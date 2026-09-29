@@ -31,7 +31,7 @@ Unmanaged installations retain their existing source command behavior.`;
 function checkManagedOptions(parsed: ParsedSourceLifecycle): void {
   if (parsed.legacyOnly) throw new OperationError('writer_coordinator_required',
     'Source creation cannot also install legacy Git hardening on a managed worktree.',
-    'Create the source without --pat-file. Configure supported postpublication Git effects separately.');
+    'Create the source without --pat-file. After the source is registered, run `gbrain sources harden <id>` on the owner host to enable managed Git effects.');
 }
 
 export async function executeSourceLifecycle(engine: BrainEngine, parsed: ParsedSourceLifecycle): Promise<Record<string, unknown>> {

@@ -1,4 +1,4 @@
-import { assertManagedFilesystemWrite } from './persistence/filesystem-guard.ts';
+import { assertManagedFilesystemWrite, isManagedFilesystemPath } from './persistence/filesystem-guard.ts';
 /**
  * brain-repo-durability.ts — auto-harden a brain's git working tree (v0.42.44).
  *
@@ -35,7 +35,7 @@ import {
 import { join, dirname, relative, isAbsolute } from 'path';
 import { execFileSync, execSync } from 'child_process';
 import {
-  GIT_ENV, GIT_ENV_AUTH, divergenceSafePull, detectDefaultBranch, pushProbe,
+  GIT_ENV, GIT_ENV_AUTH, divergenceSafePull, detectDefaultBranch, pushProbe, isInsideGitRepo,
   type PullOutcome, type PushProbeResult,
 } from './git-remote.ts';
 import { findResolverFile, RESOLVER_FILENAMES } from './resolver-filenames.ts';
@@ -50,7 +50,7 @@ import filingRulesDoc from '../../skills/_brain-filing-rules.json';
 // ── Types ───────────────────────────────────────────────────────────────────
 
 export type StepName =
-  | 'pull' | 'credential' | 'hook' | 'helper' | 'agents' | 'cron' | 'verify' | 'commit';
+  | 'pull' | 'credential' | 'outbox' | 'hook' | 'helper' | 'agents' | 'cron' | 'verify' | 'commit';
 export type StepStatus = 'ok' | 'fixed' | 'skipped' | 'needs_attention';
 
 export interface DurabilityStep {
@@ -68,6 +68,9 @@ export interface DurabilityReport {
   fixed: string[];          // what this run changed
   needs_attention: string[];
   clean_against_origin: boolean;
+  /** Present (true) only when the root is a managed canonical worktree and the
+   *  opt-in-only managed profile ran instead of the legacy hardening. */
+  managed?: true;
 }
 
 export interface HardenOpts {
@@ -96,6 +99,9 @@ const AGENTS_BEGIN = '<!-- BEGIN gbrain-brain-durability (managed; do not edit b
 const AGENTS_END = '<!-- END gbrain-brain-durability -->';
 const HELPER_REL = 'scripts/brain-commit-push.sh';
 const CRED_MANAGED_KEY = 'gbrain.durability.managedcredential';
+/** Repo-local opt-in that lets the persistence outbox run Git effects on a
+ *  managed canonical worktree, where no hook (or other file) may be installed. */
+const MANAGED_GIT_KEY = 'gbrain.durability.managed';
 
 /** CX2-8: resolves through the single gbrain-home choke point (config.ts
  *  semantics — GBRAIN_HOME is a PARENT dir, `.gbrain` is appended). The
@@ -571,6 +577,16 @@ function gitConfigUnset(repoPath: string, key: string): void {
   } catch { /* not set */ }
 }
 
+/**
+ * True when this checkout opted into the persistence outbox's Git effects via
+ * the repo-local managed key (`gbrain sources harden` on a managed root).
+ * Reads ONLY repo-local config (`--local`: global/system/env/included config
+ * can never enable it) and requires the exact value `true`. Never throws.
+ */
+export function isManagedGitEffectEnabled(repoPath: string): boolean {
+  return gitConfigGet(repoPath, MANAGED_GIT_KEY, /*localOnly*/ true) === 'true';
+}
+
 function remoteHost(repoPath: string): string {
   try {
     const url = execFileSync('git', ['-C', repoPath, 'remote', 'get-url', 'origin'], {
@@ -891,10 +907,98 @@ function pullDetail(o: PullOutcome): { status: StepStatus; detail: string } {
 }
 
 /**
+ * True for a git checkout that belongs to a managed canonical worktree, using
+ * the exact predicate the filesystem guard enforces (markers, persisted
+ * registry, in-memory roots). Evaluated on the given path AND its repo toplevel
+ * so a source subdirectory of a managed root is recognized. A corrupt registry
+ * or unreadable marker throws `writer_coordinator_required` (fail closed).
+ */
+function isManagedGitRoot(path: string): boolean {
+  if (!isInsideGitRepo(path)) return false;
+  return isManagedFilesystemPath(path) || isManagedFilesystemPath(resolveRepoRoot(path));
+}
+
+/**
+ * Managed profile: on a managed canonical worktree the persistence outbox is
+ * the only Git writer. Hardening therefore writes NO worktree file, hook,
+ * helper, rules block, commit or cron and never pulls or rebases; it only sets
+ * the repo-local opt-in the outbox reads (`git config --local`, a deliberate
+ * exception to "everything under the root is guarded": .git/config is not
+ * canonical content), wires the credential when a PAT was supplied, and runs
+ * the read-only push probe. Dry-run reports the statuses of the real run.
+ */
+async function hardenManagedGitRoot(opts: HardenOpts): Promise<DurabilityReport> {
+  const { sourceId } = opts;
+  const dryRun = !!opts.dryRun;
+  const verify = opts.verify !== false;
+  const redact = opts.pat ? (s: string) => redactSecretsInText(s, new Map([['github_pat', opts.pat!]])) : (s: string) => s;
+  const log = (l: string) => opts.logger?.(redact(l));
+  const repoPath = resolveRepoRoot(opts.repoPath);
+  const branch = opts.branch || detectDefaultBranch(repoPath);
+  const steps: DurabilityStep[] = [];
+  const push = (step: StepName, r: { status: StepStatus; detail: string }) => {
+    const s: DurabilityStep = { step, status: r.status, detail: redact(r.detail) };
+    steps.push(s); log(`[${step}] ${s.status}: ${s.detail}`);
+    return s;
+  };
+
+  if (currentBranch(repoPath) === 'HEAD') {
+    push('pull', { status: 'needs_attention', detail: 'detached HEAD — checkout a branch before hardening' });
+  } else {
+    push('pull', { status: 'skipped', detail: 'managed worktree: the persistence outbox never pulls or rebases; pull is not run' });
+  }
+
+  if (opts.pat) push('credential', wireRepoCredential(repoPath, opts.pat, dryRun));
+  else push('credential', { status: 'skipped', detail: 'no PAT provided — relying on existing git auth' });
+
+  if (isManagedGitEffectEnabled(repoPath)) {
+    push('outbox', { status: 'ok', detail: 'managed git effects already enabled (repo-local git config)' });
+  } else if (isDurabilityHardened(repoPath)) {
+    push('outbox', { status: 'ok', detail: 'already opted in via legacy hook; managed key not needed' });
+  } else if (dryRun) {
+    push('outbox', { status: 'fixed', detail: 'would enable managed git effects (repo-local git config; no hook, no committed files) (dry-run)' });
+  } else {
+    try {
+      gitConfigSet(repoPath, MANAGED_GIT_KEY, 'true');
+      push('outbox', { status: 'fixed', detail: 'enabled managed git effects (repo-local git config; no hook, no committed files)' });
+    } catch (e) {
+      push('outbox', { status: 'needs_attention', detail: `could not set repo-local git config ${MANAGED_GIT_KEY}: ${(e as Error).message.slice(0, 120)}` });
+    }
+  }
+
+  push('hook', { status: 'skipped', detail: 'managed: hook not installed — the outbox opt-in is repo-local git config' });
+  push('helper', { status: 'skipped', detail: 'managed: a committed helper would bypass coordinator publication' });
+  push('agents', { status: 'skipped', detail: 'managed: a rules block would be an uncoordinated canonical write' });
+  push('cron', { status: 'skipped', detail: 'managed: scheduled pull is refused (pull/rebase)' });
+
+  let clean = false;
+  if (verify && !dryRun) {
+    const probe: PushProbeResult = pushProbe(repoPath, branch, { redactDetail: redact });
+    if (!probe.ok) {
+      push('verify', { status: 'needs_attention', detail: `push-probe failed (${probe.reason}): ${probe.detail}` });
+    } else {
+      push('verify', { status: 'ok', detail: 'push-probe ok — push auth confirmed' });
+      clean = headMatchesOrigin(repoPath, branch);
+    }
+  } else if (dryRun) {
+    push('verify', { status: 'skipped', detail: 'dry-run' });
+  } else {
+    push('verify', { status: 'skipped', detail: '--no-verify' });
+  }
+
+  const fixed = steps.filter(s => s.status === 'fixed').map(s => s.step);
+  const needs_attention = steps.filter(s => s.status === 'needs_attention').map(s => `${s.step}: ${s.detail}`);
+  return { source_id: sourceId, repo_path: repoPath, branch, steps, missing: fixed, fixed, needs_attention, clean_against_origin: clean, managed: true };
+}
+
+/**
  * Harden a brain repo for durability. Idempotent: a second run on an
  * already-hardened repo produces all ok/skipped and NO new commit.
  */
 export async function hardenBrainRepo(opts: HardenOpts): Promise<DurabilityReport> {
+  // Managed git roots take the opt-in-only profile; everything else (unmanaged,
+  // or managed without git) falls through to the unchanged legacy path below.
+  if (isManagedGitRoot(opts.repoPath)) return hardenManagedGitRoot(opts);
   if (!opts.dryRun) assertManagedFilesystemWrite(opts.repoPath);
   const { sourceId } = opts;
   const dryRun = !!opts.dryRun;
@@ -1009,8 +1113,10 @@ function headMatchesOrigin(repoPath: string, branch: string): boolean {
   } catch { return false; }
 }
 
-/** Remove durability scaffolding: cron, local hook, credential wiring. Leaves
- *  committed content (helper, resolver block) intact. Idempotent. */
+/** Remove durability scaffolding: cron, local hook, credential wiring and the
+ *  managed git opt-in. Leaves committed content (helper, resolver block)
+ *  intact. Idempotent. The `outbox` step is reported only when the opt-in key
+ *  is present or the root is managed, so unmanaged output is unchanged. */
 export async function unhardenBrainRepo(opts: UnhardenOpts): Promise<DurabilityStep[]> {
   const { repoPath, sourceId } = opts;
   const steps: DurabilityStep[] = [];
@@ -1020,6 +1126,18 @@ export async function unhardenBrainRepo(opts: UnhardenOpts): Promise<DurabilityS
   steps.push({ step: 'hook', status: hookRemoved ? 'fixed' : 'skipped', detail: hookRemoved ? 'hook removed' : 'no gbrain hook' });
   const credRemoved = isGitRepo(repoPath) ? removeCredentialWiring(repoPath) : false;
   steps.push({ step: 'credential', status: credRemoved ? 'fixed' : 'skipped', detail: credRemoved ? 'credential wiring removed' : 'no gbrain credential wiring' });
+  if (isGitRepo(repoPath)) {
+    const keyValue = gitConfigGet(repoPath, MANAGED_GIT_KEY, true);
+    let managed = false;
+    // Teardown must keep working when managed-root records are unreadable.
+    try { managed = isManagedGitRoot(repoPath); } catch { /* treat as unmanaged for reporting only */ }
+    if (keyValue !== '' || managed) {
+      const removed = keyValue === 'true';
+      if (removed) gitConfigUnset(repoPath, MANAGED_GIT_KEY);
+      steps.push({ step: 'outbox', status: removed ? 'fixed' : 'skipped',
+        detail: removed ? 'managed git effects disabled — later writes will skip git with durability_not_enabled' : 'no managed opt-in' });
+    }
+  }
   opts.logger?.(steps.map(s => `[${s.step}] ${s.status}: ${s.detail}`).join('\n'));
   return steps;
 }

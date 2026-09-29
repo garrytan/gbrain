@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { dirname, join, relative, resolve as resolvePath, sep } from 'node:path';
-import { isDurabilityHardened } from '../brain-repo-durability.ts';
+import { isDurabilityHardened, isManagedGitEffectEnabled } from '../brain-repo-durability.ts';
 import { OperationError } from '../ops/contract.ts';
 import { persistenceHome } from './identity.ts';
 import { nativeFileTarget } from './native-file-target.ts';
@@ -19,9 +19,14 @@ function git(root: string, hooks: string, args: string[], signal?: AbortSignal):
   });
 }
 
-/** Caller owns the native worktree lock. Never run pull, rebase, or legacy hooks. */
+/**
+ * Caller owns the native worktree lock. Never run pull, rebase, or legacy hooks.
+ * Git effects run for roots opted in by the legacy hook banner (`sources harden`
+ * on an unmanaged root) or by the repo-local managed key (`sources harden` on a
+ * managed root, which installs no hook).
+ */
 export async function publishGitEffect(root: string, relativePath: string, signal?: AbortSignal): Promise<Record<string, unknown>> {
-  if (!isDurabilityHardened(root)) return { git: 'skipped', reason: 'durability_not_enabled', push: 'skipped' };
+  if (!isDurabilityHardened(root) && !isManagedGitEffectEnabled(root)) return { git: 'skipped', reason: 'durability_not_enabled', push: 'skipped' };
   const path = nativeFileTarget(root, resolvePath(root, relativePath), 'git_target_unsafe');
   relativePath = relative(root, path).split(sep).join('/');
   const base = join(persistenceHome(), 'empty-hooks');

@@ -19,6 +19,7 @@ import {
 } from '../core/brain-repo-durability.ts';
 import { divergenceSafePull, detectDefaultBranch, isInsideGitRepo } from '../core/git-remote.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
+import { redactSecretsInText } from '../core/minions/handlers/shell-redact.ts';
 import { invalidateBackupStatus } from '../core/backup/status-file.ts';
 import { existsSync } from 'fs';
 import { join } from 'path';
@@ -90,6 +91,8 @@ export async function runHarden(engine: BrainEngine, args: string[]): Promise<vo
   }
 
   const reports: DurabilityReport[] = [];
+  const failures: HardenFailure[] = [];
+  const redact = (s: string) => pat?.token ? redactSecretsInText(s, new Map([['github_pat', pat.token]])) : s;
   for (const row of rows) {
     // A source may be a SUBDIRECTORY of a git repo (the bootstrap workspace
     // registers brain/); the durability core resolves the root itself, so the
@@ -98,29 +101,48 @@ export async function runHarden(engine: BrainEngine, args: string[]): Promise<vo
       console.error(`[${row.id}] skipped — no local git repo at ${row.local_path ?? '(none)'}`);
       continue;
     }
-    const report = await hardenBrainRepo({
-      repoPath: row.local_path, sourceId: row.id, branch,
-      pat: pat?.token, installCron, verify, dryRun,
-      logger: json ? undefined : (l) => console.error(`  ${l}`),
-    });
-    reports.push(report);
-    if (!json) renderReport(report);
+    // One source that cannot be hardened (unreadable managed-root records, a
+    // failing repo-local config write) must not abort the run or hide the
+    // aggregate: record it with its code + Fix hint and continue (#5182).
+    try {
+      const report = await hardenBrainRepo({
+        repoPath: row.local_path, sourceId: row.id, branch,
+        pat: pat?.token, installCron, verify, dryRun,
+        logger: json ? undefined : (l) => console.error(`  ${l}`),
+      });
+      reports.push(report);
+      if (!json) renderReport(report);
+    } catch (e) {
+      const err = e as { code?: unknown; message?: unknown; suggestion?: unknown };
+      const failure: HardenFailure = {
+        source_id: row.id,
+        ...(typeof err.code === 'string' ? { code: err.code } : {}),
+        message: redact(String(err.message ?? e)),
+        ...(typeof err.suggestion === 'string' ? { suggestion: redact(err.suggestion) } : {}),
+      };
+      failures.push(failure);
+      console.error(`[${row.id}] harden failed${failure.code ? ` (${failure.code})` : ''}: ${failure.message}`);
+      if (failure.suggestion) console.error(`  Fix: ${failure.suggestion}`);
+    }
   }
 
-  if (json) console.log(JSON.stringify({ reports }, null, 2));
+  if (json) console.log(JSON.stringify(failures.length ? { reports, errors: failures } : { reports }, null, 2));
 
   // Fix-path invalidation: hardening changes the backup-coverage answer for
   // every touched repo — drop the cached verdict so the next check re-probes.
   if (reports.length > 0) invalidateBackupStatus();
 
-  // Non-zero exit if any source needs attention, so cron/automation notices.
-  // Route through setCliExitVerdict — a raw process.exitCode write is zeroed by
-  // the owned-verdict flush-exit (#2084 / PGLite-Emscripten pollution defense).
-  if (reports.some(r => r.needs_attention.length > 0)) setCliExitVerdict(3);
+  // Non-zero exit if any source needs attention or failed, so cron/automation
+  // notices. Route through setCliExitVerdict — a raw process.exitCode write is
+  // zeroed by the owned-verdict flush-exit (#2084 / PGLite-Emscripten pollution defense).
+  if (failures.length > 0 || reports.some(r => r.needs_attention.length > 0)) setCliExitVerdict(3);
 }
+
+interface HardenFailure { source_id: string; code?: string; message: string; suggestion?: string; }
 
 function renderReport(r: DurabilityReport): void {
   console.log(`\n[${r.source_id}] durability — ${r.repo_path} (branch ${r.branch})`);
+  if (r.managed) console.log('  managed worktree — git effects via persistence outbox');
   for (const s of r.steps) {
     const mark = s.status === 'ok' ? '✓' : s.status === 'fixed' ? '+' : s.status === 'skipped' ? '·' : '⚠';
     console.log(`  ${mark} ${s.step.padEnd(11)} ${s.detail}`);

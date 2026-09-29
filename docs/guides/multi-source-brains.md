@@ -288,6 +288,22 @@ the remote URL, logs, or the JSON report. For a self-hosted git server
 reachable only over a filesystem path, set `GBRAIN_GIT_ALLOW_FILE_TRANSPORT=1`
 (default is HTTPS-only).
 
+**Managed canonical worktrees.** After `gbrain sources writer activate`, the
+persistence outbox is the only Git writer for a source's checkout, so
+`gbrain sources harden <id>` runs a smaller managed profile there. It sets the
+repo-local git config key `gbrain.durability.managed=true` (which lets the
+outbox commit and push each write), wires the credential when you pass
+`--pat-file`, and runs the read-only push probe. It installs no hook, no
+`scripts/brain-commit-push.sh`, no AGENTS.md/RESOLVER.md block and no
+scheduled pull, makes no scaffolding commit, and never pulls or rebases. The
+report marks those steps `skipped` and adds an `outbox` step; `--dry-run`
+shows the same statuses without writing. You can harden before or after
+activation; after activation only the opt-in is applied. The opt-in is
+host-local (run harden again on the owner host after a reclone or transfer),
+and `gbrain sources unharden <id>` removes it. `--all` reports a source it
+cannot harden, keeps going and exits non-zero. A managed source that is not a
+git repository is refused, since it has nothing to opt in.
+
 ## Upgrading an existing brain
 
 `gbrain upgrade` runs the needed schema migrations automatically. Your

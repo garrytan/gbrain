@@ -4,13 +4,19 @@
  * redirected to a tmp dir; installCron:false so the suite never touches launchd.
  */
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync, statSync, chmodSync } from 'fs';
-import { join } from 'path';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, readdirSync, existsSync, statSync, chmodSync } from 'fs';
+import { join, dirname, relative } from 'path';
 import { tmpdir } from 'os';
+import { createHash, randomUUID } from 'crypto';
 import { execFileSync } from 'child_process';
 import {
-  hardenBrainRepo, unhardenBrainRepo, acceptPat, maintainPushLog,
+  hardenBrainRepo, unhardenBrainRepo, acceptPat, maintainPushLog, isDurabilityHardened,
+  type DurabilityReport, type DurabilityStep,
 } from '../src/core/brain-repo-durability.ts';
+// Namespace import: a missing export fails only the tests that use it.
+import * as durability from '../src/core/brain-repo-durability.ts';
+import { canonicalFilesystemPath, recordManagedRoots } from '../src/core/persistence/root-registry.ts';
+import { assertManagedFilesystemWrite } from '../src/core/persistence/filesystem-guard.ts';
 
 const PAT = 'ghp_TESTSECRETTOKEN0123456789abcdef';
 
@@ -258,6 +264,315 @@ describe('unhardenBrainRepo', () => {
   test('idempotent when not hardened (all skipped)', async () => {
     const steps = await unhardenBrainRepo({ repoPath: work, sourceId: 'wiki' });
     expect(steps.every(s => s.status === 'skipped')).toBe(true);
+  });
+});
+
+// ── #5182: managed canonical worktrees opt into git effects via repo-local config ──
+
+const MANAGED_KEY = 'gbrain.durability.managed';
+const LEGACY_BANNER = '# gbrain brain-durability post-commit hook (v0.42.44+)';
+
+/** Every file under `dir` (relative path → content digest / link target / '<dir>'). */
+function snapshotTree(dir: string, skip: (rel: string) => boolean = () => false): Record<string, string> {
+  const out: Record<string, string> = {};
+  const walk = (current: string): void => {
+    for (const entry of readdirSync(current, { withFileTypes: true })) {
+      const full = join(current, entry.name);
+      const rel = relative(dir, full);
+      if (skip(rel)) continue;
+      if (entry.isDirectory()) { out[rel] = '<dir>'; walk(full); }
+      else if (entry.isSymbolicLink()) out[rel] = `-> ${readFileSync(full, 'utf-8')}`;
+      else out[rel] = createHash('sha256').update(readFileSync(full)).digest('hex');
+    }
+  };
+  walk(dir);
+  return out;
+}
+/** Worktree files outside .git plus the hooks/refs state inside it (config is compared separately). */
+function localState(): Record<string, string> {
+  return snapshotTree(work, rel => rel === '.git/config' || rel === '.git/index' || rel === '.git/gbrain-managed.json');
+}
+function stepMap(r: DurabilityReport): Record<string, string> { return Object.fromEntries(r.steps.map(s => [s.step, s.status])); }
+function stepOf(r: DurabilityReport, name: string): DurabilityStep | undefined { return r.steps.find(s => s.step === name); }
+function configBytes(): string { return readFileSync(join(work, '.git', 'config'), 'utf-8'); }
+function markManaged(): void { recordManagedRoots(randomUUID(), [{ local_path: work }]); }
+function markOwnerClaimOnly(): void { writeFileSync(join(work, '.gbrain-owner.json'), '{"version":1}'); }
+function markSiblingReservation(): void {
+  const digest = createHash('sha256').update(canonicalFilesystemPath(work)).digest('hex');
+  writeFileSync(join(dirname(canonicalFilesystemPath(work)), `.gbrain-owner-${digest}.json`), '{"version":1}');
+}
+function advanceOrigin(): void {
+  const second = mkdtempSync(join(root, 'pusher-'));
+  execFileSync('git', ['-c', 'protocol.file.allow=always', 'clone', '-q', bare, second], { stdio: 'ignore' });
+  execFileSync('git', ['-C', second, 'config', 'user.email', 't@t.t'], { stdio: 'ignore' });
+  execFileSync('git', ['-C', second, 'config', 'user.name', 'tester'], { stdio: 'ignore' });
+  writeFileSync(join(second, 'upstream.md'), 'new upstream content\n');
+  execFileSync('git', ['-C', second, 'add', 'upstream.md'], { stdio: 'ignore' });
+  execFileSync('git', ['-C', second, 'commit', '-qm', 'advance origin'], { stdio: 'ignore' });
+  execFileSync('git', ['-c', 'protocol.file.allow=always', '-C', second, 'push', '-q', 'origin', 'main'], { stdio: 'ignore' });
+}
+const MANAGED_REAL_STEPS = { pull: 'skipped', credential: 'fixed', outbox: 'fixed', hook: 'skipped', helper: 'skipped',
+  agents: 'skipped', cron: 'skipped', verify: 'ok' };
+
+describe('managed root (#5182)', () => {
+  test('real harden writes only the repo-local opt-in: no hook, helper, rules, commit, pull or cron', async () => {
+    markManaged();
+    const headBefore = git(work, 'rev-parse', 'HEAD');
+    const originBefore = git(bare, 'rev-parse', 'refs/heads/main');
+    const trackingBefore = git(work, 'rev-parse', 'refs/remotes/origin/main');
+    const countBefore = commitCount(work);
+    const hooksBefore = readdirSync(join(work, '.git', 'hooks')).sort();
+    const beforeFiles = localState();
+    const r = await harden();
+
+    expect(r.managed).toBe(true);
+    expect(Object.keys(stepMap(r))).toEqual(Object.keys(MANAGED_REAL_STEPS));
+    expect(stepMap(r)).toEqual(MANAGED_REAL_STEPS);
+    expect(stepOf(r, 'commit')).toBeUndefined();
+    expect(r.needs_attention).toEqual([]);
+    expect(r.clean_against_origin).toBe(true);
+    expect(cfg(work, MANAGED_KEY)).toBe('true');
+    expect(durability.isManagedGitEffectEnabled(work)).toBe(true);
+    expect(isDurabilityHardened(work)).toBe(false); // legacy write-through sinks keep their own gate
+    expect(existsSync(join(work, '.git', 'hooks', 'post-commit'))).toBe(false);
+    expect(readdirSync(join(work, '.git', 'hooks')).sort()).toEqual(hooksBefore);
+    expect(existsSync(join(work, 'scripts'))).toBe(false);
+    expect(existsSync(join(work, 'AGENTS.md'))).toBe(false);
+    expect(existsSync(join(work, 'RESOLVER.md'))).toBe(false);
+    expect(git(work, 'status', '--porcelain')).toBe('');
+    expect(git(work, 'rev-parse', 'HEAD')).toBe(headBefore);
+    expect(commitCount(work)).toBe(countBefore);
+    expect(git(bare, 'rev-parse', 'refs/heads/main')).toBe(originBefore);
+    expect(git(work, 'rev-parse', 'refs/remotes/origin/main')).toBe(trackingBefore);
+    expect(localState()).toEqual(beforeFiles);
+    expect(existsSync(join(process.env.HOME!, '.gbrain', 'brain-push.log'))).toBe(false);
+    for (const name of ['pull', 'hook', 'helper', 'agents', 'cron']) expect(stepOf(r, name)?.detail).toContain('managed');
+    expect(JSON.stringify(r).includes(PAT)).toBe(false);
+  });
+
+  test('never pulls or fetches: an advanced origin leaves the worktree, HEAD and FETCH_HEAD alone', async () => {
+    markManaged();
+    advanceOrigin();
+    const headBefore = git(work, 'rev-parse', 'HEAD');
+    const trackingBefore = git(work, 'rev-parse', 'refs/remotes/origin/main');
+    const r = await harden();
+    expect(git(work, 'rev-parse', 'HEAD')).toBe(headBefore);
+    expect(git(work, 'rev-parse', 'refs/remotes/origin/main')).toBe(trackingBefore);
+    expect(existsSync(join(work, 'upstream.md'))).toBe(false);
+    expect(existsSync(join(work, '.git', 'FETCH_HEAD'))).toBe(false);
+    expect(stepOf(r, 'pull')?.status).toBe('skipped');
+    expect(cfg(work, MANAGED_KEY)).toBe('true');
+  });
+
+  test('is idempotent: the second run is all ok/skipped and leaves .git/config byte-identical', async () => {
+    markManaged();
+    await harden();
+    const config = configBytes();
+    const state = localState();
+    const r2 = await harden();
+    expect(r2.steps.every(s => s.status === 'ok' || s.status === 'skipped')).toBe(true);
+    expect(stepOf(r2, 'outbox')?.status).toBe('ok');
+    expect(configBytes()).toBe(config);
+    expect(localState()).toEqual(state);
+  });
+
+  test('without a PAT the credential step is skipped and only the opt-in key is written', async () => {
+    markManaged();
+    const r = await harden({ pat: undefined });
+    expect(stepOf(r, 'credential')?.status).toBe('skipped');
+    expect(stepOf(r, 'outbox')?.status).toBe('fixed');
+    expect(cfg(work, MANAGED_KEY)).toBe('true');
+    expect(cfg(work, 'credential.helper')).toBe('');
+    expect(cfg(work, 'gbrain.durability.managedcredential')).toBe('');
+  });
+
+  test('--no-verify skips the push probe and still opts in', async () => {
+    markManaged();
+    const r = await harden({ verify: false });
+    expect(stepOf(r, 'verify')?.status).toBe('skipped');
+    expect(cfg(work, MANAGED_KEY)).toBe('true');
+  });
+
+  test('a failing push probe is needs_attention but the opt-in stays set (the outbox retries pushes)', async () => {
+    markManaged();
+    git(work, 'remote', 'set-url', 'origin', join(root, 'unreachable.git'));
+    const r = await harden();
+    expect(stepOf(r, 'verify')?.status).toBe('needs_attention');
+    expect(r.needs_attention.length).toBeGreaterThan(0);
+    expect(r.clean_against_origin).toBe(false);
+    expect(cfg(work, MANAGED_KEY)).toBe('true');
+    expect(stepOf(r, 'commit')).toBeUndefined();
+  });
+
+  test('a subdirectory source hardens the enclosing managed repo root', async () => {
+    markManaged();
+    const sub = join(work, 'brain'); mkdirSync(sub, { recursive: true });
+    const r = await hardenBrainRepo({ repoPath: sub, sourceId: 'wiki', pat: PAT, installCron: false });
+    expect(r.managed).toBe(true);
+    expect(r.repo_path).toBe(git(work, 'rev-parse', '--show-toplevel'));
+    expect(cfg(work, MANAGED_KEY)).toBe('true');
+    expect(existsSync(join(sub, 'scripts'))).toBe(false);
+    expect(existsSync(join(work, 'scripts'))).toBe(false);
+  });
+
+  test('detached HEAD stays needs_attention on the pull step', async () => {
+    markManaged();
+    git(work, 'checkout', '-q', git(work, 'rev-parse', 'HEAD'));
+    const r = await harden({ verify: false });
+    expect(stepOf(r, 'pull')?.status).toBe('needs_attention');
+    expect(stepOf(r, 'pull')?.detail).toContain('detached HEAD');
+  });
+
+  for (const [label, mark] of [['registry record and git marker', markManaged], ['owner claim file only', markOwnerClaimOnly],
+    ['sibling reservation only', markSiblingReservation]] as const) {
+    test(`managed detection covers ${label}`, async () => {
+      mark();
+      const r = await harden({ verify: false });
+      expect(r.managed).toBe(true);
+      expect(stepOf(r, 'hook')?.status).toBe('skipped');
+      expect(cfg(work, MANAGED_KEY)).toBe('true');
+      expect(existsSync(join(work, '.git', 'hooks', 'post-commit'))).toBe(false);
+      expect(existsSync(join(work, 'scripts'))).toBe(false);
+      expect(existsSync(join(work, 'AGENTS.md'))).toBe(false);
+    });
+  }
+
+  test('a root already opted in through the legacy hook reports that and leaves the hook and key alone', async () => {
+    const hook = join(work, '.git', 'hooks', 'post-commit');
+    writeFileSync(hook, `#!/bin/sh\n${LEGACY_BANNER}\nexit 0\n`); chmodSync(hook, 0o755);
+    const hookBytes = readFileSync(hook);
+    markManaged();
+    const r = await harden();
+    expect(stepOf(r, 'outbox')).toMatchObject({ status: 'ok' });
+    expect(stepOf(r, 'outbox')?.detail).toContain('legacy hook');
+    expect(cfg(work, MANAGED_KEY)).toBe('');
+    expect(readFileSync(hook)).toEqual(hookBytes);
+    expect(stepOf(r, 'hook')?.status).toBe('skipped');
+    expect(existsSync(join(work, 'scripts'))).toBe(false);
+  });
+
+  test('dry-run reports the same step statuses as the real run and writes nothing', async () => {
+    markManaged();
+    git(work, 'remote', 'set-url', 'origin', join(root, 'unreachable.git')); // proves no network is needed
+    const config = configBytes();
+    const state = localState();
+    const store = join(process.env.HOME!, '.gbrain', 'git-credentials');
+    const preview = await harden({ dryRun: true, installCron: true });
+    expect(preview.managed).toBe(true);
+    expect(configBytes()).toBe(config);
+    expect(cfg(work, MANAGED_KEY)).toBe('');
+    expect(localState()).toEqual(state);
+    expect(existsSync(store)).toBe(false);
+    expect(existsSync(join(process.env.HOME!, 'Library', 'LaunchAgents'))).toBe(false);
+    expect(preview.needs_attention).toEqual([]);
+    expect(stepOf(preview, 'verify')).toMatchObject({ status: 'skipped', detail: 'dry-run' });
+    for (const name of ['hook', 'helper', 'agents', 'cron', 'pull']) expect(stepOf(preview, name)?.status).toBe('skipped');
+    expect(stepOf(preview, 'outbox')?.status).toBe('fixed');
+    expect(stepOf(preview, 'outbox')?.detail).toContain('dry-run');
+
+    const real = await harden({ verify: false, installCron: false });
+    const { verify: _previewVerify, ...previewSteps } = stepMap(preview);
+    const { verify: _realVerify, ...realSteps } = stepMap(real);
+    expect(previewSteps).toEqual(realSteps);
+    expect(Object.keys(stepMap(preview))).toEqual(Object.keys(stepMap(real)));
+  });
+
+  test('dry-run on an already opted-in root reports ok and stays a no-op', async () => {
+    markManaged();
+    await harden();
+    const config = configBytes();
+    const preview = await harden({ dryRun: true });
+    expect(stepOf(preview, 'outbox')?.status).toBe('ok');
+    expect(preview.steps.every(s => s.status === 'ok' || s.status === 'skipped')).toBe(true);
+    expect(configBytes()).toBe(config);
+  });
+
+  test('corrupt managed-root records fail closed for real and dry-run runs without writing the key', async () => {
+    const registry = join(process.env.HOME!, '.gbrain', 'persistence', 'managed-roots');
+    mkdirSync(registry, { recursive: true }); writeFileSync(join(registry, 'broken.json'), '{');
+    const config = configBytes();
+    await expect(harden()).rejects.toMatchObject({ code: 'writer_coordinator_required' });
+    await expect(harden({ dryRun: true })).rejects.toMatchObject({ code: 'writer_coordinator_required' });
+    expect(configBytes()).toBe(config);
+    expect(cfg(work, MANAGED_KEY)).toBe('');
+    expect(existsSync(join(work, '.git', 'hooks', 'post-commit'))).toBe(false);
+  });
+
+  test('after a managed harden the filesystem fence still refuses scripts, rules, pages and hooks', async () => {
+    markManaged();
+    await harden();
+    for (const target of [join(work, 'scripts', 'brain-commit-push.sh'), join(work, 'AGENTS.md'), join(work, 'RESOLVER.md'),
+      join(work, 'notes', 'page.md'), join(work, '.git', 'hooks', 'post-commit'), work]) {
+      expect(() => assertManagedFilesystemWrite(target)).toThrow('managed canonical worktree');
+    }
+  });
+
+  test('unharden removes the opt-in and credential wiring and leaves the worktree untouched', async () => {
+    markManaged();
+    await harden();
+    const state = localState();
+    const steps = await unhardenBrainRepo({ repoPath: work, sourceId: 'wiki' });
+    expect(steps.map(s => [s.step, s.status])).toEqual([['cron', 'skipped'], ['hook', 'skipped'], ['credential', 'fixed'], ['outbox', 'fixed']]);
+    expect(steps.find(s => s.step === 'outbox')?.detail).toContain('durability_not_enabled');
+    expect(cfg(work, MANAGED_KEY)).toBe('');
+    expect(cfg(work, 'gbrain.durability.managedcredential')).toBe('');
+    expect(durability.isManagedGitEffectEnabled(work)).toBe(false);
+    expect(localState()).toEqual(state);
+    const again = await unhardenBrainRepo({ repoPath: work, sourceId: 'wiki' });
+    expect(again.every(s => s.status === 'skipped')).toBe(true);
+    expect(again.find(s => s.step === 'outbox')?.detail).toContain('no managed opt-in');
+  });
+
+  test('unharden removes only an exact true value and never touches other config', async () => {
+    markManaged();
+    git(work, 'config', '--local', MANAGED_KEY, 'not-ours');
+    git(work, 'config', '--local', 'gbrain.durability.other', 'keep');
+    const steps = await unhardenBrainRepo({ repoPath: work, sourceId: 'wiki' });
+    expect(steps.find(s => s.step === 'outbox')?.status).toBe('skipped');
+    expect(cfg(work, MANAGED_KEY)).toBe('not-ours');
+    expect(cfg(work, 'gbrain.durability.other')).toBe('keep');
+  });
+});
+
+describe('unmanaged root regression (#5182)', () => {
+  const REAL_STEPS = { pull: 'ok', credential: 'fixed', hook: 'fixed', helper: 'fixed', agents: 'fixed', cron: 'skipped', verify: 'ok', commit: 'fixed' };
+  const DRY_STEPS = { pull: 'skipped', credential: 'fixed', hook: 'fixed', helper: 'fixed', agents: 'fixed', cron: 'skipped', verify: 'skipped' };
+
+  test('real harden keeps its step list and statuses, has no outbox step and does not set the key', async () => {
+    const r = await harden();
+    expect(Object.keys(stepMap(r))).toEqual(Object.keys(REAL_STEPS));
+    expect(stepMap(r)).toEqual(REAL_STEPS);
+    expect(r.managed).toBeUndefined();
+    expect('managed' in r).toBe(false);
+    expect(cfg(work, MANAGED_KEY)).toBe('');
+    expect(isDurabilityHardened(work)).toBe(true);
+    expect(existsSync(join(work, 'scripts', 'brain-commit-push.sh'))).toBe(true);
+  });
+
+  test('dry-run keeps its step list and statuses and writes nothing', async () => {
+    const config = configBytes();
+    const state = localState();
+    const r = await harden({ dryRun: true });
+    expect(Object.keys(stepMap(r))).toEqual(Object.keys(DRY_STEPS));
+    expect(stepMap(r)).toEqual(DRY_STEPS);
+    expect('managed' in r).toBe(false);
+    expect(configBytes()).toBe(config);
+    expect(localState()).toEqual(state);
+  });
+
+  test('unharden returns exactly the three legacy steps without an outbox entry', async () => {
+    await harden();
+    const steps = await unhardenBrainRepo({ repoPath: work, sourceId: 'wiki' });
+    expect(steps.map(s => String(s.step))).toEqual(['cron', 'hook', 'credential']);
+    const idle = await unhardenBrainRepo({ repoPath: work, sourceId: 'wiki' });
+    expect(idle.map(s => String(s.step))).toEqual(['cron', 'hook', 'credential']);
+  });
+
+  test('a stray opt-in key on an unmanaged root is still removed by unharden', async () => {
+    git(work, 'config', '--local', MANAGED_KEY, 'true');
+    const steps = await unhardenBrainRepo({ repoPath: work, sourceId: 'wiki' });
+    expect(steps.find(s => s.step === 'outbox')?.status).toBe('fixed');
+    expect(cfg(work, MANAGED_KEY)).toBe('');
   });
 });
 
