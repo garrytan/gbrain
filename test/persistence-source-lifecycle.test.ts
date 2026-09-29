@@ -54,7 +54,7 @@ async function queued(source:string,requestId=randomUUID()){
     worktreeId:binding.worktree_id,topologyGeneration:binding.topology_generation});
 }
 
-test('worktree manifest permits only in-tree skill links and excludes unsyncable trees',()=>fixture(async(_home,_source,root)=>{
+test('worktree manifest retains hidden content and permits agent skill links',()=>fixture(async(_home,_source,root)=>{
   mkdirSync(join(root,'content'));
   writeFileSync(join(root,'content','note.md'),'Syncable');
   mkdirSync(join(root,'node_modules'));
@@ -63,11 +63,15 @@ test('worktree manifest permits only in-tree skill links and excludes unsyncable
   symlinkSync('../../content',join(root,'.claude','skills','ignored'));
   mkdirSync(join(root,'.agents','skills','agent'),{recursive:true});
   writeFileSync(join(root,'.agents','skills','agent','SKILL.md'),'Agent skill');
+  mkdirSync(join(root,'.persisted'));
+  writeFileSync(join(root,'.persisted','note.md'),'Syncable with a hidden-path waiver');
   mkdirSync(join(root,'skills'));
   symlinkSync('../.agents/skills/agent',join(root,'skills','agent'));
 
   const manifest=worktreeManifest(root);
-  expect(Object.keys(manifest.files).sort()).toEqual(['content/note.md','example.md']);
+  expect(Object.keys(manifest.files).sort()).toEqual(['.agents/skills/agent/SKILL.md','.persisted/note.md','content/note.md','example.md']);
+  writeFileSync(join(root,'.persisted','note.md'),'Changed hidden source content');
+  expect(worktreeManifest(root).digest).not.toBe(manifest.digest);
   symlinkSync('example.md',join(root,'content-link.md'));
   expect(()=>worktreeManifest(root)).toThrow(/unsafe symbolic link/);
 }),60_000);

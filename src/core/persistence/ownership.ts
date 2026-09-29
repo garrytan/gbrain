@@ -165,14 +165,14 @@ function isInTreeSkillLink(root: string, path: string): boolean {
 export function worktreeManifest(root: string): { digest: string; files: Record<string, string> } {
   const canonical = realpathSync(root);
   const files: Record<string, string> = {};
-  const visit = (dir: string) => {
+  const visit = (dir: string, hidden = false) => {
     for (const name of readdirSync(dir).sort()) {
       if (name === '.git' || name === '.gbrain-managed' || isPhysicalRootMetadata(name)) continue;
-      // Hidden trees are never syncable source content (the sync walker prunes
-      // them before descent), including workspace-local agent configuration.
-      if (name.startsWith('.')) continue;
       const path = join(dir, name), info = lstatSync(path);
       if (info.isSymbolicLink()) {
+        // Hidden paths can be explicitly synced, so retain their regular files
+        // in the manifest. Sync never follows their agent configuration links.
+        if (hidden || name.startsWith('.')) continue;
         // Repositories may expose their in-tree agent skills at `skills/<name>`.
         // Sync never follows that link, and its target is constrained to a
         // normal in-tree skill directory. Every other link remains unsafe.
@@ -180,8 +180,8 @@ export function worktreeManifest(root: string): { digest: string; files: Record<
         throw new OperationError('writer_manifest_unsafe', 'Canonical worktree transfer refuses an unsafe symbolic link.');
       }
       if (info.isDirectory()) {
-        if (!pruneDir(name, dir)) continue;
-        visit(path);
+        if (!name.startsWith('.') && !pruneDir(name, dir)) continue;
+        visit(path, hidden || name.startsWith('.'));
       }
       else if (info.isFile()) files[relative(canonical, path).split(sep).join('/')] = sha256(readFileSync(path));
     }
