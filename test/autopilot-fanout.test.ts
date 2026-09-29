@@ -224,12 +224,13 @@ describe('resolveFanoutMax', () => {
 describe('dispatchPerSource — integration with stubbed engine + queue', () => {
   type AddedJob = { name: string; data: unknown; opts: Record<string, unknown> };
 
-  function makeStubs(sources: SourceRow[], opts?: { listThrows?: boolean }) {
+  function makeStubs(sources: SourceRow[], opts?: { listThrows?: boolean; listError?: unknown }) {
     const added: AddedJob[] = [];
     let nextId = 100;
     const engine = {
       kind: 'postgres' as const,
       listAllSources: async () => {
+        if (opts?.listError) throw opts.listError;
         if (opts?.listThrows) throw new Error('sources table missing');
         return sources;
       },
@@ -270,6 +271,24 @@ describe('dispatchPerSource — integration with stubbed engine + queue', () => 
     const result = await dispatchPerSource(engine, queue, fanoutOpts);
     expect(result.legacy_fallback).toBe(true);
     expect(added.length).toBe(1);
+  });
+
+  test('missing sources table (Postgres 42P01) falls back to legacy', async () => {
+    const err = Object.assign(new Error('relation "sources" does not exist'), { code: '42P01' });
+    const { engine, queue, added, fanoutOpts } = makeStubs([], { listError: err });
+    const result = await dispatchPerSource(engine, queue, fanoutOpts);
+    expect(result.legacy_fallback).toBe(true);
+    expect(added.length).toBe(1);
+  });
+
+  test('transient connection error skips the tick instead of the legacy repo-root cycle', async () => {
+    const err = Object.assign(new Error('write CONNECT_TIMEOUT aws-0-us-west-1.pooler.supabase.com:5432'), { code: 'CONNECT_TIMEOUT' });
+    const { engine, queue, added, events, fanoutOpts } = makeStubs([], { listError: err });
+    const result = await dispatchPerSource(engine, queue, fanoutOpts);
+    expect(result.legacy_fallback).toBe(false);
+    expect(result.dispatched).toEqual([]);
+    expect(added.length).toBe(0);
+    expect(events.some((e) => e.includes('"fanout_skipped"'))).toBe(true);
   });
 
   test('per-source fan-out: 2 stale sources, both dispatched with distinct keys', async () => {
