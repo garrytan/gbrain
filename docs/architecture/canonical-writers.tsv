@@ -104,7 +104,7 @@ src/core/takes-write.ts	8	filesystem_guard	Managed operation routes through jour
 src/core/think/index.ts	1	engine_guard	Canonical table SQL trigger requires coordinator capability; legacy calls fail before canonical DB publication.
 src/core/timeline-dedup-repair.ts	3	engine_guard	Canonical table SQL trigger requires coordinator capability; legacy calls fail before canonical DB publication.
 src/core/timeline-write-through.ts	2	filesystem_guard	Managed semantic operation journals page changes; legacy atomic writes check root.
-src/core/transcripts/ingest.ts	1	engine_guard	Canonical table SQL trigger requires coordinator capability; legacy calls fail before canonical DB publication.
+src/core/transcripts/ingest.ts	1	engine_guard	Render output submits as put_page write requests on writer-claimed brains (submitPageMutation); the remaining direct call is fenced by the canonical-table trigger for unmanaged brains.
 src/core/workspace-push.ts	0	filesystem_guard	The resolved git root is checked before staging, committing or pulling.
 src/core/write-through.ts	1	filesystem_guard	Source filesystem lock and canonical page SQL guards reject legacy publication.
 src/eval/brainbench/seed.ts	2	isolated_eval	Explicit isolated evaluation database only; never opened against the active managed brain.
