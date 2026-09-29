@@ -9,7 +9,7 @@ const LINT_MESSAGES: Record<string,string> = { citation:'Paragraph has no citati
   link:'A link target is unavailable.', 'back-link':'A reverse link is missing.', 'triple-hr':'An ambiguous timeline separator was found.' };
 
 export function remoteLinkHint(row: WriteRequest): Record<string, unknown> {
-  return row.authority.remote && !row.authority.autoLinkTrusted ? { auto_links: { skipped: 'remote',
+  return row.authority.remote && !row.authority.autoLinkTrusted && process.env.GBRAIN_REMOTE_AUTO_LINK !== '1' ? { auto_links: { skipped: 'remote',
     hint: 'Body wikilinks are saved as text but NOT reconciled into the graph. A stdio `gbrain serve` sweeps them at startup + on idle; `gbrain serve --http` does not self-sweep — run `gbrain sweep --once` (delegates to a live serve over IPC), use trusted local capture/put_page for inline link extraction, or add_link for edges needed now.' } } : {};
 }
 export function pageNoopAdvisories(row: WriteRequest): Record<string, unknown> {

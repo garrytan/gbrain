@@ -19,6 +19,8 @@ import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { operations } from '../src/core/operations.ts';
 import type { OperationContext } from '../src/core/operations.ts';
 import { resetGateway } from '../src/core/ai/gateway.ts';
+import { withEnv } from './helpers/with-env.ts';
+import { TAKES_FENCE_BEGIN, TAKES_FENCE_END } from '../src/core/takes-fence.ts';
 
 let engine: PGLiteEngine;
 
@@ -58,6 +60,7 @@ describe('put_page remote auto-link disclosure (#4525)', () => {
   test('tool description names the remote auto-link skip', () => {
     expect(putPage.description).toMatch(/[Rr]emote .*callers/);
     expect(putPage.description).toContain('skipped');
+    expect(putPage.description).toContain('GBRAIN_REMOTE_AUTO_LINK=1');
     // #4679: name the async path too (serve maintenance sweep / `gbrain sweep`).
     expect(putPage.description).toContain('sweep');
     // Wave review: only a stdio serve self-sweeps (startup + idle);
@@ -117,5 +120,104 @@ describe('put_page remote auto-link disclosure (#4525)', () => {
       { slug: 'notes/local-no-skip', content: CONTENT },
     )) as { auto_links?: { skipped?: string } };
     expect(result.auto_links?.skipped).not.toBe('remote');
+  }, 120000);
+
+  test('opted-in remote writes publish and reconcile typed links with the page', async () => {
+    await withEnv({ GBRAIN_REMOTE_AUTO_LINK: '1' }, async () => {
+      await putPage.handler(makeCtx(), {
+        slug: 'companies/acme-example',
+        content: '---\ntype: company\ntitle: Acme Example\n---\n\nA test company.',
+      });
+      const created = await putPage.handler(makeCtx({ remote: true }), {
+        slug: 'notes/remote-links',
+        content: '---\ntype: note\ntitle: Remote Links\n---\n\nAlice works at [Acme](companies/acme-example).',
+      }) as { revision: string; auto_links?: { created: number; removed: number; skipped?: string } };
+      expect(created.auto_links?.created).toBe(1);
+      expect(created.auto_links?.skipped).toBeUndefined();
+      expect((await engine.getLinks('notes/remote-links', { sourceId: 'default' })).map(link => [link.to_slug, link.link_type]))
+        .toEqual([['companies/acme-example', 'works_at']]);
+
+      const replaced = await putPage.handler(makeCtx({ remote: true }), {
+        slug: 'notes/remote-links',
+        expected_revision: created.revision,
+        content: '---\ntype: note\ntitle: Remote Links\n---\n\nThe link was removed.',
+      }) as { auto_links?: { created: number; removed: number } };
+      expect(replaced.auto_links?.removed).toBe(1);
+      expect(await engine.getLinks('notes/remote-links', { sourceId: 'default' })).toEqual([]);
+    });
+  }, 120000);
+
+  test('remote extraction cannot resolve private, foreign, or frontmatter endpoints', async () => {
+    await withEnv({ GBRAIN_REMOTE_AUTO_LINK: '1' }, async () => {
+      await engine.executeRaw("INSERT INTO sources(id,name) VALUES('foreign-example','Foreign example')");
+      await putPage.handler(makeCtx(), { slug: 'people/private-example',
+        content: '---\ntype: person\ntitle: Private Example\nvisibility: private\n---\n\nPrivate.' });
+      await putPage.handler(makeCtx({ sourceId: 'foreign-example' }), { slug: 'companies/foreign-example',
+        content: '---\ntype: company\ntitle: Foreign Example\n---\n\nForeign.' });
+      const result = (await putPage.handler(makeCtx({ remote: true }), { slug: 'meetings/remote-example',
+        content: '---\ntype: meeting\ntitle: Remote Example\nattendees:\n  - people/private-example\n---\n\n[Private](people/private-example) and [[foreign-example:companies/foreign-example]].' })) as { auto_links?: { created: number; unresolved_count: number } };
+      expect(result.auto_links?.created).toBe(0);
+      expect(await engine.getLinks('meetings/remote-example', { sourceId: 'default' })).toEqual([]);
+      expect(await engine.getBacklinks('meetings/remote-example', { sourceId: 'default' })).toEqual([]);
+    });
+  }, 120000);
+
+  test('remote replacement preserves links to private targets made by a trusted writer', async () => {
+    await withEnv({ GBRAIN_REMOTE_AUTO_LINK: '1' }, async () => {
+      await putPage.handler(makeCtx(), { slug: 'people/private-example',
+        content: '---\ntype: person\ntitle: Private Example\nvisibility: private\n---\n\nPrivate.' });
+      const original = await putPage.handler(makeCtx(), { slug: 'notes/existing-private-link',
+        content: '---\ntype: note\ntitle: Existing Private Link\n---\n\n[Private](people/private-example).' }) as { revision: string };
+      expect((await engine.getLinks('notes/existing-private-link', { sourceId: 'default' })).map(link => link.to_slug))
+        .toEqual(['people/private-example']);
+      const result = await putPage.handler(makeCtx({ remote: true }), { slug: 'notes/existing-private-link',
+        expected_revision: original.revision,
+        content: '---\ntype: note\ntitle: Existing Private Link\n---\n\nUpdated note.' }) as { auto_links?: { removed: number } };
+      expect(result.auto_links?.removed).toBe(0);
+      expect((await engine.getLinks('notes/existing-private-link', { sourceId: 'default' })).map(link => link.to_slug))
+        .toEqual(['people/private-example']);
+    });
+  }, 120000);
+
+  test('remote replacement does not derive or remove links from protected takes', async () => {
+    await withEnv({ GBRAIN_REMOTE_AUTO_LINK: '1' }, async () => {
+      await putPage.handler(makeCtx(), { slug: 'companies/protected-example',
+        content: '---\ntype: company\ntitle: Protected Example\n---\n\nA company.' });
+      const original = await putPage.handler(makeCtx(), { slug: 'notes/protected-link',
+        content: `---\ntype: note\ntitle: Protected Link\n---\n\n${TAKES_FENCE_BEGIN}\nAlice works at [Acme](companies/protected-example).\n${TAKES_FENCE_END}` }) as { revision: string };
+      const before = await engine.getLinks('notes/protected-link', { sourceId: 'default' });
+      const result = await putPage.handler(makeCtx({ remote: true }), { slug: 'notes/protected-link',
+        expected_revision: original.revision,
+        content: '---\ntype: note\ntitle: Protected Link\n---\n\nPublic replacement.' }) as { auto_links?: { skipped?: string; created?: number; removed?: number } };
+      expect(result.auto_links?.skipped).toBe('protected_body');
+      expect(await engine.getLinks('notes/protected-link', { sourceId: 'default' })).toEqual(before);
+    });
+  }, 120000);
+
+  test('opt-in reports disabled when the brain turns off automatic links', async () => {
+    await withEnv({ GBRAIN_REMOTE_AUTO_LINK: '1' }, async () => {
+      await engine.setConfig('auto_link', 'false');
+      try {
+        const result = await putPage.handler(makeCtx({ remote: true }), {
+          slug: 'notes/remote-links-disabled', content: '---\ntitle: Disabled\n---\n\nNo graph extraction.',
+        }) as { auto_links?: { skipped: string } };
+        expect(result.auto_links?.skipped).toBe('disabled');
+      } finally {
+        await engine.setConfig('auto_link', 'true');
+      }
+    });
+  }, 120000);
+
+  test('remote meeting writes keep their graph edges directed out from the page', async () => {
+    await withEnv({ GBRAIN_REMOTE_AUTO_LINK: '1' }, async () => {
+      await putPage.handler(makeCtx(), { slug: 'people/alice-example',
+        content: '---\ntype: person\ntitle: Alice Example\n---\n\nA person.' });
+      const result = (await putPage.handler(makeCtx({ remote: true }), { slug: 'meetings/remote-attendance',
+        content: '---\ntype: meeting\ntitle: Remote Attendance\n---\n\n## Attendees\n\n- [Alice](people/alice-example) attended.' })) as { auto_links?: { created: number; errors: number } };
+      expect(result.auto_links).toMatchObject({ created: 1, errors: 0 });
+      expect((await engine.getLinks('meetings/remote-attendance', { sourceId: 'default' })).map(link => link.to_slug))
+        .toEqual(['people/alice-example']);
+      expect(await engine.getBacklinks('meetings/remote-attendance', { sourceId: 'default' })).toEqual([]);
+    });
   }, 120000);
 });

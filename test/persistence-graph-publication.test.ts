@@ -7,6 +7,7 @@ import type { OperationContext } from '../src/core/ops/contract.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 const engines: BrainEngine[] = [];
 let closePostgres: (() => Promise<void>) | undefined;
@@ -75,4 +76,31 @@ test('delayed reconciliation cannot install links from an older canonical snapsh
     expect(intercepted).toBe(true);
     expect((await engine.getLinks(slug, { sourceId })).map(link => link.to_slug)).toEqual(['people/bob-example']);
   }
+});
+
+test('remote opt-in publishes only visible same-source links with the page', async () => {
+  await withEnv({ GBRAIN_REMOTE_AUTO_LINK: '1' }, async () => {
+    for (const engine of engines) {
+      const remote = { ...ctx(engine), remote: true };
+      await submitPageMutation(ctx(engine), { operation: 'put_page', params: {
+        slug: 'people/private-remote-target',
+        content: '---\ntype: person\ntitle: Private target\nvisibility: private\n---\n\nPrivate.',
+        request_id: randomUUID(),
+      } });
+      const result = await submitPageMutation(remote, { operation: 'put_page', params: {
+        slug: 'notes/remote-graph',
+        content: '---\ntype: note\ntitle: Remote graph\n---\n\nSee [Alice](people/alice-example) and [private](people/private-remote-target).',
+        request_id: randomUUID(),
+      } });
+      expect(result.auto_links).toMatchObject({ created: 1, errors: 0 });
+      expect((await engine.getLinks('notes/remote-graph', { sourceId })).map(link => link.to_slug))
+        .toEqual(['people/alice-example']);
+      const revised = await submitPageMutation(remote, { operation: 'put_page', params: {
+        slug: 'notes/remote-graph', content: '---\ntype: note\ntitle: Remote graph\n---\n\nNo references.',
+        expected_revision: result.revision, request_id: randomUUID(),
+      } });
+      expect(revised.auto_links).toMatchObject({ removed: 1, errors: 0 });
+      expect(await engine.getLinks('notes/remote-graph', { sourceId })).toEqual([]);
+    }
+  });
 });
