@@ -40,6 +40,8 @@ export interface EffectiveDateResult {
 export interface ComputeEffectiveDateOpts {
   slug: string;
   frontmatter: Record<string, unknown>;
+  /** `brain.timezone`: IANA zone for offset-less datetimes. Unset or invalid = UTC. */
+  timeZone?: string;
   /** Basename without extension, e.g. "2024-03-15-acme-call". May be null/empty. */
   filename?: string | null;
   updatedAt: Date;
@@ -63,19 +65,20 @@ const CREATED_KEYS = ['created', 'created_at', 'date_created', 'date created'];
 
 /**
  * The fallback anchor for an undated page: a page that already fell back
- * keeps its stored date, a new file-backed page takes its file's timestamp
- * (the earlier of birth and modification time), and anything else takes the
- * row's creation time. Never the time of the latest write.
+ * keeps its stored date, a new file-backed page takes the earliest of its
+ * file's birth time, modification time and (when opted in) git first-commit
+ * date, and anything else takes the row's creation time. Never the time of
+ * the latest write.
  */
 export function fallbackCreatedAt(opts: {
   existing?: { effective_date?: Date | string | null; effective_date_source?: string | null; created_at?: Date | string | null } | null;
-  fileTimes?: { birthtime?: Date; mtime?: Date } | null;
+  fileTimes?: { birthtime?: Date; mtime?: Date; firstCommit?: Date } | null;
   now: Date;
 }): Date {
   const { existing, fileTimes, now } = opts;
   if (existing?.effective_date_source === 'fallback' && existing.effective_date) return new Date(existing.effective_date);
   if (existing?.created_at) return new Date(existing.created_at);
-  const times = [fileTimes?.birthtime, fileTimes?.mtime]
+  const times = [fileTimes?.birthtime, fileTimes?.mtime, fileTimes?.firstCommit]
     .filter((d): d is Date => d instanceof Date && d.getTime() > 0)
     .map(d => d.getTime());
   return times.length ? new Date(Math.min(...times)) : now;
@@ -108,18 +111,49 @@ function utcCalendarDate(year: number, month: number, day: number, h = 0, m = 0,
 }
 
 /**
+ * Marks a frontmatter Date the YAML parser built from an offset-less datetime
+ * (`2024-03-15T10:00:00`): its UTC fields hold the author's wall-clock time.
+ */
+export const NAIVE_DATETIME = Symbol.for('gbrain.naive-datetime');
+
+/** Whether `timeZone` names an IANA zone this runtime knows. */
+export function isValidTimeZone(timeZone: string): boolean {
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone }).format();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The instant a wall-clock time (held in `wall`'s UTC fields) names in `timeZone`, DST included. */
+function zonedWallTime(wall: Date, timeZone: string): Date {
+  const format = new Intl.DateTimeFormat('en-US', { timeZone, hourCycle: 'h23', year: 'numeric', month: 'numeric',
+    day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric' });
+  const offsetAt = (instant: number) => {
+    const part = (type: string) => +format.formatToParts(instant).find(p => p.type === type)!.value;
+    return Date.UTC(part('year'), part('month') - 1, part('day'), part('hour'), part('minute'), part('second')) - (instant - instant % 1000);
+  };
+  const first = wall.getTime() - offsetAt(wall.getTime());
+  return new Date(wall.getTime() - offsetAt(first));
+}
+
+/**
  * Parse a frontmatter value as a Date. Returns null on any failure.
  *
  * Calendar shapes never depend on the syncing host's timezone: date-only
  * values (`2024-03-15`, `2024/03/15`, `March 5, 2024`, `5 March 2024`) are UTC
- * calendar dates, and a datetime without an offset is read as UTC. A
- * calendar-invalid date (`2024-02-30`) is rejected rather than rolled over.
- * Other strings fall back to Date.parse.
+ * calendar dates, and a datetime without an offset is read in `timeZone`
+ * (the brain's `brain.timezone`; UTC when unset). A calendar-invalid date
+ * (`2024-02-30`) is rejected rather than rolled over. Other strings fall back
+ * to Date.parse.
  */
-export function parseDateLoose(value: unknown): Date | null {
+export function parseDateLoose(value: unknown, timeZone?: string): Date | null {
   if (value == null) return null;
+  const zone = timeZone && timeZone !== 'UTC' ? timeZone : null;
   if (value instanceof Date) {
-    return Number.isFinite(value.getTime()) ? value : null;
+    if (!Number.isFinite(value.getTime())) return null;
+    return zone && (value as Date & { [NAIVE_DATETIME]?: boolean })[NAIVE_DATETIME] ? zonedWallTime(value, zone) : value;
   }
   if (typeof value === 'string') {
     const trimmed = value.trim();
@@ -128,12 +162,13 @@ export function parseDateLoose(value: unknown): Date | null {
     if (numeric) return utcCalendarDate(+numeric[1], +numeric[2], +numeric[3]);
     const datetime = DATETIME_RE.exec(trimmed);
     if (datetime) {
-      const [, y, mo, d, h, mi, sec, frac, zone] = datetime;
+      const [, y, mo, d, h, mi, sec, frac, offset] = datetime;
       const wall = utcCalendarDate(+y, +mo, +d, +h, +mi, +(sec ?? 0), frac ? Math.round(+frac * 1000) : 0);
       if (!wall || +h > 23 || +mi > 59 || +(sec ?? 0) > 59) return null;
-      if (!zone || zone.toUpperCase() === 'Z') return wall;
-      const sign = zone.startsWith('-') ? -1 : 1;
-      const [zh, zm] = [+zone.slice(1, 3), +zone.slice(-2)];
+      if (!offset) return zone ? zonedWallTime(wall, zone) : wall;
+      if (offset.toUpperCase() === 'Z') return wall;
+      const sign = offset.startsWith('-') ? -1 : 1;
+      const [zh, zm] = [+offset.slice(1, 3), +offset.slice(-2)];
       return new Date(wall.getTime() - sign * (zh * 60 + zm) * 60_000);
     }
     const mdy = MONTH_DAY_YEAR_RE.exec(trimmed);
@@ -184,12 +219,13 @@ function hasFilenameFirstPrefix(slug: string): boolean {
 export function computeEffectiveDate(opts: ComputeEffectiveDateOpts): EffectiveDateResult {
   const { slug, frontmatter, filename, updatedAt, createdAt } = opts;
   const filenameFirst = hasFilenameFirstPrefix(slug);
+  const timeZone = opts.timeZone && isValidTimeZone(opts.timeZone) ? opts.timeZone : undefined;
 
-  const fmEvent = validateInRange(parseDateLoose(frontmatter.event_date));
-  const fmDate = validateInRange(parseDateLoose(frontmatter.date));
-  const fmPublished = validateInRange(parseDateLoose(frontmatter.published));
+  const fmEvent = validateInRange(parseDateLoose(frontmatter.event_date, timeZone));
+  const fmDate = validateInRange(parseDateLoose(frontmatter.date, timeZone));
+  const fmPublished = validateInRange(parseDateLoose(frontmatter.published, timeZone));
   const filenameDate = extractFilenameDate(filename);
-  const fmCreated = CREATED_KEYS.map(key => validateInRange(parseDateLoose(frontmatter[key]))).find(d => d !== null) ?? null;
+  const fmCreated = CREATED_KEYS.map(key => validateInRange(parseDateLoose(frontmatter[key], timeZone))).find(d => d !== null) ?? null;
 
   // Build the ordered candidate list. For filename-first prefixes
   // (daily/, meetings/) the filename moves to the head of the chain.

@@ -20,7 +20,7 @@ import { repairTimelineDedupIndex, repairLegacyTimelineSourceRows } from './time
 import { repairPagesUpsertArbiter } from './pages-upsert-arbiter.ts';
 import { repairLinkSourceCheck, LINK_SOURCE_GATE_MIGRATION_VERSION } from './link-source-check-repair.ts';
 import { GRANT_COLUMNS_SQL, GRANT_AUDIT_SCHEMA_SQL, GRANT_SPEND_COLUMNS_SQL } from './grants/schema.ts';
-import { FACT_WITHDRAWAL_SCHEMA_SQL, FACT_WITHDRAWAL_BACKFILL_SQL, FACT_WITHDRAWAL_SUBJECT_SQL } from './facts/withdrawal-schema.ts';
+import { FACT_WITHDRAWAL_SCHEMA_SQL, FACT_WITHDRAWAL_BACKFILL_SQL, FACT_WITHDRAWAL_SUBJECT_SQL, FACT_WITHDRAWAL_NORMALIZED_SQL } from './facts/withdrawal-schema.ts';
 import { repairLegacyClientGrants } from './grants/migration.ts';
 import { PROJECTION_STATISTICS_SQL, verifyProjectionStatistics } from './search/projection-statistics.ts';
 import { SHARED_SKILLS_SCHEMA_SQL } from './shared-skills/schema-all.ts';
@@ -6757,6 +6757,25 @@ CREATE TRIGGER minion_queue_protocol BEFORE INSERT OR UPDATE ON minion_jobs
       await engine.runMigration(173, `CREATE INDEX ${engine.kind === 'postgres' ? 'CONCURRENTLY ' : ''}IF NOT EXISTS idx_minion_jobs_dead_subagent_finished
         ON minion_jobs (finished_at) WHERE name = 'subagent' AND status = 'dead'`);
     },
+  },
+  {
+    // Exact-text fingerprints let a punctuation or casing variant of a
+    // forgotten claim come back on re-extraction (write-path audit B-9).
+    // Fingerprints now fold punctuation; legacy exact rows keep matching.
+    version: 174,
+    name: 'fact_withdrawal_normalized_fingerprint',
+    idempotent: true,
+    sql: FACT_WITHDRAWAL_NORMALIZED_SQL,
+  },
+  {
+    // Frontmatter tags were add-only because a tag row carried no provenance:
+    // removing a tag from frontmatter never removed it. The importer stamps
+    // 'frontmatter' and deletes only those rows; explicit adds stamp 'added'
+    // and legacy rows stay NULL — neither is ever deleted by an import.
+    version: 175,
+    name: 'tags_tag_source',
+    idempotent: true,
+    sql: `ALTER TABLE tags ADD COLUMN IF NOT EXISTS tag_source TEXT;`,
   },
 ];
 

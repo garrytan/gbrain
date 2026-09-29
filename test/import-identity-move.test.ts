@@ -14,7 +14,7 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
-import { mkdtempSync, writeFileSync, mkdirSync, renameSync } from 'fs';
+import { mkdtempSync, writeFileSync, mkdirSync, renameSync, rmSync } from 'fs';
 import { execSync } from 'child_process';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -148,5 +148,111 @@ describe('a moved file carries its page', () => {
     expect(await liveSlugs()).toEqual(['archive/plan']);
     const [row] = await engine.executeRaw<{ compiled_truth: string }>(`SELECT compiled_truth FROM pages WHERE slug = 'archive/plan'`);
     expect(row.compiled_truth).toContain('approved');
+  });
+});
+
+describe('move inference is bound to the root the page was imported from (#5675)', () => {
+  const note = (title: string, body: string) => `---\ntype: note\ntitle: ${title}\nid: reused-template-id\n---\n\n${body}\n`;
+
+  test('importing another root with a reused id never renames the live page', async () => {
+    const rootA = mkdtempSync(join(tmpdir(), 'idroot-a-'));
+    const rootB = mkdtempSync(join(tmpdir(), 'idroot-b-'));
+    mkdirSync(join(rootA, 'notes'), { recursive: true });
+    mkdirSync(join(rootB, 'notes'), { recursive: true });
+    writeFileSync(join(rootA, 'notes/original.md'), note('Original', 'The original note.'));
+    writeFileSync(join(rootB, 'notes/unrelated.md'), note('Unrelated', 'Completely different content.'));
+    await importFromFile(engine, join(rootA, 'notes/original.md'), 'notes/original.md', { noEmbed: true });
+    const [before] = await engine.executeRaw<{ id: number }>(`SELECT id FROM pages WHERE slug = 'notes/original'`);
+
+    const second = await importFromFile(engine, join(rootB, 'notes/unrelated.md'), 'notes/unrelated.md', { noEmbed: true });
+    expect(second.status).toBe('imported');
+    expect(second.slug).toBe('notes/unrelated');
+    expect(await liveSlugs()).toEqual(['notes/original', 'notes/unrelated']);
+    const [original] = await engine.executeRaw<{ id: number; compiled_truth: string }>(
+      `SELECT id, compiled_truth FROM pages WHERE slug = 'notes/original'`);
+    expect(Number(original.id)).toBe(Number(before.id));
+    expect(original.compiled_truth).toContain('The original note.');
+  });
+
+  test('an identical copy under another root is a duplicate, not a move', async () => {
+    const rootA = mkdtempSync(join(tmpdir(), 'idroot-a-'));
+    const rootB = mkdtempSync(join(tmpdir(), 'idroot-b-'));
+    mkdirSync(join(rootA, 'notes'), { recursive: true });
+    mkdirSync(join(rootB, 'notes'), { recursive: true });
+    writeFileSync(join(rootA, 'notes/original.md'), note('Original', 'Same text.'));
+    writeFileSync(join(rootB, 'notes/copy.md'), note('Original', 'Same text.'));
+    await importFromFile(engine, join(rootA, 'notes/original.md'), 'notes/original.md', { noEmbed: true });
+    const copy = await importFromFile(engine, join(rootB, 'notes/copy.md'), 'notes/copy.md', { noEmbed: true });
+    expect(copy.status).toBe('skipped');
+    expect(copy.slug).toBe('notes/original');
+    expect(await liveSlugs()).toEqual(['notes/original']);
+  });
+
+  test('a missing file under another root is no move evidence even when the old file is gone', async () => {
+    const rootA = mkdtempSync(join(tmpdir(), 'idroot-a-'));
+    const rootB = mkdtempSync(join(tmpdir(), 'idroot-b-'));
+    mkdirSync(join(rootA, 'inbox'), { recursive: true });
+    mkdirSync(join(rootB, 'archive'), { recursive: true });
+    writeFileSync(join(rootA, 'inbox/plan.md'), note('Plan', 'Draft plan.'));
+    await importFromFile(engine, join(rootA, 'inbox/plan.md'), 'inbox/plan.md', { noEmbed: true });
+    rmSync(join(rootA, 'inbox/plan.md'));
+    writeFileSync(join(rootB, 'archive/plan.md'), note('Plan', 'Final plan, approved.'));
+    const other = await importFromFile(engine, join(rootB, 'archive/plan.md'), 'archive/plan.md', { noEmbed: true });
+    expect(other.slug).toBe('archive/plan');
+    expect(await liveSlugs()).toEqual(['archive/plan', 'inbox/plan']);
+  });
+
+  test('full sync: a new file reusing a deleted file\'s id indexes as its own page', async () => {
+    await runSources(engine, ['add', 'reuse-src', '--no-federated']);
+    const repo = gitRepo('idroot-sync-');
+    mkdirSync(join(repo, 'notes'), { recursive: true });
+    writeFileSync(join(repo, 'notes/original.md'), note('Original', 'The original note.'));
+    execSync('git add -A && git commit -qm init', { cwd: repo });
+    await performSync(engine, { repoPath: repo, full: true, sourceId: 'reuse-src', noPull: true, noEmbed: true });
+    const [before] = await engine.executeRaw<{ id: number }>(`SELECT id FROM pages WHERE source_id = 'reuse-src' AND slug = 'notes/original'`);
+
+    rmSync(join(repo, 'notes/original.md'));
+    writeFileSync(join(repo, 'notes/unrelated.md'), note('Unrelated', 'Completely different content.'));
+    execSync('git add -A && git commit -qm reuse', { cwd: repo });
+    await performSync(engine, { repoPath: repo, full: true, sourceId: 'reuse-src', noPull: true, noEmbed: true });
+
+    expect(await liveSlugs('reuse-src')).toEqual(['notes/unrelated']);
+    const [after] = await engine.executeRaw<{ id: number; compiled_truth: string }>(
+      `SELECT id, compiled_truth FROM pages WHERE source_id = 'reuse-src' AND slug = 'notes/unrelated'`);
+    expect(Number(after.id)).not.toBe(Number(before.id));
+    expect(after.compiled_truth).toContain('Completely different content.');
+  }, 60_000);
+});
+
+describe('move evidence origin', () => {
+  test('a page recorded before origins existed falls back to the source\'s configured root', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'idroot-cfg-'));
+    mkdirSync(join(root, 'inbox'), { recursive: true });
+    mkdirSync(join(root, 'archive'), { recursive: true });
+    writeFileSync(join(root, 'inbox/plan.md'), page('uuid-legacy', 'Draft plan.'));
+    await importFromFile(engine, join(root, 'inbox/plan.md'), 'inbox/plan.md', { noEmbed: true });
+    const [recorded] = await engine.executeRaw<{ source_uri: string | null }>(`SELECT source_uri FROM pages WHERE slug = 'inbox/plan'`);
+    expect(recorded.source_uri).toBe(`file://${join(root, 'inbox/plan.md')}`);
+    await engine.executeRaw(`UPDATE pages SET source_uri = NULL WHERE slug = 'inbox/plan'`);
+    renameSync(join(root, 'inbox/plan.md'), join(root, 'archive/plan.md'));
+
+    const unbound = await importFromFile(engine, join(root, 'archive/plan.md'), 'archive/plan.md', { noEmbed: true });
+    expect(unbound.status).toBe('skipped');
+    expect(await liveSlugs()).toEqual(['inbox/plan']);
+
+    await engine.executeRaw(`UPDATE sources SET local_path = $1 WHERE id = 'default'`, [root]);
+    const moved = await importFromFile(engine, join(root, 'archive/plan.md'), 'archive/plan.md', { noEmbed: true });
+    expect(moved.slug).toBe('archive/plan');
+    expect(await liveSlugs()).toEqual(['archive/plan']);
+  });
+
+  test('a file import never replaces non-file provenance', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'idroot-prov-'));
+    mkdirSync(join(root, 'notes'), { recursive: true });
+    await importFromContent(engine, 'notes/captured', page('uuid-cap', 'Captured.'), { noEmbed: true, source_uri: 'https://example.com/msg/1' });
+    writeFileSync(join(root, 'notes/captured.md'), page('uuid-cap', 'Captured, then edited on disk.'));
+    await importFromFile(engine, join(root, 'notes/captured.md'), 'notes/captured.md', { noEmbed: true });
+    const [row] = await engine.executeRaw<{ source_uri: string | null }>(`SELECT source_uri FROM pages WHERE slug = 'notes/captured'`);
+    expect(row.source_uri).toBe('https://example.com/msg/1');
   });
 });

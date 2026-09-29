@@ -74,7 +74,7 @@ import { loadStorageConfig, findDbOnlyCollisions } from '../core/storage-config.
 // time. integrations.ts is side-effect-free at module load (pure recipe I/O
 // helpers), so a static import is safe here.
 import { getConfiguredCollectorOutputs } from './integrations.ts';
-import { printManagedSyncDiagnostic } from './sync-diagnostics.ts';
+import { printManagedSyncDiagnostic, printManagedSyncNotes } from './sync-diagnostics.ts';
 import { getDefaultSourcePath } from '../core/source-resolver.ts';
 // v0.41.32.0: stamp the durable newest-COMMIT timestamp at sync time so the
 // remote staleness path reads a column instead of shelling out to git.
@@ -277,6 +277,8 @@ export interface SyncResult {
    * bookmark advancement; rename the files to import them.
    */
   malformedSkipped?: number;
+  /** Managed sync: files skipped because another origin keeps their slug, and links derived after the checkpoint. */
+  slugCollisions?: import('../core/persistence/sync-discovery.ts').SyncSlugCollision[]; links?: import('../core/persistence/links-maintenance.ts').ManagedLinkExtraction;
   /**
    * Aggregated alias/undeclared explicit-type warnings (schema.type_warnings,
    * default on) — one entry per distinct non-canonical type this run.
@@ -292,6 +294,8 @@ export interface SyncResult {
    * the working tree was imported (detached HEAD or --working-tree).
    */
   uncommitted?: { added: number; modified: number; deleted: number };
+  /** Post-sync link/timeline extraction failure (A15); the affected pages stay stale. */
+  extract_error?: string;
   /** #5050: full sync re-sealed unchanged pages at the safe-chunk fence (see RunImportResult.resealed). */
   resealed?: import('./import.ts').RunImportResult['resealed'];
   /**
@@ -3905,6 +3909,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       ` Run 'gbrain extract --stale${opts.sourceId ? ` --source-id ${opts.sourceId}` : ''}' to extract now.`,
     );
   }
+  let extractError: string | undefined;
   if (!opts.noExtract && totalChanges <= 100 && pagesAffected.length > 0) {
     try {
       const { extractLinksForSlugs, extractTimelineForSlugs, stampExtracted, slugsSafeToStamp } = await import('./extract.ts');
@@ -3928,7 +3933,14 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
         slugsSafeToStamp(linksResult, timelineResult)
           .map((slug) => ({ slug, source_id: opts.sourceId ?? 'default' })),
       );
-    } catch { /* extraction is best-effort */ }
+      const failed = [...(linksResult.errors ?? []), ...(timelineResult.errors ?? [])];
+      if (failed.length > 0) extractError = `${failed.length} page(s) not extracted, e.g. ${failed[0]!.slug}: ${failed[0]!.error}`;
+    } catch (e) {
+      extractError = e instanceof Error ? e.message : String(e);
+    }
+    // A15: best-effort (the import stands and failed pages stay stale for
+    // `extract --stale`), but never silent.
+    if (extractError) serr(`  Link/timeline extraction failed: ${extractError}. Run 'gbrain extract --stale${opts.sourceId ? ` --source-id ${opts.sourceId}` : ''}' after fixing it.`);
   }
 
   // v0.31.2: facts extraction now routes through the shared
@@ -4037,6 +4049,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     malformedSkipped: malformedSkipped.length,
     ...(typeWarningsEnabled && typeWarnings.length > 0 ? { type_warnings: typeWarnings } : {}),
     ...(uncommittedDrift ? { uncommitted: uncommittedDrift } : {}),
+    ...(extractError ? { extract_error: extractError } : {}),
   };
 }
 
@@ -5999,4 +6012,5 @@ export function printSyncResult(result: SyncResult, sink: NodeJS.WriteStream = p
       write(`  Re-run 'gbrain sync' to continue (last_commit unchanged; safe to retry).`);
       break;
   }
+  printManagedSyncNotes(result, write);
 }

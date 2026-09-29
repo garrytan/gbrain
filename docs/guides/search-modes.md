@@ -82,15 +82,21 @@ Seven of the knobs deserve a sentence:
   replayed at every budget): strict `recall_all@5` climbs monotonically as
   the budget shrinks — 255/470 legacy → 394/470 at 0.25 — but even 0.25
   trails plain hybrid (439/470) by 43 questions on the held-out decision set,
-  so the bundles keep `null` and the knob is an operator lever; if you keep
-  expansion on, `0.25` recovers most of the loss. **Say to your agent:**
+  so the bundles keep `null` and the knob is an operator lever. That receipt
+  predates page-grain fusion and the relaxed-keyword demotion: on the current
+  ranking (halfA430, 215 questions, frozen variants) legacy expansion scores
+  205/215, budget `1.0` 203/215, `0.25` 202/215 and no expansion 202/215, so
+  capping the variants no longer helps. **Say to your agent:**
   *"Cap how much query expansion can outvote my original query"* (no skill backs this; your agent
   runs `gbrain config set search.expansion_variant_budget <b>`, and
   `gbrain config set search.expansion_variant_budget legacy` restores the
   default).
 - **`relationalRetrieval`** adds a graph-walk recall arm for relational
-  questions ("who invested in X", "what connects A and B"); it's a pure
-  no-op for non-relational queries. The `query` op's `relational` flag
+  questions ("who invested in X", "what connects A and B"). Common rewordings
+  count too: "X's investors", "people who funded X", "who is the founder of
+  X", "which companies has X backed", "relationship between A and B", "who
+  can introduce me to X". It's a pure no-op for non-relational queries, and
+  it only fires when the named entity resolves to a page in your brain. The `query` op's `relational` flag
   forces it on/off per call.
 - **`relational_rerank_pin`** (config key `search.relational_rerank_pin`;
   3 in every bundle) keeps those graph-walk answers from being buried by the

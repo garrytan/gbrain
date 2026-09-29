@@ -253,9 +253,13 @@ export async function writeSingleFact(
  * `superseded_by` for the audit trail. A supersession is an update, never a
  * durable withdrawal: the old claim stays rememberable and no other page is
  * invalidated. Both steps best-effort — the new fact is already durably
- * written; a partial supersede is an audit gap, not data loss.
+ * written; a partial supersede is an audit gap, not data loss — but a
+ * failure is logged with both ids, never swallowed.
  */
 async function expireSuperseded(engine: BrainEngine, oldId: number, newId: number): Promise<void> {
+  const report = (step: string, err: unknown) => console.warn(
+    `[facts.supersede] FACTS_SUPERSEDE_BOOKKEEPING_FAILED: ${step} for fact ${oldId} -> ${newId}: ${err instanceof Error ? err.message : String(err)}`,
+  );
   try {
     const { forgetFactInFence } = await import('./forget.ts');
     const [replacement] = await engine.executeRaw<{ row_num: number | null; same_page: boolean }>(
@@ -263,13 +267,13 @@ async function expireSuperseded(engine: BrainEngine, oldId: number, newId: numbe
          FROM facts n, facts o WHERE n.id = $1 AND o.id = $2`, [newId, oldId]);
     const rowNum = replacement?.same_page && replacement.row_num !== null ? Number(replacement.row_num) : null;
     await forgetFactInFence(engine, oldId, { supersededBy: { rowNum } });
-  } catch {
-    /* best-effort */
+  } catch (err) {
+    report('fence strike', err);
   }
   try {
     await engine.executeRaw(`UPDATE facts SET superseded_by = $1 WHERE id = $2`, [newId, oldId]);
-  } catch {
-    /* best-effort */
+  } catch (err) {
+    report('superseded_by link', err);
   }
 }
 

@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { FACTS_FENCE_BEGIN, FACTS_FENCE_END, parseFactsFence, renderFactsTable, type ParsedFact } from '../facts-fence.ts';
 import type { PageWithdrawal } from '../page-state/types.ts';
 import { OperationError } from '../ops/contract.ts';
+import { normalizeLoweredClaim } from './withdrawal-schema.ts';
 
 export const WITHDRAWAL_MARKER_LIMIT = 16_384;
 
@@ -122,7 +123,8 @@ export function overlayWithdrawalBody(body: string, normalizedBody: string, with
     const facts = block.parsed.facts.map(f => {
       const claim = claims.get(f.rowNum);
       if (claim === undefined) return f;
-      const at = ledger.get(`${f.visibility}:${createHash('sha256').update(claim).digest('hex')}`);
+      const at = ledger.get(`${f.visibility}:${createHash('sha256').update(normalizeLoweredClaim(claim)).digest('hex')}`)
+        ?? ledger.get(`${f.visibility}:${createHash('sha256').update(claim).digest('hex')}`);
       if (!at) return f;
       changed = true;
       return withdrawnFact(f, new Date(at).toISOString().slice(0, 10));

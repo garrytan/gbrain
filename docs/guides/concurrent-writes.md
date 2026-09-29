@@ -318,17 +318,46 @@ Take an engine-appropriate database backup first, not a Markdown export. Prefer
 forward recovery: restoring an older database can discard committed withdrawal
 intent or intervening edits and can make withdrawn content active again.
 
-Discovery has fixed safety limits: 12,000 source pages, 40,000 chunks, 40,000 fact
-rows, 64 MiB of combined text and 256 affected pages in a target manifest no larger
-than 1 MiB. It reads bodies in batches of 128 and refuses when its checked scan
-budget exceeds 10 seconds; an individual matching batch also has a 16,384-row/8 MiB input limit.
-Each body also has a 16,384-marker parsing limit, enforced during a linear scan.
-These are capacity limits, not a latency guarantee or permission to spend on
-providers. `withdrawal_capacity` or `withdrawal_provenance` refuses the attempt
-before ledger, expiry, revision or chunk changes. Matching malformed fences need
-canonical repair; capacity refusals need host-operator investigation and a
-separately reviewed repair, not an unchanged retry, source deletion or a forced
-cursor reset. There is no override that trades away complete discovery.
+Discovery is keyed on the claim, its subject and its fingerprint, so its cost
+and limits follow the pages that carry the claim, not the size of the source.
+Every fence row or chunk whose fingerprint matches contains each of the claim's
+normalized tokens in its lowercased text, because normalization only turns
+punctuation and whitespace into token boundaries. The database shortlists
+candidate pages and chunks that contain every token, and discovery streams the
+shortlist in batches of 128 and verifies each row exactly. A subject-scoped withdrawal reads
+only that entity's page plus the provenance of that entity's matching facts;
+a subjectless (`*`) withdrawal shortlists across the source. Recorded
+provenance uses the fact fingerprint index.
+
+The limits are 256 affected pages in a target manifest no larger than 1 MiB, a
+10-second checked scan budget, a 16,384-row/8 MiB input limit per matching
+batch, and a 16,384-marker parsing limit per body, enforced during a linear
+scan. These are capacity limits, not a latency guarantee or permission to spend
+on providers. `withdrawal_capacity` or `withdrawal_provenance` refuses the
+attempt before ledger, expiry, revision or chunk changes. Matching malformed
+fences need canonical repair.
+
+When the claim itself is carried by more than 256 pages, the refusal names the
+matched count and up to 20 matched pages. Reduce the matched set, then retry:
+forget the entity-scoped copies of the fact first (each withdrawal changes only
+its own entity's pages), or edit the claim out of pages that should not carry
+it. Time-budget refusals on a common claim need host-operator investigation,
+not an unchanged retry, source deletion or a forced cursor reset. There is no
+override that trades away complete discovery.
+
+Queued legacy `source_scan` effects upgrade through the same discovery, keyed
+on the request's own forgotten fact; only when that fact row is gone does the
+upgrade fall back to the source's whole withdrawal ledger (at most 256 claims).
+
+Fingerprints fold case, whitespace and punctuation (migration v174), so a
+punctuation or casing variant re-extracted from unchanged prose stays
+withdrawn. Symbols that carry meaning in names are kept: `+`, `#` and
+in-word dots, so "C++", "C#", ".NET" and "Node.js" stay distinct from
+"C", "NET" and "Nodejs"; a dot folds only when a space, another dot or the
+end of the claim follows it. Rows recorded before v174 keep their exact fingerprint and keep
+matching; v174 adds a folded row wherever a fact row still holds the claim text
+and expires active facts that became matching. A paraphrase with different
+words is a different claim.
 
 Already queued source-wide effects are converted using the same bounded exact
 discovery and retain their individual progress cursors. An over-capacity or

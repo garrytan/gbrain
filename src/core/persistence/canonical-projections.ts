@@ -200,12 +200,12 @@ export async function materializeTimeline(engine: BrainEngine, body: CanonicalBo
 }
 
 /** Database-only timeline rows on one page, split by whether they can be materialized. */
-export async function pendingTimelineRows(engine: BrainEngine, page: { id: number; slug: string } & CanonicalBody) {
+export async function pendingTimelineRows(engine: BrainEngine, page: { id: number; slug: string } & CanonicalBody, exclude: ReadonlySet<number> = new Set()) {
   const { pinned } = classifyTimeline(await storedTimeline(engine, page.id), page, page, page.slug, 'editing');
   const renderable = new Set<string>();
   let unrenderable = 0;
   for (const row of pinned) {
-    if (row.action !== 'materialize') continue;
+    if (row.action !== 'materialize' || exclude.has(Number(row.id))) continue;
     if (renderMaterializedBullet(row, page.slug)) renderable.add(row.key);
     else unrenderable++;
   }

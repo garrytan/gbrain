@@ -14,3 +14,15 @@ export function printManagedSyncDiagnostic(result: SyncResult, sink: NodeJS.Writ
   if (d.ledger_recorded === false) write('  Local failure ledger unavailable; the durable receipt above remains authoritative.');
   return true;
 }
+
+/** Informational managed-sync lines: skipped slug collisions and the links derived after the checkpoint. */
+export function printManagedSyncNotes(result: SyncResult, write: (line: string) => void): void {
+  for (const collision of result.slugCollisions ?? []) {
+    write(`  Slug collision: ${collision.skipped.join(', ')} and ${collision.kept} map to ${collision.slug}; kept ${collision.kept}. Rename one file to import both.`);
+  }
+  const links = result.links;
+  if (links && (links.created || links.removed || links.remaining)) {
+    write(`  Links: ${links.created} created, ${links.removed} removed across ${links.pages} page(s)` +
+      (links.remaining ? `; ${links.remaining} page(s) still owe extraction — run 'gbrain extract --stale'.` : '.'));
+  }
+}

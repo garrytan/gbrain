@@ -18,17 +18,18 @@ export async function recordFactWithdrawal(
     // A managed caller takes this EXCLUSIVE source lock before authority,
     // counters and request rows. Repeating an already-held lock is safe.
     await tx.executeRaw('SELECT id FROM sources WHERE id=$1 FOR UPDATE', [sourceId]);
-    const visible = await tx.executeRaw<{ visibility: 'private' | 'world'; fact_hash: string; subject: string }>(
-      `SELECT visibility,gbrain_fact_fingerprint(fact) AS fact_hash,COALESCE(entity_slug,'*') AS subject FROM facts WHERE id=$1 AND source_id=$2
+    const visible = await tx.executeRaw<{ visibility: 'private' | 'world'; fact: string; fact_hash: string; subject: string }>(
+      `SELECT visibility,fact,gbrain_fact_fingerprint(fact) AS fact_hash,COALESCE(entity_slug,'*') AS subject FROM facts WHERE id=$1 AND source_id=$2
         AND ($3::boolean=false OR visibility='world')`, [id, sourceId, worldOnly]);
     if (!visible.length) return { withdrawn: false, pages: [] };
-    const { visibility, fact_hash, subject } = visible[0];
-    // Discovery stays claim-wide (a conservative superset of affected pages);
-    // only an existing withdrawal covering this subject makes it a no-op.
+    const { visibility, fact, fact_hash, subject } = visible[0];
+    // Discovery is keyed on the claim and its subject: a subject-scoped
+    // withdrawal changes only that entity's pages and its facts' provenance.
+    // Only an existing withdrawal covering this subject makes it a no-op.
     const existing = await tx.executeRaw(`SELECT 1 FROM fact_withdrawals
-      WHERE source_id=$1 AND visibility=$2 AND fact_hash=$3 AND (subject='*' OR subject=$4) LIMIT 1`,
-    [sourceId, visibility, fact_hash, subject]);
-    const affected = existing.length ? [] : await discoverWithdrawalTargets(tx, sourceId, [{ visibility, fact_hash }]).catch(withdrawalDiscoveryFailure);
+      WHERE source_id=$1 AND visibility=$2 AND fact_hash IN ($3,gbrain_fact_fingerprint_v1($5)) AND (subject='*' OR subject=$4) LIMIT 1`,
+    [sourceId, visibility, fact_hash, subject, fact]);
+    const affected = existing.length ? [] : await discoverWithdrawalTargets(tx, sourceId, [{ visibility, fact_hash, subject, claim: fact }]).catch(withdrawalDiscoveryFailure);
     await tx.lockPageKeys(affected.map(({ slug }) => ({ sourceId, slug })));
     const rows = await tx.executeRaw<{ visibility: string; fact: string; subject: string }>(
       `SELECT visibility,fact,COALESCE(entity_slug,'*') AS subject FROM facts WHERE id=$1 AND source_id=$2
@@ -65,7 +66,7 @@ async function ambiguousFenceMatchesWithdrawal(engine: BrainEngine, sourceId: st
   const claims = bodies.flatMap(ambiguousFenceClaims);
   if (!claims.length) return false;
   const rows = await engine.executeRaw(`SELECT 1 FROM jsonb_to_recordset($2::text::jsonb) incoming(claim text,visibility text)
-    JOIN fact_withdrawals w ON w.source_id=$1 AND w.fact_hash=gbrain_fact_fingerprint(incoming.claim)
+    JOIN fact_withdrawals w ON w.source_id=$1 AND w.fact_hash IN (gbrain_fact_fingerprint(incoming.claim),gbrain_fact_fingerprint_v1(incoming.claim))
       AND (incoming.visibility IS NULL OR w.visibility=incoming.visibility)
       AND ($3::text IS NULL OR w.subject = '*' OR w.subject = $3::text) LIMIT 1`,
   [sourceId, JSON.stringify(claims), subject]);
@@ -78,7 +79,7 @@ async function withdrawalDates(engine: BrainEngine, sourceId: string, facts: rea
     `SELECT incoming.row_num, min(w.withdrawn_at)::text AS withdrawn_at FROM jsonb_to_recordset($2::text::jsonb)
       AS incoming(row_num integer,claim text,visibility text)
       JOIN fact_withdrawals w ON w.source_id=$1 AND w.visibility=incoming.visibility
-        AND w.fact_hash=gbrain_fact_fingerprint(incoming.claim)
+        AND w.fact_hash IN (gbrain_fact_fingerprint(incoming.claim),gbrain_fact_fingerprint_v1(incoming.claim))
         AND ($3::text IS NULL OR w.subject = '*' OR w.subject = $3::text)
       GROUP BY incoming.row_num`,
     [sourceId, JSON.stringify(facts.map(f => ({ row_num:f.rowNum, claim:f.claim, visibility:f.visibility }))), subject],
@@ -132,7 +133,7 @@ export async function isFactWithdrawn(
   engine: BrainEngine, sourceId: string, visibility: string, claim: string, entitySlug: string | null,
 ): Promise<boolean> {
   const rows = await engine.executeRaw(`SELECT 1 FROM fact_withdrawals
-    WHERE source_id=$1 AND visibility=$2 AND fact_hash=gbrain_fact_fingerprint($3)
+    WHERE source_id=$1 AND visibility=$2 AND fact_hash IN (gbrain_fact_fingerprint($3),gbrain_fact_fingerprint_v1($3))
       AND (subject = '*' OR subject = $4::text)`, [sourceId,visibility,claim,entitySlug]);
   return rows.length > 0;
 }

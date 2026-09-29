@@ -10,7 +10,7 @@ import type {
 } from '../engine.ts';
 import { MAX_SEARCH_LIMIT, clampSearchLimit } from '../engine.ts';
 import { AUDIT_ROW_SOURCES } from '../facts/audit-sources.ts';
-import { resolveSupersededByRow, isInt4RowRef, type SupersedeTarget } from '../facts/supersede-resolve.ts';
+import { resolveSupersededByRow, isInt4RowRef, supersessionChainOf, type SupersedeTarget } from '../facts/supersede-resolve.ts';
 import { escapeLikePattern } from '../cjk.ts';
 
 /** Narrow slice of PGLiteEngine the facts operations use. */
@@ -256,11 +256,14 @@ export async function insertFacts(
       // above is visible. Keyed on (source_id, source_markdown_slug,
       // row_num) — the v51 unique index — so a reference also resolves
       // against a target that already existed before this batch. A target
-      // whose `expired_at` is set is itself struck (chain) and rejected.
+      // whose `expired_at` is set resolves only when it is itself superseded
+      // (an A -> B -> C chain), declared in this batch or already linked in
+      // the DB.
       for (let i = 0; i < rows.length; i++) {
         const targetRow = rows[i].superseded_by_row;
         if (targetRow === undefined || rowIds[i] === null) continue;
         const slug = rows[i].source_markdown_slug;
+        const chain = supersessionChainOf(rows, slug);
         // Only look up an int4-safe target. An absurd `#N` (11+ digits)
         // would overflow the `row_num` comparison and abort the cycle;
         // skipping the lookup leaves `target` undefined, so
@@ -268,9 +271,10 @@ export async function insertFacts(
         // warning) instead of throwing.
         let target: SupersedeTarget | undefined;
         if (isInt4RowRef(targetRow)) {
-          const found = await tx.query<{ id: number; expired_at: Date | string | null }>(
-            `SELECT id, expired_at FROM facts
-               WHERE source_id = $1 AND source_markdown_slug = $2 AND row_num = $3
+          const found = await tx.query<{ id: number; expired_at: Date | string | null; next_row: number | null }>(
+            `SELECT f.id, f.expired_at, n.row_num AS next_row FROM facts f
+               LEFT JOIN facts n ON n.id = f.superseded_by
+               WHERE f.source_id = $1 AND f.source_markdown_slug = $2 AND f.row_num = $3
                LIMIT 1`,
             [ctx.source_id, slug, targetRow],
           );
@@ -278,8 +282,9 @@ export async function insertFacts(
           target = hit
             ? { id: Number(hit.id), struck: hit.expired_at != null }
             : undefined;
+          if (hit?.next_row != null && !chain.has(targetRow)) chain.set(targetRow, Number(hit.next_row));
         }
-        const { superseded_by, warning } = resolveSupersededByRow(rows[i].row_num, targetRow, target, slug);
+        const { superseded_by, warning } = resolveSupersededByRow(rows[i].row_num, targetRow, target, slug, chain);
         if (warning) warnings.push(warning);
         if (superseded_by !== null) {
           await tx.query(`UPDATE facts SET superseded_by = $1 WHERE id = $2`, [superseded_by, rowIds[i]]);

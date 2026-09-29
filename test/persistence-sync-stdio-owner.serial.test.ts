@@ -82,6 +82,28 @@ test('actual CLI sync and page reads delegate to a real non-serve stdio owner be
   expect(inspectLockHolder(databasePath).pid).toBe(owner!.pid);
 },90000);
 
+test('extract --stale delegates to the resident owner, and the delegated sync already stamped its pages',async()=>{
+  const preview=await cli(['extract','--stale','--source-id','workspace','--dry-run','--json']);
+  expect({code:preview.code,err:preview.err}).toMatchObject({code:0});
+  expect(JSON.parse(preview.out)).toMatchObject({action:'extract_stale_dry_run',stale_pages:0});
+  const extracted=await cli(['extract','--stale','--json']);
+  expect({code:extracted.code,err:extracted.err}).toMatchObject({code:0});
+  const report=JSON.parse(extracted.out);
+  expect(report).toMatchObject({action:'extract_stale_done',stale_remaining:0});
+  expect(report.skipped_changed).toBeUndefined();
+  expect(extracted.err).not.toContain('writer_coordinator_required');
+  expect(inspectLockHolder(databasePath).pid).toBe(owner!.pid);
+},90000);
+
+test('remote stdio credentials cannot request trusted stale extraction',async()=>{
+  const socket=persistenceSocketPathForConfig(config)!,cap=await requestPersistenceCapabilities(socket);
+  expect(cap.administration).toContain('writer_extract_stale');
+  const registration=JSON.parse(readFileSync(join(home,'.gbrain','persistence',`${cap.brain_id}.stdio.json`),'utf8'));
+  await expect(requestPersistenceAdministration(socket,{version:1,kind:'administration',brain_id:cap.brain_id,
+    operation:'writer_extract_stale',params:{source_id:'workspace'},registration:{...registration,lane:'cli'}}))
+    .rejects.toMatchObject({code:'permission_denied'});
+});
+
 test('resident-owner failure JSON retains safe scoped diagnostics and the frozen receipt without a local ledger',async()=>{
   const path=join(root,'a.md');
   const pinned=execFileSync('git',['-C',root,'show','HEAD:a.md'],{encoding:'utf8'});

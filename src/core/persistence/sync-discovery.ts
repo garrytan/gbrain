@@ -17,9 +17,14 @@ import type { CompanyBrainPlan } from '../company-brain/types.ts';
 import { assertDistinctSyncOrigins, legacySyncOrigin, sameSyncOrigin, syncOriginPath, type SyncOriginScope } from './sync-origin.ts';
 import { assertManagedSyncActive } from './sync-authority.ts';
 
-export interface SyncEntry { path: string; sourcePath: string; action: 'import' | 'delete'; working: boolean; slug?: string; pageId?: number | null; revision?: string | null; }
+/** The page an import takes over from its previous origin: a Git rename, or a file that replaced a vanished origin at the same slug. */
+export interface SyncRename { sourcePath: string; slug: string; pageId: number; revision: string; }
+export interface SyncEntry { path: string; sourcePath: string; action: 'import' | 'delete'; working: boolean; slug?: string; pageId?: number | null; revision?: string | null;
+  renameFrom?: SyncRename; }
+/** Files that map to a slug another origin keeps; they are left out of the manifest until one is renamed. */
+export interface SyncSlugCollision { slug: string; kept: string; skipped: string[]; }
 export interface SyncDiscovery { binding: WorktreeBinding; root: string; gitRoot: string; sourceId: string; incarnation: string;
-  companyPlan?: CompanyBrainPlan;
+  companyPlan?: CompanyBrainPlan; slugCollisions?: SyncSlugCollision[];
   from: string | null; target: string; entries: SyncEntry[]; uncommitted?: { added: number; modified: number; deleted: number }; slugMode: 'git-root' | 'source-root'; }
 export interface ManagedSyncContext { binding: WorktreeBinding; root: string; gitRoot: string; sourceId: string; incarnation: string;
   source: { last_commit: string | null; config: Record<string, unknown> }; }
@@ -127,6 +132,7 @@ export async function discoverManagedSync(engine: BrainEngine, opts: SyncOpts, c
   const dirty = company ? { added: [], modified: [], deleted: [], renamed: [] } : buildDetachedWorkingTreeManifest(gitRoot);
   const delta = !opts.full && source.last_commit ? computeSyncDelta(gitRoot, source.last_commit, target) : null;
   const entries = new Map<string, SyncEntry>();
+  const renamedFrom = new Map<string, string>();
   const put = (path: string, action: SyncEntry['action'], working = false) => {
     if (process.platform === 'win32' && path.includes('\\')) throw new OperationError('page_identity_changed', 'Git paths containing literal backslashes are not safe Windows sync targets.');
     if (eligible(path)) entries.set(path, { path: relative(nativeRoot, join(nativeGitRoot, path)).split(sep).join('/'), sourcePath: sourcePath(path), action, working });
@@ -134,7 +140,7 @@ export async function discoverManagedSync(engine: BrainEngine, opts: SyncOpts, c
   if (delta?.status === 'ok') {
     for (const path of [...delta.manifest.added, ...delta.manifest.modified]) put(path, 'import');
     for (const path of delta.manifest.deleted) put(path, 'delete');
-    for (const rename of delta.manifest.renamed) { put(rename.from, 'delete'); put(rename.to, 'import'); }
+    for (const rename of delta.manifest.renamed) { put(rename.from, 'delete'); put(rename.to, 'import'); renamedFrom.set(rename.to, rename.from); }
   } else {
     const paths = syncGit(gitRoot, ['ls-tree', '-r', '--name-only', '-z', target]).split('\0')
       .filter(path => path && (!scope || path.startsWith(`${scope}/`)));
@@ -153,10 +159,11 @@ export async function discoverManagedSync(engine: BrainEngine, opts: SyncOpts, c
   if (working) {
     for (const path of [...dirty.added, ...dirty.modified]) put(path, 'import', true);
     for (const path of dirty.deleted) put(path, 'delete', true);
-    for (const rename of dirty.renamed) { put(rename.from, 'delete', true); put(rename.to, 'import', true); }
+    for (const rename of dirty.renamed) { put(rename.from, 'delete', true); put(rename.to, 'import', true); renamedFrom.set(rename.to, rename.from); }
   }
   if (company) {
     entries.clear();
+    renamedFrom.clear();
     const included = company.plan.manifest.filter(entry => entry.disposition === 'included');
     const present = new Set(included.map(entry => syncOriginPath(entry.path)));
     for (const entry of included) entries.set(entry.path, { path: entry.path, sourcePath: entry.path, action: 'import', working: false, slug: entry.page!.slug });
@@ -182,6 +189,8 @@ export async function discoverManagedSync(engine: BrainEngine, opts: SyncOpts, c
     const origin = syncOriginPath(page.source_path);
     byPath.set(origin, [...(byPath.get(origin) ?? []), page]);
   }
+  // Imports whose origin has no page yet claim their slug; claims are settled after every entry has one.
+  const claims = new Map<string, SyncEntry[]>();
   for (const entry of selected) {
     const legacy = legacySyncOrigin(originScope, syncOriginPath(entry.sourcePath));
     const origins = [...byPath.get(syncOriginPath(entry.sourcePath)) ?? [],
@@ -190,6 +199,11 @@ export async function discoverManagedSync(engine: BrainEngine, opts: SyncOpts, c
     let slug = entry.slug ?? origins[0]?.slug ?? resolveSlugForPath(entry.sourcePath);
     if (!slug && entry.action === 'import') slug = parseMarkdown(readSyncContent(discovered, entry), '').slug;
     if (!slug) throw new OperationError('invalid_params', 'The imported file has no usable page slug.');
+    if (!company && entry.action === 'import' && !origins.length && !isCodeFilePath(entry.sourcePath)) {
+      entry.slug = slug;
+      claims.set(slug, [...(claims.get(slug) ?? []), entry]);
+      continue;
+    }
     const page = origins[0] ?? bySlug.get(slug);
     if (page?.source_path != null && !sameSyncOrigin(page.source_path, entry.sourcePath, originScope, page.slug)) {
       const error = new OperationError('page_identity_changed', 'A different origin occupies the imported slug.',
@@ -199,6 +213,54 @@ export async function discoverManagedSync(engine: BrainEngine, opts: SyncOpts, c
     }
     Object.assign(entry, { slug, pageId: page?.id ?? null, revision: page?.knowledge_revision ?? null });
   }
+  const deletions = new Map(selected.filter(entry => entry.action === 'delete').map(entry => [syncOriginPath(entry.sourcePath), entry]));
+  // A soft-delete advances knowledge_revision, so the frozen revisions still guard this read.
+  const deleted = new Set(claims.size ? (await engine.executeRaw<{ id: number }>('SELECT id FROM pages WHERE source_id=$1 AND deleted_at IS NOT NULL', [sourceId])).map(row => row.id) : []);
+  // Origins that differ only by case or separator spelling may be one file on another platform; refuse rather than
+  // guess. The one exception is a case-only respelling whose old file this very sync removes.
+  const spelling = (origin: string) => origin.replaceAll('\\', '/').toLowerCase();
+  const retired = new Set<SyncEntry>();
+  const collisions: SyncSlugCollision[] = [];
+  const gitPath = (entry: SyncEntry) => relative(nativeGitRoot, join(nativeRoot, entry.path)).split(sep).join('/');
+  for (const [slug, candidates] of claims) {
+    const holder = bySlug.get(slug);
+    // A legacy Git-root spelling of a source-root origin (#5610) is matched against this sync's deletions by its source-relative form.
+    const recorded = holder?.source_path == null ? null : syncOriginPath(holder.source_path);
+    const prefix = originScope?.slugMode === 'source-root' && originScope.scope ? `${originScope.scope}/` : null;
+    const holderOrigin = recorded !== null && prefix && recorded.startsWith(prefix) && sameSyncOrigin(recorded, recorded.slice(prefix.length), originScope, holder!.slug)
+      ? recorded.slice(prefix.length) : recorded;
+    const respelled = holderOrigin !== null && !holderOrigin.includes('\\') && deletions.has(holderOrigin);
+    const spellings = [...(holderOrigin === null || respelled ? [] : [holderOrigin]), ...candidates.map(entry => syncOriginPath(entry.sourcePath))].map(spelling);
+    if (new Set(spellings).size !== spellings.length) throw new OperationError('page_identity_changed', 'Sync origins for one slug differ only by case or separator spelling.');
+    // A live page keeps its slug while its own file is still in the tree; the newcomer is the collision.
+    const kept = holder && !deleted.has(holder.id) && holderOrigin !== null && !deletions.has(holderOrigin) ? holderOrigin : null;
+    const winner = kept === null ? candidates.find(entry => /\.mdx?$/i.test(entry.sourcePath) && entry.sourcePath.replace(/\.mdx?$/i, '') === slug) ?? candidates[0] : null;
+    const losers = candidates.filter(entry => entry !== winner);
+    for (const entry of losers) retired.add(entry);
+    if (losers.length) collisions.push({ slug, kept: kept ?? winner!.sourcePath, skipped: losers.map(entry => entry.sourcePath) });
+    if (!winner) continue;
+    if (holder) {
+      // Same slug, vanished origin: the file takes over the page (and its history) instead of racing a deletion.
+      Object.assign(winner, { pageId: holder.id, revision: holder.knowledge_revision });
+      if (holderOrigin !== null) {
+        winner.renameFrom = { sourcePath: holder.source_path!, slug, pageId: holder.id, revision: holder.knowledge_revision };
+        const deletion = deletions.get(holderOrigin);
+        if (deletion) retired.add(deletion);
+      }
+      continue;
+    }
+    Object.assign(winner, { pageId: null, revision: null });
+    const from = renamedFrom.get(gitPath(winner));
+    const deletion = from === undefined ? undefined : [...deletions.values()].find(entry => gitPath(entry) === from);
+    const moved = deletion?.pageId == null ? undefined : identities.find(page => page.id === deletion.pageId);
+    if (deletion && moved && !deleted.has(moved.id) && moved.source_path != null) {
+      // A Git rename moves the page to its new slug, like the library path's updateSlug: same page id, inbound links and an alias.
+      winner.renameFrom = { sourcePath: moved.source_path, slug: moved.slug, pageId: moved.id, revision: moved.knowledge_revision };
+      retired.add(deletion);
+    }
+  }
+  if (retired.size) discovered.entries = selected.filter(entry => !retired.has(entry));
+  if (collisions.length) discovered.slugCollisions = collisions;
   if (!working) {
     const uncommitted = { added: new Set([...dirty.added,...dirty.renamed.map(r=>r.to)].filter(eligible)).size,
       modified: new Set(dirty.modified.filter(eligible)).size,

@@ -1,7 +1,7 @@
 import type { BrainEngine, NewFact } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import { OperationError } from '../ops/contract.ts';
-import { parseFactsFence, upsertFactRow } from '../facts-fence.ts';
+import { parseFactsFence, upsertFactRow, formatFenceDate } from '../facts-fence.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
 import { assertFactNotWithdrawn, decideSingleFact } from '../facts/single-prepare.ts';
 import { extractFactsFromFenceText } from '../facts/extract-from-fence.ts';
@@ -95,7 +95,7 @@ export async function prepareManagedFactsMutation(engine: BrainEngine, row: Writ
     const rowNum = fact.entity_slug !== null ? nextRow++ : undefined;
     if (rowNum !== undefined) body = upsertFactRow(body, { rowNum, claim: fact.fact, kind: fact.kind, visibility: fact.visibility,
       confidence: fact.confidence ?? 1, notability: fact.notability ?? 'medium', source: fact.source, context: fact.context ?? undefined,
-      validFrom: fact.valid_from!.toISOString().slice(0, 10), validUntil: fact.valid_until?.toISOString().slice(0, 10),
+      validFrom: formatFenceDate(fact.valid_from!), validUntil: fact.valid_until ? formatFenceDate(fact.valid_until) : undefined,
       claimMetric: fact.claim_metric ?? undefined, claimValue: fact.claim_value ?? undefined,
       claimUnit: fact.claim_unit ?? undefined, claimPeriod: fact.claim_period ?? undefined }).body;
     entries.push({ fact, duplicateId: null, rowNum });

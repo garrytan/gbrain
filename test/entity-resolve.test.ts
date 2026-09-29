@@ -314,19 +314,22 @@ describe('resolveEntitySlugWithSource — fuzzy_match branch', () => {
     expect(result!.source).toBe<ResolutionSource>('fuzzy_match');
   });
 
-  it('returns fuzzy_match for prefix-expansion (bare first name "Alice")', async () => {
+});
+
+describe('resolveEntitySlugWithSource — prefix_expansion branch', () => {
+  it('returns prefix_expansion for a bare first name ("Alice")', async () => {
     // Bare name "Alice" doesn't exact-match any slug, fuzzy fails the
     // 0.4 threshold on short trigrams, so prefix expansion fires and
-    // resolves to people/alice-example. We tag this branch as
-    // fuzzy_match (not fallback_slugify) so trajectory routing knows
-    // it's a real-page resolution.
+    // resolves to people/alice-example. Tagged prefix_expansion: a
+    // real-page resolution, but chosen only because it is the sole
+    // people/alice-* page, so fact writes flag it as unverified.
     const result = await resolveEntitySlugWithSource(
       engine as unknown as BrainEngine,
       'default',
       'Alice',
     );
     expect(result!.slug).toBe('people/alice-example');
-    expect(result!.source).toBe<ResolutionSource>('fuzzy_match');
+    expect(result!.source).toBe<ResolutionSource>('prefix_expansion');
   });
 });
 

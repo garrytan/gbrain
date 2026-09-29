@@ -453,3 +453,41 @@ describe('applyReranker — pass-through cases', () => {
     expect(called).toBe(false);
   });
 });
+
+describe('applyReranker — equal rerank scores (#5428)', () => {
+  test('a run of exactly equal scores keeps the fused order, not the provider order', async () => {
+    const results = [
+      makeResult('people/alice-example', 1.0, 'canonical page'),
+      makeResult('chats/log', 0.9, 'chat log'),
+      makeResult('notes/other', 0.8, 'other'),
+      makeResult('notes/tail', 0.7, 'tail'),
+    ];
+    const out = await applyReranker('q', results, {
+      enabled: true,
+      topNIn: 4,
+      topNOut: null,
+      rerankerFn: async () => [
+        { index: 2, relevanceScore: 0.95 },
+        { index: 1, relevanceScore: 0.90234375 },
+        { index: 3, relevanceScore: 0.90234375 },
+        { index: 0, relevanceScore: 0.90234375 },
+      ],
+    });
+    expect(out.map(r => r.slug)).toEqual(['notes/other', 'people/alice-example', 'chats/log', 'notes/tail']);
+    expect(out.map(r => r.reranker_delta)).toEqual([2, -1, -1, 0]);
+  });
+
+  test('rows never cross a different score, and unscored rows keep their place', async () => {
+    const results = [makeResult('a', 1, 'a'), makeResult('b', 0.9, 'b'), makeResult('c', 0.8, 'c')];
+    const out = await applyReranker('q', results, {
+      enabled: true,
+      topNIn: 3,
+      topNOut: null,
+      rerankerFn: async () => [
+        { index: 2, relevanceScore: 0.9 },
+        { index: 0, relevanceScore: 0.5 },
+      ],
+    });
+    expect(out.map(r => r.slug)).toEqual(['c', 'a', 'b']);
+  });
+});

@@ -380,7 +380,7 @@ describe('daily cap — engaged', () => {
     }
   }, 60_000);
 
-  test('fail-open: a throwing count query warns to stderr and skips the cap for the run', async () => {
+  test('fail-closed (C-13): a throwing count query warns to stderr and submits nothing this run', async () => {
     const rig = await setupRig();
     try {
       await rig.engine.setConfig('dream.synthesize.max_submissions_per_source_per_day', '1');
@@ -409,14 +409,59 @@ describe('daily cap — engaged', () => {
       };
       try {
         const details = await runPhase(rig);
-        expect(details.children_submitted).toBe(1); // cap skipped, phase proceeded
+        expect(details.children_submitted).toBe(0);
+        expect(details.skips.map(s => s.reason)).toEqual(['daily_cap_unavailable: count query failed']);
       } finally {
         (process.stderr as unknown as { write: typeof origWrite }).write = origWrite;
         // Remove the own-property patch so the SHARED engine's prototype
         // method is restored for subsequent tests in this file.
         delete (rig.engine as unknown as { executeRaw?: unknown }).executeRaw;
       }
-      expect(stderrChunks.join('')).toMatch(/daily-cap count query failed.*skipping the cap/s);
+      expect(stderrChunks.join('')).toMatch(/daily-cap count query failed.*submitting nothing/s);
+    } finally {
+      await rig.cleanup();
+    }
+  }, 60_000);
+});
+
+describe('USD budget gate (C-13)', () => {
+  test('the default budget admits a normal run', async () => {
+    const rig = await setupRig();
+    try {
+      await seedPassingFile(rig, '2026-08-10-a.txt');
+      const details = await runPhase(rig) as CapDetails & { budget_usd: number; estimated_spend_usd: number };
+      expect(details.children_submitted).toBe(1);
+      expect(details.budget_usd).toBe(5);
+      expect(details.estimated_spend_usd).toBeGreaterThan(0);
+    } finally {
+      await rig.cleanup();
+    }
+  }, 60_000);
+
+  test('a submission whose estimate crosses dream.synthesize.budget_usd is deferred before any spend', async () => {
+    const rig = await setupRig();
+    try {
+      await rig.engine.setConfig('models.dream.synthesize', 'anthropic:claude-sonnet-4-6');
+      await rig.engine.setConfig('dream.synthesize.budget_usd', '0.0001');
+      await seedPassingFile(rig, '2026-08-11-a.txt');
+      await seedPassingFile(rig, '2026-08-12-b.txt');
+      const details = await runPhase(rig) as CapDetails & { budget_deferred_transcripts: string[] };
+      expect(details.children_submitted).toBe(0);
+      expect(details.budget_deferred_transcripts.sort()).toEqual(['2026-08-11-a.txt', '2026-08-12-b.txt']);
+      expect(await rig.engine.getConfig('dream.synthesize.last_completion_ts')).toBeNull();
+    } finally {
+      await rig.cleanup();
+    }
+  }, 60_000);
+
+  test('"0" spends nothing; "unlimited" removes the cap', async () => {
+    const rig = await setupRig();
+    try {
+      await rig.engine.setConfig('dream.synthesize.budget_usd', '0');
+      await seedPassingFile(rig, '2026-08-13-a.txt');
+      expect((await runPhase(rig)).children_submitted).toBe(0);
+      await rig.engine.setConfig('dream.synthesize.budget_usd', 'unlimited');
+      expect((await runPhase(rig)).children_submitted).toBe(1);
     } finally {
       await rig.cleanup();
     }

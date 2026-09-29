@@ -96,16 +96,15 @@ for (const kind of testBackends()) {
         capabilities: { embeddings: { available: false }, extraction: { available: false }, search: 'keyword-only', mode: 'keyless' } });
     }
     for (const lane of ['fs-sync', 'fs-incremental', 'fs-batch']) {
-      // The per-slug sync lanes replace a page's own markdown-derived links
-      // (the put_page contract); the full-walk batch lane stays additive.
-      const replaces = lane !== 'fs-batch';
-      test(`${lane}: ordinary meeting links ${replaces ? 'are replaced like put_page' : 'keep additive filesystem handling'}`, async () => {
+      // Every filesystem lane, the full walk included, replaces a page's own
+      // markdown-derived links (the put_page contract).
+      test(`${lane}: ordinary meeting links are replaced like put_page`, async () => {
         await seed(meeting, 'meeting', '[Alice](../people/alice-example.md)');
         await extract(lane);
         expect((await engine.getLinks(meeting, { sourceId })).map(row => row.to_slug)).toEqual([person]);
         await seed(meeting, 'meeting', 'An ordinary reference was removed, with no attendance claim.');
         await extract(lane);
-        expect((await engine.getLinks(meeting, { sourceId })).map(row => row.to_slug)).toEqual(replaces ? [] : [person]);
+        expect((await engine.getLinks(meeting, { sourceId })).map(row => row.to_slug)).toEqual([]);
       });
       test(`${lane}: unchanged DB-only attendance survives and real evidence removal retracts it`, async () => {
         await seed(meeting, 'meeting', positive);

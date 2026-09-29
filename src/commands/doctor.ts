@@ -2675,6 +2675,12 @@ export async function buildChecks(
   } finally {
     staleMentionsHb();
   }
+  progress.heartbeat('timeline_orphans');
+  const { timelineOrphansCheck } = await import('./doctor/checks/timeline-orphans.ts');
+  checks.push(await timelineOrphansCheck(engine));
+  progress.heartbeat('slug_collisions');
+  const { slugCollisionsCheck } = await import('./doctor/checks/slug-collisions.ts');
+  checks.push(await slugCollisionsCheck(engine));
 
   // 9d. Wave 2 residual-state signals (#5567, #5525): database-only timeline
   // rows and derived pages without explicit visibility. Bounded, never throw.

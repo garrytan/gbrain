@@ -734,6 +734,10 @@ export interface ResolveSearchModeInput {
   overrides?: SearchKeyOverrides;
   /** Per-call opts (SearchOpts / HybridSearchOpts). */
   perCall?: SearchPerCallOpts;
+  /** Raw `search.source_boosts` (read in the same snapshot; see source-boost.ts). */
+  sourceBoosts?: string;
+  /** Raw `search.alias_token_hop` (read in the same snapshot; #5428, opt-in). */
+  aliasTokenHop?: string;
 }
 
 export interface ResolvedSearchKnobs extends ModeBundle {
@@ -1441,6 +1445,10 @@ export const SEARCH_MODE_CONFIG_KEYS: ReadonlyArray<string> = Object.freeze(Obje
  * the operator's mode choice.
  */
 export const SEARCH_MODE_KEY = 'search.mode';
+/** Per-brain source-boost map, read alongside the mode keys (not a bundle knob). */
+export const SOURCE_BOOSTS_KEY = 'search.source_boosts';
+/** Opt-in single-token alias hop (#5428), read alongside the mode keys. */
+export const ALIAS_TOKEN_HOP_KEY = 'search.alias_token_hop';
 
 /**
  * Load the live mode config (mode + per-key overrides) from the brain engine.
@@ -1478,8 +1486,10 @@ export async function loadSearchModeConfig(
     }
   };
 
-  const [mode, ...overrideValues] = await Promise.all([
+  const [mode, sourceBoosts, aliasTokenHop, ...overrideValues] = await Promise.all([
     safeGet(SEARCH_MODE_KEY),
+    safeGet(SOURCE_BOOSTS_KEY),
+    safeGet(ALIAS_TOKEN_HOP_KEY),
     ...SEARCH_MODE_CONFIG_KEYS.map(safeGet),
   ]);
 
@@ -1491,5 +1501,7 @@ export async function loadSearchModeConfig(
   return {
     mode,
     overrides: loadOverridesFromConfig(configMap),
+    ...(sourceBoosts !== undefined ? { sourceBoosts } : {}),
+    ...(aliasTokenHop !== undefined ? { aliasTokenHop } : {}),
   };
 }

@@ -13,9 +13,11 @@
  * All progress is keyed by (provider, source): the watermark, last_sync_at,
  * a `synced` ledger (conversation id → ingested updatedAt) that lets a capped
  * `--limit` run move on to older conversations, and a `failed` ledger. A
- * conversation that fails QUARANTINE_ATTEMPTS times at the same updatedAt is
- * quarantined: reported, no longer re-fetched, and no longer holding the
- * watermark back. An edit (new updatedAt) or `--full` retries it.
+ * conversation that fails to fetch OR to ingest QUARANTINE_ATTEMPTS times at
+ * the same updatedAt is quarantined: reported, no longer re-fetched, and no
+ * longer holding the watermark back. An edit (new updatedAt) or `--full`
+ * retries it. Ingest outcomes are attributed per conversation (session id =
+ * conversation id), so one failing conversation never blocks its batch.
  *
  * STATE LIVES IN CONFIG SCALARS (`connectors.<p>.source.<id>.*`), NOT
  * op_checkpoint: op_checkpoint stores a completed-KEY set with no scalar since,
@@ -45,7 +47,7 @@ import {
 } from './config-keys.ts';
 
 export const CONNECTOR_SYNC_VERSION = 1;
-/** Failed fetches at one updatedAt before a conversation is quarantined. */
+/** Failed fetches or ingests at one updatedAt before a conversation is quarantined. */
 export const QUARANTINE_ATTEMPTS = 3;
 
 export type ConnectorSyncStatus =
@@ -84,7 +86,7 @@ export interface ConnectorSyncResult {
   watermarkAdvancedTo?: string;
   /** Listed conversations skipped because this source already ingested that updatedAt. */
   skippedUnchanged: number;
-  /** Conversation ids quarantined after repeated fetch failures (not re-fetched until edited). */
+  /** Conversation ids quarantined after repeated fetch or ingest failures (not re-fetched until edited). */
   quarantined: string[];
   spoolPaths: string[];
   embedKickoff: EmbedKickoffOutcome;
@@ -281,7 +283,7 @@ export async function runConnectorSync(
   const spoolPaths: string[] = [];
   let fetched = 0;
   let fetchErrors = 0;
-  let blockingFetchErrors = 0;
+  let blockingFailures = 0;
   let importedTotal = 0;
   let skippedTotal = 0;
   let erroredTotal = 0;
@@ -318,16 +320,22 @@ export async function runConnectorSync(
           return { ...base, status: 'forbidden', listed: stubs.length, fetched, fetchErrors, spoolPaths };
         }
         fetchErrors++;
-        const updatedAt = stub.updatedAt ?? '';
-        const attempts = (failed[stub.id]?.updatedAt === updatedAt ? failed[stub.id].attempts : 0) + 1;
-        failed[stub.id] = { attempts, updatedAt };
-        if (attempts >= QUARANTINE_ATTEMPTS) quarantined.push(stub.id);
-        else blockingFetchErrors++;
+        const attempts = recordFailure(stub);
         log(`[connector] fetch error for ${stub.id} (attempt ${attempts}): ${e instanceof Error ? e.message : String(e)}`);
       }
     }
     if (convs.length) await ingestBatch();
     await saveLedgers();
+
+    /** Count one failure; quarantined conversations stop blocking the watermark. */
+    function recordFailure(stub: ConversationStub): number {
+      const updatedAt = stub.updatedAt ?? '';
+      const attempts = (failed[stub.id]?.updatedAt === updatedAt ? failed[stub.id].attempts : 0) + 1;
+      failed[stub.id] = { attempts, updatedAt };
+      if (attempts >= QUARANTINE_ATTEMPTS) quarantined.push(stub.id);
+      else blockingFailures++;
+      return attempts;
+    }
 
     async function ingestBatch(): Promise<void> {
       const stamp = `${new Date(now()).toISOString().replace(/[:.]/g, '-')}-b${bi}`;
@@ -346,11 +354,20 @@ export async function runConnectorSync(
         redactionsTotal += r.redactions;
         partsDeletedTotal += r.partsDeleted;
         if (!r.cleanScan) allBatchesClean = false;
-        else {
-          for (const stub of convStubs) {
-            if (stub.updatedAt) synced[stub.id] = stub.updatedAt;
-            delete failed[stub.id];
+        // A file-level problem (unreadable spool, drift, dropped lines) fails
+        // the whole batch; otherwise each conversation stands on its own
+        // session outcome. A conversation with no session had nothing to import.
+        const fileFailed = r.files.some(f => f.error || f.drift || f.truncated || f.skippedLines > 0);
+        const sessions = new Map(r.files.flatMap(f => f.sessions).map(s => [s.sessionId, s]));
+        for (const stub of convStubs) {
+          const session = sessions.get(stub.id);
+          if (fileFailed || session?.error) {
+            const attempts = recordFailure(stub);
+            log(`[connector] ingest error for ${stub.id} (attempt ${attempts}): ${session?.error ?? 'spool file failed to ingest'}`);
+            continue;
           }
+          if (stub.updatedAt) synced[stub.id] = stub.updatedAt;
+          delete failed[stub.id];
         }
         if (r.driftFiles > 0) anyDrift = true;
         opts.onProgress?.({ phase: 'ingest', listed: stubs.length, fetched, imported: importedTotal });
@@ -375,7 +392,7 @@ export async function runConnectorSync(
 
   base.quarantined = quarantined;
   // Quarantined conversations no longer hold the watermark back.
-  const clean = !listErrored && blockingFetchErrors === 0 && !capped && allBatchesClean && !opts.signal?.aborted;
+  const clean = !listErrored && blockingFailures === 0 && !capped && !opts.signal?.aborted;
 
   // Advance the watermark ONLY on a clean run.
   if (clean && maxUpdatedAt && maxUpdatedAt !== watermark) {

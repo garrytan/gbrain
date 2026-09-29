@@ -206,9 +206,26 @@ export async function applyReranker(
   // (so a top_n response with fewer items than head.length naturally
   // drops the missing ones — but since we don't pass top_n by default,
   // every input gets a score).
+  // #5428: exact score ties carry no cross-encoder preference, and providers
+  // emit tied rows in arbitrary (call-to-call unstable) order. Within each run
+  // of adjacent, exactly equal finite scores, keep the fused (input) order.
+  // Rows never cross a different score.
+  const ordered = [...reranked];
+  for (let start = 0; start < ordered.length; ) {
+    let end = start + 1;
+    const score = ordered[start].relevanceScore;
+    if (Number.isFinite(score)) {
+      while (end < ordered.length && ordered[end].relevanceScore === score) end++;
+      if (end - start > 1) {
+        const run = ordered.slice(start, end).sort((a, b) => a.index - b.index);
+        ordered.splice(start, run.length, ...run);
+      }
+    }
+    start = end;
+  }
   const seen = new Set<number>();
   const reorderedHead: SearchResult[] = [];
-  for (const r of reranked) {
+  for (const r of ordered) {
     if (r.index >= 0 && r.index < head.length && !seen.has(r.index)) {
       seen.add(r.index);
       const item = head[r.index]!;

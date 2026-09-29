@@ -72,6 +72,7 @@ describeE2E('synthesis receipt job-id correlation on Postgres', () => {
         slug: 'wiki/agents/test/postgres-bigint-abc123-c2',
         source_id: 'default',
         raw_source: '/transcripts/postgres-bigint.md',
+        first_write_at: expect.any(Date),
       }]);
     } finally {
       await conn`DELETE FROM minion_jobs WHERE id = ${jobId}`;

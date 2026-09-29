@@ -12,6 +12,8 @@
  *   - fabricated quote      a quotation nobody said
  *   - speaker swap          a real quotation attributed to the other speaker
  *   - invented number       a figure the transcript never states
+ *   - misattributed decision one speaker's proposal stated as another
+ *                           speaker's decision (#5425)
  *   - unquoted invention    a plain-prose claim with no quote or number
  *                           (not mechanically checkable; measured to show
  *                           the limit honestly)
@@ -38,7 +40,7 @@ import { normForGrounding } from '../../src/core/cycle/synthesize-verify.ts';
 import { __setChatTransportForTests, resetGateway, type ChatOpts, type ChatResult } from '../../src/core/ai/gateway.ts';
 import { withEnv } from './with-env.ts';
 
-export type ClaimKind = 'valid' | 'fabricated_quote' | 'speaker_swap' | 'invented_number' | 'unquoted_invention';
+export type ClaimKind = 'valid' | 'fabricated_quote' | 'speaker_swap' | 'invented_number' | 'misattributed_decision' | 'unquoted_invention';
 
 export interface ScriptedClaim {
   id: string;
@@ -75,6 +77,10 @@ export const CYCLES: CycleFixture[] = [
       pad(12),
       'Alice-example: Our churn is 4% this quarter, down from last quarter.',
       'Bob-example: I will hire two engineers before the launch.',
+      'Bob-example: I suggest we move the offsite to November 12.',
+      'Alice-example: No, keep the offsite where it is.',
+      'Bob-example: Should we cap the pilot budget at $30K?',
+      'Alice-example: Sounds good, do that.',
       pad(12),
     ].join('\n'),
     newPage: [
@@ -82,6 +88,8 @@ export const CYCLES: CycleFixture[] = [
       { id: 'c1-pilot', kind: 'valid', text: 'The acme-example pilot costs $40,000 and starts on September 15th.' },
       { id: 'c1-churn', kind: 'valid', text: 'Churn is 4% this quarter.' },
       { id: 'c1-hire', kind: 'valid', text: 'Bob-example plans to hire two engineers before the launch.' },
+      { id: 'c1-accept', kind: 'valid', text: 'Alice-example agreed to cap the pilot budget at $30K.' },
+      { id: 'c1-misattr', kind: 'misattributed_decision', text: 'Alice-example decided to move the offsite to November 12.' },
       { id: 'c1-fab', kind: 'fabricated_quote', text: 'Alice-example said "we will shut down the hardware line by December."' },
       { id: 'c1-swap', kind: 'speaker_swap', text: 'Bob-example said "We will price the product per seat, not per usage."' },
       { id: 'c1-num', kind: 'invented_number', text: 'The pilot budget was raised to $95K.' },
@@ -325,9 +333,9 @@ export async function runRepeatedConsolidation(opts: { onCycle?: (cycle: number,
     const final = perCycle[perCycle.length - 1].active;
     const invented = claims.filter(c => c.kind !== 'valid');
     const valid = claims.filter(c => c.kind === 'valid');
-    const byKind = { fabricated_quote: 0, speaker_swap: 0, invented_number: 0, unquoted_invention: 0 };
+    const byKind = { fabricated_quote: 0, speaker_swap: 0, invented_number: 0, misattributed_decision: 0, unquoted_invention: 0 };
     for (const c of invented) if (final[c.id]) byKind[c.kind as keyof typeof byKind]++;
-    const claimsByKind = { valid: 0, fabricated_quote: 0, speaker_swap: 0, invented_number: 0, unquoted_invention: 0 };
+    const claimsByKind = { valid: 0, fabricated_quote: 0, speaker_swap: 0, invented_number: 0, misattributed_decision: 0, unquoted_invention: 0 };
     for (const c of claims) claimsByKind[c.kind]++;
     const person = await engine.getPage(PERSON_SLUG, { sourceId: 'default' });
     const validLost = valid.filter(c => !final[c.id]).map(c => c.id);

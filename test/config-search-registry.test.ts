@@ -26,6 +26,8 @@ const DIRECTLY_READ_SINGLETONS = [
   REMOTE_PRIVATE_PAGES_KEY,                  // search/private-visibility.ts
   'search.track_retrieval',                  // last-retrieved.ts
   'search.intent_patterns',                  // search/query-intent.ts
+  'search.source_boosts',                    // search/mode.ts snapshot + ops/search.ts
+  'search.alias_token_hop',                  // search/mode.ts snapshot
   'search.adaptive_return',                  // return-policy.ts via loadConfigWithEngine
   'search.adaptive_return_entity_max',
   'search.adaptive_return_other_max',

@@ -18,6 +18,7 @@ import { readCommittedBlob } from '../company-brain/revision.ts';
 import { refreshProjectionStatistics } from '../search/projection-statistics.ts';
 import { recordManagedSyncFailure, clearManagedSyncFailureAfterSuccess, formatManagedSyncFailure, type ManagedSyncFailure } from './sync-failures.ts';
 import { writeFailureDiagnostic } from './verb-errors.ts';
+import { extractManagedStaleLinks } from './links-maintenance.ts';
 import { isTerminalWriteState, publicWriteReceipt, type WriteReceipt } from './types.ts';
 import type { WriteRequest } from './model.ts';
 
@@ -37,7 +38,7 @@ export interface ManagedSyncWriteDiagnostic {
 interface Pending { requestId: string; slug: string; pageId: number | null; intent: SyncIntent; }
 interface Cursor extends SyncDiscovery { runId: string; index: number; authority: SyncAuthority; pending?: Pending; done?: boolean; companyReceiptId?: string;
   processingOptions?: SyncProcessingOptions;
-  counts: { added: number; modified: number; deleted: number; chunks: number }; }
+  counts: { added: number; modified: number; deleted: number; chunks: number; renamed?: number }; }
 const OP = 'managed-sync';
 type CursorHeader = Omit<Cursor, 'entries' | 'companyPlan'> & { total: number };
 const header = ({ entries, companyPlan: _plan, ...value }: Cursor): CursorHeader => ({ ...value, total: entries.length });
@@ -106,7 +107,8 @@ async function replaceCursor(engine: BrainEngine, key: string, before: CursorHea
 function result(cursor: Cursor | CursorHeader, status: SyncResult['status'], reason?: SyncResult['reason']): SyncResult {
   return { status, ...(cursor.authority.writer.remote ? {} : { runId: cursor.runId }), fromCommit: cursor.authority.writer.remote ? null : cursor.from,
     toCommit: cursor.authority.writer.remote ? '' : cursor.target, added: cursor.counts.added, modified: cursor.counts.modified,
-    deleted: cursor.counts.deleted, renamed: 0, chunksCreated: cursor.counts.chunks, embedded: 0, pagesAffected: [],
+    deleted: cursor.counts.deleted, renamed: cursor.counts.renamed ?? 0, chunksCreated: cursor.counts.chunks, embedded: 0, pagesAffected: [],
+    ...(cursor.slugCollisions?.length ? { slugCollisions: cursor.slugCollisions } : {}),
     filesImported: cursor.index, bankedFiles: cursor.index, ...(cursor.uncommitted ? { uncommitted: cursor.uncommitted } : {}), ...(reason ? { reason } : {}) };
 }
 function writeDiagnostic(cursor: Cursor, pending: Pending, row: WriteRequest): ManagedSyncWriteDiagnostic {
@@ -159,15 +161,26 @@ async function freezeEntry(engine: BrainEngine, cursor: Cursor, key: string, ass
     slug = entry.slug!; pageId = entry.pageId ?? null; revision = entry.revision ?? null;
     const snapshot = await engine.readPageSnapshot(slug, { sourceId: cursor.sourceId, includeDeleted: true });
     assertActive();
+    const moved = entry.renameFrom;
+    const recorded = moved?.slug === slug ? moved.sourcePath : entry.sourcePath;
     if ((snapshot?.page.id ?? null) !== pageId || (snapshot?.revision ?? null) !== revision ||
-        (snapshot?.page.source_path != null && !sameSyncOrigin(snapshot.page.source_path, entry.sourcePath, originScope, snapshot.page.slug))) {
+        (snapshot?.page.source_path != null && !sameSyncOrigin(snapshot.page.source_path, recorded, originScope, snapshot.page.slug))) {
       throw new OperationError('revision_conflict', 'A page changed after this sync cursor was enumerated.');
+    }
+    if (moved && moved.slug !== slug) {
+      const previous = await engine.readPageSnapshot(moved.slug, { sourceId: cursor.sourceId, includeDeleted: true });
+      assertActive();
+      if (previous?.page.id !== moved.pageId || previous.revision !== moved.revision || previous.page.deleted_at != null ||
+          previous.page.source_path == null || !sameSyncOrigin(previous.page.source_path, moved.sourcePath, originScope, previous.page.slug)) {
+        throw new OperationError('revision_conflict', 'A renamed page changed after this sync cursor was enumerated.');
+      }
     }
   }
   await validateSyncAuthority(engine, cursor.authority, slug);
   assertActive();
   return { requestId: randomUUID(), slug, pageId, intent: { kind: !entry ? 'managed_sync_checkpoint' : entry.action === 'import' ? 'managed_sync_import' : 'managed_sync_delete',
     expected_revision: revision, sourcePath: entry?.sourcePath ?? null, path: entry?.path ?? null, rawHash, content, lineEndingOnly,
+    ...(entry?.renameFrom ? { renameFrom: entry.renameFrom } : {}),
     processingOptions: cursor.processingOptions,
     ownerEpoch: String(cursor.binding.owner_epoch), syncAuthority: cursor.authority, cursorKey: key, runId: cursor.runId,
     slugMode: cursor.slugMode, index: cursor.index, total: cursor.entries.length, from: cursor.from, target: cursor.target, working: entry?.working ?? false,
@@ -201,6 +214,16 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
     assertSyncDispatchActive();
     throwIfAborted(signal);
     assertPersistenceAccepting(engine);
+  };
+  // Links derive from committed pages once the checkpoint lands, in this owner
+  // process, so forward references inside one run resolve and PGLite-delegated
+  // syncs match Postgres. Content is already committed: a failure here leaves
+  // the pages stale for `gbrain extract --stale` instead of failing the sync.
+  const withLinks = async (done: Cursor, synced: SyncResult): Promise<SyncResult> => {
+    if (company || (done.processingOptions ?? processingOptions).noExtract) return synced;
+    try { return { ...synced, links: await extractManagedStaleLinks(engine, { sourceId: done.sourceId, maxPages: 1000, signal,
+      slugs: done.entries.flatMap(entry => entry.action === 'import' && entry.slug ? [entry.slug] : []) }) }; }
+    catch { return synced; }
   };
   try {
     assertActive();
@@ -374,12 +397,13 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
         await clearManagedSyncFailureAfterSuccess(engine, key);
         if (cursor.counts.added + cursor.counts.modified + cursor.counts.deleted > 0) await refreshProjectionStatistics(engine);
         assertActive();
-        return result(cursor, cursor.from === null ? 'first_sync' : 'synced');
+        return withLinks(cursor, result(cursor, cursor.from === null ? 'first_sync' : 'synced'));
       }
       // The frozen manifest is shared; only the cursor header changes per page.
       const next: Cursor = { ...cursor, index: cursor.index + 1, counts: { ...cursor.counts } }; delete next.pending;
       if (done.outcome?.noop !== true) {
         if (pending.intent.kind === 'managed_sync_delete') next.counts.deleted++;
+        else if (pending.intent.renameFrom) next.counts.renamed = (next.counts.renamed ?? 0) + 1;
         else if (pending.pageId === null) next.counts.added++; else next.counts.modified++;
       }
       next.counts.chunks += Number(done.outcome?.chunks ?? 0);
@@ -395,7 +419,7 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
         batchPages = 0; batchStart = performance.now();
       }
     }
-    return result(cursor, cursor.from === null ? 'first_sync' : 'synced');
+    return withLinks(cursor, result(cursor, cursor.from === null ? 'first_sync' : 'synced'));
   } catch (error) {
     assertSyncDispatchActive();
     if (signal?.aborted && error instanceof Error && error.name === 'AbortError') {

@@ -14,7 +14,7 @@ import { localHostId, registerLocalWriter } from '../../src/core/persistence/ide
 import { claimPersistenceEffect } from '../../src/core/persistence/effect-journal.ts';
 import { dispatchFactsBackstopEffect } from '../../src/core/persistence/effect-facts.ts';
 import { serializePageToMarkdown } from '../../src/core/markdown.ts';
-import { upsertFactRow } from '../../src/core/facts-fence.ts';
+import { parseFactsFence, upsertFactRow } from '../../src/core/facts-fence.ts';
 import { MinionWorker } from '../../src/core/minions/worker.ts';
 import { registerBuiltinHandlers } from '../../src/commands/jobs.ts';
 import type { MinionJobContext } from '../../src/core/minions/types.ts';
@@ -169,8 +169,15 @@ export async function exerciseManagedFacts(engine: BrainEngine, scenario: Case):
       const rows = await engine.executeRaw<{ id: number; visibility: string; source_session: string }>('SELECT id,visibility,source_session FROM facts WHERE source_id=$1 AND id=ANY($2::integer[])', [sourceId, first.fact_ids]);
       expect(rows).toHaveLength(2);
       for (const row of rows) expect(row).toMatchObject({ visibility: 'private', source_session: 'fixture-session' });
-      const dates = await engine.executeRaw<{ time: string }>("SELECT to_char(valid_from AT TIME ZONE 'UTC','HH24:MI:SS') AS time FROM facts WHERE source_id=$1 AND id=ANY($2::integer[]) AND source_markdown_slug IS NOT NULL", [sourceId, first.fact_ids]);
-      for (const date of dates) expect(date.time).toBe('00:00:00');
+      // B-20: a fenced fact's indexed valid_from is exactly its fence cell (a
+      // lossless write instant, never truncated to the UTC date).
+      const dates = await engine.executeRaw<{ fact: string; valid_from: Date; slug: string }>("SELECT fact, valid_from, source_markdown_slug AS slug FROM facts WHERE source_id=$1 AND id=ANY($2::integer[]) AND source_markdown_slug IS NOT NULL", [sourceId, first.fact_ids]);
+      expect(dates.length).toBeGreaterThan(0);
+      for (const date of dates) {
+        const cell = parseFactsFence(readFileSync(join(root, `${date.slug}.md`), 'utf8')).facts.find(f => f.claim === date.fact)!.validFrom!;
+        expect(cell).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
+        expect(new Date(date.valid_from).getTime()).toBe(new Date(cell).getTime());
+      }
       expect(readFileSync(join(root, `${secondSlug}.md`), 'utf8')).toContain('Acme-example measures monthly growth.');
       expect(JSON.stringify(await operationsByName.get_page.handler(ctx, { slug: secondSlug }))).not.toContain('Acme-example measures monthly growth.');
       const [afterVector] = await engine.executeRaw<{ vector: string }>('SELECT embedding::text AS vector FROM facts WHERE id=$1', [old.ids[0]]);

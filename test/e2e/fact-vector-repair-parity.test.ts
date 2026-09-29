@@ -125,8 +125,11 @@ for (const kind of ['pglite', 'postgres'] as const) {
       const result = await runExtractFacts(engine, { slugs: [slug] });
       const rows = await snapshot();
       expect(result.factsInserted).toBe(1);
-      expect(rows[0].fact).toBe('Changed claim');
-      expect(JSON.parse(rows[0].embedding!)[0]).toBe(0.5);
+      // B-5: the replaced row is expired and detached (row_num NULL), not deleted.
+      const current = rows.filter(row => row.row_num != null);
+      expect(current.map(row => row.fact)).toEqual(['Changed claim']);
+      expect(JSON.parse(current[0].embedding!)[0]).toBe(0.5);
+      expect(rows.find(row => row.fact === 'Original claim')).toMatchObject({ row_num: null });
     });
 
     test('failed embedding cannot retain a removed claim as active or reuse its vector for changed text', async () => {

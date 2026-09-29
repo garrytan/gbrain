@@ -11,18 +11,17 @@
  *   1. Reads the markdown body (DB-side fetch via engine.getPage).
  *   2. Parses the `## Facts` fence with parseFactsFence.
  *   3. Maps ParsedFact → FenceExtractedFact via extractFactsFromFenceText.
- *   4. De-dupes rows by canonical (claim, source) content key.
- *   5. Reconciles the page-scoped DB index: no-op when already in sync,
- *      insert only missing keys when possible, or wipe/reinsert when stale
- *      DB rows need cleanup (#1781 — the unconditional wipe-and-reinsert
- *      made every cycle non-idempotent, re-appending duplicate rows).
+ *   4. Collapses duplicate ACTIVE rows with the same (claim, source).
+ *   5. Reconciles the page-scoped DB index by fence row number: matched
+ *      (row_num, claim) rows are updated in place (ids stay stable), rows
+ *      that left the fence are expired and detached (never deleted), and
+ *      only new row numbers insert. No-op when already in sync (#1781).
  *
- * After the phase, the DB index for every cleanly parsed affected page
- * matches the fence's canonical (claim, source) row set (modulo embeddings
- * + runtime-derived fields). Warning-bearing parses are non-authoritative
- * and preserve that page's existing index. Pages with no fence wipe DB rows
- * for that page coordinate only; legacy NULL-source_markdown_slug rows
- * survive because deleteFactsForPage targets source_markdown_slug = slug only.
+ * Warning-bearing parses are non-authoritative and preserve that page's
+ * existing index. A page with no fence expires and detaches its fence-owned
+ * rows; `cli:` conversation facts and soft-expired legacy rows are not
+ * fence-owned and are left alone. Active fence-owned rows of soft-deleted
+ * pages are expired at the start of each run.
  *
  * Empty-fence guard (Codex R2-#7; #2484; #2646): the phase refuses to do
  * its destructive reconciliation pass when genuinely-backfillable legacy
@@ -57,13 +56,17 @@ import { existsSync, readFileSync } from 'node:fs';
 
 import type { BrainEngine } from '../engine.ts';
 import { assertUnmanagedCanonicalWriter } from '../persistence/maintenance.ts';
-import { resolveSupersededByRow, type SupersedeTarget } from '../facts/supersede-resolve.ts';
+import {
+  resolveSupersededByRow,
+  supersessionChainOf,
+  type SupersedeTarget,
+  type SupersessionChain,
+} from '../facts/supersede-resolve.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
 import { classifyRunStop, upsertExtractRollup } from '../extract/rollup-writer.ts';
 import { parseFactsFence, FACTS_FENCE_BEGIN } from '../facts-fence.ts';
 import {
   extractFactsFromFenceText,
-  FENCE_SOURCE_DEFAULT,
   type FenceExtractedFact,
 } from '../facts/extract-from-fence.ts';
 import {
@@ -78,40 +81,108 @@ import { isWriteThroughDisabled, resolvePageWriteTarget } from '../write-through
 import { acquirePageLock } from '../page-lock.ts';
 
 interface ExistingPageFact {
-  // v0.46 (#3014) — the row's own fact id. Read so the supersession-drift
-  // check can compare the DB's stored `superseded_by` (a fact id) against
-  // the fence reference re-resolved to the target row's current id.
   id: number | string;
   fact: string;
   source: string | null;
   row_num: number | string | null;
-  // v0.46 (#3014) — supersession columns, read so a struck row whose
-  // fence says "superseded" but whose DB columns are still NULL counts as
-  // drifted and re-heals through the wipe+reinsert fallback.
   superseded_by: number | string | null;
   expired_at: Date | string | null;
-  // #4870 — fence cells the reconcile must honor. Both columns are NOT NULL
-  // enums whose CHECK matches the fence's validated values, so a plain
-  // equality compare cannot churn on case/format/NULL.
+  kind: string;
   visibility: string;
   notability: string;
+  context: string | null;
+  valid_from: Date | string | null;
+  valid_until: Date | string | null;
+  confidence: number | string;
+  claim_metric: string | null;
+  claim_value: number | string | null;
+  claim_unit: string | null;
+  claim_period: string | null;
   has_embedding: boolean;
 }
 
-function factContentKey(fact: string, source: string | null | undefined): string {
-  return `${fact}\u0000${source ?? FENCE_SOURCE_DEFAULT}`;
+function timeOf(value: Date | string | null | undefined): number | null {
+  return value == null ? null : new Date(value).getTime();
 }
 
-function dedupeFactsByContentKey(facts: FenceExtractedFact[]): FenceExtractedFact[] {
-  const seen = new Set<string>();
-  const deduped: FenceExtractedFact[] = [];
-  for (const fact of facts) {
-    const key = factContentKey(fact.fact, fact.source);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    deduped.push(fact);
+function numbersDiffer(stored: number | string | null, desired: number | null | undefined): boolean {
+  if (stored == null || desired == null) return (stored == null) !== (desired == null);
+  const a = Number(stored);
+  return Math.abs(a - desired) > 1e-6 * Math.max(1, Math.abs(desired));
+}
+
+/**
+ * Whether a DB row matched to its fence row by (row_num, claim) needs an
+ * in-place update. Expiry compares NULL-ness only: the mapper stamps a struck
+ * row's `expired_at` (and a forgotten row's `valid_until`) with today, so a
+ * value compare would churn the page every day. `valid_until` is compared
+ * exactly for active rows, where it only ever comes from the fence cell.
+ * Confidence and claim values are REAL / DOUBLE columns, compared with a
+ * tolerance so float rounding never churns.
+ */
+function factCellsDiffer(stored: ExistingPageFact, desired: FenceExtractedFact): boolean {
+  const desiredActive = desired.expired_at == null;
+  return stored.kind !== (desired.kind ?? 'fact')
+    || stored.visibility !== (desired.visibility ?? 'private')
+    || stored.notability !== (desired.notability ?? 'medium')
+    || (stored.context ?? null) !== (desired.context ?? null)
+    || stored.source !== desired.source
+    || numbersDiffer(stored.confidence, desired.confidence ?? 1.0)
+    || (stored.claim_metric ?? null) !== (desired.claim_metric ?? null)
+    || numbersDiffer(stored.claim_value, desired.claim_value)
+    || (stored.claim_unit ?? null) !== (desired.claim_unit ?? null)
+    || (stored.claim_period ?? null) !== (desired.claim_period ?? null)
+    || (desired.valid_from != null && timeOf(stored.valid_from) !== desired.valid_from.getTime())
+    || (stored.expired_at == null) !== desiredActive
+    || (desiredActive && timeOf(stored.valid_until) !== timeOf(desired.valid_until));
+}
+
+/** Resolve one fence row's `superseded by #N` against the page's row -> id map. */
+function resolveSupersession(
+  desired: FenceExtractedFact,
+  byRow: ReadonlyMap<number, SupersedeTarget>,
+  chain: SupersessionChain,
+  slug: string,
+): { superseded_by: number | null; warning: string | null } {
+  if (desired.superseded_by_row === undefined) return { superseded_by: null, warning: null };
+  return resolveSupersededByRow(desired.row_num, desired.superseded_by_row, byRow.get(desired.superseded_by_row), slug, chain);
+}
+
+/**
+ * Bring every fence row's `superseded_by` in line with its resolved
+ * `superseded by #N` reference, inside the reconcile transaction. Warns only
+ * for rows inserted by this run or whose link changes, so a permanently
+ * unresolvable reference does not repeat its warning every cycle. Returns the
+ * row numbers whose link changed.
+ */
+async function syncSupersession(
+  tx: BrainEngine,
+  sourceId: string,
+  slug: string,
+  desired: FenceExtractedFact[],
+  chain: SupersessionChain,
+  inserted: ReadonlySet<number>,
+): Promise<{ warnings: string[]; changed: number[] }> {
+  const current = await tx.executeRaw<{ id: number | string; row_num: number | string; expired_at: Date | string | null; superseded_by: number | string | null }>(
+    `SELECT id, row_num, expired_at, superseded_by FROM facts
+      WHERE source_id = $1 AND source_markdown_slug = $2 AND row_num IS NOT NULL`,
+    [sourceId, slug],
+  );
+  const rows = new Map(current.map(r => [Number(r.row_num), r]));
+  const byRow = new Map([...rows].map(([row, r]) => [row, { id: Number(r.id), struck: r.expired_at != null }]));
+  const warnings: string[] = [];
+  const changed: number[] = [];
+  for (const f of desired) {
+    const row = rows.get(f.row_num);
+    if (!row) continue;
+    const { superseded_by, warning } = resolveSupersession(f, byRow, chain, slug);
+    const differs = superseded_by !== (row.superseded_by == null ? null : Number(row.superseded_by));
+    if (warning && (differs || inserted.has(f.row_num))) warnings.push(warning);
+    if (!differs) continue;
+    changed.push(f.row_num);
+    await tx.executeRaw('UPDATE facts SET superseded_by = $1 WHERE id = $2 AND source_id = $3', [superseded_by, row.id, sourceId]);
   }
-  return deduped;
+  return { warnings, changed };
 }
 
 /**
@@ -225,7 +296,8 @@ async function listExistingFactsForPage(
   sourceId: string,
 ): Promise<ExistingPageFact[]> {
   return engine.executeRaw<ExistingPageFact>(
-    `SELECT id, fact, source, row_num, superseded_by, expired_at, visibility, notability,
+    `SELECT id, fact, source, row_num, superseded_by, expired_at, kind, visibility, notability, context,
+            valid_from, valid_until, confidence, claim_metric, claim_value, claim_unit, claim_period,
             embedding IS NOT NULL AS has_embedding
        FROM facts
       WHERE source_id = $1
@@ -268,8 +340,13 @@ export interface ExtractFactsResult {
   pagesScanned: number;
   pagesWithFacts: number;
   factsInserted: number;
+  /** Fence-owned rows whose cells were updated in place (ids kept). */
+  factsUpdated: number;
+  /** Fence-owned rows expired and detached because their row left the fence. */
   factsDeleted: number;
   legacyRowsPending: number;
+  /** Active fence-owned rows expired because their page was soft-deleted. */
+  factsExpiredForDeletedPages: number;
   guardTriggered: boolean;
   /** Pages whose reconcile threw and rolled back; later pages still ran. */
   pagesFailed: number;
@@ -367,8 +444,10 @@ export async function runExtractFacts(
     pagesScanned: 0,
     pagesWithFacts: 0,
     factsInserted: 0,
+    factsUpdated: 0,
     factsDeleted: 0,
     legacyRowsPending: 0,
+    factsExpiredForDeletedPages: 0,
     pagesFailed: 0,
     guardTriggered: false,
     warnings: [],
@@ -512,6 +591,28 @@ export async function runExtractFacts(
   result.phantomsLockBusy = phantomResult.lock_busy;
   result.phantomsMorePending = phantomResult.more_pending;
 
+  // ── Facts of soft-deleted pages ────────────────────────────────
+  // Deleting a page removes the fence that is the facts' system of record,
+  // and a full walk never visits a deleted slug, so its derived rows would
+  // stay active in recall indefinitely. Expire (never delete or detach) the
+  // fence-owned rows of every soft-deleted page in this source: restoring the
+  // page brings its fence back, and the next reconcile of that slug
+  // re-activates the rows that are still in it (the withdrawal trigger keeps
+  // forgotten claims expired). Rows of a page that simply has no DB row yet
+  // (a fence write ahead of sync) are untouched.
+  if (!opts.dryRun) {
+    const expired = await engine.executeRaw<{ id: number }>(
+      `UPDATE facts f SET expired_at = now()
+        WHERE f.source_id = $1 AND f.row_num IS NOT NULL AND f.expired_at IS NULL
+          AND EXISTS (SELECT 1 FROM pages p
+                       WHERE p.source_id = f.source_id AND p.slug = f.source_markdown_slug
+                         AND p.deleted_at IS NOT NULL)
+        RETURNING f.id`,
+      [sourceId],
+    );
+    result.factsExpiredForDeletedPages = expired.length;
+  }
+
   // ── Resolve target slug set ───────────────────────────────────
   // v0.36.x #1096: presence — not length — distinguishes the modes.
   // `slugs: []` from an incremental sync no-op was previously treated
@@ -603,189 +704,59 @@ export async function runExtractFacts(
     // trajectory query against the page returns import dates instead of
     // claim dates.
     const pageEffectiveDate = page.effective_date ? new Date(page.effective_date) : null;
-    const extracted = dedupeFactsByContentKey(
-      extractFactsFromFenceText(parsed.facts, slug, sourceId, { pageEffectiveDate }),
-    );
+    // #1781: duplicate ACTIVE rows (same claim and source) index once. A
+    // struck history row never collapses with an active row that carries the
+    // same text, so a claim that reverts to an earlier value stays active.
+    const activeKeys = new Set<string>();
+    const extracted = extractFactsFromFenceText(parsed.facts, slug, sourceId, { pageEffectiveDate }).filter(f => {
+      if (f.expired_at != null) return true;
+      const key = `${f.fact}\u0000${f.source}`;
+      if (activeKeys.has(key)) return false;
+      activeKeys.add(key);
+      return true;
+    });
 
     if (opts.dryRun) return 'next';
 
-    // #1781 — reconcile instead of unconditional wipe-and-reinsert. Compare
-    // the fence's canonical (claim, source) row set against the page's
-    // fence-owned DB rows: no-op when already in sync, insert only missing
-    // keys when possible, wipe/reinsert only when stale rows need cleanup.
+    // Reconcile by row number, the fence's own unique identity (the parser
+    // refuses duplicate row numbers). A DB row whose (row_num, claim) is still
+    // in the fence keeps its id and has its other cells updated in place, so
+    // ids handed out by recall keep working for forget and consolidation,
+    // source_session, created_at and embeddings survive an edit. A row whose
+    // number disappeared or whose claim was rewritten is expired and detached
+    // (row_num NULL), never deleted: the same rule the managed projection
+    // applies. Keying on row number also keeps a claim that reverts to an
+    // earlier value (NYC -> SF -> NYC) active instead of folding it onto the
+    // struck history row with the same text.
     const existing = await listExistingFactsForPage(engine, slug, sourceId);
-    const existingKeys = new Set(existing.map(f => factContentKey(f.fact, f.source)));
-    const desiredByKey = new Map(extracted.map(f => [factContentKey(f.fact, f.source), f]));
-
-    const restrictions = existing.filter(fact => {
-      const desired = desiredByKey.get(factContentKey(fact.fact, fact.source));
-      return (fact.expired_at == null && (!desired || desired.expired_at != null))
-        || (fact.visibility !== 'private' && desired?.visibility === 'private');
+    const desiredByRow = new Map(extracted.map(f => [f.row_num, f]));
+    const matched = new Map<number, ExistingPageFact>();
+    const stale: ExistingPageFact[] = [];
+    for (const fact of existing) {
+      const desired = fact.row_num == null ? undefined : desiredByRow.get(Number(fact.row_num));
+      if (desired && desired.fact === fact.fact) matched.set(desired.row_num, fact);
+      else stale.push(fact);
+    }
+    const updates = extracted.filter(f => {
+      const fact = matched.get(f.row_num);
+      return fact !== undefined && factCellsDiffer(fact, f);
     });
-    if (restrictions.length > 0) {
-      const restricted = await underPageLock(slug, async () => {
-        if (await refuseDestructiveReconcileOnStaleCache(
-          engine, slug, sourceId, page.compiled_truth ?? '', page.timeline ?? '', result.warnings,
-        )) return null;
-        return engine.transaction(async tx => {
-          const current = await tx.getPage(slug, { sourceId });
-          if (!current || current.compiled_truth !== page.compiled_truth || current.timeline !== page.timeline) return null;
-          for (const fact of restrictions) {
-            const desired = desiredByKey.get(factContentKey(fact.fact, fact.source));
-            await tx.executeRaw(
-              `UPDATE facts SET expired_at=COALESCE(expired_at,$5::timestamptz),
-                 visibility=CASE WHEN $6 THEN 'private' ELSE visibility END
-               WHERE id=$1 AND source_id=$2 AND fact=$3 AND source IS NOT DISTINCT FROM $4`,
-              [fact.id, sourceId, fact.fact, fact.source,
-                !desired ? new Date() : desired.expired_at ?? null, desired?.visibility === 'private'],
-            );
-          }
-          return true;
-        });
-      }, opts, result.warnings);
-      if (!restricted) return 'next';
+    const toInsert = extracted.filter(f => !matched.has(f.row_num));
+    const chain = supersessionChainOf(extracted, slug);
+
+    if (stale.length === 0 && updates.length === 0 && toInsert.length === 0) {
+      const byRow = new Map([...matched].map(([row, fact]) => [row, { id: Number(fact.id), struck: fact.expired_at != null }]));
+      const inSync = extracted.every(f => {
+        const stored = matched.get(f.row_num)!.superseded_by;
+        return resolveSupersession(f, byRow, chain, slug).superseded_by === (stored == null ? null : Number(stored));
+      });
+      if (inSync) return 'next';
     }
 
-    if (extracted.length === 0) {
-      if (existing.length > 0) {
-        const deletion = await underPageLock(slug, async () => {
-          if (await refuseDestructiveReconcileOnStaleCache(
-            engine,
-            slug,
-            sourceId,
-            page.compiled_truth ?? '',
-            page.timeline ?? '',
-            result.warnings,
-          )) {
-            return null;
-          }
-          // The delete targets source_markdown_slug = slug only, so
-          // NULL-source_markdown_slug legacy rows survive (the
-          // partial-UNIQUE-index keyspace). #1928: `cli:`-origin facts
-          // (conversation facts from extract-conversation-facts) are NOT
-          // fence-owned — the page carries no `## Facts` fence to recreate
-          // them — so they MUST survive this reconcile. #2646: soft-expired
-          // legacy rows (forget_fact's record of the forget) likewise
-          // survive via preserveExpiredLegacy.
-          return engine.deleteFactsForPage(slug, sourceId, {
-            excludeSourcePrefixes: ['cli:'],
-            preserveExpiredLegacy: true,
-          });
-        }, opts, result.warnings);
-        if (!deletion) {
-          return 'next';
-        }
-        result.factsDeleted += deletion.deleted;
-      }
-      return 'next';
-    }
-
-    const hasStaleExisting = existing.some(f => !desiredByKey.has(factContentKey(f.fact, f.source)));
-    const hasDuplicateExisting = existing.length !== existingKeys.size;
-    const hasRowNumDrift = existing.some(f => {
-      const desired = desiredByKey.get(factContentKey(f.fact, f.source));
-      return desired !== undefined && Number(f.row_num) !== desired.row_num;
-    });
-    // v0.46 (#3014) — a struck row whose fence says "superseded" (or
-    // otherwise inactive) but whose DB columns are still NULL has an
-    // identical content key + row_num, so the checks above miss it. Treat
-    // a mismatch between the fence-desired supersession/expiry state and
-    // the DB columns as drift so the wipe+reinsert fallback re-heals the
-    // row (transports superseded_by + expired_at that a pre-fix cycle
-    // dropped).
-    //
-    // The supersession term keys off the RESOLVED reference, not merely
-    // "the fence carries a reference": we re-resolve the fence's
-    // `superseded by #N` against the current DB rows with the SAME resolver
-    // insertFacts uses, then compare the resolved target id to the id the
-    // DB stored. A permanently-unresolvable reference (self / dangling /
-    // chain) resolves to NULL every cycle and matches the DB's NULL, so it
-    // never churns; a pre-fix NULL, or a CHANGED reference (even between two
-    // resolvable targets), still differs and re-heals. Resolution stays
-    // page-local — `superseded by #N` only ever points within this page —
-    // so a row_num → id lookup over `existing` is a faithful mirror of the
-    // insert-time SELECT.
-    const existingByRowNum = new Map<number, ExistingPageFact>();
-    for (const f of existing) {
-      const rn = f.row_num == null ? NaN : Number(f.row_num);
-      if (Number.isFinite(rn)) existingByRowNum.set(rn, f);
-    }
-    const hasSupersessionDrift = existing.some(f => {
-      const desired = desiredByKey.get(factContentKey(f.fact, f.source));
-      if (desired === undefined) return false;
-
-      // Expiry dimension: a struck row must carry expired_at; a pre-fix row
-      // (both columns NULL) drifts here and re-heals. Compare NULL-ness, NOT
-      // the timestamp value: the mapper stamps `expired_at = valid_until ??
-      // today`, so a value comparison would see the stored timestamp differ
-      // from a freshly-recomputed `today` every day and churn the page each
-      // cycle. NULL-ness is the stable "is this row struck?" signal.
-      const desiredExpired = desired.expired_at != null;
-      const dbExpired = f.expired_at != null;
-      if (desiredExpired !== dbExpired) return true;
-
-      // Supersession dimension: resolve the fence reference against the
-      // current DB rows and compare the resolved target id to what the DB
-      // stored.
-      const desiredRow = desired.superseded_by_row;
-      let resolvedTargetId: number | null = null;
-      if (desiredRow !== undefined) {
-        const targetExisting = existingByRowNum.get(desiredRow);
-        const target: SupersedeTarget | undefined = targetExisting
-          ? { id: Number(targetExisting.id), struck: targetExisting.expired_at != null }
-          : undefined;
-        resolvedTargetId = resolveSupersededByRow(Number(f.row_num), desiredRow, target, slug).superseded_by;
-      }
-      const dbTargetId = f.superseded_by == null ? null : Number(f.superseded_by);
-      return resolvedTargetId !== dbTargetId;
-    });
-    // #4870 — a visibility / notability edit on an existing row leaves the
-    // content key, row_num and struck-state untouched, so none of the terms
-    // above fire and the edit was a silent no-op. Compare the two fence
-    // cells the parser already validates; the wipe+reinsert transports them.
-    // ponytail: confidence is skipped — it is a REAL column, so an equality
-    // compare would need the fence formatter to avoid float-noise churn;
-    // route it through formatConfidence if a confidence-edit report lands.
-    const hasAttributeDrift = existing.some(f => {
-      const desired = desiredByKey.get(factContentKey(f.fact, f.source));
-      return desired !== undefined
-        && (desired.visibility !== f.visibility || desired.notability !== f.notability);
-    });
-
-    if (
-      existing.length === extracted.length &&
-      !hasStaleExisting &&
-      !hasDuplicateExisting &&
-      !hasRowNumDrift &&
-      !hasSupersessionDrift &&
-      !hasAttributeDrift
-    ) {
-      return 'next';
-    }
-
-    let toInsert = extracted.filter(f => !existingKeys.has(factContentKey(f.fact, f.source)));
-    // v0.46 (#3014) — when old DB rows must be removed, defer the wipe into
-    // insertFacts' own transaction (deleteForPageFirst) rather than calling
-    // deleteFactsForPage here. A standalone delete self-commits, so a
-    // failing insert afterward left the page permanently emptied; running
-    // the delete as the first statement of the insert transaction makes the
-    // reconcile atomic — a failed insert rolls the delete back. Same delete
-    // scoping as before: legacy NULL-source_markdown_slug rows, `cli:`-origin
-    // conversation facts (#1928), and soft-expired legacy rows (#2646)
-    // survive.
-    let deleteForPageFirst: { slug: string; excludeSourcePrefixes: string[]; preserveExpiredLegacy: boolean } | undefined;
-    if (hasStaleExisting || hasDuplicateExisting || hasRowNumDrift || hasSupersessionDrift || hasAttributeDrift) {
-      deleteForPageFirst = { slug, excludeSourcePrefixes: ['cli:'], preserveExpiredLegacy: true };
-      toInsert = extracted;
-    }
-
-    // v0.35.4 (D-CDX-3) — batch-embed before insert. Without this,
-    // cycle-inserted facts land with `embedding = NULL`, which breaks
-    // consolidate's cosine clustering AND the drift_score formula in
-    // find_trajectory. Falls open: if the embedding gateway is
-    // unavailable (no API key configured), facts still insert with
-    // NULL embeddings — drift_score gracefully returns null and
-    // clustering falls back to recency.
+    // v0.35.4 (D-CDX-3) — batch-embed new rows before insert so
+    // consolidate's cosine clustering and find_trajectory's drift_score see
+    // them. Rows updated in place keep their vectors: the claim text is
+    // unchanged. Falls open without an embedding provider, with a warning.
     if (toInsert.length > 0) {
       if (isAvailable('embedding')) {
         try {
@@ -804,20 +775,14 @@ export async function runExtractFacts(
             toInsert[i].embedding_model = embeddingModel;
           }
         } catch (err) {
-          // Embedding failure is non-fatal — facts still get inserted, just
-          // without embeddings. The warning is NOT swallowed (#3044): the cycle
-          // wrapper folds result.warnings into a 'warn' phase status with a
-          // warning count, so a billing/auth/rate-limit embed failure surfaces
-          // in the cycle report instead of hiding behind a green 'ok'.
+          // #3044: non-fatal, but never silent — the cycle folds warnings
+          // into a 'warn' phase status.
           result.warnings.push(
             `${slug}: extract_facts batch embed failed: ${err instanceof Error ? err.message : String(err)}`,
           );
         }
       } else {
-        // #2821: same fail-open contract, but never silently. Pre-fix only
-        // the embed() FAILURE path warned — an UNAVAILABLE gateway inserted
-        // NULL-embedding rows with a clean green 'ok', hiding the degraded
-        // consolidate/drift_score behavior until someone diffed the DB.
+        // #2821: same fail-open contract, never silently.
         result.warnings.push(
           `${slug}: embedding gateway unavailable — ${toInsert.length} fact(s) need embeddings (NULL embeddings won't cluster in consolidate until re-embedded)`,
         );
@@ -828,25 +793,65 @@ export async function runExtractFacts(
       result.warnings.push(`${slug}: fact reconciliation deferred after cancellation; existing rows preserved`);
       return 'stop';
     }
-    if (deleteForPageFirst && existing.some(fact => fact.has_embedding)
-      && toInsert.some(fact => !fact.embedding)) {
+
+    // A vector-bearing row is never replaced by a row that could not be
+    // embedded. Until embedding succeeds, rows keep their positions: stale
+    // rows whose claim is still active in the fence stay as they are, others
+    // are expired in place, and new rows wait. In-place updates (privacy,
+    // notability, strikes) still apply.
+    const deferInserts = toInsert.some(f => !f.embedding) && stale.some(f => f.has_embedding);
+    const activeClaims = new Set(extracted.filter(f => f.expired_at == null).map(f => `${f.fact}\u0000${f.source}`));
+    const detach = deferInserts ? [] : stale;
+    const expireInPlace = deferInserts
+      ? stale.filter(f => f.expired_at == null && !activeClaims.has(`${f.fact}\u0000${f.source}`))
+      : [];
+    const inserts = deferInserts ? [] : toInsert;
+    if (deferInserts) {
       result.warnings.push(`${slug}: destructive fact reconciliation deferred; existing vectors preserved until embedding succeeds`);
-      return 'next';
     }
 
-    if (toInsert.length === 0) return 'next';
-
-    const insert = async () => {
+    const apply = async () => {
       try {
         return await engine.transaction(async tx => {
           opts.signal?.throwIfAborted();
-          const inserted = await tx.insertFacts( // gbrain-allow-direct-insert: extract_facts cycle phase reconciles fence → DB
-            toInsert,
-            { source_id: sourceId },
-            deleteForPageFirst ? { deleteForPageFirst } : undefined,
-          );
+          const current = await tx.getPage(slug, { sourceId });
+          if (!current || current.compiled_truth !== page.compiled_truth || current.timeline !== page.timeline) return null;
+          for (const fact of expireInPlace) {
+            await tx.executeRaw('UPDATE facts SET expired_at = COALESCE(expired_at, now()) WHERE id = $1 AND source_id = $2', [fact.id, sourceId]);
+          }
+          for (const fact of detach) {
+            await tx.executeRaw(
+              `UPDATE facts SET expired_at = COALESCE(expired_at, now()), row_num = NULL
+                WHERE id = $1 AND source_id = $2`,
+              [fact.id, sourceId],
+            );
+          }
+          for (const f of updates) {
+            await tx.executeRaw(
+              `UPDATE facts SET kind = $3, visibility = $4, notability = $5, context = $6,
+                  valid_from = COALESCE($7::timestamptz, valid_from),
+                  valid_until = CASE WHEN $8::boolean THEN $9::timestamptz ELSE valid_until END,
+                  expired_at = CASE WHEN $10::timestamptz IS NULL THEN NULL ELSE COALESCE(expired_at, $10::timestamptz) END,
+                  source = $11, confidence = $12,
+                  claim_metric = $13, claim_value = $14, claim_unit = $15, claim_period = $16
+                WHERE id = $1 AND source_id = $2`,
+              [matched.get(f.row_num)!.id, sourceId, f.kind ?? 'fact', f.visibility ?? 'private', f.notability ?? 'medium',
+                f.context ?? null, f.valid_from?.toISOString() ?? null, f.expired_at == null,
+                f.valid_until?.toISOString() ?? null, f.expired_at?.toISOString() ?? null, f.source, f.confidence ?? 1.0,
+                f.claim_metric ?? null, f.claim_value ?? null, f.claim_unit ?? null, f.claim_period ?? null],
+            );
+          }
+          const inserted = inserts.length === 0
+            ? { inserted: 0 }
+            : await tx.insertFacts( // gbrain-allow-direct-insert: extract_facts cycle phase reconciles fence → DB
+              inserts.map(f => ({ ...f, superseded_by_row: undefined })),
+              { source_id: sourceId },
+            );
+          const insertedRows = new Set(inserts.map(f => f.row_num));
+          const linked = await syncSupersession(tx, sourceId, slug, extracted, chain, insertedRows);
           opts.signal?.throwIfAborted();
-          return inserted;
+          const updated = new Set([...updates.map(f => f.row_num), ...linked.changed.filter(row => !insertedRows.has(row))]);
+          return { inserted: inserted.inserted, updated: updated.size, warnings: linked.warnings };
         });
       } catch (error) {
         if (!isAborted(opts.signal)) throw error;
@@ -854,34 +859,21 @@ export async function runExtractFacts(
         return null;
       }
     };
-    const inserted = deleteForPageFirst
-      ? await underPageLock(slug, async () => {
-        if (isAborted(opts.signal)) return null;
+    const outcome = detach.length === 0 && expireInPlace.length === 0 && updates.length === 0
+      ? await apply()
+      : await underPageLock(slug, async () => {
         if (await refuseDestructiveReconcileOnStaleCache(
-          engine,
-          slug,
-          sourceId,
-          page.compiled_truth ?? '',
-          page.timeline ?? '',
-          result.warnings,
-        )) {
-          return null;
-        }
+          engine, slug, sourceId, page.compiled_truth ?? '', page.timeline ?? '', result.warnings,
+        )) return null;
         if (isAborted(opts.signal)) return null;
-        return insert();
-      }, opts, result.warnings)
-      : await insert();
-    if (!inserted) return 'next';
-    result.factsInserted += inserted.inserted;
-    // v0.46 (#3014) — the wipe (when needed) ran inside insertFacts' txn;
-    // count it here from the atomic result rather than a separate delete.
-    result.factsDeleted += inserted.deleted;
-    // v0.46 (#3014) — surface unresolvable `superseded by #N` references
-    // (self / dangling / struck target) as cycle warnings; the row still
-    // inserts with superseded_by NULL + expired_at set (never a guessed FK).
-    // resolveSupersededByRow already prefixes each message with the slug +
-    // row, so push verbatim — no `${slug}: ` re-prefix.
-    for (const w of inserted.warnings) result.warnings.push(w);
+        return apply();
+      }, opts, result.warnings);
+    if (!outcome) return 'next';
+    result.factsInserted += outcome.inserted;
+    result.factsUpdated += outcome.updated;
+    result.factsDeleted += detach.length + expireInPlace.length;
+    // resolveSupersededByRow prefixes each message with the slug + row.
+    for (const w of outcome.warnings) result.warnings.push(w);
     return 'next';
   };
 

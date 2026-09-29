@@ -846,11 +846,11 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
     // #4348: validate cycle.timezone at set time — resolveCycleDate falls
     // back loudly at run time, but the typo should be rejected here, at the
     // moment the operator can fix it.
-    if (key === 'cycle.timezone') {
+    if (key === 'cycle.timezone' || key === 'brain.timezone') {
       const { isValidTimeZone } = await import('../core/cycle/cycle-date.ts');
       if (!isValidTimeZone(value)) {
         console.error(
-          `[config] cycle.timezone must be a valid IANA timezone ` +
+          `[config] ${key} must be a valid IANA timezone ` +
           `(for example Asia/Kolkata or America/Los_Angeles; got '${value}').`,
         );
         process.exit(1);

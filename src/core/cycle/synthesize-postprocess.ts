@@ -9,9 +9,9 @@ import type { WriteRequest } from '../persistence/model.ts';
 import { publishMaintenancePage, type MaintenanceAuthority } from '../persistence/prepared-maintenance.ts';
 import { writeResponse } from '../persistence/service.ts';
 import type { DiscoveredTranscript } from './transcript-discovery.ts';
-import { emptyQuoteVerifyStats, groundSource, resolveVerifyPrior, verifyDreamPage, type GroundedSource } from './synthesize-verify.ts';
+import { emptyQuoteVerifyStats, groundSource, isDreamOwnedPage, resolveVerifyPrior, verifyDreamPage, type GroundedSource } from './synthesize-verify.ts';
 
-interface OutputRef { slug: string; source_id: string; raw_source?: string; }
+interface OutputRef { slug: string; source_id: string; raw_source?: string; first_write_at?: Date; }
 interface RetainedOutput { job_id: number | bigint; job_key: string; request: WriteRequest; }
 
 export async function postprocessManagedSynthesis(
@@ -71,10 +71,10 @@ export async function postprocessManagedSynthesis(
         throw new OperationError('revision_conflict', 'The synthesis output changed after the child committed.');
       }
       const firstDate = snapshot.page.frontmatter.dream_created_cycle_date || snapshot.page.frontmatter.dream_cycle_date || opts.cycleDate;
-      let page = { ...snapshot.page, frontmatter: { ...snapshot.page.frontmatter, dream_generated: true,
-        dream_cycle_date: firstDate, dream_created_cycle_date: firstDate, raw_source: path } };
+      const since = ref.first_write_at ?? opts.sinceByTranscript.get(transcript.filePath);
+      let page = isDreamOwnedPage(snapshot.page, since) ? { ...snapshot.page, frontmatter: { ...snapshot.page.frontmatter, dream_generated: true,
+        dream_cycle_date: firstDate, dream_created_cycle_date: firstDate, raw_source: path } } : snapshot.page;
       if (opts.quoteVerify) {
-        const since = opts.sinceByTranscript.get(transcript.filePath);
         const prior = since ? await resolveVerifyPrior(engine, snapshot.page, ref.source_id, since) : null;
         if (prior === 'unchanged') stats.skipped_unchanged++;
         else {

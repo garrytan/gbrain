@@ -38,6 +38,7 @@ import type { SearchResult, PageReadPolicy } from '../types.ts';
 import { normalizeAlias } from './alias-normalize.ts';
 import { isLookupShapedQuery } from './query-intent.ts';
 import { applySupersedeDownrank } from './hybrid.ts';
+import { isExcludedIdentity } from './alias-hop.ts';
 
 /** Cap on tier injections per query (mirrors the alias hop's discipline). */
 export const MAX_EXACT_LOOKUP_INJECT = 3;
@@ -70,6 +71,8 @@ export interface ExactLookupOpts extends PageReadPolicy {
   type?: string;
   types?: string[];
   excludeSlugs?: string[];
+  /** Resolved prefix excludes (see IdentityTierOpts in hybrid.ts). */
+  excludeSlugPrefixes?: string[];
 }
 
 /** Max distinct sources probed for a slug-shaped query on a federated call. */
@@ -92,14 +95,13 @@ export async function structuralExactLookup(
   const seen = new Set<string>();
   // #4480 — mirror the scored arms' shape filters so the tier can never
   // inject a page the caller explicitly filtered out.
-  const excluded = new Set(opts.excludeSlugs ?? []);
   const typeGate = (t: string | undefined | null): boolean => {
     if (opts.type && t !== opts.type) return false;
     if (opts.types && opts.types.length > 0 && (t == null || !opts.types.includes(t))) return false;
     return true;
   };
   const push = (r: SearchResult) => {
-    if (excluded.has(r.slug)) return;
+    if (isExcludedIdentity(r.slug, opts)) return;
     if (!typeGate(r.type)) return;
     const key = `${r.source_id ?? 'default'}::${r.slug}`;
     if (seen.has(key)) return;
