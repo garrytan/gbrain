@@ -10,6 +10,20 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.10.1] - 2026-09-29
+
+**Compaction and writeback facts can now use a local extraction model configured in the brain.**
+
+Previously, checkpoint harvest and maintenance sweep checked only file and environment credentials before extracting facts. A usable model selected through `facts.extraction_model` in the brain database could be reported as keyless, leaving the segment for a later retry. Those gates now check the model the engine actually selects, matching the existing facts backstop. Explicit capability overrides retain their behavior.
+
+### To take advantage of v0.60.10.1
+
+Run `gbrain upgrade`. There is no migration. Restart the resident server to use the updated harvest and sweep gates.
+
+### Itemized changes
+
+- **Checkpoint and sweep extraction gates follow the selected model.** Compact and opted-in writeback segments can be harvested when a database-configured local model is available through the gateway, even if no file-plane extraction key exists.
+
 ## [0.60.10.0] - 2026-09-29
 
 **Local PGLite brains now commit writes about 3.7× faster, with the same durability.**
