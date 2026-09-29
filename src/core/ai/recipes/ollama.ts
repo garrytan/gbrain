@@ -48,6 +48,14 @@ export const ollama: Recipe = {
         'snowflake-arctic-embed-l-v2': 1024,
         'bge-m3': 1024,
       },
+      // LOCAL PATCH: per-input token ceiling for nomic-embed-text (8192 ctx).
+      // Without a declared ceiling gateway.embed hands the migration budget
+      // guard maxInputTokens=undefined, which refuses every ollama embed
+      // ("no conservative input ceiling") and blocks `migrate embeddings`.
+      // Chunk size is unaffected: min(2000, floor(8192 * 0.6)) = 2000.
+      max_input_tokens: {
+        'nomic-embed-text': 8192,
+      },
       default_dims: 768, // nomic-embed-text native dim
       trust_custom_dims: true, // #2271: local models carry varied native dims
       cost_per_1m_tokens_usd: 0,
