@@ -37,7 +37,7 @@ import type { BrainEngine, SourceRow } from '../core/engine.ts';
 import type { MinionQueue } from '../core/minions/queue.ts';
 import { SOURCE_FRESHNESS_PHASES, MAINTENANCE_PHASES, LAST_GLOBAL_AT_KEY } from '../core/cycle.ts';
 import { sourceConfigHasRemoteUrl, sourceLocalPathSkipWarning } from '../core/sources-load.ts';
-import { isSyncDisabledConfig } from '../core/sync-policy.ts';
+import { autopilotGitPullEnabled, isSyncDisabledConfig } from '../core/sync-policy.ts';
 import { AUTOPILOT_FULL_CYCLE_FLOOR_MINUTES } from './autopilot-remediation-policy.ts';
 
 // #2194 fix #2: failure cooldown. A source whose autopilot-cycle keeps
@@ -408,6 +408,7 @@ export async function dispatchPerSource(
 ): Promise<FanoutResult> {
   const emit = opts.emit ?? ((line) => process.stderr.write(line + '\n'));
   const log = opts.log ?? ((line) => console.log(line));
+  const automaticPull = await autopilotGitPullEnabled(engine);
 
   let sources: SourceRow[];
   try {
@@ -427,7 +428,7 @@ export async function dispatchPerSource(
     // (default source) and pre-v0.18 brains without the sources table.
     const job = await queue.add(
       'autopilot-cycle',
-      { repoPath: opts.repoPath },
+      { repoPath: opts.repoPath, pull: automaticPull },
       {
         queue: 'default',
         // Slot key dedups repeats within one slot; maxPending: 1 is the
@@ -511,7 +512,7 @@ export async function dispatchPerSource(
       // stamp; only the sync phase (and the pull that feeds it) is dropped —
       // normalizeQueuedSourcePhases passes a freshness subset through as-is.
       const syncDisabled = isSyncDisabledConfig(src.config);
-      const shouldPull = sourceConfigHasRemoteUrl(src.config) && !syncDisabled;
+      const shouldPull = automaticPull && sourceConfigHasRemoteUrl(src.config) && !syncDisabled;
       const job = await queue.add(
         'autopilot-cycle',
         {

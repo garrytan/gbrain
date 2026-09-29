@@ -224,7 +224,7 @@ describe('resolveFanoutMax', () => {
 describe('dispatchPerSource — integration with stubbed engine + queue', () => {
   type AddedJob = { name: string; data: unknown; opts: Record<string, unknown> };
 
-  function makeStubs(sources: SourceRow[], opts?: { listThrows?: boolean }) {
+  function makeStubs(sources: SourceRow[], opts?: { listThrows?: boolean; gitPull?: string }) {
     const added: AddedJob[] = [];
     let nextId = 100;
     const engine = {
@@ -233,6 +233,7 @@ describe('dispatchPerSource — integration with stubbed engine + queue', () => 
         if (opts?.listThrows) throw new Error('sources table missing');
         return sources;
       },
+      getConfig: async (key: string) => key === 'autopilot.git_pull' ? opts?.gitPull ?? null : null,
     } as unknown as BrainEngine;
     const queue = {
       add: async (name: string, data: unknown, addOpts: Record<string, unknown>) => {
@@ -263,6 +264,12 @@ describe('dispatchPerSource — integration with stubbed engine + queue', () => 
     expect(added[0].name).toBe('autopilot-cycle');
     expect((added[0].data as Record<string, unknown>).source_id).toBeUndefined();
     expect(added[0].opts.idempotency_key).toBe('autopilot-cycle:2026-05-22T12:00:00.000Z');
+  });
+
+  test('legacy fallback honors the automatic Git pull opt-out', async () => {
+    const { engine, queue, added, fanoutOpts } = makeStubs([], { gitPull: 'false' });
+    await dispatchPerSource(engine, queue, fanoutOpts);
+    expect((added[0].data as Record<string, unknown>).pull).toBe(false);
   });
 
   test('listAllSources throwing also falls back to legacy', async () => {
@@ -397,6 +404,13 @@ describe('dispatchPerSource — integration with stubbed engine + queue', () => 
     expect((added[0].data as Record<string, unknown>).pull).toBe(true);
   });
 
+  test('autopilot.git_pull false indexes a remote checkout without pulling it', async () => {
+    const remote = src('remote', undefined, { remote_url: 'https://github.com/x/y' });
+    const { engine, queue, added, fanoutOpts } = makeStubs([remote], { gitPull: 'false' });
+    await dispatchPerSource(engine, queue, fanoutOpts);
+    expect((added[0].data as Record<string, unknown>).pull).toBe(false);
+  });
+
   test('#4399: a syncEnabled:false source keeps its freshness cycle but is never pulled or synced', async () => {
     // The full-cycle fan-out is autopilot's SECOND automatic sync path (the
     // freshness dispatcher in autopilot.ts is the first). A source the operator
@@ -436,6 +450,7 @@ describe('dispatchPerSource — integration with stubbed engine + queue', () => 
     const engine = {
       kind: 'postgres' as const,
       listAllSources: async () => sources,
+      getConfig: async () => null,
     } as unknown as BrainEngine;
     const queue = {
       add: async (name: string, data: unknown, opts: Record<string, unknown>) => {

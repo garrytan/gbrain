@@ -13,6 +13,7 @@
  */
 
 import { parseSourceConfig } from './sources-load.ts';
+import type { BrainEngine } from './engine.ts';
 
 /**
  * True iff `config` explicitly sets `syncEnabled: false`. parseSourceConfig
@@ -21,4 +22,9 @@ import { parseSourceConfig } from './sources-load.ts';
  */
 export function isSyncDisabledConfig(config: unknown): boolean {
   return parseSourceConfig(config).syncEnabled === false;
+}
+
+/** An operator may sync checked-out repositories without automatic Git pulls. */
+export async function autopilotGitPullEnabled(engine: BrainEngine): Promise<boolean> {
+  return !/^(false|0|off|no)$/i.test(await engine.getConfig('autopilot.git_pull') ?? 'true');
 }

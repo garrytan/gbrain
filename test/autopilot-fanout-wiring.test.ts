@@ -116,7 +116,7 @@ describe('autopilot.ts ↔ dispatchPerSource wiring', () => {
     const freshnessIdx = AUTOPILOT_SRC.indexOf('idempotency_key: `autopilot-sync:');
     expect(freshnessIdx).toBeGreaterThan(-1);
     const freshnessBlock = AUTOPILOT_SRC.slice(Math.max(0, freshnessIdx - 700), freshnessIdx + 200);
-    expect(freshnessBlock).toContain('pull: sourceConfigHasRemoteUrl(src.config)');
+    expect(freshnessBlock).toContain('pull: await autopilotGitPullEnabled(engine) && sourceConfigHasRemoteUrl(src.config)');
   });
 
   test('freshness sync dispatch skips unavailable source paths before enqueueing', () => {
@@ -150,7 +150,7 @@ describe('autopilot.ts ↔ dispatchPerSource wiring', () => {
     // import here would re-introduce what that review removed), not from
     // performSync's own enforcement — this dispatcher is meant to stand on
     // its own regardless of what performSync does internally.
-    expect(AUTOPILOT_SRC).toContain("import { isSyncDisabledConfig } from '../core/sync-policy.ts';");
+    expect(AUTOPILOT_SRC).toContain("import { autopilotGitPullEnabled, isSyncDisabledConfig } from '../core/sync-policy.ts';");
     expect(AUTOPILOT_SRC).not.toContain("await import('../core/sync-policy.ts')");
     const skipIdx = loopBody.indexOf('if (isSyncDisabledConfig(src.config)) continue;');
     const localPathGuardIdx = loopBody.indexOf("if (!src.local_path) continue;");

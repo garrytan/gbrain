@@ -188,6 +188,13 @@ vars — incident-time escape hatches, not everyday knobs.
    run, not evidence of repeated deletions. Remote doctor exposes only
    source-scoped aggregate diagnostics, not paths or receipt identifiers.
 
+   Autopilot normally pulls a configured Git remote before automatic sync.
+   If another process updates the checked-out repositories, run
+   `gbrain config set autopilot.git_pull false`. Autopilot will still index
+   those checkouts, including through per-source cycles and the legacy
+   single-source fallback. Explicit `gbrain sync` retains its own `--no-pull`
+   option. Restore the default with `gbrain config set autopilot.git_pull true`.
+
 5. **Staleness can't read "fresh" forever.** A source whose content stopped
    moving (or whose local clone vanished) would otherwise report fresh
    indefinitely off the stored content timestamp. Content-relative staleness

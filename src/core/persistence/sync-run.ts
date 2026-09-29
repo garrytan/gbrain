@@ -225,6 +225,7 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
     try { return { ...synced, links: await extractManagedStaleLinks(engine, { sourceId: done.sourceId, maxPages: 1000, signal,
       slugs: done.entries.flatMap(entry => entry.action === 'import' && entry.slug ? [entry.slug] : []) }) }; }
     catch { return synced; }
+  };
   const clearLegacyCheckpointAfterRetry = (): void => {
     if (opts.retryFailed) clearLegacyCheckpointFailuresAfterSuccessfulRetry(context.sourceId);
   };

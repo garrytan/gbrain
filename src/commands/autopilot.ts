@@ -48,7 +48,7 @@ import { evaluateQuietHours } from '../core/minions/quiet-hours.ts';
 import { inspectLock } from '../core/db-lock.ts';
 import { registerCleanup } from '../core/process-cleanup.ts';
 import { loadAllSources, sourceConfigHasRemoteUrl, sourceLocalPathSkipWarning, relativeSourceLocalPathSkipWarning } from '../core/sources-load.ts';
-import { isSyncDisabledConfig } from '../core/sync-policy.ts';
+import { autopilotGitPullEnabled, isSyncDisabledConfig } from '../core/sync-policy.ts';
 import { resolveAutopilotDispatchTimeoutMs } from './autopilot-timeout.ts';
 import {
   autopilotRemediationIdempotencyKey,
@@ -1158,7 +1158,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
                   {
                     sourceId: src.id,
                     repoPath: src.local_path,
-                    pull: sourceConfigHasRemoteUrl(src.config),
+                    pull: await autopilotGitPullEnabled(engine) && sourceConfigHasRemoteUrl(src.config),
                     auto_embed_backfill: true,
                     embed_reason: 'autopilot_freshness',
                   },
@@ -1533,10 +1533,9 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
         // and pass the abort signal so the cycle winds down between phases.
         const cyclePromise = runCycle(engine, {
           brainDir: repoPath,
-          // Autopilot daemon path: pulls by default (matches
-          // pre-v0.17 autopilot behavior). CLI dream defaults false
-          // for cron safety; that choice is scoped to dream only.
-          pull: true,
+          // Preserve the automatic pull default, with an operator opt-out for
+          // repositories updated by a separate process.
+          pull: await autopilotGitPullEnabled(engine),
           signal: shutdownAbort.signal,
           yieldBetweenPhases: async () => {
             await new Promise(r => setImmediate(r));
