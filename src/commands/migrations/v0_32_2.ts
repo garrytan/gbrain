@@ -24,6 +24,9 @@
  * fence-write.ts). Dirty-tree refusal mirrors src/core/dry-fix.ts so
  * the user can review the diff before committing.
  *
+ * Connector facts stamped with the cross-source provenance prefix (#5504)
+ * are DB-only by construction and never selected for the backfill.
+ *
  * Facts with NULL entity_slug are structurally unfenceable (no page to
  * fence onto). They're skipped with a warning; the operator decides
  * whether to hand-curate or delete them. Their row_num stays NULL
@@ -41,6 +44,7 @@ import { loadConfig, toEngineConfig } from '../../core/config.ts';
 import { createEngine } from '../../core/engine-factory.ts';
 import { parseFactsFence, renderFactsTable, replaceOrInsertFactsFence } from '../../core/facts-fence.ts';
 import { resolvePageWriteTarget } from '../../core/write-through.ts';
+import { CROSS_SOURCE_PROVENANCE_PREFIX } from '../../core/facts/write-single.ts';
 
 let testEngineOverride: BrainEngine | null = null;
 export function __setTestEngineOverride(engine: BrainEngine | null): void {
@@ -169,7 +173,10 @@ async function phaseBFenceFacts(
     for (const s of sources) localPathById.set(s.id, s.local_path);
 
     // Walk legacy rows in (source_id, entity_slug) groups for per-page
-    // atomic writes.
+    // atomic writes. #5504: a connector fact whose entity resolved in another
+    // federated source is DB-only by construction, so it is never a backfill
+    // row even when its source later gains a page with the same slug. Same
+    // exclusion as the extract_facts empty-fence guard that advises this drain.
     const legacy = await engine.executeRaw<LegacyFactRow>(
       `SELECT id, source_id, entity_slug, fact, kind, visibility, notability,
               context, valid_from, valid_until, source, confidence,
@@ -177,7 +184,9 @@ async function phaseBFenceFacts(
                 AND p.slug = f.entity_slug AND p.deleted_at IS NULL) AS page_exists
          FROM facts f
         WHERE row_num IS NULL AND expired_at IS NULL
+          AND COALESCE(source, '') NOT LIKE $1
         ORDER BY source_id, entity_slug, id`,
+      [`${CROSS_SOURCE_PROVENANCE_PREFIX}%`],
     );
 
     const outcome: PhaseBOutcome = {

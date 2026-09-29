@@ -48,6 +48,7 @@ function msg(over: Partial<GmailMessageMeta> = {}): GmailMessageMeta {
     internalDateMs: ms,
     labelIds: [],
     listUnsubscribe: false,
+    autoSubmitted: false,
     bodyText: 'Sharing the roadmap draft.',
     ...over,
   };

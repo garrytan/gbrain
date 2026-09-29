@@ -154,6 +154,41 @@ describe('entity card (#4352 — covers entity/context_pack/delta)', () => {
     expect(localRes.found).toBe(true);
     expect(localRes.card?.entity.slug).toBe('notes/private-page');
   });
+
+  test('#5504: cross-source facts reach the trusted card only; remote visibility filtering unchanged', async () => {
+    const slug = 'people/vis-cross-example';
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, config) VALUES ('vis-mail', 'vis-mail', '{"kind":"google","federated":true}'::jsonb)
+       ON CONFLICT (id) DO NOTHING`,
+    );
+    await engine.putPage(slug, { type: 'person', title: 'Vis Cross', compiled_truth: 'Synthetic.' }, { sourceId: 'default' });
+    try {
+      for (const [sourceId, visibility] of [
+        ['default', 'world'], ['default', 'private'], ['vis-mail', 'world'], ['vis-mail', 'private'],
+      ] as const) {
+        await engine.executeRaw(
+          `INSERT INTO facts (source_id, entity_slug, fact, kind, source, visibility)
+           VALUES ($1, $2, $3, 'commitment', 'cross-source:vis-test', $4)`,
+          [sourceId, slug, `${sourceId} ${visibility} commitment`, visibility],
+        );
+      }
+      const texts = (card: { open_threads: Array<{ text: string }> }) => card.open_threads.map((t) => t.text).sort();
+
+      const remote = await buildEntityCard(engine, 'default', slug, { remote: true });
+      expect(texts(remote.card!)).toEqual(['default world commitment']);
+      expect(remote.card!.active_fact_count).toBe(1);
+
+      // Trusted: no visibility filter, both sources (open_threads caps at 3).
+      const local = await buildEntityCard(engine, 'default', slug, { remote: false });
+      expect(local.card!.open_threads).toHaveLength(3);
+      expect(texts(local.card!).some((t) => t.startsWith('vis-mail'))).toBe(true);
+      expect(local.card!.active_fact_count).toBe(4);
+    } finally {
+      await engine.executeRaw(`DELETE FROM facts WHERE entity_slug = $1`, [slug]);
+      await engine.deletePage(slug, { sourceId: 'default' });
+      await engine.executeRaw(`DELETE FROM sources WHERE id = 'vis-mail'`);
+    }
+  });
 });
 
 describe('page read ops (#4352 remediation — list_pages / get_page / fetch)', () => {

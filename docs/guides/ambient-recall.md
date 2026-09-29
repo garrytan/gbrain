@@ -62,7 +62,10 @@ facts in, pass `include_private` — and it is honored ONLY for trusted-local
 callers (`remote === false`, i.e. the CLI/hook path). A remote MCP caller never
 widens, even if it asks (fail-closed). When it does widen, all arms widen
 together, so a pack is never a mix of private facts beside world-stripped
-synopses.
+synopses. A widened entity card also carries the facts and open loops other
+`federated: true` sources attach to that page (for example a Google source's
+commitments about a person in `default`), the same rows the local entity card
+shows.
 
 ## Budgets
 

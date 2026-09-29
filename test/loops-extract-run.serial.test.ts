@@ -16,7 +16,10 @@
  * Synthetic data only — every person/email/company below is a placeholder.
  */
 
-import { describe, test, expect, beforeAll, afterAll, mock } from 'bun:test';
+import { describe, test, expect, beforeAll, afterAll, afterEach, mock } from 'bun:test';
+import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 // ── Gateway mock (must precede every import that can reach ai/gateway.ts) ──
 interface ChatReq {
@@ -55,6 +58,8 @@ const { runLoopsExtract, isLoopsExtractionEnabled } = await import(
 );
 const { normalizeAlias } = await import('../src/core/search/alias-normalize.ts');
 const { MinionQueue } = await import('../src/core/minions/queue.ts');
+const { readRecentStubGuardEvents } = await import('../src/core/facts/stub-guard-audit.ts');
+const { withEnv } = await import('./helpers/with-env.ts');
 
 const SRC = 'g1';
 const EMAIL_SLUG = 'emails/2026/08/2026-08-20-test-thread-abcd1234.md';
@@ -663,5 +668,159 @@ describe('runLoopsExtract', () => {
     expect(byType['awaiting_reply_from']).toBe('I will share the pilot metrics by Wednesday.');
     expect(byType['owes_to']).toBe('Send Alice the compliance checklist');
     for (const e of edges) expect(e.context).not.toContain('compliance checklist by Tuesday');
+  });
+});
+
+/**
+ * #5504: the counterparty's person page lives in another federated source.
+ * Connector source `g-xs` (federated: true, the writer rule; own local_path)
+ * extracts a commitment naming a person whose page exists only in `b-fed`
+ * (federated: true, own local_path). `g1` above has federation unset, so it
+ * is never a candidate and its own `people/alice-example` never contests.
+ */
+describe('runLoopsExtract: counterparty page in another federated source (#5504)', () => {
+  const XS = 'g-xs';
+  const FED = 'b-fed';
+  let xsDir: string;
+  let fedDir: string;
+  let auditDir: string;
+  let threadSeq = 0;
+
+  beforeAll(async () => {
+    xsDir = mkdtempSync(join(tmpdir(), 'loops-xs-conn-'));
+    fedDir = mkdtempSync(join(tmpdir(), 'loops-xs-fed-'));
+    auditDir = mkdtempSync(join(tmpdir(), 'loops-xs-audit-'));
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config) VALUES ($1, $1, $2, '{"federated": true}'::jsonb)`,
+      [XS, xsDir],
+    );
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config) VALUES ($1, $1, $2, '{"federated": true}'::jsonb)`,
+      [FED, fedDir],
+    );
+    await engine.putPage(
+      PERSON_SLUG,
+      { type: 'person', title: 'Alice Example', compiled_truth: 'A synthetic person page.' },
+      { sourceId: FED },
+    );
+  });
+
+  afterAll(() => {
+    for (const d of [xsDir, fedDir, auditDir]) rmSync(d, { recursive: true, force: true });
+  });
+
+  afterEach(() => {
+    chatImpl = async () => ({ text: '{"commitments":[],"decisions_pending":[]}', stopReason: 'end' });
+  });
+
+  async function extractNaming(counterpartyName: string) {
+    threadSeq += 1;
+    const slug = `emails/2026/08/2026-08-26-cross-source-${threadSeq}.md`;
+    await engine.putPage(
+      slug,
+      {
+        type: 'email',
+        title: 'Re: widget-co deck',
+        compiled_truth: 'Me: I will send you the deck by Friday.\n',
+        frontmatter: { thread_id: `thread-xs-${threadSeq}`, date: '2026-08-26T10:00:00Z' },
+      },
+      { sourceId: XS },
+    );
+    chatImpl = async () => ({
+      text: JSON.stringify({
+        commitments: [
+          {
+            direction: 'owed_by_me',
+            text: `Send ${counterpartyName} the widget-co deck`,
+            counterparty_name: counterpartyName,
+            counterparty_email: 'alice@example.com',
+            due_iso: null,
+            quote: 'I will send you the deck by Friday.',
+          },
+        ],
+        decisions_pending: [],
+      }),
+      stopReason: 'end',
+    });
+    const r = await withEnv({ GBRAIN_AUDIT_DIR: auditDir }, () => runLoopsExtract(engine, { slug, sourceId: XS }));
+    return { slug, r };
+  }
+
+  for (const name of ['Alice Example', 'Alice']) {
+    test(`"${name}" resolves to the page in the federated source: fact, loop row and edge, no stub`, async () => {
+      const { slug, r } = await extractNaming(name);
+      expect(r.status).toBe('extracted');
+      expect(r.loop_ids.length).toBe(1);
+
+      const [loop] = await engine.executeRaw<{ counterparty_slug: string | null; fact_id: number | null }>(
+        `SELECT counterparty_slug, fact_id FROM open_loops WHERE id = $1`,
+        [r.loop_ids[0]],
+      );
+      expect(loop.counterparty_slug).toBe(PERSON_SLUG);
+      expect(loop.fact_id).not.toBeNull();
+
+      const [fact] = await engine.executeRaw<{ source_id: string; entity_slug: string; source_markdown_slug: string | null }>(
+        `SELECT source_id, entity_slug, source_markdown_slug FROM facts WHERE id = $1`,
+        [loop.fact_id],
+      );
+      expect(fact).toEqual({ source_id: XS, entity_slug: PERSON_SLUG, source_markdown_slug: null });
+
+      // No page file in either tree, and the stub guard never fired.
+      expect(existsSync(join(xsDir, `${PERSON_SLUG}.md`))).toBe(false);
+      expect(existsSync(join(fedDir, `${PERSON_SLUG}.md`))).toBe(false);
+      expect(readdirSync(xsDir)).toEqual([]);
+      const events = await withEnv({ GBRAIN_AUDIT_DIR: auditDir }, async () =>
+        readRecentStubGuardEvents({ sinceMs: 60_000 }),
+      );
+      expect(events).toEqual([]);
+
+      // Projection 3 crosses sources: thread page in g-xs -> person page in b-fed.
+      const edges = await engine.executeRaw<{ from_source: string; to_source: string; to_slug: string; link_type: string }>(
+        `SELECT fp.source_id AS from_source, tp.source_id AS to_source, tp.slug AS to_slug, l.link_type
+           FROM links l
+           JOIN pages fp ON fp.id = l.from_page_id
+           JOIN pages tp ON tp.id = l.to_page_id
+          WHERE l.link_source = 'google-loops' AND fp.slug = $1`,
+        [slug],
+      );
+      expect(edges).toEqual([{ from_source: XS, to_source: FED, to_slug: PERSON_SLUG, link_type: 'owes_to' }]);
+    });
+  }
+
+  test('a failed fact projection is logged with slug, source id and error only; the loop row still lands', async () => {
+    const originalInsertFact = engine.insertFact.bind(engine);
+    const warnings: string[] = [];
+    const originalWarn = console.warn;
+    // The cross-source fact takes the DB-only insert, so failing it forces
+    // the projection's catch.
+    engine.insertFact = async () => {
+      throw new Error('synthetic facts insert failure');
+    };
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args.map(String).join(' '));
+    };
+    let result: Awaited<ReturnType<typeof extractNaming>>;
+    try {
+      result = await extractNaming('Alice Example');
+    } finally {
+      engine.insertFact = originalInsertFact;
+      console.warn = originalWarn;
+    }
+
+    const { slug, r } = result!;
+    expect(r.status).toBe('extracted');
+    const [loop] = await engine.executeRaw<{ counterparty_slug: string | null; fact_id: number | null }>(
+      `SELECT counterparty_slug, fact_id FROM open_loops WHERE id = $1`,
+      [r.loop_ids[0]],
+    );
+    expect(loop.fact_id).toBeNull();
+    expect(loop.counterparty_slug).toBe(PERSON_SLUG);
+
+    const lines = warnings.filter((w) => w.startsWith('[loops_extract] fact projection failed'));
+    expect(lines).toEqual([
+      `[loops_extract] fact projection failed slug=${slug} source=${XS}: synthetic facts insert failure`,
+    ]);
+    expect(lines[0]).not.toContain('widget-co deck');
+    expect(lines[0]).not.toContain('by Friday');
   });
 });

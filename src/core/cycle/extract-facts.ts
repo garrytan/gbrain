@@ -31,7 +31,10 @@
  * source-isolation invariant) — `row_num IS NULL` (never fenced) AND
  * `entity_slug` resolves to a live page in this source (so the v0_32_2
  * migration's Phase B could fence them) AND the row is not soft-expired
- * (`expired_at IS NULL`). Status returns `warn` with a hint to re-run
+ * (`expired_at IS NULL`) AND the row does not carry the #5504
+ * cross-source provenance prefix (a connector fact whose entity resolved in
+ * another federated source is DB-only by construction, and Phase B skips it
+ * too). Status returns `warn` with a hint to re-run
  * the v0.32.2 fence backfill (`apply-migrations --force-retry 0.32.2`
  * then `--yes` — a bare `--yes` is a no-op once the ledger says
  * complete). Without the guard, an interrupted upgrade where v0_32_2
@@ -58,6 +61,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import type { BrainEngine } from '../engine.ts';
 import { assertUnmanagedCanonicalWriter } from '../persistence/maintenance.ts';
 import { resolveSupersededByRow, type SupersedeTarget } from '../facts/supersede-resolve.ts';
+import { CROSS_SOURCE_PROVENANCE_PREFIX } from '../facts/write-single.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
 import { classifyRunStop, upsertExtractRollup } from '../extract/rollup-writer.ts';
 import { parseFactsFence, FACTS_FENCE_BEGIN } from '../facts-fence.ts';
@@ -422,6 +426,13 @@ export async function runExtractFacts(
   // maps to a LIVE page; without the local_path check those rows
   // tripped the guard forever with drain advice (`apply-migrations
   // --force-retry 0.32.2`) that is a structural no-op for them.
+  //
+  // #5504: a connector fact whose entity resolved in another federated
+  // source is DB-only by construction and carries the cross-source
+  // provenance prefix. When the writing source later gains a page with the
+  // same slug (a contact page), that row is not a v0.31 backfill row and
+  // must not halt this source's cycle. The reconcile pass never touches it
+  // either way (it keys on source_markdown_slug, which the row leaves NULL).
   const legacy = await engine.executeRaw<{ n: string }>(
     `SELECT COUNT(*) AS n
        FROM facts f
@@ -429,6 +440,7 @@ export async function runExtractFacts(
         AND f.row_num IS NULL
         AND f.entity_slug IS NOT NULL
         AND f.expired_at IS NULL
+        AND COALESCE(f.source, '') NOT LIKE $2
         AND EXISTS (
           SELECT 1 FROM pages p
            WHERE p.source_id = f.source_id
@@ -440,7 +452,7 @@ export async function runExtractFacts(
            WHERE s.id = f.source_id
              AND s.local_path IS NOT NULL
         )`,
-    [sourceId],
+    [sourceId, `${CROSS_SOURCE_PROVENANCE_PREFIX}%`],
   );
   const legacyCount = parseInt(legacy[0]?.n ?? '0', 10);
   result.legacyRowsPending = legacyCount;

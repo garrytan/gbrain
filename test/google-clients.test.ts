@@ -668,6 +668,43 @@ describe('GmailClient', () => {
     expect(third.labelIds).toEqual(['SENT']);
   });
 
+  test('getThread stamps autoSubmitted from the RFC 3834 Auto-Submitted header', async () => {
+    // [header value, or null for no header] -> expected autoSubmitted.
+    const cases: Array<[string | null, boolean]> = [
+      ['auto-generated', true],
+      [' Auto-Replied ', true],
+      ['auto-generated; x-tracker=widget-co', true],
+      ['no', false],
+      ['NO', false],
+      ['', false],
+      [null, false],
+    ];
+    const rawThread = {
+      id: '17aa5555dddd6666',
+      messages: cases.map(([value], i) => ({
+        id: `18c2f4a9b3d21f${(0x10 + i).toString(16)}`,
+        threadId: '17aa5555dddd6666',
+        labelIds: ['INBOX'],
+        internalDate: String(Date.parse('2026-08-10T09:00:00Z') + i * 60_000),
+        payload: {
+          mimeType: 'text/plain',
+          headers: [
+            { name: 'From', value: 'Widget Tracker <tracker@widget-co.example>' },
+            { name: 'To', value: 'a@example.com' },
+            { name: 'Subject', value: `Issue #${i} updated` },
+            ...(value === null ? [] : [{ name: 'Auto-Submitted', value }]),
+          ],
+          body: { data: b64url('Status changed.') },
+        },
+      })),
+    };
+    const h = makeHarness(() => json(rawThread));
+    const gmail = new GmailClient(h.tokens, h.fetchImpl, () => {}, CLIENT_ID);
+    const thread = await gmail.getThread('17aa5555dddd6666', 'a@example.com');
+
+    expect(thread.messages.map((m) => m.autoSubmitted)).toEqual(cases.map(([, expected]) => expected));
+  });
+
   test('getThread stamps calendarMethod from a real-shape text/calendar part; plain messages get null', async () => {
     const rawThread = {
       id: '17aa7777eeee8888',

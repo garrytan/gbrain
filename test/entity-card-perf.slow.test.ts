@@ -22,6 +22,10 @@
  *      budget when getPage floors to 1ms — the earlier 50× tripped on fast
  *      runners (a p99 tail ÷ a sub-ms median) while p99 stayed well under budget.
  *
+ * #5504: a trusted arm (remote: false) runs the same two gates on cards whose
+ * page also receives facts and open loops from two referring connector
+ * sources (the cross-source reference rule adds a sources + pages lookup).
+ *
  * The 200K-page validation is a documented MANUAL recipe in
  * docs/protocol/MEMORY_VERBS_v1.md — not CI-gated (seed time would dominate).
  *
@@ -57,6 +61,7 @@ const FACTS = 40_000;
 const WARMUP = 20;
 const MEASURED = 200;
 const TARGET_ENTITIES = 50; // pages the measured calls rotate over
+const CONNECTOR_SOURCES = ['perf-mail-a', 'perf-mail-b'];
 
 const P99_BUDGET_MS = 100 * (Number(process.env.GBRAIN_PERF_BUDGET_MULTIPLIER) || 1);
 // v0.45.7 boundary verbs — MEMORY_VERBS_v1.md promises "zero-LLM, sub-second"
@@ -154,7 +159,31 @@ beforeAll(async () => {
             'world', 'medium', NOW(), 'perf-seed', 1.0, NOW()
      FROM generate_series(0, ${TARGET_ENTITIES - 1}) t, generate_series(1, 20) g`,
   );
-  await engine.executeRaw('ANALYZE pages, links, page_aliases, facts');
+  // #5504 trusted arm: two connector sources (`federated: true`, no pages of
+  // their own) store facts and open loops under every target's slug, so a
+  // trusted card reads the page's source plus both referring sources.
+  for (const id of CONNECTOR_SOURCES) {
+    await db.query(
+      `INSERT INTO sources (id, name, config) VALUES ($1, $1, '{"kind":"google","federated":true}'::jsonb) ON CONFLICT (id) DO NOTHING`,
+      [id],
+    );
+    await db.query(
+      `INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, notability, valid_from, source, confidence, created_at)
+       SELECT $1, 'people/target-person-' || t::text,
+              'connector fact ' || g::text || ' about person ' || t::text,
+              'commitment', 'private', 'medium', NOW(), 'cross-source:perf-seed', 1.0, NOW()
+       FROM generate_series(0, ${TARGET_ENTITIES - 1}) t, generate_series(1, 5) g`,
+      [id],
+    );
+    await db.query(
+      `INSERT INTO open_loops (source_id, dedup_key, loop_type, counterparty_slug, summary, detector)
+       SELECT $1, 'commit:perf-' || t::text, 'commitment_owed_by_me', 'people/target-person-' || t::text,
+              'connector loop for person ' || t::text, 'llm_extract'
+       FROM generate_series(0, ${TARGET_ENTITIES - 1}) t`,
+      [id],
+    );
+  }
+  await engine.executeRaw('ANALYZE pages, links, page_aliases, facts, open_loops, sources');
 }, 300_000);
 
 afterAll(async () => {
@@ -205,6 +234,53 @@ describe('entity card p99 latency gate', () => {
       `| ratio=${(p99 / pageP50).toFixed(1)}x (ceiling ${RATIO_CEILING}x) | budget=${P99_BUDGET_MS}ms`,
     );
 
+    expect(p99).toBeLessThan(P99_BUDGET_MS);
+    expect(p99 / pageP50).toBeLessThanOrEqual(RATIO_CEILING);
+  }, 300_000);
+});
+
+describe('entity card p99 latency gate, trusted cross-source arm (#5504)', () => {
+  it(`trusted p99 < ${P99_BUDGET_MS}ms with rows in ${CONNECTOR_SOURCES.length} referring sources`, async () => {
+    const names: string[] = [];
+    for (let i = 0; i < TARGET_ENTITIES; i++) {
+      names.push(`tp${i}`, `Target Person ${i}`, `people/target-person-${i}`, `target-person-${i}`);
+    }
+
+    for (let i = 0; i < WARMUP; i++) {
+      await buildEntityCard(engine, 'default', names[i % names.length], { remote: false });
+    }
+
+    const samples: number[] = [];
+    let lastCount = 0;
+    for (let i = 0; i < MEASURED; i++) {
+      const name = names[(i * 13) % names.length];
+      const t0 = performance.now();
+      const res = await buildEntityCard(engine, 'default', name, { remote: false });
+      samples.push(performance.now() - t0);
+      lastCount = res.card?.active_fact_count ?? 0;
+    }
+    samples.sort((a, b) => a - b);
+    const p50 = percentile(samples, 50);
+    const p99 = percentile(samples, 99);
+
+    const pageSamples: number[] = [];
+    for (let i = 0; i < 50; i++) {
+      const t0 = performance.now();
+      await engine.getPage(`people/target-person-${i % TARGET_ENTITIES}`, { sourceId: 'default' });
+      pageSamples.push(performance.now() - t0);
+    }
+    pageSamples.sort((a, b) => a - b);
+    const pageP50 = Math.max(percentile(pageSamples, 50), 1.0);
+
+    // eslint-disable-next-line no-console
+    console.log(
+      `[entity-card-perf trusted] referring=${CONNECTOR_SOURCES.length} ` +
+      `entity p50=${p50.toFixed(2)}ms p99=${p99.toFixed(2)}ms | getPage p50=${pageP50.toFixed(2)}ms ` +
+      `| ratio=${(p99 / pageP50).toFixed(1)}x (ceiling ${RATIO_CEILING}x) | budget=${P99_BUDGET_MS}ms`,
+    );
+
+    // Real-work guard: 20 own + 5 per referring source, so the widened read ran.
+    expect(lastCount).toBe(20 + 5 * CONNECTOR_SOURCES.length);
     expect(p99).toBeLessThan(P99_BUDGET_MS);
     expect(p99 / pageP50).toBeLessThanOrEqual(RATIO_CEILING);
   }, 300_000);

@@ -15,6 +15,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runExtractFacts } from '../src/core/cycle/extract-facts.ts';
+import { CROSS_SOURCE_PROVENANCE_PREFIX } from '../src/core/facts/write-single.ts';
 import { parseFactsFence } from '../src/core/facts-fence.ts';
 import { importFromContent } from '../src/core/import-file.ts';
 import { acquirePageLock } from '../src/core/page-lock.ts';
@@ -1283,6 +1284,34 @@ describe('runExtractFacts — empty-fence guard (Codex R2-#7)', () => {
     expect(r.factsInserted).toBe(0);
     expect(r.factsDeleted).toBe(0);
     expect(r.warnings.some(w => w.includes('apply-migrations'))).toBe(true);
+  });
+
+  test('#5504: a cross-source connector row whose slug later gains a live page does NOT gate', async () => {
+    // Same shape as the genuine legacy row above, but written by a connector
+    // whose entity resolved in another federated source (provenance prefix).
+    // It stays DB-only and survives the reconcile pass untouched.
+    await putPage('people/erin', FACT_FENCE(
+      `| 1 | fence fact | fact | 1.0 | world | high | 2026-01-01 |  | s |  |`,
+    ));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (engine as any).db.query(
+      `INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, notability,
+                          valid_from, source, confidence)
+       VALUES ('default', 'people/erin', 'connector commitment', 'commitment', 'private', 'medium',
+               now(), $1, 1.0)`,
+      [`${CROSS_SOURCE_PROVENANCE_PREFIX}email thread "x" (emails/x)`],
+    );
+
+    const r = await runExtractFacts(engine, { slugs: ['people/erin'] });
+
+    expect(r.guardTriggered).toBe(false);
+    expect(r.legacyRowsPending).toBe(0);
+    expect(r.factsInserted).toBe(1);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const survivors = await (engine as any).db.query(
+      `SELECT fact FROM facts WHERE row_num IS NULL AND expired_at IS NULL`,
+    );
+    expect(survivors.rows.map((x: { fact: string }) => x.fact)).toEqual(['connector commitment']);
   });
 
   test('#2484: a soft-deleted backing page makes its legacy row unfenceable (does NOT gate)', async () => {

@@ -22,6 +22,7 @@
 import { OperationError, type Operation, type OperationContext } from './contract.ts';
 import { resolveRequestedScope, sourceScopeOpts } from './context.ts';
 import { validateSourceId } from '../utils.ts';
+import { resolveReferencedPages, type PageRef } from '../entities/cross-source-ref.ts';
 import {
   addSuppression,
   closeOpenLoop,
@@ -164,8 +165,10 @@ interface CounterpartyGroup {
   counterparty: string;
   counterparty_slug: string | null;
   counterparty_email: string | null;
-  /** The loops' home source — entity cards/aliases live THERE, not in the
-   *  caller's (often 'default') scope. */
+  /** Where the group's entity card lives: the source of the page the
+   *  counterparty slug refers to (#5504 cross-source rule, trusted local),
+   *  else the first loop's home source; never the caller's (often
+   *  'default') scope. */
   source_id: string;
   loop_count: number;
   oldest_opened_at: string;
@@ -174,7 +177,7 @@ interface CounterpartyGroup {
   context?: unknown;
 }
 
-function rankGroups(groups: CounterpartyGroup[], backlinks: Map<string, number>): CounterpartyGroup[] {
+function rankGroups(groups: CounterpartyGroup[], backlinks: Map<CounterpartyGroup, number>): CounterpartyGroup[] {
   const score = (g: CounterpartyGroup): number => {
     let s = g.loop_count * 10;
     if (g.nearest_due_at) {
@@ -183,10 +186,13 @@ function rankGroups(groups: CounterpartyGroup[], backlinks: Map<string, number>)
     }
     const ageDays = (Date.now() - Date.parse(g.oldest_opened_at)) / 86_400_000;
     s += Math.min(20, ageDays);
-    if (g.counterparty_slug) s += Math.min(20, backlinks.get(g.counterparty_slug) ?? 0);
+    s += Math.min(20, backlinks.get(g) ?? 0);
     return s;
   };
-  return [...groups].sort((a, b) => score(b) - score(a) || a.counterparty.localeCompare(b.counterparty));
+  return [...groups].sort((a, b) =>
+    score(b) - score(a)
+    || a.counterparty.localeCompare(b.counterparty)
+    || a.source_id.localeCompare(b.source_id));
 }
 
 function renderText(groups: CounterpartyGroup[], stale: boolean, noGoogleSources: boolean): string {
@@ -312,16 +318,31 @@ const open_loops: Operation = {
       };
     }
 
+    // #5504: trusted local groups key on the page each counterparty slug
+    // refers to (own source first, then the single federated page
+    // elsewhere), so a group's card never depends on row order. Slugs that
+    // refer to no page, and every remote group, keep per-slug keying.
+    const referenced = new Map<OpenLoopRow, PageRef | null>();
+    if (trusted) {
+      const withSlug = loops.filter((l) => l.counterparty_slug !== null);
+      const pages = await resolveReferencedPages(
+        ctx.engine,
+        withSlug.map((l) => ({ sourceId: l.source_id, slug: l.counterparty_slug as string })),
+      );
+      withSlug.forEach((l, i) => referenced.set(l, pages[i]));
+    }
     const byKey = new Map<string, CounterpartyGroup>();
     for (const l of loops) {
-      const key = l.counterparty_slug ?? l.counterparty_email ?? 'unknown';
+      const label = l.counterparty_slug ?? l.counterparty_email ?? 'unknown';
+      const page = referenced.get(l) ?? null;
+      const key = page ? `page:${page.sourceId}\n${page.slug}` : `slug:${label}`;
       let g = byKey.get(key);
       if (!g) {
         g = {
-          counterparty: key,
+          counterparty: label,
           counterparty_slug: l.counterparty_slug,
           counterparty_email: l.counterparty_email,
-          source_id: l.source_id,
+          source_id: page ? page.sourceId : l.source_id,
           loop_count: 0,
           oldest_opened_at: l.opened_at,
           nearest_due_at: null,
@@ -335,27 +356,27 @@ const open_loops: Operation = {
       g.loops.push(loopView(l, trusted, deepLinks));
     }
 
-    const backlinks = new Map<string, number>();
+    const backlinks = new Map<CounterpartyGroup, number>();
     try {
-      const slugs = [...byKey.values()]
-        .map((g) => g.counterparty_slug)
-        .filter((s): s is string => s !== null);
-      if (slugs.length > 0) {
-        // getBacklinkCounts takes numeric page ids (v0.46.35) — resolve the
-        // counterparty slugs within the loops' home sources first (same
-        // composite-key discipline as deepLinksFor), then fold back to slugs.
-        const srcIds = [...new Set([...byKey.values()].map((g) => g.source_id))];
-        const rows = await ctx.engine.executeRaw<{ id: number; slug: string }>(
-          `SELECT id, slug FROM pages
+      const withSlug = [...byKey.values()].filter((g) => g.counterparty_slug !== null);
+      if (withSlug.length > 0) {
+        // getBacklinkCounts takes numeric page ids (v0.46.35): resolve each
+        // group's counterparty slug in the group's card source first (same
+        // composite-key discipline as deepLinksFor), then fold back per group.
+        const slugs = [...new Set(withSlug.map((g) => g.counterparty_slug as string))];
+        const srcIds = [...new Set(withSlug.map((g) => g.source_id))];
+        const rows = await ctx.engine.executeRaw<{ id: number; slug: string; source_id: string }>(
+          `SELECT id, slug, source_id FROM pages
            WHERE source_id = ANY(string_to_array($2, E'\\n'))
              AND slug = ANY(string_to_array($1, E'\\n')) AND deleted_at IS NULL`,
           [slugs.join('\n'), srcIds.join('\n')],
         );
         if (rows.length > 0) {
           const counts = await ctx.engine.getBacklinkCounts(rows.map((r) => Number(r.id)));
-          for (const r of rows) {
-            const c = counts.get(Number(r.id));
-            if (c !== undefined) backlinks.set(r.slug, Math.max(backlinks.get(r.slug) ?? 0, c));
+          const byPage = new Map(rows.map((r) => [`${r.source_id}\n${r.slug}`, counts.get(Number(r.id))]));
+          for (const g of withSlug) {
+            const c = byPage.get(`${g.source_id}\n${g.counterparty_slug}`);
+            if (c !== undefined) backlinks.set(g, c);
           }
         }
       }
@@ -370,10 +391,11 @@ const open_loops: Operation = {
       for (const g of groups) {
         if (!g.counterparty_slug) continue;
         try {
-          // The card resolves in the LOOP's source (where the person page +
-          // alias rows live), never the caller's scope — an unqualified
-          // `gbrain waiting` would otherwise look in 'default' and silently
-          // never attach context (same bug class as deepLinksFor's fix).
+          // The card resolves in the group's card source (the referenced
+          // page's source, else the loop's), never the caller's scope; an
+          // unqualified `gbrain waiting` would otherwise look in 'default'
+          // and silently never attach context (same bug class as
+          // deepLinksFor's fix).
           const card = await buildEntityCard(ctx.engine, g.source_id, g.counterparty_slug, { remote: false });
           if (card.found) g.context = card.card;
         } catch { /* context is best-effort */ }

@@ -19,6 +19,7 @@ import { execFileSync } from 'node:child_process';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { v0_32_2, __setTestEngineOverride, __testing } from '../src/commands/migrations/v0_32_2.ts';
 import { parseFactsFence, upsertFactRow } from '../src/core/facts-fence.ts';
+import { CROSS_SOURCE_PROVENANCE_PREFIX } from '../src/core/facts/write-single.ts';
 
 let engine: PGLiteEngine;
 let brainDir: string;
@@ -57,6 +58,7 @@ async function seedLegacyFact(input: {
   visibility?: 'private' | 'world';
   notability?: 'high' | 'medium' | 'low';
   withPage?: boolean;
+  provenance?: string;
 }): Promise<number> {
   const sourceId = input.source_id ?? 'default';
   if (input.entity_slug && input.withPage !== false &&
@@ -78,7 +80,7 @@ async function seedLegacyFact(input: {
   const r = await (engine as any).db.query(
     `INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, notability,
                         valid_from, source, confidence)
-     VALUES ($1, $2, $3, 'fact', $4, $5, now(), 'mcp:put_page', 1.0)
+     VALUES ($1, $2, $3, 'fact', $4, $5, now(), $6, 1.0)
      RETURNING id`,
     [
       input.source_id ?? 'default',
@@ -86,6 +88,7 @@ async function seedLegacyFact(input: {
       input.fact,
       input.visibility ?? 'private',
       input.notability ?? 'medium',
+      input.provenance ?? 'mcp:put_page',
     ],
   );
   return r.rows[0].id;
@@ -401,6 +404,24 @@ describe('phaseBFenceFacts — missing pages and occupied fence rows', () => {
     });
     expect(facts[1]).toMatchObject({ rowNum: 5, claim: 'Shared claim', visibility: 'world' });
     expect((await __testing.phaseCVerify(engine, OPTS)).status).toBe('complete');
+  });
+
+  test('leaves a cross-source connector fact DB-only beside a legacy row on the same page (#5504)', async () => {
+    const path = await page();
+    await seedLegacyFact({ entity_slug: slug, fact: 'Legacy fact' });
+    const crossId = await seedLegacyFact({
+      entity_slug: slug, fact: 'Cross-source commitment',
+      provenance: `${CROSS_SOURCE_PROVENANCE_PREFIX}email thread "x" (emails/x)`,
+    });
+    const result = await __testing.phaseBFenceFacts(engine, OPTS);
+    expect(result.status).toBe('complete');
+    expect(result.detail).toContain('fenced=1');
+    const body = readFileSync(path, 'utf8');
+    expect(body).toContain('Legacy fact');
+    expect(body).not.toContain('Cross-source commitment');
+    expect((await engine.executeRaw<{ row_num: number | null; source_markdown_slug: string | null }>(
+      'SELECT row_num, source_markdown_slug FROM facts WHERE id = $1', [crossId],
+    ))[0]).toEqual({ row_num: null, source_markdown_slug: null });
   });
 
   test('does not re-fence soft-expired facts or rewrite a malformed existing fence', async () => {

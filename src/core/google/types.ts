@@ -112,6 +112,8 @@ export interface GmailMessageMeta {
   internalDateMs: number;
   labelIds: string[];
   listUnsubscribe: boolean;
+  /** RFC 3834: an `Auto-Submitted` header with any value other than `no`. */
+  autoSubmitted: boolean;
   /**
    * iCalendar method when the message carries a `text/calendar` part or an
    * `.ics` attachment — 'REQUEST' | 'REPLY' | 'CANCEL' | 'COUNTER' | '' when a

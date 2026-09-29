@@ -2643,3 +2643,76 @@ describe('getRawData soft-delete filter — parity (PGLite always; Postgres when
     }
   });
 });
+
+// #5504: listFactsByEntity `crossSourceIds`, rows from the named sources join
+// the page's own source only while their own source has no live page with the
+// slug (own source first). Same SQL shape on both engines; the PGLite arm
+// always runs, the Postgres arm joins when DATABASE_URL is configured.
+describe('listFactsByEntity crossSourceIds -- parity (PGLite always; Postgres when DATABASE_URL is set)', () => {
+  let pglite: PGLiteEngine;
+  const arms: Array<{ name: string; eng: BrainEngine }> = [];
+  const ENTITY = 'people/xs-parity-example';
+
+  beforeAll(async () => {
+    pglite = new PGLiteEngine();
+    await pglite.connect({});
+    await pglite.initSchema();
+    arms.push({ name: 'pglite', eng: pglite });
+    if (!SKIP_PG) arms.push({ name: 'postgres', eng: await setupDB() });
+  }, 90_000);
+
+  afterAll(async () => {
+    await pglite.disconnect();
+    if (!SKIP_PG) await teardownDB();
+  }, 30_000);
+
+  async function scenario(eng: BrainEngine) {
+    for (const id of ['xs-home', 'xs-mail', 'xs-own']) {
+      await eng.executeRaw(
+        `INSERT INTO sources (id, name, config) VALUES ($1, $1, '{}'::jsonb) ON CONFLICT (id) DO NOTHING`,
+        [id],
+      );
+    }
+    for (const sourceId of ['xs-home', 'xs-own']) {
+      await eng.putPage(ENTITY, { type: 'person', title: 'XS', compiled_truth: 'x', timeline: '' }, { sourceId });
+    }
+    const fact = async (source_id: string, text: string, extra: Record<string, unknown> = {}) =>
+      eng.insertFact(
+        { fact: text, kind: 'commitment', entity_slug: ENTITY, source: 'cross-source:test', visibility: 'world', ...extra },
+        { source_id },
+      );
+    await fact('xs-home', 'home fact');
+    await fact('xs-mail', 'mail fact');
+    await fact('xs-mail', 'mail private fact', { visibility: 'private' });
+    await fact('xs-mail', 'mail lapsed fact', { valid_until: new Date(Date.now() - 60_000) });
+    await fact('xs-mail', 'mail other entity', { entity_slug: 'people/xs-someone-else' });
+    await fact('xs-own', 'own-page fact');
+
+    const texts = (rows: Array<{ fact: string }>) => rows.map(r => r.fact).sort();
+    const cross = ['xs-mail', 'xs-own', 'xs-home'];
+    return {
+      own: texts(await eng.listFactsByEntity('xs-home', ENTITY)),
+      cross: texts(await eng.listFactsByEntity('xs-home', ENTITY, { crossSourceIds: cross })),
+      world: texts(await eng.listFactsByEntity('xs-home', ENTITY, { crossSourceIds: cross, visibility: ['world'] })),
+      history: texts(await eng.listFactsByEntity('xs-home', ENTITY, { crossSourceIds: cross, activeOnly: false })),
+      limited: (await eng.listFactsByEntity('xs-home', ENTITY, { crossSourceIds: cross, limit: 2 })).length,
+      empty: texts(await eng.listFactsByEntity('xs-home', ENTITY, { crossSourceIds: [] })),
+    };
+  }
+
+  test('both engines return the same rows; own-page sources and filters still apply', async () => {
+    expect(arms.length).toBeGreaterThan(0);
+    const results = [];
+    for (const { name, eng } of arms) results.push({ name, out: await scenario(eng) });
+    for (const { out } of results) expect(out).toEqual(results[0].out);
+
+    const out = results[0].out;
+    expect(out.own).toEqual(['home fact']);
+    // xs-own holds a live page, so its row stays off; xs-home is not duplicated.
+    expect(out.cross).toEqual(['home fact', 'mail fact', 'mail private fact']);
+    expect(out.world).toEqual(['home fact', 'mail fact']);
+    expect(out.history).toEqual(['home fact', 'mail fact', 'mail lapsed fact', 'mail private fact']);
+    expect(out.limited).toBe(2);
+    expect(out.empty).toEqual(['home fact']);
+  });
+});

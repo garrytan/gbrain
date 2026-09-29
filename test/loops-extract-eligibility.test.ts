@@ -26,6 +26,7 @@ interface MsgSpec {
   to?: string[];
   labels?: string[];
   listUnsub?: boolean;
+  autoSubmitted?: boolean;
   calendarMethod?: string | null;
   body?: string;
   subject?: string;
@@ -45,6 +46,7 @@ function msg(spec: MsgSpec): GmailMessageMeta {
     internalDateMs: Date.parse('2026-08-20T10:00:00.000Z'),
     labelIds: spec.labels ?? ['INBOX'],
     listUnsubscribe: spec.listUnsub ?? false,
+    autoSubmitted: spec.autoSubmitted ?? false,
     calendarMethod: spec.calendarMethod ?? null,
     bodyText: spec.body ?? 'Some body text.',
   };
@@ -239,6 +241,51 @@ const ROWS: Row[] = [
     ],
     eligible: false,
     reason: 'bulk_category',
+  },
+  // #5504: tracker notifications carry RFC 3834 Auto-Submitted, sit in
+  // CATEGORY_UPDATES with no List-Unsubscribe, and come from one tracker
+  // address, so neither bulk_category nor list_mail caught them.
+  {
+    name: 'a thread of only auto-submitted tracker notifications is not eligible',
+    messages: [
+      msg({ from: 'tracker@widget-co.example', labels: ['INBOX', 'CATEGORY_UPDATES'], autoSubmitted: true }),
+      msg({ from: 'tracker@widget-co.example', labels: ['INBOX', 'CATEGORY_UPDATES'], autoSubmitted: true }),
+    ],
+    eligible: false,
+    reason: 'no_substantive_messages',
+  },
+  {
+    name: 'a message not auto-submitted (Auto-Submitted: no, or header absent) counts as human',
+    messages: [msg({ from: 'bob@example.com', labels: ['INBOX', 'CATEGORY_UPDATES'], autoSubmitted: false })],
+    eligible: true,
+    reason: 'human_correspondence',
+  },
+  {
+    name: 'a human message beside auto-submitted ones keeps the thread eligible',
+    messages: [
+      msg({ from: 'tracker@widget-co.example', autoSubmitted: true }),
+      msg({ from: 'bob@example.com' }),
+    ],
+    eligible: true,
+    reason: 'human_correspondence',
+  },
+  {
+    name: 'an owner-written message in an auto-submitted thread keeps it eligible',
+    messages: [
+      msg({ from: 'tracker@widget-co.example', labels: ['INBOX', 'CATEGORY_UPDATES'], autoSubmitted: true }),
+      msg({ from: 'me@example.com', labels: ['SENT'], to: ['tracker@widget-co.example'] }),
+    ],
+    eligible: true,
+    reason: 'owner_participated',
+  },
+  {
+    name: "the owner's own auto-reply is not owner participation",
+    messages: [
+      msg({ from: 'tracker@widget-co.example', autoSubmitted: true }),
+      msg({ from: 'me@example.com', labels: ['SENT'], autoSubmitted: true, subject: 'Out of office' }),
+    ],
+    eligible: false,
+    reason: 'no_substantive_messages',
   },
 ];
 

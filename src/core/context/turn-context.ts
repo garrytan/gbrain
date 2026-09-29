@@ -438,8 +438,10 @@ async function fetchHotFacts(
 /**
  * pack mode — session-start / post-compaction bundle for a set of standing
  * entities: entity cards + open-threads + hot facts. World-only by default;
- * include_private widens the card + facts arms in lockstep. Sequential card
- * builds (PGLite is single-connection) so a deadline keeps the cards already built.
+ * include_private widens the card + facts arms in lockstep (a widened card
+ * also carries rows other federated sources attach to the entity, #5504).
+ * Sequential card builds (PGLite is single-connection) so a deadline keeps
+ * the cards already built.
  */
 async function assemblePack(
   engine: BrainEngine,

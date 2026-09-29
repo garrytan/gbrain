@@ -27,8 +27,9 @@ zero LLM, free, always on). For every synced Gmail thread:
 
 Precision rules (pinned by a labeled fixture corpus in
 `test/google-loop-detect.test.ts` — every false-positive class gets a
-fixture before its fix): noise senders (noreply/notifications), list mail
-(`List-Unsubscribe`), CC-only delivery, FYI/forwards without a question,
+fixture before its fix): noise senders (noreply/notifications), auto-submitted
+mail (an `Auto-Submitted` header with any value other than `no`, e.g. tracker
+notifications), list mail (`List-Unsubscribe`), CC-only delivery, FYI/forwards without a question,
 self-threads, and muted senders/threads never open loops. Sent-mail
 ingestion is what makes "unanswered" honest — your own replies are the
 negative filter.
@@ -141,6 +142,14 @@ the google-loops skill, whose daily-operation runbook covers muting: your
 agent runs `gbrain loops mute sender <email>` to stop tracking a sender and
 `gbrain loops unmute sender <email>` to undo it (unmute has no trigger of its
 own; the agent reaches for the command directly).
+
+A counterparty whose person or company page lives in another source still
+lands on that page: when the google source has no candidate of its own and
+exactly one other `federated: true` source has the page, the loop row and the
+commitment fact carry that page's slug (no stub page is created), and the
+entity card and `gbrain waiting` context of that page show them for local
+callers. Two federated sources holding the page is ambiguous, so the rows keep
+today's fallback and a log line names them.
 
 `gbrain waiting` and `gbrain loops list` read across **every source in the
 brain** by default (loops live in google sources, not `default` — a

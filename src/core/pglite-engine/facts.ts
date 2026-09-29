@@ -6,7 +6,7 @@
 import type { PGlite } from '@electric-sql/pglite';
 import type {
   FactRow, FactKind, FactVisibility, FactInsertStatus,
-  NewFact, FactListOpts, FactsHealth,
+  NewFact, FactListOpts, FactsByEntityOpts, FactsHealth,
 } from '../engine.ts';
 import { MAX_SEARCH_LIMIT, clampSearchLimit } from '../engine.ts';
 import { AUDIT_ROW_SOURCES } from '../facts/audit-sources.ts';
@@ -327,7 +327,7 @@ export async function listFactsByEntity(
   deps: PgliteFactsDeps,
     source_id: string,
     entitySlug: string,
-    opts?: FactListOpts,
+    opts?: FactsByEntityOpts,
   ): Promise<FactRow[]> {
     const where: string[] = [`entity_slug = $entitySlug`];
     const whereParams: Record<string, unknown> = { entitySlug };
@@ -335,8 +335,19 @@ export async function listFactsByEntity(
       where.push(`NOT (source = ANY($auditSources))`);
       whereParams.auditSources = [...AUDIT_ROW_SOURCES];
     }
+    const crossSourceIds = (opts?.crossSourceIds ?? []).filter(id => id !== source_id);
+    let sourcePredicate: string | undefined;
+    if (crossSourceIds.length > 0) {
+      // #5504: a cross-source row counts only while its own source has no
+      // live page with the slug (own source first). Parity with postgres.
+      sourcePredicate = `(source_id = $source_id OR (source_id = ANY($crossSourceIds) AND NOT EXISTS (
+          SELECT 1 FROM pages p
+           WHERE p.source_id = facts.source_id AND p.slug = facts.entity_slug AND p.deleted_at IS NULL)))`;
+      whereParams.crossSourceIds = crossSourceIds;
+    }
     return _listFacts(deps, source_id, {
       ...opts,
+      sourcePredicate,
       whereClauses: where,
       whereParams,
       order: 'valid_from DESC, id DESC',
@@ -645,6 +656,8 @@ async function _listFacts(
   deps: PgliteFactsDeps,
     source_id: string,
     opts: FactListOpts & {
+      /** Replaces `source_id = $source_id`; must still bind `$source_id`. */
+      sourcePredicate?: string;
       whereClauses?: string[];
       whereParams?: Record<string, unknown>;
       order: string;
@@ -652,7 +665,7 @@ async function _listFacts(
   ): Promise<FactRow[]> {
     const limit = clampSearchLimit(opts.limit, 50, MAX_SEARCH_LIMIT);
     const offset = Math.max(0, opts.offset ?? 0);
-    const whereParts: string[] = [`source_id = $source_id`];
+    const whereParts: string[] = [opts.sourcePredicate ?? `source_id = $source_id`];
     const params: Record<string, unknown> = { source_id };
     if (opts.activeOnly !== false) {
       // WP5 TTL honesty: active reads exclude validity-lapsed rows at read

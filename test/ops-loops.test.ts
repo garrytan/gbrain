@@ -14,7 +14,7 @@
  *
  * Synthetic data only.
  */
-import { describe, expect, test, beforeAll, afterAll, beforeEach } from 'bun:test';
+import { describe, expect, test, beforeAll, afterAll, beforeEach, spyOn } from 'bun:test';
 
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
@@ -27,6 +27,7 @@ import {
   upsertOpenLoop,
   type OpenLoopUpsert,
 } from '../src/core/loops/loops-store.ts';
+import { AMBIGUOUS_SLUG_LOG_CAP, resolveReferencedPages } from '../src/core/entities/cross-source-ref.ts';
 
 let engine: PGLiteEngine;
 
@@ -312,6 +313,211 @@ describe('open_loops deep links + context (trusted local)', () => {
       { include_context: false },
     )) as GroupsResult;
     expect(without.groups[0].context).toBeUndefined();
+  });
+});
+
+describe('open_loops cross-source counterparties (#5504)', () => {
+  const ALICE = 'people/alice-example';
+
+  // Only `federated: true` sources take part in the read-side rule; g1 is
+  // the connector source every case below writes from unless it says not.
+  beforeEach(async () => {
+    await engine.executeRaw(`UPDATE sources SET config = '{"kind":"google","federated":true}'::jsonb WHERE id = 'g1'`);
+  });
+
+  interface CtxGroup {
+    counterparty: string;
+    source_id: string;
+    loop_count: number;
+    context?: { entity: { slug: string; title: string }; open_threads: Array<{ text: string }> };
+  }
+
+  async function addGoogleSource(id: string): Promise<void> {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, config, last_sync_at)
+       VALUES ($1, $1, '{"kind":"google"}'::jsonb, now())
+       ON CONFLICT (id) DO NOTHING`,
+      [id],
+    );
+  }
+
+  async function person(sourceId: string, slug: string, title: string): Promise<void> {
+    await engine.putPage(slug, { type: 'person', title, compiled_truth: `${title}, synthetic.` }, { sourceId });
+  }
+
+  async function aliceLoop(sourceId: string, threadId: string, lastActivityAt?: string): Promise<void> {
+    await upsertOpenLoop(engine, loop({
+      sourceId,
+      threadId,
+      counterpartySlug: ALICE,
+      counterpartyEmail: 'alice@example.com',
+      summary: `Reply owed to alice (${sourceId})`,
+      ...(lastActivityAt ? { lastActivityAt } : {}),
+    }));
+  }
+
+  async function groups(c: Partial<OperationContext> = {}, p: Record<string, unknown> = {}): Promise<CtxGroup[]> {
+    const res = (await openLoopsOp.handler(ctx({ sourceId: undefined, ...c }), { all_sources: true, limit: 10, ...p })) as {
+      groups: CtxGroup[];
+    };
+    return res.groups;
+  }
+
+  test('a google loop for a default person page gets the default card as context', async () => {
+    await person('default', ALICE, 'Alice Default');
+    await aliceLoop('g1', '18c2f4a9b3d21e11');
+    const gs = await groups();
+    expect(gs).toHaveLength(1);
+    expect(gs[0].source_id).toBe('default');
+    expect(gs[0].context?.entity).toMatchObject({ slug: ALICE, title: 'Alice Default' });
+    // The default card carries the google loop (story-02 card widening).
+    expect(gs[0].context?.open_threads.map((t) => t.text)).toContain('Reply owed to alice (g1)');
+  });
+
+  test('ranking reads the backlink count of the referenced default page', async () => {
+    await person('default', ALICE, 'Alice Default');
+    for (let i = 0; i < 5; i++) {
+      await engine.putPage(`notes/alice-note-${i}`, { type: 'note', title: `Note ${i}`, compiled_truth: 'n' }, { sourceId: 'default' });
+      await engine.addLink(`notes/alice-note-${i}`, ALICE, 'synthetic', 'knows', 'markdown', undefined, undefined, {
+        fromSourceId: 'default',
+        toSourceId: 'default',
+      });
+    }
+    // Same loop score otherwise; aaron's loop is older and sorts first
+    // alphabetically, so alice leads only when the default page's backlinks
+    // count.
+    await upsertOpenLoop(engine, loop({
+      threadId: '18c2f4a9b3d21e13',
+      counterpartySlug: 'people/aaron-example',
+      counterpartyEmail: 'aaron@example.com',
+    }));
+    await aliceLoop('g1', '18c2f4a9b3d21e12');
+    const gs = await groups({}, { include_context: false });
+    expect(gs.map((g) => g.counterparty)).toEqual([ALICE, 'people/aaron-example']);
+  });
+
+  for (const order of ['g1 newest', 'g2 newest'] as const) {
+    test(`mixed group splits by referenced page whatever the row order (${order})`, async () => {
+      await addGoogleSource('g2');
+      await person('default', ALICE, 'Alice Default');
+      await person('g2', ALICE, 'Alice G2');
+      const newer = new Date().toISOString();
+      const older = new Date(Date.now() - 3_600_000).toISOString();
+      await aliceLoop('g1', '18c2f4a9b3d21e14', order === 'g1 newest' ? newer : older);
+      await aliceLoop('g2', '18c2f4a9b3d21e15', order === 'g2 newest' ? newer : older);
+      const gs = await groups();
+      expect(gs).toHaveLength(2);
+      const bySource = new Map(gs.map((g) => [g.source_id, g]));
+      expect(bySource.get('default')?.context?.entity.title).toBe('Alice Default');
+      expect(bySource.get('default')?.loop_count).toBe(1);
+      expect(bySource.get('g2')?.context?.entity.title).toBe('Alice G2');
+      expect(bySource.get('g2')?.loop_count).toBe(1);
+    });
+  }
+
+  test('loops whose slug refers to no page keep one per-slug group', async () => {
+    await addGoogleSource('g2');
+    await upsertOpenLoop(engine, loop({ threadId: '18c2f4a9b3d21e16', counterpartySlug: 'people/nobody-example' }));
+    await upsertOpenLoop(engine, loop({
+      sourceId: 'g2',
+      threadId: '18c2f4a9b3d21e17',
+      counterpartySlug: 'people/nobody-example',
+    }));
+    const gs = await groups();
+    expect(gs).toHaveLength(1);
+    expect(gs[0].loop_count).toBe(2);
+    expect(gs[0].context).toBeUndefined();
+  });
+
+  const perSlugCases: Array<{
+    name: string;
+    /** Config for the loop's source `g3`; omitted = the loop is written from g1. */
+    g3?: { config: Record<string, unknown>; archived?: boolean };
+    /** Extra sources configured `federated: true` holding a live page for the slug. */
+    federatedHolders?: string[];
+    slug?: string;
+    ambiguousLog?: boolean;
+  }> = [
+    { name: 'a loop from a federated:false source', g3: { config: { kind: 'google', federated: false } } },
+    { name: 'a loop from a source with federation unset', g3: { config: { kind: 'google' } } },
+    { name: 'a loop from an archived federated source', g3: { config: { kind: 'google', federated: true }, archived: true } },
+    { name: 'a slug with live pages in two federated sources', federatedHolders: ['crm'], ambiguousLog: true },
+    { name: 'a slug outside people/ and companies/', slug: 'concepts/alice-plan' },
+  ];
+
+  for (const cse of perSlugCases) {
+    test(`per-slug group in the loop's own source: ${cse.name}`, async () => {
+      const slug = cse.slug ?? ALICE;
+      const loopSource = cse.g3 ? 'g3' : 'g1';
+      if (cse.g3) {
+        await engine.executeRaw(
+          `INSERT INTO sources (id, name, config, archived, last_sync_at) VALUES ('g3', 'g3', $1::text::jsonb, $2, now())`,
+          [JSON.stringify(cse.g3.config), cse.g3.archived === true],
+        );
+      }
+      await engine.putPage(slug, { type: 'person', title: 'Alice Default', compiled_truth: 'Synthetic.' }, { sourceId: 'default' });
+      for (const id of cse.federatedHolders ?? []) {
+        await engine.executeRaw(
+          `INSERT INTO sources (id, name, config) VALUES ($1, $1, '{"federated":true}'::jsonb)`,
+          [id],
+        );
+        await engine.putPage(slug, { type: 'person', title: `Alice ${id}`, compiled_truth: 'Synthetic.' }, { sourceId: id });
+      }
+      await upsertOpenLoop(engine, loop({
+        sourceId: loopSource,
+        threadId: '18c2f4a9b3d21e19',
+        counterpartySlug: slug,
+        counterpartyEmail: 'alice@example.com',
+        summary: `Reply owed to alice (${loopSource})`,
+      }));
+      const errors = spyOn(console, 'error').mockImplementation(() => {});
+      let gs: CtxGroup[];
+      let logged: string[];
+      try {
+        gs = await groups();
+        logged = errors.mock.calls.flat().map(String);
+      } finally {
+        errors.mockRestore();
+      }
+      expect(gs.map((g) => [g.counterparty, g.source_id, g.loop_count])).toEqual([[slug, loopSource, 1]]);
+      expect(gs[0].context).toBeUndefined();
+      const ambiguous = logged.filter((m) => m.includes('ambiguous'));
+      expect(ambiguous).toHaveLength(cse.ambiguousLog ? 1 : 0);
+      if (cse.ambiguousLog) expect(ambiguous[0]).toContain(`1 row(s) (slugs ${slug})`);
+    });
+  }
+
+  test('the ambiguous-slug log names at most AMBIGUOUS_SLUG_LOG_CAP slugs and counts the rest', async () => {
+    const extra = 2;
+    const slugs = Array.from({ length: AMBIGUOUS_SLUG_LOG_CAP + extra }, (_, i) => `people/twin-${String(i).padStart(2, '0')}`);
+    await engine.executeRaw(`INSERT INTO sources (id, name, config) VALUES ('crm', 'crm', '{"federated":true}'::jsonb)`);
+    for (const slug of slugs) {
+      await person('default', slug, 'Twin Default');
+      await person('crm', slug, 'Twin Crm');
+    }
+    const errors = spyOn(console, 'error').mockImplementation(() => {});
+    let logged: string[];
+    try {
+      const out = await resolveReferencedPages(engine, slugs.map((slug) => ({ sourceId: 'g1', slug })));
+      expect(out).toEqual(slugs.map(() => null));
+      logged = errors.mock.calls.flat().map(String).filter((m) => m.includes('ambiguous'));
+    } finally {
+      errors.mockRestore();
+    }
+    expect(logged).toHaveLength(1);
+    expect(logged[0]).toContain(`${slugs.length} row(s) (slugs ${slugs.slice(0, AMBIGUOUS_SLUG_LOG_CAP).join(', ')} and ${extra} more)`);
+    expect(logged[0]).not.toContain(slugs[AMBIGUOUS_SLUG_LOG_CAP]);
+  });
+
+  test('remote callers keep the loop source (no cross-source page, no context)', async () => {
+    await person('default', ALICE, 'Alice Default');
+    await aliceLoop('g1', '18c2f4a9b3d21e18');
+    const res = (await openLoopsOp.handler(ctx({ remote: true, sourceId: 'g1' }), {})) as {
+      groups: CtxGroup[];
+    };
+    expect(res.groups).toHaveLength(1);
+    expect(res.groups[0].source_id).toBe('g1');
+    expect(res.groups[0].context).toBeUndefined();
   });
 });
 

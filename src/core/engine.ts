@@ -634,6 +634,17 @@ export interface FactListOpts {
   excludeAuditRows?: boolean;
 }
 
+/** `listFactsByEntity` options. */
+export interface FactsByEntityOpts extends FactListOpts {
+  /**
+   * #5504: other sources whose rows with this entity slug are returned too,
+   * each only while that source has no live page with the slug (the
+   * cross-source reference rule, `entities/cross-source-ref.ts`). Trusted
+   * local readers only; remote callers never pass it.
+   */
+  crossSourceIds?: string[];
+}
+
 /** Per-source operational health snapshot consumed by `gbrain doctor`. */
 export interface FactsHealth {
   source_id: string;
@@ -2163,7 +2174,7 @@ export interface BrainEngine {
   listFactsByEntity(
     source_id: string,
     entitySlug: string,
-    opts?: FactListOpts,
+    opts?: FactsByEntityOpts,
   ): Promise<FactRow[]>;
 
   /**

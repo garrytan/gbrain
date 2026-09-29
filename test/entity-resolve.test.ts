@@ -1,8 +1,10 @@
-import { describe, it, expect, beforeAll, afterAll } from 'bun:test';
+import { describe, it, expect, beforeAll, afterAll, afterEach } from 'bun:test';
 import {
+  resolveConnectorEntitySlug,
   resolveEntitySlug,
   resolveEntitySlugWithSource,
   slugify,
+  type ConnectorResolveResult,
   type ResolutionSource,
 } from '../src/core/entities/resolve.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -464,5 +466,264 @@ describe('alias_exact — liveness before uniqueness (v0.46.15 codex ship-review
     await engine.setPageAliases('people/twin-b', 'default', ['twinsy']);
     const r = await resolveEntitySlugWithSource(engine as unknown as BrainEngine, 'default', 'twinsy');
     expect(r!.source).not.toBe<ResolutionSource>('alias_exact');
+  });
+});
+
+/**
+ * #5504: connector-path resolution across federated sources. The writing
+ * source is `xs-g` (federated: true unless a case says otherwise); every
+ * case builds its own `xs-*` sources and pages and drops them afterwards, so
+ * the `default` pages above (federated: true, no `erin` pages) never contest
+ * a case.
+ */
+describe('resolveConnectorEntitySlug: cross-source fallback (#5504)', () => {
+  type Federation = true | false | 'unset';
+  interface XsCase {
+    name: string;
+    sources: Record<string, { federated: Federation; archived?: boolean }>;
+    pages: Array<{ source: string; slug: string; title: string; aliases?: string[] }>;
+    input: string;
+    expected: ConnectorResolveResult;
+  }
+
+  const fallback = (slug: string): ConnectorResolveResult => ({ slug, source: 'fallback_slugify', sourceId: 'xs-g' });
+  const erinInB = { source: 'xs-b', slug: 'people/erin-example', title: 'Erin Example' };
+
+  const CASES: XsCase[] = [
+    {
+      name: 'display name with a basename match in one other federated source resolves there',
+      sources: { 'xs-g': { federated: true }, 'xs-b': { federated: true } },
+      pages: [erinInB],
+      input: 'Erin Example',
+      expected: { slug: 'people/erin-example', source: 'fuzzy_match', sourceId: 'xs-b' },
+    },
+    {
+      name: 'bare name with a single prefix candidate in one other federated source resolves there',
+      sources: { 'xs-g': { federated: true }, 'xs-b': { federated: true } },
+      pages: [erinInB],
+      input: 'Erin',
+      expected: { slug: 'people/erin-example', source: 'fuzzy_match', sourceId: 'xs-b' },
+    },
+    {
+      name: 'an email alias in one other federated source resolves there',
+      sources: { 'xs-g': { federated: true }, 'xs-b': { federated: true } },
+      pages: [{ ...erinInB, aliases: ['erin@example.com'] }],
+      input: 'erin@example.com',
+      expected: { slug: 'people/erin-example', source: 'alias_exact', sourceId: 'xs-b' },
+    },
+    {
+      name: 'an exact slug in one other federated source resolves there',
+      sources: { 'xs-g': { federated: true }, 'xs-b': { federated: true } },
+      pages: [erinInB],
+      input: 'people/erin-example',
+      expected: { slug: 'people/erin-example', source: 'exact_page', sourceId: 'xs-b' },
+    },
+    {
+      name: 'a companies/ page in one other federated source resolves there',
+      sources: { 'xs-g': { federated: true }, 'xs-b': { federated: true } },
+      pages: [{ source: 'xs-b', slug: 'companies/widget-co', title: 'Widget Co' }],
+      input: 'Widget Co',
+      expected: { slug: 'companies/widget-co', source: 'fuzzy_match', sourceId: 'xs-b' },
+    },
+    {
+      // Operator decision (story-02 fix round 2): the writer is held to the
+      // read side's rule, which attaches rows only from federated sources.
+      name: 'a writing source with federation unset never resolves outside itself',
+      sources: { 'xs-g': { federated: 'unset' }, 'xs-b': { federated: true } },
+      pages: [erinInB],
+      input: 'Erin Example',
+      expected: fallback('erin-example'),
+    },
+    {
+      name: 'an archived writing source configured federated: true never resolves outside itself',
+      sources: { 'xs-g': { federated: true, archived: true }, 'xs-b': { federated: true } },
+      pages: [erinInB],
+      input: 'Erin Example',
+      expected: fallback('erin-example'),
+    },
+    {
+      name: 'matches in two other federated sources keep the fallback',
+      sources: { 'xs-g': { federated: true }, 'xs-b': { federated: true }, 'xs-c': { federated: true } },
+      pages: [erinInB, { ...erinInB, source: 'xs-c' }],
+      input: 'Erin Example',
+      expected: fallback('erin-example'),
+    },
+    {
+      name: 'a match in one source and ambiguous candidates in another keep the fallback',
+      sources: { 'xs-g': { federated: true }, 'xs-b': { federated: true }, 'xs-c': { federated: true } },
+      pages: [
+        erinInB,
+        { source: 'xs-c', slug: 'people/erin-one', title: 'Erin One' },
+        { source: 'xs-c', slug: 'people/erin-two', title: 'Erin Two' },
+      ],
+      input: 'Erin',
+      expected: fallback('erin'),
+    },
+    {
+      name: 'ambiguity inside the one contested source keeps the fallback',
+      sources: { 'xs-g': { federated: true }, 'xs-b': { federated: true } },
+      pages: [erinInB, { source: 'xs-b', slug: 'people/erin-other', title: 'Erin Other' }],
+      input: 'Erin',
+      expected: fallback('erin'),
+    },
+    {
+      name: 'a source configured federated: false is never consulted',
+      sources: { 'xs-g': { federated: true }, 'xs-b': { federated: false } },
+      pages: [erinInB],
+      input: 'Erin Example',
+      expected: fallback('erin-example'),
+    },
+    {
+      name: 'a source with federation unset is never consulted',
+      sources: { 'xs-g': { federated: true }, 'xs-b': { federated: 'unset' } },
+      pages: [erinInB],
+      input: 'Erin Example',
+      expected: fallback('erin-example'),
+    },
+    {
+      name: 'an archived federated source is never consulted',
+      sources: { 'xs-g': { federated: true }, 'xs-b': { federated: true, archived: true } },
+      pages: [erinInB],
+      input: 'Erin Example',
+      expected: fallback('erin-example'),
+    },
+    {
+      name: 'a writing source configured federated: false never resolves outside itself',
+      sources: { 'xs-g': { federated: false }, 'xs-b': { federated: true } },
+      pages: [erinInB],
+      input: 'Erin Example',
+      expected: fallback('erin-example'),
+    },
+    {
+      name: 'own-source prefix ambiguity never goes cross-source',
+      sources: { 'xs-g': { federated: true }, 'xs-b': { federated: true } },
+      pages: [
+        erinInB,
+        { source: 'xs-g', slug: 'people/erin-example-one', title: 'Erin Example One' },
+        { source: 'xs-g', slug: 'people/erin-example-two', title: 'Erin Example Two' },
+      ],
+      input: 'Erin',
+      expected: fallback('erin'),
+    },
+    {
+      name: 'own-source basename ambiguity never goes cross-source',
+      sources: { 'xs-g': { federated: true }, 'xs-b': { federated: true } },
+      pages: [
+        erinInB,
+        { source: 'xs-g', slug: 'people/erin-example', title: 'Erin Example' },
+        { source: 'xs-g', slug: 'companies/erin-example', title: 'Erin Example Inc' },
+      ],
+      input: 'Erin Example',
+      expected: fallback('erin-example'),
+    },
+    {
+      name: 'an own-source alias naming two live pages never goes cross-source',
+      sources: { 'xs-g': { federated: true }, 'xs-b': { federated: true } },
+      pages: [
+        { ...erinInB, aliases: ['erin@example.com'] },
+        { source: 'xs-g', slug: 'people/quinn-one', title: 'Quinn One', aliases: ['erin@example.com'] },
+        { source: 'xs-g', slug: 'people/quinn-two', title: 'Quinn Two', aliases: ['erin@example.com'] },
+      ],
+      input: 'erin@example.com',
+      expected: fallback('erin-example-com'),
+    },
+    {
+      name: 'an exact slug outside people/ and companies/ is never a cross-source target',
+      sources: { 'xs-g': { federated: true }, 'xs-b': { federated: true } },
+      pages: [{ source: 'xs-b', slug: 'concepts/erin-example', title: 'Erin Example' }],
+      input: 'concepts/erin-example',
+      expected: fallback('concepts/erin-example'),
+    },
+    {
+      name: 'a basename hit outside people/ and companies/ is never a cross-source target',
+      sources: { 'xs-g': { federated: true }, 'xs-b': { federated: true } },
+      pages: [{ source: 'xs-b', slug: 'concepts/erin-example', title: 'Erin Example' }],
+      input: 'Erin Example',
+      expected: fallback('erin-example'),
+    },
+    {
+      name: 'a prefix candidate outside people/ and companies/ is never a cross-source target',
+      sources: { 'xs-g': { federated: true }, 'xs-b': { federated: true } },
+      pages: [{ source: 'xs-b', slug: 'projects/erin-app', title: 'Erin App' }],
+      input: 'Erin',
+      expected: fallback('erin'),
+    },
+    {
+      name: 'an alias naming a page outside people/ and companies/ is never a cross-source target',
+      sources: { 'xs-g': { federated: true }, 'xs-b': { federated: true } },
+      pages: [{ source: 'xs-b', slug: 'hosts/erin-box', title: 'Erin Box', aliases: ['erin@example.com'] }],
+      input: 'erin@example.com',
+      expected: fallback('erin-example-com'),
+    },
+    {
+      name: 'a non-entity candidate in one source still contests a people/ match in another',
+      sources: { 'xs-g': { federated: true }, 'xs-b': { federated: true }, 'xs-c': { federated: true } },
+      pages: [
+        { source: 'xs-b', slug: 'concepts/erin-example', title: 'Erin Example' },
+        { ...erinInB, source: 'xs-c' },
+      ],
+      input: 'Erin Example',
+      expected: fallback('erin-example'),
+    },
+    {
+      name: 'an own-source match wins over another source',
+      sources: { 'xs-g': { federated: true }, 'xs-b': { federated: true } },
+      pages: [erinInB, { ...erinInB, source: 'xs-g' }],
+      input: 'Erin Example',
+      expected: { slug: 'people/erin-example', source: 'fuzzy_match', sourceId: 'xs-g' },
+    },
+    {
+      name: 'fuzzy matching never runs against another source',
+      sources: { 'xs-g': { federated: true }, 'xs-b': { federated: true } },
+      pages: [{ source: 'xs-b', slug: 'people/erin-q-example', title: 'Erin Example' }],
+      input: 'Erin Example',
+      expected: fallback('erin-example'),
+    },
+    {
+      name: 'no match anywhere keeps the fallback',
+      sources: { 'xs-g': { federated: true }, 'xs-b': { federated: true } },
+      pages: [erinInB],
+      input: 'Nobody Example',
+      expected: fallback('nobody-example'),
+    },
+  ];
+
+  afterEach(async () => {
+    await engine.executeRaw(`DELETE FROM sources WHERE id LIKE 'xs-%'`);
+  });
+
+  async function seed(c: Pick<XsCase, 'sources' | 'pages'>): Promise<void> {
+    for (const [id, cfg] of Object.entries(c.sources)) {
+      const config = cfg.federated === 'unset' ? {} : { federated: cfg.federated };
+      await engine.executeRaw(
+        `INSERT INTO sources (id, name, config, archived) VALUES ($1, $1, $2::text::jsonb, $3)`,
+        [id, JSON.stringify(config), cfg.archived === true],
+      );
+    }
+    for (const p of c.pages) {
+      await engine.putPage(p.slug, {
+        type: 'person', title: p.title, compiled_truth: `# ${p.title}`, frontmatter: {},
+      }, { sourceId: p.source });
+      if (p.aliases) await engine.setPageAliases(p.slug, p.source, p.aliases);
+    }
+  }
+
+  for (const c of CASES) {
+    it(c.name, async () => {
+      await seed(c);
+      const r = await resolveConnectorEntitySlug(engine as unknown as BrainEngine, 'xs-g', c.input);
+      expect(r).toEqual(c.expected);
+    });
+  }
+
+  it('leaves resolveEntitySlug and resolveEntitySlugWithSource single-source', async () => {
+    await seed({ sources: CASES[0].sources, pages: CASES[0].pages });
+    const tagged = await resolveEntitySlugWithSource(engine as unknown as BrainEngine, 'xs-g', 'Erin Example');
+    expect(tagged).toEqual({ slug: 'erin-example', source: 'fallback_slugify' });
+    expect(await resolveEntitySlug(engine as unknown as BrainEngine, 'xs-g', 'Erin Example')).toBe('erin-example');
+  });
+
+  it('returns null for empty input like the single-source resolvers', async () => {
+    expect(await resolveConnectorEntitySlug(engine as unknown as BrainEngine, 'xs-g', '   ')).toBeNull();
   });
 });

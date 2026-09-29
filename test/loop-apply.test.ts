@@ -66,6 +66,7 @@ function msg(spec: {
     internalDateMs,
     labelIds: spec.sent ? ['SENT'] : ['INBOX'],
     listUnsubscribe: false,
+    autoSubmitted: false,
     bodyText: spec.body ?? 'Can you review the plan?',
   };
 }
@@ -223,6 +224,29 @@ describe('applyThreadLoopVerdict', () => {
     const rows = await listOpenLoops(engine, { sourceIds: ['g1'], status: 'open' });
     expect(rows).toHaveLength(1);
     expect(rows[0].counterparty_slug).toBeNull();
+  });
+
+  test('#5504: alias in the one other FEDERATED source resolves when g1 holds no candidate', async () => {
+    // The writer rule: only a federated connector source resolves outside itself.
+    await engine.executeRaw(`UPDATE sources SET config = '{"kind":"google","federated":true}'::jsonb WHERE id = 'g1'`);
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, config) VALUES ('b-fed', 'b-fed', '{"federated": true}'::jsonb)`,
+    );
+    await engine.putPage(
+      'people/alice-example',
+      { title: 'Alice Example', type: 'person', compiled_truth: 'Alice.' },
+      { sourceId: 'b-fed' },
+    );
+    await engine.setPageAliases('people/alice-example', 'b-fed', [
+      normalizeAlias('alice@example.com'),
+    ]);
+
+    await applyThreadLoopVerdict(engine, 'g1', inboundThread('alice@example.com'), MY, null, NOW);
+    const rows = await listOpenLoops(engine, { sourceIds: ['g1'], status: 'open' });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].source_id).toBe('g1');
+    expect(rows[0].counterparty_slug).toBe('people/alice-example');
+    expect(rows[0].counterparty_email).toBe('alice@example.com');
   });
 
   test('suppressed sender never opens a NEW loop (with the cache seam cleared)', async () => {

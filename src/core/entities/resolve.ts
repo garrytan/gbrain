@@ -25,6 +25,7 @@ import type { BrainEngine } from '../engine.ts';
 import { normalizeAlias } from '../search/alias-normalize.ts';
 import { foldNonDecomposingLatin } from '../latin-fold.ts';
 import { isUndefinedTableError } from '../utils.ts';
+import { loadAllSources } from '../sources-load.ts';
 
 /**
  * Canonicalize a free-form entity reference to a page slug.
@@ -145,23 +146,28 @@ export function sameEntityName(reference: string, candidateTitle: string | null 
  */
 let aliasExactWarned = false;
 async function tryAliasExact(engine: BrainEngine, source_id: string, raw: string): Promise<string | null> {
+  const live = await liveAliasSlugs(engine, source_id, raw);
+  return live.length === 1 ? live[0] : null;
+}
+
+/** Distinct live page slugs a curated alias names in this source (0, 1 or many). */
+async function liveAliasSlugs(engine: BrainEngine, source_id: string, raw: string): Promise<string[]> {
   const norm = normalizeAlias(raw);
-  if (!norm) return null;
+  if (!norm) return [];
   try {
     const hits = (await engine.resolveAliases([norm], { sourceId: source_id })).get(norm) ?? [];
-    if (!hits.length) return null;
+    if (!hits.length) return [];
     const rows = await engine.executeRaw<{ slug: string }>(
       `SELECT slug FROM pages WHERE deleted_at IS NULL AND source_id = $1 AND slug = ANY($2::text[])`,
       [source_id, [...new Set(hits.map((h) => h.slug))]],
     );
-    const live = [...new Set(rows.map((r) => r.slug))];
-    return live.length === 1 ? live[0] : null;
+    return [...new Set(rows.map((r) => r.slug))];
   } catch (err) {
     if (!isUndefinedTableError(err) && !aliasExactWarned) {
       aliasExactWarned = true;
       console.error(`[gbrain] alias-exact resolution degraded (falling through to fuzzy): ${err instanceof Error ? err.message : String(err)}`);
     }
-    return null;
+    return [];
   }
 }
 
@@ -262,6 +268,115 @@ export async function resolveEntitySlugWithSource(
   }
 
   return { slug: fallbackSlugify(trimmed), source: 'fallback_slugify' };
+}
+
+/** A resolution plus the source whose page it names. */
+export interface ConnectorResolveResult extends ResolveResult {
+  sourceId: string;
+}
+
+/**
+ * #5504: connector-path resolution (`loops_extract`, heuristic loop
+ * detection). Resolves in the writing source exactly like
+ * `resolveEntitySlugWithSource`; only when that falls back to slugify AND the
+ * writing source holds zero candidates (no exact slug, alias, basename or
+ * prefix match) does it try the other non-archived `federated: true` sources,
+ * with the non-fuzzy steps only, and only a `people/` or `companies/` page
+ * can be matched there. One contested source with such a match wins; none,
+ * or two or more sources holding candidates, keep the writing source's
+ * fallback. Only a writing source that is itself non-archived and configured
+ * `federated: true` looks outside itself. Other callers keep the
+ * single-source resolvers.
+ */
+export async function resolveConnectorEntitySlug(
+  engine: BrainEngine,
+  source_id: string,
+  raw: string,
+): Promise<ConnectorResolveResult | null> {
+  const own = await resolveEntitySlugWithSource(engine, source_id, raw);
+  if (!own) return null;
+  const ownResult = { ...own, sourceId: source_id };
+  if (own.source !== 'fallback_slugify') return ownResult;
+
+  const targets = await crossSourceTargets(engine, source_id);
+  if (targets.length === 0) return ownResult;
+  const trimmed = raw.trim();
+  // Own-source ambiguity (two basenames, two prefix candidates, an alias
+  // naming two live pages) is a fallback too, but never a reason to look
+  // elsewhere: the name already means more than one entity here.
+  if ((await resolveNonFuzzy(engine, source_id, trimmed)).candidates > 0) return ownResult;
+
+  let contested = 0;
+  let hit: ConnectorResolveResult | null = null;
+  for (const target of targets) {
+    const outcome = await resolveNonFuzzy(engine, target, trimmed);
+    if (outcome.candidates === 0) continue;
+    contested++;
+    if (contested > 1) return ownResult;
+    if (outcome.match && isCrossSourceEntitySlug(outcome.match.slug)) hit = { ...outcome.match, sourceId: target };
+  }
+  return hit ?? ownResult;
+}
+
+/**
+ * Directories a cross-source match may name. The counterparty comes from
+ * LLM output over untrusted mail, so a slug-shaped name must not link a
+ * connector thread to an arbitrary page (a concept, a project) in another
+ * source. A candidate in any other directory still contests its source, so
+ * it can keep the fallback but never becomes the target.
+ */
+const CROSS_SOURCE_ENTITY_DIRS = ['people', 'companies'] as const;
+
+export function isCrossSourceEntitySlug(slug: string): boolean {
+  return CROSS_SOURCE_ENTITY_DIRS.some((dir) => slug.startsWith(`${dir}/`));
+}
+
+/**
+ * The resolution chain without the fuzzy arm, reporting how many candidates
+ * the source held so a caller can tell "no candidate" from "ambiguous".
+ */
+async function resolveNonFuzzy(
+  engine: BrainEngine,
+  source_id: string,
+  trimmed: string,
+): Promise<{ match: ResolveResult | null; candidates: number }> {
+  if (looksLikeSlug(trimmed)) {
+    const exact = await tryExactSlug(engine, source_id, trimmed);
+    if (exact) return { match: { slug: exact, source: 'exact_page' }, candidates: 1 };
+  }
+  const aliased = await liveAliasSlugs(engine, source_id, trimmed);
+  if (aliased.length === 1) return { match: { slug: aliased[0], source: 'alias_exact' }, candidates: 1 };
+
+  const basenames = await findExactBasenameCandidates(engine, source_id, trimmed);
+  const seen = aliased.length + basenames.length;
+  if (basenames.length === 1) return { match: { slug: basenames[0].slug, source: 'fuzzy_match' }, candidates: seen };
+  if (basenames.length > 1 || !isBareName(trimmed)) return { match: null, candidates: seen };
+
+  const prefixed = await findPrefixCandidates(engine, source_id, slugify(trimmed));
+  const match: ResolveResult | null =
+    prefixed.length === 1 ? { slug: prefixed[0].slug, source: 'fuzzy_match' } : null;
+  return { match, candidates: seen + prefixed.length };
+}
+
+/**
+ * Sources a connector write may resolve into: every other non-archived source
+ * configured `federated: true` (the `isSourceFederated` inclusion rule), and
+ * none unless the writing source is itself one of them. A writer that is
+ * archived, `federated: false` or has federation unset stays inside itself:
+ * the read side (`cross-source-ref.ts`, same loader) attaches rows only from
+ * federated sources, so a row it wrote under another source's slug would
+ * reach no card.
+ */
+async function crossSourceTargets(engine: BrainEngine, source_id: string): Promise<string[]> {
+  let federated: string[];
+  try {
+    federated = (await loadAllSources(engine, { federatedOnly: true })).map((row) => row.id);
+  } catch (err) {
+    console.error(`[gbrain] cross-source entity resolution skipped for source=${source_id}: ${err instanceof Error ? err.message : String(err)}`);
+    return [];
+  }
+  if (!federated.includes(source_id)) return [];
+  return federated.filter((id) => id !== source_id);
 }
 
 /**

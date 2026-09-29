@@ -23,6 +23,7 @@
 import type { BrainEngine, FactRow } from '../engine.ts';
 import { normalizeAlias } from '../search/alias-normalize.ts';
 import { slugify } from '../entities/resolve.ts';
+import { sourcesReferringTo } from '../entities/cross-source-ref.ts';
 import { safeSynopsis } from '../context/retrieval-reflex.ts';
 import { stampEvidence, markKeywordHits } from '../search/evidence.ts';
 import type { SearchResult } from '../types.ts';
@@ -227,6 +228,17 @@ export async function buildEntityCard(
   };
 }
 
+/**
+ * Source predicate for a card read widened by `sourcesReferringTo`: the
+ * page's own source ($1) or a referring source ($3) that still has no live
+ * page with the slug. Same shape as `listFactsByEntity`'s `crossSourceIds`.
+ */
+function crossSourcePredicate(table: 'facts' | 'open_loops', slugColumn: string): string {
+  return `(${table}.source_id = $1 OR (${table}.source_id = ANY($3::text[]) AND NOT EXISTS (
+            SELECT 1 FROM pages p
+             WHERE p.source_id = ${table}.source_id AND p.slug = ${table}.${slugColumn} AND p.deleted_at IS NULL)))`;
+}
+
 function exactMatchPreference(row: CardPageRow, exactSlugs: string[]): number {
   if (exactSlugs.includes(row.slug)) return 0;
   return ENTITY_PAGE_TYPES.has(row.type ?? '') ? 1 : 2;
@@ -240,6 +252,13 @@ async function assembleCard(
 ): Promise<EntityCard> {
   const pageSlug = row.slug;
   const visibility = remote ? (['world'] as ('private' | 'world')[]) : undefined;
+  // #5504: trusted local cards also carry the facts and open loops other
+  // sources attach to this page under the cross-source reference rule.
+  // Fail-closed: only an explicit `remote === false` widens; every other
+  // caller's card reads this source only.
+  const crossSourceIds: Promise<string[]> = remote === false
+    ? sourcesReferringTo(engine, { sourceId, slug: pageSlug })
+    : Promise.resolve([]);
 
   // Parallel depth-1 reads — every arm individually fail-soft so a partial
   // brain (no aliases, no timeline) still returns a card.
@@ -285,29 +304,31 @@ async function assembleCard(
       .then(rs => Number(rs[0]?.n ?? 0))
       .catch(() => 0),
     engine.getTimeline(pageSlug, { limit: 5, sourceId }).catch(() => []),
-    engine
-      .listFactsByEntity(sourceId, pageSlug, {
+    crossSourceIds
+      .then(ids => engine.listFactsByEntity(sourceId, pageSlug, {
         activeOnly: true,
         limit: FACT_FETCH_CAP,
         ...(visibility ? { visibility } : {}),
-      })
+        ...(ids.length ? { crossSourceIds: ids } : {}),
+      }))
       .catch(() => [] as FactRow[]),
     // Exact active-fact count: the payload fetch above is capped at
     // FACT_FETCH_CAP, so facts.length silently reports the cap for bigger
     // entities. Same predicate as the fetch (active + source + caller
     // visibility), indexed COUNT instead of rows. Fail-soft to null so a
     // count failure degrades to the capped payload length, never to 0.
-    engine
-      .executeRaw<{ n: string | number }>(
+    crossSourceIds
+      .then(ids => engine.executeRaw<{ n: string | number }>(
         `SELECT COUNT(*) AS n
            FROM facts
-          WHERE source_id = $1 AND entity_slug = $2
+          WHERE ${ids.length ? crossSourcePredicate('facts', 'entity_slug') : 'source_id = $1'} AND entity_slug = $2
             AND expired_at IS NULL${remote ? ` AND visibility = 'world'` : ''}`,
-        [sourceId, pageSlug],
-      )
+        ids.length ? [sourceId, pageSlug, ids] : [sourceId, pageSlug],
+      ))
       .then(rs => Number(rs[0]?.n ?? 0))
       .catch(() => null),
   ]);
+  const referringIds = await crossSourceIds;
 
   const edges: EntityCardEdge[] = [];
   for (const l of outLinks) {
@@ -339,10 +360,11 @@ async function assembleCard(
     }>(
       `SELECT id, loop_type, summary, due_at, last_activity_at, fact_id
        FROM open_loops
-       WHERE status = 'open' AND counterparty_slug = $1 AND source_id = $2
+       WHERE status = 'open' AND counterparty_slug = $2
+         AND ${referringIds.length ? crossSourcePredicate('open_loops', 'counterparty_slug') : 'source_id = $1'}
        ORDER BY last_activity_at DESC
        LIMIT ${OPEN_THREADS_CAP}`,
-      [pageSlug, sourceId],
+      referringIds.length ? [sourceId, pageSlug, referringIds] : [sourceId, pageSlug],
     );
     for (const l of loopRows) {
       if (l.fact_id !== null) loopFactIds.add(Number(l.fact_id));

@@ -40,6 +40,8 @@ interface MsgSpec {
   body?: string;
   subject?: string;
   listUnsub?: boolean;
+  /** RFC 3834 Auto-Submitted other than "no" (as parsed by getThread). */
+  autoSubmitted?: boolean;
   /** iCalendar method — non-null marks Google Calendar system mail. */
   calendarMethod?: string | null;
   /** Explicit internalDateMs override (0 = the all-zero-date case). */
@@ -63,6 +65,7 @@ function msg(spec: MsgSpec): GmailMessageMeta {
     calendarMethod: spec.calendarMethod ?? null,
     labelIds: spec.sent ? ['SENT'] : ['INBOX'],
     listUnsubscribe: spec.listUnsub ?? false,
+    autoSubmitted: spec.autoSubmitted ?? false,
     bodyText: spec.body ?? 'Can you review the plan?',
   };
 }
@@ -129,6 +132,28 @@ const CASES: CorpusCase[] = [
       msg({ from: 'digest@example.com', to: ['me@example.com'], ageHours: 48, listUnsub: true }),
     ],
     expect: null,
+  },
+  {
+    name: 'inbound auto-submitted tracker notification (RFC 3834) → none',
+    messages: [
+      msg({ from: 'tracker@widget-co.example', to: ['me@example.com'], ageHours: 48, autoSubmitted: true }),
+    ],
+    expect: null,
+  },
+  {
+    name: 'inbound not auto-submitted (Auto-Submitted: no, or header absent) → unanswered_inbound',
+    messages: [
+      msg({ from: 'bob@example.com', to: ['me@example.com'], ageHours: 48, autoSubmitted: false }),
+    ],
+    expect: { type: 'unanswered_inbound', counterparty: 'bob@example.com' },
+  },
+  {
+    name: 'an auto-reply to my question is not a reply → still unanswered_outbound',
+    messages: [
+      msg({ from: 'me@example.com', to: ['bob@example.com'], ageHours: 96, sent: true, body: 'Any update?' }),
+      msg({ from: 'bob@example.com', to: ['me@example.com'], ageHours: 95, autoSubmitted: true, body: 'I am out of office.' }),
+    ],
+    expect: { type: 'unanswered_outbound', counterparty: 'bob@example.com' },
   },
   {
     name: 'inbound from noreply@ → none (noise)',

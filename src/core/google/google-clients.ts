@@ -224,6 +224,16 @@ function header(msg: RawGmailMessage, name: string): string {
   return partHeader(msg.payload, name);
 }
 
+/**
+ * RFC 3834 `Auto-Submitted`: any value other than `no` marks machine mail
+ * (`auto-generated`, `auto-replied`, extensions); parameters after `;` do not
+ * change the keyword. Absent or empty reads as human mail.
+ */
+function isAutoSubmitted(value: string): boolean {
+  const v = value.split(';')[0].trim().toLowerCase();
+  return v !== '' && v !== 'no';
+}
+
 /** iCalendar METHOD parameter of a Content-Type value (quoted or bare). */
 const CALENDAR_METHOD_RE = /method\s*=\s*"?([a-z]+)"?/i;
 
@@ -407,6 +417,7 @@ export class GmailClient extends GoogleApiClient {
         internalDateMs,
         labelIds: m.labelIds ?? [],
         listUnsubscribe: header(m, 'List-Unsubscribe') !== '',
+        autoSubmitted: isAutoSubmitted(header(m, 'Auto-Submitted')),
         calendarMethod: extractCalendarMethod(m.payload),
         bodyText,
         attachmentInspection,

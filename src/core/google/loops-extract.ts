@@ -109,8 +109,10 @@ export function loopExtractionEligibility(
   // below only counts messages the owner actually wrote — an "Accepted:" RSVP
   // Calendar sends on the owner's behalf (SENT label, METHOD:REPLY) is still
   // calendar mail, so a pure invitation exchange never pays for a model call.
+  // RFC 3834 auto-submitted mail (tracker notifications, auto-replies) is
+  // machine mail by its own declaration, and counts exactly like a noise sender.
   const substantive = messages.filter(
-    (m) => !isNoiseSender(m.fromAddress) && !isCalendarSystemMail(m),
+    (m) => !isNoiseSender(m.fromAddress) && !isCalendarSystemMail(m) && !m.autoSubmitted,
   );
   if (substantive.length === 0) return { eligible: false, reason: 'no_substantive_messages' };
 
@@ -414,22 +416,32 @@ export async function runLoopsExtract(
         visibility: 'private',
         validUntil: c.due_iso ? new Date(`${c.due_iso}T23:59:59Z`) : null,
         confidence: 0.85,
+        crossSourceResolution: true,
       });
       factId = result.id;
-    } catch {
-      /* the loop row still lands; facts projection is best-effort */
+    } catch (err) {
+      // The loop row still lands; the facts projection is best-effort. Slug,
+      // source and error only: the commitment text and quote stay out of logs.
+      console.warn(
+        `[loops_extract] fact projection failed slug=${payload.slug} source=${payload.sourceId}: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
 
     // Counterparty slug: high-confidence resolutions only. The facts layer's
     // slugify holding fallback is fine for facts, but a phantom slug on the
     // loop row would group `gbrain waiting` under a person that doesn't
-    // exist and miss every entity-card lookup.
+    // exist and miss every entity-card lookup. The page may live in another
+    // federated source (#5504); the edge below targets that source.
     let counterpartySlug: string | null = null;
+    let counterpartySourceId = payload.sourceId;
     if (counterpartyRef) {
       try {
-        const { resolveEntitySlugWithSource } = await import('../entities/resolve.ts');
-        const resolved = await resolveEntitySlugWithSource(engine, payload.sourceId, counterpartyRef);
-        if (resolved && resolved.source !== 'fallback_slugify') counterpartySlug = resolved.slug;
+        const { resolveConnectorEntitySlug } = await import('../entities/resolve.ts');
+        const resolved = await resolveConnectorEntitySlug(engine, payload.sourceId, counterpartyRef);
+        if (resolved && resolved.source !== 'fallback_slugify') {
+          counterpartySlug = resolved.slug;
+          counterpartySourceId = resolved.sourceId;
+        }
       } catch {
         /* resolution is best-effort */
       }
@@ -467,7 +479,7 @@ export async function runLoopsExtract(
           'google-loops',
           undefined,
           undefined,
-          { fromSourceId: payload.sourceId, toSourceId: payload.sourceId },
+          { fromSourceId: payload.sourceId, toSourceId: counterpartySourceId },
         );
       } catch {
         /* edge is best-effort */

@@ -7258,7 +7258,9 @@ open-thread events to those after the cursor. **Visibility is WORLD-ONLY by
 default** on every arm (a pack is injected into an agent context window that may
 be logged or synced to a cloud model). `include_private` widens ALL arms in
 lockstep, and is honored ONLY for trusted-local callers (`remote === false`); a
-remote caller never widens (fail-closed).
+remote caller never widens (fail-closed). A widened entity card also includes the
+facts and open loops that other `federated: true` sources attach to the entity's
+page; the response shape is unchanged.
 
 Response: `{ protocol_version, entities, cards[], open_threads[], facts[], text,
 degraded_reason?, budget_tokens?, budget_used?, dropped_count? }`. `text` is the

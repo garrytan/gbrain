@@ -10,7 +10,7 @@ type PgSql = ReturnType<typeof postgres>;
 
 import type {
   FactRow, FactKind, FactVisibility, FactInsertStatus,
-  NewFact, FactListOpts, FactsHealth,
+  NewFact, FactListOpts, FactsByEntityOpts, FactsHealth,
 } from '../engine.ts';
 import { MAX_SEARCH_LIMIT, clampSearchLimit } from '../engine.ts';
 import { tryParseEmbedding } from '../utils.ts';
@@ -314,7 +314,7 @@ export async function listFactsByEntity(
   deps: PgFactsDeps,
     source_id: string,
     entitySlug: string,
-    opts?: FactListOpts,
+    opts?: FactsByEntityOpts,
   ): Promise<FactRow[]> {
     const sql = deps.sql;
     const limit = clampSearchLimit(opts?.limit, 50, MAX_SEARCH_LIMIT);
@@ -325,13 +325,21 @@ export async function listFactsByEntity(
     const visibility = (opts?.visibility && opts.visibility.length > 0) ? opts.visibility : null;
     const excludeAuditRows = opts?.excludeAuditRows === true;
     const grepPat = grepPattern(opts);
+    const crossSourceIds = (opts?.crossSourceIds ?? []).filter(id => id !== source_id);
+    // #5504: a cross-source row counts only while its own source has no live
+    // page with the slug (own source first). Parity with the pglite engine.
+    const sourcePredicate = crossSourceIds.length > 0
+      ? sql`(source_id = ${source_id} OR (source_id = ANY(${crossSourceIds}::text[]) AND NOT EXISTS (
+          SELECT 1 FROM pages p
+           WHERE p.source_id = facts.source_id AND p.slug = facts.entity_slug AND p.deleted_at IS NULL)))`
+      : sql`source_id = ${source_id}`;
     // WP5 TTL honesty: activeOnly reads exclude validity-lapsed rows
     // (valid_until <= now()) at read time — exact-time, zero-maintenance.
     // History readers pass activeOnly:false and stay unfiltered. Parity with
     // the pglite engine's _listFacts predicate.
     const rows = await sql<FactRowSqlShape[]>`
       SELECT * FROM facts
-      WHERE source_id = ${source_id}
+      WHERE ${sourcePredicate}
         AND entity_slug = ${entitySlug}
         ${activeOnly ? sql`AND expired_at IS NULL AND (valid_until IS NULL OR valid_until > now())` : sql``}
         ${unconsolidatedOnly ? sql`AND consolidated_at IS NULL` : sql``}
