@@ -104,6 +104,9 @@ export const CANONICAL_PRICING: Record<string, ModelPricing> = {
   'anthropic:claude-opus-4-8':            anthro( 5.00, 25.00),
   'anthropic:claude-opus-4-7':            anthro( 5.00, 25.00),
   'anthropic:claude-opus-4-6':            anthro( 5.00, 25.00),
+  // Sonnet 5.5: $2 in / $10 out, standard cache multipliers. Anthropic's pricing
+  // page lists this as the standard rate, not an introductory one.
+  'anthropic:claude-sonnet-5-5':          anthro( 2.00, 10.00),
   // Sonnet 5 (released 2026-06-29): same $3/$15 sticker as 4.6. The launch
   // intro discount ($2/$10 through 2026-08-31) is deliberately NOT modeled —
   // the table carries standard rates so estimates stay conservative and

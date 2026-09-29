@@ -46,7 +46,8 @@ describe('compareAnthropicVersions', () => {
 
 describe('newerAnthropicModel', () => {
   test('returns the newest priced same-family recipe id when the model is older', () => {
-    expect(newerAnthropicModel('anthropic:claude-sonnet-4-6')?.id).toBe('claude-sonnet-5');
+    expect(newerAnthropicModel('anthropic:claude-sonnet-4-6')?.id).toBe('claude-sonnet-5-5');
+    expect(newerAnthropicModel('anthropic:claude-sonnet-5')?.id).toBe('claude-sonnet-5-5');
     expect(newerAnthropicModel('anthropic:claude-opus-4-7')?.id).toBe('claude-opus-5');
   });
 
@@ -57,7 +58,7 @@ describe('newerAnthropicModel', () => {
 
   test('current, newer-than-recipe, fable, non-Anthropic and unparseable ids get none', () => {
     for (const id of [
-      'anthropic:claude-sonnet-5',
+      'anthropic:claude-sonnet-5-5',
       'anthropic:claude-sonnet-6',
       'anthropic:claude-opus-5-2',
       'anthropic:claude-fable-5',

@@ -140,7 +140,7 @@
     ]
   },
   "dependencies": {
-    "@ai-sdk/anthropic": "^3.0.71",
+    "@ai-sdk/anthropic": "^3.0.125",
     "@ai-sdk/google": "^3.0.64",
     "@ai-sdk/openai": "^3.0.53",
     "@ai-sdk/openai-compatible": "^2.0.41",
@@ -190,7 +190,7 @@
   "license": "MIT",
   "version": "0.59.3.0",
   "overrides": {
-    "@ai-sdk/provider-utils": "4.0.33",
+    "@ai-sdk/provider-utils": "4.0.56",
     "@hono/node-server": "^2.0.5",
     "fast-uri": "3.1.6",
     "body-parser": "^2.3.0",
