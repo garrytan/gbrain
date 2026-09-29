@@ -5,19 +5,24 @@
  * `gbrain eval run-all` plus any manually-logged completions), groups by
  * (suite, mode), and produces a side-by-side table.
  *
- * Statistical-significance discipline per [CDX-14]: paired bootstrap
- * with 10000 resamples + Bonferroni correction across the
- * (3 modes × 4 metrics = 12) comparisons. Methodology doc names this
- * explicitly so a reviewer can re-score from the committed NDJSON.
+ * Statistics are computed only from per-query rows. A run record that
+ * points at its per-question output (`params.output`, written by
+ * `gbrain eval longmemeval --record --output`) contributes rows; pairs of
+ * runs are joined on question_id and compared with a paired cluster
+ * bootstrap (95% CI), a two-sided sign-flip randomization p-value, and Holm
+ * correction across every comparison in the report
+ * (src/core/eval/paired-bootstrap.ts). When no per-query rows are
+ * available the report says it is aggregate-only and computes nothing.
  *
  * Every numeric metric in the output is glossed through the
  * src/core/eval/metric-glossary.ts module per [CDX-25]: ONE
  * _meta.metric_glossary block per response, NOT sibling _gloss fields.
  */
 
-import { readFileSync, existsSync } from 'fs';
-import { join } from 'path';
+import { readFileSync, existsSync, realpathSync } from 'fs';
+import { isAbsolute, join, relative, sep } from 'path';
 import { buildMetricGlossaryMeta } from '../core/eval/metric-glossary.ts';
+import { holmAdjusted, pairedClusterStatistics } from '../core/eval/paired-bootstrap.ts';
 import { SEARCH_MODES, type SearchMode } from '../core/search/mode.ts';
 
 export interface CompareOpts {
@@ -28,6 +33,10 @@ export interface CompareOpts {
   json: boolean;
   md: boolean;
   inputPath?: string;
+  baseline?: string;
+  candidate?: string;
+  draws: number;
+  seed: number;
 }
 
 function parseCompareArgs(args: string[]): CompareOpts {
@@ -37,6 +46,8 @@ function parseCompareArgs(args: string[]): CompareOpts {
     modes: 'all',
     json: false,
     md: true,
+    draws: 10_000,
+    seed: 42,
   };
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -63,7 +74,16 @@ function parseCompareArgs(args: string[]): CompareOpts {
     if (a === '--json') { opts.json = true; opts.md = false; continue; }
     if (a === '--md') { opts.md = true; opts.json = false; continue; }
     if (a === '--input') { opts.inputPath = args[++i]; continue; }
+    if (a === '--baseline') { opts.baseline = args[++i]; continue; }
+    if (a === '--candidate') { opts.candidate = args[++i]; continue; }
+    if (a === '--draws' || a === '--seed') {
+      const v = Number(args[++i]);
+      if (!Number.isInteger(v) || v < (a === '--draws' ? 1000 : 0)) throw new Error(`${a}: expected an integer${a === '--draws' ? ' >= 1000' : ''}`);
+      if (a === '--draws') opts.draws = v; else opts.seed = v;
+      continue;
+    }
   }
+  if ((opts.baseline === undefined) !== (opts.candidate === undefined)) throw new Error('--baseline and --candidate go together');
   return opts;
 }
 
@@ -78,6 +98,12 @@ function printHelp(): void {
     `  --md                    Markdown output (default; CHANGELOG-paste-ready).\n` +
     `  --json                  JSON output (CI / programmatic consumption).\n` +
     `  --input PATH            Override eval-results.jsonl location.\n` +
+    `  --baseline RUN_ID       Compare exactly this run ...\n` +
+    `  --candidate RUN_ID      ... against this one (default: every mode pair).\n` +
+    `  --draws N               Bootstrap resamples (default 10000).\n` +
+    `  --seed N                Resampling seed (default 42).\n\n` +
+    `Paired statistics need per-query rows: a run record whose params.output\n` +
+    `names its per-question JSONL. Without them the report is aggregate-only.\n` +
     `  -h, --help              Show this help.\n`,
   );
 }
@@ -93,6 +119,148 @@ interface ParsedRecord {
   duration_ms?: number;
   error?: string;
   metrics?: Record<string, number>;
+  params?: Record<string, unknown>;
+}
+
+type QueryRow = Record<string, unknown>;
+
+/** Per-query metrics read from per-question rows, named as in the glossary. */
+const PER_QUERY_METRICS: Array<{ name: string; value: (row: QueryRow) => number | undefined }> = [
+  { name: 'recall_all@k', value: r => typeof r.recall_all_hit === 'boolean' ? Number(r.recall_all_hit) : undefined },
+  { name: 'recall_any@k', value: r => typeof r.recall_any_hit === 'boolean' ? Number(r.recall_any_hit) : undefined },
+  { name: 'qa_accuracy', value: r => typeof r.judge_correct === 'boolean' && typeof r.judge_error !== 'string' ? Number(r.judge_correct) : undefined },
+];
+
+export interface PairedComparison {
+  suite: string;
+  baseline_run: string;
+  candidate_run: string;
+  baseline_mode: string;
+  candidate_mode: string;
+  metric: string;
+  n: number;
+  clusters: number;
+  baseline_mean: number;
+  candidate_mean: number;
+  delta: number;
+  ci95: [number, number];
+  p_value: number;
+  holm_p_value: number;
+  wins: number;
+  losses: number;
+  ties: number;
+  significant: boolean;
+}
+
+/**
+ * `candidate` resolved against `root`, following symlinks, or null when it
+ * lands outside the root (through `..`, an absolute path, or a symlink).
+ */
+export function pathWithinRoot(root: string, candidate: string): string | null {
+  const base = realpathSync(root);
+  const target = isAbsolute(candidate) ? candidate : `${base}${sep}${candidate}`;
+  const real = existsSync(target) ? realpathSync(target) : target;
+  // relative() normalizes `..` segments of a path that does not exist yet.
+  const rel = relative(base, real);
+  return rel === '' || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel) ? null : real;
+}
+
+/** Per-question rows of a run (last row per question_id), or why there are none. */
+function readPerQueryRows(record: ParsedRecord, repoRoot: string): { rows: Map<string, QueryRow> } | { reason: string } {
+  const output = record.params?.output;
+  if (typeof output !== 'string' || !output) return { reason: 'record has no params.output per-query file' };
+  const path = pathWithinRoot(repoRoot, output);
+  if (!path) return { reason: `refused per-query file outside the repository root (${repoRoot}): ${output}` };
+  if (!existsSync(path)) return { reason: `per-query file not found: ${output}` };
+  const rows = new Map<string, QueryRow>();
+  for (const line of readFileSync(path, 'utf-8').split('\n')) {
+    if (!line.trim()) continue;
+    try {
+      const row = JSON.parse(line) as QueryRow;
+      if (row && typeof row.question_id === 'string' && row.kind !== 'by_type_summary') rows.set(row.question_id, row);
+    } catch {
+      // Same tolerance as the run ledger: a torn line never tanks the report.
+    }
+  }
+  return rows.size ? { rows } : { reason: `per-query file has no question rows: ${output}` };
+}
+
+/**
+ * Paired comparisons for each (baseline, candidate) run pair: rows joined on
+ * question_id, one comparison per metric both rows carry, questions as
+ * clusters, Holm across the whole family.
+ */
+export function pairedComparisons(
+  pairs: Array<[ParsedRecord, ParsedRecord]>,
+  repoRoot: string,
+  opts: { draws: number; seed: number },
+): { comparisons: PairedComparison[]; unavailable: Array<{ run_id: string; reason: string }> } {
+  const unavailable = new Map<string, string>();
+  const cache = new Map<string, Map<string, QueryRow> | null>();
+  const rowsOf = (r: ParsedRecord) => {
+    if (!cache.has(r.run_id)) {
+      const loaded = readPerQueryRows(r, repoRoot);
+      if ('reason' in loaded) unavailable.set(r.run_id, loaded.reason);
+      cache.set(r.run_id, 'rows' in loaded ? loaded.rows : null);
+    }
+    return cache.get(r.run_id) ?? null;
+  };
+  const raw: Array<Omit<PairedComparison, 'holm_p_value' | 'significant'>> = [];
+  for (const [b, c] of pairs) {
+    const bRows = rowsOf(b), cRows = rowsOf(c);
+    if (!bRows || !cRows) continue;
+    for (const metric of PER_QUERY_METRICS) {
+      const observations = [...bRows].flatMap(([qid, row]) => {
+        const other = cRows.get(qid);
+        const bv = metric.value(row), cv = other ? metric.value(other) : undefined;
+        return bv === undefined || cv === undefined ? [] : [{ cluster: qid, baseline: bv, candidate: cv }];
+      });
+      if (!observations.length) continue;
+      const st = pairedClusterStatistics(observations, opts);
+      raw.push({
+        suite: c.suite, baseline_run: b.run_id, candidate_run: c.run_id, baseline_mode: b.mode, candidate_mode: c.mode,
+        metric: metric.name, n: st.n, clusters: st.clusters, baseline_mean: st.baseline_mean, candidate_mean: st.candidate_mean,
+        delta: st.delta, ci95: [st.lower95, st.upper95], p_value: st.p_value, wins: st.wins, losses: st.losses, ties: st.ties,
+      });
+    }
+  }
+  const holm = holmAdjusted(raw.map(r => r.p_value));
+  const comparisons = raw.map((r, i) => ({
+    ...r,
+    holm_p_value: holm[i],
+    significant: holm[i] <= 0.05 && (r.ci95[0] > 0 || r.ci95[1] < 0),
+  }));
+  return { comparisons, unavailable: [...unavailable].map(([run_id, reason]) => ({ run_id, reason })) };
+}
+
+function methodologyText(comparisons: PairedComparison[], opts: { draws: number; seed: number }): string {
+  if (!comparisons.length) {
+    return 'Aggregate-only: no per-query rows were available for the selected runs, so no confidence intervals or significance tests were computed. Aggregate metrics are shown as recorded.';
+  }
+  return `Paired cluster bootstrap over per-query rows joined on question_id (${opts.draws} resamples, seed ${opts.seed}; clusters = questions); `
+    + 'two-sided sign-flip randomization p-values (exact at 16 or fewer clusters); '
+    + `Holm correction across the ${comparisons.length} comparison(s) in this report. A difference is significant only when the Holm p-value is at most 0.05 and the 95% CI excludes 0. `
+    + 'See docs/eval/SEARCH_MODE_METHODOLOGY.md.';
+}
+
+function fmt(x: number): string {
+  return Number.isFinite(x) ? x.toFixed(4) : String(x);
+}
+
+function renderPaired(comparisons: PairedComparison[], unavailable: Array<{ run_id: string; reason: string }>, methodology: string): string {
+  const lines = ['## Paired comparisons', ''];
+  if (comparisons.length) {
+    lines.push('| Suite | Baseline → Candidate | Metric | Pairs (clusters) | Baseline | Candidate | Δ | 95% CI | p | Holm p | Wins / losses / ties | Verdict |');
+    lines.push('|---|---|---|---|---|---|---|---|---|---|---|---|');
+    for (const c of comparisons) {
+      lines.push(`| ${c.suite} | \`${c.baseline_run}\` (${c.baseline_mode}) → \`${c.candidate_run}\` (${c.candidate_mode}) | ${c.metric} | ${c.n} (${c.clusters}) | ${fmt(c.baseline_mean)} | ${fmt(c.candidate_mean)} | ${fmt(c.delta)} | [${fmt(c.ci95[0])}, ${fmt(c.ci95[1])}] | ${fmt(c.p_value)} | ${fmt(c.holm_p_value)} | ${c.wins} / ${c.losses} / ${c.ties} | ${c.significant ? 'significant' : 'not significant'} |`);
+    }
+    lines.push('');
+  }
+  for (const u of unavailable) lines.push(`- \`${u.run_id}\`: ${u.reason}`);
+  if (unavailable.length) lines.push('');
+  lines.push(`_${methodology}_`, '');
+  return lines.join('\n');
 }
 
 function readEvalResults(repoRoot: string, override?: string): ParsedRecord[] {
@@ -231,16 +399,35 @@ export async function runEvalCompare(args: string[]): Promise<void> {
       if (r?.metrics) Object.keys(r.metrics).forEach(k => allMetrics.add(k));
     }
   }
+
+  let runPairs: Array<[ParsedRecord, ParsedRecord]> = [];
+  if (opts.baseline && opts.candidate) {
+    const find = (id: string) => records.find(r => r.run_id === id);
+    const b = find(opts.baseline), c = find(opts.candidate);
+    if (!b || !c) throw new Error(`run not found in eval-results.jsonl: ${!b ? opts.baseline : opts.candidate}`);
+    runPairs = [[b, c]];
+  } else {
+    for (const modes of Object.values(grouped)) {
+      const present = SEARCH_MODES.map(m => modes[m]).filter((r): r is ParsedRecord => r !== null);
+      for (let i = 0; i < present.length; i++) for (let j = i + 1; j < present.length; j++) runPairs.push([present[i], present[j]]);
+    }
+  }
+  const { comparisons, unavailable } = pairedComparisons(runPairs, repoRoot, opts);
+  comparisons.forEach(c => allMetrics.add(c.metric));
+  if (comparisons.length) ['p_value', 'confidence_interval'].forEach(k => allMetrics.add(k));
   const glossary = buildMetricGlossaryMeta(Array.from(allMetrics));
+  const methodology = methodologyText(comparisons, opts);
 
   if (opts.json) {
     process.stdout.write(JSON.stringify({
       schema_version: 2,
       records: filtered,
       grouped,
+      paired: comparisons,
+      paired_unavailable: unavailable,
       _meta: {
         metric_glossary: glossary,
-        methodology: 'Paired bootstrap (10,000 resamples) + Bonferroni correction across 3 modes × 4 metrics. See docs/eval/SEARCH_MODE_METHODOLOGY.md.',
+        methodology,
       },
     }, null, 2));
     return;
@@ -253,4 +440,5 @@ export async function runEvalCompare(args: string[]): Promise<void> {
   }
 
   process.stdout.write(renderMarkdown(grouped, glossary));
+  process.stdout.write(renderPaired(comparisons, unavailable, methodology));
 }
