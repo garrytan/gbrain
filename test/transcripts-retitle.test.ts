@@ -76,3 +76,23 @@ describe('retitled conversation', () => {
     expect(await livePages()).toHaveLength(1);
   });
 });
+
+describe('re-ingest keeps frontmatter it does not render (#5431)', () => {
+  test('a key another tool added survives a changed session; collector keys are replaced', async () => {
+    await runTranscriptsIngest(engine, { paths: [exportFile('a.json', 'Original title', false)], sourceId: 'default', format: 'chatgpt' });
+    const [first] = await livePages();
+    await engine.executeRaw(`UPDATE pages SET frontmatter = frontmatter || '{"reviewed": true}'::jsonb WHERE slug = $1`, [first.slug]);
+
+    const b = exportFile('b.json', 'Renamed by user', true);
+    const second = await runTranscriptsIngest(engine, { paths: [b], sourceId: 'default', format: 'chatgpt' });
+    expect(second.pages.imported).toBe(1);
+    const [row] = await engine.executeRaw<{ frontmatter: Record<string, unknown>; title: string; has_new: boolean }>(
+      `SELECT frontmatter, title, compiled_truth LIKE '%FOLLOWUP-MARKER%' AS has_new FROM pages WHERE slug = $1`, [first.slug]);
+    expect(row.frontmatter.reviewed).toBe(true);
+    expect(row.title).toBe('Renamed by user');
+    expect(row.has_new).toBe(true);
+
+    const again = await runTranscriptsIngest(engine, { paths: [b], sourceId: 'default', format: 'chatgpt' });
+    expect(again.pages).toMatchObject({ imported: 0, skipped: 1 });
+  });
+});

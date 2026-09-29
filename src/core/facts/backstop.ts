@@ -61,6 +61,22 @@ export function coerceNotabilityFilter(v: unknown): FactNotabilityFilter {
   return (NOTABILITY_FILTERS as readonly unknown[]).includes(v) ? (v as FactNotabilityFilter) : 'all';
 }
 
+/**
+ * Context cell for a fact whose entity came from the bare-name
+ * `prefix_expansion` branch of `resolveEntitySlugWithSource`: the sole
+ * `<dir>/<token>-*` page was chosen by cardinality, not identity. The fact is
+ * still written (most such hits are right); the note keeps the uncertainty
+ * visible instead of reading like a confirmed fact.
+ */
+function annotateUnverifiedResolution(
+  context: string | null,
+  resolutionSource: ResolutionSource | null,
+): string | null {
+  if (resolutionSource !== 'prefix_expansion') return context;
+  const note = 'entity matched by bare name only (prefix expansion) — unverified, please confirm';
+  return context ? `${context} — ${note}` : note;
+}
+
 export interface FactsBackstopCtx {
   engine: BrainEngine;
   config?: GBrainConfig;
@@ -564,6 +580,7 @@ async function runPipelineBodyInner(
   const { resolveEntitySlugWithSource } = await import('../entities/resolve.ts');
   const { cosineSimilarity } = await import('./classify.ts');
   const { writeFactsToFence, lookupSourceLocalPath } = await import('./fence-write.ts');
+  const { isFactWithdrawn } = await import('./withdrawal.ts');
 
   if (abortSignal?.aborted) {
     return { inserted: 0, duplicate: 0, superseded: 0, fact_ids: [], entity_slugs: [] };
@@ -669,6 +686,10 @@ async function runPipelineBodyInner(
     const resolvedSlug = resolved?.source === 'fallback_slugify' ? null : resolved?.slug ?? null;
     const resolutionSource = resolved?.source ?? null;
 
+    // B-10: a withdrawn claim for this entity is never re-written; the
+    // fence writer rechecks under its page lock.
+    if (await isFactWithdrawn(ctx.engine, ctx.sourceId, visibility, f.fact, resolvedSlug)) continue;
+
     // Dedup against DB candidates (correct per Codex Q7: fence rows
     // have no embeddings; FS lock + sync invariant means DB == fence
     // at write time). Threshold 0.95 unchanged.
@@ -754,7 +775,7 @@ async function runPipelineBodyInner(
     for (const s of unparented) legacyBucket.push(s);
   }
 
-  for (const { f, resolvedSlug } of legacyBucket) {
+  for (const { f, resolvedSlug, resolutionSource } of legacyBucket) {
     const newFact: NewFact = {
       fact: f.fact,
       kind: f.kind,
@@ -770,7 +791,7 @@ async function runPipelineBodyInner(
       // DB-only row has no fence to name the page it came from, so the page
       // path's slug fills context when the caller passed no sourceSlug.
       valid_from: f.valid_from ?? ctx.validFrom,
-      context: ctx.sourceSlug ?? input.pageSlug ?? null,
+      context: annotateUnverifiedResolution(ctx.sourceSlug ?? input.pageSlug ?? null, resolutionSource),
     };
     const result = await ctx.engine.insertFact(newFact, { source_id: ctx.sourceId }); // gbrain-allow-direct-insert: legacy DB-only fallback for unparented / thin-client facts (no entity page to fence onto)
     fact_ids.push(result.id);
@@ -791,14 +812,14 @@ async function runPipelineBodyInner(
   for (const [slug, group] of byEntity) {
     if (abortSignal?.aborted) break;
 
-    const inputFacts = group.map(({ f }) => ({
+    const inputFacts = group.map(({ f, resolutionSource }) => ({
       fact: f.fact,
       kind: f.kind,
       notability: f.notability,
       source: f.source,
       // #4206: the caller's source_slug (which page/transcript the turn came
       // from) lands in the fence context cell — visible in recall projections.
-      context: ctx.sourceSlug ?? null,
+      context: annotateUnverifiedResolution(ctx.sourceSlug ?? null, resolutionSource),
       visibility,
       confidence: f.confidence,
       // #4206: extractor-derived date wins; then the caller's event time

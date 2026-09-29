@@ -32,7 +32,7 @@
 
 import type { QueryIntent } from './query-intent.ts';
 import type { SearchResult } from '../types.ts';
-import { isTitleMentionedInQuery, tokenizeTitle } from './title-match.ts';
+import { containsTokenRun, isTitleMentionedInQuery, titleAsQuerySubject, tokenizeTitle } from './title-match.ts';
 
 /**
  * Weight adjustments to apply for a classified intent. All factors are
@@ -158,6 +158,37 @@ export function applyExactMatchBoost(
       // --explain output. Only stamped when boost actually fires.
       r.exact_match_boost = weights.exactMatchBoost;
     }
+  }
+}
+
+/**
+ * #4694 — score multiplier under general and temporal intent (no
+ * exact-match boost; concept intent is excluded, see hybrid.ts) for a result whose multi-token title or slug
+ * tail is the query's subject (`titleAsQuerySubject`: "Which document is
+ * <title>?" classifies as general, so the entity-intent boost never reached
+ * it).
+ */
+export const TITLE_MENTION_BOOST = 1.18;
+
+/**
+ * Apply TITLE_MENTION_BOOST in place. When several qualifying titles are
+ * mentioned and one is a sub-run of another ("Budget Review" inside
+ * "Offsite Budget Review"), only the longest is boosted. Stamps
+ * `exact_match_boost` for --explain. Caller re-sorts.
+ */
+export function applyTitleMentionBoost(results: SearchResult[], query: string): void {
+  const subjects = new Map<SearchResult, string[]>();
+  for (const r of results) {
+    const slug = r.slug ?? '';
+    const tokens = titleAsQuerySubject(query, r.title ?? '')
+      ?? titleAsQuerySubject(query, slug.slice(slug.lastIndexOf('/') + 1));
+    if (tokens) subjects.set(r, tokens);
+  }
+  const all = [...subjects.values()];
+  for (const [r, tokens] of subjects) {
+    if (all.some((other) => other.length > tokens.length && containsTokenRun(other, tokens))) continue;
+    r.score *= TITLE_MENTION_BOOST;
+    r.exact_match_boost = TITLE_MENTION_BOOST;
   }
 }
 

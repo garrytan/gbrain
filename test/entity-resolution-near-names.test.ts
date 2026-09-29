@@ -32,6 +32,9 @@ beforeAll(async () => {
     ['companies/widgetco-robotics', 'company', 'Widgetco Robotics'],
     ['meetings/2026-03-01-bob-jones-example-sync', 'meeting', 'Bob Jones Example sync'],
     ['concepts/retrieval-augmented-generation', 'concept', 'Retrieval Augmented Generation'],
+    ['meetings/2026-03-02-dana-jones-example', 'meeting', 'Dana Jones Example'],
+    ['people/erin-lee-example', 'person', 'Erin Lee Example'],
+    ['projects/erin-lee-example-launch', 'project', 'Erin Lee Example'],
   ];
   for (const [slug, type, title] of pages) {
     await importFromContent(engine, slug, `---\ntype: ${type}\ntitle: ${title}\n---\n\n${title} notes.\n`, { noEmbed: true });
@@ -76,6 +79,16 @@ describe('fact entity resolver', () => {
   test('a person without a page never lands on a meeting page', async () => {
     expect(await resolveEntitySlugWithSource(engine, 'default', 'Bob Jones Example'))
       .toEqual({ slug: 'bob-jones-example', source: 'fallback_slugify' });
+  });
+
+  test('a meeting page titled with a person name is not an entity (B-8)', async () => {
+    expect(await resolveEntitySlugWithSource(engine, 'default', 'Dana Jones Example'))
+      .toEqual({ slug: 'dana-jones-example', source: 'fallback_slugify' });
+  });
+
+  test('two entity pages carrying the same name are ambiguous, never the first by score (B-8)', async () => {
+    expect(await resolveEntitySlugWithSource(engine, 'default', 'Lee, Erin Example'))
+      .toEqual({ slug: 'lee-erin-example', source: 'fallback_slugify' });
   });
 
   test('the same person in another spelling still resolves', async () => {

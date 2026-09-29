@@ -1,7 +1,7 @@
 import { assertUnmanagedCanonicalWriter } from './persistence/maintenance.ts';
 import { assertImportBase, sameCanonicalImport } from './page-state/import-guard.ts';
 import { stabilizeSafetyAssessments } from './persistence/reconcile-safety.ts';
-import { decideImportIdentity, collidingSlugOwner } from './import-identity.ts';
+import { decideImportIdentity, collidingSlugOwner, fileOriginUri } from './import-identity.ts';
 import { readSourceFileSync } from './minions/source-filesystem.ts';
 import { readFileSync, statSync, lstatSync } from 'fs';
 import { basename, extname, resolve } from 'path';
@@ -14,7 +14,8 @@ import { prepareCodeChunks, installCodeChunkEdges } from './code-chunks.ts';
 import { detectCodeLanguage, CHUNKER_VERSION } from './chunkers/code.ts';
 import { sanitizeRemoteBody } from './remote-body.ts';
 import { installPageEmbeddings, installPageProjection, preparePageProjection, projectionBelowSafeFence, queuePageProjection, readProjectionSnapshot, resealSafeChunks,
-  sealPageTextProjection, stampEmbeddingInputs, type ProjectionSnapshot } from './page-state/projections.ts';
+  sealPageTextProjection, stampEmbeddingInputs, embeddingWriteTarget, embeddingInputContext, type ProjectionSnapshot } from './page-state/projections.ts';
+import { embeddingInputHash } from './embedding-input-hash.ts';
 import { sanitizeText } from './batch-rows.ts';
 import { hasProtectedBody, safeChunksFilter } from './search/safe-chunks.ts';
 import { findChunkForOffset } from './chunkers/edge-extractor.ts';
@@ -27,8 +28,8 @@ import { embedMultimodal, currentEmbeddingSignature } from './embedding.ts';
 // precedent as embed-stale.ts.
 import { embedBatchWithBackoff } from './embed-retry.ts';
 import { slugifyPath, slugifyCodePath, isCodeFilePath, hasMalformedPathSegment } from './sync.ts';
-import type { ChunkInput, PageInput, PageType } from './types.ts';
-import { computeEffectiveDate, fallbackCreatedAt } from './effective-date.ts';
+import type { ChunkInput, Page, PageInput, PageType } from './types.ts';
+import { computeEffectiveDate, fallbackCreatedAt, isValidTimeZone } from './effective-date.ts';
 import { MARKDOWN_CHUNKER_VERSION } from './chunkers/recursive.ts';
 import { logSlugFallback } from './audit-slug-fallback.ts';
 import { resolveContextualRetrievalMode } from './contextual-retrieval-resolver.ts';
@@ -185,16 +186,19 @@ function invalidYamlFrontmatterError(parsed: ReturnType<typeof parseMarkdown>): 
  * zero-row UPDATEs, each firing the generation-clock trigger); undefined
  * (projection-less engine) falls through and `IS DISTINCT FROM` keeps the
  * UPDATE zero-row. brainstorm passes `${slug}.md`, the value putPage writes on
- * its own path. Bookkeeping only — never fails the import.
+ * its own path. It also records the file origin move inference binds to
+ * (#5675). Bookkeeping only — never fails the import.
  */
-async function refreshSourcePath(engine: BrainEngine, slug: string, sourceId: string | undefined, sourcePath: string | undefined, current: string | null | undefined): Promise<void> {
-  if (!sourcePath || current === sourcePath) return;
+async function refreshSourcePath(engine: BrainEngine, slug: string, sourceId: string | undefined, sourcePath: string | undefined,
+  current: Pick<Page, 'source_path' | 'source_uri'> | null, originUri: string | null): Promise<void> {
+  if (!sourcePath || (current?.source_path === sourcePath && (originUri === null || current.source_uri === originUri))) return;
   try {
     // Keep this optional legacy repair inside a savepoint: a rejected SQL
     // statement must not poison the surrounding canonical transaction.
     await engine.transaction(tx => tx.executeRaw(
-      'UPDATE pages SET source_path = $1 WHERE source_id = $2 AND slug = $3 AND deleted_at IS NULL AND source_path IS DISTINCT FROM $1',
-      [sourcePath, sourceId ?? 'default', slug],
+      `UPDATE pages SET source_path = $1, source_uri = COALESCE($4::text, source_uri) WHERE source_id = $2 AND slug = $3
+        AND deleted_at IS NULL AND (source_path IS DISTINCT FROM $1 OR source_uri IS DISTINCT FROM COALESCE($4::text, source_uri))`,
+      [sourcePath, sourceId ?? 'default', slug, originUri],
     ));
   } catch { /* bookkeeping only — never fail the import over it */ }
 }
@@ -244,7 +248,7 @@ export async function importFromContent(
      */
     sourceRoot?: string;
     /** The source file's timestamps: the date of a new page that carries no date of its own. */
-    fileTimes?: { birthtime?: Date; mtime?: Date };
+    fileTimes?: { birthtime?: Date; mtime?: Date; firstCommit?: Date };
     /**
      * v0.32.7 CJK wave (codex post-merge F1): bypass the
      * `existing.content_hash === hash` short-circuit and ALWAYS re-chunk +
@@ -675,11 +679,12 @@ export async function importFromContent(
     tags: parsed.tags,
   };
 
+  const originUri = fileOriginUri(existing?.source_uri, opts.sourceRoot, opts.sourcePath);
   const persistUnchanged = async (refreshBody = false) => {
     await engine.transaction(async tx => {
       await assertImportBase(tx, slug, sourceId ?? 'default', existing);
       if (refreshBody) await tx.refreshPageBody(slug, sourceId ?? 'default', parsed.compiled_truth, parsed.timeline || '', hash);
-      await refreshSourcePath(tx, slug, sourceId, opts.sourcePath, existing?.source_path);
+      await refreshSourcePath(tx, slug, sourceId, opts.sourcePath, existing, originUri);
       if (opts.beforeCommit) await verifyPageReadable(tx, slug, hash, sourceId, 'importFromContent');
       await opts.beforeCommit?.(tx, slug);
     });
@@ -831,41 +836,6 @@ export async function importFromContent(
     effectiveCRMode = resolution.mode === 'per_chunk_synopsis' ? 'title' : resolution.mode;
   }
 
-  const embedChunks = async () => {
-    if (opts.noEmbed || chunks.length === 0) return;
-    const prefix =
-      modeRequiresWrapper(effectiveCRMode) && !modeRequiresSynopsis(effectiveCRMode)
-        ? buildContextualPrefix(parsed.title, null)
-        : null;
-    const wrappedTexts = prefix
-      ? chunks.map((c) => wrapChunkForEmbedding(c.chunk_text, prefix, c.chunk_source))
-      : chunks.map((c) => c.chunk_text);
-    const embeddings = await embedBatchWithBackoff(wrappedTexts);
-    for (let i = 0; i < chunks.length; i++) {
-      chunks[i].embedding = embeddings[i];
-      // token_count tracks the wrapped string length so cost reporting
-      // reflects what we actually sent to the embedder.
-      chunks[i].token_count = Math.ceil(wrappedTexts[i].length / 4);
-    }
-  };
-  // An embedding outage never blocks the text write: the page and its chunks
-  // commit with NULL vectors and no embedding signature, and the stale sweep
-  // (`gbrain embed --stale`, sync's embed pass, the cycle) embeds them once
-  // the provider recovers.
-  let embeddingDeferred = false;
-  if (!opts.onPostCommitEmbedding) {
-    try {
-      await embedChunks();
-    } catch (err) {
-      embeddingDeferred = true;
-      for (const c of chunks) { c.embedding = undefined; c.token_count = undefined; }
-      process.stderr.write(
-        `[import] ${slug}: embedding failed (${err instanceof Error ? err.message : String(err)}); ` +
-        `text saved, chunks queued for \`gbrain embed --stale\`.\n`
-      );
-    }
-  }
-
   // v0.40.3.0: corpus_generation hash for D27 P1-5 cache invalidation.
   // Record the selected wrapper generation for inline or deferred embedding;
   // 'none' writes NULL. The separate embedding signature certifies vectors.
@@ -882,12 +852,78 @@ export async function importFromContent(
           // the service layer.
         });
 
+  // A13: an edit re-embeds only chunks whose embedding input changed. A stored
+  // vector is reused for a chunk with the same source and text when its
+  // recorded embedding input (#5553: column, model, dimensions, wrapper tier
+  // and exact input) equals the one this import would embed, or, for a vector
+  // recorded before provenance existed, when the input is the raw chunk text
+  // under the same model. The old index must be sealed and neither body may
+  // hold protected fences, so no reused vector can carry a private sibling.
+  const reused = new Set<number>();
+  if (existing && !existing.deleted_at && !opts.noEmbed && !opts.forceRechunk && !opts.prepare && !opts.onPostCommitEmbedding && chunks.length > 0
+    && !hasProtectedBody(`${existing.compiled_truth}\n${existing.timeline ?? ''}`) && !hasProtectedBody(`${parsed.compiled_truth}\n${parsed.timeline ?? ''}`)) {
+    const target = await embeddingWriteTarget(engine);
+    const provenance = embeddingInputContext(target, parsed.title, corpusGeneration, chunks);
+    const tier = effectiveCRMode === 'title' ? 'title' : 'none';
+    const recorded = new Map((await engine.executeRaw<{ chunk_index: number; embedding_input_hash: string | null }>(
+      `SELECT c.chunk_index, c.embedding_input_hash FROM content_chunks c JOIN pages p ON p.id = c.page_id
+        WHERE p.source_id = $1 AND p.slug = $2`, [sourceId ?? 'default', slug])).map(row => [Number(row.chunk_index), row.embedding_input_hash]));
+    // Reuse is keyed on chunk source + text, so a stored chunk's current-input
+    // hash is the hash its matching new chunk would record.
+    const stored = (await engine.getChunks(slug, { sourceId: sourceId ?? 'default', includeEmbedding: true, requireSafeChunks: true }))
+      .filter(chunk => {
+        const hash = recorded.get(chunk.chunk_index);
+        return hash == null ? tier === 'none' && chunk.model === target.provenanceModel : hash === embeddingInputHash(provenance, tier, chunk);
+      });
+    for (const [i, matched] of planEmbeddingReuse(stored, chunks, c => `${c.chunk_source}\0${c.chunk_text}`).reuse) {
+      chunks[i].embedding = matched.embedding as Float32Array;
+      chunks[i].token_count = matched.token_count ?? undefined;
+      if (matched.model) chunks[i].model = matched.model;
+      reused.add(i);
+    }
+  }
+
+  const embedChunks = async () => {
+    const pending = chunks.map((_, i) => i).filter(i => !reused.has(i));
+    if (opts.noEmbed || pending.length === 0) return;
+    const prefix =
+      modeRequiresWrapper(effectiveCRMode) && !modeRequiresSynopsis(effectiveCRMode)
+        ? buildContextualPrefix(parsed.title, null)
+        : null;
+    const wrappedTexts = pending.map(i => prefix ? wrapChunkForEmbedding(chunks[i].chunk_text, prefix, chunks[i].chunk_source) : chunks[i].chunk_text);
+    const embeddings = await embedBatchWithBackoff(wrappedTexts);
+    pending.forEach((i, j) => {
+      chunks[i].embedding = embeddings[j];
+      // token_count tracks the wrapped string length so cost reporting
+      // reflects what we actually sent to the embedder.
+      chunks[i].token_count = Math.ceil(wrappedTexts[j].length / 4);
+    });
+  };
+  // An embedding outage never blocks the text write: the page and its chunks
+  // commit with NULL vectors and no embedding signature, and the stale sweep
+  // (`gbrain embed --stale`, sync's embed pass, the cycle) embeds them once
+  // the provider recovers.
+  let embeddingDeferred = false;
+  if (!opts.onPostCommitEmbedding) {
+    try {
+      await embedChunks();
+    } catch (err) {
+      embeddingDeferred = true;
+      chunks.forEach((c, i) => { if (!reused.has(i)) { c.embedding = undefined; c.token_count = undefined; } });
+      process.stderr.write(
+        `[import] ${slug}: embedding failed (${err instanceof Error ? err.message : String(err)}); ` +
+        `text saved, chunks queued for \`gbrain embed --stale\`.\n`
+      );
+    }
+  }
+
   // Transaction wraps the canonical DB writes. Every per-page tx call carries the
   // caller's sourceId so writes target (sourceId, slug) rather than the
   // schema DEFAULT — required for multi-source brains; harmless ('default')
   // for single-source callers.
   const txOpts = { sourceId: sourceId ?? 'default' };
   let persistedProjection: ProjectionSnapshot | null = null;
+  const timeZone = await loadBrainTimeZone(engine);
   const applyPrepared = async (tx: BrainEngine) => {
     await assertImportBase(tx, slug, txOpts.sourceId, existing);
     await assertPreparedFactWithdrawals(tx, txOpts.sourceId, parsed.compiled_truth, parsed.timeline || '', slug);
@@ -906,6 +942,7 @@ export async function importFromContent(
       slug,
       frontmatter: parsed.frontmatter,
       filename: filenameForChain,
+      timeZone,
       updatedAt: existing?.updated_at ?? nowDate,
       createdAt: fallbackCreatedAt({ existing, fileTimes: opts.fileTimes, now: nowDate }),
     });
@@ -926,7 +963,7 @@ export async function importFromContent(
       // COALESCE-preserve UPDATE so omitting these on a later put_page
       // doesn't erase the original ingestion's audit trail.
       source_kind: opts.source_kind ?? null,
-      source_uri: opts.source_uri ?? null,
+      source_uri: opts.source_uri ?? originUri,
       ingested_via: opts.ingested_via ?? null,
       // ingested_at is server-stamped at the engine layer when any
       // provenance write fires; never client-controlled.
@@ -949,32 +986,23 @@ export async function importFromContent(
       );
     }
 
-    // Tag reconciliation: ADD-ONLY (v0.41.37.0 #1621).
-    //
-    // We deliberately do NOT delete existing tags here. The `tags` table has
-    // no provenance column, and frontmatter tags are stripped from the stored
-    // `pages.frontmatter` (markdown.ts:118) — so at re-import time we cannot
-    // distinguish a frontmatter-origin tag from a DB-side enrichment tag
-    // (auto-tag / dream synthesize / signal-detector writes to the same
-    // table). The pre-v0.41.37.0 "delete every existing tag not in the current
-    // frontmatter" logic wiped ALL enrichment tags on every re-import — most
-    // visibly under `gbrain reindex --markdown` (#1621), which re-imports every
-    // page with forceRechunk. reindex is a re-chunk/re-embed op; it must not
-    // destroy tags.
-    //
-    // Trade-off (accepted): removing a tag from a page's frontmatter no longer
-    // removes it from the DB on the next sync. That staleness is minor (tags
-    // are additive metadata) and far preferable to silently losing enrichment
-    // tags. Frontmatter-tag REMOVAL would require a `tag_source` provenance
-    // column (deferred — see TODOS.md #1621-followup). addTag is idempotent
-    // (ON CONFLICT DO NOTHING), so re-adding existing tags is a no-op.
+    // Tag reconciliation (A14): frontmatter tags carry tag_source='frontmatter'.
+    // A frontmatter-owned row whose tag left the frontmatter is deleted; rows
+    // explicit adds own ('added': add_tag, enrichment, the code importer) and
+    // legacy NULL rows are never deleted here (#1621: reindex must not wipe
+    // enrichment). A legacy row still in the frontmatter is adopted. Prepared
+    // (managed) imports keep the add-only union their canonical file renders.
+    if (!opts.prepare) {
+      await tx.executeRaw(`DELETE FROM tags t USING pages p WHERE p.id = t.page_id AND p.source_id = $1 AND p.slug = $2
+        AND t.tag_source = 'frontmatter' AND NOT (t.tag = ANY($3::text[]))`, [txOpts.sourceId, slug, parsed.tags]);
+    }
     for (const tag of parsed.tags) {
-      await tx.addTag(slug, tag, txOpts);
+      await tx.addTag(slug, tag, opts.prepare ? txOpts : { ...txOpts, tagSource: 'frontmatter' });
     }
 
-    // A new seal cannot inherit vectors or metadata from an older index, even
-    // when a public fragment is unchanged: its old contextual vector may have
-    // included a private sibling fragment. Replace every derived row atomically.
+    // Replace every derived row atomically. Only vectors the A13 reuse gate
+    // above admitted carry over; a new seal otherwise inherits nothing from an
+    // older index, whose contextual vector may have included a private sibling.
     await tx.deleteChunks(slug, txOpts);
     if (chunks.length > 0) {
       const embeddingColumn = await stampEmbeddingInputs(tx, chunks, null,
@@ -1185,6 +1213,8 @@ export async function importFromFile(
      * never per file (codex perf finding #7).
      */
     activePack?: { page_types: ReadonlyArray<{ name: string; path_prefixes: ReadonlyArray<string>; aliases?: ReadonlyArray<string> }> };
+    /** Git first-commit date of the file (opt-in, see git-first-commit.ts); an undated page's fallback anchor. */
+    firstCommitAt?: Date;
   } = {},
 ): Promise<ImportResult> {
   // Defense-in-depth: reject symlinks before reading content.
@@ -1351,7 +1381,7 @@ export async function importFromFile(
     sourcePath: relativePath,
     // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- walks up from the caller's own file path by the depth of its own relative path to recover the import root; import-identity confines every probe under that root
     sourceRoot: resolve(filePath, ...relativePath.split(/[\\/]/).map(() => '..')),
-    fileTimes: { birthtime: stat.birthtime, mtime: stat.mtime },
+    fileTimes: { birthtime: stat.birthtime, mtime: stat.mtime, firstCommit: opts.firstCommitAt },
     // The disk file IS the source of truth: a file the user emptied is a
     // deliberate clear, so it passes putPage's empty-overwrite guard.
     allowEmptyOverwrite: true,
@@ -2232,6 +2262,16 @@ export async function importImageFile(
   await withImportTransaction(engine, spec);
 
   return { slug: imageSlug, status: 'imported', chunks: 1 };
+}
+
+let warnedBrainTimeZone = false;
+/** `brain.timezone` (IANA) for offset-less frontmatter datetimes; unset or invalid reads them as UTC. */
+async function loadBrainTimeZone(engine: BrainEngine): Promise<string | undefined> {
+  const configured = (await engine.getConfig('brain.timezone').catch(() => null))?.trim();
+  if (!configured || isValidTimeZone(configured)) return configured || undefined;
+  if (!warnedBrainTimeZone) process.stderr.write(`[import] invalid brain.timezone "${configured}"; reading naive datetimes as UTC\n`);
+  warnedBrainTimeZone = true;
+  return undefined;
 }
 
 /** Used by sync.isSyncable + import.ts walker. */

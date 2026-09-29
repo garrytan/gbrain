@@ -247,3 +247,49 @@ describe('packToBudget \u2014 frozen strict edge (memory-verb consumers)', () =>
     expect(tiny.meta.dropped).toBe(3);
   });
 });
+
+describe('read-path audit #17 — packer and estimator', () => {
+  test('one oversized result mid-list is skipped, not a cut of everything after it', () => {
+    const results = [
+      makeResult({ slug: 'a', title: 'a', chunk_text: 'xxxx' }),
+      makeResult({ slug: 'huge', title: 'a', chunk_text: 'x'.repeat(4000) }),
+      makeResult({ slug: 'c', title: 'a', chunk_text: 'xxxx' }),
+      makeResult({ slug: 'd', title: 'a', chunk_text: 'xxxx' }),
+    ];
+    const { results: kept, meta } = enforceTokenBudget(results, 10);
+    expect(kept.map(r => r.slug)).toEqual(['a', 'c', 'd']);
+    expect(meta).toMatchObject({ used: 6, kept: 3, dropped: 1 });
+  });
+
+  test('CJK text costs about one token per character, not one per four', () => {
+    expect(estimateTokens('知识管理系统')).toBe(6);
+    expect(estimateTokens('こんにちは世界')).toBe(7);
+    expect(estimateTokens('한국어 텍스트')).toBe(7);
+    expect(estimateTokens('abcd知识')).toBe(3);
+  });
+
+  test('a CJK result is budgeted at its real cost', () => {
+    const cjk = makeResult({ slug: 'cjk', title: '', chunk_text: '知'.repeat(40) });
+    const tail = makeResult({ slug: 'tail', title: '', chunk_text: 'xxxx' });
+    const { results: kept } = enforceTokenBudget([tail, cjk], 20);
+    expect(kept.map(r => r.slug)).toEqual(['tail']);
+  });
+
+  test('the salvage truncation never splits a surrogate pair and stays within budget', () => {
+    const emoji = makeResult({ slug: 'e', title: '', chunk_text: 'abc' + '😀'.repeat(50) });
+    const { results: kept, meta } = enforceTokenBudget([emoji], 3);
+    expect(meta.truncated).toBe(true);
+    const text = kept[0].chunk_text;
+    expect(text.isWellFormed()).toBe(true);
+    expect(resultTokens(kept[0])).toBeLessThanOrEqual(3);
+    expect(text.length).toBeGreaterThan(0);
+  });
+
+  test('the salvage truncation of CJK text stays within budget', () => {
+    const cjk = makeResult({ slug: 'cjk', title: '知识', chunk_text: '知'.repeat(200) });
+    const { results: kept, meta } = enforceTokenBudget([cjk], 10);
+    expect(meta.truncated).toBe(true);
+    expect(resultTokens(kept[0])).toBeLessThanOrEqual(10);
+    expect(kept[0].chunk_text).toBe('知'.repeat(8));
+  });
+});

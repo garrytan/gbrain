@@ -1872,6 +1872,11 @@ export async function runCycle(
   const dryRun = !!opts.dryRun;
   const pull = !!opts.pull;
   const timestamp = new Date().toISOString();
+  // C-15: one calendar date for every dated phase of this cycle (a run that
+  // crosses midnight, or a UTC host, must not split the cycle across days).
+  const cycleDate = engine
+    ? await import('./cycle/cycle-date.ts').then(m => m.resolveCycleDate(engine)).catch(() => undefined)
+    : undefined;
   const phaseResults: PhaseResult[] = excludedPhases.map((phase) => ({
     phase,
     status: 'skipped',
@@ -2247,6 +2252,7 @@ export async function runCycle(
           yieldDuringPhase: buildYieldDuringPhase(lock, opts.yieldDuringPhase, onStolen),
           inputFile: opts.synthInputFile,
           date: opts.synthDate,
+          cycleDate,
           from: opts.synthFrom,
           to: opts.synthTo,
           bypassDreamGuard: opts.synthBypassDreamGuard,
@@ -2470,6 +2476,7 @@ export async function runCycle(
           // always-undefined — hook, so long phases never refreshed).
           yieldDuringPhase: buildYieldDuringPhase(lock, opts.yieldDuringPhase, onStolen),
           once: opts.onceForPhase === 'patterns',
+          cycleDate,
           deadlineAtMs: opts.deadlineAtMs ?? null,
           privateQueueOwnerJobId: opts.privateQueueOwnerJobId ?? null,
           // #1586: scope pattern writes to the cycle's resolved source, same as
@@ -2720,6 +2727,7 @@ export async function runCycle(
             dryRun,
             brainDir: brainDir ?? undefined,
             forceEnabled: opts.onceForPhase === 'drift',
+            cycleDate,
           });
           const status: PhaseStatus =
             r.status === 'complete' ? 'ok' :

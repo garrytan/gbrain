@@ -184,8 +184,18 @@ export async function replacePageFileLinks(engine: BrainEngine, slug: string, so
   return result.created;
 }
 
-export async function fileLinkOwnership(engine: BrainEngine, sourceId: string) {
-  const pages = await loadLinkPageMetadata(engine);
+/**
+ * Page metadata, resolver and attendance origins for replacing file links.
+ * With `slugs`, only those pages of the source are loaded (a sync hook passes
+ * its changed pages plus their link endpoints) — enough for
+ * `replacePageFileLinks`; the resolver then only knows those pages, so
+ * attendance reconciliation (`replaceFileLinks`) needs the unscoped form.
+ */
+export async function fileLinkOwnership(engine: BrainEngine, sourceId: string, scope?: { slugs: readonly string[] }) {
+  const pages = scope
+    ? await engine.executeRaw<LinkPageMetadata>(`SELECT slug, source_id, type, title, frontmatter->'aliases' AS aliases, knowledge_revision
+        FROM pages WHERE deleted_at IS NULL AND source_id = $1 AND slug = ANY($2::text[]) ORDER BY slug`, [sourceId, [...scope.slugs]])
+    : await loadLinkPageMetadata(engine);
   const metadata = new Map(pages.map(row => [`${row.source_id}\0${row.slug}`, row]));
   const resolver = makeIndexedLinkResolver(pages, sourceId);
   const { allSlugs, slugToSources } = indexLinkSources(pages);
@@ -194,7 +204,8 @@ export async function fileLinkOwnership(engine: BrainEngine, sourceId: string) {
     allSlugs, slugToSources, policy.allowCrossSource, policy);
   const origins = await engine.executeRaw<{ slug: string }>(`SELECT DISTINCT o.slug FROM links l
     JOIN pages o ON o.id=l.origin_page_id WHERE o.source_id=$1 AND l.link_source IN ('markdown','wikilink-resolved','frontmatter')
-      AND l.link_type='attended' AND l.to_page_id=l.origin_page_id`, [sourceId]);
+      AND l.link_type='attended' AND l.to_page_id=l.origin_page_id${scope ? ' AND o.slug = ANY($2::text[])' : ''}`,
+    scope ? [sourceId, [...scope.slugs]] : [sourceId]);
   return { metadata, resolver, resolve, origins: new Set(origins.map(row => row.slug)) };
 }
 

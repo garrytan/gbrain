@@ -17,6 +17,8 @@ import { submissionAuthority } from '../src/core/persistence/authority.ts';
 import { admitWrite, completeWrite } from '../src/core/persistence/journal.ts';
 import { runPersistenceEffects } from '../src/core/persistence/effects.ts';
 import { retryEmbeddingEffect } from '../src/core/persistence/effect-retry.ts';
+import { upgradeWithdrawalEffect } from '../src/core/persistence/effect-targets.ts';
+import type { PersistenceEffect } from '../src/core/persistence/effect-model.ts';
 import { rebuildPendingPageProjections } from '../src/core/page-state/projections.ts';
 import { importFromContent } from '../src/core/import-file.ts';
 import type { PreparedContentImport } from '../src/core/persistence/prepared-import.ts';
@@ -281,26 +283,47 @@ for (const backend of testBackends()) describe(`bounded withdrawal ${backend}`, 
     await engine.transaction(tx => completeWrite(tx, f.request, 'cancelled', {}));
   });
 
-  test('a 12001-page source refuses atomically before withdrawal or durable effects', async () => {
+  test('a source over the old 12,000-page inventory ceiling withdraws a claim with a small affected set (#5674)', async () => {
     const f = await fixture();
     try {
       await engine.executeRaw(`INSERT INTO pages(source_id,slug,type,title,compiled_truth,timeline,frontmatter)
-        SELECT $1,'capacity-page-'||n,'note','Capacity control','Unrelated control text','','{}'::jsonb FROM generate_series(1,11998) n`, [f.sourceId]);
+        SELECT $1,'capacity-page-'||n,'note','Capacity control',$2||' capacity row '||n,'','{}'::jsonb FROM generate_series(1,11998) n`,
+      [f.sourceId, fence('an unrelated capacity claim')]);
       const pages = () => engine.executeRaw(`SELECT count(*)::int AS count,md5(string_agg(row_to_json(p)::text,'' ORDER BY id)) AS fingerprint
-        FROM pages p WHERE source_id=$1`, [f.sourceId]);
-      const facts = () => engine.executeRaw('SELECT row_to_json(f) AS fact FROM facts f WHERE source_id=$1 ORDER BY id', [f.sourceId]);
-      const chunks = () => engine.executeRaw(`SELECT row_to_json(c) AS chunk FROM content_chunks c JOIN pages p ON p.id=c.page_id
-        WHERE p.source_id=$1 ORDER BY c.id`, [f.sourceId]);
-      const beforePages = await pages(), beforeFacts = await facts(), beforeChunks = await chunks();
-      expect(beforePages[0].count).toBe(12001);
-      const beforeRequest = await engine.executeRaw('SELECT row_to_json(r) AS request FROM persistence_requests r WHERE id=$1::uuid', [f.request.id]);
-      await expect(f.withdraw()).rejects.toMatchObject({ code: 'withdrawal_capacity' });
-      expect(await pages()).toEqual(beforePages); expect(await facts()).toEqual(beforeFacts); expect(await chunks()).toEqual(beforeChunks);
-      expect(await engine.executeRaw('SELECT row_to_json(r) AS request FROM persistence_requests r WHERE id=$1::uuid', [f.request.id])).toEqual(beforeRequest);
-      expect(await engine.executeRaw('SELECT 1 FROM fact_withdrawals WHERE source_id=$1', [f.sourceId])).toEqual([]);
-      expect(await engine.executeRaw('SELECT 1 FROM persistence_effects WHERE request_id=$1::uuid', [f.request.id])).toEqual([]);
+        FROM pages p WHERE source_id=$1 AND slug<>'affected'`, [f.sourceId]);
+      const before = await pages();
+      expect((await engine.executeRaw<{ count: number }>('SELECT count(*)::int AS count FROM pages WHERE source_id=$1', [f.sourceId]))[0].count).toBe(12001);
+      expect((await f.withdraw()).pages.map(page => page.slug)).toEqual(['affected']);
+      expect(await pages()).toEqual(before);
+      const effects = await engine.executeRaw<{ data: { targets: Array<{ slug: string }> } }>('SELECT data FROM persistence_effects WHERE request_id=$1::uuid', [f.request.id]);
+      expect(effects.map(effect => effect.data.targets.map(t => t.slug))).toEqual([['affected'], ['affected'], ['affected']]);
+
+      await engine.executeRaw(`INSERT INTO fact_withdrawals(source_id,visibility,fact_hash)
+        SELECT $1,'world',md5('unrelated withdrawal '||n)||md5(n::text) FROM generate_series(1,300) n`, [f.sourceId]);
+      await engine.executeRaw(`UPDATE persistence_effects SET data='{"source_scan":true}'::jsonb WHERE request_id=$1::uuid`, [f.request.id]);
+      const [legacy] = await engine.executeRaw<PersistenceEffect>("SELECT * FROM persistence_effects WHERE request_id=$1::uuid AND kind='embedding'", [f.request.id]);
+      const upgraded = await upgradeWithdrawalEffect(engine, legacy, hostId, false);
+      expect(upgraded.data.version).toBe(2);
+      expect((upgraded.data.targets as Array<{ slug: string }>).map(t => t.slug)).toEqual(['affected']);
+      expect(await pages()).toEqual(before);
     } finally { await engine.executeRaw('DELETE FROM sources WHERE id=$1', [f.sourceId]); }
   }, 120_000);
+
+  test('a claim whose affected set exceeds the bound refuses loudly with the matched count, even in a small source', async () => {
+    const sourceId = `capacity-report-${randomUUID()}`;
+    await engine.executeRaw('INSERT INTO sources(id,name) VALUES($1,$1)', [sourceId]);
+    try {
+      await engine.executeRaw(`INSERT INTO pages(source_id,slug,type,title,compiled_truth,timeline,frontmatter)
+        SELECT $1,'page-'||lpad(n::text,3,'0'),'note','Synthetic capacity',$2,'','{}'::jsonb FROM generate_series(1,300) n`, [sourceId, fence('widely repeated sentinel')]);
+      const fact = await engine.insertFact({ fact: 'widely repeated sentinel', source: 'synthetic', visibility: 'world' }, { source_id: sourceId });
+      const error = await recordFactWithdrawal(engine, fact.id, sourceId).catch(e => e);
+      expect(error).toMatchObject({ code: 'withdrawal_capacity' });
+      expect(String(error.message)).toContain('more than 256');
+      expect(String(error.suggestion)).toContain('page-001');
+      expect(await engine.executeRaw('SELECT 1 FROM fact_withdrawals WHERE source_id=$1', [sourceId])).toEqual([]);
+      expect(await engine.executeRaw('SELECT 1 FROM facts WHERE id=$1 AND expired_at IS NULL', [fact.id])).toHaveLength(1);
+    } finally { await engine.executeRaw('DELETE FROM sources WHERE id=$1', [sourceId]); }
+  });
 
   test('orphan closing fences block withdrawal and prepared publication of matching claims', async () => {
     const f = await fixture(), malformed = fence('uses A | B').replace(FACTS_FENCE_BEGIN, '');
@@ -321,7 +344,7 @@ for (const backend of testBackends()) describe(`bounded withdrawal ${backend}`, 
 
   test('dense malformed markers refuse during parsing before ledger mutation', async () => {
     const f = await fixture();
-    await engine.putPage('dense', { type: 'note', title: 'Dense', compiled_truth: FACTS_FENCE_BEGIN.repeat(16_385) }, { sourceId: f.sourceId });
+    await engine.putPage('dense', { type: 'note', title: 'Dense', compiled_truth: `${FACTS_FENCE_BEGIN.repeat(16_385)}\n${fence('uses A | B')}` }, { sourceId: f.sourceId });
     await expect(f.withdraw()).rejects.toMatchObject({ code: 'withdrawal_capacity' });
     expect(await engine.executeRaw('SELECT 1 FROM fact_withdrawals WHERE source_id=$1', [f.sourceId])).toEqual([]);
     expect(await engine.executeRaw('SELECT expired_at FROM facts WHERE id=$1', [f.fact.id])).toEqual([{ expired_at: null }]);

@@ -74,7 +74,7 @@ Hybrid search applies a source-factor CASE expression at the SQL layer (lives in
 
 `archive/` is deliberately NOT hard-excluded: it holds high-signal historical content users expect to find, so it is demoted (`0.5x` in `DEFAULT_SOURCE_BOOSTS`), not hidden. The demote is a prior applied in the outer SQL re-rank; the cross-encoder reranker (balanced/tokenmax modes) can still PROMOTE an archive page that survives the demote into the rerank candidate window — it is not an unconditional suppression. `gbrain doctor`'s `hidden_by_search_policy` check reports how many chunked pages remain hidden by the surviving exclude prefixes.
 
-The boost map is configurable via the `GBRAIN_SOURCE_BOOST` env var. Hard exclusions are separate: the exclusion set is defaults ∪ `GBRAIN_SEARCH_EXCLUDE` (env, comma-separated prefixes) ∪ per-call `SearchOpts.exclude_slug_prefixes`. Temporal queries (`detail: 'high'`) bypass the boost so chat pages re-surface for time-sensitive lookups.
+The defaults fit one vault layout, so each brain can carry its own map: `gbrain config set search.source_boosts "wiki/:1.3,daily/:1.0"` overrides or extends the defaults per prefix, and a `none` entry (`"none,wiki/:1.3"`) drops them entirely. The `GBRAIN_SOURCE_BOOST` env var (same format) wins over the brain config for one process. Hard exclusions are separate: the exclusion set is defaults ∪ `GBRAIN_SEARCH_EXCLUDE` (env, comma-separated prefixes) ∪ per-call `SearchOpts.exclude_slug_prefixes`. Temporal queries (`detail: 'high'`) bypass the boost so chat pages re-surface for time-sensitive lookups.
 
 ## Named-thing retrieval (per-page pool + title + alias + evidence)
 

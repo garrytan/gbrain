@@ -23,6 +23,10 @@
  *                                       attribution → the named speaker must
  *                                         be the turn's speaker
  *                                       numbers → must occur in a source
+ *                                       decisions → a speaker's decision or
+ *                                         commitment carries only numbers and
+ *                                         dates from that speaker's turns or a
+ *                                         turn they explicitly accepted (#5425)
  *                                     any failure → the WHOLE unit leaves the
  *                                       body and is kept in frontmatter
  *                                       `unverified_claims`
@@ -64,6 +68,7 @@ import type { Page } from '../types.ts';
 import { materializedHistoryRanges, prepareCanonicalProjections } from '../persistence/canonical-projections.ts';
 import { prepareAutomaticLinks } from '../persistence/links-preparation.ts';
 import { isAutoLinkEnabled } from '../link-extraction.ts';
+import { resolveCycleDate, utcDate } from './cycle-date.ts';
 
 /** Minimum quoted-span inner length considered a "quote" (shorter spans are
  * scare quotes / titles, not transcript quotations). */
@@ -141,6 +146,8 @@ export interface QuoteVerifyStats {
   speaker_mismatch: number;
   /** Numeric/date claims found in no source transcript. */
   number_not_in_source: number;
+  /** A speaker's decision or commitment whose numbers/dates only another speaker stated (#5425). */
+  decision_misattributed: number;
   skipped_no_transcript: number;
   /** Pages where read-back or write-back failed (fail-open, logged). */
   errors: number;
@@ -163,6 +170,7 @@ export function emptyQuoteVerifyStats(): QuoteVerifyStats {
     quote_crosses_speakers: 0,
     speaker_mismatch: 0,
     number_not_in_source: 0,
+    decision_misattributed: 0,
     skipped_no_transcript: 0,
     errors: 0,
   };
@@ -271,6 +279,9 @@ export interface GroundedSource extends GroundedTranscript {
   path: string;
   turns: SpeakerTurn[];
   numbers: Set<string>;
+  /** Speaker key → numbers/dates from that speaker's turns, plus those of a
+   * turn the speaker explicitly accepted in the next turn (#5425). */
+  numbersBySpeaker: Map<string, Set<string>>;
   nameNorm: string;
   speakers: Array<{ key: string; label: string; re: RegExp }>;
 }
@@ -430,6 +441,25 @@ export function numericFacts(text: string): Set<string> {
   return out;
 }
 
+/** A turn that opens by accepting the previous turn's proposal. */
+const ACCEPTANCE_RE = /^\W*(?:yes|yep|yeah|sure|ok(?:ay)?|agreed|sounds good|perfect|great|do (?:it|that)|go ahead|let'?s do (?:it|that)|approved)\b/i;
+
+function numbersBySpeaker(content: string, turns: SpeakerTurn[]): Map<string, Set<string>> {
+  const out = new Map<string, Set<string>>();
+  let previous: { key: string; numbers: Set<string> } | null = null;
+  turns.forEach((turn, i) => {
+    const text = content.slice(turn.labelEnd, turns[i + 1]?.labelStart ?? content.length);
+    const key = speakerKey(turn.speaker);
+    const numbers = numericFacts(text);
+    const own = out.get(key) ?? new Set<string>();
+    for (const n of numbers) own.add(n);
+    if (previous && previous.key !== key && ACCEPTANCE_RE.test(text)) for (const n of previous.numbers) own.add(n);
+    out.set(key, own);
+    previous = { key, numbers };
+  });
+  return out;
+}
+
 /** Prepare one transcript for verification. */
 export function groundSource(path: string, content: string): GroundedSource {
   const { norm, map } = normalizeForGrounding(content);
@@ -442,6 +472,7 @@ export function groundSource(path: string, content: string): GroundedSource {
     map,
     turns,
     numbers: numericFacts(`${content}\n${name}`),
+    numbersBySpeaker: numbersBySpeaker(content, turns),
     nameNorm: normForGrounding(name),
     speakers: speakerMentionPatterns(turns),
   };
@@ -652,14 +683,9 @@ const NUMERIC_CLAIM_RES: Array<{ re: RegExp; key: (m: RegExpMatchArray) => strin
   { re: /\b\d{1,3}(?:,\d{3})+(?:\.\d+)?\b|\b\d{4,}\b/g, key: m => [canonNumber(Number.parseFloat(m[0].replace(/,/g, '')))] },
 ];
 
-/**
- * Numeric and date claims in `text` that no source states. `text` must
- * already be masked (code, links) and have grounded quotes blanked. A claim
- * is supported when any of its canonical keys appears among a source's
- * numbers, or its normalized text occurs in a source or its file name.
- */
-export function unsupportedNumericClaims(text: string, sources: GroundedSource[]): string[] {
-  const out: string[] = [];
+/** Numeric and date claims in `text`, each once, with its canonical keys. */
+function numericClaims(text: string): Array<{ raw: string; claim: string; keys: string[] }> {
+  const out: Array<{ raw: string; claim: string; keys: string[] }> = [];
   const seen = new Set<string>();
   const covered: Array<[number, number]> = [];
   for (const { re, key } of NUMERIC_CLAIM_RES) {
@@ -670,13 +696,48 @@ export function unsupportedNumericClaims(text: string, sources: GroundedSource[]
       const claim = normForGrounding(m[0]);
       if (!claim || seen.has(claim) || seen.size >= MAX_NUMERIC_CLAIMS_PER_PAGE) continue;
       seen.add(claim);
-      const keys = key(m);
-      const supported = sources.some(src =>
-        keys.some(k => src.numbers.has(k)) || src.norm.includes(claim) || src.nameNorm.includes(claim));
-      if (!supported) out.push(m[0].trim());
+      out.push({ raw: m[0].trim(), claim, keys: key(m) });
     }
   }
   return out;
+}
+
+/**
+ * Numeric and date claims in `text` that no source states. `text` must
+ * already be masked (code, links) and have grounded quotes blanked. A claim
+ * is supported when any of its canonical keys appears among a source's
+ * numbers, or its normalized text occurs in a source or its file name.
+ */
+export function unsupportedNumericClaims(text: string, sources: GroundedSource[]): string[] {
+  return numericClaims(text)
+    .filter(({ claim, keys }) => !sources.some(src =>
+      keys.some(k => src.numbers.has(k)) || src.norm.includes(claim) || src.nameNorm.includes(claim)))
+    .map(({ raw }) => raw);
+}
+
+/** A claim that a speaker decided, agreed, accepted, committed or will act. */
+const DECISION_RE = /\b(?:decid(?:e|ed|es)|agree(?:d|s)?|accept(?:ed|s)?|approv(?:e|ed|es)|ch(?:o|oo)se|chosen|commit(?:ted|s)?|promis(?:e|ed|es)|confirm(?:ed|s)?|settled on|opted|signed off|will|plans? to|intends? to|going to)\b/i;
+
+/** A unit that records a proposal, a refusal or a negation is not asserting agreement. */
+const PROPOSAL_OR_REFUSAL_RE = /\b(?:(?:suggest|propos|recommend|offer|advis|declin|reject|refus)\w*|turned down|instead|rather than|not|no|never)\b|n't\b/i;
+/** A bare year names when, not what was decided; it is never attributed. */
+const YEAR_KEY_RE = /^(?:19|20|21)\d\d$/;
+
+/**
+ * #5425: numbers and dates in a decision claim that some speaker stated but
+ * none of the speakers the claim names stated (or explicitly accepted).
+ * Sources without turns cannot attribute anything and are ignored; numbers
+ * no turn states (a file-name date, say) are not attributable either.
+ */
+function misattributedDecisionClaims(text: string, attribution: string, sources: GroundedSource[], speakers: string[]): string[] {
+  if (speakers.length === 0 || !DECISION_RE.test(attribution) || PROPOSAL_OR_REFUSAL_RE.test(attribution)) return [];
+  const turned = sources.filter(src => src.turns.length > 0);
+  const statedBy = (keys: string[], who: (sp: string) => boolean) =>
+    turned.some(src => [...src.numbersBySpeaker].some(([sp, nums]) => who(sp) && keys.some(k => nums.has(k))));
+  return numericClaims(text)
+    .filter(({ keys }) => !keys.every(k => YEAR_KEY_RE.test(k)))
+    .filter(({ keys }) => statedBy(keys, () => true) && !statedBy(keys, sp => speakers.includes(sp)))
+    .map(({ raw }) => raw);
 }
 
 const LIST_MARKER_RE = /^(?:[-*+]|\d+[.)]|>|#{1,6})[ \t]+/;
@@ -728,7 +789,7 @@ export function claimUnits(body: string, spans: Array<{ start: number; end: numb
   return units;
 }
 
-export type ClaimFailure = 'quote_not_in_source' | 'quote_crosses_speakers' | 'speaker_mismatch' | 'number_not_in_source';
+export type ClaimFailure = 'quote_not_in_source' | 'quote_crosses_speakers' | 'speaker_mismatch' | 'number_not_in_source' | 'decision_misattributed';
 
 export interface QuarantinedClaim {
   text: string;
@@ -789,7 +850,7 @@ function clip(s: string, n = PROVENANCE_TEXT_CHARS): string {
 export function verifyBody(body: string, sources: GroundedSource[], opts: { priorNorm?: string } = {}): BodyVerification {
   const { spans, unbalanced } = extractQuoteSpans(body);
   const masked = maskNonProse(body);
-  const failures: Record<ClaimFailure, number> = { quote_not_in_source: 0, quote_crosses_speakers: 0, speaker_mismatch: 0, number_not_in_source: 0 };
+  const failures: Record<ClaimFailure, number> = { quote_not_in_source: 0, quote_crosses_speakers: 0, speaker_mismatch: 0, number_not_in_source: 0, decision_misattributed: 0 };
   const edits: Array<{ start: number; end: number; text: string }> = [];
   const quarantined: QuarantinedClaim[] = [];
   const provenance: QuoteProvenance[] = [];
@@ -843,8 +904,14 @@ export function verifyBody(body: string, sources: GroundedSource[], opts: { prio
         speaker: speakers[0] ?? null,
       });
     }
-    const numbers = unsupportedNumericClaims(blank(masked.slice(u.start, u.end), quoteRanges), sources);
+    const unquoted = blank(masked.slice(u.start, u.end), quoteRanges);
+    const numbers = unsupportedNumericClaims(unquoted, sources);
     for (const n of numbers) fail('number_not_in_source', n);
+    if (numbers.length === 0) {
+      for (const n of misattributedDecisionClaims(unquoted, attribution, sources, [...mentioned.keys()])) {
+        fail('decision_misattributed', `${[...mentioned.values()].join(', ')}: ${n} was stated only by another speaker`);
+      }
+    }
 
     if (unitFailures.length > 0) {
       quarantined.push({ text: clip(text, 2000), reason: unitFailures[0].reason, detail: unitFailures.map(f => f.detail).join('; ') });
@@ -999,6 +1066,16 @@ export async function loadPreRunRevision(engine: BrainEngine, slug: string, sour
 }
 
 /**
+ * C-8: dream output is a page a child created (or one already stamped). A page
+ * that existed before the child's first write keeps its own identity. Refs
+ * without a first-write time (legacy callers) count as dream output.
+ */
+export function isDreamOwnedPage(page: Pick<Page, 'created_at' | 'frontmatter'>, firstWriteAt?: Date): boolean {
+  if (!firstWriteAt || page.frontmatter?.dream_generated === true) return true;
+  return new Date(page.created_at).getTime() >= firstWriteAt.getTime();
+}
+
+/**
  * The verification scope of one written page: null prior for a page created
  * at or after `since`, the pre-run revision for an older page, or 'unchanged'
  * when an older page has no revision since then.
@@ -1019,18 +1096,19 @@ export async function resolveVerifyPrior(engine: BrainEngine, page: Pick<Page, '
  */
 export async function verifyAndRepairDreamPages(
   engine: BrainEngine,
-  refs: Array<{ slug: string; source_id: string; raw_source?: string }>,
+  refs: Array<{ slug: string; source_id: string; raw_source?: string; first_write_at?: Date }>,
   transcriptsByPath: Map<string, TranscriptForVerify>,
   opts: { since: Date; sinceByTranscript?: Map<string, Date>; checkedAt?: string; signal?: AbortSignal },
 ): Promise<QuoteVerifyStats> {
   const stats = emptyQuoteVerifyStats();
-  const checkedAt = opts.checkedAt ?? new Date().toISOString().slice(0, 10);
-  const pages = new Map<string, { slug: string; source_id: string; paths: string[] }>();
+  const checkedAt = opts.checkedAt ?? await resolveCycleDate(engine).catch(() => utcDate());
+  const pages = new Map<string, { slug: string; source_id: string; paths: string[]; first_write_at?: Date }>();
   for (const ref of refs) {
     const key = `${ref.source_id} ${ref.slug}`;
     const known = ref.raw_source && transcriptsByPath.has(ref.raw_source) ? ref.raw_source : undefined;
     const entry = pages.get(key) ?? { slug: ref.slug, source_id: ref.source_id, paths: [] };
     if (known && !entry.paths.includes(known)) entry.paths.push(known);
+    if (ref.first_write_at && (!entry.first_write_at || ref.first_write_at < entry.first_write_at)) entry.first_write_at = ref.first_write_at;
     pages.set(key, entry);
   }
   const cache = new Map<string, GroundedSource>();
@@ -1050,7 +1128,9 @@ export async function verifyAndRepairDreamPages(
     try {
       const page = await engine.getPage(ref.slug, { sourceId: ref.source_id });
       if (!page) { stats.errors++; continue; }
-      const since = ref.paths.reduce((min, p) => {
+      // The child's first write to this page is the ownership boundary: a
+      // page another writer created before it is not the run's own.
+      const since = ref.first_write_at ?? ref.paths.reduce((min, p) => {
         const at = opts.sinceByTranscript?.get(p);
         return at && at < min ? at : min;
       }, opts.since);

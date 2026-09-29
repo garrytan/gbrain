@@ -380,21 +380,31 @@ describe('engine.insertFacts — v0.46 (#3014) supersession transport', () => {
     expect(persisted.rows[0].superseded_by).toBeNull();
   });
 
-  test('chain (#N names another struck row) → superseded_by NULL + warning', async () => {
+  test('chain (#N names another superseded row) → every hop links, no warning', async () => {
     // Row 1 superseded by #2; row 2 is itself struck (superseded by #3).
+    // B-13: an A -> B -> C history keeps both links.
     const r = await engine.insertFacts(
       [struck(1, 2, { fact: 'link a' }), struck(2, 3, { fact: 'link b' }), fixtureFact(3, { fact: 'live tail' })],
       { source_id: 'default' },
     );
-    // Row 1 → row 2 is a chain (row 2 struck) → NULL + warning.
-    // Row 2 → row 3 (live) resolves cleanly.
-    expect(r.warnings.some(w => w.includes('struck'))).toBe(true);
+    expect(r.warnings).toEqual([]);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const persisted = await (engine as any).db.query(
       `SELECT row_num, superseded_by FROM facts WHERE source_markdown_slug = 'people/alice' ORDER BY row_num`,
     );
-    expect(persisted.rows[0].superseded_by).toBeNull();          // row 1: chain rejected
+    expect(Number(persisted.rows[0].superseded_by)).toBe(Number(r.ids[1])); // row 1 → row 2
     expect(Number(persisted.rows[1].superseded_by)).toBe(Number(r.ids[2])); // row 2 → row 3
+  });
+
+  test('forgotten target (struck, not superseded) → superseded_by NULL + warning', async () => {
+    const forgotten = { ...fixtureFact(2, { fact: 'withdrawn' }), expired_at: new Date('2026-01-01T00:00:00Z') };
+    const r = await engine.insertFacts([struck(1, 2, { fact: 'link a' }), forgotten], { source_id: 'default' });
+    expect(r.warnings.some(w => w.includes('struck'))).toBe(true);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const persisted = await (engine as any).db.query(
+      `SELECT superseded_by FROM facts WHERE row_num = 1 AND source_markdown_slug = 'people/alice'`,
+    );
+    expect(persisted.rows[0].superseded_by).toBeNull();
   });
 
   test('int4-overflow reference (11-digit #N) resolves as dangling — never throws', async () => {

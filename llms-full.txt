@@ -5086,8 +5086,11 @@ Three more fields answer "what did that cost and did it land":
 - `quote_verify` — what the post-write claim check touched: quotes checked
   and repaired, sentences quarantined (with counts per reason:
   `quote_not_in_source`, `quote_crosses_speakers`, `speaker_mismatch`,
-  `number_not_in_source`), pre-existing pages checked by diff, and unbalanced
-  paragraphs.
+  `number_not_in_source`, `decision_misattributed`), pre-existing pages
+  checked by diff, and unbalanced paragraphs. `decision_misattributed` is a
+  sentence saying a speaker decided, agreed or will do something whose
+  numbers or dates only another speaker stated and the named speaker never
+  explicitly accepted.
 
 Per-call spend also lands in the `chat_usage_log` ledger with a phase tag:
 the orchestrator's own calls under `phase:synthesize`, each drained child

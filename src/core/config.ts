@@ -1305,6 +1305,12 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // #4415: per-brain query-intent pattern extensions (JSON bank→regex[]),
   // merged over the shipped banks in src/core/search/query-intent.ts.
   'search.intent_patterns',
+  // Per-brain source-boost map (`prefix:factor,...`; `none` drops the
+  // defaults), read by search/mode.ts loadSearchModeConfig and ops/search.ts.
+  'search.source_boosts',
+  // #5428 opt-in single-token alias hop (`true` enables), read by
+  // search/mode.ts loadSearchModeConfig.
+  'search.alias_token_hop',
   // 2026-08 fix wave (E5a): the adaptive-return / autocut / CRAG knobs were
   // read by the search path but never registered — `gbrain config set`
   // rejected them, making the documented config plane a no-op. Read sites:
@@ -1388,6 +1394,9 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // #3852: kill-switch for the deterministic junk gate on extracted fact text
   // (plan narration / provider error strings / meta-chatter). Default on.
   'facts.extraction_junk_filter',
+  // B-16: confidence stored for an extracted candidate whose confidence is
+  // missing or non-numeric (a number in 0..1). Unset keeps the legacy 1.0.
+  'facts.extraction_missing_confidence',
   // [ENG-8] Brain-level default visibility for facts writes when the caller
   // didn't specify one: 'private' (default) | 'world'. Resolved by
   // src/core/facts/visibility.ts; explicit caller values always win.
@@ -1469,6 +1478,12 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // #4348: IANA timezone that owns the dream-cycle calendar day (summary
   // bucketing). Unset → host timezone → UTC. Validated at set time.
   'cycle.timezone',
+  // A11: IANA timezone for offset-less frontmatter datetimes in effective_date.
+  // Unset → UTC (date-only values are always UTC calendar dates). Validated at set time.
+  'brain.timezone',
+  // A12 (opt-in, default off): undated new pages in git-backed sources take the
+  // file's git first-commit date as their effective-date fallback on full import.
+  'sync.git_first_commit_dates',
   'cycle.grade_takes.write_gstack_learnings',
   // #4102: off switch for the propose_takes LLM phase (default ON; the
   // phase ships in the default list). Read by src/core/cycle/propose-takes.ts.
@@ -1544,6 +1559,9 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // consent reads this key, and enabling it is the documented path to
   // `gbrain takes extract --from-pages` — same unregistered-key class.
   'takes.bootstrap_enabled',
+  // B-14: USD cap for one takes-bootstrap run's classifier calls (default 5.0;
+  // 0 disables). Read by src/core/extract-takes-from-pages.ts.
+  'takes.bootstrap_budget_usd',
   // Orphan reporting scope. These are consumed by core/orphan-policy.ts and
   // documented there as the per-brain override path.
   'orphans.exclude_prefixes',

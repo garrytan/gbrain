@@ -83,6 +83,15 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
   }
   if (currentVerifiedLocalWriter()?.remote) throw new OperationError('permission_denied', 'Writer administration requires a trusted local CLI caller.');
   if (operation === 'writer_sync') return (await import('./sync-administration.ts')).runAuthenticatedSyncSlice(engine, params);
+  if (operation === 'writer_extract_stale') {
+    keys(params, ['source_id', 'dry_run']);
+    const writer = currentVerifiedLocalWriter();
+    if (!writer || writer.remote || writer.principal.kind !== 'local_cli') throw new OperationError('permission_denied', 'Stale extraction requires a trusted CLI registration.');
+    const { managedPersistenceEnabled } = await import('./ownership.ts');
+    if (!await managedPersistenceEnabled(engine)) throw new OperationError('writer_coordinator_required', 'Owner-delegated stale extraction requires activated managed persistence.', WRITER_INSPECTION_HINT);
+    return { ...await (await import('./links-maintenance.ts')).runManagedStaleExtraction(engine,
+      { sourceId: params.source_id === undefined ? undefined : source(params.source_id), dryRun: params.dry_run === true }) };
+  }
   if (operation === 'writer_reindex_code') return (await import('./reindex-administration.ts')).runAuthenticatedCodeReindex(engine, params);
   if (operation === 'writer_embed_facts') return (await import('./embed-facts-administration.ts')).runAuthenticatedFactEmbedding(engine, params, config);
   if (operation === 'writer_retry_effects') {

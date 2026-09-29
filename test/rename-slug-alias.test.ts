@@ -63,6 +63,32 @@ describe('updateSlug records an alias', () => {
   });
 });
 
+describe('updateSlug carries slug-keyed bindings (#5431)', () => {
+  test('facts and search aliases follow the renamed page; a purged page\'s leftovers yield', async () => {
+    await importFromContent(engine, 'people/dana-example', `---\ntype: person\ntitle: Dana Example\naliases: [Dana E]\n---\n\nDana.\n`, { noEmbed: true });
+    await engine.executeRaw(`INSERT INTO facts (source_id, entity_slug, fact, source, row_num, source_markdown_slug) VALUES
+      ('default', 'people/dana-example', 'Dana founded a company.', 'test', 1, 'people/dana-example'),
+      ('default', 'people/dana-example', 'Dana mentioned elsewhere.', 'test', NULL, 'notes/other-example'),
+      ('default', 'people/erin-example', 'Stale fence row of a purged page.', 'test', 1, 'people/dana-example-2')`);
+    await engine.executeRaw(`INSERT INTO page_aliases (source_id, alias_norm, slug) VALUES ('default', 'dana e', 'people/dana-example-2')
+      ON CONFLICT DO NOTHING`);
+    const before = await engine.executeRaw<{ alias_norm: string }>(`SELECT alias_norm FROM page_aliases WHERE source_id = 'default' AND slug = 'people/dana-example'`);
+    expect(before.map(r => r.alias_norm)).toContain('dana e');
+
+    expect(await engine.updateSlug('people/dana-example', 'people/dana-example-2')).toBe(1);
+
+    const facts = await engine.executeRaw<{ entity_slug: string; source_markdown_slug: string; fact: string }>(
+      `SELECT entity_slug, source_markdown_slug, fact FROM facts WHERE source_id = 'default' ORDER BY fact`);
+    expect(facts).toEqual([
+      { entity_slug: 'people/dana-example-2', source_markdown_slug: 'people/dana-example-2', fact: 'Dana founded a company.' },
+      { entity_slug: 'people/dana-example-2', source_markdown_slug: 'notes/other-example', fact: 'Dana mentioned elsewhere.' },
+    ]);
+    const pageAliases = await engine.executeRaw<{ slug: string }>(
+      `SELECT DISTINCT slug FROM page_aliases WHERE source_id = 'default' AND slug LIKE 'people/dana-example%'`);
+    expect(pageAliases).toEqual([{ slug: 'people/dana-example-2' }]);
+  });
+});
+
 describe('sync keeps inbound edges across a rename', () => {
   test('editing the referrer after a rename keeps its edge to the renamed page', async () => {
     const repo = mkdtempSync(join(tmpdir(), 'rename-alias-'));

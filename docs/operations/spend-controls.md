@@ -63,6 +63,14 @@ The USD-limit knobs accept `off`, `unlimited`, or `none` (case-insensitive) to m
 | `enrich` / `onboard --auto` | `--max-usd` (per-call) | — | refuse without a cap (non-TTY) | `--max-usd off` | runs uncapped (still ledgered) |
 | Image-OCR per-run ceiling | `embedding_image_ocr_max_images` / `embedding_image_ocr_max_usd` | `200` images / `$1.00` (estimated) | skips OCR over-cap (import continues; skips counted in `ocr_skipped_budget`, surfaced by doctor `ocr_health`) | `0` disables that cap | **not** bypassed (per-run cap, not a tracker gate) |
 | Dream `extract_atoms` phase budget | `cycle.extract_atoms.budget_usd` | `0.30` | caps the phase's budget tracker | — | **not** consulted (phase budget enforces regardless) |
+| Dream `synthesize` per-run budget | `dream.synthesize.budget_usd` | `5` | defers the transcript and the rest of the run before submission (estimate: prompt size + child output cap, x `max_turns` in agentic mode) | `unlimited` (`0` = submit nothing) | **not** consulted |
+| Dream `synthesize` daily submission cap | `dream.synthesize.max_submissions_per_source_per_day` | `0` (off) | skips whole files; a failed count query submits nothing that run | `0` | **not** consulted |
+| Dream `BudgetMeter` phases (auto_think, drift, propose/grade takes, calibration) | `dream.auto_think.budget`, `dream.drift.budget`, `cycle.<phase>.budget_usd` | per phase | refuses the next submit past the cap | `unlimited` (`0` = spend nothing) | **not** consulted |
+
+Dream `BudgetMeter` phases meter a model missing from the pricing table at a
+Sonnet-tier fallback rate instead of letting it run uncapped; local model
+servers (Ollama, LM Studio, llama-server) count as $0. Set
+`dream.budget.allow_unpriced=true` to let unpriced models bypass the meter.
 
 The `extract_atoms` cap is enforced only for models in the pricing maps. A model
 the tracker cannot price — e.g. a local Ollama model selected via

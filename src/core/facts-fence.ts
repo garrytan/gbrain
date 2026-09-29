@@ -108,7 +108,8 @@ export interface ParsedFact {
    *   - `claimMetric`: lowercase snake_case after normalization
    *     (`mrr`, `arr`, `team_size`, …). Free-text labels accepted; the
    *     parser does not enforce the seed-map allow-list.
-   *   - `claimValue`: numeric, finite. Empty cell → undefined.
+   *   - `claimValue`: numeric, finite. Empty cell → undefined; `2.5M` /
+   *     `900k` / `$1.2B` scale; an unparseable cell is a malformed row.
    *   - `claimUnit`: free-form unit string (`USD`, `people`, `pct`, …).
    *   - `claimPeriod`: free-form period string (`monthly`, `annual`, …)
    *     or undefined for non-periodic metrics.
@@ -124,25 +125,34 @@ export interface FactsFenceParseResult {
   warnings: string[];
 }
 
+const PLAIN_NUMBER_RE = /^[+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?$/;
+
 function parseConfidenceCell(raw: string): number | undefined {
   const trimmed = raw.trim();
-  if (!trimmed) return undefined;
-  const n = parseFloat(trimmed);
+  if (!PLAIN_NUMBER_RE.test(trimmed)) return undefined;
+  const n = Number(trimmed);
   return Number.isFinite(n) ? n : undefined;
 }
 
 /**
- * v0.35.4 — parse a free-form numeric cell for typed-claim values.
- * Empty / non-numeric → undefined (caller decides whether to drop or warn).
- * Tolerates plain numbers and standard scientific notation. Locale-dependent
- * thousand separators (`,`) are stripped so `50,000` parses to `50000`.
+ * Strict numeric cell for typed-claim values: a plain or scientific number,
+ * comma thousands separators only in the `1,234,567` shape, an optional
+ * leading currency symbol, and an optional k / M / B magnitude suffix
+ * (`2.5M` is 2,500,000). Empty → undefined; any other shape → null, which
+ * the parser reports as FACTS_TABLE_MALFORMED rather than storing a wrong
+ * numeric prefix (`1,5` → 15, `0.9abc` → 0.9).
  */
-function parseNumericCell(raw: string): number | undefined {
+const NUMERIC_CELL_RE = /^([+-]?)[$€£]?((?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?|\.\d+)((?:[eE][+-]?\d+)?)\s*([kmb]?)$/i;
+const MAGNITUDE: Record<string, number> = { '': 1, k: 1e3, m: 1e6, b: 1e9 };
+
+function parseNumericCell(raw: string): number | undefined | null {
   const trimmed = raw.trim();
   if (!trimmed) return undefined;
-  const stripped = trimmed.replace(/,/g, '');
-  const n = parseFloat(stripped);
-  return Number.isFinite(n) ? n : undefined;
+  const m = NUMERIC_CELL_RE.exec(trimmed);
+  if (!m) return null;
+  const [, sign, digits, exponent, suffix] = m;
+  const n = Number(`${sign}${digits.replace(/,/g, '')}${exponent}`) * MAGNITUDE[suffix.toLowerCase()];
+  return Number.isFinite(n) ? n : null;
 }
 
 function parseSupersededByFromContext(context: string | undefined): number | undefined {
@@ -270,6 +280,12 @@ export function parseFactsFence(body: string): FactsFenceParseResult {
       continue;
     }
 
+    const claimValue = parseNumericCell(claimValueRaw);
+    if (claimValue === null) {
+      warnings.push(`FACTS_TABLE_MALFORMED: non-numeric claim_value "${claimValueRaw.trim()}" in row ${rowNumStr} (expected a number, optionally 1,234 separators or a k/M/B suffix)`);
+      continue;
+    }
+
     const { text: claimText, struck } = stripStrikethrough(claimRaw);
     const context = parseStringCell(contextRaw);
     const supersededBy = parseSupersededByFromContext(context);
@@ -291,7 +307,7 @@ export function parseFactsFence(body: string): FactsFenceParseResult {
       forgotten: struck ? forgotten : false,
       // v0.35.4 — typed-claim fields, all optional.
       claimMetric: parseStringCell(claimMetricRaw),
-      claimValue:  parseNumericCell(claimValueRaw),
+      claimValue,
       claimUnit:   parseStringCell(claimUnitRaw),
       claimPeriod: parseStringCell(claimPeriodRaw),
     });
@@ -302,6 +318,20 @@ export function parseFactsFence(body: string): FactsFenceParseResult {
   }
 
   return { facts, warnings };
+}
+
+/**
+ * Render an instant for a `valid_from` / `valid_until` cell. A UTC-midnight
+ * value keeps the `YYYY-MM-DD` shape (date-only cells never churn); any other
+ * instant is written as a UTC timestamp to the second, so a TTL or a default
+ * "now" valid_from survives a re-read of the fence instead of being truncated
+ * to the UTC date (which expired same-day TTLs and stamped evening writes west
+ * of UTC with tomorrow's date). The parser already accepts both shapes.
+ */
+export function formatFenceDate(d: Date): string {
+  const iso = d.toISOString();
+  if (iso.endsWith('T00:00:00.000Z')) return iso.slice(0, 10);
+  return iso.replace(/\.\d{3}Z$/, 'Z');
 }
 
 function formatConfidence(c: number): string {

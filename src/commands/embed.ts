@@ -8,6 +8,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import { currentEmbeddingSignature } from '../core/embedding.ts';
 import type { ChunkInput } from '../core/types.ts';
 import { carryChunkMetadata, probeEmbedder, resolveProvenanceStamp, stampIfPageProvenanceComplete } from '../core/embed-stale.ts';
+import type { StaleImageSweepResult } from '../core/embed-stale-images.ts';
 import { chunkText } from '../core/chunkers/recursive.ts';
 import { resolveMaxChunkTokens } from '../core/embedding-input-limit.ts';
 import { healOversizedPageChunks, healedChunksToStaleRows } from '../core/embed-oversize-heal.ts';
@@ -835,7 +836,7 @@ export function isKeylessStaleRefusal(args: string[], embeddingDisabled: boolean
     && embeddingDisabled === true;
 }
 
-export async function runEmbed(engine: BrainEngine, args: string[], selectedConfig: GBrainConfig | null = null): Promise<EmbedResult | EmbedFactsResult | undefined> {
+export async function runEmbed(engine: BrainEngine, args: string[], selectedConfig: GBrainConfig | null = null): Promise<EmbedResult | EmbedFactsResult | StaleImageSweepResult | undefined> {
   if (args.includes('--facts')) {
     const result = await embedStaleFacts(engine, parseFactEmbedArgs(args), selectedConfig);
     console.log(JSON.stringify(result, null, 2));
@@ -858,6 +859,7 @@ export async function runEmbed(engine: BrainEngine, args: string[], selectedConf
     };
   }
 
+  if (args.includes('--images')) return (await import('../core/embed-stale-images.ts')).runEmbedStaleImagesCli(engine, args); // lazy: keeps import-file out of embed's graph
   // v0.36+ T7: --background submits via Minion queue, returns job_id to
   // stdout, exits. Same semantics in TTY and cron (D9).
   if (args.includes('--background')) {
@@ -924,7 +926,7 @@ export async function runEmbed(engine: BrainEngine, args: string[], selectedConf
   } else {
     const slug = args.find(a => !a.startsWith('--'));
     if (!slug) {
-      serr('Usage: gbrain embed [<slug>|--all|--stale|--slugs s1 s2 ...] [--dry-run] [--batch-size N] [--priority recent] [--catch-up] [--include-null-signature]');
+      serr('Usage: gbrain embed [<slug>|--all|--stale|--slugs s1 s2 ...] [--dry-run] [--batch-size N] [--priority recent] [--catch-up] [--include-null-signature] | --stale --images');
       process.exit(1);
     }
     opts = { slug, dryRun, sourceId, batchSize, priority, catchUp };

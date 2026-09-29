@@ -52,10 +52,15 @@ describe('synthesize_concepts human-owned pages', () => {
     const theme = await engine.getPage('concepts/theme', { sourceId: 'default' });
     expect(String(theme?.frontmatter.synthesized_by)).toMatch(/^synthesize_concepts/);
 
-    // The phase's own page is still eligible for a refresh on the next run.
-    const second = await runPhaseSynthesizeConcepts(engine, { _atoms: atoms, sourceId: 'default' });
+    // The phase's own page is still eligible for a refresh on the next run
+    // (a changed member set; an unchanged one is skipped as unchanged).
+    const grown = [...atoms, { slug: 'atoms/a3', title: 'A3', body: 'b3', concept_refs: ['flywheel', 'theme'] }];
+    await engine.putPage('atoms/a3', { type: 'atom', title: 'A3', compiled_truth: 'b3', timeline: '' });
+    const second = await runPhaseSynthesizeConcepts(engine, { _atoms: grown, sourceId: 'default' });
     expect((second.details as Record<string, unknown>).skipped_human_owned).toEqual(['concepts/flywheel']);
     expect((second.details as Record<string, unknown>).concepts_written).toBe(1);
+    const third = await runPhaseSynthesizeConcepts(engine, { _atoms: grown, sourceId: 'default' });
+    expect((third.details as Record<string, unknown>).skipped_unchanged).toEqual(['concepts/theme']);
   }, 120000);
 
   test('the ownership check runs before any LLM spend', async () => {

@@ -517,6 +517,8 @@ CREATE TABLE IF NOT EXISTS tags (
   id      SERIAL PRIMARY KEY,
   page_id INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
   tag     TEXT    NOT NULL,
+  -- 'frontmatter' (import-owned, deleted when it leaves the frontmatter), 'added', or NULL (legacy).
+  tag_source TEXT,
   UNIQUE(page_id, tag)
 );
 

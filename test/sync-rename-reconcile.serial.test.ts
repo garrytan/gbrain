@@ -317,9 +317,12 @@ describe('#3056: rename fallback reconciles the stale old row', () => {
 
     // The stale old row reconciled away even though the skip wrote nothing...
     expect(await engine.getPage('people/carol')).toBeNull();
-    // ...and the destination row is genuinely untouched (the skip was real).
-    const after = await engine.readPageSnapshot('people/dana', { sourceId: 'default' });
-    expect(after).toEqual(before);
+    // ...and the destination row is genuinely untouched (the skip was real):
+    // the only change is the file origin every file import records (#5675),
+    // bookkeeping that leaves the revision alone.
+    const after = (await engine.readPageSnapshot('people/dana', { sourceId: 'default' }))!;
+    expect(after.page.source_uri).toMatch(/^file:\/\/.*\/people\/dana\.md$/);
+    expect(after).toEqual({ ...before, page: { ...before.page, source_uri: after.page.source_uri } });
     expect(await countPages()).toBe(1);
   });
 });

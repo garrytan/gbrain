@@ -251,7 +251,10 @@ export async function preparePageMutation(engine: BrainEngine, row: WriteRequest
   const project = projected ? await prepareCanonicalProjections(engine,ready.parsedPage,row.slug,row.source_id,snapshot,writer) : undefined;
   const ordinaryPage = ['put_page','capture','restore_page','revert_version'].includes(row.operation);
   const advisories = noop || targetDeleted ? pageNoopAdvisories(row) : !ordinaryPage ? remoteLinkHint(row) : await preparePageAdvisories(engine,row,ready.parsedPage);
-  const links = !noop && !targetDeleted && ordinaryPage && (row.authority.autoLinkTrusted ?? !row.authority.remote) && await isAutoLinkEnabled(engine)
+  // A managed maintenance page (e.g. the dream write-back after grounding
+  // quarantine) republishes a body; its automatic links follow that body.
+  const autoLinkedPage = ordinaryPage || p.kind === 'managed_maintenance_page';
+  const links = !noop && !targetDeleted && autoLinkedPage && (row.authority.autoLinkTrusted ?? !row.authority.remote) && await isAutoLinkEnabled(engine)
     ? await prepareAutomaticLinks(engine,row.slug,ready.parsedPage,row.source_id) : undefined;
   const capture = row.operation === 'capture' && typeof p.capture_path === 'string' && typeof p.capture_file_hash === 'string'
     ? { path: p.capture_path, hash: p.capture_file_hash } : undefined;

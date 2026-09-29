@@ -1,0 +1,144 @@
+{"family": "title-substring", "query": "Harbor Street Lease Amendment", "relevant": ["leases/harbor-street-lease-amendment"]}
+{"family": "question-wrapped-title", "query": "Which document is Harbor Street Lease Amendment?", "relevant": ["leases/harbor-street-lease-amendment"]}
+{"family": "long-form-wrapper", "query": "Where can I find the Harbor Street Lease Amendment that extended the term and added parking spaces for our office floors?", "relevant": ["leases/harbor-street-lease-amendment"]}
+{"family": "title-substring", "query": "Maple Court Sublease Agreement", "relevant": ["leases/maple-court-sublease-agreement"]}
+{"family": "question-wrapped-title", "query": "Which document is Maple Court Sublease Agreement?", "relevant": ["leases/maple-court-sublease-agreement"]}
+{"family": "long-form-wrapper", "query": "Can you show me the Maple Court Sublease Agreement with the subtenant rent, deposit, and the master landlord's consent details?", "relevant": ["leases/maple-court-sublease-agreement"]}
+{"family": "title-substring", "query": "Riverside Warehouse Lease Renewal", "relevant": ["leases/riverside-warehouse-lease-renewal"]}
+{"family": "question-wrapped-title", "query": "Which document is Riverside Warehouse Lease Renewal?", "relevant": ["leases/riverside-warehouse-lease-renewal"]}
+{"family": "long-form-wrapper", "query": "What are the new five-year term, roof repair commitments, and early termination right in the Riverside Warehouse Lease Renewal for Dock Road?", "relevant": ["leases/riverside-warehouse-lease-renewal"]}
+{"family": "title-substring", "query": "Cedar Plaza Retail Lease", "relevant": ["leases/cedar-plaza-retail-lease"]}
+{"family": "question-wrapped-title", "query": "Which document is Cedar Plaza Retail Lease?", "relevant": ["leases/cedar-plaza-retail-lease"]}
+{"family": "long-form-wrapper", "query": "Where is the Cedar Plaza Retail Lease that describes percentage rent, the co-tenancy clause, and the showroom's radius restriction?", "relevant": ["leases/cedar-plaza-retail-lease"]}
+{"family": "title-substring", "query": "Cedar Plaza Estoppel Certificate", "relevant": ["leases/cedar-plaza-estoppel-certificate"]}
+{"family": "question-wrapped-title", "query": "Which document is Cedar Plaza Estoppel Certificate?", "relevant": ["leases/cedar-plaza-estoppel-certificate"]}
+{"family": "long-form-wrapper", "query": "Which file is the Cedar Plaza Estoppel Certificate we signed for the lender during the landlord's refinancing last spring?", "relevant": ["leases/cedar-plaza-estoppel-certificate"]}
+{"family": "title-substring", "query": "Landlord Insurance Requirements Memo", "relevant": ["leases/landlord-insurance-requirements-memo"]}
+{"family": "question-wrapped-title", "query": "Which document is Landlord Insurance Requirements Memo?", "relevant": ["leases/landlord-insurance-requirements-memo"]}
+{"family": "long-form-wrapper", "query": "I need the Landlord Insurance Requirements Memo that lists liability limits, umbrella coverage, and certificate deadlines for each of our leased locations.", "relevant": ["leases/landlord-insurance-requirements-memo"]}
+{"family": "mention-other-gold", "query": "Which amendment changed the rent and term originally set in the Harbor Street Lease Agreement?", "relevant": ["leases/harbor-street-lease-amendment"]}
+{"family": "mention-other-gold", "query": "The Weekly Update flagged the sublease consent for the second-floor subtenant; where are the actual sublease terms and subtenant rent recorded?", "relevant": ["leases/maple-court-sublease-agreement"]}
+{"family": "mention-other-gold", "query": "Which schedule lists the fixed yearly rent increases that apply after the Riverside Warehouse Lease Renewal took effect?", "relevant": ["leases/riverside-warehouse-rent-escalation-schedule"]}
+{"family": "mention-other-gold", "query": "Which certificate confirms rent paid and no defaults for the landlord's lender under the Cedar Plaza Retail Lease?", "relevant": ["leases/cedar-plaza-estoppel-certificate"]}
+{"family": "mention-other-gold", "query": "Which document lists the coverage limits behind the higher insurance premium line item discussed in the Budget Review?", "relevant": ["leases/landlord-insurance-requirements-memo"]}
+{"family": "mention-other-gold", "query": "Which master lease sits above the Maple Court Sublease Agreement and sets the base rent and annual increases Acme pays?", "relevant": ["leases/maple-court-office-lease"]}
+{"family": "title-substring", "query": "Falcon Sensor Hub Spec v1", "relevant": ["product/falcon-sensor-hub-spec-v1"]}
+{"family": "question-wrapped-title", "query": "Which document is Falcon Sensor Hub Spec v1?", "relevant": ["product/falcon-sensor-hub-spec-v1"]}
+{"family": "long-form-wrapper", "query": "Can you find the Falcon Sensor Hub Spec v1 that describes the first pilot hub with fixed sixty-second sampling and a shared radio key?", "relevant": ["product/falcon-sensor-hub-spec-v1"]}
+{"family": "title-substring", "query": "Falcon Sensor Hub Spec v2", "relevant": ["product/falcon-sensor-hub-spec-v2"]}
+{"family": "question-wrapped-title", "query": "Which document is Falcon Sensor Hub Spec v2?", "relevant": ["product/falcon-sensor-hub-spec-v2"]}
+{"family": "long-form-wrapper", "query": "I need the Falcon Sensor Hub Spec v2 covering configurable sampling, per-device encryption keys, and the larger 32 sensor capacity for the pilot.", "relevant": ["product/falcon-sensor-hub-spec-v2"]}
+{"family": "title-substring", "query": "Beacon Dock Power Design Doc", "relevant": ["product/beacon-dock-power-design-doc"]}
+{"family": "question-wrapped-title", "query": "Which document is Beacon Dock Power Design Doc?", "relevant": ["product/beacon-dock-power-design-doc"]}
+{"family": "long-form-wrapper", "query": "Where can I read the Beacon Dock Power Design Doc about the four-bay charging rails and the voltage sag issue on rail three?", "relevant": ["product/beacon-dock-power-design-doc"]}
+{"family": "title-substring", "query": "Beacon Dock Thermal Design Doc", "relevant": ["product/beacon-dock-thermal-design-doc"]}
+{"family": "question-wrapped-title", "query": "Which document is Beacon Dock Thermal Design Doc?", "relevant": ["product/beacon-dock-thermal-design-doc"]}
+{"family": "long-form-wrapper", "query": "Please point me to the Beacon Dock Thermal Design Doc that lists the fan curve and vent slot dimensions for the four-bay charger.", "relevant": ["product/beacon-dock-thermal-design-doc"]}
+{"family": "title-substring", "query": "Lantern Mobile App Requirements", "relevant": ["product/lantern-mobile-app-requirements"]}
+{"family": "question-wrapped-title", "query": "Which document is Lantern Mobile App Requirements?", "relevant": ["product/lantern-mobile-app-requirements"]}
+{"family": "long-form-wrapper", "query": "Which team owns the Lantern Mobile App Requirements covering push alerts, offline viewing, and single sign-on for warehouse staff?", "relevant": ["product/lantern-mobile-app-requirements"]}
+{"family": "title-substring", "query": "Quartz Display Panel Test Plan", "relevant": ["product/quartz-display-panel-test-plan"]}
+{"family": "question-wrapped-title", "query": "Which document is Quartz Display Panel Test Plan?", "relevant": ["product/quartz-display-panel-test-plan"]}
+{"family": "long-form-wrapper", "query": "Show me the Quartz Display Panel Test Plan with the incoming inspection sample size, burn-in hours, and dead pixel limits.", "relevant": ["product/quartz-display-panel-test-plan"]}
+{"family": "mention-other-gold", "query": "Which specification superseded the Falcon Sensor Hub Spec v1 and raised the sampling flexibility and sensor capacity?", "relevant": ["product/falcon-sensor-hub-spec-v2"]}
+{"family": "mention-other-gold", "query": "Which document covers fan curves and venting, as opposed to the Beacon Dock Power Design Doc that covers charging rails?", "relevant": ["product/beacon-dock-thermal-design-doc"]}
+{"family": "mention-other-gold", "query": "Where are the color and gamma calibration steps for panels that pass the Quartz Display Panel Test Plan?", "relevant": ["product/quartz-display-panel-calibration-guide"]}
+{"family": "mention-other-gold", "query": "Which design document explains the charging rail three voltage sag mentioned in the Status Report?", "relevant": ["product/beacon-dock-power-design-doc"]}
+{"family": "mention-other-gold", "query": "Which checklist should be followed before shipping the app release scheduled in the Project Plan?", "relevant": ["product/lantern-mobile-app-release-checklist"]}
+{"family": "mention-other-gold", "query": "Which proposal was discussed in the Meeting Notes about shrinking the carton and using pulp trays?", "relevant": ["product/widget-packaging-redesign-proposal"]}
+{"family": "title-substring", "query": "Senior Backend Engineer Role Description", "relevant": ["hiring/senior-backend-engineer-role-description"]}
+{"family": "question-wrapped-title", "query": "Which document is Senior Backend Engineer Role Description?", "relevant": ["hiring/senior-backend-engineer-role-description"]}
+{"family": "long-form-wrapper", "query": "Where can I find the Senior Backend Engineer Role Description that lists the level, salary band, and required qualifications for the Platform group?", "relevant": ["hiring/senior-backend-engineer-role-description"]}
+{"family": "title-substring", "query": "Senior Backend Engineer Hiring Plan", "relevant": ["hiring/senior-backend-engineer-hiring-plan"]}
+{"family": "question-wrapped-title", "query": "Which document is Senior Backend Engineer Hiring Plan?", "relevant": ["hiring/senior-backend-engineer-hiring-plan"]}
+{"family": "long-form-wrapper", "query": "Can you point me to the Senior Backend Engineer Hiring Plan that describes interview stages, sourcing channels, and target start dates for the two openings?", "relevant": ["hiring/senior-backend-engineer-hiring-plan"]}
+{"family": "title-substring", "query": "Support Team Headcount Plan FY25", "relevant": ["hiring/support-team-headcount-plan-fy25"]}
+{"family": "question-wrapped-title", "query": "Which document is Support Team Headcount Plan FY25?", "relevant": ["hiring/support-team-headcount-plan-fy25"]}
+{"family": "long-form-wrapper", "query": "I need the original Support Team Headcount Plan FY25 showing the first approved hiring waves and the incremental cost of 412,000 for the support agents.", "relevant": ["hiring/support-team-headcount-plan-fy25"]}
+{"family": "title-substring", "query": "Support Team Headcount Plan Amendment", "relevant": ["hiring/support-team-headcount-plan-amendment"]}
+{"family": "question-wrapped-title", "query": "Which document is Support Team Headcount Plan Amendment?", "relevant": ["hiring/support-team-headcount-plan-amendment"]}
+{"family": "long-form-wrapper", "query": "Where is the Support Team Headcount Plan Amendment that moved the tier-two specialist to April and raised the cost to 431,500?", "relevant": ["hiring/support-team-headcount-plan-amendment"]}
+{"family": "title-substring", "query": "Data Analyst Role Description", "relevant": ["hiring/data-analyst-role-description"]}
+{"family": "question-wrapped-title", "query": "Which document is Data Analyst Role Description?", "relevant": ["hiring/data-analyst-role-description"]}
+{"family": "long-form-wrapper", "query": "Where can I read the Data Analyst Role Description for the Finance and Operations group, including required experience and the salary band?", "relevant": ["hiring/data-analyst-role-description"]}
+{"family": "title-substring", "query": "Engineering Referral Bonus Policy", "relevant": ["hiring/engineering-referral-bonus-policy"]}
+{"family": "question-wrapped-title", "query": "Which document is Engineering Referral Bonus Policy?", "relevant": ["hiring/engineering-referral-bonus-policy"]}
+{"family": "long-form-wrapper", "query": "What are the payout amounts and eligibility exclusions described in the Engineering Referral Bonus Policy for employees who refer hired candidates?", "relevant": ["hiring/engineering-referral-bonus-policy"]}
+{"family": "mention-other-gold", "query": "Which amendment superseded the Support Team Headcount Plan FY25 numbers for the tier-two specialist and weekend shift?", "relevant": ["hiring/support-team-headcount-plan-amendment"]}
+{"family": "mention-other-gold", "query": "Which document gives the interview stages and target time to offer for the openings covered by the Senior Backend Engineer Role Description?", "relevant": ["hiring/senior-backend-engineer-hiring-plan"]}
+{"family": "mention-other-gold", "query": "Which document covers referral payouts, unlike the Contractor Conversion Guidelines, which apply to contractors moving onto payroll?", "relevant": ["hiring/engineering-referral-bonus-policy"]}
+{"family": "mention-other-gold", "query": "Which guidelines did the group ask Erin Demo to check in the Meeting Notes before converting two long-serving contractors?", "relevant": ["hiring/contractor-conversion-guidelines"]}
+{"family": "mention-other-gold", "query": "Where is the recruiter salary band and placement bonus explained that is funded in the Budget Review?", "relevant": ["hiring/harbor-street-recruiter-job-description"]}
+{"family": "mention-other-gold", "query": "Which position do candidates get scored for with the Data Analyst Interview Rubric, and where are its duties listed?", "relevant": ["hiring/data-analyst-role-description"]}
+{"family": "title-substring", "query": "Harbor Street Lease Amendment", "relevant": ["finance/harbor-street-lease-amendment"]}
+{"family": "question-wrapped-title", "query": "Which document is Harbor Street Lease Amendment?", "relevant": ["finance/harbor-street-lease-amendment"]}
+{"family": "long-form-wrapper", "query": "Where can I find the Harbor Street Lease Amendment that changed the monthly rent and added the third floor to our headquarters?", "relevant": ["finance/harbor-street-lease-amendment"]}
+{"family": "title-substring", "query": "Harbor Street Lease Agreement", "relevant": ["finance/harbor-street-lease-agreement"]}
+{"family": "question-wrapped-title", "query": "Which document is Harbor Street Lease Agreement?", "relevant": ["finance/harbor-street-lease-agreement"]}
+{"family": "long-form-wrapper", "query": "Can you show me the Harbor Street Lease Agreement with the original five-year term, base rent, and early termination option?", "relevant": ["finance/harbor-street-lease-agreement"]}
+{"family": "title-substring", "query": "Widget Pricing Review Q3", "relevant": ["finance/widget-pricing-review-q3"]}
+{"family": "question-wrapped-title", "query": "Which document is Widget Pricing Review Q3?", "relevant": ["finance/widget-pricing-review-q3"]}
+{"family": "long-form-wrapper", "query": "I need the Widget Pricing Review Q3 that shows the new Standard Widget list price and the projected revenue impact.", "relevant": ["finance/widget-pricing-review-q3"]}
+{"family": "title-substring", "query": "Widget Pricing Review Q2", "relevant": ["finance/widget-pricing-review-q2"]}
+{"family": "question-wrapped-title", "query": "Which document is Widget Pricing Review Q2?", "relevant": ["finance/widget-pricing-review-q2"]}
+{"family": "long-form-wrapper", "query": "Where is the Widget Pricing Review Q2 that benchmarked our prices against three competitors and left Deluxe pricing unchanged?", "relevant": ["finance/widget-pricing-review-q2"]}
+{"family": "title-substring", "query": "Q3 Marketing Budget Variance", "relevant": ["finance/q3-marketing-budget-variance"]}
+{"family": "question-wrapped-title", "query": "Which document is Q3 Marketing Budget Variance?", "relevant": ["finance/q3-marketing-budget-variance"]}
+{"family": "long-form-wrapper", "query": "Please find the Q3 Marketing Budget Variance report explaining the trade show overspend and the proposed transfer from the brand campaign.", "relevant": ["finance/q3-marketing-budget-variance"]}
+{"family": "title-substring", "query": "Travel Expense Policy Update", "relevant": ["finance/travel-expense-policy-update"]}
+{"family": "question-wrapped-title", "query": "Which document is Travel Expense Policy Update?", "relevant": ["finance/travel-expense-policy-update"]}
+{"family": "long-form-wrapper", "query": "Where can I read the Travel Expense Policy Update covering per diem caps, hotel limits, and advance airfare booking rules?", "relevant": ["finance/travel-expense-policy-update"]}
+{"family": "mention-other-gold", "query": "Which amendment superseded the Harbor Street Lease Agreement and raised the monthly rent?", "relevant": ["finance/harbor-street-lease-amendment"]}
+{"family": "mention-other-gold", "query": "What does the Weekly Update say is pending before the Riverside Road warehouse renewal can be signed?", "relevant": ["finance/riverside-warehouse-lease-renewal"]}
+{"family": "mention-other-gold", "query": "Which policy document sets the per diem cap that was discussed in the Meeting Notes?", "relevant": ["finance/travel-expense-policy-update"]}
+{"family": "mention-other-gold", "query": "Which document holds the earlier Standard Widget price of $48 that preceded the Widget Pricing Review Q3 increase?", "relevant": ["finance/widget-pricing-review-q2"]}
+{"family": "mention-other-gold", "query": "Which document lists the hardware test bench purchase that the Budget Review suggested deferring?", "relevant": ["finance/capital-equipment-purchase-forecast"]}
+{"family": "mention-other-gold", "query": "Which variance report covers cloud hosting overruns, as opposed to the Q3 Marketing Budget Variance?", "relevant": ["finance/q3-engineering-budget-variance"]}
+{"family": "title-substring", "query": "Primary Database Failover Outage", "relevant": ["postmortem/primary-database-failover-outage"]}
+{"family": "question-wrapped-title", "query": "Which document is Primary Database Failover Outage?", "relevant": ["postmortem/primary-database-failover-outage"]}
+{"family": "long-form-wrapper", "query": "Can you find the Primary Database Failover Outage write-up describing the March replication lag and the manual promotion led by Alice Example?", "relevant": ["postmortem/primary-database-failover-outage"]}
+{"family": "title-substring", "query": "Payment Gateway Timeout Incident", "relevant": ["postmortem/payment-gateway-timeout-incident"]}
+{"family": "question-wrapped-title", "query": "Which document is Payment Gateway Timeout Incident?", "relevant": ["postmortem/payment-gateway-timeout-incident"]}
+{"family": "long-form-wrapper", "query": "Where can I read the Payment Gateway Timeout Incident report covering the exhausted thread pool and unbounded retries during checkout in June?", "relevant": ["postmortem/payment-gateway-timeout-incident"]}
+{"family": "title-substring", "query": "Cache Cluster Eviction Storm", "relevant": ["postmortem/cache-cluster-eviction-storm"]}
+{"family": "question-wrapped-title", "query": "Which document is Cache Cluster Eviction Storm?", "relevant": ["postmortem/cache-cluster-eviction-storm"]}
+{"family": "long-form-wrapper", "query": "Which postmortem describes the Cache Cluster Eviction Storm in August when the hit rate dropped after a serializer change increased catalog entry sizes?", "relevant": ["postmortem/cache-cluster-eviction-storm"]}
+{"family": "title-substring", "query": "Certificate Expiry Login Outage", "relevant": ["postmortem/certificate-expiry-login-outage"]}
+{"family": "question-wrapped-title", "query": "Which document is Certificate Expiry Login Outage?", "relevant": ["postmortem/certificate-expiry-login-outage"]}
+{"family": "long-form-wrapper", "query": "I need the analysis of the Certificate Expiry Login Outage in September where the identity service handshake failed for employees and customers alike.", "relevant": ["postmortem/certificate-expiry-login-outage"]}
+{"family": "title-substring", "query": "Deployment Pipeline Rollback Failure", "relevant": ["postmortem/deployment-pipeline-rollback-failure"]}
+{"family": "question-wrapped-title", "query": "Which document is Deployment Pipeline Rollback Failure?", "relevant": ["postmortem/deployment-pipeline-rollback-failure"]}
+{"family": "long-form-wrapper", "query": "What was the root cause described in the Deployment Pipeline Rollback Failure postmortem about the dropped column and the order service in October?", "relevant": ["postmortem/deployment-pipeline-rollback-failure"]}
+{"family": "title-substring", "query": "Alert Fatigue Paging Review", "relevant": ["postmortem/alert-fatigue-paging-review"]}
+{"family": "question-wrapped-title", "query": "Which document is Alert Fatigue Paging Review?", "relevant": ["postmortem/alert-fatigue-paging-review"]}
+{"family": "long-form-wrapper", "query": "Which document is the Alert Fatigue Paging Review that analyzed weekly page counts and noisy rules for the on-call rotation during the third quarter?", "relevant": ["postmortem/alert-fatigue-paging-review"]}
+{"family": "mention-other-gold", "query": "Which followup tracks the remediation owners and due dates after the Primary Database Failover Outage?", "relevant": ["postmortem/primary-database-failover-followup"]}
+{"family": "mention-other-gold", "query": "What lessons and decisions came out of the session held after the Payment Gateway Timeout Incident?", "relevant": ["postmortem/payment-gateway-timeout-retrospective"]}
+{"family": "mention-other-gold", "query": "Which runbook gives the renewal steps that were written after the Certificate Expiry Login Outage?", "relevant": ["postmortem/certificate-expiry-renewal-runbook"]}
+{"family": "mention-other-gold", "query": "What does the Weekly Update say about the eviction alert and headroom on the shared cache, and which postmortem explains why it was needed?", "relevant": ["postmortem/cache-cluster-eviction-storm"]}
+{"family": "mention-other-gold", "query": "In the Meeting Notes, which outage was discussed regarding the schema migration that made reverting the order service impossible?", "relevant": ["postmortem/deployment-pipeline-rollback-failure"]}
+{"family": "mention-other-gold", "query": "Where is the original root cause described for the checkout timeouts that the Status Report refers to?", "relevant": ["postmortem/payment-gateway-timeout-incident"]}
+{"family": "title-substring", "query": "Spring Offsite Agenda Draft", "relevant": ["events/spring-offsite-agenda-draft"]}
+{"family": "question-wrapped-title", "query": "Which document is Spring Offsite Agenda Draft?", "relevant": ["events/spring-offsite-agenda-draft"]}
+{"family": "long-form-wrapper", "query": "Where can I find the Spring Offsite Agenda Draft that Alice Example circulated in March for department leads to comment on?", "relevant": ["events/spring-offsite-agenda-draft"]}
+{"family": "title-substring", "query": "Spring Offsite Agenda Final", "relevant": ["events/spring-offsite-agenda-final"]}
+{"family": "question-wrapped-title", "query": "Which document is Spring Offsite Agenda Final?", "relevant": ["events/spring-offsite-agenda-final"]}
+{"family": "long-form-wrapper", "query": "Can you point me to the approved Spring Offsite Agenda Final that replaced the hike with an indoor design workshop on day two?", "relevant": ["events/spring-offsite-agenda-final"]}
+{"family": "title-substring", "query": "Harbor Street Venue Contract", "relevant": ["events/harbor-street-venue-contract"]}
+{"family": "question-wrapped-title", "query": "Which document is Harbor Street Venue Contract?", "relevant": ["events/harbor-street-venue-contract"]}
+{"family": "long-form-wrapper", "query": "What are the deposit and cancellation terms written in the Harbor Street Venue Contract for the May spring gathering hall rental?", "relevant": ["events/harbor-street-venue-contract"]}
+{"family": "title-substring", "query": "Lakeview Lodge Venue Contract", "relevant": ["events/lakeview-lodge-venue-contract"]}
+{"family": "question-wrapped-title", "query": "Which document is Lakeview Lodge Venue Contract?", "relevant": ["events/lakeview-lodge-venue-contract"]}
+{"family": "long-form-wrapper", "query": "How many guests and how much money does the Lakeview Lodge Venue Contract cover for the October autumn leadership retreat stay?", "relevant": ["events/lakeview-lodge-venue-contract"]}
+{"family": "title-substring", "query": "Annual Holiday Party Budget", "relevant": ["events/annual-holiday-party-budget"]}
+{"family": "question-wrapped-title", "query": "Which document is Annual Holiday Party Budget?", "relevant": ["events/annual-holiday-party-budget"]}
+{"family": "long-form-wrapper", "query": "Which line items make up the total in the Annual Holiday Party Budget, including venue, catering, music, and the contingency reserve?", "relevant": ["events/annual-holiday-party-budget"]}
+{"family": "title-substring", "query": "Offsite Shuttle Transportation Plan", "relevant": ["events/offsite-shuttle-transportation-plan"]}
+{"family": "question-wrapped-title", "query": "Which document is Offsite Shuttle Transportation Plan?", "relevant": ["events/offsite-shuttle-transportation-plan"]}
+{"family": "long-form-wrapper", "query": "What departure times and seat counts are listed in the Offsite Shuttle Transportation Plan for travel from the main office to the venue?", "relevant": ["events/offsite-shuttle-transportation-plan"]}
+{"family": "mention-other-gold", "query": "Which final schedule superseded the Spring Offsite Agenda Draft after the weather forecast changed?", "relevant": ["events/spring-offsite-agenda-final"]}
+{"family": "mention-other-gold", "query": "Which document describes the shuttle schedule that was discussed as a need in the Meeting Notes from March?", "relevant": ["events/offsite-shuttle-transportation-plan"]}
+{"family": "mention-other-gold", "query": "Where is the full spending breakdown for the December party that the Weekly Update says the committee will review?", "relevant": ["events/annual-holiday-party-budget"]}
+{"family": "mention-other-gold", "query": "Which contract was the costlier alternative that was rejected instead of the Harbor Street Venue Contract?", "relevant": ["events/lakeview-lodge-venue-contract"]}
+{"family": "mention-other-gold", "query": "Which document lists vegan and gluten-free meal counts for the gathering described in the Team Offsite overview?", "relevant": ["events/offsite-dietary-catering-menu"]}
+{"family": "mention-other-gold", "query": "Which document explains the grill and cleanup roles for the picnic announced in the Quarterly Town Hall Recap?", "relevant": ["events/summer-picnic-volunteer-signup"]}

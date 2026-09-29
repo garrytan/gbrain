@@ -146,6 +146,8 @@ export async function backfillEffectiveDate(
   // batch otherwise; PGLite ignores SET LOCAL outside transactions but
   // doesn't have the timeout problem in the first place (single writer).
   const isPostgres = engine.kind === 'postgres';
+  // Same zone the importer reads offset-less datetimes in (brain.timezone).
+  const timeZone = (await engine.getConfig('brain.timezone').catch(() => null))?.trim() || undefined;
 
   while (true) {
     if (opts.maxRows && examined >= opts.maxRows) break;
@@ -197,6 +199,7 @@ export async function backfillEffectiveDate(
             slug: r.slug,
             frontmatter: fm,
             filename,
+            timeZone,
             updatedAt: new Date(r.updated_at),
             createdAt: fallbackCreatedAt({ existing: r, now: new Date(r.created_at) }),
           });
@@ -228,6 +231,7 @@ export async function backfillEffectiveDate(
           slug: r.slug,
           frontmatter: fm,
           filename,
+          timeZone,
           updatedAt: new Date(r.updated_at),
           createdAt: fallbackCreatedAt({ existing: r, now: new Date(r.created_at) }),
         });

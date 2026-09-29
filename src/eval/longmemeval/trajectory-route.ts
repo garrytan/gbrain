@@ -14,6 +14,7 @@ import type { TrajectoryPoint } from '../../core/engine.ts';
 import { extractCandidateEntities } from '../../core/think/entity-extract.ts';
 import { resolveEntitySlugWithSource, type ResolutionSource } from '../../core/entities/resolve.ts';
 import { formatTrajectoryBlock } from '../../core/trajectory-format.ts';
+import { OperationTimeoutError, withTimeout } from '../../core/timeout.ts';
 import type { Intent } from './intent.ts';
 
 export interface TrajectoryRoute {
@@ -41,10 +42,14 @@ export async function routeTrajectory(
       // fallback_slugify results: the extractor and the lookup both slugify
       // free-form entity names, so they cohere on the same fallback slug
       // and there are no canonical pages in the benchmark to protect.
-      const points = await Promise.race([
+      const points: TrajectoryPoint[] = await withTimeout(
         engine.findTrajectory({ entitySlug: resolved.slug, sourceId: 'default', remote: false, kind: 'all', limit: 100 }),
-        new Promise<TrajectoryPoint[]>(resolve => { setTimeout(() => resolve([]), 5000); }),
-      ]);
+        5000,
+        'findTrajectory',
+      ).catch((err: unknown) => {
+        if (err instanceof OperationTimeoutError) return [];
+        throw err;
+      });
       if (points.length === 0) continue;
       const fmt = formatTrajectoryBlock(points, resolved.slug, { intent });
       if (fmt.rendered.length === 0) continue;

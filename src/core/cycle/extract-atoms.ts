@@ -76,6 +76,7 @@ import { createHash } from 'crypto';
 import { slugifySegment } from '../sync.ts';
 import { resolveTierDefault } from '../model-config.ts';
 import { isUndefinedTableError, warnOncePerProcess } from '../utils.ts';
+import { utcDate } from './cycle-date.ts';
 import { normalizeForGrounding } from './synthesize-verify.ts';
 import type { TranscriptPageIndex } from '../transcripts/discover.ts';
 import { managedAtomSession, readAtomOrigin, resumeManagedAtoms, publishManagedAtoms, MANAGED_ATOM_DISCOVERY_SQL, type AtomOrigin } from '../persistence/atom-maintenance.ts';
@@ -1190,12 +1191,14 @@ export async function runPhaseExtractAtoms(
         // write below). Page-kind items only — transcripts are files, not
         // pages, so there is no from-endpoint to link.
         const provenanceLinks: LinkBatchInput[] = [];
+        const sourcePage = item.kind === 'page' ? await engine.getPage(item.slug, { sourceId }) : null;
+        const undatedDate = sourcePage?.created_at ? utcDate(new Date(sourcePage.created_at)) : 'undated';
         for (const atom of atoms) {
           const srcRef = item.kind === 'transcript' ? item.filePath : item.slug;
           const slug =
             item.kind === 'page'
-              ? await resolvePageAtomSlug(engine, atom.title, item.slug, sourceId)
-              : atomSlug(atom.title, srcRef);
+              ? await resolvePageAtomSlug(engine, atom.title, item.slug, sourceId, undatedDate)
+              : atomSlug(atom.title, srcRef, undefined, undatedDate);
           const originFrontmatter =
             item.kind === 'transcript'
               ? { source_path: item.filePath }
@@ -1308,6 +1311,11 @@ export async function runPhaseExtractAtoms(
         // source page. A crash between flip and stamp degrades to the legacy
         // atom-rows-mean-done semantics — safe, not lossy.
         await completeAtomReceipts(engine, sourceId, importedSlugs, hash16, item.kind === 'page' ? item : undefined);
+        // C-14: atoms are keyed by LLM-chosen titles, which drift between
+        // extractions. Once this extraction is complete, retire the atoms an
+        // earlier extraction of the same source produced that this one did not.
+        await retireStaleAtoms(engine, sourceId, item.kind === 'page'
+          ? { key: 'source_slug', value: item.slug } : { key: 'source_path', value: item.filePath }, hash16, importedSlugs);
         if (item.kind === 'page') {
           await stampAtomsScanHash(item);
         }
@@ -1621,8 +1629,35 @@ function atomsFromParsedArray(parsed: unknown[]): ExtractedAtom[] {
   return atoms;
 }
 
-function todayDate(): string {
-  return new Date().toISOString().slice(0, 10);
+/**
+ * Soft-delete a source's atoms from earlier extractions (a different or
+ * provisional source_hash) that the current, completed extraction did not
+ * re-produce. Imported atoms (`imported_from`) and managed atoms are left
+ * alone. Best-effort: a failure leaves duplicates, never loses current atoms.
+ */
+async function retireStaleAtoms(
+  engine: BrainEngine,
+  sourceId: string,
+  origin: { key: 'source_slug' | 'source_path'; value: string },
+  hash16: string,
+  currentSlugs: string[],
+): Promise<void> {
+  try {
+    const rows = await engine.executeRaw<{ slug: string }>(
+      `SELECT slug FROM pages
+        WHERE source_id = $1 AND type = 'atom' AND deleted_at IS NULL
+          AND frontmatter->>'${origin.key}' = $2
+          AND COALESCE(frontmatter->>'source_hash', '') <> $3
+          AND (frontmatter->>'imported_from') IS NULL
+          AND COALESCE(frontmatter->>'managed_extraction', '') <> 'true'
+          AND NOT (slug = ANY($4::text[]))`,
+      [sourceId, origin.value, hash16, currentSlugs],
+    );
+    const stale = rows.map(r => r.slug);
+    for (let i = 0; i < stale.length; i += 500) await engine.softDeletePages(stale.slice(i, i + 500), { sourceId });
+  } catch (err) {
+    console.error(`[extract_atoms] stale atom cleanup failed for ${origin.value} (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
+  }
 }
 
 /**
@@ -1639,13 +1674,14 @@ function atomSlugStem(title: string): string {
 /**
  * Pull a YYYY-MM-DD date from a source reference — a transcript file path like
  * `…/2026-06-11-telegram.md`, or a dated page slug. Checks the basename first
- * to avoid matching a date in a parent directory. Falls back to the run date
- * only when the source carries no date, so dated sources are fully deterministic.
+ * to avoid matching a date in a parent directory. An undated source uses
+ * `undatedDate` (C-14: the source page's creation date, or `undated`), never
+ * the run date, so re-extraction on a later day upserts the same slugs.
  */
-function sourceDate(ref: string): string {
+function sourceDate(ref: string, undatedDate: string): string {
   const base = ref.split('/').pop() ?? ref;
   const m = base.match(/(\d{4}-\d{2}-\d{2})/) ?? ref.match(/(\d{4}-\d{2}-\d{2})/);
-  return m ? m[1] : todayDate();
+  return m ? m[1] : undatedDate;
 }
 
 /**
@@ -1668,11 +1704,11 @@ function sourceDate(ref: string): string {
  *   chars on separate slugs, so a deterministic slug never silently clobbers
  *   a *different* atom.
  */
-function atomSlug(title: string, srcRef: string, sourcePageSlug?: string): string {
+function atomSlug(title: string, srcRef: string, sourcePageSlug?: string, undatedDate = 'undated'): string {
   const hash = sourcePageSlug !== undefined
     ? createHash('sha256').update(`${sourcePageSlug}\0${title}`).digest('hex').slice(0, 8)
     : createHash('sha256').update(title).digest('hex').slice(0, 6);
-  return `atoms/${sourceDate(srcRef)}/${atomSlugStem(title)}-${hash}`;
+  return `atoms/${sourceDate(srcRef, undatedDate)}/${atomSlugStem(title)}-${hash}`;
 }
 
 /**
@@ -1699,10 +1735,11 @@ async function resolvePageAtomSlug(
   title: string,
   sourcePageSlug: string,
   sourceId: string,
+  undatedDate: string,
 ): Promise<string> {
-  const slug = atomSlug(title, sourcePageSlug, sourcePageSlug);
+  const slug = atomSlug(title, sourcePageSlug, sourcePageSlug, undatedDate);
   if (await engine.getPage(slug, { sourceId })) return slug;
-  const legacySlug = atomSlug(title, sourcePageSlug);
+  const legacySlug = atomSlug(title, sourcePageSlug, undefined, undatedDate);
   const legacy = await engine.getPage(legacySlug, { sourceId });
   if (legacy && legacy.type === 'atom' && isCompatibleAtomBinding(legacy.frontmatter, sourcePageSlug)) {
     return legacySlug;

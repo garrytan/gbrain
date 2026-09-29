@@ -21,6 +21,7 @@ import { randomUUID } from 'node:crypto';
 import { isPersistenceIpcMutation } from './persistence/ipc.ts';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport, StreamableHTTPError } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 import { anySignal } from './abort-check.ts';
 import type { GBrainConfig } from './config.ts';
 import { discoverOAuth, mintClientCredentialsToken } from './remote-mcp-probe.ts';
@@ -139,6 +140,11 @@ export function toRemoteMcpError(e: unknown, mcpUrl: string, signal?: AbortSigna
     );
   }
   if (e instanceof RemoteMcpError) return e;
+  // The SDK's own request timer can fire while our composed signal is still
+  // live. A slow operation on a reachable server is a timeout, not unreachable.
+  if (e instanceof McpError && e.code === ErrorCode.RequestTimeout) {
+    return new RemoteMcpError('network', `Request to ${mcpUrl} timed out`, { mcp_url: mcpUrl, kind: 'timeout' });
+  }
   if (e instanceof Error) {
     if (e.name === 'AbortError' || e.name === 'TimeoutError') {
       return new RemoteMcpError(
@@ -311,13 +317,25 @@ async function buildClient(mcpUrl: string, accessToken: string, signal?: AbortSi
 
 /**
  * Options for `callRemoteTool`. When absent, discovery/token requests retain
- * their own caps and MCP requests inherit the SDK's timeout.
+ * their own caps and MCP requests inherit the SDK's timeout. A `timeoutMs`
+ * also becomes the SDK request deadline (see buildMcpRequestOptions).
  */
 export interface CallRemoteToolOptions {
   /** Hard wall-clock cap for the whole call (token mint + tool call). Aborts on expiry. */
   timeoutMs?: number;
   /** External AbortSignal (e.g. SIGINT handler). Composed with the timeout. */
   signal?: AbortSignal;
+}
+
+/**
+ * The SDK request options for one tool call. Passing only `signal` leaves the
+ * SDK's independent 60s default deadline in force, so a caller's longer
+ * timeout would still die at 60s; forward it.
+ *
+ * @internal Exported for test access (test/mcp-client-hardening.test.ts).
+ */
+export function buildMcpRequestOptions(opts: CallRemoteToolOptions, signal: AbortSignal): { signal: AbortSignal; timeout?: number } {
+  return { signal, ...(opts.timeoutMs !== undefined && opts.timeoutMs > 0 ? { timeout: opts.timeoutMs } : {}) };
 }
 
 /**
@@ -393,7 +411,7 @@ export async function callRemoteTool(
       try {
         signal.throwIfAborted();
         submitted = true;
-        const res = await client.callTool({ name: toolName, arguments: args }, undefined, { signal });
+        const res = await client.callTool({ name: toolName, arguments: args }, undefined, buildMcpRequestOptions(opts, signal));
         if (res.isError) {
           const message = Array.isArray(res.content)
             ? res.content.map((c: unknown) => (c as { text?: string }).text ?? '').join('\n')

@@ -35,6 +35,9 @@ import { createGlobalLlmHaltTracker, haltedClassOf, type GlobalLlmErrorClass } f
 import { importFromContent } from '../import-file.ts';
 import { serializeMarkdown } from '../markdown.ts';
 import { canonicalLookup, type ModelPricing } from '../model-pricing.ts';
+import { createHash } from 'node:crypto';
+import { slugifySegment } from '../sync.ts';
+import { validatePageSlug } from '../ops/context.ts';
 import { privatePagesFilterFragment, strictestVisibility, type Visibility } from '../search/private-visibility.ts';
 
 const DEFAULT_BUDGET_USD = 1.5;
@@ -181,10 +184,11 @@ export async function runPhaseSynthesizeConcepts(
     };
   }
 
-  // 2. Group atoms by concept slug
+  // 2. Group atoms by normalized concept slug; one atom counts once per concept.
   const groups = new Map<string, { slugs: string[]; titles: string[]; bodies: string[]; visibilities: Visibility[] }>();
   for (const atom of atoms) {
-    for (const conceptSlug of atom.concept_refs) {
+    const conceptSlugs = new Set(atom.concept_refs.map(conceptStemFor).filter((s): s is string => s !== null));
+    for (const conceptSlug of conceptSlugs) {
       const existing = groups.get(conceptSlug) ?? { slugs: [], titles: [], bodies: [], visibilities: [] };
       existing.slugs.push(atom.slug);
       existing.titles.push(atom.title);
@@ -284,13 +288,27 @@ export async function runPhaseSynthesizeConcepts(
   });
   const synthMaxOutputTokens = resolveSynthMaxOutputTokens(synthModel);
   const skippedHumanOwned: string[] = [];
+  const skippedUnchanged: string[] = [];
+  const keptExistingNarrative: string[] = [];
   for (const group of atomGroups) {
-    const conceptSlug = `concepts/${group.conceptSlug.split('/').pop() ?? group.conceptSlug}`;
+    const conceptSlug = `concepts/${group.conceptSlug}`;
     // A concept page this phase did not write belongs to a human (or another
     // writer). Check before any spend; never replace its body.
     const existing = await engine.getPage(conceptSlug, { sourceId: opts.sourceId ?? 'default' });
     if (existing && !String(existing.frontmatter?.synthesized_by ?? '').startsWith('synthesize_concepts')) {
       skippedHumanOwned.push(conceptSlug);
+      continue;
+    }
+    // The narrative is a function of the member atoms, their strictest
+    // visibility and the model. When none changed and the page holds a real
+    // narrative, there is nothing to spend or rewrite; a fallback page is retried.
+    const memberHash = createHash('sha256')
+      .update(JSON.stringify([synthModel, group.visibility, group.atomSlugs.map((s, i) => [s, group.atomTitles[i], group.atomBodies[i]])
+        .sort((a, b) => a[0].localeCompare(b[0]))]))
+      .digest('hex').slice(0, 16);
+    const priorMode = existing?.frontmatter?.synthesis_mode;
+    if (existing?.frontmatter?.member_hash === memberHash && (priorMode === 'llm' || priorMode === 'deterministic_tier')) {
+      skippedUnchanged.push(conceptSlug);
       continue;
     }
     tierCounts[group.tier]++;
@@ -369,6 +387,11 @@ export async function runPhaseSynthesizeConcepts(
       narrative = deterministicNarrative(group);
       synthesisMode = 'deterministic_tier';
     }
+    // Never replace an LLM narrative with a template stub; the next cycle retries.
+    if (priorMode === 'llm' && (synthesisMode === 'budget_fallback' || synthesisMode === 'error_fallback')) {
+      keptExistingNarrative.push(conceptSlug);
+      continue;
+    }
     synthesisModeCounts[synthesisMode]++;
 
     if (!opts.dryRun) {
@@ -386,6 +409,7 @@ export async function runPhaseSynthesizeConcepts(
           mention_count: group.atomTitles.length,
           composite_score: group.atomTitles.length,
           synthesis_mode: synthesisMode,
+          member_hash: memberHash,
           synthesized_at: synthesizedAt,
           synthesized_by: 'synthesize_concepts-v0.41',
           visibility: pageVisibility,
@@ -497,7 +521,9 @@ export async function runPhaseSynthesizeConcepts(
       `(T1=${tierCounts.T1} T2=${tierCounts.T2} T3=${tierCounts.T3})` +
       (failures.length > 0 ? ` (${failures.length} LLM-failed → template fallback)` : '') +
       (linkWarnings.length > 0 ? ` (${linkWarnings.length} provenance-link warning(s))` : '') +
-      (skippedHumanOwned.length > 0 ? ` (${skippedHumanOwned.length} human-owned page(s) left untouched)` : ''),
+      (skippedHumanOwned.length > 0 ? ` (${skippedHumanOwned.length} human-owned page(s) left untouched)` : '') +
+      (skippedUnchanged.length > 0 ? ` (${skippedUnchanged.length} unchanged)` : '') +
+      (keptExistingNarrative.length > 0 ? ` (${keptExistingNarrative.length} existing narrative(s) kept)` : ''),
     details: {
       concepts_written: conceptsWritten,
       tier_counts: tierCounts,
@@ -507,12 +533,31 @@ export async function runPhaseSynthesizeConcepts(
       failures,
       link_warnings: linkWarnings,
       skipped_human_owned: skippedHumanOwned,
+      skipped_unchanged: skippedUnchanged,
+      kept_existing_narrative: keptExistingNarrative,
       ...(abortedGlobalError ? { aborted_global_error: abortedGlobalError } : {}),
       estimated_spend_usd: estimatedSpendUsd,
       budget_usd: budgetCap,
       dry_run: opts.dryRun ?? false,
     },
   };
+}
+
+/**
+ * The concept an atom's concept ref names, as the stem of its `concepts/`
+ * slug. LLM refs vary in case, spacing and prefix ("Network Effects",
+ * "concepts/network-effects"); they all name `network-effects`. A ref with no
+ * valid slug is dropped.
+ */
+function conceptStemFor(ref: string): string | null {
+  const stem = slugifySegment(String(ref).trim().split('/').pop() ?? '');
+  if (!stem) return null;
+  try {
+    validatePageSlug(`concepts/${stem}`);
+  } catch {
+    return null;
+  }
+  return stem;
 }
 
 /**

@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [0.60.5.1] - 2026-09-29
+## [0.60.6.1] - 2026-09-29
 
 **Dream synthesize on an OpenRouter model no longer dies to a rate limit it never saw.** OpenRouter sometimes reports "you're being rate-limited, try again shortly" as a normal-looking HTTP 200 response with an error message buried inside the body, instead of a real HTTP 429. Every retry mechanism in gbrain (and in the underlying AI library) decides whether to retry by looking at the HTTP status code, so a 200-with-hidden-error looked like success failing to parse, not like a rate limit, and nothing retried. If you pointed a dream phase at a busy OpenRouter model, a burst of calls could trip the shared limit and the whole phase would fail outright instead of backing off and trying again.
 
@@ -18,7 +18,7 @@ Now gbrain reads that hidden error and turns the response into a real 429 (or 5x
 
 **Say to your agent:** *"Re-run dream synthesize and check it survives an OpenRouter rate limit"* — your agent runs `gbrain dream --phase synthesize --once`.
 
-## To take advantage of v0.60.5.1
+## To take advantage of v0.60.6.1
 
 Upgrade, then re-run the phase that was failing:
 
@@ -31,6 +31,174 @@ gbrain dream --phase synthesize --once
 
 - `src/core/ai/recipes/openrouter.ts`: the OpenRouter compat-fetch shim now detects an HTTP-200 response body shaped like `{error:{code,metadata?}}` and rewrites the response's status to match (429, or the reported 5xx), so the AI SDK's own retry logic and gbrain's rate-limit classification both see the real condition. An existing `Retry-After` header is preserved; a `retry_after` value inside the error body is promoted to one when the response didn't already carry it. Every other response shape (a real success, a 4xx, an unparseable body) passes through unchanged.
 - Closes #5473.
+
+## [0.60.6.0] - 2026-09-29
+
+**Forgetting works on big brains again, renames and edits keep everything attached to the page, search understands reworded relationship questions, and the nightly dream cycle stops spending past a budget or rewriting pages it didn't write.**
+
+This is a fix wave. Most of it is things that quietly went wrong in everyday use and now don't.
+
+On a brain with more than about 12,000 pages, telling your agent to forget something always failed. Now it works at any size, and a forgotten sentence no longer comes back because the model re-extracted it with a period or different capitalization. Renaming or moving a note used to leave its facts and search nicknames behind at the old name, and on a fresh brain it cut the page off from every note that linked to it. Now they travel with the page. Editing a page kept handing out new ids to facts that didn't change, which broke `forget` for ids your agent had already seen. Those ids are stable now.
+
+Your graph, timeline and tags follow your notes on every path: delete a wikilink, a dated bullet or a frontmatter tag, and it leaves the database. Editing one sentence no longer re-embeds the whole page. And the dream cycle has a default spending cap, stops stamping your hand-written pages as its own output, and keeps one concept page per concept instead of three.
+
+Search got better at two everyday question shapes. Ask "who backs acme-example?" or "people who funded acme-example" and the relationship graph now answers, where before only the exact "who invested in" wording did. Ask "which document is the harbor street lease amendment?" and the page with that title now ranks first more often.
+
+### What changes for you
+
+| Situation | Before | Now |
+| --- | --- | --- |
+| Forget a fact on a 15,000-page brain | Refused before the claim was even checked | Works; only refuses if the claim is on more than 256 pages, and says which |
+| Forgotten "Prefers email" re-extracted as "prefers email." | Came back as a live fact | Stays forgotten |
+| Rename `people/erin.md` to `people/erin-2.md` | Facts and search nicknames stayed at the old name; on a fresh brain, links to Erin broke | Page keeps its id, links, facts and nicknames; the old name still resolves |
+| Import a second folder that reuses a note's `id:` | Could rename your live page to the new folder's file | Creates a separate page |
+| Edit one fact row in a page's facts table | Every fact on the page got a new id | Unchanged rows keep their ids |
+| Delete a dated bullet, run `gbrain extract --stale` | Old timeline row stayed | Row removed |
+| Remove a tag from frontmatter and sync | Tag stayed forever | Tag removed; tags added by enrichment stay |
+| Edit one sentence in a 10-chunk page | 10 chunks re-embedded | Only the changed chunks |
+| Dream synthesis on a big backlog | No per-run dollar cap | Stops at $5 per run by default and picks up next run |
+| Dream edits your `people/alice-example` page | Page stamped as dream output | Page keeps its identity |
+| "Network Effects" and "network-effects" in atoms | Three concept pages, one with a space in its slug | One page |
+| A ChatGPT conversation that downloads but won't ingest | Held back every later sync | Set aside after 3 tries |
+| Thin client call longer than 60 seconds | Cut off by the SDK | Honors your timeout |
+| "Who backs acme-example?" | Graph never consulted | Graph answers (held-out rewordings: right page first 17% of the time, up from 5%) |
+| "Which document is <title>?" | Title page often second | Title page first (+3/−0 on a 144-query title benchmark) |
+| Graph walk on a densely linked group of pages | ~22 seconds | ~0.25 seconds |
+| Long LongMemEval run | Hung around question 94 | Runs to completion |
+
+### How to use it
+
+```bash
+gbrain upgrade                                        # applies migrations v174 and v175
+gbrain doctor                                         # new checks: timeline_orphans, slug_collisions
+gbrain extract timeline --prune-orphans --dry-run     # preview timeline rows left from old page versions
+gbrain extract timeline --prune-orphans               # remove them
+gbrain embed --stale --images                         # rebuild images missing their picture vector or OCR text
+gbrain config set brain.timezone America/New_York     # read frontmatter times without an offset in your zone
+gbrain config set dream.synthesize.budget_usd 20      # raise the per-run synthesis cap (0 = spend nothing, unlimited = no cap)
+gbrain config set search.source_boosts "wiki/:1.3,daily/:1.0"   # per-brain source boosts; "none" drops the defaults
+```
+
+Opt-in settings, all off by default:
+
+```bash
+gbrain config set sync.git_first_commit_dates true            # date undated notes by their first git commit on a full import
+gbrain config set facts.extraction_missing_confidence 0.5     # confidence stored when the extractor gives none (default stays 1.0)
+gbrain config set dream.synthesize.attribution_rules true     # extra speaker-attribution rules in the synthesis prompt
+gbrain config set dream.propose_takes.attribution_rules true  # same for propose-takes
+gbrain config set search.alias_token_hop true                 # a one-word query token that is a person/company alias pulls that page up
+```
+
+### Things to watch
+
+- **Synthesis now has a default $5 per-run budget.** Before, `dream` synthesis had only the daily cap. A large backfill now spreads across several runs: a transcript that doesn't fit the budget is deferred to the next run, not dropped. Set `dream.synthesize.budget_usd` to raise it or `unlimited` to remove it. A budget of `0` now means spend nothing everywhere (it used to mean unlimited in the budget meter, and drift read `"0"` as $1). A model missing from the pricing table is metered at a Sonnet-tier rate instead of skipping the gate; local runtimes (Ollama, LM Studio, llama-server) count as $0, and `dream.budget.allow_unpriced=true` restores the old bypass. If the daily-cap count query fails, that run submits nothing.
+- **Upgrading re-expires punctuation-only variants of forgotten facts.** Migration v174 folds case, spacing and sentence punctuation in withdrawal fingerprints. Any active fact that differs from a forgotten one only by punctuation, case or spacing is expired during the upgrade. `+`, `#` and in-word dots still count, so "C++" and "C" stay different claims. Paraphrases with different words are still different claims.
+- **The missing-confidence default is unchanged.** A numeric-string confidence like `"0.3"` is now read as 0.3 instead of 1.0, but a missing or null confidence still stores 1.0. `facts.extraction_missing_confidence` is an opt-in knob; no matched eval has measured a new default.
+- **Git first-commit dates are opt-in.** `sync.git_first_commit_dates` changes `effective_date`, which feeds recency ranking and since/until filters, so it stays off until you turn it on. It applies to full imports (first sync, `sync --full`, `gbrain import`), not incremental syncs.
+- **Attribution prompt rules are opt-in.** The mechanical speaker check (a decision attributed to someone who never stated its numbers or dates is held back in `unverified_claims`) is on for everyone. The two prompt changes from #5425 ship behind `dream.synthesize.attribution_rules` and `dream.propose_takes.attribution_rules` because matched runs showed no benefit.
+- **Search boosts a title that is the subject of a general or temporal question.** When a multi-word page title (or slug tail) supplies at least half of the question's content words, that page gets a bounded 1.18x boost; the longest nested title wins. Concept and relational questions are excluded. On the in-repo title benchmark this is +3/−0 hit@1 against the previous release, and the "mentions one title, asks for another" family is unchanged (24 of 36).
+- **Reworded relationship questions now reach the graph.** "X's investors", "people who funded X", "who backs X", "who is the founder of X", "which companies has X backed", "relationship between A and B" and "who can introduce me to X" parse as relational, and the graph arm fires when the named entity resolves to a page. On a held-out set of 435 reworded questions it fires on 99 (was 0), hit@1 goes from 0.048 to 0.166, paired +51/−0. The original template wording is unchanged (+72/−6 as before), and parse-level false positives stayed at 1 of 500 LongMemEval questions and 0 on the other probe sets.
+- **The single-word alias hop is opt-in.** `search.alias_token_hop` (or per-call `aliasTokenHop`) is off by default because no in-repo benchmark exercises it.
+- **Per-brain source boosts, defaults unchanged.** `search.source_boosts` overrides the built-in source boosts for one brain; brains without the key rank exactly as before, and `GBRAIN_SOURCE_BOOST` still wins.
+- Timeline rows an earlier version of a page produced and its text no longer has are removals: `--prune-orphans` deletes them (on managed-persistence brains, every fresh `gbrain init`, through a coordinated write), and `gbrain repair timeline` and doctor's `timeline_history` no longer count them as database-only history to write back into the page. Managed brains keep add-only tags for now.
+- The facts write path now reports failures it used to swallow: resolver database errors propagate, and `FACTS_ROW_NUM_HINT_UNAVAILABLE`, `FACTS_PAGE_MIRROR_FAILED` and `FACTS_SUPERSEDE_BOOKKEEPING_FAILED` appear on stderr.
+- Takes bootstrap from pages stops at `takes.bootstrap_budget_usd` (default 5.0, `0` disables).
+
+### To take advantage of v0.60.6.0
+
+`gbrain upgrade` should do this automatically. If it didn't, or if `gbrain doctor`
+warns about a partial migration:
+
+1. **Run the orchestrator manually:**
+   ```bash
+   gbrain apply-migrations --yes
+   ```
+2. **No agent action is needed.** Migration v174 adds punctuation-folded withdrawal fingerprints, backfills them and expires matching facts; v175 adds `tags.tag_source`. There is no `skills/migrations` file for this release.
+3. **Verify the outcome:**
+   ```bash
+   gbrain doctor
+   gbrain extract timeline --prune-orphans --dry-run
+   gbrain stats
+   ```
+4. **If any step fails or the numbers look wrong,** please file an issue:
+   https://github.com/garrytan/gbrain/issues with:
+   - output of `gbrain doctor`
+   - contents of `~/.gbrain/upgrade-errors.jsonl` if it exists
+   - which step broke
+
+### Itemized changes
+
+#### Forgetting and withdrawal
+
+- Discovery is keyed on the claim, its subject and its fingerprint (#5674, reported by @Grimnoth). The database shortlists pages and chunks whose text contains every normalized word of the claim, streams them by keyset and verifies each exactly (on a 2,500-page Postgres source each withdrawal takes well under a second); a subject-scoped withdrawal reads only its entity's page and the provenance of that entity's facts. Limits apply to the matched set (256 pages, 1 MiB manifest, 10 s scan budget), not the source's size, and a refusal names the matched count, sample pages and a recovery path. Legacy `source_scan` effects key discovery on their own forgotten fact.
+- Migration v174 (`fact_withdrawal_normalized_fingerprint`): fingerprints fold case, whitespace and sentence punctuation, keeping `+`, `#` and in-word dots (write-path audit B-9). Pre-v174 ledger rows keep their exact hash and every match checks both; v174 adds a folded row wherever a fact row still holds the claim text, expires facts that became matching and builds `idx_facts_withdrawal_fingerprint`.
+- `writeFactsToFence` rechecks each input under the page lock and drops claims withdrawn for the page's entity (`withdrawnSkipped`); the facts backstop skips them too, so a forgotten claim is never written to Markdown as a live row (B-10).
+- Ported from #5469 by @tarush1989: the Postgres scale gate (`test/e2e/fact-withdrawal-scope-postgres.test.ts`) and the structural pin that every coordinated prepare path runs the pre-publication withdrawal recheck.
+
+#### Import identity and renames
+
+- Move inference binds to the root the existing page was imported from (#5675, reported by @Grimnoth). `importFromFile` records a `file://` origin in `pages.source_uri` (never replacing non-file provenance), falling back to the source's `local_path` or the default source's `sync.repo_path`. A missing path under another root is not evidence of a move; a content-changed move needs the old file gone under its own root, the new file under that same root and the same file name or title.
+- `updateSlug` moves `facts.entity_slug`, `facts.source_markdown_slug`, `page_aliases` and withdrawal subjects in the rename transaction on both engines (`moveSlugBindings`, #5431 item 3, reported by @clatyceo). Rows left at the new slug by a purged page yield to the moved ones.
+- Transcript re-ingest keeps frontmatter keys the collector does not render (#5431 item 2, @clatyceo); safety and atom-scan markers are still recomputed.
+- `callRemoteTool` passes the caller's `timeoutMs` to the MCP SDK as the request deadline and reports an SDK `RequestTimeout` as a timeout (#5100, contributed by @xaviroblessarries).
+
+#### Managed persistence lifecycle
+
+- Slug collisions no longer block a managed sync: new files that map to one slug are settled after discovery (a live page whose file still exists keeps the slug, else the file named like the slug, else the first path), and losers are reported as `slugCollisions` and printed by sync. Case- or separator-only respellings of one origin still refuse.
+- A Git-detected rename becomes one import that moves the page with `updateSlug` inside the coordinator transaction: same page id, inbound links, facts (ids kept), an `old -> new` slug alias, and an implicit type re-inferred from the new path. `renamed` counts them. Links written against an old slug follow its alias.
+- Managed sync derives links for the pages it imported, after its checkpoint commits, in the process that owns the brain. Managed brains have one stale-extraction path, `extractManagedStaleLinks`: managed sync, every caller of `extractStaleFromDB` (the CLI, the cycle, jobs, `maintain`) and, with a live PGLite `gbrain serve`, the owner delegation (`writer_extract_stale`, trusted local callers only). Per page it replaces derived links (following slug aliases), adds the coordinator's unrecorded canonical timeline rows insert-only and stamps the watermark in one revision-bound coordinated transaction. `--json` reports the same `extract_stale_done` shape as unmanaged brains.
+
+#### Facts and takes lifecycle
+
+- The legacy `extract_facts` reconcile keys fence rows by row number (B-5). A row whose number and claim survive keeps its id and is updated in place; a removed or rewritten row is expired and detached (`row_num` NULL), never deleted. `ExtractFactsResult` gains `factsUpdated`. A claim that reverts (NYC, SF, NYC) stays active (B-4); supersession chains keep every hop (B-13); facts of soft-deleted pages leave recall and come back on restore (B-7).
+- Fence `valid_from`/`valid_until` round-trip to the second (B-6, B-20). `claim_value` parses strictly, with separators, a currency symbol and k/M/B scaling; malformed numbers or confidence are `FACTS_TABLE_MALFORMED` (B-15).
+- Extractor confidence: numeric strings are read as stated; `facts.extraction_missing_confidence` is opt-in; unknown kinds are counted in a warning (B-16).
+- Fuzzy fact attribution lands only on a unique same-name entity page, never a meeting or note (B-8).
+- Phantom-redirect merges are lossless (B-12): the canonical fence goes to the page's file of record, every phantom fact moves by id at the row number written to disk with `superseded by #N` renumbered, links move to the canonical page, and the phantom slug is recorded in `slug_aliases`. A fuzzy canonical needs a clear margin.
+- Takes: bootstrap from pages dedupes against the fence, stops at `takes.bootstrap_budget_usd` and reports model failures as `llm_error:<code>` (B-14); fence takes extraction stays in its source, skips deleted pages and prunes rows removed from the fence (B-18).
+- Temporal supersession orders by instant; same-day or unparseable dates get "date order unclear" (B-17). Entity identity links are atomic and re-linking the canonical member keeps it canonical (B-19). Write-path failures are reported (B-21).
+
+#### Derived data, sync and embeddings
+
+- `retractRemovedTimelineEntries` proves ownership against every stored `page_versions` text and runs on every extraction path: `extract --stale`, the file and database walks, the per-slug cycle extract and sync's hook (#5170 by @rodrigo-kiko, #4649 by @jarospm). Rows no version produced (enrichment, meeting fan-out, `--infer-dates`) are kept. `gbrain extract timeline --prune-orphans [--source-id] [--dry-run] [--json]` is the one-time cleanup, and doctor's `timeline_orphans` samples 500 pages.
+- The file-walk `gbrain extract links|all` replaces each page's own markdown-derived links through `replacePageFileLinks`.
+- The post-sync link hook loads metadata only for changed pages and their endpoints (A16) and reports per-page extraction errors as `extract_error` (A15).
+- Markdown re-imports reuse stored vectors for unchanged chunks (A13): a chunk with the same source and text keeps its vector when its recorded embedding-input hash (`content_chunks.embedding_input_hash`, from v0.60.5.0) equals the one this import would record, or, for a vector stored before hashes existed, when the input is the raw chunk text under the same model. The index must be sealed and neither body may hold protected fences. In a 40-page matched test, a one-sentence edit to 20 pages embedded 31 chunks (21,278 tokens) instead of 110 (47,719) with the same hit@1, hit@5 and MRR. `--force-rechunk` re-embeds everything.
+- Migration v175 (`tags_tag_source`) adds `tags.tag_source`: frontmatter tags stamp `'frontmatter'` and are deleted when they leave the frontmatter; every other `addTag` stamps `'added'` and is never import-deleted (A14).
+- `gbrain embed --stale --images [--source] [--dry-run] [--json]` rebuilds image pages missing a visual vector or OCR text (requires `GBRAIN_EMBEDDING_MULTIMODAL=true`).
+- Doctor `slug_collisions` names files that map to one page and which one is indexed.
+- `brain.timezone` (IANA, validated by `gbrain config set`) reads offset-less frontmatter datetimes on import and in the `effective_date` backfill; date-only values stay UTC calendar dates.
+- `sync.git_first_commit_dates` (opt-in) anchors undated new pages at the earliest of birth time, mtime and first-commit date in one `git log --diff-filter=A` pass per full import; shallow clones keep file times.
+
+#### Dream cycle, synthesis and connectors
+
+- `synthesize_concepts` normalizes refs through `slugifySegment`/`validatePageSlug` before grouping (C-4), records a `member_hash` to skip unchanged groups, and never replaces an LLM narrative with a template stub on budget exhaustion or model error (C-5).
+- The dream provenance stamp and whole-page verification apply only to pages a child created; pages another writer created mid-run are diffed from the child's first write (C-8, #5685 follow-up by @garrytan). A `managed_maintenance_page` publish rebuilds automatic links from the published body.
+- `dream.synthesize.budget_usd` (default $5) gates every submission with a per-run `BudgetMeter`; the daily cap fails closed (C-13). Budget meter gaps closed: unpriced models are metered, `0` spends nothing, drift estimates from its real prompt (C-16).
+- One calendar date per cycle for synthesis, patterns, drift and verify (C-15). Atoms from undated sources are dated by page creation or `undated`, and a completed unmanaged re-extraction retires its stale atoms (C-14).
+- Connector ingest failures are attributed per conversation; a conversation that fails to ingest 3 times at one version is quarantined (#5666 follow-up). Claude's list pages with `limit`/`offset` across every chat-capable org (C-17); ChatGPT's offset walk re-covers items shifted by a mid-walk removal and yields each id once (C-18). A session with no timestamps is a reported `skipped_no_timestamp` (C-19).
+- New grounding failure `decision_misattributed` quarantines a decision whose numbers or dates only another speaker stated and the named speaker never accepted (#5425 by @clatyceo). In the repeated-consolidation harness: misattributed decisions active 1 to 0, supported claims kept 14 of 14.
+
+#### Search and the read path
+
+- General and temporal title-subject boost (#4694, thanks @jonathanlesh for the report and benchmark shape); benchmark corpus in `evals/title-mention/` (72 placeholder pages, 144 queries) for `gbrain import` plus `gbrain eval retrieval-quality`.
+- Relational paraphrase recognition in `src/core/search/relational-intent.ts`.
+- Rows the reranker scored exactly equal keep the fused order (#5428, thanks @clatyceo). Opt-in single-token alias hop in `src/core/search/alias-hop.ts` (#5428).
+- `search.source_boosts` (audit #13); a `none` entry drops the defaults.
+- The alias hop and the exact-lookup tier no longer inject a page under `exclude_slug_prefixes` or the hard excludes. Keyword-only search (no embedding provider) applies the same entity exact-match and alias-mention boost as hybrid.
+- Failed keyword or title arms stamp `keyword_arm_failed` / `title_arm_failed` in `meta.degraded` (#5324, thanks @founders-sgp).
+- Bare-name entity matches resolved by prefix expansion are tagged `prefix_expansion`, and facts written through them carry an "unverified, please confirm" note in their context cell (#4846, #5139, thanks @kweiner).
+- `traversePaths` and `traverseGraph` stay bounded on dense hubs on both engines: a 12-page clique at depth 5 went from 21.9 s to 0.25 s and from 3.4 s to 0.06 s, with the shallow neighbourhood complete.
+- Image rows in `both` mode rescore in the image embedding space. The token budget no longer drops every lower-ranked result after one oversized result, counts CJK at about one token per character and never splits a surrogate pair. `hybridSearchCached` drops two dead round-trips per search. Trajectory lookups clear their 5 s deadline timer.
+- Expansion variant budget stays `null` by default: on 215 LongMemEval questions, budgets 1.0 and 0.25 lost against the legacy setting (recall_all@5 203 and 202 vs 205). Default search returned identical top-5 to the previous release on all 215.
+- LongMemEval: embed-cache writes are buffered and flushed in one short `BEGIN IMMEDIATE`, so runs sharing a cache keep their writes; the harness replaces its benchmark brain every 40 questions so long runs finish (#5092, thanks @justinsharpe).
+
+### For contributors
+
+- Migration pin: `test/persistence-diagnostics.test.ts` expects v175.
+- New suites include `test/import-identity-move.test.ts`, `test/fact-withdrawal-normalized.test.ts`, `test/fact-withdrawal-prepare-wiring.test.ts`, `test/extract-facts-stable-identity.test.ts`, `test/phantom-redirect-merge.test.ts`, `test/facts-fence-dates.test.ts`, `test/facts-write-path-failures.test.ts`, `test/timeline-reconcile-all-paths.test.ts`, `test/import-markdown-embedding-reuse.test.ts`, `test/import-frontmatter-tag-removal.test.ts`, `test/effective-date-brain-timezone.test.ts`, `test/effective-date-git-first-commit.test.ts`, `test/persistence-managed-lifecycle.test.ts`, `test/cycle/synthesize-concepts-identity.test.ts`, `test/cycle-date-consistency.test.ts`, `test/cycle/extract-atoms-reconcile.test.ts`, `test/managed-maintenance-links.test.ts` and `test/e2e/connectors-ingest-failure-pglite.test.ts`.
+- More new suites: `test/relational-intent-paraphrase.test.ts`, `test/search/general-title-mention-boost.test.ts`, `test/search/alias-token-hop.test.ts`, `test/search/source-boost-config.test.ts`, `test/traverse-walk-cap.test.ts`, `test/facts-backstop-unverified-resolution.test.ts`, `test/longmemeval-embed-cache.test.ts` and `test/eval-longmemeval-brain-recycle.test.ts`.
+- `docs/architecture/canonical-writers.tsv` classifies the new canonical write sites (`moveSlugBindings`, the v174 backfill, the managed rename).
 
 ## [0.60.5.0] - 2026-09-29
 

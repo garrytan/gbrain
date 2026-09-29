@@ -28,8 +28,16 @@ export async function upgradeWithdrawalEffect(engine: BrainEngine, effect: Persi
     if (effect.worktree_id) await tx.executeRaw('SELECT id FROM persistence_worktrees WHERE id=$1::uuid FOR SHARE', [effect.worktree_id]);
     await tx.executeRaw('SELECT id FROM sources WHERE id=$1 FOR UPDATE', [effect.source_id]);
     await guardEffectSource(tx, effect, hostId);
-    const claims = await tx.executeRaw<WithdrawalClaim>('SELECT visibility,fact_hash FROM fact_withdrawals WHERE source_id=$1 ORDER BY visibility,fact_hash LIMIT $2',
-      [effect.source_id, WITHDRAWAL_LIMITS.targets + 1]);
+    // Key discovery on the request's own forgotten fact; fall back to the
+    // whole ledger only when that fact row no longer exists.
+    const requested = await tx.executeRaw<WithdrawalClaim>(`SELECT w.visibility,w.fact_hash,w.subject,f.fact AS claim
+      FROM persistence_requests r JOIN facts f ON r.intent->>'id' ~ '^[0-9]+$' AND f.id=(r.intent->>'id')::bigint AND f.source_id=$1
+      JOIN fact_withdrawals w ON w.source_id=f.source_id AND w.visibility=f.visibility
+        AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact),gbrain_fact_fingerprint_v1(f.fact))
+        AND (w.subject='*' OR w.subject=COALESCE(f.entity_slug,'*'))
+      WHERE r.id=$2::uuid ORDER BY w.visibility,w.fact_hash,w.subject`, [effect.source_id, effect.request_id]);
+    const claims = requested.length ? requested : await tx.executeRaw<WithdrawalClaim>(`SELECT visibility,fact_hash,subject FROM fact_withdrawals
+      WHERE source_id=$1 ORDER BY visibility,fact_hash,subject LIMIT $2`, [effect.source_id, WITHDRAWAL_LIMITS.targets + 1]);
     if (!claims.length) throw new OperationError('withdrawal_provenance', 'Legacy withdrawal intent has no verifiable ledger. Its queued work remains retained.');
     const discovered = await discoverWithdrawalTargets(tx, effect.source_id, claims).catch(withdrawalDiscoveryFailure);
     const remaining = await tx.executeRaw<{ id: number }>(`SELECT id FROM pages WHERE source_id=$1 AND id=ANY($2::int[])

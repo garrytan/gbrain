@@ -1,4 +1,5 @@
 import { safeLoad, safeDump, Schema, Type, DEFAULT_SAFE_SCHEMA } from 'js-yaml';
+import { NAIVE_DATETIME } from './effective-date.ts';
 
 // js-yaml's timestamp type builds `2024-02-30` as March 1 (Date.UTC rolls the
 // day over). A calendar-invalid timestamp stays the string the author wrote,
@@ -15,7 +16,14 @@ const calendarTimestamp = new Type('tag:yaml.org,2002:timestamp', {
     const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
     return d.getUTCFullYear() === +m[1] && d.getUTCMonth() === +m[2] - 1 && d.getUTCDate() === +m[3];
   },
-  construct: baseTimestamp.construct,
+  // An offset-less datetime keeps its wall-clock reading for brain.timezone.
+  construct: (data: string) => {
+    const date = baseTimestamp.construct(data);
+    if (/^\d{4}-\d{1,2}-\d{1,2}(?:[Tt]|[ \t]+)\d/.test(data) && !/(?:[Zz]|[+-]\d{1,2}(?::?\d{2})?)\s*$/.test(data)) {
+      Object.defineProperty(date, NAIVE_DATETIME, { value: true });
+    }
+    return date;
+  },
   instanceOf: Date,
   represent: baseTimestamp.represent,
 });

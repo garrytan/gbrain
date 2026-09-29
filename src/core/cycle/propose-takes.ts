@@ -155,6 +155,25 @@ export interface ProposedTake {
   served_model?: string;
 }
 
+/**
+ * #5425 (opt-in, `dream.propose_takes.attribution_rules=true`): speaker and
+ * withdrawal rules for conversation pages, proposed by @clatyceo. Off by
+ * default: a matched cat15-corpus run (Sonnet 4.6, 9 labeled pages x 3)
+ * measured F1 0.896 → 0.876 (recall 0.924 → 0.882) with no attribution error
+ * in either arm to fix. A separate prompt version keeps the two caches apart.
+ */
+export const EXTRACT_TAKES_ATTRIBUTION_RULES = `NOT gradeable either:
+- Claims later withdrawn, corrected, or narrowed in the same page; omit them,
+  or express only the final narrowed scope if it remains gradeable
+
+Attribution: an assistant-authored gradeable judgment may use holder 'brain';
+do not attribute it to the user or another person/company unless that speaker
+explicitly endorses it. Assistant-added plans or deadlines are not user
+commitments by default.
+
+`;
+export const PROPOSE_TAKES_ATTRIBUTION_PROMPT_SUFFIX = '+attribution5425';
+
 /** Extractor function signature — injected for tests; production calls gateway. */
 export type ProposeTakesExtractor = (input: {
   pagePath: string;
@@ -172,6 +191,8 @@ export type ProposeTakesExtractor = (input: {
   /** #4494: escalated cap for the one truncation retry (default
    *  PROPOSE_TAKES_RETRY_MAX_TOKENS; clamped to >= maxTokens). */
   retryMaxTokens?: number;
+  /** #5425: include EXTRACT_TAKES_ATTRIBUTION_RULES (opt-in). */
+  attributionRules?: boolean;
 }) => Promise<ProposedTake[]>;
 
 export interface ProposeTakesOpts extends BasePhaseOpts {
@@ -375,7 +396,9 @@ export const EXTRACTOR_FAILURE_HALT_STREAK = 5;
 export async function defaultExtractor(
   input: Parameters<ProposeTakesExtractor>[0],
 ): Promise<ProposedTake[]> {
-  const prompt = EXTRACT_TAKES_PROMPT
+  const prompt = (input.attributionRules
+    ? EXTRACT_TAKES_PROMPT.replace('For each gradeable claim,', `${EXTRACT_TAKES_ATTRIBUTION_RULES}For each gradeable claim,`)
+    : EXTRACT_TAKES_PROMPT)
     .replace('{EXISTING_TAKES_JSON}', JSON.stringify(input.existingTakes, null, 2))
     .replace('{PAGE_BODY}', input.pageBody);
 
@@ -658,7 +681,8 @@ class ProposeTakesPhase extends BaseCyclePhase {
     }
 
     const extractor = opts.extractor ?? defaultExtractor;
-    const promptVersion = opts.promptVersion ?? PROPOSE_TAKES_PROMPT_VERSION;
+    const attributionRules = String(await Promise.resolve(engine.getConfig?.('dream.propose_takes.attribution_rules')).catch(() => null) ?? '').trim() === 'true';
+    const promptVersion = opts.promptVersion ?? `${PROPOSE_TAKES_PROMPT_VERSION}${attributionRules ? PROPOSE_TAKES_ATTRIBUTION_PROMPT_SUFFIX : ''}`;
     const pageLimit = opts.pageLimit ?? 100;
     const skipPagesWithFence = opts.skipPagesWithFence ?? false;
     // gbrain#4168: explicit test override wins; otherwise the REAL remaining
@@ -863,6 +887,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
           // #4494: configurable output caps (see resolution above).
           maxTokens: extractorMaxTokens,
           retryMaxTokens: extractorRetryMaxTokens,
+          attributionRules,
         });
       } catch (err) {
         result.llm_calls_failed += 1;

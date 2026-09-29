@@ -767,8 +767,12 @@ the per-miss rows, `--all` diagnoses every scored question. It is not a
 
 ### Architecture (read this if you're touching the harness)
 
-- One in-memory PGLite per benchmark run via `createBenchmarkBrain` +
-  `withBenchmarkBrain`. Your `~/.gbrain` is never opened.
+- In-memory PGLite brains via `createBenchmarkBrain`. Your `~/.gbrain` is
+  never opened. `TRUNCATE` never returns PGLite's WASM memory, which grows
+  with each question's vectors, so a harness-owned brain is replaced with a
+  fresh, re-configured one every `LME_BRAIN_RECYCLE_EVERY` (40) questions
+  (`brainRecycler` in `src/eval/longmemeval/harness.ts`); without it a long
+  single-process run stalls at 100% CPU around question 90-120.
 - Between questions: `TRUNCATE` over runtime-enumerated `pg_tables`, NOT a
   hardcoded list — schema migrations don't silently leak data across
   questions. Infrastructure tables (`sources`, `config`,
