@@ -399,3 +399,59 @@ test('continuous foreground arrivals cannot starve a bounded sync batch', async 
     }finally{stopping=true;clearInterval(timer);await Promise.all(admitted);await disposePersistenceConsumer(engine);}
   }
 }),120_000);
+
+test('retry-failed resets cursor when pending write is committed but failure record exists', async () =>
+  withEnv({ GBRAIN_HOME: home, GBRAIN_SYNC_FAILURES_DIR: home }, async () => {
+    for (const engine of engines) {
+      await disposePersistenceConsumer(engine);
+      const f = await fixture(engine, {
+        'a.md': 'First observation committed during the original sync run.\n',
+        'b.md': 'Second observation not yet imported.\n',
+      });
+      const abort = new AbortController();
+      const partial = await performManagedSync(engine, {
+        sourceId: f.id, noPull: true, noEmbed: true, noExtract: false,
+        signal: abort.signal,
+        onProgress: p => { if (p.phase === 'managed_sync.page_committed') abort.abort(); },
+      });
+      expect(partial).toMatchObject({ status: 'partial', filesImported: 1 });
+      await disposePersistenceConsumer(engine);
+
+      // The progress callback fires AFTER cursor advancement. Reconstruct the
+      // crash window between the committed write and that cursor update.
+      const [row] = await engine.executeRaw<{ fingerprint: string; completed_keys: [{
+        runId: string; incarnation: string; index: number;
+        counts: { added: number; modified: number; deleted: number; chunks: number };
+        pending?: { requestId: string; slug: string; pageId: number | null; intent: SyncIntent };
+      }] }>("SELECT fingerprint,completed_keys FROM op_checkpoints WHERE op='managed-sync' AND completed_keys->0->>'sourceId'=$1", [f.id]);
+      const [committed] = await engine.executeRaw<{ request_id: string; slug: string; intent: SyncIntent; state: string }>(
+        "SELECT request_id,slug,intent,state FROM persistence_requests WHERE source_id=$1 AND intent->>'kind'='managed_sync_import'", [f.id]);
+      expect(committed?.state).toBe('committed');
+      expect(committed?.slug).toBe('a');
+      const cursor = row.completed_keys[0];
+      cursor.index = 0;
+      cursor.counts = { added: 0, modified: 0, deleted: 0, chunks: 0 };
+      cursor.pending = { requestId: committed.request_id, slug: committed.slug, pageId: null, intent: committed.intent };
+      await engine.executeRaw("UPDATE op_checkpoints SET completed_keys=$2::text::jsonb WHERE op='managed-sync' AND fingerprint=$1",
+        [row.fingerprint, JSON.stringify([cursor])]);
+      expect((await engine.getPage('a', { sourceId: f.id }))?.compiled_truth).toContain('First observation');
+      expect(await engine.getPage('b', { sourceId: f.id })).toBeNull();
+
+      // A real mismatched invocation records the failure against that run.
+      await expect(performManagedSync(engine, {
+        sourceId: f.id, noPull: true, noEmbed: true, noExtract: true,
+      })).rejects.toThrow('processing options');
+      const failuresBefore = await engine.executeRaw(
+        "SELECT 1 FROM op_checkpoints WHERE op='managed-sync-failure' AND fingerprint=$1 AND completed_keys->0->>'run_id'=$2", [row.fingerprint, cursor.runId]);
+      expect(failuresBefore).toHaveLength(1);
+
+      const retried = await performManagedSync(engine, {
+        sourceId: f.id, noPull: true, noEmbed: true, noExtract: true, retryFailed: true,
+      });
+      expect(['first_sync', 'synced']).toContain(retried.status);
+      expect((await engine.getPage('b', { sourceId: f.id }))?.compiled_truth).toContain('Second observation');
+      expect((await engine.executeRaw<{ last_commit: string }>('SELECT last_commit FROM sources WHERE id=$1', [f.id]))[0].last_commit).toBe(f.head);
+      expect(await engine.executeRaw("SELECT 1 FROM op_checkpoints WHERE op='managed-sync-failure' AND fingerprint=$1", [row.fingerprint])).toHaveLength(0);
+      await disposePersistenceConsumer(engine);
+    }
+  }), 120_000);
