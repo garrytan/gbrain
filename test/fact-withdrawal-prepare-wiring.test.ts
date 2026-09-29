@@ -11,7 +11,7 @@ import { expect, test } from 'bun:test';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 
-// test-reads-source-ok: structural pin on coordinated prepare wiring; sync, connector and reconcile fixtures are too heavy to drive each path behaviorally.
+// test-reads-source-ok[structural]: pin on coordinated prepare wiring; sync, connector and reconcile fixtures are too heavy to drive each path behaviorally.
 const source = (path: string) => readFileSync(join(import.meta.dir, '../src/core/persistence', path), 'utf8').replace(/\s+/g, ' ');
 const count = (text: string, needle: string) => text.split(needle).length - 1;
 
