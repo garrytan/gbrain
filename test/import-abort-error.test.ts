@@ -9,7 +9,10 @@
  * site maps the typed error back to exit(1), keeping CLI behavior identical.
  */
 
-import { test, expect } from 'bun:test';
+import { test, expect, spyOn } from 'bun:test';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { runImport, ImportAbortError } from '../src/commands/import.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 
@@ -22,18 +25,33 @@ const engineStub = {
   getConfig: async () => null,
 } as unknown as BrainEngine;
 
-async function expectAbort(args: string[], reasonFragment: string): Promise<void> {
+// cli.ts exits on any ImportAbortError without printing, so every abort must
+// write its reason to stderr first.
+async function expectAbort(
+  args: string[],
+  reasonFragment: string,
+  stderrFragments: string[] = [],
+  engine: BrainEngine = engineStub,
+): Promise<ImportAbortError> {
+  const stderr = spyOn(console, 'error').mockImplementation(() => {});
   let thrown: unknown;
+  let printed = '';
   try {
-    await runImport(engineStub, args);
+    await runImport(engine, args);
   } catch (e) {
     thrown = e;
+  } finally {
+    printed = stderr.mock.calls.map(call => call.join(' ')).join('\n');
+    stderr.mockRestore();
   }
   expect(thrown).toBeInstanceOf(ImportAbortError);
   const err = thrown as ImportAbortError;
   expect(err.exitCode).toBe(1);
   expect(err.alreadyReported).toBe(true);
   expect(err.message).toContain(reasonFragment);
+  expect(printed).not.toBe('');
+  for (const fragment of stderrFragments) expect(printed).toContain(fragment);
+  return err;
 }
 
 test('missing dir arg → typed abort, not process death', async () => {
@@ -48,8 +66,75 @@ test('unreadable import target → typed abort', async () => {
   await expectAbort(['--no-embed', '/definitely/not/a/real/dir-w0-test'], 'not readable');
 });
 
+// Sites that refuse a real directory: each case builds its fixture under a
+// canonical temp root and names what the user must see on stderr.
+const answering = (match: string, rows: unknown[] | Error): BrainEngine => ({
+  ...engineStub,
+  executeRaw: async (sql: string) => {
+    if (!sql.includes(match)) return [];
+    if (rows instanceof Error) throw rows;
+    return rows;
+  },
+}) as unknown as BrainEngine;
+
+const directoryCases: Array<{
+  name: string;
+  setup: (root: string) => string;
+  engine?: BrainEngine;
+  reason: string;
+  stderr: (root: string) => string[];
+  cause?: string;
+}> = [
+  {
+    name: 'lock admission refused by a managed-worktree marker (#5487)',
+    setup: root => {
+      writeFileSync(join(root, '.gbrain-managed'), '');
+      return join(root, 'notes');
+    },
+    reason: 'writer_coordinator_required',
+    stderr: root => [
+      'source filesystem lock admission failed.',
+      'Error [writer_coordinator_required]: This path belongs to a managed canonical worktree.',
+      'Fix: Submit the change through the persistence coordinator.',
+      `Marker: ${join(root, '.gbrain-managed')}`,
+    ],
+  },
+  {
+    name: 'lock admission fails on a non-operation error',
+    setup: root => join(root, 'notes'),
+    engine: answering("local_path <> ''", new Error('synthetic sources lookup failure')),
+    reason: 'synthetic sources lookup failure',
+    stderr: () => ['Error: synthetic sources lookup failure'],
+    cause: 'synthetic sources lookup failure',
+  },
+  {
+    name: 'managed brain refuses a symlinked input root',
+    setup: root => {
+      symlinkSync(join(root, 'notes'), join(root, 'notes-link'));
+      return join(root, 'notes-link');
+    },
+    engine: answering('FROM persistence_brain', [{ enabled: true }]),
+    reason: 'symlinked input root',
+    stderr: () => ['symlinked input root', 'notes-link'],
+  },
+];
+
+for (const c of directoryCases) {
+  test(`${c.name} → typed abort that prints the reason`, async () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'import-abort-')));
+    try {
+      mkdirSync(join(root, 'notes'));
+      writeFileSync(join(root, 'notes', 'alpha-example.md'), '# Alpha example\n');
+      const err = await expectAbort(['--no-embed', c.setup(root)], c.reason, c.stderr(root), c.engine);
+      if (c.cause) expect((err.cause as Error).message).toBe(c.cause);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+}
+
 test('the calling process survives the abort (the actual Tier-1 bug)', async () => {
-  // Trivially true if we got here after three aborts above, but assert it
+  // Trivially true if we got here after the aborts above, but assert it
   // explicitly: the process is alive and can keep dispatching.
   expect(process.pid).toBeGreaterThan(0);
 });

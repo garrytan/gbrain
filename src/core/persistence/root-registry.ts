@@ -53,19 +53,24 @@ function markerExists(path: string): boolean {
 }
 /** Shared refusal marker helps installations with separate homes. It NEVER grants ownership. */
 export function hasManagedRootMarker(path: string): boolean {
+  return findManagedRootMarker(path) !== undefined;
+}
+/** The first ownership marker on `path` or an ancestor, so a local refusal can name it. */
+export function findManagedRootMarker(path: string): string | undefined {
   let current = canonicalFilesystemPath(path);
   for (;;) {
     // A prepared claim is already a durable refusal, including when its target
     // directory does not yet exist. Ownership still requires SQL/native proof.
     const reservation = join(dirname(current), `.gbrain-owner-${createHash('sha256').update(current).digest('hex')}.json`);
-    if (markerExists(reservation)) return true;
+    if (markerExists(reservation)) return reservation;
     if (existsSync(current) && statSync(current).isDirectory()) {
-      if (markerExists(join(current, '.gbrain-owner.json'))) return true;
+      if (markerExists(join(current, '.gbrain-owner.json'))) return join(current, '.gbrain-owner.json');
       const metadata = gitMetadataDirectory(current);
-      if (markerExists(join(current, '.gbrain-managed')) || metadata && markerExists(join(metadata, 'gbrain-managed.json'))) return true;
+      if (markerExists(join(current, '.gbrain-managed'))) return join(current, '.gbrain-managed');
+      if (metadata && markerExists(join(metadata, 'gbrain-managed.json'))) return join(metadata, 'gbrain-managed.json');
     }
     const parent = dirname(current);
-    if (parent === current) return false;
+    if (parent === current) return undefined;
     current = parent;
   }
 }
