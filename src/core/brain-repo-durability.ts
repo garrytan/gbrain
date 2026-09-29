@@ -569,6 +569,17 @@ function gitConfigSet(repoPath: string, key: string, value: string): void {
     stdio: 'ignore', timeout: 10_000, env: { ...process.env, ...GIT_ENV },
   });
 }
+/**
+ * Write a key to the repository's OWN config file only. `--local` makes git
+ * fail loudly (instead of writing somewhere else) when `GIT_CONFIG` or similar
+ * redirects config, matching the `--local` reader (`gitConfigGet(..., true)`).
+ * Used for the managed opt-in key; credential wiring keeps `gitConfigSet`.
+ */
+function gitConfigSetLocal(repoPath: string, key: string, value: string): void {
+  execFileSync('git', ['-C', repoPath, 'config', '--local', key, value], {
+    stdio: 'ignore', timeout: 10_000, env: { ...process.env, ...GIT_ENV },
+  });
+}
 function gitConfigUnset(repoPath: string, key: string): void {
   try {
     execFileSync('git', ['-C', repoPath, 'config', '--unset-all', key], {
@@ -959,10 +970,10 @@ async function hardenManagedGitRoot(opts: HardenOpts): Promise<DurabilityReport>
     push('outbox', { status: 'fixed', detail: 'would enable managed git effects (repo-local git config; no hook, no committed files) (dry-run)' });
   } else {
     try {
-      gitConfigSet(repoPath, MANAGED_GIT_KEY, 'true');
+      gitConfigSetLocal(repoPath, MANAGED_GIT_KEY, 'true');
       push('outbox', { status: 'fixed', detail: 'enabled managed git effects (repo-local git config; no hook, no committed files)' });
     } catch (e) {
-      push('outbox', { status: 'needs_attention', detail: `could not set repo-local git config ${MANAGED_GIT_KEY}: ${(e as Error).message.slice(0, 120)}` });
+      push('outbox', { status: 'needs_attention', detail: `could not set repo-local git config ${MANAGED_GIT_KEY} (unset GIT_CONFIG if it is exported, then re-run \`gbrain sources harden\`): ${(e as Error).message.slice(0, 120)}` });
     }
   }
 
@@ -1126,16 +1137,22 @@ export async function unhardenBrainRepo(opts: UnhardenOpts): Promise<DurabilityS
   steps.push({ step: 'hook', status: hookRemoved ? 'fixed' : 'skipped', detail: hookRemoved ? 'hook removed' : 'no gbrain hook' });
   const credRemoved = isGitRepo(repoPath) ? removeCredentialWiring(repoPath) : false;
   steps.push({ step: 'credential', status: credRemoved ? 'fixed' : 'skipped', detail: credRemoved ? 'credential wiring removed' : 'no gbrain credential wiring' });
-  if (isGitRepo(repoPath)) {
-    const keyValue = gitConfigGet(repoPath, MANAGED_GIT_KEY, true);
+  // The opt-in lives on the repo toplevel (harden resolves it), so resolve it
+  // here too: a subdirectory source path has no `.git` of its own. Not a repo
+  // (or unresolvable) simply skips this step; the legacy lines above are unchanged.
+  let outboxRoot = '';
+  if (isInsideGitRepo(repoPath)) { try { outboxRoot = resolveRepoRoot(repoPath); } catch { /* not a repo: skip outbox */ } }
+  if (outboxRoot) {
+    const keyValue = gitConfigGet(outboxRoot, MANAGED_GIT_KEY, true);
     let managed = false;
     // Teardown must keep working when managed-root records are unreadable.
-    try { managed = isManagedGitRoot(repoPath); } catch { /* treat as unmanaged for reporting only */ }
+    try { managed = isManagedGitRoot(outboxRoot); } catch { /* treat as unmanaged for reporting only */ }
     if (keyValue !== '' || managed) {
       const removed = keyValue === 'true';
-      if (removed) gitConfigUnset(repoPath, MANAGED_GIT_KEY);
+      if (removed) gitConfigUnset(outboxRoot, MANAGED_GIT_KEY);
       steps.push({ step: 'outbox', status: removed ? 'fixed' : 'skipped',
-        detail: removed ? 'managed git effects disabled — later writes will skip git with durability_not_enabled' : 'no managed opt-in' });
+        detail: removed ? 'managed git effects disabled — later writes will skip git with durability_not_enabled'
+          : keyValue !== '' ? `managed key present with a non-'true' value; left unchanged` : 'no managed opt-in' });
     }
   }
   opts.logger?.(steps.map(s => `[${s.step}] ${s.status}: ${s.detail}`).join('\n'));

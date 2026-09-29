@@ -415,6 +415,40 @@ describe('managed root (#5182)', () => {
     expect(existsSync(join(work, 'scripts'))).toBe(false);
   });
 
+  test('the opt-in is written to the repository own config and never to global config', async () => {
+    markManaged();
+    const globalConfig = join(process.env.HOME!, '.gitconfig');
+    expect(existsSync(globalConfig)).toBe(false);
+    const r = await hardenBrainRepo({ repoPath: work, sourceId: 'wiki', installCron: false, verify: false });
+    expect(stepOf(r, 'outbox')?.status).toBe('fixed');
+    expect(git(work, 'config', '--local', '--get', MANAGED_KEY)).toBe('true');
+    expect(readFileSync(join(work, '.git', 'config'), 'utf-8')).toContain('managed = true');
+    expect(existsSync(globalConfig)).toBe(false);
+  });
+
+  test('GIT_CONFIG cannot redirect the opt-in write: harden never reports outbox fixed unless the local key is true', async () => {
+    markManaged();
+    const alt = join(root, 'alt-gitconfig');
+    let r!: DurabilityReport;
+    const prior = process.env.GIT_CONFIG;
+    process.env.GIT_CONFIG = alt;
+    try {
+      r = await hardenBrainRepo({ repoPath: work, sourceId: 'wiki', installCron: false, verify: false });
+    } finally {
+      if (prior === undefined) delete process.env.GIT_CONFIG; else process.env.GIT_CONFIG = prior;
+    }
+    const outbox = stepOf(r, 'outbox');
+    // Read the local key with GIT_CONFIG restored (--local errors while it is set).
+    const localValue = cfg(work, MANAGED_KEY);
+    if (outbox?.status === 'fixed') expect(localValue).toBe('true');
+    expect(outbox?.status).toBe('needs_attention');
+    expect(outbox?.detail).toContain('GIT_CONFIG');
+    expect(r.needs_attention.some(n => n.startsWith('outbox:'))).toBe(true);
+    expect(localValue).toBe('');
+    // The redirect target must not have received the key.
+    expect(existsSync(alt)).toBe(false);
+  });
+
   test('detached HEAD stays needs_attention on the pull step', async () => {
     markManaged();
     git(work, 'checkout', '-q', git(work, 'rev-parse', 'HEAD'));
@@ -523,6 +557,31 @@ describe('managed root (#5182)', () => {
     expect(again.find(s => s.step === 'outbox')?.detail).toContain('no managed opt-in');
   });
 
+  test('unharden from a subdirectory source resolves the repo toplevel and removes the opt-in', async () => {
+    markManaged();
+    const sub = join(work, 'brain'); mkdirSync(sub, { recursive: true });
+    const hardened = await hardenBrainRepo({ repoPath: sub, sourceId: 'wiki', installCron: false, verify: false });
+    expect(stepOf(hardened, 'outbox')?.status).toBe('fixed');
+    expect(durability.isManagedGitEffectEnabled(work)).toBe(true);
+    const steps = await unhardenBrainRepo({ repoPath: sub, sourceId: 'wiki' });
+    const outbox = steps.find(s => s.step === 'outbox');
+    expect(outbox?.status).toBe('fixed');
+    expect(cfg(work, MANAGED_KEY)).toBe('');
+    expect(durability.isManagedGitEffectEnabled(work)).toBe(false);
+    const again = await unhardenBrainRepo({ repoPath: sub, sourceId: 'wiki' });
+    expect(again.find(s => s.step === 'outbox')?.status).toBe('skipped');
+  });
+
+  test('unharden of a non-true foreign value says so and leaves it unchanged', async () => {
+    markManaged();
+    git(work, 'config', '--local', MANAGED_KEY, 'not-ours');
+    const steps = await unhardenBrainRepo({ repoPath: work, sourceId: 'wiki' });
+    const outbox = steps.find(s => s.step === 'outbox');
+    expect(outbox?.status).toBe('skipped');
+    expect(outbox?.detail).toContain("non-'true' value");
+    expect(cfg(work, MANAGED_KEY)).toBe('not-ours');
+  });
+
   test('unharden removes only an exact true value and never touches other config', async () => {
     markManaged();
     git(work, 'config', '--local', MANAGED_KEY, 'not-ours');
@@ -566,6 +625,19 @@ describe('unmanaged root regression (#5182)', () => {
     expect(steps.map(s => String(s.step))).toEqual(['cron', 'hook', 'credential']);
     const idle = await unhardenBrainRepo({ repoPath: work, sourceId: 'wiki' });
     expect(idle.map(s => String(s.step))).toEqual(['cron', 'hook', 'credential']);
+  });
+
+  test('unharden from an unmanaged subdirectory emits no outbox step and keeps the legacy steps', async () => {
+    const sub = join(work, 'brain'); mkdirSync(sub, { recursive: true });
+    const steps = await unhardenBrainRepo({ repoPath: sub, sourceId: 'wiki' });
+    expect(steps.map(s => String(s.step))).toEqual(['cron', 'hook', 'credential']);
+    expect(steps.every(s => s.status === 'skipped')).toBe(true);
+  });
+
+  test('unharden from a subdirectory of a non-repo path skips the outbox step without throwing', async () => {
+    const plain = join(root, 'not-a-repo', 'brain'); mkdirSync(plain, { recursive: true });
+    const steps = await unhardenBrainRepo({ repoPath: plain, sourceId: 'wiki' });
+    expect(steps.map(s => String(s.step))).toEqual(['cron', 'hook', 'credential']);
   });
 
   test('a stray opt-in key on an unmanaged root is still removed by unharden', async () => {
