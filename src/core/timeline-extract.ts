@@ -158,13 +158,18 @@ export interface TimelineOrphanPruneResult {
 }
 
 /**
- * Managed brains refuse the direct prune: `timeline_entries` is writer-guarded,
- * and the persistence coordinator already replaces a page's rows with what its
- * text produces each time sync publishes a change to the page.
+ * Managed brains guard `timeline_entries`: the retraction runs as a coordinated
+ * write under the page lock, against the text read inside that transaction.
  */
-export const MANAGED_TIMELINE_PRUNE_REFUSAL =
-  'This brain uses managed persistence: the persistence coordinator replaces a page\'s timeline rows each time sync publishes a change to it, ' +
-  'and timeline rows cannot be deleted directly. `--prune-orphans --dry-run` still lists rows left from before; they clear when their page next changes.';
+async function retractCoordinated(engine: BrainEngine, pageId: number, slug: string, sourceId: string) {
+  const { withCoordinatedWrite } = await import('./persistence/context.ts');
+  return engine.transaction(tx => withCoordinatedWrite(tx, [sourceId], async () => {
+    await tx.lockPageKeys([{ sourceId, slug }]);
+    const [page] = await tx.executeRaw<{ compiled_truth: string; timeline: string | null }>(
+      'SELECT compiled_truth, timeline FROM pages WHERE id = $1 AND deleted_at IS NULL', [pageId]);
+    return page ? retractRemovedTimelineEntries(tx, slug, sourceId, `${page.compiled_truth}\n${page.timeline ?? ''}`) : [];
+  }));
+}
 
 /**
  * One-time prune of timeline rows orphaned before extraction reconciled them
@@ -173,8 +178,8 @@ export const MANAGED_TIMELINE_PRUNE_REFUSAL =
  * and capped at `limit` pages (the doctor check samples; the CLI prunes all).
  */
 export async function pruneTimelineOrphans(
-  engine: Pick<BrainEngine, 'executeRaw'>,
-  opts: { sourceId?: string; dryRun: boolean; limit?: number },
+  engine: BrainEngine,
+  opts: { sourceId?: string; dryRun: boolean; limit?: number; coordinated?: boolean },
 ): Promise<TimelineOrphanPruneResult> {
   const result: TimelineOrphanPruneResult = { pagesScanned: 0, orphans: 0, removed: 0, examples: [] };
   let afterId = 0;
@@ -190,8 +195,9 @@ export async function pruneTimelineOrphans(
         ORDER BY p.id LIMIT $2`, params);
     if (!pages.length) break;
     for (const page of pages) {
-      const orphans = await retractRemovedTimelineEntries(engine, page.slug, page.source_id,
-        `${page.compiled_truth}\n${page.timeline ?? ''}`, { dryRun: opts.dryRun });
+      const orphans = opts.coordinated && !opts.dryRun
+        ? await retractCoordinated(engine, page.id, page.slug, page.source_id)
+        : await retractRemovedTimelineEntries(engine, page.slug, page.source_id, `${page.compiled_truth}\n${page.timeline ?? ''}`, { dryRun: opts.dryRun });
       result.orphans += orphans.length;
       if (!opts.dryRun) result.removed += orphans.length;
       for (const row of orphans.slice(0, Math.max(0, 5 - result.examples.length))) {

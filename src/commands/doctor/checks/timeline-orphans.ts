@@ -12,8 +12,7 @@
 
 import type { BrainEngine } from '../../../core/engine.ts';
 import type { Check } from '../../doctor.ts';
-import { MANAGED_TIMELINE_PRUNE_REFUSAL, pruneTimelineOrphans } from '../../../core/timeline-extract.ts';
-import { managedPersistenceEnabled } from '../../../core/persistence/ownership.ts';
+import { pruneTimelineOrphans } from '../../../core/timeline-extract.ts';
 
 const SAMPLE_PAGES = 500;
 
@@ -25,12 +24,11 @@ export async function timelineOrphansCheck(engine: BrainEngine): Promise<Check> 
       return { name: 'timeline_orphans', status: 'ok', message: `No orphaned timeline rows across ${res.pagesScanned} page(s)${coverage}.` };
     }
     const eg = res.examples.map(e => `${e.source_id}:${e.slug} ${e.date} "${e.summary.slice(0, 60)}"`).join('; ');
-    const fix = await managedPersistenceEnabled(engine).catch(() => false) ? MANAGED_TIMELINE_PRUNE_REFUSAL
-      : 'Preview with: gbrain extract timeline --prune-orphans --dry-run, then remove with: gbrain extract timeline --prune-orphans.';
     return {
       name: 'timeline_orphans',
       status: 'warn',
-      message: `${res.orphans} timeline row(s) came from an earlier version of their page and are no longer in its text${coverage}. ${fix} e.g. ${eg}`,
+      message: `${res.orphans} timeline row(s) came from an earlier version of their page and are no longer in its text${coverage}. ` +
+        `Preview with: gbrain extract timeline --prune-orphans --dry-run, then remove with: gbrain extract timeline --prune-orphans. e.g. ${eg}`,
     };
   } catch (e) {
     return { name: 'timeline_orphans', status: 'warn', message: `timeline orphan scan skipped: ${e instanceof Error ? e.message : String(e)}` };

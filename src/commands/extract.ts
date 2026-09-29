@@ -64,7 +64,7 @@ import { resolveIncludeFrontmatter } from '../core/extract-frontmatter.ts';
 import { inferLinkTypeFromPack } from '../core/schema-pack/link-inference.ts';
 import { PageRegexBudget } from '../core/schema-pack/redos-guard.ts';
 export { extractTimelineFromContent, type ExtractedTimelineEntry } from '../core/timeline-extract.ts';
-import { extractTimelineFromContent, MANAGED_TIMELINE_PRUNE_REFUSAL, pruneTimelineOrphans, retractRemovedTimelineEntries, type ExtractedTimelineEntry } from '../core/timeline-extract.ts';
+import { extractTimelineFromContent, pruneTimelineOrphans, retractRemovedTimelineEntries, type ExtractedTimelineEntry } from '../core/timeline-extract.ts';
 import { managedPersistenceEnabled } from '../core/persistence/ownership.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
@@ -911,11 +911,8 @@ export async function runExtract(engine: BrainEngine, args: string[], authority?
     }
     const sidIdx = args.indexOf('--source-id');
     const pruneDryRun = args.includes('--dry-run');
-    if (!pruneDryRun && await (await import('../core/persistence/ownership.ts')).managedPersistenceEnabled(engine)) {
-      console.error(MANAGED_TIMELINE_PRUNE_REFUSAL);
-      process.exit(1);
-    }
     const r = await pruneTimelineOrphans(engine, {
+      coordinated: await managedPersistenceEnabled(engine),
       sourceId: (sidIdx >= 0 && sidIdx + 1 < args.length) ? args[sidIdx + 1] : undefined,
       dryRun: pruneDryRun,
     });

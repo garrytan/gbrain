@@ -85,10 +85,12 @@ test('actual CLI sync and page reads delegate to a real non-serve stdio owner be
 test('extract --stale delegates to the resident owner, and the delegated sync already stamped its pages',async()=>{
   const preview=await cli(['extract','--stale','--source-id','workspace','--dry-run','--json']);
   expect({code:preview.code,err:preview.err}).toMatchObject({code:0});
-  expect(JSON.parse(preview.out)).toMatchObject({action:'extract_stale_dry_run',remaining:0});
+  expect(JSON.parse(preview.out)).toMatchObject({action:'extract_stale_dry_run',stale_pages:0});
   const extracted=await cli(['extract','--stale','--json']);
   expect({code:extracted.code,err:extracted.err}).toMatchObject({code:0});
-  expect(JSON.parse(extracted.out)).toMatchObject({action:'extract_stale',skipped:0,remaining:0});
+  const report=JSON.parse(extracted.out);
+  expect(report).toMatchObject({action:'extract_stale_done',stale_remaining:0});
+  expect(report.skipped_changed).toBeUndefined();
   expect(extracted.err).not.toContain('writer_coordinator_required');
   expect(inspectLockHolder(databasePath).pid).toBe(owner!.pid);
 },90000);

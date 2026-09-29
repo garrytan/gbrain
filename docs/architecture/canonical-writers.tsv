@@ -2,6 +2,7 @@
 # path	write-reference ceiling	enforcement boundary	review rationale
 src/core/persistence/activation.ts	0	coordinator	Trusted private administration requires explicit quiescence and durable refusal records before enabling managed canonical writer enforcement.
 src/core/persistence/canonical-projections.ts	9	coordinator	Facts, takes, timeline, chunks and aliases install within the guarded canonical publication transaction before its receipt commits.
+src/core/persistence/links-maintenance.ts	1	coordinator	Managed extract --stale and post-sync extraction add only the coordinator's unrecorded canonical timeline tuples inside a revision-bound withCoordinatedWrite transaction that also replaces the page's derived links and stamps its watermark.
 src/core/persistence/takes-prepare.ts	3	coordinator	Semantic takes apply only through the journal publication callback after current revision, holder and authority validation.
 src/commands/extract-conversation-facts.ts	4	early_refusal	Unsupported managed bulk extraction refuses before queue or provider work; legacy canonical writes retain SQL guard enforcement.
 src/commands/extract.ts	7	engine_guard	Canonical table SQL trigger requires coordinator capability; legacy calls fail before canonical DB publication. On a managed brain extract --stale inserts only the canonical timeline tuples inside withCoordinatedWrite for that page, after the revision-bound derived-link replacement locked and verified the page revision in the same transaction.
