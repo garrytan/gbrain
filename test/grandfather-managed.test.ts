@@ -9,6 +9,8 @@ import { phaseCGrandfather, phaseDVerify } from '../src/commands/migrations/v0_1
 import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { activateSharedSkillPersistence } from '../src/core/persistence/skill-activation.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
+import { submitRememberMutation } from '../src/core/persistence/memory-mutations.ts';
+import { prepareManagedFactsSession, publishManagedFacts } from '../src/core/persistence/facts-maintenance.ts';
 import { grandfatherCanonicalPage } from '../src/core/persistence/grandfather.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
@@ -211,6 +213,29 @@ for (const [name, act, expected] of cacheCases) {
     expect(effects.filter(effect => effect.error_code === 'git_target_unsafe')).toEqual([]);
     expect(git(root, 'log', '--name-only', '--pretty=format:')).not.toContain('conversations');
   }, { setup: dbOnlySource(declaring('conversations/'), { cache: true }) }), 120_000);
+}
+
+// Fenced memory and fact extraction republish the entity page through
+// preparePageMutation; their receipts keep its db_only reason.
+const CLAIM = 'The probe session prefers amber fixtures.';
+const fenceCases: Array<[string, string, (ctx: OperationContext) => Promise<unknown>]> = [
+  ['a fenced remember', 'remember', ctx => submitRememberMutation(ctx, { fact: CLAIM, entity: DB_ONLY_SLUG, request_id: randomUUID() })],
+  ['a managed fact extraction', 'extract_facts', async ctx => {
+    const facts = { engine: ctx.engine, sourceId: 'default', source: 'mcp:extract_facts' as const, sessionId: null, operationContext: ctx };
+    const session = (await prepareManagedFactsSession(facts, { turnText: CLAIM }))!;
+    return publishManagedFacts(ctx.engine, session, facts,
+      [{ fact: CLAIM, kind: 'preference', entity_slug: DB_ONLY_SLUG, source: 'test', embedding: null }], 'world');
+  }],
+];
+const fenceArms: Array<[string, string | undefined]> = [['PGLite', undefined], ['Postgres', process.env.DATABASE_URL]];
+for (const [name, operation, act] of fenceCases) for (const [arm, databaseUrl] of fenceArms) {
+  test.skipIf(arm === 'Postgres' && !databaseUrl)(`${arm}: ${name} on a declared db_only page without a cache file reports db_only`, () => fixture(async ({ engine, ctx, root }) => {
+    await act(ctx);
+    expect((await engine.getPage(DB_ONLY_SLUG, { sourceId: 'default' }))?.compiled_truth).toContain(CLAIM);
+    expect(existsSync(join(root, 'conversations'))).toBe(false);
+    expect(await engine.executeRaw("SELECT outcome->'write_through' AS write_through FROM persistence_requests WHERE operation=$1 AND slug=$2",
+      [operation, DB_ONLY_SLUG])).toEqual([{ write_through: { written: false, skipped: 'db_only' } }]);
+  }, { databaseUrl, setup: dbOnlySource(declaring('conversations/')) }), 120_000);
 }
 
 test('an uncoordinated edit of a db_only cache file still refuses a managed write', () => fixture(async ({ engine, ctx, root }) => {
