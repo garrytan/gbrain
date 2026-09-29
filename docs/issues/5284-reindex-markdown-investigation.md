@@ -8,6 +8,16 @@ a COMMIT-tail stall and a subsequent real-CLI reindex stall, documented below;
 their identity with the reported macOS failure is not established. No production
 reindex or engine behavior was changed for these investigations.
 
+**Current mitigation.** A separate PGLite checkpoint self-deadlock, reproduced by
+the external harness in `scripts/pglite-checkpoint-harness/` (see "PGLite
+checkpoint harness" in [TESTING.md](../TESTING.md)), is now guarded in
+production: before an outermost write transaction, `PgliteCheckpointGuard`
+(`src/core/pglite-engine/checkpoint-guard.ts`) runs a top-level `CHECKPOINT`
+once WAL since the last redo point passes half the automatic-checkpoint
+distance. The guard was verified at the harness scale (about 0.8 GB), not on
+macOS 27 or an aged 3.6 GB store, so whether it resolves this report remains
+unproven; the prerequisite below still applies.
+
 Issue #5284 reports PGLite 0.4.3 spinning inside COMMIT after approximately
 2,600–3,300 writes, with a stalled event loop and no recovery after 48 minutes.
 The reported environment was macOS 27 ARM64, Bun 1.4.2, and an aged 3.6 GB store

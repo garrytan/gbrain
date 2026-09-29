@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { dirname, join, relative, resolve as resolvePath, sep } from 'node:path';
-import { isDurabilityHardened } from '../brain-repo-durability.ts';
+import { isDurabilityHardenedAsync } from '../brain-repo-durability.ts';
 import { OperationError } from '../ops/contract.ts';
 import { persistenceHome } from './identity.ts';
 import { nativeFileTarget } from './native-file-target.ts';
@@ -19,9 +19,14 @@ function git(root: string, hooks: string, args: string[], signal?: AbortSignal):
   });
 }
 
-/** Caller owns the native worktree lock. Never run pull, rebase, or legacy hooks. */
-export async function publishGitEffect(root: string, relativePath: string, signal?: AbortSignal): Promise<Record<string, unknown>> {
-  if (!isDurabilityHardened(root)) return { git: 'skipped', reason: 'durability_not_enabled', push: 'skipped' };
+/**
+ * Caller owns the native worktree lock. Never run pull, rebase, or legacy hooks.
+ * `hardened` is the caller's durability probe of `root`, taken before it locked
+ * the worktree.
+ */
+export async function publishGitEffect(root: string, relativePath: string, signal?: AbortSignal,
+  hardened?: boolean): Promise<Record<string, unknown>> {
+  if (!(hardened ?? await isDurabilityHardenedAsync(root))) return { git: 'skipped', reason: 'durability_not_enabled', push: 'skipped' };
   const path = nativeFileTarget(root, resolvePath(root, relativePath), 'git_target_unsafe');
   relativePath = relative(root, path).split(sep).join('/');
   const base = join(persistenceHome(), 'empty-hooks');

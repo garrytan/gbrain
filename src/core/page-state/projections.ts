@@ -16,9 +16,13 @@ import { belowSafeChunkFence } from '../search/safe-chunks.ts';
 import { acceptedEmbeddingInputHashes, embeddingInputHash, isContextualMode, plainEmbeddingTier, synopsisBodyHash,
   type EmbeddingInputContext, type EmbeddingTier } from '../embedding-input-hash.ts';
 
-/** Complete the searchable snapshot only after its sanitized chunks are installed. */
-export async function sealPageTextProjection(engine: BrainEngine, slug: string, sourceId: string): Promise<void> {
-  const current = await engine.readPageSnapshot(slug, { sourceId });
+/**
+ * Complete the searchable snapshot only after its sanitized chunks are installed.
+ * `guarded` is this transaction's own read of the page under its guard, when
+ * the caller has one and has not changed the page's revision or timeline since.
+ */
+export async function sealPageTextProjection(engine: BrainEngine, slug: string, sourceId: string, guarded?: PageSnapshot): Promise<void> {
+  const current = guarded ?? await engine.readPageSnapshot(slug, { sourceId });
   if (!current) return;
   await engine.executeRaw(`UPDATE pages SET text_projection_revision=knowledge_revision,
     search_vector=setweight(to_tsvector('${getFtsLanguage()}',COALESCE(title,'')),'A') ||
@@ -103,12 +107,18 @@ export async function readProjectionSnapshot(engine: BrainEngine, slug: string, 
   opts: { allowUnsealed?: boolean; maxChunkTokens?: number; requireLiveSource?: boolean } = {}): Promise<ProjectionSnapshot | null> {
   return engine.transaction(async tx => {
     await tx.lockPageKeys([{ sourceId, slug }]);
-    const snapshot = await tx.readPageSnapshot(slug, { sourceId, ...(opts.requireLiveSource && { requireLiveSource: true }) });
-    if (!snapshot || (!opts.allowUnsealed && snapshot.page.text_projection_revision !== snapshot.revision)) return null;
-    const context = await indexingContext(tx, snapshot, opts.maxChunkTokens);
-    return { snapshot, chunks: await tx.getChunks(slug, { sourceId, includeUnsealed: true }), indexingContext: context.key,
-      embeddingModel: context.model, embeddingColumn: context.column, maxChunkTokens: context.maxChunkTokens, maxChunkTokensOverride: opts.maxChunkTokens, pageKind: context.pageKind };
+    return readGuardedProjectionSnapshot(tx, slug, sourceId, opts);
   });
+}
+
+/** readProjectionSnapshot for a caller whose transaction already holds the page guard. */
+async function readGuardedProjectionSnapshot(tx: BrainEngine, slug: string, sourceId: string,
+  opts: { allowUnsealed?: boolean; maxChunkTokens?: number; requireLiveSource?: boolean }): Promise<ProjectionSnapshot | null> {
+  const snapshot = await tx.readPageSnapshot(slug, { sourceId, ...(opts.requireLiveSource && { requireLiveSource: true }) });
+  if (!snapshot || (!opts.allowUnsealed && snapshot.page.text_projection_revision !== snapshot.revision)) return null;
+  const context = await indexingContext(tx, snapshot, opts.maxChunkTokens);
+  return { snapshot, chunks: await tx.getChunks(slug, { sourceId, includeUnsealed: true }), indexingContext: context.key,
+    embeddingModel: context.model, embeddingColumn: context.column, maxChunkTokens: context.maxChunkTokens, maxChunkTokensOverride: opts.maxChunkTokens, pageKind: context.pageKind };
 }
 
 /** No provider work under the guard. Delayed derived results lose to newer content. */
@@ -166,7 +176,7 @@ export async function installPageProjection(engine: BrainEngine, prepared: Proje
     if (opts.seal) {
       await tx.executeRaw(`UPDATE pages SET chunker_version=$3
         WHERE source_id=$1 AND slug=$2`, [sourceId, slug, MARKDOWN_CHUNKER_VERSION]);
-      await sealPageTextProjection(tx, slug, sourceId);
+      await sealPageTextProjection(tx, slug, sourceId, current!);
       await tx.executeRaw('DELETE FROM page_projection_jobs WHERE source_incarnation=$1::uuid AND slug=$2 AND revision=$3::uuid', [snapshot.sourceIncarnation, slug, snapshot.revision]);
     }
     if (opts.signature) await tx.setPageEmbeddingSignature(slug, { sourceId, signature: opts.signature });
@@ -276,12 +286,28 @@ export async function preparePageProjection(prepared: ProjectionSnapshot) {
   return { chunks: await prepareMarkdownChunks(page, prepared.maxChunkTokens), code: undefined };
 }
 
+// The job queue is usually empty or small while pages grows without bound, so
+// these reads walk jobs and probe sources/pages per job. The OFFSET 0 fences
+// keep the planner from turning the probes back into a scan of pages; PGLite
+// has no autovacuum to give it accurate queue statistics.
+const PROJECTION_JOB_PROBES = `CROSS JOIN LATERAL (SELECT s.id FROM sources s
+      WHERE s.incarnation=j.source_incarnation AND NOT s.archived OFFSET 0) s
+    CROSS JOIN LATERAL (SELECT p.page_kind FROM pages p WHERE p.source_id=s.id AND p.slug=j.slug
+      AND p.deleted_at IS NULL AND p.page_kind IN ('markdown','code') OFFSET 0) p`;
+
+/**
+ * Rebuilds between statistics refreshes, per engine. Like autovacuum's analyze
+ * threshold, a refresh is due once 50 rows plus 10% of the table changed; a
+ * process's first drained rebuild always refreshes.
+ */
+const statisticsDebt = new WeakMap<BrainEngine, { rebuilt: number; rows: number | null }>();
+
 /** Bounded and keyless. Unsupported media remains queued for its source importer. */
 export async function rebuildPendingPageProjections(engine: BrainEngine, limit = 20): Promise<{ rebuilt: number; superseded: number }> {
   const jobs = await engine.executeRaw<{ source_id: string; source_incarnation: string; slug: string; revision: string; page_kind: string }>(`SELECT s.id AS source_id,j.source_incarnation,j.slug,j.revision,p.page_kind
-    FROM page_projection_jobs j JOIN sources s ON s.incarnation=j.source_incarnation
-    JOIN pages p ON p.source_id=s.id AND p.slug=j.slug
-    WHERE p.deleted_at IS NULL AND NOT s.archived AND p.page_kind IN ('markdown','code')
+    FROM (SELECT source_incarnation,slug,revision,updated_at FROM page_projection_jobs
+      ORDER BY updated_at,source_incarnation,slug OFFSET 0) j
+    ${PROJECTION_JOB_PROBES}
     ORDER BY j.updated_at,j.source_incarnation,j.slug LIMIT $1`, [Math.max(1, Math.min(limit, 100))]);
   let rebuilt = 0;
   let superseded = 0;
@@ -291,7 +317,7 @@ export async function rebuildPendingPageProjections(engine: BrainEngine, limit =
       const pending = await tx.executeRaw(`SELECT 1 FROM page_projection_jobs
         WHERE source_incarnation=$1::uuid AND slug=$2 AND revision=$3::uuid`, [job.source_incarnation, job.slug, job.revision]);
       if (!pending.length) return null;
-      return readProjectionSnapshot(tx, job.slug, job.source_id, { allowUnsealed: true });
+      return readGuardedProjectionSnapshot(tx, job.slug, job.source_id, { allowUnsealed: true });
     });
     if (!prepared || prepared.snapshot.sourceIncarnation !== job.source_incarnation || prepared.snapshot.revision !== job.revision) { superseded++; continue; }
     try {
@@ -309,11 +335,18 @@ export async function rebuildPendingPageProjections(engine: BrainEngine, limit =
     }
   }
   if (rebuilt > 0) {
+    const debt = statisticsDebt.get(engine);
+    const owed = { rebuilt: (debt?.rebuilt ?? 0) + rebuilt, rows: debt?.rows ?? null };
+    statisticsDebt.set(engine, owed);
+    if (owed.rows !== null && owed.rebuilt < 50 + owed.rows * 0.1) return { rebuilt, superseded };
     const remaining = await engine.executeRaw(`SELECT 1 FROM page_projection_jobs j
-      JOIN sources s ON s.incarnation=j.source_incarnation JOIN pages p ON p.source_id=s.id AND p.slug=j.slug
-      WHERE p.deleted_at IS NULL AND NOT s.archived AND p.page_kind IN ('markdown','code')
-        AND j.reason<>'rebuild_failed' LIMIT 1`);
-    if (!remaining.length) await refreshProjectionStatistics(engine);
+      ${PROJECTION_JOB_PROBES}
+      WHERE j.reason<>'rebuild_failed' LIMIT 1`);
+    if (!remaining.length) {
+      await refreshProjectionStatistics(engine);
+      const [pages] = await engine.executeRaw<{ rows: number }>("SELECT GREATEST(reltuples,0)::float8 AS rows FROM pg_class WHERE oid='pages'::regclass");
+      statisticsDebt.set(engine, { rebuilt: 0, rows: Number(pages?.rows ?? 0) });
+    }
   }
   return { rebuilt, superseded };
 }

@@ -152,8 +152,9 @@ async function prepareAdmission(engine: BrainEngine, input: WriteAdmission, over
       RETURNING *`, [input.principal.kind, input.principal.id, requestId, input.operation, input.sourceId,
       input.sourceIncarnation, input.pageId ?? null, input.slug, input.worktreeId ?? null, input.topologyGeneration ?? null,
       fingerprint, JSON.stringify(input.intent), JSON.stringify(input.authority), bytes, terminalBytes, input.targetKind ?? 'page', input.protocolVersion ?? 1]);
-    for (const c of counters) await tx.executeRaw(`UPDATE persistence_counters SET outstanding_count=outstanding_count+1,
-      intent_bytes=intent_bytes+$2,lifetime_ids=lifetime_ids+1,terminal_bytes=terminal_bytes+$3 WHERE key=$1`, [c.key, bytes, terminalBytes]);
+    await tx.executeRaw(`UPDATE persistence_counters SET outstanding_count=outstanding_count+1,
+      intent_bytes=intent_bytes+$2,lifetime_ids=lifetime_ids+1,terminal_bytes=terminal_bytes+$3 WHERE key=ANY($1::text[])`,
+    [counters.map(c => c.key), bytes, terminalBytes]);
     return row;
   } };
 }
@@ -213,7 +214,7 @@ export async function prepareRecovery(engine: BrainEngine, row: WriteRequest, re
     for (const c of counters) if (Number(c.recovery_bytes) + bytes > (c.key === 'brain' ? limits.brainRecoveryBytes : limits.worktreeRecoveryBytes)) throw capacityError('recovery bytes currently reserved by other requests');
     await tx.executeRaw(`UPDATE persistence_requests SET recovery=$3::text::jsonb,recovery_bytes=$4,updated_at=now()
       WHERE id=$1::uuid AND execution_token=$2::uuid`, [row.id, row.execution_token, JSON.stringify(recovery), bytes]);
-    for (const c of counters) await tx.executeRaw('UPDATE persistence_counters SET recovery_bytes=recovery_bytes+$2 WHERE key=$1', [c.key, bytes]);
+    await tx.executeRaw('UPDATE persistence_counters SET recovery_bytes=recovery_bytes+$2 WHERE key=ANY($1::text[])', [counters.map(c => c.key), bytes]);
   });
 }
 
@@ -236,8 +237,8 @@ export async function completeWrite(tx: SqlEngine, row: WriteRequest, state: 'co
   const [done] = await tx.executeRaw<WriteRequest>(`UPDATE persistence_requests SET state=$2,outcome=$3::text::jsonb,
     error_code=$4,error_message=$5,completed_at=now(),updated_at=now(),claim_expires_at=NULL,blocked_reason=NULL
     WHERE id=$1::uuid RETURNING *`, [row.id, state, JSON.stringify(outcome), error?.code ?? null, error?.message ?? null]);
-  for (const key of ['brain', principalKey(requestPrincipal(row))]) await tx.executeRaw(`UPDATE persistence_counters
-    SET outstanding_count=outstanding_count-1,intent_bytes=intent_bytes-$2 WHERE key=$1`, [key, Number(current.intent_bytes)]);
+  await tx.executeRaw(`UPDATE persistence_counters SET outstanding_count=outstanding_count-1,intent_bytes=intent_bytes-$2
+    WHERE key=ANY($1::text[])`, [['brain', principalKey(requestPrincipal(row))], Number(current.intent_bytes)]);
   // Recovery bytes remain reserved until physical cleanup has been verified.
   return done;
 }
@@ -253,7 +254,7 @@ export async function clearResolvedRecovery(engine: BrainEngine, id: string): Pr
     const [locked] = await tx.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE id=$1::uuid FOR UPDATE', [id]);
     if (!locked?.recovery || !isTerminal(locked)) return;
     for (const file of recoveryFiles(locked.recovery)) assertRecoveryStagingAbsent(file);
-    for (const key of keys) await tx.executeRaw('UPDATE persistence_counters SET recovery_bytes=recovery_bytes-$2 WHERE key=$1', [key, Number(locked.recovery_bytes)]);
+    await tx.executeRaw('UPDATE persistence_counters SET recovery_bytes=recovery_bytes-$2 WHERE key=ANY($1::text[])', [keys, Number(locked.recovery_bytes)]);
     await tx.executeRaw('UPDATE persistence_requests SET recovery=NULL,recovery_bytes=0,blocked_reason=NULL WHERE id=$1::uuid', [id]);
   });
 }
@@ -262,6 +263,18 @@ export async function markRecovering(engine: SqlEngine, row: WriteRequest, reaso
     error_code=COALESCE(error_code,$4),error_message=COALESCE(error_message,$5)
     WHERE id=$1::uuid AND execution_token=$2::uuid AND state IN ('running','recovering') AND ${PERSISTENCE_PROTOCOL_PREDICATE}`, [row.id, row.execution_token, reason, failure?.code ?? null, failure?.message ?? null]);
 }
+/**
+ * PGLite has no autovacuum. The resident owner reclaims queue churn and keeps
+ * planner statistics current, so receipt lookups keep using the request-id
+ * index and claims do not walk dead queue entries.
+ */
+export async function vacuumPersistenceQueues(engine: BrainEngine): Promise<number> {
+  if (engine.kind !== 'pglite') return 0;
+  await engine.executeRaw('VACUUM (ANALYZE) persistence_requests, persistence_effects, persistence_counters, page_projection_jobs, page_write_guards');
+  const [requests] = await engine.executeRaw<{ rows: number }>("SELECT GREATEST(reltuples,0)::float8 AS rows FROM pg_class WHERE oid='persistence_requests'::regclass");
+  return Number(requests?.rows ?? 0);
+}
+
 export async function compactWriteReceipts(engine: BrainEngine, retentionDays?: number): Promise<number> {
   retentionDays ??= await readReceiptRetentionDays(engine);
   if (!Number.isFinite(retentionDays) || retentionDays < 0) throw new TypeError('Invalid receipt retention.');

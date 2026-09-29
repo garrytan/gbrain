@@ -384,7 +384,7 @@ gbrain eval export > before.ndjson
 gbrain eval replay --against before.ndjson
 
 # A/B retrieval strategies on a labeled fixture
-gbrain eval --qrels labels.tsv --config balanced.json
+gbrain eval --qrels qrels.json --config-a baseline.json --config-b balanced.json
 ```
 
 The current measured LongMemEval result (95.53% session-level `recall_all@5` on the release default path, 449/470, and 93.40% with the reranker off, 439/470; cleaned S split, 470 scored questions, k=5, measured 2026-09-06 by the in-repo harness), its per-type table, every arm of the ranker wave and the judged answer-accuracy row live in [`docs/eval-bench.md`](../eval-bench.md#public-benchmarks-longmemeval).

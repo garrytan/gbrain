@@ -214,6 +214,18 @@ export const SECTIONS: DocSection[] = [
         path: "docs/guides/minions-fix.md",
       },
       {
+        title: "docs/guides/repair.md",
+        description:
+          "`gbrain repair timeline|visibility|safe-chunks`: dry run vs --apply, --source/--limit/--json, resume, capacity stop, thin-client refusal, what each kind fixes and costs.",
+        path: "docs/guides/repair.md",
+      },
+      {
+        title: "docs/guides/write-refusals.md",
+        description:
+          "Refusal reasons (file_database_drift, ambiguous_source_path, physical_root_device_changed, cursor_processing_options_conflict, take_row_collision, invalid_source_uri, queue_capacity, parked effects) with the exact recovery command.",
+        path: "docs/guides/write-refusals.md",
+      },
+      {
         title: "docs/integrations/reliability-repair.md",
         description: "Data integrity recovery.",
         path: "docs/integrations/reliability-repair.md",
@@ -319,6 +331,7 @@ export const INLINE_TIPS = [
   "`gbrain doctor [--json] [--fast] [--fix]` - built-in health checks.",
   "`gbrain orphans [--json]` - pages with zero inbound wikilinks.",
   "`gbrain repair-jsonb [--dry-run]` - repair v0.12.0 double-encoded JSONB rows.",
+  "`gbrain repair [<kind>] [--apply]` - preview, then fix timeline, visibility and safe-chunk damage doctor reports.",
   "`gbrain upgrade` runs post-upgrade + apply-migrations.",
 ];
 

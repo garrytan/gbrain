@@ -450,6 +450,7 @@ check. Logs: `~/.gbrain/serve/serve.log` and `serve.err`.
 | `service: manual` (cloud sandbox, ephemeral container, no user bus) | There is no supervisor to keep the server alive. Run the printed foreground command, or the `nohup ~/.gbrain/serve/gbrain-serve.sh &` line, and re-run `--status`. On Linux without a user bus, `loginctl enable-linger $USER` may enable one. |
 | `thin_client` (exit 1) — "run on the brain host" | This install is a thin client; `expose` publishes the machine that holds the database. Run it there. |
 | Clients see `needsAuth` while tool calls succeed | Spec discovery, not a failed login — see [DEPLOY.md troubleshooting](../mcp/DEPLOY.md#troubleshooting). |
+| A connector (ChatGPT, claude.ai) keeps asking to reconnect, or OAuth returns `invalid_target` naming an accepted URL | The connector's MCP URL does not match the server's `/mcp` resource, which comes from the published URL (`expose` sets `--public-url` to your MagicDNS name). Use the accepted URL from the message, then reconnect once. Details in [CHATGPT.md troubleshooting](../mcp/CHATGPT.md#troubleshooting). |
 
 ## Security posture
 
@@ -1725,6 +1726,11 @@ writing or reviewing an operation, consult `src/core/operations.ts` for the cont
   `gbrain db-repair --yes` to apply safe fixes. All three are engine-free — they
   work while the database is down. Full loop:
   [`docs/ENGINES.md`](./docs/ENGINES.md#engine-detection-and-access-repair).
+  Doctor residue (`timeline_history`, `derived_visibility`, unsealed pages):
+  preview `gbrain repair`, then `gbrain repair <kind> --apply` on the brain host
+  after the user agrees ([repair guide](./docs/guides/repair.md)). A refused
+  write names its reason and recovery command
+  ([write refusal reasons](./docs/guides/write-refusals.md)).
 - **Migrate / upgrade:** `gbrain upgrade` (binary self-update + schema migrations + post-upgrade prompts),
   [`docs/UPGRADING_DOWNSTREAM_AGENTS.md`](./docs/UPGRADING_DOWNSTREAM_AGENTS.md),
   [`skills/migrations/`](./skills/migrations/), `gbrain apply-migrations --yes --no-autopilot-install` (manual migration orchestration without service installation).
@@ -2861,6 +2867,13 @@ consent gates around unattended remediation.
 
 ## Upgrade
 
+For v0.60.5.0 and later, confirm a database backup exists before upgrading,
+upgrade every process that writes to the brain, then follow the
+[v0.60.5.0 steps](skills/migrations/v0.60.5.0.md): one full `gbrain doctor`,
+then preview `gbrain repair` and apply only after the user agrees
+([repair guide](docs/guides/repair.md)). For v0.60.6.0, also follow the
+[one-time timeline prune and slug-collision steps](skills/migrations/v0.60.6.0.md).
+
 For v0.53.0.0, follow the
 [mechanical shared-skills migration](skills/migrations/v0.53.0.0.md) on the host,
 starting with `gbrain apply-migrations --dry-run --json`. Stop/exclude old writers,
@@ -3079,6 +3092,8 @@ off until the user opts in, and paid enrichment is a separate choice.
 | "harvest this skill into gbrain", "publish this skill to gbrain", "lift this skill upstream", "share this skill with other gbrain clients", "promote my skill to gbrain" | `skills/skillpack-harvest/SKILL.md` |
 | Post-restart health + auto-fix, "did the container restart break anything", smoke test | `skills/smoke-test/SKILL.md` |
 | `GBRAIN_DB_ACCESS`, "gbrain database error", "gbrain connection refused", "brain database is down", "cannot reach the brain database", "fix gbrain database access", "repair gbrain postgres" | `skills/db-repair/SKILL.md` |
+| Doctor `timeline_history` / `derived_visibility` / unsealed pages, "repair timeline history", "fix atom visibility", "re-seal withheld pages" | Preview with `gbrain repair`, apply one kind with `gbrain repair <kind> --apply` on the brain host after the user agrees. See `docs/guides/repair.md` |
+| A write or sync refused with `file_database_drift`, `ambiguous_source_path`, `physical_root_device_changed`, `cursor_processing_options_conflict`, `take_row_collision`, `invalid_source_uri`, `queue_capacity`, or doctor `parked_effects` | Relay the error's `suggestion` command; see `docs/guides/write-refusals.md` before running it |
 | Cross-modal review, second opinion | `skills/cross-modal-review/SKILL.md` |
 | "Validate skills", skill health check | `skills/testing/SKILL.md` |
 | Webhook setup, external event processing | `skills/webhook-transforms/SKILL.md` |
@@ -4303,7 +4318,7 @@ If you want to FEEL the difference without buying the pitch:
 
 Pick a real corpus you have. Run `gbrain whoknows` on a topic that should match. Note the top-3 results.
 
-Then run `gbrain schema review-orphans --limit 50 --json` and look at the untyped pages. If 10+ of them share an obvious prefix that should be a real type, add the type + sync.
+Then run `gbrain schema review-orphans --json` and look at the untyped pages. If 10+ of them share an obvious prefix that should be a real type, add the type + sync.
 
 Re-run the same `whoknows` query. Top-3 should shift, because the new type is now routing through expert ranking instead of being lumped into the catchall. The numerical delta IS the win. You can run a tutorial in 5 minutes; this experiment proves it matters on your actual content.
 
@@ -5069,8 +5084,21 @@ of indistinguishable from a stuck one), and `dead_jobs`/`degraded`. A run
 with any non-completed child does NOT stamp the cooldown, so the next
 nightly retries exactly the failed transcripts; a run whose EVERY child
 died fails the phase loudly. Synthesis children also fail (dead-letter)
-when every attempted page write failed — `completed` never means
-"zero pages written".
+when every attempted page write failed, or when they attempted no page
+write and stopped dirty, finished with prose instead of calling the write
+tool, or had only failed tool calls. A `completed` child with zero pages written is a
+deliberate answer: the model explicitly skipped the transcript
+(`{"pages":[],"skipped":true}`), or a patterns child ran its tools and found
+nothing new. It completes so the cooldown stamps instead of re-billing the
+same input.
+
+A dream key whose submissions died `dream.breaker.max_dead_submissions`
+times (default 3; `0` disables) within 24 hours is refused before the next
+submission, and `gbrain doctor` reports it as `dream_paid_loop`. Fix the
+cause first (a missing provider key, a quota, a failing transcript), then
+`gbrain dream reset-key --list` shows the refused keys and
+`gbrain dream reset-key '<key>'` re-enables one. Details in
+[spend controls](../operations/spend-controls.md#dream-paid-loop-breaker-dreambreakermax_dead_submissions).
 
 Three more fields answer "what did that cost and did it land":
 
@@ -6796,6 +6824,25 @@ plain-HTTP OAuth discovery on a private network you fully control: the SDK's
 own `MCP_DANGEROUSLY_ALLOW_INSECURE_ISSUER_URL=1` opt-in. Bearer auth works
 either way; OAuth clients may still refuse a non-HTTPS issuer.
 
+**A connector loops back to sign-in, or the token endpoint returns `invalid_target`**
+Every OAuth authorization, token, refresh and bearer check uses one resource:
+`<origin of --public-url>/mcp`. The bare origin is accepted as an alias. A
+requested resource that is anything else, such as an old tunnel hostname,
+`http` for an `https` server or a query string, gets `invalid_target` naming
+the accepted URL. A bearer token bound to another resource gets
+`invalid_token`, and a stored grant for a resource this server no longer
+serves gets `invalid_grant` on refresh. Point the client at the accepted URL
+or fix `--public-url`, then reconnect. ChatGPT specifics
+are in [CHATGPT.md](CHATGPT.md#troubleshooting).
+
+**A claude.ai connector can search but not save**
+The `/mcp` challenge hints `read write`, and each token is capped to the
+client's registered scope. A connector approved before v0.60.5.0 was
+approved with the old `read` hint and keeps a read-only grant. Remove and
+re-add the connector, and approve `write` on the consent screen. If the
+client is registered with `read` only, widen it first
+([ADMIN.md](ADMIN.md#inspect-clients-and-edit-access)).
+
 **Claude Desktop doesn't connect**
 Remote servers must be added via Settings > Integrations, NOT
 `claude_desktop_config.json`. See [CLAUDE_DESKTOP.md](CLAUDE_DESKTOP.md).
@@ -6884,7 +6931,7 @@ the same registry.
 gbrain init --pglite                                      # 2-second local brain
 claude mcp add gbrain -- gbrain serve --surface verbs     # the memory-verb surface
 gbrain remember "I prefer dark mode in every editor" --provenance demo --entity people/me
-gbrain recall --entity people/me                          # …now ask your agent in a NEW session
+gbrain recall people/me                                   # …now ask your agent in a NEW session
 ```
 
 > Memories agents save are readable by every agent connected to this brain;
@@ -7412,6 +7459,9 @@ Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/GBRAIN_VER
 
 Run these checks after install to confirm every part of GBrain is working.
 Each check includes the command, expected output, and what to do if it fails.
+When `gbrain doctor` reports `timeline_history`, `derived_visibility` or
+unsealed pages, use [`gbrain repair`](guides/repair.md); when a write is
+refused with a named reason, see [write refusal reasons](guides/write-refusals.md).
 
 The most important check is #4 (live sync). "Sync ran" is not the same as
 "sync worked." A sync that silently skips pages because of a pooler bug is
@@ -8299,6 +8349,242 @@ Each phase is idempotent. Re-running is safe. Common failure modes:
   handlers.
 - `skills/conventions/cron-via-minions.md` — the canonical cron rewrite
   pattern.
+
+---
+
+## docs/guides/repair.md
+
+Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/repair.md
+
+# Repair residual damage with `gbrain repair`
+
+`gbrain doctor` finds some damage that it cannot fix on its own: timeline
+history that exists only in the database, derived pages without an explicit
+visibility, and pages indexed before the safe-chunk fence. `gbrain repair`
+fixes those three kinds. Every run is a preview unless you pass `--apply`.
+
+**Say to your agent:** *"Doctor says some timeline history is only in the
+database. Show me what `gbrain repair` would change, then apply it."* The
+agent runs `gbrain repair` to preview and, after you agree,
+`gbrain repair <kind> --apply` on the brain host.
+
+## Preview first
+
+```bash
+gbrain repair                    # preview every kind
+gbrain repair timeline           # preview one kind
+gbrain repair --json             # machine-readable preview
+```
+
+The preview names the brain and sources it will touch, then prints one block
+per kind:
+
+```text
+Scope: brain <brain id>; sources default
+timeline: 12 item(s) to repair
+  e.g. default:people/alice-example, default:companies/acme-example
+  materializable_rows=31, kept_unrenderable_rows=2
+  cost: 12 request ID(s), 196608 receipt bytes, 12 page(s) to re-embed
+  capacity brain lifetime_ids: 4100 of 1000000 (stops at 900000)
+  ...
+  apply: gbrain repair timeline --apply
+```
+
+- **Items** are pages. The sample lists at most 10 of them as `source:slug`.
+- **Residuals** are named counters: some count what the repair will do
+  (`materializable_rows`, `atoms_origin_gone_to_private`), others count rows
+  it leaves alone (see [What each kind fixes](#what-each-kind-fixes)).
+- **Cost** is what an apply of the pending items would consume: one permanent
+  request ID and 16 KiB of reserved receipt space per page for `timeline` and
+  `visibility`, and nothing for `safe-chunks`. When an embedding model is
+  configured and priced, the line adds an estimated embedding cost in dollars.
+- **Capacity** shows the write-journal counters the run draws on and the 90%
+  line where it stops (see [Capacity stop](#capacity-stop)).
+- **apply** is the command that applies this kind with the same `--source`
+  (and `--no-embed`). It does not repeat `--limit`; add it yourself if you
+  previewed a limited batch.
+
+## Apply
+
+```bash
+gbrain repair timeline --apply
+gbrain repair visibility --apply
+gbrain repair safe-chunks --apply
+gbrain repair safe-chunks --apply --no-embed   # re-seal text now, embed later
+gbrain repair --all --apply                    # every kind in order
+```
+
+`--apply` writes without a prompt, so review the preview first. With
+`--apply` you must name a kind or pass `--all`; `--yes` is refused. `--all`
+runs `timeline`, then `visibility`, then `safe-chunks`, and stops at the
+first kind that stops.
+
+Each item is re-checked against the page's current state just before it is
+written, and the write is bound to the revision it just read, so an edit made
+after planning is kept and repaired too. An item that no longer needs the
+repair, or whose page changes during the write, is counted as `skipped` and
+left for the next run. Nothing is deleted.
+
+| Option | Effect |
+| --- | --- |
+| `--apply` | Write the repair. Without it, only preview. |
+| `--source <id>` | Limit the run to one active source. The default is every active (non-archived) source. An unknown or archived id is refused. |
+| `--limit <n>` | Repair at most `n` items per kind in this run (a positive integer; with `--all`, up to `n` for each of the three kinds). Rerun the same command to continue. |
+| `--no-embed` | `safe-chunks` only: re-seal chunk text and skip embedding. Run `gbrain embed --stale` later. |
+| `--all` | Run every kind in order. |
+| `--json` | Print `{ scope, mode, results[] }`, one result per kind with `affected`, `sample`, `residuals`, `cost`, `capacity`, `resumed_from`, `applied`, `skipped`, `complete`, `stopped` and `apply_command`. |
+
+The command exits 1 when a run stops early (capacity, a pending write, or a
+held writer). A `--limit` batch that leaves work behind exits 0, so scripts
+should also check `results[].complete`.
+
+## What each kind fixes
+
+| Kind | Doctor check that points here | What it does | Left alone and counted |
+| --- | --- | --- | --- |
+| `timeline` | `timeline_history` | Re-saves each page with its current body through a revision-bound `put_page`. The save writes each database-only timeline entry back into the page as a bullet preceded by `<!-- gbrain:materialized v1 <hash> -->`. | `kept_unrenderable_rows`: entries that would change if written as a bullet (for example an empty source). They stay in the database. |
+| `visibility` | `derived_visibility` | Stamps an explicit `visibility` on extracted atoms and synthesized concepts. An atom takes its origin page's visibility; transcript atoms and atoms whose origin is gone become `private`; a concept takes the strictest visibility of its input atoms. A concept input found only through an atom's `concepts:` list counts as private. Atoms are repaired before concepts. It never loosens an explicit value: `private` stays `private`, and `world` can only become `private`. A missing value is stamped with the origin's value, which is `world` when the origin page is public. | `concepts_without_lineage`: concepts whose inputs cannot be found. They stay as they are, and remote readers already treat a missing visibility as private. `atoms_origin_gone_to_private` counts atoms made private because their origin page no longer exists. |
+| `safe-chunks` | `contextual_retrieval_coverage` (`details.unsealed_pages`) | Rebuilds the chunks of markdown and code pages indexed before the safe-chunk fence, which remote and MCP search withhold. It rebuilds projections only: no page write, no new page version and no request ID. Vectors whose embedding input did not change are kept; the rest are embedded unless you pass `--no-embed` or no embedding model is configured. | `code_without_source_path`: code pages with no recorded file to re-chunk. `unsupported_page_kind`: other page kinds, such as images. Their importer re-seals them. |
+
+Timeline rows that an earlier version of a page produced and its current text
+no longer has are removals, not history, so `timeline` neither counts nor
+restores them. Doctor reports those as `timeline_orphans`; preview their
+removal with `gbrain extract timeline --prune-orphans --dry-run`, then run it
+without `--dry-run`.
+
+A timeline repair can make pages gain marked bullets. That is the fix: the
+history is now visible in the page and survives later edits. Deleting a marked
+bullet in a save that passes the current `expected_revision` deletes its entry.
+
+## Resume
+
+Runs are resumable. After each page commits, the position is saved under the
+kind, the brain and the source list. Rerunning the same command (the same kind
+and `--source`) continues after the last committed page, and the preview says
+`resuming after item ...`. A finished run clears the saved position. `--limit`
+does not change the position key, so `--limit 500` batches continue each other.
+
+Request IDs are derived from the page and its revision, so rerunning after a
+crash replays the same write instead of making a second one. If the run stops
+with "still pending publication" or "the canonical writer ... is held", check
+`gbrain sources writer status <source>`, then rerun the printed apply command.
+
+## Capacity stop
+
+`timeline` and `visibility` write through the managed write journal, which has
+permanent per-principal and per-brain limits on request IDs and receipt bytes.
+Before each page, the repair checks those counters and stops before it would
+cross 90% of any limit. The stop message names the setting and a value that
+lets the remaining pages finish:
+
+```text
+STOPPED: Stopped before crossing 90% of brain lifetime_ids (...). Run: gbrain config set persistence.limits.brain_lifetime_ids 1200000 — then rerun `gbrain repair timeline --apply` to resume.
+```
+
+Raise the limit on the brain host only if you agree, then rerun. Raised limits
+are brain-wide; request IDs stay permanent replay protection. `safe-chunks`
+takes no journal admission and never hits this stop. The limits and their
+defaults are in [bounded admission and retention](concurrent-writes.md#bounded-admission-and-retention).
+
+## Where it runs
+
+Run `gbrain repair` on the brain host, the machine that holds the database. A
+thin client refuses before doing anything:
+
+```text
+`gbrain repair` is not routable. repair runs on the brain host (it publishes coordinated page writes against the local engine). Run `gbrain repair` on the brain host.
+```
+
+A repair is an ordinary trusted local write and follows the same rules as
+any other page save. It never transfers an existing owner and does not change
+activation, sync checkpoints or search settings. Like any local save on a
+PGLite brain, the first `timeline` or `visibility` write to a source with a
+configured checkout and no owner yet claims that checkout for this host. Do not set
+`search.remote_private_pages` to get derived pages back remotely: that exposes
+every private page.
+
+## Verify
+
+```bash
+gbrain repair --json     # every kind reports "affected": 0
+gbrain doctor --json     # timeline_history, derived_visibility, unsealed_pages
+```
+
+Items the repair leaves alone can keep a doctor warning: concepts without
+lineage still count under `derived_visibility`, and code pages without a
+source path or unsupported page kinds still count as unsealed pages. Check
+the residual counters before treating a remaining warning as a failed repair.
+
+## Related
+
+- [Write refusal reasons](write-refusals.md) — what a refused write means and the recovery command
+- [Concurrent writes and durable receipts](concurrent-writes.md) — receipts, retries and capacity limits
+- [v0.60.5.0 upgrade steps](../../skills/migrations/v0.60.5.0.md) — the backup-first upgrade that introduced these repairs
+
+---
+
+## docs/guides/write-refusals.md
+
+Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/write-refusals.md
+
+# Write refusal reasons
+
+When a managed brain refuses a write, sync or background effect, the error
+names a reason and a recovery command. This page lists the reasons a user or
+agent is most likely to meet, what each one means, and what to run. None of
+these refusals overwrites your file or your database copy; each one stops so
+that nothing is lost.
+
+**Say to your agent:** *"My save was refused with `file_database_drift`.
+Show me the preview before you fix it."* or *"Doctor says effects are parked.
+What failed, and can we retry it?"*
+
+## Where the reason appears
+
+A refused operation prints, or returns in JSON, an error with these fields:
+
+```json
+{ "error": "source_changed", "detail": "file_database_drift",
+  "message": "...", "suggestion": "On the brain host, run gbrain sources reconcile ..." }
+```
+
+`error` is the error code. `detail` is the specific reason when one code has
+several causes. `suggestion` is the recovery step: usually a command, filled
+in with the real source and slug where the code knows them, sometimes with
+placeholders such as `<source>` or `<brain>` to fill in, and sometimes an
+inspection instruction. A failed write receipt carries the error code as
+`write_error`; managed sync and memory-verb errors add the specific reason.
+Run recovery commands on the brain host unless the row says otherwise.
+
+Keep the original `request_id`. Unless a row says to use a new one, retry the
+original write with the same ID after the fix, so the brain replays it instead
+of making a duplicate.
+
+## Reference
+
+| Reason | Error code | What it means | Recovery |
+| --- | --- | --- | --- |
+| `file_database_drift` | `source_changed` | The page's canonical file and its database copy disagree, usually because the file was edited outside a coordinated write. Neither copy was overwritten. A file with no `type:` line keeps the stored type, and titles compare trimmed, so those alone no longer cause this. | `gbrain sources reconcile <source> <slug> --brain <brain> --preview`, review the preview, resolve it, then `--apply <resolved-preview-file> --request-id <new uuid>`. Retry the original write with a **new** request ID. See [repair a file/database disagreement](concurrent-writes.md#repair-a-filedatabase-disagreement). |
+| `ambiguous_source_path` | `page_identity_changed` | A source registered at a Git subfolder `<sub>` has a page whose stored path `<sub>/<file>` could mean either `<file>` in the source directory (the older Git-root spelling) or `<sub>/<file>` inside a folder of the source that repeats its name, and both files exist. Sync refuses instead of guessing. See [sources in a Git subfolder](multi-source-brains.md#sources-in-a-git-subfolder). | Rename or move one of the two files, commit, then `gbrain sync --source <source> --no-pull --retry-failed`. |
+| `physical_root_device_changed` | `recovery_required` | The checkout's filesystem device number changed while everything else matches, which macOS can do after a reboot. When the owner token, brain, worktree, root, inode and a non-zero birth time all match and the caller can verify database ownership, the write path re-stamps ownership by itself and the write proceeds. This refusal means the automatic re-stamp could not be verified; the suggestion says why. | Do a deliberate self-transfer: `gbrain sources writer status <source>` (note `admin_state`), then `gbrain sources writer transfer prepare <source> --self-transfer --admin-intent writer_transfer_prepare --expected-state <admin_state>`, then `gbrain sources writer transfer accept <source> --path <root> --expected-epoch <epoch> --manifest <digest from prepare> --self-transfer --admin-intent writer_transfer_accept --expected-state <fresh admin_state>`. Retry the original write with the **same** request ID. Never delete ownership marker files. |
+| `cursor_processing_options_conflict` | `invalid_params` | An unfinished sync's processing options (`--no-embed`, `--no-extract`, `--no-schema-pack`) conflict with this run, or the cursor predates saved options and has none. When options are saved, a run that omits those flags, including autopilot and `sync` jobs, adopts them. | When the message prints a resume command (`gbrain sync --source <source> --no-pull` plus the saved flags), run it or drop the conflicting flag. When it reports no saved options, resolve pending requests first, then rediscover with `gbrain sync --source <source> --no-pull --retry-failed` and the processing flags you want. |
+| `take_row_collision` | `take_row_collision` | A save adds a takes-table row whose row number already belongs to a different take that exists only in the database. The save stops instead of overwriting that take. | Renumber the new takes row, or add the existing take to the page's takes table, then save with the current `expected_revision` and a **new** request ID (the content changed). |
+| `invalid_source_uri` | `invalid_source_uri` | The brain has shared skillpacks, and the page's stored `source_uri` is a `file:` URI that cannot be turned into a local path, so gbrain cannot prove the write stays outside a skillpack. Shared-skill protection stays on. | The source owner inspects the page's stored `source_uri` on the brain host and replaces it with an absolute file URI or clears it; there is no dedicated command yet. Retry with a **new** request ID. |
+| `queue_capacity` | `queue_capacity` | Admission would exceed a write-journal limit. Existing requests keep their place; nothing is evicted. For the cumulative limits (lifetime request IDs and receipt bytes), `detail` names the limit, for example `principal_lifetime_ids`. | For a cumulative limit, run the printed `gbrain config set persistence.limits.<limit> <value>` (sized for about one more year at the current rate), then retry with the **same** request ID. For outstanding-request, queued-byte or recovery-byte limits, let outstanding requests finish and check `gbrain sources writer status`. See [bounded admission and retention](concurrent-writes.md#bounded-admission-and-retention). |
+| `targets_parked` (doctor: `parked_effects`) | effect `error_code` | A Git backup or withdrawal target failed five times in a row and was set aside so the other pages keep committing. The page write itself committed; its Git backup or withdrawal is incomplete. Contention, dependency waits, shutdown and transient database errors never count toward the five. | `gbrain sources writer status <source>`, fix the cause it names, preview with `gbrain sources writer retry-effects <source> --request-id <id> --dry-run`, then run it without `--dry-run`. Each run grants one more attempt per parked target; a target that fails again parks again. |
+
+`gbrain doctor` reports parked targets as the `parked_effects` check with the
+exact `retry-effects` command per request. It reports `persistence_capacity`
+when lifetime request IDs or receipt bytes reach 80% of a limit, with the
+`gbrain config set` value to use; outstanding-request, queued-byte and
+recovery-byte limits can refuse writes without that warning.
+
+## Related
+
+- [Concurrent writes and durable receipts](concurrent-writes.md) — receipt states, retries, capacity limits
+- [Repair residual damage](repair.md) — `gbrain repair` for history, visibility and safe-chunk damage
+- [Multi-source brains](multi-source-brains.md) — sources, slug-root mode and write-through
+- [Topologies](../architecture/topologies.md) — the writer administration procedure behind self-transfer
 
 ---
 

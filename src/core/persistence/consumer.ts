@@ -1,6 +1,6 @@
 import type { BrainEngine, ReservedConnection } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
-import { claimNextWrite, compactWriteReceipts, getWriteRequestById, releaseUnpublishedClaim, renewWriteClaim } from './journal.ts';
+import { claimNextWrite, compactWriteReceipts, getWriteRequestById, releaseUnpublishedClaim, renewWriteClaim, vacuumPersistenceQueues } from './journal.ts';
 import { finishUnpublishedFailure, publishMutation, recoverPublication, type PreparedMutation } from './coordinator.ts';
 import { localHostId } from './identity.ts';
 import { isTerminal, type WriteRequest } from './model.ts';
@@ -33,6 +33,10 @@ export class PersistenceConsumer {
   private topologyWorker: Promise<unknown> | undefined;
   private maintenanceWorker: Promise<unknown> | undefined;
   private nextMaintenance = 0;
+  private publishedSinceMaintenance = 0;
+  private maintenanceVolume = 50;
+  private lastScan = 0;
+  private progressWake = false;
   private lastError: { code: string; at: string; phase?: string } | undefined;
   private abort = new AbortController();
   private phaseObservation: { name: string; started_at: string; deadline_exceeded: boolean; attempt: number } | undefined;
@@ -47,8 +51,12 @@ export class PersistenceConsumer {
     this.hostId = opts.hostId ?? localHostId();
   }
   start(): void { this.stopping = false; this.abort = new AbortController(); this.fullTickRequested = true; this.idleDelayMs = this.pollMs; this.schedule(0); }
-  /** Work admitted by this process: run a full tick now instead of waiting out the idle backoff. */
-  wake(): void { this.idleDelayMs = this.pollMs; this.schedule(0); }
+  /**
+   * Work admitted by this process: tick now instead of waiting out the idle
+   * backoff. Like a completed publication, it claims at once and leaves scans
+   * to at most one pass per poll interval.
+   */
+  wake(): void { this.progressWake = true; this.idleDelayMs = this.pollMs; this.schedule(0); }
   private get pollMs(): number { return this.opts.pollMs ?? 250; }
   private get idleMaxMs(): number { return Math.max(this.pollMs, this.opts.idleMaxMs ?? 5000); }
   private schedule(ms: number): void {
@@ -60,7 +68,9 @@ export class PersistenceConsumer {
     this.timerDueAt = Date.now() + ms;
     this.timer = setTimeout(() => {
       this.timer = undefined;
-      void this.tick().finally(() => { const next = this.nextDelayMs ?? this.pollMs; this.nextDelayMs = undefined; this.schedule(next); });
+      const afterProgress = this.progressWake;
+      this.progressWake = false;
+      void this.tick(afterProgress).finally(() => { const next = this.nextDelayMs ?? this.pollMs; this.nextDelayMs = undefined; this.schedule(next); });
     }, ms);
     this.timer.unref?.();
   }
@@ -169,15 +179,21 @@ export class PersistenceConsumer {
       throw error;
     } finally { signal.removeEventListener('abort', onAbort); }
   }
-  async tick(): Promise<void> {
+  /**
+   * `afterProgress` marks the wake-up that follows a completed publication
+   * or a local admission. Those ticks claim the next write at once and leave
+   * root refresh and recovery/expiry/topology scans to at most one pass per
+   * poll interval, the same bound an idle owner has.
+   */
+  async tick(afterProgress = false): Promise<void> {
     if (this.tickPromise) return this.tickPromise;
-    this.tickPromise = this.doTick().catch(error => { this.report(error); }).finally(() => {
+    this.tickPromise = this.doTick(afterProgress).catch(error => { this.report(error); }).finally(() => {
       this.tickPromise = undefined;
       if (this.wakeRequested) { this.wakeRequested = false; this.schedule(0); }
     });
     return this.tickPromise;
   }
-  private async doTick(): Promise<void> {
+  private async doTick(afterProgress: boolean): Promise<void> {
     if (this.stopping) return;
     const requested = this.fullTickRequested || this.active.size > 0;
     this.fullTickRequested = false;
@@ -208,19 +224,26 @@ export class PersistenceConsumer {
     await this.releaseIdleLane();
     this.idleDelayMs = this.pollMs;
     this.nextDelayMs = this.pollMs;
-    await this.phase('refresh_roots', signal => refreshManagedFilesystemRoots(this.engine,
-      this.engine.kind === 'pglite' ? this.config.database_path : undefined, signal));
+    const scan = !afterProgress || Date.now() - this.lastScan >= this.pollMs;
+    if (scan) {
+      this.lastScan = Date.now();
+      await this.phase('refresh_roots', signal => refreshManagedFilesystemRoots(this.engine,
+        this.engine.kind === 'pglite' ? this.config.database_path : undefined, signal));
+    }
     if (this.stopping) return;
-    if (!this.topologyWorker) this.topologyWorker = import('./topology-recovery.ts')
+    if (scan && !this.topologyWorker) this.topologyWorker = import('./topology-recovery.ts')
       .then(({ recoverSourceTopologies }) => recoverSourceTopologies(this.engine, { hostId: this.hostId, limit: 2,
         onAttempt: (id, recovered) => { if (recovered) this.topologyRetryAfter.delete(id); else this.topologyRetryAfter.set(id, Date.now() + 30_000); } }))
       .catch(error => this.report(error)).finally(() => { this.topologyWorker = undefined; });
-    if (!this.effectsWorker) this.effectsWorker = runPersistenceEffects(this.engine, this.config,
-      { hostId: this.hostId, limit: 2, signal: this.abort.signal }).catch(error => this.report(error))
+    if (!this.effectsWorker) this.effectsWorker = this.drainEffects().catch(error => this.report(error))
       .finally(() => { this.effectsWorker = undefined; });
-    if (!this.maintenanceWorker && Date.now() >= this.nextMaintenance) {
+    // Queue upkeep also follows publication volume, like autovacuum's scale
+    // factor, so a busy owner never plans against a much smaller queue.
+    if (!this.maintenanceWorker && (Date.now() >= this.nextMaintenance || this.publishedSinceMaintenance >= this.maintenanceVolume)) {
       this.nextMaintenance = Date.now() + 60_000;
-      this.maintenanceWorker = compactWriteReceipts(this.engine).catch(error => this.report(error))
+      this.publishedSinceMaintenance = 0;
+      this.maintenanceWorker = compactWriteReceipts(this.engine).then(() => vacuumPersistenceQueues(this.engine))
+        .then(rows => { this.maintenanceVolume = 50 + Math.ceil(rows * 0.2); }).catch(error => this.report(error))
         .finally(() => { this.maintenanceWorker = undefined; });
     }
     if (!this.projectionWorker) this.projectionWorker = rebuildPendingPageProjections(this.engine, 2)
@@ -229,35 +252,37 @@ export class PersistenceConsumer {
     // proves that a previous process can no longer be publishing this root.
     const now = Date.now();
     for (const [root, retryAt] of this.rootRetryAfter) if (retryAt <= now) this.rootRetryAfter.delete(root);
-    const excluded = [...this.activeRoots, ...this.rootRetryAfter.keys()];
-    const recovery = await this.phase('recovery_scan', signal => this.engine.executeRaw<WriteRequest>(`SELECT r.* FROM persistence_requests r
-      JOIN persistence_worktrees w ON w.id=r.worktree_id
-      WHERE w.owner_host_id=$1::uuid AND r.recovery IS NOT NULL AND NOT(r.worktree_id::text=ANY($2::text[]))
-      AND NOT EXISTS (SELECT 1 FROM persistence_requests earlier WHERE earlier.worktree_id=r.worktree_id
-        AND earlier.recovery IS NOT NULL AND earlier.sequence<r.sequence)
-      ORDER BY r.updated_at,r.sequence LIMIT 16`, [this.hostId, excluded], { signal }));
-    for (const row of recovery) {
-      const root = row.worktree_id!;
-      // Always skip at least the next scheduled poll for an unresolved root.
-      // This preserves its FIFO head while allowing the next root into LIMIT 16.
-      const delay = Math.max(1000, (this.opts.pollMs ?? 250) * 2);
-      this.rootRetryAfter.set(root, Date.now() + delay);
-      try {
-        const recovered = await this.phase('recovery', () => recoverPublication(this.engine, row.id, this.hostId));
-        if (!recovered.recovery) this.rootRetryAfter.delete(root);
-        else if (recovered.blocked_reason === 'unexpected_file_bytes') this.rootRetryAfter.set(root, Date.now() + Math.max(delay, 30_000));
-      } catch (error) {
-        this.rootRetryAfter.set(root, Date.now() + Math.max(delay, 30_000));
-        this.report(error);
+    if (scan) {
+      const excluded = [...this.activeRoots, ...this.rootRetryAfter.keys()];
+      const recovery = await this.phase('recovery_scan', signal => this.engine.executeRaw<WriteRequest>(`SELECT r.* FROM persistence_requests r
+        JOIN persistence_worktrees w ON w.id=r.worktree_id
+        WHERE w.owner_host_id=$1::uuid AND r.recovery IS NOT NULL AND NOT(r.worktree_id::text=ANY($2::text[]))
+        AND NOT EXISTS (SELECT 1 FROM persistence_requests earlier WHERE earlier.worktree_id=r.worktree_id
+          AND earlier.recovery IS NOT NULL AND earlier.sequence<r.sequence)
+        ORDER BY r.updated_at,r.sequence LIMIT 16`, [this.hostId, excluded], { signal }));
+      for (const row of recovery) {
+        const root = row.worktree_id!;
+        // Always skip at least the next scheduled poll for an unresolved root.
+        // This preserves its FIFO head while allowing the next root into LIMIT 16.
+        const delay = Math.max(1000, (this.opts.pollMs ?? 250) * 2);
+        this.rootRetryAfter.set(root, Date.now() + delay);
+        try {
+          const recovered = await this.phase('recovery', () => recoverPublication(this.engine, row.id, this.hostId));
+          if (!recovered.recovery) this.rootRetryAfter.delete(root);
+          else if (recovered.blocked_reason === 'unexpected_file_bytes') this.rootRetryAfter.set(root, Date.now() + Math.max(delay, 30_000));
+        } catch (error) {
+          this.rootRetryAfter.set(root, Date.now() + Math.max(delay, 30_000));
+          this.report(error);
+        }
       }
+      await this.phase('expired_claims', signal => this.engine.executeRaw(`WITH expired AS (
+        SELECT r.id FROM persistence_requests r WHERE r.state='running' AND r.recovery IS NULL
+        AND r.publication_started=false AND r.claim_expires_at<now() AND ${PERSISTENCE_PROTOCOL_PREDICATE}
+        AND (r.worktree_id IS NULL OR EXISTS (SELECT 1 FROM persistence_worktrees w WHERE w.id=r.worktree_id AND w.owner_host_id=$1::uuid))
+        ORDER BY r.sequence LIMIT 100 FOR UPDATE OF r SKIP LOCKED)
+        UPDATE persistence_requests r SET state='queued',execution_token=NULL,claim_expires_at=NULL
+        FROM expired WHERE r.id=expired.id`, [this.hostId], { signal }));
     }
-    await this.phase('expired_claims', signal => this.engine.executeRaw(`WITH expired AS (
-      SELECT r.id FROM persistence_requests r WHERE r.state='running' AND r.recovery IS NULL
-      AND r.publication_started=false AND r.claim_expires_at<now() AND ${PERSISTENCE_PROTOCOL_PREDICATE}
-      AND (r.worktree_id IS NULL OR EXISTS (SELECT 1 FROM persistence_worktrees w WHERE w.id=r.worktree_id AND w.owner_host_id=$1::uuid))
-      ORDER BY r.sequence LIMIT 100 FOR UPDATE OF r SKIP LOCKED)
-      UPDATE persistence_requests r SET state='queued',execution_token=NULL,claim_expires_at=NULL
-      FROM expired WHERE r.id=expired.id`, [this.hostId], { signal }));
     if (publicationConcurrency(this.engine) === 0) {
       await this.phase('capacity', signal => this.engine.executeRaw(`UPDATE persistence_requests SET blocked_reason='writer_pool_capacity'
         WHERE state='queued' AND blocked_reason IS DISTINCT FROM 'writer_pool_capacity' AND ${PERSISTENCE_PROTOCOL_PREDICATE}`, undefined, { signal }));
@@ -276,10 +301,17 @@ export class PersistenceConsumer {
       let progressed = false;
       const task = this.execute(row).then(result => { progressed = result; }).catch(error => this.report(error)).finally(() => {
         if (!progressed) this.rootRetryAfter.set(key, Date.now() + (this.opts.pollMs ?? 250));
+        else { this.progressWake = true; this.publishedSinceMaintenance++; }
         this.active.delete(task); this.activeRoots.delete(key); this.schedule(progressed ? 0 : this.opts.pollMs ?? 250);
       });
       this.active.add(task);
     }
+  }
+  /** Effects keep pace with publication: full batches continue without waiting for the next tick. */
+  private async drainEffects(): Promise<void> {
+    const limit = 20;
+    while (!this.stopping && await runPersistenceEffects(this.engine, this.config,
+      { hostId: this.hostId, limit, signal: this.abort.signal }) >= limit);
   }
   foregroundCompletions(worktreeId: string): number { return this.foregroundCounts.get(worktreeId) ?? 0; }
   status() {
