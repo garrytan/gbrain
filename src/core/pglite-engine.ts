@@ -7,6 +7,7 @@ import { assertPageRevision } from './page-state/types.ts';
 import { lockPageKeys as acquirePageKeys } from './page-state/guards.ts';
 import { readPageSnapshot as readCanonicalPageSnapshot } from './page-state/snapshot.ts';
 import { createPageVersion } from './page-state/versions.ts';
+import { recordRenameAlias } from './page-state/rename-alias.ts';
 import { composablePgliteTransaction } from './page-state/transactions.ts';
 import { GRANT_COLUMNS_SQL } from './grants/schema.ts';
 import type { PageReadScope } from './types.ts';
@@ -1739,16 +1740,17 @@ export class PGLiteEngine implements BrainEngine {
    */
   async findDuplicatePage(
     sourceId: string,
-    opts: { hash: string; frontmatterId?: string | null },
+    opts: { hash: string; frontmatterId?: string | null; excludeSlug?: string },
   ): Promise<{ slug: string; id: number } | null> {
     const fmId = opts.frontmatterId ?? null;
     const sql = `SELECT id, slug FROM pages
        WHERE source_id = $1
          AND deleted_at IS NULL
          AND (content_hash = $2 OR (frontmatter->>'id' = $3 AND $3 IS NOT NULL))
-       ORDER BY id
+         AND ($4::text IS NULL OR slug <> $4)
+       ORDER BY (frontmatter->>'id' IS NOT DISTINCT FROM $3) DESC, id
        LIMIT 1`;
-    const { rows } = await this.db.query(sql, [sourceId, opts.hash, fmId]);
+    const { rows } = await this.db.query(sql, [sourceId, opts.hash, fmId, opts.excludeSlug ?? null]);
     if (rows.length === 0) return null;
     const r = rows[0] as { id: number | string; slug: string };
     return { slug: r.slug, id: Number(r.id) };
@@ -5785,14 +5787,18 @@ export class PGLiteEngine implements BrainEngine {
     newSlug = validateSlug(newSlug);
     const sourceId = opts?.sourceId ?? 'default';
     // Source-qualify so a rename in source A doesn't sweep up same-slug rows
-    // in sources B/C/D (mirrors postgres-engine.ts).
-    const result = await this.db.query(
-      `UPDATE pages SET slug = $1, updated_at = now() WHERE slug = $2 AND source_id = $3`,
-      [newSlug, oldSlug, sourceId]
-    );
-    // #3056: rows moved — a zero-row UPDATE does not throw, so the count is
-    // the only way callers can see the no-op.
-    return result.affectedRows ?? 0;
+    // in sources B/C/D (mirrors postgres-engine.ts). The rename and its
+    // slug alias commit together.
+    return this.transaction(async tx => {
+      const moved = await tx.executeRaw(
+        `UPDATE pages SET slug = $1, updated_at = now() WHERE slug = $2 AND source_id = $3 RETURNING id`,
+        [newSlug, oldSlug, sourceId]
+      );
+      if (moved.length > 0) await recordRenameAlias(tx, sourceId, oldSlug, newSlug);
+      // #3056: rows moved — a zero-row UPDATE does not throw, so the count is
+      // the only way callers can see the no-op.
+      return moved.length;
+    });
   }
 
   async rewriteLinks(_oldSlug: string, _newSlug: string): Promise<void> {

@@ -33,8 +33,8 @@ import { isUndefinedTableError } from '../utils.ts';
  *   1. If `raw` is already a page slug shape (contains a "/" or matches an
  *      exact pages.slug row in this source), return it untouched.
  *   2. Resolve a bare name only when prefix expansion finds one candidate.
- *   3. For multi-token input, require a high-specificity fuzzy match against
- *      pages.slug + pages.title within the source (case-insensitive).
+ *   3. For multi-token input, take a fuzzy candidate within the source only
+ *      when it carries the same name tokens (sameEntityName).
  *   4. Fall back to a deterministic slugify: lowercase-no-spaces with
  *      hyphen-collapse. NOT prefixed with a directory — caller decides
  *      whether to prefix `people/`, `companies/`, etc.
@@ -104,6 +104,33 @@ function fallbackSlugify(trimmed: string): string {
     return trimmed.split('/').map(slugify).filter(Boolean).join('/');
   }
   return slugify(trimmed);
+}
+
+const IDENTITY_TYPES = new Set(['person', 'company', 'fund', 'organization']);
+const IDENTITY_DIRS = ['people/', 'companies/', 'funds/', 'orgs/', 'organizations/'];
+const NAME_NOISE_TOKENS = new Set(['the', 'inc', 'llc', 'ltd', 'co', 'corp', 'corporation', 'plc', 'gmbh']);
+
+/** True for pages that name one real-world person, company, fund or organization. */
+export function isIdentityEntity(slug: string, type?: string | null): boolean {
+  return (type != null && IDENTITY_TYPES.has(type)) || IDENTITY_DIRS.some(dir => slug.startsWith(dir));
+}
+
+function nameTokens(value: string): string {
+  const folded = foldNonDecomposingLatin(value).normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase();
+  const tokens = folded.split(/[^\p{L}\p{N}]+/u).filter(token => token && !NAME_NOISE_TOKENS.has(token));
+  return [...new Set(tokens)].sort().join(' ');
+}
+
+/**
+ * A fuzzy candidate names the same entity as a reference only when both carry
+ * the same name tokens, ignoring case, punctuation, order, accents and
+ * corporate suffixes. "Example, Alice" matches "Alice Example"; "Alicia
+ * Example" and "Alice Examples" do not, so a near-name never resolves to a
+ * different entity.
+ */
+export function sameEntityName(reference: string, candidateTitle: string | null | undefined, candidateSlug: string): boolean {
+  const wanted = nameTokens(reference);
+  return wanted !== '' && (wanted === nameTokens(candidateTitle ?? '') || wanted === nameTokens(candidateSlug.split('/').pop() ?? ''));
 }
 
 /**
@@ -266,7 +293,7 @@ export async function resolvePhantomCanonical(
   // The phantom slug is the input; we treat it as the search term too,
   // because phantom slugs ARE the lowercased bare name a fuzzy / prefix
   // lookup would naturally target.
-  const fuzzy = await tryFuzzyMatch(engine, source_id, trimmed);
+  const fuzzy = await tryFuzzyMatch(engine, source_id, trimmed, false);
   if (fuzzy && fuzzy !== phantomSlug && fuzzy.includes('/')) return fuzzy;
 
   const expanded = await tryPrefixExpansion(engine, source_id, slugify(trimmed));
@@ -439,6 +466,7 @@ async function tryFuzzyMatch(
   engine: BrainEngine,
   source_id: string,
   raw: string,
+  sameNameOnly = true,
 ): Promise<string | null> {
   const lc = raw.toLowerCase();
   const fragment = slugify(raw);
@@ -460,13 +488,14 @@ async function tryFuzzyMatch(
            OR slug ILIKE '%' || $3 || '%'
          )
        ORDER BY score DESC, slug ASC
-       LIMIT 3`,
+       LIMIT 5`,
       [source_id, lc, fragment],
     );
-    // 0.4 confidently misattributes names that share only a generic company
-    // token (for example "Beacon Capital" → "Benton Capital"). Keep fuzzy
-    // typo tolerance, but require high-specificity overlap before writing a
-    // fact to an existing entity.
+    // A trigram score alone attributes facts about "Alicia Example" to Alice,
+    // and facts about a person with no page to a meeting page that carries
+    // their name. Entity resolution takes a candidate only when it names the
+    // same entity; anything else falls back to the reference's own slug.
+    if (sameNameOnly) return rows.find(row => sameEntityName(raw, row.title, row.slug))?.slug ?? null;
     if (rows.length > 0 && rows[0].score >= 0.7) return rows[0].slug;
   } catch {
     // pg_trgm functions might not be available on every engine config;

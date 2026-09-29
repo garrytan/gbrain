@@ -222,9 +222,16 @@ describe('cycle extract phase stale drain (#4062)', () => {
     // The cycle calls runExtractCore with jsonMode: true so the helper's human
     // summary never lands ahead of the dream --json report. Quiet must not mean
     // silent: a flush that drops rows still has to surface on stderr.
+    // Links are replaced per page (the put_page contract), so the dropped write
+    // is that page's replacement; both endpoints are live pages.
     writeFileSync(join(brainDir, 'alice.md'), '# Alice\nMet [[bob]] today.\n');
     writeFileSync(join(brainDir, 'bob.md'), '# Bob\nQuiet page.\n');
-    const addLinks = spyOn(engine, 'addLinksBatch').mockRejectedValueOnce(new Error('pool exhausted'));
+    await engine.executeRaw(
+      `INSERT INTO pages (slug, source_id, type, title, compiled_truth, timeline)
+       VALUES ('alice', 'wiki', 'person', 'Alice', 'Met [[bob]] today.', ''),
+              ('bob', 'wiki', 'person', 'Bob', 'Quiet page.', '')`,
+    );
+    const addLinks = spyOn(engine, 'replaceDerivedLinks').mockRejectedValueOnce(new Error('pool exhausted'));
     const log = spyOn(console, 'log').mockImplementation(() => {});
     const stdout = spyOn(process.stdout, 'write').mockReturnValue(true);
     const err = spyOn(console, 'error').mockImplementation(() => {});

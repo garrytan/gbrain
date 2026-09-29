@@ -79,10 +79,10 @@ describe('computeEffectiveDate precedence chain (default order)', () => {
     expect(r.date?.toISOString().startsWith('2024-06-15')).toBe(true);
   });
 
-  test('fallback to updated_at when chain exhausted', () => {
+  test('fallback to the stable creation anchor, not the last write, when chain exhausted', () => {
     const r = run({});
     expect(r.source).toBe('fallback');
-    expect(r.date?.toISOString()).toBe(baseUpdated.toISOString());
+    expect(r.date?.toISOString()).toBe(baseCreated.toISOString());
   });
 });
 
@@ -147,7 +147,7 @@ describe('computeEffectiveDate parse failure fall-through', () => {
   test('filename without date prefix → fallback', () => {
     const r = run({ filename: 'no-date-here' });
     expect(r.source).toBe('fallback');
-    expect(r.date?.toISOString()).toBe(baseUpdated.toISOString());
+    expect(r.date?.toISOString()).toBe(baseCreated.toISOString());
   });
 });
 

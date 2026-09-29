@@ -43,9 +43,10 @@ import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { ATTENDANCE_REPAIR_HELP, isAttendanceRepairRequest } from './extract-attendance-repair.ts';
 import { join, relative, dirname } from 'path';
 import type { BrainEngine, LinkBatchInput, TimelineBatchInput } from '../core/engine.ts';
+import { isUndefinedTableError } from '../core/utils.ts';
 import type { PageType } from '../core/types.ts';
 import { parseMarkdown } from '../core/markdown.ts';
-import { resolveCandidateSources, resolveLinkFallbackDefault, loadLinkPageMetadata, capturedLinkEndpoints, fileLinkOwnership, replaceFileLinks, type LinkPageMetadata } from '../core/link-reconciliation.ts';
+import { resolveCandidateSources, resolveLinkFallbackDefault, loadLinkPageMetadata, capturedLinkEndpoints, fileLinkOwnership, replaceFileLinks, replacePageFileLinks, type LinkPageMetadata } from '../core/link-reconciliation.ts';
 export { reconcileSourceLinks, type SourceLinkReconciliationResult } from '../core/link-reconciliation.ts';
 export { extractMarkdownLinks } from '../core/link-extraction.ts';
 import {
@@ -63,7 +64,7 @@ import { resolveIncludeFrontmatter } from '../core/extract-frontmatter.ts';
 import { inferLinkTypeFromPack } from '../core/schema-pack/link-inference.ts';
 import { PageRegexBudget } from '../core/schema-pack/redos-guard.ts';
 export { extractTimelineFromContent, type ExtractedTimelineEntry } from '../core/timeline-extract.ts';
-import { extractTimelineFromContent, type ExtractedTimelineEntry } from '../core/timeline-extract.ts';
+import { extractTimelineFromContent, retractRemovedTimelineEntries, type ExtractedTimelineEntry } from '../core/timeline-extract.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 import { pathToSlug, slugifyPath, slugifySegment, pruneDir, isSyncable } from '../core/sync.ts';
@@ -467,12 +468,34 @@ function loadFsPageTypes(files: ReadonlyArray<{ path: string; relPath: string }>
   return types;
 }
 
+/**
+ * Old slugs of renamed pages (slug_aliases), mapped to their current slug when
+ * that slug has a file in this walk. The old slugs join `allSlugs` so a link
+ * written before the rename still resolves; a slug that is itself a live file
+ * never becomes an alias.
+ */
+async function loadSlugAliasTargets(engine: BrainEngine, sourceId: string, allSlugs: Set<string>): Promise<Map<string, string>> {
+  let rows: Array<{ alias_slug: string; canonical_slug: string }> = [];
+  try {
+    rows = await engine.executeRaw('SELECT alias_slug, canonical_slug FROM slug_aliases WHERE source_id = $1', [sourceId]);
+  } catch (error) {
+    if (!isUndefinedTableError(error)) throw error;
+  }
+  const aliases = new Map(rows.filter(row => !allSlugs.has(row.alias_slug) && allSlugs.has(row.canonical_slug))
+    .map(row => [row.alias_slug, row.canonical_slug]));
+  for (const alias of aliases.keys()) allSlugs.add(alias);
+  return aliases;
+}
+
 export async function extractLinksFromFile(
   content: string, relPath: string, allSlugs: Set<string>,
   opts?: { includeFrontmatter?: boolean; globalBasename?: boolean; pack?: LinkExtractionPack | null;
-    pageTypes?: ReadonlyMap<string, string> },
+    pageTypes?: ReadonlyMap<string, string>; aliases?: ReadonlyMap<string, string> },
 ): Promise<ExtractedLink[]> {
   const links: ExtractedLink[] = [];
+  // Renamed pages: `allSlugs` also holds their old slugs (see
+  // loadSlugAliasTargets), which resolve here to the page's current slug.
+  const canonical = (target: string) => opts?.aliases?.get(target) ?? target;
   const slug = pathToSlug(relPath);
   const fileDir = dirname(relPath);
   // Issue #972: globalBasename routes bare `[[name]]` wikilinks through
@@ -503,7 +526,8 @@ export async function extractLinksFromFile(
     const isBasename = resolvedSlugs.length > 1
       || (globalBasename && resolvedSlugs.length === 1
           && resolveSlug(fileDir, relTarget, allSlugs) === null);
-    for (const target of resolvedSlugs) {
+    for (const resolved of resolvedSlugs) {
+      const target = canonical(resolved);
       // Issue #972 (codex [P2]): drop a basename self-loop ([[own-tail]] on
       // its own page resolving back to itself).
       if (isBasename && target === slug) continue;
@@ -565,7 +589,7 @@ export async function extractLinksFromFile(
         // digit-leading folders (`90-people/nicolai`) and nested paths.
         // Exact Set membership guards it — no false positives.
         if (/\//.test(trimmed) && /^[a-z0-9][a-z0-9/_-]*$/.test(trimmed) && allSlugs.has(trimmed)) {
-          return trimmed;
+          return canonical(trimmed);
         }
         const hints = Array.isArray(dirHint) ? dirHint : (dirHint ? [dirHint] : []);
         // Both slug grammars, as in makeResolver step 2 (#4855): the folded
@@ -575,7 +599,7 @@ export async function extractLinksFromFile(
           if (!hint) continue;
           for (const form of forms) {
             const candidate = `${hint}/${form}`;
-            if (allSlugs.has(candidate)) return candidate;
+            if (allSlugs.has(candidate)) return canonical(candidate);
           }
         }
         return null;
@@ -1259,32 +1283,24 @@ async function extractForSlugs(
   if (doLinks && !pack) throw new Error('Cannot extract links: active schema pack is unavailable.');
   const pageTypes = loadFsPageTypes(allFiles, pack);
   const ownership = !dryRun && doLinks ? await fileLinkOwnership(engine, sourceId ?? 'default') : undefined;
+  const aliases = doLinks ? await loadSlugAliasTargets(engine, sourceId ?? 'default', allSlugs) : undefined;
 
-  const linkBatch: LinkBatchInput[] = [];
   const timelineBatch: TimelineBatchInput[] = [];
 
-  async function flushLinks() {
-    if (linkBatch.length === 0) return;
-    // Snapshot BEFORE clear so a producer pushing during the 500ms retry
-    // delay can't lose items on the second attempt. Error messages read
-    // snapshot.length (batch.length is 0 by the time the catch fires).
-    const snapshot = linkBatch.slice();
-    linkBatch.length = 0;
+  // A page's links are replaced in one transaction. A failed replacement keeps
+  // the batch-loss contract of the timeline flush below (stderr, never stdout)
+  // and leaves the page unprocessed, so it stays stale for the next sweep.
+  async function replaceLinksReportingLoss(slug: string, links: LinkBatchInput[], owner: NonNullable<typeof ownership>): Promise<number> {
     try {
-      // v0.41.18.0: engine self-retries on Supavisor blip. auditSite routes
-      // the audit JSONL emission. Per-snapshot try/catch preserves the
-      // log-and-continue contract for exhausted retries.
-      linksCreated += await engine.addLinksBatch(snapshot, { auditSite: 'extract.links_inc' }); // gbrain-allow-direct-insert: gbrain extract command — canonical link reconciliation from markdown body
+      return await replacePageFileLinks(engine, slug, sourceId ?? 'default', links, includeFrontmatter, owner) ?? 0;
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      // Same two-channel contract as the fs-walk siblings: the cycle runs this
-      // path with jsonMode (stdout belongs to the dream --json report), and a
-      // flush that drops rows must still surface on stderr.
       if (jsonMode) {
-        process.stderr.write(JSON.stringify({ event: 'batch_error', size: snapshot.length, error: msg }) + '\n');
+        process.stderr.write(JSON.stringify({ event: 'batch_error', size: links.length, error: msg }) + '\n');
       } else {
-        console.error(`  link batch error (${snapshot.length} rows lost): ${msg}`);
+        console.error(`  link replacement error for ${slug} (${links.length} rows not written): ${msg}`);
       }
+      throw e;
     }
   }
 
@@ -1304,21 +1320,20 @@ async function extractForSlugs(
     }
   }
 
-  // v0.41.15.0 (T7): sliding-pool fan-out. The shared linkBatch /
-  // timelineBatch arrays + flush functions still serve correctly because
-  // every push + length check + length=0 reset is synchronous JS — no
-  // await between the check and the reset means workers never see a
-  // half-cleared batch. flushLinks/flushTimeline snapshot before await,
-  // so the second worker's pushes during the await land cleanly in the
-  // (now-empty) batch for the next flush.
+  // v0.41.15.0 (T7): sliding-pool fan-out. Links are replaced per page; the
+  // shared timelineBatch array + flush still serve correctly because every
+  // push + length check + length=0 reset is synchronous JS — no await between
+  // the check and the reset means workers never see a half-cleared batch.
+  // flushTimeline snapshots before await, so the second worker's pushes
+  // during the await land cleanly in the (now-empty) batch for the next flush.
   await runSlidingPool({
     items: slugs,
     workers,
     signal,
     failureLabel: (slug) => slug,
     onItem: async (slug) => {
-      // #1972: bail before doing any work for this slug on abort. Trailing
-      // flushLinks/flushTimeline still commit accumulated rows — no torn write.
+      // #1972: bail before doing any work for this slug on abort. The trailing
+      // flushTimeline still commits accumulated rows — no torn write.
       if (isAborted(signal)) return;
       const relPath = resolveSlugRelPath(slugToPath, brainDir, slug);
       if (relPath === undefined) return; // deleted file — sync already handled removal
@@ -1329,30 +1344,26 @@ async function extractForSlugs(
         const content = readFileSync(fullPath, 'utf-8');
 
         if (doLinks) {
-          const links = await extractLinksFromFile(content, relPath, allSlugs, { globalBasename, includeFrontmatter, pack, pageTypes });
-          let reconciled = false;
-          if (ownership && (snapshot?.page.type === 'meeting' || ownership.origins.has(slug) || links.some(link => link.link_type === 'attended' && link.origin_slug === slug && link.to_slug === slug))) {
-            if (!snapshot) throw new Error('Link extraction origin is missing');
-            const written = await replaceFileLinks(engine, slug, sourceId ?? 'default', links, includeFrontmatter, snapshot, ownership, content, { pack, globalBasename });
-            if (written === null) return;
-            reconciled = written !== undefined;
-            linksCreated += written ?? 0;
-          }
-          if (!reconciled) for (const link of links) {
-            if (dryRun) {
+          const links = await extractLinksFromFile(content, relPath, allSlugs, { globalBasename, includeFrontmatter, pack, pageTypes, aliases });
+          if (dryRun) {
+            for (const link of links) {
               if (!stdoutQuiet) console.log(`  ${link.from_slug} → ${link.to_slug} (${link.link_type})`);
               linksCreated++;
-            } else {
-              linkBatch.push(sourceId
-                ? { ...link, from_source_id: sourceId, to_source_id: sourceId, origin_source_id: sourceId }
-                : link);
-              if (linkBatch.length >= BATCH_SIZE) await flushLinks();
             }
+          } else if (ownership) {
+            let written: number | null | undefined;
+            if (snapshot?.page.type === 'meeting' || ownership.origins.has(slug) || links.some(link => link.link_type === 'attended' && link.origin_slug === slug && link.to_slug === slug)) {
+              if (!snapshot) throw new Error('Link extraction origin is missing');
+              written = await replaceFileLinks(engine, slug, sourceId ?? 'default', links, includeFrontmatter, snapshot, ownership, content, { pack, globalBasename });
+              if (written === null) return;
+            }
+            linksCreated += written ?? await replaceLinksReportingLoss(slug, links, ownership);
           }
         }
 
         if (doTimeline) {
           const entries = extractTimelineFromContent(content, slug);
+          if (!dryRun) await retractRemovedTimelineEntries(engine, slug, sourceId ?? 'default', entries);
           for (const entry of entries) {
             if (dryRun) {
               if (!stdoutQuiet) console.log(`  ${entry.slug}: ${entry.date} — ${entry.summary}`);
@@ -1371,7 +1382,6 @@ async function extractForSlugs(
     },
   });
 
-  await flushLinks();
   await flushTimeline();
   // #2636: the Dream cycle disables sync's inline extraction and routes
   // changed slugs through this incremental path — without a stamp here,
@@ -1616,13 +1626,9 @@ export async function extractLinksForSlugs(
   // back for it and the edges were lost for good.
   const slugToPath = buildSlugPathIndex(allFiles);
   const allSlugs = new Set(slugToPath.keys());
-  // v0.18.0+ multi-source: post-sync extract reconciles same-source edges.
-  // Markdown→markdown links within one repo always live in the caller's
-  // sourceId. Cross-source extraction (rare) would need a per-repo source
-  // manifest; not in this PR's scope.
-  const linkOpts = opts?.sourceId
-    ? { fromSourceId: opts.sourceId, toSourceId: opts.sourceId, originSourceId: opts.sourceId }
-    : undefined;
+  // Post-sync extract replaces each page's own markdown-derived edges in the
+  // caller's source (the put_page contract); cross-source extraction would
+  // need a per-repo source manifest.
   // Issue #972: same flag as the standalone extract path.
   const globalBasename = await isGlobalBasenameEnabled(engine);
   // #3190: pack-aware typing on the sync inline hook too.
@@ -1631,6 +1637,7 @@ export async function extractLinksForSlugs(
   if (!pack) throw new Error('Cannot extract links: active schema pack is unavailable.');
   const pageTypes = loadFsPageTypes(allFiles, pack);
   const ownership = await fileLinkOwnership(engine, sourceId);
+  const aliases = await loadSlugAliasTargets(engine, sourceId, allSlugs);
   // #4999: resolved HERE, like isGlobalBasenameEnabled above, so every caller
   // (sync, GitHub/Google source inline extracts) honours the configured
   // frontmatter knob without per-caller threading — an unattended sync used to
@@ -1650,18 +1657,14 @@ export async function extractLinksForSlugs(
       const snapshot = ownership.metadata.get(`${sourceId}\0${slug}`)?.type === 'meeting' || ownership.origins.has(slug)
         ? await engine.readPageSnapshot(slug, { sourceId }) : null;
       const content = readFileSync(filePath, 'utf-8');
-      const links = await extractLinksFromFile(content, relPath, allSlugs, { globalBasename, includeFrontmatter, pack, pageTypes });
-      let reconciled = false;
+      const links = await extractLinksFromFile(content, relPath, allSlugs, { globalBasename, includeFrontmatter, pack, pageTypes, aliases });
+      let written: number | null | undefined;
       if (snapshot?.page.type === 'meeting' || ownership.origins.has(slug) || links.some(link => link.link_type === 'attended' && link.origin_slug === slug && link.to_slug === slug)) {
         if (!snapshot) throw new Error('Link extraction origin is missing');
-        const written = await replaceFileLinks(engine, slug, sourceId, links, includeFrontmatter, snapshot, ownership, content, { pack, globalBasename });
+        written = await replaceFileLinks(engine, slug, sourceId, links, includeFrontmatter, snapshot, ownership, content, { pack, globalBasename });
         if (written === null) continue;
-        reconciled = written !== undefined;
-        created += written ?? 0;
       }
-      if (!reconciled) for (const link of links) {
-        try { await engine.addLink(link.from_slug, link.to_slug, link.context, link.link_type, link.link_source, link.origin_slug, link.origin_field, linkOpts); created++; } catch {} // gbrain-allow-direct-insert: gbrain extract single-row fallback when batch path declines a row
-      }
+      created += written ?? await replacePageFileLinks(engine, slug, sourceId, links, includeFrontmatter, ownership) ?? 0;
       processed.push(slug);
     } catch { /* skip: unreadable — not processed, stays stale */ }
   }
@@ -1690,8 +1693,10 @@ export async function extractTimelineForSlugs(
     const filePath = join(repoPath, relPath);
     try {
       const content = readFileSync(filePath, 'utf-8');
+      const entries = extractTimelineFromContent(content, slug);
+      await retractRemovedTimelineEntries(engine, slug, opts?.sourceId ?? 'default', entries);
       processed.push(slug);
-      for (const entry of extractTimelineFromContent(content, slug)) {
+      for (const entry of entries) {
         try { await engine.addTimelineEntry(entry.slug, { date: entry.date, source: entry.source, summary: entry.summary, detail: entry.detail }, entryOpts); created++; } catch { /* skip */ } // gbrain-allow-direct-insert: gbrain extract single-row fallback for timeline entries
       }
     } catch { /* skip: unreadable — not processed, stays stale */ }

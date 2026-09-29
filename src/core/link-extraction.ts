@@ -20,6 +20,7 @@ import { parseInlineCitationTimelineEntries } from './timeline-citations.ts';
 import { slugifyPath, slugifySegment } from './sync.ts';
 import { SLUG_WORD_CHARS, SLUG_VARIATION_SELECTORS_RE } from './cjk.ts';
 import { foldNonDecomposingLatin } from './latin-fold.ts';
+import { isIdentityEntity, sameEntityName } from './entities/resolve.ts';
 // #3190: pack-aware link typing. link-inference imports only manifest-v1
 // (zod) + redos-guard (node:vm) — no cycle back into this module.
 import type { SchemaPackManifest } from './schema-pack/manifest-v1.ts';
@@ -1539,6 +1540,15 @@ export function makeResolver(
           cache.set(cacheKey, trimmed);
           return trimmed;
         }
+        // A renamed page leaves `old -> new` in slug_aliases; links written
+        // against the old slug keep resolving to the page that moved.
+        if (typeof engine.resolveSlugWithAlias === 'function') {
+          const canonical = await engine.resolveSlugWithAlias(trimmed, opts.sourceId ?? 'default');
+          if (canonical !== trimmed && await engine.getPage(canonical, { sourceId: opts.sourceId ?? 'default' })) {
+            cache.set(cacheKey, canonical);
+            return canonical;
+          }
+        }
       }
 
       // Step 2: dir-hint + slugify → exact getPage. Two grammars (#4855):
@@ -1566,10 +1576,17 @@ export function makeResolver(
       // so cross-source slug suggestions don't get silently dropped at the
       // FK filter downstream. Mirrors the same scope fix `tryFuzzyMatch` got
       // via #1436.
+      // A person, company, fund or organization candidate must carry the
+      // same name tokens (sameEntityName): a near-name like "Carol Exampl" never
+      // links to a different person's page and stays unresolved instead.
       const searchHints = hints.length > 0 ? hints : [undefined];
+      const confident = async (slug: string): Promise<boolean> => {
+        const page = await engine.getPage(slug, opts.sourceId ? { sourceId: opts.sourceId } : undefined); // gbrain-allow-unscoped-getpage: read-only confidence check on a candidate the fuzzy lookup just returned
+        return !!page && (!isIdentityEntity(slug, page.type) || sameEntityName(trimmed, page.title, slug));
+      };
       for (const hint of searchHints) {
         const match = await engine.findByTitleFuzzy(trimmed, hint, 0.55, opts.sourceId);
-        if (match) {
+        if (match && await confident(match.slug)) {
           cache.set(cacheKey, match.slug);
           return match.slug;
         }
@@ -1580,13 +1597,13 @@ export function makeResolver(
       // mode skips this step entirely to keep migration deterministic.
       if (opts.mode === 'live') {
         try {
-          const results = await engine.searchKeyword(trimmed, { limit: 3 });
+          const results = await engine.searchKeyword(trimmed, { limit: 3, ...(opts.sourceId ? { sourceId: opts.sourceId } : {}) });
           if (results.length > 0 && results[0].score >= 0.8) {
             // Filter by dir hint if provided.
             const top = hints.length > 0
               ? results.find(r => hints.some(h => r.slug.startsWith(`${h}/`)))
               : results[0];
-            if (top) {
+            if (top && (!isIdentityEntity(top.slug, top.type) || sameEntityName(trimmed, top.title, top.slug))) {
               cache.set(cacheKey, top.slug);
               return top.slug;
             }

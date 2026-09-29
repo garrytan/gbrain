@@ -1,4 +1,25 @@
-import { safeLoad, safeDump } from 'js-yaml';
+import { safeLoad, safeDump, Schema, Type, DEFAULT_SAFE_SCHEMA } from 'js-yaml';
+
+// js-yaml's timestamp type builds `2024-02-30` as March 1 (Date.UTC rolls the
+// day over). A calendar-invalid timestamp stays the string the author wrote,
+// so date consumers reject it instead of storing the wrong day.
+type TimestampBehavior = { resolve(data: string): boolean; construct(data: string): Date; represent(data: object): string };
+const baseTimestamp = (DEFAULT_SAFE_SCHEMA as unknown as { compiledTypeMap: { scalar: Record<string, TimestampBehavior> } })
+  .compiledTypeMap.scalar['tag:yaml.org,2002:timestamp']!;
+const calendarTimestamp = new Type('tag:yaml.org,2002:timestamp', {
+  kind: 'scalar',
+  resolve: (data: string) => {
+    if (!baseTimestamp.resolve(data)) return false;
+    const m = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(data);
+    if (!m) return true;
+    const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+    return d.getUTCFullYear() === +m[1] && d.getUTCMonth() === +m[2] - 1 && d.getUTCDate() === +m[3];
+  },
+  construct: baseTimestamp.construct,
+  instanceOf: Date,
+  represent: baseTimestamp.represent,
+});
+const FRONTMATTER_SCHEMA = new Schema({ include: [DEFAULT_SAFE_SCHEMA], implicit: [calendarTimestamp] });
 
 export interface DataFrontmatter {
   data: Record<string, unknown>;
@@ -33,7 +54,7 @@ export function parseDataFrontmatter(input: string): DataFrontmatter {
   const block = closing ? rest.slice(0, closing.index) : rest;
   let value: unknown;
   try {
-    value = block.trim() === '' ? {} : language === 'json' ? JSON.parse(block) : safeLoad(block);
+    value = block.trim() === '' ? {} : language === 'json' ? JSON.parse(block) : safeLoad(block, { schema: FRONTMATTER_SCHEMA });
   } catch (error) {
     // Parser messages can contain the document itself. Report only location,
     // so request/job diagnostics never copy private frontmatter into logs.
