@@ -131,6 +131,7 @@
     "check:compile-autoload": "bash scripts/check-compile-autoload.sh",
     "check:structural-manifest": "bash scripts/check-structural-manifest.sh",
     "check:orphan-modules": "node scripts/check-orphan-modules.mjs",
+    "check:test-placeholders": "node scripts/check-test-placeholders.mjs",
     "build:harness-docs": "bun run scripts/build-harness-docs.ts"
   },
   "openclaw": {
