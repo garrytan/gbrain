@@ -7,12 +7,12 @@
  * deterministic transform over search rows + dataset fields, so the harness
  * (src/commands/eval-longmemeval.ts) and the tests score the same bytes.
  *
- * INVARIANT: the join is on RAW session ids. `haystackToPages` lowercases and
- * hyphenates ids to build slugs (`sharegpt_yywfIrx_0` -> `chat/sharegpt-yywfirx-0`),
- * so a slug-tail compared against `answer_session_ids` never matches on the
- * public _s split. `buildSlugToRawMap` inverts the slug construction per
- * question and `distinctRetrievedSessions` joins through it; `normalizeSessionId`
- * exists only for slug construction / fallback, never for the gold compare.
+ * INVARIANT: the join is on RAW session ids. `haystackToPages` builds OPAQUE
+ * slugs (`chat/s-<10 hex>`, adapter.ts `sessionSlug`) so no gold label reaches
+ * the system, so a slug-tail never matches `answer_session_ids`.
+ * `buildSlugToRawMap` is the private per-question inverse and
+ * `distinctRetrievedSessions` joins through it; `normalizeSessionId` exists
+ * only for legacy-row rawification, never for the gold compare.
  *
  * INVARIANT: k semantics. `recall_*@k` is scored over the DISTINCT sessions
  * among the top-k CHUNK rows returned at `limit: k` (the receipt's
@@ -24,6 +24,7 @@ import type { SearchResult } from '../../core/types.ts';
 import {
   normalizeSessions,
   sanitizeSessionIdForSlug,
+  sessionSlug,
   type LongMemEvalQuestion,
 } from './adapter.ts';
 
@@ -40,8 +41,8 @@ export const normalizeSessionId: (sessionId: string) => string = sanitizeSession
 /**
  * Slug tail after `chat/`. Falls back to the tail after the first `/`, then to
  * the slug itself, so a non-`chat/` slug still yields a stable id. Returns the
- * NORMALIZED id (lowercase, hyphenated); use `distinctRetrievedSessions` with a
- * `SlugToRawMap` to recover the raw dataset id.
+ * OPAQUE id the system and the reader see; use `distinctRetrievedSessions` with
+ * a `SlugToRawMap` to recover the raw dataset id.
  */
 export function sessionIdFromSlug(slug: string): string {
   if (slug.startsWith(SESSION_SLUG_PREFIX)) return slug.slice(SESSION_SLUG_PREFIX.length);
@@ -54,7 +55,7 @@ export function isAbstentionQuestion(questionId: string): boolean {
   return /_abs$/.test(questionId);
 }
 
-/** `chat/<normalized>` slug -> the raw session id(s) that produced it (haystack order, deduped). */
+/** `chat/<opaque>` slug -> the raw session id(s) that produced it (haystack order, deduped). */
 export type SlugToRawMap = Map<string, string[]>;
 
 /**
@@ -67,7 +68,7 @@ export type SlugToRawMap = Map<string, string[]>;
 export function buildSlugToRawMap(question: LongMemEvalQuestion): SlugToRawMap {
   const map: SlugToRawMap = new Map();
   for (const session of normalizeSessions(question)) {
-    const slug = `${SESSION_SLUG_PREFIX}${normalizeSessionId(session.session_id)}`;
+    const slug = sessionSlug(question.question_id, session.session_id);
     const list = map.get(slug);
     if (!list) map.set(slug, [session.session_id]);
     else if (!list.includes(session.session_id)) list.push(session.session_id);

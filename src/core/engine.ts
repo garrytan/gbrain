@@ -694,7 +694,7 @@ export interface TrajectoryOpts {
   since?: string | Date;
   /** Upper bound on valid_from (inclusive). YYYY-MM-DD or full ISO. */
   until?: string | Date;
-  /** Cap on points returned. Default 100, max 500. */
+  /** Cap on points returned (the newest N, in chronological order). Default 100, max 500. */
   limit?: number;
 }
 
@@ -1701,7 +1701,7 @@ export interface BrainEngine {
    * via `page_id IN (…) … DISTINCT`. The write-side addTag/removeTag deliberately
    * stay scalar-only — `allowedSources` is a read grant; writes route to one source.
    */
-  getTags(slug: string, opts?: { sourceId?: string; sourceIds?: string[] }): Promise<string[]>;
+  getTags(slug: string, opts?: { sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean; liveOnly?: boolean }): Promise<string[]>;
 
   // Timeline
   /**

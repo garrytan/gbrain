@@ -519,8 +519,9 @@ export async function findTrajectory(deps: PgFactsDeps, opts: import('../engine.
     const remoteFilter = opts.remote !== false;
 
     // Source-scope predicate: array path (federated) wins over scalar.
-    // Engine.ts contract: returns chronological points; regressions +
-    // drift_score are computed by the caller (src/core/trajectory.ts).
+    // Engine.ts contract: returns chronological points (the NEWEST `limit`,
+    // so a capped series keeps its latest value); regressions + drift_score
+    // are computed by the caller (src/core/trajectory.ts).
     // v0.40.2.0 — kind filter ('all'|'metric'|'event'); event_type column.
     const rows = await sql<Array<{
       id: number;
@@ -551,11 +552,11 @@ export async function findTrajectory(deps: PgFactsDeps, opts: import('../engine.
         ${kind === 'event' ? sql`AND event_type IS NOT NULL` : sql``}
         ${sinceDate ? sql`AND valid_from >= ${sinceDate}` : sql``}
         ${untilDate ? sql`AND valid_from <= ${untilDate}` : sql``}
-      ORDER BY valid_from ASC, id ASC
+      ORDER BY valid_from DESC, id DESC
       LIMIT ${limit}
     `;
 
-    return rows.map(r => ({
+    return [...rows].reverse().map(r => ({
       fact_id: Number(r.id),
       valid_from: r.valid_from,
       metric: r.claim_metric,

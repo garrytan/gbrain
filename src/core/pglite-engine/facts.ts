@@ -495,7 +495,8 @@ export async function findTrajectory(deps: PgliteFactsDeps, opts: import('../eng
 
     // Build SQL dynamically. PGLite uses $N positional params; we
     // assemble the WHERE clauses + params array in tandem to keep them
-    // aligned. Final shape is single SELECT, ORDER BY (valid_from, id) ASC.
+    // aligned. Selects the NEWEST `limit` points (ORDER BY … DESC) and
+    // returns them chronologically, so a capped series keeps its latest value.
     const where: string[] = [
       useArray ? `source_id = ANY($1::text[])` : `source_id = $1`,
       `entity_slug = $2`,
@@ -540,7 +541,7 @@ export async function findTrajectory(deps: PgliteFactsDeps, opts: import('../eng
                AND embedded_text_hash=md5(fact) THEN embedding END AS embedding
       FROM facts
       WHERE ${where.join(' AND ')}
-      ORDER BY valid_from ASC, id ASC
+      ORDER BY valid_from DESC, id DESC
       LIMIT $${limitPlaceholder}
     `;
     const result = await deps.db.query<{
@@ -557,7 +558,7 @@ export async function findTrajectory(deps: PgliteFactsDeps, opts: import('../eng
       embedding: string | number[] | Float32Array | null;
     }>(sqlText, params);
 
-    return result.rows.map(r => {
+    return result.rows.reverse().map(r => {
       // Inline embedding parser — mirrors rowToFact() at line 3911.
       let embedding: Float32Array | null = null;
       if (r.embedding != null) {

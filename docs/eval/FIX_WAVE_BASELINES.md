@@ -23,6 +23,47 @@ touch `~/.gbrain` per the eval discipline — results land in
 `<repo>/.gbrain-evals/eval-results.jsonl`). Record the gate verdict + headline
 metrics here per run.
 
+## Read-path wave (2026-09-28, v0.59.13.0)
+
+Page-grain fusion, identity tiers that keep the reranker order, soft auto
+entity detail, title/alias-mention boost, and the LongMemEval opaque session
+ids. Three arms on the measured base `6bb88d1`, all with the opaque-id scorer so
+the leak fix does not confound them: A = unchanged ranking, B = A + page-grain
+fusion only, C = the whole wave. Same data, one embedding cache
+(`openai:text-embedding-3-large@1536`; B and C ran with 0 cache misses against
+A's vectors), `limit 5`, reranker off, autocut off, expansion off, trajectory
+off. Question set: the committed `halfA430` split in
+`evals/longmemeval/splits-seed42.json` (215 scored questions).
+
+```bash
+gbrain eval longmemeval longmemeval_s_cleaned.json --retrieval-only --top-k 5 \
+  --by-type --no-trajectory --mode balanced --reranker off --autocut off \
+  --question-ids halfA430.txt --embed-cache embed.sqlite --output armX.ndjson
+```
+
+| Arm | `recall_all@5` | `recall_any@5` | Mean distinct sessions in top 5 | Paired vs A |
+|---|---|---|---|---|
+| A unchanged ranking | 203/215 (94.42%) | 211/215 | 4.912 | |
+| B page-grain fusion, every chunk carries the page score (rejected) | 201/215 (93.49%) | 211/215 | 4.879 | +0 / −2 |
+| B page-grain fusion, lead chunk only (shipped) | 202/215 (93.95%) | 211/215 | 4.907 | +0 / −1 |
+| C whole wave (lead-chunk fusion) | 202/215 (93.95%) | 211/215 | 4.907 | +0 / −1 |
+
+- The first fusion design let a page's second chunk inherit the page score and
+  crowd other sessions out of the five-chunk window (both losses were
+  multi-session questions whose distinct-session count dropped). Only the
+  page's lead chunk now carries the summed vote.
+- The remaining loss, `gpt4_ab202e7f`, needs all five of its gold sessions in
+  five chunks; a distractor that two retrieval arms agreed on took one slot.
+- Evidence-span check (a returned chunk contains a window of an answer-bearing
+  turn, from the dataset's `has_answer` labels): identical across A, B and C,
+  93/215 all-evidence and 163/215 any-evidence.
+- B and C differ in no top-5 chunk on this corpus: the other ranking fixes
+  target timelines, aliases, rerank order and identity lookups, which these
+  chat sessions do not exercise.
+- Verdict: flat on LongMemEval recall (−1, no gains; exact McNemar p = 1.0).
+  The fusion change is kept because it corrects a reproduced ranking defect
+  (`test/search/rrf-page-grain.test.ts`), not because it moved this benchmark.
+
 ## Ranker wave (2026-09-06, branch stuttgart, v0.48.4.0)
 
 The read-path wave whose receipt producer is the in-repo harness

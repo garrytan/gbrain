@@ -6,7 +6,7 @@ Vector search alone underdelivers on real personal-knowledge queries. This doc e
 
 1. **Vector (HNSW on pgvector)** — semantic similarity. Catches "who works on retrieval quality at acme-example?" → pages mentioning "alice-example + retrieval" even when the user never typed "acme".
 2. **BM25 keyword** — lexical match. Catches names, exact phrases, code identifiers, anything where the user remembers the literal token. Survives the cases where vector search drifts into thematic neighbors.
-3. **Reciprocal-rank fusion (RRF)** — merges vector + keyword rankings without weighting one over the other globally. Each strategy gets to vote.
+3. **Reciprocal-rank fusion (RRF)** — merges vector + keyword rankings without weighting one over the other globally. Each strategy gets to vote, and the vote is for a PAGE: arms return each page's best chunk, often different chunks, so fusion sums a page's votes across arms onto the page's lead chunk (largest own vote, ties to the vector arm's chunk); the page's other chunks keep their own votes so they cannot crowd other pages out of a chunk-limited result.
 4. **Knowledge graph traversal** — follows recorded typed edges. It can answer relationship queries whose relevant endpoints are not close in embedding space; it depends on the edges being present and correct, and does not by itself establish causality.
 
 ## Why each one alone fails
@@ -23,17 +23,22 @@ Vector search alone underdelivers on real personal-knowledge queries. This doc e
 
 BrainBench (corpus + harness in the sibling [gbrain-evals](https://github.com/garrytan/gbrain-evals) repo) measures retrieval P@5, R@5, MRR, nDCG@5 on a 240-page Opus-generated rich-prose corpus. (This is the retrieval-ranking benchmark; the in-repo `gbrain eval brainbench` suite — [`docs/eval/BRAINBENCH.md`](../eval/BRAINBENCH.md) — gates the memory behaviors *above* retrieval: unprompted context push, write-back fidelity, cross-session continuity.)
 
-| Strategy | P@5 | R@5 | Notes |
-|---|---|---|---|
-| ripgrep BM25 only | ~18 | ~75 | Lexical-only baseline |
-| vector-only RAG | ~18 | ~80 | Standard RAG implementation |
-| gbrain graph-disabled (hybrid + RRF, no graph traversal) | ~18 | ~85 | Hybrid alone |
-| **gbrain default (full stack)** | **49.1** | **97.9** | Graph + extract-quality lift |
+The [September 9, 2026 refresh](https://github.com/garrytan/gbrain-evals/blob/main/docs/benchmarks/2026-09-09-retrieval-refresh.md) (gbrain v0.48.4.0, three ingestion
+orders, fixed-denominator P@5) measured the 145 relationship questions:
 
-The recorded lift on that synthetic corpus was **+31 P@5 points** for graph
-plus extraction-quality changes together. It does not isolate the graph's
-contribution, establish universal superiority, or predict accuracy on a
-different corpus. See the linked harness for the experiment's scope.
+| Adapter | Mean P@5 | Mean R@5 |
+|---|---:|---:|
+| Specialized `gbrain` (recognizes four question templates, follows the fixture graph) | **0.3421** | **0.9791** |
+| Reference hybrid | 0.1917 | 0.6874 |
+| Keyword ranker | 0.1710 | 0.6244 |
+| Vector only | 0.1076 | 0.4069 |
+
+The specialized adapter is strong on the templates it understands, but this is a
+comparison between whole systems. The refresh found that the older headline
+(P@5 49.1%, "+31.4 points over graph-disabled") was not a graph-only effect and
+used metric helpers since corrected; do not cite it. On the fuzzy and externally
+authored families the keyword and vector paths win some comparisons. None of
+this predicts accuracy on a different corpus.
 
 ## Auto-link: why zero-LLM-call edge extraction works
 
@@ -189,8 +194,9 @@ hybrid recall + fusion:
    ├── relational (typed-edge recall arm — relational queries only)
    ├── source-aware re-rank (CASE in SQL)
    ├── role-tagged arms; variant/clause lists weighted by search.expansion_variant_budget INSIDE the fusion (fusion-lists.ts)
-   └── RRF fusion → cosine re-score → post-fusion boosts
-       (backlink / salience / recency / graph signals / exact-match;
+   └── page-grain RRF fusion → cosine re-score → post-fusion boosts
+       (backlink / salience / recency / graph signals / exact-match,
+        which also fires when a title, slug or alias is named in the query;
         the metadata boosts are skipped when the vector arm was the only
         voter — search.metadata_boost_gate=lexical, metadata-boost-gate.ts)
        │
@@ -209,7 +215,8 @@ relational re-pin (relational-arm rows back above the reranked text rows, in
    reordered — src/core/search/relational-rerank-pin.ts)
        │
        ▼
-alias hop (exact alias match injects/boosts the canonical page)
+alias hop (exact alias match injects/boosts the canonical page; like the
+   exact-lookup tier below it never re-sorts, so the reranked order holds)
        │
        ▼
 exact-lookup tier (lookup-shaped queries only: slug + exact-title probes

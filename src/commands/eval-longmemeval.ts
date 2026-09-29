@@ -829,7 +829,7 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
     // Gate on the RESOLVED reranker pin (flag, --search-pin, snapshot or bundle),
     // not the flag alone: a configured-but-silently-skipped reranker never exits 0.
     if (pins.reranker.enabled && st.rerankerSkippedRows > 0) {
-      process.stderr.write(`[longmemeval] FAIL reranker on (resolved pin): ${st.rerankerSkippedRows} row(s) fell through un-reranked (reranker_skipped / rerank_passthrough) — pass --reranker off or set the reranker provider key (e.g. VOYAGE_API_KEY)\n`);
+      process.stderr.write(`[longmemeval] FAIL reranker on (resolved pin): ${st.rerankerSkippedRows} row(s) fell through un-reranked (reranker_skipped / rerank_passthrough / rerank_failed) — pass --reranker off or set the reranker provider key (e.g. VOYAGE_API_KEY)\n`);
       exitCode = 1;
     }
     // Every question of this run errored AND the output holds no scored row

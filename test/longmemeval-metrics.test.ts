@@ -10,7 +10,9 @@ import { join } from 'path';
 import type { SearchResult } from '../src/core/types.ts';
 import {
   haystackToPages,
+  opaqueSessionId,
   sanitizeSessionIdForSlug,
+  sessionSlug,
   type LongMemEvalQuestion,
 } from '../src/eval/longmemeval/adapter.ts';
 import {
@@ -83,11 +85,13 @@ describe('normalizeSessionId / sessionIdFromSlug / isAbstentionQuestion', () => 
     expect(normalizeSessionId(once)).toBe(once);
   });
 
-  test('normalized ids round-trip through the adapter slug', () => {
+  test('adapter slugs are opaque per-question ids that round-trip through sessionIdFromSlug', () => {
     const q = sQuestion('q1', ['sharegpt_yywfIrx_0'], []);
     const pages = haystackToPages(q);
-    expect(pages[0].slug).toBe(`chat/${normalizeSessionId('sharegpt_yywfIrx_0')}`);
-    expect(sessionIdFromSlug(pages[0].slug)).toBe('sharegpt-yywfirx-0');
+    expect(pages[0].slug).toBe(sessionSlug('q1', 'sharegpt_yywfIrx_0'));
+    expect(pages[0].slug).toMatch(/^chat\/s-[0-9a-f]{10}$/);
+    expect(sessionIdFromSlug(pages[0].slug)).toBe(opaqueSessionId('q1', 'sharegpt_yywfIrx_0'));
+    expect(sessionSlug('q2', 'sharegpt_yywfIrx_0')).not.toBe(pages[0].slug);
   });
 
   test('sessionIdFromSlug strips chat/, then any first segment, else returns the slug', () => {
@@ -109,8 +113,8 @@ describe('normalizeSessionId / sessionIdFromSlug / isAbstentionQuestion', () => 
 describe('rawSessionId — the ONE slug→raw resolver', () => {
   test('mapped slug → first raw id in haystack order; unmapped slug (or no map) → normalized tail; reader.ts re-exports the same function', () => {
     const map = buildSlugToRawMap(sQuestion('q', ['Sess_A', 'sess-a', 'Other_1'], []));
-    expect(rawSessionId('chat/sess-a', map)).toBe('Sess_A');
-    expect(rawSessionId('chat/other-1', map)).toBe('Other_1');
+    expect(rawSessionId(sessionSlug('q', 'Sess_A'), map)).toBe('Sess_A');
+    expect(rawSessionId(sessionSlug('q', 'Other_1'), map)).toBe('Other_1');
     expect(rawSessionId('chat/unmapped-9', map)).toBe('unmapped-9');
     expect(rawSessionId('chat/unmapped-9')).toBe('unmapped-9');
     expect(rawSessionId('notes/x')).toBe('x');
@@ -124,8 +128,8 @@ describe('buildSlugToRawMap / detectSlugCollisions', () => {
     const map = buildSlugToRawMap(q);
     const slugs = haystackToPages(q).map(p => p.slug);
     expect(Array.from(map.keys()).sort()).toEqual([...slugs].sort());
-    expect(map.get('chat/sharegpt-yywfirx-0')).toEqual(['sharegpt_yywfIrx_0']);
-    expect(map.get('chat/sharegpt-qz-9-2')).toEqual(['sharegpt_Qz.9_2']);
+    expect(map.get(sessionSlug('q1', 'sharegpt_yywfIrx_0'))).toEqual(['sharegpt_yywfIrx_0']);
+    expect(map.get(sessionSlug('q1', 'sharegpt_Qz.9_2'))).toEqual(['sharegpt_Qz.9_2']);
     expect(detectSlugCollisions(map)).toEqual([]);
   });
 
@@ -142,23 +146,23 @@ describe('buildSlugToRawMap / detectSlugCollisions', () => {
       ],
     };
     const map = buildSlugToRawMap(q);
-    expect(map.get('chat/s-1')).toEqual(['S_1']);
-    expect(map.get('chat/s-2')).toEqual(['s-2']);
+    expect(map.get(sessionSlug('q-oracle', 'S_1'))).toEqual(['S_1']);
+    expect(map.get(sessionSlug('q-oracle', 's-2'))).toEqual(['s-2']);
   });
 
   test('a_b vs a-b collide on the slug and are reported once, sorted', () => {
     const q = sQuestion('q1', ['z_z', 'a_b', 'a-b', 'other', 'z-z'], ['a_b']);
     const map = buildSlugToRawMap(q);
-    expect(map.get('chat/a-b')).toEqual(['a_b', 'a-b']);
-    expect(detectSlugCollisions(map)).toEqual(['chat/a-b', 'chat/z-z']);
-    expect(collisionsTouchingGold(map, ['a_b'])).toEqual(['chat/a-b']);
+    expect(map.get(sessionSlug('q1', 'a_b'))).toEqual(['a_b', 'a-b']);
+    expect(detectSlugCollisions(map)).toEqual([sessionSlug('q1', 'a_b'), sessionSlug('q1', 'z_z')].sort());
+    expect(collisionsTouchingGold(map, ['a_b'])).toEqual([sessionSlug('q1', 'a_b')]);
     expect(collisionsTouchingGold(map, ['other'])).toEqual([]);
   });
 
   test('an identical raw id repeated in the haystack is deduped, not a collision', () => {
     const q = sQuestion('q1', ['dup_1', 'dup_1'], ['dup_1']);
     const map = buildSlugToRawMap(q);
-    expect(map.get('chat/dup-1')).toEqual(['dup_1']);
+    expect(map.get(sessionSlug('q1', 'dup_1'))).toEqual(['dup_1']);
     expect(detectSlugCollisions(map)).toEqual([]);
   });
 
@@ -177,10 +181,10 @@ describe('distinctRetrievedSessions', () => {
 
   test('collapses chunk rows to raw ids in first-occurrence order with 1-based ranks', () => {
     const results = [
-      row('chat/sess-decoy-c', { chunk_id: 1, score: 0.9 }),
-      row('chat/sess-multi-a', { chunk_id: 2, score: 0.8, rerank_score: 0.7 }),
-      row('chat/sess-decoy-c', { chunk_id: 3, score: 0.6 }),
-      row('chat/sess-multi-a', { chunk_id: 4, score: 0.5 }),
+      row(sessionSlug('q1', 'Sess_DECOY_c'), { chunk_id: 1, score: 0.9 }),
+      row(sessionSlug('q1', 'Sess_MULTI_a'), { chunk_id: 2, score: 0.8, rerank_score: 0.7 }),
+      row(sessionSlug('q1', 'Sess_DECOY_c'), { chunk_id: 3, score: 0.6 }),
+      row(sessionSlug('q1', 'Sess_MULTI_a'), { chunk_id: 4, score: 0.5 }),
     ];
     const distinct = distinctRetrievedSessions(results, map);
     expect(distinct).toEqual([
@@ -329,10 +333,10 @@ describe('buildRow', () => {
 
   test('scores recall over the top-k distinct sessions but records every returned row', () => {
     const results = [
-      row('chat/sess-multi-a', { chunk_id: 11, score: 0.9, rerank_score: 0.8, alias_hit: true }),
-      row('chat/sess-decoy-c', { chunk_id: 12, score: 0.7 }),
-      row('chat/sess-multi-a', { chunk_id: 13, score: 0.6 }),
-      row('chat/sess-multi-b', { chunk_id: 14, score: 0.5 }),
+      row(sessionSlug('mc-2', 'Sess_MULTI_a'), { chunk_id: 11, score: 0.9, rerank_score: 0.8, alias_hit: true }),
+      row(sessionSlug('mc-2', 'Sess_DECOY_c'), { chunk_id: 12, score: 0.7 }),
+      row(sessionSlug('mc-2', 'Sess_MULTI_a'), { chunk_id: 13, score: 0.6 }),
+      row(sessionSlug('mc-2', 'Sess_MULTI_b'), { chunk_id: 14, score: 0.5 }),
     ];
     const r = buildRow({ question: q, hypothesis: 'h', results, k: 2, slugToRaw: map, mode: 'balanced', extra: { intent: 'other' } });
     expect(r.question_id).toBe('mc-2');
@@ -349,10 +353,10 @@ describe('buildRow', () => {
     expect(r.gold_found).toBe(1);
     expect(r.distinct_sessions_in_top_k).toBe(2);
     expect(r.retrieved).toEqual([
-      { slug: 'chat/sess-multi-a', chunk_id: 11, session_id: 'Sess_MULTI_a', rank: 1, score: 0.9, rerank_score: 0.8, alias_hit: true },
-      { slug: 'chat/sess-decoy-c', chunk_id: 12, session_id: 'Sess_DECOY_c', rank: 2, score: 0.7 },
-      { slug: 'chat/sess-multi-a', chunk_id: 13, session_id: 'Sess_MULTI_a', rank: 3, score: 0.6 },
-      { slug: 'chat/sess-multi-b', chunk_id: 14, session_id: 'Sess_MULTI_b', rank: 4, score: 0.5 },
+      { slug: sessionSlug('mc-2', 'Sess_MULTI_a'), chunk_id: 11, session_id: 'Sess_MULTI_a', rank: 1, score: 0.9, rerank_score: 0.8, alias_hit: true },
+      { slug: sessionSlug('mc-2', 'Sess_DECOY_c'), chunk_id: 12, session_id: 'Sess_DECOY_c', rank: 2, score: 0.7 },
+      { slug: sessionSlug('mc-2', 'Sess_MULTI_a'), chunk_id: 13, session_id: 'Sess_MULTI_a', rank: 3, score: 0.6 },
+      { slug: sessionSlug('mc-2', 'Sess_MULTI_b'), chunk_id: 14, session_id: 'Sess_MULTI_b', rank: 4, score: 0.5 },
     ]);
     expect(r.retrieved_session_ids).toEqual(['Sess_MULTI_a', 'Sess_DECOY_c', 'Sess_MULTI_b']);
     expect(r.gold_missing_from_haystack).toEqual([]);
@@ -377,7 +381,7 @@ describe('buildRow', () => {
 
   test('no gold: recall fields omitted (row stays out of the denominator), abstention flagged', () => {
     const abs = sQuestion('mc-9_abs', ['s_1'], []);
-    const r = buildRow({ question: abs, hypothesis: 'h', results: [row('chat/s-1')], k: 5, slugToRaw: buildSlugToRawMap(abs) });
+    const r = buildRow({ question: abs, hypothesis: 'h', results: [row(sessionSlug('mc-9_abs', 's_1'))], k: 5, slugToRaw: buildSlugToRawMap(abs) });
     expect(r.abstention).toBe(true);
     expect('recall_all_hit' in r).toBe(false);
     expect('recall_any_hit' in r).toBe(false);
@@ -388,7 +392,7 @@ describe('buildRow', () => {
 
   test('gold missing from haystack and slug collisions are stamped per row', () => {
     const bad = sQuestion('q-bad', ['a_b', 'a-b', 'c_1'], ['c_1', 'ghost']);
-    const r = buildRow({ question: bad, hypothesis: 'h', results: [row('chat/c-1')], k: 5, slugToRaw: buildSlugToRawMap(bad) });
+    const r = buildRow({ question: bad, hypothesis: 'h', results: [row(sessionSlug('q-bad', 'c_1'))], k: 5, slugToRaw: buildSlugToRawMap(bad) });
     expect(r.gold_missing_from_haystack).toEqual(['ghost']);
     expect(r.slug_collision).toBe(1);
     expect(r.recall_any_hit).toBe(true);

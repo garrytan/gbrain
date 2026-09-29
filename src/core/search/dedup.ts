@@ -7,6 +7,7 @@
  * 3. By type: no page type exceeds 60% of results
  * 4. By page: max N chunks per page (default 2)
  * 5. Compiled truth guarantee: ensure at least 1 compiled_truth chunk per page
+ *    (appended, never evicting a kept chunk; the output is re-sorted by score)
  *
  * v0.18.0: every page key is composite (source_id, slug). Pre-v0.17 this
  * was slug alone — under multi-source uniqueness that would collapse two
@@ -63,10 +64,11 @@ export function dedupResults(
   // Layer 4: Cap chunks per page
   deduped = capPerPage(deduped, maxPerPage);
 
-  // Final pass: guarantee compiled_truth representation
+  // Final pass: guarantee compiled_truth representation, then restore score
+  // order (downstream slice / token budget / evidence assume it).
   deduped = guaranteeCompiledTruth(deduped, preDedup);
 
-  return deduped;
+  return deduped.sort((a, b) => b.score - a.score);
 }
 
 /**
@@ -180,7 +182,9 @@ function capPerPage(results: SearchResult[], maxPerPage: number): SearchResult[]
 
 /**
  * Final pass: for each page in results that has no compiled_truth chunk,
- * swap in the best compiled_truth chunk from the pre-dedup set (if one exists).
+ * add the best compiled_truth chunk from the pre-dedup set (if one exists).
+ * It is appended, not swapped in: evicting the page's lowest kept chunk threw
+ * away matching evidence (a 0.90 hit replaced by a 0.10 summary chunk).
  */
 function guaranteeCompiledTruth(results: SearchResult[], preDedup: SearchResult[]): SearchResult[] {
   // Group results by composite page key (source_id, slug).
@@ -208,17 +212,7 @@ function guaranteeCompiledTruth(results: SearchResult[], preDedup: SearchResult[
 
     if (!candidate) continue;
 
-    // Swap: replace the lowest-scored chunk from this page (same
-    // composite key match).
-    const lowestIdx = output.reduce((minIdx, r, idx) => {
-      if (pageKey(r) !== key) return minIdx;
-      if (minIdx === -1) return idx;
-      return r.score < output[minIdx].score ? idx : minIdx;
-    }, -1);
-
-    if (lowestIdx !== -1) {
-      output[lowestIdx] = candidate;
-    }
+    output.push(candidate);
   }
 
   return output;

@@ -4,7 +4,7 @@ import { chat, configureGateway, type ChatOpts, type ChatResult } from '../src/c
 import { withAIInvocationGuard, type AIInvocationUsage } from '../src/core/ai/invocation-guard.ts';
 import { BudgetTracker } from '../src/core/budget/budget-tracker.ts';
 import { canonicalLookup } from '../src/core/model-pricing.ts';
-import { normalizeSessions, haystackToPages, type LongMemEvalQuestion } from '../src/eval/longmemeval/adapter.ts';
+import { normalizeSessions, haystackToPages, opaqueSessionId, type LongMemEvalQuestion } from '../src/eval/longmemeval/adapter.ts';
 import { buildEvidencePacket, renderFullSessions, type EvidenceSession } from '../src/eval/longmemeval/evidence-packet.ts';
 import { buildReaderUserText, READER_SYSTEM_TEXT, READER_MAX_TOKENS, READER_MAX_SESSION_CHARS } from '../src/eval/longmemeval/reader.ts';
 import { sanitizeChatContent } from '../src/eval/longmemeval/sanitize.ts';
@@ -52,7 +52,8 @@ export function freezeEvidence(q: Question, row: Receipt): EvidenceSession[] {
     const i = sessions.findIndex(s => s.session_id === id);
     if (i < 0) throw new Error(`Missing saved session: ${id}`);
     if (sessions.filter(s => s.session_id === id).length !== 1 || pages.filter(p => p.slug === pages[i].slug).length !== 1) throw new Error('Missing or ambiguous saved session');
-    return { source_id: 'longmemeval-public', session_id: id, date: q.haystack_dates?.[i], body: pages[i].content, turns: sessions[i].turns.map(t => ({ role: t.role, content: t.content })) };
+    // Reader-visible id is opaque (gold ids start with `answer_`); scoring uses the receipt's raw ids.
+    return { source_id: 'longmemeval-public', session_id: opaqueSessionId(q.question_id, id), date: q.haystack_dates?.[i], body: pages[i].content, turns: sessions[i].turns.map(t => ({ role: t.role, content: t.content })) };
   });
 }
 
@@ -342,7 +343,7 @@ async function main(args: string[]) {
         outcomes[`${arm}_correct`] = judge.verdict === 'correct';
       }
       const row = { phase, variant, question_id: id, category: q.question_type, abstention: id.endsWith('_abs'),
-        retrieval_complete: q.answer_session_ids.length > 0 && q.answer_session_ids.every(id => sources.some(s => s.session_id === id)),
+        retrieval_complete: q.answer_session_ids.length > 0 && q.answer_session_ids.every(gold => receipts.find(r => r.question_id === id)!.retrieved_session_ids.includes(gold)),
         ...outcomes, arm_order: order, budget_fallback: packet.budget_fallback, provider_count_fallback: providerCountFallback,
         baseline_input_count: countBaseline, candidate_input_count: countCandidate };
       appendRecord(pairsPath, row);
