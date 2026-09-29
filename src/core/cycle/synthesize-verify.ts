@@ -65,7 +65,7 @@ import { importFromContent } from '../import-file.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
 import { throwIfAborted } from '../abort-check.ts';
 import type { Page } from '../types.ts';
-import { prepareCanonicalProjections } from '../persistence/canonical-projections.ts';
+import { materializedHistoryRanges, prepareCanonicalProjections } from '../persistence/canonical-projections.ts';
 import { prepareAutomaticLinks } from '../persistence/links-preparation.ts';
 import { isAutoLinkEnabled } from '../link-extraction.ts';
 import { resolveCycleDate, utcDate } from './cycle-date.ts';
@@ -856,8 +856,16 @@ export function verifyBody(body: string, sources: GroundedSource[], opts: { prio
   const provenance: QuoteProvenance[] = [];
   let quotes = 0, exact = 0, normalized = 0, near = 0;
 
+  // Materialized timeline history (#5567) is database history a write rendered
+  // back into an existing page, not a claim this run authored. Only a marked
+  // bullet absent from the pre-run revision was materialized during the run
+  // (with its stored detail); an edit under a bullet that already existed is
+  // verified like any other new unit. A new page has no history to render.
+  const history = opts.priorNorm === undefined ? [] : materializedHistoryRanges(body)
+    .filter(([start, end]) => !opts.priorNorm!.includes(normForGrounding(body.slice(start, end).split('\n')[1] ?? '')));
   for (const u of claimUnits(body, spans)) {
     const text = body.slice(u.start, u.end);
+    if (history.some(([start, end]) => u.start >= start && u.start < end)) continue;
     if (opts.priorNorm !== undefined && opts.priorNorm.includes(normForGrounding(text))) continue;
     const unitSpans = spans.filter(sp => sp.start >= u.start && sp.end < u.end);
     const quoteRanges = unitSpans.map(sp => [sp.start - u.start, sp.end - u.start + 1] as [number, number]);
@@ -1138,7 +1146,10 @@ export async function verifyAndRepairDreamPages(
         // from the unverified body; re-project from the verified body in the
         // same transaction so no derived row outlives its quarantined claim.
         const parsed = { type: page.type, title: page.title, compiled_truth: next.compiled_truth, timeline: next.timeline, frontmatter: next.frontmatter, tags };
-        const project = prepareCanonicalProjections(parsed, ref.slug, ref.source_id);
+        // Preserving writer (#5567): rows for bullets the verifier removed are
+        // deleted; database-only timeline history is kept.
+        const project = await prepareCanonicalProjections(engine, parsed, ref.slug, ref.source_id,
+          await engine.readPageSnapshot(ref.slug, { sourceId: ref.source_id }), 'preserving');
         const links = await isAutoLinkEnabled(engine) ? await prepareAutomaticLinks(engine, ref.slug, parsed, ref.source_id) : undefined;
         // noEmbed: the phase-end embed sweep backfills. Provenance fields
         // null → engine COALESCE keeps the first-write record intact.

@@ -276,7 +276,12 @@ export async function assembleTurnContext(
       };
       const meta = await getBrainHotMemoryMeta('turn_context', metaCtx);
       const hot = meta?.brain_hot_memory as { facts?: TurnContextFact[] } | undefined;
-      return Array.isArray(hot?.facts) ? [...hot.facts] : [];
+      const all = Array.isArray(hot?.facts) ? [...hot.facts] : [];
+      // Cross-turn dedupe, same contract as volunteered pages: a fact already
+      // injected this session is not repeated. Matched without the trailing
+      // confidence, which drifts as facts age.
+      const prior = opts.priorContextText;
+      return prior ? all.filter((f) => !prior.includes(renderFactLine(f).replace(/ \([0-9.]+\)$/, ' ('))) : all;
     } catch {
       return [];
     }

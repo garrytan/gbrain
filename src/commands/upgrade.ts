@@ -641,16 +641,24 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
 
         // v0.32.7 CJK wave: chunker-version bump → re-embed sweep.
         // Idempotent — `runReindex` short-circuits when no pages are pending.
+        // A managed brain refuses the markdown reindex; name its drain instead.
         try {
-          const { runPostUpgradeReembedPrompt } = await import('../core/post-upgrade-reembed.ts');
-          const { getEmbeddingModel } = await import('../core/ai/gateway.ts');
-          let modelString = 'openai:text-embedding-3-large';
-          try { modelString = getEmbeddingModel(); } catch { /* gateway not configured — keep default */ }
-          const promptResult = await runPostUpgradeReembedPrompt(engine, modelString);
-          if (promptResult.proceeded) {
-            const { runReindex } = await import('./reindex.ts');
-            await runReindex(engine, ['--markdown']);
+          const { managedPersistenceEnabled } = await import('../core/persistence/ownership.ts');
+          const { safeChunkUpgradeAdvisory } = await import('../core/repair/safe-chunks.ts');
+          const managed = await managedPersistenceEnabled(engine);
+          if (!managed) {
+            const { runPostUpgradeReembedPrompt } = await import('../core/post-upgrade-reembed.ts');
+            const { getEmbeddingModel } = await import('../core/ai/gateway.ts');
+            let modelString = 'openai:text-embedding-3-large';
+            try { modelString = getEmbeddingModel(); } catch { /* gateway not configured — keep default */ }
+            const promptResult = await runPostUpgradeReembedPrompt(engine, modelString);
+            if (promptResult.proceeded) {
+              const { runReindex } = await import('./reindex.ts');
+              await runReindex(engine, ['--markdown']);
+            }
           }
+          const advisory = await safeChunkUpgradeAdvisory(engine, managed);
+          if (advisory) console.log(advisory);
         } catch (re) {
           const msg = re instanceof Error ? re.message : String(re);
           console.warn(`\nChunker-bump reindex skipped: ${msg}`);

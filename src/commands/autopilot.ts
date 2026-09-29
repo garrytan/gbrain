@@ -1348,6 +1348,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
           // doctor's planner (file plane, per the #2662 rule above) said was
           // missing, so autopilot dispatched chat jobs doctor called blocked.
           hasChatApiKey: chatApiKeyConfigured(fileCfg),
+          staleExtractionBlocked: await (await import('../core/remediation/context.ts')).staleExtractionBlocked(engine).catch(() => undefined),
         };
         // v0.41.18.0 (A5 + A19 + A22, T15): consult onboard recommendations
         // ALONGSIDE doctor's brain-score recommendations. Onboard's 4 new

@@ -61,6 +61,11 @@ The grandfathering batch in `src/commands/migrations/v0_13_1.ts` changes only
 `frontmatter.validate`. It holds canonical page guards and row locks, rechecks
 eligibility, and advances the text seal only for already-sealed snapshots.
 An unsealed page stays unsealed. This preserves keyword retrieval after a
-metadata-only upgrade without bypassing revision safety. The installed-lifecycle
+metadata-only upgrade without bypassing revision safety. The verify phase
+checks only the pages this run grandfathered, keyed on `pages.id` and the
+revision each write produced: a page a concurrent writer (such as a connector
+re-import) rewrote or deleted since is reported as `rewritten_concurrently`,
+and only a page still at that revision without `validate: false` fails the
+phase. The installed-lifecycle
 test and `test/e2e/grandfather-projection-postgres.test.ts` cover the actual
 upgrade consequence and engine parity respectively.

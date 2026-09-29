@@ -105,6 +105,7 @@ import {
   recordBackupSpawn,
 } from '../core/backup/status-file.ts';
 import { realpathOrResolve } from '../core/path-confine.ts';
+import { isClaudeCliSelfTranscriptPath } from '../core/ai/providers/claude-cli-scratch.ts';
 
 // ── Tunables ────────────────────────────────────────────────────────────────
 
@@ -1685,6 +1686,16 @@ async function hookSessionEnd(io: HookIo): Promise<number> {
     }
     if (!conf.ok) {
       degrade(`transcript_${conf.reason}`);
+    } else if (
+      isClaudeCliSelfTranscriptPath(conf.path) ||
+      (ws !== undefined && isClaudeCliSelfTranscriptPath(ws))
+    ) {
+      // #5413: this session is gbrain's OWN claude-cli subprocess (the
+      // scratch cwd fingerprint appears in the transcript path or the
+      // payload cwd). Writing it to the dream corpus is a self-ingestion
+      // feedback loop — extraction prompts and page content re-enter as
+      // "conversations", and synthesize mints duplicate idea pages.
+      segmentMode = 'self_transcript';
     } else {
       const parsed = spec.parse(conf.path, { collectToolCalls: memorableAllowed });
       if (sessionId === 'unknown') {

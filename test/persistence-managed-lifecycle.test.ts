@@ -241,10 +241,12 @@ test('extract --stale on a managed brain derives links after a --no-extract sync
     expect(await engine.getLinks('notes/a', { sourceId: f.id })).toEqual([]);
     expect(await runManagedStaleExtraction(engine, { sourceId: f.id, dryRun: true })).toMatchObject({ pages: 0, remaining: 2 });
     const printed: string[] = [];
-    const log = console.log;
-    console.log = (...args: unknown[]) => { printed.push(args.join(' ')); };
-    try { await runExtract(engine, ['--stale', '--source-id', f.id, '--json']); } finally { console.log = log; }
-    expect(JSON.parse(printed.at(-1)!)).toMatchObject({ action: 'extract_stale', pages: 2, created: 1, skipped: 0, remaining: 0 });
+    const stdoutWrite = process.stdout.write;
+    process.stdout.write = ((chunk: string | Uint8Array) => { printed.push(String(chunk)); return true; }) as typeof process.stdout.write;
+    try { await runExtract(engine, ['--stale', '--source-id', f.id, '--json']); } finally { process.stdout.write = stdoutWrite; }
+    const report = JSON.parse(printed.at(-1)!);
+    expect(report).toMatchObject({ action: 'extract_stale_done', pages_processed: 2, links_created: 1, stale_remaining: 0 });
+    expect(report.skipped_changed).toBeUndefined();
     expect((await engine.getLinks('notes/a', { sourceId: f.id })).map(link => link.to_slug)).toEqual(['people/alice-example']);
     expect((await engine.getTimeline('people/alice-example', { sourceId: f.id })).map(entry => entry.summary)).toEqual(['Joined Acme Example']);
   }

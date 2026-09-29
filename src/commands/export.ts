@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { BrainEngine } from '../core/engine.ts';
 import { resolveSourceLocalFilePath, serializeMarkdown } from '../core/markdown.ts';
+import { scannerSlugRootMode } from '../core/write-through.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 import { loadStorageConfig, isDbOnly } from '../core/storage-config.ts';
@@ -108,7 +109,7 @@ a fresh directory. See docs/storage-tiering.md#safe-export.`);
             if (restoreOnly && storage && repo) {
               if (!isDbOnly(key.slug, storage)) continue;
               if (Number(key.source_path_bytes) > 4096) throw new Error('The recorded restore path exceeds the safe path limit.');
-              const recorded = resolveSourceLocalFilePath(repo, key.source_path, key.slug);
+              const recorded = resolveSourceLocalFilePath(repo, key.source_path, key.slug, await scannerSlugRootMode(tx, batchSource, repo));
               if (key.source_path && !recorded) throw new Error('The recorded restore file path is unsafe. Reconcile it before exporting.');
               if (existsSync(nativeFileTarget(repo, recorded ?? join(repo, key.slug + '.md')))) continue;
             }

@@ -13,6 +13,7 @@
 
 import { parseInlineCitationTimelineEntries, findTimelineSourceDelimiter, parseTimelineEntries } from './link-extraction.ts';
 import type { BrainEngine } from './engine.ts';
+import { firstMaterializedMarkerIndex } from './timeline-marker.ts';
 
 export interface ExtractedTimelineEntry {
   slug: string;
@@ -66,7 +67,10 @@ export function extractTimelineFromContent(content: string, slug: string): Extra
       nextHeader >= 0 ? nextHeader : content.length,
       nextSection >= 0 ? nextSection : content.length,
     );
-    const detail = content.slice(afterIdx, endIdx).trim();
+    // #5567: a materialized bullet appended after this header is its own entry.
+    const section = content.slice(afterIdx, endIdx);
+    const marker = firstMaterializedMarkerIndex(section);
+    const detail = (marker >= 0 ? section.slice(0, marker) : section).trim();
     entries.push({ slug, date: match[1], source: 'markdown', summary: match[2].trim(), detail: detail || undefined });
   }
 

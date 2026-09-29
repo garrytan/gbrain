@@ -46,7 +46,7 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   "src/core/company-brain/receipt-schema.ts": ["test/e2e/company-brain-receipts.test.ts"],
   "src/core/minions/errors.ts": ["test/e2e/subagent-gateway-path.test.ts", "test/e2e/delegated-http-worker.test.ts", "test/e2e/subagent-crash-replay-multi-provider.test.ts"],
   "src/core/harness/**": ["test/e2e/harness-access.test.ts", "test/e2e/shared-skills-transports.test.ts"],
-  "src/core/shared-skills/**": ["test/e2e/shared-skills-transports.test.ts", "test/e2e/shared-skills-rls.test.ts", "test/e2e/persistence-skill-bundles-postgres.test.ts"],
+  "src/core/shared-skills/**": ["test/e2e/shared-skills-transports.test.ts", "test/e2e/shared-skills-rls.test.ts", "test/e2e/persistence-skill-bundles-postgres.test.ts", "test/e2e/knowledge-source-uri-postgres.test.ts"],
   "src/mcp/skill-resources.ts": ["test/e2e/shared-skills-transports.test.ts"],
   "src/core/scope.ts": ["test/e2e/client-grants.test.ts", "test/e2e/shared-skills-transports.test.ts"],
   "src/core/grants/**": ["test/e2e/client-grants.test.ts", "test/e2e/harness-access.test.ts", "test/e2e/delegated-grants-withdrawal.test.ts", "test/e2e/delegated-http-worker.test.ts"],
@@ -74,10 +74,11 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   // Concrete content and derived-information read policy parity.
   "src/core/remote-body.ts": ["test/e2e/engine-content-privacy.test.ts", "test/e2e/legacy-chunk-privacy.test.ts", "test/e2e/chunk-canonical-text-privacy.test.ts"],
   "src/core/entity-identity.ts": ["test/e2e/engine-content-privacy.test.ts"],
-  "src/core/ops/**": ["test/e2e/engine-content-privacy.test.ts", "test/e2e/read-enrichment-privacy.test.ts", "test/e2e/legacy-chunk-privacy.test.ts", "test/e2e/chunk-canonical-text-privacy.test.ts", "test/e2e/put-page-persistence-postgres.test.ts", "test/e2e/deep-research-source-id.test.ts", "test/e2e/deep-research-http.test.ts"],
+  "src/core/ops/**": ["test/e2e/engine-content-privacy.test.ts", "test/e2e/read-enrichment-privacy.test.ts", "test/e2e/legacy-chunk-privacy.test.ts", "test/e2e/chunk-canonical-text-privacy.test.ts", "test/e2e/put-page-persistence-postgres.test.ts", "test/e2e/deep-research-source-id.test.ts", "test/e2e/deep-research-http.test.ts", "test/e2e/derived-page-visibility.test.ts"],
   "src/commands/whoknows.ts": ["test/e2e/read-enrichment-privacy.test.ts"],
   "src/commands/orphans.ts": ["test/e2e/engine-content-privacy.test.ts"],
   // Source-aware ranking, hybrid search, intent classification.
+  "src/core/search/private-visibility.ts": ["test/e2e/derived-page-visibility.test.ts", "test/e2e/derived-visibility-repair.test.ts"],
   "src/core/search/**": [
     "test/e2e/unsupported-embedding-identity-postgres.test.ts",
     "test/e2e/projection-statistics-postgres.test.ts",
@@ -91,7 +92,9 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
     "test/e2e/search-exclude.test.ts",
     "test/e2e/search-swamp.test.ts",
   ],
-  "src/core/page-state/**": ["test/e2e/projection-recovery-parity.test.ts", "test/e2e/projection-readiness-currency.test.ts", ...MIGRATION_WAVE_TESTS],
+  "src/core/page-state/**": ["test/e2e/projection-recovery-parity.test.ts", "test/e2e/projection-readiness-currency.test.ts", "test/e2e/projection-embedding-input-hash.test.ts", "test/e2e/safe-chunk-reseal.test.ts", ...MIGRATION_WAVE_TESTS],
+  "src/core/embedding-input-hash.ts": ["test/e2e/projection-embedding-input-hash.test.ts"],
+  "src/core/search/safe-chunks.ts": ["test/e2e/safe-chunk-reseal.test.ts", "test/e2e/legacy-chunk-privacy.test.ts"],
   "src/core/code-chunks.ts": ["test/e2e/projection-recovery-parity.test.ts"],
   "src/core/markdown-chunks.ts": ["test/e2e/projection-recovery-parity.test.ts"],
   // Tree-sitter chunkers feed code-indexing E2E.
@@ -126,7 +129,9 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   // JSONB bind parity for the cycle writers (the #2339 class PGLite hides).
   "src/core/cycle/propose-takes.ts": ["test/e2e/propose-takes-jsonb-postgres.test.ts"],
   "src/core/cycle/calibration-profile.ts": ["test/e2e/calibration-profile-write.test.ts"],
-  "src/core/cycle/patterns.ts": ["test/e2e/multi-source-bug-class.test.ts"],
+  "src/core/cycle/patterns.ts": ["test/e2e/multi-source-bug-class.test.ts", "test/e2e/dream-breaker-postgres.test.ts"],
+  // Dream paid-loop breaker: released-key JSONB shape + counter + migration 173 on Postgres.
+  "src/core/cycle/dream-breaker.ts": ["test/e2e/dream-breaker-postgres.test.ts"],
   "src/core/cycle/synthesize.ts": [
     "test/e2e/multi-source-bug-class.test.ts",
     "test/e2e/synthesize-bigint-job-id-postgres.test.ts",
@@ -156,7 +161,7 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   "src/core/embedding-readiness.ts": ["test/e2e/embedding-recovery-parity.test.ts"],
   "src/core/facts/embedding-identity.ts": ["test/e2e/embedding-recovery-parity.test.ts", "test/e2e/fact-embedding-backfill-parity.test.ts"],
   "src/core/stored-embedding-identity.ts": ["test/e2e/unsupported-embedding-identity-postgres.test.ts"],
-  "src/commands/extract.ts": ["test/e2e/multi-source-bug-class.test.ts", "test/e2e/attendance-retrieval-postgres.test.ts", "test/e2e/extract-timeline-attendance-postgres.test.ts"],
+  "src/commands/extract.ts": ["test/e2e/multi-source-bug-class.test.ts", "test/e2e/attendance-retrieval-postgres.test.ts", "test/e2e/extract-timeline-attendance-postgres.test.ts", "test/e2e/w5-persistence-postgres.test.ts"],
   "src/commands/extract-attendance-repair.ts": ["test/e2e/attendance-repair-postgres.test.ts"],
   "src/commands/migrate-engine.ts": [
     "test/e2e/multi-source-bug-class.test.ts",
@@ -194,6 +199,7 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   "src/core/persistence/**": [
     "test/e2e/persistence-http-liveness.test.ts",
     "test/e2e/persistence-phase-liveness.test.ts",
+    "test/e2e/persistence-idle-pool.test.ts",
     "test/e2e/persistence-publication-parity.test.ts",
     "test/e2e/persistence-sync-origin-parity.test.ts",
     "test/e2e/persistence-sync-options-parity.test.ts",
@@ -225,7 +231,17 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
     "test/e2e/reconcile-pgbouncer.test.ts",
     "test/e2e/persistence-skill-bundles-postgres.test.ts",
     "test/e2e/shared-skills-transports.test.ts",
+    "test/e2e/canonical-projection-history.test.ts",
+    "test/e2e/derived-page-visibility.test.ts",
+    "test/e2e/timeline-materialize.test.ts",
+    "test/e2e/derived-visibility-repair.test.ts",
+    "test/e2e/repair-command.test.ts",
+    "test/e2e/w5-persistence-postgres.test.ts",
   ],
+  "src/core/brain-score-recommendations.ts": ["test/e2e/w5-persistence-postgres.test.ts"],
+  "src/core/repair/**": ["test/e2e/repair-command.test.ts", "test/e2e/derived-visibility-repair.test.ts", "test/e2e/safe-chunk-reseal.test.ts"],
+  "src/commands/repair.ts": ["test/e2e/repair-command.test.ts"],
+  "src/core/timeline-marker.ts": ["test/e2e/timeline-materialize.test.ts"],
   "src/commands/source-reconcile.ts": ["test/e2e/reconcile-crash.test.ts", "test/e2e/reconcile-crash-unactivated.test.ts", "test/e2e/reconcile-pgbouncer.test.ts"],
   "src/core/cycle/extract-atoms.ts": ["test/e2e/extract-atoms-page-state.test.ts", "test/e2e/cycle.test.ts", "test/e2e/dream.test.ts", "test/e2e/multi-source-bug-class.test.ts", "test/e2e/managed-extract-atoms.test.ts", "test/e2e/managed-atom-regressions.test.ts", "test/e2e/managed-atom-compaction.test.ts"],
   "src/core/cycle/synthesize*.ts": ["test/e2e/managed-maintenance.test.ts", "test/e2e/managed-synthesis-postprocess.test.ts"],

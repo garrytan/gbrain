@@ -47,7 +47,6 @@ import {
   buildContextualPrefix,
   modeRequiresSynopsis,
   modeRequiresWrapper,
-  sanitizeTitle,
   wrapChunkForEmbedding,
 } from './embedding-context.ts';
 import {
@@ -322,7 +321,8 @@ export async function reembedPageWithContextualRetrieval(
         await tx.lockPageKeys([{ sourceId: page.source_id, slug: page.slug }]);
         if (digest(sourcePolicy(await loadSourceRow(tx, page.source_id))) !== digest(sourcePolicy(source))) return false;
         if (embedded) {
-          if (!await installPageEmbeddings(tx, prepared, embedded.map(chunk => ({ ...chunk, model: prepared.embeddingModel ?? undefined })))) return false;
+          if (!await installPageEmbeddings(tx, prepared, embedded.map(chunk => ({ ...chunk, model: prepared.embeddingModel ?? undefined })),
+            undefined, { tier: mode, corpusGeneration: generation })) return false;
         } else {
           const current = await readProjectionSnapshot(tx, page.slug, page.source_id, { allowUnsealed: true });
           if (!sameProjection(prepared, current)) return false;
@@ -491,7 +491,8 @@ async function tryBuildPhase1(opts: {
   // Build the wrapper prefix for THIS page. Title-only tier: one prefix
   // reused across all chunks. per_chunk_synopsis tier: prefix is built
   // per-chunk with the chunk-specific generated synopsis.
-  const safeTitle = sanitizeTitle(page.title);
+  // buildContextualPrefix sanitizes once, as every embedding writer and embedding-input-hash.ts do.
+  const title = page.title;
 
   if (attemptMode === 'title' || !modeRequiresSynopsis(attemptMode)) {
     // Title-only path. No synopsis-model calls; pure string concat.
@@ -499,7 +500,7 @@ async function tryBuildPhase1(opts: {
     // the title tier wants slightly more context — but per D2 the
     // balanced default is title-only without summary. Keep it pure for
     // now; the title block alone is what 'balanced' ships.
-    const prefix = buildContextualPrefix(safeTitle, null);
+    const prefix = buildContextualPrefix(title, null);
     const wrappedTexts = chunks.map((c) =>
       modeRequiresWrapper(attemptMode)
         ? wrapChunkForEmbedding(c.chunk_text, prefix, c.chunk_source)
@@ -542,7 +543,7 @@ async function tryBuildPhase1(opts: {
       wrappedTexts[i] = await buildWrappedChunkText({
         chunk: c,
         sourceText,
-        safeTitle,
+        title,
         page,
         args,
         synopsisModel,
@@ -590,14 +591,14 @@ class ChunkSynopsisPhase1Error extends Error {
 async function buildWrappedChunkText(opts: {
   chunk: ChunkInput;
   sourceText: string;
-  safeTitle: string;
+  title: string;
   page: Page;
   args: ReembedPageArgs;
   synopsisModel: string;
   /** #3883: resolved output-token cap (undefined → page-summary default). */
   synopsisMaxTokens?: number;
 }): Promise<string> {
-  const { chunk: c, sourceText, safeTitle, page, args, synopsisModel, synopsisMaxTokens } = opts;
+  const { chunk: c, sourceText, title, page, args, synopsisModel, synopsisMaxTokens } = opts;
 
   // Code chunks always bypass the wrapper (D20-T4) — pass through.
   if (c.chunk_source === 'fenced_code') {
@@ -648,7 +649,7 @@ async function buildWrappedChunkText(opts: {
   }
 
   if (synopsisResult.kind === 'success') {
-    const prefix = buildContextualPrefix(safeTitle, synopsisResult.synopsis);
+    const prefix = buildContextualPrefix(title, synopsisResult.synopsis);
     return wrapChunkForEmbedding(c.chunk_text, prefix, c.chunk_source);
   }
 

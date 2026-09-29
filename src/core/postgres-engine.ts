@@ -103,7 +103,7 @@ import { drainBackgroundWorkBeforeDisconnect } from './background-work.ts';
 import { validateSlug, contentHash, isBlankBody, rowToPage, rowToStalePage, rowToChunk, rowToSearchResult, parseEmbedding, tryParseEmbedding, isUndefinedTableError, warnOncePerProcess } from './utils.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
 import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildBestPerPagePoolCte, buildOrFallbackWebsearchQuery, boundWebsearchQuery } from './search/sql-ranking.ts';
-import { privatePagesFilterFragment, privateLinkOriginFilterFragment, privateTimelineEventFilterFragment, privateProvenanceFilterFragment } from './search/private-visibility.ts';
+import { privatePagesFilterFragment, privateSnapshotFilterFragment, privateLinkOriginFilterFragment, privateTimelineEventFilterFragment, privateProvenanceFilterFragment } from './search/private-visibility.ts';
 import { unverifiedExtractionFragment } from './extraction-review.ts';
 import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } from './ai/defaults.ts';
 import { readStoredEmbeddingIdentity } from './stored-embedding-identity.ts';
@@ -2354,7 +2354,7 @@ export class PostgresEngine implements BrainEngine {
     // #4246: embedded_text_hash records md5(chunk_text) AT EMBED TIME so a
     // later text rewrite that keeps the vector is detectable as content
     // drift (invalidateContentDriftEmbeddings). NULL when no embedding lands.
-    const cols = `(page_id, chunk_index, chunk_text, chunk_source, ${writeColId}, model, token_count, embedded_at, embedded_text_hash, language, symbol_name, symbol_type, start_line, end_line, parent_symbol_path, doc_comment, symbol_name_qualified, modality, embedding_image)`;
+    const cols = `(page_id, chunk_index, chunk_text, chunk_source, ${writeColId}, model, token_count, embedded_at, embedded_text_hash, embedding_input_hash, language, symbol_name, symbol_type, start_line, end_line, parent_symbol_path, doc_comment, symbol_name_qualified, modality, embedding_image)`;
     const rows: string[] = [];
     const params: unknown[] = [];
     let paramIdx = 1;
@@ -2396,10 +2396,13 @@ export class PostgresEngine implements BrainEngine {
       // #4246: hash in SQL (not JS) so stamp + drift comparison share ONE
       // md5 implementation. Binds chunk_text a second time.
       const embeddedTextHashPh = embeddingStr ? `md5($${paramIdx++})` : 'NULL';
+      // #5553: embedding-input provenance travels only with the vector it describes.
+      const embeddingInputHash = embeddingStr ? chunk.embedding_input_hash ?? null : null;
+      const embeddingInputHashPh = embeddingInputHash ? `$${paramIdx++}` : 'NULL';
 
       rows.push(
         `($${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, ` +
-        `${embeddingPh}, $${paramIdx++}, $${paramIdx++}, ${embeddedAtPh}, ${embeddedTextHashPh}, ` +
+        `${embeddingPh}, $${paramIdx++}, $${paramIdx++}, ${embeddedAtPh}, ${embeddedTextHashPh}, ${embeddingInputHashPh}, ` +
         `$${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, ` +
         `$${paramIdx++}::text[], $${paramIdx++}, $${paramIdx++}, ` +
         `$${paramIdx++}, ${embeddingImagePh})`,
@@ -2412,6 +2415,7 @@ export class PostgresEngine implements BrainEngine {
       if (embeddingStr) params.push(embeddingStr);
       if (embeddingImageStr) params.push(embeddingImageStr);
       if (embeddingStr) params.push(sanitizedChunkText); // embedded_text_hash md5() input
+      if (embeddingInputHash) params.push(embeddingInputHash);
       params.push(
         pageId, chunk.chunk_index, sanitizedChunkText, chunk.chunk_source,
         chunk.model || resolvedModel, chunk.token_count || null,
@@ -2489,6 +2493,14 @@ export class PostgresEngine implements BrainEngine {
                 AND (content_chunks.embedded_at IS NULL OR EXCLUDED.embedded_at > content_chunks.embedded_at)
                 THEN EXCLUDED.embedded_text_hash
            ELSE content_chunks.embedded_text_hash
+         END,
+         embedding_input_hash = CASE
+           WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.embedding_input_hash
+           WHEN content_chunks.${writeColId} IS NULL THEN EXCLUDED.embedding_input_hash
+           WHEN EXCLUDED.embedded_at IS NOT NULL
+                AND (content_chunks.embedded_at IS NULL OR EXCLUDED.embedded_at > content_chunks.embedded_at)
+                THEN EXCLUDED.embedding_input_hash
+           ELSE content_chunks.embedding_input_hash
          END,
          language = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.language ELSE COALESCE(EXCLUDED.language, content_chunks.language) END,
          symbol_name = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.symbol_name ELSE COALESCE(EXCLUDED.symbol_name, content_chunks.symbol_name) END,
@@ -4645,7 +4657,7 @@ export class PostgresEngine implements BrainEngine {
   async getVersions(slug: string, opts?: { sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean }): Promise<PageVersion[]> {
     const sql = this.sql;
     const privacy = opts?.excludePrivate
-      ? sql.unsafe(`AND ${privatePagesFilterFragment('p')} AND ${privatePagesFilterFragment('pv')}`) : sql``;
+      ? sql.unsafe(`AND ${privatePagesFilterFragment('p')} AND ${privateSnapshotFilterFragment('pv')}`) : sql``;
     if (opts?.sourceIds && opts.sourceIds.length > 0) {
       const rows = await sql`
         SELECT pv.* FROM page_versions pv

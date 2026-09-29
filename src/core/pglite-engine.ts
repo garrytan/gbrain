@@ -113,7 +113,7 @@ import { PAGE_SORT_SQL, MIN_ENTITY_PAGES_FOR_COVERAGE } from './types.ts';
 import { finalizeLastSeen } from './chronicle/last-seen.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
 import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildBestPerPagePoolCte, buildOrFallbackWebsearchQuery, boundWebsearchQuery } from './search/sql-ranking.ts';
-import { privatePagesFilterFragment, privateLinkOriginFilterFragment, privateTimelineEventFilterFragment, privateProvenanceFilterFragment } from './search/private-visibility.ts';
+import { privatePagesFilterFragment, privateSnapshotFilterFragment, privateLinkOriginFilterFragment, privateTimelineEventFilterFragment, privateProvenanceFilterFragment } from './search/private-visibility.ts';
 import { unverifiedExtractionFragment } from './extraction-review.ts';
 import { shouldExcludeFromOrphanReporting, loadOrphanPolicyOverrides } from './orphan-policy.ts';
 import { LINK_EXTRACTOR_VERSION_TS } from './link-extraction.ts';
@@ -133,6 +133,7 @@ import { hasCJK } from './cjk.ts';
 import * as factsImpl from './pglite-engine/facts.ts';
 import type { PgliteFactsDeps } from './pglite-engine/facts.ts';
 import * as takesImpl from './pglite-engine/takes.ts';
+import { PgliteCheckpointGuard } from './pglite-engine/checkpoint-guard.ts';
 import type { PgliteTakesDeps } from './pglite-engine/takes.ts';
 import * as codeEdgesImpl from './pglite-engine/code-edges.ts';
 import type { PgliteCodeEdgesDeps } from './pglite-engine/code-edges.ts';
@@ -699,6 +700,7 @@ export class PGLiteEngine implements BrainEngine {
   private vectorIterativeScan?: Promise<boolean>;
   /** Transaction clones keep chunk invalidation and replacement atomic. */
   private _chunkWritesInTransaction = false;
+  private _checkpointGuard: PgliteCheckpointGuard | undefined;
   readonly kind = 'pglite' as const;
   private _db: PGLiteDB | null = null;
   private _lock: LockHandle | null = null;
@@ -718,6 +720,7 @@ export class PGLiteEngine implements BrainEngine {
 
   private _attachDatabase(database: PGLiteDB): PGLiteDB {
     this._dbWork = trackPgliteDatabase(database);
+    this._checkpointGuard = undefined;
     return this._dbWork.database;
   }
   // #2034: captured at connect() so reconnect() can restore the same data dir
@@ -1706,7 +1709,7 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   async transaction<T>(fn: (engine: BrainEngine) => Promise<T>): Promise<T> {
-    return this.db.transaction(async handle => {
+    const run = (db = this.db) => db.transaction(async handle => {
       const tx = composablePgliteTransaction(handle);
       const txEngine = Object.create(this) as PGLiteEngine;
       Object.defineProperty(txEngine, '_chunkWritesInTransaction', { value: true });
@@ -1714,6 +1717,9 @@ export class PGLiteEngine implements BrainEngine {
       Object.defineProperty(txEngine, 'db', { get: () => tx });
       return fn(txEngine);
     });
+    if (this._pageTransaction || !this._dbWork) return run();
+    const guard = this._checkpointGuard ??= new PgliteCheckpointGuard();
+    return this._dbWork.admit(db => guard.runOutermost(sql => db.query(sql), () => run(db)));
   }
 
   async transactionDirect<T>(fn: (engine: BrainEngine) => Promise<T>): Promise<T> {
@@ -3201,7 +3207,7 @@ export class PGLiteEngine implements BrainEngine {
     // #4246: embedded_text_hash records md5(chunk_text) AT EMBED TIME so a
     // later text rewrite that keeps the vector is detectable as content
     // drift (invalidateContentDriftEmbeddings). NULL when no embedding lands.
-    const cols = `(page_id, chunk_index, chunk_text, chunk_source, ${writeColId}, model, token_count, embedded_at, embedded_text_hash, language, symbol_name, symbol_type, start_line, end_line, parent_symbol_path, doc_comment, symbol_name_qualified, modality, embedding_image)`;
+    const cols = `(page_id, chunk_index, chunk_text, chunk_source, ${writeColId}, model, token_count, embedded_at, embedded_text_hash, embedding_input_hash, language, symbol_name, symbol_type, start_line, end_line, parent_symbol_path, doc_comment, symbol_name_qualified, modality, embedding_image)`;
     const rowParts: string[] = [];
     const params: unknown[] = [];
     let paramIdx = 1;
@@ -3246,10 +3252,13 @@ export class PGLiteEngine implements BrainEngine {
       // #4246: hash in SQL (not JS) so stamp + drift comparison share ONE
       // md5 implementation. Binds chunk_text a second time.
       const embeddedTextHashPh = embeddingStr ? `md5($${paramIdx++})` : 'NULL';
+      // #5553: embedding-input provenance travels only with the vector it describes.
+      const embeddingInputHash = embeddingStr ? chunk.embedding_input_hash ?? null : null;
+      const embeddingInputHashPh = embeddingInputHash ? `$${paramIdx++}` : 'NULL';
 
       rowParts.push(
         `($${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, ` +
-        `${embeddingPh}, $${paramIdx++}, $${paramIdx++}, ${embeddedAtPh}, ${embeddedTextHashPh}, ` +
+        `${embeddingPh}, $${paramIdx++}, $${paramIdx++}, ${embeddedAtPh}, ${embeddedTextHashPh}, ${embeddingInputHashPh}, ` +
         `$${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, ` +
         `$${paramIdx++}::text[], $${paramIdx++}, $${paramIdx++}, ` +
         `$${paramIdx++}, ${embeddingImagePh})`,
@@ -3264,6 +3273,7 @@ export class PGLiteEngine implements BrainEngine {
       if (embeddingStr) params.push(embeddingStr);
       if (embeddingImageStr) params.push(embeddingImageStr);
       if (embeddingStr) params.push(sanitizedChunkText); // embedded_text_hash md5() input
+      if (embeddingInputHash) params.push(embeddingInputHash);
       params.push(
         pageId, chunk.chunk_index, sanitizedChunkText, chunk.chunk_source,
         chunk.model || resolvedModel, chunk.token_count || null,
@@ -3325,6 +3335,14 @@ export class PGLiteEngine implements BrainEngine {
                 AND (content_chunks.embedded_at IS NULL OR EXCLUDED.embedded_at > content_chunks.embedded_at)
                 THEN EXCLUDED.embedded_text_hash
            ELSE content_chunks.embedded_text_hash
+         END,
+         embedding_input_hash = CASE
+           WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.embedding_input_hash
+           WHEN content_chunks.${writeColId} IS NULL THEN EXCLUDED.embedding_input_hash
+           WHEN EXCLUDED.embedded_at IS NOT NULL
+                AND (content_chunks.embedded_at IS NULL OR EXCLUDED.embedded_at > content_chunks.embedded_at)
+                THEN EXCLUDED.embedding_input_hash
+           ELSE content_chunks.embedding_input_hash
          END,
          language = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.language ELSE COALESCE(EXCLUDED.language, content_chunks.language) END,
          symbol_name = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.symbol_name ELSE COALESCE(EXCLUDED.symbol_name, content_chunks.symbol_name) END,
@@ -5441,7 +5459,7 @@ export class PGLiteEngine implements BrainEngine {
 
   async getVersions(slug: string, opts?: { sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean }): Promise<PageVersion[]> {
     const privacy = opts?.excludePrivate
-      ? `AND ${privatePagesFilterFragment('p')} AND ${privatePagesFilterFragment('pv')}` : '';
+      ? `AND ${privatePagesFilterFragment('p')} AND ${privateSnapshotFilterFragment('pv')}` : '';
     if (opts?.sourceIds && opts.sourceIds.length > 0) {
       const { rows } = await this.db.query(
         `SELECT pv.* FROM page_versions pv

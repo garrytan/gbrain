@@ -15,6 +15,7 @@ import type { EffectRecovery, PersistenceEffect } from './effect-model.ts';
 import { tryAcquirePublicationCapacity } from './pool-capacity.ts';
 import { assertRecoveryStagingAbsent, cleanupRecoveryStaging, upgradeRecoveryStaging } from './staging.ts';
 import { declarePersistenceProtocol } from './protocol.ts';
+import { advanceEffectCursor } from './effect-journal.ts';
 
 export async function guardEffectSource(tx: BrainEngine, effect: PersistenceEffect, hostId: string): Promise<WorktreeBinding | null> {
   await declarePersistenceProtocol(tx);
@@ -113,9 +114,9 @@ export async function recoverEffectPublication(engine: BrainEngine, effect: Pers
     }
     await materializePageSnapshot(tx, snapshot);
     await clearRecovery(tx, current);
-    // One page per transaction/cursor checkpoint bounds work and restart cost.
-    await tx.executeRaw(`UPDATE persistence_effects SET state='queued',data=jsonb_set(data,'{after_slug}',to_jsonb($2::text)),
-      execution_token=NULL,claim_expires_at=NULL,next_attempt_at=now(),error_code=NULL,updated_at=now() WHERE id=$1`, [current.id, record.slug]);
+    // One page per transaction/cursor checkpoint bounds work and restart cost;
+    // a retried parked target is consumed without rewinding the cursor.
+    await advanceEffectCursor(tx, current, record.slug);
     await hooks.boundary?.('before_mirror_commit');
   }); } finally { releaseCapacity(); }
 }

@@ -38,6 +38,7 @@ import { canonicalLookup, type ModelPricing } from '../model-pricing.ts';
 import { createHash } from 'node:crypto';
 import { slugifySegment } from '../sync.ts';
 import { validatePageSlug } from '../ops/context.ts';
+import { privatePagesFilterFragment, strictestVisibility, type Visibility } from '../search/private-visibility.ts';
 
 const DEFAULT_BUDGET_USD = 1.5;
 // Canonical-miss policy — mirrors skillopt/preflight.ts's lookupPrice:
@@ -104,7 +105,7 @@ export interface SynthesizeConceptsOpts {
   /** Test seam: alternative chat function. */
   _chat?: typeof gatewayChat;
   /** Test seam: skip DB query; cluster these atoms directly. */
-  _atoms?: Array<{ slug: string; concept_refs: string[]; body: string; title: string }>;
+  _atoms?: Array<{ slug: string; concept_refs: string[]; body: string; title: string; visibility?: Visibility }>;
 }
 
 interface AtomGroup {
@@ -113,6 +114,8 @@ interface AtomGroup {
   atomSlugs: string[];
   atomTitles: string[];
   atomBodies: string[];
+  /** #5525: strictest effective visibility of the member atoms. */
+  visibility: Visibility;
   tier: 'T1' | 'T2' | 'T3' | 'T4';
 }
 
@@ -144,11 +147,12 @@ export async function runPhaseSynthesizeConcepts(
         title: string;
         compiled_truth: string;
         frontmatter: { concepts?: string[]; imported_from?: string };
+        private: boolean;
       }>(
         // Codex P2: scoped to the cycle source — the provenance edges below
         // are pinned to it, so a brain-global scan grouped same-slug atoms
         // from OTHER sources into this source's concepts.
-        `SELECT slug, title, compiled_truth, frontmatter
+        `SELECT slug, title, compiled_truth, frontmatter, NOT (${privatePagesFilterFragment('pages')}) AS private
            FROM pages
           WHERE type = 'atom'
             AND source_id = $1
@@ -163,6 +167,7 @@ export async function runPhaseSynthesizeConcepts(
           title: r.title,
           body: r.compiled_truth,
           concept_refs: r.frontmatter!.concepts!,
+          visibility: r.private ? 'private' as const : 'world' as const,
         }));
     } catch {
       // No atoms table or query failed — phase no-ops cleanly.
@@ -180,14 +185,16 @@ export async function runPhaseSynthesizeConcepts(
   }
 
   // 2. Group atoms by normalized concept slug; one atom counts once per concept.
-  const groups = new Map<string, { slugs: string[]; titles: string[]; bodies: string[] }>();
+  const groups = new Map<string, { slugs: string[]; titles: string[]; bodies: string[]; visibilities: Visibility[] }>();
   for (const atom of atoms) {
     const conceptSlugs = new Set(atom.concept_refs.map(conceptStemFor).filter((s): s is string => s !== null));
     for (const conceptSlug of conceptSlugs) {
-      const existing = groups.get(conceptSlug) ?? { slugs: [], titles: [], bodies: [] };
+      const existing = groups.get(conceptSlug) ?? { slugs: [], titles: [], bodies: [], visibilities: [] };
       existing.slugs.push(atom.slug);
       existing.titles.push(atom.title);
       existing.bodies.push(atom.body);
+      // An atom with no recorded visibility is private (derived pages fail closed).
+      existing.visibilities.push(atom.visibility ?? 'private');
       groups.set(conceptSlug, existing);
     }
   }
@@ -204,6 +211,7 @@ export async function runPhaseSynthesizeConcepts(
       atomSlugs: data.slugs,
       atomTitles: data.titles,
       atomBodies: data.bodies,
+      visibility: strictestVisibility(data.visibilities),
       tier,
     });
   }
@@ -291,11 +299,11 @@ export async function runPhaseSynthesizeConcepts(
       skippedHumanOwned.push(conceptSlug);
       continue;
     }
-    // The narrative is a function of the member atoms and the model. When
-    // neither changed and the page holds a real narrative, there is nothing to
-    // spend or rewrite; a fallback page is retried.
+    // The narrative is a function of the member atoms, their strictest
+    // visibility and the model. When none changed and the page holds a real
+    // narrative, there is nothing to spend or rewrite; a fallback page is retried.
     const memberHash = createHash('sha256')
-      .update(JSON.stringify([synthModel, group.atomSlugs.map((s, i) => [s, group.atomTitles[i], group.atomBodies[i]])
+      .update(JSON.stringify([synthModel, group.visibility, group.atomSlugs.map((s, i) => [s, group.atomTitles[i], group.atomBodies[i]])
         .sort((a, b) => a[0].localeCompare(b[0]))]))
       .digest('hex').slice(0, 16);
     const priorMode = existing?.frontmatter?.synthesis_mode;
@@ -388,28 +396,35 @@ export async function runPhaseSynthesizeConcepts(
 
     if (!opts.dryRun) {
       const title = conceptSlug.slice('concepts/'.length);
+      // #5525: tighten-only — a concept already private stays private.
+      const prior = await engine.getPage(conceptSlug, { sourceId: opts.sourceId ?? 'default' });
+      const visibility = strictestVisibility([group.visibility, prior?.frontmatter?.visibility === 'private' ? 'private' : 'world']);
       // #2163: serialize to markdown and import via the canonical pipeline so
       // the page is chunked (+ embedded when a provider is configured) —
       // mirrors put_page's isAvailable('embedding') → noEmbed gate.
-      const md = serializeMarkdown(
+      const synthesizedAt = new Date().toISOString();
+      const publish = (pageVisibility: Visibility) => importFromContent(engine, conceptSlug, serializeMarkdown(
         {
           tier: group.tier,
           mention_count: group.atomTitles.length,
           composite_score: group.atomTitles.length,
           synthesis_mode: synthesisMode,
           member_hash: memberHash,
-          synthesized_at: new Date().toISOString(),
+          synthesized_at: synthesizedAt,
           synthesized_by: 'synthesize_concepts-v0.41',
+          visibility: pageVisibility,
         },
         narrative,
         '',
         { type: 'concept', title: title.replace(/-/g, ' '), tags: [] },
-      );
-      await importFromContent(engine, conceptSlug, md, {
+      ), {
         noEmbed: !isAvailable('embedding'),
         // #4416: target the cycle's resolved source, not the 'default' literal.
         sourceId: opts.sourceId,
       });
+      // #5525: a world concept stays private until every member's provenance
+      // edge is durable, because a later private flip reaches it through them.
+      await publish('private');
       // #4589: bank concept<->member-atom provenance edges. The prompt forbids
       // enumerating atoms in the body and no frontmatter field maps to a link
       // verb, so without this every concept page lands with zero edges (graph
@@ -440,6 +455,14 @@ export async function runPhaseSynthesizeConcepts(
         const msg = err instanceof Error ? err.message : String(err);
         linkWarnings.push({ concept: group.conceptSlug, warning: `provenance links failed: ${msg}` });
         console.error(`[synthesize_concepts] provenance links failed for ${conceptSlug} (non-fatal): ${msg}`);
+      }
+      if (visibility === 'world') {
+        const members = [...new Set(group.atomSlugs)];
+        const [{ linked }] = await engine.executeRaw<{ linked: number }>(`SELECT COUNT(DISTINCT a.slug)::int AS linked FROM links l
+          JOIN pages c ON c.id=l.from_page_id JOIN pages a ON a.id=l.to_page_id
+          WHERE c.source_id=$1 AND c.slug=$2 AND a.slug=ANY($3::text[]) AND l.link_source='concept-provenance' AND l.link_type='synthesized_from'`,
+        [src, conceptSlug, members]);
+        if (Number(linked) === members.length) await publish('world');
       }
     }
     conceptsWritten++;

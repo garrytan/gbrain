@@ -10,8 +10,8 @@ import { getWriteRequest, admitWriteInTransaction, receiptFor } from './journal.
 import { retryWriteAdmission } from './admission-retry.ts';
 import { assertPersistenceAccepting, foregroundWriteCompletions, startPersistenceConsumer, waitForWrite } from './service.ts';
 import { assertSyncEntryOrigin, discoverManagedSync, resolveManagedSyncContext, readSyncContent, readSyncFile, syncGit, type SyncDiscovery } from './sync-discovery.ts';
-import { assertSyncPageOrigin, syncOriginPath } from './sync-origin.ts';
-import { assertManagedSyncActive, assertSyncDispatchActive, managedSyncAuthority, validateSyncAuthority, validateManagedSyncOptions, syncProcessingOptions, type SyncAuthority, type SyncProcessingOptions } from './sync-authority.ts';
+import { assertSyncPageOrigin, sameSyncOrigin, syncOriginScope } from './sync-origin.ts';
+import { assertManagedSyncActive, assertSyncDispatchActive, managedSyncAuthority, validateSyncAuthority, validateManagedSyncOptions, syncProcessingOptions, SYNC_PROCESSING_KEYS, type SyncAuthority, type SyncProcessingOptions } from './sync-authority.ts';
 import type { SyncIntent } from './sync-prepare.ts';
 import { currentCompanyBrainSync, getCompanyBrainProfile, readCompanyBrainPlan } from '../company-brain/profile.ts';
 import { readCommittedBlob } from '../company-brain/revision.ts';
@@ -144,7 +144,8 @@ async function freezeEntry(engine: BrainEngine, cursor: Cursor, key: string, ass
   let lineEndingOnly = false;
   if (entry) {
     assertSyncEntryOrigin(cursor, entry);
-    await assertSyncPageOrigin(engine, cursor.sourceId, entry.sourcePath, entry.pageId ?? null, entry.action === 'delete');
+    const originScope = syncOriginScope(cursor);
+    await assertSyncPageOrigin(engine, cursor.sourceId, entry.sourcePath, entry.pageId ?? null, entry.action === 'delete', originScope);
     assertActive();
     const bytes = readSyncFile(cursor.root, entry.path);
     rawHash = bytes === null ? null : sha256(bytes);
@@ -163,14 +164,14 @@ async function freezeEntry(engine: BrainEngine, cursor: Cursor, key: string, ass
     const moved = entry.renameFrom;
     const recorded = moved?.slug === slug ? moved.sourcePath : entry.sourcePath;
     if ((snapshot?.page.id ?? null) !== pageId || (snapshot?.revision ?? null) !== revision ||
-        (snapshot?.page.source_path != null && syncOriginPath(snapshot.page.source_path) !== syncOriginPath(recorded))) {
+        (snapshot?.page.source_path != null && !sameSyncOrigin(snapshot.page.source_path, recorded, originScope, snapshot.page.slug))) {
       throw new OperationError('revision_conflict', 'A page changed after this sync cursor was enumerated.');
     }
     if (moved && moved.slug !== slug) {
       const previous = await engine.readPageSnapshot(moved.slug, { sourceId: cursor.sourceId, includeDeleted: true });
       assertActive();
       if (previous?.page.id !== moved.pageId || previous.revision !== moved.revision || previous.page.deleted_at != null ||
-          previous.page.source_path == null || syncOriginPath(previous.page.source_path) !== syncOriginPath(moved.sourcePath)) {
+          previous.page.source_path == null || !sameSyncOrigin(previous.page.source_path, moved.sourcePath, originScope, previous.page.slug)) {
         throw new OperationError('revision_conflict', 'A renamed page changed after this sync cursor was enumerated.');
       }
     }
@@ -309,9 +310,20 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
         String(cursor.binding.owner_epoch) !== String(context.binding.owner_epoch) || cursor.root !== context.root) {
       throw new OperationError('source_changed', 'The unfinished sync cursor belongs to an older source binding.');
     }
-    if (cursor.processingOptions ? digest(cursor.processingOptions) !== digest(processingOptions) : !cursor.pending) {
-      throw new OperationError('invalid_params', 'The unfinished sync has different or unknown processing options.',
-        'Resume with the original --no-embed, --no-extract and --no-schema-pack options. After resolving pending requests, use --retry-failed for explicit rediscovery; existing requests are not rewritten.');
+    const stored = cursor.processingOptions;
+    if (stored ? digest(stored) !== digest(processingOptions) : !cursor.pending) {
+      // An unattended or flagless resume adopts the cursor's options; freezeEntry reads them from the cursor.
+      const explicit = opts.explicitProcessing ?? SYNC_PROCESSING_KEYS;
+      if (!stored || explicit.some(key => stored[key] !== processingOptions[key])) {
+        const flags = { noEmbed: '--no-embed', noExtract: '--no-extract', noSchemaPack: '--no-schema-pack' } as const;
+        const resume = stored ? ` Resume it with: gbrain sync --source ${cursor.sourceId} --no-pull${SYNC_PROCESSING_KEYS.filter(key => stored[key]).map(key => ` ${flags[key]}`).join('')}`
+          + ' (or omit the conflicting flag to adopt the stored options).' : '';
+        const error = new OperationError('invalid_params', 'The unfinished sync has different or unknown processing options.',
+          `The unfinished sync cursor for source ${cursor.sourceId} stores ${stored ? SYNC_PROCESSING_KEYS.map(key => `${key}=${stored[key]}`).join(', ') : 'no processing options'}.${resume}`
+          + ' After resolving pending requests, use --retry-failed for explicit rediscovery; existing requests are not rewritten.');
+        error.detail = 'cursor_processing_options_conflict';
+        throw error;
+      }
     }
     if (opts.dryRun) return result(cursor, 'dry_run');
     const config = loadConfig() ?? { engine: engine.kind };

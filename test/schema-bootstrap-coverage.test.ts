@@ -985,7 +985,7 @@ const COLUMN_EXEMPTIONS = new Set<string>([
   // Postgres-blob gate test below and the e2e pre-v143 convergence case.
   // This exemption only silences the PGLite column-only check.
   'dream_verdicts.expires_at',
-  // A14 (migration v171) — tag provenance. Column-only and nullable; no index
+  // A14 (migration v175) — tag provenance. Column-only and nullable; no index
   // in either schema blob references it, so the blob replay has no forward
   // reference to trip on, and every reader treats NULL as an unclaimed legacy
   // row (never import-deleted).

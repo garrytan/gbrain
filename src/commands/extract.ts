@@ -65,6 +65,7 @@ import { inferLinkTypeFromPack } from '../core/schema-pack/link-inference.ts';
 import { PageRegexBudget } from '../core/schema-pack/redos-guard.ts';
 export { extractTimelineFromContent, type ExtractedTimelineEntry } from '../core/timeline-extract.ts';
 import { extractTimelineFromContent, MANAGED_TIMELINE_PRUNE_REFUSAL, pruneTimelineOrphans, retractRemovedTimelineEntries, type ExtractedTimelineEntry } from '../core/timeline-extract.ts';
+import { managedPersistenceEnabled } from '../core/persistence/ownership.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 import { pathToSlug, slugifyPath, slugifySegment, pruneDir, isSyncable } from '../core/sync.ts';
@@ -888,7 +889,6 @@ export async function runExtract(engine: BrainEngine, args: string[], authority?
     }
     const sidIdx = args.indexOf('--source-id');
     const staleSourceId = (sidIdx >= 0 && sidIdx + 1 < args.length) ? args[sidIdx + 1] : undefined;
-    if (await (await import('./extract-stale-delegate.ts')).runManagedExtractStale(engine, args, staleSourceId)) return;
     await extractStaleFromDB(engine, {
       dryRun: args.includes('--dry-run'),
       jsonMode: args.includes('--json'),
@@ -2109,7 +2109,7 @@ export async function extractStaleFromDB(
      */
     timeBudgetMs?: number;
   },
-): Promise<{ linksCreated: number; timelineCreated: number; pagesProcessed: number; staleRemaining: number; skippedMissingTarget?: number; skippedCrossSource?: number; skippedAttendanceIncomplete?: number }> {
+): Promise<{ linksCreated: number; timelineCreated: number; pagesProcessed: number; staleRemaining: number; skippedMissingTarget?: number; skippedCrossSource?: number; skippedAttendanceIncomplete?: number; skippedChanged?: number }> {
   const { dryRun, jsonMode, sourceIdFilter, catchUp } = opts;
   const includeFrontmatter = opts.includeFrontmatter ?? await resolveIncludeFrontmatter(engine);
   const log = opts.quiet ? (..._args: unknown[]) => {} : console.log;
@@ -2129,6 +2129,15 @@ export async function extractStaleFromDB(
   if (totalStale === 0) {
     if (!jsonMode) log('No stale pages — extraction is up to date.');
     return { linksCreated: 0, timelineCreated: 0, pagesProcessed: 0, staleRemaining: 0 };
+  }
+  // Managed brains: the writer guard owns canonical rows, so links, missing
+  // canonical timeline rows and the watermark publish on the one managed path.
+  if (await managedPersistenceEnabled(engine)) {
+    const { extractManagedStaleLinks, formatManagedStaleExtraction } = await import('../core/persistence/links-maintenance.ts');
+    const r = await extractManagedStaleLinks(engine, { sourceId: sourceIdFilter, ...(catchUp ? {} : { timeBudgetMs }) });
+    if (!jsonMode) log(formatManagedStaleExtraction(r, false, false));
+    else if (!opts.quiet) process.stdout.write(formatManagedStaleExtraction(r, false, true) + '\n');
+    return { linksCreated: r.created, timelineCreated: r.timeline, pagesProcessed: r.pages, staleRemaining: r.remaining, ...(r.skipped ? { skippedChanged: r.skipped } : {}) };
   }
 
   // Resolver + cross-source resolution map built ONCE before the loop (the
@@ -2232,9 +2241,10 @@ export async function extractStaleFromDB(
         }
         linkRows.push(resolvedLinkCandidate(c, page.slug, page.source_id, r));
       }
-      const written = await engine.replaceDerivedLinks({ slug: page.slug, sourceId: page.source_id,
-        expectedRevision: snapshot.revision, sourceIncarnation: snapshot.sourceIncarnation }, linkRows, { includeFrontmatter,
-        expectedEndpoints: capturedLinkEndpoints(linkRows, targetMetadata) });
+      const origin = { slug: page.slug, sourceId: page.source_id, expectedRevision: snapshot.revision, sourceIncarnation: snapshot.sourceIncarnation };
+      const linkOpts = { includeFrontmatter, expectedEndpoints: capturedLinkEndpoints(linkRows, targetMetadata) };
+      const stampIso = page.updated_at.getTime() >= Date.parse(versionTs) ? page.updated_at_iso : versionTs;
+      const written = await engine.replaceDerivedLinks(origin, linkRows, linkOpts);
       linksCreated += written.created;
       await retractRemovedTimelineEntries(engine, page.slug, page.source_id, fullContent);
       for (const entry of parseTimelineEntries(fullContent)) {
@@ -2262,9 +2272,6 @@ export async function extractStaleFromDB(
       // GREATEST(updated_at, versionTs) preserves the race semantics (a real
       // future edit advances updated_at > versionTs >= stamp → re-extracts)
       // while lifting old pages to the threshold so they clear.
-      const stampIso = page.updated_at.getTime() >= Date.parse(versionTs)
-        ? page.updated_at_iso
-        : versionTs;
       processedRefs.push({ slug: page.slug, source_id: page.source_id, extractedAt: stampIso });
     }
 

@@ -342,8 +342,8 @@ export class MinionQueue {
       //
       //    Dead/cancelled jobs represent permanently-failed work whose
       //    idempotency slot must be freed so a fresh attempt can be inserted.
-      //    We NULL the key (preserving the row for audit) and fall through
-      //    to the INSERT path below.
+      //    We NULL the key (preserving the row, with the released key in its
+      //    data for the dream breaker) and fall through to the INSERT below.
       if (opts?.idempotency_key) {
         const existing = await tx.executeRaw<Record<string, unknown>>(
           `SELECT * FROM minion_jobs WHERE idempotency_key = $1`,
@@ -354,8 +354,8 @@ export class MinionQueue {
           assertSameAuthority(existingJob.submission_authority, authority);
           if (existingJob.status === 'dead' || existingJob.status === 'cancelled') {
             await tx.executeRaw(
-              `UPDATE minion_jobs SET idempotency_key = NULL WHERE id = $1`,
-              [existingJob.id]
+              `UPDATE minion_jobs SET idempotency_key = NULL, data = data || $2::text::jsonb WHERE id = $1`,
+              [existingJob.id, JSON.stringify({ __released_idempotency_key: opts.idempotency_key })]
             );
           } else {
             existingJob.coalesced = true;

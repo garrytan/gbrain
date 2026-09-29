@@ -1,7 +1,7 @@
 /**
  * Write-path audit B-9: a forgotten claim must stay forgotten when extraction
  * re-emits it from unchanged prose with different punctuation, casing or
- * spacing. Fingerprints fold those differences (migration v170); ledger rows
+ * spacing. Fingerprints fold those differences (migration v174); ledger rows
  * recorded with the older exact fingerprint keep matching. Real PGLite.
  */
 import { afterAll, beforeAll, expect, test } from 'bun:test';
@@ -71,7 +71,7 @@ test('discovery and the snapshot overlay strike a punctuation variant fence row'
     .toEqual([['Used to live in Tokyo.', true], ['Prefers email', false]]);
 });
 
-test('exact legacy ledger rows keep matching and v170 adds folded rows wherever the claim text survives', async () => {
+test('exact legacy ledger rows keep matching and v174 adds folded rows wherever the claim text survives', async () => {
   const sourceId = await source('normalized-legacy');
   const kept = await engine.insertFact({ fact: 'Legacy claim, here.', visibility: 'world', source: 'synthetic' }, { source_id: sourceId });
   await engine.executeRaw('UPDATE facts SET expired_at=now() WHERE id=$1', [kept.id]);

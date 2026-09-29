@@ -760,6 +760,8 @@ export interface ChunkInput {
    */
   chunk_source: 'compiled_truth' | 'timeline' | 'fenced_code' | 'image_asset';
   embedding?: Float32Array;
+  /** #5553: embedding-input provenance (see embedding-input-hash.ts); written only with `embedding`. */
+  embedding_input_hash?: string;
   model?: string;
   token_count?: number;
   /**
@@ -1301,9 +1303,9 @@ export interface SearchOpts extends PageReadPolicy {
   /**
    * #4352 — page-level `visibility: private` enforcement for untrusted
    * callers. When true, both engines' search paths (keyword, titles,
-   * keyword-chunks, vector) add
-   * `COALESCE(p.frontmatter->>'visibility','world') <> 'private'` to the
-   * visibility clause. Callers resolve trust + the config gate via
+   * keyword-chunks, vector) add `privatePagesFilterFragment` to the
+   * visibility clause (absent visibility is world, except on derived atoms
+   * and synthesized concepts, where it is private). Callers resolve trust + the config gate via
    * `resolveExcludePrivatePages` (search/private-visibility.ts):
    * ctx.remote !== false → true unless the operator opted out. Omitted /
    * false = pre-fix behavior (trusted local reads see everything).

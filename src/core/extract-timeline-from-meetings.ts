@@ -168,7 +168,7 @@ export async function extractTimelineFromMeetings(
     // timelines: the row carries no event_page_id (the (event_page_id, date)
     // unique index allows one row per event, not one per attendee), so the
     // remote private-event filter could never hide it. Fail closed: skip.
-    if (isPrivatePage(frontmatter)) { privateSkipped++; continue; }
+    if (isPrivatePage({ frontmatter })) { privateSkipped++; continue; }
     // put_page-written pages never get effective_date computed (column stays
     // NULL); derive it exactly as `gbrain backfill effective_date` would —
     // same filename recipe (import_filename, else the slug tail) — so a later

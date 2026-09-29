@@ -7,20 +7,7 @@ import { inspectLockHolder } from '../core/pglite-lock.ts';
 import { OperationError } from '../core/ops/contract.ts';
 import { reportPersistenceCliError } from './persistence-delegate.ts';
 import { writeStdoutFinal } from '../core/cli-force-exit.ts';
-import { formatManagedStaleExtraction, runManagedStaleExtraction, type ManagedLinkExtraction } from '../core/persistence/links-maintenance.ts';
-import { managedPersistenceEnabled } from '../core/persistence/ownership.ts';
-import type { BrainEngine } from '../core/engine.ts';
-
-const render = (result: ManagedLinkExtraction, dryRun: boolean, json: boolean) =>
-  json ? JSON.stringify({ action: dryRun ? 'extract_stale_dry_run' : 'extract_stale', ...result }) : formatManagedStaleExtraction(result, dryRun);
-
-/** Managed brains guard canonical rows; `extract --stale` derives links and watermarks on the coordinator-safe path. */
-export async function runManagedExtractStale(engine: BrainEngine, args: string[], sourceId: string | undefined): Promise<boolean> {
-  if (!await managedPersistenceEnabled(engine)) return false;
-  const dryRun = args.includes('--dry-run');
-  console.log(render(await runManagedStaleExtraction(engine, { sourceId, dryRun }), dryRun, args.includes('--json')));
-  return true;
-}
+import { formatManagedStaleExtraction, type ManagedLinkExtraction } from '../core/persistence/links-maintenance.ts';
 
 /** A live PGLite owner holds the database; `extract --stale` runs inside it instead of failing on the lock. */
 export async function maybeDelegateExtractStale(hostConfig: GBrainConfig | null, args: string[]): Promise<boolean> {
@@ -47,7 +34,7 @@ export async function maybeDelegateExtractStale(hostConfig: GBrainConfig | null,
     if (!delegated.handled) throw new OperationError('owner_unavailable', 'The registered owner stopped before extraction. Retry the same command.');
     const result = delegated.result as ManagedLinkExtraction;
     const dryRun = params.dry_run === true;
-    await writeStdoutFinal(render(result, dryRun, json) + '\n');
+    await writeStdoutFinal(formatManagedStaleExtraction(result, dryRun, json) + '\n');
     return true;
   } catch (error) {
     if (await reportPersistenceCliError(error, json)) return true;

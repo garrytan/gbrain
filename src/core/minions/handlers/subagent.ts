@@ -312,7 +312,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
         ? { ...inner, synth_mode_used: 'agentic' }
         : inner;
     return finalizeWriteAccounting(engine, ctx.id, stamped, {
-      requireWrites: dataForAccounting.require_writes === true,
+      requireWrites: dataForAccounting.require_writes === true, allowCleanZeroWrites: dataForAccounting.allow_clean_zero_writes === true,
       // OV-4: a successful oneshot job's verdict is scoped to its own
       // invocation family; a fallback wrote through the loop (no oneshot
       // rows exist — validation precedes all writes), so job-wide is exact.

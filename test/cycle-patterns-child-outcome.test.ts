@@ -94,11 +94,13 @@ describe('runPhasePatterns child-outcome status (#2782)', () => {
         runPhasePatterns(engine, { brainDir, dryRun: false }),
       );
 
-      const jobs = await engine.executeRaw<{ timeout_ms: string | number | null }>(
-        `SELECT timeout_ms FROM minion_jobs WHERE name = 'subagent' ORDER BY id DESC LIMIT 1`,
+      const jobs = await engine.executeRaw<{ timeout_ms: string | number | null; data: Record<string, unknown> }>(
+        `SELECT timeout_ms, data FROM minion_jobs WHERE name = 'subagent' ORDER BY id DESC LIMIT 1`,
       );
       expect(jobs).toHaveLength(1);
       expect(Number(jobs[0]!.timeout_ms)).toBe(600000);
+      expect(jobs[0]!.data.require_writes).toBe(true);
+      expect(jobs[0]!.data.allow_clean_zero_writes).toBe(true);
     } finally {
       rmSync(brainDir, { recursive: true, force: true });
     }

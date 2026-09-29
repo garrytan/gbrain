@@ -349,13 +349,13 @@ Queued legacy `source_scan` effects upgrade through the same discovery, keyed
 on the request's own forgotten fact; only when that fact row is gone does the
 upgrade fall back to the source's whole withdrawal ledger (at most 256 claims).
 
-Fingerprints fold case, whitespace and punctuation (migration v170), so a
+Fingerprints fold case, whitespace and punctuation (migration v174), so a
 punctuation or casing variant re-extracted from unchanged prose stays
 withdrawn. Symbols that carry meaning in names are kept: `+`, `#` and
 in-word dots, so "C++", "C#", ".NET" and "Node.js" stay distinct from
 "C", "NET" and "Nodejs"; a dot folds only when a space, another dot or the
-end of the claim follows it. Rows recorded before v170 keep their exact fingerprint and keep
-matching; v170 adds a folded row wherever a fact row still holds the claim text
+end of the claim follows it. Rows recorded before v174 keep their exact fingerprint and keep
+matching; v174 adds a folded row wherever a fact row still holds the claim text
 and expires active facts that became matching. A paraphrase with different
 words is a different claim.
 
@@ -640,8 +640,8 @@ Default admission limits are enforced atomically:
 | --- | ---: | ---: |
 | Outstanding requests | 100 | 1,000 |
 | Queued intent bytes | 32 MiB | 256 MiB |
-| Lifetime request IDs | 100,000 | 1,000,000 |
-| Terminal receipt reservation | 128 MiB | 1 GiB |
+| Lifetime request IDs | 250,000 | 1,000,000 |
+| Terminal receipt reservation | 1.5 GiB | 8 GiB |
 | Recovery bytes | — | 1 GiB, also 256 MiB per worktree |
 
 Completion space is reserved at admission. Beforeimage/recovery bytes are
@@ -649,4 +649,30 @@ reserved before filesystem publication. Reaching a limit refuses additional
 work; it does not discard an accepted request to make room. Terminal diagnostic
 compaction has a default eligibility threshold of 30 days and preserves replay IDs, digests, terminal
 outcomes, and frozen memory-verb result fields. Pending/recovering requests are
-not evicted. Lifetime IDs and replay protection are not silently reset.
+not evicted, and receipts with unfinished effects stay retained without
+blocking compaction of later receipts. Lifetime IDs and replay protection are
+not silently reset.
+
+Each admission reserves at least 16 KiB of receipt bytes until compaction; a
+compacted receipt keeps about 4 KiB. The cumulative defaults cover one
+principal admitting about 600 writes a day for at least a year. Every limit and
+the retention window are brain-wide database settings:
+
+```bash
+gbrain config set persistence.limits.principal_lifetime_ids 500000
+gbrain config set persistence.limits.principal_terminal_bytes 3221225472
+gbrain config set persistence.receipt_retention_days 7
+```
+
+**Say to your agent:** *"Doctor says my brain is near its write capacity. Raise the limit it names."*
+
+Keys are `persistence.limits.<limit>` for `principal_outstanding`,
+`brain_outstanding`, `principal_intent_bytes`, `brain_intent_bytes`,
+`principal_lifetime_ids`, `brain_lifetime_ids`, `principal_terminal_bytes`,
+`brain_terminal_bytes`, `brain_recovery_bytes` and `worktree_recovery_bytes`,
+each a nonnegative integer. `gbrain doctor` warns (`persistence_capacity`) once
+a principal or the brain uses 80% of its lifetime IDs or receipt bytes and
+prints the `gbrain config set` command with a value that covers about one more
+year at the current admission rate; a `queue_capacity` refusal carries the same
+command. Raising a cap is a mitigation: lifetime IDs remain permanent replay
+protection.

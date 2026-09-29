@@ -132,6 +132,35 @@ estimate is `delta + stale backlog`, labeled as such.
   toward their ceiling; a run that hits its cap needs a higher cap, not a bug
   report.
 
+## Dream paid-loop breaker (`dream.breaker.max_dead_submissions`)
+
+Dream synthesize and patterns pay a model for each transcript or reflection set
+they submit. When the same input keeps failing, every cycle used to pay for it
+again. The breaker stops that: once one dream key has died 3 times within 24
+hours, dream refuses to submit it again until you reset it. The refusal shows up
+in the cycle summary and the autopilot log with the exact reset command, and
+`gbrain doctor` reports it as `dream_paid_loop`.
+
+**Say to your agent:** *"Is dream re-billing the same transcripts?"* or
+*"Reset the dream key that keeps failing once you've fixed it."*
+
+```bash
+gbrain dream reset-key --list                    # tripped keys, counts, reset commands
+gbrain dream reset-key 'dream:synth-v2:...'      # re-enable one key (persists across restarts)
+gbrain config set dream.breaker.max_dead_submissions 5   # raise the limit; 0 disables
+```
+
+- A submission is one run of a key: the chunks of one transcript in one run count
+  once. Only jobs that ended dead count; completed jobs, including a legitimate
+  answer that wrote nothing, never do.
+- The check happens before synthesis submission. Transcript triage for that run may
+  already have happened, so the promise is "no synthesis submission", not "no
+  model call at all".
+- Not covered: a transcript that keeps growing gets a new content-hashed key each
+  cycle, and patterns runs outside maintenance carry no key.
+- If the count query fails, the breaker is skipped for that run with a warning, the
+  same posture as the synthesize daily cap.
+
 ## Operator price overrides (`pricing.overrides`)
 
 Cost caps are fail-closed: when `--max-cost` (or a phase's default cap) is set

@@ -10,8 +10,10 @@
  *   - `tailscale status --json` → `BackendState` ('Running' | 'NeedsLogin' |
  *     'NeedsMachineAuth' | 'NoState' | 'Stopped' | 'Starting'), `Self.DNSName`
  *     (trailing dot), `Self.TailscaleIPs`, `Self.CapMap` (object keyed by
- *     capability URL) or `Self.Capabilities` (string array) — the Funnel node
- *     attribute shows up as `https://tailscale.com/cap/funnel`,
+ *     capability) or `Self.Capabilities` (string array, deprecated and `null`
+ *     on current CLIs) — the Funnel node attribute shows up as `funnel` and
+ *     `https://tailscale.com/cap/funnel-ports?ports=…` on current control
+ *     planes, `https://tailscale.com/cap/funnel` on older ones,
  *     `CurrentTailnet.MagicDNSEnabled`, `CertDomains` (non-empty when HTTPS
  *     certificates are enabled), `Version`. The `--json` form exits 0 in EVERY
  *     BackendState (only the human-readable form exits 1 when logged out), so
@@ -262,8 +264,19 @@ export function tailscaleDaemonStartHint(platform: string): string {
 
 export type TailscaleBackendState = 'Running' | 'NeedsLogin' | 'NeedsMachineAuth' | 'NoState' | 'Stopped' | 'Starting' | string;
 
-/** Node capability that Tailscale Funnel requires (the `funnel` node attribute in the tailnet policy). */
+/** Legacy URL form of the Funnel node capability (older control planes). */
 export const TAILSCALE_FUNNEL_CAPABILITY = 'https://tailscale.com/cap/funnel';
+/** Current form: `tailcfg.NodeAttrFunnel` (the `funnel` node attribute in the tailnet policy). */
+export const TAILSCALE_FUNNEL_NODE_ATTR = 'funnel';
+/** Current form: `tailcfg.CapabilityFunnelPorts`, emitted with a `?ports=` query. */
+export const TAILSCALE_FUNNEL_PORTS_CAPABILITY = 'https://tailscale.com/cap/funnel-ports';
+
+/** #5599: any form of the Funnel capability a `CapMap` key or `Capabilities` entry can carry. */
+function isFunnelCapability(key: unknown): boolean {
+  return key === TAILSCALE_FUNNEL_CAPABILITY || key === TAILSCALE_FUNNEL_NODE_ATTR
+    || key === TAILSCALE_FUNNEL_PORTS_CAPABILITY
+    || (typeof key === 'string' && key.startsWith(`${TAILSCALE_FUNNEL_PORTS_CAPABILITY}?`));
+}
 
 export interface TailscaleStatus {
   backendState: TailscaleBackendState;
@@ -304,10 +317,10 @@ export function parseTailscaleStatus(stdout: string): TailscaleStatus | null {
   const rawDns = typeof self.DNSName === 'string' ? normalizeDnsName(self.DNSName) : '';
   let funnelCapable: boolean | null = null;
   if (self.CapMap && typeof self.CapMap === 'object' && !Array.isArray(self.CapMap)) {
-    funnelCapable = Object.keys(self.CapMap as Record<string, unknown>).includes(TAILSCALE_FUNNEL_CAPABILITY);
+    funnelCapable = Object.keys(self.CapMap as Record<string, unknown>).some(isFunnelCapability);
   }
   if (Array.isArray(self.Capabilities)) {
-    funnelCapable = funnelCapable === true || self.Capabilities.includes(TAILSCALE_FUNNEL_CAPABILITY);
+    funnelCapable = funnelCapable === true || self.Capabilities.some(isFunnelCapability);
   }
   return {
     backendState: typeof doc.BackendState === 'string' ? doc.BackendState : 'NoState',

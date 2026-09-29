@@ -2,7 +2,7 @@ import { SOURCE_INGESTION_RECEIPTS_SCHEMA_SQL } from './company-brain/receipt-sc
 import { MANAGED_WRITER_GUARD_SQL } from './persistence/writer-guard-schema.ts';
 import { PERSISTENCE_TOPOLOGY_SCHEMA_SQL } from './persistence/topology-schema.ts';
 import { PERSISTENCE_SCHEMA_STATEMENTS, PERSISTENCE_REQUEST_RECOVERY_INDEX_SQL, PERSISTENCE_DATABASE_PENDING_INDEX_SQL } from './persistence/schema.ts';
-import { PERSISTENCE_EFFECT_SCHEMA_SQL } from './persistence/effect-schema.ts';
+import { PERSISTENCE_EFFECT_PARKED_INDEX_SQL, PERSISTENCE_EFFECT_SCHEMA_SQL } from './persistence/effect-schema.ts';
 import { PAGE_PROJECTION_SCHEMA_SQL, PAGE_PROJECTION_ACTIVATION_SQL } from './page-state/projection-schema.ts';
 import { LEASE_TOKEN_SCHEMA_SQL } from './lease-schema.ts';
 import { PAGE_STATE_SCHEMA_SQL, PAGE_VERSION_DELETION_SCHEMA_SQL } from './page-state/schema.ts';
@@ -6709,10 +6709,60 @@ CREATE TRIGGER minion_queue_protocol BEFORE INSERT OR UPDATE ON minion_jobs
     sql: FACT_WITHDRAWAL_SUBJECT_SQL,
   },
   {
+    version: 170, name: 'index_parked_persistence_effects', idempotent: true, transaction: false, sql: '',
+    handler: async engine => {
+      if (engine.kind === 'postgres') await dropInvalidConcurrentIndex(engine, 170, 'persistence_effects_parked');
+      await engine.runMigration(170, engine.kind === 'postgres'
+        ? PERSISTENCE_EFFECT_PARKED_INDEX_SQL.replace('CREATE INDEX', 'CREATE INDEX CONCURRENTLY')
+        : PERSISTENCE_EFFECT_PARKED_INDEX_SQL);
+    },
+  },
+  {
+    version: 171,
+    name: 'content_chunks_embedding_input_hash',
+    // #5553: per-chunk embedding-input provenance, written in the same
+    // statement as the vector (src/core/embedding-input-hash.ts). A projection
+    // rebuild keeps a vector only when the stored hash equals the recomputed
+    // one. Same shape as v133 and v166's fact provenance: nullable, no
+    // backfill (a hash cannot be proven for an existing vector), no index
+    // (read only per page during a rebuild; bootstrap-coverage: column-only).
+    // NULL on a contextual page is nulled once and stamped by its re-embed.
+    // Keep in sync with src/schema.sql (regenerate schema-embedded.ts via
+    // build:schema) and src/core/pglite-schema.ts.
+    idempotent: true,
+    sql: `
+      ALTER TABLE content_chunks ADD COLUMN IF NOT EXISTS embedding_input_hash TEXT;
+    `,
+  },
+  {
+    version: 172, name: 'pages_safe_chunk_pending_index', idempotent: true, transaction: false, sql: '',
+    // #5050/#5247: the safe_index_pending probe (ops/search.ts) runs on every
+    // remote search and now counts pages of every kind below the safe-chunk
+    // fence, so the markdown-only partial pages_chunker_version_idx no longer
+    // serves it. This partial index holds only unsealed pages (empty on a
+    // sealed brain). The literal 4 is SAFE_FENCE_CHUNKER_VERSION when this
+    // migration shipped; a later fence bump needs its own index.
+    handler: async engine => {
+      if (engine.kind === 'postgres') await dropInvalidConcurrentIndex(engine, 172, 'pages_safe_chunk_pending_idx');
+      await engine.runMigration(172, `CREATE INDEX ${engine.kind === 'postgres' ? 'CONCURRENTLY ' : ''}IF NOT EXISTS pages_safe_chunk_pending_idx
+        ON pages (source_id) WHERE chunker_version < 4`);
+    },
+  },
+  {
+    // Paid-loop breaker (dream-breaker.ts) and its doctor check count dead
+    // subagent submissions by finish time over the last 24 h.
+    version: 173, name: 'minion_jobs_dead_subagent_finished_index', idempotent: true, transaction: false, sql: '',
+    handler: async engine => {
+      if (engine.kind === 'postgres') await dropInvalidConcurrentIndex(engine, 173, 'idx_minion_jobs_dead_subagent_finished');
+      await engine.runMigration(173, `CREATE INDEX ${engine.kind === 'postgres' ? 'CONCURRENTLY ' : ''}IF NOT EXISTS idx_minion_jobs_dead_subagent_finished
+        ON minion_jobs (finished_at) WHERE name = 'subagent' AND status = 'dead'`);
+    },
+  },
+  {
     // Exact-text fingerprints let a punctuation or casing variant of a
     // forgotten claim come back on re-extraction (write-path audit B-9).
     // Fingerprints now fold punctuation; legacy exact rows keep matching.
-    version: 170,
+    version: 174,
     name: 'fact_withdrawal_normalized_fingerprint',
     idempotent: true,
     sql: FACT_WITHDRAWAL_NORMALIZED_SQL,
@@ -6722,7 +6772,7 @@ CREATE TRIGGER minion_queue_protocol BEFORE INSERT OR UPDATE ON minion_jobs
     // removing a tag from frontmatter never removed it. The importer stamps
     // 'frontmatter' and deletes only those rows; explicit adds stamp 'added'
     // and legacy rows stay NULL — neither is ever deleted by an import.
-    version: 171,
+    version: 175,
     name: 'tags_tag_source',
     idempotent: true,
     sql: `ALTER TABLE tags ADD COLUMN IF NOT EXISTS tag_source TEXT;`,

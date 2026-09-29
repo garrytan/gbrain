@@ -296,6 +296,8 @@ export interface SyncResult {
   uncommitted?: { added: number; modified: number; deleted: number };
   /** Post-sync link/timeline extraction failure (A15); the affected pages stay stale. */
   extract_error?: string;
+  /** #5050: full sync re-sealed unchanged pages at the safe-chunk fence (see RunImportResult.resealed). */
+  resealed?: import('./import.ts').RunImportResult['resealed'];
   /**
    * v0.41.13.0 partial-sync fields (only set when status === 'partial').
    *
@@ -359,6 +361,8 @@ export interface SyncOpts {
    * Threaded through performSync AND syncOneSource so `sync --all` honors it.
    */
   noSchemaPack?: boolean;
+  /** Processing options this caller set; an unfinished managed cursor supplies the rest (unset = all explicit). */
+  explicitProcessing?: Array<'noEmbed' | 'noExtract' | 'noSchemaPack'>;
   /**
    * v0.18.0 Step 5 — sync a specific named source. When set, sync reads
    * local_path + last_commit from the sources table (not the global
@@ -4482,6 +4486,7 @@ async function performFullSync(
     // topologies (codex re-review; same rationale as the incremental path).
     ...(result.malformedSkipped ? { malformedSkipped: result.malformedSkipped } : {}),
     ...(result.type_warnings ? { type_warnings: result.type_warnings } : {}),
+    ...(result.resealed ? { resealed: result.resealed } : {}),
   };
 }
 
@@ -4664,6 +4669,8 @@ See also:
   const skipFailed = args.includes('--skip-failed');
   const retryFailed = args.includes('--retry-failed');
   const noSchemaPack = args.includes('--no-schema-pack'); // v0.41.37.0 #1569
+  const explicitProcessing = ([['--no-embed', 'noEmbed'], ['--no-extract', 'noExtract'], ['--no-schema-pack', 'noSchemaPack']] as const)
+    .filter(([flag]) => args.includes(flag)).map(([, key]) => key);
   const includeGitignored = args.includes('--include-gitignored');
   // Untracked-gap fix: --working-tree imports uncommitted working-tree state.
   // The config fallback (sync.include_working_tree) resolves inside
@@ -5131,7 +5138,7 @@ See also:
         dryRun, full, noPull,
         noEmbed: effectiveNoEmbed,
         noExtract,
-        skipFailed, retryFailed, noSchemaPack,
+        skipFailed, retryFailed, noSchemaPack, explicitProcessing,
         includeGitignored,
         workingTree,
         sourceId: src.id,
@@ -5366,7 +5373,7 @@ See also:
   const singleSourceInterrupt = new AbortController();
   const onSingleSourceSigint = () => { try { singleSourceInterrupt.abort(new Error('SIGINT')); } catch { /* */ } };
   const opts: SyncOpts = {
-    repoPath, dryRun, full, noPull, noEmbed, noExtract, skipFailed, retryFailed, noSchemaPack, includeGitignored, workingTree, sourceId,
+    repoPath, dryRun, full, noPull, noEmbed, noExtract, skipFailed, retryFailed, noSchemaPack, explicitProcessing, includeGitignored, workingTree, sourceId,
     strategy: strategyArg, concurrency,
     srcSubpath,
     exclude: excludePatterns.length > 0 ? excludePatterns : undefined,

@@ -683,6 +683,26 @@ snapshot. The slow runner and direct BrainBench test invocation prepare the
 default profile automatically. `GBRAIN_NO_SNAPSHOT=1` clears both paths and
 survives test preloads.
 
+### PGLite checkpoint harness (outside CI)
+
+`scripts/pglite-checkpoint-harness/supervisor.ts` reproduces the large-store
+PGLite freeze. It spawns `worker.ts`, which imports 40 KB pages through
+`PGLiteEngine.transaction()` into one long-lived store. It then watches that
+process from outside: CPU from `/proc`, committed pages from the worker's
+progress file, and WAL and checkpoint activity from the data directory. A
+worker that burns CPU with no committed page and no checkpoint progress for
+`--stall-sec` is reported as wedged. A completed run also asserts that WAL
+since the last redo point never exceeded the guard threshold plus the largest
+single transaction. `--shared-buffers` and `--max-wal-size` scale the store
+down with `ALTER SYSTEM`, so a small machine reaches the same trigger in
+minutes:
+
+```bash
+bun scripts/pglite-checkpoint-harness/supervisor.ts --dir /tmp/h --fresh --pages 3000 --stall-sec 600 --timeout-sec 1800
+bun scripts/pglite-checkpoint-harness/supervisor.ts --dir /tmp/h --fresh --pages 1500 \
+  --shared-buffers 16MB --max-wal-size 160MB --stall-sec 120 --expect-wedge   # baseline check
+```
+
 ### Keeping CI partitions balanced
 
 Required CI runs ten weighted unit workers, four serial workers with bounded

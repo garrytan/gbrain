@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync, statSync } from 'node:fs';
+import { existsSync, lstatSync, realpathSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import type { BrainEngine } from '../engine.ts';
 import type { SqlEngine } from './model.ts';
 import { persistenceHome } from './identity.ts';
 import { canonicalFilesystemPath } from './root-registry.ts';
-import { adoptTransferredRootStamp, assertNoPhysicalRootOverlap, assertPhysicalRoot, assertPhysicalRootStamp, PHYSICAL_ROOT_MARKER, physicalRootError,
-  readPhysicalRootReservation, reservePhysicalRootRecord, writePhysicalRootStamp, type PhysicalRootReservation } from './physical-root-record.ts';
+import { adoptTransferredRootStamp, assertNoPhysicalRootOverlap, assertPhysicalRoot, assertPhysicalRootStamp, PHYSICAL_ROOT_MARKER, physicalRootDeviceChange, physicalRootError,
+  readPhysicalRootReservation, readPhysicalRootStamp, reservePhysicalRootRecord, restampPhysicalRootDevice, writePhysicalRootStamp, type PhysicalRootReservation } from './physical-root-record.ts';
 
 export { assertPhysicalRoot, isPhysicalRootMetadata, readPhysicalRootReservation } from './physical-root-record.ts';
 export interface PhysicalRootClaim { hostId: string; worktreeId?: string; coordinationPath?: string; }
@@ -75,4 +76,62 @@ export async function preparePhysicalRootTransfer(tx: SqlEngine, path: string,
   if (reservation.brainId !== brainId || reservation.worktreeId !== opts.worktreeId || reservation.coordinationPath !== opts.coordinationPath) throw physicalRootError();
   assertNoPhysicalRootOverlap(root);
   adoptTransferredRootStamp(root, reservation);
+}
+
+type DeviceChange = { from: string; to: string };
+function restampRecovery(recovery: Record<string, any> | undefined, change: DeviceChange): boolean {
+  let changed = false;
+  for (const [record, field] of [[recovery?.before?.reservation, 'initialDevice'], [recovery?.before?.stamp, 'device'],
+    [recovery?.reservation, 'initialDevice'], [recovery?.stamp, 'device']] as const) {
+    if (record?.[field] === change.from) { record[field] = change.to; changed = true; }
+  }
+  return changed;
+}
+/**
+ * #5604: re-stamp every persisted device copy (ownership stamp, reservation,
+ * recorded self-transfer and retained topology staging identity) when only the
+ * filesystem device id changed. The caller holds the outside-root native lock;
+ * database ownership is verified in the same transaction that rewrites the
+ * database copies, and the files are rewritten after it commits.
+ */
+export async function restampPhysicalRoot(engine: BrainEngine, binding: { worktree_id: string; local_path: string | null; coordination_path: string | null },
+  hostId: string): Promise<DeviceChange | null> {
+  const root = binding.local_path;
+  if (!root || !binding.coordination_path || realpathSync(root) !== root || lstatSync(root).isSymbolicLink()) return null;
+  const reservation = readPhysicalRootReservation(root), stamp = readPhysicalRootStamp(root);
+  if (!reservation || !stamp || reservation.worktreeId !== binding.worktree_id || reservation.coordinationPath !== binding.coordination_path) return null;
+  const change = physicalRootDeviceChange(stamp, reservation, statSync(root, { bigint: true }));
+  if (!change) return null;
+  const applied = await engine.transaction(async tx => {
+    await tx.executeRaw("SELECT set_config('synchronous_commit','on',true)");
+    const [owner] = await tx.executeRaw<{ owner_host_id: string | null; manifest: Record<string, any> | null }>(
+      'SELECT owner_host_id,manifest FROM persistence_worktrees WHERE id=$1::uuid FOR UPDATE', [binding.worktree_id]);
+    const [brain] = await tx.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1');
+    const [bound] = await tx.executeRaw<{ local_path: string; coordination_path: string }>(
+      'SELECT local_path,coordination_path FROM persistence_host_bindings WHERE worktree_id=$1::uuid AND host_id=$2::uuid', [binding.worktree_id, hostId]);
+    if (!owner || owner.owner_host_id !== hostId || brain?.brain_id !== stamp.brainId
+      || bound?.local_path !== root || bound.coordination_path !== binding.coordination_path) return false;
+    const manifest = owner.manifest;
+    if (manifest && restampRecovery(manifest.self_transfer, change)) {
+      await tx.executeRaw('UPDATE persistence_worktrees SET manifest=$2::text::jsonb WHERE id=$1::uuid', [binding.worktree_id, JSON.stringify(manifest)]);
+    }
+    const topology = await tx.executeRaw<{ id: string; recovery: Record<string, any> | null }>(
+      "SELECT id,recovery FROM persistence_topology_changes WHERE state='recovering' AND $1::uuid=ANY(worktree_ids) FOR UPDATE", [binding.worktree_id]);
+    for (const row of topology) {
+      const identity = row.recovery?.stageIdentity, stage = row.recovery?.stage;
+      if (identity?.device !== change.from || typeof stage !== 'string' || !existsSync(stage)) continue;
+      const info = lstatSync(stage, { bigint: true });
+      if (!info.isDirectory() || info.ino.toString() !== identity.inode || info.birthtimeNs.toString() !== identity.birthNs || info.dev.toString() !== change.to) continue;
+      identity.device = change.to;
+      await tx.executeRaw('UPDATE persistence_topology_changes SET recovery=$2::text::jsonb,updated_at=now() WHERE id=$1::uuid', [row.id, JSON.stringify(row.recovery)]);
+    }
+    return true;
+  });
+  if (!applied) return null;
+  // Database copies commit first; each update is conditional on the old device, so
+  // a crash before the files are rewritten leaves a device-only change that the next
+  // locked acquisition re-stamps again.
+  restampPhysicalRootDevice(root, reservation, stamp, change);
+  process.stderr.write(`[persistence] physical root ${root} filesystem device id changed ${change.from} -> ${change.to}; inode, birth time and owner token matched, so every persisted copy was re-stamped.\n`);
+  return change;
 }

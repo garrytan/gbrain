@@ -25,6 +25,8 @@ import { VERSION as GBRAIN_BINARY_VERSION } from '../version.ts';
 import { schemaVersionHealth } from '../core/schema-version-health.ts';
 import { zeroTotalContradictionsCheck } from '../core/eval-contradictions/run-health.ts';
 import { checkProjectionReadiness } from './doctor/checks/projection-readiness.ts';
+import { checkPersistenceCapacity } from './doctor/checks/persistence-capacity.ts';
+import { checkParkedEffects } from './doctor/checks/parked-effects.ts';
 import { checkPostgresCancellationDriver } from './doctor/checks/postgres-cancellation.ts';
 export { checkPostgresCancellationDriver } from './doctor/checks/postgres-cancellation.ts';
 export { checkProjectionReadiness } from './doctor/checks/projection-readiness.ts';
@@ -870,6 +872,16 @@ export async function buildChecks(
       checks.push(await connectorsHealthCheck(engine));
     } catch {
       // best-effort; a connectors check failure must never break doctor
+    }
+  }
+
+  // 2g. Dream paid-loop breaker: keys whose submissions keep dying.
+  if (engine) {
+    try {
+      const { dreamPaidLoopCheck } = await import('./doctor/checks/dream-breaker.ts');
+      checks.push(await dreamPaidLoopCheck(engine));
+    } catch (e) {
+      checks.push({ name: 'dream_paid_loop', status: 'warn', message: `Could not count dead dream submissions: ${e instanceof Error ? e.message : String(e)}` });
     }
   }
 
@@ -1886,6 +1898,10 @@ export async function buildChecks(
   checks.push(await pagesUpsertArbiterCheck(engine));
   checks.push(await checkProjectionReadiness(engine));
 
+  // 4a-bis. Managed write capacity (#5470) and parked postcommit effects (#5612).
+  progress.heartbeat('persistence_capacity');
+  checks.push(await checkPersistenceCapacity(engine), await checkParkedEffects(engine));
+
   // 4a-ter. #4613: links_link_source_check shape — a ledger-current brain
   // whose CHECK reverted to the pre-v114 allowlist rejects every kebab
   // provenance write; the version counter can't see it.
@@ -2665,6 +2681,15 @@ export async function buildChecks(
   progress.heartbeat('slug_collisions');
   const { slugCollisionsCheck } = await import('./doctor/checks/slug-collisions.ts');
   checks.push(await slugCollisionsCheck(engine));
+
+  // 9d. Wave 2 residual-state signals (#5567, #5525): database-only timeline
+  // rows and derived pages without explicit visibility. Bounded, never throw.
+  progress.heartbeat('timeline_history');
+  {
+    const { timelineHistoryCheck } = await import('./doctor/checks/timeline-history.ts');
+    const { derivedVisibilityCheck } = await import('./doctor/checks/derived-visibility.ts');
+    checks.push(await timelineHistoryCheck(engine, orphanRatioSourceId), await derivedVisibilityCheck(engine, orphanRatioSourceId));
+  }
 
   // 10. Integrity sample scan (v0.13 knowledge runtime).
   // Read-only — no network, no writes, no resolver calls. Samples the first

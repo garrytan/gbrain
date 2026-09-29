@@ -8,6 +8,7 @@ import type { SearchResult } from '../types.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
 import { isIdentityEntity } from '../entities/resolve.ts';
 import { normalizeAlias } from './alias-normalize.ts';
+import { isPrivatePage } from './private-visibility.ts';
 
 // T3 — free-text alias hop tuning.
 const ALIAS_HOP_PRESENT_BOOST = 1.10; // bounded boost when canonical already in results
@@ -183,10 +184,7 @@ async function fetchAliasCanonical(
   // #4352 — the alias inject path bypasses the engines' SQL visibility
   // clause (getPage, not search); re-apply the private predicate here so
   // an untrusted caller can't hop into a `visibility: private` page.
-  if (
-    opts.excludePrivate &&
-    ((page.frontmatter as Record<string, unknown> | null | undefined)?.visibility === 'private')
-  ) return null;
+  if (opts.excludePrivate && isPrivatePage(page)) return null;
   return page;
 }
 

@@ -62,7 +62,8 @@ import { parseLlmJson } from '../llm-json.ts';
 import type { BrainEngine, DreamVerdict, TriageSegment } from '../engine.ts';
 import type { PhaseResult, PhaseError } from '../cycle.ts';
 import { DEFAULT_PRIVATE_QUEUE_LEASE_MS, MinionQueue } from '../minions/queue.ts';
-import { clampSubagentBudgets, CYCLE_DEADLINE_RESERVE_MS, MIN_PATTERNS_SUBAGENT_BUDGET_MS } from './patterns.ts';
+import { clampSubagentBudgets, CYCLE_DEADLINE_RESERVE_MS, MIN_PATTERNS_SUBAGENT_BUDGET_MS, loadPatternsOutputSlugPrefix } from './patterns.ts';
+import { claudeCliSelfSessionIds } from '../ai/providers/claude-cli-scratch.ts';
 import { isQueueQuotaExceededError } from '../minions/admission.ts';
 import { waitForCompletionRenewing, TimeoutError } from '../minions/wait-for-completion.ts';
 import type { MinionJobInput, SubagentHandlerData } from '../minions/types.ts';
@@ -88,6 +89,7 @@ import { safeSplitIndex } from '../text-safe.ts';
 import { PAGE_SLUG_SEG } from '../cjk.ts';
 import { withChatPhase, estimateChatCostUsd } from '../ai/chat-usage.ts';
 import { verifyAndRepairDreamPages, normForGrounding, readVerifyEpoch, loadChildWriteEpochs, isDreamOwnedPage, type QuoteVerifyStats, type TranscriptForVerify } from './synthesize-verify.ts';
+import { dreamBreakerRefusal, loadDreamBreaker } from './dream-breaker.ts';
 import { passesTriageGate, rescueConfigOf, DEFAULT_RESCUE_FLOOR, DEFAULT_RESCUE_MIN_SEGMENTS, DEFAULT_RESCUE_CONTENT_TYPES, DEFAULT_RESCUE_CONFIG, type RescueConfig, type RescueVerdictLike } from './triage-rescue.ts';
 
 // Slug grammar from validatePageSlug — shared via PAGE_SLUG_SEG (#738).
@@ -490,6 +492,18 @@ async function runPhaseSynthesizeInner(
           from: opts.from,
           to: opts.to,
           bypassGuard: opts.bypassDreamGuard,
+          // #5471: outputs a failed postprocess left unmarked must not come
+          // back as transcripts; the explicit bypass re-enables them.
+          excludeDirs: opts.bypassDreamGuard
+            ? []
+            : [
+                config.reflectionsPrefix,
+                config.originalsPrefix,
+                await loadPatternsOutputSlugPrefix(engine, config.outputRoot),
+                dirname(buildDreamSummarySlug(config.outputRoot, 'x')),
+              ].map(prefix => join(opts.brainDir, prefix)),
+          // #5413: corpus files captured from gbrain's own claude-cli calls.
+          selfCaptureSessionIds: claudeCliSelfSessionIds(),
         });
 
     if (transcripts.length === 0) {
@@ -687,6 +701,7 @@ async function runPhaseSynthesizeInner(
     const synthMeter = new BudgetMeter({ budgetUsd: config.budgetUsd, allowUnpriced: config.allowUnpriced, phase: 'synthesize' });
     const childMaxOutputTokens = resolveMaxOutputTokens(undefined, await engine.getConfig('agent.max_output_tokens').catch(() => null), config.model);
 
+    const breaker = await loadDreamBreaker(engine);
     // Admission-quota latch: once a submit is rejected, every later transcript
     // this run would be rejected too — record one skip per remaining file
     // without hammering the queue.
@@ -765,6 +780,9 @@ async function runPhaseSynthesizeInner(
         continue;
       }
 
+      const refusal = breaker && dreamBreakerRefusal(breaker,
+        `dream:synth-v2:${encodeURIComponent(synthesisIdentity)}:filename:${encodeURIComponent(basename(t.filePath))}:${hash16}`);
+      if (refusal) { process.stderr.write(`[dream] ${t.basename}: ${refusal}\n`); skipReports.push({ filePath: t.filePath, reason: refusal }); continue; }
       const chunks = splitTranscriptByBudget(t.content, t.contentHash, maxCharsPerChunk);
 
       // D5 cap hit: log + skip; do NOT write to dream_verdicts. Closes the
@@ -1740,14 +1758,15 @@ export async function loadSynthConfig(engine: BrainEngine): Promise<SynthConfig>
  * Count dream synth-v2 subagent submissions for a source in the last 24h —
  * the opt-in daily-cap denominator. Filters on `data->>'source_id'` (NOT a
  * LIKE on the key's encoded source segment — avoids LIKE-metachar issues);
- * cancelled rows are excluded so retriage-cancelled jobs don't eat budget.
+ * cancelled rows are excluded so retriage-cancelled jobs don't eat budget;
+ * dead rows count through the key the queue recorded when it released them.
  */
 async function countRecentSynthSubmissions(engine: BrainEngine, sourceId: string): Promise<number> {
   const rows = await engine.executeRaw<{ n: number }>(
     `SELECT COUNT(*)::int AS n
        FROM minion_jobs
       WHERE name = 'subagent'
-        AND idempotency_key LIKE 'dream:synth-v2:%'
+        AND (idempotency_key LIKE 'dream:synth-v2:%' OR idempotency_key IS NULL AND data->>'__released_idempotency_key' LIKE 'dream:synth-v2:%')
         AND COALESCE(NULLIF(data->>'source_id', ''), 'default') = $1
         AND status <> 'cancelled'
         AND created_at > NOW() - INTERVAL '24 hours'`,

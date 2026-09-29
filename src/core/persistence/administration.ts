@@ -98,7 +98,7 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
     keys(params, ['source_id', 'request_id', 'dry_run']);
     if (params.dry_run !== undefined && typeof params.dry_run !== 'boolean') throw invalid('dry_run must be a boolean.');
     if (!isWriteRequestId(params.request_id)) throw invalid('A valid original write request UUID is required.');
-    return (await import('./effect-retry.ts')).retryEmbeddingEffect(engine, source(params.source_id), params.request_id, params.dry_run === true, config, embeddingRetryPolicy);
+    return (await import('./effect-retry.ts')).retryRequestEffects(engine, source(params.source_id), params.request_id, params.dry_run === true, config, embeddingRetryPolicy);
   }
   if (operation === 'source_add' || operation === 'source_lifecycle') {
     const { managedPersistenceEnabled } = await import('./ownership.ts');

@@ -25,7 +25,7 @@ const NORMALIZE_CLAIM_SQL = `btrim(regexp_replace(regexp_replace(regexp_replace(
  * fact cannot say whom it was about, and rows recorded before subject scoping
  * keep their source-wide reach, so an upgrade never resurrects a forgotten
  * claim. A withdrawal matches a fact when `subject = '*' OR subject =
- * entity_slug`. Fingerprints fold case, whitespace and punctuation (v170);
+ * entity_slug`. Fingerprints fold case, whitespace and punctuation (v174);
  * ledger rows written earlier carry the exact v1 fingerprint and keep
  * matching through gbrain_fact_fingerprint_v1.
  */
@@ -90,7 +90,7 @@ ALTER TABLE fact_withdrawals ADD CONSTRAINT fact_withdrawals_pkey PRIMARY KEY (s
 ` + FACT_WITHDRAWAL_SCHEMA_SQL;
 
 /**
- * Punctuation-folded fingerprints (migration v170). Existing rows keep their
+ * Punctuation-folded fingerprints (migration v174). Existing rows keep their
  * exact (v1) hash and still match; a v2 row is added wherever a fact row still
  * carries the claim text, facts that became matching are expired like the
  * trigger would, and the fingerprint index keys claim lookups.
