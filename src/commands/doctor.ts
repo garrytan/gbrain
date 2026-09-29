@@ -3955,9 +3955,8 @@ export async function buildChecks(
     // parse, like orphan_ratio); bare doctor stays brain-wide. Fix: extract --stale.
     progress.heartbeat('links_extraction_lag');
     checks.push(await checkLinksExtractionLag(engine, { sourceId: orphanRatioSourceId }));
-    // v0.38 — full-cycle freshness, sibling to sync_freshness. Reads
-    // last_full_cycle_at from sources.config; mirrors what autopilot's
-    // per-source dispatch gate sees.
+    // v0.38 — full-cycle freshness reads current-incarnation state first and
+    // falls back to preserved legacy config only when no state row exists.
     progress.heartbeat('cycle_freshness');
     checks.push(await checkCycleFreshness(engine));
     // Silent-failure batch (#2250 / #2784 / #2788): wrong-root import

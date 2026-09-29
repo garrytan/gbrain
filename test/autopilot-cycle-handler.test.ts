@@ -73,7 +73,7 @@ describe('autopilot-cycle handler source_id validation + archive recheck', () =>
 
   test('valid source_id + existing source runs cycle', async () => {
     await seedSource('alpha');
-    const result = await runHandlerOnce({ repoPath: brainDir, source_id: 'alpha', phases: ['lint'] });
+    const result = await runHandlerOnce({ repoPath: brainDir, source_id: 'alpha', phases: ['recompute_emotional_weight'] });
     expect(['ok', 'clean']).toContain(result.status);
   });
 
@@ -103,10 +103,9 @@ describe('autopilot-cycle handler source_id validation + archive recheck', () =>
   });
 
   test('explicit pull: false overrides default pull: true', async () => {
-    // Behavior check via lack-of-throw + return shape — no actual pull
-    // is invoked because the phase set is just ['lint'].
     await seedSource('echo');
-    const result = await runHandlerOnce({ repoPath: brainDir, source_id: 'echo', pull: false, phases: ['lint'] });
+    // The provider-free phase keeps this pull-threading check independent of lint setup.
+    const result = await runHandlerOnce({ repoPath: brainDir, source_id: 'echo', pull: false, phases: ['recompute_emotional_weight'] });
     expect(['ok', 'clean']).toContain(result.status);
   });
 });

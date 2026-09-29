@@ -86,8 +86,8 @@ async function readLastFullCycleAt(sourceId: string): Promise<string | null> {
   const sources = await engine.listAllSources();
   const s = sources.find(x => x.id === sourceId);
   if (!s) return null;
-  const raw = s.config?.last_full_cycle_at;
-  return typeof raw === 'string' ? raw : null;
+  const raw = s.cycle_state_exists ? s.last_full_cycle_at : s.config?.last_full_cycle_at;
+  return raw instanceof Date ? raw.toISOString() : (typeof raw === 'string' ? raw : null);
 }
 
 describe('#2540 (i) — pack omitting optional phases, all enabled phases complete', () => {
@@ -162,6 +162,7 @@ describe('#2540 (ii) — an enabled phase that never completes still prevents th
       expect(report.status).toBe('failed');
       expect(report.phases[0]?.status).toBe('fail');
       expect(await readLastFullCycleAt('always-fails')).toBeNull();
+      expect((await engine.listAllSources()).find(s => s.id === 'always-fails')?.cycle_state_exists).toBe(false);
     });
   }, 60_000);
 });

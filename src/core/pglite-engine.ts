@@ -9,6 +9,7 @@ import { readPageSnapshot as readCanonicalPageSnapshot } from './page-state/snap
 import { createPageVersion } from './page-state/versions.ts';
 import { recordRenameAlias } from './page-state/rename-alias.ts';
 import { composablePgliteTransaction } from './page-state/transactions.ts';
+import { mapStoredSourceRow } from './source-cycle-state.ts';
 import { GRANT_COLUMNS_SQL } from './grants/schema.ts';
 import type { PageReadScope } from './types.ts';
 import type { PageReadPolicy } from './types.ts';
@@ -2200,33 +2201,32 @@ export class PGLiteEngine implements BrainEngine {
   }): Promise<SourceRow[]> {
     // v0.38: parity with postgres-engine.listAllSources. Defaults match
     // sources-ops.listSources (archived rows filtered out by default).
-    // localPathOnly skips pure-DB sources so autopilot fan-out doesn't
-    // dispatch jobs that would fall back to the global sync.repo_path.
+    // localPathOnly skips pure-DB sources so autopilot fan-out doesn't dispatch jobs that would fall back to the global sync.repo_path.
     const includeArchived = opts?.includeArchived === true;
     const localPathOnly = opts?.localPathOnly === true;
     const { rows } = await this.db.query<{
       id: string;
+      incarnation: string;
       name: string | null;
       local_path: string | null;
       last_sync_at: string | null;
       config: unknown;
+      cycle_state_exists: boolean;
+      last_source_cycle_at: string | Date | null;
+      last_full_cycle_at: string | Date | null;
     }>(
-      `SELECT id, name, local_path, last_sync_at, config
-         FROM sources
-        WHERE ($1::boolean OR archived IS NOT TRUE)
-          AND ($2::boolean OR local_path IS NOT NULL)
-        ORDER BY (id = 'default') DESC, id`,
+      `SELECT s.id, s.incarnation, s.name, s.local_path, s.last_sync_at, s.config,
+              (c.source_id IS NOT NULL) AS cycle_state_exists,
+              c.last_source_cycle_at, c.last_full_cycle_at
+         FROM sources s
+         LEFT JOIN source_cycle_state c
+           ON c.source_id = s.id AND c.source_incarnation = s.incarnation
+        WHERE ($1::boolean OR s.archived IS NOT TRUE)
+          AND ($2::boolean OR s.local_path IS NOT NULL)
+        ORDER BY (s.id = 'default') DESC, s.id`,
       [includeArchived, !localPathOnly],
     );
-    return rows.map((r) => ({
-      id: r.id,
-      name: r.name,
-      local_path: r.local_path,
-      last_sync_at: r.last_sync_at ? new Date(r.last_sync_at) : null,
-      config: typeof r.config === 'string'
-        ? JSON.parse(r.config) as Record<string, unknown>
-        : ((r.config as Record<string, unknown> | null) ?? {}),
-    }));
+    return rows.map(mapStoredSourceRow);
   }
 
   async updateSourceConfig(sourceId: string, patch: Record<string, unknown>): Promise<boolean> {

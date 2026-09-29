@@ -60,12 +60,11 @@ async function seedSource(id: string, archived = false): Promise<void> {
 }
 
 async function readLastFullCycleAt(sourceId: string): Promise<string | null> {
-  const rows = await engine.executeRaw<{ config: Record<string, unknown> | null }>(
-    `SELECT config FROM sources WHERE id = $1`,
-    [sourceId],
-  );
-  const raw = rows[0]?.config?.last_full_cycle_at;
-  return typeof raw === 'string' ? raw : null;
+  const sources = await engine.listAllSources();
+  const source = sources.find(item => item.id === sourceId);
+  if (!source) return null;
+  const raw = source.cycle_state_exists ? source.last_full_cycle_at : source.config?.last_full_cycle_at;
+  return raw instanceof Date ? raw.toISOString() : (typeof raw === 'string' ? raw : null);
 }
 
 describe('gbrain dream --dir <path> freshness stamp (#1869)', () => {
@@ -74,7 +73,7 @@ describe('gbrain dream --dir <path> freshness stamp (#1869)', () => {
       await seedSource('path-scoped');
       expect(await readLastFullCycleAt('path-scoped')).toBeNull();
 
-      const report = await runDream(engine, ['--dir', brainDir, '--phase', 'lint', '--json']);
+      const report = await runDream(engine, ['--dir', brainDir, '--phase', 'recompute_emotional_weight', '--json']);
       expect(report).toBeTruthy();
       if (report) expect(['ok', 'clean']).toContain(report.status);
 
@@ -88,7 +87,7 @@ describe('gbrain dream --dir <path> freshness stamp (#1869)', () => {
     await withEnv({ GBRAIN_HOME: gbrainHome }, async () => {
       await seedSource('mothballed', true);
 
-      const report = await runDream(engine, ['--dir', brainDir, '--phase', 'lint', '--json']);
+      const report = await runDream(engine, ['--dir', brainDir, '--phase', 'recompute_emotional_weight', '--json']);
       expect(report).toBeTruthy();
 
       // Stamping an archived source would mask data staleness when it is
@@ -105,7 +104,7 @@ describe('gbrain dream --dir <path> freshness stamp (#1869)', () => {
       await seedSource('retired-twin', true);
       await seedSource('active-twin', false);
 
-      const report = await runDream(engine, ['--dir', brainDir, '--phase', 'lint', '--json']);
+      const report = await runDream(engine, ['--dir', brainDir, '--phase', 'recompute_emotional_weight', '--json']);
       expect(report).toBeTruthy();
       if (report) expect(['ok', 'clean']).toContain(report.status);
 
@@ -154,7 +153,7 @@ describe('gbrain dream --dir <path> freshness stamp across a symlink (#2540)', (
         ['vault-real', 'vault-real', realTarget],
       );
 
-      const report = await runDream(engine, ['--dir', symlinkedDir, '--phase', 'lint', '--json']);
+      const report = await runDream(engine, ['--dir', symlinkedDir, '--phase', 'recompute_emotional_weight', '--json']);
       expect(report).toBeTruthy();
       expect(await readLastFullCycleAt('vault-real')).not.toBeNull();
 
@@ -176,7 +175,7 @@ describe('gbrain dream --dir <path> freshness stamp across a symlink (#2540)', (
         ['vault-link', 'vault-link', symlinkedDir],
       );
 
-      const report = await runDream(engine, ['--dir', realpathSync(symlinkedDir), '--phase', 'lint', '--json']);
+      const report = await runDream(engine, ['--dir', realpathSync(symlinkedDir), '--phase', 'recompute_emotional_weight', '--json']);
       expect(report).toBeTruthy();
       expect(await readLastFullCycleAt('vault-link')).not.toBeNull();
 

@@ -61,12 +61,11 @@ async function seedSource(id: string, localPath: string): Promise<void> {
 }
 
 async function readLastFullCycleAt(sourceId: string): Promise<string | null> {
-  const rows = await engine.executeRaw<{ config: Record<string, unknown> | null }>(
-    `SELECT config FROM sources WHERE id = $1`,
-    [sourceId],
-  );
-  const raw = rows[0]?.config?.last_full_cycle_at;
-  return typeof raw === 'string' ? raw : null;
+  const sources = await engine.listAllSources();
+  const source = sources.find(item => item.id === sourceId);
+  if (!source) return null;
+  const raw = source.cycle_state_exists ? source.last_full_cycle_at : source.config?.last_full_cycle_at;
+  return raw instanceof Date ? raw.toISOString() : (typeof raw === 'string' ? raw : null);
 }
 
 /** Run dream expecting a clean exit-1; returns the stderr lines it printed. */
@@ -97,7 +96,7 @@ describe('gbrain dream honors GBRAIN_SOURCE like --source (#4778)', () => {
     await seedSource('source-a', dirA);
     await seedSource('source-b', dirB);
     await withEnv({ GBRAIN_HOME: gbrainHome, GBRAIN_SOURCE: 'source-a' }, async () => {
-      const report = await runDream(engine, ['--phase', 'lint', '--json']);
+      const report = await runDream(engine, ['--phase', 'recompute_emotional_weight', '--json']);
       expect(report).toBeTruthy();
       if (report) expect(['ok', 'clean']).toContain(report.status);
       // Pre-fix: two non-default sources defeat sole-non-default routing, no
@@ -112,7 +111,7 @@ describe('gbrain dream honors GBRAIN_SOURCE like --source (#4778)', () => {
     await seedSource('source-a', dirA);
     await seedSource('source-b', dirB);
     await withEnv({ GBRAIN_HOME: gbrainHome, GBRAIN_SOURCE: 'NOT!VALID' }, async () => {
-      const errLines = await runExpectingExit1(['--phase', 'lint', '--json']);
+      const errLines = await runExpectingExit1(['--phase', 'recompute_emotional_weight', '--json']);
       expect(errLines.some((l) => l.startsWith('Invalid GBRAIN_SOURCE value'))).toBe(true);
     });
   }, 60_000);
@@ -121,7 +120,7 @@ describe('gbrain dream honors GBRAIN_SOURCE like --source (#4778)', () => {
     await seedSource('source-a', dirA);
     await seedSource('source-b', dirB);
     await withEnv({ GBRAIN_HOME: gbrainHome, GBRAIN_SOURCE: 'ghost' }, async () => {
-      const errLines = await runExpectingExit1(['--phase', 'lint', '--json']);
+      const errLines = await runExpectingExit1(['--phase', 'recompute_emotional_weight', '--json']);
       expect(errLines.some((l) => l.includes('Source "ghost" not found or is archived.'))).toBe(true);
     });
   }, 60_000);
@@ -135,14 +134,14 @@ describe('gbrain dream honors GBRAIN_SOURCE like --source (#4778)', () => {
     await seedSource('source-b', dirB);
     await engine.setConfig('sources.default', 'source-a');
     await withEnv({ GBRAIN_HOME: gbrainHome, GBRAIN_SOURCE: '' }, async () => {
-      const bare = await runDream(engine, ['--phase', 'lint', '--json']);
+      const bare = await runDream(engine, ['--phase', 'recompute_emotional_weight', '--json']);
       expect(bare?.brain_dir).toBe(dirA); // the #4700 implicit-default lane
     });
     await withEnv({ GBRAIN_HOME: gbrainHome, GBRAIN_SOURCE: '__all__' }, async () => {
-      const report = await runDream(engine, ['--phase', 'lint', '--json']);
+      const report = await runDream(engine, ['--phase', 'recompute_emotional_weight', '--json']);
       expect(report).toBeTruthy();
       expect(report?.brain_dir).not.toBe(dirA);
-      expect(report?.phases.map((p) => p.phase)).toEqual(['lint']);
+      expect(report?.phases.map((p) => p.phase)).toEqual(['recompute_emotional_weight']);
     });
   }, 60_000);
 

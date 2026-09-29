@@ -2,12 +2,10 @@
  * #3504 — a cycle that cannot persist its freshness stamp must stop reporting
  * success.
  *
- * Before this, `updateSourceConfig` throwing was a `console.warn` and nothing
- * else. `gbrain dream --json` reported `status: 'ok'`, doctor separately
- * reported `cycle_freshness` stale, and no signal connected them — so the fix
- * doctor recommends (re-run the cycle) could never work, because the cycle was
- * already succeeding. That is the loop #2251 sat in while every stamp write
- * failed on a corrupted `sources.config`.
+ * Before this, stamp persistence shared `sources.config` with connector intent
+ * data. A failed isolated-state write still degrades the cycle report rather
+ * than silently claiming freshness; connector config is never repaired or
+ * rewritten by this path.
  *
  * Contract pinned here:
  *   - a stamp-write error sets `stamp_write_failed: {source_id, error}`
@@ -57,31 +55,34 @@ beforeEach(async () => {
   );
 });
 
-/** Run a per-source cycle with updateSourceConfig forced to throw. */
+/** Run a per-source cycle with the source_cycle_state insert forced to throw. */
 async function runWithFailingStamp(message: string) {
-  const original = engine.updateSourceConfig.bind(engine);
+  const original = engine.executeRaw.bind(engine);
   let calls = 0;
-  (engine as unknown as { updateSourceConfig: unknown }).updateSourceConfig = async () => {
-    calls += 1;
-    throw new Error(message);
+  (engine as unknown as { executeRaw: unknown }).executeRaw = async (sql: string, params?: unknown[]) => {
+    if (sql.includes('INSERT INTO source_cycle_state')) {
+      calls += 1;
+      throw new Error(message);
+    }
+    return original(sql, params);
   };
   try {
     const report = await withEnv({ GBRAIN_HOME: gbrainHome }, () =>
-      runCycle(engine, { brainDir, sourceId: SOURCE, phases: ['lint'] }),
+      runCycle(engine, { brainDir, sourceId: SOURCE, phases: ['recompute_emotional_weight'] }),
     );
     return { report, calls };
   } finally {
-    (engine as unknown as { updateSourceConfig: unknown }).updateSourceConfig = original;
+    (engine as unknown as { executeRaw: unknown }).executeRaw = original;
   }
 }
 
 describe('#3504 stamp-write failure is surfaced on the report', () => {
   test('sets stamp_write_failed with the source id and the error message', async () => {
-    const { report, calls } = await runWithFailingStamp('jsonb_each on a non-object');
+    const { report, calls } = await runWithFailingStamp('source_cycle_state unavailable');
     expect(calls).toBeGreaterThan(0);
     expect(report.stamp_write_failed).toBeDefined();
     expect(report.stamp_write_failed!.source_id).toBe(SOURCE);
-    expect(report.stamp_write_failed!.error).toContain('jsonb_each on a non-object');
+    expect(report.stamp_write_failed!.error).toContain('source_cycle_state unavailable');
   });
 
   test('degrades a successful status to partial with reason stamp_write_failed', async () => {
@@ -101,11 +102,34 @@ describe('#3504 stamp-write failure is surfaced on the report', () => {
 describe('#3504 no false positives', () => {
   test('a healthy per-source cycle has no stamp_write_failed and keeps a success status', async () => {
     const report = await withEnv({ GBRAIN_HOME: gbrainHome }, () =>
-      runCycle(engine, { brainDir, sourceId: SOURCE, phases: ['lint'] }),
+      runCycle(engine, { brainDir, sourceId: SOURCE, phases: ['recompute_emotional_weight'] }),
     );
     expect(report.stamp_write_failed).toBeUndefined();
     expect(report.reason).toBeUndefined();
     expect(['ok', 'clean']).toContain(report.status);
+  });
+
+  test('a source incarnation/archive race that skips the stamp is surfaced as degraded', async () => {
+    const original = engine.executeRaw.bind(engine);
+    let attempted = false;
+    (engine as unknown as { executeRaw: unknown }).executeRaw = async (sql: string, params?: unknown[]) => {
+      if (sql.includes('INSERT INTO source_cycle_state')) {
+        attempted = true;
+        return [];
+      }
+      return original(sql, params);
+    };
+    try {
+      const report = await withEnv({ GBRAIN_HOME: gbrainHome }, () =>
+        runCycle(engine, { brainDir, sourceId: SOURCE, phases: ['recompute_emotional_weight'] }),
+      );
+      expect(attempted).toBe(true);
+      expect(report.status).toBe('partial');
+      expect(report.reason).toBe('stamp_write_failed');
+      expect(report.stamp_write_failed?.error).toContain('different incarnation');
+    } finally {
+      (engine as unknown as { executeRaw: unknown }).executeRaw = original;
+    }
   });
 
   test('a pack that omits optional phases is not conflated with a stamp failure', async () => {
@@ -113,7 +137,7 @@ describe('#3504 no false positives', () => {
     // deliberately ignores 'skipped' phases, so omitting optional phases is not
     // a failure. Only a real write error may degrade the status.
     const report = await withEnv({ GBRAIN_HOME: gbrainHome }, () =>
-      runCycle(engine, { brainDir, sourceId: SOURCE, phases: ['lint'] }),
+      runCycle(engine, { brainDir, sourceId: SOURCE, phases: ['recompute_emotional_weight'] }),
     );
     const skipped = report.phases.filter((p) => p.status === 'skipped');
     // Whether or not any phase skipped in this environment, the invariant holds:
@@ -125,35 +149,39 @@ describe('#3504 no false positives', () => {
   });
 
   test('dryRun does not attempt the write and cannot report a stamp failure', async () => {
-    const original = engine.updateSourceConfig.bind(engine);
+    const original = engine.executeRaw.bind(engine);
     let called = false;
-    (engine as unknown as { updateSourceConfig: unknown }).updateSourceConfig = async () => {
-      called = true;
-      throw new Error('should never run under dryRun');
+    (engine as unknown as { executeRaw: unknown }).executeRaw = async (sql: string, params?: unknown[]) => {
+      if (sql.includes('INSERT INTO source_cycle_state')) {
+        called = true;
+        throw new Error('should never run under dryRun');
+      }
+      return original(sql, params);
     };
     try {
       const report = await withEnv({ GBRAIN_HOME: gbrainHome }, () =>
-        runCycle(engine, { brainDir, sourceId: SOURCE, phases: ['lint'], dryRun: true }),
+        runCycle(engine, { brainDir, sourceId: SOURCE, phases: ['recompute_emotional_weight'], dryRun: true }),
       );
       expect(called).toBe(false);
       expect(report.stamp_write_failed).toBeUndefined();
     } finally {
-      (engine as unknown as { updateSourceConfig: unknown }).updateSourceConfig = original;
+      (engine as unknown as { executeRaw: unknown }).executeRaw = original;
     }
   });
 
   test('a legacy caller with no sourceId cannot report a stamp failure', async () => {
-    const original = engine.updateSourceConfig.bind(engine);
-    (engine as unknown as { updateSourceConfig: unknown }).updateSourceConfig = async () => {
-      throw new Error('should never run without sourceId');
+    const original = engine.executeRaw.bind(engine);
+    (engine as unknown as { executeRaw: unknown }).executeRaw = async (sql: string, params?: unknown[]) => {
+      if (sql.includes('INSERT INTO source_cycle_state')) throw new Error('should never run without sourceId');
+      return original(sql, params);
     };
     try {
       const report = await withEnv({ GBRAIN_HOME: gbrainHome }, () =>
-        runCycle(engine, { brainDir, phases: ['lint'] }),
+        runCycle(engine, { brainDir, phases: ['recompute_emotional_weight'] }),
       );
       expect(report.stamp_write_failed).toBeUndefined();
     } finally {
-      (engine as unknown as { updateSourceConfig: unknown }).updateSourceConfig = original;
+      (engine as unknown as { executeRaw: unknown }).executeRaw = original;
     }
   });
 });

@@ -1388,7 +1388,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
           // v0.38: per-source fan-out replaces the single-job dispatch.
           // dispatchPerSource enumerates sources via listAllSources
           // ({ localPathOnly: true }), gates each on per-source
-          // `last_full_cycle_at` from sources.config JSONB, and fans out
+          // current-incarnation last_full_cycle_at from source_cycle_state (legacy config fallback only before a state row exists), and fans out
           // up to `fanoutMax` per tick (default 4 Postgres, 1 PGLite per
           // codex P1-3). Fresh-install brains with no sources rows fall
           // back to the legacy single autopilot-cycle so existing

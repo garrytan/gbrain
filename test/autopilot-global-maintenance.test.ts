@@ -289,6 +289,9 @@ describe('autopilot-global-maintenance handler stamps last_global_at (PGLite)', 
     const source = (await engine.listAllSources()).find((row) => row.id === 'repo-b');
     expect(source?.config.last_source_cycle_at).toBeUndefined();
     expect(source?.config.last_full_cycle_at).toBeUndefined();
+    expect(source?.cycle_state_exists).toBe(false);
+    expect(source?.last_source_cycle_at).toBeNull();
+    expect(source?.last_full_cycle_at).toBeNull();
 
     // A payload that ARRIVES empty is the same explicit no-op, with an
     // honest reason (nothing was rejected — the list was empty).
@@ -315,6 +318,9 @@ describe('autopilot-global-maintenance handler stamps last_global_at (PGLite)', 
     const source = (await engine.listAllSources()).find((row) => row.id === 'repo-empty');
     expect(source?.config.last_source_cycle_at).toBeUndefined();
     expect(source?.config.last_full_cycle_at).toBeUndefined();
+    expect(source?.cycle_state_exists).toBe(false);
+    expect(source?.last_source_cycle_at).toBeNull();
+    expect(source?.last_full_cycle_at).toBeNull();
   });
 
   test('a maintenance job with NO phases payload defaults to MAINTENANCE_PHASES (mixed included), not GLOBAL_PHASES', async () => {

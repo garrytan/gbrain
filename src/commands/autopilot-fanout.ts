@@ -6,10 +6,8 @@
  * headline win: a 5-source federated brain refreshes in ~5 min wall-clock
  * (parallel via worker pool) instead of ~25 min (sequential across 5 ticks).
  *
- * Per the codex outside-voice review of this plan:
- *   - P0-5: each per-source cycle writes `last_full_cycle_at` in its
- *     `sources.config` JSONB on success (handled in `runCycle` exit hook,
- *     not here — this module just READS it for freshness gating).
+ *   - P0-5: cycle freshness lives in `source_cycle_state` for the current
+ *     source incarnation; legacy config is read only when no state row exists.
  *   - P1-2: explicitly threads `pull: !!source.config.remote_url` so
  *     local-only sources don't try to git-pull.
  *   - P1-3: PGLite engines default `fanoutMax=1` (PGLite is single-writer;
@@ -38,6 +36,7 @@ import type { MinionQueue } from '../core/minions/queue.ts';
 import { SOURCE_FRESHNESS_PHASES, MAINTENANCE_PHASES, LAST_GLOBAL_AT_KEY } from '../core/cycle.ts';
 import { sourceConfigHasRemoteUrl, sourceLocalPathSkipWarning } from '../core/sources-load.ts';
 import { isSyncDisabledConfig } from '../core/sync-policy.ts';
+import { readSourceCycleTimestamps } from '../core/source-cycle-state.ts';
 import { AUTOPILOT_FULL_CYCLE_FLOOR_MINUTES } from './autopilot-remediation-policy.ts';
 
 // #2194 fix #2: failure cooldown. A source whose autopilot-cycle keeps
@@ -175,16 +174,9 @@ export async function resolveEffectiveFanoutMax(engine: BrainEngine, queue = 'de
   }
 }
 
-/**
- * Read `last_full_cycle_at` ISO string from a source's config JSONB.
- * Returns null when missing or unparseable. Pure function over the row
- * shape `listAllSources` returns (config is already a parsed object).
- */
+/** Read the effective cycle freshness timestamp for this source incarnation. */
 export function readLastFullCycleAt(src: SourceRow): Date | null {
-  const raw = src.config?.last_full_cycle_at;
-  if (typeof raw !== 'string') return null;
-  const d = new Date(raw);
-  return Number.isFinite(d.getTime()) ? d : null;
+  return readSourceCycleTimestamps(src).lastFullCycleAt;
 }
 
 /**
@@ -213,13 +205,8 @@ export function isSourceStale(
  * `last_full_cycle_at`, so this works before AND after the cycle split.
  */
 export function readLastSuccessAt(src: SourceRow): Date | null {
-  const c = src.config ?? {};
-  const raw = (typeof c.last_source_cycle_at === 'string' && c.last_source_cycle_at)
-    || (typeof c.last_full_cycle_at === 'string' && c.last_full_cycle_at)
-    || null;
-  if (!raw) return null;
-  const d = new Date(raw);
-  return Number.isFinite(d.getTime()) ? d : null;
+  const stamps = readSourceCycleTimestamps(src);
+  return stamps.lastSourceCycleAt ?? stamps.lastFullCycleAt;
 }
 
 /** Bounded exponential cooldown window (minutes) for a given failure count. */
@@ -326,10 +313,29 @@ export async function isSourceInCooldown(engine: BrainEngine, sourceId: string, 
   if (!failure) return false;
   let lastSuccessAt: Date | null = null;
   try {
-    const rows = await engine.executeRaw<{ config: Record<string, unknown> | null }>(
-      `SELECT config FROM sources WHERE id = $1`, [sourceId],
+    const rows = await engine.executeRaw<{
+      config: Record<string, unknown> | null;
+      cycle_state_exists: boolean;
+      last_source_cycle_at: Date | string | null;
+      last_full_cycle_at: Date | string | null;
+    }>(
+      `SELECT s.config,
+              (c.source_id IS NOT NULL) AS cycle_state_exists,
+              c.last_source_cycle_at,
+              c.last_full_cycle_at
+         FROM sources s
+         LEFT JOIN source_cycle_state c
+           ON c.source_id = s.id AND c.source_incarnation = s.incarnation
+        WHERE s.id = $1 AND s.archived IS NOT TRUE`, [sourceId],
     );
-    if (rows[0]) lastSuccessAt = readLastSuccessAt({ config: rows[0].config ?? {} } as SourceRow);
+    if (rows[0]) {
+      lastSuccessAt = readLastSuccessAt({
+        config: rows[0].config ?? {},
+        cycle_state_exists: rows[0].cycle_state_exists,
+        last_source_cycle_at: rows[0].last_source_cycle_at,
+        last_full_cycle_at: rows[0].last_full_cycle_at,
+      } as SourceRow);
+    }
   } catch { /* treat as no success */ }
   return isInFailureCooldown(failure, lastSuccessAt, now, opts);
 }

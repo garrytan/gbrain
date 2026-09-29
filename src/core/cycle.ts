@@ -51,6 +51,7 @@ import { createProgress, type ProgressReporter } from './progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from './cli-options.ts';
 import { tryAcquireDbLock, reapDeadHolderLocks, LockStolenError, type DbLockHandle } from './db-lock.ts';
 import { assertValidSourceId } from './source-id.ts';
+import { captureSourceIncarnation, writeSourceCycleTimestamps } from './source-cycle-state.ts';
 import { PHASE_SCOPE, SOURCE_FRESHNESS_PHASES, type PhaseScope } from './cycle/phase-scope.ts';
 import { assertEmbedNotStalled } from './embed-stall.ts';
 
@@ -1909,6 +1910,9 @@ export async function runCycle(
   const cycleSourceId: string | undefined = engine
     ? (opts.sourceId ?? (await resolveSourceForDir(engine, brainDir)))
     : opts.sourceId;
+  const sourceIncarnation = engine && cycleSourceId
+    ? await captureSourceIncarnation(engine, cycleSourceId)
+    : null;
   const orphansSourceId = opts.forceGlobalOrphans ? undefined : cycleSourceId;
 
   const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
@@ -3019,43 +3023,21 @@ export async function runCycle(
     }
   }
 
-  // v0.38 (codex r1 P0-5): persist per-source cycle completion timestamp
-  // when the cycle ran successfully against an explicit source. Read by
-  // autopilot's per-source freshness gate next tick. Skipped when:
-  //   - opts.sourceId is unset (legacy callers — autopilot still here)
-  //   - engine is null (no-DB path)
-  //   - status is 'failed' or 'skipped' (don't mark a non-run as fresh)
-  //   - dryRun (writes are out of scope)
-  //
-  // #3504: the write is still best-effort in the sense that it never throws out
-  // of runCycle and never aborts the run (the phases already did their work).
-  // But a failure is no longer invisible: it is recorded on the report and
-  // degrades `status` away from success, so a cycle that could not persist its
-  // "done" stamp stops claiming it finished. The cost of writing the wrong
-  // timestamp post-failure is still higher than missing a successful write, so
-  // the stamp itself is unchanged — only the reporting is.
+  // Successful non-aborted source cycles persist freshness in the separate
+  // incarnation-scoped table. Do not patch sources.config: connector intents
+  // and legacy receipts depend on its exact identity.
   let stampWriteFailed: { source_id: string; error: string } | undefined;
-  if (opts.sourceId && phases.length > 0 && engine && !dryRun && !aborted && (status === 'ok' || status === 'clean' || status === 'partial')) {
+  if (opts.sourceId && sourceIncarnation && phases.length > 0 && engine && !dryRun && !aborted && (status === 'ok' || status === 'clean' || status === 'partial')) {
     try {
       const nowIso = new Date().toISOString();
-      // #2194 fix #3 (the cycle split): `last_source_cycle_at` is the NEW gate
-      // for per-source dispatch (source-scoped phases done). We ALSO keep
-      // `last_full_cycle_at` current so doctor's cycle-freshness check and any
-      // legacy reader stay valid — it's no longer a *gate* for the brain-wide
-      // phases (those gate on autopilot.last_global_at), so writing it on a
-      // source-only cycle does not re-introduce the freshness poisoning codex
-      // flagged in the rejected skip-based design.
-      await engine.updateSourceConfig(opts.sourceId, {
-        last_source_cycle_at: nowIso,
-        last_full_cycle_at: nowIso,
-      });
+      const written = await writeSourceCycleTimestamps(engine, opts.sourceId, sourceIncarnation, nowIso);
+      if (!written) {
+        throw new Error('source is missing, archived, or has a different incarnation');
+      }
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
-      // Record it so `--json` consumers and the autopilot runner can see it.
-      // stderr alone does not survive a cron run, which is how #2251 stayed
-      // invisible while every stamp write failed for weeks.
       stampWriteFailed = { source_id: opts.sourceId, error: message };
-      console.warn(`[cycle] failed to write last_source_cycle_at for source ${opts.sourceId}: ${message}`);
+      console.warn(`[cycle] failed to write source cycle state for source ${opts.sourceId}: ${message}`);
     }
   }
 

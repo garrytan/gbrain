@@ -437,8 +437,8 @@ describe('runDream — --source / --source-id (v0.41.13)', () => {
     const sources = await engine.listAllSources();
     const s = sources.find(x => x.id === sourceId);
     if (!s) return null;
-    const raw = (s.config as any)?.last_full_cycle_at;
-    return typeof raw === 'string' ? raw : null;
+    const raw = s.cycle_state_exists ? s.last_full_cycle_at : s.config?.last_full_cycle_at;
+    return raw instanceof Date ? raw.toISOString() : (typeof raw === 'string' ? raw : null);
   }
 
   function phaseByName(report: any, name: string): any {

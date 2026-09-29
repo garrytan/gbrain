@@ -26,6 +26,7 @@ import { resolveSourceLocalFilePath } from '../../../core/markdown.ts';
 import { unverifiedExtractionFragment } from '../../../core/extraction-review.ts';
 import type { Check } from '../../doctor.ts';
 import { ownedContentFreshness } from '../../../core/shared-skills/content-freshness.ts';
+import { readRawFullCycleAt } from '../../../core/source-cycle-state.ts';
 
 /** Local aliases; the shared warn-once memo lives in core so it can't fork per module. */
 const _resolveEnvNumber = resolveEnvNumber;
@@ -597,7 +598,8 @@ async function latestFullCycleEvidence(
     let latest = Number.NEGATIVE_INFINITY;
     let latestIso: string | null = null;
     for (const src of sources) {
-      const raw = src.config?.last_full_cycle_at;
+      const rawValue = readRawFullCycleAt(src);
+      const raw = rawValue instanceof Date ? rawValue.toISOString() : rawValue;
       if (typeof raw !== 'string') continue;
       const t = new Date(raw).getTime();
       if (Number.isFinite(t) && t > latest) {

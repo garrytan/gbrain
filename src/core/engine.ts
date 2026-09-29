@@ -58,10 +58,14 @@ import type {
  */
 export interface SourceRow {
   id: string;
+  incarnation?: string;
   name: string | null;
   local_path: string | null;
   last_sync_at: Date | null;
   config: Record<string, unknown>;
+  cycle_state_exists?: boolean;
+  last_source_cycle_at?: Date | null;
+  last_full_cycle_at?: Date | null;
 }
 
 export interface TraverseGraphOpts extends PageReadScope {
@@ -1028,9 +1032,9 @@ export interface BrainEngine {
    * the global sync.repo_path (codex r1 P1-4).
    *
    * `config` is returned as `Record<string, unknown>` — both engines
-   * already parse the JSONB at the boundary (Postgres-js returns
-   * parsed objects; PGLite returns objects via its built-in JSONB
-   * codec). Callers reading `config['last_full_cycle_at']` get a string.
+   * parse JSONB at the boundary. Runtime cycle freshness is returned
+   * separately from `source_cycle_state`, for the row's current incarnation;
+   * legacy config timestamps are not copied into config by this reader.
    */
   listAllSources(opts?: {
     includeArchived?: boolean;
@@ -1038,19 +1042,9 @@ export interface BrainEngine {
   }): Promise<SourceRow[]>;
 
   /**
-   * v0.38 — atomic JSONB merge into sources.config. Uses Postgres's
-   * `config || $patch::jsonb` operator so concurrent writers don't
-   * stomp each other (last write wins, but no read-modify-write race).
-   *
-   * Primary caller: runCycle's exit hook writes
-   *   { last_full_cycle_at: '<ISO>' }
-   * after a successful per-source cycle so autopilot's freshness gate
-   * can read it next tick. Resolves codex round-1 P0-5 (write site for
-   * last_full_cycle_at was unspecified pre-PR).
-   *
-   * Returns true if a row was updated (source exists), false otherwise
-   * (silently no-ops on unknown sourceId — caller decides whether that's
-   * a problem).
+   * Generic atomic JSONB merge into sources.config for existing source
+   * metadata callers. Runtime cycle freshness uses `source_cycle_state` and
+   * must not be added through this method.
    */
   updateSourceConfig(sourceId: string, patch: Record<string, unknown>): Promise<boolean>;
 

@@ -8,6 +8,7 @@ import { readPageSnapshot as readCanonicalPageSnapshot } from './page-state/snap
 import { createPageVersion } from './page-state/versions.ts';
 import { recordRenameAlias } from './page-state/rename-alias.ts';
 import { composablePostgresTransaction } from './page-state/transactions.ts';
+import { mapStoredSourceRow } from './source-cycle-state.ts';
 import type { PageReadScope } from './types.ts';
 import type { PageReadPolicy } from './types.ts';
 import { readRelationalFanout, readAliases, readBacklinkCounts, readAdjacencyBoosts, readContentFlags, readExtractionStates, readEffectiveDates, readSalienceScores } from './search/read-enrichment.ts';
@@ -1152,19 +1153,17 @@ export class PostgresEngine implements BrainEngine {
     const includeArchived = opts?.includeArchived === true;
     const localPathOnly = opts?.localPathOnly === true;
     const rows = await sql`
-      SELECT id, name, local_path, last_sync_at, config
-        FROM sources
-       WHERE (${includeArchived} OR archived IS NOT TRUE)
-         AND (${!localPathOnly} OR local_path IS NOT NULL)
-       ORDER BY (id = 'default') DESC, id
+      SELECT s.id, s.incarnation, s.name, s.local_path, s.last_sync_at, s.config,
+             (c.source_id IS NOT NULL) AS cycle_state_exists,
+             c.last_source_cycle_at, c.last_full_cycle_at
+        FROM sources s
+        LEFT JOIN source_cycle_state c
+          ON c.source_id = s.id AND c.source_incarnation = s.incarnation
+       WHERE (${includeArchived} OR s.archived IS NOT TRUE)
+         AND (${!localPathOnly} OR s.local_path IS NOT NULL)
+       ORDER BY (s.id = 'default') DESC, s.id
     `;
-    return rows.map((r) => ({
-      id: r.id as string,
-      name: (r.name as string | null) ?? null,
-      local_path: (r.local_path as string | null) ?? null,
-      last_sync_at: r.last_sync_at ? new Date(r.last_sync_at as string) : null,
-      config: typeof r.config === 'string' ? JSON.parse(r.config) : ((r.config as Record<string, unknown> | null) ?? {}),
-    }));
+    return rows.map(mapStoredSourceRow);
   }
 
   async updateSourceConfig(sourceId: string, patch: Record<string, unknown>): Promise<boolean> {

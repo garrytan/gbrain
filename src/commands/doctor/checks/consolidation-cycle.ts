@@ -7,6 +7,7 @@
 import type { BrainEngine } from '../../../core/engine.ts';
 import { resolveHoursEnv } from '../../../core/env-number.ts';
 import type { Check } from '../../doctor.ts';
+import { readRawFullCycleAt } from '../../../core/source-cycle-state.ts';
 
 /** Local alias; the shared warn-once memo lives in core so it can't fork per module. */
 const _resolveSyncFreshnessHours = resolveHoursEnv;
@@ -128,12 +129,11 @@ export async function checkPoolBudget(_engine: BrainEngine): Promise<Check> {
 /**
  * v0.38 — per-source `last_full_cycle_at` freshness check.
  *
- * Sibling to `sync_freshness`. Where sync_freshness reads `last_sync_at`
- * (one phase of the cycle), this check reads `sources.config->>'last_full_cycle_at'`
- * which is the canonical "this whole cycle completed" timestamp written
- * by runCycle's exit hook. Autopilot's per-source fan-out gate (the
- * v0.38 fan-out wave) reads the same field — so this check surfaces
- * exactly what autopilot sees when deciding to skip a source.
+ * Sibling to `sync_freshness`, which reads `last_sync_at` for one phase of the
+ * cycle. This check reads the current-incarnation
+ * `source_cycle_state.last_full_cycle_at`, falling back to preserved legacy
+ * config only before that incarnation has a state row. Autopilot's per-source
+ * fan-out gate reads the same effective timestamp.
  *
  * Default thresholds: warn at 6h, fail at 24h. Tighter than sync_freshness
  * because full-cycle staleness compounds (sync stale → extract stale →
@@ -169,7 +169,8 @@ export async function checkCycleFreshness(
       const display = source.name && source.name !== source.id
         ? `'${source.id}' (${source.name})`
         : `'${source.id}'`;
-      const raw = source.config?.last_full_cycle_at;
+      const rawValue = readRawFullCycleAt(source);
+      const raw = rawValue instanceof Date ? rawValue.toISOString() : rawValue;
       if (typeof raw !== 'string') {
         // #2540: WARN, not FAIL. This check iterates EVERY local_path source,
         // so on a multi-source install where only some vaults are cycled

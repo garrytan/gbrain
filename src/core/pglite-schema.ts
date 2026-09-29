@@ -77,6 +77,21 @@ CREATE INDEX IF NOT EXISTS sources_github_repo_idx
   ON sources ((config->>'github_repo'))
   WHERE config ? 'github_repo';
 
+-- Source-cycle freshness is separate from sources.config so sync intent and
+-- connector receipts remain byte-stable across runtime cycles.
+ALTER TABLE sources ADD COLUMN IF NOT EXISTS incarnation UUID NOT NULL DEFAULT gen_random_uuid();
+CREATE UNIQUE INDEX IF NOT EXISTS sources_incarnation_key ON sources(incarnation);
+CREATE UNIQUE INDEX IF NOT EXISTS sources_id_incarnation_key ON sources(id, incarnation);
+CREATE TABLE IF NOT EXISTS source_cycle_state (
+  source_id TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+  source_incarnation UUID NOT NULL REFERENCES sources(incarnation) ON DELETE CASCADE,
+  last_source_cycle_at TIMESTAMPTZ,
+  last_full_cycle_at TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (source_id, source_incarnation),
+  FOREIGN KEY (source_id, source_incarnation) REFERENCES sources(id, incarnation) ON DELETE CASCADE
+);
+
 -- ============================================================
 -- pages: the core content table
 -- ============================================================

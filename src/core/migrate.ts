@@ -6708,6 +6708,45 @@ CREATE TRIGGER minion_queue_protocol BEFORE INSERT OR UPDATE ON minion_jobs
     idempotent: true,
     sql: FACT_WITHDRAWAL_SUBJECT_SQL,
   },
+  {
+    version: 170,
+    name: 'source_cycle_state',
+    // Keep runtime freshness out of sources.config: connector intent and
+    // durable receipts hash that JSON byte-for-byte. Preserve legacy timestamps
+    // untouched; readers use them as a fallback until the first new cycle.
+    idempotent: true,
+    sql: `
+      CREATE TABLE IF NOT EXISTS source_cycle_state (
+        source_id TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+        source_incarnation UUID NOT NULL REFERENCES sources(incarnation) ON DELETE CASCADE,
+        last_source_cycle_at TIMESTAMPTZ,
+        last_full_cycle_at TIMESTAMPTZ,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        PRIMARY KEY (source_id, source_incarnation)
+      );
+    `,
+  },
+  {
+    version: 171,
+    name: 'source_cycle_state_composite_source_identity',
+    // Each state row must belong to the source id AND its current incarnation;
+    // independent FKs allowed a valid id paired with another source's UUID.
+    idempotent: true,
+    sql: `
+      CREATE UNIQUE INDEX IF NOT EXISTS sources_id_incarnation_key ON sources(id, incarnation);
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint WHERE conname = 'source_cycle_state_source_identity_fkey'
+        ) THEN
+          ALTER TABLE source_cycle_state
+            ADD CONSTRAINT source_cycle_state_source_identity_fkey
+            FOREIGN KEY (source_id, source_incarnation)
+            REFERENCES sources(id, incarnation) ON DELETE CASCADE;
+        END IF;
+      END $$;
+    `,
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0
