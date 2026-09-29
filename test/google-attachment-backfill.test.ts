@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -329,5 +329,22 @@ test('historical metadata response overflow cannot advance a managed cursor or c
     expect(after.page.frontmatter).toEqual(before.page.frontmatter);
     expect((await engine.readPageSnapshot(slug(2), { sourceId: f.id }))!.page.frontmatter.gmail_attachment_receipts).toBeUndefined();
     expect(await runGoogleAttachmentBackfill(engine, f.id, f.cfg, {}, fetcher)).toMatchObject({ status: 'complete', inspected: 2 });
+  }
+}), 120_000);
+
+test('a declared db_only Gmail page without a file repairs database-only and its receipt says db_only', async () => withEnv(env, async () => {
+  for (const engine of engines) {
+    const f = await seed(engine, true);
+    const file = join(f.dir, `${slug(1)}.md`);
+    writeFileSync(join(f.dir, 'gbrain.yml'), 'storage:\n  db_only:\n    - emails/\n');
+    rmSync(file);
+    expect(await runGoogleAttachmentBackfill(engine, f.id, f.cfg, {}, fetcher)).toMatchObject({ status: 'complete', processed: 1 });
+    expect((await engine.readPageSnapshot(slug(1), { sourceId: f.id }))!.page.frontmatter.gmail_attachment_receipts)
+      .toMatchObject({ version: 1, messages: [{ messageId: msg(1), inspection: { state: 'present' } }] });
+    expect(existsSync(file)).toBe(false);
+    const receipts = await engine.executeRaw<{ outcome: Record<string, unknown> }>(
+      "SELECT outcome FROM persistence_requests WHERE source_id=$1 AND intent->>'kind'='managed_connector_google_receipts'", [f.id]);
+    expect(receipts).toHaveLength(1);
+    expect(receipts[0].outcome).toMatchObject({ write_through: { written: false, skipped: 'db_only' } });
   }
 }), 120_000);

@@ -6,7 +6,7 @@ import { OperationError } from '../ops/contract.ts';
 import { digest } from './digest.ts';
 import { contentHash } from '../utils.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
-import { prepareFileTarget } from './page-prepare.ts';
+import { databaseOnlyPublication, prepareFileTarget } from './page-prepare.ts';
 import { installPageProjection, preparePageProjection, readProjectionSnapshot } from '../page-state/projections.ts';
 import type { GmailThreadAttachmentReceipts } from '../google/types.ts';
 
@@ -72,7 +72,7 @@ export async function prepareGoogleReceiptPatch(engine: BrainEngine, row: WriteR
   const projection = noop ? null : await readProjectionSnapshot(engine, row.slug, row.source_id, { allowUnsealed: true });
   if (!noop && (!projection || projection.snapshot.revision !== current.revision)) throw new OperationError('revision_conflict', 'The Gmail page changed during receipt preparation.');
   const chunks = projection ? await preparePageProjection(projection) : null;
-  return { observedRevision: current.revision, sourceExclusive: true, deferEmbedding: true, noop, file,
+  return { observedRevision: current.revision, sourceExclusive: true, deferEmbedding: true, noop, file, ...databaseOnlyPublication(row, file),
     apply: async tx => {
       if (!noop) {
         const liveProjection = await readProjectionSnapshot(tx, row.slug, row.source_id, { allowUnsealed: true });
