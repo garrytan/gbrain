@@ -12,6 +12,7 @@
  */
 
 import { parseInlineCitationTimelineEntries, findTimelineSourceDelimiter } from './link-extraction.ts';
+import type { BrainEngine } from './engine.ts';
 
 export interface ExtractedTimelineEntry {
   slug: string;
@@ -90,4 +91,37 @@ export function extractTimelineFromContent(content: string, slug: string): Extra
   }
 
   return entries;
+}
+
+/**
+ * Retract the timeline rows a page's previous text produced that its current
+ * text no longer does (a corrected or deleted dated bullet). The previous text
+ * is the page's latest version snapshot, taken before the import that changed
+ * it. Only exact (date, source, summary) tuples that text produced are
+ * removed, so rows from other producers (enrichment, meeting fan-out, event
+ * projections) are never touched. Returns the number of rows removed.
+ */
+export async function retractRemovedTimelineEntries(
+  engine: Pick<BrainEngine, 'executeRaw'>,
+  slug: string,
+  sourceId: string,
+  current: ReadonlyArray<ExtractedTimelineEntry>,
+): Promise<number> {
+  const [previous] = await engine.executeRaw<{ compiled_truth: string; timeline: string | null }>(
+    `SELECT v.compiled_truth, v.timeline FROM page_versions v JOIN pages p ON p.id = v.page_id
+      WHERE p.source_id = $1 AND p.slug = $2 ORDER BY v.id DESC LIMIT 1`, [sourceId, slug]);
+  if (!previous) return 0;
+  const key = (e: Pick<ExtractedTimelineEntry, 'date' | 'source' | 'summary'>) => JSON.stringify([e.date, e.source, e.summary]);
+  const kept = new Set(current.map(key));
+  const removed = extractTimelineFromContent(`${previous.compiled_truth}\n${previous.timeline ?? ''}`, slug)
+    .filter(entry => !kept.has(key(entry)))
+    .map(({ date, source, summary }) => ({ date, source, summary }));
+  if (!removed.length) return 0;
+  const rows = await engine.executeRaw(
+    `DELETE FROM timeline_entries t USING pages p
+      WHERE p.id = t.page_id AND p.source_id = $1 AND p.slug = $2 AND t.event_page_id IS NULL
+        AND EXISTS (SELECT 1 FROM jsonb_to_recordset($3::text::jsonb) AS r(date date, source text, summary text)
+          WHERE r.date = t.date AND r.source = t.source AND r.summary = t.summary)
+      RETURNING t.id`, [sourceId, slug, JSON.stringify(removed)]);
+  return rows.length;
 }

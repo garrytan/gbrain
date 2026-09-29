@@ -26,7 +26,7 @@
  */
 
 import type { BrainEngine } from './engine.ts';
-import { computeEffectiveDate } from './effective-date.ts';
+import { computeEffectiveDate, fallbackCreatedAt } from './effective-date.ts';
 import type { EffectiveDateSource } from './types.ts';
 
 const BATCH_SIZE = 1000;
@@ -198,7 +198,7 @@ export async function backfillEffectiveDate(
             frontmatter: fm,
             filename,
             updatedAt: new Date(r.updated_at),
-            createdAt: new Date(r.created_at),
+            createdAt: fallbackCreatedAt({ existing: r, now: new Date(r.created_at) }),
           });
 
           // No-op-on-equal: skip the UPDATE if existing matches (saves write
@@ -229,7 +229,7 @@ export async function backfillEffectiveDate(
           frontmatter: fm,
           filename,
           updatedAt: new Date(r.updated_at),
-          createdAt: new Date(r.created_at),
+          createdAt: fallbackCreatedAt({ existing: r, now: new Date(r.created_at) }),
         });
         const existingMs = r.effective_date ? new Date(r.effective_date).getTime() : null;
         const computedMs = computed.date ? computed.date.getTime() : null;

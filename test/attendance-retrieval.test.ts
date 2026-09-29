@@ -95,13 +95,16 @@ for (const kind of ['pglite', ...(process.env.DATABASE_URL ? ['postgres'] : [])]
         capabilities: { embeddings: { available: false }, extraction: { available: false }, search: 'keyword-only', mode: 'keyless' } });
     }
     for (const lane of ['fs-sync', 'fs-incremental', 'fs-batch']) {
-      test(`${lane}: ordinary meeting links keep additive filesystem handling`, async () => {
+      // The per-slug sync lanes replace a page's own markdown-derived links
+      // (the put_page contract); the full-walk batch lane stays additive.
+      const replaces = lane !== 'fs-batch';
+      test(`${lane}: ordinary meeting links ${replaces ? 'are replaced like put_page' : 'keep additive filesystem handling'}`, async () => {
         await seed(meeting, 'meeting', '[Alice](../people/alice-example.md)');
         await extract(lane);
         expect((await engine.getLinks(meeting, { sourceId })).map(row => row.to_slug)).toEqual([person]);
         await seed(meeting, 'meeting', 'An ordinary reference was removed, with no attendance claim.');
         await extract(lane);
-        expect((await engine.getLinks(meeting, { sourceId })).map(row => row.to_slug)).toEqual([person]);
+        expect((await engine.getLinks(meeting, { sourceId })).map(row => row.to_slug)).toEqual(replaces ? [] : [person]);
       });
       test(`${lane}: unchanged DB-only attendance survives and real evidence removal retracts it`, async () => {
         await seed(meeting, 'meeting', positive);

@@ -163,6 +163,27 @@ export async function replaceFileLinks(engine: BrainEngine, slug: string, source
   return result.created;
 }
 
+/**
+ * Replace one file page's own markdown-derived links with what its current
+ * text produces, the put_page contract: an edge the text no longer supports
+ * is removed, other producers' edges stay. Returns the number of new edges,
+ * or null when the page row is missing. Links whose endpoints are not live
+ * pages in the source are dropped, as the add-only path's failed inserts were.
+ */
+export async function replacePageFileLinks(engine: BrainEngine, slug: string, sourceId: string,
+  links: LinkBatchInput[], includeFrontmatter: boolean,
+  ownership: Awaited<ReturnType<typeof fileLinkOwnership>>): Promise<number | null> {
+  const snapshot = await engine.readPageSnapshot(slug, { sourceId });
+  if (!snapshot) return null;
+  const rows = links.filter(link => ownership.metadata.has(`${sourceId}\0${link.from_slug}`)
+    && ownership.metadata.has(`${sourceId}\0${link.to_slug}`)).map(link => ({ ...link,
+    from_source_id: sourceId, to_source_id: sourceId, origin_source_id: sourceId }));
+  const result = await engine.replaceDerivedLinks({ slug, sourceId, expectedRevision: snapshot.revision,
+    sourceIncarnation: snapshot.sourceIncarnation }, rows, { includeFrontmatter, preserveExisting: true,
+    includeLegacyNullProducer: false });
+  return result.created;
+}
+
 export async function fileLinkOwnership(engine: BrainEngine, sourceId: string) {
   const pages = await loadLinkPageMetadata(engine);
   const metadata = new Map(pages.map(row => [`${row.source_id}\0${row.slug}`, row]));

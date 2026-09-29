@@ -196,6 +196,7 @@ export type EffectiveDateSource =
   | 'date'
   | 'published'
   | 'filename'
+  | 'created'
   | 'fallback';
 
 // `image` (v0.27.1): multimodal ingestion path, parallel to markdown + code.

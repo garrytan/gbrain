@@ -146,8 +146,16 @@ describe('resolveEntitySlug — prefix expansion', () => {
     expect(result).toContain('alice-example');
   });
 
-  it('preserves a high-specificity multi-token typo match', async () => {
+  it('does not attach a near-name to an existing person (a typo and a different person look alike)', async () => {
+    // "Alice Exampl" is one edit from "Alice Example", exactly as "Carol Exampl" is
+    // one edit from "Carol Example": trigram similarity cannot tell a typo from a
+    // different person, so the reference keeps its own slug.
     const result = await resolveEntitySlug(engine as unknown as BrainEngine, 'default', 'Alice Exampl');
+    expect(result).toBe('alice-exampl');
+  });
+
+  it('resolves the same person written in another order or case', async () => {
+    const result = await resolveEntitySlug(engine as unknown as BrainEngine, 'default', 'example, ALICE');
     expect(result).toBe('people/alice-example');
   });
 
