@@ -18,25 +18,31 @@ export async function recordFactWithdrawal(
     // A managed caller takes this EXCLUSIVE source lock before authority,
     // counters and request rows. Repeating an already-held lock is safe.
     await tx.executeRaw('SELECT id FROM sources WHERE id=$1 FOR UPDATE', [sourceId]);
-    const visible = await tx.executeRaw<{ visibility: 'private' | 'world'; fact: string; fact_hash: string }>(
-      `SELECT visibility,fact,gbrain_fact_fingerprint(fact) AS fact_hash FROM facts WHERE id=$1 AND source_id=$2
+    const visible = await tx.executeRaw<{ visibility: 'private' | 'world'; fact_hash: string; subject: string }>(
+      `SELECT visibility,gbrain_fact_fingerprint(fact) AS fact_hash,COALESCE(entity_slug,'*') AS subject FROM facts WHERE id=$1 AND source_id=$2
         AND ($3::boolean=false OR visibility='world')`, [id, sourceId, worldOnly]);
     if (!visible.length) return { withdrawn: false, pages: [] };
-    const target = visible[0];
+    const { visibility, fact_hash, subject } = visible[0];
+    // Discovery stays claim-wide (a conservative superset of affected pages);
+    // only an existing withdrawal covering this subject makes it a no-op.
     const existing = await tx.executeRaw(`SELECT 1 FROM fact_withdrawals
-      WHERE source_id=$1 AND visibility=$2 AND fact_hash=$3 LIMIT 1`, [sourceId, target.visibility, target.fact_hash]);
-    const affected = existing.length ? [] : await discoverWithdrawalTargets(tx, sourceId, [target]).catch(withdrawalDiscoveryFailure);
+      WHERE source_id=$1 AND visibility=$2 AND fact_hash=$3 AND (subject='*' OR subject=$4) LIMIT 1`,
+    [sourceId, visibility, fact_hash, subject]);
+    const affected = existing.length ? [] : await discoverWithdrawalTargets(tx, sourceId, [{ visibility, fact_hash }]).catch(withdrawalDiscoveryFailure);
     await tx.lockPageKeys(affected.map(({ slug }) => ({ sourceId, slug })));
-    const rows = await tx.executeRaw<{ visibility: string; fact: string }>(
-      `SELECT visibility,fact FROM facts WHERE id=$1 AND source_id=$2
+    const rows = await tx.executeRaw<{ visibility: string; fact: string; subject: string }>(
+      `SELECT visibility,fact,COALESCE(entity_slug,'*') AS subject FROM facts WHERE id=$1 AND source_id=$2
         AND ($3::boolean=false OR visibility='world') FOR UPDATE`, [id, sourceId, worldOnly]);
     if (!rows.length) return { withdrawn: false, pages: [] };
     const row = rows[0];
-    const inserted = await tx.executeRaw(`INSERT INTO fact_withdrawals(source_id,visibility,fact_hash)
-      VALUES ($1,$2,gbrain_fact_fingerprint($3)) ON CONFLICT DO NOTHING RETURNING fact_hash`, [sourceId,row.visibility,row.fact]);
+    // Scoped to the forgotten row's entity: the same claim about another
+    // entity stays active and rememberable. A subjectless fact withdraws
+    // source-wide ('*').
+    const inserted = await tx.executeRaw(`INSERT INTO fact_withdrawals(source_id,visibility,subject,fact_hash)
+      VALUES ($1,$2,$4,gbrain_fact_fingerprint($3)) ON CONFLICT DO NOTHING RETURNING fact_hash`, [sourceId,row.visibility,row.fact,row.subject]);
     await tx.executeRaw(`UPDATE facts SET expired_at=now(),valid_until=LEAST(COALESCE(valid_until,now()),now())
       WHERE source_id=$1 AND visibility=$2 AND gbrain_fact_fingerprint(fact)=gbrain_fact_fingerprint($3)
-        AND expired_at IS NULL`, [sourceId,row.visibility,row.fact]);
+        AND ($4='*' OR entity_slug=$4) AND expired_at IS NULL`, [sourceId,row.visibility,row.fact,row.subject]);
     if (!inserted.length) return { withdrawn: false, pages: [] };
     // Logical revision and projection invalidation commit with the withdrawal.
     // The revision trigger queues durable rebuild work even for unmanaged calls.
@@ -55,36 +61,43 @@ export async function recordFactWithdrawal(
   });
 }
 
-async function ambiguousFenceMatchesWithdrawal(engine: BrainEngine, sourceId: string, bodies: readonly string[]): Promise<boolean> {
+async function ambiguousFenceMatchesWithdrawal(engine: BrainEngine, sourceId: string, bodies: readonly string[], subject: string | null): Promise<boolean> {
   const claims = bodies.flatMap(ambiguousFenceClaims);
   if (!claims.length) return false;
   const rows = await engine.executeRaw(`SELECT 1 FROM jsonb_to_recordset($2::text::jsonb) incoming(claim text,visibility text)
     JOIN fact_withdrawals w ON w.source_id=$1 AND w.fact_hash=gbrain_fact_fingerprint(incoming.claim)
-      AND (incoming.visibility IS NULL OR w.visibility=incoming.visibility) LIMIT 1`,
-  [sourceId, JSON.stringify(claims)]);
+      AND (incoming.visibility IS NULL OR w.visibility=incoming.visibility)
+      AND ($3::text IS NULL OR w.subject = '*' OR w.subject = $3::text) LIMIT 1`,
+  [sourceId, JSON.stringify(claims), subject]);
   return rows.length > 0;
 }
 
-async function withdrawalDates(engine: BrainEngine, sourceId: string, facts: readonly ParsedFact[]): Promise<Map<number,string>> {
+async function withdrawalDates(engine: BrainEngine, sourceId: string, facts: readonly ParsedFact[], subject: string | null): Promise<Map<number,string>> {
   if (!facts.length) return new Map();
   const rows = await engine.executeRaw<{ row_num: number; withdrawn_at: string }>(
-    `SELECT incoming.row_num, w.withdrawn_at::text FROM jsonb_to_recordset($2::text::jsonb)
+    `SELECT incoming.row_num, min(w.withdrawn_at)::text AS withdrawn_at FROM jsonb_to_recordset($2::text::jsonb)
       AS incoming(row_num integer,claim text,visibility text)
       JOIN fact_withdrawals w ON w.source_id=$1 AND w.visibility=incoming.visibility
-        AND w.fact_hash=gbrain_fact_fingerprint(incoming.claim)`,
-    [sourceId, JSON.stringify(facts.map(f => ({ row_num:f.rowNum, claim:f.claim, visibility:f.visibility })))],
+        AND w.fact_hash=gbrain_fact_fingerprint(incoming.claim)
+        AND ($3::text IS NULL OR w.subject = '*' OR w.subject = $3::text)
+      GROUP BY incoming.row_num`,
+    [sourceId, JSON.stringify(facts.map(f => ({ row_num:f.rowNum, claim:f.claim, visibility:f.visibility }))), subject],
   );
   return new Map(rows.map(r => [r.row_num, new Date(r.withdrawn_at).toISOString().slice(0,10)]));
 }
 
-/** Overlay stale source files before hashing/chunking, retaining an explicit retraction. */
-export async function preserveWithdrawnFenceRows(engine: BrainEngine, sourceId: string, body: string): Promise<string> {
+/**
+ * Overlay stale source files before hashing/chunking, retaining an explicit
+ * retraction. Fence rows belong to the page's entity, so pass the page slug
+ * as `subject`; without it every subject's withdrawal applies (conservative).
+ */
+export async function preserveWithdrawnFenceRows(engine: BrainEngine, sourceId: string, body: string, subject?: string): Promise<string> {
   if (!body.includes('gbrain:facts:begin')) return body;
   const blocks = withdrawalFenceBlocks(body);
   for (const block of blocks.reverse()) {
     // Preserve malformed-fence diagnostics; never re-render a partial parse.
     if (block.parsed.warnings.length) continue;
-    const dates = await withdrawalDates(engine, sourceId, block.parsed.facts);
+    const dates = await withdrawalDates(engine, sourceId, block.parsed.facts, subject ?? null);
     if (!dates.size) continue;
     const facts = block.parsed.facts.map(f => {
       const date = dates.get(f.rowNum);
@@ -95,11 +108,15 @@ export async function preserveWithdrawnFenceRows(engine: BrainEngine, sourceId: 
   return body;
 }
 
-/** Refuse provider-free preparation that raced a newly committed withdrawal. */
-export async function assertPreparedFactWithdrawals(engine: BrainEngine, sourceId: string, body: string, timeline: string): Promise<void> {
-  const changed = await preserveWithdrawnFenceRows(engine, sourceId, body) !== body ||
-    await preserveWithdrawnFenceRows(engine, sourceId, timeline) !== timeline;
-  const blocked = await ambiguousFenceMatchesWithdrawal(engine, sourceId, [body, timeline]);
+/**
+ * Refuse provider-free preparation that raced a newly committed withdrawal.
+ * `subject` is the page slug the prepared body belongs to (see
+ * preserveWithdrawnFenceRows); without it every subject's withdrawal counts.
+ */
+export async function assertPreparedFactWithdrawals(engine: BrainEngine, sourceId: string, body: string, timeline: string, subject?: string): Promise<void> {
+  const changed = await preserveWithdrawnFenceRows(engine, sourceId, body, subject) !== body ||
+    await preserveWithdrawnFenceRows(engine, sourceId, timeline, subject) !== timeline;
+  const blocked = await ambiguousFenceMatchesWithdrawal(engine, sourceId, [body, timeline], subject ?? null);
   if (changed) {
     throw new OperationError('revision_conflict', 'A fact withdrawal changed during import preparation. Retry the import.',
       'Read the current page revision, then submit the updated import with a new request_id.');
@@ -110,9 +127,12 @@ export async function assertPreparedFactWithdrawals(engine: BrainEngine, sourceI
   }
 }
 
-/** Explicit remember is not an implicit restore operation. */
-export async function isFactWithdrawn(engine: BrainEngine, sourceId: string, visibility: string, claim: string): Promise<boolean> {
+/** Explicit remember is not an implicit restore operation for that entity. */
+export async function isFactWithdrawn(
+  engine: BrainEngine, sourceId: string, visibility: string, claim: string, entitySlug: string | null,
+): Promise<boolean> {
   const rows = await engine.executeRaw(`SELECT 1 FROM fact_withdrawals
-    WHERE source_id=$1 AND visibility=$2 AND fact_hash=gbrain_fact_fingerprint($3)`, [sourceId,visibility,claim]);
+    WHERE source_id=$1 AND visibility=$2 AND fact_hash=gbrain_fact_fingerprint($3)
+      AND (subject = '*' OR subject = $4::text)`, [sourceId,visibility,claim,entitySlug]);
   return rows.length > 0;
 }

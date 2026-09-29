@@ -816,3 +816,41 @@ describe('tryRedirectPhantom — fence placement above the timeline sentinel (#4
     });
   });
 });
+
+describe('tryRedirectPhantom — content outside compiled_truth is residue', () => {
+  test('a page whose content lives in the timeline is not a phantom and survives', async () => {
+    await withTempDirs(async ({ brainDir }) => {
+      await putPage('people/alice-example', '# Alice Example\n\nCanonical person page.\n', { type: 'person' });
+      await engine.putPage('alice', {
+        title: 'alice',
+        type: 'person',
+        compiled_truth: '# alice\n',
+        timeline: '## Timeline\n\n- **2026-03-01** | Met alice at the acme-example offsite; TIMELINE-MARKER.\n',
+        frontmatter: {},
+      });
+      writeMd(brainDir, 'alice', '# alice\n\n<!-- timeline -->\n\n## Timeline\n\n- **2026-03-01** | TIMELINE-MARKER\n');
+
+      const phantom = await engine.getPage('alice', { sourceId: 'default' });
+      const result = await tryRedirectPhantom(engine, phantom!, 'default', brainDir, false);
+
+      expect(result.outcome).toBe('not_phantom');
+      const after = await engine.getPage('alice', { sourceId: 'default' });
+      expect(after?.timeline).toContain('TIMELINE-MARKER');
+      expect(mdExists(brainDir, 'alice')).toBe(true);
+    });
+  });
+
+  test('custom frontmatter is residue; title/type/tags alone are not', async () => {
+    await withTempDirs(async ({ brainDir }) => {
+      await putPage('people/alice-example', '# Alice Example\n\nCanonical person page.\n', { type: 'person' });
+      await putPage('alice', STUB_BODY, { frontmatter: { email_hint: 'alice@acme-example.test' } });
+      writeMd(brainDir, 'alice', `---\nemail_hint: alice@acme-example.test\n---\n${STUB_BODY}`);
+      const withCustom = await engine.getPage('alice', { sourceId: 'default' });
+      expect((await tryRedirectPhantom(engine, withCustom!, 'default', brainDir, false)).outcome).toBe('not_phantom');
+
+      await putPage('alice', STUB_BODY, { frontmatter: { title: 'alice', type: 'person', tags: [] } });
+      const plain = await engine.getPage('alice', { sourceId: 'default' });
+      expect((await tryRedirectPhantom(engine, plain!, 'default', brainDir, true)).outcome).toBe('redirected');
+    });
+  });
+});

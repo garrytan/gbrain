@@ -17,7 +17,7 @@ test('export refuses an over-limit withdrawal ledger before fetching its payload
 
 test('export accepts the exact ledger limit and keeps both reads source scoped', async () => {
   const params: unknown[][] = [];
-  const ledger = [{ visibility: 'world' as const, fact_hash: 'synthetic-fingerprint', withdrawn_at: '2026-01-01T00:00:00Z' }];
+  const ledger = [{ visibility: 'world' as const, fact_hash: 'synthetic-fingerprint', withdrawn_at: '2026-01-01T00:00:00Z', subject: '*' }];
   const engine = { executeRaw: async (_sql: string, bound: unknown[]) => {
     params.push(bound);
     return params.length === 1 ? [{ bytes: String(EXPORT_PAYLOAD_LIMIT) }] : ledger;

@@ -275,7 +275,16 @@ export async function runPhaseSynthesizeConcepts(
     fallback: 'sonnet',
   });
   const synthMaxOutputTokens = resolveSynthMaxOutputTokens(synthModel);
+  const skippedHumanOwned: string[] = [];
   for (const group of atomGroups) {
+    const conceptSlug = `concepts/${group.conceptSlug.split('/').pop() ?? group.conceptSlug}`;
+    // A concept page this phase did not write belongs to a human (or another
+    // writer). Check before any spend; never replace its body.
+    const existing = await engine.getPage(conceptSlug, { sourceId: opts.sourceId ?? 'default' });
+    if (existing && !String(existing.frontmatter?.synthesized_by ?? '').startsWith('synthesize_concepts')) {
+      skippedHumanOwned.push(conceptSlug);
+      continue;
+    }
     tierCounts[group.tier]++;
     let narrative: string;
     let synthesisMode: ConceptSynthesisMode;
@@ -355,7 +364,7 @@ export async function runPhaseSynthesizeConcepts(
     synthesisModeCounts[synthesisMode]++;
 
     if (!opts.dryRun) {
-      const title = group.conceptSlug.split('/').pop() ?? group.conceptSlug;
+      const title = conceptSlug.slice('concepts/'.length);
       // #2163: serialize to markdown and import via the canonical pipeline so
       // the page is chunked (+ embedded when a provider is configured) —
       // mirrors put_page's isAvailable('embedding') → noEmbed gate.
@@ -372,7 +381,6 @@ export async function runPhaseSynthesizeConcepts(
         '',
         { type: 'concept', title: title.replace(/-/g, ' '), tags: [] },
       );
-      const conceptSlug = `concepts/${title}`;
       await importFromContent(engine, conceptSlug, md, {
         noEmbed: !isAvailable('embedding'),
         // #4416: target the cycle's resolved source, not the 'default' literal.
@@ -465,7 +473,8 @@ export async function runPhaseSynthesizeConcepts(
       `synthesize_concepts: ${conceptsWritten} concepts ` +
       `(T1=${tierCounts.T1} T2=${tierCounts.T2} T3=${tierCounts.T3})` +
       (failures.length > 0 ? ` (${failures.length} LLM-failed → template fallback)` : '') +
-      (linkWarnings.length > 0 ? ` (${linkWarnings.length} provenance-link warning(s))` : ''),
+      (linkWarnings.length > 0 ? ` (${linkWarnings.length} provenance-link warning(s))` : '') +
+      (skippedHumanOwned.length > 0 ? ` (${skippedHumanOwned.length} human-owned page(s) left untouched)` : ''),
     details: {
       concepts_written: conceptsWritten,
       tier_counts: tierCounts,
@@ -474,6 +483,7 @@ export async function runPhaseSynthesizeConcepts(
       atoms_seen: atoms.length,
       failures,
       link_warnings: linkWarnings,
+      skipped_human_owned: skippedHumanOwned,
       ...(abortedGlobalError ? { aborted_global_error: abortedGlobalError } : {}),
       estimated_spend_usd: estimatedSpendUsd,
       budget_usd: budgetCap,

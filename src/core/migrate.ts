@@ -20,7 +20,7 @@ import { repairTimelineDedupIndex, repairLegacyTimelineSourceRows } from './time
 import { repairPagesUpsertArbiter } from './pages-upsert-arbiter.ts';
 import { repairLinkSourceCheck, LINK_SOURCE_GATE_MIGRATION_VERSION } from './link-source-check-repair.ts';
 import { GRANT_COLUMNS_SQL, GRANT_AUDIT_SCHEMA_SQL, GRANT_SPEND_COLUMNS_SQL } from './grants/schema.ts';
-import { FACT_WITHDRAWAL_SCHEMA_SQL, FACT_WITHDRAWAL_BACKFILL_SQL } from './facts/withdrawal-schema.ts';
+import { FACT_WITHDRAWAL_SCHEMA_SQL, FACT_WITHDRAWAL_BACKFILL_SQL, FACT_WITHDRAWAL_SUBJECT_SQL } from './facts/withdrawal-schema.ts';
 import { repairLegacyClientGrants } from './grants/migration.ts';
 import { PROJECTION_STATISTICS_SQL, verifyProjectionStatistics } from './search/projection-statistics.ts';
 import { SHARED_SKILLS_SCHEMA_SQL } from './shared-skills/schema-all.ts';
@@ -6667,6 +6667,46 @@ CREATE TRIGGER minion_queue_protocol BEFORE INSERT OR UPDATE ON minion_jobs
     sql: `ALTER TABLE facts ADD COLUMN IF NOT EXISTS embedding_model TEXT;
       ALTER TABLE facts ADD COLUMN IF NOT EXISTS embedded_text_hash TEXT;
       ${MANAGED_WRITER_GUARD_SQL}`,
+  },
+  {
+    // A legacy DB-only row can name a fence row as its successor. The fence
+    // reconcile deletes and reinserts that row, so a NO ACTION reference made
+    // the page fail to reconcile on every cycle. The superseded row stays
+    // expired; only the pointer to the replaced row clears.
+    version: 167,
+    name: 'facts_superseded_by_set_null',
+    idempotent: true,
+    sql: `
+      ALTER TABLE facts DROP CONSTRAINT IF EXISTS facts_superseded_by_fkey;
+      ALTER TABLE facts ADD CONSTRAINT facts_superseded_by_fkey
+        FOREIGN KEY (superseded_by) REFERENCES facts(id) ON DELETE SET NULL NOT VALID;
+      ALTER TABLE facts VALIDATE CONSTRAINT facts_superseded_by_fkey;
+    `,
+  },
+  {
+    // The only record that a transcript was synthesized was its completed
+    // subagent job row, which `jobs prune` deletes after 30 days; the next
+    // cycle then paid to synthesize it again. Prune archives the keys here.
+    version: 168,
+    name: 'dream_synthesis_completions',
+    idempotent: true,
+    sql: `
+      CREATE TABLE IF NOT EXISTS dream_synthesis_completions (
+        source_id TEXT NOT NULL,
+        idempotency_key TEXT NOT NULL,
+        completed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        PRIMARY KEY (source_id, idempotency_key)
+      );
+    `,
+  },
+  {
+    // A withdrawal keyed only on the claim text expired and blocked that claim
+    // for every entity in the source. New withdrawals carry the forgotten
+    // row's subject; existing rows keep the source-wide '*' subject.
+    version: 169,
+    name: 'fact_withdrawal_subject',
+    idempotent: true,
+    sql: FACT_WITHDRAWAL_SUBJECT_SQL,
   },
 ];
 

@@ -127,6 +127,7 @@ import type { PgSalienceDeps } from './postgres-engine/salience.ts';
 import { hasCJK } from './cjk.ts';
 import { searchKeywordCJK as searchKeywordCJKImpl } from './postgres-engine/cjk-search.ts';
 import type { CjkKeywordCtx } from './search/cjk-keyword-sql.ts';
+import { MOVE_WITHDRAWAL_SUBJECT_SQL } from './facts/withdrawal-schema.ts';
 
 function escapeSqlStringLiteral(value: string): string {
   return value.replace(/'/g, "''");
@@ -5031,7 +5032,11 @@ export class PostgresEngine implements BrainEngine {
         `UPDATE pages SET slug = $1, updated_at = now() WHERE slug = $2 AND source_id = $3 RETURNING id`,
         [newSlug, oldSlug, sourceId],
       );
-      if (moved.length > 0) await recordRenameAlias(tx, sourceId, oldSlug, newSlug);
+      if (moved.length > 0) {
+        await recordRenameAlias(tx, sourceId, oldSlug, newSlug);
+        // A forgotten claim stays forgotten for the renamed entity.
+        await tx.executeRaw(MOVE_WITHDRAWAL_SUBJECT_SQL, [sourceId, oldSlug, newSlug]);
+      }
       // #3056: rows moved — a zero-row UPDATE does not throw, so the count is
       // the only way callers can see the no-op.
       return moved.length;

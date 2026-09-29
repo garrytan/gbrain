@@ -77,7 +77,7 @@ export interface ParsedFact {
   rowNum: number;
   claim: string;          // strikethrough markers stripped on parse
   kind: FactKind;
-  confidence: number;     // 0..1 (clamp/normalize happens in the engine layer)
+  confidence: number;     // 0..1; out-of-range cells are FACTS_TABLE_MALFORMED
   visibility: FactVisibility;
   notability: FactNotability;
   validFrom?: string;     // ISO date 'YYYY-MM-DD' (or empty)
@@ -263,6 +263,10 @@ export function parseFactsFence(body: string): FactsFenceParseResult {
     const confidence = parseConfidenceCell(confidenceRaw);
     if (confidence === undefined) {
       warnings.push(`FACTS_TABLE_MALFORMED: non-numeric confidence "${confidenceRaw}" in row ${rowNumStr}`);
+      continue;
+    }
+    if (confidence < 0 || confidence > 1) {
+      warnings.push(`FACTS_TABLE_MALFORMED: confidence "${confidenceRaw}" in row ${rowNumStr} is outside 0..1`);
       continue;
     }
 

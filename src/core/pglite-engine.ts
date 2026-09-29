@@ -139,6 +139,7 @@ import type { PgliteCodeEdgesDeps } from './pglite-engine/code-edges.ts';
 import * as salienceImpl from './pglite-engine/salience.ts';
 import type { PgliteSalienceDeps } from './pglite-engine/salience.ts';
 import { searchKeywordCJK } from './pglite-engine/cjk-search.ts';
+import { MOVE_WITHDRAWAL_SUBJECT_SQL } from './facts/withdrawal-schema.ts';
 
 /**
  * #4284 — opt-in out-of-band watchdog for a PGLite disconnect with a live
@@ -5805,7 +5806,11 @@ export class PGLiteEngine implements BrainEngine {
         `UPDATE pages SET slug = $1, updated_at = now() WHERE slug = $2 AND source_id = $3 RETURNING id`,
         [newSlug, oldSlug, sourceId]
       );
-      if (moved.length > 0) await recordRenameAlias(tx, sourceId, oldSlug, newSlug);
+      if (moved.length > 0) {
+        await recordRenameAlias(tx, sourceId, oldSlug, newSlug);
+        // A forgotten claim stays forgotten for the renamed entity.
+        await tx.executeRaw(MOVE_WITHDRAWAL_SUBJECT_SQL, [sourceId, oldSlug, newSlug]);
+      }
       // #3056: rows moved — a zero-row UPDATE does not throw, so the count is
       // the only way callers can see the no-op.
       return moved.length;

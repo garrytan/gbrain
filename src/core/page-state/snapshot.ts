@@ -43,8 +43,9 @@ export async function readPageSnapshot(query: ReadQuery, slug: string, opts?: Pa
     (SELECT s.incarnation FROM sources s WHERE s.id=p.source_id) AS source_incarnation,
     COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag) FROM tags t WHERE t.page_id=p.id), '[]'::jsonb) AS snapshot_tags,
     COALESCE((SELECT jsonb_agg(jsonb_build_object('visibility',w.visibility,'fact_hash',w.fact_hash,'withdrawn_at',w.withdrawn_at)
-      ORDER BY w.visibility,w.fact_hash) FROM fact_withdrawals w WHERE w.source_id=p.source_id
-      ${opts?.excludePrivate ? "AND w.visibility='world'" : ''}), '[]'::jsonb) AS snapshot_withdrawals,
+      ORDER BY w.visibility,w.fact_hash) FROM (SELECT visibility,fact_hash,min(withdrawn_at) AS withdrawn_at
+        FROM fact_withdrawals WHERE source_id=p.source_id AND (subject='*' OR subject=p.slug)
+        ${opts?.excludePrivate ? "AND visibility='world'" : ''} GROUP BY visibility,fact_hash) w), '[]'::jsonb) AS snapshot_withdrawals,
     (SELECT string_agg(regexp_replace(lower(line), '[[:space:]]+', ' ', 'g'), chr(10) ORDER BY ord)
       FROM unnest(string_to_array(p.compiled_truth,chr(10))) WITH ORDINALITY AS lines(line,ord)) AS fingerprint_body,
     (SELECT string_agg(regexp_replace(lower(line), '[[:space:]]+', ' ', 'g'), chr(10) ORDER BY ord)

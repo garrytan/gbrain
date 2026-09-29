@@ -36,6 +36,7 @@ import {
   loadImportRedactionPatterns,
   redactSession,
   renderSessionParts,
+  type RenderSessionResult,
 } from './render.ts';
 
 export interface IngestActivePack {
@@ -283,6 +284,8 @@ export async function runTranscriptsIngest(
             // title or corrected start date) — raw-data writes and stale-part
             // reconciliation must follow the page that actually exists, or
             // every re-run aborts on a nonexistent slug.
+            await adoptExistingBaseSlug(engine, opts.sourceId ?? 'default', rendered);
+            outcome.baseSlug = rendered.baseSlug;
             let resolvedBaseSlug = rendered.baseSlug;
             for (const part of rendered.parts) {
               try {
@@ -453,4 +456,21 @@ export async function runTranscriptsIngest(
 
   if (opts.dryRun) result.cleanScan = false; // dry-runs never advance watermarks
   return result;
+}
+
+/**
+ * The slug embeds the title (and start day) for export formats, so a rename
+ * renders a new slug for the same session. Import at the slug the session's
+ * pages already live at: the content is then an in-place update. At a new
+ * slug, the importer's cross-slug identity dedup skipped it as a duplicate
+ * and every message added since the last import was silently dropped.
+ */
+async function adoptExistingBaseSlug(engine: BrainEngine, sourceId: string, rendered: RenderSessionResult): Promise<void> {
+  const [existing] = await engine.executeRaw<{ slug: string }>(
+    `SELECT slug FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND frontmatter->>'id' = $2 ORDER BY id LIMIT 1`,
+    [sourceId, rendered.parts[0].frontmatterId],
+  );
+  if (!existing || existing.slug === rendered.baseSlug) return;
+  rendered.baseSlug = existing.slug;
+  for (const part of rendered.parts) part.slug = part.part === 1 ? existing.slug : `${existing.slug}-p${part.part}`;
 }

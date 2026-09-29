@@ -1680,7 +1680,11 @@ describe('runExtractFacts — v0.46 (#3014) supersession transport + heal', () =
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (engine as any).insertFacts = async () => { throw new Error('simulated insert failure'); };
     try {
-      await expect(runExtractFacts(engine, { slugs: ['people/deal'] })).rejects.toThrow('simulated insert failure');
+      // The failure is isolated to this page and reported, not thrown out of
+      // the phase (a thrown error aborted every later page).
+      const result = await runExtractFacts(engine, { slugs: ['people/deal'] });
+      expect(result.pagesFailed).toBe(1);
+      expect(result.warnings).toContain('people/deal: FACTS_RECONCILE_FAILED: simulated insert failure');
     } finally {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (engine as any).insertFacts = original;

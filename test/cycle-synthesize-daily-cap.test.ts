@@ -422,3 +422,30 @@ describe('daily cap — engaged', () => {
     }
   }, 60_000);
 });
+
+describe('synthesis completion survives job pruning', () => {
+  test('`jobs prune` of an old completed synth-v2 child does not make the transcript eligible again', async () => {
+    const rig = await setupRig();
+    try {
+      const done = await seedPassingFile(rig, '2026-07-01-pruned.txt');
+      const content = `conversation in 2026-07-01-pruned.txt\n`.repeat(200);
+      const hash16 = createHash('sha256').update(content, 'utf8').digest('hex').slice(0, 16);
+      await rig.engine.executeRaw(
+        `INSERT INTO minion_jobs (submission_authority, name, queue, status, data, idempotency_key, created_at, finished_at, updated_at)
+         VALUES ('{"version":1,"kind":"application"}'::jsonb, 'subagent', 'dream-inline-old-run', 'completed', '{"source_id":"default"}'::jsonb, $1,
+                 now() - interval '40 days', now() - interval '40 days', now() - interval '40 days')`,
+        [`dream:synth-v2:default:filename:2026-07-01-pruned.txt:${hash16}`],
+      );
+      const { MinionQueue } = await import('../src/core/minions/queue.ts');
+      expect(await new MinionQueue(rig.engine).prune()).toBe(1);
+      const left = await rig.engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM minion_jobs WHERE name='subagent'`);
+      expect(left[0].n).toBe(0);
+
+      const details = await runPhase(rig);
+      expect(details.skips.find(s => s.filePath === done)?.reason).toBe('already_synthesized_v2_single_chunk');
+      expect(details.children_submitted).toBe(0);
+    } finally {
+      await rig.cleanup();
+    }
+  }, 60_000);
+});

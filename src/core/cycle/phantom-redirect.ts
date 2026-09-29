@@ -58,6 +58,7 @@ import { parseMarkdown, splitBody, serializeMarkdown } from '../markdown.ts';
 import { tryAcquireDbLock, syncLockId, type DbLockHandle } from '../db-lock.ts';
 import { isAborted } from '../abort-check.ts';
 import { logPhantomEvent, type PhantomOutcome } from '../facts/phantom-audit.ts';
+import { MOVE_WITHDRAWAL_SUBJECT_SQL } from '../facts/withdrawal-schema.ts';
 
 /** Tagged-union outcome of a single phantom-redirect attempt. */
 export type RedirectOutcome =
@@ -344,6 +345,9 @@ async function materializeCanonicalToDisk(
   fs.writeFileSync(canonicalPath, body, 'utf-8');
 }
 
+/** Frontmatter a bare phantom stub may carry; any other key is residue. */
+const PHANTOM_STUB_FRONTMATTER = new Set(['title', 'type', 'tags']);
+
 /**
  * Single-phantom redirect. Caller (the pass) is responsible for the
  * outer lock + the audit-log cap.
@@ -360,9 +364,15 @@ export async function tryRedirectPhantom(
 
   // A3 + codex #2: strict zero-residue body-shape gate. Real top-level
   // pages have prose; phantoms have only the stub-shape `# slug` + maybe
-  // a facts fence.
-  const residue = stripFenceAndFrontmatterAndLeadingH1(page.compiled_truth ?? '');
-  if (residue.length > 0) {
+  // a facts fence. Only fence rows migrate, so anything else the page holds
+  // (timeline text or rows, custom frontmatter) is residue that a redirect
+  // would delete.
+  const residue = stripFenceAndFrontmatterAndLeadingH1(page.compiled_truth ?? '')
+    + (page.timeline ?? '').trim()
+    + Object.keys(page.frontmatter ?? {}).filter(key => !PHANTOM_STUB_FRONTMATTER.has(key)).join(',');
+  const timelineRows = residue.length > 0 ? [] : await engine.executeRaw(
+    'SELECT 1 FROM timeline_entries WHERE page_id=$1 LIMIT 1', [page.id]);
+  if (residue.length > 0 || timelineRows.length > 0) {
     logPhantomEvent({
       phantom_slug: page.slug,
       outcome: 'not_phantom_has_residue',
@@ -449,6 +459,8 @@ export async function tryRedirectPhantom(
 
   // Codex #3/#4/#12: lossless DB migration. Re-runs return migrated=0.
   const migrated = await engine.migrateFactsToCanonical(page.slug, canonical, sourceId);
+  // Withdrawals are scoped to the entity; the phantom was the canonical entity.
+  await engine.executeRaw(MOVE_WITHDRAWAL_SUBJECT_SQL, [sourceId, page.slug, canonical]);
 
   // D6: DB FK rewrite for the links table (wiki-link text rewrite is a
   // documented follow-up — codex #5).

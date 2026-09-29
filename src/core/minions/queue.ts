@@ -1266,11 +1266,20 @@ export class MinionQueue {
       return parseInt(rows[0]?.count ?? '0', 10);
     }
 
+    // A completed dream synthesis child is the record that its transcript was
+    // synthesized. Archive the key before the row goes, or the next cycle
+    // pays to synthesize the transcript again.
     const rows = await this.engine.executeRaw<{ count: string }>(
       `WITH pruned AS (
          DELETE FROM minion_jobs
          WHERE status = ANY($1) AND updated_at < $2
-         RETURNING id
+         RETURNING name, status, data, idempotency_key, finished_at
+       ), archived AS (
+         INSERT INTO dream_synthesis_completions (source_id, idempotency_key, completed_at)
+         SELECT COALESCE(NULLIF(data->>'source_id', ''), 'default'), idempotency_key, COALESCE(finished_at, now())
+           FROM pruned
+          WHERE name = 'subagent' AND status = 'completed' AND idempotency_key LIKE 'dream:synth%'
+         ON CONFLICT DO NOTHING
        )
        SELECT count(*)::text as count FROM pruned`,
       [statuses, olderThan.toISOString()]

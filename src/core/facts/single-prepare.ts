@@ -21,7 +21,7 @@ export async function prepareFactEmbedding(fact: string, signal?: AbortSignal): 
   return { embedding: null, embedding_model: null, degraded: true };
 }
 export async function assertFactNotWithdrawn(engine: BrainEngine, sourceId: string, input: SingleFactIntent): Promise<void> {
-  if (await isFactWithdrawn(engine, sourceId, input.visibility, input.fact)) {
+  if (await isFactWithdrawn(engine, sourceId, input.visibility, input.fact, input.entity_slug)) {
     throw verbError('invalid_params', 'fact_withdrawn: this exact claim was explicitly forgotten in this source and visibility.',
       'Remember a corrected claim. Repeating the old claim does not restore withdrawn memory.');
   }

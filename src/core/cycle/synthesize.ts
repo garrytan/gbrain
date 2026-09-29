@@ -2815,8 +2815,10 @@ async function collectChildPutPageSlugs(
  * transcripts the old code path never re-ran, and reading `result` at all
  * would need the `(result #>> '{}')` double-encoded-jsonb defense.
  *
- * Loads source-scoped completions once per phase; no schema additions
- * and no repeated history scan for each transcript.
+ * Completed rows that `jobs prune` removed live on in
+ * `dream_synthesis_completions` (the prune archives them), so pruning never
+ * makes a synthesized transcript eligible again. Loads source-scoped
+ * completions once per phase; no repeated history scan per transcript.
  */
 async function loadSuccessfulSynthesisKeys(
   engine: BrainEngine,
@@ -2829,7 +2831,10 @@ async function loadSuccessfulSynthesisKeys(
       WHERE name = 'subagent'
         AND status = 'completed'
         AND COALESCE(NULLIF(data->>'source_id', ''), 'default') = $1
-        AND idempotency_key LIKE $2`,
+        AND idempotency_key LIKE $2
+     UNION
+     SELECT idempotency_key FROM dream_synthesis_completions
+      WHERE source_id = $1 AND idempotency_key LIKE $2`,
     [sourceId, `${keyPrefix}%`],
   );
   return rows.map(row => row.idempotency_key);

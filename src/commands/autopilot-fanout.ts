@@ -707,7 +707,7 @@ export async function maybeDispatchConnectorSyncs(
   const {
     autoSyncKey,
     authErrorAtKey,
-    lastSyncAtKey,
+    readConnectorState,
     syncFloorMinKey,
     sourceIdKey,
     isTruthy,
@@ -733,7 +733,7 @@ export async function maybeDispatchConnectorSyncs(
     const authErrorAt = await engine.getConfig(authErrorAtKey(provider));
     if (authErrorAt && cred.savedAt && authErrorAt > cred.savedAt) continue;
 
-    const lastSyncAt = await engine.getConfig(lastSyncAtKey(provider));
+    const lastSyncAt = await readConnectorState(engine, provider, sourceId, 'last_sync_at');
     if (!isConnectorSyncStale(lastSyncAt, nowMs, floorMin)) continue;
 
     const job = await queue.add(
