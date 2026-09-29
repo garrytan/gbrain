@@ -48,7 +48,8 @@ import {
 } from './relational-recall.ts';
 import { loadConfigWithEngine } from '../config.ts';
 import { dedupResults } from './dedup.ts';
-import { applyReranker, type RerankPassThroughReason, type RerankSkipReason } from './rerank.ts';
+import { accumulateRrf } from './rrf-page-fusion.ts';
+import { applyReranker, type RerankFailedReason, type RerankPassThroughReason, type RerankSkipReason } from './rerank.ts';
 import {
   classifyQuery,
   classifyQueryWithBrainPatterns,
@@ -80,6 +81,7 @@ import {
   weightsForIntent,
   effectiveRrfK,
   applyExactMatchBoost,
+  applyAliasMentionBoost,
 } from './intent-weights.ts';
 import {
   SemanticQueryCache,
@@ -126,6 +128,26 @@ export function shouldBoostCompiledTruth(detail: string | null | undefined): boo
 }
 
 /**
+ * Compiled-truth tilt for an AUTO-detected `low` (entity intent, never an
+ * explicit `detail: 'low'`). Auto intent is a guess from framing words ("who
+ * is", "tell me about"), so it must not hide timeline evidence: no SQL
+ * filter, and a soft preference instead of the categorical 2x boost.
+ */
+export const AUTO_LOW_COMPILED_TRUTH_TILT = 1.2;
+
+/**
+ * The fusion-boost argument for `rrfFusionWeighted`: `true` (full 2x) only for
+ * an explicit `low`, the soft tilt for an auto-detected `low`, `false` otherwise.
+ */
+export function compiledTruthFusionBoost(
+  detail: string | null | undefined,
+  explicitDetail: string | null | undefined,
+): boolean | number {
+  if (!shouldBoostCompiledTruth(detail)) return false;
+  return explicitDetail === 'low' ? true : AUTO_LOW_COMPILED_TRUTH_TILT;
+}
+
+/**
  * #3695 — the boost multiplier for one fused row. The title arm COALESCEs a
  * page with no text chunk into a synthetic row (chunk_id 0 + empty chunk_text,
  * both engines' searchTitles); it has no real compiled_truth chunk and must
@@ -134,13 +156,13 @@ export function shouldBoostCompiledTruth(detail: string | null | undefined): boo
  * cosineReScore never runs. Unverified auto-extracted stubs stay excluded
  * (issue #160, stamped pre-fusion by stampUnverifiedExtractions).
  */
-export function compiledTruthBoost(result: SearchResult, applyBoost: boolean): number {
+export function compiledTruthBoost(result: SearchResult, applyBoost: boolean, boost: number = COMPILED_TRUTH_BOOST): number {
   const syntheticTitleRow = result.chunk_id === 0 && (result.chunk_text ?? '').trim().length === 0;
   return applyBoost &&
     result.chunk_source === 'compiled_truth' &&
     result.unverified !== true &&
     !syntheticTitleRow
-    ? COMPILED_TRUTH_BOOST
+    ? boost
     : 1.0;
 }
 const pendingCacheWrites = new Set<Promise<unknown>>();
@@ -888,6 +910,9 @@ const MAX_ALIAS_INJECT = 3;           // cap injected pages per query (collision
  *   - skip queries longer than MAX_ALIAS_QUERY_TOKENS (clearly prose, not a name).
  *   - bounded: present-boost is 1.10x; inject score is top-of-organic + ε,
  *     never an absolute 1.0 (D3 — aliases are not a ranking sledgehammer).
+ *   - order-preserving: injected rows go to the front and a boosted row only
+ *     climbs past lower-scored rows directly above it; every other row keeps
+ *     its input (reranked) order.
  *   - collisions (two pages claim one alias): deterministic alpha order, capped.
  *
  * Fail-open: pre-v110 brains (no page_aliases table) and any lookup error
@@ -897,7 +922,7 @@ export async function applyAliasHop(
   engine: import('../engine.ts').BrainEngine,
   results: SearchResult[],
   query: string,
-  opts: { sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean; requireSafeChunks?: boolean },
+  opts: { sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean; requireSafeChunks?: boolean; excludeSlugs?: string[] },
 ): Promise<SearchResult[]> {
   if (!query) return results;
   const qNorm = normalizeAlias(query);
@@ -916,6 +941,7 @@ export async function applyAliasHop(
   // pair so a federated caller boosts/injects the RIGHT source's page, never
   // collapsing or cross-injecting (P0 source-isolation contract).
   const ordered = [...refs]
+    .filter(ref => !opts.excludeSlugs?.includes(ref.slug))
     .sort((a, b) => (a.source_id === b.source_id ? a.slug.localeCompare(b.slug) : a.source_id.localeCompare(b.source_id)))
     .slice(0, MAX_ALIAS_INJECT);
   const out = [...results];
@@ -923,10 +949,19 @@ export async function applyAliasHop(
   let injectScore = topScore > 0 ? topScore : 1.0;
 
   for (const ref of ordered) {
-    const idx = out.findIndex(r => r.slug === ref.slug && (r.source_id ?? 'default') === ref.source_id);
+    let idx = out.findIndex(r => r.slug === ref.slug && (r.source_id ?? 'default') === ref.source_id);
     if (idx >= 0) {
-      if (Number.isFinite(out[idx].score)) out[idx].score *= ALIAS_HOP_PRESENT_BOOST;
-      out[idx].alias_hit = true;
+      const hit = out[idx];
+      if (Number.isFinite(hit.score)) hit.score *= ALIAS_HOP_PRESENT_BOOST;
+      hit.alias_hit = true;
+      // Bubble the boosted row past lower-scored rows directly above it; never
+      // re-sort the list, which would discard a reranked order (post-rerank
+      // `score` is still the fusion score, not the rerank order).
+      while (idx > 0 && out[idx - 1].score < hit.score) {
+        out[idx] = out[idx - 1];
+        idx--;
+      }
+      out[idx] = hit;
       continue;
     }
     // Absent canonical: fetch (in its OWN source) + inject at top-of-organic + epsilon.
@@ -945,7 +980,7 @@ export async function applyAliasHop(
       ((page.frontmatter as Record<string, unknown> | null | undefined)?.visibility === 'private')
     ) continue;
     injectScore += 1e-6;
-    out.push({
+    out.unshift({
       // #2339-sibling: include page_id. The `as SearchResult` cast hid its
       // absence, so any consumer reading page_id off an alias-injected result got
       // undefined — e.g. listActiveTakesForPages bound undefined/NaN into
@@ -963,7 +998,6 @@ export async function applyAliasHop(
       alias_hit: true,
     } as SearchResult);
   }
-  out.sort((a, b) => b.score - a.score);
   return out;
 }
 
@@ -1297,9 +1331,12 @@ export async function hybridSearch(
   // on the first query of a fresh process before the config was applied.
   const detail = opts?.detail ?? suggestions.suggestedDetail;
   const detailResolved: 'low' | 'medium' | 'high' | null = detail ?? null;
+  const ctBoost = compiledTruthFusionBoost(detail, opts?.detail);
   const searchOpts: SearchOpts = {
     limit: innerLimit,
-    detail,
+    // Only an EXPLICIT `low` hard-filters to compiled truth in SQL; an
+    // auto-detected one is the soft tilt in `ctBoost`.
+    detail: detail === 'low' && opts?.detail !== 'low' ? undefined : detail,
     // v0.20.0 Cathedral II Layer 10 — thread language + symbolKind through so
     // per-engine searchKeyword / searchVector apply the filters at SQL level.
     language: opts?.language,
@@ -1308,6 +1345,12 @@ export async function hybridSearch(
     // type filter to SQL level so the limit budget goes to candidate-typed
     // pages instead of being eaten by note/transcript/article pages.
     types: opts?.types,
+    // Exact-slug and prefix exclusions are caller contract too (grade-takes
+    // passes exclude_slugs; SDK callers pass prefix excludes); dropping them
+    // here silently ignored them on every arm.
+    exclude_slugs: opts?.exclude_slugs,
+    exclude_slug_prefixes: opts?.exclude_slug_prefixes,
+    include_slug_prefixes: opts?.include_slug_prefixes,
     // v0.29.1: since/until take precedence over deprecated afterDate/beforeDate.
     // The engine still consumes the legacy field names; this aliasing keeps
     // PR #618 callers compiling while the new names are the public surface.
@@ -1568,7 +1611,7 @@ export async function hybridSearch(
       const noEmbedLists = [{ list: keywordResults, k: fk }];
       if (titleResults.length > 0) noEmbedLists.push({ list: titleResults, k: fk });
       if (relationalList.length > 0) noEmbedLists.push({ list: relationalList, k: fk });
-      noEmbedResults = rrfFusionWeighted(noEmbedLists, shouldBoostCompiledTruth(detailResolved));
+      noEmbedResults = rrfFusionWeighted(noEmbedLists, ctBoost);
     }
     if (noEmbedResults.length > 0) {
       await runPostFusionStages(engine, noEmbedResults, postFusionOpts);
@@ -1965,7 +2008,7 @@ export async function hybridSearch(
       const fallbackLists = [{ list: keywordResults, k: fk }];
       if (titleResults.length > 0) fallbackLists.push({ list: titleResults, k: fk });
       if (relationalList.length > 0) fallbackLists.push({ list: relationalList, k: fk });
-      fallbackResults = rrfFusionWeighted(fallbackLists, shouldBoostCompiledTruth(detail));
+      fallbackResults = rrfFusionWeighted(fallbackLists, ctBoost);
     }
     if (fallbackResults.length > 0) {
       await runPostFusionStages(engine, fallbackResults, postFusionOpts);
@@ -2114,14 +2157,16 @@ export async function hybridSearch(
   // arms BEFORE fusion so the compiled-truth authority boost skips them.
   await stampUnverifiedExtractions(engine, allLists.flatMap((l) => l.list), opts);
 
-  let fused = rrfFusionWeighted(allLists, shouldBoostCompiledTruth(detail));
+  let fused = rrfFusionWeighted(allLists, ctBoost);
 
   // Cosine re-scoring before dedup so semantically better chunks survive.
   // v0.36 (D9): hydrate from the active embedding column so rescore happens
   // in the same vector space the HNSW just ranked in. Pre-v0.36 this
   // always pulled from `embedding` and silently corrupted alt-column ranks.
   if (queryEmbedding) {
-    fused = await cosineReScore(engine, fused, queryEmbedding, resolvedCol.name);
+    // Unified routing embedded the query with the multimodal model, so the
+    // rescore must hydrate the multimodal column, not the text column.
+    fused = await cosineReScore(engine, fused, queryEmbedding, unifiedDone ? 'embedding_multimodal' : resolvedCol.name);
   }
 
   // Phase E3 (Cat 13): metadata boost gate — decided from the SAME lexical
@@ -2146,6 +2191,9 @@ export async function hybridSearch(
     // No-op when boost factor is 1.0 (general intent or weighting disabled).
     if (intentWeights.exactMatchBoost !== 1.0) {
       applyExactMatchBoost(fused, query, intentWeights);
+      await applyAliasMentionBoost(fused, query, intentWeights, (aliases) => engine.resolveAliases(aliases, {
+        sourceId: opts?.sourceId, sourceIds: opts?.sourceIds, excludePrivate: opts?.excludePrivate,
+      }));
     }
     fused.sort((a, b) => b.score - a.score);
   }
@@ -2244,6 +2292,7 @@ export async function hybridSearch(
     ? await applyReranker(query, deduped, {
         ...(rerankerOpts as any),
         onSkip: (reason: RerankSkipReason) => pushDegraded(degraded, 'reranker_skipped', reason),
+        onFailure: (reason: RerankFailedReason) => pushDegraded(degraded, 'rerank_failed', reason),
         onPassThrough: (reason: RerankPassThroughReason) => {
           pushDegraded(degraded, 'rerank_passthrough', reason);
           // Chain a per-call callback if the caller supplied one.
@@ -2271,6 +2320,7 @@ export async function hybridSearch(
     sourceIds: opts?.sourceIds,
     excludePrivate: opts?.excludePrivate,
     requireSafeChunks: opts?.requireSafeChunks,
+    excludeSlugs: opts?.exclude_slugs,
   });
 
   // #1663 — structural exact-lookup tier: a query that IS a page identity
@@ -2942,21 +2992,6 @@ export function textVectorArmNonEmpty(arms: readonly VectorArm[]): boolean {
 }
 
 /**
- * RRF/dedup identity for a result row, at chunk granularity.
- *
- * Includes `source_id` so two same-slug pages in different federated sources
- * don't collapse into one fusion entry (the same composite-key discipline
- * `dedup.ts:pageKey` already uses at page granularity). Pre-fix the key was
- * `slug:chunk_id`, which silently merged cross-source rows and let a
- * synthetic chunkless row (chunk_id null) key on a text prefix; the
- * `(source_id, slug, chunk_id)` shape is collision-safe for both.
- */
-function rrfKey(r: SearchResult): string {
-  const source = r.source_id ?? 'default';
-  return `${source}:${r.slug}:${r.chunk_id ?? r.chunk_text.slice(0, 50)}`;
-}
-
-/**
  * Canonical query-cache scope key.
  *
  * The semantic cache stores results keyed by `(scope, query, knobs_hash)`.
@@ -3027,31 +3062,9 @@ export function filterResultsByCallerScope(
  */
 export function rrfFusionWeighted(
   lists: FusionListEntry[],
-  applyBoost = true,
+  applyBoost: boolean | number = true,
 ): SearchResult[] {
-  const scores = new Map<string, { result: SearchResult; score: number; keywordHit: boolean }>();
-
-  for (const { list, k, weight } of lists) {
-    const w = weight ?? 1;
-    for (let rank = 0; rank < list.length; rank++) {
-      const r = list[rank];
-      const key = rrfKey(r);
-      const existing = scores.get(key);
-      const rrfScore = w / (k + rank);
-
-      if (existing) {
-        existing.score += rrfScore;
-        // #3783 — OR-propagate lexical-arm membership: a row that fusion
-        // first saw via a vector list must still read keyword_hit when the
-        // keyword arm ALSO surfaced it.
-        if (r.keyword_hit === true) existing.keywordHit = true;
-      } else {
-        scores.set(key, { result: r, score: rrfScore, keywordHit: r.keyword_hit === true });
-      }
-    }
-  }
-
-  const entries = Array.from(scores.values());
+  const entries = accumulateRrf(lists);
   if (entries.length === 0) return [];
 
   const maxScore = Math.max(...entries.map(e => e.score));
@@ -3059,14 +3072,16 @@ export function rrfFusionWeighted(
     for (const e of entries) {
       e.score = e.score / maxScore;
       // issue #160 + #3695: unverified stubs and synthetic chunkless title
-      // rows never get the compiled-truth authority boost.
-      const boost = compiledTruthBoost(e.result, applyBoost);
+      // rows never get the compiled-truth authority boost. Numeric = factor.
+      const boost = typeof applyBoost === 'number'
+        ? compiledTruthBoost(e.result, true, applyBoost)
+        : compiledTruthBoost(e.result, applyBoost);
       e.score *= boost;
     }
   }
 
   return entries
-    .sort((a, b) => b.score - a.score)
+    .sort((a, b) => b.score - a.score || b.own - a.own)
     .map(({ result, score, keywordHit }) =>
       keywordHit && result.keyword_hit !== true
         ? { ...result, score, keyword_hit: true }
@@ -3075,7 +3090,8 @@ export function rrfFusionWeighted(
 
 /**
  * Reciprocal Rank Fusion: merge multiple ranked lists.
- * Each result gets score = sum(1 / (K + rank)) across all lists it appears in.
+ * Each PAGE gets score = sum(1 / (K + rank)) across the lists it appears in
+ * (its best rank per list), carried by the page's lead chunk; other chunks keep their own vote.
  * After accumulation: normalize to 0-1, then boost compiled_truth chunks.
  */
 /**
@@ -3091,26 +3107,7 @@ export function resolveWalkDedupCap(explicitCap: number | undefined, capFromWalk
 }
 
 export function rrfFusion(lists: SearchResult[][], k: number, applyBoost = true): SearchResult[] {
-  const scores = new Map<string, { result: SearchResult; score: number; keywordHit: boolean }>();
-
-  for (const list of lists) {
-    for (let rank = 0; rank < list.length; rank++) {
-      const r = list[rank];
-      const key = rrfKey(r);
-      const existing = scores.get(key);
-      const rrfScore = 1 / (k + rank);
-
-      if (existing) {
-        existing.score += rrfScore;
-        // #3783 — OR-propagate lexical-arm membership across merge order.
-        if (r.keyword_hit === true) existing.keywordHit = true;
-      } else {
-        scores.set(key, { result: r, score: rrfScore, keywordHit: r.keyword_hit === true });
-      }
-    }
-  }
-
-  const entries = Array.from(scores.values());
+  const entries = accumulateRrf(lists.map(list => ({ list, k })));
   if (entries.length === 0) return [];
 
   // Normalize to 0-1 by dividing by observed max
@@ -3132,9 +3129,9 @@ export function rrfFusion(lists: SearchResult[][], k: number, applyBoost = true)
     }
   }
 
-  // Sort by boosted score descending
+  // Sort by boosted score descending; a page's own-vote leader breaks ties
   return entries
-    .sort((a, b) => b.score - a.score)
+    .sort((a, b) => b.score - a.score || b.own - a.own)
     .map(({ result, score, keywordHit }) =>
       keywordHit && result.keyword_hit !== true
         ? { ...result, score, keyword_hit: true }
@@ -3204,6 +3201,9 @@ export async function cosineReScore(
 }
 
 export function cosineSimilarity(a: Float32Array, b: Float32Array): number {
+  // Vectors from different embedding spaces are incomparable: a length
+  // mismatch used to yield a truncated dot product or NaN.
+  if (a.length !== b.length) return 0;
   let dot = 0, magA = 0, magB = 0;
   for (let i = 0; i < a.length; i++) {
     dot += a[i] * b[i];

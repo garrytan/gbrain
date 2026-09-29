@@ -36,10 +36,19 @@ export interface RerankerOpts {
   rerankerFn?: (input: RerankInput) => Promise<RerankResult[]>;
 
   onSkip?: (reason: RerankSkipReason) => void;
+  /**
+   * Fired when the reranker call failed hard (HTTP error, timeout, budget,
+   * network, …) and the results passed through in RRF order. hybridSearch
+   * stamps it as the `rerank_failed` degraded stage. Best-effort.
+   */
+  onFailure?: (reason: RerankFailedReason) => void;
 }
 
 /** The two skip classes (no HTTP call, no per-query audit row). */
 export type RerankSkipReason = 'no_key';
+
+/** A reranker call that threw (anything but a missing key), as stamped on the wire. */
+export type RerankFailedReason = 'timeout' | 'budget' | 'provider_error';
 
 /** SHA-256 prefix (8 chars) of the query text for privacy-preserving audit. */
 function hashQuery(query: string): string {
@@ -149,6 +158,8 @@ export async function applyReranker(
     } catch {
       // Audit logging must never break search.
     }
+    const failed: RerankFailedReason = reason === 'timeout' || reason === 'budget' ? reason : 'provider_error';
+    try { opts.onFailure?.(failed); } catch { /* caller hook must never break search */ }
     return results;
   }
 

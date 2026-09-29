@@ -318,7 +318,7 @@ export interface RowSearchMeta {
 
 const VECTOR_DEGRADED_STAGES: ReadonlySet<string> = new Set(['embed_unavailable', 'embed_timeout']);
 const EXPANSION_FAILED_STAGES: ReadonlySet<string> = new Set(['expansion_failed', 'expansion_partial']);
-const RERANKER_SKIPPED_STAGES: ReadonlySet<string> = new Set(['reranker_skipped', 'rerank_passthrough']);
+const RERANKER_SKIPPED_STAGES: ReadonlySet<string> = new Set(['reranker_skipped', 'rerank_passthrough', 'rerank_failed']);
 
 /**
  * Silent-degradation classifier shared by the live row and the resume

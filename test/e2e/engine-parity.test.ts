@@ -149,6 +149,57 @@ describeBoth('Engine parity — Postgres vs PGLite', () => {
     });
   }
 
+  test('searchKeyword honors exclude_slugs and type identically on BOTH engines (read-path audit #8)', async () => {
+    const q = 'fat code thin harness';
+    const pgAll = (await pgEngine.searchKeyword(q, { limit: 10 })).map((r: SearchResult) => r.slug);
+    expect(pgAll).toContain('concepts/fat-code-thin-harness');
+    const opts = { limit: 10, exclude_slugs: ['concepts/fat-code-thin-harness'] };
+    const pgEx = (await pgEngine.searchKeyword(q, opts)).map((r: SearchResult) => r.slug);
+    const pgliteEx = (await pgliteEngine.searchKeyword(q, opts)).map((r: SearchResult) => r.slug);
+    expect(pgEx).not.toContain('concepts/fat-code-thin-harness');
+    expect(new Set(pgliteEx)).toEqual(new Set(pgEx));
+    const typed = { limit: 10, type: 'concept' as const };
+    const pgTyped = (await pgEngine.searchKeyword(q, typed)).map((r: SearchResult) => r.type);
+    const pgliteTyped = (await pgliteEngine.searchKeyword(q, typed)).map((r: SearchResult) => r.type);
+    expect(pgTyped.length).toBeGreaterThan(0);
+    expect(pgTyped.every(t => t === 'concept')).toBe(true);
+    expect(pgliteTyped).toEqual(pgTyped);
+  });
+
+  test('findTrajectory keeps the NEWEST points under a limit on BOTH engines (read-path audit #4)', async () => {
+    for (const eng of [pgEngine, pgliteEngine] as BrainEngine[]) {
+      await eng.executeRaw(`DELETE FROM facts WHERE entity_slug = 'people/traj-parity'`);
+      for (let i = 0; i < 6; i++) {
+        await eng.executeRaw(
+          `INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, valid_from, source, claim_metric, claim_value)
+           VALUES ('default', 'people/traj-parity', $1, 'fact', 'world', $2::timestamptz, 'test', 'mrr', $3)`,
+          [`mrr is ${i}`, new Date(Date.UTC(2024, 0, 1 + i)).toISOString(), i],
+        );
+      }
+    }
+    const opts = { entitySlug: 'people/traj-parity', remote: false, limit: 3 };
+    const pg = (await pgEngine.findTrajectory(opts)).map(p => p.value);
+    const pglite = (await pgliteEngine.findTrajectory(opts)).map(p => p.value);
+    expect(pg).toEqual([3, 4, 5]);
+    expect(pglite).toEqual(pg);
+  });
+
+  test('getTags excludePrivate / liveOnly behave identically on BOTH engines (read-path audit #19)', async () => {
+    for (const eng of [pgEngine, pgliteEngine] as BrainEngine[]) {
+      await eng.putPage('notes/tag-private', { type: 'note', title: 'P', compiled_truth: 'x', frontmatter: { visibility: 'private' } } as any);
+      await eng.putPage('notes/tag-gone', { type: 'note', title: 'G', compiled_truth: 'x' } as any);
+      await eng.addTag('notes/tag-private', 'p-tag');
+      await eng.addTag('notes/tag-gone', 'g-tag');
+      await eng.executeRaw(`UPDATE pages SET deleted_at = now() WHERE slug = 'notes/tag-gone'`);
+    }
+    for (const eng of [pgEngine, pgliteEngine] as BrainEngine[]) {
+      expect(await eng.getTags('notes/tag-private')).toEqual(['p-tag']);
+      expect(await eng.getTags('notes/tag-private', { excludePrivate: true })).toEqual([]);
+      expect(await eng.getTags('notes/tag-gone')).toEqual(['g-tag']);
+      expect(await eng.getTags('notes/tag-gone', { liveOnly: true })).toEqual([]);
+    }
+  });
+
   test('searchKeyword orFallback: relaxed rows tagged keyword_relaxed on BOTH engines (2026-09 #3617 follow-up)', async () => {
     // A query whose terms never co-occur in one chunk: zero strict recall,
     // non-empty OR recall. Both engines must return the SAME tagged shape —

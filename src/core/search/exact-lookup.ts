@@ -172,8 +172,10 @@ export async function structuralExactLookup(
  * Promote/inject structural exact-lookup hits into a ranked result set.
  * Mirrors applyAliasHop's contract: hits already present are promoted to the
  * top (score = current-top + epsilon) and stamped; absent hits inject with
- * the same top-of-organic + epsilon score shape. Returns a NEW sorted array;
- * fail-open returns `results` unchanged.
+ * the same top-of-organic + epsilon score shape. Identity rows move to the
+ * front; every other row keeps its input order (never re-sorted by `score`,
+ * which would discard a reranked order). Returns a NEW array; fail-open
+ * returns `results` unchanged.
  */
 export async function applyExactLookupTier(
   engine: BrainEngine,
@@ -218,14 +220,13 @@ export async function applyExactLookupTier(
       if (hit.title_match_boost) {
         promoted.title_match_boost = Math.max(promoted.title_match_boost ?? 1.0, hit.title_match_boost);
       }
-      // Splice highest-index-first so earlier removals don't shift later ones.
-      for (let k = matchingIndexes.length - 1; k >= 0; k--) {
-        if (matchingIndexes[k] !== idx) out.splice(matchingIndexes[k], 1);
-      }
+      // Remove every chunk of the page, then put the promoted one first. No
+      // global re-sort: the rest keep their input (reranked) order.
+      for (let k = matchingIndexes.length - 1; k >= 0; k--) out.splice(matchingIndexes[k], 1);
+      out.unshift(promoted);
       continue;
     }
-    out.push({ ...hit, score: injectScore, base_score: injectScore });
+    out.unshift({ ...hit, score: injectScore, base_score: injectScore });
   }
-  out.sort((a, b) => b.score - a.score);
   return out;
 }

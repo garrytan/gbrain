@@ -2,8 +2,8 @@
  * Ranker wave Phase 0 — the like-for-like LongMemEval harness, pinned on the
  * mixed-case `_s`-shaped fixture (test/fixtures/longmemeval-mixedcase.jsonl):
  *
- *   - raw-id join: `sharegpt_yywfIrx_0`-style gold ids match the slug-tail
- *     `chat/sharegpt-yywfirx-0` through the per-question slug→raw map (pre-fix
+ *   - raw-id join: `sharegpt_yywfIrx_0`-style gold ids match the opaque slug
+ *     `chat/s-<10 hex>` through the per-question slug→raw map (pre-fix
  *     every recall_hit on the public split was false);
  *   - strict vs lenient: mc-2 has two gold sessions and keyword hits only one
  *     → recall_all_hit=false, recall_any_hit=true;
@@ -43,6 +43,7 @@ import { redactSecrets, retrievalConfigHash, type KnobsFingerprint, type Retriev
 import { makeStubClient } from './helpers/longmemeval-stub.ts';
 import type { ThinkLLMClient } from '../src/core/think/index.ts';
 import { checkResumeConfigHash, retrievedIdsAtK } from '../src/eval/longmemeval/resume.ts';
+import { sessionSlug } from '../src/eval/longmemeval/adapter.ts';
 import { rerankerReadiness } from '../src/core/ai/reranker-readiness.ts';
 import { __setEmbedTransportForTests, configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 import { fnv1a } from '../src/eval/deterministic-embed.ts';
@@ -260,7 +261,7 @@ describe('slug collision touching gold → error row (plan D32)', () => {
     expect(r['col-1'].error).toContain('slug_collision');
     expect(r['col-1'].hypothesis).toBe('');
     expect(r['col-1'].slug_collision).toBe(1);
-    expect(r['col-1'].slug_collision_gold).toEqual(['chat/alpha-b']);
+    expect(r['col-1'].slug_collision_gold).toEqual([sessionSlug('col-1', 'alpha_b')]);
     expect(r['col-1'].recall_all_hit).toBeUndefined();
     // The run continued: the clean question still scored.
     expect(r['mc-1'].recall_all_hit).toBe(true);

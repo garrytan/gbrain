@@ -3754,7 +3754,7 @@ export class PostgresEngine implements BrainEngine {
     return mutatePageTag(this, { sourceId: opts?.sourceId ?? 'default', slug }, tag, false);
   }
 
-  async getTags(slug: string, opts?: { sourceId?: string; sourceIds?: string[] }): Promise<string[]> {
+  async getTags(slug: string, opts?: { sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean; liveOnly?: boolean }): Promise<string[]> {
     const sql = this.sql;
     // #2200: federated grant (sourceIds[]) wins over scalar sourceId. Use
     // `page_id IN (subquery)` — NOT `= (subquery)` — because a federated read of
@@ -3765,9 +3765,11 @@ export class PostgresEngine implements BrainEngine {
       opts?.sourceIds && opts.sourceIds.length > 0
         ? sql`source_id = ANY(${opts.sourceIds}::text[])`
         : sql`source_id = ${opts?.sourceId ?? 'default'}`;
+    const privacy = opts?.excludePrivate ? sql.unsafe(`AND ${privatePagesFilterFragment('pages')}`) : sql``;
+    const live = opts?.liveOnly ? sql`AND deleted_at IS NULL` : sql``;
     const rows = await sql`
       SELECT DISTINCT tag FROM tags
-      WHERE page_id IN (SELECT id FROM pages WHERE slug = ${slug} AND ${scope})
+      WHERE page_id IN (SELECT id FROM pages WHERE slug = ${slug} AND ${scope} ${privacy} ${live})
       ORDER BY tag
     `;
     return rows.map((r) => r.tag as string);

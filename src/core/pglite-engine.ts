@@ -2487,6 +2487,15 @@ export class PGLiteEngine implements BrainEngine {
       params.push(opts.types);
       extraFilter += ` AND p.type = ANY($${params.length}::text[])`;
     }
+    // Postgres parity: single-type filter and exact-slug excludes.
+    if (opts?.type) {
+      params.push(opts.type);
+      extraFilter += ` AND p.type = $${params.length}`;
+    }
+    if (opts?.exclude_slugs?.length) {
+      params.push(opts.exclude_slugs);
+      extraFilter += ` AND p.slug != ALL($${params.length}::text[])`;
+    }
     // v0.29.1 — since/until date filter (Postgres parity, codex pass-1 #10).
     // Reads against COALESCE(effective_date, updated_at) so date filtering
     // matches user intent (a meeting was on its event_date, not when it
@@ -4547,7 +4556,7 @@ export class PGLiteEngine implements BrainEngine {
     return mutatePageTag(this, { sourceId: opts?.sourceId ?? 'default', slug }, tag, false);
   }
 
-  async getTags(slug: string, opts?: { sourceId?: string; sourceIds?: string[] }): Promise<string[]> {
+  async getTags(slug: string, opts?: { sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean; liveOnly?: boolean }): Promise<string[]> {
     // #2200: federated grant (sourceIds[]) wins over scalar. `page_id IN (..)`
     // (not `= (..)`) so a slug present in >1 allowed source doesn't blow up;
     // DISTINCT unions tags across the matched pages. Scalar/unscoped keeps the
@@ -4556,9 +4565,11 @@ export class PGLiteEngine implements BrainEngine {
       opts?.sourceIds && opts.sourceIds.length > 0
         ? { sql: 'source_id = ANY($2::text[])', param: opts.sourceIds }
         : { sql: 'source_id = $2', param: opts?.sourceId ?? 'default' };
+    const privacy = opts?.excludePrivate ? `AND ${privatePagesFilterFragment('pages')}` : '';
+    const live = opts?.liveOnly ? 'AND deleted_at IS NULL' : '';
     const { rows } = await this.db.query(
       `SELECT DISTINCT tag FROM tags
-       WHERE page_id IN (SELECT id FROM pages WHERE slug = $1 AND ${scope.sql})
+       WHERE page_id IN (SELECT id FROM pages WHERE slug = $1 AND ${scope.sql} ${privacy} ${live})
        ORDER BY tag`,
       [slug, scope.param]
     );

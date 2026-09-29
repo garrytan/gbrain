@@ -212,3 +212,24 @@ describe('getBacklinkCounts — #4380 page-id keying (multi-source namesakes)', 
     expect(counts.get(pageB.id)).toBe(0);
   });
 });
+
+describe('getBacklinkCounts counts distinct linking pages (read-path audit #18)', () => {
+  test('duplicate edges and self-links do not inflate the count; a policy also drops soft-deleted contributors', async () => {
+    const targetId = await seedTarget('people/dana');
+    await seedSource('writing/one', 1);
+    await seedSource('writing/two', 2);
+    await seedSource('writing/gone', 3);
+    await engine.addLinksBatch([
+      { from_slug: 'writing/one', to_slug: 'people/dana', link_type: 'mentions', link_source: 'markdown', context: '' },
+      { from_slug: 'writing/one', to_slug: 'people/dana', link_type: 'works_with', link_source: 'markdown', context: '' },
+      { from_slug: 'writing/two', to_slug: 'people/dana', link_type: 'mentions', link_source: 'markdown', context: '' },
+      { from_slug: 'writing/gone', to_slug: 'people/dana', link_type: 'mentions', link_source: 'markdown', context: '' },
+      { from_slug: 'people/dana', to_slug: 'people/dana', link_type: 'mentions', link_source: 'markdown', context: '' },
+    ]);
+    await engine.executeRaw(`UPDATE pages SET deleted_at = now() WHERE slug = 'writing/gone'`);
+    // Trusted unscoped call: distinct live-or-not linking pages, no self-link.
+    expect((await engine.getBacklinkCounts([targetId])).get(targetId)).toBe(3);
+    // A read policy additionally requires live contributors.
+    expect((await engine.getBacklinkCounts([targetId], { sourceId: 'default' })).get(targetId)).toBe(2);
+  });
+});
