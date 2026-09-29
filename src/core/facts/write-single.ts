@@ -88,13 +88,6 @@ export async function writeSingleFact(
   const kind = input.kind ?? 'fact';
   const visibility = input.visibility ?? 'private';
   const validUntil = input.validUntil ?? null;
-  const { isFactWithdrawn } = await import('./withdrawal.ts');
-  if (await isFactWithdrawn(engine, sourceId, visibility, factText)) {
-    const { verbError } = await import('../ops/contract.ts');
-    throw verbError('invalid_params', 'fact_withdrawn: this exact claim was explicitly forgotten in this source and visibility.',
-      'Remember a corrected claim. Repeating the old claim does not restore withdrawn memory.');
-  }
-
   // #4755: normalize null-like entity refs to ABSENT before resolution so
   // the `resolved?.slug ?? entityRef` fallback can never adopt "null" as a
   // slug. Applied here (not only at the verb boundary) so every
@@ -108,6 +101,13 @@ export async function writeSingleFact(
   // #4108: provenance for the fence writer's stub guard. Null when the
   // resolver returned nothing (fail-closed — no live page was verified).
   const resolutionSource = resolved?.source ?? null;
+
+  const { isFactWithdrawn } = await import('./withdrawal.ts');
+  if (await isFactWithdrawn(engine, sourceId, visibility, factText, resolvedSlug)) {
+    const { verbError } = await import('../ops/contract.ts');
+    throw verbError('invalid_params', 'fact_withdrawn: this exact claim was explicitly forgotten in this source and visibility.',
+      'Remember a corrected claim. Repeating the old claim does not restore withdrawn memory.');
+  }
 
   // Embedding (NOT an LLM call): powers dedup + downstream recall. Fail-soft —
   // a missing/failing provider degrades dedup, never the write.
@@ -248,16 +248,21 @@ export async function writeSingleFact(
 }
 
 /**
- * Fence-path supersession bookkeeping: expire the old row through the fence
- * (strikethrough + valid_until, the same surface `forget` uses) and link
- * `superseded_by` for the audit trail. Both steps best-effort — the new fact
- * is already durably written; a partial supersede is an audit gap, not data
- * loss.
+ * Fence-path supersession bookkeeping: strike the old row in the fence with a
+ * `superseded by #N` reference (strikethrough + valid_until) and link
+ * `superseded_by` for the audit trail. A supersession is an update, never a
+ * durable withdrawal: the old claim stays rememberable and no other page is
+ * invalidated. Both steps best-effort — the new fact is already durably
+ * written; a partial supersede is an audit gap, not data loss.
  */
 async function expireSuperseded(engine: BrainEngine, oldId: number, newId: number): Promise<void> {
   try {
     const { forgetFactInFence } = await import('./forget.ts');
-    await forgetFactInFence(engine, oldId, { reason: `superseded by fact #${newId}` });
+    const [replacement] = await engine.executeRaw<{ row_num: number | null; same_page: boolean }>(
+      `SELECT n.row_num, n.source_markdown_slug IS NOT DISTINCT FROM o.source_markdown_slug AS same_page
+         FROM facts n, facts o WHERE n.id = $1 AND o.id = $2`, [newId, oldId]);
+    const rowNum = replacement?.same_page && replacement.row_num !== null ? Number(replacement.row_num) : null;
+    await forgetFactInFence(engine, oldId, { supersededBy: { rowNum } });
   } catch {
     /* best-effort */
   }

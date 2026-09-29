@@ -188,6 +188,7 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   // these arrived unclaimed): connector classify/sync core + doctor check.
   "src/core/connectors/**": [
     "test/e2e/connector-sync-handler-pglite.test.ts",
+    "test/e2e/connectors-sync-checkpoints-pglite.test.ts",
     "test/e2e/connectors-sync-pglite.test.ts",
     "test/e2e/doctor-connectors-pglite.test.ts",
   ],

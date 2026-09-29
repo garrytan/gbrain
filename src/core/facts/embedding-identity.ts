@@ -5,7 +5,8 @@ export const retainedFactEmbedding = `f.expired_at IS NULL AND f.superseded_by I
   AND (f.valid_until IS NULL OR f.valid_until>now())
   AND NOT (f.source = ANY($2::text[]))
   AND NOT EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id=f.source_id
-    AND w.visibility=f.visibility AND w.fact_hash=gbrain_fact_fingerprint(f.fact))`;
+    AND w.visibility=f.visibility AND (w.subject = '*' OR w.subject = f.entity_slug)
+    AND w.fact_hash=gbrain_fact_fingerprint(f.fact))`;
 
 export const eligibleFactEmbedding = `${retainedFactEmbedding}
   AND EXISTS (SELECT 1 FROM sources s WHERE s.id=f.source_id AND NOT s.archived)

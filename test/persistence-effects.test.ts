@@ -46,10 +46,11 @@ async function admit(f: Awaited<ReturnType<typeof fixture>>) {
     sourceIncarnation: f.binding.source_incarnation, slug: 'page', pageId: f.snapshot.page.id, requestId: randomUUID(),
     callerIntent: { content: 'After' }, intent: { content: 'After' }, worktreeId: f.binding.worktree_id, topologyGeneration: f.binding.topology_generation });
 }
-async function withdraw(f: Awaited<ReturnType<typeof fixture>>) {
+async function withdraw(f: Awaited<ReturnType<typeof fixture>>, opts: { subjectless?: boolean } = {}) {
   const row = await admit(f);
+  // Withdrawals are entity-scoped; a subjectless fact withdraws source-wide.
   const [fact] = await engine.executeRaw<{ id: number }>(`INSERT INTO facts(source_id,entity_slug,fact,source,visibility)
-    VALUES($1,'page','Withdraw this claim','test conversation','world') RETURNING id`, [f.sourceId]);
+    VALUES($1,$2,'Withdraw this claim','test conversation','world') RETURNING id`, [f.sourceId, opts.subjectless ? null : 'page']);
   await engine.transaction(async tx => {
     await recordFactWithdrawal(tx, Number(fact.id), f.sourceId, false, { requestId: row.id });
     await completeWrite(tx, row, 'committed', { status: 'forgotten' });
@@ -128,7 +129,7 @@ test('missing withdrawal files materialize and advance mirror and Git scans with
   await engine.putPage('z-later', page(body()), { sourceId: f.sourceId });
   const later = (await engine.readPageSnapshot('z-later', { sourceId: f.sourceId }))!;
   const laterFile = join(f.root, 'z-later.md'); writeFileSync(laterFile, serializePageToMarkdown(later.page, later.tags));
-  const row = await withdraw(f); await onlyEffects(row.id); rmSync(f.file);
+  const row = await withdraw(f, { subjectless: true }); await onlyEffects(row.id); rmSync(f.file);
   const logical = (await engine.readPageSnapshot('page', { sourceId: f.sourceId }))!;
   // Ordinary edits still refuse this unimported deletion.
   await expect(prepareFileTarget(engine, row, logical, 'Replacement', hostId)).rejects.toMatchObject({ code: 'source_changed' });

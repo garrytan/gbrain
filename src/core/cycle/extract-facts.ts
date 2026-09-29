@@ -59,7 +59,7 @@ import type { BrainEngine } from '../engine.ts';
 import { assertUnmanagedCanonicalWriter } from '../persistence/maintenance.ts';
 import { resolveSupersededByRow, type SupersedeTarget } from '../facts/supersede-resolve.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
-import { upsertExtractRollup } from '../extract/rollup-writer.ts';
+import { classifyRunStop, upsertExtractRollup } from '../extract/rollup-writer.ts';
 import { parseFactsFence, FACTS_FENCE_BEGIN } from '../facts-fence.ts';
 import {
   extractFactsFromFenceText,
@@ -271,6 +271,8 @@ export interface ExtractFactsResult {
   factsDeleted: number;
   legacyRowsPending: number;
   guardTriggered: boolean;
+  /** Pages whose reconcile threw and rolled back; later pages still ran. */
+  pagesFailed: number;
   warnings: string[];
   /** v0.35.5: phantom-redirect pre-pass counts. */
   phantomsScanned: number;
@@ -367,6 +369,7 @@ export async function runExtractFacts(
     factsInserted: 0,
     factsDeleted: 0,
     legacyRowsPending: 0,
+    pagesFailed: 0,
     guardTriggered: false,
     warnings: [],
     phantomsScanned: 0,
@@ -539,18 +542,14 @@ export async function runExtractFacts(
   }
 
   // ── Reconcile each page ───────────────────────────────────────
-  for (const slug of slugs) {
-    // #1972: bail at the top of the per-page loop on abort. Each page is an
-    // independent delete-then-insert commit, so breaking leaves a consistent
-    // partial state; the receipt/rollup below still runs with partial counts.
-    if (isAborted(opts.signal)) break;
-    result.pagesScanned += 1;
-
+  // Each page reconciles independently: 'stop' ends the walk (cancellation),
+  // 'next' moves on. A thrown error is isolated to its page below.
+  const reconcilePage = async (slug: string): Promise<'next' | 'stop'> => {
     const page = await engine.getPage(slug, { sourceId });
     if (!page) {
       // Slug listed but not in DB — skip silently. The next cycle
       // will pick it up if it exists.
-      continue;
+      return 'next';
     }
 
     const body = page.compiled_truth ?? '';
@@ -563,7 +562,7 @@ export async function runExtractFacts(
       // could still recover. That partial result is not authoritative: using
       // it for reconciliation would interpret skipped rows as deletions.
       // Preserve this page's existing index and continue with other pages.
-      continue;
+      return 'next';
     }
 
     // #3625: splitBody() puts everything below the timeline sentinel into
@@ -593,7 +592,7 @@ export async function runExtractFacts(
         `Move the fence above the sentinel and re-save — leaving it in place ` +
         `preserves the existing indexed facts but they will not update.`,
       );
-      continue;
+      return 'next';
     }
 
     if (parsed.facts.length > 0) result.pagesWithFacts += 1;
@@ -608,7 +607,7 @@ export async function runExtractFacts(
       extractFactsFromFenceText(parsed.facts, slug, sourceId, { pageEffectiveDate }),
     );
 
-    if (opts.dryRun) continue;
+    if (opts.dryRun) return 'next';
 
     // #1781 — reconcile instead of unconditional wipe-and-reinsert. Compare
     // the fence's canonical (claim, source) row set against the page's
@@ -644,7 +643,7 @@ export async function runExtractFacts(
           return true;
         });
       }, opts, result.warnings);
-      if (!restricted) continue;
+      if (!restricted) return 'next';
     }
 
     if (extracted.length === 0) {
@@ -674,11 +673,11 @@ export async function runExtractFacts(
           });
         }, opts, result.warnings);
         if (!deletion) {
-          continue;
+          return 'next';
         }
         result.factsDeleted += deletion.deleted;
       }
-      continue;
+      return 'next';
     }
 
     const hasStaleExisting = existing.some(f => !desiredByKey.has(factContentKey(f.fact, f.source)));
@@ -761,7 +760,7 @@ export async function runExtractFacts(
       !hasSupersessionDrift &&
       !hasAttributeDrift
     ) {
-      continue;
+      return 'next';
     }
 
     let toInsert = extracted.filter(f => !existingKeys.has(factContentKey(f.fact, f.source)));
@@ -827,15 +826,15 @@ export async function runExtractFacts(
 
     if (isAborted(opts.signal)) {
       result.warnings.push(`${slug}: fact reconciliation deferred after cancellation; existing rows preserved`);
-      break;
+      return 'stop';
     }
     if (deleteForPageFirst && existing.some(fact => fact.has_embedding)
       && toInsert.some(fact => !fact.embedding)) {
       result.warnings.push(`${slug}: destructive fact reconciliation deferred; existing vectors preserved until embedding succeeds`);
-      continue;
+      return 'next';
     }
 
-    if (toInsert.length === 0) continue;
+    if (toInsert.length === 0) return 'next';
 
     const insert = async () => {
       try {
@@ -872,7 +871,7 @@ export async function runExtractFacts(
         return insert();
       }, opts, result.warnings)
       : await insert();
-    if (!inserted) continue;
+    if (!inserted) return 'next';
     result.factsInserted += inserted.inserted;
     // v0.46 (#3014) — the wipe (when needed) ran inside insertFacts' txn;
     // count it here from the atomic result rather than a separate delete.
@@ -883,6 +882,25 @@ export async function runExtractFacts(
     // resolveSupersededByRow already prefixes each message with the slug +
     // row, so push verbatim — no `${slug}: ` re-prefix.
     for (const w of inserted.warnings) result.warnings.push(w);
+    return 'next';
+  };
+
+  for (const slug of slugs) {
+    // #1972: bail at the top of the per-page loop on abort. Each page is an
+    // independent delete-then-insert commit, so breaking leaves a consistent
+    // partial state; the receipt/rollup below still runs with partial counts.
+    if (isAborted(opts.signal)) break;
+    result.pagesScanned += 1;
+    try {
+      if (await reconcilePage(slug) === 'stop') break;
+    } catch (error) {
+      if (isAborted(opts.signal)) throw error;
+      // One page the database rejects (CHECK/FK violation, malformed input the
+      // parser tolerated) must not abort reconciliation for every later page.
+      // Its transaction rolled back, so the existing index is preserved.
+      result.pagesFailed += 1;
+      result.warnings.push(`${slug}: FACTS_RECONCILE_FAILED: ${(error instanceof Error ? error.message : String(error)).slice(0, 300)}`);
+    }
   }
 
   // v0.42 Wave B3: receipt + rollup. extract_facts is deterministic
@@ -915,8 +933,7 @@ export async function runExtractFacts(
       kind: 'facts.fence',
       source_id: sourceId,
       cost_delta: 0,
-      round_completed_delta: 1,
-      halt_delta: 0,
+      ...classifyRunStop({ error: result.pagesFailed > 0 }),
     });
   }
 

@@ -160,13 +160,13 @@ describe('B. incremental + watermark', () => {
     const state = newFixtureState([conv('c-1', 'A', T0 + 10, [{ role: 'user', text: 'hi' }, { role: 'assistant', text: 'hello' }])]);
     const r1 = await runChatgpt(state, { windowDays: 0 });
     expect(r1.ingest?.imported).toBe(1);
-    const wm1 = await engine.getConfig(watermarkKey('chatgpt'));
+    const wm1 = await engine.getConfig(watermarkKey('chatgpt', 'default'));
     expect(wm1).toBe(new Date((T0 + 10) * 1000).toISOString());
     state.hits = {}; // reset counters between runs
     const r2 = await runChatgpt(state, { windowDays: 0 });
     expect(r2.status).toBe('nothing_new');
     expect(state.hits.detail ?? 0).toBe(0); // windowDays:0 → boundary conv excluded, nothing re-fetched
-    expect(await engine.getConfig(watermarkKey('chatgpt'))).toBe(wm1);
+    expect(await engine.getConfig(watermarkKey('chatgpt', 'default'))).toBe(wm1);
   });
 
   test('B5 only the new conversation is detail-fetched; watermark advances (windowDays:0)', async () => {
@@ -179,7 +179,7 @@ describe('B. incremental + watermark', () => {
     expect(state.hits['detail:c-2']).toBe(1);
     expect(state.hits['detail:c-1'] ?? 0).toBe(0); // old one excluded (windowDays:0)
     expect(r.ingest?.imported).toBe(1);
-    expect(await engine.getConfig(watermarkKey('chatgpt'))).toBe(new Date((T0 + 500) * 1000).toISOString());
+    expect(await engine.getConfig(watermarkKey('chatgpt', 'default'))).toBe(new Date((T0 + 500) * 1000).toISOString());
   });
 
   test('B6 >30-day gap survives: next run is incremental, not a full history re-fetch', async () => {
@@ -194,7 +194,7 @@ describe('B. incremental + watermark', () => {
     }
     const state = newFixtureState(oldConvs);
     await runChatgpt(state, { full: true });
-    expect(await engine.getConfig(watermarkKey('chatgpt'))).toBeTruthy();
+    expect(await engine.getConfig(watermarkKey('chatgpt', 'default'))).toBeTruthy();
     state.hits = {};
     // A single new conv arrives well after the newest old one.
     state.conversations.push(conv('new-1', 'new', T0, [{ role: 'user', text: 'nq' }, { role: 'assistant', text: 'na' }]));
@@ -233,12 +233,12 @@ describe('B. incremental + watermark', () => {
     const r = await runChatgpt(state);
     expect(r.status).toBe('partial');
     expect(r.fetchErrors).toBe(1);
-    expect(await engine.getConfig(watermarkKey('chatgpt'))).toBeNull(); // never advanced
+    expect(await engine.getConfig(watermarkKey('chatgpt', 'default'))).toBeNull(); // never advanced
     // Clear the script; a clean re-run imports both and advances.
     state.script = [];
     const r2 = await runChatgpt(state);
     expect(r2.fetchErrors).toBe(0);
-    expect(await engine.getConfig(watermarkKey('chatgpt'))).toBe(new Date((T0 + 20) * 1000).toISOString());
+    expect(await engine.getConfig(watermarkKey('chatgpt', 'default'))).toBe(new Date((T0 + 20) * 1000).toISOString());
   });
 });
 
@@ -344,7 +344,7 @@ describe('G. client behavior', () => {
     const r = await runChatgpt(state);
     expect(r.status).toBe('auth_required');
     expect(await engine.getConfig(authErrorAtKey('chatgpt'))).toBeTruthy();
-    expect(await engine.getConfig(watermarkKey('chatgpt'))).toBeNull();
+    expect(await engine.getConfig(watermarkKey('chatgpt', 'default'))).toBeNull();
   });
 
   test('G28 403 + Cloudflare HTML → forbidden (no JSON-parse crash)', async () => {
@@ -379,7 +379,7 @@ describe('K. dry-run / limit / receipt / spool', () => {
     expect(r.status).toBe('dry_run');
     expect(state.hits.detail ?? 0).toBe(0);
     expect(await engine.listPages({ type: 'conversation', sourceId: 'default', limit: 10 })).toHaveLength(0);
-    expect(await engine.getConfig(watermarkKey('chatgpt'))).toBeNull();
+    expect(await engine.getConfig(watermarkKey('chatgpt', 'default'))).toBeNull();
   });
 
   test('K45 --limit N imports N and does NOT advance the watermark (not clean)', async () => {
@@ -392,7 +392,7 @@ describe('K. dry-run / limit / receipt / spool', () => {
     const r = await runChatgpt(state, { limit: 2 });
     expect(r.fetched).toBe(2);
     expect(r.status).toBe('partial'); // cap ⇒ not clean
-    expect(await engine.getConfig(watermarkKey('chatgpt'))).toBeNull();
+    expect(await engine.getConfig(watermarkKey('chatgpt', 'default'))).toBeNull();
   });
 
   test('K46 the run writes a connector ingest_log receipt', async () => {
@@ -409,7 +409,7 @@ describe('K. dry-run / limit / receipt / spool', () => {
     saveChatgptCookie();
     const state = newFixtureState([conv('c-1', 'A', T0 + 10, [{ role: 'user', text: 'q1' }, { role: 'assistant', text: 'a1' }])]);
     await runChatgpt(state);
-    expect(await engine.getConfig(lastSyncAtKey('chatgpt'))).toBeTruthy();
+    expect(await engine.getConfig(lastSyncAtKey('chatgpt', 'default'))).toBeTruthy();
     // spool dir should be empty (pruned in finally)
     const spoolPath = join(tmp, '.gbrain', 'connectors', 'spool', 'chatgpt');
     let entries: string[] = [];

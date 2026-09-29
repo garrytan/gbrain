@@ -1280,6 +1280,13 @@ CREATE TABLE IF NOT EXISTS extract_atoms_page_state (
 CREATE INDEX IF NOT EXISTS extract_atoms_page_state_tombstoned_idx
   ON extract_atoms_page_state (source_incarnation, content_hash, page_id) WHERE tombstoned;
 CREATE INDEX IF NOT EXISTS extract_atoms_page_state_page_idx ON extract_atoms_page_state (page_id);
+-- Durable record that a transcript was synthesized; survives minion_jobs pruning.
+CREATE TABLE IF NOT EXISTS dream_synthesis_completions (
+  source_id TEXT NOT NULL,
+  idempotency_key TEXT NOT NULL,
+  completed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (source_id, idempotency_key)
+);
 
 `;
 
