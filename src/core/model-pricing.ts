@@ -80,6 +80,8 @@ function anthro(input: number, output: number, cacheReadMult = ANTHROPIC_CACHE_R
 export const ANTHROPIC_CACHE_READ_MULT_OVERRIDES: Record<string, number> = {
   // Fable 5.1 bills cache hits at 0.025x base input ($0.25/MTok on $10).
   'anthropic:claude-fable-5-1': 0.025,
+  // Opus 5.5 bills cache hits at 0.05x base input ($0.20/MTok on $4).
+  'anthropic:claude-opus-5-5': 0.05,
 };
 
 /**
@@ -98,17 +100,20 @@ export const CANONICAL_PRICING: Record<string, ModelPricing> = {
   // Fable 5.1: same $10/$50 sticker as Fable 5, but cache hits bill 0.025x
   // ($0.25/MTok) instead of 0.1x — the only rate that changed.
   'anthropic:claude-fable-5-1':           anthro(10.00, 50.00, ANTHROPIC_CACHE_READ_MULT_OVERRIDES['anthropic:claude-fable-5-1']),
+  // Opus 5.5 (released 2026-09-22): $4 in / $20 out, cache read $0.20.
+  'anthropic:claude-opus-5-5':            anthro( 4.00, 20.00, ANTHROPIC_CACHE_READ_MULT_OVERRIDES['anthropic:claude-opus-5-5']),
   // Opus 4.x/5: $5 in / $25 out. Opus 5 (new generation) shares the same
   // per-token rate as 4.8 (released 2026-05-28) — closes gbrain#1819.
   'anthropic:claude-opus-5':              anthro( 5.00, 25.00),
   'anthropic:claude-opus-4-8':            anthro( 5.00, 25.00),
   'anthropic:claude-opus-4-7':            anthro( 5.00, 25.00),
   'anthropic:claude-opus-4-6':            anthro( 5.00, 25.00),
-  // Sonnet 5 (released 2026-06-29): same $3/$15 sticker as 4.6. The launch
-  // intro discount ($2/$10 through 2026-08-31) is deliberately NOT modeled —
-  // the table carries standard rates so estimates stay conservative and
-  // don't need a time-bombed edit when the promo lapses.
-  'anthropic:claude-sonnet-5':            anthro( 3.00, 15.00),
+  // Sonnet 5 / 5.5: $2 in / $10 out. Anthropic made Sonnet 5's launch
+  // price the standard rate — the scheduled 2026-09-01 increase to $3/$15
+  // did not happen (pricing page footnote). Sonnet 5.5 (released
+  // 2026-09-28) ships at the same rate.
+  'anthropic:claude-sonnet-5-5':          anthro( 2.00, 10.00),
+  'anthropic:claude-sonnet-5':            anthro( 2.00, 10.00),
   'anthropic:claude-sonnet-4-6':          anthro( 3.00, 15.00),
   // Haiku 4.5 — both the dateless canonical id and the dated snapshot.
   'anthropic:claude-haiku-4-5':           anthro( 1.00,  5.00),

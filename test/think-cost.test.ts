@@ -13,8 +13,8 @@ describe('computeThinkCostUsd', () => {
       { input_tokens: 1_000_000, output_tokens: 1_000_000 },
       'anthropic:claude-sonnet-5',
     );
-    // sonnet-5 pricing: input $3.00/MTok, output $15.00/MTok.
-    expect(cost).toBe(18);
+    // sonnet-5 pricing: input $2.00/MTok, output $10.00/MTok.
+    expect(cost).toBe(12);
   });
 
   test('undefined usage (no-client/stub path) → undefined, never a fabricated cost', () => {
