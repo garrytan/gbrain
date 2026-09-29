@@ -6,16 +6,28 @@
 // gbrain-unify lock held; verify-step thresholds.
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import { withEnv } from './helpers/with-env.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
-import { runUnifyTypes } from '../src/core/schema-pack/unify-types-handler.ts';
+import { runUnifyTypes as runUnifyTypesRaw } from '../src/core/schema-pack/unify-types-handler.ts';
 import { _resetPackCacheForTests } from '../src/core/schema-pack/registry.ts';
 import { ALLOWED_TYPES } from '../src/core/facts/conversation-types.ts';
 import { parseSchemaPackManifest, parseYamlMini } from '../src/core/schema-pack/index.ts';
 
 let engine: PGLiteEngine;
+let fileHome: string;
+
+// apply:true flips the active pack with saveConfig() into $GBRAIN_HOME. The
+// preload's GBRAIN_HOME is shared by every file in the bun process, so a
+// leaked schema_pack there changes the active pack for later files
+// (link-source-namespaced-regex saw gbrain-base-v2 instead of gbrain-base).
+// Every call in this file therefore runs against a file-private home.
+function runUnifyTypes(...args: Parameters<typeof runUnifyTypesRaw>) {
+  return withEnv({ GBRAIN_HOME: fileHome }, () => runUnifyTypesRaw(...args));
+}
 
 beforeAll(async () => {
+  fileHome = mkdtempSync(join(tmpdir(), 'gbrain-unify-file-home-'));
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
@@ -23,6 +35,8 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await engine.disconnect();
+  rmSync(fileHome, { recursive: true, force: true });
+  _resetPackCacheForTests();
 });
 
 beforeEach(async () => {
@@ -220,7 +234,6 @@ import { readFileSync } from 'fs';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { withEnv } from './helpers/with-env.ts';
 
 function filteredCatchAllPack(name: string, filterLines: string): string {
   return `api_version: gbrain-schema-pack-v1
@@ -262,7 +275,7 @@ describe('#4651 catch-all retype carries slug_filter/path_filter into synthesize
   it('dry-run: slug_filter scopes the synthesized rules — out-of-filter pages are not counted', async () => {
     await seed('inbox/legacy-a', 'widget-legacy');
     await seed('keep/legacy-b', 'widget-legacy');
-    const result = await withEnv({ GBRAIN_HOME: home }, () => runUnifyTypes(ctxOf(), {
+    const result = await withEnv({ GBRAIN_HOME: home }, () => runUnifyTypesRaw(ctxOf(), {
       target_pack: 'unify-catchall-slugfilter',
       apply: false,
     }));
@@ -274,7 +287,7 @@ describe('#4651 catch-all retype carries slug_filter/path_filter into synthesize
   it('apply: path_filter parity — a same-type page outside the filter keeps its type', async () => {
     await seed('inbox/legacy-a', 'widget-legacy');
     await seed('keep/legacy-b', 'widget-legacy');
-    const result = await withEnv({ GBRAIN_HOME: home }, () => runUnifyTypes(ctxOf(), {
+    const result = await withEnv({ GBRAIN_HOME: home }, () => runUnifyTypesRaw(ctxOf(), {
       target_pack: 'unify-catchall-pathfilter',
       apply: true,
     }));

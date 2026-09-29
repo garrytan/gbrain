@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [0.60.6.1] - 2026-09-29
+## [0.60.8.1] - 2026-09-29
 
 **`gbrain doctor` stopped warning about the lock doctor itself is holding.** `doctor` opens the brain's database to run its checks, and briefly holds the same PGLite lock file that a live `gbrain serve` process holds while it's running. One of doctor's own checks looks at that lock and warns whenever the holder isn't a `serve` process — so on a machine where you'd stopped `serve` and just ran `gbrain doctor`, it reported "a non-serve process holds the lock and hook IPC will fail" about itself, describing a collision that didn't exist.
 
@@ -18,7 +18,7 @@ Now the check only warns about a genuinely different process holding the lock. D
 
 **Say to your agent:** *"Run gbrain doctor and check whether the PGLite lock warning still shows up when serve is stopped"* — your agent runs `gbrain doctor`.
 
-## To take advantage of v0.60.6.1
+## To take advantage of v0.60.8.1
 
 Upgrade, then re-run doctor with serve stopped and confirm the warning is gone:
 
@@ -32,6 +32,61 @@ gbrain doctor
 - `src/core/bootstrap/uninstall.ts`: `probeLivePgliteHolder` now returns a namespace-aware `isSelf` field on `LiveHolder`. On Linux, it compares the lock's stored `pid_ns`/`boot_id` evidence against the running process's own via `pglite-lock.ts`'s exported readers, requiring both to be readable and matching before trusting a pid match — a pid alone (which a shared-mount container could coincidentally reuse) is never sufficient there, and unreadable evidence on either side fails closed (still warns). Non-Linux platforms have no PID namespaces, so pid equality alone decides there, matching `pglite-lock.ts`'s own unmodified lock-acquisition trust model. A pid+namespace match alone also does not decide: a lock whose `acquired_at` predates this process's own start time cannot be ours (we couldn't have acquired it before we existed) regardless of matching evidence, catching a stale legacy lock left behind by a dead process whose pid was later recycled.
 - `src/commands/doctor/bootstrap-checks.ts`: the `bootstrap_serve_lock` check now skips a lock holder only when `isSelf` is true, instead of treating any lock holder sharing the doctor's numeric pid as self.
 - Closes #5481.
+
+## [0.60.8.0] - 2026-09-29
+
+**Pull-request CI asks for about a fifth of the machines it used to, so checks start right away instead of waiting half an hour in line.**
+
+Every pull request's test run used to ask for about 890 virtual CPUs at once, on a shared pool of 256. Jobs waited up to 28 minutes just to start, and one run took 41 minutes end to end even though its longest job ran under 14. Most of those machines sat idle: a test shard is one process that keeps one or two cores busy, and it ran on a 16-core machine.
+
+Now each job gets the smallest machine that runs it just as fast, pull requests test the main Bun version instead of all three, the native lock builds for Windows, macOS and ARM run on a pull request only when it touches that code, and the one test that took ten minutes on every PR runs a smaller copy of itself there. Master, the nightly schedule and manual runs still run everything, at full scale.
+
+### The numbers that matter
+
+| Per pull request | Before | After |
+| --- | --- | --- |
+| Peak machine demand (Test + E2E) | ~890 vCPUs | ~180 vCPUs |
+| Unit shard machine | 16 vCPUs | 4 vCPUs (same time) |
+| Longest unit shard | 13.6 min (one 571s test) | ~6 min (8 balanced shards) |
+| Test workflow runner-minutes | 235 | ~115 (projected from job times) |
+| Agent `ci:ubicloud` default fleet | 160 vCPUs | 64 vCPUs |
+
+Machine sizes were measured on matched Ubicloud VMs, not guessed:
+
+| Job | 2 vCPU | 4 vCPU | 8 vCPU | 16 vCPU |
+| --- | --- | --- | --- | --- |
+| Unit shard 9 | 488s | 361s | 366s | 361s |
+| Serial shard 2 | | 277s | 222s | 224s |
+| `bun run verify` | 137s | 58s | 51s | 48s |
+| 2,500-write PGLite soak | | 523s | 539s | 500s |
+| E2E full-corpus shard 1 | | 668s | 704s | 741s |
+
+### What moved from pull requests to master, nightly and manual runs
+
+Nothing stopped running. These cells now run on every push to master, every night and on manual dispatch, and skip on pull requests:
+
+- Bun 1.3.11: security regressions (Linux, macOS, Windows), persistence read latency, deployment matrix, soak and reconciliation crashes.
+- Bun 1.3.11 and 1.4.2 native lock cells on every target, musl and both Windows probes.
+- When a pull request does not touch native, lock, IPC, persistence, publication, backup, export or sync paths: the non-Linux-x64 native targets, musl, the Windows probes and OpenClaw startup. The `linux-x64-glibc / Bun 1.3.13` cell always runs the whole native step list.
+- `test/export-scale.slow.test.ts` at 100,001 pages. Pull requests run the same assertions at 10,001 pages.
+
+### Things to watch
+
+- The required `test-status` and `e2e-status` checks keep their names and still fail on any failed, cancelled or skipped required lane.
+- The new nightly `Test` run (07:23 UTC) uses its own concurrency group, so it never cancels a master push.
+- `bun run ci:ubicloud --vms 10` restores the old fleet when the quota is idle. A VM the quota refuses is skipped and the run continues on the rest.
+
+### Itemized changes
+
+**Runners.** `test.yml`: unit shards, slow and eval jobs, BrainBench, admin browser and shared-skills compatibility on `ubicloud-standard-4`; `verify` and `serial-tests` on `ubicloud-standard-8`; Linux security regressions on `ubicloud-standard-2`. `persistence-validation.yml`: read latency, soak and reconciliation on `standard-4`, deployment matrix on `standard-8` (soak was `standard-30`). `native-locks.yml`: Linux cells on `standard-4` and `standard-4-arm`. `e2e.yml`: JSONB parity, Tier 2, selected E2E and nightly coverage lanes on `standard-4` (nightly serial on `standard-8`); Tier 1 stays on `standard-16`. `.github/actionlint.yaml` and `test/scripts/ci-runner-routing.test.ts` pin the labels.
+
+**Pull-request scope.** Bun matrices keep their full static lists and drop cells with an event-based `exclude`. A new `changes` job classifies the PR's files with `scripts/ci-native-scope.sh` and passes `scope: full | primary | smoke` to `native-locks.yml`, whose native runners now map from the target. `test.yml` gains a nightly `schedule`. `test/scripts/ci-pr-scope.test.ts` pins every scope.
+
+**Shards.** Eight unit shards (was ten), rebalanced from the measured September 29 timings (`scripts/test-weights.json` now covers all 2,038 files; 1,714 before). `test/export-scale.slow.test.ts` moved to the `slow-entity-resolve-perf` job and reads `GBRAIN_TEST_EXPORT_SCALE_PAGES` (pull requests 10,001, elsewhere 100,001; every count assertion scales with it). `test/reconcile-crash.slow.test.ts` left the unit matrix, where it duplicated the persistence-validation PGLite run; the reconciliation step became its own job beside the soak. Nightly `coverage-full-slow` runs both files.
+
+**Slow tests.** `test/worker-configuration-release.test.ts` checks the 30-second eviction deadline directly and exercises the drain against a 300 ms deadline, instead of sleeping 30 seconds.
+
+**Agents.** `scripts/ci-ubicloud.ts` defaults to 4 VMs; `scripts/ubicloud/ci-item.sh` runs export-scale at the pull-request scale. `docs/TESTING.md` documents runner sizes, the measurements and the PR, master and nightly scope.
 
 ## [0.60.6.0] - 2026-09-29
 
@@ -200,6 +255,8 @@ warns about a partial migration:
 - New suites include `test/import-identity-move.test.ts`, `test/fact-withdrawal-normalized.test.ts`, `test/fact-withdrawal-prepare-wiring.test.ts`, `test/extract-facts-stable-identity.test.ts`, `test/phantom-redirect-merge.test.ts`, `test/facts-fence-dates.test.ts`, `test/facts-write-path-failures.test.ts`, `test/timeline-reconcile-all-paths.test.ts`, `test/import-markdown-embedding-reuse.test.ts`, `test/import-frontmatter-tag-removal.test.ts`, `test/effective-date-brain-timezone.test.ts`, `test/effective-date-git-first-commit.test.ts`, `test/persistence-managed-lifecycle.test.ts`, `test/cycle/synthesize-concepts-identity.test.ts`, `test/cycle-date-consistency.test.ts`, `test/cycle/extract-atoms-reconcile.test.ts`, `test/managed-maintenance-links.test.ts` and `test/e2e/connectors-ingest-failure-pglite.test.ts`.
 - More new suites: `test/relational-intent-paraphrase.test.ts`, `test/search/general-title-mention-boost.test.ts`, `test/search/alias-token-hop.test.ts`, `test/search/source-boost-config.test.ts`, `test/traverse-walk-cap.test.ts`, `test/facts-backstop-unverified-resolution.test.ts`, `test/longmemeval-embed-cache.test.ts` and `test/eval-longmemeval-brain-recycle.test.ts`.
 - `docs/architecture/canonical-writers.tsv` classifies the new canonical write sites (`moveSlugBindings`, the v174 backfill, the managed rename).
+
+**Credits (added later):** three fixes in this release independently repeat earlier community PRs: sub-day TTL (#5320, thanks @VXNCXNX), concept change detection (#5156, thanks @Natetgmaxwell) and managed `extract --stale` through the coordinator (#5513, thanks @openclaw-agent-man).
 
 ## [0.60.5.0] - 2026-09-29
 

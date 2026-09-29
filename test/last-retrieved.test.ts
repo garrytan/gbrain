@@ -125,14 +125,16 @@ describe('awaitPendingLastRetrievedWrites', () => {
     await new Promise((r) => setTimeout(r, 10));
     expect(_peekPendingLastRetrievedWritesForTests()).toBe(1);
 
-    const t0 = Date.now();
+    const t0 = performance.now();
     const result = await awaitPendingLastRetrievedWrites(100); // 100ms test timeout
-    const dt = Date.now() - t0;
+    const dt = performance.now() - t0;
 
     expect(result.outcome).toBe('timeout');
     expect(result.pending).toBe(1);
-    // Should return within timeout + small buffer; not block forever
-    expect(dt).toBeGreaterThanOrEqual(100);
+    // Should return within timeout + small buffer; not block forever. Timers
+    // are scheduled at whole-millisecond granularity, so a 100ms timer can be
+    // observed at 99.x ms (CI saw 99 with Date.now()).
+    expect(dt).toBeGreaterThanOrEqual(99);
     expect(dt).toBeLessThan(300);
     // C1 fix: snapshot's tracked promises ARE dropped from the set on
     // timeout so the next drain doesn't see ghosts (daemon leak guard).

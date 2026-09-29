@@ -21,24 +21,54 @@ not grant access. No Ubicloud API token is passed to workflow jobs.
 
 | Workload | Runner | Capacity |
 | --- | --- | --- |
-| Unit, serial, E2E, browser, compatibility, read-performance and deployment-matrix tests | `ubicloud-standard-16-ubuntu-2404` | 16 vCPU, 64 GB RAM |
-| Heavy test suite and persistence invariant/soak matrix | `ubicloud-standard-30-ubuntu-2404` | 30 vCPU, 120 GB RAM |
-| Native ARM64 glibc and musl tests | `ubicloud-standard-16-arm-ubuntu-2404` | 16 vCPU, 48 GB RAM |
+| Unit shards, slow and eval jobs, BrainBench, admin browser, shared-skills compatibility, persistence soak, reconciliation crashes and read latency, native Linux cells, OpenClaw startup, JSONB parity, selected E2E and Tier 2 | `ubicloud-standard-4-ubuntu-2404` | 4 vCPU, 16 GB RAM |
+| Serial pool (PR and nightly coverage), `verify`, PgBouncer/RLS deployment matrix | `ubicloud-standard-8-ubuntu-2404` | 8 vCPU, 32 GB RAM |
+| E2E Tier 1 (its CLI `init` spawns exceed their timeouts on 4 vCPUs), label-gated and nightly heavy-tests jobs | `ubicloud-standard-16-ubuntu-2404` | 16 vCPU, 64 GB RAM |
+| Label-gated heavy test suite | `ubicloud-standard-30-ubuntu-2404` | 30 vCPU, 120 GB RAM |
+| Native ARM64 glibc and musl tests | `ubicloud-standard-4-arm-ubuntu-2404` | 4 vCPU |
 | Coverage reports and Semgrep | `ubicloud-standard-4-ubuntu-2404` | 4 vCPU, 16 GB RAM |
-| Planning, status aggregation, dependency audit, gitleaks and actionlint | `ubicloud-standard-2-ubuntu-2404` | 2 vCPU, 8 GB RAM |
+| Planning, status aggregation, dependency audit, gitleaks, security regressions and actionlint | `ubicloud-standard-2-ubuntu-2404` | 2 vCPU, 8 GB RAM |
 
 macOS and Windows matrices stay on GitHub-hosted runners. Release building and
 publishing also stay unchanged. The pinned upstream OSV reusable workflow does
 not expose a runner override, so its runner remains upstream-owned.
 
-The migration does not change shards, test selection, commands, timeouts,
-thresholds, artifact collection or required check identities. The security
-matrix retains its existing OS labels and changes only the Linux execution
-target. `test/scripts/ci-runner-routing.test.ts` pins capacity and platform
-routing; `.github/actionlint.yaml` declares the exact custom runner labels.
-Actual GitHub job records and completed checks establish runner availability;
-local workflow tests do not. More CPU and memory do not guarantee proportional
-speedups for serial tests or external-provider requests.
+Sizes come from measured CPU use, not guesses. Each Ubicloud project shares one
+vCPU quota between pull-request CI and agent `ci:ubicloud` VMs, so an oversized
+runner makes every other job wait. On matched VMs (September 2026), a unit
+shard is one Bun process that averaged 1.1-1.5 busy cores and took 361s on 4,
+8 and 16 vCPUs (488s on 2); the serial pool and `verify` took the same time on
+8 and 16 vCPUs (serial shard 2: 222s and 224s; 277s on 4); the 2,500-write
+PGLite soak averaged 1.3-1.8 busy cores and took 523s on 4 vCPUs and 500s on
+16. Re-measure with `scripts/ubicloud/ubi-runner.sh run -s standard-N` before
+growing a runner: more CPU does not shorten a single-process job.
+`test/scripts/ci-runner-routing.test.ts` pins capacity and platform routing;
+`.github/actionlint.yaml` declares the exact custom runner labels. Actual
+GitHub job records and completed checks establish runner availability; local
+workflow tests do not.
+
+### Pull request, master and nightly scope
+
+Every test file runs on every push to master, on the nightly schedule and on
+manual dispatch. Pull requests run a narrower matrix of the same files:
+
+| Lane | Pull request | Push to master, nightly, manual |
+| --- | --- | --- |
+| Security regressions | Linux, macOS and Windows on Bun 1.3.13 | Also Bun 1.3.11 |
+| Persistence read latency, deployment matrix, soak, reconciliation crashes | Bun 1.3.13 | Bun 1.3.11 and 1.3.13 |
+| Persistence soak size | 2,500 writes | 10,000 writes |
+| Native writer locks, native paths changed | Every target on Bun 1.3.13, musl, both Windows probes, OpenClaw | Every target, musl and Windows probe on Bun 1.3.11, 1.3.13 and 1.4.2, OpenClaw |
+| Native writer locks, other changes | `linux-x64-glibc / Bun 1.3.13` smoke cell (full native step list) | Same as above |
+| `test/export-scale.slow.test.ts` | 10,001 pages | 100,001 pages |
+
+The `changes` job classifies a pull request's changed files with
+`scripts/ci-native-scope.sh`: native lock sources, the native toolchain, IPC,
+persistence, publication, backup, export and sync sources, their native tests,
+`package.json`, `bun.lock` and the workflow files select every target. An
+unreadable file list selects every target too. Skipped cells never report a
+failure: `test-status` needs the `native-locks` and `persistence-validation`
+workflow calls, which succeed when their remaining cells do, so the required
+check names are unchanged. `test/scripts/ci-pr-scope.test.ts` pins every scope.
 
 Shared-skill tests distinguish canonical publication, protocol delivery, installed
 files and native harness use. `test/shared-skills-transports.test.ts` and
@@ -302,7 +332,7 @@ Test command tiers, each with a clear scope:
 
 | Command | What it runs | Wallclock | When to use |
 |---|---|---|---|
-| `bun run test` | Parallel unit-test fast loop. Sharded fan-out via `scripts/run-unit-parallel.sh` (default 4 shards — CPU-detected, clamped to a max of 8; 4 limits local PGLite WASM-init contention; GitHub CI uses 10 unit shards), then a serial pass over `*.serial.test.ts`. Excludes `*.slow.test.ts` and `test/e2e/*`. No pre-checks, no typecheck. Builds/refreshes the PGLite schema snapshot BEFORE the shard fan-out and exports `GBRAIN_PGLITE_SNAPSHOT` so PGLite-booting files restore a baked schema instead of replaying every migration (~3.5x per booting file; see "PGLite schema snapshot" below). Opt out: `GBRAIN_NO_SNAPSHOT=1`. Memory-safe by default: total concurrency (shards × intra-shard width) is capped to available memory at `GBRAIN_TEST_MEM_PER_FILE_MB` (default 1536 — a PGLite WASM instance) per concurrent slot, shedding INTRA-SHARD width first and shards only after it (bun's `--max-concurrency` bounds only `test.concurrent` tests — 1 file in the corpus — so intra width is nearly free to shed, while every dropped shard removes a whole bun process of real fan-out; shedding shards first would collapse a 16GB box to a serial 1×4 run, measured 3.25× slower than 4×1 on the same machine). Two phantom-failure classes are automatically re-run serially (the rescue pass): failures carrying the WASM out-of-memory signature, and shards killed externally (SIGTERM/SIGKILL well before the shard timeout — sibling workspaces' process cleanup, memory jetsam). On machines without coreutils `timeout`, the fallback watchdog drops a `.watchdog` sentinel before TERMing a shard at the cap so the WEDGED/EXIT-HANG classifier stays reachable there (a bare rc=143 would otherwise read as a plain failure). Phantoms pass serially and the run goes green with an `oom_rescued` note; real failures fail again serially and stay red. Knobs: `GBRAIN_TEST_NO_MEM_ADAPT=1`, `GBRAIN_TEST_NO_OOM_FALLBACK=1`, `GBRAIN_TEST_MAX_CONCURRENCY` (intra-shard, default 4), `GBRAIN_TEST_SHARD_TIMEOUT` / `GBRAIN_TEST_SHARD_KILL_AFTER`, plus `--shards N` / `--max-concurrency N` / `--dry-run` script args. | a few minutes on a Mac dev box | Inner edit loop. Default. |
+| `bun run test` | Parallel unit-test fast loop. Sharded fan-out via `scripts/run-unit-parallel.sh` (default 4 shards — CPU-detected, clamped to a max of 8; 4 limits local PGLite WASM-init contention; GitHub CI uses 8 unit shards), then a serial pass over `*.serial.test.ts`. Excludes `*.slow.test.ts` and `test/e2e/*`. No pre-checks, no typecheck. Builds/refreshes the PGLite schema snapshot BEFORE the shard fan-out and exports `GBRAIN_PGLITE_SNAPSHOT` so PGLite-booting files restore a baked schema instead of replaying every migration (~3.5x per booting file; see "PGLite schema snapshot" below). Opt out: `GBRAIN_NO_SNAPSHOT=1`. Memory-safe by default: total concurrency (shards × intra-shard width) is capped to available memory at `GBRAIN_TEST_MEM_PER_FILE_MB` (default 1536 — a PGLite WASM instance) per concurrent slot, shedding INTRA-SHARD width first and shards only after it (bun's `--max-concurrency` bounds only `test.concurrent` tests — 1 file in the corpus — so intra width is nearly free to shed, while every dropped shard removes a whole bun process of real fan-out; shedding shards first would collapse a 16GB box to a serial 1×4 run, measured 3.25× slower than 4×1 on the same machine). Two phantom-failure classes are automatically re-run serially (the rescue pass): failures carrying the WASM out-of-memory signature, and shards killed externally (SIGTERM/SIGKILL well before the shard timeout — sibling workspaces' process cleanup, memory jetsam). On machines without coreutils `timeout`, the fallback watchdog drops a `.watchdog` sentinel before TERMing a shard at the cap so the WEDGED/EXIT-HANG classifier stays reachable there (a bare rc=143 would otherwise read as a plain failure). Phantoms pass serially and the run goes green with an `oom_rescued` note; real failures fail again serially and stay red. Knobs: `GBRAIN_TEST_NO_MEM_ADAPT=1`, `GBRAIN_TEST_NO_OOM_FALLBACK=1`, `GBRAIN_TEST_MAX_CONCURRENCY` (intra-shard, default 4), `GBRAIN_TEST_SHARD_TIMEOUT` / `GBRAIN_TEST_SHARD_KILL_AFTER`, plus `--shards N` / `--max-concurrency N` / `--dry-run` script args. | a few minutes on a Mac dev box | Inner edit loop. Default. |
 | `bun run verify` | CI's authoritative pre-test gate set, fanned out by `scripts/run-verify-parallel.sh` through a bounded worker pool (default `detect_cpus`; override `GBRAIN_VERIFY_MAX_PARALLEL`) with the heavy checks ordered first (typecheck, the two compile-embed checks, admin build, fuzz bundles, guard self-tests, the PGLite-booting chronicle eval check, whole-tree greps). The battery includes the deterministic `check:eval-chronicle` eval gate; `check:eval-canary` is deliberately NOT in the battery (its test-file twin `test/eval-canary.test.ts` spawns the identical runner in the unit matrix, and CI's verify job and matrix always run together — the package script stays for on-demand runs, so `verify`-only local callers should know the canary rides the unit lane instead). The `CHECKS` array in that script is the single source of truth — CI literally calls `bun run verify` in a dedicated job. | ~50s (pool-bounded; longest check dominates) | Before pushing; before `/ship`. |
 | `bun run test:full` | `verify && bun run test && bun run test:slow && [smart e2e]`. Smart e2e runs only when `DATABASE_URL` is set and propagates its failure; otherwise it prints a skip notice to stderr. Use `ci:local` to provision the databases and require PgBouncer execution. | ~3-5min depending on slow + e2e | Pre-merge sanity, before opening a PR. |
 | `bun run ci:local` | Independent host gitleaks scans, then frozen dependencies, guards/typecheck, the complete serial and slow lanes, and four unit/E2E shards inside Docker. Each E2E shard has its own pgvector database; selected PgBouncer tests must execute against the transaction-mode pooler. Unit, serial, and slow lanes have database URL overrides unset. Any failed stage fails the command. Complete shard logs survive container teardown under `.context/ci-local-shards/`. `ci:local:diff` narrows E2E selection; `--no-shard` runs unit/E2E sequentially. Doc-only diffs still require successful gitleaks scans. | Depends on the full corpus | Full local gate before shipping. |
@@ -382,8 +412,15 @@ when any item fails, an item never produces a result, or no VM becomes ready.
 An item whose SSH batch dies without a result is retried once on any slot, and a
 VM with three such infrastructure errors is retired.
 
-Defaults are ten `standard-16` VMs in `eu-central-h1` with 8 slots each, one
-per two vCPUs (`--vms`, `--size`, `--slots`, `--location`). `--lanes` runs a
+Defaults are four `standard-16` VMs (64 vCPUs) in `eu-central-h1` with 8 slots
+each, one per two vCPUs (`--vms`, `--size`, `--slots`, `--location`). The
+Ubicloud project's vCPU quota (256) is shared with pull-request CI, so the
+default leaves room for about two concurrent PR runs; the former default of
+ten VMs took 160 vCPUs and queued PR jobs for up to 28 minutes. A VM that the
+quota refuses fails to provision and the run continues on the VMs that did
+start, so a busy project shrinks the fleet instead of failing. Pass `--vms 10`
+only when the quota is idle. Slow-lane items run `test/export-scale.slow.test.ts`
+at the pull-request scale (`GBRAIN_TEST_EXPORT_SCALE_PAGES=10001`). `--lanes` runs a
 subset, `--keep` leaves the VMs up for debugging, and `--diff` follows
 `ci:local:diff` (a doc-only diff runs gitleaks alone). The corpus is roughly
 8,000 seconds of test compute at that density, so 80 slots finish everything
@@ -705,7 +742,7 @@ bun scripts/pglite-checkpoint-harness/supervisor.ts --dir /tmp/h --fresh --pages
 
 ### Keeping CI partitions balanced
 
-Required CI runs ten weighted unit workers, four serial workers with bounded
+Required CI runs eight weighted unit workers, four serial workers with bounded
 per-file pools, and up to four selected E2E workers. E2E selection and exclusions
 run once before setup; the resulting file lists are frozen and executed against
 separate Postgres services. An explicit empty selection launches no tests;
@@ -904,7 +941,7 @@ there even though they pass on Linux and macOS.
 
 ### CI vs local: intentionally divergent file sets
 
-- **CI matrix** (`.github/workflows/test.yml`) runs `scripts/test-shard.sh` across 10 matrix shards partitioned by weight-aware LPT bin-packing (`scripts/sharding.ts`; files with no mined weight fall back to the p75 file weight so a new unweighted file can't silently unbalance a shard) and INCLUDES `*.slow.test.ts` (the four dedicated slow files — longmemeval, entity-resolve-perf, entity-card-perf, brainbench-e2e — run as dedicated jobs alongside the matrix) plus `evals/**/*.test.ts` (keyless-allowlist-gated — `test/scripts/evals-collection.test.ts`). Each shard's bun process is bounded by `--max-concurrency` (`GBRAIN_TEST_MAX_CONCURRENCY`, default 4). Every bun-test job — matrix shards, serial-tests, verify, the slow/eval jobs — activates the PGLite schema snapshot (built in-runner via `scripts/lib/test-env.sh`; the BrainBench gate uses the separate default-profile snapshot for its in-memory PGLite; the ~42MB tar is also cached across jobs via actions/cache, with the runner's own hash check staying authoritative). CI EXCLUDES `*.serial.test.ts` from the shards and runs them across four `serial-tests` workers via `bun run test:serial` — one bun process per file preserves the `mock.module` quarantine; the pool runs those processes concurrently. `bun run verify` gets its own job too, as does the BrainBench memory-conformance gate (`brainbench` job → `scripts/ci-brainbench-gate.sh`, hermetic in-memory PGLite, ~15s), which compares HEAD's fresh run against master's committed baseline (`evals/brainbench/baselines/main.json`) — the `test-status` aggregate checks its result explicitly. E2E (`.github/workflows/e2e.yml`) always runs its applicable execution lanes, with the jsonb-parity job in front of tier2 as the token-spend gate, and aggregates through `e2e-status`. Scheduled runs also require the full-corpus lanes, including each slow suite excluded from the coverage shards (longmemeval, entity-resolve-perf, and brainbench-e2e). Both aggregates reject failures, cancellations, and unexpected skips. Dependency caches and validated PGLite snapshots remain; successful test results are never reused. CI is the ground truth for "did everything pass."
+- **CI matrix** (`.github/workflows/test.yml`) runs `scripts/test-shard.sh` across 8 matrix shards partitioned by weight-aware LPT bin-packing (`scripts/sharding.ts`; files with no mined weight fall back to the p75 file weight so a new unweighted file can't silently unbalance a shard) and INCLUDES `*.slow.test.ts` (the dedicated slow files — longmemeval, entity-resolve-perf, entity-card-perf, export-scale, brainbench-e2e — run as dedicated jobs alongside the matrix, and `reconcile-crash.slow.test.ts` runs only in the persistence-validation reconciliation job) plus `evals/**/*.test.ts` (keyless-allowlist-gated — `test/scripts/evals-collection.test.ts`). Each shard's bun process is bounded by `--max-concurrency` (`GBRAIN_TEST_MAX_CONCURRENCY`, default 4). Every bun-test job — matrix shards, serial-tests, verify, the slow/eval jobs — activates the PGLite schema snapshot (built in-runner via `scripts/lib/test-env.sh`; the BrainBench gate uses the separate default-profile snapshot for its in-memory PGLite; the ~42MB tar is also cached across jobs via actions/cache, with the runner's own hash check staying authoritative). CI EXCLUDES `*.serial.test.ts` from the shards and runs them across four `serial-tests` workers via `bun run test:serial` — one bun process per file preserves the `mock.module` quarantine; the pool runs those processes concurrently. `bun run verify` gets its own job too, as does the BrainBench memory-conformance gate (`brainbench` job → `scripts/ci-brainbench-gate.sh`, hermetic in-memory PGLite, ~15s), which compares HEAD's fresh run against master's committed baseline (`evals/brainbench/baselines/main.json`) — the `test-status` aggregate checks its result explicitly. E2E (`.github/workflows/e2e.yml`) always runs its applicable execution lanes, with the jsonb-parity job in front of tier2 as the token-spend gate, and aggregates through `e2e-status`. Scheduled runs also require the full-corpus lanes, including each slow suite excluded from the coverage shards (longmemeval, entity-resolve-perf, entity-card-perf, brainbench-e2e, export-scale and reconcile-crash). Both aggregates reject failures, cancellations, and unexpected skips. Dependency caches and validated PGLite snapshots remain; successful test results are never reused. CI is the ground truth for "did everything pass."
 - **Local fast loop** (`scripts/run-unit-shard.sh` via the parallel wrapper) uses the same weighted partitioner as CI and EXCLUDES `*.slow.test.ts` AND `*.serial.test.ts`. Each shard runs its complete ordered selection with a fresh Bun process per file, without adding workers. Later groups still run after failures; missing summaries or file-completion evidence fail the shard. Local trades coverage for inner-loop speed; CI catches what local skips.
 
 This divergence is intentional. Don't try to make them equal — the two scripts deliberately solve different problems. The regression test at `test/scripts/run-unit-shard.test.ts` pins what the local fast loop should and shouldn't include, and that no unit-lane file spawning the CLI through `test/helpers/cli-spawn.ts` hand-pins a per-test timeout below the bunfig default (an explicit `test(name, fn, N)` ceiling overrides bun's `--timeout`, so `GBRAIN_TEST_TIMEOUT_MULTIPLIER` never reaches it — inherit the default instead; cli-spawn's own kill timer still reaps a hung child); `test/scripts/run-unit-parallel.test.ts` pins the wrapper's memory-adaptive concurrency, and the OOM/external-kill serial rescue pass, and operator-interrupt teardown (a Ctrl-C / SIGTERM to the wrapper while shards are live TERMs then KILLs every shard descendant, so a cancelled run cannot leave gtimeout/bun alive until the shard cap).
@@ -945,8 +982,8 @@ non-`GBRAIN_`-prefixed so the hermetic env scrub keeps them.
 
 **Two corpora.**
 
-- **PR corpus** (`prCorpus`) — the 17 coverage-collecting lanes in
-  `.github/workflows/test.yml`: the 10 matrix shards, four `serial-tests` partitions, and the
+- **PR corpus** (`prCorpus`) — the 15 coverage-collecting lanes in
+  `.github/workflows/test.yml`: the 8 matrix shards, four `serial-tests` partitions, and the
   three dedicated slow jobs (`slow-eval-longmemeval`,
   `slow-entity-resolve-perf`, `slow-brainbench-e2e`). Deterministic (runs identically on every PR); this
   is the corpus the gates run against.

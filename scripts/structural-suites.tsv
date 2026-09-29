@@ -234,6 +234,7 @@ test/scripts/ci-local-rendering.test.ts	ci-local command rendering	1	readFileSyn
 test/scripts/ci-local-rendering.test.ts	ci-local execution coverage	3	readFileSync
 test/scripts/ci-local-rendering.test.ts	local test configuration through run-e2e	2	readFileSync
 test/scripts/ci-local-rendering.test.ts	required PgBouncer execution through run-e2e	1	readFileSync
+test/scripts/ci-pr-scope.test.ts	pull-request CI scope	7	readFileSync
 test/scripts/ci-runner-routing.test.ts	CI runner routing	5	readFileSync
 test/scripts/classify-tests.test.ts	classify-tests detectors	20	bun-file,doctor-source-helper,exec-scan,readFileSync
 test/scripts/coverage-diff-gate.test.ts	exemptions	3	readFileSync
@@ -247,7 +248,7 @@ test/scripts/native-lock-prebuilds.test.ts	native lock distribution integrity	2	
 test/scripts/nightly-e2e.test.ts	nightly E2E scheduling	4	readFileSync
 test/scripts/run-verify-parallel.test.ts	guard registration ⇒ execution coverage	1	readFileSync
 test/scripts/test-shard.slow.test.ts	test-shard.sh — LPT balance contract	5	readFileSync
-test/scripts/test-shard.slow.test.ts	test-shard.sh — exclusion contract	6	readFileSync
+test/scripts/test-shard.slow.test.ts	test-shard.sh — exclusion contract	7	readFileSync
 test/serve-http-admin-route-guard.test.ts	(file-level)	4	readFileSync
 test/serve-http-github-webhook.test.ts	handler wiring (source pin)	1	readFileSync
 test/serve-http-mcp-transport-cleanup.test.ts	POST /mcp transport cleanup (#2844)	2	readFileSync

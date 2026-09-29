@@ -29,6 +29,8 @@ unset SLOT
 export GBRAIN_CI_DISABLE_TEST_ENV_FILE=1
 export GBRAIN_PGLITE_SNAPSHOT=test/fixtures/pglite-snapshot.tar
 export GBRAIN_TEST_TIMEOUT_MULTIPLIER="${GBRAIN_TEST_TIMEOUT_MULTIPLIER:-6}"
+# Pull-request scale for export-scale.slow.test.ts; the 100,001-page run is master CI's.
+export GBRAIN_TEST_EXPORT_SCALE_PAGES="${GBRAIN_TEST_EXPORT_SCALE_PAGES:-10001}"
 unset DATABASE_URL GBRAIN_DATABASE_URL
 
 # Throwaway password of the loopback-only slot servers setup-ci-vm.sh starts.

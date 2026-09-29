@@ -27,8 +27,10 @@ describe('native-only CI remains separate from full validation', () => {
     expect(workflow.on.workflow_dispatch.inputs.native_only).toMatchObject({ type: 'boolean', default: false });
     expect(workflow.jobs['native-locks'].uses).toBe('./.github/workflows/native-locks.yml');
     expect(workflow.jobs['native-locks'].if).toBeUndefined();
+    expect(workflow.jobs.changes.if).toBeUndefined();
+    expect(workflow.jobs['native-locks'].needs).toEqual(['changes']);
     for (const [name, job] of Object.entries(workflow.jobs)) {
-      if (name === 'native-locks') continue;
+      if (name === 'native-locks' || name === 'changes') continue;
       expect(job.if).toBeDefined();
       const nativeStatus = name === 'native-only-status';
       for (const event of ['push', 'pull_request', 'workflow_dispatch']) {

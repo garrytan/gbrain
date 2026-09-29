@@ -34,7 +34,7 @@ jobs:
     # Postgres and HARD-FAILS if DATABASE_URL is missing, so the guard can never
     # silently skip.
     name: JSONB parity (#2339 regression guard)
-    runs-on: ubicloud-standard-16-ubuntu-2404
+    runs-on: ubicloud-standard-4-ubuntu-2404
     timeout-minutes: 15
     services:
       postgres:
@@ -149,7 +149,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.prepare-e2e.outputs.matrix) }}
-    runs-on: ubicloud-standard-16-ubuntu-2404
+    runs-on: ubicloud-standard-4-ubuntu-2404
     timeout-minutes: 60
     services:
       postgres:
@@ -203,6 +203,9 @@ jobs:
 
   tier1:
     name: Tier 1 (Mechanical)
+    # Tier 1 stays on 16 vCPUs: on 4 its CLI `init --url` spawns in
+    # mechanical.test.ts went from ~2s to past their 15-30s kill timeouts
+    # (measured September 29, 2026), while every other E2E lane ran as fast.
     runs-on: ubicloud-standard-16-ubuntu-2404
     timeout-minutes: 30
     services:
@@ -332,7 +335,7 @@ jobs:
     # OpenAI/Anthropic tokens and must not fire when the build
     # can't even pass the cheapest DB guard.
     needs: jsonb-parity
-    runs-on: ubicloud-standard-16-ubuntu-2404
+    runs-on: ubicloud-standard-4-ubuntu-2404
     timeout-minutes: 30
     services:
       postgres:
@@ -434,7 +437,7 @@ jobs:
   # ──────────────────────────────────────────────────────────────────────
   coverage-full-unit:
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_corpus)
-    runs-on: ubicloud-standard-16-ubuntu-2404
+    runs-on: ubicloud-standard-4-ubuntu-2404
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -462,7 +465,7 @@ jobs:
 
   coverage-full-serial:
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_corpus)
-    runs-on: ubicloud-standard-16-ubuntu-2404
+    runs-on: ubicloud-standard-8-ubuntu-2404
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
@@ -485,8 +488,8 @@ jobs:
 
   coverage-full-slow:
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_corpus)
-    runs-on: ubicloud-standard-16-ubuntu-2404
-    timeout-minutes: 25
+    runs-on: ubicloud-standard-4-ubuntu-2404
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
@@ -498,6 +501,12 @@ jobs:
       - run: bun test test/entity-resolve-perf.slow.test.ts --timeout=300000 --coverage --coverage-reporter=lcov --coverage-dir=${{ runner.temp }}/coverage/slow-b
       - run: bun test test/entity-card-perf.slow.test.ts --timeout=300000 --coverage --coverage-reporter=lcov --coverage-dir=${{ runner.temp }}/coverage/slow-c
       - run: bun test test/eval-brainbench-e2e.slow.test.ts --timeout=300000 --coverage --coverage-reporter=lcov --coverage-dir=${{ runner.temp }}/coverage/slow-d
+      # Coverage only: the 100,001-page scale and the PGLite crash gate run in
+      # test.yml and persistence-validation.yml on every push.
+      - run: bun test test/export-scale.slow.test.ts --timeout=900000 --coverage --coverage-reporter=lcov --coverage-dir=${{ runner.temp }}/coverage/slow-e
+        env:
+          GBRAIN_TEST_EXPORT_SCALE_PAGES: '10001'
+      - run: bun test test/reconcile-crash.slow.test.ts --timeout=180000 --coverage --coverage-reporter=lcov --coverage-dir=${{ runner.temp }}/coverage/slow-f
       - name: Write coverage lane manifest
         run: |
           printf '{"lane":"slow","sha":"%s","lcovCount":%s,"complete":true}\n' \
@@ -515,7 +524,7 @@ jobs:
 
   coverage-full-e2e:
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_corpus)
-    runs-on: ubicloud-standard-16-ubuntu-2404
+    runs-on: ubicloud-standard-4-ubuntu-2404
     timeout-minutes: 60
     strategy:
       fail-fast: false

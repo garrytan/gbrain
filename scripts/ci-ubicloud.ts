@@ -7,7 +7,8 @@
  *   bun run ci:ubicloud:diff            # same, E2E narrowed by select-e2e (doc-only: gitleaks only)
  *
  * Options:
- *   --vms N            VMs to provision in parallel (default 10)
+ *   --vms N            VMs to provision in parallel (default 4: 64 vCPUs of the
+ *                      project quota that pull-request CI shares)
  *   --size SIZE        Ubicloud size (default standard-16)
  *   --slots N          concurrent work slots per VM (default: half of --size's vCPUs)
  *   --location LOC     Ubicloud location (default eu-central-h1)
@@ -76,7 +77,7 @@ interface Opts {
 
 function parseArgs(argv: string[]): Opts {
   const opts: Opts = {
-    vms: 10,
+    vms: 4,
     size: "standard-16",
     slots: 0,
     location: "eu-central-h1",
