@@ -14,7 +14,7 @@ import { localHostId } from './identity.ts';
 import { sha256 } from './digest.ts';
 import { currentCompanyBrainSync } from '../company-brain/profile.ts';
 import type { CompanyBrainPlan } from '../company-brain/types.ts';
-import { assertDistinctSyncOrigins, syncOriginPath } from './sync-origin.ts';
+import { assertDistinctSyncOrigins, legacySyncOrigin, sameSyncOrigin, syncOriginPath, type SyncOriginScope } from './sync-origin.ts';
 import { assertManagedSyncActive } from './sync-authority.ts';
 
 export interface SyncEntry { path: string; sourcePath: string; action: 'import' | 'delete'; working: boolean; slug?: string; pageId?: number | null; revision?: string | null; }
@@ -113,6 +113,7 @@ export async function discoverManagedSync(engine: BrainEngine, opts: SyncOpts, c
   const slugMode = company ? 'source-root' : scope ? await resolveSlugRootMode(engine, { sourceId, explicitGitRoot: opts.srcSubpath !== undefined,
     slugPrefix: probe.slice(0, -2), dryRun: true }) : 'git-root';
   const sourcePath = (path: string) => slugMode === 'source-root' && scope ? path.slice(scope.length + 1) : path;
+  const originScope: SyncOriginScope = { sourceId, root, scope, slugMode };
   const exclude = [...(opts.exclude ?? []), ...(await engine.getConfig('sync.exclude') ?? '').split(/[\n,]/).map(v => v.trim()).filter(Boolean)]
     .map(v => v.endsWith('/') ? `${v}**` : v);
   const includeHidden = [...new Set([...(opts.includeHidden ?? []), ...(await engine.getConfig('sync.include_hidden') ?? '')
@@ -140,11 +141,13 @@ export async function discoverManagedSync(engine: BrainEngine, opts: SyncOpts, c
     assertDistinctSyncOrigins(paths);
     const present = new Set(paths.map(path => syncOriginPath(sourcePath(path))));
     for (const path of paths) put(path, 'import');
-    const pages = await engine.executeRaw<{ source_path: string }>('SELECT source_path FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND source_path IS NOT NULL', [sourceId]);
+    const pages = await engine.executeRaw<{ slug: string; source_path: string }>('SELECT slug,source_path FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND source_path IS NOT NULL', [sourceId]);
     assertDistinctSyncOrigins([...present, ...pages.map(page => page.source_path)]);
     for (const page of pages) {
       const origin = syncOriginPath(page.source_path);
-      if (!present.has(origin)) put(slugMode === 'source-root' && scope ? `${scope}/${origin}` : origin, 'delete');
+      const stripped = slugMode === 'source-root' && scope && origin.startsWith(`${scope}/`) ? origin.slice(scope.length + 1) : null;
+      if (present.has(origin) || stripped !== null && present.has(stripped) && sameSyncOrigin(origin, stripped, originScope, page.slug)) continue;
+      put(slugMode === 'source-root' && scope ? `${scope}/${origin}` : origin, 'delete');
     }
   }
   if (working) {
@@ -180,13 +183,20 @@ export async function discoverManagedSync(engine: BrainEngine, opts: SyncOpts, c
     byPath.set(origin, [...(byPath.get(origin) ?? []), page]);
   }
   for (const entry of selected) {
-    const origins = byPath.get(syncOriginPath(entry.sourcePath)) ?? [];
+    const legacy = legacySyncOrigin(originScope, syncOriginPath(entry.sourcePath));
+    const origins = [...byPath.get(syncOriginPath(entry.sourcePath)) ?? [],
+      ...(legacy ? byPath.get(legacy) ?? [] : []).filter(page => sameSyncOrigin(page.source_path!, entry.sourcePath, originScope, page.slug))];
     if (origins.length > 1) throw new OperationError('page_identity_changed', 'Several pages claim the same imported origin.');
     let slug = entry.slug ?? origins[0]?.slug ?? resolveSlugForPath(entry.sourcePath);
     if (!slug && entry.action === 'import') slug = parseMarkdown(readSyncContent(discovered, entry), '').slug;
     if (!slug) throw new OperationError('invalid_params', 'The imported file has no usable page slug.');
     const page = origins[0] ?? bySlug.get(slug);
-    if (page?.source_path != null && syncOriginPath(page.source_path) !== syncOriginPath(entry.sourcePath)) throw new OperationError('page_identity_changed', 'A different origin occupies the imported slug.');
+    if (page?.source_path != null && !sameSyncOrigin(page.source_path, entry.sourcePath, originScope, page.slug)) {
+      const error = new OperationError('page_identity_changed', 'A different origin occupies the imported slug.',
+        `Page ${slug} in source ${sourceId} records the origin '${page.source_path}', but sync found it at '${entry.sourcePath}'. On the brain host, rename or move one of the two files so each page has one origin, commit, then run gbrain sync --source ${sourceId} --no-pull --retry-failed.`);
+      error.detail = 'sync_origin_mismatch';
+      throw error;
+    }
     Object.assign(entry, { slug, pageId: page?.id ?? null, revision: page?.knowledge_revision ?? null });
   }
   if (!working) {

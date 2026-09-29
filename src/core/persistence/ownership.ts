@@ -9,7 +9,8 @@ import { localHostId, persistenceHome } from './identity.ts';
 import type { SqlEngine, WriteRequest } from './model.ts';
 import { acquireNativeLock, tryAcquireNativeLock, type NativeLockHandle } from './native-lock.ts';
 import { managedFilesystemDatastorePath, refreshManagedFilesystemRoots } from './filesystem-guard.ts';
-import { assertPhysicalRoot, claimPhysicalRoot, isPhysicalRootMetadata, preparePhysicalRootTransfer, readPhysicalRootReservation } from './physical-root.ts';
+import { assertPhysicalRoot, claimPhysicalRoot, isPhysicalRootMetadata, preparePhysicalRootTransfer, readPhysicalRootReservation, restampPhysicalRoot } from './physical-root.ts';
+import { readPhysicalRootStamp } from './physical-root-record.ts';
 import { canonicalFilesystemPath, nativeFilesystemPath } from './root-registry.ts';
 import { assertWriterAdminState } from './admin-intent.ts';
 import { inspectPhysicalRootRecovery, repairPhysicalRoot, type PhysicalRootRecovery } from './physical-root-recovery.ts';
@@ -105,13 +106,32 @@ export async function claimWorktree(engine: BrainEngine, sourceId: string, path:
   });
   return (await getWorktreeBinding(engine, sourceId, hostId))!;
 }
-export async function acquireWorktree(binding: WorktreeBinding, waitMs = 0, signal?: AbortSignal): Promise<NativeLockHandle | null> {
+/**
+ * With an engine, a device-only physical-root change (#5604) is re-stamped under
+ * this native lock after database ownership is verified; otherwise it refuses
+ * with the filled self-transfer commands.
+ */
+export async function acquireWorktree(binding: WorktreeBinding, waitMs = 0, signal?: AbortSignal, engine?: BrainEngine): Promise<NativeLockHandle | null> {
   if (!binding.local_path || !binding.coordination_path) return null;
   const lock = await (waitMs > 0 ? acquireNativeLock(binding.coordination_path, { timeoutMs: waitMs, signal })
     : tryAcquireNativeLock(binding.coordination_path));
   if (!lock) return null;
-  try { assertPhysicalRoot(binding.local_path, { worktreeId: binding.worktree_id, coordinationPath: binding.coordination_path }); return lock; }
-  catch (error) { await lock.release(); throw error; }
+  const identity = { worktreeId: binding.worktree_id, coordinationPath: binding.coordination_path };
+  try { assertPhysicalRoot(binding.local_path, identity); return lock; }
+  catch (error) {
+    try {
+      if (!(error instanceof OperationError) || error.detail !== 'physical_root_device_changed') throw error;
+      if (engine && await restampPhysicalRoot(engine, binding, localHostId())) { assertPhysicalRoot(binding.local_path, identity); return lock; }
+      const why = !engine ? 'this caller cannot verify database ownership'
+        : readPhysicalRootStamp(binding.local_path)?.birth === '0' ? 'this filesystem reports no birth time'
+          : 'database ownership of this checkout did not verify';
+      error.suggestion = `The automatic device re-stamp did not apply because ${why}. On the brain host, run gbrain sources writer status ${binding.source_id} and note admin_state, `
+        + `then gbrain sources writer transfer prepare ${binding.source_id} --self-transfer --admin-intent writer_transfer_prepare --expected-state <admin_state>, `
+        + `then gbrain sources writer transfer accept ${binding.source_id} --path ${binding.local_path} --expected-epoch ${binding.owner_epoch} --manifest <manifest digest printed by prepare> `
+        + `--self-transfer --admin-intent writer_transfer_accept --expected-state <admin_state from a fresh status>. Retry the original write with the same request_id afterwards.`;
+      throw error;
+    } catch (failure) { await lock.release(); throw failure; }
+  }
 }
 export async function guardOwnership(tx: SqlEngine, row: WriteRequest, hostId: string): Promise<WorktreeBinding | null> {
   if (!row.worktree_id) return null;

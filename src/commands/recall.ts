@@ -470,7 +470,10 @@ async function runRecallOnce(
     }
   }
 
-  if (flags.grep) {
+  // `--grep` narrows in SQL before LIMIT on every engine path (op params,
+  // thin-client params, and fetchRowsLocal's list calls). listSupersessions
+  // takes no grep option, so the client-side filter remains only there.
+  if (flags.grep && flags.supersessions) {
     const g = flags.grep;
     rows = rows.filter(r => r.fact.toLowerCase().includes(g));
   }
@@ -533,11 +536,13 @@ async function fetchRowsLocal(
           sessionId: flags.sessionId || undefined,
           activeOnly: !flags.includeExpired,
           limit: flags.limit,
+          grep: flags.grep ?? undefined,
           excludeAuditRows: true,
         })
       : await engine.listFactsByEntity(sourceId, slug, {
           activeOnly: !flags.includeExpired,
           limit: flags.limit,
+          grep: flags.grep ?? undefined,
           excludeAuditRows: true,
         });
     // #4720: the bare positional is entity-first, but keyless/casual usage
@@ -572,12 +577,14 @@ async function fetchRowsLocal(
         sessionId: flags.sessionId,
         activeOnly: !flags.includeExpired,
         limit: flags.limit,
+        grep: flags.grep ?? undefined,
         excludeAuditRows: true,
       });
     }
     return engine.listFactsBySession(sourceId, flags.sessionId, {
       activeOnly: !flags.includeExpired,
       limit: flags.limit,
+      grep: flags.grep ?? undefined,
       excludeAuditRows: true,
     });
   }
@@ -595,6 +602,7 @@ async function fetchRowsLocal(
       eventTime: !flags.sinceLastRun,
       activeOnly: !flags.includeExpired,
       limit: flags.limit,
+      grep: flags.grep ?? undefined,
       excludeAuditRows: true,
     });
   }
@@ -602,6 +610,7 @@ async function fetchRowsLocal(
     eventTime: true,
     activeOnly: !flags.includeExpired,
     limit: flags.limit,
+    grep: flags.grep ?? undefined,
     excludeAuditRows: true,
   });
 }

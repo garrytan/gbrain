@@ -126,6 +126,7 @@ describe('put_page persistence boundary', () => {
     execFileSync('git', ['init', root], { stdio: 'ignore' });
     const scoped = join(root, 'public'); mkdirSync(scoped);
     await engine.setConfig('sync.repo_path', scoped);
+    await engine.setConfig('sync.slug_root_mode', 'git-root');
     const slug = 'notes/scoped-path';
     expect((await put(slug, content('Original scoped body.'))).payload.state).toBe('committed');
     const initial = (await engine.readPageSnapshot(slug, { sourceId: 'default' }))!;

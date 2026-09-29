@@ -23,6 +23,11 @@ export interface SyncProcessingOptions { noEmbed: boolean; noExtract: boolean; n
 export function syncProcessingOptions(opts: SyncOpts): SyncProcessingOptions {
   return { noEmbed: opts.noEmbed === true, noExtract: opts.noExtract === true, noSchemaPack: opts.noSchemaPack === true };
 }
+export const SYNC_PROCESSING_KEYS = ['noEmbed', 'noExtract', 'noSchemaPack'] as const;
+/** The processing options a caller set itself; an unfinished cursor supplies the rest (#5632). */
+export function explicitSyncProcessing(values: Record<string, unknown>): Array<keyof SyncProcessingOptions> {
+  return SYNC_PROCESSING_KEYS.filter(key => typeof values[key] === 'boolean');
+}
 export function assertSyncDispatchActive(): void {
   assertSourceFilesystemActive(true);
   throwIfAborted(currentJobSignal());
@@ -87,7 +92,7 @@ export function validateManagedSyncOptions(opts: SyncOpts): void {
   assertDurableSyncCaller();
   const current = currentSubmissionAuthority();
   if (current?.kind !== 'remote_generic') return;
-  const allowed = new Set(['repoPath','sourceId','noPull','noEmbed','noExtract','signal','concurrency','onProgress','auto_embed_backfill']);
+  const allowed = new Set(['repoPath','sourceId','noPull','noEmbed','noExtract','explicitProcessing','signal','concurrency','onProgress','auto_embed_backfill']);
   if (current.grant.jobName !== 'sync' || opts.repoPath !== current.grant.canonicalRoot || opts.sourceId !== current.grant.sourceId ||
       opts.noPull !== true || opts.noEmbed !== true || opts.noExtract !== true ||
       Object.entries(opts).some(([key,value]) => value !== undefined && !allowed.has(key)) ||

@@ -1459,6 +1459,9 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // dream.synthesize.* pair from #1594).
   'dream.patterns.subagent_timeout_ms',
   'dream.patterns.subagent_wait_timeout_ms',
+  // Paid-loop breaker: dead submissions of one dream key within 24h before
+  // it is refused (default 3; 0 disables). `gbrain dream reset-key` clears one.
+  'dream.breaker.max_dead_submissions',
   // Emotional weight (v0.29)
   'emotional_weight.high_tags',
   'emotional_weight.user_holder',
@@ -1578,6 +1581,14 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'schema.type_warnings',
   // #4795 reindex-search-vector marker (doctor fts_reindex_incomplete reads it); `config unset` is the escape hatch.
   'fts.reindex_in_progress',
+  // #5470: managed-write journal caps + receipt retention, read by
+  // persistence/limits.ts (JOURNAL_CONFIG_KEYS; drift-guarded by test).
+  'persistence.limits.principal_outstanding', 'persistence.limits.brain_outstanding',
+  'persistence.limits.principal_intent_bytes', 'persistence.limits.brain_intent_bytes',
+  'persistence.limits.principal_lifetime_ids', 'persistence.limits.brain_lifetime_ids',
+  'persistence.limits.principal_terminal_bytes', 'persistence.limits.brain_terminal_bytes',
+  'persistence.limits.brain_recovery_bytes', 'persistence.limits.worktree_recovery_bytes',
+  'persistence.receipt_retention_days',
 ];
 
 /**

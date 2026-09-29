@@ -65,6 +65,11 @@ import { inferLinkTypeFromPack } from '../core/schema-pack/link-inference.ts';
 import { PageRegexBudget } from '../core/schema-pack/redos-guard.ts';
 export { extractTimelineFromContent, type ExtractedTimelineEntry } from '../core/timeline-extract.ts';
 import { extractTimelineFromContent, retractRemovedTimelineEntries, type ExtractedTimelineEntry } from '../core/timeline-extract.ts';
+import { managedPersistenceEnabled } from '../core/persistence/ownership.ts';
+import { withCoordinatedWrite } from '../core/persistence/context.ts';
+import { unrecordedCanonicalTimeline } from '../core/persistence/canonical-projections.ts';
+import { PageRevisionConflictError } from '../core/page-state/types.ts';
+import { DerivedLinkEndpointChangedError } from '../core/derived-links.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 import { pathToSlug, slugifyPath, slugifySegment, pruneDir, isSyncable } from '../core/sync.ts';
@@ -2085,7 +2090,7 @@ export async function extractStaleFromDB(
      */
     timeBudgetMs?: number;
   },
-): Promise<{ linksCreated: number; timelineCreated: number; pagesProcessed: number; staleRemaining: number; skippedMissingTarget?: number; skippedCrossSource?: number; skippedAttendanceIncomplete?: number }> {
+): Promise<{ linksCreated: number; timelineCreated: number; pagesProcessed: number; staleRemaining: number; skippedMissingTarget?: number; skippedCrossSource?: number; skippedAttendanceIncomplete?: number; skippedChanged?: number }> {
   const { dryRun, jsonMode, sourceIdFilter, catchUp } = opts;
   const includeFrontmatter = opts.includeFrontmatter ?? await resolveIncludeFrontmatter(engine);
   const log = opts.quiet ? (..._args: unknown[]) => {} : console.log;
@@ -2151,8 +2156,10 @@ export async function extractStaleFromDB(
   let afterPageId = 0;
   let linksCreated = 0, timelineCreated = 0, pagesProcessed = 0;
   let skippedAttendanceIncomplete = 0;
+  let skippedChanged = 0;
   let budgetHit = false;
   let packUnavailable = false;
+  const managed = await managedPersistenceEnabled(engine);
   // #2576: candidates whose endpoint pages don't exist are skipped, not
   // persisted. Counted so a dropped reference is observable in the summary
   // instead of vanishing silently (the failure mode that hid bug 2).
@@ -2172,6 +2179,7 @@ export async function extractStaleFromDB(
 
     const timelineRows: TimelineBatchInput[] = [];
     const processedRefs: Array<{ slug: string; source_id: string; extractedAt: string }> = [];
+    let coordinated = 0;
 
     for (const page of rows) {
       const pack = packs.get(page.source_id);
@@ -2208,9 +2216,30 @@ export async function extractStaleFromDB(
         }
         linkRows.push(resolvedLinkCandidate(c, page.slug, page.source_id, r));
       }
-      const written = await engine.replaceDerivedLinks({ slug: page.slug, sourceId: page.source_id,
-        expectedRevision: snapshot.revision, sourceIncarnation: snapshot.sourceIncarnation }, linkRows, { includeFrontmatter,
-        expectedEndpoints: capturedLinkEndpoints(linkRows, targetMetadata) });
+      const origin = { slug: page.slug, sourceId: page.source_id, expectedRevision: snapshot.revision, sourceIncarnation: snapshot.sourceIncarnation };
+      const linkOpts = { includeFrontmatter, expectedEndpoints: capturedLinkEndpoints(linkRows, targetMetadata) };
+      const stampIso = page.updated_at.getTime() >= Date.parse(versionTs) ? page.updated_at_iso : versionTs;
+      if (managed) {
+        // #5609: the coordinator owns canonical projections. Derived links, the
+        // canonical timeline tuples and the watermark publish in one
+        // revision-bound coordinated transaction; a page edited since the
+        // read stays stale for the next run.
+        const published = await engine.transaction(tx => withCoordinatedWrite(tx, [page.source_id], async () => {
+          const written = await tx.replaceDerivedLinks(origin, linkRows, linkOpts);
+          const timeline = (await unrecordedCanonicalTimeline(tx, snapshot.page.id, snapshot.page, page.slug)).map(entry => ({ slug: page.slug, date: entry.date,
+            source: entry.source, summary: entry.summary, detail: entry.detail || '', source_id: page.source_id }));
+          const created = timeline.length ? await tx.addTimelineEntriesBatch(timeline, { auditSite: 'extract.stale' }) : 0;
+          await tx.markPagesExtractedBatch([{ slug: page.slug, source_id: page.source_id }], stampIso);
+          return { links: written.created, timeline: created };
+        })).catch(error => {
+          if (error instanceof PageRevisionConflictError || error instanceof DerivedLinkEndpointChangedError) return null;
+          throw error;
+        });
+        if (!published) { skippedChanged++; continue; }
+        linksCreated += published.links; timelineCreated += published.timeline; coordinated++;
+        continue;
+      }
+      const written = await engine.replaceDerivedLinks(origin, linkRows, linkOpts);
       linksCreated += written.created;
       for (const entry of parseTimelineEntries(fullContent)) {
         // #3957: carry the parsed source label — omitting it wrote source=''
@@ -2237,9 +2266,6 @@ export async function extractStaleFromDB(
       // GREATEST(updated_at, versionTs) preserves the race semantics (a real
       // future edit advances updated_at > versionTs >= stamp → re-extracts)
       // while lifting old pages to the threshold so they clear.
-      const stampIso = page.updated_at.getTime() >= Date.parse(versionTs)
-        ? page.updated_at_iso
-        : versionTs;
       processedRefs.push({ slug: page.slug, source_id: page.source_id, extractedAt: stampIso });
     }
 
@@ -2250,8 +2276,8 @@ export async function extractStaleFromDB(
     // failure surfaces instead of looping forever.
     await engine.markPagesExtractedBatch(processedRefs, new Date().toISOString());
 
-    pagesProcessed += processedRefs.length;
-    progress.tick(processedRefs.length);
+    pagesProcessed += processedRefs.length + coordinated;
+    progress.tick(processedRefs.length + coordinated);
     afterPageId = rows[rows.length - 1]!.id;
 
     if (!catchUp && Date.now() - startMs > timeBudgetMs) { budgetHit = true; break; }
@@ -2264,6 +2290,7 @@ export async function extractStaleFromDB(
   if (!jsonMode) {
     log(`Extract --stale: ${linksCreated} link(s) + ${timelineCreated} timeline entr(ies) from ${pagesProcessed} page(s).`);
     if (skippedAttendanceIncomplete) log(`Skipped ${skippedAttendanceIncomplete} page(s) with unresolved attendance; prior links and extraction watermarks were preserved.`);
+    if (skippedChanged) log(`Skipped ${skippedChanged} page(s) edited during extraction; they stay stale for the next run.`);
     if (skippedMissingTarget > 0) {
       log(`Skipped ${skippedMissingTarget} candidate(s) whose target page doesn't exist (references to non-pages are never persisted).`);
     }
@@ -2279,10 +2306,11 @@ export async function extractStaleFromDB(
       pages_processed: pagesProcessed, stale_remaining: staleRemaining, budget_hit: budgetHit,
       skipped_missing_target: skippedMissingTarget, skipped_cross_source: skippedCrossSource,
       ...(skippedAttendanceIncomplete ? { skipped_attendance_incomplete: skippedAttendanceIncomplete } : {}),
+      ...(skippedChanged ? { skipped_changed: skippedChanged } : {}),
     }) + '\n');
   }
   return { linksCreated, timelineCreated, pagesProcessed, staleRemaining, skippedMissingTarget, skippedCrossSource,
-    ...(skippedAttendanceIncomplete ? { skippedAttendanceIncomplete } : {}) };
+    ...(skippedAttendanceIncomplete ? { skippedAttendanceIncomplete } : {}), ...(skippedChanged ? { skippedChanged } : {}) };
 }
 
 /**

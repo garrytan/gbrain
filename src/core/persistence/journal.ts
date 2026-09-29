@@ -4,7 +4,7 @@ import { assertRecoveryStagingAbsent } from './staging.ts';
 import { OperationError } from '../ops/contract.ts';
 import { digest, jsonBytes, requireUuid } from './digest.ts';
 import { authorizeWrite } from './authority.ts';
-import { readJournalLimits } from './limits.ts';
+import { journalLimitKey, oneYearCapacity, readJournalLimits, readReceiptRetentionDays } from './limits.ts';
 import { retryWriteAdmission } from './admission-retry.ts';
 import { writeHealth, type WriteHealthFacts } from './health.ts';
 import { assertMutationProtocol, assertSharedSkillPersistence, declarePersistenceProtocol, PERSISTENCE_PROTOCOL_PREDICATE } from './protocol.ts';
@@ -39,6 +39,16 @@ interface Counter {
 export function capacityError(resource: string): OperationError {
   return new OperationError('queue_capacity', `Write capacity exhausted: ${resource}.`,
     'Inspect writer status and configured persistence limits. Existing requests retain their reserved completion space.');
+}
+/** Cumulative caps name their config key and a value that covers one more year at the current admission rate. */
+async function cumulativeCapacityError(tx: SqlEngine, resource: string, scope: string, setting: keyof JournalLimits, used: number, limit: number): Promise<OperationError> {
+  const key = journalLimitKey(setting);
+  const value = await oneYearCapacity(tx, scope, setting.endsWith('LifetimeIds') ? 'LifetimeIds' : 'TerminalBytes', used, limit);
+  const error = new OperationError('queue_capacity', `Write capacity exhausted: ${resource} (${used} used of ${limit}).`,
+    `Run on the brain host: gbrain config set ${key} ${value} (covers about one more year at the current admission rate). ` +
+    'Keep the same request_id and retry after the change. Accepted request IDs and retained receipts are never evicted.');
+  error.detail = key.slice('persistence.limits.'.length);
+  return error;
 }
 export async function lockCounters(tx: SqlEngine, keys: string[]): Promise<Counter[]> {
   const sorted = [...new Set(keys)].sort();
@@ -129,8 +139,11 @@ async function prepareAdmission(engine: BrainEngine, input: WriteAdmission, over
       const brain = row.key === 'brain';
       if (Number(row.outstanding_count) + 1 > (brain ? limits.brainOutstanding : limits.principalOutstanding)) throw capacityError(`${brain ? 'brain' : 'principal'} outstanding requests`);
       if (Number(row.intent_bytes) + bytes > (brain ? limits.brainIntentBytes : limits.principalIntentBytes)) throw capacityError(`${brain ? 'brain' : 'principal'} intent bytes`);
-      if (Number(row.lifetime_ids) + 1 > (brain ? limits.brainLifetimeIds : limits.principalLifetimeIds)) throw capacityError(`${brain ? 'brain' : 'principal'} permanent request IDs; raise the quota to retain replay protection`);
-      if (Number(row.terminal_bytes) + terminalBytes > (brain ? limits.brainTerminalBytes : limits.principalTerminalBytes)) throw capacityError(`${brain ? 'brain' : 'principal'} reserved receipt bytes`);
+      const scope = brain ? 'brain' : 'principal';
+      if (Number(row.lifetime_ids) + 1 > limits[`${scope}LifetimeIds`]) throw await cumulativeCapacityError(tx, `${scope} permanent request IDs`,
+        row.key, `${scope}LifetimeIds`, Number(row.lifetime_ids), limits[`${scope}LifetimeIds`]);
+      if (Number(row.terminal_bytes) + terminalBytes > limits[`${scope}TerminalBytes`]) throw await cumulativeCapacityError(tx, `${scope} reserved receipt bytes`,
+        row.key, `${scope}TerminalBytes`, Number(row.terminal_bytes), limits[`${scope}TerminalBytes`]);
     }
     const [row] = await tx.executeRaw<WriteRequest>(`INSERT INTO persistence_requests
       (principal_kind,principal_id,request_id,operation,source_id,source_incarnation,page_id,slug,
@@ -249,11 +262,16 @@ export async function markRecovering(engine: SqlEngine, row: WriteRequest, reaso
     error_code=COALESCE(error_code,$4),error_message=COALESCE(error_message,$5)
     WHERE id=$1::uuid AND execution_token=$2::uuid AND state IN ('running','recovering') AND ${PERSISTENCE_PROTOCOL_PREDICATE}`, [row.id, row.execution_token, reason, failure?.code ?? null, failure?.message ?? null]);
 }
-export async function compactWriteReceipts(engine: BrainEngine, retentionDays = 30): Promise<number> {
+export async function compactWriteReceipts(engine: BrainEngine, retentionDays?: number): Promise<number> {
+  retentionDays ??= await readReceiptRetentionDays(engine);
   if (!Number.isFinite(retentionDays) || retentionDays < 0) throw new TypeError('Invalid receipt retention.');
-  const rows = await engine.executeRaw<WriteRequest>(`SELECT * FROM persistence_requests
+  // Receipts with unfinished effects stay retained; filtering them before the
+  // LIMIT keeps a backlog of parked effects from starving later receipts.
+  const rows = await engine.executeRaw<WriteRequest>(`SELECT * FROM persistence_requests r
     WHERE state IN ('committed','conflict','failed','cancelled') AND recovery IS NULL AND NOT compacted
-    AND completed_at < now()-($1::double precision*interval '1 day') ORDER BY sequence LIMIT 100`, [retentionDays]);
+    AND completed_at < now()-($1::double precision*interval '1 day')
+    AND NOT EXISTS (SELECT 1 FROM persistence_effects e WHERE e.request_id=r.id AND e.state<>'committed')
+    ORDER BY sequence LIMIT 100`, [retentionDays]);
   let count=0;
   for(const row of rows) count+=await engine.transaction(async tx=>{
     await declarePersistenceProtocol(tx);

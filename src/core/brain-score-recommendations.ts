@@ -166,6 +166,12 @@ export interface RecommendationContext {
    * cohort is re-embedded instead of grandfathered forever.
    */
   nullSignatureCohort?: number;
+  /**
+   * #5609: why `extract --stale` cannot run on this brain right now (it would
+   * fail every dispatch). Probed by `staleExtractionBlocked()`; when set, the
+   * `extract.stale` step is withheld and its check classifies as blocked.
+   */
+  staleExtractionBlocked?: string;
 }
 
 /** Triage result for one check. */
@@ -281,7 +287,7 @@ export function computeRecommendations(
     });
   }
 
-  if (health.stale_pages > 0) {
+  if (health.stale_pages > 0 && !ctx.staleExtractionBlocked) {
     const params = { stale: true, ...(ctx.sourceId ? { sourceId: ctx.sourceId } : {}) };
     out.push({
       id: 'extract.stale',
@@ -352,6 +358,9 @@ function classifyOne(check: Check, ctx: RecommendationContext): CheckClassificat
       if (ctx.embeddingProviderConfigured === false) {
         return { check: check.name, status: 'blocked', reason: 'embedding provider not configured' };
       }
+      return { check: check.name, status: 'remediable' };
+    case 'links_extraction_lag':
+      if (ctx.staleExtractionBlocked) return { check: check.name, status: 'blocked', reason: ctx.staleExtractionBlocked };
       return { check: check.name, status: 'remediable' };
     case 'dead_links':
       if (!ctx.repoPath) {

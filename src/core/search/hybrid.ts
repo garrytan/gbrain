@@ -77,6 +77,7 @@ import { expandAnchors, hydrateChunks } from './two-pass.ts';
 import { enforceTokenBudget, searchSalvageEnabled, type TokenBudgetMeta } from './token-budget.ts';
 import { warnOncePerProcess } from '../utils.ts';
 import { recordSearchTelemetry } from './telemetry.ts';
+import { isPrivatePage } from './private-visibility.ts';
 import {
   weightsForIntent,
   effectiveRrfK,
@@ -975,10 +976,7 @@ export async function applyAliasHop(
     // #4352 — the alias inject path bypasses the engines' SQL visibility
     // clause (getPage, not search); re-apply the private predicate here so
     // an untrusted caller can't hop into a `visibility: private` page.
-    if (
-      opts.excludePrivate &&
-      ((page.frontmatter as Record<string, unknown> | null | undefined)?.visibility === 'private')
-    ) continue;
+    if (opts.excludePrivate && isPrivatePage(page)) continue;
     injectScore += 1e-6;
     out.unshift({
       // #2339-sibling: include page_id. The `as SearchResult` cast hid its

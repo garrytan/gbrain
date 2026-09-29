@@ -45,6 +45,7 @@ import { loadAllowedSlugPrefixes, loadOutputRoot, runSubagentsInline } from './s
 import { probeChatModel } from '../ai/gateway.ts';
 import { normalizeModelId } from '../model-id.ts';
 import { throwIfAborted } from '../abort-check.ts';
+import { dreamBreakerRefusal, loadDreamBreaker } from './dream-breaker.ts';
 
 export interface PatternsPhaseOpts {
   brainDir: string;
@@ -257,8 +258,12 @@ export async function runPhasePatterns(
       max_turns: 30,
       // #4217/CDX-12: a patterns child whose every put_page failed must
       // dead-letter (its whole purpose is writing pattern pages), not report
-      // completed with zero pages.
+      // completed with zero pages. #5540: a clean finish that examined the
+      // evidence and named nothing completes, so the #4879 watermark stamps
+      // instead of re-billing the same reflections every run. Older workers
+      // ignore the opt-in and keep the strict behavior.
       require_writes: true,
+      allow_clean_zero_writes: true,
       allowed_slug_prefixes: allowedSlugPrefixes,
       // #1586: scope every child tool call to the cycle's resolved source so
       // put_page writes land there instead of the hardcoded 'default'.
@@ -274,6 +279,13 @@ export async function runPhasePatterns(
       private_queue_owner_token: privateQueueOwnerToken,
       private_queue_lease_ms: DEFAULT_PRIVATE_QUEUE_LEASE_MS,
     };
+    // Paid-loop breaker: only maintenance runs carry a key, so only they are covered.
+    const breaker = submitOpts.idempotency_key ? await loadDreamBreaker(engine) : null;
+    const refusal = breaker && dreamBreakerRefusal(breaker, submitOpts.idempotency_key!);
+    if (refusal) {
+      process.stderr.write(`[dream] patterns: ${refusal}\n`);
+      return skipped('dream_breaker_tripped', refusal);
+    }
     let job: Awaited<ReturnType<typeof queue.add>>;
     try {
       job = await queue.add('subagent', data as unknown as Record<string, unknown>, submitOpts, {
@@ -470,6 +482,11 @@ async function getSlugPrefixConfig(engine: BrainEngine, key: string, fallback: s
   return trimmed || fallback;
 }
 
+/** Where pattern pages land; also a dream output directory synthesize discovery excludes (#5471). */
+export async function loadPatternsOutputSlugPrefix(engine: BrainEngine, outputRoot: string): Promise<string> {
+  return getSlugPrefixConfig(engine, 'dream.patterns.output_slug_prefix', `${outputRoot}/personal/patterns`);
+}
+
 async function loadPatternsConfig(engine: BrainEngine): Promise<PatternsConfig> {
   const enabledStr = await engine.getConfig('dream.patterns.enabled');
   const enabled = enabledStr === null ? true : enabledStr === 'true';
@@ -493,9 +510,7 @@ async function loadPatternsConfig(engine: BrainEngine): Promise<PatternsConfig> 
     sourceSlugPrefix: await getSlugPrefixConfig(
       engine, 'dream.patterns.source_slug_prefix', `${outputRoot}/personal/reflections`,
     ),
-    outputSlugPrefix: await getSlugPrefixConfig(
-      engine, 'dream.patterns.output_slug_prefix', `${outputRoot}/personal/patterns`,
-    ),
+    outputSlugPrefix: await loadPatternsOutputSlugPrefix(engine, outputRoot),
     subagentTimeoutMs: await getNumberConfig(
       engine, 'dream.patterns.subagent_timeout_ms', DEFAULT_PATTERNS_SUBAGENT_TIMEOUT_MS,
     ),

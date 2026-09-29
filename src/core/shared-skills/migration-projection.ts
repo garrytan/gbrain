@@ -1,7 +1,7 @@
 import type { BrainEngine } from '../engine.ts';
 import type { ParsedMarkdown } from '../markdown.ts';
 import { OperationError } from '../ops/contract.ts';
-import { prepareCanonicalProjections } from '../persistence/canonical-projections.ts';
+import { compileCanonicalProjections } from '../persistence/canonical-projections.ts';
 import { extractFactsFromFenceText } from '../facts/extract-from-fence.ts';
 import { parseFactsFence } from '../facts-fence.ts';
 import { parseTakesFence } from '../takes-fence.ts';
@@ -27,7 +27,7 @@ function differences(stored: Row, expected: Row): string[] {
 }
 
 export async function assertExportProjectionRoundtrip(engine: BrainEngine, page: ParsedMarkdown, pageId: number, sourceId: string): Promise<void> {
-  prepareCanonicalProjections(page, page.slug, sourceId);
+  compileCanonicalProjections(page, page.slug, sourceId);
   const fields = [page.compiled_truth, page.timeline];
   const facts = extractFactsFromFenceText(fields.flatMap(field => parseFactsFence(field).facts), page.slug, sourceId);
   const takes = fields.flatMap(field => parseTakesFence(field).takes);

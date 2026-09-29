@@ -205,6 +205,7 @@ test/ocr-run-budget.test.ts	doctor ocr_health surfaces the budget-skip counter (
 test/openclaw-plugin-manifest.test.ts	bundled-skill reference closure (nothing bundled points at a non-bundled skill)	1	readFileSync
 test/openclaw-plugin-manifest.test.ts	plugin membership curation (skills = plugin ∪ exclusions, disjoint)	9	readFileSync
 test/openclaw-plugin-manifest.test.ts	root OpenClaw plugin manifest	2	readFileSync
+test/persistence-git-subdir-origin.test.ts	(file-level)	6	readFileSync
 test/persistence-sync-options.serial.test.ts	(file-level)	1	readFileSync
 test/pg-access-classify.test.ts	marker contract (skill↔binary lockstep, the UPGRADE_AVAILABLE pattern)	3	bun-file
 test/pglite-engine.test.ts	PGLiteEngine: v0.13.1 error-wrap on connect() (#223)	1	readFileSync
@@ -259,7 +260,7 @@ test/shared-skills-optimizer.serial.test.ts	(file-level)	15	readFileSync
 test/shared-skills-publication-sparse.test.ts	(file-level)	4	readFileSync
 test/shared-skills-setup.serial.test.ts	packaged default skills	2	readFileSync
 test/shared-skills-setup.serial.test.ts	staged skill migration	7	readFileSync
-test/shared-skills-writer-boundary.serial.test.ts	(file-level)	5	readFileSync
+test/shared-skills-writer-boundary.serial.test.ts	(file-level)	7	readFileSync
 test/skillify-scaffold.test.ts	11-item scaffold contract (T9 + Phase 3 cross-modal eval)	1	readFileSync
 test/skillify-scaffold.test.ts	applyScaffold	3	readFileSync
 test/skillify-scaffold.test.ts	planScaffold	13	readFileSync

@@ -239,6 +239,8 @@ interface GBrainOAuthProviderOptions {
    * before mcpAuthRouter ran).
    */
   dcrDisabled?: boolean;
+  /** #5222: the canonical /mcp resource from the configured public URL; grants canonicalize `resource` against it. */
+  resourceUrl?: URL;
   /**
    * Allow the consent-bypassing `client_credentials` grant on the unauthenticated
    * Dynamic Client Registration path. Default false (#1353): a self-registered
@@ -558,7 +560,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     this.dcrDisabled = options.dcrDisabled === true;
     this.tokenTtl = options.tokenTtl || 3600;
     this.refreshTtl = options.refreshTtl || 30 * 24 * 3600;
-    this.grants = new OAuthGrants({ sql: this.sql, transaction: options.transaction, tokenTtl: this.tokenTtl, refreshTtl: this.refreshTtl });
+    this.grants = new OAuthGrants({ sql: this.sql, transaction: options.transaction, tokenTtl: this.tokenTtl, refreshTtl: this.refreshTtl, resourceUrl: options.resourceUrl });
     // #2179 fail-closed: an unset DCR max is bounded by the operator's own
     // token TTL — never a fixed permissive ceiling — so a self-registering
     // client cannot elect a longer-lived token than the server default

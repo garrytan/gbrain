@@ -21,6 +21,7 @@ export function trackPgliteDatabase<T extends object>(database: T): {
   database: T;
   stopAndDrain(): Promise<void>;
   checkpoint(): Promise<void>;
+  admit<R>(run: (database: T) => Promise<R>): Promise<R>;
 } {
   const pending = new Set<Promise<unknown>>();
   const tracked = new Set(['query', 'exec', 'transaction', 'runExclusive']);
@@ -54,6 +55,14 @@ export function trackPgliteDatabase<T extends object>(database: T): {
     async stopAndDrain() {
       accepting = false;
       await Promise.allSettled([...pending]);
+    },
+    /** Admit a multi-step operation once; it runs on the raw database and shutdown drains it. */
+    admit<R>(run: (raw: T) => Promise<R>): Promise<R> {
+      if (!accepting) return Promise.reject(new Error('PGLite not connected: datastore is closing'));
+      const result = Promise.resolve().then(() => run(database));
+      pending.add(result);
+      void result.then(() => pending.delete(result), () => pending.delete(result));
+      return result;
     },
     async checkpoint() {
       const query = Reflect.get(database, 'query', database);

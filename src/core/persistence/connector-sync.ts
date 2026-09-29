@@ -13,7 +13,7 @@ import { currentSubmissionAuthority } from '../minions/submission-authority.ts';
 import { sealPageTextProjection } from '../page-state/projections.ts';
 import { loadActivePackForEngine } from '../schema-pack/engine-resolution.ts';
 import { authorizeStoredRequest, authorizeWrite } from './authority.ts';
-import { prepareCanonicalProjections } from './canonical-projections.ts';
+import { materializeTimeline, prepareCanonicalProjections } from './canonical-projections.ts';
 import { digest, sha256 } from './digest.ts';
 import { admitWriteInTransaction, assertReplayIntent, getWriteRequest, getWriteRequestById, intentDigest, receiptFor } from './journal.ts';
 import { acquireWorktree, containsPath, getWorktreeBinding, type WorktreeBinding } from './ownership.ts';
@@ -23,7 +23,7 @@ import { managedSyncAuthority, validateManagedSyncOptions, validateSyncAuthority
 import type { PreparedContentImport } from './prepared-import.ts';
 import { persistenceFileHash, type PreparedMutation } from './coordinator.ts';
 import { isTerminal, type WriteRequest } from './model.ts';
-import { prepareFileTarget } from './page-prepare.ts';
+import { databaseOnlyPublication, prepareFileTarget } from './page-prepare.ts';
 import { assertPhysicalRoot } from './physical-root.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import { LockStolenError, syncLockId, withRefreshingLock, type DbLockHandle } from '../db-lock.ts';
@@ -66,20 +66,26 @@ interface ConnectorIntent extends Record<string, unknown> {
   fileBeforeHash: string | null;
 }
 
-function connectorBindingRoot(sourceId: string, source: ConnectorSource, binding: WorktreeBinding | null): string | null {
-  if (!binding) return null;
+/** The connector binding's owner and incarnation checks; returns the paths they prove present. */
+function checkedConnectorBinding(sourceId: string, source: ConnectorSource, binding: WorktreeBinding) {
   if (binding.owner_host_id !== localHostId() || !binding.local_path || !binding.coordination_path) {
     throw new OperationError('owner_unavailable', 'The connector canonical owner is unavailable on this host.');
   }
   if (binding.source_id !== sourceId || binding.source_incarnation !== source.incarnation || !source.local_path) {
     throw new OperationError('source_changed', 'The connector source does not match its canonical binding.');
   }
-  assertPhysicalRoot(binding.local_path, { worktreeId: binding.worktree_id, coordinationPath: binding.coordination_path });
+  return { localPath: binding.local_path, coordinationPath: binding.coordination_path, sourcePath: source.local_path };
+}
+
+function connectorBindingRoot(sourceId: string, source: ConnectorSource, binding: WorktreeBinding | null): string | null {
+  if (!binding) return null;
+  const { localPath, coordinationPath, sourcePath } = checkedConnectorBinding(sourceId, source, binding);
+  assertPhysicalRoot(localPath, { worktreeId: binding.worktree_id, coordinationPath });
   try {
-    const root = realpathSync(join(binding.local_path, binding.relative_path));
+    const root = realpathSync(join(localPath, binding.relative_path));
     const configured = source.config[source.config.kind === 'google' ? 'g_dir' : 'gh_dir'];
-    const directory = typeof configured === 'string' && configured.length > 0 ? configured : source.local_path;
-    if (!containsPath(binding.local_path, root) || !statSync(root).isDirectory() || realpathSync(source.local_path) !== root || realpathSync(directory) !== root) {
+    const directory = typeof configured === 'string' && configured.length > 0 ? configured : sourcePath;
+    if (!containsPath(localPath, root) || !statSync(root).isDirectory() || realpathSync(sourcePath) !== root || realpathSync(directory) !== root) {
       throw new Error('root mismatch');
     }
     return root;
@@ -132,9 +138,10 @@ export async function beginConnectorSync(engine: BrainEngine, sourceId: string, 
   }
   const authority = await managedSyncAuthority(engine, sourceId, source.incarnation, source.local_path ?? '');
   const binding = await getWorktreeBinding(engine, sourceId);
-  const canonicalRoot = connectorBindingRoot(sourceId, source, binding);
-  if (binding) await (await acquireWorktree(binding))?.release();
+  // The locked acquisition re-stamps a device-only physical-root change (#5604) before the root is asserted.
+  if (binding) { checkedConnectorBinding(sourceId, source, binding); await (await acquireWorktree(binding, 0, undefined, engine))?.release(); }
   else authority.writer.databaseOnlyReason = 'connector_database';
+  const canonicalRoot = connectorBindingRoot(sourceId, source, binding);
   const session = new ManagedConnectorSync(engine, sourceId, connector, source, authority, binding, canonicalRoot, opts.noEmbed === true, opts.noSchemaPack === true, opts.retryFailed === true, lease);
   await session.load();
   return session;
@@ -349,7 +356,7 @@ export class ManagedConnectorSync {
     const prior = await selected(this.engine);
     let row = prior.row;
     if (mayRetry(row)) {
-      const lock = this.binding ? await acquireWorktree(this.binding, 1000) : null;
+      const lock = this.binding ? await acquireWorktree(this.binding, 1000, undefined, this.engine) : null;
       try {
         if (this.binding && !lock) {
           await this.refuseRetryBlocker(this.engine);
@@ -439,8 +446,9 @@ export async function prepareConnectorMutation(engine: BrainEngine, row: WriteRe
       snapshot?.page.source_path != null && snapshot.page.source_path !== p.sourcePath) {
     throw new OperationError('revision_conflict', 'The connector page changed after admission.');
   }
+  const deleteFile = p.kind === 'managed_connector_delete' ? await prepareFileTarget(engine, row, snapshot, null) : undefined;
   if (p.kind === 'managed_connector_delete') return { observedRevision: snapshot?.revision ?? null, sourceExclusive: true, validate,
-    file: await prepareFileTarget(engine, row, snapshot, null),
+    file: deleteFile, ...databaseOnlyPublication(row, deleteFile),
     noop: !snapshot || snapshot.page.deleted_at != null, apply: async tx => {
       if (snapshot && snapshot.page.deleted_at == null) {
         await tx.createVersion(row.slug, { sourceId: row.source_id });
@@ -459,9 +467,13 @@ export async function prepareConnectorMutation(engine: BrainEngine, row: WriteRe
     throw new OperationError('invalid_params', 'The connector import path is invalid.');
   }
   const activePack = p.noSchemaPack ? undefined : (await loadActivePackForEngine(engine, { remote: false, sourceId: row.source_id }).catch(() => null))?.manifest;
-  if (parseMarkdown(p.content, row.slug, { activePack }).slug !== row.slug) throw new OperationError('invalid_params', 'The connector content changes its page identity.');
+  const parsed = parseMarkdown(p.content, row.slug, { activePack });
+  if (parsed.slug !== row.slug) throw new OperationError('invalid_params', 'The connector content changes its page identity.');
+  // #5567: carry materialized and database-only timeline rows forward into the connector render.
+  const carried = await materializeTimeline(engine, parsed, row.slug, snapshot, 'preserving');
+  const content = carried.materialized && snapshot ? serializePageToMarkdown({ ...snapshot.page, ...parsed, timeline: carried.timeline, type: parsed.typeExplicit ? parsed.type : snapshot.page.type }, parsed.tags) : p.content;
   let prepared: PreparedContentImport | undefined;
-  const result = await importFromContent(engine, row.slug, p.content, { sourceId: row.source_id, sourcePath: p.sourcePath,
+  const result = await importFromContent(engine, row.slug, content, { sourceId: row.source_id, sourcePath: p.sourcePath,
     filename: basename(p.sourcePath).replace(/\.mdx?$/i, ''), noEmbed: true, allowEmptyOverwrite: true, activePack,
     prepareFrontmatter: page => {
       if (snapshot?.page.frontmatter.visibility === 'private') page.frontmatter.visibility = 'private';
@@ -470,14 +482,14 @@ export async function prepareConnectorMutation(engine: BrainEngine, row: WriteRe
   if (!prepared || prepared.slug !== row.slug) throw new OperationError('revision_conflict', result.error ?? 'A different page owns this connector content.');
   const ready = prepared;
   if (ready.observedRevision !== (snapshot?.revision ?? null)) throw new OperationError('revision_conflict', 'The connector page changed during preparation.');
-  const project = prepareCanonicalProjections(ready.parsedPage, row.slug, row.source_id);
+  const project = await prepareCanonicalProjections(engine, ready.parsedPage, row.slug, row.source_id, snapshot, 'preserving');
   const tags = [...new Set([...(snapshot?.tags ?? []), ...ready.parsedPage.tags])].sort();
   const page: Page = { ...(snapshot?.page ?? { id: 0, slug: row.slug, source_id: row.source_id, created_at: new Date(row.created_at), updated_at: new Date(row.created_at) }), ...ready.parsedPage };
   const file = await connectorFileTarget(engine, row, snapshot, serializePageToMarkdown(page, tags), p.sourcePath, p.canonicalRoot);
   if (file && (file.path !== p.filePath || file.expectedBeforeHash !== p.fileBeforeHash)) throw new OperationError('source_changed', 'The connector canonical file changed during preparation.');
   return { observedRevision: ready.observedRevision, sourceExclusive: true,
     validate: async tx => { await validate(tx); await ready.validate(tx); },
-    file, noop: ready.noop, deferEmbedding: p.noEmbed, apply: async tx => {
+    file, ...databaseOnlyPublication(row, file), noop: ready.noop, deferEmbedding: p.noEmbed, apply: async tx => {
     await ready.apply(tx);
     if (!ready.noop) { await project(tx); await sealPageTextProjection(tx, row.slug, row.source_id); }
     return { status: ready.noop ? 'skipped' : snapshot ? 'updated' : 'created', slug: row.slug, source_id: row.source_id,

@@ -417,20 +417,30 @@ incompleteness notices to stderr. MCP carries them in `_meta.retrieval`.
 The upgraded resident `gbrain serve` drains queued Markdown and code rebuilds
 without provider calls. Code repair can also run through the current owner:
 `gbrain reindex-code --force --no-embed`. Rebuilds preserve only exact,
-provenance-compatible vectors; remaining NULL vectors still need an explicitly
+provenance-compatible vectors: each vector records the embedding input it was
+built from (`content_chunks.embedding_input_hash`: column, model, dimensions,
+wrapping tier and wrapped text), and a rebuild keeps it only when the current
+page would produce the same input, so an unchanged contextual page keeps its
+vectors and a synopsis-mode body edit nulls every synopsis-tier chunk. Vectors
+written before that record existed are kept on non-contextual pages and nulled
+once on contextual ones. Remaining NULL vectors still need an explicitly
 authorized `gbrain embed --stale` run. A text-ready index is not a promise that
 every page has a vector. Diagnostics do not disclose private or foreign-source
 pending pages and never start repair themselves.
 
 Markdown chunk creation applies the strict protected-body sanitizer before
-splitting text. For remote reads, all existing chunks are withheld until a
-successful rebuild records the current chunker version. Public pages require
-this rebuild too; trusted local chunk reads remain available. Body or chunk changes
-invalidate that record until the next successful rebuild. While pages are withheld,
-remote `search` / `query` report `degraded: [safe_index_pending]` (the MCP
-empty-result block names it) instead of a clean miss, and `gbrain doctor` counts
-the withheld pages and points at the `gbrain reindex --markdown` fix. Direct page reads
-continue to use current source and visibility policy plus body sanitization.
+splitting text. For remote reads, all existing chunks of every page kind are
+withheld until a successful rebuild records the current chunker version. Public
+pages require this rebuild too; trusted local chunk reads remain available. Body or
+chunk changes invalidate that record until the next successful rebuild. Re-importing
+unchanged content (`gbrain sync --full`, `gbrain import`) re-seals such a page
+without a page write or journal admission. While pages are withheld, remote
+`search` / `query` report `degraded: [safe_index_pending]` on empty and partial
+results alike (the MCP empty-result block names it) instead of a clean or complete
+answer, and `gbrain doctor` counts the withheld markdown and code pages and points
+at `gbrain repair safe-chunks`, which re-seals them on any brain, managed included.
+Direct page reads continue to use current source and visibility policy plus body
+sanitization.
 
 Run rebuild commands from a local installation on the brain host; thin clients
 cannot rebuild the host's indexes.

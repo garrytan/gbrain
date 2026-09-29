@@ -83,7 +83,7 @@ export function normalizeLocalResult(rawResult: unknown): unknown {
 }
 
 // CLI-only commands that bypass the operation layer
-export const CLI_ONLY = new Set(['mcp', 'init', 'reinit-pglite', 'pglite-repair', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'extract-conversation-facts', 'enrich', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'maintain', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'reconcile-links', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'calibration', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache', 'retrieval-upgrade', 'founder', 'brainstorm', 'lsd', 'schema', 'capture', 'onboard', 'conversation-parser', 'status', 'connect', 'connectors', 'skillopt', 'quarantine', 'self-upgrade', 'protocol', 'advisor', 'watch', 'reindex-search-vector', 'pages', 'bench', 'backfill',
+export const CLI_ONLY = new Set(['mcp', 'init', 'repair', 'reinit-pglite', 'pglite-repair', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'extract-conversation-facts', 'enrich', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'maintain', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'reconcile-links', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'calibration', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache', 'retrieval-upgrade', 'founder', 'brainstorm', 'lsd', 'schema', 'capture', 'onboard', 'conversation-parser', 'status', 'connect', 'connectors', 'skillopt', 'quarantine', 'self-upgrade', 'protocol', 'advisor', 'watch', 'reindex-search-vector', 'pages', 'bench', 'backfill',
   // v0.42.58 (#2035 class, caught by the handleCliOnly reachability sweep):
   // full handler at `case 'notability-eval'` but never dispatchable.
   'notability-eval',
@@ -253,6 +253,8 @@ const CLI_ONLY_SELF_HELP = new Set([
   // or help-before-engine; the generic stub would hide the [SHOW USER]
   // setup contract agents depend on.
   'google', 'creds', 'loops', 'waiting',
+  // gbrain repair prints REPAIR_HELP (kinds + dry-run/apply contract).
+  'repair',
 ]);
 
 /**
@@ -270,6 +272,7 @@ const SELF_HELP_WITHOUT_ENGINE: Record<string, () => Promise<(engine: never, arg
   watch: async () => (await import('./commands/watch.ts')).runWatch as never,
   skillopt: async () => (await import('./commands/skillopt.ts')).runSkillOptCommand as never,
   maintain: async () => (await import('./commands/maintain.ts')).runMaintain as never,
+  repair: async () => (await import('./commands/repair.ts')).runRepairCommand as never,
   'extract-conversation-facts': async () =>
     (await import('./commands/extract-conversation-facts.ts')).runExtractConversationFacts as never,
   transcripts: async () => (await import('./commands/transcripts.ts')).runTranscripts as never,
@@ -2014,6 +2017,8 @@ export const THIN_CLIENT_REFUSED_COMMANDS = new Set([
   // cathedral-5: compiled views read the LOCAL brain (thin clients have
   // no engine to compile from; remote-brain support is a filed follow-up).
   'compile-context',
+  // Wave 2 repair core: repairs publish coordinated writes on the brain host.
+  'repair',
 ]);
 
 /**
@@ -2063,6 +2068,7 @@ const THIN_CLIENT_REFUSE_HINTS: Record<string, string> = {
   // hint fires — these fire only for the host-bound remainder.
   search: '`search modes|stats|tune` route to the brain host automatically (search_modes / search_stats / search_tune MCP ops). The modes reset form, modes with the source flag (the reset dry-run), and tune apply mutate or preview host config, and `diagnose` runs live retrieval — run those on the host.',
   cache: '`cache stats` routes to the brain host automatically (cache_stats MCP op). clear/prune mutate the host cache — run those on the host.',
+  repair: 'repair runs on the brain host (it publishes coordinated page writes against the local engine). Run `gbrain repair` on the brain host.',
   quarantine: '`quarantine list` routes to the brain host automatically (quarantine_list MCP op). scan/clear are host-bound (bulk re-import; the clear trust decision) — run those on the host.',
 };
 
@@ -3234,6 +3240,11 @@ async function handleCliOnly(command: string, args: string[]) {
         await runReconcileLinksCli(engine, args);
         break;
       }
+      case 'repair': {
+        const { runRepairCommand } = await import('./commands/repair.ts');
+        await runRepairCommand(engine, args);
+        break;
+      }
       case 'orphans': {
         const { runOrphans } = await import('./commands/orphans.ts');
         await runOrphans(engine, args);
@@ -3862,6 +3873,7 @@ SETUP
   migrate embeddings --to <p:model>  Re-embed onto another embedding provider
   upgrade                            Self-update
   check-update [--json]              Check for new versions
+  repair [<kind>] [--apply]          Preview/apply residual repairs (timeline, visibility, safe-chunks)
   doctor [--json] [--fast] [--probe-pglite]  Health check (resolver, skills, pgvector, RLS, embeddings; --probe-pglite runs the scratch-store probe)
   integrations [subcommand]          Manage integration recipes (senses + reflexes)
 
