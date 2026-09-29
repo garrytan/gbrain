@@ -13,10 +13,6 @@ describe('migrate', () => {
     expect(LATEST_VERSION).toBeGreaterThanOrEqual(1);
   });
 
-  test('runMigrations is exported and callable', async () => {
-    expect(typeof runMigrations).toBe('function');
-  });
-
   // Integration tests for actual migration execution require DATABASE_URL
   // and are covered in the E2E suite (test/e2e/mechanical.test.ts)
 });

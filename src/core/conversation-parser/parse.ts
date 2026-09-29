@@ -20,9 +20,8 @@
  * adapter in `extract-conversation-facts.ts` (T5 retrofit).
  *
  * Pure-function inner core: no I/O, no LLM calls except via the
- * polish/fallback wrappers in `llm-polish.ts` + `llm-fallback.ts`
- * (T4). Those wrappers are passed in via opts so this file stays
- * test-isolatable.
+ * fallback wrapper in `llm-fallback.ts` (T4). That wrapper is passed
+ * in via opts so this file stays test-isolatable.
  */
 
 import {

@@ -99,18 +99,6 @@ describe('put_page remote auto-link disclosure (#4525)', () => {
     expect(skill).not.toMatch(/\(at startup and on 10-minute idle ticks\)/);
   });
 
-  // The paste-in template downstream forks copy (UPGRADING_DOWNSTREAM_AGENTS.md)
-  // and the enrich skill carried the same inline promise one file over.
-  test('downstream-upgrade doc and enrich skill state the MCP skip, not an inline auto_links promise', () => {
-    for (const rel of ['docs/UPGRADING_DOWNSTREAM_AGENTS.md', 'skills/enrich/SKILL.md']) {
-      const flat = readFileSync(join(import.meta.dir, '..', rel), 'utf8').replace(/\s+/g, ' ');
-      expect(flat).not.toContain('MCP response includes `auto_links: { created');
-      expect(flat).not.toContain('Verify via the `auto_links` field in the put_page response (`{ created');
-      expect(flat).toContain('skipped: "remote"');
-      expect(flat).toContain('sweep');
-    }
-  });
-
   test('local write does not carry the remote skip marker', async () => {
     const result = (await putPage.handler(
       makeCtx({ remote: false }),

@@ -6,6 +6,7 @@ import type { BrainEngine } from '../engine.ts';
 import { OperationError } from '../ops/contract.ts';
 import { isValidSourceId } from '../source-id.ts';
 import { parseSourceConfig } from '../sources-load.ts';
+import { redactSourceConfig } from '../source-config-redact.ts';
 import { discoverGitRoot } from '../sync-git.ts';
 import { isInsideGitRepo, hasTrackedContent } from '../git-remote.ts';
 import { containsPath, getWorktreeBinding, type WorktreeBinding, worktreeManifest } from './ownership.ts';
@@ -186,7 +187,7 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
       await refreshManagedFilesystemRoots(tx,managedFilesystemDatastorePath(engine));
       return {operation:input.operation,source_id:input.sourceId,source_incarnation:incarnation,invalidated_requests:invalidated,
         ...(root?{local_path:root.source}:{}),...(['remove','purge'].includes(input.operation)?{storage_retained:true,local_path:ownedSourcePath??null,pages_deleted:pagesDeleted}:{}),
-        ...(input.operation==='add'?{name:input.name??source?.name??input.sourceId,config:{...source?.config,...input.config},id:input.sourceId}: {})};
+        ...(input.operation==='add'?{name:input.name??source?.name??input.sourceId,config:redactSourceConfig({...source?.config,...input.config}),id:input.sourceId}: {})};
     });
     if(admission) await admission.after(tx,String(result.source_incarnation));
     const row=await recordTopologyChange(tx,{principal,requestId,intent,operation:input.operation,sourceId:input.sourceId,incarnation:source?.incarnation??String(result.source_incarnation),worktrees},result);

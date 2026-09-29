@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [0.59.18.1] - 2026-09-29
+## [0.59.20.1] - 2026-09-29
 
 **`gbrain doctor` stopped warning about the lock doctor itself is holding.** `doctor` opens the brain's database to run its checks, and briefly holds the same PGLite lock file that a live `gbrain serve` process holds while it's running. One of doctor's own checks looks at that lock and warns whenever the holder isn't a `serve` process — so on a machine where you'd stopped `serve` and just ran `gbrain doctor`, it reported "a non-serve process holds the lock and hook IPC will fail" about itself, describing a collision that didn't exist.
 
@@ -18,7 +18,7 @@ Now the check only warns about a genuinely different process holding the lock. D
 
 **Say to your agent:** *"Run gbrain doctor and check whether the PGLite lock warning still shows up when serve is stopped"* — your agent runs `gbrain doctor`.
 
-## To take advantage of v0.59.18.1
+## To take advantage of v0.59.20.1
 
 Upgrade, then re-run doctor with serve stopped and confirm the warning is gone:
 
@@ -32,6 +32,68 @@ gbrain doctor
 - `src/core/bootstrap/uninstall.ts`: `probeLivePgliteHolder` now returns a namespace-aware `isSelf` field on `LiveHolder`. On Linux, it compares the lock's stored `pid_ns`/`boot_id` evidence against the running process's own via `pglite-lock.ts`'s exported readers, requiring both to be readable and matching before trusting a pid match — a pid alone (which a shared-mount container could coincidentally reuse) is never sufficient there, and unreadable evidence on either side fails closed (still warns). Non-Linux platforms have no PID namespaces, so pid equality alone decides there, matching `pglite-lock.ts`'s own unmodified lock-acquisition trust model. A pid+namespace match alone also does not decide: a lock whose `acquired_at` predates this process's own start time cannot be ours (we couldn't have acquired it before we existed) regardless of matching evidence, catching a stale legacy lock left behind by a dead process whose pid was later recycled.
 - `src/commands/doctor/bootstrap-checks.ts`: the `bootstrap_serve_lock` check now skips a lock holder only when `isSelf` is true, instead of treating any lock holder sharing the doctor's numeric pid as self.
 - Closes #5481.
+
+## [0.59.20.0] - 2026-09-29
+
+**Two commands could print a source's webhook secret, and hundreds of tests in gbrain's own suite guarded nothing: they stayed green with the code broken, or tested code the product never runs. Both are fixed.**
+
+Security first. If you attached a folder to an existing source that already had a GitHub webhook secret, `gbrain call sources_add` and `gbrain sources add --path` printed the whole source record, secret included, and the second one also kept that record in the database's change history. Both now hide the secret. Setting or rotating a webhook still shows the new secret exactly once, because you need to paste it into GitHub.
+
+The rest of the release is a cleanup of gbrain's own test suite, done the careful way: every test we removed was first shown to stay green while the code it claimed to guard was deliberately broken, and every hole that turned up got a real test before anything was deleted. About 5,000 lines of tests that could not fail and about 4,700 lines of code nothing ever ran are gone. Along the way the new tests caught a real bug: a sync interrupted twice in quick succession left its lock behind for 30 minutes. That is fixed too.
+
+### What changes for you
+
+| Situation | Before | Now |
+| --- | --- | --- |
+| `gbrain call sources_add` attaching a path to a source with a webhook secret | Printed the secret | Secret hidden |
+| `gbrain sources add --path` (managed) in the same case | Printed the secret and kept it in the change history | Hidden in the output, the replay and the stored record |
+| `gbrain sources webhook set` | Printed the new secret twice | Printed once, in the paste block |
+| A sync killed by two signals at once (for example `gbrain sync \| head` then Ctrl-C) | Lock stayed for 30 minutes | Lock released before exit |
+| Guides naming commands or flags that do not exist | Nothing noticed | A test fails; 13 stale guides fixed |
+
+### How to use it
+
+Nothing to configure. If you rely on attaching paths to webhook sources, re-run the command; the output no longer carries the secret. To see a webhook secret, rotate it: `gbrain sources webhook rotate <source>`.
+
+### Things to watch
+
+- Full-database backups still contain source configs, secrets included, by design: restoring a brain needs them. Treat backup archives as sensitive, as `gbrain backup` already warns.
+- `gbrain config set auto_chronicle true` has done nothing since v0.51.0.0, and `gbrain onboard --history` always returns empty. We did not delete the code behind them; both are filed as P1 follow-ups.
+
+### What we caught and fixed before merging
+
+The plan went through CEO, developer-experience and engineering reviews with two independent AI reviewers each. They stopped us from deleting code that user docs still promise (the inbox folder, the greenfield importer and the `gbrain/ingestion` daemon stay until that is a product decision), from treating the webhook rotate reveal and full backups as leaks, and from replacing weak tests with new checks that still could not fail.
+
+### Itemized changes
+
+**Security**
+- `src/core/ops/sources.ts`, `src/core/persistence/source-lifecycle.ts`: attach-path receipts go through `redactSourceConfig()`; the retained `persistence_topology_changes` record and its replay are redacted too. `src/commands/sources.ts`: `webhook set` prints the secret once.
+- New `test/source-config-secret-surfaces.test.ts` covers every surface that serializes source config (sources CLI human/`--json`, remote MCP `sources_list`/`sources_status`/`get_status_snapshot`/`run_doctor`, `doctor --json`, admin `GET /admin/api/sources`, backup metadata, restore receipts, `GBRAIN_HOME` logs) and pins the create/rotate one-time reveals. `scripts/check-source-config-leak.sh` header lists the audited surfaces.
+
+**Bug fix**
+- `src/core/process-cleanup.ts`: later signals await the in-flight cleanup pass (`cleanupPass ??= runCleanupCallbacks()`), so a second signal no longer exits before the sync lock row is deleted. Unit and real-process E2E regressions.
+
+**Coverage holes filled** (each new test fails on a targeted mutation; the old tests passed it)
+- `gbrain features` shipped output, supervisor health reconnect (all five arms), embed default concurrency on both pools, experimental schema verbs, `check-resolvable` fix shapes, image OCR opt-in through `importImageFile` (seam `_maybeOcrGatedForTests` removed), `postgres-engine.ts` routed to its singleton E2E owners, a real-process SIGPIPE lock-release test (50/50 under load), embed pool abort, singleton lifecycle races, backfill registry.
+
+**Tests removed** (evidence per test in `docs/test-audit/2026-09-29/` and the PR)
+- 42 test files and ~130 individual cases: source-text pins that passed with behavior broken or failed on renames, doc phrase pins, copied-function tests, `typeof` export probes, tautologies, byte-identical duplicates, `expect(true)` placeholders, a stale MCP E2E that re-implemented the tool mapping, and duplicate E2E runs (attendance PGLite arms, `reconcile-crash` now owned on PRs by `persistence-validation.yml`).
+- 15 source-grep test files rewritten as behavior tests; one table-driven `test/doc-claims.test.ts` replaces one-off doc pins.
+
+**Dead code removed** (no runtime caller; per-module disposition in the PR)
+- 24 modules across the misc, calibration and minions clusters, including the never-wired minions budget tracker, self-fix and lease-cap controller, calibration E3/E5/E7/E8 surfaces, `upgrade-checkpoint` and `brain-pack-lint`; test-only seams such as `_resetRerankWarningsForTest` (was reachable from the `gbrain/ai/gateway` export). The `take_nudge_log` migration stays. Ingestion, progressive-batch, chronicle backstop, onboard impact capture and archive-crawler config are held.
+
+**Guards and docs for contributors**
+- `scripts/check-orphan-modules.mjs`: the test-only count ceiling becomes a named `PERMITTED_TEST_ONLY` list with reasons; new or stale entries fail with a remedy.
+- New `bun run check:test-placeholders` (AST scan for no-op `expect(true)` assertions) in `verify`.
+- `test/test-reads-source-smell.test.ts` now sees `join(...)`, `Bun.file`, `readFile` and path-constant reads, requires a category tag on `test-reads-source-ok` markers, and ratchets unjustified read sites per file.
+- Docs-CLI truth check: `gbrain <verb> --flag` in `docs/guides`, `docs/migrations` and `skills` must resolve against the real CLI (`<!-- gbrain-cli: historical -->` marker for history).
+- `docs/TESTING.md`: authoring gate (4 questions), "Retiring a test" with an evidence template, lane-move pilot table, live-key E2E run commands, `reconcile-crash` ownership.
+
+**CI lanes**
+- 20 PGLite-only `test/e2e` files moved to the unit (10), serial (7) and slow (3) lanes; the Ubicloud E2E lane drops ~300 s and the moved files now run on every PR. Key-gated OpenRouter/Voyage live files leave the default `run-e2e.sh` list (by-name runs still work).
+
+**Contributor note:** deleted and moved tests are listed in the PR; `check:test-placeholders`, the stricter source-read policy and the orphan permitted list are new `verify`/unit rules, and each failure message names the fix and a `docs/TESTING.md` anchor.
 
 ## [0.59.18.0] - 2026-09-29
 

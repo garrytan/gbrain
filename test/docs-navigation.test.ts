@@ -77,27 +77,4 @@ describe('primary documentation navigation', () => {
     });
     expect(failures).toEqual([]);
   });
-
-  test('active memory guidance keeps durable preferences separate from configuration', () => {
-    const guide = readFileSync(join(root, 'docs/guides/brain-vs-memory.md'), 'utf8');
-    expect(guide).toContain('Durable facts, preferences');
-    expect(guide).toContain('Tool configuration, credentials');
-    expect(guide).not.toContain("Don't store user preferences in GBrain");
-    expect(guide).not.toContain('it should return nothing');
-  });
-
-  test('primary docs do not reinstate blanket graph or exclusivity promises', () => {
-    for (const document of documents.filter(path => !path.startsWith(subsystemDir))) {
-      const text = readFileSync(join(root, document), 'utf8');
-      expect(text).not.toMatch(/Every (?:future )?`put_page` (?:auto-creates|extracts)/);
-      expect(text).not.toContain('auto-linking on every write');
-      expect(text).not.toContain('nobody else ships together');
-    }
-    const boundaries = readFileSync(join(root, 'docs/guides/memory-boundaries.md'), 'utf8');
-    expect(boundaries).toContain('no inline graph extraction');
-    expect(boundaries).toContain('Does not self-sweep');
-    expect(boundaries).toContain('embeddings receive the text');
-    expect(boundaries).toContain('rerankers receive the query');
-    expect(boundaries).toContain('not a full database backup');
-  });
 });

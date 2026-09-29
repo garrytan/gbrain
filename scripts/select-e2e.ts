@@ -35,6 +35,7 @@ import { readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
 import { E2E_TEST_MAP } from "./e2e-test-map.ts";
+import { PERSISTENCE_VALIDATION_OWNED, exclusionNotice } from "./e2e-matrix.ts";
 
 // Doc allowlist (inclusive). A path counts as doc-only ONLY if it matches one
 // of these patterns. Unrecognized paths fall through to SRC, never silently
@@ -193,6 +194,18 @@ export function selectTests(inputs: SelectInputs): string[] {
   return Array.from(result).sort();
 }
 
+export function persistenceOwnedNotices(changedFiles: string[], map: Record<string, string[]>): string[] {
+  const owned = new Set<string>();
+  for (const f of changedFiles) {
+    if (PERSISTENCE_VALIDATION_OWNED.has(f)) owned.add(f);
+    for (const [glob, tests] of Object.entries(map)) {
+      if (!matchGlob(glob, f)) continue;
+      for (const t of tests) if (PERSISTENCE_VALIDATION_OWNED.has(t)) owned.add(t);
+    }
+  }
+  return Array.from(owned).sort().map(exclusionNotice);
+}
+
 function runGit(args: string[], cwd: string): string {
   const result = spawnSync("git", args, { cwd, encoding: "utf8" });
   if (result.status !== 0) {
@@ -247,6 +260,7 @@ if (import.meta.main) {
     map: E2E_TEST_MAP,
   });
 
+  for (const notice of persistenceOwnedNotices(changedFiles, E2E_TEST_MAP)) process.stderr.write(notice + "\n");
   process.stdout.write(tests.join("\n"));
   if (tests.length > 0) process.stdout.write("\n");
 }

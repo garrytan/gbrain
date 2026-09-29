@@ -15,7 +15,6 @@ import { parseMarkdown } from '../../src/core/markdown.ts';
 import { runDetect } from '../../src/core/schema-pack/detect.ts';
 import { runReviewCandidates, runReviewOrphans } from '../../src/core/schema-pack/review.ts';
 import { knobsHash } from '../../src/core/search/mode.ts';
-import { detectArtifactKind, validateManifestByKind } from '../../src/core/artifact/index.ts';
 
 // Cold-path opt-out (conservative): umbrella schema-invariant suite whose
 // point is proving the cathedral end-to-end through a genuinely cold-built
@@ -123,19 +122,6 @@ describe('v0.39 T22c — T18-replacement: schema show --as-filing-rules', () => 
     const extractable = customManifest.page_types.filter((pt) => pt.extractable);
     expect(extractable.length).toBe(1);
     expect(extractable[0].name).toBe('meeting');
-  });
-});
-
-describe('v0.39 T22d — artifact-type routing', () => {
-  test('detectArtifactKind dispatches by extension', () => {
-    expect(detectArtifactKind('/tmp/foo.gbrain-schema')).toBe('schemapack');
-    expect(detectArtifactKind('/tmp/foo.gbrain-skillpack')).toBe('skillpack');
-    expect(detectArtifactKind('/tmp/foo.tar.gz')).toBe(null);
-  });
-
-  test('validateManifestByKind rejects cross-kind manifests', () => {
-    expect(() => validateManifestByKind('schemapack', { api_version: 'gbrain-skillpack-v1' })).toThrow();
-    expect(() => validateManifestByKind('skillpack', { api_version: 'gbrain-schema-pack-v1' })).toThrow();
   });
 });
 

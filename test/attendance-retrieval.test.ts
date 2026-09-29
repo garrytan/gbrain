@@ -17,13 +17,14 @@ import { bundledPackPath } from '../src/core/schema-pack/bundled-assets.ts';
 import { loadActivePackForLocalEngine } from '../src/core/schema-pack/best-effort.ts';
 import { installFixtureChunks } from './helpers/page-projection.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
+import { testBackends } from './helpers/test-backends.ts';
 
 const sourceId = 'attendance-fixture';
 const person = 'people/alice-example';
 const meeting = 'meetings/planning';
 const positive = 'Attendees: [Alice](../people/alice-example.md)';
 
-for (const kind of ['pglite', ...(process.env.DATABASE_URL ? ['postgres'] : [])]) {
+for (const kind of testBackends()) {
   describe(`non-overridden canonical attendance lifecycle (${kind})`, () => {
     let engine: BrainEngine;
     let close: () => Promise<void>;

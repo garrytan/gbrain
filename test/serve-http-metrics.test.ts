@@ -138,7 +138,7 @@ describe('metricsTrackingMiddleware — Express wiring (serve-http.ts order)', (
 });
 
 describe('serve-http.ts wiring (structural — the two defects of the original PR)', () => {
-  // test-reads-source-ok: mount ORDER (middleware before first route) and the requireAdmin
+  // test-reads-source-ok[trust-boundary]: mount ORDER (middleware before first route) and the requireAdmin
   // gate are wiring properties of the real serve-http.ts; the behavioral tests above run a
   // rebuilt harness app, so only a source scan pins the real module without booting it.
   const src = readFileSync(new URL('../src/commands/serve-http.ts', import.meta.url), 'utf-8');

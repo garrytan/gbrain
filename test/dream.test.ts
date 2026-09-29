@@ -824,6 +824,108 @@ describe('runDream — --drain --dry-run --json payload (#4730)', () => {
   }, 300_000);
 });
 
+// ─── synthesize targeting flags (--input / --date / --from / --to) ──
+
+async function dreamExit(args: string[]): Promise<{ code: number | undefined; stderr: string }> {
+  let code: number | undefined;
+  const exitSpy = spyOn(process, 'exit').mockImplementation(((c?: number) => { code = c; throw new Error('EXIT'); }) as never);
+  const errSpy = spyOn(console, 'error').mockImplementation(() => {});
+  try {
+    await runDream(engine, ['--dir', repo, ...args]);
+  } catch (e: any) {
+    if (e.message !== 'EXIT') throw e;
+  } finally {
+    exitSpy.mockRestore();
+  }
+  const stderr = errSpy.mock.calls.flat().join(' ');
+  errSpy.mockRestore();
+  return { code, stderr };
+}
+
+async function dreamJson(args: string[]) {
+  const lines: string[] = [];
+  const logSpy = spyOn(console, 'log').mockImplementation((...a: unknown[]) => { lines.push(a.map(String).join(' ')); });
+  const exitSpy = spyOn(process, 'exit').mockImplementation(((c?: number) => { throw new Error(`EXIT ${c}`); }) as never);
+  try {
+    await runDream(engine, ['--dir', repo, ...args, '--dry-run', '--json']);
+  } catch (e: any) {
+    if (!String(e.message).startsWith('EXIT')) throw e;
+  } finally {
+    logSpy.mockRestore();
+    exitSpy.mockRestore();
+  }
+  return JSON.parse(lines.join('\n')) as { phases: Array<{ phase: string; status: string; summary: string; details?: Record<string, unknown> }> };
+}
+
+describe('runDream — synthesize targeting flags', () => {
+  test('malformed dates, an inverted range and --input with a date filter exit 2 with the reason', async () => {
+    const cases: Array<[string[], string]> = [
+      [['--date', '2026-4-1'], '--date must be YYYY-MM-DD; got "2026-4-1"'],
+      [['--from', '04/01/2026'], '--from must be YYYY-MM-DD'],
+      [['--to', 'tomorrow'], '--to must be YYYY-MM-DD'],
+      [['--from', '2026-04-25', '--to', '2026-04-01'], '--from (2026-04-25) is after --to (2026-04-01); empty range'],
+      [['--input', '/tmp/gbrain-dream-fixture.txt', '--from', '2026-04-01'], '--input cannot be combined with --date / --from / --to'],
+    ];
+    for (const [args, message] of cases) {
+      const r = await dreamExit(args);
+      expect(r.code, args.join(' ')).toBe(2);
+      expect(r.stderr, args.join(' ')).toContain(message);
+    }
+  });
+
+  test('--input implies --phase synthesize and reaches the phase even with no corpus dir configured', async () => {
+    const missing = join(repo, '..', 'gbrain-dream-missing-transcript.txt');
+    const report = await dreamJson(['--input', missing]);
+    expect(report.phases.map(p => p.phase)).toEqual(['synthesize']);
+    expect(JSON.stringify(report.phases[0])).toContain(`could not read transcript at ${missing}`);
+    const unscoped = await dreamJson(['--phase', 'synthesize']);
+    expect(unscoped.phases[0].details).toMatchObject({ reason: 'not_configured' });
+  });
+
+  test('--date, --from and --to reach the synthesize phase as explicit targets (they bypass the cooldown)', async () => {
+    const corpus = mkdtempSync(join(tmpdir(), 'gbrain-dream-corpus-'));
+    try {
+      await engine.setConfig('dream.synthesize.session_corpus_dir', corpus);
+      await engine.setConfig('dream.synthesize.last_completion_ts', new Date().toISOString());
+      const cooled = await dreamJson(['--phase', 'synthesize']);
+      expect(cooled.phases[0].details).toMatchObject({ reason: 'cooldown_active' });
+      for (const target of [['--date', '2026-04-01'], ['--from', '2026-04-01'], ['--to', '2026-04-25']]) {
+        const report = await dreamJson(['--phase', 'synthesize', ...target]);
+        expect(report.phases[0], target.join(' ')).toMatchObject({ status: 'ok', summary: 'no transcripts to process' });
+      }
+    } finally {
+      rmSync(corpus, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('runDream — help and human totals', () => {
+  test('--help documents dry-run synthesis cost and the cycle timezone setting', async () => {
+    const logSpy = spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      await runDream(engine, ['--help']);
+      const help = logSpy.mock.calls.flat().join('\n');
+      expect(help).toContain('skips the synthesis subagents');
+      expect(help.toLowerCase()).toContain('zero llm calls');
+      expect(help).toContain('gbrain config set cycle.timezone');
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  test('a cycle with work prints the totals line including the synth and patterns counters', async () => {
+    await engine.putPage('notes/lonely-example', { type: 'note', title: 'Lonely', compiled_truth: 'No links here.', timeline: '' });
+    const logSpy = spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      await runDream(engine, ['--dir', repo, '--phase', 'orphans']);
+      const totals = logSpy.mock.calls.flat().map(String).find(l => l.includes('totals:'));
+      expect(totals).toMatch(/orphans=[1-9]\d* synth_transcripts=0 synth_pages=0 patterns=0$/);
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+});
+
 // ─── v0.41.13 D5: end-to-end dream → checkCycleFreshness parity ───────
 //
 // Closes the column-rename drift class: if a future PR renames

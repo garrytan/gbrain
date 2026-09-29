@@ -251,7 +251,4 @@ describe('postgres-engine fact insert cast (T6, codex #20)', () => {
     expect(literalHits ?? []).toEqual([]);
   });
 
-  test('cached cast suffix has a test-only reset hook for unit cases', () => {
-    expect(PG_SRC).toMatch(/__resetFactsEmbeddingCastCacheForTest/);
-  });
 });

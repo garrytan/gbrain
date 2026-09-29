@@ -62,7 +62,6 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   "src/core/serve-sync-runner.ts": ["test/e2e/sync-delegation-under-serve.serial.test.ts"],
   "src/commands/sync-delegate.ts": ["test/e2e/sync-delegation-under-serve.serial.test.ts"],
   "src/core/context/resolve-ipc.ts": [
-    "test/e2e/bootstrap-hook-under-serve.serial.test.ts",
     "test/e2e/sync-delegation-under-serve.serial.test.ts",
   ],
   // Codex session-end capture lane: the hooks writer + hook-lane parser +
@@ -70,25 +69,23 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   "src/core/bootstrap/codex-hooks.ts": ["test/e2e/bootstrap-real-codex.serial.test.ts"],
   "src/core/transcripts/codex-hook-lane.ts": ["test/e2e/bootstrap-real-codex.serial.test.ts"],
   "src/core/transcripts/capture-spec.ts": [
-    "test/e2e/bootstrap-hook-under-serve.serial.test.ts",
     "test/e2e/bootstrap-real-codex.serial.test.ts",
   ],
   // Concrete content and derived-information read policy parity.
-  "src/core/remote-body.ts": ["test/e2e/engine-content-privacy.test.ts", "test/e2e/remote-privacy-journeys.test.ts", "test/e2e/legacy-chunk-privacy.test.ts", "test/e2e/chunk-canonical-text-privacy.test.ts"],
-  "src/core/entity-identity.ts": ["test/e2e/engine-content-privacy.test.ts", "test/e2e/remote-privacy-journeys.test.ts"],
-  "src/core/ops/**": ["test/e2e/engine-content-privacy.test.ts", "test/e2e/remote-privacy-journeys.test.ts", "test/e2e/read-enrichment-privacy.test.ts", "test/e2e/legacy-chunk-privacy.test.ts", "test/e2e/chunk-canonical-text-privacy.test.ts", "test/e2e/put-page-persistence-postgres.test.ts", "test/e2e/deep-research-source-id.test.ts", "test/e2e/deep-research-http.test.ts"],
+  "src/core/remote-body.ts": ["test/e2e/engine-content-privacy.test.ts", "test/e2e/legacy-chunk-privacy.test.ts", "test/e2e/chunk-canonical-text-privacy.test.ts"],
+  "src/core/entity-identity.ts": ["test/e2e/engine-content-privacy.test.ts"],
+  "src/core/ops/**": ["test/e2e/engine-content-privacy.test.ts", "test/e2e/read-enrichment-privacy.test.ts", "test/e2e/legacy-chunk-privacy.test.ts", "test/e2e/chunk-canonical-text-privacy.test.ts", "test/e2e/put-page-persistence-postgres.test.ts", "test/e2e/deep-research-source-id.test.ts", "test/e2e/deep-research-http.test.ts"],
   "src/commands/whoknows.ts": ["test/e2e/read-enrichment-privacy.test.ts"],
-  "src/commands/orphans.ts": ["test/e2e/engine-content-privacy.test.ts", "test/e2e/remote-privacy-journeys.test.ts"],
+  "src/commands/orphans.ts": ["test/e2e/engine-content-privacy.test.ts"],
   // Source-aware ranking, hybrid search, intent classification.
   "src/core/search/**": [
     "test/e2e/unsupported-embedding-identity-postgres.test.ts",
     "test/e2e/projection-statistics-postgres.test.ts",
     "test/e2e/search-query-contract-postgres.test.ts",
     "test/e2e/vector-candidate-safety-postgres.test.ts",
-    "test/e2e/search-readiness-http.test.ts",
     "test/e2e/projection-readiness-currency.test.ts",
     "test/e2e/chunk-canonical-text-privacy.test.ts",
-    "test/e2e/engine-content-privacy.test.ts", "test/e2e/remote-privacy-journeys.test.ts",
+    "test/e2e/engine-content-privacy.test.ts",
     "test/e2e/read-enrichment-privacy.test.ts", "test/e2e/legacy-chunk-privacy.test.ts",
     "test/e2e/search-quality.test.ts",
     "test/e2e/search-exclude.test.ts",
@@ -110,12 +107,6 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
     "test/e2e/openclaw-context-engine-plugin.test.ts",
     "test/e2e/openclaw-plugin-load-real.test.ts",
   ],
-  // claw-test harness (command + core: runners, scenarios, seeding, friction
-  // merge) feeds the scripted + shim-live E2E. The hermes door
-  // (install-real-hermes.serial.test.ts) is deliberately NOT mapped — it is
-  // opt-in-gated (GBRAIN_REAL_HERMES_E2E) and self-skips in run-all anyway.
-  "src/commands/claw-test.ts": ["test/e2e/claw-test.test.ts"],
-  "src/core/claw-test/**": ["test/e2e/claw-test.test.ts"],
   // dream.ts is a thin alias over runCycle in cycle.ts.
   "src/core/cycle.ts": ["test/e2e/cycle.test.ts", "test/e2e/dream.test.ts"],
   // Multi-source sync writes share the per-source bookmark anchor.
@@ -226,7 +217,6 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
     "test/e2e/withdrawal-bounded-safety-postgres.test.ts",
     "test/e2e/withdrawal-crash-postgres.test.ts",
     "test/e2e/memory-safety-wave-postgres.test.ts",
-    "test/e2e/fact-backfill-resident.test.ts",
     "test/e2e/reconcile-crash.test.ts",
     "test/e2e/reconcile-crash-unactivated.test.ts",
     "test/e2e/reconcile-pgbouncer.test.ts",
@@ -249,7 +239,7 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
     "test/e2e/persistence-chaos.test.ts",
     "test/e2e/db-lock-acquisition-token.test.ts",
     "test/e2e/chunk-canonical-text-privacy.test.ts",
-    "test/e2e/engine-content-privacy.test.ts", "test/e2e/remote-privacy-journeys.test.ts",
+    "test/e2e/engine-content-privacy.test.ts",
     "test/e2e/read-enrichment-privacy.test.ts", "test/e2e/legacy-chunk-privacy.test.ts",
     "test/e2e/postgres-bootstrap.test.ts",
     "test/e2e/postgres-jsonb.test.ts",
@@ -262,6 +252,11 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
     "test/e2e/health-parity-postgres.test.ts",
     // #4109: FOR KEY SHARE deletion-race behavior of addLink/addTimelineEntry.
     "test/e2e/source-boundary-mutation-postgres.test.ts",
+    // Shared-singleton ownership: disconnect idempotency, shared-pool
+    // recovery and reconnect under a live singleton.
+    "test/e2e/postgres-engine-disconnect-idempotency.test.ts",
+    "test/e2e/db-singleton-shared-recovery.test.ts",
+    "test/e2e/postgres-reconnect-singleton.test.ts",
   ],
   // PGLite bootstrap path + parity guard.
   "src/core/pglite-engine.ts": [
@@ -270,7 +265,7 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
     "test/e2e/unsupported-embedding-identity-postgres.test.ts",
     "test/e2e/persistence-chaos.test.ts",
     "test/e2e/chunk-canonical-text-privacy.test.ts",
-    "test/e2e/engine-content-privacy.test.ts", "test/e2e/remote-privacy-journeys.test.ts",
+    "test/e2e/engine-content-privacy.test.ts",
     "test/e2e/read-enrichment-privacy.test.ts", "test/e2e/legacy-chunk-privacy.test.ts",
     "test/e2e/postgres-bootstrap.test.ts",
     "test/e2e/engine-parity.test.ts",
@@ -282,7 +277,7 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   "src/core/postgres-engine/**": [
     "test/e2e/unsupported-embedding-identity-postgres.test.ts",
     "test/e2e/chunk-canonical-text-privacy.test.ts",
-    "test/e2e/engine-content-privacy.test.ts", "test/e2e/remote-privacy-journeys.test.ts",
+    "test/e2e/engine-content-privacy.test.ts",
     "test/e2e/read-enrichment-privacy.test.ts", "test/e2e/legacy-chunk-privacy.test.ts",
     "test/e2e/postgres-bootstrap.test.ts",
     "test/e2e/postgres-jsonb.test.ts",
@@ -296,7 +291,7 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   "src/core/pglite-engine/**": [
     "test/e2e/unsupported-embedding-identity-postgres.test.ts",
     "test/e2e/chunk-canonical-text-privacy.test.ts",
-    "test/e2e/engine-content-privacy.test.ts", "test/e2e/remote-privacy-journeys.test.ts",
+    "test/e2e/engine-content-privacy.test.ts",
     "test/e2e/read-enrichment-privacy.test.ts", "test/e2e/legacy-chunk-privacy.test.ts",
     "test/e2e/postgres-bootstrap.test.ts",
     "test/e2e/engine-parity.test.ts",
@@ -344,35 +339,15 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   "src/core/link-source-check-repair.ts": ["test/e2e/link-source-check-repair-postgres.test.ts"],
   "src/core/vector-index.ts": ["test/e2e/migration-vector-replay-postgres.test.ts"],
   // MCP stdio + HTTP transports share dispatch.
-  "src/mcp/**": ["test/e2e/mcp.test.ts", "test/e2e/http-transport.test.ts", "test/e2e/mcp-search-transport-matrix.test.ts"],
-  // G6: the --surface verbs CEILING journey over a real `serve --http` boot
-  // (hermetic PGLite): 7-verb tools/list for full-preset + bare clients,
-  // fail-closed dispatch on hidden ops, the narrow-only
-  // GBRAIN_MCP_FORCE_SURFACE kill switch, and a verb round-trip. Keyed on the
-  // surface implementation; the selector UNIONS this with the src/mcp/**
-  // entry above. src/commands/serve.ts stays deliberately unmapped
-  // (fail-closed run-all), so serve-side changes hit this suite too.
-  "src/mcp/surface.ts": ["test/e2e/serve-http-surface-ceiling.test.ts"],
+  "src/mcp/**": ["test/e2e/http-transport.test.ts", "test/e2e/mcp-search-transport-matrix.test.ts"],
   // Integrity batch-load fast path.
   "src/commands/integrity.ts": ["test/e2e/integrity-batch.test.ts"],
-  // gbrain connect — raw-bearer MCP smoke probe exercised end-to-end against
-  // a real serve --http (PGLite), so changes to either feed it.
-  "src/commands/connect.ts": ["test/e2e/connect-bearer.test.ts"],
-  "src/core/connect-probe.ts": ["test/e2e/connect-bearer.test.ts"],
-  // G4: brain-axis mount ROUTING journey — resolver tiers (flag > env >
-  // dotfile > path-prefix > host) exercised over real CLI spawns against two
-  // real PGLite DBs. mounts.ts subcommand dispatch itself is unit-covered in
-  // test/mounts-cli.test.ts; this e2e pins the resolver→engine wiring.
-  "src/core/brain-resolver.ts": ["test/e2e/mounts-routing-pglite.test.ts"],
-  "src/commands/mounts.ts": ["test/e2e/mounts-routing-pglite.test.ts"],
   // Upgrade chains migration ledger; touches both runners. The bun-link arc
-  // (detection marker, pull→install ordering, post-upgrade ledger checkpoint,
-  // --swap-only) is behaviorally pinned by the shimmed serial e2e (G6).
+  // is pinned by test/upgrade-bun-link-arc.serial.test.ts (serial lane).
   "src/commands/upgrade.ts": [
     "test/e2e/upgrade.test.ts",
     "test/e2e/migrate-chain.test.ts",
     "test/e2e/migration-flow.test.ts",
-    "test/e2e/upgrade-bun-link-arc.serial.test.ts",
   ],
   "src/commands/apply-migrations.ts": [
     "test/e2e/migration-preview-safety.test.ts",
@@ -429,8 +404,7 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
     "test/e2e/ingestion-roundtrip.test.ts",
     "test/e2e/serve-http-ingest-webhook.test.ts",
   ],
-  "src/core/embed-facts*.ts": ["test/e2e/fact-embedding-backfill-parity.test.ts", "test/e2e/fact-backfill-resident.test.ts"],
-  "src/commands/embed-facts-delegate.ts": ["test/e2e/fact-backfill-resident.test.ts"],
+  "src/core/embed-facts*.ts": ["test/e2e/fact-embedding-backfill-parity.test.ts"],
   "src/core/cycle/extract-facts.ts": ["test/e2e/fact-vector-repair-parity.test.ts", "test/e2e/facts-fence-reconcile-postgres.test.ts"],
   "src/core/cycle/phases/consolidate.ts": ["test/e2e/managed-maintenance.test.ts", "test/e2e/cycle.test.ts"],
   "src/core/ops/facts.ts": ["test/e2e/managed-facts-backstop.test.ts"],

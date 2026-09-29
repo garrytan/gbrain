@@ -442,7 +442,7 @@ for pid in $(pgrep -f 'gbrain jobs work'); do ps eww -p "$pid"; done \
   | grep -o -e '--allow-shell-jobs' -e 'GBRAIN_ALLOW_SHELL_JOBS=[^ ]*' | sort -u \
   || echo "shell jobs not enabled"
 # An unflagged worker that claims a shell job dead-letters it instantly:
-gbrain jobs list --status dead --name shell --limit 3
+gbrain jobs list --status dead --json | jq '[.[] | select(.name == "shell")][:3]'
 ```
 
 ## Uninstall

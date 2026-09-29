@@ -43,6 +43,12 @@ describe('CI execution evidence', () => {
     expect(e2e.jobs.tier2.if).toBeUndefined();
   });
 
+  test('the verify job runs `bun run verify`, which dispatches through run-verify-parallel.sh', () => {
+    expect(unit.jobs.verify.steps.some(step => step.run === 'bun run verify')).toBe(true);
+    const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as { scripts: Record<string, string> };
+    expect(pkg.scripts.verify).toContain('scripts/run-verify-parallel.sh');
+  });
+
   test('unit aggregate rejects failed, cancelled or skipped required jobs', () => {
     expect(unit.jobs['test-status'].if).toBe("${{ always() && (github.event_name != 'workflow_dispatch' || inputs.native_only != true) }}");
     expect(unit.jobs['test-status'].needs).toEqual([

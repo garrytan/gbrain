@@ -109,6 +109,3 @@ export function isTitleMentionedInQuery(query: string, title: string): boolean {
   if (tContent.length < MIN_CONTENT_TOKENS && tContent[0].length < MIN_SINGLE_TOKEN_TITLE_CHARS) return false;
   return containsTokenRun(qTokens, tTokens);
 }
-
-// Exported for unit tests.
-export const __test__ = { tokenizeTitle, contentTokens, containsTokenRun, STOPWORDS, MIN_CONTENT_TOKENS };

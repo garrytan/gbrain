@@ -1,8 +1,8 @@
 /**
- * E2E test helpers: DB lifecycle, fixture import, timing, and diagnostics.
+ * E2E test helpers: DB lifecycle, fixture import, and diagnostics.
  *
  * Usage in test files:
- *   import { setupDB, teardownDB, importFixtures, time } from './helpers.ts';
+ *   import { setupDB, teardownDB, importFixtures } from './helpers.ts';
  *   beforeAll(async () => { await setupDB(); await importFixtures(); });
  *   afterAll(async () => { await teardownDB(); });
  */
@@ -267,16 +267,6 @@ function findMarkdownFiles(dir: string): string[] {
     }
   }
   return results.sort();
-}
-
-/**
- * Time a function and return [result, durationMs].
- */
-export async function time<T>(fn: () => Promise<T>): Promise<[T, number]> {
-  const start = performance.now();
-  const result = await fn();
-  const dur = performance.now() - start;
-  return [result, dur];
 }
 
 /**

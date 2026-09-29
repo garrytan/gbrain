@@ -145,7 +145,9 @@ const sources_add: Operation = {
         p.federated === undefined ? null : (p.federated as boolean),
       cloneDir: remoteCloneDir,
     });
-    return row;
+    const { redactSourceConfig } = await import('../source-config-redact.ts');
+    const { parseSourceConfig } = await import('../sources-load.ts');
+    return { ...row, config: redactSourceConfig(parseSourceConfig(row.config)) };
   },
   cliHints: { name: 'sources_add', hidden: true },
 };

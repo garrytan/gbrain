@@ -12,6 +12,7 @@ import { softDeleteSource, restoreSource } from '../src/core/destructive-guard.t
 import { purgeStaleCheckpoints } from '../src/core/op-checkpoint.ts';
 import { attendanceRepairConnectionIdentity } from '../src/commands/extract-attendance-repair.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
+import { testBackends } from './helpers/test-backends.ts';
 
 const sourceId = 'repair-fixture';
 const person = 'people/alice-example';
@@ -20,7 +21,7 @@ const positive = 'Attendees: [Alice Example](../people/alice-example.md)';
 const pack = { api_version: 'gbrain-schema-pack-v1', name: 'repair-fixture', version: '1.0.0', extends: null,
   page_types: [], link_types: [], frontmatter_links: [] };
 
-for (const kind of ['pglite', ...(process.env.DATABASE_URL ? ['postgres'] : [])]) {
+for (const kind of testBackends()) {
   describe(`preview-bound attendance repair (${kind}; repair-fixture non-overridden person_to_meeting)`, () => {
     let engine: BrainEngine;
     let close: () => Promise<void>;

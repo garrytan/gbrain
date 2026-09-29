@@ -255,7 +255,7 @@ cat ~/.gbrain/audit/shell-jobs-*.jsonl | jq '.'
 # First-time failure mode: submitted without env flag on the worker.
 # The handler is always registered but guarded: an unflagged worker that claims
 # a shell job dead-letters it immediately (UnrecoverableError, no retries).
-gbrain jobs list --status dead --name shell
+gbrain jobs list --status dead --json | jq '.[] | select(.name == "shell")'
 # → error_text: "shell handler disabled on this worker (start it with --allow-shell-jobs or GBRAIN_ALLOW_SHELL_JOBS=1 ...)"
 # `waiting` pileups mean NO worker is running at all (flagged or not) — check
 # `gbrain jobs supervisor status` in that case.

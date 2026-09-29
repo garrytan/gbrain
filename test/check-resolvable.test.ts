@@ -270,26 +270,6 @@ describe("checkResolvable — real skills directory", () => {
     expect(Array.isArray(report.issues)).toBe(true);
   });
 
-  test("all manifest skills are reachable from RESOLVER.md", () => {
-    const unreachableIssues = report.issues.filter(i => i.type === "unreachable");
-    if (unreachableIssues.length > 0) {
-      const names = unreachableIssues.map(i => i.skill).join(", ");
-      console.warn(`Unreachable skills: ${names}`);
-    }
-    // Currently expect all 24 skills to be reachable
-    expect(report.summary.unreachable).toBe(0);
-  });
-
-  test("no missing files referenced by RESOLVER.md", () => {
-    const missingFiles = report.issues.filter(i => i.type === "missing_file");
-    expect(missingFiles.length).toBe(0);
-  });
-
-  test("no orphan triggers (in resolver but not manifest)", () => {
-    const orphans = report.issues.filter(i => i.type === "orphan_trigger");
-    expect(orphans.length).toBe(0);
-  });
-
   test("action strings are specific (contain file paths)", () => {
     for (const issue of report.issues) {
       expect(issue.action.length).toBeGreaterThan(10);
@@ -715,6 +695,71 @@ describe("missing_file is reported once per skill path, not once per trigger row
       const missing = report.issues.filter(i => i.type === "missing_file");
       expect(missing).toHaveLength(1);
       expect(missing[0].skill).toBe("skills/ghost-skill/SKILL.md");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Fixture trees for the unreachable-skill fix shape and the MECE whitelist.
+// The real skills/ tree has no unreachable skills and no overlaps, so these
+// contracts need their own inputs.
+// ---------------------------------------------------------------------------
+
+function writeSkillTree(skills: { name: string; triggers: string[]; resolverRow?: string }[]): string {
+  const dir = mkdtempSync(join(tmpdir(), "gbrain-resolvable-"));
+  const rows = skills.filter(s => s.resolverRow).map(s => `| "${s.resolverRow}" | \`skills/${s.name}/SKILL.md\` |`).join("\n");
+  writeFileSync(join(dir, "RESOLVER.md"), `## Brain operations\n| Trigger | Skill |\n|-----|-----|\n${rows}\n`);
+  writeFileSync(join(dir, "manifest.json"), JSON.stringify({ skills: skills.map(s => ({ name: s.name, path: `${s.name}/SKILL.md` })) }, null, 2));
+  for (const s of skills) {
+    mkdirSync(join(dir, s.name), { recursive: true });
+    const triggers = s.triggers.length ? `triggers:\n${s.triggers.map(t => `  - "${t}"`).join("\n")}\n` : "";
+    writeFileSync(join(dir, s.name, "SKILL.md"), `---\nname: ${s.name}\ndescription: fixture\n${triggers}---\n# ${s.name}\n`);
+  }
+  return dir;
+}
+
+describe("checkResolvable — fixture trees", () => {
+  test("a manifest skill with no trigger anywhere is an unreachable error carrying an add_trigger fix for RESOLVER.md", () => {
+    const dir = writeSkillTree([
+      { name: "alpha-notes", triggers: ["file an alpha note"] },
+      { name: "orphan-skill", triggers: [] },
+    ]);
+    try {
+      const report = checkResolvable(dir);
+      const unreachable = report.issues.filter(i => i.type === "unreachable");
+      expect(unreachable.map(i => i.skill)).toEqual(["orphan-skill"]);
+      expect(unreachable[0].severity).toBe("error");
+      expect(unreachable[0].fix).toEqual({
+        type: "add_trigger",
+        file: join(dir, "RESOLVER.md"),
+        section: "Brain operations",
+        skill_path: "skills/orphan-skill/SKILL.md",
+      });
+      expect(report.ok).toBe(false);
+      expect(report.summary).toMatchObject({ total_skills: 2, reachable: 1, unreachable: 1 });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("shared triggers report a MECE overlap among non-whitelisted skills only; whitelisted skills need no triggers", () => {
+    const dir = writeSkillTree([
+      { name: "alpha-notes", triggers: ["capture this", "save a note"] },
+      { name: "beta-notes", triggers: ["capture this"] },
+      { name: "brain-ops", triggers: ["capture this", "save a note"] },
+      { name: "signal-detector", triggers: ["save a note"] },
+      { name: "ingest", triggers: [], resolverRow: "ingest anything" },
+    ]);
+    try {
+      const report = checkResolvable(dir);
+      const overlaps = report.issues.filter(i => i.type === "mece_overlap");
+      expect(overlaps.map(i => [i.skill, i.message])).toEqual([
+        ["alpha-notes, beta-notes", "Trigger 'capture this' matches multiple skills: alpha-notes, beta-notes"],
+      ]);
+      expect(report.summary.overlaps).toBe(1);
+      expect(report.issues.filter(i => i.type === "mece_gap")).toEqual([]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

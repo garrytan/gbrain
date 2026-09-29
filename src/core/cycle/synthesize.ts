@@ -38,7 +38,7 @@ import { postprocessManagedSynthesis } from './synthesize-postprocess.ts';
  *     written ONLY on success (codex finding #5 deferral: no auto git commit
  *     in v1).
  *   - Idempotency via `dream:synth-v2:<source>:filename:<basename>:<hash16>`
- *     job keys (byte-stable — pinned by test/e2e/dream-synthesize-chunking).
+ *     job keys (byte-stable — pinned by test/dream-synthesize-chunking.serial.test.ts).
  *   - Edited transcripts produce slugs with content-hash suffix → no overwrite.
  *   - Degenerate triage verdicts (truncated / refusal / unparseable /
  *     score out of [0,1]) are never cached — the next cycle re-judges.

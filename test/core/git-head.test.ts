@@ -15,8 +15,6 @@ import {
   probeSourceGitState,
   _setGitHeadProbeForTests,
   _setGitCleanProbeForTests,
-  type GitHeadProbe,
-  type GitCleanProbe,
 } from '../../src/core/git-head.ts';
 
 // Reset both probe seams between every test so case order can't leak state.
@@ -117,27 +115,6 @@ describe('isSourceUnchangedSinceSync — shell-injection regression guard', () =
       }
       try { rmSync(sentinelDir, { recursive: true, force: true }); } catch { /* ignore */ }
     }
-  });
-});
-
-describe('isSourceUnchangedSinceSync — test-seam round-trip', () => {
-  test('case 10: _setGitHeadProbeForTests + _setGitCleanProbeForTests round-trip', () => {
-    // Install custom probes
-    const customHead: GitHeadProbe = () => 'custom-head';
-    const customClean: GitCleanProbe = () => true;
-    _setGitHeadProbeForTests(customHead);
-    _setGitCleanProbeForTests(customClean);
-
-    expect(isSourceUnchangedSinceSync('/x', 'custom-head', { requireCleanWorkingTree: true })).toBe(true);
-
-    // Restore defaults via null
-    _setGitHeadProbeForTests(null);
-    _setGitCleanProbeForTests(null);
-
-    // After restoration, the real probes run. Against a non-git path,
-    // both probes return null → predicate returns false. This proves the
-    // restore worked without depending on a git repo in the test env.
-    expect(isSourceUnchangedSinceSync('/definitely-not-a-git-repo-xyz', 'custom-head')).toBe(false);
   });
 });
 

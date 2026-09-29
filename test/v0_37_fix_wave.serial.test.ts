@@ -245,12 +245,6 @@ describe('v0.37 Lane C.3 — Voyage key reaches buildGatewayConfig', () => {
     }
   });
 
-  test('GBrainConfig type includes voyage_api_key field (TS compile guard)', async () => {
-    const { type } = await import('../src/core/config.ts').then(m => ({ type: undefined }));
-    // The type-level assertion happens at compile time. If this file
-    // compiles, the field exists. Body of the test is a runtime no-op.
-    expect(true).toBe(true);
-  });
 });
 
 // Lane D.1 — engine-kind branching already covered in test/embedding-dim-check.test.ts
@@ -295,11 +289,6 @@ describe('v0.37 deferred TODO shipped — gbrain reinit-pglite', () => {
     const selfHelpMatch = src.match(/const CLI_ONLY_SELF_HELP = new Set\(\[([\s\S]*?)\]\)/);
     expect(selfHelpMatch).not.toBeNull();
     expect(selfHelpMatch![1]).toContain(`'reinit-pglite'`);
-  });
-
-  test('reinit-pglite module exports runReinitPglite', async () => {
-    const mod = await import('../src/commands/reinit-pglite.ts');
-    expect(typeof mod.runReinitPglite).toBe('function');
   });
 
   test('embeddingMismatchMessage PGLite branch recommends `gbrain reinit-pglite`', async () => {
