@@ -731,7 +731,18 @@ async function runGraphCmd(args: string[]): Promise<void> {
 async function runLintCmd(args: string[]): Promise<void> {
   const { json, positional } = parseFlags(args);
   const withDb = args.includes('--with-db');
-  const name = positional[0];
+  // parseFlags only strips the flags it knows about (--json, --source[-id]);
+  // an unrecognized flag like --with-db lands in `positional` too. Taking
+  // positional[0] unconditionally mistook a bare `--with-db` (no pack name
+  // given) for the pack name itself: `gbrain schema lint --with-db` failed
+  // with "Pack not found: --with-db" instead of DB-plane-linting the active
+  // pack, and `gbrain schema lint --with-db <name>` (flag before name)
+  // reported the wrong pack. Match runShow's `!a.startsWith('--')` filter
+  // so any leading/embedded unrecognized flag is skipped, not adopted as
+  // the pack name. This only covers boolean (no-value) unrecognized flags
+  // like --with-db — a future value-taking flag not already handled by
+  // parseFlags (e.g. `--foo bar`) would still misparse `bar` as the name.
+  const name = positional.find((p) => !p.startsWith('--'));
   const cfg = loadConfig();
   // v0.40.6.0 Phase 5: swap basic 2-rule check for the rich 11-rule lint
   // suite from Phase 1.5. File-plane rules run by default; --with-db
