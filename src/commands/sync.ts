@@ -46,6 +46,8 @@ export interface SyncResult {
    * bookmark advancement; rename the files to import them.
    */
   malformedSkipped?: number;
+  /** #5751: unchanged managed working-tree files skipped although a no-op publication cannot resolve their admit reason. */
+  legacySkips?: { contextualMode: number; canonicalBytes: number };
   /** Managed sync: files skipped because another origin keeps their slug, and links derived after the checkpoint. */
   slugCollisions?: import('../core/persistence/sync-discovery.ts').SyncSlugCollision[]; links?: import('../core/persistence/links-maintenance.ts').ManagedLinkExtraction;
   /**
@@ -91,6 +93,8 @@ export interface SyncResult {
    * everything," the exact misdiagnosis in the #1794 recurrence report.
    */
   bankedFiles?: number;
+  /** Fix wave 4: connector items held after repeated item-scoped failures (not blocking freshness). */
+  connectorHolds?: { held: number; newly_held: number; retry_command: string; status_command: string };
 }
 
 // The cost-gate / token-estimate cluster (estimateSourceTreeTokens,

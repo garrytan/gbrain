@@ -23,6 +23,7 @@ import { isPathContained } from './path-confine.ts';
 import { defaultCloneDir } from './sources-ops.ts';
 import { gbrainPath } from './config.ts';
 import { isUndefinedColumnError, isUndefinedTableError } from './utils.ts';
+import { deleteSourceRow } from './source-delete.ts';
 
 // ── Types ───────────────────────────────────────────────────
 
@@ -495,16 +496,7 @@ export async function purgeExpiredSources(
   for (const candidate of candidates) {
     const { id } = candidate;
     try {
-      const rows = await engine.executeRaw<{ id: string }>(
-        `DELETE FROM sources
-         WHERE id = $1
-           AND archived = true
-           AND archive_expires_at IS NOT NULL
-           AND archive_expires_at <= now()
-         RETURNING id`,
-        [id],
-      );
-      if (rows.length > 0) {
+      if (await deleteSourceRow(engine, id, { expiredArchiveOnly: true })) {
         purged.push(id);
         // github-kind mirrors are gbrain-owned only when created at the
         // default clone location. Never recursively delete an altered or

@@ -8,7 +8,7 @@ import { OperationError, type OperationContext } from '../ops/contract.ts';
 import { assertPageRevision } from '../page-state/types.ts';
 import { initializeLocalPersistence, requestPrincipalForContext } from './page-mutations.ts';
 import { submissionAuthority, authorizeStoredRequest } from './authority.ts';
-import { admitWrite, assertReplayIntent, getWriteRequest, intentDigest } from './journal.ts';
+import { admitWrite, assertLifetimeIdHeadroom, assertReplayIntent, getWriteRequest, intentDigest } from './journal.ts';
 import { getWorktreeBinding } from './ownership.ts';
 import { digest, requireUuid } from './digest.ts';
 import { waitForWrite, writeResponse } from './service.ts';
@@ -33,6 +33,14 @@ export async function grandfatherCanonicalPage(engine: BrainEngine, selected: Gr
  * one commit per page. `complete()` waits for the publication and settles the
  * page's checkpoint exactly as the serial path does.
  */
+/** Refuse a managed grandfather pass up front when its page admissions cannot fit the ID caps. */
+export async function assertGrandfatherCapacity(engine: BrainEngine, pages: number): Promise<void> {
+  const ctx: OperationContext = { engine, config: loadConfig() ?? { engine: engine.kind }, sourceId: 'default', remote: false, dryRun: false,
+    logger: { info() {}, warn() {}, error() {} } };
+  await initializeLocalPersistence(ctx);
+  await assertLifetimeIdHeadroom(engine, await requestPrincipalForContext(ctx), pages);
+}
+
 export async function admitCanonicalGrandfather(engine: BrainEngine, selected: GrandfatherSelection,
   before: (page: GrandfatherSelection & { frontmatter: Record<string, unknown>; knowledge_revision: string; request_id: string }) => void | Promise<void>,
 ): Promise<{ status: 'skipped' } | { status: 'admitted'; complete: () => Promise<GrandfatherOutcome> }> {

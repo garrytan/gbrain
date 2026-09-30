@@ -57,6 +57,12 @@ export const CONNECTOR_INTENT_OUTDATED_OLD_HOST = 'A connector host older than t
  * a stored receipt: connector codes, the #5254 unbound-source publication
  * refusal, and the per-item embedding refusal.
  */
+/** Fix wave 4: recovery for `connector_fence_below_timeline`. */
+export function connectorFenceHint(source: string): string {
+  return `Preview the fix: gbrain repair connector-fences --source ${source}; apply it after review: gbrain repair connector-fences --source ${source} --apply; `
+    + `then re-attempt the item: gbrain sources retry-held ${source}`;
+}
+
 export function receiptDeliveredHint(receipt: { error_code?: string | null; error_message?: string | null; source_id?: string; slug?: string | null; intent?: Record<string, unknown> | null }):
   { suggestion: string; detail?: string; docs: string } | null {
   const source = receipt.source_id ?? '<source>';
@@ -82,6 +88,8 @@ export function receiptDeliveredHint(receipt: { error_code?: string | null; erro
         suggestion: `The embedding provider gave no usable vector for some chunks of ${slug}; the other chunks were stored and nothing is retried. `
           + `Inspect those chunks' text (empty, whitespace- or symbol-only chunks are the usual cause) or the provider, then run gbrain embed ${slug}${sourceFlag}.` };
     }
+    case 'connector_fence_below_timeline':
+      return { docs: docsAnchor('connector_fence_below_timeline'), detail: 'fence_not_carried', suggestion: connectorFenceHint(source) };
     case 'owner_unavailable':
       if (receipt.error_message === CONNECTOR_BOUND_MESSAGE) return { suggestion: CONNECTOR_BOUND_HINT, docs: UNBOUND_SOURCE_DOCS };
       if (receipt.error_message !== UNBOUND_PUBLICATION_MESSAGE) return null;

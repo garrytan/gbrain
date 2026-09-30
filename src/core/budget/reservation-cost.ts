@@ -44,7 +44,7 @@ export function canonicalPricingKey(modelId: string): string {
  * dated id must also price the alias the operator configured, or the alias
  * silently bills at list price while the table lookup below resolves it.
  */
-function overrideFor(modelId: string, overrides?: PricingOverrides): ModelPricing | null {
+export function overrideFor(modelId: string, overrides?: PricingOverrides): ModelPricing | null {
   if (!overrides) return null;
   const raw = modelId.trim().toLowerCase();
   return overrides[raw] ?? overrides[canonicalPricingKey(modelId.trim()).toLowerCase()] ?? null;

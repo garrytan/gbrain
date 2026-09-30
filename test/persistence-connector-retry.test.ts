@@ -12,7 +12,7 @@ import { beginConnectorSync } from '../src/core/persistence/connector-sync.ts';
 import { compactWriteReceipts } from '../src/core/persistence/journal.ts';
 import { purgeStaleCheckpoints } from '../src/core/op-checkpoint.ts';
 import { withEnv } from './helpers/with-env.ts';
-import { createConnectorFixture, options, json, googleConfig, githubConfig, contact, issueFixture, githubFetch, sourceCheckpoint, connectorPendingSet } from './helpers/connector-fixture.ts';
+import { createConnectorFixture, options, json, googleConfig, githubConfig, contact, issueFixture, githubFetch, sourceCheckpoint, sourceCursor, cursorOf, connectorPendingSet } from './helpers/connector-fixture.ts';
 
 const { engines, env, backends, source, boundSource, standaloneConnector, setup, teardown } = createConnectorFixture();
 beforeAll(setup, 120_000);
@@ -66,7 +66,7 @@ test('explicit connector retry replaces a real storage failure without changing 
       const [failed] = await engine.executeRaw<WriteRequest>("SELECT * FROM persistence_requests WHERE source_id=$1 AND state='failed'", [f.id]);
       expect(failed).toMatchObject({ error_code: 'storage_error', recovery: null });
       expect(readFileSync(path, 'utf8')).toBe(initial);
-      expect(await sourceCheckpoint(engine, f.id)).toEqual(checkpoint);
+      expect(await sourceCursor(engine, f.id)).toEqual(cursorOf(checkpoint));
       if (compact) {
         await engine.executeRaw("UPDATE persistence_requests SET completed_at=now()-interval '31 days' WHERE id=$1::uuid", [failed.id]);
         expect(await compactWriteReceipts(engine)).toBeGreaterThanOrEqual(1);
@@ -146,7 +146,7 @@ test('explicit retries survive compaction for bound and database-only Google and
     await disposePersistenceConsumer(engine);
     const [failed] = await engine.executeRaw<WriteRequest>("SELECT * FROM persistence_requests WHERE source_id=$1 AND state='failed'", [f.id]);
     expect(failed.recovery).toBeNull();
-    expect(await sourceCheckpoint(engine, f.id)).toEqual(f.checkpoint);
+    expect(await sourceCursor(engine, f.id)).toEqual(cursorOf(f.checkpoint));
     await engine.executeRaw("UPDATE persistence_requests SET completed_at=now()-interval '31 days' WHERE id=$1::uuid", [failed.id]);
     await compactWriteReceipts(engine);
     const [immutable] = await engine.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE id=$1::uuid', [failed.id]);
@@ -175,7 +175,7 @@ test('checkpoint storage failures require explicit retry after pages have alread
     await disposePersistenceConsumer(engine);
     const [failed] = await engine.executeRaw<WriteRequest>("SELECT * FROM persistence_requests WHERE source_id=$1 AND state='failed'", [f.id]);
     expect(failed.intent?.kind).toBe('connector_v2_checkpoint');
-    expect(await sourceCheckpoint(engine, f.id)).toEqual(f.checkpoint);
+    expect(await sourceCursor(engine, f.id)).toEqual(cursorOf(f.checkpoint));
     await engine.executeRaw("UPDATE persistence_requests SET completed_at=now()-interval '31 days' WHERE id=$1::uuid", [failed.id]);
     await compactWriteReceipts(engine);
     const [immutable] = await engine.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE id=$1::uuid', [failed.id]);
@@ -266,7 +266,7 @@ test('concurrent connector approvals and a restarted paused owner retain one pen
       else expect(result.reason).toMatchObject({ code: 'write_pending', writeRequest: { request_id: retry.request_id } });
     }
     await disposePersistenceConsumer(engine);
-    expect(await sourceCheckpoint(engine, f.id)).toEqual(f.checkpoint);
+    expect(await sourceCursor(engine, f.id)).toEqual(cursorOf(f.checkpoint));
     const restarted = await standaloneConnector(engine, f, githubConfig, false, true);
     expect(restarted.exitCode).toBe(1);
     expect(restarted.stdout).not.toContain('CONNECTOR_FIXTURE_FETCH');
@@ -298,7 +298,7 @@ test('concurrent database-only connector retry approvals admit one replacement o
     expect(retries).toHaveLength(1);
     expect(retries[0]).toMatchObject({ state: 'committed', worktree_id: null });
     expect((await engine.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE id=$1::uuid', [original.id]))[0]).toEqual(original);
-    expect(await sourceCheckpoint(engine, f.id)).toEqual(f.checkpoint);
+    expect(await sourceCursor(engine, f.id)).toEqual(cursorOf(f.checkpoint));
     expect(await engine.executeRaw("SELECT fingerprint FROM op_checkpoints WHERE op='managed-connector-retry' AND completed_keys->0->>'checkpointKey'=$1", [f.checkpointKey])).toHaveLength(1);
   }
 }), 120_000);
@@ -376,7 +376,7 @@ test('connector retry approval is atomic and a lost acknowledgement reuses the c
     expect(lostAck).toBe(true);
     const [retry] = await engine.executeRaw<WriteRequest>("SELECT * FROM persistence_requests WHERE source_id=$1 AND intent->>'retryOf'=$2", [f.id, original.request_id]);
     expect(retry.state).toBe('queued');
-    expect(await sourceCheckpoint(engine, f.id)).toEqual(f.checkpoint);
+    expect(await sourceCursor(engine, f.id)).toEqual(cursorOf(f.checkpoint));
     expect((await f.run(true)).status).not.toBe('partial');
     expect((await engine.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE id=$1::uuid', [retry.id]))[0].state).toBe('committed');
     expect(await engine.executeRaw("SELECT id FROM persistence_requests WHERE source_id=$1 AND intent->>'retryOf'=$2", [f.id, original.request_id])).toHaveLength(1);

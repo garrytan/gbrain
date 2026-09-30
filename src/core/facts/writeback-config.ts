@@ -60,6 +60,14 @@ export const WRITEBACK_MODES = Object.freeze(['off', 'salient', 'all'] as const)
 export type WritebackMode = (typeof WRITEBACK_MODES)[number];
 export const DEFAULT_TRANSIENT_TTL = '3d';
 
+/** #5671: the consequence + fix shared by `bootstrap harness` and doctor when
+ * an explicit private default meets remote (MCP/HTTP) readers — remote reads
+ * are world-only (ops/facts.ts honors include_private for ctx.remote===false). */
+export const PRIVATE_DEFAULT_REMOTE_CONSEQUENCE =
+  'remote sessions read world-visible facts only, so they cannot recall or forget the private facts they save ' +
+  '(extract_facts, the writeback backstop and the ambient instructions all write private here). ' +
+  'Keep private only if that is intended; otherwise: gbrain config set facts.default_visibility world';
+
 /** Engine-free resolution (hook child + stdio boot): no visibility arm. */
 export interface WritebackFileConfig {
   mode: WritebackMode;

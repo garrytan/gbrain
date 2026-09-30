@@ -184,6 +184,21 @@ export const ROLLBACK_CASES: RollbackCase[] = [
     },
   },
   {
+    domain: 'pages (attendance marker)',
+    async seed(engine) {
+      await seedPage(engine);
+    },
+    async write(tx) {
+      const snapshot = await tx.readPageSnapshot(SLUG, { sourceId: 'default' });
+      expect(await tx.markPagesAttendanceBlocked([{ slug: SLUG, source_id: 'default', revision: snapshot!.revision }])).toBe(1);
+    },
+    async observe(engine) {
+      const rows = await engine.executeRaw<{ blocked: boolean }>(
+        `SELECT links_attendance_blocked_revision IS NOT NULL AS blocked FROM pages WHERE slug = $1 AND source_id = 'default'`, [SLUG]);
+      return rows[0]?.blocked ?? null;
+    },
+  },
+  {
     domain: 'tags',
     async seed(engine) {
       await seedPage(engine);

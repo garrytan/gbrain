@@ -202,6 +202,18 @@
         "name": "connector_checkpoints"
       },
       {
+        "category": "ops",
+        "name": "persistence_request_indexes"
+      },
+      {
+        "category": "ops",
+        "name": "persistence_request_growth"
+      },
+      {
+        "category": "brain",
+        "name": "connector_held_items"
+      },
+      {
         "category": "brain",
         "name": "unbound_source"
       },

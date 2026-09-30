@@ -159,30 +159,7 @@ done
 
 # Step 3: smoke-test run-e2e.sh argv + shard handling.
 echo "[ci-local] Smoke: run-e2e.sh argv + shard..."
-SMOKE_NO_ARGS=$(bash scripts/run-e2e.sh --dry-run-list | wc -l | tr -d ' ')
-# run-e2e.sh's no-arg list is the test/e2e glob PLUS phantom-redirect-engine-
-# parity (lives in test/; its Postgres arm is only reachable through this
-# DATABASE_URL-bearing lane — see the comment in run-e2e.sh). Mirror that +1
-# here or the smoke check fails on every tree where the counts drift.
-EXPECTED_ALL=$(( $(ls test/e2e/*.test.ts | wc -l | tr -d ' ') + 1 ))
-if [ "$SMOKE_NO_ARGS" != "$EXPECTED_ALL" ]; then
-  echo "[ci-local] ERROR: --dry-run-list (no args) printed $SMOKE_NO_ARGS, expected $EXPECTED_ALL" >&2
-  exit 1
-fi
-SMOKE_ONE_ARG=$(bash scripts/run-e2e.sh --dry-run-list test/e2e/sync.test.ts)
-if [ "$SMOKE_ONE_ARG" != "test/e2e/sync.test.ts" ]; then
-  echo "[ci-local] ERROR: --dry-run-list with 1 arg printed '$SMOKE_ONE_ARG'" >&2
-  exit 1
-fi
-SHARD_TOTAL=$(( $(SHARD=1/4 bash scripts/run-e2e.sh --dry-run-list | wc -l) + \
-                $(SHARD=2/4 bash scripts/run-e2e.sh --dry-run-list | wc -l) + \
-                $(SHARD=3/4 bash scripts/run-e2e.sh --dry-run-list | wc -l) + \
-                $(SHARD=4/4 bash scripts/run-e2e.sh --dry-run-list | wc -l) ))
-if [ "$SHARD_TOTAL" != "$EXPECTED_ALL" ]; then
-  echo "[ci-local] ERROR: shards 1-4 covered $SHARD_TOTAL files, expected $EXPECTED_ALL" >&2
-  exit 1
-fi
-echo "[ci-local] Smoke OK ($SMOKE_NO_ARGS files no-arg, 1 single-arg, ${SHARD_TOTAL}=4-shard total)."
+bash scripts/ci-local-e2e-smoke.sh
 
 # Step 4: build the runner-side command.
 # Tier 1: 4-shard parallel UNIT + E2E. Each shard runs ~46 unit files + ~9

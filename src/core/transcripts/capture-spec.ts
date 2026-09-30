@@ -28,7 +28,7 @@ export type CaptureHarness = 'claude-code' | 'codex';
 
 export interface HarnessCaptureSpec {
   /** Validate an untrusted transcript path against THIS harness's pinned root. */
-  confine(p: unknown, opts?: { root?: string; maxBytes?: number }): ConfineTranscriptResult;
+  confine(p: unknown, opts?: { root?: string; maxBytes?: number; allowOversize?: boolean }): ConfineTranscriptResult;
   /** Parse to the hook lane's shared ParsedTranscript shape.
    * `collectToolCalls: false` (the memorable-off default path) skips the
    * tool-call/result collection + join entirely — that data exists only for

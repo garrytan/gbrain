@@ -1761,9 +1761,12 @@ export async function embedOne(text: string, opts?: EmbedOpts): Promise<Float32A
 
 export async function embedQuery(
   text: string,
-  opts?: { embeddingModel?: string; dimensions?: number; abortSignal?: AbortSignal },
+  opts?: { embeddingModel?: string; dimensions?: number; abortSignal?: AbortSignal; queryPrefix?: string },
 ): Promise<Float32Array> {
-  const [v] = await embed([text], {
+  // #5691: instruction-style models (Qwen3-Embedding, e5, BGE, nomic) take a
+  // query instruction. The caller resolves it per brain (search/query-prefix.ts);
+  // documents are never prefixed.
+  const [v] = await embed([(opts?.queryPrefix ?? '') + text], {
     inputType: 'query',
     embeddingModel: opts?.embeddingModel,
     dimensions: opts?.dimensions,

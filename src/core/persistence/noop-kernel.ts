@@ -18,6 +18,13 @@
  * The preparer's own `validate` then re-checks authority, source incarnation,
  * identity and revision before the skip is counted. Anything else is admitted
  * and published exactly as before.
+ *
+ * #5751: a caller may waive two admit reasons that its no-op publication can
+ * never resolve (so admitting them re-admits the same item on every run): a
+ * pending contextual-mode stamp (only an import that changes the page, or
+ * `gbrain repair contextual-mode`, stamps it) and canonical file bytes that
+ * differ from the prepared content while parsing to the same page. Every
+ * other check still runs; the result lists each waiver it applied.
  */
 import type { BrainEngine } from '../engine.ts';
 import type { PreparedMutation } from './coordinator.ts';
@@ -34,7 +41,10 @@ export interface NoopKernelResult {
   observedRevision: string | null;
   /** Why the item is admitted; absent when it may be skipped. */
   admitReason?: 'content_changed' | 'page_missing' | 'page_deleted' | 'revision_moved' | 'projection_work' | 'metadata_work' | 'canonical_file_differs';
+  /** The caller's waivers that this skip relied on. */
+  waived?: NoopKernelWaiver[];
 }
+export type NoopKernelWaiver = 'contextual_mode' | 'canonical_file_differs';
 
 /** A request-shaped value for preparers; it is never admitted or persisted. */
 export function screeningRequest(fields: Pick<WriteRequest, 'source_id' | 'source_incarnation' | 'slug' | 'page_id' | 'worktree_id' | 'authority' | 'intent'>
@@ -48,6 +58,7 @@ export async function inspectUnchanged(engine: Pick<BrainEngine, 'executeRaw'>, 
   prepared: PreparedMutation; snapshot: PageSnapshot | null; sourcePath: string | null; databaseOnly: boolean;
   /** The publication would queue an embedding effect: a page with unembedded chunks is then not skipped. */
   embeddingRequested?: boolean;
+  waive?: readonly NoopKernelWaiver[];
 }): Promise<NoopKernelResult> {
   const { prepared, snapshot } = input;
   const observedRevision = prepared.observedRevision ?? null;
@@ -65,15 +76,22 @@ export async function inspectUnchanged(engine: Pick<BrainEngine, 'executeRaw'>, 
       EXISTS (SELECT 1 FROM content_chunks c WHERE c.page_id=p.id AND c.embedding IS NULL) AS unembedded
     FROM pages p WHERE p.id=$1 AND p.deleted_at IS NULL`, [snapshot.page.id]);
   if (!page) return result('page_missing');
+  const waived: NoopKernelWaiver[] = [];
+  const modePending = page.mode_pending === true;
+  if (modePending && input.waive?.includes('contextual_mode')) waived.push('contextual_mode');
   const projectionWorkRequired = belowSafeChunkFence(page.chunker_version === null ? null : Number(page.chunker_version))
-    || page.text_projection_revision !== page.knowledge_revision || page.mode_pending === true
+    || page.text_projection_revision !== page.knowledge_revision || modePending && !waived.includes('contextual_mode')
     || input.embeddingRequested === true && page.unembedded === true;
   if (projectionWorkRequired) return result('projection_work', { projectionWorkRequired });
   const metadataWorkRequired = input.sourcePath !== null && page.source_path !== input.sourcePath;
   if (metadataWorkRequired) return result('metadata_work', { metadataWorkRequired });
   if (!input.databaseOnly) {
     const file = prepared.file;
-    if (!file || file.content === null || persistenceFileHash(file.path) !== sha256(file.content)) return result('canonical_file_differs');
+    const onDisk = file && file.content !== null ? persistenceFileHash(file.path) : null;
+    if (!file || file.content === null || onDisk !== sha256(file.content)) {
+      if (onDisk === null || !input.waive?.includes('canonical_file_differs')) return result('canonical_file_differs');
+      waived.push('canonical_file_differs');
+    }
   }
-  return result();
+  return result(undefined, waived.length ? { waived } : {});
 }

@@ -3,6 +3,13 @@ import { isTerminalWriteState, isWriteErrorCode, type WriteErrorCode, type Write
 import { pendingWriteHint } from './health.ts';
 import { UNBOUND_COLLISION_MESSAGE, UNBOUND_PUBLICATION_MESSAGE } from './unbound-source.ts';
 
+const FRONTMATTER_SLUG_CONFLICT = /^The frontmatter slug "[^"\n]{1,300}" in [^/"\n][^"\n]{0,1000} conflicts with its path, which expects slug "[^"\n]{1,300}"\. Remove `slug:` or make it match the path\.$/;
+
+/** Sync refusal for a file whose frontmatter `slug:` names a different page than its path does. */
+export function frontmatterSlugConflictMessage(path: string, found: string, expected: string): string {
+  return `The frontmatter slug "${found}" in ${path} conflicts with its path, which expects slug "${expected}". Remove \`slug:\` or make it match the path.`;
+}
+
 export function writeFailureDiagnostic(code: string, message?: string | null): { reason: string; message: string; suggestion: string } {
   if (code === 'source_changed') {
     if (message === 'The canonical file contains an uncoordinated local edit.') return {
@@ -51,6 +58,8 @@ export function writeFailureDiagnostic(code: string, message?: string | null): {
     suggestion: 'Check the current caller grant for this source and operation. Content reconciliation does not grant permissions.' };
   if (code === 'revision_conflict' || code === 'page_identity_changed') return { reason: code, message: 'The accepted page identity or revision no longer matches.',
     suggestion: 'Read the current page and review the intended change before submitting a corrected write.' };
+  if (code === 'invalid_params' && message && FRONTMATTER_SLUG_CONFLICT.test(message)) return { reason: code, message,
+    suggestion: 'Correct the frontmatter in the file and commit the change.' };
   return { reason: isWriteErrorCode(code) ? code : 'storage_error', message: 'The write did not commit. Inspect its durable request on the source host.',
     suggestion: 'Resolve the reported write failure before starting a corrected attempt.' };
 }

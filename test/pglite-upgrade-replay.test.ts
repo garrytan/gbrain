@@ -15,8 +15,10 @@
  *
  * Asserts, on the extracted brain (file-backed, so the GBRAIN_PGLITE_SNAPSHOT
  * fast path can never apply):
- *   - before boot the catalog equals the committed E4 fresh-install golden
- *     (catalog/pglite-engine-init-default), ordinals included (T-G13);
+ *   - before boot the catalog equals the E4 fresh-install golden of the
+ *     fixture's schema version (pglite-upgrade-replay/catalog-before-boot, a
+ *     copy of catalog/pglite-engine-init-default at pin time), ordinals
+ *     included (T-G13);
  *   - the upgrade boot succeeds and its catalog is pinned as its own golden
  *     (pglite-upgrade-replay/catalog-after-boot). MASTER FINDING: it is NOT
  *     byte-identical to a fresh install. `initSchema()` replays the schema
@@ -65,7 +67,12 @@ import {
   fixtureDataStats,
 } from './helpers/pglite-upgrade-fixture.ts';
 
-const FRESH_GOLDEN = 'catalog/pglite-engine-init-default';
+/**
+ * The E4 fresh-install catalog at the fixture's own schema version, copied from
+ * `catalog/pglite-engine-init-default` when the fixture was pinned. That golden
+ * moves with every schema migration; the pinned brain does not.
+ */
+const FRESH_GOLDEN = 'pglite-upgrade-replay/catalog-before-boot';
 /**
  * Master finding (see header): functions whose body text on an upgraded brain
  * differs from a fresh install by whitespace only.
@@ -185,9 +192,12 @@ describe('PGLite upgrade replay (EO3)', () => {
   });
 
   test('before boot, the pinned brain matches the E4 fresh-install golden', () => {
-    expect(existsSync(join(GOLDENS_DIR, `${FRESH_GOLDEN}.json`))).toBe(true);
+    expect(existsSync(join(GOLDENS_DIR, 'pglite-upgrade-replay/catalog-before-boot.json'))).toBe(true);
     expect(requirePhase('beforeBoot').version).toBe(manifest.schema_version);
-    expect(describeCatalogGoldenDrift(FRESH_GOLDEN, requirePhase('beforeBoot').catalog)).toBe('');
+    // The fresh-install golden of the schema generation that built the fixture
+    // (a copy of catalog/pglite-engine-init-default at that version); the live
+    // fresh-install golden moves with every later schema change.
+    expect(describeCatalogGoldenDrift('pglite-upgrade-replay/catalog-before-boot', requirePhase('beforeBoot').catalog)).toBe('');
   });
 
   test('upgrade boot succeeds; its catalog is pinned and differs from a fresh install only by function whitespace', async () => {

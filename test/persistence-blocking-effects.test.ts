@@ -57,8 +57,7 @@ for (const kind of testBackends()) {
       expect(suggestion.startsWith(WRITER_INSPECTION_HINT)).toBe(true);
       expect(suggestion).toContain(`Blocking effect ${effect.id} (kind embedding, state queued) for source effects-example, page notes/stuck, request ${published.request_id}.`);
       expect(suggestion).toContain('Inspect it with: gbrain sources writer status effects-example --json.');
-      expect(suggestion).toContain('Inspection cannot clear it');
-      expect(suggestion).toContain('deferred reconcile path');
+      expect(suggestion).toContain('gbrain repair embedding-effects --source effects-example (preview first, then --apply)');
 
       const expected = { effect_id: effect.id, kind: 'embedding', state: 'queued', recovering: false, source_id: 'effects-example',
         slug: 'notes/stuck', request_id: published.request_id, inspect: 'gbrain sources writer status effects-example --json' };

@@ -21,6 +21,10 @@ import { visibilityRepair } from './visibility.ts';
 import { safeChunksRepair } from './safe-chunks.ts';
 import { contextualModeRepair } from './contextual-mode.ts';
 import { connectorCheckpointsRepair } from './connector-checkpoints.ts';
+import { requestIndexesRepair } from './request-indexes.ts';
+import { connectorFencesRepair } from './connector-fences.ts';
+import { orphanBindingsRepair } from './orphan-bindings.ts';
+import { embeddingEffectsRepair } from './embedding-effects.ts';
 
 export interface RepairKindSpec {
   kind: RepairKind;
@@ -56,6 +60,28 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
     handler: connectorCheckpointsRepair, embeds: 'none', checks: ['connector_checkpoints'],
     summary: 'Delete connector checkpoint rows and retry pointers that no registered connector source can load and that are older than 7 days (#5686). '
       + 'Cleanup only; no journal admission. Rows a pending write still references are kept. Brain-wide.',
+  },
+  'request-indexes': {
+    handler: requestIndexesRepair, embeds: 'none', checks: ['persistence_request_indexes'],
+    summary: 'Create a missing managed sync request index, or drop an INVALID one and rebuild it (#5762), so sync checkpoints validate within their '
+      + 'statement budget. Postgres builds CONCURRENTLY, one index at a time. No journal admission and no user data changes. Brain-wide.',
+  },
+  'connector-fences': {
+    handler: connectorFencesRepair, embeds: 'effect', checks: [],
+    summary: 'Move facts and takes fences that sit below the timeline sentinel of Google and GitHub pages into the page body, so connector re-renders '
+      + 'carry them instead of refusing with connector_fence_below_timeline (fix wave 4). Ambiguous fences are kept and counted for a manual edit. '
+      + 'Each repaired page is re-embedded by its publication.',
+  },
+  'orphan-bindings': {
+    handler: orphanBindingsRepair, embeds: 'none', checks: ['orphan_persistence_bindings'],
+    summary: 'Delete persistence source bindings whose source or source incarnation no longer exists (#5732), so a source re-added under the same id can be claimed again. '
+      + 'Bookkeeping only; no journal admission. A binding a pending request still references is kept. Brain-wide.',
+  },
+  'embedding-effects': {
+    handler: embeddingEffectsRepair, embeds: 'effect', checks: ['stale_embedding_effects'],
+    summary: 'Settle stale queued or failed embedding effects of committed writes (#5629, #5734), which block receipt compaction and activation. '
+      + 'Each effect is reconciled (current vectors pass the effect verifier), superseded (page deleted, or a newer revision owns its own effect), '
+      + 'retry_queued for its owner (paid; a consumed retry allowance gets one new bounded cycle per explicit run) or blocked with the reason. Never drops an obligation.',
   },
 };
 

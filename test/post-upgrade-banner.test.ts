@@ -20,7 +20,7 @@ describe('post-upgrade recovery banner', () => {
       expect(text).toContain('brain host (pglite, id test-brain)');
       expect(text).toContain('timeline_history: 1 (repairable after the user agrees)');
       expect(text).toContain('self_capture: 1 (needs an operator action)');
-      expect(text).toContain('stale_embedding_effects: 1 (reported only; no command clears it yet)');
+      expect(text).toContain('stale_embedding_effects: 1 (repairable after the user agrees)');
       expect(text).toContain('Preview (read-only): gbrain doctor --remediation-plan');
       expect(text).toContain('Ask the user before applying');
       expect(text).not.toContain('--yes');

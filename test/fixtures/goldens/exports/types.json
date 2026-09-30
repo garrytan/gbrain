@@ -58,7 +58,7 @@
           "consolidateFact: (id: number, takeId: number) => Promise<void>",
           "countChunklessPagesWithContent: (opts?: { sourceId?: string; }) => Promise<number>",
           "countStaleChunks: (opts?: { sourceId?: string; signature?: string; includeNullSignature?: boolean; }) => Promise<number>",
-          "countStalePagesForExtraction: (opts?: { sourceId?: string; versionTs?: string; }) => Promise<number>",
+          "countStalePagesForExtraction: (opts?: { sourceId?: string; versionTs?: string; attendance?: \"exclude\" | \"blocked\"; }) => Promise<number>",
           "countStaleTakes: () => Promise<number>",
           "countUnconsolidatedFacts: (source_id: string) => Promise<number>",
           "createVersion: (slug: string, opts?: { sourceId?: string; }) => Promise<PageVersion>",
@@ -151,6 +151,7 @@
           "logEvalCandidate: (input: EvalCandidateInput) => Promise<number>",
           "logEvalCaptureFailure: (reason: EvalCaptureFailureReason) => Promise<void>",
           "logIngest: (entry: IngestLogInput) => Promise<void>",
+          "markPagesAttendanceBlocked: (refs: Array<{ slug: string; source_id: string; revision: string; }>) => Promise<number>",
           "markPagesExtractedBatch: (refs: Array<{ slug: string; source_id: string; extractedAt?: string; }>, defaultExtractedAt: string) => Promise<number>",
           "mergeOntologyFact: (obs: OntologyObservationInput) => Promise<OntologyMergeResult>",
           "migrateFactsToCanonical: (phantomSlug: string, canonicalSlug: string, sourceId: string) => Promise<{ migrated: number; }>",
@@ -927,6 +928,7 @@
           "knowledge_revision?: string | null | undefined",
           "page_id: number",
           "snapshot_at: Date",
+          "source_path?: string | null | undefined",
           "tags?: string[] | null | undefined",
           "timeline?: string | null | undefined",
           "title?: string | null | undefined",
@@ -951,7 +953,7 @@
           "consolidateFact: (id: number, takeId: number) => Promise<void>",
           "countChunklessPagesWithContent: (opts?: { sourceId?: string; }) => Promise<number>",
           "countStaleChunks: (opts?: { sourceId?: string; signature?: string; includeNullSignature?: boolean; }) => Promise<number>",
-          "countStalePagesForExtraction: (opts?: { sourceId?: string; versionTs?: string; }) => Promise<number>",
+          "countStalePagesForExtraction: (opts?: { sourceId?: string; versionTs?: string; attendance?: \"exclude\" | \"blocked\"; }) => Promise<number>",
           "countStaleTakes: () => Promise<number>",
           "countUnconsolidatedFacts: (source_id: string) => Promise<number>",
           "createVersion: (slug: string, opts?: { sourceId?: string; }) => Promise<PageVersion>",
@@ -1045,6 +1047,7 @@
           "logEvalCandidate: (input: EvalCandidateInput) => Promise<number>",
           "logEvalCaptureFailure: (reason: EvalCaptureFailureReason) => Promise<void>",
           "logIngest: (entry: IngestLogInput) => Promise<void>",
+          "markPagesAttendanceBlocked: (refs: Array<{ slug: string; source_id: string; revision: string; }>) => Promise<number>",
           "markPagesExtractedBatch: (refs: Array<{ slug: string; source_id: string; extractedAt?: string; }>, defaultExtractedAt: string) => Promise<number>",
           "mergeOntologyFact: (obs: OntologyObservationInput) => Promise<OntologyMergeResult>",
           "migrateFactsToCanonical: (phantomSlug: string, canonicalSlug: string, sourceId: string) => Promise<{ migrated: number; }>",
@@ -1904,7 +1907,7 @@
         "kind": "function",
         "name": "embedQuery",
         "signature": [
-          "(text: string, opts?: { embeddingModel?: string; dimensions?: number; abortSignal?: AbortSignal; }) => Promise<Float32Array>"
+          "(text: string, opts?: { embeddingModel?: string; dimensions?: number; abortSignal?: AbortSignal; queryPrefix?: string; }) => Promise<Float32Array>"
         ]
       },
       {
@@ -2881,7 +2884,7 @@
         "kind": "function",
         "name": "embedQuery",
         "signature": [
-          "(text: string, opts?: { embeddingModel?: string; dimensions?: number; abortSignal?: AbortSignal; }) => Promise<Float32Array>"
+          "(text: string, opts?: { embeddingModel?: string; dimensions?: number; abortSignal?: AbortSignal; queryPrefix?: string; }) => Promise<Float32Array>"
         ]
       },
       {
@@ -2973,7 +2976,7 @@
           "consolidateFact: (id: number, takeId: number) => Promise<void>",
           "countChunklessPagesWithContent: (opts?: { sourceId?: string; }) => Promise<number>",
           "countStaleChunks: (opts?: { sourceId?: string; signature?: string; includeNullSignature?: boolean; }) => Promise<number>",
-          "countStalePagesForExtraction: (opts?: { sourceId?: string; versionTs?: string; }) => Promise<number>",
+          "countStalePagesForExtraction: (opts?: { sourceId?: string; versionTs?: string; attendance?: \"exclude\" | \"blocked\"; }) => Promise<number>",
           "countStaleTakes: () => Promise<number>",
           "countUnconsolidatedFacts: (source_id: string) => Promise<number>",
           "createVersion: (slug: string, opts?: { sourceId?: string; }) => Promise<PageVersion>",
@@ -3066,6 +3069,7 @@
           "logEvalCandidate: (input: EvalCandidateInput) => Promise<number>",
           "logEvalCaptureFailure: (reason: EvalCaptureFailureReason) => Promise<void>",
           "logIngest: (entry: IngestLogInput) => Promise<void>",
+          "markPagesAttendanceBlocked: (refs: Array<{ slug: string; source_id: string; revision: string; }>) => Promise<number>",
           "markPagesExtractedBatch: (refs: Array<{ slug: string; source_id: string; extractedAt?: string; }>, defaultExtractedAt: string) => Promise<number>",
           "mergeOntologyFact: (obs: OntologyObservationInput) => Promise<OntologyMergeResult>",
           "migrateFactsToCanonical: (phantomSlug: string, canonicalSlug: string, sourceId: string) => Promise<{ migrated: number; }>",
@@ -4438,7 +4442,7 @@
         "kind": "variable",
         "name": "LINK_EXTRACTOR_VERSION_TS",
         "signature": [
-          "\"2026-09-21T00:00:00Z\""
+          "\"2026-09-30T00:00:00Z\""
         ]
       },
       {
@@ -4482,7 +4486,15 @@
       {
         "kind": "interface",
         "members": [
-          "resolve: (name: string, dirHint?: string | string[]) => Promise<string | null>",
+          "globalBasename?: boolean | undefined",
+          "selfSlug?: string | undefined"
+        ],
+        "name": "ResolveOptions"
+      },
+      {
+        "kind": "interface",
+        "members": [
+          "resolve: (name: string, dirHint?: string | string[], opts?: ResolveOptions) => Promise<string | null>",
           "resolveAttendance?: ((name: string, dirHint?: string | string[]) => Promise<string | null>) | undefined",
           "resolveBasenameMatches?: ((name: string) => Promise<string[]>) | undefined"
         ],
@@ -5260,7 +5272,7 @@
         "kind": "type",
         "name": "ErrorCode",
         "signature": [
-          "\"writer_lock_unavailable\" | \"writer_pool_capacity\" | \"owner_unavailable\" | \"recovery_required\" | \"queue_capacity\" | \"revision_required\" | \"revision_conflict\" | \"idempotency_conflict\" | \"source_changed\" | \"write_pending\" | \"storage_error\" | \"cancelled\" | \"permission_denied\" | \"scope_denied\" | \"invalid_params\" | \"not_found\" | \"page_not_found\" | \"page_identity_changed\" | \"write_claim_lost\" | \"request_too_large\" | \"response_too_large\" | \"writer_registration_required\" | \"writer_identity_invalid\" | \"writer_not_initialized\" | \"writer_coordinator_required\" | \"fact_already_expired\" | \"source_writeback_required\" | \"unsupported_mutation_protocol\" | \"writer_upgrade_required\" | \"writer_not_quiesced\" | \"skill_bundle_required\" | \"take_row_collision\" | \"invalid_source_uri\" | \"writer_admin_locked\" | \"connector_account_changed\" | \"connector_intent_outdated\" | \"embedding_failed\" | \"bucket_not_found\" | \"database_error\" | \"unknown_transport\" | \"rate_limited\" | \"extraction_failed\" | \"fact_not_found\" | \"provenance_required\" | \"unavailable\" | \"budget_unsatisfiable\" | \"embedding_budget_below_worst_case\" | (string & {})"
+          "\"writer_lock_unavailable\" | \"writer_pool_capacity\" | \"owner_unavailable\" | \"recovery_required\" | \"queue_capacity\" | \"revision_required\" | \"revision_conflict\" | \"idempotency_conflict\" | \"source_changed\" | \"write_pending\" | \"storage_error\" | \"cancelled\" | \"permission_denied\" | \"scope_denied\" | \"invalid_params\" | \"not_found\" | \"page_not_found\" | \"page_identity_changed\" | \"write_claim_lost\" | \"request_too_large\" | \"response_too_large\" | \"writer_registration_required\" | \"writer_identity_invalid\" | \"writer_not_initialized\" | \"writer_coordinator_required\" | \"fact_already_expired\" | \"source_writeback_required\" | \"unsupported_mutation_protocol\" | \"writer_upgrade_required\" | \"writer_not_quiesced\" | \"skill_bundle_required\" | \"take_row_collision\" | \"invalid_source_uri\" | \"writer_admin_locked\" | \"connector_account_changed\" | \"connector_intent_outdated\" | \"checkpoint_validation_timeout\" | \"invalid_connector_text\" | \"connector_holds_exhausted\" | \"connector_fence_below_timeline\" | \"embedding_failed\" | \"bucket_not_found\" | \"database_error\" | \"unknown_transport\" | \"rate_limited\" | \"extraction_failed\" | \"fact_not_found\" | \"provenance_required\" | \"unavailable\" | \"budget_unsatisfiable\" | \"embedding_budget_below_worst_case\" | (string & {})"
         ]
       },
       {
@@ -5344,8 +5356,8 @@
           "protocolVersion?: number | undefined",
           "stack?: string | undefined",
           "suggestion?: string | undefined",
-          "toJSON: () => { write_error?: \"writer_lock_unavailable\" | \"writer_pool_capacity\" | \"owner_unavailable\" | \"recovery_required\" | \"queue_capacity\" | \"revision_required\" | \"revision_conflict\" | \"idempotency_conflict\" | \"source_changed\" | \"write_pending\" | \"storage_error\" | \"cancelled\" | \"permission_denied\" | \"scope_denied\" | \"invalid_params\" | \"not_found\" | \"page_not_found\" | \"page_identity_changed\" | \"write_claim_lost\" | \"request_too_large\" | \"response_too_large\" | \"writer_registration_required\" | \"writer_identity_invalid\" | \"writer_not_initialized\" | \"writer_coordinator_required\" | \"fact_already_expired\" | \"source_writeback_required\" | \"unsupported_mutation_protocol\" | \"writer_upgrade_required\" | \"writer_not_quiesced\" | \"skill_bundle_required\" | \"take_row_collision\" | \"invalid_source_uri\" | \"writer_admin_locked\" | \"connector_account_changed\" | \"connector_intent_outdated\" | undefined; write_request?: WriteReceipt | undefined; error: ErrorCode; message: string; suggestion: string | undefined; docs: string | undefined; detail: string | undefined; protocol_version: number | undefined; }",
-          "writeError?: \"writer_lock_unavailable\" | \"writer_pool_capacity\" | \"owner_unavailable\" | \"recovery_required\" | \"queue_capacity\" | \"revision_required\" | \"revision_conflict\" | \"idempotency_conflict\" | \"source_changed\" | \"write_pending\" | \"storage_error\" | \"cancelled\" | \"permission_denied\" | \"scope_denied\" | \"invalid_params\" | \"not_found\" | \"page_not_found\" | \"page_identity_changed\" | \"write_claim_lost\" | \"request_too_large\" | \"response_too_large\" | \"writer_registration_required\" | \"writer_identity_invalid\" | \"writer_not_initialized\" | \"writer_coordinator_required\" | \"fact_already_expired\" | \"source_writeback_required\" | \"unsupported_mutation_protocol\" | \"writer_upgrade_required\" | \"writer_not_quiesced\" | \"skill_bundle_required\" | \"take_row_collision\" | \"invalid_source_uri\" | \"writer_admin_locked\" | \"connector_account_changed\" | \"connector_intent_outdated\" | undefined",
+          "toJSON: () => { write_error?: \"writer_lock_unavailable\" | \"writer_pool_capacity\" | \"owner_unavailable\" | \"recovery_required\" | \"queue_capacity\" | \"revision_required\" | \"revision_conflict\" | \"idempotency_conflict\" | \"source_changed\" | \"write_pending\" | \"storage_error\" | \"cancelled\" | \"permission_denied\" | \"scope_denied\" | \"invalid_params\" | \"not_found\" | \"page_not_found\" | \"page_identity_changed\" | \"write_claim_lost\" | \"request_too_large\" | \"response_too_large\" | \"writer_registration_required\" | \"writer_identity_invalid\" | \"writer_not_initialized\" | \"writer_coordinator_required\" | \"fact_already_expired\" | \"source_writeback_required\" | \"unsupported_mutation_protocol\" | \"writer_upgrade_required\" | \"writer_not_quiesced\" | \"skill_bundle_required\" | \"take_row_collision\" | \"invalid_source_uri\" | \"writer_admin_locked\" | \"connector_account_changed\" | \"connector_intent_outdated\" | \"checkpoint_validation_timeout\" | \"invalid_connector_text\" | \"connector_holds_exhausted\" | \"connector_fence_below_timeline\" | undefined; write_request?: WriteReceipt | undefined; error: ErrorCode; message: string; suggestion: string | undefined; docs: string | undefined; detail: string | undefined; protocol_version: number | undefined; }",
+          "writeError?: \"writer_lock_unavailable\" | \"writer_pool_capacity\" | \"owner_unavailable\" | \"recovery_required\" | \"queue_capacity\" | \"revision_required\" | \"revision_conflict\" | \"idempotency_conflict\" | \"source_changed\" | \"write_pending\" | \"storage_error\" | \"cancelled\" | \"permission_denied\" | \"scope_denied\" | \"invalid_params\" | \"not_found\" | \"page_not_found\" | \"page_identity_changed\" | \"write_claim_lost\" | \"request_too_large\" | \"response_too_large\" | \"writer_registration_required\" | \"writer_identity_invalid\" | \"writer_not_initialized\" | \"writer_coordinator_required\" | \"fact_already_expired\" | \"source_writeback_required\" | \"unsupported_mutation_protocol\" | \"writer_upgrade_required\" | \"writer_not_quiesced\" | \"skill_bundle_required\" | \"take_row_collision\" | \"invalid_source_uri\" | \"writer_admin_locked\" | \"connector_account_changed\" | \"connector_intent_outdated\" | \"checkpoint_validation_timeout\" | \"invalid_connector_text\" | \"connector_holds_exhausted\" | \"connector_fence_below_timeline\" | undefined",
           "writeRequest?: WriteReceipt | undefined"
         ],
         "name": "OperationError",
@@ -5530,7 +5542,7 @@
           "consolidateFact: (id: number, takeId: number) => Promise<void>",
           "countChunklessPagesWithContent: (opts?: { sourceId?: string; }) => Promise<number>",
           "countStaleChunks: (opts?: { sourceId?: string; signature?: string; includeNullSignature?: boolean; }) => Promise<number>",
-          "countStalePagesForExtraction: (opts?: { sourceId?: string; versionTs?: string; }) => Promise<number>",
+          "countStalePagesForExtraction: (opts?: { sourceId?: string; versionTs?: string; attendance?: \"exclude\" | \"blocked\"; }) => Promise<number>",
           "countStaleTakes: () => Promise<number>",
           "countUnconsolidatedFacts: (source_id: string) => Promise<number>",
           "createVersion: (slug: string, opts?: { sourceId?: string; }) => Promise<PageVersion>",
@@ -5624,6 +5636,7 @@
           "logEvalCandidate: (input: EvalCandidateInput) => Promise<number>",
           "logEvalCaptureFailure: (reason: EvalCaptureFailureReason) => Promise<void>",
           "logIngest: (entry: IngestLogInput) => Promise<void>",
+          "markPagesAttendanceBlocked: (refs: Array<{ slug: string; source_id: string; revision: string; }>) => Promise<number>",
           "markPagesExtractedBatch: (refs: Array<{ slug: string; source_id: string; extractedAt?: string; }>, defaultExtractedAt: string) => Promise<number>",
           "mergeOntologyFact: (obs: OntologyObservationInput) => Promise<OntologyMergeResult>",
           "migrateFactsToCanonical: (phantomSlug: string, canonicalSlug: string, sourceId: string) => Promise<{ migrated: number; }>",
@@ -5901,6 +5914,13 @@
         "name": "getPgliteKernelLockPath",
         "signature": [
           "(dataDir: string | undefined) => string | undefined"
+        ]
+      },
+      {
+        "kind": "function",
+        "name": "getPgliteMigrationLockPath",
+        "signature": [
+          "(dataDir: string) => string"
         ]
       },
       {
@@ -6346,6 +6366,7 @@
         "kind": "interface",
         "members": [
           "_queryEmbedDeadline?: QueryEmbedDeadline | undefined",
+          "_queryPrefix?: string | undefined",
           "_searchModeInput?: ResolveSearchModeInput | undefined",
           "_telemetryCacheStatus?: \"miss\" | \"disabled\" | undefined",
           "adaptiveReturn?: AdaptiveReturnInput",
@@ -6586,7 +6607,7 @@
         "kind": "function",
         "name": "embedQueryBounded",
         "signature": [
-          "(text: string, embedOpts: { embeddingModel?: string; dimensions?: number; } | undefined, dl: QueryEmbedDeadline) => Promise<Float32Array>"
+          "(text: string, embedOpts: { embeddingModel?: string; dimensions?: number; queryPrefix?: string; } | undefined, dl: QueryEmbedDeadline) => Promise<Float32Array>"
         ]
       },
       {
@@ -7644,6 +7665,7 @@
           "knowledge_revision?: string | null | undefined",
           "page_id: number",
           "snapshot_at: Date",
+          "source_path?: string | null | undefined",
           "tags?: string[] | null | undefined",
           "timeline?: string | null | undefined",
           "title?: string | null | undefined",

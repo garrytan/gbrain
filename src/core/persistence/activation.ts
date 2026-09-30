@@ -126,7 +126,7 @@ export async function activatePersistence(engine: BrainEngine, opts: { confirmQu
       }
       await registerLocalWriter(tx, 'cli');
       await registerLocalWriter(tx, 'stdio');
-      await tx.executeRaw('UPDATE persistence_brain SET enabled=true,activated_at=COALESCE(activated_at,now()) WHERE singleton=1');
+      await tx.executeRaw('UPDATE persistence_brain SET enabled=true,activated_at=COALESCE(activated_at,now()),mode_epoch=mode_epoch+1 WHERE singleton=1');
       // Any fsync/marker failure rolls back enabled=true. A conservative stale
       // refusal record after rollback is safe and cannot grant writer authority.
       await refreshManagedFilesystemRoots(tx, managedFilesystemDatastorePath(engine));

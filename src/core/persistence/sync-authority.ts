@@ -37,7 +37,7 @@ export async function resolveSyncPersistenceMode(engine: BrainEngine, opts: Sync
   assertSyncDispatchActive();
   if (brain?.enabled || opts.signal?.aborted) return brain?.enabled === true;
   const [source] = await engine.executeRaw<{ claimed: boolean }>(`SELECT
-    EXISTS(SELECT 1 FROM persistence_source_bindings WHERE source_id=s.id) AS claimed
+    EXISTS(SELECT 1 FROM persistence_source_bindings WHERE source_id=s.id AND source_incarnation=s.incarnation) AS claimed
     FROM sources s WHERE s.id=$1`, [opts.sourceId ?? 'default']);
   if (source?.claimed) {
     throw new OperationError('writer_coordinator_required', 'Claimed-source sync, including connectors, requires explicit persistence activation.',

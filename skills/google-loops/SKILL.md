@@ -107,6 +107,11 @@ gbrain loops mute sender <email>   # never track this sender again
 - `waiting` REFUSES on stale data (no successful sync in 24h) and names the
   exact fix (`gbrain sync --source <id>`). Run the sync, then retry. Only
   use `--stale-ok` when the user explicitly accepts stale results.
+- `completeness: "partial"` means some mail in the last 14 days is held after
+  repeated import failures (listed in `held`). Present the answer as partial:
+  name each held item (sender, and subject when shown) and its retry command
+  (`gbrain sources retry-held <id>`). Never say "you are clean" on a partial
+  answer.
 - When presenting loops, show: the counterparty, what's owed (summary), the
   evidence quote, the deep link (opens the exact Gmail thread in the right
   account), and the due date when present. The trusted-local result already
@@ -172,6 +177,8 @@ failures; never dump raw JSON envelopes at the user.
 - **Answering "who is waiting on me" from `query`/`search`.** The open-loop
   record is `open_loops` / `gbrain waiting` — search results have no
   loop-state semantics and will happily surface answered threads.
+- **Dropping `completeness: "partial"`.** A partial answer with no loops is
+  not an empty inbox; say which items are held and how to re-attempt them.
 - **Bypassing the staleness refusal with `--stale-ok` silently.** Run the
   named `gbrain sync --source <id>` first; only pass `--stale-ok` when the
   user explicitly accepts possibly-outdated loops.

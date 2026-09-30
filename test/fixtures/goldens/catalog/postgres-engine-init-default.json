@@ -186,7 +186,7 @@
       "persistence_topology_changes.persistence_topology_changes_state_check": "c CHECK ((state = ANY (ARRAY['recovering'::text, 'committed'::text, 'failed'::text])))",
       "persistence_topology_changes.persistence_topology_changes_terminal_bytes_check": "c CHECK ((terminal_bytes >= 0))",
       "persistence_worktrees.persistence_worktrees_pkey": "p PRIMARY KEY (id)",
-      "persistence_worktrees.persistence_worktrees_state_check": "c CHECK ((state = ANY (ARRAY['active'::text, 'draining'::text, 'recovering'::text])))",
+      "persistence_worktrees.persistence_worktrees_state_check": "c CHECK ((state = ANY (ARRAY['active'::text, 'draining'::text, 'recovering'::text, 'retired'::text])))",
       "persistence_writer_protocols.persistence_writer_protocols_pkey": "p PRIMARY KEY (worktree_id, host_id)",
       "persistence_writer_protocols.persistence_writer_protocols_protocol_version_check": "c CHECK ((protocol_version = 2))",
       "persistence_writer_protocols.persistence_writer_protocols_worktree_id_fkey": "f FOREIGN KEY (worktree_id) REFERENCES persistence_worktrees(id)",
@@ -829,6 +829,8 @@
       "persistence_requests_principal_kind_principal_id_request_id_key": "CREATE UNIQUE INDEX persistence_requests_principal_kind_principal_id_request_id_key ON public.persistence_requests USING btree (principal_kind, principal_id, request_id)",
       "persistence_requests_recovery": "CREATE INDEX persistence_requests_recovery ON public.persistence_requests USING btree (worktree_id, sequence) WHERE (recovery IS NOT NULL)",
       "persistence_requests_sequence_key": "CREATE UNIQUE INDEX persistence_requests_sequence_key ON public.persistence_requests USING btree (sequence)",
+      "persistence_requests_sync_run_committed": "CREATE INDEX persistence_requests_sync_run_committed ON public.persistence_requests USING btree (source_id, ((intent ->> 'runId'::text)), ((intent ->> 'index'::text))) WHERE ((state = 'committed'::text) AND (intent ? 'runId'::text))",
+      "persistence_requests_sync_run_open": "CREATE INDEX persistence_requests_sync_run_open ON public.persistence_requests USING btree (worktree_id, ((intent ->> 'runId'::text))) WHERE ((state <> 'committed'::text) AND ((intent ->> 'kind'::text) = ANY (ARRAY['managed_sync_import'::text, 'managed_sync_delete'::text])))",
       "persistence_source_bindings_pkey": "CREATE UNIQUE INDEX persistence_source_bindings_pkey ON public.persistence_source_bindings USING btree (source_id)",
       "persistence_topology_changes_pkey": "CREATE UNIQUE INDEX persistence_topology_changes_pkey ON public.persistence_topology_changes USING btree (id)",
       "persistence_topology_changes_principal_id_request_id_key": "CREATE UNIQUE INDEX persistence_topology_changes_principal_id_request_id_key ON public.persistence_topology_changes USING btree (principal_id, request_id)",
@@ -1774,7 +1776,8 @@
           "8 title text/text NULL",
           "9 type text/text NULL",
           "10 tags jsonb/jsonb NULL",
-          "11 is_deleted boolean/bool NULL"
+          "11 is_deleted boolean/bool NULL",
+          "12 source_path text/text NULL"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },
@@ -1821,7 +1824,9 @@
           "32 ingested_at timestamp with time zone/timestamptz NULL",
           "33 source_uri text/text NULL",
           "34 source_kind text/text NULL",
-          "35 embedding_signature text/text NULL"
+          "35 embedding_signature text/text NULL",
+          "36 links_attendance_blocked_revision uuid/uuid NULL",
+          "37 links_attendance_blocked_at timestamp with time zone/timestamptz NULL"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },
@@ -1833,7 +1838,8 @@
           "4 activated_at timestamp with time zone/timestamptz NULL",
           "5 writer_protocol_floor integer/int4 NOT NULL DEFAULT 1",
           "6 skill_bundles_enabled boolean/bool NOT NULL DEFAULT false",
-          "7 writer_version_cutoff timestamp with time zone/timestamptz NULL"
+          "7 writer_version_cutoff timestamp with time zone/timestamptz NULL",
+          "8 mode_epoch bigint/int8 NOT NULL DEFAULT 1"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },

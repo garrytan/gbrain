@@ -4,8 +4,9 @@ import type { SqlEngine, WriteRequest } from './model.ts';
 
 /**
  * #5254: a Postgres page write to a filesystem source with no canonical owner.
- * Refused by default; `persistence.unbound_write=database_only` lets put_page
- * write new or already database-only pages to the database only. Those pages
+ * Refused by default; `persistence.unbound_write=database_only` lets every
+ * page mutation (#5393) write a page with no recorded canonical file to the
+ * database only. Those pages
  * carry `pages.database_only_reason='unbound_source'` so writes and sync after
  * binding keep them database-only instead of materializing or overwriting them.
  */
@@ -37,16 +38,14 @@ export function unboundBindCommand(sourceId: string, path: string | null): strin
  * `path` is filled only for trusted local callers; remote callers get a
  * placeholder instead of a host path.
  */
-export function unboundSourceError(sourceId: string, path: string | null, scope: 'put_page' | 'file_backed' | 'other'): OperationError {
+export function unboundSourceError(sourceId: string, path: string | null, scope: 'database_only_eligible' | 'file_backed'): OperationError {
   const bind = `bind the source on the brain host: ${unboundBindCommand(sourceId, path)} `
     + '(if an operator has locked writer administration, ask the operator to unlock it first)';
-  const suggestion = scope === 'put_page'
+  const suggestion = scope === 'database_only_eligible'
     ? `Source '${sourceId}' has a checkout path but no canonical owner. Choose one: ${bind}; or allow database-only writes to unbound sources `
       + `with gbrain config set ${UNBOUND_WRITE_KEY} database_only. Pages written that way stay database-only and are not materialized into canonical files after binding.`
     : `Source '${sourceId}' has a checkout path but no canonical owner. To write this page, ${bind}. `
-      + (scope === 'file_backed'
-        ? `${UNBOUND_WRITE_KEY}=database_only does not apply: this page came from a canonical file, and a database-only edit would be lost on the owner's next sync.`
-        : `${UNBOUND_WRITE_KEY} applies only to put_page.`);
+      + `${UNBOUND_WRITE_KEY}=database_only does not apply: this page came from a canonical file, and a database-only edit would be lost on the owner's next sync.`;
   const error = new OperationError('owner_unavailable', 'This source has no designated canonical owner.', suggestion, UNBOUND_SOURCE_DOCS);
   error.detail = 'unbound_source';
   return error;
@@ -91,8 +90,8 @@ export async function isUnboundSourcePage(engine: SqlEngine, sourceId: string, s
   return row?.database_only_reason === 'unbound_source';
 }
 
-export function unboundWriteWarning(sourceId: string, admittedUnbound: boolean): string {
-  return `put_page wrote only to the database for source '${sourceId}': ` + (admittedUnbound
+export function unboundWriteWarning(operation: string, sourceId: string, admittedUnbound: boolean): string {
+  return `${operation} wrote only to the database for source '${sourceId}': ` + (admittedUnbound
     ? `the source has no canonical owner and ${UNBOUND_WRITE_KEY}=database_only, so no markdown file was created. `
     : 'this page was written while the source had no canonical owner. ')
     + 'The page stays database-only and is not materialized into a canonical file after binding.';

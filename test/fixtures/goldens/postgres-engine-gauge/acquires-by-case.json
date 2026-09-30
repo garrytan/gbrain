@@ -35,6 +35,8 @@
     "countStaleChunks#signature+sourceId": {
       "raw": 1
     },
+    "countStalePagesForExtraction#attendance-blocked+sourceId": {},
+    "countStalePagesForExtraction#attendance-exclude": {},
     "countStalePagesForExtraction#default": {},
     "countStalePagesForExtraction#versionTs+sourceId": {},
     "countStaleTakes#default": {},
@@ -244,6 +246,7 @@
       "raw": 4,
       "tx": 1
     },
+    "markPagesAttendanceBlocked#default": {},
     "markPagesExtractedBatch#default": {},
     "mergeOntologyFact#corroborate": {},
     "mergeOntologyFact#insert": {},

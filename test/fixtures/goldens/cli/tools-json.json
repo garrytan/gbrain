@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 198725,
-    "stdoutSha256": "3559128ade73b7bee9f7ee38013049ac8757cc66f8c2cf6ea639f9f526a11115",
+    "stdoutBytes": 199477,
+    "stdoutSha256": "f786702cc5f72f442c7e10fba6df96f06ff3e1bef9726aeea28a96a908b5c72f",
     "toolNames": [
       "remember",
       "entity",
@@ -314,12 +314,13 @@
         }
       },
       {
-        "description": "Read a page by slug (supports optional fuzzy matching). Slug aliases left by renames redirect to the canonical page in the source that owns the alias (archived sources excluded); a redirected read reports `resolved_slug`. To edit a page, pass include_content: true — the returned `content` field is the canonical full markdown (frontmatter + body + timeline sentinel); edit THAT and pass it back to put_page to round-trip losslessly. Reassembling compiled_truth/timeline by hand risks dropping sections. Soft-deleted pages are hidden by default; pass include_deleted: true to surface them with deleted_at populated (see v0.26.5 recovery window).",
+        "description": "Read a page by slug (supports optional fuzzy matching). Slug aliases left by renames redirect to the canonical page in the source that owns the alias (archived sources excluded); a redirected read reports `resolved_slug`. To edit a page, pass include_content: true — the returned `content` field is the canonical full markdown (frontmatter + body + timeline sentinel); edit THAT and pass it back to put_page to round-trip losslessly. Reassembling compiled_truth/timeline by hand risks dropping sections. Soft-deleted pages are hidden by default; pass include_deleted: true to surface them with deleted_at populated (see v0.26.5 recovery window). `timeline` is only the markdown section after the timeline sentinel; entries written by add_timeline_entry or extraction live in timeline rows, which include_timeline_entries: true returns as `timeline_entries` (the same rows get_timeline returns).",
         "name": "get_page",
         "parameters": {
           "fuzzy": "boolean?",
           "include_content": "boolean?",
           "include_deleted": "boolean?",
+          "include_timeline_entries": "boolean?",
           "slug": "string",
           "source_id": "string?"
         },
@@ -335,6 +336,10 @@
             },
             "include_deleted": {
               "description": "v0.26.5: surface soft-deleted pages with deleted_at populated (default: false). Used by restore workflows.",
+              "type": "boolean"
+            },
+            "include_timeline_entries": {
+              "description": "#5709: also return `timeline_entries`, the page's timeline rows (the same rows and filtering as get_timeline for this caller). Default false to keep the payload small.",
               "type": "boolean"
             },
             "slug": {
@@ -5072,7 +5077,7 @@
         }
       },
       {
-        "description": "The open-loop engine's killer output: who is waiting on you, what you promised, and the context needed to respond. Grouped by counterparty (default, ranked) or flat. Loops come from the deterministic Gmail thread-state detector and the LLM commitment extractor. Remote callers get redacted evidence (no verbatim quotes); trusted local callers also get quotes, Gmail deep links, entity-card context, and a pre-rendered text digest. Carries google-source freshness (stale flag).",
+        "description": "The open-loop engine's killer output: who is waiting on you, what you promised, and the context needed to respond. Grouped by counterparty (default, ranked) or flat. Loops come from the deterministic Gmail thread-state detector and the LLM commitment extractor. Remote callers get redacted evidence (no verbatim quotes); trusted local callers also get quotes, Gmail deep links, entity-card context, and a pre-rendered text digest. Carries google-source freshness (stale flag) and completeness: when it is \"partial\", some mail in the window is held after repeated import failures; present the answer as partial and name the held items and their retry command.",
         "name": "open_loops",
         "parameters": {
           "all_sources": "boolean?",

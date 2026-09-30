@@ -8,7 +8,7 @@ import { VERSION } from '../src/version.ts';
 const REPO = resolve(import.meta.dir, '..');
 
 describe('upgrade autopilot opt-out propagation', () => {
-  test('upgrade forwards the opt-out through package postinstall and post-upgrade', () => {
+  test('upgrade forwards the opt-out to package install and post-upgrade, which owns migrations', () => {
     const home = mkdtempSync(join(tmpdir(), 'gbrain-upgrade-optout-'));
     try {
       const bin = join(home, 'bin');
@@ -29,7 +29,7 @@ describe('upgrade autopilot opt-out propagation', () => {
       expect(result.status, result.stderr + result.stdout).toBe(0);
       const calls = readFileSync(join(home, 'calls.log'), 'utf8');
       expect(calls).toContain('bun:update gbrain:no-autopilot=1');
-      expect(calls).toContain('gbrain:apply-migrations --yes --non-interactive:no-autopilot=1');
+      expect(calls).not.toContain('gbrain:apply-migrations');
       expect(calls).toContain('gbrain:post-upgrade --no-autopilot-install:no-autopilot=1');
     } finally {
       rmSync(home, { recursive: true, force: true });

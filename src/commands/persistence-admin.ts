@@ -18,6 +18,7 @@ export const WRITER_HELP = `Usage:
   gbrain sources writer retry-effects <source> --request-id <uuid> [--dry-run] [--json]
   gbrain sources writer claim <source> --path <directory> [administration options] [--dry-run] [--json]
   gbrain sources writer activate --confirm-quiesced [--cleanup-dead-local-locks] [--shared-skills] [administration options] [--dry-run] [--json]
+  gbrain sources writer deactivate [--admin-intent writer_deactivate --expected-state <admin_state>] [--dry-run] [--json]
   gbrain sources writer transfer prepare <source> [--self-transfer] [administration options] [--dry-run] [--json]
   gbrain sources writer transfer accept <source> --path <worktree-root> --expected-epoch <n> --manifest <sha256> [--self-transfer] [administration options] [--dry-run] [--json]
   gbrain sources writer lock [--json]
@@ -26,7 +27,7 @@ export const WRITER_HELP = `Usage:
 Inspect status first. Routine diagnosis, doctor --fix, startup, and maintenance
 must not change ownership or activate managed persistence. Read the operator
 procedure in docs/architecture/topologies.md before deliberate administration.
-Non-dry-run changes require --admin-intent <writer_claim|writer_activate|writer_transfer_prepare|writer_transfer_accept>
+Non-dry-run changes require --admin-intent <writer_claim|writer_activate|writer_deactivate|writer_transfer_prepare|writer_transfer_accept>
 matching the action and --expected-state <admin_state from reviewed status>.
 These checks also apply to interactive terminals; --yes is not a substitute.
 Explicit noninteractive administration is supported. Stale state is rejected.
@@ -43,6 +44,19 @@ Activation may explicitly remove exact dead local legacy holders with
 --cleanup-dead-local-locks; expiry alone is never evidence of death.
 --shared-skills activates recoverable skill bundles and blocks older writers.
 No command takes over an owner based on a stale heartbeat.
+deactivate converts the whole brain back to classic mode (it takes no <source>):
+--dry-run prints every blocker with its exit and what would change, and changes
+nothing. It refuses while the writer admin lock is set or any request, effect,
+recovery or connector/maintenance lease is pending, naming each blocker's exit
+(gbrain cancel-write-request <request_id>, gbrain sync --source <id> --no-pull
+--retry-failed, gbrain repair embedding-effects --source <id>, gbrain sources
+writer retry-effects <source> --request-id <id> --dry-run, gbrain sources writer
+unlock). It retires every worktree, removes source and host bindings, and keeps
+canonical files and database pages. Its output and status report the database
+mode (classic) separately from this host's local_markers (cleared, or pending
+with each path). Older binaries honor local markers: run a command from this
+release (for example gbrain sources writer status) once on every other host
+before an older binary writes there. Runbook: docs/architecture/topologies.md.
 retry-effects handles parked Git/withdrawal effects and failed embedding effects.
 A Git or withdrawal target parks after five consecutive failures; the command
 previews parked targets with --dry-run and otherwise authorizes one more attempt
@@ -116,13 +130,14 @@ export function parsePersistenceAdminArgs(group: Group, args: string[]): {
     else if (verb === 'retry-effects') operation = 'writer_retry_effects';
     else if (verb === 'claim') operation = 'writer_claim';
     else if (verb === 'activate') operation = 'writer_activate';
+    else if (verb === 'deactivate') operation = 'writer_deactivate';
     else if (verb === 'lock') operation = 'writer_lock';
     else if (verb === 'unlock') operation = 'writer_unlock';
     else if (verb === 'transfer') {
       const phase = positional.shift();
       if (phase !== 'prepare' && phase !== 'accept') throw new OperationError('invalid_params', 'Transfer requires prepare or accept.');
       operation = phase === 'prepare' ? 'writer_transfer_prepare' : 'writer_transfer_accept';
-    } else throw new OperationError('invalid_params', 'Writer administration requires status, retry-effects, claim, activate, transfer, lock, or unlock.');
+    } else throw new OperationError('invalid_params', 'Writer administration requires status, retry-effects, claim, activate, deactivate, transfer, lock, or unlock.');
     const source = positional.shift();
     if (source !== undefined) {
       if (params.source_id !== undefined) throw new OperationError('invalid_params', 'Specify the source once.');

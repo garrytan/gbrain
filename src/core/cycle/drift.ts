@@ -23,7 +23,7 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
-import { BudgetMeter, loadAllowUnpriced, parseBudgetUsd } from './budget-meter.ts';
+import { BudgetMeter, loadAllowUnpriced, loadPricingOverrides, parseBudgetUsd } from './budget-meter.ts';
 import { resolveSynthMaxOutputTokens } from './synthesize-concepts.ts';
 import { resolveCycleDate, shiftCalendarDate } from './cycle-date.ts';
 import { resolveModel } from '../model-config.ts';
@@ -325,6 +325,7 @@ export async function runPhaseDrift(
   const meter = new BudgetMeter({
     budgetUsd: config.budgetUsd,
     allowUnpriced: config.allowUnpriced,
+    pricingOverrides: await loadPricingOverrides(engine),
     phase: 'drift',
     auditPath: opts.auditPath,
   });

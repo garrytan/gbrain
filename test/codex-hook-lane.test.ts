@@ -153,6 +153,29 @@ describe('confineCodexTranscriptPath — the S3#8 ladder on the codex root', () 
     writeFileSync(fat, 'x'.repeat(64));
     expect(confineCodexTranscriptPath(fat, { root, maxBytes: 16 })).toEqual({ ok: false, reason: 'too_large' });
   });
+
+  // #5701: same split as the claude lane — this parser reads a bounded
+  // HEAD+TAIL window, so the opt-in skips ONLY the size gate.
+  test('allowOversize skips only the size gate (mirrors the claude lane)', () => {
+    const root = mkdtempSync(join(tmpdir(), 'gb-cdx-oversize-'));
+    const fat = join(root, 'rollout-fat.jsonl');
+    writeFileSync(fat, 'x'.repeat(64));
+    expect(confineCodexTranscriptPath(fat, { root, maxBytes: 16 })).toEqual({ ok: false, reason: 'too_large' });
+    const r = confineCodexTranscriptPath(fat, { root, maxBytes: 16, allowOversize: true });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.size).toBe(64);
+    // Root containment is not relaxed by the opt-in.
+    const outside = join(root, '..', `gb-codex-outside-${process.pid}.jsonl`);
+    writeFileSync(outside, '{}\n');
+    try {
+      expect(confineCodexTranscriptPath(outside, { root, maxBytes: 16, allowOversize: true })).toEqual({
+        ok: false,
+        reason: 'outside_projects_dir',
+      });
+    } finally {
+      rmSync(outside, { force: true });
+    }
+  });
 });
 
 describe('discoverNewestCodexRollout — bounded, id-matched, symlink-rejecting', () => {

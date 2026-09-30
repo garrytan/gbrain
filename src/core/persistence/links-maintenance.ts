@@ -35,6 +35,9 @@ export function formatManagedStaleExtraction(result: ManagedLinkExtraction, dryR
  * their link targets existed; then pages whose watermark is stale follow. Each
  * page's links and watermark commit together, bound to the revision that was
  * read; a page edited meanwhile, or with unresolved attendance, stays stale.
+ * An unresolved-attendance page is marked attendance-blocked at the revision
+ * read (doctor reports it apart from lag) and is still reconsidered every run;
+ * publishing its links later clears the marker with the watermark.
  * Timeline tuples the coordinator projects from the page body but has no stored
  * row for (a page published before timeline projection) are added in the same
  * coordinated transaction, insert-only. This is the one managed extraction
@@ -58,6 +61,10 @@ export async function extractManagedStaleLinks(engine: BrainEngine,
       await tx.lockPageKeys(prepared.pageKeys);
       const current = await tx.readPageSnapshot(slug, { sourceId });
       if (current?.revision !== snapshot.revision) return null;
+      if (!prepared.attendanceComplete) {
+        await tx.markPagesAttendanceBlocked([{ slug, source_id: sourceId, revision: current.revision }]);
+        return null;
+      }
       const written = await prepared.apply(tx);
       if (written.errors) return null;
       const timeline = (await unrecordedCanonicalTimeline(tx, current.page.id, current.page, slug)).map(entry => ({ slug, date: entry.date,

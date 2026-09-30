@@ -33,6 +33,7 @@ import {
   type GmailThreadData,
 } from './types.ts';
 import { htmlToText, trimQuotedReply } from './google-render.ts';
+import { truncateUtf8 } from '../text-safe.ts';
 import { GMAIL_MIME_LIMITS, gmailPartHeader, inspectGmailAttachments, walkGmailMime, type GmailMimePart } from './attachment-receipts.ts';
 
 export type FetchImpl = (url: string, init?: RequestInit) => Promise<Response>;
@@ -333,34 +334,57 @@ export class GmailClient extends GoogleApiClient {
    * Thread ids touched since the stored historyId. Throws
    * GoogleCursorExpiredError(404) when the cursor is too old (~1 week).
    * Returns the new historyId to store after a successful drain.
+   *
+   * #5581 (fix wave 4): with `maxThreads`, the listing stops before the
+   * history record that would exceed it and returns `truncated: true` with
+   * `newHistoryId` set to the last record fully included, so the caller can
+   * bank that far and resume from there without dropping any change. A
+   * record without an id cannot be bounded safely, so the listing then
+   * drains everything.
    */
   async listHistoryThreadIds(
     startHistoryId: string,
-    opts: { signal?: AbortSignal } = {},
-  ): Promise<{ threadIds: string[]; newHistoryId: string | null }> {
+    opts: { signal?: AbortSignal; maxThreads?: number } = {},
+  ): Promise<{ threadIds: string[]; newHistoryId: string | null; truncated: boolean; versions: Map<string, string> }> {
     const threadIds = new Set<string>();
+    // The latest history record touching each thread: its upstream version for the item holds.
+    const versions = new Map<string, string>();
     let newHistoryId: string | null = null;
+    let lastRecordId: string | null = null;
+    let truncated = false;
     await this.drainPages(
       (t) =>
         `${GMAIL_BASE}/users/me/history?startHistoryId=${encodeURIComponent(startHistoryId)}&maxResults=100${t ? `&pageToken=${encodeURIComponent(t)}` : ''}`,
       (body) => {
-        if (typeof body.historyId === 'string') newHistoryId = body.historyId;
         const records = (body.history as Array<Record<string, unknown>> | undefined) ?? [];
         for (const rec of records) {
+          const touched = new Set<string>();
           for (const key of ['messages', 'messagesAdded', 'messagesDeleted', 'labelsAdded', 'labelsRemoved']) {
             const arr = rec[key] as Array<{ threadId?: string; message?: { threadId?: string } }> | undefined;
             for (const m of arr ?? []) {
               const tid = m.threadId ?? m.message?.threadId;
-              if (tid) threadIds.add(tid);
+              if (tid) touched.add(tid);
             }
           }
+          const fresh = [...touched].filter((tid) => !threadIds.has(tid));
+          const recordId = typeof rec.id === 'string' ? rec.id : null;
+          if (opts.maxThreads !== undefined && lastRecordId && recordId && threadIds.size + fresh.length > opts.maxThreads) {
+            truncated = true;
+            return { items: [], nextPageToken: null };
+          }
+          for (const tid of fresh) threadIds.add(tid);
+          if (recordId) {
+            lastRecordId = recordId;
+            for (const tid of touched) versions.set(tid, recordId);
+          }
         }
+        if (typeof body.historyId === 'string') newHistoryId = body.historyId;
         return { items: [], nextPageToken: (body.nextPageToken as string | undefined) ?? null };
       },
       'gmail',
       opts,
     );
-    return { threadIds: [...threadIds], newHistoryId };
+    return { threadIds: [...threadIds], newHistoryId: truncated ? lastRecordId : newHistoryId, truncated, versions };
   }
 
   async getThread(
@@ -396,10 +420,10 @@ export class GmailClient extends GoogleApiClient {
       // Pre-truncate before conversion: only the first `cap` output chars
       // survive, so a multi-hundred-KB marketing email must not pay ~15
       // full-body regex passes in htmlToText inside the per-thread hot loop.
-      const text = rawText.length > cap * 16 ? rawText.slice(0, cap * 16) : rawText;
+      const text = truncateUtf8(rawText, cap * 16);
       let bodyText = isHtml ? htmlToText(text) : text;
       bodyText = trimQuotedReply(bodyText);
-      if (bodyText.length > cap) bodyText = bodyText.slice(0, cap) + '\n[truncated]';
+      if (bodyText.length > cap) bodyText = truncateUtf8(bodyText, cap) + '\n[truncated]';
       const internalDateMs = Number(m.internalDate ?? 0);
       const attachmentInspection = inspectGmailAttachments(m.payload, account, messageId, receiptBudget);
       receiptBudget -= Buffer.byteLength(JSON.stringify(attachmentInspection));

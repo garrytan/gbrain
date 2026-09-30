@@ -52,6 +52,13 @@ export { parseInlineCitationTimelineEntries, type InlineCitationTimelineCandidat
  * OR updated_at > links_extracted_at`. It is an ISO-8601 string (NOT a number) —
  * the column is TIMESTAMPTZ and the predicate binds it as `::timestamptz`.
  */
+// 2026-09-30: #5749 — with link_resolution.global_basename on, a unique
+// basename match resolves a frontmatter wikilink before the fuzzy and live
+// keyword steps, so edges the managed stale sweep re-pointed at a transcript
+// re-extract back to the named page on the next `extract --stale`.
+// 2026-09-30: #5765 — a bold `**Attendees:**` label before a bare link list is
+// attendance evidence (the meeting-ingestion template wrote it), so meeting
+// pages filed with it re-extract and gain their attended edges.
 // 2026-09-09: #4985 — normalizeBasename strips Unicode variation selectors (twin
 // of slugifySegment), so emoji+VS16 wikilinks re-resolve to the clean slug.
 // 2026-09-09 (same wave): #4977 — the page-role prior no longer applies to
@@ -75,7 +82,7 @@ export { parseInlineCitationTimelineEntries, type InlineCitationTimelineCandidat
 // PRE-wave code after this date reads as fresh and won't re-extract until
 // the page is next edited; no fixed watermark can cover code that keeps
 // running past it.
-export const LINK_EXTRACTOR_VERSION_TS = '2026-09-21T00:00:00Z';
+export const LINK_EXTRACTOR_VERSION_TS = '2026-09-30T00:00:00Z';
 
 // ─── Entity references ──────────────────────────────────────────
 
@@ -1027,7 +1034,7 @@ export function attendanceEvidenceRanges(content: string): Array<[number, number
       section.entries.push([line.start, line.end]);
       continue;
     }
-    const inline = /^Attendees:[ \t]*(.*)$/i.exec(line.text);
+    const inline = /^(?:Attendees:|\*\*Attendees:\*\*|\*\*Attendees\*\*:)[ \t]*(.*)$/i.exec(line.text);
     if (inline && list(inline[1])) ranges.push([line.start, line.end]);
   }
   finishSection();
@@ -1343,6 +1350,11 @@ export const FRONTMATTER_LINK_MAP: FrontmatterFieldMapping[] = [
 
 // ─── Slug resolver ──────────────────────────────────────────────
 
+export interface ResolveOptions {
+  globalBasename?: boolean;
+  selfSlug?: string;
+}
+
 export interface SlugResolver {
   resolveAttendance?(name: string, dirHint?: string | string[]): Promise<string | null>;
   /**
@@ -1350,8 +1362,13 @@ export interface SlugResolver {
    * Returns null when no match meets confidence threshold — callers should
    * skip (not write a dead link) and the unresolved name goes into the
    * extract/put_page summary so the user can see the gap.
+   *
+   * `globalBasename` (#5749): the caller runs with
+   * `link_resolution.global_basename` on, so a unique page whose slug
+   * basename is `name` (other than `selfSlug`) resolves before any fuzzy or
+   * keyword-search candidate.
    */
-  resolve(name: string, dirHint?: string | string[]): Promise<string | null>;
+  resolve(name: string, dirHint?: string | string[], opts?: ResolveOptions): Promise<string | null>;
   /**
    * Issue #972: return every slug whose basename (final `/`-segment, or
    * the whole slug if it has no `/`) matches `name`. Multi-match by
@@ -1513,12 +1530,13 @@ export function makeResolver(
       return queryBasenameIndex(await ensureBasenameIndex(), name);
     },
 
-    async resolve(name: string, dirHint?: string | string[]): Promise<string | null> {
+    async resolve(name: string, dirHint?: string | string[], resolveOpts?: ResolveOptions): Promise<string | null> {
       if (!name || typeof name !== 'string') return null;
       const trimmed = name.trim();
       if (!trimmed) return null;
 
-      const cacheKey = `${trimmed}\u0000${Array.isArray(dirHint) ? dirHint.join(',') : (dirHint || '')}`;
+      const basenameKey = resolveOpts?.globalBasename ? `\u0000basename:${resolveOpts.selfSlug ?? ''}` : '';
+      const cacheKey = `${trimmed}\u0000${Array.isArray(dirHint) ? dirHint.join(',') : (dirHint || '')}${basenameKey}`;
       if (cache.has(cacheKey)) return cache.get(cacheKey)!;
 
       const hints = Array.isArray(dirHint) ? dirHint : (dirHint ? [dirHint] : []);
@@ -1567,6 +1585,20 @@ export function makeResolver(
             cache.set(cacheKey, candidate);
             return candidate;
           }
+        }
+      }
+
+      // Step 2.5 (#5749): with link_resolution.global_basename on, a unique
+      // page whose slug basename IS the name wins before fuzzy or keyword
+      // evidence about some other page — the exact-name-first precedence of
+      // resolveEntitySlug (#5769). Without it the live keyword step let a
+      // transcript that repeats the term take over a correct frontmatter edge.
+      if (resolveOpts?.globalBasename) {
+        const matches = queryBasenameIndex(await ensureBasenameIndex(), trimmed)
+          .filter(s => s !== resolveOpts.selfSlug);
+        if (matches.length === 1) {
+          cache.set(cacheKey, matches[0]);
+          return matches[0];
         }
       }
 
@@ -1733,7 +1765,8 @@ export async function extractFrontmatterLinks(
         const linkTarget = unwrapWikilink(name);
         const canonicalAttendance = mapping.type === 'attended' && mapping.direction === 'incoming';
         let resolved = await (canonicalAttendance && resolver.resolveAttendance
-          ? resolver.resolveAttendance(linkTarget, mapping.dirHint) : resolver.resolve(linkTarget, mapping.dirHint));
+          ? resolver.resolveAttendance(linkTarget, mapping.dirHint)
+          : resolver.resolve(linkTarget, mapping.dirHint, globalBasename ? { globalBasename, selfSlug: slug } : undefined));
         if (!resolved && globalBasename && !(canonicalAttendance && resolver.resolveAttendance)
           && typeof resolver.resolveBasenameMatches === 'function') {
           // Issue #972 follow-up: extend global_basename resolution to

@@ -122,12 +122,26 @@ export async function readAtomOrigin(engine: BrainEngine, session: ManagedAtomSe
     revision: snapshot.revision, visibility: effectiveVisibility({ kind: 'page', page: snapshot.page }) };
 }
 
+/**
+ * The atom input a run key covers. Revision and visibility are left out, so a
+ * revision-only source change (a tag, a timeline row) is the same input for
+ * the drain and for an explicit retry (#5699).
+ */
+function atomInputKey(session: ManagedAtomSession, origin: AtomOrigin): string {
+  return digest(['managed-atoms-v1', session.incarnation, origin.kind, origin.locator, origin.pageId, origin.contentHash]);
+}
+
+/** The retry check adds the extracted text's hash: a transcript retry reads the current file under the retained content hash. */
+export function atomRetryInputKey(session: ManagedAtomSession, origin: AtomOrigin): string {
+  return digest([atomInputKey(session, origin), origin.textHash]);
+}
+
 function runKey(session: ManagedAtomSession, origin: AtomOrigin): string {
   if (session.retry) {
-    if (digest(session.retry.origin) !== digest(origin)) throw new OperationError('source_changed', 'The atom retry input no longer matches its accepted source snapshot.');
+    if (atomRetryInputKey(session, session.retry.origin) !== atomRetryInputKey(session, origin)) throw new OperationError('source_changed', 'The atom retry input no longer matches its accepted source snapshot.');
     return session.retry.runKey;
   }
-  return digest(['managed-atoms-v1', session.incarnation, origin.kind, origin.locator, origin.pageId, origin.contentHash]);
+  return atomInputKey(session, origin);
 }
 
 function atomRequestId(key: string, slug: string): string {

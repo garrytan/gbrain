@@ -94,6 +94,7 @@ export async function prepareSemanticCache(
   opts: HybridSearchOpts | undefined,
   resolvedForCache: ResolvedSearchKnobs,
   knobsHash: typeof KnobsHashFn,
+  queryPrefix = '',
 ): Promise<SemanticCacheHandle> {
   const mergedCfgCached = await loadConfigWithEngine(engine).catch(() => null);
   const cfgCached = mergedCfgCached ?? ((await import('../../config.ts')).loadConfig()) ?? { engine: 'pglite' as const };
@@ -165,6 +166,8 @@ export async function prepareSemanticCache(
       minKeep: adaptiveResolvedForCache.minKeep,
       intent: cacheSuggestions.intent,
     },
+    // #5691: the query embedding input includes the brain's prefix.
+    queryPrefix,
   });
 
   // Cache decision: opts.useCache (explicit) wins over global config; global

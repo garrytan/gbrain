@@ -95,7 +95,8 @@ export async function runGoogleSetupTail(input: SetupTailInput): Promise<void> {
       partial = result.status === 'partial';
       process.stderr.write(
         `First sync: ${result.added + result.modified} pages (${result.status}).` +
-          (partial ? ' The rest of the backfill resumes automatically on every future sync.\n' : '\n'),
+          (partial ? ' The rest of the backfill resumes automatically on every future sync.' : '') +
+          ' Autopilot keeps this source synced on the autopilot interval from now on.\n',
       );
     } finally {
       clearTimeout(timer);
@@ -112,7 +113,7 @@ export async function runGoogleSetupTail(input: SetupTailInput): Promise<void> {
         );
         process.stderr.write('Queued the backfill remainder as a background job.\n');
       } catch {
-        process.stderr.write(`Backfill remainder: run \`gbrain sync --source ${sourceId}\` (or let autopilot pick it up).\n`);
+        process.stderr.write(`Backfill remainder: run \`gbrain sync --source ${sourceId}\` (or let autopilot pick it up: it keeps the source synced after this first sync).\n`);
       }
     }
 

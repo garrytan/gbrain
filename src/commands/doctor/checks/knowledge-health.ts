@@ -324,7 +324,8 @@ async function runEffectiveDate(ctx: DoctorContext): Promise<Check[]> {
   //
   // Sample 1000 random rows by default to keep the check fast on 200K-page
   // brains. The expression index pages_coalesce_date_idx makes the future-
-  // date and pre-1990 scans cheap. The "fell back despite parseable date"
+  // date and pre-1990 scans cheap. Explicit frontmatter dates may be
+  // historical (#5742), so only an inferred pre-1990 date is an anomaly. The "fell back despite parseable date"
   // arm can't be a pure SQL COUNT(*) — JSONB `?` only proves a key exists,
   // not that its value parses — so it fetches the candidate rows and
   // re-runs computeEffectiveDate() in JS (same function `gbrain
@@ -333,7 +334,7 @@ async function runEffectiveDate(ctx: DoctorContext): Promise<Check[]> {
   try {
     const result = await engine.executeRaw<{ kind: string; count: string }>(
       `WITH sample AS (
-         SELECT effective_date
+         SELECT effective_date, effective_date_source
            FROM pages
           ORDER BY id DESC
           LIMIT 1000
@@ -342,7 +343,8 @@ async function runEffectiveDate(ctx: DoctorContext): Promise<Check[]> {
         WHERE effective_date IS NOT NULL AND effective_date > NOW() + INTERVAL '1 year'
        UNION ALL
        SELECT 'pre_1990', COUNT(*)::text FROM sample
-        WHERE effective_date IS NOT NULL AND effective_date < TIMESTAMPTZ '1990-01-01'`,
+        WHERE effective_date IS NOT NULL AND effective_date < TIMESTAMPTZ '1990-01-01'
+          AND COALESCE(effective_date_source, '') NOT IN ('event_date', 'date', 'published', 'created')`,
     );
     const counts = new Map(result.map(r => [r.kind, Number(r.count)]));
     const future = counts.get('future_dated') ?? 0;
