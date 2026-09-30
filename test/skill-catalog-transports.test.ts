@@ -12,7 +12,7 @@
  */
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { join } from 'path';
-import { mkdtempSync, rmSync } from 'fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
@@ -60,6 +60,79 @@ async function call(
 }
 
 describe('list_skills over dispatch', () => {
+  const boundClientCases: { auth: Partial<AuthInfo>; denied: string; allowed: string }[] = [
+    { auth: { allowedOperations: ['list_skills', 'get_skill', 'search'] }, denied: 'query', allowed: 'search' },
+    { auth: { boundSlugPrefixes: ['wiki/agents/example'] }, denied: 'remember', allowed: 'put_page' },
+    { auth: { fenceProjectionDegraded: true }, denied: 'put_page', allowed: 'search' },
+  ];
+  test.each(boundClientCases)('tool inventories honor operation grants and bound-client fences: %j', async ({ auth, denied, allowed }) => {
+    const dir = mkdtempSync(join(home, 'fenced-skills-'));
+    try {
+      for (const name of ['portable', 'declared']) {
+        mkdirSync(join(dir, name));
+        writeFileSync(join(dir, name, 'SKILL.md'), `---\nname: ${name}\n${name === 'declared' ? `tools: [${denied}, ${allowed}]\n` : ''}---\nRead the brain.\n`);
+      }
+      await withEnv({ GBRAIN_HOME: home }, async () => {
+        await engine.setConfig('mcp.skills_dir', dir);
+        await engine.setConfig('mcp.publish_skills', 'true');
+        for (const transport of [undefined, 'stdio'] as const) {
+          const opts = { remote: true, auth: { token: 't', clientId: 'c', scopes: ['read', 'write'], ...auth }, transport };
+          const list = await call('list_skills', {}, opts);
+          expect(list.isError).toBe(false);
+          expect(list.body.instructions.available_brain_tools).not.toContain(denied);
+          expect(list.body.instructions.available_brain_tools).toContain(allowed);
+          for (const name of ['portable', 'declared']) {
+            const listed = list.body.skills.find((skill: { name: string }) => skill.name === name);
+            const detail = await call('get_skill', { name }, opts);
+            expect(detail.isError).toBe(false);
+            expect(detail.body.usable_tools).toEqual(listed.usable_tools);
+            expect(detail.body.usable_tools).not.toContain(denied);
+            expect(detail.body.usable_tools).toContain(allowed);
+            expect(detail.body.client_guidance.available_brain_tools).not.toContain(denied);
+            expect(detail.body.unavailable_tools.includes(denied)).toBe(name === 'declared');
+          }
+        }
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('inherited and declared tool inventories honor live publication gates in both catalog paths', async () => {
+    const dir = mkdtempSync(join(home, 'published-skills-'));
+    try {
+      for (const name of ['portable', 'declared']) {
+        mkdirSync(join(dir, name));
+        writeFileSync(join(dir, name, 'SKILL.md'), `---\nname: ${name}\n${name === 'declared' ? 'tools: [advisor, search]\n' : ''}---\nRead the brain.\n`);
+      }
+      await withEnv({ GBRAIN_HOME: home }, async () => {
+        await engine.setConfig('mcp.skills_dir', dir);
+        await engine.setConfig('mcp.publish_skills', 'true');
+        for (const enabled of [false, true, false]) {
+          await engine.setConfig('mcp.publish_advisor', String(enabled));
+          for (const transport of [undefined, 'stdio'] as const) {
+            const opts = { remote: true, auth: { token: 't', clientId: 'c', scopes: ['read'] }, transport };
+            const list = await call('list_skills', {}, opts);
+            expect(list.isError).toBe(false);
+            expect(list.body.instructions.available_brain_tools.includes('advisor')).toBe(enabled);
+            for (const name of ['portable', 'declared']) {
+              const listed = list.body.skills.find((skill: { name: string }) => skill.name === name);
+              const detail = await call('get_skill', { name }, opts);
+              expect(detail.isError).toBe(false);
+              expect(detail.body.usable_tools).toEqual(listed.usable_tools);
+              expect(detail.body.usable_tools.includes('advisor')).toBe(enabled);
+              expect(detail.body.client_guidance.available_brain_tools.includes('advisor')).toBe(enabled);
+              expect(detail.body.usable_tools).toContain('search');
+              if (name === 'declared') expect(detail.body.unavailable_tools.includes('advisor')).toBe(!enabled);
+            }
+          }
+        }
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test('HTTP-remote + gate OFF → permission_denied', async () => {
     await withEnv({ GBRAIN_HOME: home }, async () => {
       const r = await call('list_skills', {}, { remote: true, auth: { token: 't', clientId: 'c', scopes: ['read'] } });

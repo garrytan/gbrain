@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [0.60.13.1] - 2026-09-30
+## [0.60.15.1] - 2026-09-30
 
 **Dream synthesize on an OpenRouter model no longer dies to a rate limit it never saw.** OpenRouter sometimes reports "you're being rate-limited, try again shortly" as a normal-looking HTTP 200 response with an error message buried inside the body, instead of a real HTTP 429. Every retry mechanism in gbrain (and in the underlying AI library) decides whether to retry by looking at the HTTP status code, so a 200-with-hidden-error looked like success failing to parse, not like a rate limit, and nothing retried. If you pointed a dream phase at a busy OpenRouter model, a burst of calls could trip the shared limit and the whole phase would fail outright instead of backing off and trying again.
 
@@ -18,7 +18,7 @@ Now gbrain reads that hidden error and turns the response into a real 429 (or 5x
 
 **Say to your agent:** *"Re-run dream synthesize and check it survives an OpenRouter rate limit"* — your agent runs `gbrain dream --phase synthesize --once`.
 
-## To take advantage of v0.60.13.1
+## To take advantage of v0.60.15.1
 
 Upgrade, then re-run the phase that was failing:
 
@@ -31,6 +31,23 @@ gbrain dream --phase synthesize --once
 
 - `src/core/ai/recipes/openrouter.ts`: the OpenRouter compat-fetch shim now detects an HTTP-200 response body shaped like `{error:{code,metadata?}}` and rewrites the response's status to match (429, or the reported 5xx), so the AI SDK's own retry logic and gbrain's rate-limit classification both see the real condition. An existing `Retry-After` header is preserved; a `retry_after` value inside the error body is promoted to one when the response didn't already carry it. Every other response shape (a real success, a 4xx, an unparseable body) passes through unchanged.
 - Closes #5473.
+
+## [0.60.15.0] - 2026-09-30
+
+**Import retries pick up edited files, contacts recover from expired sync tokens, and published skills work without extra tool annotations.** This release also filters machine-authored transcript entries and makes lock, push, and health checks report the right outcome.
+
+### Fixed
+- **Retried imports recheck the files you have now.** A checkpoint left by an interrupted or partly failed import no longer hides later edits, including edits with preserved timestamps. Unchanged pages still avoid re-chunking and embedding; retrying a large import does repeat file reads and content-hash checks.
+- **Claude Code transcript imports exclude metadata and explicitly non-human user text.** Root metadata and compact-summary markers are honored, while assistant text and tool placeholders keep their existing behavior. Legacy records without a structured origin remain compatible; this is not a strict human-origin requirement.
+- **Quoted installation paths no longer make a live autopilot lock look abandoned.** Script paths containing spaces are recognized without accepting similarly named scripts.
+- **Brain-repository pushes recognize work already saved remotely.** When a push reports failure, the helper checks fresh evidence from the exact branch at every configured push destination for the intended commit before reporting local-only work. Rebase conflicts and genuinely rejected pushes still fail; unrelated working-tree edits are not automatically stashed.
+- **`gbrain schema lint --with-db` works with or without a pack name.** The flag can appear before or after the name, and unsupported lint arguments are rejected rather than mistaken for a pack.
+- **Sync health checks respect `syncEnabled: false`.** Deliberately disabled sources no longer raise stale-sync warnings. Their scheduled non-sync maintenance still runs and remains covered by cycle-health checks.
+- **Legacy host-repository MCP skills can omit optional `tools:` metadata.** Valid skills without that field inherit the caller's available brain tools, filtered by grants and the effective tool surface. Explicit tool lists still narrow the inventory, `tools: []` stays empty, and invalid metadata does not receive the fallback. Canonical shared-skill requirements and server authorization are unchanged.
+- **Google contacts recover from HTTP 400 sync-token expiry.** A documented expiry reason or recognized expiry message triggers a full contacts refresh and stores a new token. Other bad requests still fail instead of silently resetting sync state.
+
+### To take advantage of v0.60.15.0
+If upgrading from before v0.51.0.0, first follow the [coordinated writer upgrade guide](skills/migrations/v0.51.0.0.md). From v0.51.0.0, run `gbrain upgrade` and restart long-running GBrain processes. Retry a partly failed import normally; deleting its checkpoint is no longer necessary to pick up edits. The next contacts sync recovers an expired token automatically. For existing hardened, unmanaged brain repositories, run `gbrain sources harden <source-id>` to refresh the generated push helper and local hook; managed worktrees retain the persistence outbox as their Git writer. This patch adds no migration, credentials, permission grants, or automatic-capture requirement beyond v0.51.0.0.
 
 ## [0.60.13.0] - 2026-09-30
 
