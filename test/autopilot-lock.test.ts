@@ -74,6 +74,20 @@ describe('decideLockAcquisition', () => {
     });
   });
 
+  test('keeps a stale lock held by autopilot launched from a quoted script path (#5134)', () => {
+    writeFileSync(lockPath, '1234');
+    const stale = new Date(Date.now() - AUTOPILOT_FOREIGN_PID_TAKEOVER_GRACE_MS - 1000);
+    utimesSync(lockPath, stale, stale);
+    expect(decideLockAcquisition(lockPath, process.pid, {
+      isPidAlive: (pid) => pid === 1234,
+      readProcessCommand: () => 'bun "C:/Users/Example User/project/src/cli.ts" autopilot',
+    })).toEqual({
+      action: 'exit',
+      holderPid: 1234,
+      holderState: 'alive-autopilot',
+    });
+  });
+
   test('keeps a fresh lock when the live PID command is unrecognized', () => {
     writeFileSync(lockPath, '1234');
     expect(decideLockAcquisition(lockPath, process.pid, {
@@ -149,21 +163,31 @@ describe('readProcessCommand', () => {
   });
 
   test('falls back to ps when the cmdline probe throws', () => {
-    // The current process always exists; ps must resolve it on macOS/Linux.
     const cmd = readProcessCommand(process.pid, {
+      platform: 'darwin',
       readCmdlineFile: () => {
         throw new Error('ENOENT');
       },
+      execFile: (file, args) => {
+        expect(file).toBe('ps');
+        expect(args).toEqual(['-p', String(process.pid), '-o', 'args=']);
+        return 'bun src/cli.ts autopilot\n';
+      },
     });
-    expect(cmd).not.toBeNull();
-    expect((cmd ?? '').length).toBeGreaterThan(0);
+    expect(cmd).toBe('bun src/cli.ts autopilot');
   });
 
   test('falls back to ps when the cmdline file is empty (zombie)', () => {
     const cmd = readProcessCommand(process.pid, {
+      platform: 'linux',
       readCmdlineFile: () => Buffer.from(''),
+      execFile: (file, args) => {
+        expect(file).toBe('ps');
+        expect(args).toEqual(['-p', String(process.pid), '-o', 'args=']);
+        return 'bun src/cli.ts autopilot\n';
+      },
     });
-    expect(cmd).not.toBeNull();
+    expect(cmd).toBe('bun src/cli.ts autopilot');
   });
 
   test('returns null for invalid pids without probing', () => {
@@ -219,6 +243,43 @@ describe('looksLikeGbrainAutopilotCommand', () => {
 
   test('matches a Windows command line with the executable quoted under a path with spaces', () => {
     expect(looksLikeGbrainAutopilotCommand('"C:\\Program Files\\gbrain\\gbrain.exe" autopilot --repo "C:\\my brain"')).toBe(true);
+  });
+
+  for (const extension of ['ts', 'js', 'mjs']) {
+    test.each([
+      `"C:/Users/Example User/project/src/cli.${extension}" autopilot`,
+      `"C:\\Program Files\\Bun\\bun.exe" "C:\\Users\\Example User\\project\\src\\cli.${extension}" autopilot`,
+      `bun '/home/example user/project/src/cli.${extension}' autopilot`,
+      `bun "/project/src/cli.${extension}" autopilot`,
+      `bun "cli.${extension}" autopilot`,
+      `bun 'cli.${extension}' autopilot`,
+      `bun /home/example user/project/src/cli.${extension} autopilot`,
+      `bun /home/example/project dir /cli.${extension} autopilot`,
+    ])('matches quoted or space-containing script paths (#5134): %s', (command) => {
+      expect(looksLikeGbrainAutopilotCommand(command)).toBe(true);
+    });
+
+    test.each([
+      `bun cli.${extension} autopilot`,
+      `bun ./cli.${extension} autopilot`,
+      `bun ../src/cli.${extension} autopilot`,
+      `node /project/dist/cli.${extension} autopilot --repo repo`,
+    ])('preserves unquoted script matching: %s', (command) => {
+      expect(looksLikeGbrainAutopilotCommand(command)).toBe(true);
+    });
+  }
+
+  test.each([
+    'bun "C:/Users/Example User/project/src/cli.ts" serve',
+    'bun "C:/Users/Example User/project/src/cli.ts" autopilot-other',
+    'bun "C:/Users/Example User/project/src/not-cli.ts" autopilot',
+    'bun "C:/Users/Example User/project/src/cli.ts.bak" autopilot',
+    'bun "C:/Users/Example User/project/src/cli.jsx" autopilot',
+    'bun "C:/Users/Example User/project/src/cli.ts"suffix autopilot',
+    'other-gbrain autopilot',
+    'python worker.py autopilot',
+  ])('rejects commands outside the existing name and argument boundaries: %s', (command) => {
+    expect(looksLikeGbrainAutopilotCommand(command)).toBe(false);
   });
 
   test('rejects unrelated live processes', () => {
