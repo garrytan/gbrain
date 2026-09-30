@@ -453,6 +453,67 @@ describe('removeSource — clone-cleanup', () => {
 });
 
 // ---------------------------------------------------------------------------
+// removeSource — persistence_source_bindings cleanup on the unmanaged path
+// (#5732 review F1: the MCP/remote-reachable sources_remove operation calls
+// removeSource() directly, which mirrors the bug runRemove's CLI path had —
+// a same-id source recreated after remove inherited a stale writer claim.)
+// ---------------------------------------------------------------------------
+
+describe('removeSource — persistence_source_bindings cleanup (#5732 review F1)', () => {
+  async function bindSource(id: string): Promise<void> {
+    const [source] = await engine.executeRaw<{ incarnation: string }>(
+      `SELECT incarnation FROM sources WHERE id = $1`,
+      [id],
+    );
+    const [worktree] = await engine.executeRaw<{ id: string }>(
+      `INSERT INTO persistence_worktrees DEFAULT VALUES RETURNING id`,
+    );
+    await engine.executeRaw(
+      `INSERT INTO persistence_source_bindings (source_id, source_incarnation, worktree_id) VALUES ($1, $2::uuid, $3::uuid)`,
+      [id, source.incarnation, worktree.id],
+    );
+  }
+
+  async function isClaimed(id: string): Promise<boolean> {
+    const [row] = await engine.executeRaw<{ claimed: boolean }>(
+      `SELECT EXISTS(SELECT 1 FROM persistence_source_bindings WHERE source_id=s.id) AS claimed
+       FROM sources s WHERE s.id=$1`,
+      [id],
+    );
+    return row?.claimed === true;
+  }
+
+  test('removeSource (the sources_remove op handler) deletes the matching binding row', async () => {
+    await withEnv2(async () => {
+      await addSource(engine, { id: 'ops-leak-test', localPath: '/tmp/ops-leak-test-fixture' });
+      await bindSource('ops-leak-test');
+      expect(await isClaimed('ops-leak-test')).toBe(true);
+
+      await removeSource(engine, { id: 'ops-leak-test', confirmDestructive: true });
+
+      const rows = await engine.executeRaw(
+        `SELECT 1 FROM persistence_source_bindings WHERE source_id = $1`,
+        ['ops-leak-test'],
+      );
+      expect(rows.length).toBe(0);
+    });
+  });
+
+  test('a same-id source recreated after removeSource is not treated as claimed', async () => {
+    await withEnv2(async () => {
+      await addSource(engine, { id: 'ops-leak-test-2', localPath: '/tmp/ops-leak-test-2-fixture' });
+      await bindSource('ops-leak-test-2');
+      expect(await isClaimed('ops-leak-test-2')).toBe(true);
+
+      await removeSource(engine, { id: 'ops-leak-test-2', confirmDestructive: true });
+      await addSource(engine, { id: 'ops-leak-test-2', localPath: '/tmp/ops-leak-test-2-fixture-2' });
+
+      expect(await isClaimed('ops-leak-test-2')).toBe(false);
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
 // getSourceStatus — clone_state branches
 // ---------------------------------------------------------------------------
 

@@ -1011,7 +1011,28 @@ export async function removeSource(
     }
   }
 
-  await engine.executeRaw(`DELETE FROM sources WHERE id = $1`, [opts.id]);
+  // #5732 review F1: persistence_source_bindings has PRIMARY KEY(source_id)
+  // with no FK to sources, so it never cascades. Delete it here, scoped to
+  // the removed incarnation, the same way runRemove's CLI path
+  // (src/commands/sources.ts) and the managed lifecycle's remove path
+  // (source-lifecycle.ts) already do — otherwise a same-id replacement
+  // source inherits the old incarnation's binding and is wrongly treated as
+  // claimed by resolveSyncPersistenceMode. This branch backs the
+  // MCP/remote-reachable sources_remove operation, so it needs the same
+  // cleanup the CLI's own remove path received.
+  await engine.transaction(async (tx) => {
+    const [row] = await tx.executeRaw<{ incarnation: string }>(
+      `SELECT incarnation FROM sources WHERE id = $1`,
+      [opts.id],
+    );
+    await tx.executeRaw(`DELETE FROM sources WHERE id = $1`, [opts.id]);
+    if (row?.incarnation) {
+      await tx.executeRaw(
+        `DELETE FROM persistence_source_bindings WHERE source_id = $1 AND source_incarnation = $2::uuid`,
+        [opts.id, row.incarnation],
+      );
+    }
+  });
 
   return {
     id: opts.id,
