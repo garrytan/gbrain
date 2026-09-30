@@ -24,7 +24,7 @@ import {
   resolveTakesWritePath,
   TakesWriteError,
 } from './takes-write.ts';
-import { BudgetMeter } from './cycle/budget-meter.ts';
+import { BudgetMeter, loadPricingOverrides } from './cycle/budget-meter.ts';
 import { parseTakesFence } from './takes-fence.ts';
 
 export const ALLOWED_PAGE_TYPES = [
@@ -212,7 +212,11 @@ export async function extractTakesFromPages(
   let duplicatesSkipped = 0;
   const skipped: Array<{ slug: string; reason: string }> = [];
   const model = opts.model || getChatModel();
-  const meter = new BudgetMeter({ budgetUsd: await resolveBudgetUsd(engine, opts.budgetUsd), phase: 'takes_bootstrap' });
+  const meter = new BudgetMeter({
+    budgetUsd: await resolveBudgetUsd(engine, opts.budgetUsd),
+    phase: 'takes_bootstrap',
+    pricingOverrides: await loadPricingOverrides(engine),
+  });
   // #4473: takes are markdown-canonical (takes-write.ts contract), so the
   // bootstrap routes every write through the fence writer instead of minting
   // DB-only rows the next reconcile/extract would clobber.

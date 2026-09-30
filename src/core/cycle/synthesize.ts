@@ -68,7 +68,7 @@ import { isQueueQuotaExceededError } from '../minions/admission.ts';
 import { waitForCompletionRenewing, TimeoutError } from '../minions/wait-for-completion.ts';
 import type { MinionJobInput, SubagentHandlerData } from '../minions/types.ts';
 import { resolveMaxOutputTokens } from '../minions/handlers/subagent.ts';
-import { BudgetMeter, loadAllowUnpriced, parseBudgetUsd } from './budget-meter.ts';
+import { BudgetMeter, loadAllowUnpriced, loadPricingOverrides, parseBudgetUsd } from './budget-meter.ts';
 import { runSubagentsInline, runDrainRenewalTick, percentile, INLINE_LOCK_MS } from './inline-drain.ts';
 import { buildManifestContext, buildLinkManifest, type ManifestContext } from './link-manifest.ts';
 import { resolveCycleDate, utcDate } from './cycle-date.ts';
@@ -698,7 +698,7 @@ async function runPhaseSynthesizeInner(
     }
     // C-13: USD gate checked before every submission, from the prompt size and
     // the child's output cap (one call in oneshot mode, max_turns in agentic).
-    const synthMeter = new BudgetMeter({ budgetUsd: config.budgetUsd, allowUnpriced: config.allowUnpriced, phase: 'synthesize' });
+    const synthMeter = new BudgetMeter({ budgetUsd: config.budgetUsd, allowUnpriced: config.allowUnpriced, pricingOverrides: await loadPricingOverrides(engine), phase: 'synthesize' });
     const childMaxOutputTokens = resolveMaxOutputTokens(undefined, await engine.getConfig('agent.max_output_tokens').catch(() => null), config.model);
 
     const breaker = await loadDreamBreaker(engine);
