@@ -458,6 +458,39 @@ describe('probeLivePgliteHolder', () => {
     expect(holder).toEqual({ pid: process.pid, serve: true, isSelf: true });
   });
 
+  // #5481 review F1: `ourProcessStartTime`'s default path is anchored ONCE at
+  // module load (near real process start, since this module is a static
+  // top-level import), not recomputed from `Date.now() - process.uptime() *
+  // 1000` at probe-call time. A wall-clock jump (NTP correction, VM/container
+  // pause-resume) occurring AFTER module load but BEFORE a later check
+  // actually runs the probe must not retroactively move the start-time
+  // estimate later and false-flag a genuinely-self lock as foreign.
+  test('a wall-clock jump between module load and the probe call does not flip a genuinely-self lock to non-self', () => {
+    const dataDir = join(home, 'brain.pglite');
+    mkdirSync(join(dataDir, '.gbrain-lock'), { recursive: true });
+    // This process's own lock, written at (simulated) true process start.
+    const trueAcquiredAt = Date.now();
+    writeFileSync(
+      join(dataDir, '.gbrain-lock', 'lock'),
+      JSON.stringify({ pid: process.pid, subcommand: 'serve', pid_ns: readPidNs(), boot_id: readBootId(), acquired_at: trueAcquiredAt }),
+      'utf8',
+    );
+    const realNow = Date.now;
+    try {
+      // Simulate a forward wall-clock jump discovered well after module
+      // load: if the default path still recomputed `Date.now() -
+      // process.uptime() * 1000` at call time (the pre-fix behavior), this
+      // jump alone would push the estimated start time past
+      // `trueAcquiredAt + ACQUIRED_AT_TOLERANCE_MS`, wrongly flagging the
+      // process's own lock as pre-existing (not self).
+      Date.now = () => realNow() + 10 * 60 * 1000;
+      const holder = probeLivePgliteHolder(dataDir);
+      expect(holder).toEqual({ pid: process.pid, serve: true, isSelf: true });
+    } finally {
+      Date.now = realNow;
+    }
+  });
+
   // #5481 review F2: on Linux, when THIS process's own /proc markers are
   // unreadable (a hardened environment masking pid-namespace/boot-id), the
   // doctor's own self-lock (which it wrote under the same restriction, so it

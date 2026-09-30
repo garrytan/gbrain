@@ -40,6 +40,19 @@ import { readReceipt, receiptPath, type InstallReceipt } from './format.ts';
 import { BootstrapError } from './lock.ts';
 import type { ExecRunner } from './repo.ts';
 
+// (#5481 review F1) Captured ONCE at module load — this module is a static
+// top-level import of the doctor CLI's own import graph, so load time tracks
+// real process start closely. A per-call `Date.now() - process.uptime() *
+// 1000` recompute instead drifts if the wall clock is adjusted (NTP
+// correction, VM/container pause-resume) at any point between real process
+// start and whenever a later check actually runs `probeLivePgliteHolder` —
+// pushing the estimate later than the true start and false-flagging a
+// genuinely-self lock as a foreign collision, the exact bug this file exists
+// to fix. Anchoring the estimate at load time instead of check time closes
+// that window: uptime() is already near-zero at load, so the subtraction
+// barely matters, and no later clock jump can retroactively move it.
+const MODULE_LOAD_PROCESS_START_ESTIMATE = Date.now() - process.uptime() * 1000;
+
 // ---------------------------------------------------------------------------
 // Read-only PGLite lock probe (never opens the engine)
 // ---------------------------------------------------------------------------
@@ -101,8 +114,9 @@ export interface LiveHolder {
  *
  * `deps` is test-only injection for the namespace-evidence readers and our
  * own process-start time (default: the real `/proc` readers from
- * pglite-lock.ts and `Date.now() - process.uptime() * 1000`); production
- * callers never pass it.
+ * pglite-lock.ts and this module's load-time-anchored estimate, captured
+ * once above rather than recomputed per call); production callers never
+ * pass it.
  */
 export function probeLivePgliteHolder(
   dataDir: string,
@@ -178,7 +192,7 @@ export function probeLivePgliteHolder(
   // POSITIVE, verifiable "written before we existed" timestamp overrides a
   // pid/namespace match.
   const lockAcquiredAt = typeof raw.acquired_at === 'number' ? raw.acquired_at : null;
-  const ourProcessStartTime = (deps.processStartTime ?? (() => Date.now() - process.uptime() * 1000))();
+  const ourProcessStartTime = deps.processStartTime?.() ?? MODULE_LOAD_PROCESS_START_ESTIMATE;
   const ACQUIRED_AT_TOLERANCE_MS = 1000;
   const acquiredBeforeThisProcessStarted = lockAcquiredAt != null
     && lockAcquiredAt < ourProcessStartTime - ACQUIRED_AT_TOLERANCE_MS;
