@@ -226,7 +226,7 @@ and sometimes confidently WRONG names. Resolve by evidence:
 ```markdown
 # {Meeting Title} — {Date}
 
-**Attendees:** {list with links to people pages}
+Attendees: {comma-separated links to the people pages of everyone in the room}
 **Date:** {YYYY-MM-DD}
 **Duration:** {if available}
 
@@ -246,6 +246,19 @@ If none: _No notable quotes — operational/logistics meeting._}
 ## Discussion Notes
 {Structured notes by topic}
 ```
+
+The `Attendees:` line is the page's attendance record, and the link extractor
+reads it literally. Write it as one line that starts with `Attendees:` (no
+bold markup) and holds only links to people pages, one per person who was in
+the room, separated by commas (no "and"). Link a person only when the
+identification is high or medium confidence (Phase 4). Put a company, role,
+speaker confidence, a low-confidence guess, or an unresolved speaker such as
+`UNKNOWN_2` in Discussion Notes instead: any extra text on the line stops the
+extractor from reading it as the attendance record, and a line wrapped onto a
+second line loses everyone after the break. Leave people who were only
+invited or mentioned off the line. If the page also carries `attendees:`
+frontmatter, list exactly the same people there or leave the field out:
+extraction reads it as a second attendance record.
 
 The four required sections are Summary, Key Decisions, Action Items, and
 Notable Quotes — additional sections (Discussion Notes, a link to the
@@ -316,9 +329,24 @@ garbled name or a low-confidence guess; a wrong backlink pollutes the graph
 worse than a missing one.
 
 **Note:** Once the meeting page is written via `gbrain put`, the auto-link
-post-hook automatically creates `attended` links from the meeting to each
-attendee whose page is referenced as `[Name](people/slug)`. You don't need to
-call `gbrain link` for attendees. You DO still need `gbrain timeline-add` for
+post-hook reads attendance from the page. Where the active schema pack does
+not override attendance (gbrain-base-v2, which `gbrain init` sets), each
+person linked on the `Attendees:` line (Phase 5) gets a
+`person --attended--> meeting` edge, and people linked anywhere else on the
+page are not recorded as attendance; a pack that overrides attendance, such as
+the older `gbrain-base`, sets its own rule and direction. Leave attendance to
+auto-link rather than `gbrain link` or `add_link`: a hand-written `attended`
+edge can point the wrong way. Over MCP, `put_page` skips auto-link: a stdio
+`gbrain serve` reconciles the page on its maintenance sweep, and behind
+`gbrain serve --http` you run `gbrain sweep --once` or
+`gbrain extract links --source db`.
+
+A missing `attended` edge has one of two causes. Either the `Attendees:` line
+breaks a Phase 5 rule, or it links a person whose page did not exist when the
+meeting page was written; auto-link then reports an error and writes none of
+the page's links. This skill creates new people pages in Phase 7, after the
+meeting page, so once Phase 7 is done run `gbrain extract --stale` (over MCP,
+the sweep above) to link the page. You DO still need `gbrain timeline-add` for
 dated events (auto-link only handles links, not timeline entries).
 
 ### Phase 8: Entity propagation + timeline merge (MANDATORY)

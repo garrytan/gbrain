@@ -181,6 +181,7 @@ test/link-source-check-repair.test.ts	regex literal drift guard (#4613)	1	readFi
 test/longmemeval-embed-cache.test.ts	EmbeddingCache — canonical hash	4	readFileSync
 test/loops-extract-wiring.test.ts	jobs.ts wiring	2	source-surface-helper
 test/loops-extract-wiring.test.ts	relational edge vocabulary	2	readFileSync,source-surface-helper
+test/meeting-ingestion-attendance-template.test.ts	(file-level)	1	readFileSync
 test/migrate-stdout-clean.test.ts	migration output stays off stdout	2	source-surface-helper
 test/migrate.test.ts	PR #356 + #363 — session timeouts applied via startup parameters	1	readFileSync,source-surface-helper
 test/migrate.test.ts	PR #356 — LATEST_VERSION is max(versions), not array[-1]	2	readFileSync,source-surface-helper
