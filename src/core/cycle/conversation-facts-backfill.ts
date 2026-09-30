@@ -49,7 +49,6 @@ import {
   loadPricingOverrides,
 } from '../budget/budget-tracker.ts';
 import { withBudgetTracker } from '../ai/gateway.ts';
-import { assertUnmanagedCanonicalWriter } from '../persistence/maintenance.ts';
 import { listSources } from '../sources-ops.ts';
 import {
   runExtractConversationFactsCore,
@@ -191,7 +190,6 @@ export async function runPhaseConversationFactsBackfill(
     );
   }
 
-  await assertUnmanagedCanonicalWriter(engine, 'conversation fact backfill');
   const startedAt = Date.now();
   const maxTotalWalltimeMs = cfg.maxTotalWalltimeMin * 60_000;
   const maxWalltimeMs = cfg.maxWalltimeMin * 60_000;

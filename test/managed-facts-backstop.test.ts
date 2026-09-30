@@ -52,12 +52,24 @@ test('omitted extraction request IDs create distinct writes and returned IDs rec
   } finally { await disposePersistenceConsumer(engine); rmSync(home, { recursive: true, force: true }); }
 }, 60_000);
 
-test('legacy fact fence callers refuse managed work before falling back or touching files', async () => {
-  await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
-  await expect(writeFactsToFence(engine, { sourceId: 'default', slug: 'people/example', localPath: null, resolutionSource: 'exact_page' }, [
-    { fact: 'A synthetic fact.', kind: 'fact', source: 'fixture', visibility: 'private', notability: 'medium', embedding: null, sessionId: null },
-  ])).rejects.toMatchObject({ code: 'writer_coordinator_required' });
-  expect(await engine.executeRaw('SELECT id FROM facts')).toHaveLength(0);
+test('managed direct fact fence callers publish through the coordinator instead of the legacy fallback', async () => {
+  // #5280: the legacy file edit and DB-only fallback never run on a managed
+  // brain; an entity with no live page lands database-only through the
+  // coordinator's fact intent (test/managed-facts-writers.test.ts covers a file-backed entity).
+  const home = mkdtempSync(join(tmpdir(), 'gbrain-managed-fence-write-'));
+  try {
+    await withEnv({ GBRAIN_HOME: home }, async () => {
+      await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+      const result = await writeFactsToFence(engine, { sourceId: 'default', slug: 'people/example', localPath: null, resolutionSource: 'exact_page' }, [
+        { fact: 'A synthetic fact.', kind: 'fact', source: 'fixture', visibility: 'private', notability: 'medium', embedding: null, sessionId: null },
+      ]);
+      expect(result).toMatchObject({ inserted: 1 });
+      expect(result.legacyFallback).toBeUndefined();
+      const rows = await engine.executeRaw<{ id: number; source_markdown_slug: string | null }>('SELECT id,source_markdown_slug FROM facts');
+      expect(rows.map(r => [Number(r.id), r.source_markdown_slug])).toEqual([[result.ids[0], null]]);
+      expect(await engine.executeRaw("SELECT id FROM persistence_requests WHERE operation='extract_facts' AND state='committed'")).toHaveLength(2);
+    });
+  } finally { await disposePersistenceConsumer(engine); rmSync(home, { recursive: true, force: true }); }
 });
 
 test('managed extract_facts publishes multiple private entity fences and replays without provider calls', async () => {

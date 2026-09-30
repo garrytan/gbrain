@@ -39,6 +39,6 @@ export async function timelineHistoryCheck(engine: BrainEngine, sourceId?: strin
       : `Every timeline row has a bullet in its page (${scan.inspected} page(s) inspected).` };
   } catch (e) {
     return { name, status: 'warn', message: `timeline history check skipped: ${e instanceof Error ? e.message : String(e)}`,
-      details: { count: 'lower_bound', truncated: true } };
+      details: { count: 'lower_bound', truncated: true, health: 'unknown' } };
   }
 }

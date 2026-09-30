@@ -9,12 +9,14 @@ const SAMPLE = 20;
  * parked instead of retried forever. Reads the partial `persistence_effects_parked`
  * index: an exact count plus a capped sample naming each page and its retry command.
  */
-export async function checkParkedEffects(engine: BrainEngine): Promise<Check> {
+export async function checkParkedEffects(engine: BrainEngine, sourceIds?: string[]): Promise<Check> {
   try {
-    const [{ count }] = await engine.executeRaw<{ count: number }>(`SELECT COUNT(*)::int AS count FROM persistence_effects WHERE data ? 'parked'`);
+    const scoped = sourceIds ? ' AND e.source_id=ANY($1::text[])' : '';
+    const params = sourceIds ? [sourceIds] : [];
+    const [{ count }] = await engine.executeRaw<{ count: number }>(`SELECT COUNT(*)::int AS count FROM persistence_effects e WHERE e.data ? 'parked'${scoped}`, params);
     const rows = await engine.executeRaw<{ request_id: string; source_id: string; kind: string; state: string; parked: ParkedTarget[] }>(
       `SELECT r.request_id::text AS request_id,e.source_id,e.kind,e.state,e.data->'parked' AS parked FROM persistence_effects e
-       JOIN persistence_requests r ON r.id=e.request_id WHERE e.data ? 'parked' ORDER BY e.id LIMIT ${SAMPLE}`);
+       JOIN persistence_requests r ON r.id=e.request_id WHERE e.data ? 'parked'${scoped} ORDER BY e.id LIMIT ${SAMPLE}`, params);
     const effects = rows.map(row => ({ ...row, command: `gbrain sources writer retry-effects ${row.source_id} --request-id ${row.request_id} --dry-run` }));
     const details = { parked_effects: count, exact: true, inspected: rows.length, truncated: count > rows.length, effects };
     if (!count) return { name: 'parked_effects', status: 'ok', message: 'No Git or withdrawal effect is parked.', details };
@@ -27,6 +29,6 @@ export async function checkParkedEffects(engine: BrainEngine): Promise<Check> {
   } catch (error) {
     return { name: 'parked_effects', status: 'warn',
       message: `Parked effects could not be read: ${error instanceof Error ? error.message : String(error)}. Health is unknown.`,
-      details: { exact: false, inspected: 0, truncated: true } };
+      details: { exact: false, inspected: 0, truncated: true, health: 'unknown' } };
   }
 }

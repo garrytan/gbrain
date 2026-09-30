@@ -57,7 +57,10 @@ export type CheckCategory = 'brain' | 'skill' | 'ops' | 'meta';
 export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'abandoned_threads',
   'atom_provenance_drift',
+  'connector_checkpoints',
   'derived_visibility',
+  'safe_index_pending',
+  'self_capture',
   'brain_score',
   'calibration_freshness',
   'child_table_orphans',
@@ -132,6 +135,8 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'timeline_coverage',
   'timeline_orphans',
   'timeline_history',
+  // #5254 — pages written database-only to a source with no canonical owner.
+  'unbound_source',
   'undeclared_db_only_pages',
   'unified_multimodal_coverage',
   'unverified_extractions',
@@ -195,6 +200,8 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'oauth_confidential_client_health',
   'orphan_clones',
   'persistence_capacity',
+  'stale_embedding_effects',
+  'writer_version',
   'pgbouncer_prepare',
   'pglite_data_dir',
   // db-availability loop: engine-fit + repair-recurrence signals.

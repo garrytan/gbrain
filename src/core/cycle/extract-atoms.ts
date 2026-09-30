@@ -83,6 +83,7 @@ import { managedAtomSession, readAtomOrigin, resumeManagedAtoms, publishManagedA
 import { effectiveVisibility } from '../search/private-visibility.ts';
 import { OperationError } from '../ops/contract.ts';
 import type { WriteReceipt } from '../persistence/types.ts';
+import { acceptedPendingReceipt } from '../persistence/accepted-pending.ts';
 import { AtomPageStateError, completeAtomReceipts, readAtomPageIdentity, writeAtomPageState, type AtomPageInput } from './extract-atoms-page-state.ts';
 
 const DEFAULT_BUDGET_USD = 0.3;
@@ -991,6 +992,7 @@ export async function runPhaseExtractAtoms(
   // EXCEPT the ones TRANSIENT_EXTRACT_ERROR_RE + the rate_limit abort class
   // say are "retryable, never counted" — see that regex's doc comment.
   let hardFailureCount = 0;
+  let writesPending = 0; // #5601: accepted atom batches still publishing (progress, not failures)
 
   async function stampAtomsScanHash(item: AtomPageInput): Promise<void> {
     await writeAtomPageState(engine, sourceId, item, 'complete');
@@ -1300,7 +1302,9 @@ export async function runPhaseExtractAtoms(
         // the deterministic slugs make the retry converge.
         if (managed && origin) {
           for (const atom of managedAtoms) atom.links = provenanceLinks.filter(link => link.to_slug === atom.slug);
-          writeRequests.push(...await publishManagedAtoms(engine, managed, origin, managedAtoms));
+          const published = await publishManagedAtoms(engine, managed, origin, managedAtoms);
+          writeRequests.push(...published);
+          if (published.some(receipt => receipt.state !== 'committed')) writesPending++;
           totalAtomsExtracted += managedAtoms.length;
         } else {
         if (provenanceLinks.length > 0) {
@@ -1330,6 +1334,7 @@ export async function runPhaseExtractAtoms(
       opts.progress?.tick(1, `${totalAtomsExtracted} atoms / ${duplicatesSkipped} skipped`);
     } catch (err) {
       if (err instanceof OperationError && err.writeRequest) writeRequests.push(err.writeRequest);
+      if (acceptedPendingReceipt(err)) { writesPending++; continue; }
       if (err instanceof BudgetExhausted) {
         budgetExhausted = true;
         if (item.kind === 'transcript') transcriptsSkipped++;
@@ -1439,6 +1444,7 @@ export async function runPhaseExtractAtoms(
       pages_total: pages.length,
       pages_skipped_budget: pagesSkipped,
       duplicates_skipped: duplicatesSkipped,
+      write_pending: writesPending,
       failures,
       ...(managed ? { write_requests: writeRequests } : {}),
       ...(abortedGlobalError ? { aborted_global_error: abortedGlobalError } : {}),

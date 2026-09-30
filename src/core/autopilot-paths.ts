@@ -1,7 +1,7 @@
 /**
  * Filesystem coordination points for the autopilot daemon.
  *
- * A LEAF module (imports only `path` + `config`) so other commands can read the
+ * A LEAF module (imports only node builtins + `config`) so other commands can read the
  * daemon's state files WITHOUT importing `src/commands/autopilot.ts`.
  *
  * Why that matters concretely: the CLI flag-registry generator follows a
@@ -20,6 +20,7 @@
  * because that is where the daemon itself writes; a `GBRAIN_HOME` install
  * otherwise has readers looking in a different directory than the writer.
  */
+import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { gbrainPath } from './config.ts';
 
@@ -112,4 +113,27 @@ export function markerHolderAlive(body: string): 'alive' | 'dead' | 'unknown' {
   } catch (e) {
     return (e as NodeJS.ErrnoException)?.code === 'ESRCH' ? 'dead' : 'alive';
   }
+}
+
+/**
+ * The operator's own pause (the autopilot pause subcommand), kept apart from
+ * the migration/restore hold above: installing autopilot and upgrading gbrain
+ * clear a leaked migration hold but never this marker, and resuming clears
+ * only this marker, never a live migration's hold.
+ */
+export function autopilotOperatorPauseMarkerPath(): string {
+  return join(gbrainPath(), 'autopilot-operator-paused');
+}
+
+/** True while either pause marker is present; the daemon and workers do no new work. */
+export function autopilotPaused(): boolean {
+  return existsSync(autopilotOperatorPauseMarkerPath()) || existsSync(autopilotPausedMarkerPath());
+}
+
+/** The recorded reason for the active pause (the operator pause first), or null. */
+export function autopilotPauseReason(): string | null {
+  for (const path of [autopilotOperatorPauseMarkerPath(), autopilotPausedMarkerPath()]) {
+    try { return readFileSync(path, 'utf-8').trim() || 'pause marker present (no reason recorded)'; } catch { /* not present */ }
+  }
+  return null;
 }

@@ -34,6 +34,7 @@ import { realpathOrResolve } from '../core/path-confine.ts';
 import { slog } from '../core/console-prefix.ts';
 import { refreshProjectionStatistics } from '../core/search/projection-statistics.ts';
 import { importManagedFile } from '../core/persistence/import-mutations.ts';
+import { acceptedPendingReceipt } from '../core/persistence/accepted-pending.ts';
 import { estimateCostFromChars, lookupEmbeddingPrice } from '../core/embedding-pricing.ts';
 import { getEmbeddingModel } from '../core/ai/gateway.ts';
 
@@ -706,16 +707,19 @@ export async function runImport(
         if (e !== signal.reason && !(e instanceof Error && e.name === 'AbortError')) throw e;
         return;
       }
-      const msg = e instanceof Error ? e.message : String(e);
-      const { count, sample } = recordImportFailure(errorCounts, errorSamples, msg);
-      if (count <= 5) {
-        console.error(`  Warning: skipped ${relativePath}: ${msg}`);
-      } else if (count === 6) {
-        console.error(`  (suppressing further "${sample.slice(0, 60)}..." errors)`);
+      // #5600: an accepted managed import still publishing is not a failure; the next run resumes its request.
+      if (acceptedPendingReceipt(e)) { skipped++; console.error(`  Pending: ${relativePath} was accepted and is still publishing; rerun to confirm it.`); } else {
+        const msg = e instanceof Error ? e.message : String(e);
+        const { count, sample } = recordImportFailure(errorCounts, errorSamples, msg);
+        if (count <= 5) {
+          console.error(`  Warning: skipped ${relativePath}: ${msg}`);
+        } else if (count === 6) {
+          console.error(`  (suppressing further "${sample.slice(0, 60)}..." errors)`);
+        }
+        errors++;
+        skipped++;
+        failures.push({ path: importRelPath, error: msg });
       }
-      errors++;
-      skipped++;
-      failures.push({ path: importRelPath, error: msg });
     }
     processed++;
     tickProgress();

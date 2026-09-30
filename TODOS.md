@@ -1,5 +1,58 @@
 # TODOS
 
+## Fix wave 3 follow-ups (filed 2026-09-29, follow-up from v0.60.11.0)
+
+### Recovery layer
+
+- [ ] **P1 — Bounded replay window for lifetime request IDs (wave-2 CEO-E7).**
+  **What:** every admitted write keeps a permanent request ID for replay protection, so the principal and brain lifetime-ID limits only move later (`persistence_capacity` warns at 80% and names a `gbrain config set` value). **Fix:** a bounded replay window with a documented horizon and an eviction rule that never replays a committed write twice; size it from the default of 600 admissions a day (about 417 days of headroom at the default limit). **Effort:** L. **Priority:** P1.
+- [ ] **P1 — `gbrain sources writer deactivate` (#5455).**
+  **What:** managed mode is a one-way door: the claim and activate runbook in `docs/architecture/topologies.md` tells operators to take a database backup because nothing turns activation off. **Fix:** a deliberate, state-bound deactivate with the same `--admin-intent` / `--expected-state` contract and quiescence checks, honoring the writer admin lock. **Effort:** M. **Priority:** P1.
+- [ ] **P1 — Opt-in `min_writer_version` floor.**
+  **What:** the `writer_version` doctor advisory only observes: a binary older than v0.60.5.0 can still delete database-only timeline rows. **Fix:** an opt-in floor enforced at admission and publication by the database (reusing the `writer_protocol_floor` trigger pattern), a binary version declaration older binaries lack, quiescence to enable it, and a floor that cannot be lowered. Eng estimate 1,500-3,000 changed lines against 800-1,500 for the advisory. **Effort:** L. **Priority:** P1.
+- [ ] **P1 — #5629: reconcile or re-queue a stale queued embedding effect.**
+  **What:** a committed write whose queued embedding effect is never claimed blocks shared-skill activation (`writer_not_quiesced` names it; doctor reports `stale_embedding_effects` as unsupported), and `retry-effects` refuses effects that have not failed. **Fix:** let the operator reconcile existing vectors or re-queue the effect under the owner, never silently drop the embedding obligation; then reclassify the doctor finding as repairable. **Effort:** M. **Priority:** P1.
+- [ ] **P2 — #5522: write the reproduction first.** Plausible but unreproduced; no code until a failing repro exists. **Priority:** P2.
+- [ ] **P2 — #5226 part 2.** Revisit only after part 1 is confirmed fixed with pacing on. **Priority:** P2.
+- [ ] **P2 — Database remediation run record with a reservation ledger.**
+  **What:** the remediation cap, consent and spend live in the local checkpoint (`~/.gbrain/remediation/<plan hash>.json`), which covers one host. **Fix:** a `remediation_runs` record plus per-attempt reservations that delegated workers enforce, so a cap holds across processes and hosts. This also closes two known gaps: the embedding effects that `timeline` and `visibility` repairs queue are charged at their pre-repair estimate but the persistence consumer does not enforce the cap per provider call, and a resumed safe-chunks embedding pass is scoped by source rather than by the exact re-sealed pages. **Effort:** L. **Priority:** P2.
+- [ ] **P3 — Host-label registry for writer-version warnings.** The advisory names hosts by persistence host UUID because no hostname is recorded (`identity.ts` `host.json`). Record an operator-chosen label per host and show it beside the UUID. **Effort:** S. **Priority:** P3.
+- [ ] **P3 — `source-paths` / `source-uris` repair kinds and the metadata-repair intent (dropped from W8).** Revisit when `invalid_source_uri` reports arrive; the manual step in `docs/guides/write-refusals.md` stands until then. **Priority:** P3.
+- [ ] **P3 — Doctor check for unpushed managed commits by age (#5198 thread).** **Priority:** P3.
+- [ ] **P3 — #3783 with #5691: query-side embedding prefixes behind a setting.** **Priority:** P3.
+- [ ] **P3 — #5392 inert single-writer mode.** Recommended no: resolve through the #5198/#5254 family instead. Recorded so the decision is visible. **Priority:** P3.
+- [ ] **P3 — Retire `safeChunkUpgradeAdvisory`.** Post-upgrade now reports `safe_index_pending` through the recovery banner; the function remains only for `test/safe-chunk-reseal.test.ts`. Move that assertion onto the doctor check and delete the function. **Effort:** S. **Priority:** P3.
+
+### Connectors
+
+- [ ] **P1 — Move the cycle stamps out of `sources.config`.**
+  **What:** `runCycle` writes `last_source_cycle_at` / `last_full_cycle_at` into `sources.config` after every source cycle; that rotating blob was the root cause behind #5686. v0.60.11.0 keys connector identity on parsed settings instead, but nine files still read the stamps from the blob. **Fix:** dedicated columns or a cycle-state row, with a migration; community PR #5695 sketched one.
+- [ ] **P2 — Per-source "admit even if unchanged" bypass for the #5470 no-op skip.**
+  **What:** there is no way to force one connector, import or sync source to republish unchanged pages (for example after a renderer fix that keeps content hashes). **Fix:** a source-scoped, one-run flag that disables the kernel skip; `--reset-checkpoint` only re-walks.
+- [ ] **P3 — Configurable connector pending-wait budget, clamped to the run's deadline.**
+  **What:** the managed connector waits at most 30 s in total for accepted writes per run (`CONNECTOR_WAIT_BUDGET_MS`). **Fix:** a config key, clamped so it never exceeds the caller's job timeout.
+- [ ] **P2 — Multi-source connector fan-out deadline (`stopped_on_wait_budget` across sources).**
+  **What:** each connector run bounds its own waits and records `stopped_on_wait_budget`, but no in-process fan-out dispatches many connector sources against one shared deadline, so the plan's 50-source fan-out stop was not built. **Fix:** when such a fan-out exists (for example `sync --all` over connector sources), stop dispatching new sources at the deadline and report the rest.
+- [ ] **P3 — Connector ingest waits on its whole pending set while the owner is delayed.**
+  **What:** under a delayed consumer each run first waits on its recorded pending set and stops on the wait budget, so new upstream items are not admitted until the backlog drains (measured by `test/fix-wave-3-chaos.test.ts`). Nothing is lost; the items wait upstream. **Fix:** if time-to-searchable under sustained arrivals matters, admit new items up to the outstanding limit while the pending set resolves.
+- [ ] **P3 — User timeline bullets on pages other preserving writers regenerate.**
+  **What:** `add_timeline_entry` on a connector page now writes a materialized-marked bullet so the connector re-render keeps it (#5567). Other preserving writers that regenerate an ordinary page still treat an unmarked bullet their new body drops as removed. **Fix:** audit those writers and mark user-added bullets on the pages they own, with a regression per writer.
+- [ ] **P2 — Facts and takes fences below the timeline sentinel on connector pages.**
+  **What:** a connector re-render carries the page's facts and takes fences (so remembered facts are not expired), but only when the stored fences sit in the page body and pass the preservation check. A legacy page with a fence below the timeline sentinel, or an ambiguous fence, still loses those rows on re-render. **Fix:** move such fences above the sentinel in a repair, or refuse the connector publication for that page with a typed hold and a repair command.
+- [ ] **P3 — Row-level ownership for fences in connector renders.**
+  **What:** when the provider's own render carries a facts fence (for example a GitHub issue body), the provider owns the whole fence: upstream corrections win, and rows added on the brain to that fence are not carried. When the provider later drops its fence entirely, the stored fence is carried as brain-added. **Fix:** record which fence rows came from the provider so each side's rows follow its owner.
+- [ ] **P3 — Resume a partially refused embedding without re-embedding its siblings.**
+  **What:** after a #4616 refusal the page signature is cleared so `gbrain embed --stale` finds it; an explicit `retry-effects` then re-embeds the page's other chunks too, and `gbrain embed <slug>` stamps the signature only when it embeds every chunk in one run. **Fix:** judge completion from per-chunk provenance and stamp the page once the stored set is complete.
+- [ ] **P3 — Record #4616 refusals inside embedding scans.**
+  **What:** a withdrawal or source-scan embedding effect that meets a refused chunk moves on to its next page, so the effect can finish `committed` while that page's refused chunk has no vector (the page keeps no signature, so `gbrain embed --stale` still finds it). The generic parking path is built for Git and withdrawal targets: it would share the scan's embedding retry budget across pages, and `retry-effects` would mark a parked embedding scan complete. **Fix:** a scan-local refused-page list that resets the per-page attempt base and that `retry-effects` resolves before completing.
+
+### Maintenance writers
+
+- [ ] **P2 — Managed `writeSingleFact` keeps unresolved entity attribution.**
+  **What:** on a managed brain a single fact for an entity with no page is stored database-only with `entity_slug` NULL (the response now reports that honestly), so the same claim for a second absent entity dedups against the first. The shared `managed_facts_entity` preparer accepts only the row's slug or NULL. **Fix:** an opt-in intent flag used only by `writeSingleFact`: `publishManagedFacts` keeps the resolver's fallback slug on `memory/unattributed` rows, and `prepareManagedFactsMutation` allows that slug on rows without a row number and passes it to `insertFact`, so dedup is per entity; add a test pinning the facts backstop's unchanged replay and dedup contract.
+- [ ] **P3 — Release the reservation of other permanent embedding rejections.**
+  **What:** the migration budget now refunds a provider token-limit rejection (it bills nothing), but the drain's per-chunk fan-out after another permanent 4xx (400/413/422) keeps the failed batch's maximum debit; the overshoot and exhaustion refusal bound it, but it can stop a migration early. **Fix:** map those unbilled rejections through the same `invokeAI` rejection mapper, with a test at exactly the printed cap.
+
 ## Test-audit follow-ups (filed 2026-09-29)
 
 Evidence for each item is in `docs/test-audit/2026-09-29/`.

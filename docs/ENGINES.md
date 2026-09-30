@@ -270,9 +270,12 @@ version bump changes it.
    backs up `pg_wal/` + `pg_control` into a sibling
    `<dataDir>.wal-repair-backup-<ts>/` dir, resets the WAL in place
    (pg_resetwal semantics — data files preserved; transactions not
-   checkpointed before the corruption may be lost), and retries once. On
-   success it prints a loud stderr notice naming the backup and recommending
-   `gbrain doctor`. Safety bounds: repair only runs under a cleanly-acquired
+   checkpointed before the corruption may be lost), and retries once. The
+   reset does not rebuild indexes, so a page written just before the crash
+   can be missing from vector search while keyword search still finds it.
+   On success it prints a loud stderr notice naming the backup and the next
+   commands: `gbrain reindex --vectors` (rebuilds every HNSW index from the
+   stored vectors, no re-embedding) and then `gbrain doctor`. Safety bounds: repair only runs under a cleanly-acquired
    data-dir lock (never after reaping another process's lock), skips for a
    cooldown window after a failed attempt
    (`GBRAIN_PGLITE_WAL_REPAIR_COOLDOWN_SECONDS`, default 3600), reuses one

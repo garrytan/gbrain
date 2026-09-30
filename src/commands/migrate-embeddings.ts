@@ -36,7 +36,8 @@ import { prepareEmbeddingProjections } from '../core/embedding-readiness.ts';
 import { assertRetainedEmbeddingRebuildability } from '../core/embedding-migration-retention.ts';
 import { embedStaleFacts } from '../core/embed-facts.ts';
 import { countStaleFactEmbeddings } from '../core/facts/embedding-identity.ts';
-import { authorizeMigrationBudget, assertMigrationLeases } from '../core/embedding-migration-budget.ts';
+import { authorizeMigrationBudget, assertMigrationLeases, ceilCents, MigrationBudgetRefusal, type MigrationBudgetRefusalDetails, type MigrationWorstCase } from '../core/embedding-migration-budget.ts';
+import { planMigrationWorstCase, MIGRATION_PROBE_TEXT, RERANKER_PROBE } from '../core/embedding-migration-worst-case.ts';
 import { withAIInvocationGuard } from '../core/ai/invocation-guard.ts';
 
 /**
@@ -69,7 +70,8 @@ Flags:
                           declared width; required when the recipe declares none.
   --dry-run               Plan + cost estimate only; change nothing.
   --yes                   Skip the confirm prompt (required non-interactively).
-  --max-cost-usd <USD>    Total durable authorization; retries retain debits. Raise explicitly to renew.
+  --max-cost-usd <USD>    Total durable authorization; must cover the printed worst case (or the run
+                          refuses before any change). Requests settle to reported usage; raise to renew.
   --json                  Machine-readable envelope on stdout.
   --no-embed              Apply schema + config + invalidation, but skip the
                           re-embed pass. Inspect --status, then rerun this migration
@@ -112,7 +114,7 @@ function renderPlan(ctx: MigrationPlanContext): string {
   lines.push(`  From: ${plan.from_model} (${plan.from_dims}d${plan.column_dims !== null && plan.column_dims !== plan.from_dims ? `; column is actually ${plan.column_dims}d` : ''})`);
   lines.push(`  To:   ${plan.to_model} (${plan.to_dims}d)`);
   lines.push(`  Work: ${plan.chunks_to_embed} chunks, ${plan.facts_to_embed ?? 0} active facts; ${plan.blocked_projection_pages ?? 0} projection-blocked pages.`);
-  lines.push('  Paid authorization: --max-cost-usd is a durable total cap, conservatively debited before each attempt; unknown prices refuse.');
+  lines.push('  Paid authorization: --max-cost-usd is a durable total cap; each attempt reserves its maximum input size and settles to reported usage; unknown prices refuse.');
   // DB-reality census: what pages say they were embedded with (env can lie
   // about From; the census cannot).
   if (plan.signature_census.length > 0) {
@@ -172,6 +174,17 @@ function renderPlan(ctx: MigrationPlanContext): string {
       ? `  Estimated cost: $${plan.est_cost_usd.toFixed(2)} (${plan.total_chars} chars at the ${plan.to_model} rate)`
       : `  Estimated cost: unknown — no pricing entry for ${plan.to_model}. Check the provider's pricing before proceeding.`,
   );
+  const worst = plan.worst_case_authorization;
+  lines.push(worst.usd === null
+    ? `  Worst-case authorization: unknown (${worst.requests} request(s); no price for ${plan.to_model}); paid dispatch refuses until priced.`
+    : `  Worst-case authorization: $${ceilCents(worst.usd).toFixed(2)} (${worst.requests} request(s) at maximum input size; retries and batch splits settle from the same headroom).`);
+  const unpricedReranker = worst.unpriced_models.filter(m => m !== plan.to_model);
+  if (worst.usd !== null && unpricedReranker.length) {
+    lines.push(`  WARNING: reranker ${unpricedReranker.join(', ')} has no price; its probe refuses without dispatch and the switch is reported as failed. The worst case above covers embeddings only.`);
+  }
+  if (worst.usd !== null && worst.prior_debited_usd > 0) {
+    lines.push(`  Prior debits: $${worst.prior_debited_usd.toFixed(4)} retained; --max-cost-usd must be at least $${ceilCents(worst.usd + worst.prior_debited_usd).toFixed(2)}.`);
+  }
   if (plan.resuming) {
     lines.push('  Resuming: a prior migration to this target was interrupted; continuing it.');
   }
@@ -273,7 +286,7 @@ export async function probeTargetProvider(
 ): Promise<{ ok: true } | { ok: false; message: string }> {
   try {
     const { embed } = await import('../core/ai/gateway.ts');
-    const vecs = await embed(['gbrain embedding migration probe'], {
+    const vecs = await embed([MIGRATION_PROBE_TEXT], {
       embeddingModel: toModel,
       dimensions: toDims,
     });
@@ -306,8 +319,8 @@ export async function probeTargetReranker(
   try {
     const { rerank } = await import('../core/ai/gateway.ts');
     const results = await rerank({
-      query: 'gbrain reranker migration probe',
-      documents: ['gbrain reranker migration probe document a', 'gbrain reranker migration probe document b'],
+      query: RERANKER_PROBE.query,
+      documents: [...RERANKER_PROBE.documents],
       model,
       timeoutMs: 8000,
     });
@@ -411,8 +424,11 @@ export interface RerankerOutcome {
   suggestion?: string | null;
 }
 
+/** The plan plus its worst-case authorization (#5680) and the same target's retained debits. */
+export type MigrationPlan = EmbeddingMigrationPlan & { worst_case_authorization: MigrationWorstCase & { prior_debited_usd: number } };
+
 export interface MigrationPlanContext {
-  plan: EmbeddingMigrationPlan;
+  plan: MigrationPlan;
   verify: MigrationVerify;
   envPresence: ReturnType<typeof detectEnvPresence>;
   /** env is set AND exactly pins the target (the notice-and-proceed case). */
@@ -435,6 +451,7 @@ export type MigrationFlowResult =
   | { status: 'refused_env'; warning: EnvOverrideWarning }
   | { status: 'probe_failed'; message: string }
   | { status: 'apply_failed'; reason: string }
+  | { status: 'refused_budget'; refusal: MigrationBudgetRefusalDetails }
   | {
       status: 'applied_no_embed';
       invalidated: number; cache_cleared: number;
@@ -515,6 +532,8 @@ export async function planMigrationFlow(
   // Reranker companion decision (D8) — throws a paste-ready message on an
   // invalid explicit --reranker value BEFORE anything destructive can run.
   const rerankerPlan = await resolveRerankerPlan(engine, plan.from_model, plan.to_model, opts.reranker);
+  const worstCase = await planMigrationWorstCase(engine, plan, { rerankerModel: rerankerPlan.action.kind === 'switch' ? rerankerPlan.action.to : undefined });
+  const priorDebitedUsd = marker.state && !inflightOther ? marker.state.budget?.debited_usd ?? 0 : 0;
 
   // Brain/DB identity (round-1 C1): make wrong-brain routing visible in every
   // transcript. Redacted — never print a raw connection string.
@@ -551,7 +570,8 @@ export async function planMigrationFlow(
     if (col && col !== 'embedding') customSearchColumn = col;
   } catch { /* informational */ }
 
-  return { plan, verify, envPresence, envMatchesTarget, inflightOther, rerankerPlan, identity, concurrentWriters, customSearchColumn };
+  return { plan: { ...plan, worst_case_authorization: { ...worstCase, prior_debited_usd: priorDebitedUsd } },
+    verify, envPresence, envMatchesTarget, inflightOther, rerankerPlan, identity, concurrentWriters, customSearchColumn };
 }
 
 /**
@@ -658,8 +678,15 @@ export async function executeMigrationFlow(
       return { status: 'apply_failed', reason: 'Embedding is disabled or its policy is invalid; no provider requests or migration invalidation performed. Review the selected brain embedding configuration before retrying.' };
     }
     await engine.transaction(async tx => { await assertOwned(tx); await assertRetainedEmbeddingRebuildability(tx, plan.to_dims, plan.to_model, plan); });
-    const debit = await authorizeMigrationBudget(engine, plan, opts.maxCostUsd, heldLocks,
-      ctx.rerankerPlan.action.kind === 'switch' ? ctx.rerankerPlan.action.to : undefined);
+    const rerankerModel = ctx.rerankerPlan.action.kind === 'switch' ? ctx.rerankerPlan.action.to : undefined;
+    let debit: Awaited<ReturnType<typeof authorizeMigrationBudget>>;
+    try {
+      debit = await authorizeMigrationBudget(engine, plan, opts.maxCostUsd, heldLocks, rerankerModel,
+        await planMigrationWorstCase(engine, plan, { rerankerModel }));
+    } catch (error) {
+      if (error instanceof MigrationBudgetRefusal) return { status: 'refused_budget', refusal: error.details };
+      throw error;
+    }
     return await withAIInvocationGuard(async call => {
       await assertOwned();
       const permit = await debit(call);
@@ -1045,7 +1072,7 @@ export async function runMigrateEmbeddings(
 
   // Refusals normalize to the op-envelope shape ({status:'refused', reason})
   // in their own cases below; everything else gets the generic envelope.
-  if (flags.json && result.status !== 'refused_env' && result.status !== 'refused_retarget') {
+  if (flags.json && result.status !== 'refused_env' && result.status !== 'refused_retarget' && result.status !== 'refused_budget') {
     console.log(JSON.stringify({ ...result, plan,
       ...(result.status !== 'completed' && result.status !== 'applied_no_embed' && { recovery: EMBEDDING_MIGRATION_RECOVERY }),
     }, null, 2));
@@ -1078,6 +1105,15 @@ export async function runMigrateEmbeddings(
       } else {
         serr(formatEnvOverrideWarning(result.warning));
       }
+      exit(1);
+      break;
+    }
+    case 'refused_budget': {
+      if (flags.json) {
+        console.log(JSON.stringify({ status: 'refused', reason: result.refusal.error, ...result.refusal, plan, recovery: EMBEDDING_MIGRATION_RECOVERY }, null, 2));
+      }
+      serr(result.refusal.message);
+      serr(`  Docs: ${result.refusal.docs}`);
       exit(1);
       break;
     }

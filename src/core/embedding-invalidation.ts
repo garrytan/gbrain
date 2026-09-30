@@ -154,6 +154,32 @@ export async function clearFalseStampedSignatures(
   });
 }
 
+/**
+ * #5289: chunks the widened stale predicate counts that the live run only
+ * restamps. Their vectors are already in the target space (model, text hash
+ * and width match), so invalidation keeps them and never re-embeds them; an
+ * honest dry run subtracts them from its "would embed" figure.
+ */
+export async function countRestampOnlyChunks(
+  engine: Pick<BrainEngine, 'executeRaw'>,
+  opts: { signature: string; sourceId?: string; includeNullSignature?: boolean },
+): Promise<number> {
+  const colId = quoteIdentifier((await resolveActiveEmbeddingColumnFromEngine(engine, { fallbackToLegacy: true })).name);
+  const { model, dims } = splitEmbeddingSignature(opts.signature);
+  const sigClause = opts.includeNullSignature
+    ? '(p.embedding_signature IS NULL OR p.embedding_signature <> $1)'
+    : 'p.embedding_signature IS NOT NULL AND p.embedding_signature <> $1';
+  const rows = await engine.executeRaw<{ count: number | string }>(
+    `SELECT count(*)::int AS count FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
+      WHERE p.deleted_at IS NULL AND ${sigClause}
+        AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')
+        AND ($4::text IS NULL OR p.source_id = $4)
+        AND ${currentSpaceChunkPredicate(colId, 2, 3)}`,
+    [opts.signature, model, dims, opts.sourceId ?? null],
+  );
+  return Number(rows[0]?.count ?? 0);
+}
+
 export async function invalidateStaleSignatureEmbeddingsGuarded(
   engine: BrainEngine,
   opts: { signature: string; sourceId?: string; includeNullSignature?: boolean },

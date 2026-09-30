@@ -13,7 +13,7 @@ import { assertNoUnreviewedJobs, authorizeJobExecution, withSubmissionAuthority 
  */
 
 import { existsSync } from 'fs';
-import { autopilotPausedMarkerPath } from '../autopilot-paths.ts';
+import { autopilotOperatorPauseMarkerPath, autopilotPausedMarkerPath } from '../autopilot-paths.ts';
 import type { BrainEngine } from '../engine.ts';
 import type {
   MinionJob, MinionJobContext, MinionHandler, MinionWorkerOpts,
@@ -827,7 +827,7 @@ export class MinionWorker extends EventEmitter {
         // the CLAIM here extends that fence to queued jobs (an already
         // in-flight job finishes and is waited on by the migrate drain).
         // Checked at claim time only: one existsSync per poll tick.
-        if (existsSync(autopilotPausedMarkerPath())) {
+        if (existsSync(autopilotPausedMarkerPath()) || existsSync(autopilotOperatorPauseMarkerPath())) {
           if (!this.pausedByMarkerAnnounced) {
             console.log('[worker] pause marker present — not claiming new jobs until it clears.');
             this.pausedByMarkerAnnounced = true;
@@ -891,7 +891,7 @@ export class MinionWorker extends EventEmitter {
             // after migrate's drain probe counted zero active jobs. A job
             // claimed into that window is released back (delayed, un-run)
             // instead of executed; the poll loop then parks on the marker.
-            if (existsSync(autopilotPausedMarkerPath())) {
+            if (existsSync(autopilotPausedMarkerPath()) || existsSync(autopilotOperatorPauseMarkerPath())) {
               console.log(`[worker] pause marker appeared after claim — releasing ${job.name} (id=${job.id}) un-run.`);
               await this.releaseClaimForPause(job, lockToken);
               this.executions.delete(lockToken);

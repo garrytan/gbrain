@@ -1,9 +1,9 @@
 import type { BrainEngine, NewFact } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import { OperationError } from '../ops/contract.ts';
-import { parseFactsFence, upsertFactRow, formatFenceDate } from '../facts-fence.ts';
+import { parseFactsFence, upsertFactRow, formatFenceDate, renderFactsTable, replaceOrInsertFactsFence } from '../facts-fence.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
-import { assertFactNotWithdrawn, decideSingleFact } from '../facts/single-prepare.ts';
+import { assertFactNotWithdrawn, decideSingleFact, type FactCandidate } from '../facts/single-prepare.ts';
 import { extractFactsFromFenceText } from '../facts/extract-from-fence.ts';
 import { authorizeWrite } from './authority.ts';
 import { authorizePageVisibility } from './page-visibility.ts';
@@ -82,7 +82,7 @@ export async function prepareManagedFactsMutation(engine: BrainEngine, row: Writ
   if (parsed.warnings.length) throw new OperationError('invalid_params', 'The entity facts fence is malformed.');
   const [maximum] = await engine.executeRaw<{ n: number }>('SELECT COALESCE(MAX(row_num),0)::int AS n FROM facts WHERE source_id=$1 AND source_markdown_slug=$2', [row.source_id, row.slug]);
   let nextRow = Math.max(maximum?.n ?? 0, ...parsed.facts.map(fact => fact.rowNum)) + 1;
-  const entries: Array<{ fact: typeof facts[number]; duplicateId: number | null; rowNum?: number; duplicateOf?: number }> = [];
+  const entries: Array<{ fact: typeof facts[number]; duplicateId: number | null; rowNum?: number; duplicateOf?: number; supersedes?: FactCandidate }> = [];
   const seen = new Map<string, number>();
   for (const fact of facts) {
     await assertFactNotWithdrawn(engine, row.source_id, fact);
@@ -91,14 +91,20 @@ export async function prepareManagedFactsMutation(engine: BrainEngine, row: Writ
     if (earlier !== undefined) { entries.push({ fact, duplicateId: null, duplicateOf: earlier }); continue; }
     seen.set(key, entries.length);
     const decision = await decideSingleFact(engine, row.source_id, fact, fact.embedding ?? null, fact.embedding_model);
-    if (decision.candidate) { entries.push({ fact, duplicateId: decision.candidate.id }); continue; }
+    const supersedes = p.supersede === true && decision.status === 'superseded' ? decision.candidate! : undefined;
+    if (decision.candidate && !supersedes) { entries.push({ fact, duplicateId: decision.candidate.id }); continue; }
     const rowNum = fact.entity_slug !== null ? nextRow++ : undefined;
     if (rowNum !== undefined) body = upsertFactRow(body, { rowNum, claim: fact.fact, kind: fact.kind, visibility: fact.visibility,
       confidence: fact.confidence ?? 1, notability: fact.notability ?? 'medium', source: fact.source, context: fact.context ?? undefined,
       validFrom: formatFenceDate(fact.valid_from!), validUntil: fact.valid_until ? formatFenceDate(fact.valid_until) : undefined,
       claimMetric: fact.claim_metric ?? undefined, claimValue: fact.claim_value ?? undefined,
       claimUnit: fact.claim_unit ?? undefined, claimPeriod: fact.claim_period ?? undefined }).body;
-    entries.push({ fact, duplicateId: null, rowNum });
+    // Strike the superseded row in this page's fence, as the remember mutation does.
+    if (supersedes && rowNum !== undefined && supersedes.source_markdown_slug === row.slug && supersedes.row_num != null) {
+      body = replaceOrInsertFactsFence(body, renderFactsTable(parseFactsFence(body).facts.map(f => f.rowNum === Number(supersedes.row_num)
+        ? { ...f, active: false, supersededBy: rowNum, context: `superseded by #${rowNum}` } : f)));
+    }
+    entries.push({ fact, duplicateId: null, rowNum, supersedes });
   }
   const canonicalFacts = extractFactsFromFenceText(parseFactsFence(body).facts, row.slug, row.source_id);
   for (const entry of entries) {
@@ -123,12 +129,13 @@ export async function prepareManagedFactsMutation(engine: BrainEngine, row: Writ
         await assertFactNotWithdrawn(tx, row.source_id, entry.fact);
         if (entry.duplicateOf !== undefined) continue;
         const current = await decideSingleFact(tx, row.source_id, entry.fact, entry.fact.embedding ?? null, entry.fact.embedding_model);
-        if ((current.candidate?.id ?? null) !== entry.duplicateId) throw new OperationError('revision_conflict', 'The fact deduplication state changed before publication.');
+        if ((current.candidate?.id ?? null) !== (entry.duplicateId ?? entry.supersedes?.id ?? null)) throw new OperationError('revision_conflict', 'The fact deduplication state changed before publication.');
       }
     }, apply: async tx => {
       await page?.apply(tx);
       const ids: number[] = [];
       let inserted = 0;
+      let superseded = 0;
       for (const entry of entries) {
         if (entry.duplicateOf !== undefined) { ids.push(ids[entry.duplicateOf]); continue; }
         if (entry.duplicateId !== null) { ids.push(entry.duplicateId); continue; }
@@ -138,8 +145,13 @@ export async function prepareManagedFactsMutation(engine: BrainEngine, row: Writ
           ids.push(result.ids[0]);
         } else ids.push((await tx.insertFact(entry.fact, { source_id: row.source_id })).id);
         inserted++;
+        if (entry.supersedes) {
+          await tx.executeRaw('UPDATE facts SET expired_at=COALESCE(expired_at,now()),superseded_by=$3 WHERE id=$1 AND source_id=$2',
+            [entry.supersedes.id, row.source_id, ids[ids.length - 1]]);
+          superseded++;
+        }
       }
-      return { status: 'completed', inserted, duplicate: entries.length - inserted, superseded: 0, fact_ids: ids,
+      return { status: 'completed', inserted, duplicate: entries.length - inserted, superseded, fact_ids: ids,
         fenced: page !== undefined, kind: p.kind, batch_key: p.batchKey, input_digest: p.inputDigest };
     } };
 }

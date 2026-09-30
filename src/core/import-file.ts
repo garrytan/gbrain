@@ -26,13 +26,13 @@ import { embedMultimodal, currentEmbeddingSignature } from './embedding.ts';
 // transient network backoff) instead of bare embedBatch, so one socket blip
 // mid-sync no longer aborts the whole file import. Same core→commands edge
 // precedent as embed-stale.ts.
-import { embedBatchWithBackoff } from './embed-retry.ts';
+import { embedBatchKeepingUsable, embedBatchWithBackoff } from './embed-retry.ts';
+import { isEmbeddingZeroNormError, type EmbeddingZeroNormError } from './ai/embedding-guard.ts';
 import { slugifyPath, slugifyCodePath, isCodeFilePath, hasMalformedPathSegment } from './sync.ts';
 import type { ChunkInput, Page, PageInput, PageType } from './types.ts';
 import { computeEffectiveDate, fallbackCreatedAt, isValidTimeZone } from './effective-date.ts';
 import { MARKDOWN_CHUNKER_VERSION } from './chunkers/recursive.ts';
 import { logSlugFallback } from './audit-slug-fallback.ts';
-import { resolveContextualRetrievalMode } from './contextual-retrieval-resolver.ts';
 import { assessContentSanity, ContentSanityBlockError } from './content-sanity.ts';
 import { loadOperatorLiterals } from './content-sanity-literals.ts';
 import { logContentSanityAssessment } from './audit/content-sanity-audit.ts';
@@ -50,12 +50,10 @@ import {
   modeRequiresWrapper,
   wrapChunkForEmbedding,
 } from './embedding-context.ts';
-import { loadSearchModeConfig, resolveSearchMode } from './search/mode.ts';
 import { normalizeAliasList } from './search/alias-normalize.ts';
-import { isUndefinedTableError, warnOncePerProcess, validateSlug, contentHash, contentHashLegacy, ATOMS_SCAN_HASH_KEY } from './utils.ts';
+import { warnOncePerProcess, validateSlug, contentHash, contentHashLegacy, ATOMS_SCAN_HASH_KEY } from './utils.ts';
 import { decorateEmbeddingDimError } from './embedding-dim-check.ts';
-import { computeCorpusGeneration, loadSourceRow } from './contextual-retrieval-service.ts';
-import { DEFAULT_SYNOPSIS_MODEL } from './page-summary.ts';
+import { resolveImportContextualMode } from './import-contextual-mode.ts';
 import { runGuardrails } from './guardrails.ts';
 import { parseFactsFence, renderFactsTable, restoreHiddenFactRows, factsGapWarning, replaceOrInsertFactsFence } from './facts-fence.ts';
 
@@ -785,72 +783,12 @@ export async function importFromContent(
   //   and defers per-chunk synopsis to the Minion-driven sweep).
   // - Stored chunk_text stays canonical; only the embedding input is wrapped.
   // - Code chunks (chunk_source='fenced_code') bypass wrapping per D20-T4.
-  // Coordinated imports publish text now and embed through the durable outbox.
-  // Capture their wrapping convention before publication, even though no
-  // provider runs here. Plain legacy --no-embed imports retain their behavior.
-  const prepareEmbeddingContext = !opts.noEmbed || opts.prepare !== undefined;
-  let effectiveCRMode: 'none' | 'title' | 'per_chunk_synopsis' = 'none';
-  if (prepareEmbeddingContext) {
-    const searchInput = await loadSearchModeConfig(engine);
-    const knobs = resolveSearchMode(searchInput);
-    // #3885: load the REAL source row so a stored `gbrain sources
-    // set-cr-mode <id> <mode>` (and the mount trust flag) applies on the
-    // inline import path — capture + reindex --markdown — not just the
-    // Minion backfill. The prior hardcoded stub (contextual_retrieval_mode:
-    // null / trust_frontmatter_overrides: false) silently ignored the
-    // per-source override. Unknown source id / pre-sources-table brains
-    // keep the stub (host-trust defaults).
-    let sourceRow: {
-      id: string;
-      contextual_retrieval_mode?: string | null;
-      trust_frontmatter_overrides?: boolean;
-    } = {
-      id: sourceId ?? 'default',
-      contextual_retrieval_mode: null,
-      trust_frontmatter_overrides: false,
-    };
-    try {
-      const row = await loadSourceRow(engine, sourceId ?? 'default');
-      sourceRow = {
-        id: row.id,
-        contextual_retrieval_mode: row.contextual_retrieval_mode ?? null,
-        trust_frontmatter_overrides: row.trust_frontmatter_overrides === true,
-      };
-    } catch (error) {
-      // Accepted coordinated writes must retry a failed policy read; falling
-      // back here could commit a different source's wrapping convention.
-      if (opts.prepare) throw error;
-      // Source row missing ('default' not seeded on a fresh brain) — the
-      // stub stands, matching pre-#3885 behavior.
-    }
-    const resolution = resolveContextualRetrievalMode({
-      pageFrontmatter: parsed.frontmatter,
-      source: sourceRow,
-      globalMode: knobs.contextual_retrieval,
-      killSwitchDisabled: knobs.contextual_retrieval_disabled,
-    });
-    // Inline path: title-tier wrap is free. per_chunk_synopsis is too
-    // expensive for the inline import path; the page lands at the
-    // title tier on disk and the Minion-driven contextual reindex
-    // upgrades it later when the user accepts the cost prompt.
-    effectiveCRMode = resolution.mode === 'per_chunk_synopsis' ? 'title' : resolution.mode;
-  }
-
-  // v0.40.3.0: corpus_generation hash for D27 P1-5 cache invalidation.
-  // Record the selected wrapper generation for inline or deferred embedding;
-  // 'none' writes NULL. The separate embedding signature certifies vectors.
-  const corpusGeneration =
-    effectiveCRMode === 'none' || !prepareEmbeddingContext
-      ? null
-      : computeCorpusGeneration({
-          crMode: effectiveCRMode,
-          synopsisModel: DEFAULT_SYNOPSIS_MODEL,
-          // Inline import-file path never uses per_chunk_synopsis (refuses
-          // upstream); pass undefined so the doc-cap field stays out of
-          // the hash here. Per_chunk_synopsis runs through the Minion
-          // backfill handler which threads SYNOPSIS_DOC_MAX_CHARS through
-          // the service layer.
-        });
+  // Every markdown import records its wrapping convention with the canonical
+  // write, --no-embed included (#5621): later embed passes reproduce the stored
+  // mode, so an unstamped page would stay unwrapped. No provider runs here.
+  // #3885: the real source row applies (a stored `sources set-cr-mode`); the
+  // inline path demotes per_chunk_synopsis to the free title tier.
+  const { mode: effectiveCRMode, corpusGeneration } = await resolveImportContextualMode(engine, sourceId ?? 'default', parsed.frontmatter, opts.prepare !== undefined);
 
   // A13: an edit re-embeds only chunks whose embedding input changed. A stored
   // vector is reused for a chunk with the same source and text when its
@@ -883,6 +821,7 @@ export async function importFromContent(
     }
   }
 
+  let embeddingPartial: EmbeddingZeroNormError | undefined;
   const embedChunks = async () => {
     const pending = chunks.map((_, i) => i).filter(i => !reused.has(i));
     if (opts.noEmbed || pending.length === 0) return;
@@ -891,9 +830,12 @@ export async function importFromContent(
         ? buildContextualPrefix(parsed.title, null)
         : null;
     const wrappedTexts = pending.map(i => prefix ? wrapChunkForEmbedding(chunks[i].chunk_text, prefix, chunks[i].chunk_source) : chunks[i].chunk_text);
-    const embeddings = await embedBatchWithBackoff(wrappedTexts);
+    // #4616: store the usable vectors; refused chunks stay NULL for embed --stale.
+    const { vectors: embeddings, refused } = await embedBatchKeepingUsable(wrappedTexts);
+    embeddingPartial = refused;
     pending.forEach((i, j) => {
-      chunks[i].embedding = embeddings[j];
+      if (!embeddings[j]) return;
+      chunks[i].embedding = embeddings[j]!;
       // token_count tracks the wrapped string length so cost reporting
       // reflects what we actually sent to the embedder.
       chunks[i].token_count = Math.ceil(wrappedTexts[j].length / 4);
@@ -907,6 +849,10 @@ export async function importFromContent(
   if (!opts.onPostCommitEmbedding) {
     try {
       await embedChunks();
+      if (embeddingPartial) {
+        embeddingDeferred = true;
+        process.stderr.write(`[import] ${slug}: ${embeddingPartial.message} ${embeddingPartial.suggestionFor(slug, sourceId)}\n`);
+      }
     } catch (err) {
       embeddingDeferred = true;
       chunks.forEach((c, i) => { if (!reused.has(i)) { c.embedding = undefined; c.token_count = undefined; } });
@@ -974,17 +920,16 @@ export async function importFromContent(
     // v0.40.3.0: stamp the contextual retrieval state columns alongside
     // the page write. updatePageContextualRetrievalState is a narrow
     // UPDATE that runs after putPage's INSERT/UPDATE so the row exists.
-    // Prepared imports bind this convention to the new canonical revision;
-    // their deferred embedder reproduces it and installs only under CAS.
+    // Deferred embedders reproduce it: the prepared outbox installs only
+    // under CAS, and --no-embed drains read it back. Every chunk row is
+    // replaced below, so no older vector survives under this stamp.
     // This stamp certifies no vector: embedding_signature stays deferred.
-    if (prepareEmbeddingContext) {
-      await tx.updatePageContextualRetrievalState(
-        slug,
-        sourceId ?? 'default',
-        effectiveCRMode,
-        corpusGeneration,
-      );
-    }
+    await tx.updatePageContextualRetrievalState(
+      slug,
+      sourceId ?? 'default',
+      effectiveCRMode,
+      corpusGeneration,
+    );
 
     // Tag reconciliation (A14): frontmatter tags carry tag_source='frontmatter'.
     // A frontmatter-owned row whose tag left the frontmatter is deleted; rows
@@ -1108,7 +1053,7 @@ export async function importFromContent(
         if (!persistedProjection) return { status: 'superseded' };
         const signature = currentEmbeddingSignature();
         await embedChunks();
-        const installed = await installPageEmbeddings(engine, persistedProjection, chunks, signature ?? undefined);
+        const installed = await installPageEmbeddings(engine, persistedProjection, chunks, embeddingPartial ? undefined : signature ?? undefined);
         return { status: installed ? 'embedded' : 'superseded' };
       } catch {
         return { status: 'failed', error: 'Page content was saved, but embedding failed. Check the embedding provider and database on the brain host, then run gbrain embed --stale --source <source-id>.' };
@@ -1534,6 +1479,8 @@ export async function importCodeFile(
       }
     } catch (e: unknown) {
       codeEmbeddingFailed = true;
+      // #4616: keep the usable vectors of a partially refused batch.
+      if (isEmbeddingZeroNormError(e)) needsEmbedIndexes.forEach((i, j) => { if (e.vectors[j]) chunks[i]!.embedding = e.vectors[j]!; });
       console.warn(`[gbrain] embedding failed for code file ${slug}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }

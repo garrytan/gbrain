@@ -264,9 +264,14 @@ export async function prepareCanonicalProjections(engine: BrainEngine, page: Par
     if (!snapshot) return;
     // Fact IDs in permanent receipts remain meaningful when a canonical row is
     // removed/replaced. Expire and detach its row position instead of deleting it.
+    // Conversation-extractor rows share the page coordinate without a fence
+    // (#1928, as in the extract_facts reconcile); their replay owns them. A
+    // fence row that takes one of their row numbers wins that position.
     const incoming=JSON.stringify(factRows.map(f=>({row_num:f.row_num,fact:f.fact,visibility:f.visibility})));
     await tx.executeRaw(`UPDATE facts f SET expired_at=COALESCE(expired_at,now()),row_num=NULL
       WHERE source_id=$1 AND source_markdown_slug=$2 AND row_num IS NOT NULL
+      AND (COALESCE(f.source,'') NOT LIKE 'cli:extract-conversation-facts%'
+        OR EXISTS (SELECT 1 FROM jsonb_to_recordset($3::text::jsonb) AS c(row_num integer) WHERE c.row_num=f.row_num))
       AND NOT EXISTS (SELECT 1 FROM jsonb_to_recordset($3::text::jsonb) AS n(row_num integer,fact text,visibility text)
         WHERE n.row_num=f.row_num AND n.fact=f.fact AND n.visibility=f.visibility)`,[sourceId,slug,incoming]);
     if (factRows.length) {

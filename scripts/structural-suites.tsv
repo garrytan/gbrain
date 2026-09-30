@@ -14,7 +14,7 @@ test/auto-link-targeted-probe-2544.test.ts	#2544 — auto-link behavior through 
 test/autopilot-auto-drain-wiring.test.ts	autopilot auto-drain wiring	8	readFileSync
 test/autopilot-cycle-failure-classification.test.ts	autopilot cycle-failure classification — only 'failed' trips the circuit breaker	2	readFileSync
 test/autopilot-cycle-failure-classification.test.ts	runPhaseOrphans ratio threshold — no more absolute count > 20	3	readFileSync
-test/autopilot-fanout-wiring.test.ts	autopilot.ts ↔ dispatchPerSource wiring	16	readFileSync
+test/autopilot-fanout-wiring.test.ts	autopilot.ts ↔ dispatchPerSource wiring	17	readFileSync
 test/autopilot-install.test.ts	autopilot install — reload-safety (#2608)	1	readFileSync
 test/autopilot-install.test.ts	autopilot showStatus — wrapper-path detection	1	readFileSync
 test/autopilot-install.test.ts	autopilot wiring: chat-unavailable boot warning (#2608)	1	readFileSync
@@ -45,7 +45,7 @@ test/brain-score-breakdown.test.ts	linkable scope — archive pages do not drag 
 test/brainstorm-timeout.test.ts	orchestrator entry-point wrap (CV11 single-point classification)	2	bun-file
 test/build-llms.test.ts	CLAUDE.md restructure content contracts	5	readFileSync
 test/build-llms.test.ts	build-llms generator	7	readFileSync
-test/canonical-writer-inventory.test.ts	(file-level)	2	readFileSync
+test/canonical-writer-inventory.test.ts	(file-level)	4	readFileSync
 test/chat-key-plane.test.ts	#3944 both planner surfaces share the helper (source guard)	2	readFileSync
 test/check-bootstrap-guards.test.ts	check-grok-pin.sh	9	readFileSync
 test/check-bootstrap-guards.test.ts	check-opencode-pin.sh	6	readFileSync
@@ -212,6 +212,7 @@ test/pg-access-classify.test.ts	marker contract (skill↔binary lockstep, the UP
 test/pglite-engine.test.ts	PGLiteEngine: v0.13.1 error-wrap on connect() (#223)	1	readFileSync
 test/pglite-repair-command.serial.test.ts	gbrain pglite-repair — interactive confirm wiring (#4318 residual)	1	readFileSync
 test/pglite-wal-repair.serial.test.ts	WAL auto-repair — real-brain regression (#223/#1670/#2575)	6	readFileSync
+test/post-upgrade-banner.test.ts	post-upgrade recovery banner	3	readFileSync
 test/postgres-driver-vendor.test.ts	vendored Postgres driver packaging	3	readFileSync
 test/postgres-engine.test.ts	postgres-engine / search date filtering	1	readFileSync
 test/postgres-engine.test.ts	postgres-engine / search path timeout isolation	7	readFileSync
@@ -235,7 +236,7 @@ test/scripts/ci-local-rendering.test.ts	ci-local execution coverage	3	readFileSy
 test/scripts/ci-local-rendering.test.ts	local test configuration through run-e2e	2	readFileSync
 test/scripts/ci-local-rendering.test.ts	required PgBouncer execution through run-e2e	1	readFileSync
 test/scripts/ci-pr-scope.test.ts	pull-request CI scope	7	readFileSync
-test/scripts/ci-runner-routing.test.ts	CI runner routing	5	readFileSync
+test/scripts/ci-runner-routing.test.ts	CI runner routing	6	readFileSync
 test/scripts/classify-tests.test.ts	classify-tests detectors	20	bun-file,doctor-source-helper,exec-scan,readFileSync
 test/scripts/coverage-diff-gate.test.ts	exemptions	3	readFileSync
 test/scripts/data-safety-native-workflow.test.ts	data-safety native CI coverage	12	readFileSync

@@ -9,6 +9,7 @@ import { authorizeStoredRequest, submissionAuthority } from './authority.ts';
 import { admitWrite, admitWriteInTransaction, assertPageRequestIdentity, assertReplayIntent, completeWrite, getWriteRequest, intentDigest } from './journal.ts';
 import { assertPersistenceAccepting, registerMutationPreparer, waitForWrite, writeResponse } from './service.ts';
 import { claimWorktree, getWorktreeBinding } from './ownership.ts';
+import { isConnectorSourceKind } from './connector-identity.ts';
 import { WRITER_INSPECTION_HINT } from './admin-intent.ts';
 import { parseMutationPrecondition } from './preconditions.ts';
 import { withCoordinatedWrite } from './context.ts';
@@ -49,8 +50,8 @@ export async function submitRememberMutation(ctx: OperationContext, params: Reco
   const sub = await submission(ctx, 'remember', params);
   if (sub.prior) return writeResponse(await waitForWrite(ctx.engine, sub.prior, ctx.config, waitMs));
   const { p, sourceId, principal, callerIntent, requestId } = sub;
-  const [source] = await ctx.engine.executeRaw<{ incarnation: string; archived: boolean; local_path: string | null }>(
-    'SELECT incarnation,archived,local_path FROM sources WHERE id=$1', [sourceId]);
+  const [source] = await ctx.engine.executeRaw<{ incarnation: string; archived: boolean; local_path: string | null; kind: string | null }>(
+    "SELECT incarnation,archived,local_path,config->>'kind' AS kind FROM sources WHERE id=$1", [sourceId]);
   if (!source || source.archived) throw new OperationError('source_changed', 'The write source is not active.');
   const { parseTtlParam } = await import('../ops/facts.ts');
   const validUntil = parseTtlParam(p.ttl);
@@ -79,9 +80,11 @@ export async function submitRememberMutation(ctx: OperationContext, params: Reco
   if (sandbox) authority.databaseOnlyReason = 'subagent_sandbox';
   else if (!configuredWriteThrough) authority.databaseOnlyReason = 'disabled_by_config';
   const root = source.local_path || (sourceId === 'default' ? await ctx.engine.getConfig('sync.repo_path') : null);
-  if (fence && writeThrough && root && !binding) {
+  // An unbound connector source is database-only by design; never claim it for a fence write.
+  if (fence && writeThrough && root && !binding && isConnectorSourceKind(source.kind)) authority.databaseOnlyReason = 'connector_database';
+  else if (fence && writeThrough && root && !binding) {
     if (ctx.engine.kind !== 'pglite') throw new OperationError('owner_unavailable', 'This source has no designated canonical owner.', WRITER_INSPECTION_HINT);
-    binding = await claimWorktree(ctx.engine, sourceId, root);
+    binding = await claimWorktree(ctx.engine, sourceId, root, undefined, undefined, { automatic: true });
   }
   const row = await admitWrite(ctx.engine, { principal, operation: 'remember', sourceId, sourceIncarnation: source.incarnation,
     slug, pageId: snapshot?.page.id ?? null, requestId, callerIntent,

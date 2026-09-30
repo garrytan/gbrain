@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
+import { withGoogleAccount } from './helpers/connector-fixture.ts';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -98,7 +99,7 @@ test('sync, remember, withdraw, metadata repair, migration, export and HTTP MCP 
     const other = await fixture.boundSource(engine, { kind: 'filesystem' });
     const ctx = context(engine, source.id);
     const cfg = parseGoogleSourceConfig(config, source.dir);
-    expect((await runGoogleSync(engine, source.id, cfg, options, gmailFetch)).added).toBe(1);
+    expect((await runGoogleSync(engine, source.id, cfg, options, withGoogleAccount(gmailFetch))).added).toBe(1);
     const [email] = await engine.executeRaw<{ slug: string }>("SELECT slug FROM pages WHERE source_id=$1 AND frontmatter->>'thread_id'='abc123'", [source.id]);
     const imported = (await engine.readPageSnapshot(email.slug, { sourceId: source.id }))!;
     const { gmail_attachment_receipts: oldReceipts, ...frontmatter } = imported.page.frontmatter;
@@ -145,13 +146,13 @@ test('sync, remember, withdraw, metadata repair, migration, export and HTTP MCP 
     expect(killed.stdout, killed.stderr).toContain('MEMORY_WAVE_CRASH after_metadata_commit');
     expect(killed.exit).not.toBe(0);
     expect(JSON.stringify(await sourceCheckpoint(engine, source.id))).toContain('"afterPageId":0');
-    expect(await engine.executeRaw("SELECT id FROM persistence_requests WHERE source_id=$1 AND intent->>'kind'='managed_connector_google_receipts' AND state='committed'", [source.id])).toHaveLength(1);
+    expect(await engine.executeRaw("SELECT id FROM persistence_requests WHERE source_id=$1 AND intent->>'kind'='connector_v2_google_receipts' AND state='committed'", [source.id])).toHaveLength(1);
     const resumed = await repairChild(false);
     expect(resumed.exit, resumed.stderr).toBe(0);
     expect(resumed.stdout).toContain('"status":"complete"');
     expect(JSON.stringify(await sourceCheckpoint(engine, source.id))).toContain('"complete":true');
     expect(await engine.executeRaw('SELECT id FROM persistence_requests WHERE source_id=$1 AND recovery IS NOT NULL', [source.id])).toHaveLength(0);
-    expect(await engine.executeRaw("SELECT id FROM persistence_requests WHERE source_id=$1 AND intent->>'kind'='managed_connector_google_receipts' AND state='committed' AND NOT COALESCE((outcome->>'noop')::boolean,false)", [source.id])).toHaveLength(1);
+    expect(await engine.executeRaw("SELECT id FROM persistence_requests WHERE source_id=$1 AND intent->>'kind'='connector_v2_google_receipts' AND state='committed' AND NOT COALESCE((outcome->>'noop')::boolean,false)", [source.id])).toHaveLength(1);
     const repaired = (await engine.readPageSnapshot(email.slug, { sourceId: source.id }))!;
     expect(repaired.page.compiled_truth).toBe(beforeWithdrawal.page.compiled_truth);
     expect(repaired.page.frontmatter).toMatchObject({ visibility: 'private', custom: 'preserved', gmail_attachment_receipts: { messages: [{ inspection: { state: 'present' } }] } });

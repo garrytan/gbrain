@@ -18,7 +18,8 @@ import { digest, sha256 } from './digest.ts';
 import { getWorktreeBinding } from './ownership.ts';
 import type { PreparedContentImport } from './prepared-import.ts';
 import type { PreparedMutation } from './coordinator.ts';
-import type { WriteRequest } from './model.ts';
+import type { SqlEngine, WriteRequest } from './model.ts';
+import { isUnboundSourcePage } from './unbound-source.ts';
 import { sealPageTextProjection } from '../page-state/projections.ts';
 import { overlayCanonicalBodies } from '../page-state/snapshot.ts';
 import { materializeTimeline, prepareCanonicalProjections } from './canonical-projections.ts';
@@ -68,6 +69,10 @@ function putProvenance(row: WriteRequest, snapshot: PageSnapshot | null, parsed:
 export async function prepareFileTarget(engine: BrainEngine, row: Pick<WriteRequest, 'source_id' | 'worktree_id' | 'slug'>, snapshot: PageSnapshot | null,
   content: string | null, hostId?: string, options: { allowMissing?: boolean; capture?: { path: string; hash: string } } = {}): Promise<PreparedMutation['file']> {
   if (!row.worktree_id) return undefined;
+  // #5254: a page written while its source was unbound stays database-only in
+  // every state (live, tombstone, restore, revert, delete, purge); any file at
+  // its derived path is not its canonical file and is neither written nor removed.
+  if (snapshot && !snapshot.page.source_path && await isUnboundSourcePage(engine, row.source_id, row.slug)) return undefined;
   const binding = await getWorktreeBinding(engine, row.source_id, hostId);
   if (!binding?.local_path) throw new OperationError('owner_unavailable', 'The canonical worktree is unavailable on this host.');
   const root = join(binding.local_path, binding.relative_path);
@@ -113,10 +118,15 @@ export async function prepareFileTarget(engine: BrainEngine, row: Pick<WriteRequ
 /**
  * Receipt reason for a page write that publishes no file. Invariant: for a
  * bound row, prepareFileTarget returns no target only for a live declared
- * db_only page whose file is absent; every other case returns a target or throws.
+ * db_only page whose file is absent, or a page written while its source was
+ * unbound (#5254) in any state; every other case returns a target or throws.
  */
 export function databaseOnlyPublication(row: Pick<WriteRequest, 'worktree_id'>, file: PreparedMutation['file']): Pick<PreparedMutation, 'databaseOnlyReason'> {
   return row.worktree_id && !file ? { databaseOnlyReason: 'db_only' } : {};
+}
+async function pageDatabaseOnlyPublication(engine: SqlEngine, row: WriteRequest, file: PreparedMutation['file']): Promise<Pick<PreparedMutation, 'databaseOnlyReason'>> {
+  const reason = databaseOnlyPublication(row, file);
+  return reason.databaseOnlyReason && await isUnboundSourcePage(engine, row.source_id, row.slug) ? { databaseOnlyReason: 'unbound_source' } : reason;
 }
 
 /** Providers and parsing run before the OS lock and before any publication transaction. */
@@ -149,7 +159,7 @@ export async function preparePageMutation(engine: BrainEngine, row: WriteRequest
     // removal before the guarded hard-delete and receipt commit; failure rolls
     // back to the prior row, and replay survives the eventual absence of that row.
     const file = await prepareFileTarget(engine, row, snapshot, null, undefined, { allowMissing: purge });
-    return { observedRevision, noop, file, ...databaseOnlyPublication(row, file), apply: async tx => {
+    return { observedRevision, noop, file, ...await pageDatabaseOnlyPublication(engine, row, file), apply: async tx => {
       if (purge) {
         await tx.deletePage(row.slug, source);
         return { status: 'purged', slug: row.slug, source_id: row.source_id, residuals: PURGE_RESIDUALS };
@@ -206,7 +216,7 @@ export async function preparePageMutation(engine: BrainEngine, row: WriteRequest
     const tags = versionTags ?? [...new Set([...snapshot.tags,...incoming.tags])].sort();
     if (digest(canonical(snapshot.page,snapshot.tags)) === digest(canonical(incoming,tags))) {
       const file=await prepareFileTarget(engine,row,snapshot,targetDeleted ? null : serializePageToMarkdown(snapshot.page,snapshot.tags));
-      return {observedRevision,noop:true,file,...databaseOnlyPublication(row,file),
+      return {observedRevision,noop:true,file,...await pageDatabaseOnlyPublication(engine,row,file),
         apply:async()=>({...pageNoopAdvisories(row),status:'skipped',slug:row.slug,source_id:row.source_id,noop:true,chunks:0,chunk_skip_reason:'write_skipped',
           ...(row.operation==='capture'?{channel:'capture',content_hash:p.capture_hash}:{})})};
     }
@@ -263,7 +273,7 @@ export async function preparePageMutation(engine: BrainEngine, row: WriteRequest
   const sourcePath = file && mintMode ? scannerSourcePath(file.root, file.path, mintMode) : undefined;
   // An inferred mode is pinned with the first origin it mints, so later pages cannot flip the inference (#5610).
   const pinMode = sourcePath && mintMode && scannerSourcePath(file!.root, file!.root) && !await readSlugRootMode(engine, row.source_id) ? mintMode : undefined;
-  return { observedRevision, noop, additionalPageKeys:links?.pageKeys, file, ...databaseOnlyPublication(row, file), validate: ready.validate, apply: async tx => {
+  return { observedRevision, noop, additionalPageKeys:links?.pageKeys, file, ...await pageDatabaseOnlyPublication(engine, row, file), validate: ready.validate, apply: async tx => {
     let autoLinks: Awaited<ReturnType<NonNullable<typeof links>['apply']>> | undefined;
     if (!noop) {
       await ready.apply(tx);

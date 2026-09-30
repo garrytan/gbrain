@@ -92,11 +92,15 @@ async function visible(ctx: OperationContext, row: WriteRequest): Promise<boolea
 async function publicReceipt(ctx: OperationContext, row: WriteRequest, facts?: WriteHealthFacts): Promise<Record<string, unknown>> {
   const { receiptFor } = await import('../persistence/journal.ts');
   const { publicEffectsForRequest } = await import('../persistence/effect-journal.ts');
+  const { receiptDeliveredHint } = await import('../persistence/connector-errors.ts');
   return {
     ...publicWriteReceipt(receiptFor(row, facts)),
     operation: row.operation, source_id: row.source_id, slug: row.slug,
     ...(isWriteErrorCode(row.error_code) ? { write_error: row.error_code } : {}),
-    effects: await publicEffectsForRequest(ctx.engine, row.id),
+    effects: (await publicEffectsForRequest(ctx.engine, row.id)).map(effect => {
+      const hint = effect.reason ? receiptDeliveredHint({ error_code: effect.reason, source_id: row.source_id, slug: row.slug }) : null;
+      return hint ? { ...effect, suggestion: hint.suggestion, docs: hint.docs } : effect;
+    }),
   };
 }
 

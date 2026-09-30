@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
+import { withGoogleAccount } from './helpers/connector-fixture.ts';
 import { randomUUID } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -19,9 +20,9 @@ test('standalone connector restart recovers a real SIGKILL after file publicatio
   for (const engine of engines) for (const connector of ['google', 'github'] as const) {
     const config = connector === 'google' ? googleConfig : githubConfig;
     const f = await boundSource(engine, config);
-    if (connector === 'google') await runGoogleSync(engine, f.id, parseGoogleSourceConfig(config, f.dir), options, async url =>
+    if (connector === 'google') await runGoogleSync(engine, f.id, parseGoogleSourceConfig(config, f.dir), options, withGoogleAccount(async url =>
       json(url.includes('/settings/sendAs') ? { sendAs: [] } : { connections: [{ ...contact('first', 'First Example'),
-        organizations: [{ name: 'Initial organization' }] }], nextSyncToken: 'contacts-restart' }));
+        organizations: [{ name: 'Initial organization' }] }], nextSyncToken: 'contacts-restart' })));
     else await runGitHubSync(engine, f.id, parseGitHubSourceConfig(config, f.dir), options, githubFetch());
     const slug = connector === 'google' ? 'people/first-example' : 'gh/acme-example/app/1';
     const before = await engine.readPageSnapshot(slug, { sourceId: f.id });
