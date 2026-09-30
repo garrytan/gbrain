@@ -136,6 +136,7 @@ export function normalizeDoctorText(text: string, roots: Record<string, string>,
   let out = scrubPaths(text, roots);
   for (const [pattern, label] of extra) out = typeof pattern === 'string' ? out.split(pattern).join(label) : out.replace(pattern, label);
   out = scrubTimestamps(out).replace(UUID, '<uuid>');
+  out = out.replace(/\(most recent caller: at [^()]*\([^()]*\)\)/g, '(most recent caller: <frame>)');
   out = out.split(PACKAGE_VERSION).join('<version>');
   const host = hostname();
   if (host) out = out.split(host).join('<hostname>');

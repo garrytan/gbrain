@@ -245,8 +245,10 @@ attached. The catalog (also emitted as structured JSON with `--json`):
 | `access_env_missing` | The `--access env` variable is unset/blank in this process | Export a live token into it (refresh externally), or switch back to the vault flow |
 
 Cursor expiries (`historyId` older than ~a week, calendar/contacts
-`syncToken` 410) are handled automatically with bounded re-lists — never
-user-facing.
+`syncToken` 410, or a contacts HTTP 400 explicitly reporting an expired sync
+token) use bounded re-lists automatically. Contacts recovery refreshes its
+own cursor without restarting Gmail. Unrelated HTTP 400 errors remain
+upstream failures rather than triggering a full re-list.
 
 ## Custody, privacy, spend
 
