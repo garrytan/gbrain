@@ -829,7 +829,23 @@ async function runRemove(engine: BrainEngine, args: string[]): Promise<void> {
         );
         if (Number(rows[0]?.n ?? 0) > 0) throw new SourceReferencedError();
       }
+      // #5732: persistence_source_bindings has PRIMARY KEY(source_id) with no
+      // FK to sources, so it never cascades. Delete it here, scoped to the
+      // removed incarnation, the same way the managed lifecycle's remove path
+      // already does (source-lifecycle.ts) — otherwise a same-id replacement
+      // source inherits the old incarnation's binding and is wrongly treated
+      // as claimed by resolveSyncPersistenceMode.
+      const [row] = await tx.executeRaw<{ incarnation: string }>(
+        `SELECT incarnation FROM sources WHERE id = $1`,
+        [id],
+      );
       await tx.executeRaw(`DELETE FROM sources WHERE id = $1`, [id]);
+      if (row?.incarnation) {
+        await tx.executeRaw(
+          `DELETE FROM persistence_source_bindings WHERE source_id = $1 AND source_incarnation = $2::uuid`,
+          [id, row.incarnation],
+        );
+      }
     });
   } catch (e) {
     const code = typeof e === 'object' && e !== null && 'code' in e ? String((e as { code?: unknown }).code) : '';

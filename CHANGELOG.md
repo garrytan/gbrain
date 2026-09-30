@@ -10,6 +10,27 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.10.1] - 2026-09-30
+
+**Removing a source no longer leaves a stale writer claim behind for whatever gets the same id next.**
+
+`gbrain sources remove` deleted the `sources` row but never the source's row in `persistence_source_bindings`, which has no foreign key back to `sources` and is keyed by id alone, not by the removed source's specific incarnation. Add a new source under the same id later, and it inherited the old claim: every `gbrain sync --source <id>` failed with `writer_coordinator_required`, and there was no way to release a claim that belonged to a source that no longer existed. The managed source lifecycle's own remove path already cleaned this up correctly; the plain CLI path did not.
+
+**Say to your agent:** *"Remove and recreate a source with the same id, then confirm sync still works"* — your agent runs `gbrain sources remove <id> --confirm-destructive` followed by `gbrain sources add <id> ...` and `gbrain sync --source <id>`.
+
+## To take advantage of v0.60.10.1
+
+Upgrade; no migration is needed. A brain that already has a leftover binding from before this fix can clear it by hand: `DELETE FROM persistence_source_bindings WHERE source_id = '<id>'` for any id with no matching row in `sources`.
+
+### Itemized changes
+
+- `src/commands/sources.ts`: `runRemove`'s transaction now also deletes the matching `persistence_source_bindings` row, scoped to the removed source's incarnation, in the same transaction as the `sources` row delete — mirroring the incarnation-qualified cleanup the managed lifecycle's remove path (`source-lifecycle.ts`) already does.
+- Closes #5732.
+
+### For contributors
+
+- New tests in `test/sources.test.ts` (production-schema PGLite, `resetPgliteState` pattern): a claimed source's binding is deleted on remove, a same-id source recreated after remove is not classified as claimed by `resolveSyncPersistenceMode`'s own predicate, and removing an unclaimed source is a no-op on bindings.
+
 ## [0.60.10.0] - 2026-09-29
 
 **Local PGLite brains now commit writes about 3.7× faster, with the same durability.**

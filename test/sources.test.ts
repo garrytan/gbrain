@@ -6,12 +6,14 @@
  * shape, validation, and flag parsing.
  */
 
-import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, beforeAll, afterAll, spyOn } from 'bun:test';
 import { mkdtempSync, mkdirSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { runSources } from '../src/commands/sources.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { resetPgliteState } from './helpers/reset-pglite.ts';
 
 // ── Stub engine that records queries ───────────────────────
 
@@ -337,5 +339,79 @@ describe('sources federate / unfederate', () => {
     // Must preserve ttl_days while flipping federated.
     expect(parsed.ttl_days).toBe(90);
     expect(parsed.federated).toBe(false);
+  });
+});
+
+// ── remove — persistence_source_bindings cleanup (#5732) ─────
+//
+// Production-schema regression: persistence_source_bindings has
+// PRIMARY KEY(source_id) with no FK to sources, so a plain `sources remove`
+// that only deletes the sources row leaves a stale binding behind. A later
+// source recreated under the same id then inherits the old incarnation's
+// binding and is wrongly treated as claimed by resolveSyncPersistenceMode's
+// `EXISTS(SELECT 1 FROM persistence_source_bindings WHERE source_id=s.id)`
+// check, since that predicate never looks at incarnation.
+describe('sources remove — persistence_source_bindings cleanup (#5732)', () => {
+  let engine: PGLiteEngine;
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+  });
+  afterAll(async () => { await engine.disconnect(); });
+  beforeEach(async () => { await resetPgliteState(engine); });
+
+  async function claimedPredicate(id: string): Promise<boolean> {
+    const [row] = await engine.executeRaw<{ claimed: boolean }>(
+      `SELECT EXISTS(SELECT 1 FROM persistence_source_bindings WHERE source_id=s.id) AS claimed
+       FROM sources s WHERE s.id=$1`,
+      [id],
+    );
+    return row?.claimed === true;
+  }
+
+  async function bindSource(id: string): Promise<void> {
+    const [source] = await engine.executeRaw<{ incarnation: string }>(
+      `SELECT incarnation FROM sources WHERE id = $1`,
+      [id],
+    );
+    const [worktree] = await engine.executeRaw<{ id: string }>(
+      `INSERT INTO persistence_worktrees DEFAULT VALUES RETURNING id`,
+    );
+    await engine.executeRaw(
+      `INSERT INTO persistence_source_bindings (source_id, source_incarnation, worktree_id) VALUES ($1, $2::uuid, $3::uuid)`,
+      [id, source.incarnation, worktree.id],
+    );
+  }
+
+  test('remove deletes the matching persistence_source_bindings row', async () => {
+    await engine.executeRaw(`INSERT INTO sources (id, name) VALUES ($1, $1)`, ['leak-test']);
+    await bindSource('leak-test');
+    expect(await claimedPredicate('leak-test')).toBe(true);
+
+    await runSources(engine, ['remove', 'leak-test', '--yes']);
+
+    const rows = await engine.executeRaw(`SELECT 1 FROM persistence_source_bindings WHERE source_id = $1`, ['leak-test']);
+    expect(rows.length).toBe(0);
+  });
+
+  test('a same-id source recreated after remove is not treated as claimed', async () => {
+    await engine.executeRaw(`INSERT INTO sources (id, name) VALUES ($1, $1)`, ['leak-test-2']);
+    await bindSource('leak-test-2');
+    expect(await claimedPredicate('leak-test-2')).toBe(true);
+
+    await runSources(engine, ['remove', 'leak-test-2', '--yes']);
+
+    // Recreate under the same id — production DEFAULT gives it a fresh,
+    // distinct incarnation from the removed source's.
+    await engine.executeRaw(`INSERT INTO sources (id, name) VALUES ($1, $1)`, ['leak-test-2']);
+    expect(await claimedPredicate('leak-test-2')).toBe(false);
+  });
+
+  test('remove is a no-op on bindings when the source was never claimed', async () => {
+    await engine.executeRaw(`INSERT INTO sources (id, name) VALUES ($1, $1)`, ['unclaimed-test']);
+    await runSources(engine, ['remove', 'unclaimed-test', '--yes']);
+    const rows = await engine.executeRaw(`SELECT 1 FROM sources WHERE id = $1`, ['unclaimed-test']);
+    expect(rows.length).toBe(0);
   });
 });
