@@ -6,6 +6,7 @@ import {
   loadCheckpoint,
   saveCheckpoint,
   resumeFilter,
+  freshCompletedPaths,
   clearCheckpoint,
   resolveImportTargetDir,
   type ImportCheckpoint,
@@ -298,5 +299,41 @@ describe('clearCheckpoint', () => {
   test('is a no-op when the checkpoint file is missing', () => {
     expect(existsSync(cpPath)).toBe(false);
     expect(() => clearCheckpoint(cpPath)).not.toThrow();
+  });
+});
+
+describe('freshCompletedPaths', () => {
+  const T0 = Date.parse('2026-09-15T00:00:00.000Z');
+  const cp: ImportCheckpoint = {
+    schema_version: 1, owner: 'gbrain', kind: 'import',
+    dir: '/brain', completedPaths: ['a.md', 'b.md', 'c.md'], timestamp: new Date(T0).toISOString(),
+  };
+
+  test('keeps entries whose file is unchanged since the checkpoint', () => {
+    const { fresh, stale } = freshCompletedPaths(cp, '/brain', () => T0 - 1000);
+    expect([...fresh].sort()).toEqual(['a.md', 'b.md', 'c.md']);
+    expect(stale).toBe(0);
+  });
+
+  test('drops entries modified after the checkpoint (preserved-across-runs staleness)', () => {
+    const mtimes: Record<string, number> = { '/brain/a.md': T0 - 1, '/brain/b.md': T0 + 60_000, '/brain/c.md': T0 };
+    const { fresh, stale } = freshCompletedPaths(cp, '/brain', (p) => mtimes[p]);
+    expect([...fresh].sort()).toEqual(['a.md', 'c.md']);
+    expect(stale).toBe(1);
+  });
+
+  test('drops entries whose file no longer exists', () => {
+    const { fresh, stale } = freshCompletedPaths(cp, '/brain', (p) => (p.endsWith('b.md') ? null : T0 - 1));
+    expect(fresh.has('b.md')).toBe(false);
+    expect(stale).toBe(1);
+  });
+
+  test('default stat reads real mtimes (fs-backed)', () => {
+    const f = join(workDir, 'x.md');
+    writeFileSync(f, '# x');
+    const old: ImportCheckpoint = { ...cp, dir: workDir, completedPaths: ['x.md'], timestamp: new Date(Date.now() + 5 * 60_000).toISOString() };
+    expect(freshCompletedPaths(old, workDir).fresh.has('x.md')).toBe(true);
+    const past: ImportCheckpoint = { ...old, timestamp: new Date(Date.now() - 24 * 3600_000).toISOString() };
+    expect(freshCompletedPaths(past, workDir).fresh.has('x.md')).toBe(false);
   });
 });

@@ -1,5 +1,5 @@
-import { existsSync, readFileSync, writeFileSync, renameSync, unlinkSync, realpathSync } from 'fs';
-import { relative, isAbsolute, resolve } from 'path';
+import { existsSync, readFileSync, writeFileSync, renameSync, unlinkSync, realpathSync, statSync } from 'fs';
+import { relative, isAbsolute, resolve, join } from 'path';
 
 /**
  * Path-based import checkpoint.
@@ -140,6 +140,47 @@ export function saveCheckpoint(path: string, cp: ImportCheckpoint): void {
     renameSync(tmp, path);
   } catch {
     /* non-fatal: lost checkpoint just means re-walk on next run */
+  }
+}
+
+/**
+ * Resume set with stale entries dropped.
+ *
+ * A checkpoint is preserved across runs whenever an import ends with
+ * errors ("Checkpoint preserved (N errors). Run again to retry failed
+ * files."), so on the next run it can be hours or days old. Its
+ * `completedPaths` were "done" as of `timestamp` — a file edited after
+ * that (mtime > timestamp) or removed since must NOT be skipped, or the
+ * edit silently never reaches the brain while the sync bookmark still
+ * advances. Observed: a source with 2 permanently-failing files resumed
+ * every daily `sync --full` as `2/2`, skipping every changed page.
+ *
+ * `mtimeMs` is injectable for tests; the default stats the file and
+ * returns null when it is gone (→ dropped, so the walk re-checks it).
+ */
+export function freshCompletedPaths(
+  cp: ImportCheckpoint,
+  dir: string,
+  mtimeMs: (absPath: string) => number | null = statMtimeMs,
+): { fresh: Set<string>; stale: number } {
+  const cutoff = Date.parse(cp.timestamp);
+  const fresh = new Set<string>();
+  let stale = 0;
+  for (const rel of cp.completedPaths) {
+    const m = mtimeMs(join(dir, rel));
+    // ISO timestamps carry ms; mtimeMs carries sub-ms fractions — floor so a
+    // file written in the same millisecond the checkpoint was stamped is fresh.
+    if (m !== null && Number.isFinite(cutoff) && Math.floor(m) <= cutoff) fresh.add(rel);
+    else stale++;
+  }
+  return { fresh, stale };
+}
+
+function statMtimeMs(absPath: string): number | null {
+  try {
+    return statSync(absPath).mtimeMs;
+  } catch {
+    return null;
   }
 }
 
