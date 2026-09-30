@@ -61,9 +61,11 @@ describe('anchor scan — bracketed preamble no longer hijacks the parse', () =>
 
   test('preamble recovery: a parseable-but-WRONG array ahead of the real one is skipped', () => {
     // `["a","b"]` parses cleanly but yields no atom, so the scan moves on and
-    // recovers the real payload below. NOTE: this passes with OR without the
-    // shape gate (the first-bracket offset fails to parse either way), so it
-    // pins recovery, not the gate — the gate is pinned directly further down.
+    // recovers the real payload below. The first-bracket offset now parses
+    // successfully on its own (findArrayCloseIndex correctly bounds it to
+    // `["a","b"]`) and is rejected by the SHAPE GATE instead — this test still
+    // pins recovery (the scan moving past a non-atom offset to the real one),
+    // the gate itself is pinned directly further down.
     const raw = 'Candidate labels were ["a","b"] before I settled on:\n' + ATOM_ARRAY;
     const atoms = atomsOf(raw);
     expect(atoms).toHaveLength(1);
@@ -135,6 +137,58 @@ describe('anchor scan — preserved behaviour', () => {
 
   test('trailing prose after a valid array is still recovered', () => {
     expect(atomsOf(ATOM_ARRAY + '\n\nThose are the atoms I found.')).toHaveLength(1);
+  });
+
+  test('trailing prose containing a bracketed citation does not hijack the recovery boundary', () => {
+    // The trim-back recovery used to find the array's boundary with a naive
+    // `lastIndexOf(']')`. A valid array followed by a `[Source: X]`-style
+    // citation has that citation's `]` sorting AFTER the array's own closing
+    // bracket, so the naive scan trimmed back to the wrong `]` and included
+    // the dangling citation text in the re-parse attempt — which then failed
+    // as `unparseable JSON array` even though the array itself was fine.
+    const raw = ATOM_ARRAY + '\nSee [Source: alice-example, agent session, 2026-09-03].';
+    expect(atomsOf(raw)).toHaveLength(1);
+    expect(atomsOf(raw)[0]!.title).toBe(ATOM.title);
+  });
+
+  test('trailing prose with an unmatched trailing bracket after a valid array is still recovered', () => {
+    // A pathological variant: a stray, unbalanced `]` after the array (no
+    // opening `[` to pair with it). The array's own boundary must still win.
+    const raw = ATOM_ARRAY + '\nas noted above]';
+    expect(atomsOf(raw)).toHaveLength(1);
+  });
+
+  test('recovery still finds the true boundary when the array body has escaped quotes, brackets inside strings, and a nested array', () => {
+    // Exercises findArrayCloseIndex's string/escape handling together with
+    // the depth counter: the atom body embeds an escaped quote, a literal
+    // `[bracket]`-looking substring inside a JSON string (must not perturb
+    // depth), and a nested array value — all ahead of a trailing citation
+    // that forces the recovery path to run at all.
+    const nestedAtom = {
+      title: 'Escapes and nesting inside the array body',
+      atom_type: 'insight' as const,
+      body: 'She said \\"data is in [brackets]\\" and listed refs [1, 2].',
+      tags: ['[a]', '[b]'],
+    };
+    const raw = JSON.stringify([nestedAtom]) + '\nSee [Source: alice-example, 2026-09-03].';
+    const atoms = atomsOf(raw);
+    expect(atoms).toHaveLength(1);
+    expect(atoms[0]!.title).toBe(nestedAtom.title);
+  });
+
+  test('two complete top-level arrays: the FIRST one wins, pinning the anchor scan precedence', () => {
+    // Not a documented/prompted output shape (extract_atoms asks for ONE
+    // array), but worth pinning explicitly: finding each candidate's own real
+    // boundary (instead of occasionally over-running into later text) means
+    // the first candidate that parses to >=1 atom now succeeds where it
+    // previously sometimes failed and fell through to a later offset. That is
+    // the anchor scan's existing first-candidate-wins policy applying
+    // correctly, not a new precedence rule — see the NOTE on parseArrayAtOffset.
+    const secondAtom = { ...ATOM, title: 'A later, different array' };
+    const raw = ATOM_ARRAY + '\nCorrected answer:\n' + JSON.stringify([secondAtom]);
+    const atoms = atomsOf(raw);
+    expect(atoms).toHaveLength(1);
+    expect(atoms[0]!.title).toBe(ATOM.title);
   });
 
   test('an empty array after BRACKETED prose is a zero-yield success (#4948 rule holds at any offset)', () => {
