@@ -64,5 +64,5 @@ export const zhipu: Recipe = {
     },
   },
   setup_hint:
-    'Get an API key at https://open.bigmodel.cn/, then `export ZHIPUAI_API_KEY=...`. Chat/subagent: use `zhipu:glm-5.1`.',
+    'Get an API key at https://open.bigmodel.cn/ (or https://z.ai/ for the international endpoint — set provider_base_urls.zhipu to https://api.z.ai/api/paas/v4), then `gbrain config set zhipu_api_key ...` (or `export ZHIPUAI_API_KEY=...`). Chat/subagent: use `zhipu:glm-5.3-flash` or `zhipu:glm-5.1`.',
 };
