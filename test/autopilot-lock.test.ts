@@ -86,6 +86,20 @@ describe('decideLockAcquisition', () => {
     });
   });
 
+  test.each([
+    'bun "C:/Users/Example User/project/src/cli.ts" autopilot',
+    "bun '/home/example user/project/src/cli.js' autopilot",
+    'node "/project/src/cli.mjs" autopilot',
+  ])('keeps a stale lock held by a quoted autopilot command: %s', (command) => {
+    writeFileSync(lockPath, '1234');
+    const stale = new Date(Date.now() - AUTOPILOT_FOREIGN_PID_TAKEOVER_GRACE_MS - 1000);
+    utimesSync(lockPath, stale, stale);
+    expect(decideLockAcquisition(lockPath, process.pid, {
+      isPidAlive: (pid) => pid === 1234,
+      readProcessCommand: () => command,
+    })).toEqual({ action: 'exit', holderPid: 1234, holderState: 'alive-autopilot' });
+  });
+
   test('takes over a stale lock when the PID was reused by a foreign process', () => {
     writeFileSync(lockPath, '1234');
     const stale = new Date(Date.now() - AUTOPILOT_FOREIGN_PID_TAKEOVER_GRACE_MS - 1000);
@@ -224,5 +238,37 @@ describe('looksLikeGbrainAutopilotCommand', () => {
   test('rejects unrelated live processes', () => {
     expect(looksLikeGbrainAutopilotCommand('/sbin/launchd')).toBe(false);
     expect(looksLikeGbrainAutopilotCommand('/usr/bin/python worker.py')).toBe(false);
+  });
+
+  for (const extension of ['ts', 'js', 'mjs']) {
+    test.each([
+      `"C:/Users/Example User/project/src/cli.${extension}" autopilot`,
+      `"C:\\Program Files\\Bun\\bun.exe" "C:\\Users\\Example User\\project\\src\\cli.${extension}" autopilot`,
+      `bun '/home/example user/project/src/cli.${extension}' autopilot`,
+      `bun "/project/src/cli.${extension}" autopilot`,
+      `bun "cli.${extension}" autopilot`,
+      `bun 'cli.${extension}' autopilot`,
+      `bun /home/example user/project/src/cli.${extension} autopilot`,
+      `bun /home/example/project dir /cli.${extension} autopilot`,
+      `bun cli.${extension} autopilot`,
+      `bun ./cli.${extension} autopilot`,
+      `bun ../src/cli.${extension} autopilot`,
+      `node /project/dist/cli.${extension} autopilot --repo repo`,
+    ])('matches quoted and unquoted source paths: %s', (command) => {
+      expect(looksLikeGbrainAutopilotCommand(command)).toBe(true);
+    });
+  }
+
+  test.each([
+    'bun "C:/Users/Example User/project/src/cli.ts" serve',
+    'bun "C:/Users/Example User/project/src/cli.ts" autopilot-other',
+    'bun "C:/Users/Example User/project/src/not-cli.ts" autopilot',
+    'bun "C:/Users/Example User/project/src/cli.ts.bak" autopilot',
+    'bun "C:/Users/Example User/project/src/cli.jsx" autopilot',
+    'bun "C:/Users/Example User/project/src/cli.ts"suffix autopilot',
+    'other-gbrain autopilot',
+    'python worker.py autopilot',
+  ])('rejects commands outside script and argument boundaries: %s', (command) => {
+    expect(looksLikeGbrainAutopilotCommand(command)).toBe(false);
   });
 });

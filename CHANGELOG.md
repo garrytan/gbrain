@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [0.60.13.1] - 2026-09-30
+## [0.60.15.1] - 2026-09-30
 
 **`gbrain doctor` stopped warning about the lock doctor itself is holding.** `doctor` opens the brain's database to run its checks, and briefly holds the same PGLite lock file that a live `gbrain serve` process holds while it's running. One of doctor's own checks looks at that lock and warns whenever the holder isn't a `serve` process — so on a machine where you'd stopped `serve` and just ran `gbrain doctor`, it reported "a non-serve process holds the lock and hook IPC will fail" about itself, describing a collision that didn't exist.
 
@@ -18,7 +18,7 @@ Now the check only warns about a genuinely different process holding the lock. D
 
 **Say to your agent:** *"Run gbrain doctor and check whether the PGLite lock warning still shows up when serve is stopped"* — your agent runs `gbrain doctor`.
 
-## To take advantage of v0.60.13.1
+## To take advantage of v0.60.15.1
 
 Upgrade, then re-run doctor with serve stopped and confirm the warning is gone:
 
@@ -32,6 +32,23 @@ gbrain doctor
 - `src/core/bootstrap/uninstall.ts`: `probeLivePgliteHolder` now returns a namespace-aware `isSelf` field on `LiveHolder`. On Linux, it compares the lock's stored `pid_ns`/`boot_id` evidence against the running process's own via `pglite-lock.ts`'s exported readers, requiring both to be readable and matching before trusting a pid match — a pid alone (which a shared-mount container could coincidentally reuse) is never sufficient there, and unreadable evidence on either side fails closed (still warns). Non-Linux platforms have no PID namespaces, so pid equality alone decides there, matching `pglite-lock.ts`'s own unmodified lock-acquisition trust model. A pid+namespace match alone also does not decide: a lock whose `acquired_at` predates this process's own start time cannot be ours (we couldn't have acquired it before we existed) regardless of matching evidence, catching a stale legacy lock left behind by a dead process whose pid was later recycled.
 - `src/commands/doctor/bootstrap-checks.ts`: the `bootstrap_serve_lock` check now skips a lock holder only when `isSelf` is true, instead of treating any lock holder sharing the doctor's numeric pid as self.
 - Closes #5481.
+
+## [0.60.15.0] - 2026-09-30
+
+**Import retries pick up edited files, contacts recover from expired sync tokens, and published skills work without extra tool annotations.** This release also filters machine-authored transcript entries and makes lock, push, and health checks report the right outcome.
+
+### Fixed
+- **Retried imports recheck the files you have now.** A checkpoint left by an interrupted or partly failed import no longer hides later edits, including edits with preserved timestamps. Unchanged pages still avoid re-chunking and embedding; retrying a large import does repeat file reads and content-hash checks.
+- **Claude Code transcript imports exclude metadata and explicitly non-human user text.** Root metadata and compact-summary markers are honored, while assistant text and tool placeholders keep their existing behavior. Legacy records without a structured origin remain compatible; this is not a strict human-origin requirement.
+- **Quoted installation paths no longer make a live autopilot lock look abandoned.** Script paths containing spaces are recognized without accepting similarly named scripts.
+- **Brain-repository pushes recognize work already saved remotely.** When a push reports failure, the helper checks fresh evidence from the exact branch at every configured push destination for the intended commit before reporting local-only work. Rebase conflicts and genuinely rejected pushes still fail; unrelated working-tree edits are not automatically stashed.
+- **`gbrain schema lint --with-db` works with or without a pack name.** The flag can appear before or after the name, and unsupported lint arguments are rejected rather than mistaken for a pack.
+- **Sync health checks respect `syncEnabled: false`.** Deliberately disabled sources no longer raise stale-sync warnings. Their scheduled non-sync maintenance still runs and remains covered by cycle-health checks.
+- **Legacy host-repository MCP skills can omit optional `tools:` metadata.** Valid skills without that field inherit the caller's available brain tools, filtered by grants and the effective tool surface. Explicit tool lists still narrow the inventory, `tools: []` stays empty, and invalid metadata does not receive the fallback. Canonical shared-skill requirements and server authorization are unchanged.
+- **Google contacts recover from HTTP 400 sync-token expiry.** A documented expiry reason or recognized expiry message triggers a full contacts refresh and stores a new token. Other bad requests still fail instead of silently resetting sync state.
+
+### To take advantage of v0.60.15.0
+If upgrading from before v0.51.0.0, first follow the [coordinated writer upgrade guide](skills/migrations/v0.51.0.0.md). From v0.51.0.0, run `gbrain upgrade` and restart long-running GBrain processes. Retry a partly failed import normally; deleting its checkpoint is no longer necessary to pick up edits. The next contacts sync recovers an expired token automatically. For existing hardened, unmanaged brain repositories, run `gbrain sources harden <source-id>` to refresh the generated push helper and local hook; managed worktrees retain the persistence outbox as their Git writer. This patch adds no migration, credentials, permission grants, or automatic-capture requirement beyond v0.51.0.0.
 
 ## [0.60.13.0] - 2026-09-30
 

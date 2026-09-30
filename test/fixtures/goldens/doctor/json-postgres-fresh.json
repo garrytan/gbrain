@@ -862,7 +862,7 @@
         },
         {
           "category": "ops",
-          "message": "No exhausted batch retries in last 24h. Disconnect-call audit: 2 call(s) in 24h (most recent caller: at disconnect (<repo>/src/core/db.ts:346:5)).",
+          "message": "No exhausted batch retries in last 24h. Disconnect-call audit: 2 call(s) in 24h (most recent caller: <frame>).",
           "name": "batch_retry_health",
           "status": "ok"
         },
