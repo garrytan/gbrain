@@ -48,7 +48,9 @@ on new_meeting_transcript(meeting):
     # Add to task list with owner attribution
 
     # Step 5: Back-link everything (bidirectional graph)
-    for entity in all_entities_mentioned:
+    #   Attendees are the exception: auto-link derives their `attended`
+    #   edges from the meeting page's `Attendees:` line, so skip them here
+    for entity in all_entities_mentioned - meeting.attendees:
         gbrain link <slug> <entity_slug>   # meeting -> entity
         gbrain link <entity_slug> <slug>    # entity -> meeting
 
@@ -78,8 +80,9 @@ on new_meeting_transcript(meeting):
 1. After ingesting a meeting, run `gbrain get meetings/{date}-{slug}`. Confirm the page has the agent's analysis above the bar and the full diarized transcript below it.
 2. For each attendee, run `gbrain get <attendee_slug>`. Check that their timeline has a new entry referencing the meeting with specific insights (not just "attended meeting").
 3. Pick a company mentioned in the meeting. Run `gbrain get <company_slug>`. Confirm a timeline entry exists referencing what was discussed about the company.
-4. Run `gbrain call get_links '{"slug": "meetings/{date}-{slug}"}'`. Verify back-links exist to all attendee and entity pages.
-5. Run `gbrain search "{meeting_topic}"`. Confirm the meeting page appears in search results (verifies sync ran).
+4. Run `gbrain call get_links '{"slug": "meetings/{date}-{slug}"}'`. Verify links exist to the mentioned entity pages.
+5. Run `gbrain call get_backlinks '{"slug": "meetings/{date}-{slug}"}'`. Verify an `attended` link arrives from each attendee: where the active schema pack does not override attendance (gbrain-base-v2, which `gbrain init` sets), attendance points from the person to the meeting, so `get_links` on the meeting does not list it.
+6. Run `gbrain search "{meeting_topic}"`. Confirm the meeting page appears in search results (verifies sync ran).
 
 ## Related
 
