@@ -17,7 +17,7 @@ import { PageSnapshotAmbiguousError, type PageSnapshot } from '../page-state/typ
 import { serializePageToMarkdown } from '../markdown.ts';
 import { isAutoLinkEnabled } from '../link-extraction.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
-import { omitFactsFence } from '../facts-fence.ts';
+import { omitFactsFromPage } from '../persistence/omitted-facts.ts';
 import { getContentFlag } from '../quarantine.ts';
 import { bumpLastRetrievedAt } from '../last-retrieved.ts';
 import { resolveExcludePrivatePages, isPrivatePage, findPrivateOnlySlugs } from '../search/private-visibility.ts';
@@ -88,7 +88,6 @@ const get_page: Operation = {
   },
   handler: async (ctx, p) => {
     const slug = p.slug as string;
-    const omitFacts = (p.omit_facts as boolean) === true;
     const fuzzy = (p.fuzzy as boolean) || false;
     const includeDeleted = (p.include_deleted as boolean) === true;
     const includeContent = (p.include_content as boolean) === true;
@@ -178,15 +177,7 @@ const get_page: Operation = {
     // Only explicitly trusted local reads retain protected body sections.
     // Holder grants and page-visibility opt-outs do not bypass this boundary.
     const isUntrustedReader = ctx.remote !== false;
-    const protectedBody = isUntrustedReader
-      ? stripPrivacyFencesForRemoteReader(page)
-      : page;
-    // omit_facts: the facts fence becomes a placeholder that put_page swaps
-    // back for the stored fence, so editing an entity page never carries its
-    // (unbounded) facts table.
-    const visibleBody = omitFacts
-      ? { ...protectedBody, compiled_truth: omitFactsFence(protectedBody.compiled_truth), timeline: omitFactsFence(protectedBody.timeline) }
-      : protectedBody;
+    const visibleBody = omitFactsFromPage(isUntrustedReader ? stripPrivacyFencesForRemoteReader(page) : page, (p.omit_facts as boolean) === true);
     // v0.42 (#1699) agent-warning channel: surface the page's content_flag
     // marker as a top-level field (parallel to SearchResult.content_flag) so
     // an agent reading a page directly gets the same "this looks odd, examine
