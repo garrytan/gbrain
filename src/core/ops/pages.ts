@@ -15,6 +15,7 @@ import type { Page } from '../types.ts';
 import { decodeDeepResearchId, deepResearchPageUrl } from '../deep-research-id.ts';
 import { PageSnapshotAmbiguousError, type PageSnapshot } from '../page-state/types.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
+import { projectGetPage } from './get-page-projection.ts';
 import { isAutoLinkEnabled } from '../link-extraction.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
 import { getContentFlag } from '../quarantine.ts';
@@ -91,9 +92,6 @@ const get_page: Operation = {
     const includeDeleted = (p.include_deleted as boolean) === true;
     const includeContent = (p.include_content as boolean) === true;
     const includeTimelineEntries = (p.include_timeline_entries as boolean) === true;
-    // Only meaningful with include_content: a round-trip reader needs `content`
-    // + `revision`, not the same text again as compiled_truth + timeline.
-    const contentOnly = includeContent && (p.content_only as boolean) === true;
     // #4329: honor a per-call source_id (pre-fix it was silently dropped).
     // resolveRequestedScope (inside federatedSearchScope) enforces the remote
     // caller's grant on the explicit value.
@@ -197,35 +195,12 @@ const get_page: Operation = {
     // Opt-in (include_content: true): get_page is the most-called read op, and
     // `content` roughly duplicates compiled_truth + timeline — always emitting
     // it would double every reader's payload for the round-trip minority.
-    if (contentOnly) {
-      // Everything a get→edit→put_page round trip needs, without the duplicate
-      // compiled_truth / timeline / frontmatter the full shape carries next to
-      // `content` (a 30 KB page otherwise comes back as ~62 KB).
-      const deletedAt = (visibleBody as { deleted_at?: unknown }).deleted_at;
-      return {
-        slug: visibleBody.slug,
-        type: visibleBody.type,
-        title: visibleBody.title,
-        revision: snapshot!.revision,
-        tags,
-        content: serializePageToMarkdown(visibleBody as Page, tags),
-        ...(includeTimelineEntries
-          ? { timeline_entries: await ctx.engine.getTimeline(page.slug, await readPolicyOpts(ctx, { sourceId: page.source_id })) } : {}),
-        ...(deletedAt ? { deleted_at: deletedAt } : {}),
-        ...(resolved_slug ? { resolved_slug } : {}),
-        ...(content_flag ? { content_flag } : {}),
-      };
-    }
-    return {
-      ...visibleBody,
-      revision: snapshot!.revision,
-      tags,
-      ...(includeContent ? { content: serializePageToMarkdown(visibleBody as Page, tags) } : {}),
-      ...(includeTimelineEntries
-        ? { timeline_entries: await ctx.engine.getTimeline(page.slug, await readPolicyOpts(ctx, { sourceId: page.source_id })) } : {}),
-      ...(resolved_slug ? { resolved_slug } : {}),
-      ...(content_flag ? { content_flag } : {}),
-    };
+    const timelineEntries = includeTimelineEntries
+      ? await ctx.engine.getTimeline(page.slug, await readPolicyOpts(ctx, { sourceId: page.source_id })) : undefined;
+    return projectGetPage(visibleBody, {
+      revision: snapshot!.revision, tags, includeContent, contentOnly: (p.content_only as boolean) === true, resolved_slug, content_flag,
+      ...(timelineEntries ? { timeline_entries: timelineEntries } : {}),
+    });
   },
   scope: 'read', mutating: false,
   cliHints: { name: 'get', positional: ['slug'] },
