@@ -1446,8 +1446,9 @@ async function runGitHubSyncInner(engine: BrainEngine, sourceId: string, cfg: Gi
       if (managed) await managed.saveState(state, true, state.last_sweep_at ?? undefined);
       else { writeState(cfg.dir, state); await touchSourceRow(deps, state.last_sweep_at!); }
     } else if (!managed) {
+      // Persist the cursor state but leave sources.last_sync_at alone: a partial
+      // sweep must not advance it.
       writeState(cfg.dir, state);
-      await touchSourceRow(deps, state.last_sweep_at ?? new Date().toISOString());
     }
 
     return syncResult(summary, opts);

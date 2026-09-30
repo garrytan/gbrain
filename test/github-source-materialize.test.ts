@@ -615,6 +615,33 @@ describe('github-source materialize', () => {
     }
   });
 
+  test('a partial sweep does not stamp sources.last_sync_at (sync_freshness must not see it as fresh)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ghsrc-freshness-'));
+    const fx = makeFixture();
+    const fetchImpl = buildFetch(fx);
+    const lastSync = async () => (await engine.executeRaw<{ last_sync_at: string | null }>(
+      `SELECT last_sync_at FROM sources WHERE id = 'ghsrc'`,
+    ))[0]!.last_sync_at;
+    try {
+      await insertSource(engine, dir);
+      await withEnv({ GH_TOKEN: 'test-token' }, async () => {
+        // Item 1 fails on every run, so no sweep ever completes.
+        fx.failDetailItems.add(1);
+        const partial = await runGitHubSync(engine, 'ghsrc', makeCfg(dir), { sourceId: 'ghsrc', full: true }, fetchImpl);
+        expect(partial.status).toBe('partial');
+        expect(await lastSync()).toBeNull();
+
+        // A sweep that fully succeeds does stamp it.
+        fx.failDetailItems.delete(1);
+        const ok = await runGitHubSync(engine, 'ghsrc', makeCfg(dir), { sourceId: 'ghsrc', full: true }, fetchImpl);
+        expect(ok.status).not.toBe('partial');
+        expect(await lastSync()).not.toBeNull();
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test('open PR check changes are picked up even when updated_at is unchanged', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'ghsrc-checks-'));
     const fx = makeFixture();
