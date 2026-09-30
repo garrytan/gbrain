@@ -6,6 +6,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { withColdPglite } from './helpers/with-snapshot.ts';
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
+import { surfaceFileSource, surfaceSource } from './helpers/source-surface.ts';
 
 describe('migrate', () => {
   test('LATEST_VERSION is a number >= 1', () => {
@@ -677,8 +678,7 @@ describe('migrate v14 — pages_updated_at_index (handler-based, engine-aware)',
   });
 
   test('v14 handler source delegates invalid-remnant cleanup to the shared helper (#1178)', async () => {
-    const { readFileSync } = await import('fs');
-    const src = readFileSync('src/core/migrate.ts', 'utf-8');
+    const src = surfaceFileSource('migrate', 'src/core/schema-migrations/v014-pages-updated-at-index.ts');
     const v14Start = src.indexOf("name: 'pages_updated_at_index'");
     expect(v14Start).toBeGreaterThan(-1);
     const v14Block = src.slice(v14Start, v14Start + 3000);
@@ -717,8 +717,7 @@ describe('migrate — DROP INDEX CONCURRENTLY invalid-remnant cleanup (#1178, fi
   ];
 
   test('no DO $$ ... EXECUTE .DROP INDEX CONCURRENTLY. shape remains anywhere in migrate.ts', async () => {
-    const { readFileSync } = await import('fs');
-    const src = readFileSync('src/core/migrate.ts', 'utf-8');
+    const src = surfaceSource('migrate');
     // `DO $$ ... END $$` blocks are a normal Postgres idiom used all over this
     // file for unrelated conditional DDL — only the specific combination that
     // EXECUTEs a DROP INDEX CONCURRENTLY string is the #1178 bug shape.
@@ -726,16 +725,14 @@ describe('migrate — DROP INDEX CONCURRENTLY invalid-remnant cleanup (#1178, fi
   });
 
   test('every known invalid-remnant site calls dropInvalidConcurrentIndex(engine, version, indexName)', async () => {
-    const { readFileSync } = await import('fs');
-    const src = readFileSync('src/core/migrate.ts', 'utf-8');
+    const src = surfaceSource('migrate');
     for (const { version, indexName } of KNOWN_SITES) {
       expect(src).toContain(`dropInvalidConcurrentIndex(engine, ${version}, '${indexName}')`);
     }
   });
 
   test('dropInvalidConcurrentIndex helper itself probes pg_index.indisvalid and issues a standalone DROP (no DO block)', async () => {
-    const { readFileSync } = await import('fs');
-    const src = readFileSync('src/core/migrate.ts', 'utf-8');
+    const src = surfaceFileSource('migrate', 'src/core/schema-migrations/helpers.ts');
     const helperStart = src.indexOf('async function dropInvalidConcurrentIndex');
     expect(helperStart).toBeGreaterThan(-1);
     const helperBlock = src.slice(helperStart, helperStart + 1200);
@@ -840,8 +837,7 @@ describe('migrate v66 — embed_stale_partial_index (D6)', () => {
   });
 
   test('v66 handler source delegates invalid-remnant cleanup to the shared helper (#1178)', async () => {
-    const { readFileSync } = await import('fs');
-    const src = readFileSync('src/core/migrate.ts', 'utf-8');
+    const src = surfaceFileSource('migrate', 'src/core/schema-migrations/v066-embed-stale-partial-index.ts');
     const v66Start = src.indexOf("name: 'embed_stale_partial_index'");
     expect(v66Start).toBeGreaterThan(-1);
     const v66Block = src.slice(v66Start, v66Start + 3000);
@@ -868,8 +864,7 @@ describe('migrate v66 — embed_stale_partial_index (D6)', () => {
   });
 
   test('dropInvalidConcurrentIndex helper itself probes pg_index.indisvalid and issues a standalone DROP (no DO block)', async () => {
-    const { readFileSync } = await import('fs');
-    const src = readFileSync('src/core/migrate.ts', 'utf-8');
+    const src = surfaceFileSource('migrate', 'src/core/schema-migrations/helpers.ts');
     const helperStart = src.indexOf('async function dropInvalidConcurrentIndex');
     expect(helperStart).toBeGreaterThan(-1);
     const helperBlock = src.slice(helperStart, helperStart + 1200);
@@ -1226,7 +1221,7 @@ describe('PR #356 — LATEST_VERSION is max(versions), not array[-1]', () => {
 
     // Guard against regression to array[-1]: the production source must use
     // Math.max, never indexed access to the last element.
-    const src = readFileSync(resolve('src/core/migrate.ts'), 'utf-8');
+    const src = surfaceFileSource('migrate', 'src/core/migrate.ts');
     expect(src).toMatch(/LATEST_VERSION\s*=\s*MIGRATIONS\.length[\s\S]{0,200}Math\.max/);
     expect(src).not.toMatch(/MIGRATIONS\[MIGRATIONS\.length\s*-\s*1\]\.version/);
   });
@@ -1356,7 +1351,7 @@ describe('PR #356 + #363 — session timeouts applied via startup parameters', (
     // PgBouncer-transaction-mode-safe). The setSessionDefaults function is
     // kept as a no-op shim for back-compat with existing call sites.
     const dbSrc = readFileSync(resolve('src/core/db.ts'), 'utf-8');
-    const pgSrc = readFileSync(resolve('src/core/postgres-engine.ts'), 'utf-8');
+    const pgSrc = surfaceSource('postgres-engine');
 
     // Helper still exists for back-compat
     expect(dbSrc).toContain('export async function setSessionDefaults');
@@ -1394,7 +1389,7 @@ describe('PR #356 — non-transactional DDL runs via reserved connection', () =>
     // immediately above. The wrapper calls runMigrationSQL inside its retry
     // body, so it must come BEFORE in the source — which is why a prefix
     // match would catch the wrong function.
-    const source = readFileSync(resolve('src/core/migrate.ts'), 'utf-8');
+    const source = surfaceFileSource('migrate', 'src/core/migrate.ts');
 
     const runFnIdx = source.indexOf('async function runMigrationSQL(');
     expect(runFnIdx).toBeGreaterThan(-1);

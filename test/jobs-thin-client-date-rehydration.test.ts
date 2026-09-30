@@ -12,9 +12,8 @@
  */
 
 import { describe, test, expect } from 'bun:test';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { rehydrateJobDates } from '../src/commands/jobs.ts';
+import { surfaceSource } from './helpers/source-surface.ts';
 
 describe('rehydrateJobDates', () => {
   test('coerces wire-format ISO strings to Dates on all timestamp fields', () => {
@@ -68,7 +67,7 @@ describe('rehydrateJobDates', () => {
 });
 
 describe('thin-client unpack sites route through rehydrateJobDates (source audit)', () => {
-  const src = readFileSync(join(import.meta.dir, '..', 'src', 'commands', 'jobs.ts'), 'utf8');
+  const src = surfaceSource('jobs');
 
   test('list branch rehydrates', () => {
     expect(src).toContain('unpackToolResult<MinionJob[]>(raw).map((j) => rehydrateJobDates(j))');

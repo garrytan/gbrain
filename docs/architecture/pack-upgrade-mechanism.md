@@ -241,6 +241,6 @@ a `GBRAIN_AUDIT_FULL=1` escape hatch has been proposed but is not yet wired.
 - Onboard check: `src/core/onboard/checks.ts:checkPackUpgradeAvailable`
 - Render allowlist: `src/core/onboard/render.ts:MANUAL_ONLY_PROTECTED_JOBS`
 - Handler: `src/core/schema-pack/unify-types-handler.ts`
-- Migration: the `slug_aliases` entry in `src/core/migrate.ts`'s `MIGRATIONS` array
+- Migration: `src/core/schema-migrations/v105-slug-aliases.ts` (`slug_aliases`)
 - Type taxonomy doc: `docs/architecture/type-taxonomy.md`
 - Skill: `skills/schema-unify/SKILL.md`

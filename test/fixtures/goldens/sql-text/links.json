@@ -1,0 +1,587 @@
+{
+  "golden": {
+    "domain": "links",
+    "methods": {
+      "addLink": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "string",
+              "string",
+              "null",
+              "string",
+              "string",
+              "string",
+              "string",
+              "null"
+            ],
+            "sql": "WITH endpoint_state AS ( SELECT (SELECT id FROM pages WHERE slug = $1 AND source_id = $2 FOR KEY SHARE) AS from_id, (SELECT id FROM pages WHERE slug = $3 AND source_id = $4 FOR KEY SHARE) AS to_id, (SELECT id FROM pages WHERE slug = $5 AND source_id = $6 FOR KEY SHARE) AS origin_id ), upserted AS ( INSERT INTO links (from_page_id, to_page_id, link_type, context, link_source, origin_page_id, origin_field) SELECT s.from_id, s.to_id, $7, $8, $9, s.origin_id, $10 FROM endpoint_state s WHERE s.from_id IS NOT NULL AND s.to_id IS NOT NULL ON CONFLICT (from_page_id, to_page_id, link_type, link_source, origin_page_id) DO UPDATE SET context = EXCLUDED.context, origin_field = EXCLUDED.origin_field RETURNING 1 ) SELECT endpoint_state.from_id IS NOT NULL AS from_exists, endpoint_state.to_id IS NOT NULL AS to_exists FROM endpoint_state",
+            "textSha256": "985d6920b2f20b54cc394a8c37a0a46e3b998d8707e01ea2c43b5397715eb7d7"
+          }
+        ]
+      },
+      "addLinksBatch": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "object"
+            ],
+            "sql": "INSERT INTO links (from_page_id, to_page_id, link_type, context, link_source, link_kind, origin_page_id, origin_field) SELECT f.id, t.id, v.link_type, v.context, v.link_source, v.link_kind, o.id, v.origin_field FROM jsonb_to_recordset(($1::jsonb)->'rows') AS v( from_slug text, to_slug text, link_type text, context text, link_source text, origin_slug text, origin_field text, from_source_id text, to_source_id text, origin_source_id text, link_kind text ) JOIN pages f ON f.slug = v.from_slug AND f.source_id = v.from_source_id JOIN pages t ON t.slug = v.to_slug AND t.source_id = v.to_source_id LEFT JOIN pages o ON o.slug = v.origin_slug AND o.source_id = v.origin_source_id ON CONFLICT (from_page_id, to_page_id, link_type, link_source, origin_page_id) DO NOTHING RETURNING 1",
+            "textSha256": "0da50d169284c0223f331dcf1e03b36c9e691aedcd0b2ecd9106e2efaee9438c"
+          }
+        ]
+      },
+      "findOrphanPages": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [],
+            "sql": "SELECT p.slug, COALESCE(p.title, p.slug) AS title, p.frontmatter->>'domain' AS domain, p.type, (NOT NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine')) AS quarantined FROM pages p WHERE p.deleted_at IS NULL AND NOT EXISTS ( SELECT 1 FROM links l JOIN pages src ON src.id = l.from_page_id WHERE l.to_page_id = p.id AND src.deleted_at IS NULL ) AND NOT EXISTS ( SELECT 1 FROM links l JOIN pages tgt ON tgt.id = l.to_page_id WHERE l.from_page_id = p.id AND tgt.deleted_at IS NULL ) ORDER BY p.slug",
+            "textSha256": "0fa2045edf96c55157b109a673ea67cfde76f808c73c2285454ee33a6f634c88"
+          }
+        ],
+        "inbound": [
+          {
+            "lane": "pool",
+            "params": [],
+            "sql": "SELECT p.slug, COALESCE(p.title, p.slug) AS title, p.frontmatter->>'domain' AS domain, p.type, (NOT NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine')) AS quarantined FROM pages p WHERE p.deleted_at IS NULL AND NOT EXISTS ( SELECT 1 FROM links l JOIN pages src ON src.id = l.from_page_id WHERE l.to_page_id = p.id AND src.deleted_at IS NULL ) ORDER BY p.slug",
+            "textSha256": "3bfc66a02a00c96ed7dda81cad12b3f9b1791f6a5c7a3d44a05ca0e346da0432"
+          }
+        ],
+        "sourceId": [
+          {
+            "lane": "pool",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT p.slug, COALESCE(p.title, p.slug) AS title, p.frontmatter->>'domain' AS domain, p.type, (NOT NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine')) AS quarantined FROM pages p WHERE p.deleted_at IS NULL AND p.source_id = $1 AND NOT EXISTS ( SELECT 1 FROM links l JOIN pages src ON src.id = l.from_page_id WHERE l.to_page_id = p.id AND src.deleted_at IS NULL ) AND NOT EXISTS ( SELECT 1 FROM links l JOIN pages tgt ON tgt.id = l.to_page_id WHERE l.from_page_id = p.id AND tgt.deleted_at IS NULL ) ORDER BY p.slug",
+            "textSha256": "8cae9b94e4071fae4702f46d9855d928337bbf7576486d86a562cc8c5cd15a9e"
+          }
+        ],
+        "sourceIds+excludePrivate": [
+          {
+            "lane": "pool",
+            "params": [
+              "array<string>"
+            ],
+            "sql": "SELECT p.slug, COALESCE(p.title, p.slug) AS title, p.frontmatter->>'domain' AS domain, p.type, (NOT NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine')) AS quarantined FROM pages p WHERE p.deleted_at IS NULL AND (COALESCE(p.frontmatter->>'visibility', CASE WHEN (p.type = 'atom' OR (p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private' AND NOT (CASE WHEN p.type = 'atom' THEN EXISTS (SELECT 1 FROM pages derived_origin WHERE derived_origin.source_id = p.source_id AND derived_origin.slug = p.frontmatter->>'source_slug' AND derived_origin.frontmatter->>'visibility' = 'private') WHEN (p.type = 'atom' OR (p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL)) THEN EXISTS (SELECT 1 FROM links derived_input_link JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id WHERE derived_input_link.from_page_id = p.id AND derived_input_link.link_source = 'concept-provenance' AND derived_input_link.link_type = 'synthesized_from' AND (COALESCE(derived_input.frontmatter->>'visibility', CASE WHEN derived_input.type = 'atom' THEN 'private' ELSE 'world' END) = 'private' OR EXISTS (SELECT 1 FROM pages derived_input_origin WHERE derived_input_origin.source_id = derived_input.source_id AND derived_input_origin.slug = derived_input.frontmatter->>'source_slug' AND derived_input_origin.frontmatter->>'visibility' = 'private'))) ELSE false END)) AND p.source_id = ANY($1::text[]) AND NOT EXISTS ( SELECT 1 FROM links l JOIN pages src ON src.id = l.from_page_id WHERE l.to_page_id = p.id AND src.deleted_at IS NULL AND (COALESCE(src.frontmatter->>'visibility', CASE WHEN (src.type = 'atom' OR (src.type = 'concept' AND src.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private' AND NOT (CASE WHEN src.type = 'atom' THEN EXISTS (SELECT 1 FROM pages derived_origin WHERE derived_origin.source_id = src.source_id AND derived_origin.slug = src.frontmatter->>'source_slug' AND derived_origin.frontmatter->>'visibility' = 'private') WHEN (src.type = 'atom' OR (src.type = 'concept' AND src.frontmatter->>'synthesized_by' IS NOT NULL)) THEN EXISTS (SELECT 1 FROM links derived_input_link JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id WHERE derived_input_link.from_page_id = src.id AND derived_input_link.link_source = 'concept-provenance' AND derived_input_link.link_type = 'synthesized_from' AND (COALESCE(derived_input.frontmatter->>'visibility', CASE WHEN derived_input.type = 'atom' THEN 'private' ELSE 'world' END) = 'private' OR EXISTS (SELECT 1 FROM pages derived_input_origin WHERE derived_input_origin.source_id = derived_input.source_id AND derived_input_origin.slug = derived_input.frontmatter->>'source_slug' AND derived_input_origin.frontmatter->>'visibility' = 'private'))) ELSE false END)) AND (l.origin_page_id IS NULL OR EXISTS ( SELECT 1 FROM pages origin_private WHERE origin_private.id = l.origin_page_id AND (COALESCE(origin_private.frontmatter->>'visibility', CASE WHEN (origin_private.type = 'atom' OR (origin_private.type = 'concept' AND origin_private.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private' AND NOT (CASE WHEN origin_private.type = 'atom' THEN EXISTS (SELECT 1 FROM pages derived_origin WHERE derived_origin.source_id = origin_private.source_id AND derived_origin.slug = origin_private.frontmatter->>'source_slug' AND derived_origin.frontmatter->>'visibility' = 'private') WHEN (origin_private.type = 'atom' OR (origin_private.type = 'concept' AND origin_private.frontmatter->>'synthesized_by' IS NOT NULL)) THEN EXISTS (SELECT 1 FROM links derived_input_link JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id WHERE derived_input_link.from_page_id = origin_private.id AND derived_input_link.link_source = 'concept-provenance' AND derived_input_link.link_type = 'synthesized_from' AND (COALESCE(derived_input.frontmatter->>'visibility', CASE WHEN derived_input.type = 'atom' THEN 'private' ELSE 'world' END) = 'private' OR EXISTS (SELECT 1 FROM pages derived_input_origin WHERE derived_input_origin.source_id = derived_input.source_id AND derived_input_origin.slug = derived_input.frontmatter->>'source_slug' AND derived_input_origin.frontmatter->>'visibility' = 'private'))) ELSE false END)) )) ) AND NOT EXISTS ( SELECT 1 FROM links l JOIN pages tgt ON tgt.id = l.to_page_id WHERE l.from_page_id = p.id AND tgt.deleted_at IS NULL AND (COALESCE(tgt.frontmatter->>'visibility', CASE WHEN (tgt.type = 'atom' OR (tgt.type = 'concept' AND tgt.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private' AND NOT (CASE WHEN tgt.type = 'atom' THEN EXISTS (SELECT 1 FROM pages derived_origin WHERE derived_origin.source_id = tgt.source_id AND derived_origin.slug = tgt.frontmatter->>'source_slug' AND derived_origin.frontmatter->>'visibility' = 'private') WHEN (tgt.type = 'atom' OR (tgt.type = 'concept' AND tgt.frontmatter->>'synthesized_by' IS NOT NULL)) THEN EXISTS (SELECT 1 FROM links derived_input_link JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id WHERE derived_input_link.from_page_id = tgt.id AND derived_input_link.link_source = 'concept-provenance' AND derived_input_link.link_type = 'synthesized_from' AND (COALESCE(derived_input.frontmatter->>'visibility', CASE WHEN derived_input.type = 'atom' THEN 'private' ELSE 'world' END) = 'private' OR EXISTS (SELECT 1 FROM pages derived_input_origin WHERE derived_input_origin.source_id = derived_input.source_id AND derived_input_origin.slug = derived_input.frontmatter->>'source_slug' AND derived_input_origin.frontmatter->>'visibility' = 'private'))) ELSE false END)) AND (l.origin_page_id IS NULL OR EXISTS ( SELECT 1 FROM pages origin_private WHERE origin_private.id = l.origin_page_id AND (COALESCE(origin_private.frontmatter->>'visibility', CASE WHEN (origin_private.type = 'atom' OR (origin_private.type = 'concept' AND origin_private.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private' AND NOT (CASE WHEN origin_private.type = 'atom' THEN EXISTS (SELECT 1 FROM pages derived_origin WHERE derived_origin.source_id = origin_private.source_id AND derived_origin.slug = origin_private.frontmatter->>'source_slug' AND derived_origin.frontmatter->>'visibility' = 'private') WHEN (origin_private.type = 'atom' OR (origin_private.type = 'concept' AND origin_private.frontmatter->>'synthesized_by' IS NOT NULL)) THEN EXISTS (SELECT 1 FROM links derived_input_link JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id WHERE derived_input_link.from_page_id = origin_private.id AND derived_input_link.link_source = 'concept-provenance' AND derived_input_link.link_type = 'synthesized_from' AND (COALESCE(derived_input.frontmatter->>'visibility', CASE WHEN derived_input.type = 'atom' THEN 'private' ELSE 'world' END) = 'private' OR EXISTS (SELECT 1 FROM pages derived_input_origin WHERE derived_input_origin.source_id = derived_input.source_id AND derived_input_origin.slug = derived_input.frontmatter->>'source_slug' AND derived_input_origin.frontmatter->>'visibility' = 'private'))) ELSE false END)) )) ) ORDER BY p.slug",
+            "textSha256": "657e2b5a974e49468aa218c45b29ae0394a4985f988e0d9167e62d48fa000e16"
+          }
+        ]
+      },
+      "getBacklinks": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT f.slug as from_slug, f.source_id as from_source_id, t.slug as to_slug, t.source_id as to_source_id, l.link_type, l.context, l.link_source, o.slug as origin_slug, o.source_id as origin_source_id, l.origin_field FROM links l JOIN pages f ON f.id = l.from_page_id JOIN pages t ON t.id = l.to_page_id LEFT JOIN pages o ON o.id = l.origin_page_id WHERE t.slug = $1 AND f.deleted_at IS NULL AND t.deleted_at IS NULL",
+            "textSha256": "7d3b83f8d08012a264432a507f636bc9e84cb3dc459f53fa5532f7b5fea3cf78"
+          }
+        ],
+        "excludePrivate": [
+          {
+            "lane": "pool",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT f.slug as from_slug, f.source_id as from_source_id, t.slug as to_slug, t.source_id as to_source_id, l.link_type, l.context, l.link_source, o.slug as origin_slug, o.source_id as origin_source_id, l.origin_field FROM links l JOIN pages f ON f.id = l.from_page_id JOIN pages t ON t.id = l.to_page_id LEFT JOIN pages o ON o.id = l.origin_page_id WHERE t.slug = $1 AND f.deleted_at IS NULL AND t.deleted_at IS NULL AND (COALESCE(f.frontmatter->>'visibility', CASE WHEN (f.type = 'atom' OR (f.type = 'concept' AND f.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private' AND NOT (CASE WHEN f.type = 'atom' THEN EXISTS (SELECT 1 FROM pages derived_origin WHERE derived_origin.source_id = f.source_id AND derived_origin.slug = f.frontmatter->>'source_slug' AND derived_origin.frontmatter->>'visibility' = 'private') WHEN (f.type = 'atom' OR (f.type = 'concept' AND f.frontmatter->>'synthesized_by' IS NOT NULL)) THEN EXISTS (SELECT 1 FROM links derived_input_link JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id WHERE derived_input_link.from_page_id = f.id AND derived_input_link.link_source = 'concept-provenance' AND derived_input_link.link_type = 'synthesized_from' AND (COALESCE(derived_input.frontmatter->>'visibility', CASE WHEN derived_input.type = 'atom' THEN 'private' ELSE 'world' END) = 'private' OR EXISTS (SELECT 1 FROM pages derived_input_origin WHERE derived_input_origin.source_id = derived_input.source_id AND derived_input_origin.slug = derived_input.frontmatter->>'source_slug' AND derived_input_origin.frontmatter->>'visibility' = 'private'))) ELSE false END)) AND (COALESCE(t.frontmatter->>'visibility', CASE WHEN (t.type = 'atom' OR (t.type = 'concept' AND t.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private' AND NOT (CASE WHEN t.type = 'atom' THEN EXISTS (SELECT 1 FROM pages derived_origin WHERE derived_origin.source_id = t.source_id AND derived_origin.slug = t.frontmatter->>'source_slug' AND derived_origin.frontmatter->>'visibility' = 'private') WHEN (t.type = 'atom' OR (t.type = 'concept' AND t.frontmatter->>'synthesized_by' IS NOT NULL)) THEN EXISTS (SELECT 1 FROM links derived_input_link JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id WHERE derived_input_link.from_page_id = t.id AND derived_input_link.link_source = 'concept-provenance' AND derived_input_link.link_type = 'synthesized_from' AND (COALESCE(derived_input.frontmatter->>'visibility', CASE WHEN derived_input.type = 'atom' THEN 'private' ELSE 'world' END) = 'private' OR EXISTS (SELECT 1 FROM pages derived_input_origin WHERE derived_input_origin.source_id = derived_input.source_id AND derived_input_origin.slug = derived_input.frontmatter->>'source_slug' AND derived_input_origin.frontmatter->>'visibility' = 'private'))) ELSE false END)) AND (l.origin_page_id IS NULL OR EXISTS ( SELECT 1 FROM pages origin_private WHERE origin_private.id = l.origin_page_id AND (COALESCE(origin_private.frontmatter->>'visibility', CASE WHEN (origin_private.type = 'atom' OR (origin_private.type = 'concept' AND origin_private.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private' AND NOT (CASE WHEN origin_private.type = 'atom' THEN EXISTS (SELECT 1 FROM pages derived_origin WHERE derived_origin.source_id = origin_private.source_id AND derived_origin.slug = origin_private.frontmatter->>'source_slug' AND derived_origin.frontmatter->>'visibility' = 'private') WHEN (origin_private.type = 'atom' OR (origin_private.type = 'concept' AND origin_private.frontmatter->>'synthesized_by' IS NOT NULL)) THEN EXISTS (SELECT 1 FROM links derived_input_link JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id WHERE derived_input_link.from_page_id = origin_private.id AND derived_input_link.link_source = 'concept-provenance' AND derived_input_link.link_type = 'synthesized_from' AND (COALESCE(derived_input.frontmatter->>'visibility', CASE WHEN derived_input.type = 'atom' THEN 'private' ELSE 'world' END) = 'private' OR EXISTS (SELECT 1 FROM pages derived_input_origin WHERE derived_input_origin.source_id = derived_input.source_id AND derived_input_origin.slug = derived_input.frontmatter->>'source_slug' AND derived_input_origin.frontmatter->>'visibility' = 'private'))) ELSE false END)) ))",
+            "textSha256": "695e199ca070e35fe302338cd5988edb2393864e9eb147f50b42368651b117f1"
+          }
+        ],
+        "sourceId": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT f.slug as from_slug, f.source_id as from_source_id, t.slug as to_slug, t.source_id as to_source_id, l.link_type, l.context, l.link_source, o.slug as origin_slug, o.source_id as origin_source_id, l.origin_field FROM links l JOIN pages f ON f.id = l.from_page_id JOIN pages t ON t.id = l.to_page_id LEFT JOIN pages o ON o.id = l.origin_page_id WHERE t.slug = $1 AND t.source_id = $2 AND f.deleted_at IS NULL AND t.deleted_at IS NULL",
+            "textSha256": "d40000067d7b970f2adc3d1aceeaae3a9dba58afd87b0436c4fe76ea8b7d4132"
+          }
+        ],
+        "sourceIds": [
+          {
+            "lane": "pool",
+            "params": [
+              "array<string>",
+              "string",
+              "array<string>",
+              "array<string>"
+            ],
+            "sql": "SELECT f.slug as from_slug, f.source_id as from_source_id, t.slug as to_slug, t.source_id as to_source_id, l.link_type, l.context, l.link_source, o.slug as origin_slug, o.source_id as origin_source_id, l.origin_field FROM links l JOIN pages f ON f.id = l.from_page_id JOIN pages t ON t.id = l.to_page_id LEFT JOIN pages o ON o.id = l.origin_page_id AND o.source_id = ANY($1::text[]) WHERE t.slug = $2 AND t.source_id = ANY($3::text[]) AND f.source_id = ANY($4::text[]) AND f.deleted_at IS NULL AND t.deleted_at IS NULL",
+            "textSha256": "f84cef0e4257fa530728f1b560521ed95049d867f3a8726f04e2b4151d142433"
+          }
+        ]
+      },
+      "getLinks": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT f.slug as from_slug, f.source_id as from_source_id, t.slug as to_slug, t.source_id as to_source_id, l.link_type, l.context, l.link_source, o.slug as origin_slug, o.source_id as origin_source_id, l.origin_field FROM links l JOIN pages f ON f.id = l.from_page_id JOIN pages t ON t.id = l.to_page_id LEFT JOIN pages o ON o.id = l.origin_page_id WHERE f.slug = $1 AND f.deleted_at IS NULL AND t.deleted_at IS NULL",
+            "textSha256": "c326f3772480fd102e584acd07c02fe649dae800d26a059aebb69670d8fa1b5a"
+          }
+        ],
+        "excludePrivate": [
+          {
+            "lane": "pool",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT f.slug as from_slug, f.source_id as from_source_id, t.slug as to_slug, t.source_id as to_source_id, l.link_type, l.context, l.link_source, o.slug as origin_slug, o.source_id as origin_source_id, l.origin_field FROM links l JOIN pages f ON f.id = l.from_page_id JOIN pages t ON t.id = l.to_page_id LEFT JOIN pages o ON o.id = l.origin_page_id WHERE f.slug = $1 AND f.deleted_at IS NULL AND t.deleted_at IS NULL AND (COALESCE(f.frontmatter->>'visibility', CASE WHEN (f.type = 'atom' OR (f.type = 'concept' AND f.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private' AND NOT (CASE WHEN f.type = 'atom' THEN EXISTS (SELECT 1 FROM pages derived_origin WHERE derived_origin.source_id = f.source_id AND derived_origin.slug = f.frontmatter->>'source_slug' AND derived_origin.frontmatter->>'visibility' = 'private') WHEN (f.type = 'atom' OR (f.type = 'concept' AND f.frontmatter->>'synthesized_by' IS NOT NULL)) THEN EXISTS (SELECT 1 FROM links derived_input_link JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id WHERE derived_input_link.from_page_id = f.id AND derived_input_link.link_source = 'concept-provenance' AND derived_input_link.link_type = 'synthesized_from' AND (COALESCE(derived_input.frontmatter->>'visibility', CASE WHEN derived_input.type = 'atom' THEN 'private' ELSE 'world' END) = 'private' OR EXISTS (SELECT 1 FROM pages derived_input_origin WHERE derived_input_origin.source_id = derived_input.source_id AND derived_input_origin.slug = derived_input.frontmatter->>'source_slug' AND derived_input_origin.frontmatter->>'visibility' = 'private'))) ELSE false END)) AND (COALESCE(t.frontmatter->>'visibility', CASE WHEN (t.type = 'atom' OR (t.type = 'concept' AND t.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private' AND NOT (CASE WHEN t.type = 'atom' THEN EXISTS (SELECT 1 FROM pages derived_origin WHERE derived_origin.source_id = t.source_id AND derived_origin.slug = t.frontmatter->>'source_slug' AND derived_origin.frontmatter->>'visibility' = 'private') WHEN (t.type = 'atom' OR (t.type = 'concept' AND t.frontmatter->>'synthesized_by' IS NOT NULL)) THEN EXISTS (SELECT 1 FROM links derived_input_link JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id WHERE derived_input_link.from_page_id = t.id AND derived_input_link.link_source = 'concept-provenance' AND derived_input_link.link_type = 'synthesized_from' AND (COALESCE(derived_input.frontmatter->>'visibility', CASE WHEN derived_input.type = 'atom' THEN 'private' ELSE 'world' END) = 'private' OR EXISTS (SELECT 1 FROM pages derived_input_origin WHERE derived_input_origin.source_id = derived_input.source_id AND derived_input_origin.slug = derived_input.frontmatter->>'source_slug' AND derived_input_origin.frontmatter->>'visibility' = 'private'))) ELSE false END)) AND (l.origin_page_id IS NULL OR EXISTS ( SELECT 1 FROM pages origin_private WHERE origin_private.id = l.origin_page_id AND (COALESCE(origin_private.frontmatter->>'visibility', CASE WHEN (origin_private.type = 'atom' OR (origin_private.type = 'concept' AND origin_private.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private' AND NOT (CASE WHEN origin_private.type = 'atom' THEN EXISTS (SELECT 1 FROM pages derived_origin WHERE derived_origin.source_id = origin_private.source_id AND derived_origin.slug = origin_private.frontmatter->>'source_slug' AND derived_origin.frontmatter->>'visibility' = 'private') WHEN (origin_private.type = 'atom' OR (origin_private.type = 'concept' AND origin_private.frontmatter->>'synthesized_by' IS NOT NULL)) THEN EXISTS (SELECT 1 FROM links derived_input_link JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id WHERE derived_input_link.from_page_id = origin_private.id AND derived_input_link.link_source = 'concept-provenance' AND derived_input_link.link_type = 'synthesized_from' AND (COALESCE(derived_input.frontmatter->>'visibility', CASE WHEN derived_input.type = 'atom' THEN 'private' ELSE 'world' END) = 'private' OR EXISTS (SELECT 1 FROM pages derived_input_origin WHERE derived_input_origin.source_id = derived_input.source_id AND derived_input_origin.slug = derived_input.frontmatter->>'source_slug' AND derived_input_origin.frontmatter->>'visibility' = 'private'))) ELSE false END)) ))",
+            "textSha256": "6a9d06556058ab9b2a10727eb3ceacebec03e00f69fb76a77a6e1cfcbc276ff7"
+          }
+        ],
+        "sourceId": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT f.slug as from_slug, f.source_id as from_source_id, t.slug as to_slug, t.source_id as to_source_id, l.link_type, l.context, l.link_source, o.slug as origin_slug, o.source_id as origin_source_id, l.origin_field FROM links l JOIN pages f ON f.id = l.from_page_id JOIN pages t ON t.id = l.to_page_id LEFT JOIN pages o ON o.id = l.origin_page_id WHERE f.slug = $1 AND f.source_id = $2 AND f.deleted_at IS NULL AND t.deleted_at IS NULL",
+            "textSha256": "6d42832aea826bcff6ed51b166facbb6df6bc33acdf985614a2c40decb436353"
+          }
+        ],
+        "sourceIds": [
+          {
+            "lane": "pool",
+            "params": [
+              "array<string>",
+              "string",
+              "array<string>",
+              "array<string>"
+            ],
+            "sql": "SELECT f.slug as from_slug, f.source_id as from_source_id, t.slug as to_slug, t.source_id as to_source_id, l.link_type, l.context, l.link_source, o.slug as origin_slug, o.source_id as origin_source_id, l.origin_field FROM links l JOIN pages f ON f.id = l.from_page_id JOIN pages t ON t.id = l.to_page_id LEFT JOIN pages o ON o.id = l.origin_page_id AND o.source_id = ANY($1::text[]) WHERE f.slug = $2 AND f.source_id = ANY($3::text[]) AND t.source_id = ANY($4::text[]) AND f.deleted_at IS NULL AND t.deleted_at IS NULL",
+            "textSha256": "0a0323d66573dbd2ea49978f4ed78e217cf7668056abdb38017c3a39b1c0ed78"
+          }
+        ]
+      },
+      "listLinkSources": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [],
+            "sql": "SELECT l.link_source, COUNT(*)::int AS count FROM links l JOIN pages f ON f.id = l.from_page_id GROUP BY l.link_source ORDER BY count DESC, l.link_source ASC NULLS LAST",
+            "textSha256": "81d4af721bc98052c4908b0e9efba82e49f4a197728911007c618369b32a6127"
+          }
+        ],
+        "sourceId": [
+          {
+            "lane": "pool",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT l.link_source, COUNT(*)::int AS count FROM links l JOIN pages f ON f.id = l.from_page_id WHERE f.source_id = $1 GROUP BY l.link_source ORDER BY count DESC, l.link_source ASC NULLS LAST",
+            "textSha256": "3db294a33ababf477fecf8c7f9c370b9faaad75ca559ab2ec71c04be22adecdc"
+          }
+        ],
+        "sourceIds": [
+          {
+            "lane": "pool",
+            "params": [
+              "array<string>"
+            ],
+            "sql": "SELECT l.link_source, COUNT(*)::int AS count FROM links l JOIN pages f ON f.id = l.from_page_id WHERE f.source_id = ANY($1::text[]) GROUP BY l.link_source ORDER BY count DESC, l.link_source ASC NULLS LAST",
+            "textSha256": "c957e6fa81debdccaf2bdb8bc273387b392a60d5fa116a4ebbc980cbbe9060e7"
+          }
+        ]
+      },
+      "removeLink": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "string",
+              "string"
+            ],
+            "sql": "DELETE FROM links WHERE from_page_id = (SELECT id FROM pages WHERE slug = $1 AND source_id = $2) AND to_page_id = (SELECT id FROM pages WHERE slug = $3 AND source_id = $4) RETURNING 1",
+            "textSha256": "a6ae5888d264954339318394dd84154c444a09597536f5cc599f8ae3f28455fc"
+          }
+        ],
+        "linkSource": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "string",
+              "string",
+              "string"
+            ],
+            "sql": "DELETE FROM links WHERE from_page_id = (SELECT id FROM pages WHERE slug = $1 AND source_id = $2) AND to_page_id = (SELECT id FROM pages WHERE slug = $3 AND source_id = $4) AND link_source IS NOT DISTINCT FROM $5 RETURNING 1",
+            "textSha256": "f0b5dc57f103514ab2a2608fdf069e16df0e1d5ea2792e709d7fb1968505c247"
+          }
+        ],
+        "linkType": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "string",
+              "string",
+              "string"
+            ],
+            "sql": "DELETE FROM links WHERE from_page_id = (SELECT id FROM pages WHERE slug = $1 AND source_id = $2) AND to_page_id = (SELECT id FROM pages WHERE slug = $3 AND source_id = $4) AND link_type = $5 RETURNING 1",
+            "textSha256": "cf1f3918ea0c9492bd31c29c80aa3e48f559c922e0b2a0eb6ab2bd8dc2d87605"
+          }
+        ],
+        "linkType+linkSource": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string"
+            ],
+            "sql": "DELETE FROM links WHERE from_page_id = (SELECT id FROM pages WHERE slug = $1 AND source_id = $2) AND to_page_id = (SELECT id FROM pages WHERE slug = $3 AND source_id = $4) AND link_type = $5 AND link_source IS NOT DISTINCT FROM $6 RETURNING 1",
+            "textSha256": "d100361cb1fd828894d60ef36833fbefc75f35944416faf68bb797dd083e32bc"
+          }
+        ]
+      },
+      "removeLinksByPagesAndSource": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "object",
+              "object",
+              "string"
+            ],
+            "sql": "WITH scope AS ( SELECT f.id AS from_id FROM jsonb_to_recordset(($1::jsonb)->'pages') AS p(slug text, source_id text) JOIN pages f ON f.slug = p.slug AND f.source_id = p.source_id ), keep AS ( SELECT f.id AS from_id, t.id AS to_id FROM jsonb_to_recordset(($2::jsonb)->'keep') AS k( from_slug text, from_source_id text, to_slug text, to_source_id text ) JOIN pages f ON f.slug = k.from_slug AND f.source_id = k.from_source_id JOIN pages t ON t.slug = k.to_slug AND t.source_id = k.to_source_id ) DELETE FROM links l USING scope s WHERE l.from_page_id = s.from_id AND l.link_source = $3 AND NOT ( COALESCE(l.link_kind, '') = 'typed_ner' AND EXISTS ( SELECT 1 FROM keep k WHERE k.from_id = l.from_page_id AND k.to_id = l.to_page_id ) ) RETURNING 1",
+            "textSha256": "bfc601f3da1859c53caae43011e542fc1ce996000423f410838cdb5091dd6e88"
+          }
+        ]
+      },
+      "replaceDerivedLinks": {
+        "default": [
+          {
+            "event": "begin",
+            "lane": "tx"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT incarnation FROM sources WHERE id=$1 FOR SHARE",
+            "textSha256": "414efa2a18b3a4ac2f6f6675b6f7273b71c262a6bab8a44f82963606fed221d7"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "INSERT INTO page_write_guards(source_incarnation,slug) VALUES ($1::uuid,$2) ON CONFLICT DO NOTHING",
+            "textSha256": "fa56fa770a66caa8ae77b19c2c3ae9caac336d8e8281bc16f09d36a7fcdd74fd"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT slug FROM page_write_guards WHERE source_incarnation=$1::uuid AND slug=$2 FOR UPDATE",
+            "textSha256": "3d08e10394edab70fb78946e378dd11528213526b214a8516d8cf3825e87ac19"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT id FROM pages WHERE source_id=$1 AND slug=$2 FOR UPDATE",
+            "textSha256": "6c2eb61492fe7470a32169e89b9f04d471f3311d55ff790ad08f4736af483a2c"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "INSERT INTO page_write_guards(source_incarnation,slug) VALUES ($1::uuid,$2) ON CONFLICT DO NOTHING",
+            "textSha256": "fa56fa770a66caa8ae77b19c2c3ae9caac336d8e8281bc16f09d36a7fcdd74fd"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT slug FROM page_write_guards WHERE source_incarnation=$1::uuid AND slug=$2 FOR UPDATE",
+            "textSha256": "3d08e10394edab70fb78946e378dd11528213526b214a8516d8cf3825e87ac19"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT id FROM pages WHERE source_id=$1 AND slug=$2 FOR UPDATE",
+            "textSha256": "6c2eb61492fe7470a32169e89b9f04d471f3311d55ff790ad08f4736af483a2c"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string",
+              "string",
+              "string"
+            ],
+            "sql": "WITH chosen AS ( SELECT p.* FROM pages p WHERE p.slug=$1 AND p.source_id=$2 AND p.deleted_at IS NULL ORDER BY (p.slug=$3) DESC, (p.source_id=$4) DESC, p.source_id ASC LIMIT 1 ) SELECT p.*, (SELECT s.incarnation FROM sources s WHERE s.id=p.source_id) AS source_incarnation, COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag) FROM tags t WHERE t.page_id=p.id), '[]'::jsonb) AS snapshot_tags, COALESCE((SELECT jsonb_agg(jsonb_build_object('visibility',w.visibility,'fact_hash',w.fact_hash,'withdrawn_at',w.withdrawn_at) ORDER BY w.visibility,w.fact_hash) FROM (SELECT visibility,fact_hash,min(withdrawn_at) AS withdrawn_at FROM fact_withdrawals WHERE source_id=p.source_id AND (subject='*' OR subject=p.slug) GROUP BY visibility,fact_hash) w), '[]'::jsonb) AS snapshot_withdrawals, (SELECT string_agg(regexp_replace(lower(line), '[[:space:]]+', ' ', 'g'), chr(10) ORDER BY ord) FROM unnest(string_to_array(p.compiled_truth,chr(10))) WITH ORDINALITY AS lines(line,ord)) AS fingerprint_body, (SELECT string_agg(regexp_replace(lower(line), '[[:space:]]+', ' ', 'g'), chr(10) ORDER BY ord) FROM unnest(string_to_array(p.timeline,chr(10))) WITH ORDINALITY AS lines(line,ord)) AS fingerprint_timeline FROM chosen p",
+            "textSha256": "22ce659b8fb6104bf08b6ee101bd0e0bafb2769bb7c399380a38e9a4a26c693e"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "number",
+              "number"
+            ],
+            "sql": "SELECT 1 FROM links WHERE link_source='frontmatter' AND origin_page_id IS NULL AND (from_page_id=$1 OR to_page_id=$2) LIMIT 1",
+            "textSha256": "b2c03345c2ab3512619e399a0e0aa81f14e82a23f6d3d9dedbac5a7066525049"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "object"
+            ],
+            "sql": "SELECT 1 FROM jsonb_to_recordset(($1::jsonb)->'rows') AS v(from_slug text, to_slug text, from_source_id text, to_source_id text) LEFT JOIN pages f ON f.slug=v.from_slug AND f.source_id=v.from_source_id AND f.deleted_at IS NULL LEFT JOIN pages t ON t.slug=v.to_slug AND t.source_id=v.to_source_id AND t.deleted_at IS NULL WHERE f.id IS NULL OR t.id IS NULL LIMIT 1",
+            "textSha256": "6446f477cc034315f2e55e7d2489029b3229ffa2bcd339ee147aa3475914c957"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "array<string>",
+              "number",
+              "number"
+            ],
+            "sql": "DELETE FROM links WHERE link_source=ANY($1::text[]) AND (origin_page_id=$2 OR (origin_page_id IS NULL AND from_page_id=$3 AND link_source IN ('markdown','wikilink-resolved'))) RETURNING id",
+            "textSha256": "139b6f1adbab926678851d9ab9aa31c10522ad78488ed0ce1daca8c5b2952cac"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "object"
+            ],
+            "sql": "INSERT INTO links (from_page_id, to_page_id, link_type, context, link_source, link_kind, origin_page_id, origin_field) SELECT f.id, t.id, v.link_type, v.context, v.link_source, v.link_kind, o.id, v.origin_field FROM jsonb_to_recordset(($1::jsonb)->'rows') AS v( from_slug text, to_slug text, link_type text, context text, link_source text, origin_slug text, origin_field text, from_source_id text, to_source_id text, origin_source_id text, link_kind text ) JOIN pages f ON f.slug = v.from_slug AND f.source_id = v.from_source_id JOIN pages t ON t.slug = v.to_slug AND t.source_id = v.to_source_id LEFT JOIN pages o ON o.slug = v.origin_slug AND o.source_id = v.origin_source_id ON CONFLICT (from_page_id, to_page_id, link_type, link_source, origin_page_id) DO NOTHING RETURNING 1",
+            "textSha256": "0da50d169284c0223f331dcf1e03b36c9e691aedcd0b2ecd9106e2efaee9438c"
+          },
+          {
+            "event": "commit",
+            "lane": "tx"
+          }
+        ]
+      },
+      "traverseGraph": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "number",
+              "number"
+            ],
+            "sql": "WITH RECURSIVE graph AS ( SELECT p.id, p.slug, p.title, p.type, 0 as depth, ARRAY[p.id] as visited FROM pages p WHERE p.slug = $1 AND p.deleted_at IS NULL UNION ALL SELECT p2.id, p2.slug, p2.title, p2.type, g.depth + 1, g.visited || p2.id FROM graph g JOIN links l ON l.from_page_id = g.id JOIN pages p2 ON p2.id = l.to_page_id WHERE g.depth < $2 AND NOT (p2.id = ANY(g.visited)) AND p2.deleted_at IS NULL ) SELECT DISTINCT g.slug, g.title, g.type, g.depth, coalesce( -- jsonb_agg(DISTINCT ...) collapses duplicate (to_slug, link_type) -- edges that originate from different provenance (markdown body -- vs frontmatter vs auto-extracted). The underlying links table -- preserves every row with its origin_page_id / link_source — -- the dedup is presentation-only for the legacy traverseGraph -- aggregation. traversePaths has its own in-memory dedup at a -- different layer. See plan Bug 6/10. (SELECT jsonb_agg(DISTINCT jsonb_build_object('to_slug', p3.slug, 'link_type', l2.link_type)) FROM links l2 JOIN pages p3 ON p3.id = l2.to_page_id WHERE l2.from_page_id = g.id AND p3.deleted_at IS NULL ), '[]'::jsonb ) as links FROM (SELECT DISTINCT id, slug, title, type, depth FROM (SELECT id, slug, title, type, depth FROM graph LIMIT $3) capped) g ORDER BY g.depth, g.slug",
+            "textSha256": "f1dd83368f4490f9153b52f5364c0c35f9367505d0f4633ed6db222aa01a737b"
+          }
+        ],
+        "excludePrivate": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "number",
+              "number"
+            ],
+            "sql": "WITH RECURSIVE graph AS ( SELECT p.id, p.slug, p.title, p.type, 0 as depth, ARRAY[p.id] as visited FROM pages p WHERE p.slug = $1 AND p.deleted_at IS NULL AND (COALESCE(p.frontmatter->>'visibility', CASE WHEN (p.type = 'atom' OR (p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private' AND NOT (CASE WHEN p.type = 'atom' THEN EXISTS (SELECT 1 FROM pages derived_origin WHERE derived_origin.source_id = p.source_id AND derived_origin.slug = p.frontmatter->>'source_slug' AND derived_origin.frontmatter->>'visibility' = 'private') WHEN (p.type = 'atom' OR (p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL)) THEN EXISTS (SELECT 1 FROM links derived_input_link JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id WHERE derived_input_link.from_page_id = p.id AND derived_input_link.link_source = 'concept-provenance' AND derived_input_link.link_type = 'synthesized_from' AND (COALESCE(derived_input.frontmatter->>'visibility', CASE WHEN derived_input.type = 'atom' THEN 'private' ELSE 'world' END) = 'private' OR EXISTS (SELECT 1 FROM pages derived_input_origin WHERE derived_input_origin.source_id = derived_input.source_id AND derived_input_origin.slug = derived_input.frontmatter->>'source_slug' AND derived_input_origin.frontmatter->>'visibility' = 'private'))) ELSE false END)) UNION ALL SELECT p2.id, p2.slug, p2.title, p2.type, g.depth + 1, g.visited || p2.id FROM graph g JOIN links l ON l.from_page_id = g.id JOIN pages p2 ON p2.id = l.to_page_id WHERE g.depth < $2 AND NOT (p2.id = ANY(g.visited)) AND p2.deleted_at IS NULL AND (COALESCE(p2.frontmatter->>'visibility', CASE WHEN (p2.type = 'atom' OR (p2.type = 'concept' AND p2.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private' AND NOT (CASE WHEN p2.type = 'atom' THEN EXISTS (SELECT 1 FROM pages derived_origin WHERE derived_origin.source_id = p2.source_id AND derived_origin.slug = p2.frontmatter->>'source_slug' AND derived_origin.frontmatter->>'visibility' = 'private') WHEN (p2.type = 'atom' OR (p2.type = 'concept' AND p2.frontmatter->>'synthesized_by' IS NOT NULL)) THEN EXISTS (SELECT 1 FROM links derived_input_link JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id WHERE derived_input_link.from_page_id = p2.id AND derived_input_link.link_source = 'concept-provenance' AND derived_input_link.link_type = 'synthesized_from' AND (COALESCE(derived_input.frontmatter->>'visibility', CASE WHEN derived_input.type = 'atom' THEN 'private' ELSE 'world' END) = 'private' OR EXISTS (SELECT 1 FROM pages derived_input_origin WHERE derived_input_origin.source_id = derived_input.source_id AND derived_input_origin.slug = derived_input.frontmatter->>'source_slug' AND derived_input_origin.frontmatter->>'visibility' = 'private'))) ELSE false END)) AND (l.origin_page_id IS NULL OR EXISTS ( SELECT 1 FROM pages origin_private WHERE origin_private.id = l.origin_page_id AND (COALESCE(origin_private.frontmatter->>'visibility', CASE WHEN (origin_private.type = 'atom' OR (origin_private.type = 'concept' AND origin_private.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private' AND NOT (CASE WHEN origin_private.type = 'atom' THEN EXISTS (SELECT 1 FROM pages derived_origin WHERE derived_origin.source_id = origin_private.source_id AND derived_origin.slug = origin_private.frontmatter->>'source_slug' AND derived_origin.frontmatter->>'visibility' = 'private') WHEN (origin_private.type = 'atom' OR (origin_private.type = 'concept' AND origin_private.frontmatter->>'synthesized_by' IS NOT NULL)) THEN EXISTS (SELECT 1 FROM links derived_input_link JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id WHERE derived_input_link.from_page_id = origin_private.id AND derived_input_link.link_source = 'concept-provenance' AND derived_input_link.link_type = 'synthesized_from' AND (COALESCE(derived_input.frontmatter->>'visibility', CASE WHEN derived_input.type = 'atom' THEN 'private' ELSE 'world' END) = 'private' OR EXISTS (SELECT 1 FROM pages derived_input_origin WHERE derived_input_origin.source_id = derived_input.source_id AND derived_input_origin.slug = derived_input.frontmatter->>'source_slug' AND derived_input_origin.frontmatter->>'visibility' = 'private'))) ELSE false END)) )) ) SELECT DISTINCT g.slug, g.title, g.type, g.depth, coalesce( -- jsonb_agg(DISTINCT ...) collapses duplicate (to_slug, link_type) -- edges that originate from different provenance (markdown body -- vs frontmatter vs auto-extracted). The underlying links table -- preserves every row with its origin_page_id / link_source — -- the dedup is presentation-only for the legacy traverseGraph -- aggregation. traversePaths has its own in-memory dedup at a -- different layer. See plan Bug 6/10. (SELECT jsonb_agg(DISTINCT jsonb_build_object('to_slug', p3.slug, 'link_type', l2.link_type)) FROM links l2 JOIN pages p3 ON p3.id = l2.to_page_id WHERE l2.from_page_id = g.id AND p3.deleted_at IS NULL AND (COALESCE(p3.frontmatter->>'visibility', CASE WHEN (p3.type = 'atom' OR (p3.type = 'concept' AND p3.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private' AND NOT (CASE WHEN p3.type = 'atom' THEN EXISTS (SELECT 1 FROM pages derived_origin WHERE derived_origin.source_id = p3.source_id AND derived_origin.slug = p3.frontmatter->>'source_slug' AND derived_origin.frontmatter->>'visibility' = 'private') WHEN (p3.type = 'atom' OR (p3.type = 'concept' AND p3.frontmatter->>'synthesized_by' IS NOT NULL)) THEN EXISTS (SELECT 1 FROM links derived_input_link JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id WHERE derived_input_link.from_page_id = p3.id AND derived_input_link.link_source = 'concept-provenance' AND derived_input_link.link_type = 'synthesized_from' AND (COALESCE(derived_input.frontmatter->>'visibility', CASE WHEN derived_input.type = 'atom' THEN 'private' ELSE 'world' END) = 'private' OR EXISTS (SELECT 1 FROM pages derived_input_origin WHERE derived_input_origin.source_id = derived_input.source_id AND derived_input_origin.slug = derived_input.frontmatter->>'source_slug' AND derived_input_origin.frontmatter->>'visibility' = 'private'))) ELSE false END)) AND (l2.origin_page_id IS NULL OR EXISTS ( SELECT 1 FROM pages origin_private WHERE origin_private.id = l2.origin_page_id AND (COALESCE(origin_private.frontmatter->>'visibility', CASE WHEN (origin_private.type = 'atom' OR (origin_private.type = 'concept' AND origin_private.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private' AND NOT (CASE WHEN origin_private.type = 'atom' THEN EXISTS (SELECT 1 FROM pages derived_origin WHERE derived_origin.source_id = origin_private.source_id AND derived_origin.slug = origin_private.frontmatter->>'source_slug' AND derived_origin.frontmatter->>'visibility' = 'private') WHEN (origin_private.type = 'atom' OR (origin_private.type = 'concept' AND origin_private.frontmatter->>'synthesized_by' IS NOT NULL)) THEN EXISTS (SELECT 1 FROM links derived_input_link JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id WHERE derived_input_link.from_page_id = origin_private.id AND derived_input_link.link_source = 'concept-provenance' AND derived_input_link.link_type = 'synthesized_from' AND (COALESCE(derived_input.frontmatter->>'visibility', CASE WHEN derived_input.type = 'atom' THEN 'private' ELSE 'world' END) = 'private' OR EXISTS (SELECT 1 FROM pages derived_input_origin WHERE derived_input_origin.source_id = derived_input.source_id AND derived_input_origin.slug = derived_input.frontmatter->>'source_slug' AND derived_input_origin.frontmatter->>'visibility' = 'private'))) ELSE false END)) )) ), '[]'::jsonb ) as links FROM (SELECT DISTINCT id, slug, title, type, depth FROM (SELECT id, slug, title, type, depth FROM graph LIMIT $3) capped) g ORDER BY g.depth, g.slug",
+            "textSha256": "92cb87da1b2f09b5b4a5c209e8388ca8cc8e802062b6b220f962b11272541434"
+          }
+        ],
+        "frontierCap": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "number",
+              "number",
+              "number"
+            ],
+            "sql": "WITH RECURSIVE graph AS ( SELECT p.id, p.slug, p.title, p.type, 0 as depth, ARRAY[p.id] as visited FROM pages p WHERE p.slug = $1 AND p.deleted_at IS NULL UNION ALL (SELECT p2.id, p2.slug, p2.title, p2.type, g.depth + 1, g.visited || p2.id FROM graph g JOIN links l ON l.from_page_id = g.id JOIN pages p2 ON p2.id = l.to_page_id WHERE g.depth < $2 AND NOT (p2.id = ANY(g.visited)) AND p2.deleted_at IS NULL ORDER BY p2.slug ASC, p2.id ASC LIMIT $3) ) SELECT DISTINCT g.slug, g.title, g.type, g.depth, coalesce( -- jsonb_agg(DISTINCT ...) collapses duplicate (to_slug, link_type) -- edges that originate from different provenance (markdown body -- vs frontmatter vs auto-extracted). The underlying links table -- preserves every row with its origin_page_id / link_source — -- the dedup is presentation-only for the legacy traverseGraph -- aggregation. traversePaths has its own in-memory dedup at a -- different layer. See plan Bug 6/10. (SELECT jsonb_agg(DISTINCT jsonb_build_object('to_slug', p3.slug, 'link_type', l2.link_type)) FROM links l2 JOIN pages p3 ON p3.id = l2.to_page_id WHERE l2.from_page_id = g.id AND p3.deleted_at IS NULL ), '[]'::jsonb ) as links FROM (SELECT DISTINCT id, slug, title, type, depth FROM (SELECT id, slug, title, type, depth FROM graph LIMIT $4) capped) g ORDER BY g.depth, g.slug",
+            "textSha256": "ccdff59c0b210028ea95d7d10b571b270736cd7f1bf5a5f31f0f91b91cd02141"
+          }
+        ],
+        "sourceId": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "number",
+              "string",
+              "string",
+              "number"
+            ],
+            "sql": "WITH RECURSIVE graph AS ( SELECT p.id, p.slug, p.title, p.type, 0 as depth, ARRAY[p.id] as visited FROM pages p WHERE p.slug = $1 AND p.deleted_at IS NULL AND p.source_id = $2 UNION ALL SELECT p2.id, p2.slug, p2.title, p2.type, g.depth + 1, g.visited || p2.id FROM graph g JOIN links l ON l.from_page_id = g.id JOIN pages p2 ON p2.id = l.to_page_id WHERE g.depth < $3 AND NOT (p2.id = ANY(g.visited)) AND p2.deleted_at IS NULL AND p2.source_id = $4 ) SELECT DISTINCT g.slug, g.title, g.type, g.depth, coalesce( -- jsonb_agg(DISTINCT ...) collapses duplicate (to_slug, link_type) -- edges that originate from different provenance (markdown body -- vs frontmatter vs auto-extracted). The underlying links table -- preserves every row with its origin_page_id / link_source — -- the dedup is presentation-only for the legacy traverseGraph -- aggregation. traversePaths has its own in-memory dedup at a -- different layer. See plan Bug 6/10. (SELECT jsonb_agg(DISTINCT jsonb_build_object('to_slug', p3.slug, 'link_type', l2.link_type)) FROM links l2 JOIN pages p3 ON p3.id = l2.to_page_id WHERE l2.from_page_id = g.id AND p3.deleted_at IS NULL AND p3.source_id = $5), '[]'::jsonb ) as links FROM (SELECT DISTINCT id, slug, title, type, depth FROM (SELECT id, slug, title, type, depth FROM graph LIMIT $6) capped) g ORDER BY g.depth, g.slug",
+            "textSha256": "a94d59c8f8e3a10c55b47709c7b1ce97727b6ce4018e362f8c5993c1f6921e6c"
+          }
+        ],
+        "sourceIds": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "array<string>",
+              "number",
+              "array<string>",
+              "array<string>",
+              "number"
+            ],
+            "sql": "WITH RECURSIVE graph AS ( SELECT p.id, p.slug, p.title, p.type, 0 as depth, ARRAY[p.id] as visited FROM pages p WHERE p.slug = $1 AND p.deleted_at IS NULL AND p.source_id = ANY($2::text[]) UNION ALL SELECT p2.id, p2.slug, p2.title, p2.type, g.depth + 1, g.visited || p2.id FROM graph g JOIN links l ON l.from_page_id = g.id JOIN pages p2 ON p2.id = l.to_page_id WHERE g.depth < $3 AND NOT (p2.id = ANY(g.visited)) AND p2.deleted_at IS NULL AND p2.source_id = ANY($4::text[]) ) SELECT DISTINCT g.slug, g.title, g.type, g.depth, coalesce( -- jsonb_agg(DISTINCT ...) collapses duplicate (to_slug, link_type) -- edges that originate from different provenance (markdown body -- vs frontmatter vs auto-extracted). The underlying links table -- preserves every row with its origin_page_id / link_source — -- the dedup is presentation-only for the legacy traverseGraph -- aggregation. traversePaths has its own in-memory dedup at a -- different layer. See plan Bug 6/10. (SELECT jsonb_agg(DISTINCT jsonb_build_object('to_slug', p3.slug, 'link_type', l2.link_type)) FROM links l2 JOIN pages p3 ON p3.id = l2.to_page_id WHERE l2.from_page_id = g.id AND p3.deleted_at IS NULL AND p3.source_id = ANY($5::text[])), '[]'::jsonb ) as links FROM (SELECT DISTINCT id, slug, title, type, depth FROM (SELECT id, slug, title, type, depth FROM graph LIMIT $6) capped) g ORDER BY g.depth, g.slug",
+            "textSha256": "e652f1a45bbd561e3c65fa8fec192cde258b763c62bcdbf6539c73199884d1d1"
+          }
+        ]
+      },
+      "traversePaths": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "number",
+              "boolean",
+              "string",
+              "number",
+              "number",
+              "number",
+              "boolean",
+              "string",
+              "number"
+            ],
+            "sql": "WITH RECURSIVE walk AS ( SELECT p.id, p.slug, 0::int as depth, ARRAY[p.id] as visited FROM pages p WHERE p.slug = $1 AND p.deleted_at IS NULL UNION ALL SELECT p2.id, p2.slug, w.depth + 1, w.visited || p2.id FROM walk w JOIN links l ON l.from_page_id = w.id JOIN pages p2 ON p2.id = l.to_page_id WHERE w.depth + 1 < $2 AND NOT (p2.id = ANY(w.visited)) AND p2.deleted_at IS NULL AND ($3 OR l.link_type = $4) ), capped AS (SELECT id, slug, depth FROM walk LIMIT $5), nodes AS (SELECT DISTINCT id, slug, depth FROM capped) SELECT (SELECT count(*) FROM capped) > $6 AS walk_truncated, w.slug as from_slug, p2.slug as to_slug, l.link_type, l.context, w.depth + 1 as depth FROM nodes w JOIN links l ON l.from_page_id = w.id JOIN pages p2 ON p2.id = l.to_page_id WHERE w.depth < $7 AND p2.deleted_at IS NULL AND ($8 OR l.link_type = $9) ORDER BY depth, from_slug, to_slug LIMIT $10",
+            "textSha256": "8431b064516c53834fd114df302b49f5acbe3a09fc5e80a95d6ee17b6ac8377c"
+          }
+        ]
+      },
+      "traversePathsDetailed": {
+        "both": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "number",
+              "boolean",
+              "string",
+              "number",
+              "number",
+              "number",
+              "boolean",
+              "string",
+              "number"
+            ],
+            "sql": "WITH RECURSIVE walk AS ( SELECT p.id, 0::int as depth, ARRAY[p.id] as visited FROM pages p WHERE p.slug = $1 AND p.deleted_at IS NULL UNION ALL SELECT p2.id, w.depth + 1, w.visited || p2.id FROM walk w JOIN links l ON (l.from_page_id = w.id OR l.to_page_id = w.id) JOIN pages p2 ON p2.id = CASE WHEN l.from_page_id = w.id THEN l.to_page_id ELSE l.from_page_id END WHERE w.depth + 1 < $2 AND NOT (p2.id = ANY(w.visited)) AND p2.deleted_at IS NULL AND ($3 OR l.link_type = $4) ), capped AS (SELECT id, depth FROM walk LIMIT $5), nodes AS (SELECT DISTINCT id, depth FROM capped) SELECT (SELECT count(*) FROM capped) > $6 AS walk_truncated, pf.slug as from_slug, pt.slug as to_slug, l.link_type, l.context, w.depth + 1 as depth FROM nodes w JOIN links l ON (l.from_page_id = w.id OR l.to_page_id = w.id) JOIN pages pf ON pf.id = l.from_page_id JOIN pages pt ON pt.id = l.to_page_id WHERE w.depth < $7 AND pf.deleted_at IS NULL AND pt.deleted_at IS NULL AND ($8 OR l.link_type = $9) ORDER BY depth, from_slug, to_slug LIMIT $10",
+            "textSha256": "d0b5842b5dd640d8da08e98665d9afad106345275c39c24d28022a27d5ea61c5"
+          }
+        ],
+        "both+sourceIds+excludePrivate": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "array<string>",
+              "number",
+              "boolean",
+              "string",
+              "array<string>",
+              "number",
+              "number",
+              "number",
+              "boolean",
+              "string",
+              "array<string>",
+              "array<string>",
+              "number"
+            ],
+            "sql": "WITH RECURSIVE walk AS ( SELECT p.id, 0::int as depth, ARRAY[p.id] as visited FROM pages p WHERE p.slug = $1 AND p.deleted_at IS NULL AND (COALESCE(p.frontmatter->>'visibility', CASE WHEN (p.type = 'atom' OR (p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private' AND NOT (CASE WHEN p.type = 'atom' THEN EXISTS (SELECT 1 FROM pages derived_origin WHERE derived_origin.source_id = p.source_id AND derived_origin.slug = p.frontmatter->>'source_slug' AND derived_origin.frontmatter->>'visibility' = 'private') WHEN (p.type = 'atom' OR (p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL)) THEN EXISTS (SELECT 1 FROM links derived_input_link JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id WHERE derived_input_link.from_page_id = p.id AND derived_input_link.link_source = 'concept-provenance' AND derived_input_link.link_type = 'synthesized_from' AND (COALESCE(derived_input.frontmatter->>'visibility', CASE WHEN derived_input.type = 'atom' THEN 'private' ELSE 'world' END) = 'private' OR EXISTS (SELECT 1 FROM pages derived_input_origin WHERE derived_input_origin.source_id = derived_input.source_id AND derived_input_origin.slug = derived_input.frontmatter->>'source_slug' AND derived_input_origin.frontmatter->>'visibility' = 'private'))) ELSE false END)) AND p.source_id = ANY($2::text[]) UNION ALL SELECT p2.id, w.depth + 1, w.visited || p2.id FROM walk w JOIN links l ON (l.from_page_id = w.id OR l.to_page_id = w.id) JOIN pages p2 ON p2.id = CASE WHEN l.from_page_id = w.id THEN l.to_page_id ELSE l.from_page_id END WHERE w.depth + 1 < $3 AND NOT (p2.id = ANY(w.visited)) AND p2.deleted_at IS NULL AND (COALESCE(p2.frontmatter->>'visibility', CASE WHEN (p2.type = 'atom' OR (p2.type = 'concept' AND p2.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private' AND NOT (CASE WHEN p2.type = 'atom' THEN EXISTS (SELECT 1 FROM pages derived_origin WHERE derived_origin.source_id = p2.source_id AND derived_origin.slug = p2.frontmatter->>'source_slug' AND derived_origin.frontmatter->>'visibility' = 'private') WHEN (p2.type = 'atom' OR (p2.type = 'concept' AND p2.frontmatter->>'synthesized_by' IS NOT NULL)) THEN EXISTS (SELECT 1 FROM links derived_input_link JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id WHERE derived_input_link.from_page_id = p2.id AND derived_input_link.link_source = 'concept-provenance' AND derived_input_link.link_type = 'synthesized_from' AND (COALESCE(derived_input.frontmatter->>'visibility', CASE WHEN derived_input.type = 'atom' THEN 'private' ELSE 'world' END) = 'private' OR EXISTS (SELECT 1 FROM pages derived_input_origin WHERE derived_input_origin.source_id = derived_input.source_id AND derived_input_origin.slug = derived_input.frontmatter->>'source_slug' AND derived_input_origin.frontmatter->>'visibility' = 'private'))) ELSE false END)) AND (l.origin_page_id IS NULL OR EXISTS ( SELECT 1 FROM pages origin_private WHERE origin_private.id = l.origin_page_id AND (COALESCE(origin_private.frontmatter->>'visibility', CASE WHEN (origin_private.type = 'atom' OR (origin_private.type = 'concept' AND origin_private.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private' AND NOT (CASE WHEN origin_private.type = 'atom' THEN EXISTS (SELECT 1 FROM pages derived_origin WHERE derived_origin.source_id = origin_private.source_id AND derived_origin.slug = origin_private.frontmatter->>'source_slug' AND derived_origin.frontmatter->>'visibility' = 'private') WHEN (origin_private.type = 'atom' OR (origin_private.type = 'concept' AND origin_private.frontmatter->>'synthesized_by' IS NOT NULL)) THEN EXISTS (SELECT 1 FROM links derived_input_link JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id WHERE derived_input_link.from_page_id = origin_private.id AND derived_input_link.link_source = 'concept-provenance' AND derived_input_link.link_type = 'synthesized_from' AND (COALESCE(derived_input.frontmatter->>'visibility', CASE WHEN derived_input.type = 'atom' THEN 'private' ELSE 'world' END) = 'private' OR EXISTS (SELECT 1 FROM pages derived_input_origin WHERE derived_input_origin.source_id = derived_input.source_id AND derived_input_origin.slug = derived_input.frontmatter->>'source_slug' AND derived_input_origin.frontmatter->>'visibility' = 'private'))) ELSE false END)) )) AND ($4 OR l.link_type = $5) AND p2.source_id = ANY($6::text[]) ), capped AS (SELECT id, depth FROM walk LIMIT $7), nodes AS (SELECT DISTINCT id, depth FROM capped) SELECT (SELECT count(*) FROM capped) > $8 AS walk_truncated, pf.slug as from_slug, pt.slug as to_slug, l.link_type, l.context, w.depth + 1 as depth FROM nodes w JOIN links l ON (l.from_page_id = w.id OR l.to_page_id = w.id) JOIN pages pf ON pf.id = l.from_page_id JOIN pages pt ON pt.id = l.to_page_id WHERE w.depth < $9 AND pf.deleted_at IS NULL AND (COALESCE(pf.frontmatter->>'visibility', CASE WHEN (pf.type = 'atom' OR (pf.type = 'concept' AND pf.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private' AND NOT (CASE WHEN pf.type = 'atom' THEN EXISTS (SELECT 1 FROM pages derived_origin WHERE derived_origin.source_id = pf.source_id AND derived_origin.slug = pf.frontmatter->>'source_slug' AND derived_origin.frontmatter->>'visibility' = 'private') WHEN (pf.type = 'atom' OR (pf.type = 'concept' AND pf.frontmatter->>'synthesized_by' IS NOT NULL)) THEN EXISTS (SELECT 1 FROM links derived_input_link JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id WHERE derived_input_link.from_page_id = pf.id AND derived_input_link.link_source = 'concept-provenance' AND derived_input_link.link_type = 'synthesized_from' AND (COALESCE(derived_input.frontmatter->>'visibility', CASE WHEN derived_input.type = 'atom' THEN 'private' ELSE 'world' END) = 'private' OR EXISTS (SELECT 1 FROM pages derived_input_origin WHERE derived_input_origin.source_id = derived_input.source_id AND derived_input_origin.slug = derived_input.frontmatter->>'source_slug' AND derived_input_origin.frontmatter->>'visibility' = 'private'))) ELSE false END)) AND (l.origin_page_id IS NULL OR EXISTS ( SELECT 1 FROM pages origin_private WHERE origin_private.id = l.origin_page_id AND (COALESCE(origin_private.frontmatter->>'visibility', CASE WHEN (origin_private.type = 'atom' OR (origin_private.type = 'concept' AND origin_private.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private' AND NOT (CASE WHEN origin_private.type = 'atom' THEN EXISTS (SELECT 1 FROM pages derived_origin WHERE derived_origin.source_id = origin_private.source_id AND derived_origin.slug = origin_private.frontmatter->>'source_slug' AND derived_origin.frontmatter->>'visibility' = 'private') WHEN (origin_private.type = 'atom' OR (origin_private.type = 'concept' AND origin_private.frontmatter->>'synthesized_by' IS NOT NULL)) THEN EXISTS (SELECT 1 FROM links derived_input_link JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id WHERE derived_input_link.from_page_id = origin_private.id AND derived_input_link.link_source = 'concept-provenance' AND derived_input_link.link_type = 'synthesized_from' AND (COALESCE(derived_input.frontmatter->>'visibility', CASE WHEN derived_input.type = 'atom' THEN 'private' ELSE 'world' END) = 'private' OR EXISTS (SELECT 1 FROM pages derived_input_origin WHERE derived_input_origin.source_id = derived_input.source_id AND derived_input_origin.slug = derived_input.frontmatter->>'source_slug' AND derived_input_origin.frontmatter->>'visibility' = 'private'))) ELSE false END)) )) AND pt.deleted_at IS NULL AND (COALESCE(pt.frontmatter->>'visibility', CASE WHEN (pt.type = 'atom' OR (pt.type = 'concept' AND pt.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private' AND NOT (CASE WHEN pt.type = 'atom' THEN EXISTS (SELECT 1 FROM pages derived_origin WHERE derived_origin.source_id = pt.source_id AND derived_origin.slug = pt.frontmatter->>'source_slug' AND derived_origin.frontmatter->>'visibility' = 'private') WHEN (pt.type = 'atom' OR (pt.type = 'concept' AND pt.frontmatter->>'synthesized_by' IS NOT NULL)) THEN EXISTS (SELECT 1 FROM links derived_input_link JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id WHERE derived_input_link.from_page_id = pt.id AND derived_input_link.link_source = 'concept-provenance' AND derived_input_link.link_type = 'synthesized_from' AND (COALESCE(derived_input.frontmatter->>'visibility', CASE WHEN derived_input.type = 'atom' THEN 'private' ELSE 'world' END) = 'private' OR EXISTS (SELECT 1 FROM pages derived_input_origin WHERE derived_input_origin.source_id = derived_input.source_id AND derived_input_origin.slug = derived_input.frontmatter->>'source_slug' AND derived_input_origin.frontmatter->>'visibility' = 'private'))) ELSE false END)) AND ($10 OR l.link_type = $11) AND pf.source_id = ANY($12::text[]) AND pt.source_id = ANY($13::text[]) ORDER BY depth, from_slug, to_slug LIMIT $14",
+            "textSha256": "f7b67d9b99542223fe741b65e39c048efe9febbe73073a329e7988078e2559a0"
+          }
+        ],
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "number",
+              "boolean",
+              "string",
+              "number",
+              "number",
+              "number",
+              "boolean",
+              "string",
+              "number"
+            ],
+            "sql": "WITH RECURSIVE walk AS ( SELECT p.id, p.slug, 0::int as depth, ARRAY[p.id] as visited FROM pages p WHERE p.slug = $1 AND p.deleted_at IS NULL UNION ALL SELECT p2.id, p2.slug, w.depth + 1, w.visited || p2.id FROM walk w JOIN links l ON l.from_page_id = w.id JOIN pages p2 ON p2.id = l.to_page_id WHERE w.depth + 1 < $2 AND NOT (p2.id = ANY(w.visited)) AND p2.deleted_at IS NULL AND ($3 OR l.link_type = $4) ), capped AS (SELECT id, slug, depth FROM walk LIMIT $5), nodes AS (SELECT DISTINCT id, slug, depth FROM capped) SELECT (SELECT count(*) FROM capped) > $6 AS walk_truncated, w.slug as from_slug, p2.slug as to_slug, l.link_type, l.context, w.depth + 1 as depth FROM nodes w JOIN links l ON l.from_page_id = w.id JOIN pages p2 ON p2.id = l.to_page_id WHERE w.depth < $7 AND p2.deleted_at IS NULL AND ($8 OR l.link_type = $9) ORDER BY depth, from_slug, to_slug LIMIT $10",
+            "textSha256": "8431b064516c53834fd114df302b49f5acbe3a09fc5e80a95d6ee17b6ac8377c"
+          }
+        ],
+        "in": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "number",
+              "boolean",
+              "string",
+              "number",
+              "number",
+              "number",
+              "boolean",
+              "string",
+              "number"
+            ],
+            "sql": "WITH RECURSIVE walk AS ( SELECT p.id, p.slug, 0::int as depth, ARRAY[p.id] as visited FROM pages p WHERE p.slug = $1 AND p.deleted_at IS NULL UNION ALL SELECT p2.id, p2.slug, w.depth + 1, w.visited || p2.id FROM walk w JOIN links l ON l.to_page_id = w.id JOIN pages p2 ON p2.id = l.from_page_id WHERE w.depth + 1 < $2 AND NOT (p2.id = ANY(w.visited)) AND p2.deleted_at IS NULL AND ($3 OR l.link_type = $4) ), capped AS (SELECT id, slug, depth FROM walk LIMIT $5), nodes AS (SELECT DISTINCT id, slug, depth FROM capped) SELECT (SELECT count(*) FROM capped) > $6 AS walk_truncated, p2.slug as from_slug, w.slug as to_slug, l.link_type, l.context, w.depth + 1 as depth FROM nodes w JOIN links l ON l.to_page_id = w.id JOIN pages p2 ON p2.id = l.from_page_id WHERE w.depth < $7 AND p2.deleted_at IS NULL AND ($8 OR l.link_type = $9) ORDER BY depth, from_slug, to_slug LIMIT $10",
+            "textSha256": "311669d8d3ae9b2353cba5d61f1930435807a062a6241d8e07bde66fb91806f2"
+          }
+        ],
+        "out+sourceId+linkType": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "number",
+              "boolean",
+              "string",
+              "string",
+              "number",
+              "number",
+              "number",
+              "boolean",
+              "string",
+              "string",
+              "number"
+            ],
+            "sql": "WITH RECURSIVE walk AS ( SELECT p.id, p.slug, 0::int as depth, ARRAY[p.id] as visited FROM pages p WHERE p.slug = $1 AND p.deleted_at IS NULL AND p.source_id = $2 UNION ALL SELECT p2.id, p2.slug, w.depth + 1, w.visited || p2.id FROM walk w JOIN links l ON l.from_page_id = w.id JOIN pages p2 ON p2.id = l.to_page_id WHERE w.depth + 1 < $3 AND NOT (p2.id = ANY(w.visited)) AND p2.deleted_at IS NULL AND ($4 OR l.link_type = $5) AND p2.source_id = $6 ), capped AS (SELECT id, slug, depth FROM walk LIMIT $7), nodes AS (SELECT DISTINCT id, slug, depth FROM capped) SELECT (SELECT count(*) FROM capped) > $8 AS walk_truncated, w.slug as from_slug, p2.slug as to_slug, l.link_type, l.context, w.depth + 1 as depth FROM nodes w JOIN links l ON l.from_page_id = w.id JOIN pages p2 ON p2.id = l.to_page_id WHERE w.depth < $9 AND p2.deleted_at IS NULL AND ($10 OR l.link_type = $11) AND p2.source_id = $12 ORDER BY depth, from_slug, to_slug LIMIT $13",
+            "textSha256": "4d1393bd3ef7fabe22133c82a8bd0779c32cb1825bf3d89dc5c53bf7a6a343e4"
+          }
+        ]
+      }
+    }
+  },
+  "normalizer": "sql-text-v1"
+}

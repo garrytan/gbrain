@@ -67,6 +67,7 @@ const PERMITTED_TEST_ONLY = [
   { path: 'src/eval/shared/autocut-replay.ts', reason: 'script-reachable' },
   { path: 'src/mcp/http-transport.ts', reason: 'script-reachable' },
   { path: 'src/mcp/tool-catalog.ts', reason: 'script-reachable' },
+  { path: 'src/core/postgres-engine/forward-reference-bootstrap.ts', reason: 'held: refactor wave 1 E1 façade re-exporting engine-sql/bootstrap.ts (CLAUDE.md façade rule); every runtime caller imports engine-sql/bootstrap.ts' },
   { path: 'src/core/archive-crawler-config.ts', reason: "held: skills/archive-crawler/SKILL.md describes the scan_paths safety fence as code-enforced; wire-or-retract is a product decision" },
   { path: 'src/core/chronicle/backstop.ts', reason: 'held: the put_page chronicle backstop was dropped in v0.51.0.0, so the documented auto_chronicle setting does nothing; restore-or-retract is a product decision' },
   { path: 'src/core/onboard/impact-capture.ts', reason: 'held: sole writer of migration_impact_log, which the shipped `gbrain onboard --history` reads; wire-or-retract is a product decision' },

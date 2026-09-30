@@ -12,10 +12,10 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
-import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runMigrations } from '../src/core/migrate.ts';
+import { surfaceFileSource } from './helpers/source-surface.ts';
 
 describe('migration output stays off stdout', () => {
   let engine: PGLiteEngine;
@@ -58,7 +58,7 @@ describe('migration output stays off stdout', () => {
   }, 60000);
 
   test('migrate.ts contains no console.log (all migration noise goes to stderr)', () => {
-    const src = readFileSync(join(import.meta.dir, '../src/core/migrate.ts'), 'utf8');
+    const src = surfaceFileSource('migrate', 'src/core/migrate.ts');
     const offenders = src
       .split('\n')
       .map((line, i) => ({ line, n: i + 1 }))

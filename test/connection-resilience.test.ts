@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'bun:test';
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
+import { surfaceFileSource, surfaceSource } from './helpers/source-surface.ts';
 
 // ─────────────────────────────────────────────────────────────────
 // Eng-review D3 regression guards — executeRaw retry wrapper dropped
@@ -17,7 +18,7 @@ import { resolve } from 'path';
 
 describe('Eng-review D3 — executeRaw has no per-call retry wrapper', () => {
   it('PostgresEngine.executeRaw is a single-statement passthrough (no try/catch on connection errors)', () => {
-    const src = readFileSync(resolve('src/core/postgres-engine.ts'), 'utf-8');
+    const src = surfaceFileSource('postgres-engine', 'src/core/postgres-engine.ts');
 
     // v0.42.24.0 (eng-review D1): the cancellation plumbing shared by executeRaw
     // and executeRawDirect was extracted into a private `runUnsafe(conn, ...)`
@@ -63,7 +64,7 @@ describe('Eng-review D3 — executeRaw has no per-call retry wrapper', () => {
   });
 
   it('PostgresEngine.reconnect() still exists for supervisor-driven recovery', () => {
-    const src = readFileSync(resolve('src/core/postgres-engine.ts'), 'utf-8');
+    const src = surfaceSource('postgres-engine');
     // v0.42.10.0 (#1685 GAP B): reconnect() gained an optional ctx param so it
     // can classify the triggering error for the pool-recovery audit. Match the
     // prefix so both `reconnect()` and `reconnect(ctx?)` satisfy the contract.

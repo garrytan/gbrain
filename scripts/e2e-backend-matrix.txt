@@ -1,0 +1,45 @@
+# E2E backend matrix (refactor wave 1, docs/TESTING.md#e2e-backend-matrix).
+#
+# scripts/run-e2e.sh runs every file listed here twice when a pooled target is
+# configured: once against DATABASE_URL (direct Postgres, GBRAIN_TEST_BACKEND=
+# postgres-direct), then with DATABASE_URL=$GBRAIN_PGBOUNCER_E2E_URL (the same
+# database through transaction-mode PgBouncer, explicit ?prepare=false,
+# GBRAIN_TEST_BACKEND=pgbouncer). Both passes must execute the same non-zero
+# number of tests. The PGLite arm of each file runs in-process in both passes;
+# the E5 PGLite arm is test/executor-binding-matrix.test.ts (unit lane).
+#
+# Format: one repo-relative path per line, optionally followed by
+# `<TAB>pooled-timeout=<seconds>` when the PgBouncer pass (no prepared
+# statements, pooled connections) needs more than the per-file cap.
+# `!path<TAB>reason` records a
+# parity file deliberately left out of the PgBouncer pass;
+# test/scripts/e2e-backend-matrix.test.ts requires every test/e2e/*parity*
+# file to appear exactly once, listed or excluded.
+test/e2e/executor-binding-matrix.test.ts
+test/e2e/engine-sql-prepare-parity.test.ts
+test/e2e/engine-sql-normalize-parity.test.ts
+test/e2e/engine-sql-transaction-parity.test.ts
+test/e2e/engine-sql-capabilities-parity.test.ts
+test/e2e/engine-sql-rls-scope.test.ts
+test/phantom-redirect-engine-parity.test.ts
+test/e2e/autopilot-cooldown-parity.test.ts
+test/e2e/backup-coverage-parity.test.ts
+test/e2e/chronicle-event-projection-parity.test.ts
+test/e2e/code-edges-read-parity.test.ts
+test/e2e/doctor-silent-death-parity.test.ts
+test/e2e/embedding-recovery-parity.test.ts	pooled-timeout=600
+test/e2e/engine-parity-cjk.test.ts
+test/e2e/engine-parity-salience.test.ts
+test/e2e/engine-parity.test.ts
+test/e2e/fact-embedding-backfill-parity.test.ts
+test/e2e/fact-vector-repair-parity.test.ts
+test/e2e/health-parity-postgres.test.ts
+test/e2e/minions-authority-parity.test.ts
+test/e2e/ontology-merge-parity.test.ts
+test/e2e/op-checkpoint-jsonb-parity.test.ts
+test/e2e/persistence-publication-parity.test.ts
+test/e2e/persistence-sync-company-parity.test.ts
+test/e2e/persistence-sync-options-parity.test.ts
+test/e2e/persistence-sync-origin-parity.test.ts
+test/e2e/projection-recovery-parity.test.ts
+test/e2e/takes-scorecard-parity.test.ts

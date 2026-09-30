@@ -22,13 +22,9 @@
  */
 
 import { describe, test, expect } from 'bun:test';
-import { readFileSync } from 'fs';
-import { join } from 'path';
+import { surfaceFileSource } from './helpers/source-surface.ts';
 
-const SRC = readFileSync(
-  join(import.meta.dir, '..', 'src', 'core', 'postgres-engine.ts'),
-  'utf-8',
-);
+const SRC = surfaceFileSource('postgres-engine', 'src/core/postgres-engine.ts');
 
 describe('postgres-engine / search path timeout isolation', () => {
   test('no bare `SET statement_timeout` statement survives', () => {

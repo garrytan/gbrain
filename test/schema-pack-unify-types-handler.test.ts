@@ -244,6 +244,7 @@ import { readFileSync } from 'fs';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { surfaceFileSource } from './helpers/source-surface.ts';
 
 function filteredCatchAllPack(name: string, filterLines: string): string {
   return `api_version: gbrain-schema-pack-v1
@@ -313,8 +314,13 @@ describe('#4651 catch-all retype carries slug_filter/path_filter into synthesize
 
 describe('#1575 unify-types worker dry-run default', () => {
   it('jobs.ts worker registration defaults apply to false, matching the handler contract', () => {
-    const jobsSource = readFileSync(new URL('../src/commands/jobs.ts', import.meta.url), 'utf-8');
-    const workerBlock = jobsSource.slice(jobsSource.indexOf("worker.register('unify-types'"));
+    // W4 jobs: jobs.ts registers the handler module that now holds the body.
+    expect(surfaceFileSource('jobs', 'src/commands/jobs.ts')).toContain(
+      "worker.register('unify-types', makeUnifyTypesHandler(engine))",
+    );
+    const jobsSource = surfaceFileSource('jobs', 'src/core/minions/handlers/unify-types.ts');
+    expect(jobsSource.indexOf('export function makeUnifyTypesHandler(')).toBeGreaterThan(-1);
+    const workerBlock = jobsSource.slice(jobsSource.indexOf('export function makeUnifyTypesHandler('));
     const registration = workerBlock.slice(0, workerBlock.indexOf('});'));
     expect(registration).toContain('apply: data.apply ?? false');
     expect(registration).not.toContain('apply: data.apply ?? true');
