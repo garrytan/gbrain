@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [0.60.16.1] - 2026-09-30
+## [0.60.17.1] - 2026-09-30
 
 **`gbrain doctor` stopped warning about the lock doctor itself is holding.** `doctor` opens the brain's database to run its checks, and briefly holds the same PGLite lock file that a live `gbrain serve` process holds while it's running. One of doctor's own checks looks at that lock and warns whenever the holder isn't a `serve` process — so on a machine where you'd stopped `serve` and just ran `gbrain doctor`, it reported "a non-serve process holds the lock and hook IPC will fail" about itself, describing a collision that didn't exist.
 
@@ -18,7 +18,7 @@ Now the check only warns about a genuinely different process holding the lock. D
 
 **Say to your agent:** *"Run gbrain doctor and check whether the PGLite lock warning still shows up when serve is stopped"* — your agent runs `gbrain doctor`.
 
-## To take advantage of v0.60.16.1
+## To take advantage of v0.60.17.1
 
 Upgrade, then re-run doctor with serve stopped and confirm the warning is gone:
 
@@ -32,6 +32,29 @@ gbrain doctor
 - `src/core/bootstrap/uninstall.ts`: `probeLivePgliteHolder` now returns a namespace-aware `isSelf` field on `LiveHolder`. On Linux, it compares the lock's stored `pid_ns`/`boot_id` evidence against the running process's own via `pglite-lock.ts`'s exported readers, requiring both to be readable and matching before trusting a pid match — a pid alone (which a shared-mount container could coincidentally reuse) is never sufficient there, and unreadable evidence on either side fails closed (still warns). Non-Linux platforms have no PID namespaces, so pid equality alone decides there, matching `pglite-lock.ts`'s own unmodified lock-acquisition trust model. A pid+namespace match alone also does not decide: a lock whose `acquired_at` predates this process's own start time cannot be ours (we couldn't have acquired it before we existed) regardless of matching evidence, catching a stale legacy lock left behind by a dead process whose pid was later recycled.
 - `src/commands/doctor/bootstrap-checks.ts`: the `bootstrap_serve_lock` check now skips a lock holder only when `isSelf` is true, instead of treating any lock holder sharing the doctor's numeric pid as self.
 - Closes #5481.
+
+## [0.60.17.0] - 2026-09-30
+
+**The Windows native lock checks stop timing out on pull requests. They download the pinned Zig compiler from a fast mirror, cache it, and fail within minutes with every source named if all downloads stall.**
+
+Every recent pull request that bumps the version got its `native-locks / win32-x64` and `win32-arm64` cells cancelled at the 15-minute job limit, which failed `test-status`. The cause was not a runner change or a test. The first build step downloads the pinned Zig archive from ziglang.org, which throttles automated downloads (about 180 KB/s measured). The Windows archive is 82 MB, so that step alone ran past 14 minutes, and on good runs it still took about 4 minutes. The Zig project asks CI to use its community mirrors instead. CI speed change #5727 (v0.60.8.0) did not touch this job's timeout or runners. It keeps these cells on any pull request that changes `package.json`, which every release bump does, so the slow download now showed up on every such PR.
+
+| Zig archive download (82 MB Windows zip) | Before | After |
+| --- | --- | --- |
+| Source | ziglang.org (throttled) | community mirrors in order, ziglang.org last |
+| Measured time | 4 to 14+ minutes | about 3 seconds from a mirror; seconds from the cache |
+| A stalled source | hangs until the 15-minute job limit | abandoned after 30 s without bytes (4 minutes per source at most) |
+| Integrity | pinned sha256 | the same pinned sha256, checked for every source before use |
+
+### To take advantage of v0.60.17.0
+
+Nothing to do: this changes CI only. `bun scripts/native/setup-toolchain.ts` downloads from the mirrors for local native builds too.
+
+### Itemized changes
+
+- `scripts/native/setup-toolchain.ts` streams the pinned archive from five community mirrors in order, with ziglang.org as the last resort. Each attempt aborts after 30 s without bytes or 4 minutes in total. An archive is kept only when its sha256 matches the pinned value, so a mirror can fail but cannot substitute bytes. When every source fails, the error lists each source and why it failed. A cached archive is re-verified before reuse, and a corrupt one is discarded.
+- `native-locks.yml` caches the archive per runner OS and architecture, keyed on `scripts/native/toolchain.json`, in the native and musl jobs. `timeout-minutes` is unchanged.
+- `scripts/native/toolchain.json` is unchanged, so the native build input digest and the committed prebuilds do not move.
 
 ## [0.60.16.0] - 2026-09-30
 
