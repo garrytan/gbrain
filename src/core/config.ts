@@ -131,6 +131,15 @@ export interface GBrainConfig {
   embedding_model?: string;
   embedding_dimensions?: number;
   /**
+   * #5543: task line for the query-side instruction prefix that asymmetric
+   * embedders (Qwen3-Embedding) expect on openai-compatible providers
+   * (Ollama, llama-server, vLLM, LiteLLM). Unset → the model-card default
+   * for families that need it; `''` → disabled; other → that task line.
+   * Env: `GBRAIN_EMBEDDING_QUERY_INSTRUCT`. Documents are never prefixed,
+   * so changing this never requires a re-embed.
+   */
+  embedding_query_instruct?: string;
+  /**
    * v0.37 (D9): user opted into deferred-setup mode at init time via
    * `gbrain init --no-embedding`. When true, embed callsites and `gbrain
    * import` refuse with a `gbrain config set embedding_model <id>` hint
@@ -720,6 +729,11 @@ export function loadConfig(): GBrainConfig | null {
     ...(process.env.OPENROUTER_API_KEY ? { openrouter_api_key: process.env.OPENROUTER_API_KEY } : {}),
     ...(process.env.GBRAIN_EMBEDDING_MODEL ? { embedding_model: process.env.GBRAIN_EMBEDDING_MODEL } : {}),
     ...(process.env.GBRAIN_EMBEDDING_DIMENSIONS ? { embedding_dimensions: parseInt(process.env.GBRAIN_EMBEDDING_DIMENSIONS, 10) } : {}),
+    // #5543: `!== undefined` (not truthiness) so an exported empty string is
+    // an explicit "disable the prefix", matching the config-file semantics.
+    ...(process.env.GBRAIN_EMBEDDING_QUERY_INSTRUCT !== undefined
+      ? { embedding_query_instruct: process.env.GBRAIN_EMBEDDING_QUERY_INSTRUCT }
+      : {}),
     ...(process.env.GBRAIN_EXPANSION_MODEL ? { expansion_model: process.env.GBRAIN_EXPANSION_MODEL } : {}),
     ...(process.env.GBRAIN_CHAT_MODEL ? { chat_model: process.env.GBRAIN_CHAT_MODEL } : {}),
     ...(process.env.GBRAIN_CHAT_FALLBACK_CHAIN
@@ -1212,6 +1226,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'azure_openai_use_entra',
   'embedding_model',
   'embedding_dimensions',
+  'embedding_query_instruct',
   'embedding_disabled',
   'expansion_model',
   'chat_model',

@@ -195,3 +195,107 @@ describe('Voyage hosted — input_type reaches the wire body (opt-in preserved)'
     expect('input_type' in capturedBody).toBe(false);
   });
 });
+
+describe('#5543: Qwen3-Embedding on self-hosted openai-compatible — instruction reaches the wire', () => {
+  const defaultPrefix = 'Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery: ';
+
+  test('llama-server: embedQuery sends input_type=query AND the instruction prefix in the text', async () => {
+    configureGateway({
+      embedding_model: 'llama-server:qwen3-embedding-0.6b',
+      embedding_dimensions: 1024,
+      env: {},
+    });
+    let capturedBody: any = null;
+    fetchHandler = async (_url, init) => {
+      capturedBody = JSON.parse(init.body as string);
+      return openAIShapedResponse(1024, 1);
+    };
+
+    await embedQuery('what does foo bar do?');
+    expect(capturedBody.input_type).toBe('query');
+    // Native width: no `dimensions` on the wire (vLLM 400s on it).
+    expect('dimensions' in capturedBody).toBe(false);
+    const inputs: string[] = Array.isArray(capturedBody.input) ? capturedBody.input : [capturedBody.input];
+    expect(inputs).toEqual([`${defaultPrefix}what does foo bar do?`]);
+  });
+
+  test('ollama colon-tag form: same signal, and documents go out raw', async () => {
+    configureGateway({
+      embedding_model: 'ollama:qwen3-embedding:0.6b',
+      embedding_dimensions: 1024,
+      env: {},
+    });
+    const bodies: any[] = [];
+    fetchHandler = async (_url, init) => {
+      bodies.push(JSON.parse(init.body as string));
+      return openAIShapedResponse(1024, 1);
+    };
+
+    await embedQuery('where are the meeting notes?');
+    await embed(['# Meeting notes\n\nraw chunk body'], { inputType: 'document' });
+
+    expect(bodies).toHaveLength(2);
+    const [q, d] = bodies;
+    expect(q.input_type).toBe('query');
+    const qInputs: string[] = Array.isArray(q.input) ? q.input : [q.input];
+    expect(qInputs[0].startsWith(defaultPrefix)).toBe(true);
+    expect(d.input_type).toBe('document');
+    const dInputs: string[] = Array.isArray(d.input) ? d.input : [d.input];
+    expect(dInputs).toEqual(['# Meeting notes\n\nraw chunk body']);
+  });
+
+  test('embedding_query_instruct="" disables the prefix but keeps input_type threaded', async () => {
+    configureGateway({
+      embedding_model: 'llama-server:qwen3-embedding-0.6b',
+      embedding_dimensions: 1024,
+      embedding_query_instruct: '',
+      env: {},
+    });
+    let capturedBody: any = null;
+    fetchHandler = async (_url, init) => {
+      capturedBody = JSON.parse(init.body as string);
+      return openAIShapedResponse(1024, 1);
+    };
+
+    await embedQuery('what does foo bar do?');
+    expect(capturedBody.input_type).toBe('query');
+    const inputs: string[] = Array.isArray(capturedBody.input) ? capturedBody.input : [capturedBody.input];
+    expect(inputs).toEqual(['what does foo bar do?']);
+  });
+
+  test('embedding_query_instruct overrides the task line', async () => {
+    configureGateway({
+      embedding_model: 'llama-server:qwen3-embedding-0.6b',
+      embedding_dimensions: 1024,
+      embedding_query_instruct: 'Retrieve the personal note that answers the question',
+      env: {},
+    });
+    let capturedBody: any = null;
+    fetchHandler = async (_url, init) => {
+      capturedBody = JSON.parse(init.body as string);
+      return openAIShapedResponse(1024, 1);
+    };
+
+    await embedQuery('what does foo bar do?');
+    const inputs: string[] = Array.isArray(capturedBody.input) ? capturedBody.input : [capturedBody.input];
+    expect(inputs).toEqual(['Instruct: Retrieve the personal note that answers the question\nQuery: what does foo bar do?']);
+  });
+
+  test('non-Qwen3 local model is untouched: no prefix, no input_type', async () => {
+    configureGateway({
+      embedding_model: 'llama-server:bge-m3',
+      embedding_dimensions: 1024,
+      env: {},
+    });
+    let capturedBody: any = null;
+    fetchHandler = async (_url, init) => {
+      capturedBody = JSON.parse(init.body as string);
+      return openAIShapedResponse(1024, 1);
+    };
+
+    await embedQuery('what does foo bar do?');
+    expect('input_type' in capturedBody).toBe(false);
+    const inputs: string[] = Array.isArray(capturedBody.input) ? capturedBody.input : [capturedBody.input];
+    expect(inputs).toEqual(['what does foo bar do?']);
+  });
+});

@@ -158,6 +158,69 @@ const QWEN3_EMBEDDING_NATIVE_DIMS: Record<string, number> = {
   'qwen3-embedding-8b': 4096,
 };
 
+/**
+ * Qwen3-Embedding is an asymmetric family (#5543): the model card embeds
+ * documents raw and prepends an instruction to every retrieval query,
+ * `Instruct: <task>\nQuery: <text>`. Without the prefix the same model
+ * retrieves WORSE than the symmetric bge-m3 it usually replaces (MRR 0.360
+ * vs 0.460 on a 1,100-page brain; 0.557 with the prefix). Self-hosted
+ * OpenAI-compatible servers (Ollama, llama-server, vLLM) never see
+ * `input_type`, so the prefix has to travel inside the text — see
+ * `queryInstructPrefix` below and its call site in `gateway.ts:embed()`.
+ *
+ * This task line is the model card's general-retrieval default. Operators
+ * override it (or disable the prefix with an empty string) via the
+ * `embedding_query_instruct` config key / `GBRAIN_EMBEDDING_QUERY_INSTRUCT`.
+ */
+export const QWEN3_EMBEDDING_DEFAULT_QUERY_INSTRUCT =
+  'Given a web search query, retrieve relevant passages that answer the query';
+
+/** Qwen3-Embedding family match: Ollama colon-tag form, hyphenated hub form, or the bare id. */
+export function isQwen3EmbeddingModel(modelId: string): boolean {
+  const matchId = modelMatchKey(modelId);
+  const bare = matchId.includes('/') ? matchId.split('/').pop()! : matchId;
+  return bare === 'qwen3-embedding' || bare.startsWith('qwen3-embedding:') || bare.startsWith('qwen3-embedding-');
+}
+
+/**
+ * Text prefix to prepend to each QUERY-side input before it is embedded, or
+ * `''` when the text must go out untouched. Document-side inputs are never
+ * prefixed, so brains indexed before this landed need no re-embed.
+ *
+ * Resolution (#5543):
+ *   - `inputType !== 'query'`                 → `''` (documents stay raw)
+ *   - `configured` is a string (even `''`)    → operator decision: `''` disables,
+ *                                                anything else is the task line,
+ *                                                applied on every openai-compatible
+ *                                                model (an explicit knob is a
+ *                                                choice, not a family default)
+ *   - `configured` undefined + Qwen3 family   → model-card default task line
+ *   - anything else                           → `''`
+ *
+ * Only the `openai-compatible` implementation is eligible: the native
+ * OpenAI/Google/Anthropic paths serve symmetric models that would treat the
+ * prefix as content.
+ */
+export function queryInstructPrefix(
+  implementation: Implementation,
+  modelId: string,
+  inputType: 'query' | 'document' | undefined,
+  configured?: string,
+): string {
+  if (inputType !== 'query') return '';
+  if (implementation !== 'openai-compatible') return '';
+  let task: string;
+  if (configured !== undefined) {
+    task = configured.trim();
+  } else if (isQwen3EmbeddingModel(modelId)) {
+    task = QWEN3_EMBEDDING_DEFAULT_QUERY_INSTRUCT;
+  } else {
+    return '';
+  }
+  if (!task) return '';
+  return `Instruct: ${task}\nQuery: `;
+}
+
 export function dimsProviderOptions(
   implementation: Implementation,
   modelId: string,
@@ -304,8 +367,22 @@ export function dimsProviderOptions(
         // ("does not support matryoshka representation") even when the
         // requested value equals the native size; omitting it in the equal
         // case is semantically identical for Ollama and keeps vLLM working.
-        if (QWEN3_EMBEDDING_NATIVE_DIMS[bareModelId] === dims) return undefined;
-        return { openaiCompatible: { dimensions: dims } };
+        //
+        // #5543: the family is asymmetric, so thread the caller's inputType
+        // like the Voyage branch does. Servers that honour `input_type`
+        // (custom wrappers, some proxies) can apply the instruction
+        // themselves; servers that ignore unknown fields (Ollama,
+        // llama-server, vLLM) are unaffected on the wire and rely on the
+        // text prefix from `queryInstructPrefix` instead. Both signals are
+        // emitted because neither alone reaches every server.
+        const native = QWEN3_EMBEDDING_NATIVE_DIMS[bareModelId] === dims;
+        if (native && !inputType) return undefined;
+        return {
+          openaiCompatible: {
+            ...(native ? {} : { dimensions: dims }),
+            ...(inputType ? { input_type: inputType } : {}),
+          },
+        };
       }
       // MiniMax embo-01 takes a `type: 'db' | 'query'` field for asymmetric
       // retrieval. Today still hardcoded to 'db' for back-compat — opting

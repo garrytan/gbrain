@@ -55,7 +55,7 @@ import { snapshotConfigReader } from '../config-snapshot.ts';
 import { clearGatewayModelSources, gatewayModelSource, setGatewayModelSource } from './gateway-model-sources.ts';
 import { parseLlmJson } from '../llm-json.ts';
 import type { BrainEngine } from '../engine.ts';
-import { dimsProviderOptions } from './dims.ts';
+import { dimsProviderOptions, queryInstructPrefix } from './dims.ts';
 import { hasAnthropicKey, stashGatewayAnthropicKeyFromEnv } from './anthropic-key.ts';
 import { AIConfigError, AITransientError, isStructuredOutputRejection, normalizeAIError } from './errors.ts';
 import { isEmbeddingZeroNormError, screenAlignedEmbeddings, screenEmbeddings, sendableEmbeddingInputs } from './embedding-guard.ts';
@@ -433,6 +433,7 @@ export function configureGateway(config: AIGatewayConfig): void {
     // designed to SKIP validation when the dim is unknown rather than fabricate
     // one).
     embedding_dimensions: config.embedding_dimensions,
+    embedding_query_instruct: config.embedding_query_instruct,
     embedding_multimodal_model: config.embedding_multimodal_model,
     embedding_image_ocr_model: config.embedding_image_ocr_model,
     expansion_model: config.expansion_model ?? DEFAULT_EXPANSION_MODEL,
@@ -1545,7 +1546,19 @@ export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32A
   const resolveTarget = opts?.embeddingModel ?? getEmbeddingModel();
   const tracker = __budgetStore.getStore() ?? null;
   const { model, recipe, modelId } = await resolveEmbeddingProvider(resolveTarget);
-  const truncated = truncateEmbedInputs(texts);
+  // #5543: asymmetric families (Qwen3-Embedding) expect an instruction
+  // prefix on QUERY text, and self-hosted openai-compatible servers only
+  // see it if it travels inside the input. Documents stay raw, so this
+  // never invalidates an existing index. Prefix before truncation so the
+  // instruction can't be cut off a long query; empty prefix = no-op.
+  const instructPrefix = queryInstructPrefix(
+    recipe.implementation,
+    modelId,
+    opts?.inputType,
+    cfg.embedding_query_instruct,
+  );
+  const inputs = instructPrefix ? texts.map(t => instructPrefix + (t ?? '')) : texts;
+  const truncated = truncateEmbedInputs(inputs);
 
   // Reserve up front for the worst-case batch token count. Embeddings have
   // no output rate, so maxOutputTokens=0. record() at the end uses the

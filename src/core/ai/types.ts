@@ -452,6 +452,14 @@ export interface AIGatewayConfig {
   /** Target embedding dims. Gateway asserts returned embeddings match this. */
   embedding_dimensions?: number;
   /**
+   * #5543: task line for the query-side instruction prefix
+   * (`Instruct: <task>\nQuery: <text>`) on openai-compatible embedders.
+   * `undefined` → the model-card default for asymmetric families that need
+   * one (Qwen3-Embedding today); `''` → never prefix; any other string →
+   * that task line. Documents are never prefixed.
+   */
+  embedding_query_instruct?: string;
+  /**
    * Separate model for multimodal embeddings (e.g. "voyage:voyage-multimodal-3").
    * When set, embedMultimodal() routes to this model instead of embedding_model.
    * Allows brains using OpenAI for text to use Voyage for image embeddings.

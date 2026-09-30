@@ -186,6 +186,21 @@ The recipe marks Ollama chat as **not** tool-capable. That is enough for local r
 
 User-driven models: launch llama-server with `--model <gguf-path> --embeddings`, then run `gbrain init --embedding-model llama-server:<your-id> --embedding-dimensions <N>`. gbrain trusts the dimension you declare (you know the GGUF you launched); the recipe refuses the implicit shorthand `--model llama-server` because there's no canonical first model.
 
+### Qwen3-Embedding on a local server (asymmetric queries)
+
+Qwen3-Embedding (`qwen3-embedding:0.6b` / `:4b` / `:8b` on Ollama, `qwen3-embedding-0.6b` etc. on llama-server, vLLM or LiteLLM) is an asymmetric model: the model card embeds documents raw and prepends an instruction to every search query (`Instruct: <task>\nQuery: <text>`). Local servers only see what is in the text, so gbrain adds that prefix to query-side embeddings itself and leaves indexed chunks untouched. Nothing changes on disk, so switching to this model, or changing the instruction later, never needs a re-embed.
+
+The default task line is the model card's general-retrieval one. Override it, or turn it off, with one config key (or `GBRAIN_EMBEDDING_QUERY_INSTRUCT`):
+
+```bash
+gbrain config set embedding_query_instruct "Retrieve the personal note that answers the question"
+gbrain config set embedding_query_instruct ""    # send queries raw (see the trade-off below)
+```
+
+The prefix is a trade, not a free win. On question-style queries against a larger brain it lifted every metric we measured (MRR 0.36 → 0.56 on ~1,100 pages). On a small corpus where queries are close paraphrases of a single passage, an independent run saw top-3 recall go up while top-1 dipped slightly and MRR stayed flat. If your queries look like the second case, set the key to `""`: that empty string is the only way to turn the prefix off, and because documents are never prefixed it takes effect immediately with no re-embed.
+
+gbrain also sends `input_type: query|document` on these requests. Ollama, llama-server and vLLM ignore the field; a custom OpenAI-compatible wrapper can use it to apply its own query handling.
+
 ### LM Studio (local)
 
 LM Studio's OpenAI-compatible local server, on default port 1234 (distinct from Ollama's 11434 and llama-server's 8080). No env required — the local server ignores auth. Optional `LMSTUDIO_BASE_URL` (default `http://localhost:1234/v1`) and `LMSTUDIO_API_KEY`.

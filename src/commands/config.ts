@@ -115,6 +115,40 @@ async function restampVisibilityPosture(newRaw: string | null): Promise<void> {
   } catch { /* best-effort — the authoritative DB write already landed */ }
 }
 
+/**
+ * Plain string keys that are FILE-plane canonical for the same reason as the
+ * vendor credentials above: `buildGatewayConfig` reads them from
+ * ~/.gbrain/config.json (or the env), never the DB plane. Unlike the
+ * credentials they are not secrets and the EMPTY string is a meaningful
+ * value (#5543: `embedding_query_instruct ""` = send queries raw), which the
+ * DB-plane reader would collapse to "unset". ONE list for `set` and `unset`;
+ * `set` accepts `""` for these keys only, every other key keeps the
+ * usage-on-empty behaviour. `unset` shares the FILE_PLANE_API_KEYS lane.
+ */
+export const FILE_PLANE_STRING_KEYS: readonly string[] = ['embedding_query_instruct'];
+
+/**
+ * `config set` for FILE_PLANE_STRING_KEYS: write ~/.gbrain/config.json and
+ * say what the new value does. Returns true when the key was handled (caller
+ * returns), false for every other key.
+ */
+export async function handleFilePlaneStringKeys(key: string, value: string): Promise<boolean> {
+  if (!FILE_PLANE_STRING_KEYS.includes(key)) return false;
+  const { loadConfigFileOnly, saveConfig } = await import('../core/config.ts');
+  const cfg = (loadConfigFileOnly() ?? { engine: 'pglite' }) as Parameters<typeof saveConfig>[0];
+  (cfg as unknown as Record<string, unknown>)[key] = value;
+  saveConfig(cfg);
+  console.log(`Set ${key} = ${JSON.stringify(value)} (file plane: ~/.gbrain/config.json)`);
+  if (key === 'embedding_query_instruct') {
+    console.log(
+      value.trim()
+        ? 'Query-side embeddings now carry `Instruct: <this>\\nQuery: <text>`; indexed chunks are unchanged (no re-embed needed).'
+        : 'Query-side instruction prefix disabled; queries go to the embedder raw (not recommended for Qwen3-Embedding).',
+    );
+  }
+  return true;
+}
+
 export const FILE_PLANE_API_KEYS: readonly string[] = [
   'openai_api_key',
   'anthropic_api_key',
@@ -402,7 +436,7 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
       }
       return;
     }
-    if (FILE_PLANE_API_KEYS.includes(key)) {
+    if (FILE_PLANE_API_KEYS.includes(key) || FILE_PLANE_STRING_KEYS.includes(key)) {
       const { loadConfigFileOnly, saveConfig } = await import('../core/config.ts');
       const cfg = loadConfigFileOnly() as unknown as Record<string, unknown> | null;
       if (cfg && key in cfg) {
@@ -481,7 +515,7 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
       console.error(`Config key not found: ${key}`);
       process.exit(1);
     }
-  } else if (action === 'set' && key && value) {
+  } else if (action === 'set' && key && (value || (value === '' && FILE_PLANE_STRING_KEYS.includes(key)))) {
     // #3661: `config set` dropped flags it does not implement and wrote
     // anyway. `--dry-run` — honored by sync/import/extract/quarantine/pages —
     // printed the usual "Set <key> = <value>" confirmation and persisted the
@@ -743,7 +777,7 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
     // DB-connection keys route to the file plane (or refuse, for `engine`) —
     // single home in handleDbPlaneRoutedKeys, shared with the engine-free
     // pre-connectEngine dispatch.
-    if (await handleDbPlaneRoutedKeys(key, value)) return;
+    if (await handleDbPlaneRoutedKeys(key, value) || await handleFilePlaneStringKeys(key, value)) return;
 
     // Vendor credentials are file-plane canonical (see FILE_PLANE_API_KEYS).
     // Routed, not refused: unlike embedding_model there is nothing to re-init,
