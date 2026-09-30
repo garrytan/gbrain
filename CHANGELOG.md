@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [0.60.15.1] - 2026-09-30
+## [0.60.16.1] - 2026-09-30
 
 **Dream synthesize on an OpenRouter model no longer dies to a rate limit it never saw.** OpenRouter sometimes reports "you're being rate-limited, try again shortly" as a normal-looking HTTP 200 response with an error message buried inside the body, instead of a real HTTP 429. Every retry mechanism in gbrain (and in the underlying AI library) decides whether to retry by looking at the HTTP status code, so a 200-with-hidden-error looked like success failing to parse, not like a rate limit, and nothing retried. If you pointed a dream phase at a busy OpenRouter model, a burst of calls could trip the shared limit and the whole phase would fail outright instead of backing off and trying again.
 
@@ -18,7 +18,7 @@ Now gbrain reads that hidden error and turns the response into a real 429 (or 5x
 
 **Say to your agent:** *"Re-run dream synthesize and check it survives an OpenRouter rate limit"* — your agent runs `gbrain dream --phase synthesize --once`.
 
-## To take advantage of v0.60.15.1
+## To take advantage of v0.60.16.1
 
 Upgrade, then re-run the phase that was failing:
 
@@ -31,6 +31,30 @@ gbrain dream --phase synthesize --once
 
 - `src/core/ai/recipes/openrouter.ts`: the OpenRouter compat-fetch shim now detects an HTTP-200 response body shaped like `{error:{code,metadata?}}` and rewrites the response's status to match (429, or the reported 5xx), so the AI SDK's own retry logic and gbrain's rate-limit classification both see the real condition. An existing `Retry-After` header is preserved; a `retry_after` value inside the error body is promoted to one when the response didn't already carry it. Every other response shape (a real success, a 4xx, an unparseable body) passes through unchanged.
 - Closes #5473.
+
+## [0.60.16.0] - 2026-09-30
+
+**Long-running brains stop getting stuck waiting on a `git` check that already finished.**
+
+Before GBrain publishes a page to your brain's git repo, it runs two quick `git` commands to confirm the repo is safe to write to. On the Bun versions GBrain runs on today, Bun can miss the signal that one of those commands has finished. GBrain then waited forever. The write queue stalled, and shutting down the owner process hung behind it. In our test suite this hit roughly one run in sixty under load and showed up as whole test files timing out after "killed 1 dangling process".
+
+Now every one of those `git` calls has its own deadline. If the command hasn't reported back in time, GBrain stops it and moves on, with the same "git unavailable" result a slow `git` already produced. The worst case is a 10 to 20 second delay instead of a hang.
+
+| Under load (16 parallel test workers) | Before | After |
+| --- | --- | --- |
+| Runs that hung | 4 of 250 | 0 of 320 |
+| Worst-case wait on a lost `git` exit | forever | 10 s (durability check), 20 s (page publish) |
+
+Nothing to configure and nothing to run after upgrading.
+
+### To take advantage of v0.60.16.0
+
+`gbrain upgrade` is all you need. There is no migration. To confirm, run `gbrain doctor`.
+
+### Itemized changes
+
+- `execFileBounded` in `src/core/brain-repo-durability.ts` settles from its own timer at the deadline or on abort and SIGKILLs the child, so a lost exit or pipe event (Bun 1.3.x, oven-sh/bun#30301) can no longer strand the caller. The durability probe (10 s) and the persistence effect `git` runner (20 s) use it; the staged topology clone's exit wait also returns once its deadline kill fires.
+- New `test/bounded-child-exec.test.ts` reproduces the lost exit event deterministically and pins deadline, abort, exit code and stdout behavior.
 
 ## [0.60.15.0] - 2026-09-30
 
