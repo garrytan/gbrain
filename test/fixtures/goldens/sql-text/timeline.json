@@ -41,10 +41,11 @@
               "string",
               "string",
               "string",
+              "string",
               "string"
             ],
-            "sql": "SELECT te.date::text AS last_date, ep.slug AS last_event_slug FROM timeline_entries te JOIN pages p ON p.id = te.page_id AND p.deleted_at IS NULL LEFT JOIN pages ep ON ep.id = te.event_page_id AND ep.source_id = $1 WHERE (te.event_page_id IS NULL OR ep.deleted_at IS NULL) AND te.date <= $2::date AND ( p.slug = $3 OR (ep.id IS NOT NULL AND EXISTS ( SELECT 1 FROM jsonb_array_elements_text( CASE WHEN jsonb_typeof(ep.frontmatter->'event'->'who') = 'array' THEN ep.frontmatter->'event'->'who' ELSE '[]'::jsonb END ) AS w(name) WHERE w.name = $4 OR w.name LIKE $5 )) ) AND p.source_id = $6 ORDER BY COALESCE(ep.effective_date, te.date::timestamptz) DESC, te.id DESC LIMIT 1",
-            "textSha256": "46f3058edbde4893bb6d55ca7a6e345be6eb5d5532ba5dbd272fbfe050c7178d"
+            "sql": "SELECT te.date::text AS last_date, ep.slug AS last_event_slug FROM timeline_entries te JOIN pages p ON p.id = te.page_id AND p.deleted_at IS NULL LEFT JOIN pages ep ON ep.id = te.event_page_id AND ep.source_id = $1 WHERE (te.event_page_id IS NULL OR ep.deleted_at IS NULL) AND te.date <= $2::date AND ( p.slug = $3 OR (ep.id IS NOT NULL AND EXISTS ( SELECT 1 FROM jsonb_array_elements_text( CASE WHEN jsonb_typeof(ep.frontmatter->'event'->'who') = 'array' THEN ep.frontmatter->'event'->'who' ELSE '[]'::jsonb END ) AS w(name) WHERE w.name = $4 OR w.name LIKE $5 ESCAPE '\\' OR w.name LIKE $6 ESCAPE '\\' )) ) AND p.source_id = $7 ORDER BY te.date DESC, COALESCE(ep.effective_date, te.date::timestamptz) DESC, te.id DESC LIMIT 1",
+            "textSha256": "b1983964b23c4ca8fd62d217cfef9b91af454f28aaf19ec263a77e5bc974ea73"
           }
         ],
         "default": [
@@ -53,10 +54,11 @@
             "params": [
               "string",
               "string",
+              "string",
               "string"
             ],
-            "sql": "SELECT te.date::text AS last_date, ep.slug AS last_event_slug FROM timeline_entries te JOIN pages p ON p.id = te.page_id AND p.deleted_at IS NULL LEFT JOIN pages ep ON ep.id = te.event_page_id WHERE (te.event_page_id IS NULL OR ep.deleted_at IS NULL) AND te.date <= current_date AND ( p.slug = $1 OR (ep.id IS NOT NULL AND EXISTS ( SELECT 1 FROM jsonb_array_elements_text( CASE WHEN jsonb_typeof(ep.frontmatter->'event'->'who') = 'array' THEN ep.frontmatter->'event'->'who' ELSE '[]'::jsonb END ) AS w(name) WHERE w.name = $2 OR w.name LIKE $3 )) ) ORDER BY COALESCE(ep.effective_date, te.date::timestamptz) DESC, te.id DESC LIMIT 1",
-            "textSha256": "1961a0d028029570230919d1a512f0f5438510500066b1d72a8335f91a5e313e"
+            "sql": "SELECT te.date::text AS last_date, ep.slug AS last_event_slug FROM timeline_entries te JOIN pages p ON p.id = te.page_id AND p.deleted_at IS NULL LEFT JOIN pages ep ON ep.id = te.event_page_id WHERE (te.event_page_id IS NULL OR ep.deleted_at IS NULL) AND te.date <= current_date AND ( p.slug = $1 OR (ep.id IS NOT NULL AND EXISTS ( SELECT 1 FROM jsonb_array_elements_text( CASE WHEN jsonb_typeof(ep.frontmatter->'event'->'who') = 'array' THEN ep.frontmatter->'event'->'who' ELSE '[]'::jsonb END ) AS w(name) WHERE w.name = $2 OR w.name LIKE $3 ESCAPE '\\' OR w.name LIKE $4 ESCAPE '\\' )) ) ORDER BY te.date DESC, COALESCE(ep.effective_date, te.date::timestamptz) DESC, te.id DESC LIMIT 1",
+            "textSha256": "9aa7d61f3255e394faf3f2e20f0015d3b94dc201c257a1808e61995478101de6"
           }
         ]
       },

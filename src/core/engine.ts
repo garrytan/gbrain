@@ -1,4 +1,5 @@
 import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } from './page-state/types.ts';
+import type { ChunkWindowRequest, ChunkWindowOpts, ChunkWindowPage } from './search/chunk-windows.ts';
 import type { DerivedLinkOrigin, DerivedLinkReplacementOptions } from './derived-links.ts';
 export type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions, PageMutationPrecondition, PageWithdrawal } from './page-state/types.ts';
 import type {
@@ -1158,6 +1159,8 @@ export interface BrainEngine {
    * `getChunksWithEmbeddings`, which honors neither scope precedence nor RLS.
    */
   getChunks(slug: string, opts?: PageReadScope & { includeEmbedding?: boolean; includeUnsealed?: boolean }): Promise<Chunk[]>;
+  /** Evidence delivery: one batched, re-authorized chunk-window read keyed by page_id (engine-sql/chunks.ts). */
+  getChunkWindows(requests: ChunkWindowRequest[], opts: ChunkWindowOpts): Promise<ChunkWindowPage[]>;
   /**
    * Count chunks whose registry-ACTIVE embedding column IS NULL (S2).
    * Pre-flight short-circuit for `embed --stale` so a 100%-embedded brain

@@ -31,7 +31,9 @@ import { isUndefinedTableError } from '../utils.ts';
  *
  * Resolution order:
  *   1. If `raw` is already a page slug shape (contains a "/" or matches an
- *      exact pages.slug row in this source), return it untouched.
+ *      exact pages.slug row in this source), return it untouched. A mention
+ *      that is exactly one live page's own name (slug basename) resolves to
+ *      it next, before any other page's alias.
  *   2. Resolve a bare name only when prefix expansion finds one candidate.
  *   3. For multi-token input, take a fuzzy candidate within the source only
  *      when it carries the same name tokens (sameEntityName).
@@ -58,6 +60,13 @@ export async function resolveEntitySlug(
     if (exact) return exact;
   }
 
+  // 1.25. Exact own name: a live page whose slug basename IS the mention wins
+  //       over another page's alias — "Jordan Lee-Example" is
+  //       people/jordan-lee-example even when a different person lists it as
+  //       a former name.
+  const basenames = await findExactBasenameCandidates(engine, source_id, trimmed);
+  if (basenames.length === 1) return basenames[0].slug;
+
   // 1.5. Alias-exact (v0.46.15 identity wave, #3730): an unambiguous
   //      page_aliases hit resolves BEFORE prefix expansion / fuzzy — the
   //      alias table is curated ground truth ("saoirse" → people/saoirse-x)
@@ -65,8 +74,6 @@ export async function resolveEntitySlug(
   const aliased = await tryAliasExact(engine, source_id, trimmed);
   if (aliased) return aliased;
 
-  const basenames = await findExactBasenameCandidates(engine, source_id, trimmed);
-  if (basenames.length === 1) return basenames[0].slug;
   if (basenames.length > 1) return fallbackSlugify(trimmed);
 
   // 2. Prefix-expansion match: when the input looks like a bare first name
@@ -262,11 +269,12 @@ export async function resolveEntitySlugWithSource(
     if (exact) return { slug: exact, source: 'exact_page' };
   }
 
+  const basenames = await findExactBasenameCandidates(engine, source_id, trimmed);
+  if (basenames.length === 1) return { slug: basenames[0].slug, source: 'fuzzy_match' };
+
   const aliased = await tryAliasExact(engine, source_id, trimmed);
   if (aliased) return { slug: aliased, source: 'alias_exact' };
 
-  const basenames = await findExactBasenameCandidates(engine, source_id, trimmed);
-  if (basenames.length === 1) return { slug: basenames[0].slug, source: 'fuzzy_match' };
   if (basenames.length > 1) return { slug: fallbackSlugify(trimmed), source: 'fallback_slugify' };
 
   if (isBareName(trimmed)) {

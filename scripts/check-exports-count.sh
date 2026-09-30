@@ -19,7 +19,7 @@
 
 set -euo pipefail
 
-EXPECTED_COUNT=27
+EXPECTED_COUNT=28
 
 # Count top-level keys in the exports object. `node -e` parses JSON
 # reliably without needing jq (which isn't in every CI environment).

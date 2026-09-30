@@ -44,7 +44,7 @@ import { CheckoutGauge, type PoolGaugeSnapshot } from './pool-gauge.ts';
 import {
   valueHash,
   normalizeDimension,
-  isNovelDimension,
+  isNovelDimension, isBackdatedObservation,
 } from './chronicle/ontology.ts';
 import { logDbDisconnect } from './audit/db-disconnect-audit.ts';
 import { logPoolRecovery } from './audit/pool-recovery-audit.ts';
@@ -125,6 +125,7 @@ import * as linksImpl from './engine-sql/links.ts';
 import * as timelineImpl from './engine-sql/timeline.ts';
 import * as sourcesImpl from './engine-sql/sources.ts';
 import * as filesImpl from './engine-sql/files.ts';
+import type { ChunkWindowRequest, ChunkWindowOpts, ChunkWindowPage } from './search/chunk-windows.ts';
 import * as chunksImpl from './engine-sql/chunks.ts';
 import { hasCJK } from './cjk.ts';
 import { searchKeywordCJK as searchKeywordCJKImpl } from './engine-sql/cjk-search.ts';
@@ -1732,6 +1733,10 @@ export class PostgresEngine implements BrainEngine {
     }, slug, chunks, opts);
   }
 
+  getChunkWindows(requests: ChunkWindowRequest[], opts: ChunkWindowOpts): Promise<ChunkWindowPage[]> {
+    return this.withScopedReadTransaction(opts.sourceIds?.length ? opts.sourceIds : undefined, opts.sourceIds?.length ? undefined : opts.sourceId, tx => chunksImpl.getChunkWindows(scopedRead(this.engineSqlOn(tx)), requests, opts));
+  }
+
   async getChunks(slug: string, opts?: { sourceId?: string; sourceIds?: string[]; includeEmbedding?: boolean; excludePrivate?: boolean; requireSafeChunks?: boolean; includeUnsealed?: boolean }): Promise<Chunk[]> {
     const sourceIds = opts?.sourceIds && opts.sourceIds.length > 0 ? opts.sourceIds : undefined;
     const sourceId = opts?.sourceId ?? 'default';
@@ -2026,7 +2031,7 @@ export class PostgresEngine implements BrainEngine {
        LIMIT 1`;
     const current = cur[0];
 
-    if (current && current.value_hash === vh) {
+    if (current && current.value_hash === vh && !isBackdatedObservation(validFrom, current.valid_from)) {
       // Same value → corroboration (or exact dup → noop via the dedup unique).
       const ins = await sql<{ id: number }[]>`
         INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, dimension, value, value_hash, dim_status,

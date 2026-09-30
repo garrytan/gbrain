@@ -85,6 +85,8 @@
     "getCalleesOf#sourceId": {},
     "getCallersOf#default": {},
     "getCallersOf#sourceId": {},
+    "getChunkWindows#default": {},
+    "getChunkWindows#scopedPrivateSafe": {},
     "getChunks#default": {
       "raw": 1
     },

@@ -35,6 +35,7 @@ import { IngestionTestHarness as e23 } from 'gbrain/ingestion/test-harness';
 import { GuardrailLoadError as e24 } from 'gbrain/core/guardrails';
 import { loadHeldOut as e25 } from 'gbrain/core/skillopt';
 import { LiveServeLockError as e26 } from 'gbrain/pglite-lock';
+import { assembleEvidenceForHits as e27 } from 'gbrain/search/evidence-delivery';
 import type { BrainEngine } from 'gbrain/engine';
 import type { PageInput, SearchResult } from 'gbrain/types';
 import { PGLiteEngine } from 'gbrain/pglite-engine';
@@ -67,6 +68,7 @@ export const RUNTIME_IMPORTS: readonly unknown[] = [
   e24,
   e25,
   e26,
+  e27,
 ];
 
 export function makeEngine(): BrainEngine {
