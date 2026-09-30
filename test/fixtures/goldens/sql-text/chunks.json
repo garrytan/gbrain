@@ -84,6 +84,43 @@
           }
         ]
       },
+      "getChunkWindows": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "array<number>",
+              "array<number>",
+              "array<number>",
+              "array<number>",
+              "number",
+              "array<number>",
+              "array<string>",
+              "number"
+            ],
+            "sql": "WITH req AS ( SELECT * FROM unnest($1::int[], $2::int[], $3::int[], $4::int[]) AS r(page_id, lo, hi, prio) ), auth AS ( SELECT p.id, p.slug, p.source_id, p.type, p.knowledge_revision::text AS revision, p.compiled_truth, p.timeline, (COALESCE(p.chunker_version, 0) >= $5) AS sealed, (SELECT MIN(req.prio) FROM req WHERE req.page_id = p.id) AS prio FROM pages p JOIN sources s ON s.id = p.source_id WHERE p.id = ANY($6::int[]) AND p.deleted_at IS NULL AND (p.text_projection_revision = p.knowledge_revision) IS TRUE AND NOT s.archived AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') ), chunk_rows AS ( SELECT cc.page_id, cc.id AS chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source, a.prio FROM auth a JOIN content_chunks cc ON cc.page_id = a.id WHERE a.sealed AND cc.chunk_source = ANY($7::text[]) AND COALESCE(cc.modality, 'text') = 'text' AND EXISTS (SELECT 1 FROM req r WHERE r.page_id = cc.page_id AND cc.chunk_index BETWEEN r.lo AND r.hi) ORDER BY a.prio, cc.page_id, cc.chunk_index LIMIT $8 ) SELECT 'page' AS kind, a.id AS page_id, a.slug, a.source_id, a.type, a.revision, a.sealed, a.prio, (SELECT MAX(c2.chunk_index) FROM content_chunks c2 WHERE c2.page_id = a.id) AS max_chunk_index, a.compiled_truth, a.timeline, NULL::int AS chunk_id, NULL::int AS chunk_index, NULL::text AS chunk_text, NULL::text AS chunk_source FROM auth a UNION ALL SELECT 'chunk' AS kind, c.page_id, NULL, NULL, NULL, NULL, NULL, c.prio, NULL, NULL, NULL, c.chunk_id, c.chunk_index, c.chunk_text, c.chunk_source FROM chunk_rows c",
+            "textSha256": "36f167b6708826aa64eda532d22495b8c0dc0d133555ff743603a9a14083d8a9"
+          }
+        ],
+        "scopedPrivateSafe": [
+          {
+            "lane": "pool",
+            "params": [
+              "array<number>",
+              "array<number>",
+              "array<number>",
+              "array<number>",
+              "number",
+              "array<number>",
+              "array<string>",
+              "array<string>",
+              "number"
+            ],
+            "sql": "WITH req AS ( SELECT * FROM unnest($1::int[], $2::int[], $3::int[], $4::int[]) AS r(page_id, lo, hi, prio) ), auth AS ( SELECT p.id, p.slug, p.source_id, p.type, p.knowledge_revision::text AS revision, p.compiled_truth, p.timeline, (COALESCE(p.chunker_version, 0) >= $5) AS sealed, (SELECT MIN(req.prio) FROM req WHERE req.page_id = p.id) AS prio FROM pages p JOIN sources s ON s.id = p.source_id WHERE p.id = ANY($6::int[]) AND p.source_id = ANY($7::text[]) AND p.deleted_at IS NULL AND (p.text_projection_revision = p.knowledge_revision) IS TRUE AND NOT s.archived AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') AND (COALESCE(p.frontmatter->>'visibility', CASE WHEN (p.type = 'atom' OR (p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private' AND NOT (CASE WHEN p.type = 'atom' THEN EXISTS (SELECT 1 FROM pages derived_origin WHERE derived_origin.source_id = p.source_id AND derived_origin.slug = p.frontmatter->>'source_slug' AND derived_origin.frontmatter->>'visibility' = 'private') WHEN (p.type = 'atom' OR (p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL)) THEN EXISTS (SELECT 1 FROM links derived_input_link JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id WHERE derived_input_link.from_page_id = p.id AND derived_input_link.link_source = 'concept-provenance' AND derived_input_link.link_type = 'synthesized_from' AND (COALESCE(derived_input.frontmatter->>'visibility', CASE WHEN derived_input.type = 'atom' THEN 'private' ELSE 'world' END) = 'private' OR EXISTS (SELECT 1 FROM pages derived_input_origin WHERE derived_input_origin.source_id = derived_input.source_id AND derived_input_origin.slug = derived_input.frontmatter->>'source_slug' AND derived_input_origin.frontmatter->>'visibility' = 'private'))) ELSE false END)) AND COALESCE(p.chunker_version, 0) >= 4 ), chunk_rows AS ( SELECT cc.page_id, cc.id AS chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source, a.prio FROM auth a JOIN content_chunks cc ON cc.page_id = a.id WHERE a.sealed AND cc.chunk_source = ANY($8::text[]) AND COALESCE(cc.modality, 'text') = 'text' AND EXISTS (SELECT 1 FROM req r WHERE r.page_id = cc.page_id AND cc.chunk_index BETWEEN r.lo AND r.hi) ORDER BY a.prio, cc.page_id, cc.chunk_index LIMIT $9 ) SELECT 'page' AS kind, a.id AS page_id, a.slug, a.source_id, a.type, a.revision, a.sealed, a.prio, (SELECT MAX(c2.chunk_index) FROM content_chunks c2 WHERE c2.page_id = a.id) AS max_chunk_index, a.compiled_truth, a.timeline, NULL::int AS chunk_id, NULL::int AS chunk_index, NULL::text AS chunk_text, NULL::text AS chunk_source FROM auth a UNION ALL SELECT 'chunk' AS kind, c.page_id, NULL, NULL, NULL, NULL, NULL, c.prio, NULL, NULL, NULL, c.chunk_id, c.chunk_index, c.chunk_text, c.chunk_source FROM chunk_rows c",
+            "textSha256": "deffa97e09a1ffb4ab99f3ad6289b7972f5598deb0ef0c0a1b606513410ccd33"
+          }
+        ]
+      },
       "getChunks": {
         "default": [
           {

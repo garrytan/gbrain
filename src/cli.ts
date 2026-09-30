@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 
 import { affectsRecall } from './core/types.ts';
+import { deliveryVersionSkewWarning } from './core/search/evidence-delivery.ts';
 import { installSigchldHandler } from './core/zombie-reap.ts';
 installSigchldHandler();
 import { installSignalHandlers as installCleanupSignalHandlers } from './core/process-cleanup.ts';
@@ -765,6 +766,8 @@ async function runThinClientRouted(
     const envelopeMeta = extractResponseMeta(raw);
     if (envelopeMeta?.retrieval) captureRetrievalMeta('retrieval', envelopeMeta.retrieval);
     const result = unpackToolResult(raw);
+    const skew = deliveryVersionSkewWarning(op.name, params, envelopeMeta?.retrieval as Record<string, unknown> | undefined, result);
+    if (skew) process.stderr.write(skew + '\n');
     const output = formatResult(op.name, result, params);
     // Awaited delivery (#3423) — same contract as the local-engine path.
     if (output) await writeStdoutFinal(output);

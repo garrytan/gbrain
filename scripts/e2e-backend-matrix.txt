@@ -43,3 +43,4 @@ test/e2e/persistence-sync-options-parity.test.ts
 test/e2e/persistence-sync-origin-parity.test.ts
 test/e2e/projection-recovery-parity.test.ts
 test/e2e/takes-scorecard-parity.test.ts
+test/e2e/evidence-delivery-parity.test.ts

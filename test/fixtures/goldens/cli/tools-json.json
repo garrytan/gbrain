@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 191990,
-    "stdoutSha256": "d8c3c5a0179f54f551ec6a37b3c011a30910605a9d08db0df63fa0680247e463",
+    "stdoutBytes": 198725,
+    "stdoutSha256": "3559128ade73b7bee9f7ee38013049ac8757cc66f8c2cf6ea639f9f526a11115",
     "toolNames": [
       "remember",
       "entity",
@@ -22,6 +22,7 @@
       "cancel_write_request",
       "search",
       "query",
+      "assemble_evidence",
       "search_stats",
       "search_modes",
       "search_tune",
@@ -739,7 +740,7 @@
         }
       },
       {
-        "description": "Cheap hybrid search (vector + keyword + RRF) with no LLM expansion. Best for exact known tokens, names, and structured-field lookups. A populated result set is NOT proof of coverage — for concept / synonym / landscape questions use `query` (adds multi-query expansion); for exhaustive enumeration use list_pages pagination. For personal/emotional questions, prefer get_recent_salience or find_anomalies — they surface activity bursts without needing a search term. For code-symbol questions (callers, callees, definitions, blast radius), use code_callers / code_callees / code_def / code_refs instead — those return structural graph data, not text chunks. For agent memory reads (saved facts + budget-packed retrieval), prefer the `recall` verb.",
+        "description": "Cheap hybrid search (vector + keyword + RRF) with no LLM expansion. Best for exact known tokens, names, and structured-field lookups. A populated result set is NOT proof of coverage — for concept / synonym / landscape questions use `query` (adds multi-query expansion); for exhaustive enumeration use list_pages pagination. Pass `return_unit` ('window' / 'section' / 'page') for whole evidence instead of chunks. For personal/emotional questions, prefer get_recent_salience or find_anomalies — they surface activity bursts without needing a search term. For code-symbol questions (callers, callees, definitions, blast radius), use code_callers / code_callees / code_def / code_refs instead — those return structural graph data, not text chunks. For agent memory reads (saved facts + budget-packed retrieval), prefer the `recall` verb.",
         "name": "search",
         "parameters": {
           "limit": "number?",
@@ -747,9 +748,12 @@
           "offset": "number?",
           "query": "string",
           "recency": "string?",
+          "return_unit": "string?",
+          "return_window": "number?",
           "salience": "string?",
           "snippet_chars": "number?",
           "source_id": "string?",
+          "token_budget": "number?",
           "types": "array?"
         },
         "schema": {
@@ -779,6 +783,21 @@
               ],
               "type": "string"
             },
+            "return_unit": {
+              "description": "Evidence unit returned in each result's chunk_text (default: config search.return_unit, which defaults to 'chunk').\n  'chunk'   — the ranked chunk only (~300-450 tokens per result).\n  'window'  — the hit chunk plus return_window neighbor chunks each side (local context, ~3x chunk).\n  'section' — the enclosing markdown section, or the conversation rounds around the hit.\n  'page'    — the whole page/session, capped. Use for multi-session or temporal questions where the answer needs the whole conversation.\n  'auto'    — page for conversations and short pages, section or window for long curated pages.\nNon-chunk units return one result per page, packed into token_budget (default 6000; remote max 32000), with a `delivered` object (unit, chunk_ids, match_spans, tokens, truncated) per result and `delivery` in the response meta.",
+              "enum": [
+                "chunk",
+                "window",
+                "section",
+                "page",
+                "auto"
+              ],
+              "type": "string"
+            },
+            "return_window": {
+              "description": "Neighbor chunks on each side for return_unit 'window' (integer 1-3, default 1).",
+              "type": "number"
+            },
             "salience": {
               "description": "Salience boost (emotional_weight + take_count, no time component): 'off' | 'on' | 'strong'. Omit and gbrain auto-detects from query text. Independent of `recency`.",
               "enum": [
@@ -796,6 +815,10 @@
               "description": "Scope search to a single source. Defaults to OperationContext.sourceId (set from CLI --source / GBRAIN_SOURCE / .gbrain-source dotfile); when unset, an unqualified read spans every federated source. Pass '__all__' to span every source for trusted local callers; for remote callers '__all__' spans only your granted sources.",
               "type": "string"
             },
+            "token_budget": {
+              "description": "Token budget for delivered evidence when return_unit is not 'chunk' (default search.return_budget_default = 6000). Ignored in chunk mode.",
+              "type": "number"
+            },
             "types": {
               "description": "Filter results to pages whose `type` is in this list (e.g. ['person','company']). CLI: --types person,company. Applied at SQL level on every retrieval leg — the same filter `whoknows` uses. Stacks with all other filters.",
               "items": {
@@ -811,7 +834,7 @@
         }
       },
       {
-        "description": "Hybrid search with vector + keyword + multi-query expansion. Prefer `query` for concept / synonym / landscape questions ('all the X that do Y', 'the landscape of Z') — expansion recovers synonym- and outcome-phrased matches a single embedding misses. Still top-K, and the default count when `limit` is omitted depends on the configured search mode (10 conservative / 25 balanced / 50 tokenmax — see the `limit` param description); pass `limit` explicitly for a stable count regardless of mode. For exhaustive enumeration use list_pages; for exact known tokens `search` is cheaper (no expansion LLM call). For personal/emotional questions ('what's going on with me', 'anything notable', 'how am I feeling'), prefer get_recent_salience, find_anomalies, or get_recent_transcripts. Semantic search returns polished pages and misses recent activity bursts. Do NOT assume words like 'crazy', 'notable', or 'big' mean impressive — they often mean difficult or emotionally charged.",
+        "description": "Hybrid search with vector + keyword + multi-query expansion. Prefer `query` for concept / synonym / landscape questions ('all the X that do Y', 'the landscape of Z') — expansion recovers synonym- and outcome-phrased matches a single embedding misses. Still top-K, and the default count when `limit` is omitted depends on the configured search mode (10 conservative / 25 balanced / 50 tokenmax — see the `limit` param description); pass `limit` explicitly for a stable count regardless of mode. When the answer needs the surrounding conversation or section, pass `return_unit` ('page' / 'section' / 'window') to get that evidence in one call instead of get_page per hit. For exhaustive enumeration use list_pages; for exact known tokens `search` is cheaper (no expansion LLM call). For personal/emotional questions ('what's going on with me', 'anything notable', 'how am I feeling'), prefer get_recent_salience, find_anomalies, or get_recent_transcripts. Semantic search returns polished pages and misses recent activity bursts. Do NOT assume words like 'crazy', 'notable', or 'big' mean impressive — they often mean difficult or emotionally charged.",
         "name": "query",
         "parameters": {
           "adaptive_return": "boolean?",
@@ -830,11 +853,14 @@
           "query": "string?",
           "recency": "string?",
           "relational": "boolean?",
+          "return_unit": "string?",
+          "return_window": "number?",
           "salience": "string?",
           "since": "string?",
           "snippet_chars": "number?",
           "source_id": "string?",
           "symbol_kind": "string?",
+          "token_budget": "number?",
           "types": "array?",
           "until": "string?",
           "walk_depth": "number?"
@@ -916,6 +942,21 @@
               "description": "v0.43 — relational recall arm. SMART DEFAULT (on in balanced/tokenmax). When the question is about a RELATIONSHIP ('who invested in widget-co', 'who introduced me to alice', 'what connects fund-a and fund-b'), the brain resolves the named entity and walks its typed-edge graph (invested_in, works_at, founded, …), surfacing the answer even when no passage mentions both sides. Pure no-op for non-relational questions. Pass FALSE to force lexical/vector-only retrieval (e.g. debugging why a graph answer appeared). You almost never set this.",
               "type": "boolean"
             },
+            "return_unit": {
+              "description": "Evidence unit returned in each result's chunk_text (default: config search.return_unit, which defaults to 'chunk').\n  'chunk'   — the ranked chunk only (~300-450 tokens per result).\n  'window'  — the hit chunk plus return_window neighbor chunks each side (local context, ~3x chunk).\n  'section' — the enclosing markdown section, or the conversation rounds around the hit.\n  'page'    — the whole page/session, capped. Use for multi-session or temporal questions where the answer needs the whole conversation.\n  'auto'    — page for conversations and short pages, section or window for long curated pages.\nNon-chunk units return one result per page, packed into token_budget (default 6000; remote max 32000), with a `delivered` object (unit, chunk_ids, match_spans, tokens, truncated) per result and `delivery` in the response meta.",
+              "enum": [
+                "chunk",
+                "window",
+                "section",
+                "page",
+                "auto"
+              ],
+              "type": "string"
+            },
+            "return_window": {
+              "description": "Neighbor chunks on each side for return_unit 'window' (integer 1-3, default 1).",
+              "type": "number"
+            },
             "salience": {
               "description": "v0.29.1 salience boost — emotional_weight + take_count, NO time component.\n  'off' — default for entity / canonical / definitional queries\n  'on'  — surface emotionally-weighted + take-rich pages\n  'strong' — aggressive mattering tilt\nOmit and gbrain auto-detects from query text. Independent of `recency`.",
               "enum": [
@@ -941,6 +982,10 @@
               "description": "Filter to chunks where content_chunks.symbol_type matches (e.g., function, class, method, type, interface)",
               "type": "string"
             },
+            "token_budget": {
+              "description": "Token budget. Chunk mode: caps the cumulative chunk payload (results that would overflow are skipped). Non-chunk return_unit: the budget for delivered evidence (default search.return_budget_default = 6000; remote max search.return_budget_max_remote = 32000).",
+              "type": "number"
+            },
             "types": {
               "description": "Filter results to pages whose `type` is in this list (e.g. ['person','company']). CLI: --types person,company. Applied at SQL level on every retrieval leg — the same filter `whoknows` uses. Stacks with all other filters.",
               "items": {
@@ -958,6 +1003,60 @@
             }
           },
           "required": [],
+          "type": "object"
+        }
+      },
+      {
+        "description": "Deliver whole evidence for an ordered list of search hits (each {source_id, slug, chunk_id} from a prior search/query result): the same windows, sections or pages `query` returns with return_unit, packed into token_budget. Use it to widen hits you already have instead of calling get_page per hit. Returns { results, delivery, unresolved }; results carry chunk_text (the evidence) and `delivered`.",
+        "name": "assemble_evidence",
+        "parameters": {
+          "detail": "string?",
+          "hits": "array",
+          "return_unit": "string?",
+          "return_window": "number?",
+          "token_budget": "number?"
+        },
+        "schema": {
+          "properties": {
+            "detail": {
+              "description": "As query: 'low' delivers compiled truth only (no timeline text).",
+              "enum": [
+                "low",
+                "medium",
+                "high"
+              ],
+              "type": "string"
+            },
+            "hits": {
+              "description": "Ordered hits, best first (max 50): [{ \"source_id\": \"default\", \"slug\": \"chat/session-0412\", \"chunk_id\": 8812 }]. chunk_id 0 addresses the page's first chunk.",
+              "items": {
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "return_unit": {
+              "description": "Evidence unit: 'chunk' | 'window' | 'section' | 'page' | 'auto' (default 'page').",
+              "enum": [
+                "chunk",
+                "window",
+                "section",
+                "page",
+                "auto"
+              ],
+              "type": "string"
+            },
+            "return_window": {
+              "description": "Neighbor chunks on each side for return_unit 'window' (integer 1-3, default 1).",
+              "type": "number"
+            },
+            "token_budget": {
+              "description": "Token budget for the delivered evidence (default search.return_budget_default = 6000; remote max 32000).",
+              "type": "number"
+            }
+          },
+          "required": [
+            "hits"
+          ],
           "type": "object"
         }
       },
@@ -4131,6 +4230,8 @@
           "include_pending": "boolean?",
           "limit": "number?",
           "query": "string?",
+          "return_unit": "string?",
+          "return_window": "number?",
           "session_id": "string?",
           "since": "string?",
           "source_id": "string?",
@@ -4151,7 +4252,7 @@
               "type": "number"
             },
             "entity": {
-              "description": "Entity slug (canonical). Returns facts about this entity newest first.",
+              "description": "Entity slug (canonical). Returns facts about this entity newest first, each labelled with its source_id. Across several granted sources, same-slug entities that no entity-identity group links are different entities: facts comes back empty and ambiguous_entity names each (source_id, entity_slug); pass source_id to read one.",
               "type": "string"
             },
             "grep": {
@@ -4173,6 +4274,21 @@
             "query": {
               "description": "MEMORY_VERBS v1: free-text retrieval over pages (hybrid search arm). Response adds results[] (slug, title, chunk, evidence, create_safety, provenance). Combinable with entity (both arms run). Degrades to keyword-only search when no embedding provider is configured (search_degraded notes it; never an error).",
               "type": "string"
+            },
+            "return_unit": {
+              "description": "Evidence unit for the results[] arm (needs `query`; default config search.return_unit = 'chunk'). 'window' adds neighbor chunks, 'section' the enclosing section or conversation rounds, 'page' the whole page/session (best for multi-session questions), 'auto' picks per page. Non-chunk units return one result per page with `delivered` metadata and a top-level `delivery` block; the evidence is budgeted by budget_tokens (default 6000) and then packed by recall's usual rules.",
+              "enum": [
+                "chunk",
+                "window",
+                "section",
+                "page",
+                "auto"
+              ],
+              "type": "string"
+            },
+            "return_window": {
+              "description": "Neighbor chunks on each side for return_unit 'window' (integer 1-3, default 1).",
+              "type": "number"
             },
             "session_id": {
               "description": "Source session id (e.g. topic-A). Returns facts captured in that session.",

@@ -101,7 +101,7 @@ export const DOMAIN_OF: Record<string, string> = {
   // files
   'upsertFile': 'files', 'getFile': 'files', 'listFilesForPage': 'files',
   // chunks
-  'upsertChunks': 'chunks', 'getChunks': 'chunks', 'countStaleChunks': 'chunks', 'sumStaleChunkChars': 'chunks',
+  'upsertChunks': 'chunks', 'getChunks': 'chunks', 'getChunkWindows': 'chunks', 'countStaleChunks': 'chunks', 'sumStaleChunkChars': 'chunks',
   'setPageEmbeddingSignature': 'chunks', 'invalidateStaleSignatureEmbeddings': 'chunks',
   'invalidateContentDriftEmbeddings': 'chunks', 'listStaleChunks': 'chunks',
   'countChunklessPagesWithContent': 'chunks', 'listChunklessPagesWithContent': 'chunks', 'deleteChunks': 'chunks',
@@ -543,6 +543,10 @@ export const SQL_CASES: SqlCase[] = [
   ...variants('getEmbeddingsByChunkIds', [
     ['default', (e) => e.getEmbeddingsByChunkIds([1, 2])],
     ['column', (e) => e.getEmbeddingsByChunkIds([1, 2], 'embedding_voyage')],
+  ]),
+  ...variants('getChunkWindows', [
+    ['default', (e) => e.getChunkWindows([{ page_id: 1, from_index: 0, to_index: 4, priority: 0 }], { chunkSources: ['compiled_truth', 'timeline'], maxRows: 16 })],
+    ['scopedPrivateSafe', (e) => e.getChunkWindows([{ page_id: 1, from_index: 0, to_index: 4, priority: 0 }], { sourceIds: SRCS, excludePrivate: true, requireSafeChunks: true, chunkSources: ['compiled_truth'], maxRows: 16 })],
   ]),
   ...variants('getChunksWithEmbeddings', [
     ['default', (e) => e.getChunksWithEmbeddings(SLUG)],

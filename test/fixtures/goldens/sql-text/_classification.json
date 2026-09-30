@@ -1,7 +1,7 @@
 {
   "golden": {
     "counts": {
-      "chunks": 13,
+      "chunks": 14,
       "cjk-search": 2,
       "code-edges": 5,
       "facts": 18,
@@ -80,6 +80,7 @@
       "getCalibrationCurve": "takes",
       "getCalleesOf": "code-edges",
       "getCallersOf": "code-edges",
+      "getChunkWindows": "chunks",
       "getChunks": "chunks",
       "getChunksWithEmbeddings": "chunks",
       "getConfig": "out-of-scope:config",

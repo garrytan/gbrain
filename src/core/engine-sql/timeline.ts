@@ -203,12 +203,19 @@ export async function getOnThisDay(exec: LegacyUnscopedRead, opts?: PageReadScop
 
 export async function getLastSeen(exec: LegacyUnscopedRead, entitySlug: string, opts?: PageReadScope & { asof?: string }): Promise<LastSeenResult> {
     // "Seen" = the entity's own page has a timeline row, OR an event's `who`
-    // array references the entity (exact slug or wikilink-substring match).
+    // array references the entity: the exact slug, or a wikilink to exactly
+    // that slug ([[slug]] / [[slug|label]]). Never a substring — a slug that
+    // prefixes another slug must not inherit its sightings — and LIKE
+    // metacharacters in the slug are escaped.
     // "Last seen" is a PAST relation: the chronicle legitimately stores
     // future events (calendar-event is eligibility-eligible), so bound to
     // <= asof/today or a scheduled event reads as "seen today". Mirrors
     // getOnThisDay's `te.date < target` bound.
+    // The newest sighting is the newest projected day (te.date is already the
+    // chronicle.tz local day); the event instant only orders within a day, so
+    // a late-evening event never outranks a plain row dated the next day.
     const seenThrough = opts?.asof ? sqlFragment`${opts.asof}::date` : sqlFragment`current_date`;
+    const likeSlug = entitySlug.replace(/[\\%_]/g, (c) => '\\' + c);
     const rows = (await exec.run(sqlFragment`
       SELECT te.date::text AS last_date, ep.slug AS last_event_slug
       FROM timeline_entries te
@@ -223,11 +230,13 @@ export async function getLastSeen(exec: LegacyUnscopedRead, entitySlug: string, 
               CASE WHEN jsonb_typeof(ep.frontmatter->'event'->'who') = 'array'
                    THEN ep.frontmatter->'event'->'who' ELSE '[]'::jsonb END
             ) AS w(name)
-            WHERE w.name = ${entitySlug} OR w.name LIKE ${'%' + entitySlug + '%'}
+            WHERE w.name = ${entitySlug}
+               OR w.name LIKE ${'%[[' + likeSlug + ']]%'} ESCAPE '\\'
+               OR w.name LIKE ${'%[[' + likeSlug + '|%'} ESCAPE '\\'
           ))
         )
         ${chronicleSourceCond(opts)}
-      ORDER BY COALESCE(ep.effective_date, te.date::timestamptz) DESC, te.id DESC
+      ORDER BY te.date DESC, COALESCE(ep.effective_date, te.date::timestamptz) DESC, te.id DESC
       LIMIT 1`)).rows;
     const row = rows[0] as { last_date?: string; last_event_slug?: string } | undefined;
     return finalizeLastSeen(entitySlug, row?.last_date ?? null, row?.last_event_slug ?? null, opts?.asof);

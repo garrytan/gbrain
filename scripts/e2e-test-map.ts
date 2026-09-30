@@ -94,6 +94,10 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   ],
   "src/core/page-state/**": ["test/e2e/projection-recovery-parity.test.ts", "test/e2e/projection-readiness-currency.test.ts", "test/e2e/projection-embedding-input-hash.test.ts", "test/e2e/safe-chunk-reseal.test.ts", ...MIGRATION_WAVE_TESTS],
   "src/core/embedding-input-hash.ts": ["test/e2e/projection-embedding-input-hash.test.ts"],
+  // Evidence delivery (return_unit): the release-gate leak canaries and the
+  // engine / product-path parity suite.
+  "src/core/search/evidence-delivery.ts": ["test/e2e/evidence-delivery-leak.test.ts", "test/e2e/evidence-delivery-parity.test.ts"],
+  "src/core/search/chunk-windows.ts": ["test/e2e/evidence-delivery-leak.test.ts", "test/e2e/evidence-delivery-parity.test.ts"],
   "src/core/search/safe-chunks.ts": ["test/e2e/safe-chunk-reseal.test.ts", "test/e2e/legacy-chunk-privacy.test.ts"],
   "src/core/code-chunks.ts": ["test/e2e/projection-recovery-parity.test.ts"],
   "src/core/markdown-chunks.ts": ["test/e2e/projection-recovery-parity.test.ts"],
@@ -545,3 +549,4 @@ E2E_TEST_MAP["src/core/engine-sql/executor.ts"] = ENGINE_SQL_EXECUTOR_E2E;
 E2E_TEST_MAP["src/core/engine-sql/dialect-*.ts"] = ENGINE_SQL_EXECUTOR_E2E;
 E2E_TEST_MAP["src/core/engine-sql/normalize.ts"] = ["test/e2e/engine-sql-normalize-parity.test.ts"];
 E2E_TEST_MAP["src/core/engine-sql/brands.ts"] = ["test/e2e/engine-sql-rls-scope.test.ts"];
+E2E_TEST_MAP["src/core/engine-sql/chunks.ts"] = ["test/e2e/evidence-delivery-leak.test.ts", "test/e2e/evidence-delivery-parity.test.ts"];

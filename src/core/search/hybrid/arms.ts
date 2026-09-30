@@ -25,6 +25,16 @@ export interface LexicalArms {
   exactLookupOpts: ExactLookupOpts;
 }
 
+/**
+ * SQLSTATE 22007 / 22008: a date bound the database could not cast. That is
+ * the caller's input, never a degraded arm, so it surfaces instead of
+ * becoming an empty result.
+ */
+function isDatetimeInputError(err: unknown): boolean {
+  const code = (err as { code?: unknown } | null)?.code;
+  return code === '22007' || code === '22008';
+}
+
 /** Keyword + title FTS arms, fetched concurrently (fail-open per arm, rethrow when both hit a dead database). */
 export async function runLexicalArms(req: HybridRequest): Promise<LexicalArms> {
   const { engine, query, opts, suggestions, searchOpts, identityTierOpts, degraded } = req;
@@ -67,6 +77,7 @@ export async function runLexicalArms(req: HybridRequest): Promise<LexicalArms> {
       ? [[], []]
       : await Promise.all([
           engine.searchKeyword(query, searchOpts).catch((err: unknown) => {
+            if (isDatetimeInputError(err)) throw err;
             if (isDbAccessFailure(err)) keywordAccessError = err;
             pushDegraded(degraded, 'keyword_arm_failed', isTimeoutError(err) ? 'timeout' : 'provider_error');
             warnOncePerProcess(
@@ -77,6 +88,7 @@ export async function runLexicalArms(req: HybridRequest): Promise<LexicalArms> {
             return [] as SearchResult[];
           }),
           engine.searchTitles(query, searchOpts).catch((err: unknown) => {
+            if (isDatetimeInputError(err)) throw err;
             if (isDbAccessFailure(err)) titleAccessError = err;
             pushDegraded(degraded, 'title_arm_failed', isTimeoutError(err) ? 'timeout' : 'provider_error');
             warnOncePerProcess(
