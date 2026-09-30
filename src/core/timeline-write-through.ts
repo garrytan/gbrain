@@ -59,6 +59,7 @@ import {
 import { withPageLock } from './page-lock.ts';
 import { assertSourceFilesystemActive, hasSourceFilesystemLock, withSourceFilesystemLock } from './minions/source-filesystem.ts';
 import { findTimelineSplitIndex } from './markdown.ts';
+import { isMaterializedMarkerLine } from './timeline-marker.ts';
 import {
   isDurabilityHardened, commitWriteThroughFile, currentBranch, getLastPushOutcome,
   type PushLogOutcome,
@@ -269,6 +270,8 @@ export function spliceTimelineIntoFileText(fileText: string, date: string, block
     }
     if (before !== -1) {
       insertAt = before;
+      // #5567: a materialized marker belongs to the bullet below it; never split the pair.
+      while (insertAt > sentinel + 1 && isMaterializedMarkerLine(lines[insertAt - 1])) insertAt--;
     } else {
       // After the LAST bullet, past its indented continuation (detail) lines.
       insertAt = bullets[bullets.length - 1].index + 1;

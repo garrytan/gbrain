@@ -28,6 +28,8 @@ import { resolveSynthMaxOutputTokens } from './synthesize-concepts.ts';
 import { resolveCycleDate, shiftCalendarDate } from './cycle-date.ts';
 import { resolveModel } from '../model-config.ts';
 import type { DreamPhaseResult } from './auto-think.ts';
+import { maintenancePreflight, publishMaintenancePage } from '../persistence/prepared-maintenance.ts';
+import { serializeMarkdown } from '../markdown.ts';
 
 export interface DriftPhaseOpts {
   brainDir?: string;
@@ -310,6 +312,10 @@ export async function runPhaseDrift(
     };
   }
 
+  // #5280: a managed brain publishes the report through the maintenance
+  // coordinator; the preflight refuses a missing canonical owner before any
+  // judge spend. Null on an unmanaged brain.
+  const maintenance = await maintenancePreflight(engine, 'default');
   const modelId = await resolveModel(engine, {
     configKey: 'models.drift',
     deprecatedConfigKey: 'dream.drift.model',
@@ -358,11 +364,17 @@ export async function runPhaseDrift(
     // Report-only v1: the report page is the ONLY write this phase makes.
     // Lands in the default source (brain-global artifact, same-day re-runs
     // upsert the same slug).
-    await engine.putPage(reportSlug, {
-      type: 'report',
-      title: `Drift report ${cycleDate}`,
-      compiled_truth: buildReportBody(judged, config, modelId),
-    });
+    if (maintenance) {
+      const snapshot = await engine.readPageSnapshot(reportSlug, { sourceId: 'default' });
+      await publishMaintenancePage(engine, maintenance, reportSlug, serializeMarkdown({}, buildReportBody(judged, config, modelId), '',
+        { type: 'report', title: `Drift report ${cycleDate}`, tags: [] }), { expectedRevision: snapshot?.revision ?? null, file: false });
+    } else {
+      await engine.putPage(reportSlug, {
+        type: 'report',
+        title: `Drift report ${cycleDate}`,
+        compiled_truth: buildReportBody(judged, config, modelId),
+      });
+    }
   }
 
   const detail =

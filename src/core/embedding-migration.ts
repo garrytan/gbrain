@@ -325,7 +325,8 @@ export const MIGRATION_COMPLETED_KEY = 'embedding_migration.completed';
 
 export interface MigrationState {
   authorization_version?: 1;
-  budget?: { max_cost_usd: number; debited_usd: number; requests: number };
+  authorization_generation?: number;
+  budget?: { max_cost_usd: number; debited_usd: number; requests: number; generation?: number; pending?: Record<string, number>; overshoot_usd?: number; halted?: boolean };
   /** Marker schema version. Absent = v1 (pre-hardening). */
   version?: 2;
   companion_vectors_invalidated?: boolean;
@@ -1171,6 +1172,7 @@ export async function applyEmbeddingMigration(
       state.companion_vectors_invalidated = prior.state.companion_vectors_invalidated;
       state.budget = prior.state.budget;
       state.authorization_version = prior.state.authorization_version;
+      state.authorization_generation = prior.state.authorization_generation;
       if (prior.state.retargeted_at) state.retargeted_at = prior.state.retargeted_at;
       if (prior.state.superseded) state.superseded = prior.state.superseded;
     } else if (prior.state) {

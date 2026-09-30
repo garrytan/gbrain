@@ -78,7 +78,7 @@ test('historical repair preserves current body, facts, frontmatter and private r
     const revision = (await engine.readPageSnapshot(slug(1), { sourceId: f.id }))!.revision;
     expect(await runGoogleAttachmentBackfill(engine, f.id, f.cfg, {}, fetcher)).toMatchObject({ status: 'complete', processed: 0 });
     expect((await engine.readPageSnapshot(slug(1), { sourceId: f.id }))!.revision).toBe(revision);
-    expect(await engine.executeRaw("SELECT e.id FROM persistence_effects e JOIN persistence_requests r ON r.id=e.request_id WHERE r.source_id=$1 AND r.intent->>'kind'='managed_connector_google_receipts' AND e.kind<>'git'", [f.id])).toHaveLength(0);
+    expect(await engine.executeRaw("SELECT e.id FROM persistence_effects e JOIN persistence_requests r ON r.id=e.request_id WHERE r.source_id=$1 AND r.intent->>'kind'='connector_v2_google_receipts' AND e.kind<>'git'", [f.id])).toHaveLength(0);
   }
 }), 120_000);
 
@@ -172,7 +172,7 @@ test('withdrawal wins after receipt preparation but before real canonical public
     const f = await seed(engine, true);
     await runGoogleAttachmentBackfill(engine, f.id, f.cfg, {}, fetcher);
     await disposePersistenceConsumer(engine);
-    const [template] = await engine.executeRaw<WriteRequest>("SELECT * FROM persistence_requests WHERE source_id=$1 AND intent->>'kind'='managed_connector_google_receipts' LIMIT 1", [f.id]);
+    const [template] = await engine.executeRaw<WriteRequest>("SELECT * FROM persistence_requests WHERE source_id=$1 AND intent->>'kind'='connector_v2_google_receipts' LIMIT 1", [f.id]);
     const snapshot = (await engine.readPageSnapshot(slug(1), { sourceId: f.id }))!;
     const [checkpoint] = await engine.executeRaw<{ completed_keys: unknown[] }>("SELECT completed_keys FROM op_checkpoints WHERE op='managed-connector' AND fingerprint=$1", [template.intent!.checkpointKey]);
     const intent = structuredClone(template.intent!);

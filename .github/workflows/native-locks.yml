@@ -54,7 +54,7 @@ jobs:
 
   native:
     name: ${{ matrix.target }} / Bun ${{ matrix.bun }}
-    runs-on: ${{ fromJSON('{"linux-x64-glibc":"ubicloud-standard-4-ubuntu-2404","linux-arm64-glibc":"ubicloud-standard-4-arm-ubuntu-2404","darwin-arm64":"macos-15","darwin-x64":"macos-15-intel","win32-x64":"windows-2022","win32-arm64":"windows-11-arm"}')[matrix.target] }}
+    runs-on: ${{ fromJSON('{"linux-x64-glibc":"ubicloud-standard-4-ubuntu-2404","linux-arm64-glibc":"ubicloud-standard-4-arm-ubuntu-2404","darwin-arm64":"macos-26","darwin-x64":"macos-26-intel","win32-x64":"windows-2022","win32-arm64":"windows-11-arm"}')[matrix.target] }}
     timeout-minutes: 15
     strategy:
       fail-fast: false

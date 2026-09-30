@@ -644,7 +644,6 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
         // A managed brain refuses the markdown reindex; name its drain instead.
         try {
           const { managedPersistenceEnabled } = await import('../core/persistence/ownership.ts');
-          const { safeChunkUpgradeAdvisory } = await import('../core/repair/safe-chunks.ts');
           const managed = await managedPersistenceEnabled(engine);
           if (!managed) {
             const { runPostUpgradeReembedPrompt } = await import('../core/post-upgrade-reembed.ts');
@@ -657,12 +656,20 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
               await runReindex(engine, ['--markdown']);
             }
           }
-          const advisory = await safeChunkUpgradeAdvisory(engine, managed);
-          if (advisory) console.log(advisory);
         } catch (re) {
           const msg = re instanceof Error ? re.message : String(re);
           console.warn(`\nChunker-bump reindex skipped: ${msg}`);
           console.warn('Run `gbrain reindex --markdown` manually when ready.');
+        }
+
+        // Fix wave 3: run the wave checks once (full, not --fast) and relay a
+        // preview-only recovery banner; applying stays the user's decision.
+        try {
+          const { postUpgradeRecoveryBanner } = await import('./doctor/upgrade-banner.ts');
+          const [brain] = await engine.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1').catch(() => []);
+          for (const line of await postUpgradeRecoveryBanner(engine, `host (${engine.kind}${brain ? `, id ${brain.brain_id}` : ''})`)) console.log(line);
+        } catch (be) {
+          console.warn(`\nRecovery checks skipped: ${be instanceof Error ? be.message : String(be)}. Run \`gbrain doctor --remediation-plan\` to preview.`);
         }
       } finally {
         try { await engine.disconnect(); } catch { /* best-effort */ }

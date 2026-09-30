@@ -1,4 +1,5 @@
-import { withConnectorSync, rethrowConnectorWriteError, type ManagedConnectorSync } from '../persistence/connector-sync.ts';
+import { withConnectorSync, rethrowConnectorWriteError, pendingConnectorResult, type ManagedConnectorSync } from '../persistence/connector-sync.ts';
+import { resolveGoogleAccount } from '../persistence/connector-account.ts';
 /**
  * google-source — Gmail/Calendar/Contacts sync for the `google` source kind.
  *
@@ -64,6 +65,8 @@ import { LOOPS_EXTRACT_WINDOW_DAYS, loopExtractionEligibility } from './loops-ex
 
 export type { GoogleSourceConfig } from './types.ts';
 export { runGoogleAttachmentBackfill } from './attachment-backfill.ts';
+export { parseGoogleSourceConfig } from './source-config.ts';
+import { parseGoogleSourceConfig } from './source-config.ts';
 
 // ── Config ───────────────────────────────────────────────────────────────────
 
@@ -71,49 +74,6 @@ const G_KIND = 'google';
 
 export function isGoogleSourceConfig(config: Record<string, unknown>): boolean {
   return config.kind === G_KIND;
-}
-
-export function parseGoogleSourceConfig(
-  config: Record<string, unknown>,
-  fallbackDir: string,
-): GoogleSourceConfig {
-  const account =
-    typeof config.g_account === 'string' ? config.g_account.trim().toLowerCase() : '';
-  const services =
-    typeof config.g_services === 'string'
-      ? (config.g_services
-          .split(',')
-          .map((s) => s.trim().toLowerCase())
-          .filter((s): s is GoogleService => (ALL_GOOGLE_SERVICES as string[]).includes(s)))
-      : [...ALL_GOOGLE_SERVICES];
-  const historyDays =
-    typeof config.g_history_days === 'number' &&
-    Number.isFinite(config.g_history_days) &&
-    config.g_history_days > 0
-      ? Math.min(3650, Math.floor(config.g_history_days))
-      : 90;
-  const calendarId =
-    typeof config.g_calendar_id === 'string' && config.g_calendar_id.trim().length > 0
-      ? config.g_calendar_id.trim()
-      : DEFAULT_CALENDAR_ID;
-  const dir =
-    typeof config.g_dir === 'string' && config.g_dir.length > 0 ? config.g_dir : fallbackDir;
-  const access =
-    config.g_access === 'command' || config.g_access === 'env' ? config.g_access : 'vault';
-  return {
-    account,
-    services: services.length > 0 ? services : [...ALL_GOOGLE_SERVICES],
-    historyDays,
-    calendarId,
-    dir,
-    access,
-    ...(typeof config.g_token_command === 'string' && config.g_token_command.trim()
-      ? { tokenCommand: config.g_token_command }
-      : {}),
-    ...(typeof config.g_token_env === 'string' && config.g_token_env.trim()
-      ? { tokenEnv: config.g_token_env }
-      : {}),
-  };
 }
 
 // ── State ────────────────────────────────────────────────────────────────────
@@ -1004,7 +964,7 @@ export async function runGoogleSync(
   vaultOverride?: CredentialVault,
 ): Promise<SyncResult> {
   return withConnectorSync(engine, sourceId, 'google', cfg, opts,
-    (managed, options) => runGoogleSyncInner(engine, sourceId, cfg, options, managed, fetchImpl, vaultOverride));
+    (managed, options) => runGoogleSyncInner(engine, sourceId, cfg, options, managed, fetchImpl, vaultOverride), pendingConnectorResult);
 }
 
 async function runGoogleSyncInner(engine: BrainEngine, sourceId: string, cfg: GoogleSourceConfig, opts: SyncOpts,
@@ -1102,6 +1062,11 @@ async function runGoogleSyncInner(engine: BrainEngine, sourceId: string, cfg: Go
     log(new CredentialError('scope_missing', undefined, `services without grant: ${missingServices.join(', ')}`).toHuman());
   }
   const activeServices = grantedScopes.length > 0 ? grantedServices : cfg.services;
+  // #5686: every enabled service reads as the pinned account; checked before any service runs.
+  if (managed) {
+    const email = await resolveGoogleAccount({ gmail, calendar, people }, activeServices, opts.signal);
+    await managed.assertAccount(email ? { kind: 'google', email } : null);
+  }
 
   const state = managed ? managed.state(emptyState()) : readGoogleState(cfg.dir);
   const firstRun = !state.gmail_backfill_done && state.gmail_history_id === null;

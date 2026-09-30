@@ -7,6 +7,8 @@
  * page_links, chunk_relations via existing FKs.
  */
 import type { BrainEngine } from '../core/engine.ts';
+import { purgeDeletedPagesCoordinated } from '../core/persistence/purge-deleted.ts';
+import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 
 const SOFT_DELETE_TTL_HOURS_DEFAULT = 72;
 
@@ -44,11 +46,15 @@ async function runPurgeDeleted(engine: BrainEngine, args: string[]): Promise<voi
     return;
   }
 
-  const result = await engine.purgeDeletedPages(olderThanHours);
+  const result = await purgeDeletedPagesCoordinated(engine, olderThanHours);
   if (json) {
-    console.log(JSON.stringify({ older_than_hours: olderThanHours, count: result.count, slugs: result.slugs }, null, 2));
+    console.log(JSON.stringify({ older_than_hours: olderThanHours, count: result.count, slugs: result.slugs,
+      ...(result.blocked.length ? { blocked: result.blocked } : {}) }, null, 2));
+    if (result.error) setCliExitVerdict(1);
     return;
   }
+  for (const b of result.blocked) console.error(`Not purged: ${b.source_id}/${b.slug}: ${b.reason}`);
+  if (result.error) setCliExitVerdict(1);
   if (result.count === 0) {
     console.log(`No pages to purge (older than ${olderThanHours}h).`);
   } else {

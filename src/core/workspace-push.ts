@@ -1,4 +1,5 @@
 import { assertManagedFilesystemWrite } from './persistence/filesystem-guard.ts';
+import { OperationError } from './ops/contract.ts';
 /**
  * workspace-push.ts — the `gbrain sources push` core: scan-gated
  * add → commit → pull → push for an agent-workspace repo
@@ -510,14 +511,26 @@ export function aheadCount(root: string, branch: string): number | undefined {
 }
 
 export async function workspacePush(opts: WorkspacePushOpts): Promise<WorkspacePushResult> {
-  assertManagedFilesystemWrite(opts.dir);
   const log = (line: string) => opts.logger?.(line);
 
   const root = resolveWorkspaceRoot(opts.dir);
+  try {
+    assertManagedFilesystemWrite(opts.dir);
+    if (root) assertManagedFilesystemWrite(root);
+  } catch (e) {
+    // #5198: the managed-worktree guard refuses before the lock and before
+    // finish(), so without this the previous success stays on record and every
+    // status surface calls a push that can never run "stale" instead of failing.
+    // No lock winner can be in flight here: the same guard refuses every legacy
+    // push of this root.
+    if (root && e instanceof OperationError) {
+      writePushStatus({ ts: new Date().toISOString(), ok: false, reason: `${e.code}: ${e.message}`, repoRoot: root });
+    }
+    throw e;
+  }
   if (!root) {
     return { ok: false, status: 'error', reason: `not a git repository: ${opts.dir}` };
   }
-  assertManagedFilesystemWrite(root);
   const branch = opts.branch || detectDefaultBranch(root);
 
   // ONE lock spans scan → stage → commit → pull → push [G14/A5, CX2-6].

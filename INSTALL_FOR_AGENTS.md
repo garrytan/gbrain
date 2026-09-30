@@ -510,7 +510,9 @@ upgrade every process that writes to the brain, then follow the
 [v0.60.5.0 steps](skills/migrations/v0.60.5.0.md): one full `gbrain doctor`,
 then preview `gbrain repair` and apply only after the user agrees
 ([repair guide](docs/guides/repair.md)). For v0.60.6.0, also follow the
-[one-time timeline prune and slug-collision steps](skills/migrations/v0.60.6.0.md).
+[one-time timeline prune and slug-collision steps](skills/migrations/v0.60.6.0.md). For v0.60.11.0, preview
+`gbrain repair contextual-mode` and rebuild PGLite vector indexes after a crash
+repair ([steps](skills/migrations/v0.60.11.0.md)).
 
 For v0.53.0.0, follow the
 [mechanical shared-skills migration](skills/migrations/v0.53.0.0.md) on the host,

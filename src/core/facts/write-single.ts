@@ -76,8 +76,8 @@ export async function writeSingleFact(
   sourceId: string,
   input: SingleFactInput,
 ): Promise<SingleFactResult> {
-  const { assertCoordinatedWrite } = await import('../persistence/context.ts');
-  await assertCoordinatedWrite(engine, sourceId);
+  const { managedPersistenceEnabled } = await import('../persistence/ownership.ts');
+  const managed = await managedPersistenceEnabled(engine);
 
   const { resolveEntitySlugWithSource } = await import('../entities/resolve.ts');
   const { cosineSimilarity } = await import('./classify.ts');
@@ -123,6 +123,18 @@ export async function writeSingleFact(
     }
   } else {
     degradedDedup = true;
+  }
+
+  if (managed) {
+    // The coordinator's fact intent owns dedup, supersession, the fence row and
+    // the file on a managed brain; the legacy direct writes stay unmanaged.
+    const { publishManagedEntityFacts } = await import('./managed-fact-write.ts');
+    const written = await publishManagedEntityFacts(engine, sourceId, resolvedSlug, [{ fact: factText, kind, notability: 'medium',
+      source: input.provenance, visibility, confidence: input.confidence ?? 1.0, validFrom: new Date(), validUntil,
+      embedding, embedding_model: embeddingModel, sessionId: input.sessionId ?? null }], { supersede: true });
+    const [stored] = await engine.executeRaw<{ entity_slug: string | null }>('SELECT entity_slug FROM facts WHERE id=$1', [written.ids[0]]);
+    return { id: written.ids[0], status: written.superseded ? 'superseded' : written.inserted ? 'inserted' : 'duplicate', entity_slug: stored?.entity_slug ?? null,
+      valid_until: validUntil, degraded_dedup: degradedDedup };
   }
 
   // Dedup + supersession decision (same candidates + threshold as the pipeline).

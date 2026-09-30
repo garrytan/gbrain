@@ -33,7 +33,8 @@ import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../core/engine.ts';
 import type { EnrichCandidate, PageType } from '../core/types.ts';
 import { operations, OperationError } from '../core/operations.ts';
-import { assertUnmanagedCanonicalWriter } from '../core/persistence/maintenance.ts';
+import { maintenancePreflight, publishMaintenancePage, type MaintenanceAuthority } from '../core/persistence/prepared-maintenance.ts';
+import { preserveCanonicalFences } from '../core/cycle/concept-publication.ts';
 import type { WriteReceipt } from '../core/persistence/types.ts';
 import type { OperationContext } from '../core/operations.ts';
 import { configureGatewayIfUninitialized, isAvailable, chat, getChatModel, withBudgetTracker } from '../core/ai/gateway.ts';
@@ -340,6 +341,8 @@ interface EnrichOneCtx {
   done: Set<string>;
   signal?: AbortSignal;
   config: ReturnType<typeof loadConfig>;
+  /** Managed brains publish through the maintenance coordinator (#5280); null when unmanaged. */
+  maintenance: MaintenanceAuthority | null;
 }
 
 async function enrichOne(ctx: EnrichOneCtx, candidate: EnrichCandidate): Promise<void> {
@@ -439,12 +442,20 @@ async function enrichOneLocked(ctx: EnrichOneCtx, candidate: EnrichCandidate): P
     enriched_at: new Date().toISOString(),
     enriched_by: ENRICHED_BY,
   };
-  const content = serializeMarkdown(newFrontmatter, parsed.body, page.timeline ?? '', {
+  // The model owns the prose only: the page's facts/takes fences are carried
+  // over verbatim so publication never expires fence facts or deletes takes.
+  const content = serializeMarkdown(newFrontmatter, preserveCanonicalFences(page, parsed.body), page.timeline ?? '', {
     type: page.type,
     title: page.title,
     tags,
   });
 
+  if (ctx.maintenance) {
+    await publishMaintenancePage(engine, ctx.maintenance, slug, content, { expectedRevision: snapshot.revision });
+    ctx.result.pages_enriched++;
+    ctx.done.add(completedKey(sourceId, slug));
+    return;
+  }
   const putPageOp = operations.find((o) => o.name === 'put_page');
   if (!putPageOp) throw new Error('put_page operation missing (gbrain build issue)');
   const opCtx: OperationContext = {
@@ -475,7 +486,6 @@ export async function runEnrichCore(
   signal?: AbortSignal,
 ): Promise<EnrichResult> {
   if (!opts.sourceId) throw new Error('runEnrichCore: opts.sourceId is required');
-  if (!opts.dryRun) await assertUnmanagedCanonicalWriter(engine, 'enrich');
 
   const result: EnrichResult = {
     candidates_considered: 0,
@@ -544,6 +554,9 @@ export async function runEnrichCore(
   // permanent instead of decaying (the intended retry channel; --force is
   // the immediate one).
   if (pending.length === 0) return result;
+  // #5280: a managed brain publishes through the maintenance coordinator; the
+  // preflight refuses a missing canonical owner before any model spend.
+  const maintenance = opts.dryRun ? null : await maintenancePreflight(engine, opts.sourceId);
 
   const body = async () => {
     const oneCtx: EnrichOneCtx = {
@@ -557,6 +570,7 @@ export async function runEnrichCore(
       done,
       signal,
       config,
+      maintenance,
     };
 
     let lastFlush = 0;

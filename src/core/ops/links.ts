@@ -1,4 +1,4 @@
-import { assertUnmanagedCanonicalWriter } from '../persistence/maintenance.ts';
+import { coordinatedManualLinkWrite } from '../persistence/manual-links.ts';
 /**
  * Links + graph operation cluster — pure move from operations.ts (v0.46.x
  * tranche 1). MANAGED_LINK_SOURCES stays exported (test suite + operations.ts
@@ -76,7 +76,6 @@ const add_link: Operation = {
       }
     }
     if (ctx.dryRun) return { dry_run: true, action: 'add_link', from: p.from, to: p.to };
-    await assertUnmanagedCanonicalWriter(ctx.engine, 'add_link');
     // v114 (#1941): default omitted provenance to 'manual' (NOT the engine's
     // 'markdown' default) so hand/tool-created CLI edges are honestly manual,
     // and forbid forging the reconciliation-managed built-ins.
@@ -97,7 +96,11 @@ const add_link: Operation = {
     await requireWritablePage(ctx, p.from as string, 'add_link', 'from');
     await requireWritablePage(ctx, p.to as string, 'add_link', 'to');
     try {
-      await ctx.engine.addLink( // gbrain-allow-direct-insert: add_link MCP op is the explicit canonical surface for manual link creation; auto-link reconciliation runs separately via auto_link post-hook
+      // #5280: a managed brain takes the coordinated database-only path.
+      const managed = await coordinatedManualLinkWrite(ctx, 'add_link', p.from as string, p.to as string, (engine, sourceId) =>
+        engine.addLink(p.from as string, p.to as string, (p.context as string) || '', linkType, linkSource, undefined, undefined, // gbrain-allow-direct-insert: coordinated manual link inside withCoordinatedWrite
+          { fromSourceId: sourceId, toSourceId: sourceId, originSourceId: sourceId }));
+      if (!managed) await ctx.engine.addLink( // gbrain-allow-direct-insert: add_link MCP op is the explicit canonical surface for manual link creation; auto-link reconciliation runs separately via auto_link post-hook
         p.from as string, p.to as string,
         (p.context as string) || '', linkType,
         linkSource, undefined, undefined,
@@ -130,19 +133,22 @@ const remove_link: Operation = {
   handler: async (ctx, p) => {
     enforceClientSlugFence(ctx, p.from as string, 'remove_link');
     if (ctx.dryRun) return { dry_run: true, action: 'remove_link', from: p.from, to: p.to };
-    await assertUnmanagedCanonicalWriter(ctx.engine, 'remove_link');
     const linkOpts = ctx.sourceId
       ? { fromSourceId: ctx.sourceId, toSourceId: ctx.sourceId }
       : undefined;
-    // #4527: report how many edges actually died — an unconditional
-    // `{ status: 'ok' }` made a zero-match delete (typo'd slug, wrong
-    // link_type, already removed) indistinguishable from a real removal.
-    const removed = await ctx.engine.removeLink(
+    const remove = (engine: typeof ctx.engine, opts: typeof linkOpts) => engine.removeLink(
       p.from as string, p.to as string,
       (p.link_type as string) || undefined,
       (p.link_source as string) || undefined,
-      linkOpts,
+      opts,
     );
+    // #4527: report how many edges actually died — an unconditional
+    // `{ status: 'ok' }` made a zero-match delete (typo'd slug, wrong
+    // link_type, already removed) indistinguishable from a real removal.
+    // #5280: a managed brain takes the coordinated database-only path.
+    const managed = await coordinatedManualLinkWrite(ctx, 'remove_link', p.from as string, p.to as string,
+      (engine, sourceId) => remove(engine, { fromSourceId: sourceId, toSourceId: sourceId }));
+    const removed = managed ? managed.value : await remove(ctx.engine, linkOpts);
     return { status: 'ok', removed };
   },
   cliHints: { name: 'unlink', aliases: ['link-rm'], positional: ['from', 'to'] },

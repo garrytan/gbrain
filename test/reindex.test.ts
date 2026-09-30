@@ -109,9 +109,13 @@ describe('gbrain reindex --markdown (v0.32.7)', () => {
     expect(rows.every(r => Number(r.chunker_version) === MARKDOWN_CHUNKER_VERSION)).toBe(true);
   });
 
-  test('idempotent: --no-embed re-run ignores contextual mode drift it cannot repair', async () => {
+  test('idempotent: --no-embed stamps the contextual mode of the pages it re-chunks', async () => {
     await seedLegacyPage('note-e', 'body e');
     await runReindex(engine, ['--markdown', '--no-embed']);
+    const [stamped] = await engine.executeRaw<{ contextual_retrieval_mode: string | null }>(
+      `SELECT contextual_retrieval_mode FROM pages WHERE slug = 'note-e'`,
+    );
+    expect(stamped.contextual_retrieval_mode).toBe('title');
     const second = await runReindex(engine, ['--markdown', '--no-embed']);
     expect(second.pending).toBe(0);
     expect(second.reindexed).toBe(0);

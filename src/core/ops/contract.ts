@@ -45,6 +45,7 @@ export type ErrorCode =
   | 'provenance_required'  // remember: provenance missing or empty
   | 'unavailable'          // a required dependency cannot serve (no API key, gateway down, model refusal)
   | 'budget_unsatisfiable' // RESERVED in v1 — schema-listed, never returned
+  | 'embedding_budget_below_worst_case' // #5680: migration cap below its worst-case authorization; refused before any change
   // eslint-disable-next-line @typescript-eslint/ban-types
   | (string & {});      // OPEN union for forward-compat (eE7 / D13)
 

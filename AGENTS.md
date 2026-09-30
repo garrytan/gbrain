@@ -95,9 +95,11 @@ writing or reviewing an operation, consult `src/core/operations.ts` for the cont
   `gbrain db-repair --yes` to apply safe fixes. All three are engine-free — they
   work while the database is down. Full loop:
   [`docs/ENGINES.md`](./docs/ENGINES.md#engine-detection-and-access-repair).
-  Doctor residue (`timeline_history`, `derived_visibility`, unsealed pages):
-  preview `gbrain repair`, then `gbrain repair <kind> --apply` on the brain host
-  after the user agrees ([repair guide](./docs/guides/repair.md)). A refused
+  Doctor residue (`timeline_history`, `derived_visibility`, `safe_index_pending`):
+  preview `gbrain doctor --remediation-plan` (or `gbrain repair`), then, after the
+  user agrees, `gbrain doctor --remediate --yes --include-repairs --max-usd <n>`
+  or `gbrain repair <kind> --apply` on the brain host. After an upgrade, follow
+  [recover after upgrading](./docs/guides/repair.md#recover-after-upgrading-to-this-release). A refused
   write names its reason and recovery command
   ([write refusal reasons](./docs/guides/write-refusals.md)).
 - **Migrate / upgrade:** `gbrain upgrade` (binary self-update + schema migrations + post-upgrade prompts),
@@ -111,14 +113,22 @@ writing or reviewing an operation, consult `src/core/operations.ts` for the cont
   <dataset.jsonl>` runs against an isolated in-memory PGLite
   per question — your `~/.gbrain` is never opened. Full guide:
   [`docs/eval-bench.md`](./docs/eval-bench.md).
-- **Drive the brain to a target health score:** the one-command
-  loop. `gbrain doctor --remediation-plan --json` previews what would be
-  fixed; `gbrain doctor --remediate --yes --target-score 90 --max-usd 5`
-  walks a dependency-ordered plan, re-checking score between every step and
-  refusing to spend past the cost cap. Stale extraction uses source-scoped
-  database pages, including DB-only pages; it does not require a repository
-  sync first. Empty brains (no entity pages) or unconfigured embedding
-  keys hit a `max_reachable_score` ceiling and bail with what's missing.
+- **Drive the brain to a target health score:** preview, then agree.
+  `gbrain doctor --remediation-plan --json` previews job steps and the
+  PROTECTED repair steps (each marked "requires user agreement", with its
+  exact command); after the user agrees,
+  `gbrain doctor --remediate --yes --include-repairs --target-score 90 --max-usd 5`
+  runs the repairs (even when the score target is unreachable) and walks the
+  dependency-ordered job plan, re-checking score between steps. The cap is
+  cumulative across `--resume`; a paid step that would exceed it is not
+  started while free steps still run. Without `--include-repairs`, repair
+  steps are listed as skipped. `--json` classifies each finding `cleared`,
+  `pending`, `consent_required`, `operator_required` or `unsupported`.
+  Stale extraction uses source-scoped database pages, including DB-only
+  pages; it does not require a repository sync first. Empty brains (no
+  entity pages) or unconfigured embedding keys hit a `max_reachable_score`
+  ceiling: job steps stop with what's missing, while included repair steps
+  still run.
   Three phase handlers (synthesize / patterns / consolidate) are
   PROTECTED — only trusted local callers can submit them; MCP cannot.
   Reference: [`docs/architecture/topologies.md`](./docs/architecture/topologies.md).

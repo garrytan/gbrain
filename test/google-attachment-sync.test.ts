@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
+import { withGoogleAccount } from './helpers/connector-fixture.ts';
 import { parseGoogleSourceConfig, runGoogleSync } from '../src/core/google/google-source.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { createConnectorFixture, json, options, sourceCheckpoint } from './helpers/connector-fixture.ts';
@@ -31,14 +32,14 @@ test('normal managed Gmail sync persists attachment receipts without marking his
   for (const engine of engines) {
     const f = await source(engine, config);
     const cfg = parseGoogleSourceConfig(config, f.dir);
-    const result = await runGoogleSync(engine, f.id, cfg, options, gmailFetch);
+    const result = await runGoogleSync(engine, f.id, cfg, options, withGoogleAccount(gmailFetch));
     expect(result.added).toBe(1);
     const [page] = await engine.executeRaw<{ frontmatter: Record<string, any>; compiled_truth: string }>('SELECT frontmatter,compiled_truth FROM pages WHERE source_id=$1', [f.id]);
     expect(page.frontmatter.gmail_attachment_receipts.messages[0].inspection).toMatchObject({ state: 'present', attachments: [{ filename: 'synthetic-report.pdf', fetched: false, indexed: false }] });
     expect(page.compiled_truth).toContain('not downloaded; not indexed');
     expect(JSON.stringify(await sourceCheckpoint(engine, f.id))).not.toContain('gmail_attachment_backfill');
     await disposePersistenceConsumer(engine);
-    expect((await runGoogleSync(engine, f.id, cfg, options, gmailFetch)).added).toBe(0);
+    expect((await runGoogleSync(engine, f.id, cfg, options, withGoogleAccount(gmailFetch))).added).toBe(0);
     expect(await engine.executeRaw('SELECT id FROM pages WHERE source_id=$1', [f.id])).toHaveLength(1);
   }
 }), 120_000);

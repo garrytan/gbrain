@@ -12,7 +12,10 @@ import { assertPersistenceAccepting, foregroundWriteCompletions, startPersistenc
 import { assertSyncEntryOrigin, discoverManagedSync, resolveManagedSyncContext, readSyncContent, readSyncFile, syncGit, type SyncDiscovery } from './sync-discovery.ts';
 import { assertSyncPageOrigin, sameSyncOrigin, syncOriginScope } from './sync-origin.ts';
 import { assertManagedSyncActive, assertSyncDispatchActive, managedSyncAuthority, validateSyncAuthority, validateManagedSyncOptions, syncProcessingOptions, SYNC_PROCESSING_KEYS, type SyncAuthority, type SyncProcessingOptions } from './sync-authority.ts';
-import type { SyncIntent } from './sync-prepare.ts';
+import { prepareManagedSyncMutation, type SyncIntent } from './sync-prepare.ts';
+import { inspectUnchanged, screeningRequest } from './noop-kernel.ts';
+import type { GBrainConfig } from '../config.ts';
+import { join } from 'node:path';
 import { currentCompanyBrainSync, getCompanyBrainProfile, readCompanyBrainPlan } from '../company-brain/profile.ts';
 import { readCommittedBlob } from '../company-brain/revision.ts';
 import { refreshProjectionStatistics } from '../search/projection-statistics.ts';
@@ -361,6 +364,16 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
       phase = 'admission';
       const prior = await getWriteRequest(engine, cursor.authority.writer.principal, pending.requestId);
       assertActive();
+      // #5470: a frozen import whose publication would change nothing advances the cursor without an admission.
+      if (!prior && await unchangedSyncImport(engine, cursor, pending, config)) {
+        const skipped: Cursor = { ...cursor, index: cursor.index + 1, counts: { ...cursor.counts } }; delete skipped.pending;
+        cursor = await saveCursor(engine, key, cursor, skipped);
+        opts.onProgress?.({ phase: 'managed_sync.page_committed', bankedFiles: cursor.index });
+        assertActive();
+        // A skipped entry still counts toward the caller's slice, so a sliced run yields at the same positions.
+        if (slice && (cursor.index - sliceFirstIndex >= slice.maxPages || performance.now() - sliceStarted >= slice.maxMs)) return result(cursor, 'partial', 'writer_yield');
+        continue;
+      }
       const admitting = cursor;
       const row = prior ?? await retryWriteAdmission(pending.requestId, remaining => engine.transaction(async tx => {
         assertActive();
@@ -442,5 +455,29 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
       }
     }
     throw error;
+  }
+}
+
+/**
+ * #5470 no-op screen for working-tree and company-profile sync: runs the sync
+ * preparer on the frozen, unadmitted entry. A rename, a canonical overlay or a
+ * working-tree file that differs from the imported bytes is always admitted.
+ */
+async function unchangedSyncImport(engine: BrainEngine, cursor: Cursor, pending: Pending, config: GBrainConfig): Promise<boolean> {
+  const intent = pending.intent;
+  if (intent.kind !== 'managed_sync_import' || intent.renameFrom || pending.pageId === null || typeof intent.path !== 'string' || typeof intent.content !== 'string') return false;
+  try {
+    const snapshot = await engine.readPageSnapshot(pending.slug, { sourceId: cursor.sourceId, includeDeleted: true });
+    const row = screeningRequest({ source_id: cursor.sourceId, source_incarnation: cursor.incarnation, slug: pending.slug, page_id: pending.pageId,
+      worktree_id: cursor.binding.worktree_id, authority: cursor.authority.writer, intent, request_id: pending.requestId });
+    const prepared = await prepareManagedSyncMutation(engine, row, config);
+    if (prepared.file || prepared.target === 'skill_bundle') return false;
+    const file = { root: cursor.root, path: join(cursor.root, intent.path), content: intent.content };
+    if ((await inspectUnchanged(engine, { prepared: { ...prepared, target: 'page', file }, snapshot, sourcePath: intent.sourcePath, databaseOnly: false,
+      embeddingRequested: !prepared.deferEmbedding && !config.embedding_disabled && !!config.embedding_model?.trim() })).admitReason) return false;
+    await prepared.validate?.(engine);
+    return true;
+  } catch {
+    return false;
   }
 }

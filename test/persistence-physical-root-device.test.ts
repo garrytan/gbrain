@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -41,7 +41,8 @@ test('device-only change is recognized only with a non-zero matching birth time 
 });
 
 for (const kind of testBackends()) describe(`physical root device change (${kind})`, () => {
-  const directory = mkdtempSync(join(tmpdir(), 'gbrain-root-device-'));
+  // The canonical root is the real path: on macOS the temporary directory sits behind the /var -> /private/var symlink.
+  const directory = realpathSync.native(mkdtempSync(join(tmpdir(), 'gbrain-root-device-')));
   let engine: BrainEngine, close: (() => Promise<void>) | undefined;
   beforeAll(async () => {
     if (kind === 'postgres') ({ engine, close } = await isolatedPersistencePostgres(process.env.DATABASE_URL!));
