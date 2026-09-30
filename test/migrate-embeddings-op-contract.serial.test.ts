@@ -46,7 +46,7 @@ import {
 } from '../src/core/ai/gateway.ts';
 import { runEmbedCore } from '../src/commands/embed.ts';
 import { operationsByName, type OperationContext } from '../src/core/operations.ts';
-import { GLOBAL_MIGRATION_LOCK_ID } from '../src/commands/migrate-embeddings.ts';
+import { GLOBAL_MIGRATION_LOCK_ID, EMBEDDING_MIGRATION_RECOVERY } from '../src/commands/migrate-embeddings.ts';
 import {
   MIGRATION_STATE_KEY,
   readMigrationState,
@@ -55,8 +55,8 @@ import {
 } from '../src/core/embedding-migration.ts';
 import { tryAcquireDbLock } from '../src/core/db-lock.ts';
 
-const FROM_MODEL = 'zeroentropyai:zembed-1';
-const FROM_DIMS = 1280;
+const FROM_MODEL = 'voyage:voyage-4';
+const FROM_DIMS = 1024;
 const TO_MODEL = 'openai:text-embedding-3-small';
 const TO_DIMS = 1536;
 
@@ -100,6 +100,7 @@ function expectJsonRoundTrip(res: unknown): void {
 }
 
 interface OpEnvelope {
+  recovery?: typeof EMBEDDING_MIGRATION_RECOVERY;
   status: string;
   reason?: string;
   holder?: string;
@@ -120,7 +121,7 @@ async function runOp(params: Record<string, unknown>): Promise<OpEnvelope> {
 beforeAll(async () => {
   for (const k of [
     'GBRAIN_HOME', 'GBRAIN_EMBEDDING_MODEL', 'GBRAIN_EMBEDDING_DIMENSIONS',
-    'OPENAI_API_KEY', 'ZEROENTROPY_API_KEY', 'VOYAGE_API_KEY', 'DATABASE_URL',
+    'OPENAI_API_KEY', 'VOYAGE_API_KEY', 'VOYAGE_API_KEY', 'DATABASE_URL',
   ]) {
     savedEnv[k] = process.env[k];
     delete process.env[k];
@@ -132,7 +133,7 @@ beforeAll(async () => {
     engine: 'pglite',
     embedding_model: FROM_MODEL,
     embedding_dimensions: FROM_DIMS,
-    zeroentropy_api_key: 'ze-test-fake',
+    voyage_api_key: 'voyage-test-fake',
     openai_api_key: 'sk-test-fake',
   }, null, 2));
 
@@ -140,7 +141,7 @@ beforeAll(async () => {
   configureGateway({
     embedding_model: FROM_MODEL,
     embedding_dimensions: FROM_DIMS,
-    env: { ZEROENTROPY_API_KEY: 'ze-test-fake', OPENAI_API_KEY: 'sk-test-fake' },
+    env: { VOYAGE_API_KEY: 'voyage-test-fake', OPENAI_API_KEY: 'sk-test-fake' },
   });
   installTransport();
 
@@ -174,11 +175,14 @@ describe('migrate_embeddings op envelope contract', () => {
   test('admin scope + localOnly + remote belt-and-braces guard', async () => {
     expect(op.scope).toBe('admin');
     expect(op.localOnly).toBe(true);
+    expect(op.params.source).toBeUndefined();
+    expect(op.params.slugs).toBeUndefined();
     // Belt-and-braces on top of localOnly: anything not strictly
     // remote:false throws before the orchestrator is even imported.
     await expect(
       op.handler(ctx({ remote: true }), { to: TO_MODEL, dim: TO_DIMS }),
     ).rejects.toThrow(/local-only/);
+    await expect(op.handler(ctx({ remote: undefined }), { to: TO_MODEL, dim: TO_DIMS })).rejects.toThrow(/local-only/);
   }, 30000);
 
   test('refused_env: env pointing at a different model flattens to refused/env_override with warning + plan', async () => {
@@ -188,6 +192,7 @@ describe('migrate_embeddings op envelope contract', () => {
     try {
       const res = await runOp({ to: TO_MODEL, dim: TO_DIMS, yes: true });
       expect(res.status).toBe('refused');
+      expect(res.recovery).toBe(EMBEDDING_MIGRATION_RECOVERY);
       expect(res.reason).toBe('env_override');
       expect(res.warning?.triggered).toBe(true);
       const varNames = (res.warning?.vars ?? []).map((v) => v.name);
@@ -221,6 +226,7 @@ describe('migrate_embeddings op envelope contract', () => {
       // the CLI ordering — retarget decision precedes any skip/execute).
       const refused = await runOp({ to: TO_MODEL, dim: TO_DIMS, yes: true });
       expect(refused.status).toBe('refused');
+      expect(refused.recovery).toBe(EMBEDDING_MIGRATION_RECOVERY);
       expect(refused.reason).toBe('retarget_required');
       expect(refused.inflight?.to_model).toBe('voyage:voyage-4');
       expect(refused.inflight?.to_dims).toBe(1024);
@@ -235,6 +241,7 @@ describe('migrate_embeddings op envelope contract', () => {
       // (`p.dry_run !== true` in the guard) and renders the plan instead.
       const dry = await runOp({ to: TO_MODEL, dim: TO_DIMS, dry_run: true });
       expect(dry.status).toBe('planned');
+      expect(dry.recovery).toBeUndefined();
       expect(dry.plan?.to_model).toBe(TO_MODEL);
       expectJsonRoundTrip(dry);
     } finally {
@@ -253,6 +260,7 @@ describe('migrate_embeddings op envelope contract', () => {
     try {
       const res = await runOp({ to: TO_MODEL, dim: TO_DIMS, yes: true });
       expect(res.status).toBe('locked');
+      expect(res.recovery).toBe(EMBEDDING_MIGRATION_RECOVERY);
       expect(res.holder).toBe('migration');
       expect(res.detail).toContain('migration lock');
       expect(res.plan?.to_model).toBe(TO_MODEL);
@@ -262,11 +270,45 @@ describe('migrate_embeddings op envelope contract', () => {
     }
   }, 30000);
 
+  test('provider and apply failures keep failed discriminators and share static recovery guidance', async () => {
+    __setEmbedTransportForTests(async () => { throw new Error('synthetic-private-provider-detail'); });
+    try {
+      const probe = await runOp({ to: TO_MODEL, dim: TO_DIMS, yes: true, max_cost_usd: 1, reranker: 'off' });
+      expect(probe.status).toBe('failed');
+      expect(probe.reason).toContain('Preflight embed');
+      expect(probe.recovery).toBe(EMBEDDING_MIGRATION_RECOVERY);
+      expect(probe.recovery?.docs).toBe('https://github.com/garrytan/gbrain/blob/master/docs/guides/embedding-migration.md#recovery');
+      expect(JSON.stringify(probe)).not.toContain('synthetic-private-provider-detail');
+      await engine.setConfig('embedding_disabled', 'true');
+      const applied = await runOp({ to: TO_MODEL, dim: TO_DIMS, yes: true, max_cost_usd: 1, reranker: 'off' });
+      expect(applied.status).toBe('failed');
+      expect(applied.reason).toContain('Embedding is disabled');
+      expect(applied.recovery).toBe(EMBEDDING_MIGRATION_RECOVERY);
+    } finally { await engine.unsetConfig('embedding_disabled'); installTransport(); }
+  }, 30_000);
+
+  test('incomplete local operation retains its discriminator and recovery guidance', async () => {
+    currentDims = TO_DIMS;
+    __setEmbedTransportForTests(async ({ values }) => ({
+      embeddings: values.map(text => Array(TO_DIMS).fill(text.includes('probe') ? 0.1 : NaN)), usage: { tokens: 8 },
+    }) as never);
+    try {
+      const result = await op.handler(ctx({ sourceId: 'default' }), {
+        to: TO_MODEL, dim: TO_DIMS, yes: true, max_cost_usd: 1, reranker: 'off',
+      }) as OpEnvelope;
+      expect(result.status).toBe('incomplete');
+      expect(result.remaining).toBeGreaterThan(0);
+      expect(result.recovery).toBe(EMBEDDING_MIGRATION_RECOVERY);
+      expectJsonRoundTrip(result);
+    } finally { installTransport(); }
+  }, 30_000);
+
   test('live run completes; second call returns skipped_no_work with the verify payload and zero embed spend', async () => {
     currentDims = TO_DIMS;
     embeddedTexts = [];
-    const completed = await runOp({ to: TO_MODEL, dim: TO_DIMS, yes: true });
+    const completed = await runOp({ to: TO_MODEL, dim: TO_DIMS, yes: true, max_cost_usd: 1, reranker: 'off' });
     expect(completed.status).toBe('completed');
+    expect(completed.recovery).toBeUndefined();
     expect(completed.remaining).toBe(0);
     expect(Number(completed.embedded)).toBeGreaterThan(0);
     expect(completed.verify_search?.status).toBeDefined();
@@ -280,8 +322,9 @@ describe('migrate_embeddings op envelope contract', () => {
     // Converged brain: the DB-verified skip fires on the second call — no
     // work, no spend, verify payload attached.
     embeddedTexts = [];
-    const skipped = await runOp({ to: TO_MODEL, dim: TO_DIMS, yes: true });
+    const skipped = await runOp({ to: TO_MODEL, dim: TO_DIMS, yes: true, reranker: 'off' });
     expect(skipped.status).toBe('skipped_no_work');
+    expect(skipped.recovery).toBeUndefined();
     expect(skipped.verified?.complete).toBe(true);
     expect(skipped.plan?.to_model).toBe(TO_MODEL);
     expectJsonRoundTrip(skipped);

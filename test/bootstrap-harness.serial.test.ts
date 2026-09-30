@@ -42,7 +42,7 @@ import {
   type HarnessDeps,
   type HarnessFlags,
 } from '../src/core/bootstrap/harness.ts';
-import { readHarnessReceiptState, harnessReceiptPath, type HarnessTarget } from '../src/core/bootstrap/format.ts';
+import { readHarnessReceiptState, harnessReceiptPath, type HarnessTarget, type HarnessReceipt } from '../src/core/bootstrap/format.ts';
 import {
   CLAUDE_HOOK_EVENTS,
   CODEX_TOML_BLOCK_BEGIN,
@@ -62,12 +62,18 @@ const TOKEN_B = `gbrain_${'b'.repeat(64)}`;
 const ID_A = '11111111-1111-1111-1111-111111111111';
 const ID_B = '22222222-2222-2222-2222-222222222222';
 const URL = 'http://127.0.0.1:3131/mcp';
+const DEFAULT_MINT_QUEUE = [...'abcdef012345'].map((character, index) => {
+  const digit = (index + 1).toString(16);
+  return { token: `gbrain_${character.repeat(64)}`, id: [8, 4, 4, 4, 12].map(length => digit.repeat(length)).join('-') };
+});
 
 interface Fake {
   deps: HarnessDeps;
   calls: string[][];
   revoked: string[];
   mintCalls: Array<{ name: string; scopes: string[]; sourceGrant?: string[] }>;
+  minted: Array<{ token: string; id: string }>;
+  events: string[];
   out: string[];
   err: string[];
   home: string;
@@ -101,18 +107,32 @@ function makeFake(opts: {
   const mintCalls: Array<{ name: string; scopes: string[]; sourceGrant?: string[] }> = [];
   const out: string[] = [];
   const err: string[] = [];
-  const mintQueue = opts.mintQueue ?? [{ token: TOKEN_A, id: ID_A }, { token: TOKEN_B, id: ID_B }];
+  const mintQueue = opts.mintQueue ?? DEFAULT_MINT_QUEUE;
+  const minted: Array<{ token: string; id: string }> = [];
+  const events: string[] = [];
   let mintIdx = 0;
   const health = opts.health ?? { ok: true, version: VERSION, engine: 'postgres' };
+  const registrations = new Map<string, { url: string; token: string }>();
 
   const runner: ExecRunner = async (argv: string[]) => {
     calls.push(argv);
     if (argv[0] === 'claude' && argv[2] === 'get') {
-      return opts.mcpGet ? opts.mcpGet(argv[3]) : { code: 1, stdout: '', stderr: 'No MCP server found' };
+      if (opts.mcpGet) return opts.mcpGet(argv[3]);
+      const current = registrations.get(argv[3]);
+      return current
+        ? { code: 0, stdout: `Scope: User\nType: http\nURL: ${current.url}\nHeaders:\n  Authorization: Bearer ${current.token}`, stderr: '' }
+        : { code: 1, stdout: '', stderr: 'No MCP server found' };
     }
     if (argv[0] === 'claude' && argv[2] === 'add') {
+      if (!opts.mcpAddCode) {
+        const url = argv.find(value => /^https?:\/\//.test(value));
+        const header = argv.find(value => value.startsWith('Authorization: Bearer '));
+        if (!url || !header) throw new Error('fixture received an incomplete Claude MCP registration');
+        registrations.set(argv[3], { url, token: header.slice('Authorization: Bearer '.length) });
+      }
       return { code: opts.mcpAddCode ?? 0, stdout: '', stderr: opts.mcpAddCode ? 'add failed' : '' };
     }
+    if (argv[0] === 'claude' && argv[2] === 'remove') registrations.delete(argv[3]);
     return { code: 0, stdout: '', stderr: '' };
   };
 
@@ -132,6 +152,8 @@ function makeFake(opts: {
       // must fail with reason 'auth' or every apply trips the impostor guard.
       const known = new Set([TOKEN_A, TOKEN_B, ...mintQueue.map((m) => m.token)]);
       if (!known.has(probeToken)) return { ok: false, reason: 'auth', message: 'HTTP 401' };
+      const issued = minted.find(m => m.token === probeToken);
+      if (issued) events.push(`probe:${issued.id}`);
       return (opts.probeOk ?? true)
         ? { ok: true, identity: 'brain "test" (source default)' }
         : { ok: false, reason: 'auth', message: 'HTTP 401' };
@@ -141,13 +163,18 @@ function makeFake(opts: {
     opencodeConfig,
     mint: async (o) => {
       mintCalls.push(o as { name: string; scopes: string[]; sourceGrant?: string[] });
-      const m = mintQueue[Math.min(mintIdx++, mintQueue.length - 1)];
-      return { token: m.token, id: m.id, name: 'bootstrap-harness', scopes: ['read', 'write'] };
+      const m = mintQueue[mintIdx++];
+      if (!m) throw new Error('fixture mint queue exhausted; supply another independent token');
+      minted.push(m);
+      events.push(`mint:${m.id}`);
+      return { token: m.token, id: m.id, name: o.name, scopes: [...o.scopes] };
     },
     revokeById: async (id: string) => {
       revoked.push(id);
+      events.push(`revoke:${id}`);
       return true;
     },
+    installSharedSkills: async () => ({ status: 'pending', reason: 'shared_skills_unsupported' }),
     pgliteLiveServe: () => opts.pgliteLive ?? false,
     resolveHookSource: async (explicit) => {
       if (opts.hookSourceError) throw opts.hookSourceError;
@@ -162,7 +189,7 @@ function makeFake(opts: {
     log: (l) => out.push(l),
     logError: (l) => err.push(l),
   };
-  return { deps, calls, revoked, mintCalls, out, err, home, userSettings, codexConfig, opencodeConfig };
+  return { deps, calls, revoked, mintCalls, minted, events, out, err, home, userSettings, codexConfig, opencodeConfig };
 }
 
 function flags(extra: string[] = []): HarnessFlags {
@@ -248,7 +275,12 @@ describe('full apply', () => {
     expect(toml).toContain(CODEX_TOML_BLOCK_BEGIN);
     // #4574: http_headers inline-table credential — never inline bearer_token
     // (codex-cli >=0.149 rejects it at config load, bricking every session).
-    expect(toml).toContain(`http_headers = { Authorization = "Bearer ${TOKEN_A}" }`);
+    expect(toml).toContain(`http_headers = { Authorization = "Bearer ${TOKEN_B}" }`);
+    expect(toml).not.toContain(TOKEN_A);
+    expect((readJson(f.opencodeConfig).mcp as Record<string, { headers: { Authorization: string } }>).gbrain.headers.Authorization)
+      .toBe(`Bearer ${f.minted[2].token}`);
+    expect(new Set(f.minted.map(m => m.id)).size).toBe(3);
+    expect(new Set(f.minted.map(m => m.token)).size).toBe(3);
     expect(toml).not.toContain('bearer_token');
     // Harness-lane codex hooks: hooks.json written beside the TARGET's
     // config.toml (never the ambient global), trust entry in the same toml.
@@ -268,9 +300,14 @@ describe('full apply', () => {
 
     const state = readHarnessReceiptState(f.home);
     expect(state.state).toBe('ok');
-    const receipt = (state as { receipt: { targets: Array<{ state: string }>; token: { id?: string } } }).receipt;
+    const receipt = (state as { receipt: HarnessReceipt }).receipt;
     expect(receipt.targets.every((t) => t.state === 'confirmed')).toBe(true);
     expect(receipt.token.id).toBe(ID_A);
+    expect(receipt.harness_tokens).toEqual({
+      'claude-code': { id: ID_A, minted: true, name: 'bootstrap-harness-claude-code' },
+      codex: { id: ID_B, minted: true, name: 'bootstrap-harness-codex' },
+      opencode: { id: f.minted[2].id, minted: true, name: 'bootstrap-harness-opencode' },
+    });
     // first run: nothing to rotate
     expect(f.revoked).toEqual([]);
   });
@@ -286,32 +323,45 @@ describe('full apply', () => {
   test('re-run rotates mint-first [C7]: one entry per event, previous token revoked by id AFTER confirm', async () => {
     const f = makeFake();
     expect(await applyHarness(flags(), f.deps)).toBe(0);
+    const priorIds = f.minted.map(m => m.id);
     // second run: existing registration points at OUR url → remove+re-add
     const f2deps: HarnessDeps = {
       ...f.deps,
-      runner: async (argv: string[]) => {
-        f.calls.push(argv);
-        if (argv[0] === 'claude' && argv[2] === 'get') {
-          return { code: 0, stdout: `Scope: User\nType: http\nURL: ${URL}\nHeaders:\n  Authorization: Bearer ${TOKEN_A}`, stderr: '' };
-        }
-        return { code: 0, stdout: '', stderr: '' };
+      revokeById: async id => {
+        const current = readHarnessReceiptState(f.home);
+        expect(current.state).toBe('ok');
+        if (current.state !== 'ok') throw new Error('expected current write-ahead receipt');
+        expect(current.receipt.targets.every(target => target.state === 'confirmed')).toBe(true);
+        for (const replacement of f.minted.slice(3)) expect(f.events).toContain(`probe:${replacement.id}`);
+        return f.deps.revokeById!(id);
       },
     };
     expect(await applyHarness(flags(), f2deps)).toBe(0);
-    expect(f.revoked).toEqual([ID_A]); // previous id, only after full confirm
+    expect(f.revoked).toEqual(priorIds);
+    expect(new Set(f.minted.map(m => m.id)).size).toBe(6);
+    expect(new Set(f.minted.map(m => m.token)).size).toBe(6);
+    expect(f.calls.some(argv => argv[0] === 'claude' && argv[2] === 'remove')).toBe(true);
+    for (const replacement of f.minted.slice(3)) {
+      expect(f.events.indexOf(`mint:${replacement.id}`)).toBeLessThan(f.events.indexOf(`revoke:${priorIds[0]}`));
+      expect(f.events.indexOf(`probe:${replacement.id}`)).toBeLessThan(f.events.indexOf(`revoke:${priorIds[0]}`));
+      expect(f.revoked).not.toContain(replacement.id);
+    }
     const settings = readJson(f.userSettings);
     const groups = (settings.hooks as Record<string, unknown[]>).SessionStart;
     const entries = groups.flatMap((g) => ((g as { hooks?: unknown[] }).hooks ?? []) as unknown[]);
     expect(entries.length).toBe(1); // marker dedupe, not accumulation
     expect((settings.permissions as { allow: string[] }).allow).toEqual(['mcp__gbrain']);
     expect(readFileSync(f.codexConfig, 'utf8').split(CODEX_TOML_BLOCK_BEGIN).length - 1).toBe(1);
-    expect(readFileSync(f.codexConfig, 'utf8')).toContain(TOKEN_B);
+    expect(readFileSync(f.codexConfig, 'utf8')).toContain(f.minted[4].token);
+    expect(readFileSync(f.codexConfig, 'utf8')).not.toContain(TOKEN_B);
+    expect(await statusHarness(parseHarnessArgs(['--status']), f.deps)).toBe(0);
   });
 
   test('wiring failure leaves the OLD token unrevoked and the receipt retryable [C7/F1]', async () => {
     const f = makeFake();
     expect(await applyHarness(flags(), f.deps)).toBe(0);
-    const f2 = makeFake({ mcpAddCode: 1, mintQueue: [{ token: TOKEN_B, id: ID_B }] });
+    const priorIds = f.minted.map(m => m.id);
+    const f2 = makeFake({ mcpAddCode: 1, mintQueue: DEFAULT_MINT_QUEUE.slice(3) });
     // same home so the prior receipt is visible
     const deps: HarnessDeps = { ...f2.deps, gbrainHome: f.home, userSettingsPath: f.userSettings, codexConfig: f.codexConfig };
     const code = await applyHarness(flags(), deps);
@@ -319,7 +369,9 @@ describe('full apply', () => {
     expect(f2.revoked).toEqual([]); // old token still live
     const state = readHarnessReceiptState(f.home);
     const receipt = (state as { receipt: { targets: Array<{ state: string; kind: string }>; token: { previous_ids?: string[] } } }).receipt;
-    expect(receipt.token.previous_ids).toEqual([ID_A]); // kept for the next converge [X4]
+    expect(receipt.token.previous_ids).toEqual(priorIds);
+    expect(f2.minted).toHaveLength(3);
+    expect(f2.minted.every(m => !priorIds.includes(m.id))).toBe(true);
     expect(receipt.targets.some((t) => t.state === 'failed' && t.kind === 'mcp')).toBe(true);
   });
 
@@ -490,7 +542,7 @@ describe('--status', () => {
 
   test('green path: token recovered from the codex block, identity verified, exit 0', async () => {
     const f = makeFake({ mcpGet: () => ({ code: 1, stdout: '', stderr: 'nope' }) });
-    expect(await applyHarness(flags(), f.deps)).toBe(0);
+    expect(await applyHarness(flags(['--harness', 'codex']), f.deps)).toBe(0);
     const code = await statusHarness(parseHarnessArgs(['--status']), f.deps);
     expect(code).toBe(0);
     expect(f.out.join('\n')).toMatch(/token: OK .*codex config block/);

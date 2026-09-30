@@ -26,6 +26,11 @@ import {
 } from '../src/core/operations.ts';
 import type { OperationContext } from '../src/core/operations.ts';
 import { cliAliases, printOpHelp } from '../src/cli.ts';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { _resetPackCacheForTests } from '../src/core/schema-pack/registry.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 const V = 114;
 
@@ -153,29 +158,40 @@ describe('upgrade-path — existing rows survive the constraint swap', () => {
 });
 
 describe('add_link op — provenance + managed-built-in guard (OV4A)', () => {
-  beforeAll(seedPages);
+  // #4655 checks resolve the active pack from GBRAIN_HOME and
+  // GBRAIN_SCHEMA_PACK; pin both (plus a cold resolver cache) so a pack or
+  // home left behind by an earlier file in the shard cannot change which
+  // link verbs are declared mid-file.
+  let packHome: string;
+  beforeAll(async () => {
+    packHome = mkdtempSync(join(tmpdir(), 'gbrain-link-source-pack-'));
+    await seedPages();
+  });
+  afterAll(() => rmSync(packHome, { recursive: true, force: true }));
+  const addLink = (ctx: OperationContext, params: Record<string, unknown>) => {
+    _resetPackCacheForTests();
+    return withEnv({ GBRAIN_HOME: packHome, GBRAIN_SCHEMA_PACK: undefined },
+      () => operationsByName['add_link'].handler(ctx, params));
+  };
 
   // #4655: link verbs below come from gbrain-base's declared link_types —
   // the add_link op now rejects explicit undeclared verbs when a pack resolves.
   test('threads custom provenance through to the row', async () => {
-    const op = operationsByName['add_link'];
-    await op.handler(makeCtx(), { from: 'lsrc-a', to: 'lsrc-b', link_type: 'works_at', link_source: 'citation-graph' });
+    await addLink(makeCtx(), { from: 'lsrc-a', to: 'lsrc-b', link_type: 'works_at', link_source: 'citation-graph' });
     const links = await engine.getLinks('lsrc-a');
     expect(links.some(l => (l as any).to_slug === 'lsrc-b' && (l as any).link_source === 'citation-graph' && (l as any).link_type === 'works_at')).toBe(true);
   });
 
   test("omitted link_source defaults to 'manual' (not 'markdown')", async () => {
-    const op = operationsByName['add_link'];
-    await op.handler(makeCtx(), { from: 'lsrc-a', to: 'lsrc-b', link_type: 'attended' });
+    await addLink(makeCtx(), { from: 'lsrc-a', to: 'lsrc-b', link_type: 'attended' });
     const links = await engine.getLinks('lsrc-a');
     const row = links.find(l => (l as any).link_type === 'attended');
     expect((row as any)?.link_source).toBe('manual');
   });
 
   test('rejects an undeclared link_type before inserting the row (#4655)', async () => {
-    const op = operationsByName['add_link'];
     await expect(
-      op.handler(makeCtx(), { from: 'lsrc-a', to: 'lsrc-b', link_type: 'definitely_not_a_verb' }),
+      addLink(makeCtx(), { from: 'lsrc-a', to: 'lsrc-b', link_type: 'definitely_not_a_verb' }),
     ).rejects.toMatchObject({
       code: 'invalid_params',
       message: expect.stringContaining("link type 'definitely_not_a_verb' is not declared"),
@@ -187,32 +203,28 @@ describe('add_link op — provenance + managed-built-in guard (OV4A)', () => {
   });
 
   test('rejects an undeclared link_type for remote callers too (#4655)', async () => {
-    const op = operationsByName['add_link'];
     await expect(
-      op.handler(makeCtx({ remote: true }), { from: 'lsrc-a', to: 'lsrc-b', link_type: 'definitely_not_a_verb' }),
+      addLink(makeCtx({ remote: true }), { from: 'lsrc-a', to: 'lsrc-b', link_type: 'definitely_not_a_verb' }),
     ).rejects.toMatchObject({ code: 'invalid_params' });
   });
 
   test('an omitted link_type stays unchecked (untyped-edge default)', async () => {
-    const op = operationsByName['add_link'];
     await expect(
-      op.handler(makeCtx(), { from: 'lsrc-a', to: 'lsrc-b' }),
+      addLink(makeCtx(), { from: 'lsrc-a', to: 'lsrc-b' }),
     ).resolves.toMatchObject({ status: 'ok' });
   });
 
   for (const managed of MANAGED_LINK_SOURCES) {
     test(`rejects managed built-in '${managed}'`, async () => {
-      const op = operationsByName['add_link'];
-      await expect(
-        op.handler(makeCtx(), { from: 'lsrc-a', to: 'lsrc-b', link_type: 'mentions', link_source: managed }),
+        await expect(
+        addLink(makeCtx(), { from: 'lsrc-a', to: 'lsrc-b', link_type: 'mentions', link_source: managed }),
       ).rejects.toThrow(/reconciliation-managed/);
     });
   }
 
   test("'manual' is allowed (not in the managed set)", async () => {
-    const op = operationsByName['add_link'];
     await expect(
-      op.handler(makeCtx(), { from: 'lsrc-a', to: 'lsrc-b', link_type: 'related_to', link_source: 'manual' }),
+      addLink(makeCtx(), { from: 'lsrc-a', to: 'lsrc-b', link_type: 'related_to', link_source: 'manual' }),
     ).resolves.toMatchObject({ status: 'ok' });
   });
 });

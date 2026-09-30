@@ -150,6 +150,7 @@ for _e2e_var in $(env | grep -oE '^(CONDUCTOR_|MCP_|OPENCLAW_|HERMES_|GROK_|OPEN
     GBRAIN_CI_DISABLE_TEST_ENV_FILE) ;;  # CI forbids loading checkout-local .env.testing — keep through Bun startup
     GBRAIN_TEST_DB) ;;  # explicit schema-reset opt-in for service hosts; schema-drift still requires a test-shaped DB name
     GBRAIN_PGBOUNCER_URL|GBRAIN_PGBOUNCER_DIRECT_URL|GBRAIN_CI_REQUIRE_PGBOUNCER) ;; # explicit pooler test target and execution requirement
+    GBRAIN_PGBOUNCER_E2E_URL|GBRAIN_PGBOUNCER_E2E_DB) ;; # backend-matrix pooled target (scripts/e2e-backend-matrix.txt)
     GBRAIN_E2E_FILE_TIMEOUT) ;;  # per-file cap override — read AFTER this scrub, so it must survive it
     GBRAIN_E2E_ALLOW_DB) ;;  # #3485 name-floor opt-in — the guard's own error
                              # message tells operators to set it; stripping it
@@ -173,7 +174,14 @@ else
   # phantom-redirect lives in test/ (its PGLite arm runs in the unit suite) but
   # its Postgres arm is only reachable through a DATABASE_URL-bearing lane —
   # the unit wrappers strip the URL (#3485), so this lane must carry it.
-  files=(test/e2e/*.test.ts test/phantom-redirect-engine-parity.test.ts)
+  # Key-gated live files no CI job provides keys for; run them by name (docs/TESTING.md).
+  live_key_only=" test/e2e/openrouter-anthropic-subagent-replay.live.test.ts test/e2e/openrouter-deepseek-subagent-replay.live.test.ts test/e2e/voyage-multimodal.test.ts test/e2e/voyage-rerank-live.test.ts "
+  files=()
+  for f in test/e2e/*.test.ts; do
+    case "$live_key_only" in *" $f "*) continue ;; esac
+    files+=("$f")
+  done
+  files+=(test/phantom-redirect-engine-parity.test.ts)
 fi
 
 # Weighted across isolated databases, sequential within each shard.
@@ -205,6 +213,19 @@ if [ "${#files[@]}" -eq 0 ]; then
   exit 0
 fi
 
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "ERROR: python3 is required to validate native E2E JUnit reports." >&2
+  exit 1
+fi
+
+if [ -n "${COVERAGE_DIR:-}" ]; then
+  mkdir -p "$(dirname "$COVERAGE_DIR")"
+  if ! mkdir "$COVERAGE_DIR"; then
+    echo "ERROR: COVERAGE_DIR must be a new, unused directory for each E2E invocation." >&2
+    exit 1
+  fi
+fi
+
 # PGLite snapshot fast path — ~90 e2e files boot in-memory PGLite; a cold boot
 # replays every migration (~3.5x per booting file). Every other runner already
 # activates this; the env scrub above deliberately keep-lists the var. Placed
@@ -221,12 +242,107 @@ if [ -n "${GBRAIN_PGLITE_SNAPSHOT:-}" ] && [ "${GBRAIN_PGLITE_SNAPSHOT#/}" = "$G
   export GBRAIN_PGLITE_SNAPSHOT="$PWD/$GBRAIN_PGLITE_SNAPSHOT"
 fi
 
+# Backend matrix (refactor wave 1): files listed in scripts/e2e-backend-matrix.txt
+# run a second time with DATABASE_URL pointed at the transaction-mode PgBouncer
+# (GBRAIN_PGBOUNCER_E2E_URL, same database, reached through the pooler). The
+# pooler's prepare mode must be explicit in that URL, because only the 6543
+# port auto-detects it and CI poolers listen elsewhere. Both passes must
+# execute the same, non-zero number of tests.
+BACKEND_MATRIX_FILE="scripts/e2e-backend-matrix.txt"
+backend_matrix=" "
+backend_matrix_timeouts=" "
+[ -f "$BACKEND_MATRIX_FILE" ] && while IFS= read -r line || [ -n "$line" ]; do
+  case "$line" in ''|'#'*|'!'*) continue ;; esac
+  backend_matrix+="${line%%[[:space:]]*} "
+  case "$line" in
+    *pooled-timeout=*) backend_matrix_timeouts+="${line%%[[:space:]]*}=${line##*pooled-timeout=} " ;;
+  esac
+done < "$BACKEND_MATRIX_FILE"
+# The pooled target is either a full URL (GBRAIN_PGBOUNCER_E2E_URL) or a
+# database name behind the pooler named by GBRAIN_PGBOUNCER_URL
+# (GBRAIN_PGBOUNCER_E2E_DB); the second form creates that database through
+# GBRAIN_PGBOUNCER_DIRECT_URL on first use and always pins prepare=false.
+PGBOUNCER_E2E_URL="${GBRAIN_PGBOUNCER_E2E_URL:-}"
+PGBOUNCER_E2E_DB="${GBRAIN_PGBOUNCER_E2E_DB:-}"
+if [ -z "$PGBOUNCER_E2E_URL" ] && [ -n "$PGBOUNCER_E2E_DB" ]; then
+  if [ -z "${GBRAIN_PGBOUNCER_URL:-}" ]; then
+    echo "ERROR: GBRAIN_PGBOUNCER_E2E_DB needs GBRAIN_PGBOUNCER_URL (the pooler to reach it through)." >&2
+    exit 2
+  fi
+  PGBOUNCER_E2E_URL="${GBRAIN_PGBOUNCER_URL%/*}/${PGBOUNCER_E2E_DB}?prepare=false"
+fi
+pooled_db_ready=0
+if [ -n "$PGBOUNCER_E2E_URL" ]; then
+  case "$PGBOUNCER_E2E_URL" in
+    *[?\&]prepare=false|*[?\&]prepare=false\&*) ;;
+    *)
+      echo "ERROR: GBRAIN_PGBOUNCER_E2E_URL must set the pooler prepare mode explicitly (?prepare=false)." >&2
+      exit 2
+      ;;
+  esac
+fi
+backend_matrix_report=()
+
 pass_files=0
 fail_files=0
 fail_list=()
 total_pass=0
 total_fail=0
 file_idx=0
+
+completed_e2e_passes() {
+  python3 - "${1#./}" "$E2E_TMP_HOME/current.junit.xml" "$E2E_TMP_HOME/current.log" <<'PY'
+import re
+import sys
+import xml.etree.ElementTree as ET
+
+expected, report, log = sys.argv[1:]
+try:
+    root = ET.parse(report).getroot()
+    suites = root.findall('testsuite')
+    if root.tag != 'testsuites' or len(suites) != 1 or suites[0].get('file') != expected:
+        raise ValueError('wrong selected-file suite')
+    for node in [root, *root.iter('testsuite')]:
+        cases = list(node.iter('testcase'))
+        skipped = sum(case.find('skipped') is not None for case in cases)
+        if any(case.find('failure') is not None or case.find('error') is not None for case in cases):
+            raise ValueError('failed testcase')
+        for key, count in [('tests', len(cases)), ('failures', 0), ('skipped', skipped)]:
+            if node.get(key) != str(count):
+                raise ValueError(f'inconsistent {key} count')
+        if node.get('errors', '0') != '0':
+            raise ValueError('reported errors')
+    tests = int(root.get('tests'))
+    skipped = int(root.get('skipped'))
+    header = False
+    counts = {}
+    final = None
+    with open(log) as stream:
+        for raw in stream:
+            line = re.sub(r'\x1b\[[0-9;]*m', '', raw.rstrip('\n'))
+            header = header or line in (expected + ':', '::group::' + expected + ':')
+            count = re.fullmatch(r'\s*(\d+) (pass|fail|skip|todo)\s*', line)
+            if count:
+                value, kind = count.groups()
+                if kind == 'pass':
+                    counts = {'skip': 0, 'todo': 0}
+                counts[kind] = int(value)
+            summary = re.match(r'^Ran (\d+) tests? across (\d+) files?\. \[[0-9.]+(?:ms|s)\]', line)
+            if summary:
+                final = (int(summary[1]), int(summary[2]), counts.copy())
+    if not header or final is None:
+        raise ValueError('missing final console report')
+    final_tests, final_files, counts = final
+    if final_tests != tests or final_files != 1 or counts.get('pass') != tests - skipped or counts.get('fail') != 0:
+        raise ValueError('missing or inconsistent final console report')
+    if counts.get('skip', 0) + counts.get('todo', 0) != skipped:
+        raise ValueError('inconsistent skipped/todo count')
+    print(tests - skipped)
+except (OSError, ET.ParseError, ValueError, TypeError) as error:
+    print(f'E2E report validation: {error}', file=sys.stderr)
+    sys.exit(1)
+PY
+}
 
 for f in "${files[@]}"; do
   name=$(basename "$f")
@@ -278,7 +394,7 @@ for f in "${files[@]}"; do
   # word-splitting into extra gtimeout arguments or breaking the 4x math.
   case "$file_timeout" in ''|*[!0-9]*) file_timeout=180 ;; esac
   case "$f" in
-    */skills.test.ts|*/zeroentropy-live.test.ts|*/serve-http-multi-agent.test.ts) file_timeout=$((file_timeout * 4)) ;;
+    */skills.test.ts|*/serve-http-multi-agent.test.ts) file_timeout=$((file_timeout * 4)) ;;
   esac
   if command -v gtimeout >/dev/null 2>&1; then
     TIMEOUT_CMD="gtimeout $file_timeout"
@@ -287,16 +403,72 @@ for f in "${files[@]}"; do
   else
     TIMEOUT_CMD=""
   fi
-  rc=0
-  $TIMEOUT_CMD bun test --timeout=60000 ${COVERAGE_ARGS[@]+"${COVERAGE_ARGS[@]}"} "$f" > "$E2E_TMP_HOME/current.log" 2>&1 &
-  ACTIVE_E2E_PID=$!
-  wait "$ACTIVE_E2E_PID" || rc=$?
-  ACTIVE_E2E_PID=""
-  output=$(cat "$E2E_TMP_HOME/current.log")
+  in_backend_matrix=0
+  case "$backend_matrix" in *" ${f#./} "*) in_backend_matrix=1 ;; esac
+  run_e2e_pass() {
+    # $1 = pass label; remaining args = env assignments for this pass.
+    local pass_label="$1"
+    shift
+    FILE_HOME="$E2E_TMP_HOME/file-$file_idx-$pass_label"
+    mkdir -p "$FILE_HOME/.gbrain"
+    rc=0
+    p=0
+    rm -f "$E2E_TMP_HOME/current.junit.xml"
+    env "$@" HOME="$FILE_HOME" GBRAIN_HOME="$FILE_HOME" $TIMEOUT_CMD bun test --timeout=60000 --reporter=junit --reporter-outfile="$E2E_TMP_HOME/current.junit.xml" ${COVERAGE_ARGS[@]+"${COVERAGE_ARGS[@]}"} "$f" > "$E2E_TMP_HOME/current.log" 2>&1 &
+    ACTIVE_E2E_PID=$!
+    wait "$ACTIVE_E2E_PID" || rc=$?
+    ACTIVE_E2E_PID=""
+    output=$(cat "$E2E_TMP_HOME/current.log")
+    rm -rf "$FILE_HOME"
+    if [ "$rc" -eq 0 ] && ! p=$(completed_e2e_passes "$f"); then
+      echo "FAILED: $name did not produce a complete native Bun report for the selected file"
+      rc=1
+    fi
+  }
+  if [ "$in_backend_matrix" = "1" ]; then
+    run_e2e_pass direct GBRAIN_TEST_BACKEND=postgres-direct
+  else
+    run_e2e_pass direct
+  fi
+  if [ "$rc" -eq 0 ] && [ "$in_backend_matrix" = "1" ] && [ -n "${DATABASE_URL:-}" ]; then
+    direct_passes="$p"
+    if [ -z "$PGBOUNCER_E2E_URL" ]; then
+      if [ "${GBRAIN_CI_REQUIRE_PGBOUNCER:-0}" = "1" ]; then
+        echo "$output" | tail -8
+        echo "FAILED: $name is in $BACKEND_MATRIX_FILE but neither GBRAIN_PGBOUNCER_E2E_URL nor GBRAIN_PGBOUNCER_E2E_DB is set, so its PgBouncer pass cannot run"
+        rc=1
+      fi
+    else
+      echo "--- $name [pgbouncer] ---"
+      echo "$output" | tail -8
+      psql "$DATABASE_URL" -At -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE pid != pg_backend_pid() AND datname = current_database()" >/dev/null 2>&1 || true
+      if [ "$pooled_db_ready" = "0" ] && [ -n "$PGBOUNCER_E2E_DB" ] && [ -n "${GBRAIN_PGBOUNCER_DIRECT_URL:-}" ]; then
+        bun scripts/lib/ensure-e2e-database.ts "$GBRAIN_PGBOUNCER_DIRECT_URL" "$PGBOUNCER_E2E_DB" || echo "WARN: could not create $PGBOUNCER_E2E_DB; the pooled pass will report the connection error"
+        pooled_db_ready=1
+      fi
+      pooled_timeout_cmd="$TIMEOUT_CMD"
+      case "$backend_matrix_timeouts" in
+        *" ${f#./}="*)
+          pooled_timeout="${backend_matrix_timeouts#* "${f#./}"=}"
+          pooled_timeout="${pooled_timeout%% *}"
+          case "$pooled_timeout" in ''|*[!0-9]*) ;; *) [ -n "$TIMEOUT_CMD" ] && TIMEOUT_CMD="${TIMEOUT_CMD%% *} $pooled_timeout" ;; esac
+          ;;
+      esac
+      run_e2e_pass pgbouncer DATABASE_URL="$PGBOUNCER_E2E_URL" GBRAIN_TEST_BACKEND=pgbouncer
+      TIMEOUT_CMD="$pooled_timeout_cmd"
+      if [ "$rc" -eq 0 ] && { [ "$p" -eq 0 ] || [ "$p" -ne "$direct_passes" ]; }; then
+        echo "$output"
+        echo "FAILED: $name executed $direct_passes tests on postgres-direct but $p on pgbouncer (must be equal and non-zero)"
+        rc=1
+      fi
+      backend_matrix_report+=("$name postgres-direct=$direct_passes pgbouncer=$p")
+      [ "$rc" -eq 0 ] && p=$((p + direct_passes))
+    fi
+  fi
   if [ "$rc" -eq 0 ]; then
     if [ "$f" = "test/e2e/pgbouncer-teardown.test.ts" ] && \
        [ "${GBRAIN_CI_REQUIRE_PGBOUNCER:-0}" = "1" ] && \
-       ! printf '%s\n' "$output" | grep -qE '^[[:space:]]*[1-9][0-9]* pass$'; then
+       [ "$p" -eq 0 ]; then
       fail_files=$((fail_files + 1))
       fail_list+=("$name")
       echo "$output"
@@ -304,8 +476,6 @@ for f in "${files[@]}"; do
       continue
     fi
     pass_files=$((pass_files + 1))
-    # Extract pass/fail counts from bun's summary (e.g., "123 pass")
-    p=$(echo "$output" | grep -oE '[0-9]+ pass' | tail -1 | grep -oE '[0-9]+' || echo 0)
     total_pass=$((total_pass + p))
     echo "$output" | tail -8
   else
@@ -328,6 +498,12 @@ echo "E2E SUMMARY (sequential execution)"
 echo "========================================"
 echo "Files: $((pass_files + fail_files)) total, $pass_files passed, $fail_files failed"
 echo "Tests: $total_pass passed, $total_fail failed"
+if [ "${#backend_matrix_report[@]}" -gt 0 ]; then
+  echo "Backend matrix (executed tests per backend):"
+  for line in "${backend_matrix_report[@]}"; do
+    echo "  $line"
+  done
+fi
 
 # --- HOME isolation verification: fail loud on any out-of-isolation write ---
 # Runs regardless of test pass/fail; isolation breach is higher-severity than
@@ -375,6 +551,10 @@ fi
 # complete:true means the lcov data represents the whole E2E lane.
 if [ -n "${COVERAGE_DIR:-}" ]; then
   LCOV_COUNT=$(find "$COVERAGE_DIR" -name 'lcov.info' 2>/dev/null | grep -c '^' || true)
-  printf '{"lane":"e2e","sha":"%s","lcovCount":%s,"complete":true}\n' \
-    "$(git rev-parse HEAD)" "${LCOV_COUNT:-0}" > "$COVERAGE_DIR/lane-manifest.json"
+  LANE="e2e"
+  [ -z "$RUNNER_SHARD" ] || LANE="e2e-$shard_n"
+  RUN_SHA=$(git rev-parse HEAD)
+  printf '%s\n' "${files[@]}" > "$COVERAGE_DIR/executed-files.txt"
+  printf '{"lane":"%s","sha":"%s","lcovCount":%s,"complete":true}\n' \
+    "$LANE" "$RUN_SHA" "${LCOV_COUNT:-0}" > "$COVERAGE_DIR/lane-manifest.json"
 fi

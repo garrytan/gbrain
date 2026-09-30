@@ -177,7 +177,8 @@ export function buildVisibilityClause(
   opts?: {
     /**
      * #4352 — untrusted-caller predicate: hide pages whose frontmatter
-     * carries `visibility: private` (absent visibility defaults to 'world').
+     * carries `visibility: private` (absent visibility defaults to 'world',
+     * or to 'private' on derived atoms and synthesized concepts).
      * Set from SearchOpts.excludePrivate by both engines; callers resolve
      * trust + the config gate via resolveExcludePrivatePages
      * (search/private-visibility.ts). Off by default — trusted local reads

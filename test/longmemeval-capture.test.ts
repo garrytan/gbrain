@@ -7,7 +7,7 @@ import { describe, test, expect } from 'bun:test';
 import type { HybridSearchMeta, SearchResult } from '../src/core/types.ts';
 import { buildCaptureExtras, poolKey } from '../src/eval/longmemeval/capture.ts';
 import { buildSlugToRawMap } from '../src/eval/longmemeval/metrics.ts';
-import type { LongMemEvalQuestion } from '../src/eval/longmemeval/adapter.ts';
+import { sessionSlug, type LongMemEvalQuestion } from '../src/eval/longmemeval/adapter.ts';
 
 function row(slug: string, chunk_id: number, over: Partial<SearchResult> = {}): SearchResult {
   return {
@@ -23,6 +23,7 @@ const Q = {
   answer_session_ids: ['Sess_A'],
 } as unknown as LongMemEvalQuestion;
 const MAP = buildSlugToRawMap(Q);
+const A = sessionSlug('q', 'Sess_A'), B = sessionSlug('q', 'Sess_B'), C = sessionSlug('q', 'Sess_C');
 
 const autocutMeta = (kept: number, total: number): HybridSearchMeta =>
   ({ vector_enabled: true, autocut: { applied: true, signal: 'rerank', cut: kept, kept, total, gapRatio: 0.5 } } as unknown as HybridSearchMeta);
@@ -36,11 +37,11 @@ describe('poolKey', () => {
 
 describe('buildCaptureExtras', () => {
   const pool = [
-    row('chat/sess-b', 2, { rerank_score: 0.9 }),
-    row('chat/sess-a', 1, { rerank_score: 0.8 }),
-    row('chat/sess-c', 3, { alias_hit: true }),                       // unscored alias hop
-    row('chat/sess-c', 4, { exact_lookup: 'title' }),                 // unscored exact lookup
-    row('chat/sess-b', 5, { rerank_score: 0.1, relational_pinned: true }),
+    row(B, 2, { rerank_score: 0.9 }),
+    row(A, 1, { rerank_score: 0.8 }),
+    row(C, 3, { alias_hit: true }),                       // unscored alias hop
+    row(C, 4, { exact_lookup: 'title' }),                 // unscored exact lookup
+    row(B, 5, { rerank_score: 0.1, relational_pinned: true }),
   ];
   // Pre-rerank (RRF) order differs from pool order; the last pool row is absent from it.
   const preRerank = [pool[1], pool[0], pool[2], pool[3]];
@@ -75,7 +76,7 @@ describe('buildCaptureExtras', () => {
   test('autocut_kept_keys: present iff autocut recorded a decision AND kept === results.length; equals results.map(poolKey)', () => {
     const results = pool.slice(0, 2);
     const exact = buildCaptureExtras({ pool, preRerank, meta: autocutMeta(2, 5), results, slugToRaw: MAP });
-    expect(exact.autocut_kept_keys).toEqual(['chat/sess-b#2', 'chat/sess-a#1']);
+    expect(exact.autocut_kept_keys).toEqual([`${B}#2`, `${A}#1`]);
     expect(exact.autocut_kept_keys).toEqual(results.map(poolKey));
     // A further limit/budget slice hid the exact set → absent (replay falls back to count/gap validation).
     const sliced = buildCaptureExtras({ pool, preRerank, meta: autocutMeta(3, 5), results, slugToRaw: MAP });

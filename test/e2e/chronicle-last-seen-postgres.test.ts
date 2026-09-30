@@ -59,6 +59,22 @@ d('getLastSeen (live Postgres) bounds to <= asof/today', () => {
     // Future event: a scheduled Q3 launch on 2026-08-01.
     ids.fut = await insertPage({ slug: 'life/events/2026-08-01-fut', type: 'event', effectiveDate: '2026-08-01T10:00:00Z', frontmatter: '{"event":{"who":["people/sarah-chen"],"kind":"event"}}' });
     await insertProjection(ids.meeting, ids.fut, '2026-08-01', 'Planned Q3 launch');
+    // Exact who matching: kim-example-2's sighting must not count for the
+    // kim-example prefix, nor axb-example's for the a_b-example underscore.
+    await insertPage({ slug: 'people/kim-example', type: 'person' });
+    ids.kim2 = await insertPage({ slug: 'life/events/2026-06-19-kim2', type: 'event', effectiveDate: '2026-06-19T10:00:00Z', frontmatter: '{"event":{"who":["people/kim-example-2","people/axb-example"],"kind":"meeting"}}' });
+    await insertProjection(ids.meeting, ids.kim2, '2026-06-19', 'Sync with kim 2');
+    ids.kimLink = await insertPage({ slug: 'life/events/2026-06-10-kim', type: 'event', effectiveDate: '2026-06-10T10:00:00Z', frontmatter: '{"event":{"who":["[[people/kim-example|Kim]]"],"kind":"meeting"}}' });
+    await insertProjection(ids.meeting, ids.kimLink, '2026-06-10', 'Sync with kim');
+    // Day ordering: a 23:30 New York event projected on 06-21 (03:30 UTC on
+    // 06-22) must not outrank dave's own row dated 06-22.
+    ids.dave = await insertPage({ slug: 'people/dave-example', type: 'person' });
+    ids.late = await insertPage({ slug: 'life/events/2026-06-21-late', type: 'event', effectiveDate: '2026-06-22T03:30:00Z', frontmatter: '{"event":{"who":["people/dave-example"],"kind":"call"}}' });
+    await insertProjection(ids.meeting, ids.late, '2026-06-21', 'Late call');
+    await engine.executeRaw(
+      `INSERT INTO timeline_entries (page_id, date, source, summary, detail) VALUES ($1, '2026-06-22'::date, 'manual', 'spoke at startup-1', '')`,
+      [ids.dave],
+    );
   });
 
   afterAll(async () => { await teardownDB(); });
@@ -73,5 +89,18 @@ d('getLastSeen (live Postgres) bounds to <= asof/today', () => {
     const later = await engine.getLastSeen('people/sarah-chen', { asof: '2026-08-02', sourceId: 'default' });
     expect(later.last_date).toBe('2026-08-01');
     expect(later.days_ago).toBe(1);
+  });
+
+  test('who matches the exact slug or a wikilink to it, never a substring or LIKE wildcard', async () => {
+    const kim = await engine.getLastSeen('people/kim-example', { asof: '2026-06-25', sourceId: 'default' });
+    expect(kim.last_date).toBe('2026-06-10');
+    const underscore = await engine.getLastSeen('people/a_b-example', { asof: '2026-06-25', sourceId: 'default' });
+    expect(underscore.last_date).toBeNull();
+  });
+
+  test('the newest projected day wins over a later instant on the previous local day', async () => {
+    const dave = await engine.getLastSeen('people/dave-example', { asof: '2026-06-22', sourceId: 'default' });
+    expect(dave.last_date).toBe('2026-06-22');
+    expect(dave.days_ago).toBe(0);
   });
 });

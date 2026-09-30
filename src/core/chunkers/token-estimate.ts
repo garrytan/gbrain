@@ -32,18 +32,27 @@ let tiktokenInitialized = false;
 // surprise OpenAI bill. Same cl100k_base tokenizer the embedding path
 // actually uses, so cost estimates match actual billing within tokenizer
 // noise.
+function loadEncoder(): void {
+  if (tiktokenInitialized) return;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const m = require('@dqbd/tiktoken');
+    tiktokenEncoder = m.get_encoding('cl100k_base');
+  } catch {
+    tiktokenEncoder = null;
+  }
+  tiktokenInitialized = true;
+}
+
+/** Whether estimateTokens counts with cl100k (false = the len/4 fallback). */
+export function cl100kAvailable(): boolean {
+  loadEncoder();
+  return tiktokenEncoder !== null;
+}
+
 export function estimateTokens(text: string): number {
   if (!text) return 0;
-  if (!tiktokenInitialized) {
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const m = require('@dqbd/tiktoken');
-      tiktokenEncoder = m.get_encoding('cl100k_base');
-    } catch {
-      tiktokenEncoder = null;
-    }
-    tiktokenInitialized = true;
-  }
+  loadEncoder();
   if (tiktokenEncoder) {
     try {
       return tiktokenEncoder.encode(text).length;

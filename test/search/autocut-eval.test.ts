@@ -13,7 +13,7 @@
  * enumeration, flat curves for ambiguous breadth, and an adversarial case
  * where the reranker mis-scores a relevant doc below a cliff). It measures
  * the precision/recall tradeoff of the CUT DECISION on those distributions.
- * It does NOT claim that ZeroEntropy's live scores look like these fixtures
+ * It does NOT claim that Voyage's live scores look like these fixtures
  * on a specific brain — that empirical confirmation is the optional
  * gbrain-evals PrecisionMemBench run. What this gate DOES guarantee, in CI:
  *  - autocut lifts mean precision well above the no-autocut baseline,

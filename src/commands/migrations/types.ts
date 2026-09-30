@@ -32,6 +32,12 @@ export interface OrchestratorOpts {
   hostDir?: string;
   /** Skip autopilot install (Phase F). */
   noAutopilotInstall: boolean;
+  dbOnlyExport?: {
+    root: string;
+    sourceId: string;
+    confirmQuiesced: boolean;
+    backup?: 'operator_verified' | 'acknowledged_unprotected';
+  };
 }
 
 export interface OrchestratorPhaseResult {
@@ -57,4 +63,6 @@ export interface Migration {
   featurePitch: FeaturePitch;
   /** Run the migration. Must be idempotent. */
   orchestrator: (opts: OrchestratorOpts) => Promise<OrchestratorResult>;
+  preview?: (opts: OrchestratorOpts) => Promise<unknown>;
+  reconcile?: boolean;
 }

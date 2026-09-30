@@ -28,7 +28,9 @@ import {
   resolveChildCliInvocation,
   writeChildOutcomeFile,
   type ChildOutcome,
+  parseChildOutcome,
 } from '../src/core/minions/job-isolation.ts';
+import { LocalConfigurationError, isLocalConfigurationError } from '../src/core/minions/configuration-error.ts';
 import { UnrecoverableError } from '../src/core/minions/types.ts';
 import { RateLeaseUnavailableError } from '../src/core/minions/handlers/subagent.ts';
 
@@ -107,6 +109,31 @@ describe('outcome file round-trip', () => {
 });
 
 describe('handler-error encode → reconstruct (instanceof parity with inline mode)', () => {
+  test('versioned typed configuration outcome roundtrips without disclosing error text', () => {
+    const encoded = encodeHandlerError(new LocalConfigurationError('postgres_cancellation_unavailable', 'postgres://private:GSTACK_EXAMPLE_NONCE@example.invalid/db'));
+    const raw = JSON.stringify(encoded);
+    expect(raw).not.toContain('GSTACK_EXAMPLE_NONCE');
+    const decoded = parseChildOutcome(raw, raw.length);
+    expect(decoded.outcome).toBe('error');
+    if (decoded.outcome !== 'error') throw new Error('expected error');
+    const error = reconstructHandlerError(decoded);
+    expect(isLocalConfigurationError(error)).toBe(true);
+    expect((error as LocalConfigurationError).reasonCode).toBe('postgres_cancellation_unavailable');
+  });
+
+  test('unknown tags, missing versions and matching generic messages cannot assert permanent provenance', () => {
+    for (const payload of [
+      { errorKind: 'local_configuration', reasonCode: 'postgres_cancellation_unavailable' },
+      { errorKind: 'local_configuration', protocolVersion: 1, reasonCode: 'unknown' },
+      { errorKind: 'local_configuration', protocolVersion: 999, reasonCode: 'postgres_cancellation_unavailable' },
+      { errorKind: 'generic', protocolVersion: 1, reasonCode: 'postgres_cancellation_unavailable' },
+    ]) {
+      const raw = JSON.stringify({ outcome: 'error', message: 'postgres_cancellation_unavailable', ...payload });
+      const outcome = parseChildOutcome(raw, raw.length);
+      if (outcome.outcome !== 'error') throw new Error('expected error');
+      expect(isLocalConfigurationError(reconstructHandlerError(outcome))).toBe(false);
+    }
+  });
   test('UnrecoverableError survives the boundary', () => {
     const enc = encodeHandlerError(new UnrecoverableError('bad config, never retry'));
     expect(enc.outcome).toBe('error');
@@ -161,9 +188,19 @@ describe('child CLI invocation resolution', () => {
     expect(inv).toEqual({ cmd: '/opt/custom/gbrain', argsPrefix: [] });
   });
 
-  test('compiled binary next', () => {
+  test('current source entrypoint precedes PATH', () => {
     const inv = resolveChildCliInvocation({}, '/usr/bin/bun', '/repo/src/cli.ts', () => '/usr/local/bin/gbrain');
-    expect(inv).toEqual({ cmd: '/usr/local/bin/gbrain', argsPrefix: [] });
+    expect(inv).toEqual({ cmd: '/usr/bin/bun', argsPrefix: ['/repo/src/cli.ts'] });
+  });
+
+  test('current compiled executable precedes PATH', () => {
+    expect(resolveChildCliInvocation({}, '/opt/current/gbrain', '/$bunfs/root/cli.ts', () => '/opt/old/gbrain'))
+      .toEqual({ cmd: '/opt/current/gbrain', argsPrefix: [] });
+  });
+
+  test('PATH is the fallback when the current runtime is not a CLI', () => {
+    expect(resolveChildCliInvocation({}, '/usr/bin/bun', '/repo/test.ts', () => '/opt/gbrain'))
+      .toEqual({ cmd: '/opt/gbrain', argsPrefix: [] });
   });
 
   test('bun-dev fallback when no binary resolves', () => {

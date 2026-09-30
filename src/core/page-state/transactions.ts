@@ -1,5 +1,5 @@
 import type { PGlite, Transaction } from '@electric-sql/pglite';
-import type postgres from 'postgres';
+import type postgres from '#postgres'
 
 /** Sibling savepoints must finish in order; children receive a separate queue. */
 function serial<T>() {

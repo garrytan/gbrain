@@ -130,9 +130,8 @@ describe('background-work registry', () => {
 
   test('empty registry (no test drainers) resolves fast', async () => {
     // Production sinks may be registered, but they fast-path on empty pending
-    // sets. This just asserts the call resolves without throwing.
-    await drainAllBackgroundWorkForCliExit({ timeoutMs: 10 });
-    expect(true).toBe(true);
+    // sets. The exit drain must resolve, never reject.
+    await expect(drainAllBackgroundWorkForCliExit({ timeoutMs: 10 })).resolves.toBeUndefined();
   });
 });
 

@@ -5,9 +5,9 @@
  * gateway to openai:text-embedding-3-large @ 1536 at process start and
  * registers that config as the reset baseline. Before the fix,
  * resetGateway() wiped the pin to _config = null; the next file's beforeAll
- * engine-connect then reconfigured from the SHIPPED default (zembed-1 @
- * 1280) and every 1536-d fixture in that file failed with
- * `expected 1280 dimensions, not 1536`. Which file pairs collided depended
+ * engine-connect then reconfigured from the SHIPPED default (voyage-4 @
+ * 1024) and every 1536-d fixture in that file failed with
+ * `expected 1024 dimensions, not 1536`. Which file pairs collided depended
  * on shard bin-packing, so adding ANY test file reshuffled the mines.
  *
  * These assertions pin the contract so it cannot silently rot again.
@@ -34,11 +34,11 @@ describe('resetGateway baseline restore (#3554)', () => {
 
   test('resetGateway() overwrites a file-local config back to the baseline', () => {
     configureGateway({
-      embedding_model: 'zeroentropyai:zembed-1',
-      embedding_dimensions: 1280,
+      embedding_model: 'voyage:voyage-4',
+      embedding_dimensions: 1024,
       env: {},
     });
-    expect(getEmbeddingDimensions()).toBe(1280);
+    expect(getEmbeddingDimensions()).toBe(1024);
     resetGateway();
     expect(getEmbeddingModel()).toBe('openai:text-embedding-3-large');
     expect(getEmbeddingDimensions()).toBe(1536);

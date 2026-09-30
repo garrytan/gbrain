@@ -5,7 +5,7 @@
  *   VOYAGE key present, any keyed embedding pick   → NO write (bundle default resolves to it)
  *   no key, keyed non-voyage pick (openai)         → search.reranker.enabled=false
  *   no key, keyless (resolvedModel undefined)      → NO write (recovery re-init contract)
- *   zeroentropyai:* pick, no Voyage key            → search.reranker.enabled=false (keyed non-Voyage)
+ *   google:* pick, no Voyage key            → search.reranker.enabled=false (keyed non-Voyage)
  *   existing explicit reranker choice              → NO write (never-clobber)
  */
 import { describe, expect, test } from 'bun:test';
@@ -72,10 +72,10 @@ describe('writeNewInstallRerankerDefault (v0.48.2)', () => {
     });
   });
 
-  test('zeroentropyai pick without a Voyage key is a keyed non-Voyage install → enabled=false (its hosted reranker dies 2026-09-04)', async () => {
+  test('google pick without a Voyage key is a keyed non-Voyage install → enabled=false (no reranker touchpoint)', async () => {
     await withEnv({ VOYAGE_API_KEY: undefined, GBRAIN_HOME: emptyHome() }, async () => {
       const { engine, writes } = stubEngine();
-      await quiet(() => writeNewInstallRerankerDefault(engine, 'zeroentropyai:zembed-1'));
+      await quiet(() => writeNewInstallRerankerDefault(engine, 'google:gemini-embedding-001'));
       expect(writes).toEqual([['search.reranker.enabled', 'false']]);
     });
   });

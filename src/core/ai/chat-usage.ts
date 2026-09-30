@@ -60,6 +60,15 @@ export function currentChatPhase(): string | null {
   return __chatPhaseStore.getStore() ?? null;
 }
 
+/** Successful chat calls counted for one cycle phase (phase containment, dream_paid_loop). */
+export interface ChatCallMeter { calls: number }
+const __chatMeterStore = new AsyncLocalStorage<ChatCallMeter>();
+
+/** Run `fn` counting every successful gateway.chat() inside it on `meter`. */
+export function withChatCallMeter<T>(meter: ChatCallMeter, fn: () => T): T {
+  return __chatMeterStore.run(meter, fn);
+}
+
 /**
  * #4480: sink REGISTRY (stack), not a last-wins scalar. A multi-engine
  * process (migrate-engine source+target, doctor probes, tests) used to lose
@@ -131,6 +140,8 @@ export function recordChatUsage(input: {
     cache_write_tokens?: number;
   };
 }): void {
+  const meter = __chatMeterStore.getStore();
+  if (meter) meter.calls++;
   const sink = _sinks.length > 0 ? _sinks[_sinks.length - 1]!.sink : null;
   if (!sink) return;
   try {

@@ -137,7 +137,13 @@ describe('root OpenClaw plugin manifest', () => {
     expect(manifest.id).toBe(entryId);
     expect(manifest.configSchema).toBeDefined();
     expect(typeof manifest.configSchema).toBe('object');
+    expect(manifest.configSchema.type).toBe('object');
+    expect(manifest.configSchema.properties.workspaceDir.type).toBe('string');
+    expect(manifest.uiHints.database_url.sensitive).toBe(true);
+    expect(manifest.uiHints.openai_api_key.sensitive).toBe(true);
     expect(manifest.contracts?.contextEngines).toContain('gbrain-context');
+    expect(manifest.contracts?.contextEngines).toContain(manifest.id);
+    expect(manifest.kind).toBe('context-engine');
     expect(entrySource).toContain('export function register');
   });
 

@@ -6,14 +6,18 @@
  * renewal and ALL result recording; this module owns spawn → signal → reap →
  * decode:
  *
- *   spawn    — detached (own process group; group signals reach handler
- *              grandchildren even under tini), tini-wrapped when available,
+ *   spawn    — detached, tracking tini's separate child group on Linux;
+ *              escaped descendants remain outside the cleanup guarantee,
  *              stdio ['ignore','inherit','inherit'] so handler logs stream
  *              to the operator; results travel by outcome file, never stdout.
  *   signal   — per-job abort (timeout / cancel / lock-lost /
  *              lock-renewal-failed) → group SIGTERM now, group SIGKILL at
  *              +CHILD_KILL_GRACE_MS (25s — inside the worker's 30s
  *              force-evict window, which stays as an untouched backstop).
+ *              After the direct child exits, termination settles as soon
+ *              as supported Linux proof confirms the owned groups gone;
+ *              without that proof the group is SIGKILLed at once and the
+ *              stop stays unconfirmed. Survivors keep the grace SIGKILL.
  *              Worker shutdown → same SIGTERM (the child's own handler fires
  *              ctx.shutdownSignal, giving handlers the drain window to
  *              finish AND write their outcome) with the SIGKILL backstop.
@@ -33,6 +37,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildSpawnInvocation } from './spawn-helpers.ts';
+import { LocalConfigurationError, isLocalConfigurationError } from './configuration-error.ts';
 import {
   UnrecoverableError,
   ABORT_REASON_TIMEOUT,
@@ -47,11 +52,16 @@ import {
   CHILD_ENV,
   CHILD_KILL_GRACE_MS,
   CHILD_READ_POOL_MAX,
+  childConfigurationError,
   buildChildArgs,
   decodeChildOutcomeFileAsync,
   killProcessGroup,
+  observeTiniChildProcessGroups,
+  captureChildCleanup,
+  confirmChildCleanup,
+  validateChildExecutable,
+  type ChildCleanupSnapshot,
   reconstructHandlerError,
-  unrefTimer,
   type ChildCliInvocation,
 } from './job-isolation.ts';
 
@@ -64,10 +74,9 @@ export class ChildSpawnInfraError extends Error {
   }
 }
 
-/** Child terminated by worker shutdown before it could report. Released with
- *  no attempt burned — routine deploys must not burn attempts (codex-2 #7). */
+/** Shutdown before a report; execution stop requires independent evidence. */
 export class ChildWorkerShutdownError extends Error {
-  constructor(message: string) {
+  constructor(message: string, readonly executionStopped = false) {
     super(message);
     this.name = 'ChildWorkerShutdownError';
   }
@@ -114,6 +123,9 @@ export interface RunJobInChildOpts {
   killGraceMs?: number;
   /** Injectable base env for tests. Default process.env. */
   env?: Record<string, string | undefined>;
+  signalProcessGroup?: typeof killProcessGroup;
+  onConfigurationError?: (error: LocalConfigurationError) => void;
+  onExecutionStopped?: () => void;
 }
 
 interface ChildExit {
@@ -129,10 +141,43 @@ interface ChildExit {
  * them verbatim).
  */
 export async function runJobInChild(opts: RunJobInChildOpts): Promise<unknown> {
+  let executionStopped = false;
+  let configurationError: LocalConfigurationError | undefined;
+  try {
+    return await runJobChildProcess({
+      ...opts,
+      onConfigurationError: error => {
+        configurationError = error;
+        opts.onConfigurationError?.(error);
+      },
+      onExecutionStopped: () => {
+        executionStopped = true;
+        opts.onExecutionStopped?.();
+      },
+    });
+  } catch (error) {
+    if (configurationError) throw configurationError;
+    if (isLocalConfigurationError(error)) throw error;
+    const abortReason = opts.abortSignal.reason instanceof Error ? opts.abortSignal.reason.message : String(opts.abortSignal.reason ?? '');
+    if (opts.shutdownSignal.aborted && (isLocalConfigurationError(opts.shutdownSignal.reason) || !PER_JOB_ABORT_REASONS.has(abortReason))) {
+      throw new ChildWorkerShutdownError('Job child stopped reporting during worker shutdown; cleanup evidence determines whether its claim can be released.', executionStopped);
+    }
+    throw error;
+  }
+}
+
+async function runJobChildProcess(opts: RunJobInChildOpts): Promise<unknown> {
+  const base = opts.env ?? process.env;
+  let executable: string;
+  try { executable = validateChildExecutable(opts.invocation.cmd, base); }
+  catch (error) {
+    if (isLocalConfigurationError(error)) opts.onExecutionStopped?.();
+    throw error;
+  }
   const dir = mkdtempSync(join(tmpdir(), `gbrain-job-${opts.jobId}-`));
   const resultPath = join(dir, 'outcome.json');
   const graceMs = opts.killGraceMs ?? CHILD_KILL_GRACE_MS;
-  const base = opts.env ?? process.env;
+  const signalGroup = opts.signalProcessGroup ?? killProcessGroup;
 
   // Bound the child's pools: sockets die with the process (the isolation
   // win), but per-child footprint must stay small — read pool <= 3, direct
@@ -160,7 +205,7 @@ export async function runJobInChild(opts: RunJobInChildOpts): Promise<unknown> {
     GBRAIN_DIRECT_POOL_SIZE: '1',
   };
 
-  const inv = buildSpawnInvocation(opts.tiniPath, opts.invocation.cmd, [
+  const inv = buildSpawnInvocation(opts.tiniPath, executable, [
     ...opts.invocation.argsPrefix,
     ...buildChildArgs(opts.jobId, base),
   ]);
@@ -174,35 +219,113 @@ export async function runJobInChild(opts: RunJobInChildOpts): Promise<unknown> {
     });
   } catch (e) {
     rmSync(dir, { recursive: true, force: true });
-    const msg = e instanceof Error ? e.message : String(e);
-    throw new ChildSpawnInfraError(`job child spawn failed (${inv.cmd}): ${msg}`);
+    if (['ENOENT', 'EACCES'].includes((e as NodeJS.ErrnoException).code ?? '')) {
+      opts.onExecutionStopped?.();
+      throw childConfigurationError('child_executable_invalid');
+    }
+    throw new ChildSpawnInfraError('Job child could not be spawned.');
   }
 
   let killTimer: ReturnType<typeof setTimeout> | null = null;
+  let directExited = false;
+  let stopPublished = false;
+  let naturalCleanupConfirmed = false;
+  const publishExecutionStopped = (): void => {
+    if (stopPublished) return;
+    stopPublished = true;
+    opts.onExecutionStopped?.();
+  };
+  const directExit = new Promise<ChildExit>((resolve) => {
+    child.once('error', error => {
+      if (child.pid == null && ['ENOENT', 'EACCES'].includes((error as NodeJS.ErrnoException).code ?? '')) publishExecutionStopped();
+      resolve({ code: null, signal: null, spawnErr: error });
+    });
+    child.once('exit', (code, signal) => { directExited = true; resolve({ code, signal }); });
+  });
+  const processGroups = new Set<number>(child.pid ? [child.pid] : []);
+  const observeTiniChildGroup = (): void => {
+    if (opts.tiniPath && child.pid) observeTiniChildProcessGroups(child.pid, processGroups);
+  };
+  const groupObserver = opts.tiniPath ? setInterval(() => {
+    observeTiniChildGroup();
+    if (processGroups.size > 1 && groupObserver != null) clearInterval(groupObserver);
+  }, 25) : null;
+  groupObserver?.unref();
+  let finishTermination!: () => void;
+  const terminationDone = new Promise<void>((resolve) => { finishTermination = resolve; });
+  let cleanupSnapshot: ChildCleanupSnapshot | undefined;
+  let signallingFailed = false;
   let termed = false;
+  let terminationSettled = false;
+  let graceExpired = false;
+  let cleanupPoll: ReturnType<typeof setTimeout> | null = null;
+  const settleTermination = (executionStopped: boolean): void => {
+    if (terminationSettled) return;
+    terminationSettled = true;
+    if (killTimer != null) clearTimeout(killTimer);
+    if (cleanupPoll != null) clearTimeout(cleanupPoll);
+    if (executionStopped) publishExecutionStopped();
+    else {
+      console.error(`[isolation] job ${opts.jobId} (${opts.jobName}): execution stop is unconfirmed ` +
+        `(pid=${child.pid ?? 'unknown'}, platform=${process.platform}); lease expiry and duplicate-side-effect risk remain.`);
+    }
+    finishTermination();
+  };
+  const killGroups = (): void => {
+    try { for (const group of processGroups) signalGroup(group, 'SIGKILL'); }
+    catch { signallingFailed = true; }
+  };
+  const pollCleanup = (delayMs: number): void => {
+    cleanupPoll = setTimeout(() => {
+      cleanupPoll = null;
+      if (terminationSettled || graceExpired) return;
+      if (cleanupSnapshot && confirmChildCleanup(cleanupSnapshot)) settleTermination(true);
+      else pollCleanup(Math.min(delayMs * 2, 500));
+    }, delayMs);
+  };
   const terminate = (): void => {
     if (termed) return;
     termed = true;
+    observeTiniChildGroup();
+    if (groupObserver != null) clearInterval(groupObserver);
     if (child.pid != null) {
-      killProcessGroup(child.pid, 'SIGTERM');
-      killTimer = setTimeout(() => {
-        // Loud on failure (red-team finding): the /bin/kill fallback is the
-        // NORMAL delivery path in Bun-compiled binaries, and a container
-        // without /bin/kill (distroless) would otherwise silently void the
-        // SIGKILL guarantee while the child runs to completion and the job
-        // gets requeued elsewhere (duplicate side effects).
-        if (child.pid != null && child.exitCode == null && child.signalCode == null) {
-          const delivered = killProcessGroup(child.pid, 'SIGKILL');
-          if (!delivered) {
-            console.error(
-              `[isolation] job ${opts.jobId} (${opts.jobName}): group SIGKILL was NOT delivered ` +
-              `to pid ${child.pid} (platform=${process.platform}; is /bin/kill present?). ` +
-              `The child may still be running — the SIGKILL guarantee is degraded on this host.`,
-            );
+      cleanupSnapshot = captureChildCleanup(child.pid, processGroups);
+      if (opts.tiniPath && processGroups.size < 2) cleanupSnapshot.supported = false;
+      for (const group of processGroups) {
+        const delivered = signalGroup(group, 'SIGTERM');
+        if (!delivered && cleanupSnapshot.observed.some(entry => entry.group === group && entry.state !== 'Z' && entry.state !== 'X')) signallingFailed = true;
+      }
+      void directExit.then(() => {
+        if (!directExited || terminationSettled || graceExpired) return;
+        if (!signallingFailed && cleanupSnapshot?.supported) {
+          pollCleanup(25);
+          return;
+        }
+        killGroups();
+        settleTermination(false);
+      });
+      killTimer = setTimeout(async () => {
+        graceExpired = true;
+        if (cleanupPoll != null) clearTimeout(cleanupPoll);
+        let executionStopped = false;
+        try {
+          killGroups();
+          await new Promise<void>(resolve => {
+            const timer = setTimeout(resolve, 250);
+            void directExit.then(() => { clearTimeout(timer); resolve(); });
+          });
+          if (directExited && !signallingFailed && cleanupSnapshot?.supported) {
+            await new Promise(resolve => setTimeout(resolve, 10));
+            executionStopped = confirmChildCleanup(cleanupSnapshot);
           }
+        } catch {
+          signallingFailed = true;
+        } finally {
+          settleTermination(executionStopped);
         }
       }, graceMs);
-      unrefTimer(killTimer);
+    } else {
+      finishTermination();
     }
   };
   const onAbort = (): void => terminate();
@@ -217,20 +340,27 @@ export async function runJobInChild(opts: RunJobInChildOpts): Promise<unknown> {
   );
 
   try {
-    const exit = await new Promise<ChildExit>((resolve) => {
-      child.once('error', (e) => resolve({ code: null, signal: null, spawnErr: e }));
-      child.once('exit', (code, signal) => resolve({ code, signal }));
-    });
+    const exit = await Promise.race([directExit, terminationDone.then(() => ({ code: child.exitCode, signal: child.signalCode }))]);
 
-    if (exit.spawnErr && child.pid == null) {
+    if (termed) await terminationDone;
+    if (!termed && directExited && child.pid != null) {
+      observeTiniChildGroup();
+      const snapshot = captureChildCleanup(child.pid, processGroups);
+      naturalCleanupConfirmed = (!opts.tiniPath || processGroups.size > 1) && confirmChildCleanup(snapshot);
+    }
+
+    if ('spawnErr' in exit && exit.spawnErr && child.pid == null) {
+      if (['ENOENT', 'EACCES'].includes((exit.spawnErr as NodeJS.ErrnoException).code ?? '')) {
+        throw childConfigurationError('child_executable_invalid');
+      }
       throw new ChildSpawnInfraError(
-        `job child spawn failed (${inv.cmd}): ${exit.spawnErr.message}`,
+        'Job child could not be spawned.',
       );
     }
 
     console.log(
       `[isolation] job ${opts.jobId} (${opts.jobName}) child pid ${child.pid ?? '?'} ` +
-      `exited code=${exit.code ?? 'null'} signal=${exit.signal ?? 'null'}`,
+      `settled code=${exit.code ?? 'null'} signal=${exit.signal ?? 'null'}`,
     );
 
     const abortReason = opts.abortSignal.aborted
@@ -252,6 +382,17 @@ export async function runJobInChild(opts: RunJobInChildOpts): Promise<unknown> {
       // event loop that runs lock-renewal ticks (performance review).
       outcome = await decodeChildOutcomeFileAsync(resultPath);
     } catch (decodeErr) {
+      if (exit.code === 126 || exit.code === 127) {
+        try { validateChildExecutable(executable, base); }
+        catch (error) {
+          if (isLocalConfigurationError(error)) {
+            opts.onConfigurationError?.(error);
+            terminate();
+            await terminationDone;
+          }
+          throw error;
+        }
+      }
       // No usable outcome. Classify by WHY the child died.
       if (decodeErr instanceof UnrecoverableError) throw decodeErr; // oversize cap — dead on attempt 1
       if (isShutdownClass) {
@@ -288,6 +429,13 @@ export async function runJobInChild(opts: RunJobInChildOpts): Promise<unknown> {
     }
 
     if (outcome.outcome === 'success') return outcome.result;
+    const handlerError = reconstructHandlerError(outcome);
+    if (isLocalConfigurationError(handlerError)) {
+      opts.onConfigurationError?.(handlerError);
+      terminate();
+      await terminationDone;
+      throw handlerError;
+    }
     // A handler-error outcome DURING worker shutdown is presumed
     // shutdown-induced (cooperative handlers that honor shutdownSignal bail
     // and report an error): release with no attempt burned rather than
@@ -296,12 +444,15 @@ export async function runJobInChild(opts: RunJobInChildOpts): Promise<unknown> {
     // coincided with a deploy gets one free retry — bounded and benign.
     if (isShutdownClass) {
       throw new ChildWorkerShutdownError(
-        `job child reported an error during worker shutdown (${outcome.message}) — released, not burned`,
+        'Job child reported an error during worker shutdown; execution stop is unconfirmed, so lease expiry remains the fallback.',
       );
     }
-    throw reconstructHandlerError(outcome);
+    throw handlerError;
   } finally {
+    if (termed) await terminationDone;
+    if (naturalCleanupConfirmed) publishExecutionStopped();
     if (killTimer != null) clearTimeout(killTimer);
+    if (groupObserver != null) clearInterval(groupObserver);
     opts.abortSignal.removeEventListener('abort', onAbort);
     opts.shutdownSignal.removeEventListener('abort', onShutdown);
     rmSync(dir, { recursive: true, force: true });

@@ -111,7 +111,9 @@ export function detectCapabilities(opts: DetectCapabilitiesOpts = {}): Capabilit
   const rawEnv = opts.env ?? process.env;
   const env = mergedProviderEnv(cfg, rawEnv);
 
-  const embeddings = probeTouchpoint(
+  const embeddings = cfg?.embedding_disabled || (cfg && !cfg.embedding_model?.trim())
+    ? { available: false }
+    : probeTouchpoint(
     cfg?.embedding_model ?? DEFAULT_EMBEDDING_MODEL,
     'embedding',
     env,

@@ -1,0 +1,1084 @@
+{
+  "golden": {
+    "args": [
+      "doctor",
+      "--json",
+      "--skills-dir",
+      "<home>/skills"
+    ],
+    "exit_code": 0,
+    "report": {
+      "brain_checks_score": 85,
+      "category_scores": {
+        "brain": 85,
+        "meta": 100,
+        "ops": 95,
+        "skill": 95
+      },
+      "checks": [
+        {
+          "category": "skill",
+          "message": "1 skills, all reachable",
+          "name": "resolver_health",
+          "status": "ok"
+        },
+        {
+          "category": "skill",
+          "details": {
+            "enabled": true,
+            "engine": "postgres",
+            "fired_recently": false,
+            "last_fired": null,
+            "path": "postgres direct",
+            "policy_skill_installed": false
+          },
+          "message": "postgres direct; enabled; not observed firing yet — policy skill not installed; run `gbrain integrations install retrieval-reflex --target <host-repo>`",
+          "name": "retrieval_reflex_health",
+          "status": "ok"
+        },
+        {
+          "category": "skill",
+          "details": {
+            "channels": {},
+            "window_days": 7
+          },
+          "message": "no push-context activity in 7 days — note: the harness-hook channels require a PGLite serve socket — on this engine the hook lane stays quiet by design (pull-mode retrieval covers it)",
+          "name": "volunteer_channels",
+          "status": "ok"
+        },
+        {
+          "category": "skill",
+          "message": "no verb calls recorded yet (sidecar appears on first remember/recall/entity/synthesize/forget)",
+          "name": "memory_verbs_usage",
+          "status": "ok"
+        },
+        {
+          "category": "skill",
+          "message": "1/1 skills pass",
+          "name": "skill_conformance",
+          "status": "ok"
+        },
+        {
+          "category": "skill",
+          "message": "1 skill(s) compliant or exempt",
+          "name": "skill_brain_first",
+          "status": "ok"
+        },
+        {
+          "category": "skill",
+          "message": "No skills.lock.json in <home>/skills — integrity check not applicable",
+          "name": "skills_manifest_integrity",
+          "status": "ok"
+        },
+        {
+          "category": "skill",
+          "details": {
+            "drifted": [],
+            "new": [
+              "academic-verify",
+              "archive-crawler",
+              "article-enrichment",
+              "ask-user",
+              "blog-ingest",
+              "book-mirror",
+              "brain-ingest-gate",
+              "brain-link-discipline",
+              "brain-ops",
+              "brain-pdf",
+              "brain-taxonomist",
+              "briefing",
+              "bulk-ingestion",
+              "capture",
+              "chat-connectors",
+              "citation-fixer",
+              "citation-graph-ingest",
+              "cold-start",
+              "company-brainify",
+              "concept-synthesis",
+              "context-audit",
+              "conversation-archive",
+              "correction-pipeline",
+              "cron-scheduler",
+              "cross-modal-review",
+              "daily-task-manager",
+              "daily-task-prep",
+              "data-loss-gate",
+              "data-research",
+              "draft-in-voice",
+              "eiirp",
+              "enrich",
+              "fact-check",
+              "functional-area-resolver",
+              "gbrain-advisor",
+              "google-loops",
+              "idea-ingest",
+              "idea-lineage",
+              "ingest",
+              "maintain",
+              "mcp-access",
+              "measure-before-you-fix",
+              "media-ingest",
+              "meeting-ingestion",
+              "minion-orchestrator",
+              "perplexity-research",
+              "publish",
+              "query",
+              "repo-architecture",
+              "reports",
+              "research-compendium",
+              "resolve-before-asking",
+              "signal-detector",
+              "skill-autobench",
+              "skill-creator",
+              "skillify",
+              "skillpack-check",
+              "skillpack-harvest",
+              "soul-audit",
+              "strategic-reading",
+              "testing",
+              "two-tier-extraction",
+              "voice-note-ingest",
+              "webhook-transforms"
+            ]
+          },
+          "message": "64 new built-in skill(s) available that this workspace hasn't installed: academic-verify, archive-crawler, article-enrichment, ask-user, blog-ingest, book-mirror, brain-ingest-gate, brain-link-discipline, … +56 more. Add them with `gbrain skillpack sync`.",
+          "name": "skill_currency",
+          "status": "warn"
+        },
+        {
+          "category": "skill",
+          "message": "no installed skills declare preconditions",
+          "name": "skill_preconditions",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "details": {
+            "enabled": false,
+            "out_of_band_settable": true,
+            "reason": "disabled"
+          },
+          "message": "memorable relay off (default)",
+          "name": "memorable_relay_health",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "audience": "personal",
+            "audience_reasons": [
+              "no shared declaration; 0 non-automation client(s) active in 30d"
+            ],
+            "backstop_visibility": "private",
+            "counters_note": "local, append-only, loss-tolerant observability over the last 7d — never a source of truth",
+            "instruction_visibility": "world",
+            "mode": "off",
+            "mode_valid": true,
+            "nudge_shown": true,
+            "transient_ttl": "3d",
+            "ttl_valid": true,
+            "visibility_note": "world = readable by agents authorized on THIS brain, not the public internet"
+          },
+          "message": "ambient writeback off (default). Enable: gbrain config set memory.auto_writeback salient",
+          "name": "memory_writeback",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "message": "No chat connectors configured (optional).",
+          "name": "connectors",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "details": {
+            "breaker_enabled": true,
+            "count_exact": true,
+            "inspected_keys": 0,
+            "keys": [],
+            "threshold": 3
+          },
+          "message": "No dream key died 3+ times in 24h",
+          "name": "dream_paid_loop",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "message": "mode=notify",
+          "name": "self_upgrade_health",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "message": "disabled (opt-in). Enable with: gbrain config set autopilot.nightly_quality_probe.enabled true",
+          "name": "nightly_quality_probe_health",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "kinds": [],
+            "schema_version": 1
+          },
+          "message": "no extractions in last 7 days",
+          "name": "extract_health",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "message": "disabled (opt-in). Enable with: gbrain config set cycle.conversation_facts_backfill.enabled true",
+          "name": "conversation_facts_backlog",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "backlog": 0,
+            "known_approximation": "page backlog only; transcript corpus not counted",
+            "pack_declares_phase": false
+          },
+          "message": "no pages awaiting atom extraction",
+          "name": "extract_atoms_backlog",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "drift_pct": 0,
+            "drifted": 0,
+            "slug_unbound": 0,
+            "source_changed": 0,
+            "source_gone": 0,
+            "total_atoms": 0
+          },
+          "message": "no atoms to check",
+          "name": "atom_provenance_drift",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "message": "No conversation-type pages — coverage check not applicable",
+          "name": "conversation_format_coverage",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "message": "No progressive-batch operations in the last 7 days",
+          "name": "progressive_batch_audit_health",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "message": "disabled (opt-in; default-on only for search.mode=tokenmax). Enable with: `gbrain config set autopilot.conversation_parser_probe.enabled true`",
+          "name": "conversation_parser_probe_health",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "message": "gbrain home is outside any enclosing git worktree.",
+          "name": "home_dir_in_worktree",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "message": "No abandoned PGLite store under the gbrain home (engine: postgres).",
+          "name": "pglite_leftovers",
+          "status": "ok"
+        },
+        {
+          "category": "meta",
+          "message": "default source local_path is set: <home>/.gbrain/content/<uuid>/default",
+          "name": "default_source_local_path",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "message": "Connected, 0 pages",
+          "name": "connection",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "message": "Extension installed",
+          "name": "pgvector",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "message": "Postgres driver supports safe query cancellation.",
+          "name": "postgres_cancellation_driver",
+          "status": "ok"
+        },
+        {
+          "category": "meta",
+          "message": "pages has the UNIQUE(source_id, slug) upsert arbiter",
+          "name": "pages_upsert_arbiter",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "readiness": "ready",
+            "ready": true
+          },
+          "message": "Visible text projections match their canonical revisions.",
+          "name": "text_projection_readiness",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "details": {
+            "commands": [],
+            "exact": true,
+            "inspected": 2,
+            "resources": [],
+            "truncated": false
+          },
+          "message": "Managed write capacity is below 80% of every cumulative limit.",
+          "name": "persistence_capacity",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "effects": [],
+            "exact": true,
+            "inspected": 0,
+            "parked_effects": 0,
+            "truncated": false
+          },
+          "message": "No Git or withdrawal effect is parked.",
+          "name": "parked_effects",
+          "status": "ok"
+        },
+        {
+          "category": "meta",
+          "message": "links_link_source_check has the v114 kebab-case gate",
+          "name": "links_link_source_check",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "message": "RLS enabled on 93/93 public tables",
+          "name": "rls",
+          "status": "ok"
+        },
+        {
+          "category": "meta",
+          "message": "Version 178 (latest: 178)",
+          "name": "schema_version",
+          "status": "ok"
+        },
+        {
+          "category": "meta",
+          "message": "713 column(s) verified against live schema",
+          "name": "schema_columns",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "message": "Auto-RLS event trigger installed",
+          "name": "rls_event_trigger",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "message": "100% coverage, 0 missing",
+          "name": "embeddings",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "message": "Embedding provider probe failed: This brain has no explicit embedding model. Its stored vectors must not be interpreted using a new default. Run gbrain migrate embeddings --status and preview an explicit migration with --dry-run.",
+          "name": "embedding_provider",
+          "status": "warn"
+        },
+        {
+          "category": "brain",
+          "message": "Registry healthy: 1 columns (embedding_image) (all indexed); primary embeddings disabled",
+          "name": "embedding_column_registry",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "message": "no embedding env overrides set",
+          "name": "embedding_env_override",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "message": "no embedding migration in flight",
+          "name": "embedding_migration_state",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "message": "No entity pages — graph_coverage not applicable (markdown-only brain)",
+          "name": "graph_coverage",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "message": "Brain score 100/100",
+          "name": "brain_score",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "message": "Vacuous: 0 entity pages (<100). Orphan ratio not meaningful at this scale.",
+          "name": "orphan_ratio",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "message": "No by-mention links in this brain.",
+          "name": "stale_mentions",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "message": "No orphaned timeline rows across 0 page(s).",
+          "name": "timeline_orphans",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "message": "No slug collisions across 1 source checkout(s).",
+          "name": "slug_collisions",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "count": "exact",
+            "kept_unrenderable_rows": 0,
+            "materializable_rows": 0,
+            "pages_affected": 0,
+            "pages_inspected": 0,
+            "repair": "timeline",
+            "truncated": false
+          },
+          "message": "Every timeline row has a bullet in its page (0 page(s) inspected).",
+          "name": "timeline_history",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "count": "exact",
+            "looser_atoms": 0,
+            "looser_concepts": 0,
+            "repair": "visibility",
+            "truncated": false,
+            "unstamped_atoms": 0,
+            "unstamped_concepts": 0
+          },
+          "message": "Every extracted atom and synthesized concept carries an explicit visibility no looser than its origin.",
+          "name": "derived_visibility",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "count": "exact",
+            "kept_pages": 0,
+            "pages_pending": 0,
+            "repair": "safe-chunks",
+            "truncated": false
+          },
+          "message": "Every re-sealable page is at the safe-chunk index version.",
+          "name": "safe_index_pending",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "checkpoints": 0,
+            "count": 0,
+            "docs": "docs/guides/repair.md#connector-checkpoints",
+            "repair": "connector-checkpoints",
+            "retries": 0,
+            "truncated": false
+          },
+          "message": "No orphan connector checkpoint rows older than 7 days.",
+          "name": "connector_checkpoints",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "sources": [],
+            "total": 0
+          },
+          "message": "No page was written database-only to an unbound source.",
+          "name": "unbound_source",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "details": {
+            "count": 0,
+            "floor": "0.60.5.0",
+            "hosts": [],
+            "observed": [
+              {
+                "host_id": "<uuid>",
+                "last_seen": "<ts>",
+                "principal": "local_cli:<uuid>",
+                "role": "consumer",
+                "version": "<version>"
+              },
+              {
+                "host_id": "<uuid>",
+                "last_seen": "<ts>",
+                "principal": "local_cli:<uuid>",
+                "role": "admitter",
+                "version": "<version>"
+              }
+            ],
+            "truncated": false,
+            "window_days": 7
+          },
+          "message": "Every writer that admitted or published a request in the last 7 days is v0.60.5.0 or newer.",
+          "name": "writer_version",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "classified": 0,
+            "count": "exact",
+            "truncated": false,
+            "unclassifiable": 0
+          },
+          "message": "No session corpus is configured; nothing to classify.",
+          "name": "self_capture",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "details": {
+            "count": "exact",
+            "docs": "docs/guides/repair.md#stale-queued-embedding-effects",
+            "effects": [],
+            "resolution": "unsupported",
+            "stale_effects": 0,
+            "truncated": false
+          },
+          "message": "No committed write has a queued embedding effect older than an hour.",
+          "name": "stale_embedding_effects",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "message": "Sampled 0 pages; no bare-tweet phrases or external links.",
+          "name": "integrity",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "message": "All JSONB columns store objects/arrays",
+          "name": "jsonb_integrity",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "message": "No takes yet",
+          "name": "takes_weight_grid",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "message": "All FK-child tables clean (10 tables checked)",
+          "name": "child_table_orphans",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "message": "All synthesized pages carry a raw trace or explicit exemption",
+          "name": "raw_provenance",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "message": "All source config values are JSON objects",
+          "name": "source_config_shape",
+          "status": "ok"
+        },
+        {
+          "category": "skill",
+          "message": "whoknows eval fixture present (10 queries). Run `gbrain eval whoknows test/fixtures/whoknows-eval.jsonl` to grade.",
+          "name": "whoknows_health",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "message": "All image-asset chunks have modality=image",
+          "name": "cross_modal_modality_backfill",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "message": "search.unified_multimodal is off; coverage check N/A",
+          "name": "unified_multimodal_coverage",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "message": "No truncated bodies detected",
+          "name": "markdown_body_completeness",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "message": "No pages exceed 500000 bytes (excluding embed_skip pages, which already took the accepted non-embeddable remediation)",
+          "name": "oversized_pages",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "message": "No junk-pattern hits in 0 recent page(s) (use --content-audit for full scan)",
+          "name": "scraper_junk_pages",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "message": "No content-sanity events in last 7 days (audit JSONL is local to this host; share GBRAIN_AUDIT_DIR for multi-host visibility)",
+          "name": "content_sanity_audit_recent",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "message": "No quarantined pages",
+          "name": "quarantined_pages",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "message": "No flagged pages",
+          "name": "flagged_pages",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "count": 0,
+            "days": 7,
+            "source_id": null
+          },
+          "message": "No stale unverified extraction stubs",
+          "name": "unverified_extractions",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "message": "1 source(s) clean — no frontmatter issues",
+          "name": "frontmatter_integrity",
+          "status": "ok"
+        },
+        {
+          "category": "meta",
+          "message": "No capture failures in the last 24h",
+          "name": "eval_capture",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "message": "No probe runs in the last 7 days. Run `gbrain eval suspected-contradictions --query \"...\" --top-k 5` to populate.",
+          "name": "contradictions",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "message": "Automatic fact extraction not configured (keyless) — memory comes from agent-authored `## Facts` fences and the `remember` verb. One optional key enables automatic extraction (OpenAI or Anthropic).",
+          "name": "facts_extraction_health",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "message": "Sample of last 1000 pages clean (no fallback-with-parseable-fm-date, no future-dated, no pre-1990)",
+          "name": "effective_date_health",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "message": "Skipped (no pages have emotional_weight > 0; either fresh install or recompute hasn't run yet)",
+          "name": "salience_health",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "details": {
+            "depth": 0,
+            "oldest_age_seconds": null,
+            "worker_alive": true
+          },
+          "message": "No stalled-forever jobs; no queue over depth 10; no old embed-backfill jobs without a worker.",
+          "name": "queue_health",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "message": "Subagent tier resolves to default (claude-sonnet-4-6) — full tool-loop capability",
+          "name": "subagent_capability",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "message": "facts_health(default): 0 active, 0 today, 0 this week, 0 consolidated, top entities —",
+          "name": "facts_health",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "message": "No image assets indexed yet",
+          "name": "image_assets",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "message": "OCR not in use (or no images ingested with OCR opt-in)",
+          "name": "ocr_health",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "stale_count": 0,
+            "synced_recently_count": 0,
+            "unchanged_count": 0,
+            "writer_owned_count": 1
+          },
+          "message": "1 writer-owned canonical content source(s): upstream sync is not applicable; see canonical_content_writes for publication status.",
+          "name": "sync_freshness",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "details": {
+            "pending_count": 0,
+            "recovering_count": 0,
+            "writer_owned_count": 1
+          },
+          "message": "1 writer-owned content source(s); no pending canonical publication or recovery.",
+          "name": "canonical_content_writes",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "details": {
+            "cache_age": "under an hour ago",
+            "checked_at": "<ts>",
+            "computed_by": "doctor",
+            "degraded": false,
+            "recovery_scope": "Git evidence covers committed repository files only; not a full database backup. DB-only pages, facts, configuration and credentials need a separate backup and restore drill.",
+            "totals": {
+              "assets": 1,
+              "configured_repos": 0,
+              "failing": 0,
+              "no_remote": 0,
+              "pages_at_risk": 0,
+              "recoverable_repos": 0,
+              "unpushed": 0
+            }
+          },
+          "message": "0 knowledge asset(s) have no git remote: . Current recovery is not verified for all repositories. Run `gbrain backup status` for fix commands (`gbrain bootstrap repo` / `git remote add origin <url>` / `gbrain sources harden <id>`).",
+          "name": "backup_coverage",
+          "status": "warn"
+        },
+        {
+          "category": "ops",
+          "message": "Single-source brain — sync --all consolidation not applicable.",
+          "name": "sync_consolidation",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "message": "Extraction lag not applicable (no pages)",
+          "name": "links_extraction_lag",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "message": "Source 'default' has never completed a full cycle. Run `gbrain dream --source <id>` to cycle a source, or start `gbrain autopilot`.",
+          "name": "cycle_freshness",
+          "status": "warn"
+        },
+        {
+          "category": "brain",
+          "message": "No same-source content-hash duplicate groups",
+          "name": "content_hash_duplicates",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "message": "All code-page chunks carry symbol metadata",
+          "name": "code_chunk_metadata",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "message": "Every DB page is file-backed or under a declared/default db_only path (derive-phase defaults: life/events/ atoms/ concepts/ extracts/ dream-cycle-summaries/)",
+          "name": "undeclared_db_only_pages",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "message": "No configured collectors declare output paths",
+          "name": "db_only_collector_collision",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "message": "Mode: conservative (no per-key overrides — mode bundle is canonical).",
+          "name": "search_mode",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "counts": {},
+            "prefixes": [
+              "test/",
+              "attachments/",
+              ".raw/"
+            ]
+          },
+          "message": "No pages hidden by search-exclude policy.",
+          "name": "hidden_by_search_policy",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "message": "No retrieval-affecting files changed in working tree.",
+          "name": "eval_drift",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "message": "Reranker disabled — no failures expected",
+          "name": "reranker_health",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "message": "No exhausted batch retries in last 24h. Disconnect-call audit: 2 call(s) in 24h (most recent caller: <frame>).",
+          "name": "batch_retry_health",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "message": "No wedged queues",
+          "name": "wedged_queue",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "message": "No orphaned private queues",
+          "name": "orphaned_private_queue",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "message": "No supervisor observed — skipping fan-out/concurrency check",
+          "name": "autopilot_fanout_concurrency",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "message": "no Google accounts connected (gbrain google connect to start)",
+          "name": "google_oauth",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "message": "graph_signals disabled — coverage not checked",
+          "name": "graph_signals_coverage",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "message": "No junk entity hubs (pages with <=2 chunks and >1000 edges)",
+          "name": "junk_entity_hubs",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "message": "Migration v79 applied; tracking enabled. Calibration profile not yet generated — brainstorm/lsd will run unbiased until enough takes are resolved.",
+          "name": "brainstorm_health",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "message": "Brain is empty — nothing to scan",
+          "name": "link_resolution_opportunity",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "message": "Embeddings disabled — no active embedding width to reconcile.",
+          "name": "embedding_width_consistency",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "message": "gateway not configured — facts.embedding width check skipped.",
+          "name": "facts_embedding_width_consistency",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "message": "Single-source brain (no federation to check)",
+          "name": "source_routing_health",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "message": "No OAuth clients registered",
+          "name": "oauth_confidential_client_health",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "message": "Scoped-client grants consistent (no dangling federated reads, no orphaned workspace sources, no privileged self-registered clients)",
+          "name": "oauth_client_scope_health",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "message": "Lock path: <home>/.gbrain/autopilot.lock",
+          "name": "autopilot_lock_scope",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "message": "No stale locks (no rows with ttl_expires_at < NOW())",
+          "name": "stale_locks",
+          "status": "ok"
+        },
+        {
+          "category": "meta",
+          "details": {
+            "counts": {
+              "global": 9,
+              "mixed": 2,
+              "source": 12
+            },
+            "phase_scope_map": {
+              "backlinks": "source",
+              "calibration_profile": "global",
+              "consolidate": "source",
+              "conversation_facts_backfill": "source",
+              "drift": "global",
+              "embed": "global",
+              "enrich_thin": "source",
+              "extract": "source",
+              "extract_atoms": "source",
+              "extract_facts": "source",
+              "grade_takes": "global",
+              "lint": "source",
+              "orphans": "global",
+              "patterns": "mixed",
+              "propose_takes": "source",
+              "purge": "global",
+              "recompute_emotional_weight": "source",
+              "resolve_symbol_edges": "global",
+              "schema-suggest": "source",
+              "skillopt": "global",
+              "sync": "source",
+              "synthesize": "mixed",
+              "synthesize_concepts": "global"
+            }
+          },
+          "message": "Phase taxonomy: 12 source-scoped, 9 brain-global, 2 mixed. Source-safe: [lint, backlinks, sync, extract, extract_facts, extract_atoms, recompute_emotional_weight, consolidate, propose_takes, conversation_facts_backfill, enrich_thin, schema-suggest]. Brain-global: [resolve_symbol_edges, synthesize_concepts, grade_takes, calibration_profile, drift, skillopt, embed, orphans, purge]. Mixed: [synthesize, patterns].",
+          "name": "cycle_phase_scope",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "message": "No stale chunks",
+          "name": "embed_staleness",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "message": "No entity pages — coverage check vacuous",
+          "name": "entity_link_coverage",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "message": "No entity pages — coverage check vacuous",
+          "name": "timeline_coverage",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "message": "0 takes (takes.bootstrap_enabled is false; opt in to enable)",
+          "name": "takes_count",
+          "status": "warn"
+        },
+        {
+          "category": "meta",
+          "message": "Active pack gbrain-base-v2@1.2.0+1a2aee67 is current (no successor declared)",
+          "name": "pack_upgrade_available",
+          "status": "ok"
+        },
+        {
+          "category": "meta",
+          "message": "0 distinct typed values (pack declares 19)",
+          "name": "type_proliferation",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "message": "No dangling aliases",
+          "name": "dangling_aliases",
+          "status": "ok"
+        }
+      ],
+      "db_url_source": null,
+      "engine": "postgres",
+      "health_score": 75,
+      "schema_version": 2,
+      "status": "warnings",
+      "top_issues": [
+        {
+          "fix": "0 knowledge asset(s) have no git remote: . Current recovery is not verified for all repositories. Run `gbrain backup status` for fix commands (`gbrain bootstrap repo` / `git remote add origin <url>` / `gbrain sources harden <id>`).",
+          "name": "backup_coverage",
+          "status": "warn",
+          "tier": "symptom"
+        },
+        {
+          "fix": "Source 'default' has never completed a full cycle. Run `gbrain dream --source <id>` to cycle a source, or start `gbrain autopilot`.",
+          "name": "cycle_freshness",
+          "status": "warn",
+          "tier": "symptom"
+        },
+        {
+          "fix": "Embedding provider probe failed: This brain has no explicit embedding model. Its stored vectors must not be interpreted using a new default. Run gbrain migrate embeddings --status and preview an explicit migration with --dry-run.",
+          "name": "embedding_provider",
+          "status": "warn",
+          "tier": "symptom"
+        },
+        {
+          "fix": "64 new built-in skill(s) available that this workspace hasn't installed: academic-verify, archive-crawler, article-enrichment, ask-user, blog-ingest, book-mirror, brain-ingest-gate, brain-link-discipline, … +56 more. Add them with `gbrain skillpack sync`.",
+          "name": "skill_currency",
+          "status": "warn",
+          "tier": "symptom"
+        },
+        {
+          "fix": "0 takes (takes.bootstrap_enabled is false; opt in to enable)",
+          "name": "takes_count",
+          "status": "warn",
+          "tier": "symptom"
+        }
+      ]
+    },
+    "stderr": [
+      "[backup] checked 1 asset(s): 0 without a git remote (computed_by=doctor)"
+    ],
+    "stdout": "<json>"
+  },
+  "normalizer": "doctor-json-pg-v1"
+}

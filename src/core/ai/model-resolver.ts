@@ -5,6 +5,7 @@
 import type { ParsedModelId, Recipe, TouchpointKind, ChatTouchpoint, EmbeddingTouchpoint, ExpansionTouchpoint, RerankerTouchpoint } from './types.ts';
 import { getRecipe, RECIPES } from './recipes/index.ts';
 import { AIConfigError } from './errors.ts';
+import { renderCanonicalMigrationCommands } from './defaults.ts';
 
 /**
  * Split "openai:text-embedding-3-large" or "openai/text-embedding-3-large"
@@ -66,7 +67,7 @@ export function resolveRecipe(modelId: string): { parsed: ParsedModelId; recipe:
   if (!recipe) {
     throw new AIConfigError(
       `Unknown provider: "${parsed.providerId}"`,
-      `Known providers: ${[...knownProviderIds()].join(', ')}. Add a new recipe at src/core/ai/recipes/.`,
+      `Known providers: ${[...knownProviderIds()].join(', ')}. For stored embeddings, run gbrain migrate embeddings --status and preview an explicit migration with ${renderCanonicalMigrationCommands().recommendedDryRun}. Do not relabel existing vectors or change only the configured model. For reranking, select a supported model with gbrain config set search.reranker.model voyage:rerank-2.5.`,
     );
   }
   // Apply alias if the modelId matches an alias key. Canonical wins.

@@ -63,11 +63,11 @@ beforeAll(async () => {
   // Pin the embedding dim to 1536 BEFORE initSchema. basisEmbedding()
   // hardcodes Float32Array(1536) vectors, but initSchema sizes vector
   // columns from process-global gateway state (getEmbeddingDimensions(),
-  // default 1280 = zeroentropyai). Whether this file passes therefore
+  // default 1024 = Voyage). Whether this file passes therefore
   // depended on which test files happened to run before it in the shard: a
   // predecessor that leaves the gateway configured without dims (or a bare
-  // CI env) yields vector(1280) and every upsertChunks here dies with
-  // "expected 1280 dimensions, not 1536". Adding test files to the repo
+  // CI env) yields vector(1024) and every upsertChunks here dies with
+  // "expected 1024 dimensions, not 1536". Adding test files to the repo
   // reshuffles the weight-packed shards, so unrelated PRs trip it (seen on
   // #2800 CI, test (1)). Same fix + rationale as
   // engine-find-trajectory.test.ts and cosine-rescore-column.test.ts, which

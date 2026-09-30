@@ -588,13 +588,28 @@ async function cmdExtract(engine: BrainEngine, rest: string[]): Promise<void> {
   }
   // #4473: takes are markdown-canonical — pages the fence writer refused are
   // skipped (never written DB-only). Say so instead of silently undercounting.
-  if (result.pages_skipped > 0) {
-    const reasons = [...new Set(result.skipped.map((s) => s.reason))].join(', ');
+  const unlocatable = result.skipped.filter((s) => !s.reason.startsWith('llm_error:'));
+  if (unlocatable.length > 0) {
+    const reasons = [...new Set(unlocatable.map((s) => s.reason))].join(', ');
     process.stderr.write(
-      `[takes extract] ${result.pages_skipped} page(s) skipped (${reasons}) — takes are ` +
+      `[takes extract] ${unlocatable.length} page(s) skipped (${reasons}) — takes are ` +
       `markdown-canonical; a page with no locatable .md file is not written. ` +
       `Configure sync.repo_path (or the source's local_path) and re-run.\n`,
     );
+  }
+  const llmErrors = result.skipped.filter((s) => s.reason.startsWith('llm_error:'));
+  if (llmErrors.length > 0) {
+    const reasons = [...new Set(llmErrors.map((s) => s.reason))].join(', ');
+    process.stderr.write(`[takes extract] ${llmErrors.length} page(s) skipped because the model call failed (${reasons}).\n`);
+  }
+  if (result.budget_exhausted) {
+    process.stderr.write(
+      `[takes extract] stopped at the USD budget; raise it with ` +
+      `\`gbrain config set takes.bootstrap_budget_usd <usd>\` and re-run to continue.\n`,
+    );
+  }
+  if (result.duplicates_skipped > 0) {
+    process.stderr.write(`[takes extract] ${result.duplicates_skipped} claim(s) already in the page's takes fence were not re-added.\n`);
   }
   process.stdout.write(
     `takes extract --from-pages: ${result.claims_extracted} claim(s) from ${result.pages_scanned} page(s)` +

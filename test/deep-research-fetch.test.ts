@@ -8,13 +8,14 @@ import { installFixtureChunks } from './helpers/page-projection.ts';
  * `search` but no `fetch` (and results carried no `id`), so the connector
  * worked in normal chat and failed in deep research. Pins:
  *   - the `fetch` op exists, is remote-allowed read scope, returns the shape
- *   - search results are stamped with id = slug so the pair round-trips
+ *   - search results carry opaque source-qualified ids that round-trip
  *   - fetch honors source scoping and the remote privacy fences
  */
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { operations, OperationError, type OperationContext } from '../src/core/operations.ts';
+import { decodeDeepResearchId } from '../src/core/deep-research-id.ts';
 
 let engine: PGLiteEngine;
 const fetch_op = operations.find(o => o.name === 'fetch')!;
@@ -51,6 +52,22 @@ beforeEach(async () => {
 });
 
 describe('fetch op (#4039 deep-research contract)', () => {
+  test('Zirconiumneedle search fetches the matching source, not its same-slug neighbor', async () => {
+    await engine.executeRaw(`INSERT INTO sources (id, name) VALUES ('beta', 'beta')`);
+    await engine.setConfig('search.mcp_keyword_only', 'true');
+    for (const [sourceId, body] of [['default', 'Unrelated default text.'], ['beta', 'Zirconiumneedle beta evidence.']]) {
+      await engine.putPage('notes/shared-example', { type: 'note', title: sourceId, compiled_truth: body }, { sourceId });
+      await installFixtureChunks(engine, 'notes/shared-example', [{ chunk_index: 0, chunk_source: 'compiled_truth', chunk_text: body }], { sourceId });
+    }
+    const ctx = ctxOf({ auth: { allowedSources: ['default', 'beta'] } as any });
+    const hits = await search_op.handler(ctx, { query: 'Zirconiumneedle' }) as Array<Record<string, unknown>>;
+    expect(hits).toHaveLength(1);
+    expect(hits[0].source_id).toBe('beta');
+    const fetched = await fetch_op.handler(ctx, { id: hits[0].id }) as any;
+    expect(fetched.metadata.source_id).toBe('beta');
+    expect(fetched.text).toContain('Zirconiumneedle beta evidence.');
+  });
+
   test('exists as a remote-allowed read op with a required id param', () => {
     expect(fetch_op, "the 'fetch' op must exist").toBeDefined();
     expect(fetch_op.scope).toBe('read');
@@ -91,14 +108,14 @@ describe('fetch op (#4039 deep-research contract)', () => {
     expect(String(remoteRes.text)).not.toContain('SECRET-TAKE');
   });
 
-  test('search results carry id = slug so the pair round-trips', async () => {
+  test('search results carry source-qualified ids so the pair round-trips', async () => {
     const results = (await search_op.handler(ctxOf({ remote: false }), { query: 'Alice widget' })) as Array<Record<string, unknown>>;
     expect(results.length).toBeGreaterThan(0);
     for (const r of results) {
-      expect(r.id).toBe(r.slug);
+      expect(decodeDeepResearchId(r.id as string)).toEqual({ sourceId: r.source_id as string, slug: r.slug as string });
     }
     // Round-trip: the stamped id feeds fetch directly.
     const fetched = (await fetch_op.handler(ctxOf(), { id: results[0].id as string })) as Record<string, unknown>;
-    expect(fetched.id).toBe(results[0].slug);
+    expect(fetched.id).toBe(results[0].id);
   });
 });

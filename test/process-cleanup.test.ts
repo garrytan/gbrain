@@ -5,14 +5,16 @@
  *   - registerCleanup adds + returned deregister removes
  *   - triggerCleanupAndExit walks registry via Promise.allSettled
  *   - cleanup callback throw doesn't break other callbacks (allSettled)
- *   - idempotent on double-trigger (second call during cleanup is NO-OP)
+ *   - idempotent on double-trigger (callbacks run once; a later signal or
+ *     EPIPE waits for the running pass before exiting)
  *   - 3s deadline honored (longer callbacks don't block exit)
  *   - deregister-then-release race: no double-fire
  *
  * Signal-handler installation contract is verified by:
  *   - installSignalHandlers() idempotency (this file)
- *   - E2E sync-lock-cleanup-on-sigterm.test.ts (real SIGTERM → real DELETE)
- *   - E2E sync-pipe-sigpipe.test.ts (real EPIPE → real DELETE)
+ *   - E2E test/e2e/sync-lock-recovery.test.ts: real SIGTERM mid-sync →
+ *     real lock-row DELETE, and a real closed output pipe mid-sync →
+ *     broken-pipe cleanup route → real lock-row DELETE
  *
  * NOT covered here: the SIGINT coexistence test (eng-review D9) — moved
  * to E2E because spawning a subprocess and verifying both AbortController
@@ -197,6 +199,31 @@ describe('installSignalHandlers', () => {
     expect(process.listenerCount('SIGTERM')).toBe(before.sigterm + 1);
     expect(process.listenerCount('SIGHUP')).toBe(before.sighup + 1);
     expect(process.listenerCount('SIGPIPE')).toBe(before.sigpipe + 1);
+  });
+
+  test('later signals and a stdout EPIPE during the cleanup pass wait for it before exiting', async () => {
+    let releaseCleanup!: () => void;
+    let cleanupFinished = false;
+    registerCleanup('lock-row', async () => {
+      await new Promise<void>(resolve => { releaseCleanup = resolve; });
+      cleanupFinished = true;
+    });
+    const exits: Array<{ code: number; cleanupFinished: boolean }> = [];
+    const origExit = process.exit;
+    (process as any).exit = (code?: number) => { exits.push({ code: code ?? 0, cleanupFinished }); };
+    try {
+      installSignalHandlers();
+      process.emit('SIGTERM');
+      process.emit('SIGPIPE');
+      process.stdout.emit('error', Object.assign(new Error('write EPIPE'), { code: 'EPIPE' }));
+      await new Promise(r => setTimeout(r, 20));
+      expect(exits).toEqual([]);
+      releaseCleanup();
+      await new Promise(r => setTimeout(r, 20));
+    } finally {
+      (process as any).exit = origExit;
+    }
+    expect(exits).toEqual([{ code: 143, cleanupFinished: true }, { code: 141, cleanupFinished: true }, { code: 0, cleanupFinished: true }]);
   });
 
   test('_resetForTests DETACHES every listener installSignalHandlers attached', () => {

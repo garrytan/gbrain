@@ -11,8 +11,9 @@ import type { PostgresEngine } from '../../src/core/postgres-engine.ts';
 import { configureGateway, resetGateway, __setEmbedTransportForTests } from '../../src/core/ai/gateway.ts';
 import { dispatchToolCall } from '../../src/mcp/dispatch.ts';
 import { acquireWorktree, claimWorktree, getWorktreeBinding } from '../../src/core/persistence/ownership.ts';
-import { registerLocalWriter, withVerifiedLocalRegistration, type LocalRegistration } from '../../src/core/persistence/identity.ts';
+import { localHostId, registerLocalWriter, withVerifiedLocalRegistration, type LocalRegistration } from '../../src/core/persistence/identity.ts';
 import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
+import { runPersistenceEffects } from '../../src/core/persistence/effects.ts';
 import { _resetWriteThroughCacheForTest } from '../../src/core/write-through.ts';
 
 const d = hasDatabase() ? describe : describe.skip;
@@ -89,11 +90,12 @@ d('Postgres put_page persistence', () => {
   test('native lock contention preserves the prior revision and returns a durable same-ID receipt', async () => {
     const first = await put('Original canonical revision.');
     expect(first.payload.state).toBe('committed');
+    await disposePersistenceConsumer(engine);
     const before = await snapshot();
     const disk = readFileSync(join(root, `${slug}.md`), 'utf8');
     const binding = await getWorktreeBinding(engine, 'default');
     expect(binding).not.toBeNull();
-    const holder = await acquireWorktree(binding!);
+    const holder = await acquireWorktree(binding!, 5000);
     expect(holder).not.toBeNull();
     let accepted: Awaited<ReturnType<typeof put>>;
     try {
@@ -136,10 +138,11 @@ d('Postgres put_page persistence', () => {
   test('pgvector failure is reported after the canonical write without rolling back its receipt', async () => {
     config.embedding_disabled = false;
     configureGateway({ embedding_model: 'openai:text-embedding-3-small', embedding_dimensions: 1536, env: { OPENAI_API_KEY: 'sk-test' } });
+    await engine.executeRaw('ALTER TABLE content_chunks ALTER COLUMN embedding TYPE vector(2)');
     __setEmbedTransportForTests(async ({ values }) => {
       expect((await engine.readPageSnapshot(slug, { sourceId: 'default' }))?.page.compiled_truth).toBe('Persists before vector validation.');
       expect(readFileSync(join(root, `${slug}.md`), 'utf8')).toContain('Persists before vector validation.');
-      return { values, warnings: [], embeddings: values.map(() => [0.1, 0.2]), usage: { tokens: 1 } };
+      return { values, warnings: [], embeddings: values.map(() => Array(1536).fill(0.1)), usage: { tokens: 1 } };
     });
     const result = await put('Persists before vector validation.');
     expect(result.response.isError).not.toBe(true);
@@ -151,6 +154,30 @@ d('Postgres put_page persistence', () => {
     expect(observed.payload.effects).toContainEqual({ kind: 'embedding', state: 'queued', reason: 'effect_unavailable' });
     expect((await engine.getChunks(slug, { sourceId: 'default' })).every(chunk => chunk.embedding_is_null)).toBe(true);
     expect((await dispatch('put_page', result.params)).payload.revision).toBe(result.payload.revision);
+  });
+
+  test('provider dimension mismatch fails its effect once without changing the committed canonical receipt', async () => {
+    config.embedding_disabled = false;
+    configureGateway({ embedding_model: 'openai:text-embedding-3-small', embedding_dimensions: 1536, env: { OPENAI_API_KEY: 'sk-test' } });
+    let calls = 0;
+    __setEmbedTransportForTests(async ({ values }) => {
+      calls++;
+      return { values, warnings: [], embeddings: values.map(() => [0.1, 0.2]), usage: { tokens: 1 } };
+    });
+    const result = await put('Canonical content survives an invalid provider dimension.');
+    expect(result.response.isError).not.toBe(true);
+    expect(result.payload.write_through.written).toBe(true);
+    const observed = await embedding(result, 'embedding_configuration');
+    expect(observed.payload.state).toBe('committed');
+    expect(observed.payload.revision).toBe(result.payload.revision);
+    expect(observed.payload.effects).toContainEqual({ kind: 'embedding', state: 'failed', reason: 'embedding_configuration' });
+    expect((await engine.getChunks(slug, { sourceId: 'default' })).every(chunk => chunk.embedding_is_null)).toBe(true);
+    await disposePersistenceConsumer(engine);
+    await runPersistenceEffects(engine, config, { hostId: localHostId(), limit: 20 });
+    expect(calls).toBe(1);
+    expect(readFileSync(join(root, `${slug}.md`), 'utf8')).toContain('Canonical content survives an invalid provider dimension.');
+    expect((await dispatch('put_page', result.params)).payload.revision).toBe(result.payload.revision);
+    expect(calls).toBe(1);
   });
 
   test('slow embedding releases the worktree before other writes and rejects superseded vectors', async () => {

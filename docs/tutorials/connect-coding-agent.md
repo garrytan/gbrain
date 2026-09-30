@@ -24,8 +24,10 @@ before initializing. Start keyless, relay the required search-mode matrix, and
 confirm my choice. Save only explicit requests to remember unless I opt into
 automatic capture. Do not add paid enrichment, connectors, or schedules implicitly.
 Verify a unique memory write/readback and report native activation and recall in
-a new conversation separately. If my brain is hosted, provision there and install
-the private handoff here using the actual harness adapter.
+a new conversation separately. If my brain is hosted, use its existing endpoint
+and select this harness's native OAuth/PKCE flow when supported; otherwise have
+the owner provision the chosen machine connection and install its private handoff
+here using the actual harness adapter.
 ```
 
 ## Path B: start from nothing (local brain, local agent)
@@ -118,9 +120,13 @@ material, and backups may remain.
 
 ## Path A: connect an agent to a brain you already have
 
-Use [hosted harness access](../guides/hosted-harness-access.md) for the full
-procedure. There are two environments: the owner grants access on the brain
-host, then you install the private handoff inside your coding agent's environment.
+Use [hosted harness access](../guides/hosted-harness-access.md) to choose the
+connection method. A harness with native OAuth settings follows the
+[native OAuth path](../guides/hosted-harness-access.md#native-oauth-path).
+The steps below install a private machine connection: the owner grants access
+on the brain host, then you install the handoff inside your coding agent's
+environment. Dashboard access and client management use the separate
+[owner administration](../mcp/ADMIN.md) protocol.
 
 ### A1. On the host, grant memory access
 
@@ -132,6 +138,7 @@ client for each intended agent:
 ```bash
 gbrain mcp grant coding-example --harness codex --profile memory-writer \
   --source default --url https://brain.example.com/mcp \
+  --admin-token-file /absolute/private/owner-token \
   --credentials-out /absolute/private/coding-example.json --json
 ```
 
@@ -176,6 +183,9 @@ ordinary permission repair does not rotate secrets or duplicate clients.
 
 ## Now make it actually useful
 
+Read [memory boundaries](../guides/memory-boundaries.md) before promising graph
+freshness, provider-local processing, or recovery from Markdown export.
+
 ### A compact standing instruction
 
 Add this section to the agent's existing instructions:
@@ -188,6 +198,8 @@ decisions, projects, or prior work. On the memory surface, use recall or entity;
 only use paid synthesis when that capability has been configured and authorized.
 
 Save explicit requests to remember with provenance and the intended brain/source.
+Durable preferences belong in shared memory; transient task state, credentials,
+local configuration, and harness activation state do not.
 Do not automatically capture conversations unless I opt in. A request to save one
 fact does not enable ongoing capture. Chat-only instructions suppress persistence.
 

@@ -5,6 +5,10 @@ import { assertManagedFilesystemWrite } from './filesystem-guard.ts';
 import { OperationError } from '../ops/contract.ts';
 import type { SqlEngine } from './model.ts';
 
+// Every facts-family bulk writer now publishes through the coordinator on a
+// managed brain (#5280); status and activation keep reporting the (empty) list.
+export const UNSUPPORTED_MANAGED_BULK_WRITERS: readonly string[] = [];
+
 /** Refuse unsupported multi-stage writers before providers, files or git change. */
 export async function assertUnmanagedCanonicalWriter(engine: SqlEngine, operation: string): Promise<void> {
   const rows = await engine.executeRaw<{ enabled: boolean }>('SELECT enabled FROM persistence_brain WHERE singleton=1');

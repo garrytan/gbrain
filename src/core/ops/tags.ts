@@ -6,7 +6,7 @@
  */
 
 import type { Operation } from './contract.ts';
-import { enforceClientSlugFence, sourceScopeOpts } from './context.ts';
+import { enforceClientSlugFence, readPolicyOpts } from './context.ts';
 import { submitPageMutation } from '../persistence/page-mutations.ts';
 import { WRITE_REQUEST_PARAM } from '../persistence/params.ts';
 
@@ -56,12 +56,19 @@ const get_tags: Operation = {
     slug: { type: 'string', required: true, description: 'Slug of the page whose tags to list.' },
   },
   handler: async (ctx, p) => {
-    // #2200: route through sourceScopeOpts so a federated read grant
+    // #2200: route through the source scope (via readPolicyOpts) so a federated read grant
     // (ctx.auth.allowedSources) reaches the engine, not just scalar ctx.sourceId.
     // Was `ctx.sourceId ? {sourceId} : {}` — a federated client got '{}' →
     // engine fell back to 'default' (functionality gap + cross-source leak).
-    const sourceOpts = sourceScopeOpts(ctx);
-    return ctx.engine.getTags(p.slug as string, sourceOpts);
+    // Untrusted callers never learn a private or soft-deleted page's tags
+    // (readPolicyOpts resolves the operator's private-pages posture).
+    const policy = await readPolicyOpts(ctx);
+    return ctx.engine.getTags(p.slug as string, {
+      sourceId: policy.sourceId,
+      sourceIds: policy.sourceIds,
+      excludePrivate: policy.excludePrivate,
+      liveOnly: ctx.remote !== false,
+    });
   },
   scope: 'read',
   cliHints: { name: 'tags', positional: ['slug'] },

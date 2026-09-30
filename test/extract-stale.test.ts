@@ -96,8 +96,10 @@ describe('engine: stale-page extraction methods', () => {
   });
 
   test('markPagesExtractedBatch: empty input is a no-op', async () => {
+    await engine.putPage('people/alice', personPage('Alice'));
     await engine.markPagesExtractedBatch([], new Date().toISOString());
-    expect(true).toBe(true); // no throw
+    expect(await stampOf('people/alice')).toBeNull();
+    expect(await engine.countStalePagesForExtraction()).toBe(1);
   });
 });
 
@@ -300,15 +302,15 @@ describe('gbrain extract --stale', () => {
     // Make the link flush throw mid-sweep. The --stale path flushes
     // NON-swallowing (no try/catch), so the throw must propagate AND no page in
     // the batch may be stamped (stamp runs only AFTER a successful flush).
-    const origBatch = engine.addLinksBatch.bind(engine);
+    const origBatch = engine.replaceDerivedLinks.bind(engine);
     let threw = false;
-    (engine as unknown as { addLinksBatch: unknown }).addLinksBatch = async () => { throw new Error('__flush_boom__'); };
+    (engine as unknown as { replaceDerivedLinks: unknown }).replaceDerivedLinks = async () => { throw new Error('__flush_boom__'); };
     try {
       await runExtract(engine, ['--stale']);
     } catch (e) {
       if ((e as Error).message === '__flush_boom__') threw = true; else throw e;
     } finally {
-      (engine as unknown as { addLinksBatch: unknown }).addLinksBatch = origBatch;
+      (engine as unknown as { replaceDerivedLinks: unknown }).replaceDerivedLinks = origBatch;
     }
     expect(threw).toBe(true);
     // Pages whose edges were lost are NOT stamped fresh — they stay stale.

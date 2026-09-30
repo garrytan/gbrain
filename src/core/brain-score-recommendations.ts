@@ -31,31 +31,11 @@ import { getGatewayAnthropicKeySnapshot } from './ai/anthropic-key.ts';
  */
 export const HOSTED_EMBED_KEY_CONFIG: Record<string, string> = {
   OPENAI_API_KEY: 'openai_api_key',
-  ZEROENTROPY_API_KEY: 'zeroentropy_api_key',
   VOYAGE_API_KEY: 'voyage_api_key',
   GOOGLE_GENERATIVE_AI_API_KEY: 'google_api_key',
   DASHSCOPE_API_KEY: 'dashscope_api_key',
 };
 
-/**
- * v0.40.x: is the configured embedding provider usable for the remediation
- * planner? Recipe-aware:
- *   - empty `auth_env.required` (ollama, llama-server, ...) ⇒ local, no hosted
- *     key needed ⇒ true.
- *   - hosted (openai, zeroentropyai, voyage, google, ...) ⇒ true iff every
- *     required key resolves.
- *
- * `resolveKey(envVar)` is supplied by the caller so each producer reads config
- * from its own source (doctor → file plane; autopilot → engine.getConfig).
- * Only the recipe logic is shared, not the config lookup.
- *
- * NOTE: deliberately NOT the same as `gateway.isAvailable('embedding')`.
- * isAvailable returns false for user_provided_models recipes (llama-server,
- * models: []) because it can't validate the model id. For a remediation
- * verdict we WANT true there — local embeddings work. Do not "align" them.
- * Uses the recipe registry (pure data), not the gateway runtime, so this
- * module stays free of AI-SDK coupling and works before engine.connect().
- */
 /**
  * #3944: chat-key presence for the remediation planner, judged on the planes
  * both planner surfaces can rely on — process env, the FILE config plane,
@@ -186,6 +166,12 @@ export interface RecommendationContext {
    * cohort is re-embedded instead of grandfathered forever.
    */
   nullSignatureCohort?: number;
+  /**
+   * #5609: why `extract --stale` cannot run on this brain right now (it would
+   * fail every dispatch). Probed by `staleExtractionBlocked()`; when set, the
+   * `extract.stale` step is withheld and its check classifies as blocked.
+   */
+  staleExtractionBlocked?: string;
 }
 
 /** Triage result for one check. */
@@ -301,7 +287,7 @@ export function computeRecommendations(
     });
   }
 
-  if (health.stale_pages > 0) {
+  if (health.stale_pages > 0 && !ctx.staleExtractionBlocked) {
     const params = { stale: true, ...(ctx.sourceId ? { sourceId: ctx.sourceId } : {}) };
     out.push({
       id: 'extract.stale',
@@ -372,6 +358,9 @@ function classifyOne(check: Check, ctx: RecommendationContext): CheckClassificat
       if (ctx.embeddingProviderConfigured === false) {
         return { check: check.name, status: 'blocked', reason: 'embedding provider not configured' };
       }
+      return { check: check.name, status: 'remediable' };
+    case 'links_extraction_lag':
+      if (ctx.staleExtractionBlocked) return { check: check.name, status: 'blocked', reason: ctx.staleExtractionBlocked };
       return { check: check.name, status: 'remediable' };
     case 'dead_links':
       if (!ctx.repoPath) {

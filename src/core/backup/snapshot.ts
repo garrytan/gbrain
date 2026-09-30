@@ -1,15 +1,18 @@
 /** Full PGLite state recovery for managed in-agent installations. Never starts workers. */
 import { randomUUID } from 'node:crypto';
 import { chmodSync, closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, renameSync, rmSync } from 'node:fs';
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { VERSION } from '../../version.ts';
 import { PGLiteEngine } from '../pglite-engine.ts';
 import { acquireBootstrapLock } from '../bootstrap/lock.ts';
 import { configDir, type GBrainConfig } from '../config.ts';
 import { LATEST_VERSION } from '../migrate.ts';
-import { AgentInstallError, checkedManagedPaths, checkedRoot, confinedPath, privateWrite, readFileConfigState, readInstallReceipt, type AgentInstallReceipt } from '../agent-install/state.ts';
+import { AgentInstallError, checkedManagedPaths, checkedRoot, confinedPath, privateWrite, readFileConfigState, readInstallReceipt, syncDirectory, type AgentInstallReceipt } from '../agent-install/state.ts';
 import { extractPgliteDump, hashFile, isBackupArchiveFile, readBackupArchive, writeBackupArchive, type ArchiveManifest } from './archive.ts';
-import { quarantineRestoredExecution, type RestoreQuarantine } from './quarantine.ts';
+import { quarantineRestoredExecution, rebaseRestorePath, relativeBackupPath, type RestoreQuarantine } from './quarantine.ts';
+import { quarantineSharedSkillRestore, validateSharedSkillRestoreMode, type SharedSkillRestore, type SharedSkillRestoreOptions } from '../shared-skills/restore.ts';
+import { isPhysicalRootMetadata } from '../persistence/physical-root-record.ts';
+import { protectNewBackupPath } from './private-path.ts';
 
 interface SourceInventory { id: string; local_path: string | null; managed_relative_path: string | null }
 interface BackupMetadata {
@@ -67,17 +70,16 @@ function walkFiles(root: string, relativePath: string, excluded: string[] = []):
   return result;
 }
 
-function relativeInside(root: string, path: string): string | null {
-  const result = relative(root, resolve(path));
-  return result && result !== '..' && !result.startsWith('..' + sep) && !resolve(path).startsWith(root + sep + '.gbrain' + sep) ? result : null;
-}
-
 /** Persist restored file contents AND directory entries before the ready receipt. */
 function syncRestoredTree(path: string): void {
   const stat = lstatSync(path);
-  if (stat.isDirectory()) for (const name of readdirSync(path)) syncRestoredTree(join(path, name));
-  else if (!stat.isFile()) throw new AgentInstallError('unsupported_file', 'Unexpected file type in restored staging.');
-  const fd = openSync(path, 'r');
+  if (stat.isDirectory()) {
+    for (const name of readdirSync(path)) syncRestoredTree(join(path, name));
+    syncDirectory(path);
+    return;
+  }
+  if (!stat.isFile()) throw new AgentInstallError('unsupported_file', 'Unexpected file type in restored staging.');
+  const fd = openSync(path, 'r+');
   try { fsyncSync(fd); } finally { closeSync(fd); }
 }
 
@@ -109,8 +111,8 @@ export function rebaseManagedConfig(config: GBrainConfig, originalRoot: string, 
     const leaf = parts[parts.length - 1];
     const value = Object.getOwnPropertyDescriptor(parent, leaf)?.value;
     if (typeof value !== 'string') continue;
-    const rel = isAbsolute(value) ? relativeInside(originalRoot, value) : null;
-    if (rel && managedPaths.some(p => rel === p || rel.startsWith(p + '/'))) parent[leaf] = confinedPath(root, rel);
+    const rebased = rebaseRestorePath(value, originalRoot, root, managedPaths);
+    if (rebased) parent[leaf] = rebased;
     else {
       detached.push(`External configuration path ${parts.join('.')}: ${value}`);
       // A local backend with no path silently defaults to /tmp; detach the
@@ -142,13 +144,14 @@ export async function createPgliteBackup(options: { output: string; root?: strin
   const engine = new PGLiteEngine();
   try {
     work = mkdtempSync(join(dirname(output), '.gbrain-backup-')); chmodSync(work, 0o700);
+    await protectNewBackupPath(work, 'directory');
     const receipt = readInstallReceipt(root);
     // The engine holds its real PGLite writer lock until publication completes.
     await engine.connect({ engine: 'pglite', database_path: dbPath });
     const rows = await engine.executeRaw<{ id: string; local_path: string | null }>('SELECT id, local_path FROM sources ORDER BY id');
     const managedPaths = checkedManagedPaths(root, receipt?.managed_paths ?? []);
     const sources: SourceInventory[] = rows.map(row => {
-      const rel = row.local_path ? relativeInside(root, row.local_path) : null;
+      const rel = row.local_path ? relativeBackupPath(root, row.local_path) : null;
       return { ...row, managed_relative_path: rel && managedPaths.some(p => rel === p || rel.startsWith(p + '/')) ? rel : null };
     });
     const excludedPaths: string[] = [];
@@ -188,7 +191,7 @@ export async function createPgliteBackup(options: { output: string; root?: strin
         'Native harness skills/routines must be reattached and verified; no platform account state is included.',
       ],
     };
-    const manifest = writeBackupArchive(output, { ...metadata }, files);
+    const manifest = await writeBackupArchive(output, { ...metadata }, files);
     return { archive: output, manifest };
   } finally {
     try { await engine.disconnect(); } finally {
@@ -202,19 +205,20 @@ function metadataOf(manifest: ArchiveManifest): BackupMetadata {
   if (value.kind !== 'gbrain-pglite' || value.classification !== 'sensitive-full-database-state' || typeof value.original_root !== 'string' || !Number.isInteger(value.schema_version) || value.schema_version < 1 || !Array.isArray(value.sources) || !Array.isArray(value.managed_paths) || !Array.isArray(value.credential_references) || !Array.isArray(value.omitted)) {
     throw new AgentInstallError('invalid_backup', 'Invalid PGLite backup metadata.');
   }
-  checkedRoot(value.original_root);
+  if (relativeBackupPath(value.original_root, value.original_root) !== '') throw new AgentInstallError('invalid_backup', 'Invalid archived root.');
   if (value.schema_version > LATEST_VERSION) throw new AgentInstallError('newer_backup_schema', 'Upgrade GBrain before restoring this newer database schema.');
-  checkedManagedPaths('/restore', value.managed_paths);
+  checkedManagedPaths(null, value.managed_paths);
   if ([...value.credential_references, ...value.omitted].some(v => typeof v !== 'string')) throw new AgentInstallError('invalid_backup', 'Invalid backup reconnect inventory.');
   for (const source of value.sources) {
     if (!source || typeof source.id !== 'string' || (source.local_path !== null && typeof source.local_path !== 'string')) throw new AgentInstallError('invalid_backup', 'Invalid source inventory.');
-    if (source.managed_relative_path !== null && (typeof source.managed_relative_path !== 'string' || (!value.managed_paths.includes(source.managed_relative_path) && !value.managed_paths.some(p => source.managed_relative_path!.startsWith(p + '/'))))) throw new AgentInstallError('invalid_backup', 'Source path is outside the managed inventory.');
+    if (source.managed_relative_path !== null && (typeof source.managed_relative_path !== 'string' || !source.local_path || relativeBackupPath(value.original_root, source.local_path) !== source.managed_relative_path || (!value.managed_paths.includes(source.managed_relative_path) && !value.managed_paths.some(p => source.managed_relative_path!.startsWith(p + '/'))))) throw new AgentInstallError('invalid_backup', 'Source path is outside the managed inventory.');
   }
   if (value.installation && (!['grok-bot', 'muse'].includes(value.installation.harness) || typeof value.installation.source_id !== 'string' || !value.sources.some(s => s.id === value.installation!.source_id))) throw new AgentInstallError('invalid_backup', 'Invalid installer identity in backup.');
   return value;
 }
 
-export async function restorePgliteBackup(options: { archive: string; into: string }): Promise<{ root: string; quarantined_jobs: number; reconnect_required: string[] }> {
+export async function restorePgliteBackup(options: { archive: string; into: string } & SharedSkillRestoreOptions): Promise<{ root: string; quarantined_jobs: number; reconnect_required: string[]; shared_skills: SharedSkillRestore | null }> {
+  const mode = validateSharedSkillRestoreMode(options);
   const root = checkedRoot(options.into);
   if (!existsSync(dirname(root))) throw new AgentInstallError('parent_missing', 'Restore parent directory must already exist.');
   // Exclusive mkdir reserves an ABSENT destination. A crash leaves a private
@@ -224,9 +228,10 @@ export async function restorePgliteBackup(options: { archive: string; into: stri
     if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw new AgentInstallError('restore_target_exists', 'Restore only into a new, absent root. Existing state is never overwritten.');
     throw error;
   }
+  await protectNewBackupPath(root, 'directory');
   const restoreId = randomUUID();
   const receiptPath = join(root, 'restore-receipt.json');
-  privateWrite(receiptPath, JSON.stringify({ format_version: 1, restore_id: restoreId, state: 'restoring' }) + '\n');
+  privateWrite(receiptPath, JSON.stringify({ format_version: 1, restore_id: restoreId, state: 'restoring', mode }) + '\n');
   const stage = mkdtempSync(join(root, '.restore-')); chmodSync(stage, 0o700);
   const engine = new PGLiteEngine();
   let published = false;
@@ -246,7 +251,7 @@ export async function restorePgliteBackup(options: { archive: string; into: stri
     const dbPath = join(home, 'brain.pglite'); mkdirSync(dbPath, { mode: 0o700 });
     extractPgliteDump(join(payload, 'database.tar'), dbPath);
     if (readFileSync(join(dbPath, 'PG_VERSION'), 'utf8').trim() !== '17') throw new AgentInstallError('unsupported_database_version', 'This runtime only restores PostgreSQL 17 PGLite clusters.');
-    await engine.connect({ engine: 'pglite', database_path: dbPath });
+    await engine.connectForRestore({ engine: 'pglite', database_path: dbPath });
     const databaseSchema = Number(await engine.getConfig('version'));
     if (!Number.isInteger(databaseSchema) || databaseSchema !== metadata.schema_version) {
       throw new AgentInstallError('backup_schema_mismatch', 'The archived database schema does not match the backup inventory. Preserve the archive and use a verified backup.');
@@ -255,7 +260,10 @@ export async function restorePgliteBackup(options: { archive: string; into: stri
     // Restore changes are committed in ONE database transaction.
     let quarantined = 0;
     let execution: RestoreQuarantine;
+    let sharedSkills: SharedSkillRestore | null = null;
     await engine.transaction(async tx => {
+      sharedSkills = await quarantineSharedSkillRestore(tx, restoreId, options);
+      await tx.executeRaw("SELECT set_config('gbrain.topology_change','on',true)");
       execution = await quarantineRestoredExecution(tx, { sources: metadata.sources, originalRoot: metadata.original_root, root, managedPaths: metadata.managed_paths, restoreId });
       const jobs = await tx.executeRaw<{ id: number }>(`UPDATE minion_jobs SET status = 'cancelled', lock_token = NULL, lock_until = NULL, finished_at = NOW(), updated_at = NOW(), error_text = 'quarantined by backup restore; inspect and explicitly resubmit', data = data || jsonb_build_object('__restore_previous_status', status, '__restore_id', $1::text) WHERE status NOT IN ('completed', 'failed', 'dead', 'cancelled') RETURNING id`, [restoreId]);
       quarantined = jobs.length;
@@ -266,10 +274,20 @@ export async function restorePgliteBackup(options: { archive: string; into: stri
     if (!restoredDatabase.closed) throw new AgentInstallError('restore_close_incomplete', 'The restored database did not close cleanly. Staging is preserved; no usable root was published.');
     const detachedConfig: string[] = [];
     const config: GBrainConfig = { ...rebaseManagedConfig(state.config, metadata.original_root, root, metadata.managed_paths, detachedConfig), engine: 'pglite', database_path: join(root, '.gbrain', 'brain.pglite') };
+    if (sharedSkills) {
+      config.mcp = { ...config.mcp, publish_skills: false };
+      detachedConfig.push(`${mode === 'recovery' ? 'Recovered the persistent brain identity under operator attestation; external exclusion of the old service remains operator-required and unverified' : 'Restored as a new independent brain'}: archived credentials and enrollments are revoked, publication is disabled, and canonical owners are detached. Review content and policies, claim restored paths through trusted source administration, revalidate writer quiescence, and issue new credentials before publishing. Stale backups cannot establish current revocations or withdrawals.`);
+    }
     delete config.database_url;
     privateWrite(join(home, 'config.json'), JSON.stringify(config, null, 2) + '\n');
     privateWrite(join(home, 'restore-detached.json'), JSON.stringify({ restore_id: restoreId, ...execution! }, null, 2) + '\n');
     privateWrite(join(home, 'autopilot-paused'), `Paused by backup restore ${restoreId}. Review the reconnect inventory before explicitly resuming automation.\n`);
+    if (sharedSkills) for (const entry of manifest.entries) {
+      if (!entry.path.startsWith('files/') || !isPhysicalRootMetadata(basename(entry.path))) continue;
+      const destination = confinedPath(home, `restore-ownership/${entry.path.slice(6)}`);
+      mkdirSync(dirname(destination), { recursive: true, mode: 0o700 });
+      renameSync(confinedPath(payload, entry.path), destination);
+    }
     for (const path of metadata.managed_paths) {
       const from = confinedPath(join(payload, 'files'), path);
       const to = confinedPath(restored, path);
@@ -300,12 +318,12 @@ export async function restorePgliteBackup(options: { archive: string; into: stri
       renameSync(join(restored, name), join(root, name));
     }
     const reconnect = [...new Set([...metadata.credential_references.map(key => `Configure credential: ${key}`), ...metadata.omitted, ...detachedConfig, ...execution!.reconnect, 'Autopilot is paused; review .gbrain/restore-detached.json before explicitly resuming automation.'])];
-    privateWrite(receiptPath, JSON.stringify({ format_version: 1, restore_id: restoreId, state: 'ready', original_root: metadata.original_root, quarantined_jobs: quarantined, reconnect_required: reconnect, launcher_ready: false, setup_required: true, native_automation_started: false }, null, 2) + '\n');
-    const rootFd = openSync(root, 'r'); try { fsyncSync(rootFd); } finally { closeSync(rootFd); }
+    privateWrite(receiptPath, JSON.stringify({ format_version: 1, restore_id: restoreId, state: 'ready', original_root: metadata.original_root, shared_skills: sharedSkills, quarantined_jobs: quarantined, reconnect_required: reconnect, launcher_ready: false, setup_required: true, native_automation_started: false }, null, 2) + '\n');
+    syncDirectory(root);
     published = true;
-    return { root, quarantined_jobs: quarantined, reconnect_required: reconnect };
+    return { root, quarantined_jobs: quarantined, reconnect_required: reconnect, shared_skills: sharedSkills };
   } catch (error) {
-    privateWrite(receiptPath, JSON.stringify({ format_version: 1, restore_id: restoreId, state: 'failed', reason: error instanceof AgentInstallError ? error.code : 'restore_failed', original_preserved: true }) + '\n');
+    privateWrite(receiptPath, JSON.stringify({ format_version: 1, restore_id: restoreId, state: 'failed', mode, reason: error instanceof AgentInstallError ? error.code : 'restore_failed', original_preserved: true }) + '\n');
     throw error;
   } finally {
     try { await engine.disconnect(); } finally {

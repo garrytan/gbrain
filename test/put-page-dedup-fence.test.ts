@@ -38,6 +38,7 @@ let victimRevision: string;
 
 const VICTIM_SLUG = 'people/alice-example';
 const VICTIM_ID = 'external-uuid-victim';
+const VICTIM_BODY = 'Confidential.';
 
 function put(): Operation {
   const found = operations.find(o => o.name === 'put_page');
@@ -72,9 +73,14 @@ function boundAuth(prefixes: string[]): AuthInfo {
   };
 }
 
-/** The attacker's move: echo the victim's frontmatter id under an in-fence slug. */
-async function putEchoingVictimId(ctx: OperationContext, slug: string, id = VICTIM_ID) {
-  return withEnv({ GBRAIN_HOME: home }, () => put().handler(ctx, { slug, content: page(id, 'Attacker body, different text.') }));
+/**
+ * The attacker's move: echo the victim's frontmatter id under an in-fence slug.
+ * The dedup redirect only fires for a true duplicate (same id AND same content),
+ * so the echo carries the duplicated body; a different body imports at the
+ * requested slug instead (pinned at the end of this file).
+ */
+async function putEchoingVictimId(ctx: OperationContext, slug: string, id = VICTIM_ID, body = VICTIM_BODY) {
+  return withEnv({ GBRAIN_HOME: home }, () => put().handler(ctx, { slug, content: page(id, body) }));
 }
 
 async function expectFenced(p: Promise<unknown>): Promise<void> {
@@ -108,7 +114,7 @@ beforeEach(async () => {
   await engine.executeRaw(`INSERT INTO oauth_clients(client_id,client_name,scope,source_id,federated_read,bound_slug_prefixes,bound_tools,delegated_slug_prefixes,bound_source_id,bound_max_concurrent)
     VALUES('gbrain_cl_dedup_fence','Example dedup client','read write agent','default',$1,$2,$3,$4,'default',1)`,
   [['default'], ['emp-bob/'], ['put_page'], ['emp-bob/*']]);
-  const victim = await importFromContent(engine, VICTIM_SLUG, page(VICTIM_ID, 'Confidential.'), {
+  const victim = await importFromContent(engine, VICTIM_SLUG, page(VICTIM_ID, VICTIM_BODY), {
     noEmbed: true,
     sourceId: 'default',
   });
@@ -160,7 +166,7 @@ describe('put_page: dedup-resolved slug is fenced by the caller\'s own confineme
       subagentId: 7,
       allowedSlugPrefixes: ['wiki/agents/7/*'],
     });
-    const r = await putEchoingVictimId(ctx, 'wiki/agents/7/second', 'in-fence-id') as {
+    const r = await putEchoingVictimId(ctx, 'wiki/agents/7/second', 'in-fence-id', 'Body.') as {
       slug: string; status: string;
     };
     expect(r.status).toBe('duplicate');
@@ -177,7 +183,7 @@ describe('put_page: dedup-resolved slug is fenced by the caller\'s own confineme
     expect(inFence.status).toBe('imported');
 
     const ctx = makeCtx({ auth: boundAuth(['emp-bob/']) });
-    const r = await putEchoingVictimId(ctx, 'emp-bob/second', 'bob-id') as {
+    const r = await putEchoingVictimId(ctx, 'emp-bob/second', 'bob-id', 'Body.') as {
       slug: string; status: string;
     };
     expect(r.status).toBe('duplicate');
@@ -198,6 +204,16 @@ describe('put_page: dedup-resolved slug is fenced by the caller\'s own confineme
     const r = await putEchoingVictimId(makeCtx(), 'anywhere/notes') as { slug: string; status: string };
     expect(r.status).toBe('duplicate');
     expect(r.slug).toBe(VICTIM_SLUG);
+    expect((await engine.readPageSnapshot(VICTIM_SLUG, { sourceId: 'default' }))!.revision).toBe(victimRevision);
+  });
+
+  test('an id echo with different content writes only the requested slug', async () => {
+    const ctx = makeCtx({ auth: boundAuth(['emp-bob/']) });
+    const r = await putEchoingVictimId(ctx, 'emp-bob/notes', VICTIM_ID, 'Attacker body, different text.') as {
+      slug: string; status: string;
+    };
+    expect(r.slug).toBe('emp-bob/notes');
+    expect(r.status).not.toBe('duplicate');
     expect((await engine.readPageSnapshot(VICTIM_SLUG, { sourceId: 'default' }))!.revision).toBe(victimRevision);
   });
 });

@@ -58,18 +58,6 @@ export async function checkChatFallbackChainInert(
  * `gbrain search modes --reset` consolidation command whenever per-key
  * overrides exist.
  *
- * #3657/#4382 sunset amendment: the reset advice was a foot-gun on brains
- * whose overrides exist precisely to hold the reranker OFF the sunsetting
- * mode-bundle default — `--reset` clears `search.reranker.*` (they are in
- * SEARCH_MODE_CONFIG_KEYS) while preserving `search.mode`, silently
- * re-arming a provider gbrain itself knows is shutting down. So:
- *   - the ACTIVE resolved reranker (mode bundle + overrides, the same
- *     plane hybrid search reranks with) matching RERANKER_SUNSETS → WARN
- *     with the sunset date + the paste-ready replacement;
- *   - overrides present AND the PURE-BUNDLE resolution (what `--reset`
- *     restores) matching RERANKER_SUNSETS → keep `ok`, but WITHHOLD the
- *     reset recommendation and name the overrides load-bearing;
- *   - otherwise the original [CDX-20] behavior is unchanged.
  */
 
 export async function checkSearchMode(engine: BrainEngine): Promise<Check> {
@@ -80,48 +68,14 @@ export async function checkSearchMode(engine: BrainEngine): Promise<Check> {
     // override roster — they aren't knobs.
     const overrideKeys = overrides.filter(k => k !== 'search.mode' && k !== 'search.mode_upgrade_notice_shown');
 
-    // #3657/#4382: resolve the active reranker AND what a reset would arm.
-    let activeSunset: import('../../../core/ai/defaults.ts').RerankerSunset | null = null;
-    let resetSunset: import('../../../core/ai/defaults.ts').RerankerSunset | null = null;
-    let activeReranker: string | undefined;
-    let resetReranker: string | undefined;
-    try {
-      const { loadSearchModeConfig, resolveSearchMode } = await import('../../../core/search/mode.ts');
-      const { rerankerSunset } = await import('../../../core/ai/defaults.ts');
-      const loaded = await loadSearchModeConfig(engine);
-      const active = resolveSearchMode(loaded);
-      if (active.reranker_enabled) {
-        activeReranker = active.reranker_model;
-        activeSunset = rerankerSunset(active.reranker_model);
-      }
-      // Pure bundle for the same mode — `search modes --reset` clears the
-      // per-key overrides but deliberately preserves search.mode.
-      const bundle = resolveSearchMode({ mode: loaded.mode });
-      if (bundle.reranker_enabled) {
-        resetReranker = bundle.reranker_model;
-        resetSunset = rerankerSunset(bundle.reranker_model);
-      }
-    } catch {
-      // Mode resolution failed — make no sunset claim; legacy copy below.
-    }
-
+    const { loadSearchModeConfig, resolveSearchMode } = await import('../../../core/search/mode.ts');
+    const loaded = await loadSearchModeConfig(engine);
+    const resetReranker = resolveSearchMode({ mode: loaded.mode }).reranker_model;
     const context = !mode
       ? 'search.mode is unset (using balanced fallback). Run `gbrain search modes` to see what is running and pick a mode explicitly.'
       : overrideKeys.length === 0
         ? `Mode: ${mode} (no per-key overrides — mode bundle is canonical).`
         : `Mode: ${mode} with ${overrideKeys.length} per-key override(s) (${overrideKeys.join(', ')}).`;
-
-    if (activeSunset) {
-      return {
-        name: 'search_mode',
-        status: 'warn',
-        message:
-          `${context} The active reranker (${activeReranker}) is on a provider with an announced ` +
-          `shutdown: the hosted API dies on ${activeSunset.date}, after which rerank calls fail open ` +
-          `to unreranked order. Fix: gbrain config set search.reranker.model ${activeSunset.replacement} ` +
-          `(or disable: gbrain config set search.reranker.enabled false).`,
-      };
-    }
 
     if (!mode || overrideKeys.length === 0) {
       return { name: 'search_mode', status: 'ok', message: context };
@@ -143,20 +97,6 @@ export async function checkSearchMode(engine: BrainEngine): Promise<Check> {
         message:
           `${context} The override equals the mode bundle's own default, so it is redundant: ` +
           `gbrain config unset ${redundant.join(' ')}`,
-      };
-    }
-
-    if (resetSunset) {
-      // Overrides are what keep this brain OFF the sunsetting bundle default
-      // — recommending a reset here re-arms a dying provider (#4382).
-      return {
-        name: 'search_mode',
-        status: 'ok',
-        message:
-          `${context} These override(s) are load-bearing: a mode-bundle reset would restore ` +
-          `reranker_model=${resetReranker}, whose provider shuts down on ${resetSunset.date} — ` +
-          `so no consolidation is recommended. To consolidate later, first re-set ` +
-          `search.reranker.model to a live provider after resetting.`,
       };
     }
 
@@ -239,27 +179,6 @@ export async function checkEvalDrift(engine: BrainEngine): Promise<Check> {
  * before a job is submitted.
  */
 
-/**
- * v0.41.2.1 — embedding_env_override (D9 #9). Defense-in-depth for the
- * ze-switch env-override class (the 716K-chunk damage incident from
- * PR #1421's description).
- *
- * GBRAIN_EMBEDDING_MODEL / GBRAIN_EMBEDDING_DIMENSIONS win over DB+file
- * config in loadConfig(). When env disagrees with DB, the gateway embeds
- * with the env-selected model — even after ze-switch wrote a different
- * value to DB. This check surfaces that disagreement on every hourly
- * doctor run so users can spot the drift before the embed sweep corrupts
- * vectors at the wrong width.
- *
- * Uses Check.details (NOT Check.issues, which has a different schema)
- * so the structured `mismatches[]` payload is consumable by monitoring
- * pipelines without ad-hoc type widening.
- *
- * Cross-surface parity: wired into BOTH buildChecks() and
- * doctorReportRemote() — operators running thin-client doctor against
- * a remote brain see the server's env, which is the env that matters
- * for the embed pipeline running there.
- */
 export async function checkEmbeddingEnvOverride(engine: BrainEngine): Promise<Check> {
   const envModel = process.env.GBRAIN_EMBEDDING_MODEL?.trim();
   const envDim = process.env.GBRAIN_EMBEDDING_DIMENSIONS?.trim();

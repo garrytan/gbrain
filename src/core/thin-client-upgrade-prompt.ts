@@ -323,17 +323,6 @@ export function _setUpgradeRunnerForTest(fn: UpgradeRunner | null): void {
 }
 
 // ============================================================================
-// Test escape: clear in-process state file path memo (none today, but matches
-// the _clearIdentityCacheForTest pattern for future-proofing).
-// ============================================================================
-
-export function _clearPromptStateForTest(): void {
-  // No in-process state to clear today; the file lives on disk and tests use
-  // GBRAIN_HOME tempdirs for isolation. This stub exists for symmetry with
-  // _clearIdentityCacheForTest in src/cli.ts so future caching can hook here.
-}
-
-// ============================================================================
 // Orchestrator
 // ============================================================================
 

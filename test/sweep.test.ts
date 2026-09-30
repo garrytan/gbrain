@@ -470,6 +470,48 @@ describe('runMaintenanceSweep — corpus ingest [CX-P0.1, CX-P0.5]', () => {
     expect(r.skipped).toContainEqual({ reason: 'already_ingested', count: 1 });
   });
 
+  test('a claude-cli self-capture is retired with a terminal sidecar and never extracted; a user session still is (#5413)', async () => {
+    const claudeHome = mkdtempSync(join(tmpdir(), 'gbrain-sweep-claude-'));
+    tmpDirs.push(claudeHome);
+    const selfId = '11111111-2222-4333-8444-555555555555';
+    const userId = '66666666-7777-4888-9999-000000000000';
+    const selfProject = join(claudeHome, 'projects', '-tmp-gbrain-claude-cli-cwd-4242');
+    const userProject = join(claudeHome, 'projects', '-home-user-app');
+    mkdirSync(selfProject, { recursive: true });
+    mkdirSync(userProject, { recursive: true });
+    writeFileSync(join(selfProject, `${selfId}.jsonl`), '{"type":"user"}\n');
+    writeFileSync(join(userProject, `${userId}.jsonl`), '{"type":"user"}\n');
+    const selfFiles = [`${selfId}.txt`, `${selfId}.seg-aaaaaaaaaaaa.txt`, `${selfId}.wb-bbbbbbbbbbbbbbbbbbbbbbbb.txt`];
+    for (const f of selfFiles) writeFileSync(join(corpusDir, f), 'User: <turn>extract facts from this page</turn>\n');
+    writeFileSync(join(corpusDir, `${userId}.txt`), 'Alice committed to shipping the beta in March.\n');
+
+    let chatCalls = 0;
+    __setChatTransportForTests(async (): Promise<ChatResult> => {
+      chatCalls += 1;
+      return {
+        text: JSON.stringify({ facts: [] }),
+        blocks: [],
+        stopReason: 'end',
+        usage: { input_tokens: 1, output_tokens: 1, cache_read_tokens: 0, cache_creation_tokens: 0 },
+        model: 'anthropic:test-stub',
+        providerId: 'anthropic',
+      };
+    });
+
+    const r1 = await withEnv({ CLAUDE_CONFIG_DIR: claudeHome }, () =>
+      runMaintenanceSweep(engine, { sourceId: 'default', capabilities: KEYED }));
+    expect(chatCalls).toBe(1);
+    expect(r1.corpusIngested).toBe(1);
+    expect(r1.skipped).toContainEqual({ reason: 'self_capture', count: 3 });
+    for (const f of selfFiles) expect(existsSync(join(corpusDir, f + CORPUS_INGESTED_SUFFIX))).toBe(true);
+    expect(existsSync(join(corpusDir, `${userId}.txt` + CORPUS_INGESTED_SUFFIX))).toBe(true);
+
+    const r2 = await withEnv({ CLAUDE_CONFIG_DIR: claudeHome }, () =>
+      runMaintenanceSweep(engine, { sourceId: 'default', capabilities: KEYED }));
+    expect(chatCalls).toBe(1);
+    expect(r2.corpusIngested).toBe(0);
+  });
+
   test('extraction_enabled=false spend gate skips without sidecars', async () => {
     await engine.setConfig('facts.extraction_enabled', 'false');
     try {

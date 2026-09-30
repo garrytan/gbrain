@@ -172,7 +172,14 @@ and snapshot verification. Force means "recompute" rather than "relax safety."
 
 ## Operator signals
 
-The result exposes separate counters:
+`pages_skipped` retains its existing aggregate meaning. Its reason-specific
+subsets distinguish `pages_skipped_unparsed`, `pages_skipped_type_mismatch`,
+`pages_skipped_insufficient_turns`, and `pages_skipped_since`; speaker-attribution
+declines retain `pages_skipped_unrecognized_speaker`. These subsets explain a
+skip without adding a second page to the aggregate. `--since` filtering is not
+a checkpoint skip, and a parse miss remains retryable.
+
+The result also exposes separate durable-outcome and failure counters:
 
 - `pages_skipped_completed`
 - `pages_skipped_non_extractable`
@@ -182,6 +189,23 @@ The result exposes separate counters:
 The CLI aggregates these across sources. The autopilot backfill phase includes
 them in phase details. `gbrain doctor` reports `completed`,
 `scanned_not_extractable`, and `backlog` independently.
+
+### Preview without model calls
+
+**Say to your agent:** *"Preview which conversations can be read, and explain
+why any are skipped."*
+
+```bash
+gbrain extract-conversation-facts --source-id default --dry-run --limit 10 --workers 1
+```
+
+Dry-run reports segmentation and skip reasons without calling the parser
+fallback, fact extractor, or embedding provider. It does not write facts,
+durable outcomes, checkpoints, receipt pages, or extraction rollups. Normal
+source checks and transient advisory-lock handling still apply. The preview
+does not estimate how many facts a later model call would return.
+
+### Verify durable outcomes
 
 Run a small canary twice:
 

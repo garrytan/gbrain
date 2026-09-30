@@ -133,7 +133,7 @@ If you want to FEEL the difference without buying the pitch:
 
 Pick a real corpus you have. Run `gbrain whoknows` on a topic that should match. Note the top-3 results.
 
-Then run `gbrain schema review-orphans --limit 50 --json` and look at the untyped pages. If 10+ of them share an obvious prefix that should be a real type, add the type + sync.
+Then run `gbrain schema review-orphans --json` and look at the untyped pages. If 10+ of them share an obvious prefix that should be a real type, add the type + sync.
 
 Re-run the same `whoknows` query. Top-3 should shift, because the new type is now routing through expert ranking instead of being lumped into the catchall. The numerical delta IS the win. You can run a tutorial in 5 minutes; this experiment proves it matters on your actual content.
 

@@ -31,10 +31,12 @@ import { isUndefinedTableError } from '../utils.ts';
  *
  * Resolution order:
  *   1. If `raw` is already a page slug shape (contains a "/" or matches an
- *      exact pages.slug row in this source), return it untouched.
+ *      exact pages.slug row in this source), return it untouched. A mention
+ *      that is exactly one live page's own name (slug basename) resolves to
+ *      it next, before any other page's alias.
  *   2. Resolve a bare name only when prefix expansion finds one candidate.
- *   3. For multi-token input, require a high-specificity fuzzy match against
- *      pages.slug + pages.title within the source (case-insensitive).
+ *   3. For multi-token input, take a fuzzy candidate within the source only
+ *      when it carries the same name tokens (sameEntityName).
  *   4. Fall back to a deterministic slugify: lowercase-no-spaces with
  *      hyphen-collapse. NOT prefixed with a directory — caller decides
  *      whether to prefix `people/`, `companies/`, etc.
@@ -58,6 +60,13 @@ export async function resolveEntitySlug(
     if (exact) return exact;
   }
 
+  // 1.25. Exact own name: a live page whose slug basename IS the mention wins
+  //       over another page's alias — "Jordan Lee-Example" is
+  //       people/jordan-lee-example even when a different person lists it as
+  //       a former name.
+  const basenames = await findExactBasenameCandidates(engine, source_id, trimmed);
+  if (basenames.length === 1) return basenames[0].slug;
+
   // 1.5. Alias-exact (v0.46.15 identity wave, #3730): an unambiguous
   //      page_aliases hit resolves BEFORE prefix expansion / fuzzy — the
   //      alias table is curated ground truth ("saoirse" → people/saoirse-x)
@@ -65,8 +74,6 @@ export async function resolveEntitySlug(
   const aliased = await tryAliasExact(engine, source_id, trimmed);
   if (aliased) return aliased;
 
-  const basenames = await findExactBasenameCandidates(engine, source_id, trimmed);
-  if (basenames.length === 1) return basenames[0].slug;
   if (basenames.length > 1) return fallbackSlugify(trimmed);
 
   // 2. Prefix-expansion match: when the input looks like a bare first name
@@ -104,6 +111,42 @@ function fallbackSlugify(trimmed: string): string {
     return trimmed.split('/').map(slugify).filter(Boolean).join('/');
   }
   return slugify(trimmed);
+}
+
+const IDENTITY_TYPES = new Set(['person', 'company', 'fund', 'organization']);
+const IDENTITY_DIRS = ['people/', 'companies/', 'funds/', 'orgs/', 'organizations/'];
+const NAME_NOISE_TOKENS = new Set(['the', 'inc', 'llc', 'ltd', 'co', 'corp', 'corporation', 'plc', 'gmbh']);
+
+/** True for pages that name one real-world person, company, fund or organization. */
+export function isIdentityEntity(slug: string, type?: string | null): boolean {
+  return (type != null && IDENTITY_TYPES.has(type)) || IDENTITY_DIRS.some(dir => slug.startsWith(dir));
+}
+
+const FACT_ENTITY_TYPES = new Set(['concept', 'project', 'deal']);
+const FACT_ENTITY_DIRS = ['hosts/', 'projects/', 'concepts/', 'deals/'];
+
+/** Pages a fuzzy fact attribution may land on: entities, never meetings, notes or other documents. */
+function isFactEntityPage(slug: string, type: string | null): boolean {
+  return isIdentityEntity(slug, type) || (type != null && FACT_ENTITY_TYPES.has(type))
+    || FACT_ENTITY_DIRS.some(dir => slug.startsWith(dir));
+}
+
+function nameTokens(value: string): string {
+  const folded = foldNonDecomposingLatin(value).normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase();
+  const tokens = folded.split(/[^\p{L}\p{N}]+/u).filter(token => token && !NAME_NOISE_TOKENS.has(token));
+  return [...new Set(tokens)].sort().join(' ');
+}
+
+/**
+ * A fuzzy candidate names the same entity as a reference only when both carry
+ * the same name tokens, ignoring case, punctuation, order, accents and
+ * corporate suffixes. "Example, Alice" matches "Alice Example"; "Alicia
+ * Example" and "Alice Examples" do not, so a near-name never resolves to a
+ * different entity.
+ */
+export function sameEntityName(reference: string, candidateTitle: string | null | undefined, candidateSlug: string): boolean {
+  const wanted = nameTokens(reference);
+  return wanted !== '' && (wanted === nameTokens(candidateTitle ?? '') || wanted === nameTokens(candidateSlug.split('/').pop() ?? ''));
 }
 
 /**
@@ -188,16 +231,23 @@ async function findExactBasenameCandidates(
  * v0.40.2.0 — resolution-source-tagged variant for trajectory routing.
  *
  * Same resolution chain as `resolveEntitySlug` but returns the source
- * (`exact_page` | `fuzzy_match` | `fallback_slugify`) alongside the slug
- * so trajectory callers can gate on `resolution_source !==
- * 'fallback_slugify'` — querying findTrajectory on an invented slug
- * always returns [] and wastes a SQL round-trip. Codex Problem 5 from
- * v0.40.2.0 outside-voice review.
+ * (`exact_page` | `alias_exact` | `prefix_expansion` | `fuzzy_match` |
+ * `fallback_slugify`) alongside the slug so trajectory callers can gate on
+ * `resolution_source !== 'fallback_slugify'` — querying findTrajectory on an
+ * invented slug always returns [] and wastes a SQL round-trip.
+ *
+ * `prefix_expansion` is the bare single-token branch: it picks the sole
+ * `<dir>/<token>-*` page because it is the only candidate, not because
+ * anything confirms the mention is the same person or company (a bare
+ * "Victor" in an unrelated transcript landed on the brain's one
+ * `people/victor-*` page). It still verifies a live page, so
+ * `!== 'fallback_slugify'` gates are unaffected; `facts/backstop.ts` flags
+ * facts written through it as unverified.
  *
  * The original `resolveEntitySlug` keeps its existing contract (returns
  * just the slug) for all pre-v0.40 call sites — no caller-side churn.
  */
-export type ResolutionSource = 'exact_page' | 'alias_exact' | 'fuzzy_match' | 'fallback_slugify';
+export type ResolutionSource = 'exact_page' | 'alias_exact' | 'prefix_expansion' | 'fuzzy_match' | 'fallback_slugify';
 
 export interface ResolveResult {
   slug: string;
@@ -219,16 +269,17 @@ export async function resolveEntitySlugWithSource(
     if (exact) return { slug: exact, source: 'exact_page' };
   }
 
+  const basenames = await findExactBasenameCandidates(engine, source_id, trimmed);
+  if (basenames.length === 1) return { slug: basenames[0].slug, source: 'fuzzy_match' };
+
   const aliased = await tryAliasExact(engine, source_id, trimmed);
   if (aliased) return { slug: aliased, source: 'alias_exact' };
 
-  const basenames = await findExactBasenameCandidates(engine, source_id, trimmed);
-  if (basenames.length === 1) return { slug: basenames[0].slug, source: 'fuzzy_match' };
   if (basenames.length > 1) return { slug: fallbackSlugify(trimmed), source: 'fallback_slugify' };
 
   if (isBareName(trimmed)) {
     const expanded = await tryUnambiguousPrefixExpansion(engine, source_id, slugify(trimmed));
-    if (expanded) return { slug: expanded, source: 'fuzzy_match' };
+    if (expanded) return { slug: expanded, source: 'prefix_expansion' };
   } else {
     const fuzzy = await tryFuzzyMatch(engine, source_id, trimmed);
     if (fuzzy) return { slug: fuzzy, source: 'fuzzy_match' };
@@ -266,7 +317,7 @@ export async function resolvePhantomCanonical(
   // The phantom slug is the input; we treat it as the search term too,
   // because phantom slugs ARE the lowercased bare name a fuzzy / prefix
   // lookup would naturally target.
-  const fuzzy = await tryFuzzyMatch(engine, source_id, trimmed);
+  const fuzzy = await tryFuzzyMatch(engine, source_id, trimmed, false);
   if (fuzzy && fuzzy !== phantomSlug && fuzzy.includes('/')) return fuzzy;
 
   const expanded = await tryPrefixExpansion(engine, source_id, slugify(trimmed));
@@ -399,7 +450,9 @@ async function tryPrefixExpansion(
       if (rows.length === 1) return rows[0].slug;
       // Multiple matches: the top row (sorted by connection_count desc)
       // wins. The slug-ASC secondary key makes ties deterministic when
-      // connection counts collide — important for test pinning.
+      // connection counts collide — important for test pinning. The
+      // phantom pass's findPrefixCandidates gate refuses any multi-candidate
+      // redirect, so this top row is never taken on its own.
       return rows[0].slug;
     } catch {
       // Defensive: a missing table or index shouldn't crash extraction.
@@ -423,22 +476,20 @@ async function tryExactSlug(
   source_id: string,
   candidate: string,
 ): Promise<string | null> {
-  try {
-    const rows = await engine.executeRaw<{ slug: string }>(
-      `SELECT slug FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL LIMIT 1`,
-      [source_id, candidate],
-    );
-    if (rows.length > 0) return rows[0].slug;
-  } catch {
-    // Defensive: fail open. Caller still gets a slug from the fallback.
-  }
-  return null;
+  // A database error propagates: degrading to the fallback slug would
+  // silently attribute the caller's facts to a different entity.
+  const rows = await engine.executeRaw<{ slug: string }>(
+    `SELECT slug FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL LIMIT 1`,
+    [source_id, candidate],
+  );
+  return rows[0]?.slug ?? null;
 }
 
 async function tryFuzzyMatch(
   engine: BrainEngine,
   source_id: string,
   raw: string,
+  sameNameOnly = true,
 ): Promise<string | null> {
   const lc = raw.toLowerCase();
   const fragment = slugify(raw);
@@ -446,8 +497,8 @@ async function tryFuzzyMatch(
   // tends to be display-name-shaped ("Alice Example" vs "alice-example"). Cap at
   // 3 candidates; pick the first deterministic one.
   try {
-    const rows = await engine.executeRaw<{ slug: string; title: string; score: number }>(
-      `SELECT slug, title,
+    const rows = await engine.executeRaw<{ slug: string; title: string; type: string | null; score: number }>(
+      `SELECT slug, title, type,
          GREATEST(
            similarity(lower(title), $2),
            similarity(slug, $3)
@@ -460,19 +511,35 @@ async function tryFuzzyMatch(
            OR slug ILIKE '%' || $3 || '%'
          )
        ORDER BY score DESC, slug ASC
-       LIMIT 3`,
+       LIMIT 5`,
       [source_id, lc, fragment],
     );
-    // 0.4 confidently misattributes names that share only a generic company
-    // token (for example "Beacon Capital" → "Benton Capital"). Keep fuzzy
-    // typo tolerance, but require high-specificity overlap before writing a
-    // fact to an existing entity.
-    if (rows.length > 0 && rows[0].score >= 0.7) return rows[0].slug;
-  } catch {
-    // pg_trgm functions might not be available on every engine config;
-    // fall through to slugify.
+    // A trigram score alone attributes facts about "Alicia Example" to Alice,
+    // and facts about a person with no page to a meeting page that carries
+    // their name. Entity resolution takes a candidate only when it names the
+    // same entity; anything else falls back to the reference's own slug.
+    // Only entity pages are candidates (a meeting titled "Dana Jones Example"
+    // is not Dana), and two entity pages carrying the same name are
+    // ambiguous: neither wins by trigram score.
+    if (sameNameOnly) {
+      const named = rows.filter(row => isFactEntityPage(row.slug, row.type) && sameEntityName(raw, row.title, row.slug));
+      return named.length === 1 ? named[0].slug : null;
+    }
+    // Phantom canonicals: a clear winner only, with a margin over the runner-up.
+    if (rows.length > 0 && rows[0].score >= 0.7 && (rows.length === 1 || rows[0].score - rows[1].score >= 0.1)) return rows[0].slug;
+  } catch (err) {
+    // pg_trgm might not be installed on every engine config: that brain has
+    // no fuzzy arm and falls through to slugify. Any other database error
+    // propagates rather than becoming a silent misattribution.
+    if (!isMissingTrigramError(err)) throw err;
   }
   return null;
+}
+
+function isMissingTrigramError(err: unknown): boolean {
+  const code = typeof err === 'object' && err !== null && 'code' in err ? String((err as { code?: unknown }).code) : '';
+  const message = err instanceof Error ? err.message : String(err);
+  return code === '42883' || /function similarity|operator does not exist: text %/i.test(message);
 }
 
 /**

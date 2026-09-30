@@ -33,8 +33,9 @@ describe('isTruthy', () => {
 });
 
 describe('key builders', () => {
-  test('per-provider keys are namespaced', () => {
+  test('per-provider keys are namespaced; sync progress is per (provider, source)', () => {
     expect(autoSyncKey('chatgpt')).toBe('connectors.chatgpt.auto_sync');
-    expect(watermarkKey('claude')).toBe('connectors.claude.watermark_iso');
+    expect(watermarkKey('claude', 'default')).toBe('connectors.claude.source.default.watermark_iso');
+    expect(watermarkKey('claude', 'work')).toBe('connectors.claude.source.work.watermark_iso');
   });
 });

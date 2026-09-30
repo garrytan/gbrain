@@ -1,4 +1,3 @@
-import { isZeroEntropyModel } from '../core/ai/defaults.ts';
 import { execSync, execFileSync } from 'child_process';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync, realpathSync } from 'fs';
 import { basename, join, dirname, resolve } from 'path';
@@ -28,13 +27,15 @@ export function assessUpgradeOutcome(
 
 export async function runUpgrade(args: string[], opts: { targetVersion?: string } = {}) {
   if (args.includes('--help') || args.includes('-h')) {
-    console.log('Usage: gbrain upgrade [--swap-only]\n\nSelf-update the CLI.\n\nDetects install method (bun, binary, clawhub) and runs the appropriate update.\nAfter upgrading, shows what\'s new and offers to set up new features.\n\n--swap-only  Perform ONLY the binary/source swap and skip post-upgrade\n             (migrations run on the next launch). Used by the autopilot\n             silent self-upgrade channel so the daemon can swap + relaunch\n             without a 30-min blocking post-upgrade inside its tick.');
+    console.log('Usage: gbrain upgrade [--swap-only] [--no-autopilot-install]\n\nSelf-update the CLI.\n\nDetects install method (bun, binary, clawhub) and runs the appropriate update.\nAfter upgrading, shows what\'s new and offers to set up new features.\n\n--no-autopilot-install  Skip autopilot installation and service rewrites, including package postinstall.\n                       Also supported as GBRAIN_NO_AUTOPILOT_INSTALL=1.\n--swap-only  Perform ONLY the binary/source swap and skip post-upgrade\n             (migrations run on the next launch). Used by the autopilot\n             silent self-upgrade channel so the daemon can swap + relaunch\n             without a 30-min blocking post-upgrade inside its tick.');
     return;
   }
 
   // --swap-only: do the swap, skip the (potentially 30-min) post-upgrade. The
   // relaunched binary runs migrations on boot (split-brain guard). v0.42.
   const swapOnly = args.includes('--swap-only');
+  const noAutopilotInstall = args.includes('--no-autopilot-install') || process.env.GBRAIN_NO_AUTOPILOT_INSTALL === '1';
+  const upgradeEnv = noAutopilotInstall ? { ...process.env, GBRAIN_NO_AUTOPILOT_INSTALL: '1' } : process.env;
 
   // Capture old version BEFORE upgrading (Codex finding: old binary runs this code)
   const oldVersion = VERSION;
@@ -53,7 +54,7 @@ export async function runUpgrade(args: string[], opts: { targetVersion?: string 
       console.log(`Upgrading bun-link source clone at ${linkInfo.repoRoot}...`);
       try {
         execFileSync('git', ['-C', linkInfo.repoRoot, 'pull', '--ff-only'], { stdio: 'inherit', timeout: 120_000 });
-        execFileSync('bun', ['install'], { cwd: linkInfo.repoRoot, stdio: 'inherit', timeout: 120_000 });
+        execFileSync('bun', ['install'], { cwd: linkInfo.repoRoot, env: upgradeEnv, stdio: 'inherit', timeout: 120_000 });
         upgraded = true;
       } catch {
         console.error('Auto-upgrade failed. Try manually:');
@@ -66,7 +67,7 @@ export async function runUpgrade(args: string[], opts: { targetVersion?: string 
       console.log('Upgrading via bun...');
       const bunGlobalRoot = resolveBunGlobalRoot();
       try {
-        execFileSync('bun', ['update', 'gbrain'], { cwd: bunGlobalRoot, stdio: 'inherit', timeout: 120_000 });
+        execFileSync('bun', ['update', 'gbrain'], { cwd: bunGlobalRoot, env: upgradeEnv, stdio: 'inherit', timeout: 120_000 });
         upgraded = true;
       } catch {
         console.error('Upgrade failed. Try running manually:');
@@ -132,7 +133,7 @@ export async function runUpgrade(args: string[], opts: { targetVersion?: string 
     case 'clawhub':
       console.log('Upgrading via ClawHub...');
       try {
-        execSync('clawhub update gbrain', { stdio: 'inherit', timeout: 120_000 });
+        execSync('clawhub update gbrain', { env: upgradeEnv, stdio: 'inherit', timeout: 120_000 });
         upgraded = true;
       } catch {
         console.error('ClawHub upgrade failed. Try: clawhub update gbrain');
@@ -203,7 +204,7 @@ export async function runUpgrade(args: string[], opts: { targetVersion?: string 
       process.env.GBRAIN_POST_UPGRADE_TIMEOUT_MS || 1_800_000,
     );
     try {
-      execSync('gbrain post-upgrade', { stdio: 'inherit', timeout: postUpgradeTimeoutMs });
+      execFileSync('gbrain', ['post-upgrade', ...(noAutopilotInstall ? ['--no-autopilot-install'] : [])], { env: upgradeEnv, stdio: 'inherit', timeout: postUpgradeTimeoutMs });
     } catch (e) {
       // post-upgrade is best-effort, don't fail the upgrade. BUT leave a
       // trail so `gbrain doctor` can surface it and give the user a clear
@@ -355,7 +356,7 @@ function saveUpgradeState(oldVersion: string, newVersion: string) {
  * one-time informational banner, and rewrite an existing autopilot systemd unit
  * to Restart=always so the silent channel's exit-for-relaunch respawns.
  */
-async function applySelfUpgradeSetup(): Promise<void> {
+async function applySelfUpgradeSetup(noAutopilotInstall: boolean): Promise<void> {
   try {
     const { loadConfig, saveConfig } = await import('../core/config.ts');
     const cfg = loadConfig();
@@ -389,6 +390,7 @@ async function applySelfUpgradeSetup(): Promise<void> {
   } catch {
     /* best-effort */
   }
+  if (noAutopilotInstall) return;
   try {
     const { migrateSystemdUnitToRestartAlways } = await import('./autopilot.ts');
     const r = migrateSystemdUnitToRestartAlways();
@@ -402,8 +404,9 @@ async function applySelfUpgradeSetup(): Promise<void> {
 
 export async function runPostUpgrade(args: string[] = []): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) {
-    console.log('Usage: gbrain post-upgrade');
+    console.log('Usage: gbrain post-upgrade [--no-autopilot-install]');
     console.log('Prints feature pitches for new migrations and runs apply-migrations.');
+    console.log('--no-autopilot-install (or GBRAIN_NO_AUTOPILOT_INSTALL=1) skips autopilot installation and service rewrites.');
     console.log('Idempotent — safe to re-run any time.');
     return;
   }
@@ -422,7 +425,8 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
   // autonomy), inform once, and rewrite an existing systemd unit to
   // Restart=always so the silent channel's exit-for-relaunch respawns. All
   // file-plane + mechanical + idempotent; never blocks the upgrade.
-  await applySelfUpgradeSetup();
+  const noAutopilotInstall = args.includes('--no-autopilot-install') || process.env.GBRAIN_NO_AUTOPILOT_INSTALL === '1';
+  await applySelfUpgradeSetup(noAutopilotInstall);
   // Cosmetic: print feature pitches for migrations newer than the prior binary.
   try {
     const statePath = join(process.env.HOME || '', '.gbrain', 'upgrade-state.json');
@@ -453,7 +457,7 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
   // (autopilot install) doesn't hit a subprocess boundary.
   try {
     const { runApplyMigrations } = await import('./apply-migrations.ts');
-    await runApplyMigrations(['--yes', '--non-interactive']);
+    await runApplyMigrations(['--yes', '--non-interactive', ...(noAutopilotInstall ? ['--no-autopilot-install'] : [])]);
   } catch (e) {
     // Surface the error but don't throw — post-upgrade is best-effort.
     // Users can re-run `gbrain apply-migrations` manually if they want
@@ -570,146 +574,31 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
           // Banner is cosmetic; never block the upgrade.
         }
 
-        // #3390: ZeroEntropy sunset notice. ZE announced (2026-07-24) that
-        // its hosted endpoints — including /models/embed and /models/rerank —
-        // shut down on 2026-09-04. Any brain resolving to a zeroentropyai:*
-        // embedding model (including default-config brains that never set
-        // one) loses SEMANTIC RETRIEVAL ENTIRELY on that date: the query
-        // embedding uses the same endpoint, so existing vectors become
-        // unqueryable. One-shot per install, gated by
-        // `ze_sunset_notice_shown` (same pattern as the search-mode banner).
-        try {
-          const shown = await engine.getConfig('ze_sunset_notice_shown');
-          const { DEFAULT_EMBEDDING_MODEL, ZEROENTROPY_SUNSET_DATE } = await import('../core/ai/defaults.ts');
-          const effectiveModel = cfgSchema.embedding_model ?? DEFAULT_EMBEDDING_MODEL;
-          // Effective reranker via the plane search actually reranks with
-          // (mode bundle + search.reranker.* overrides) — the bare config
-          // key is unset by default while balanced/tokenmax rerank with the
-          // bundle's zeroentropyai model. Same resolution as the
-          // provider_sunset doctor check.
-          let rerankerModel: string | undefined;
-          try {
-            const { loadSearchModeConfig, resolveSearchMode } = await import('../core/search/mode.ts');
-            const knobs = resolveSearchMode(await loadSearchModeConfig(engine));
-            if (knobs.reranker_enabled) rerankerModel = knobs.reranker_model;
-          } catch { /* no reranker-exposure claim */ }
-          const onZeEmbedding = isZeroEntropyModel(effectiveModel);
-          const onZeReranker = isZeroEntropyModel(rerankerModel);
-          if (shown !== 'true' && (onZeEmbedding || onZeReranker)) {
-            // Paste-ready --dim from the ACTUAL column width (config can
-            // drift): keeping the current width avoids a needless dimension
-            // transition + index rebuild when the target supports it.
-            let colDims: number | null = null;
-            try {
-              const { readContentChunksEmbeddingDim } = await import('../core/embedding-dim-check.ts');
-              colDims = (await readContentChunksEmbeddingDim(engine)).dims;
-            } catch { /* fresh brain — canonical command carries its own --dim */ }
-            const { renderCanonicalMigrationCommands } = await import('../core/ai/defaults.ts');
-            const cmds = renderCanonicalMigrationCommands({ colDims });
-            console.log('');
-            console.log('═══════════════════════════════════════════════════════════════');
-            console.log(`[gbrain] ACTION REQUIRED: ZeroEntropy hosted API sunsets ${ZEROENTROPY_SUNSET_DATE}.`);
-            if (onZeEmbedding) {
-              console.log(`[gbrain] This brain embeds with ${effectiveModel}. After the sunset,`);
-              console.log('[gbrain] semantic retrieval STOPS WORKING entirely — your EXISTING');
-              console.log('[gbrain] vectors become unqueryable (queries embed through the same');
-              console.log('[gbrain] endpoint), not just new content.');
-            }
-            if (onZeReranker) {
-              console.log(`[gbrain] The reranker (${rerankerModel}) also sunsets; search falls`);
-              console.log('[gbrain] back to unreranked ordering.');
-            }
-            console.log('═══════════════════════════════════════════════════════════════');
-            console.log('');
-            console.log('Two fixes, either works:');
-            console.log('');
-            console.log('[1] Self-host the same model — zembed-1 weights are Apache-2.0. Keep the');
-            console.log('    zeroentropyai:zembed-1 id and point provider_base_urls.zeroentropyai');
-            console.log('    at a ZE-wire-compatible endpoint (NOT a generic OpenAI-compatible');
-            console.log('    server — the id speaks ZE\'s /models/embed dialect). Keeps every');
-            console.log('    vector; NO re-embed. See docs/guides/embedding-migration.md.');
-            console.log('');
-            console.log('[2] Migrate to another provider (resumable; preview cost first):');
-            console.log(`      ${cmds.recommendedDryRun}`);
-            console.log(`      ${cmds.recommended}`);
-            if (cmds.note) console.log(`    ${cmds.note}`);
-            if (cmds.openaiAlternative) {
-              console.log(`    Keep-width alternative: ${cmds.openaiAlternative}`);
-            }
-            if (onZeReranker) {
-              console.log('');
-              console.log('Reranker: gbrain config set search.reranker.enabled false (or pick another).');
-            }
-            console.log('');
-            console.log(`\`gbrain doctor\` will keep flagging this until the brain is off the`);
-            console.log('provider (check name: provider_sunset).');
-            console.log('');
-            await engine.setConfig('ze_sunset_notice_shown', 'true');
-          }
-        } catch {
-          // Banner is cosmetic; never block the upgrade.
-        }
-
-        // v0.46.3: stage-2 sunset notice, gated by `ze_sunset_notice_v2_shown`.
-        // Fires even for brains that saw stage 1 — this release ships the
-        // migration playbook + the Voyage default, and the exposure story
-        // widened (custom columns, env overrides, reranker-without-key).
-        // The gate opens on `exposed` and on `unknown` (fail-safe: nag rather
-        // than stay silent). Reranker-only exposure is COVERED by `exposed`:
-        // detectZeExposure sets status='exposed' whenever the resolved
-        // reranker is ZE (including the legacy bundle default), so an
-        // OpenAI/Voyage-embedding brain whose reranking rides the ZE bundle
-        // still opens the gate, and renderZeActionRequired includes the
-        // reranker paragraph.
-        try {
-          const shownV2 = await engine.getConfig('ze_sunset_notice_v2_shown');
-          if (shownV2 !== 'true') {
-            const { detectZeExposure, renderZeActionRequired } =
-              await import('../core/ze-exposure.ts');
-            const exposure = await detectZeExposure(engine);
-            if (exposure.status === 'exposed' || exposure.status === 'unknown') {
-              console.log('');
-              console.log('═══════════════════════════════════════════════════════════════');
-              console.log('[gbrain] ACTION REQUIRED — ZeroEntropy shutdown (v0.46.3 notice)');
-              console.log('═══════════════════════════════════════════════════════════════');
-              for (const line of renderZeActionRequired(exposure).split('\n')) {
-                console.log(`[gbrain] ${line}`);
-              }
-              console.log('[AGENT] Relay this to your operator: this brain needs an embedding/');
-              console.log('[AGENT] reranker migration before the shutdown date. Playbook:');
-              console.log('[AGENT] skills/migrations/v0.46.3.0.md');
-              console.log('═══════════════════════════════════════════════════════════════');
-              console.log('');
-              await engine.setConfig('ze_sunset_notice_v2_shown', 'true');
-            }
-          }
-        } catch {
-          // Banner is cosmetic; never block the upgrade.
-        }
-
         // PR1: skill-catalog publish consent. New installs default ON at
         // `gbrain init`; EXISTING installs stay OFF (default-OFF runtime = no
         // silent capability grant on upgrade) until the owner opts in HERE.
         // One-time, gated by `mcp.publish_skills_prompted`. Strongly recommended.
         try {
           const prompted = await engine.getConfig('mcp.publish_skills_prompted');
-          const current = await engine.getConfig('mcp.publish_skills');
+          const { loadConfigFileOnly } = await import('../core/config.ts');
+          const filePublication = loadConfigFileOnly()?.mcp?.publish_skills;
+          const current = await engine.getConfig('mcp.publish_skills') ?? (filePublication == null ? null : String(filePublication));
           if (prompted !== 'true' && current == null) {
-            const { autoDetectSkillsDir } = await import('../core/repo-root.ts');
-            const det = autoDetectSkillsDir();
-            const dirLine = det.dir
-              ? `Skills dir: ${det.dir} (source: ${det.source})`
-              : 'Skills dir: not auto-detected — set $GBRAIN_SKILLS_DIR or mcp.skills_dir before enabling.';
+            const sources = await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE NOT archived AND local_path IS NOT NULL');
+            const dirLine = sources.length
+              ? `${sources.length} registered content source(s); shared skills require reviewed source-local publication.`
+              : 'No registered content root: choose a canonical source and complete host content migration first.';
             console.log('');
             console.log('═══════════════════════════════════════════════════════════════');
             console.log('[gbrain] Publish your skills to MCP clients?');
             console.log('[gbrain] Codex desktop, Claude Code/Cowork, and Perplexity can then');
-            console.log("[gbrain] DISCOVER and FOLLOW your agent's skills over `gbrain serve`.");
+            console.log('[gbrain] DISCOVER approved source-scoped skill prose over `gbrain serve`.');
             console.log('[gbrain] This makes your MCP server dramatically more useful.');
             console.log('[gbrain]');
             console.log(`[gbrain] ${dirLine}`);
             console.log('[gbrain] Effect: the CONTENTS of your SKILL.md files become readable by');
             console.log('[gbrain] remote MCP callers you have authorized. Source code is NOT exposed.');
+            console.log('[gbrain] Following updates, bundle bytes and skill editing require separate approval.');
             console.log('═══════════════════════════════════════════════════════════════');
             const isTty = Boolean(process.stdin.isTTY && process.stdout.isTTY);
             let enabled = false;
@@ -752,20 +641,35 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
 
         // v0.32.7 CJK wave: chunker-version bump → re-embed sweep.
         // Idempotent — `runReindex` short-circuits when no pages are pending.
+        // A managed brain refuses the markdown reindex; name its drain instead.
         try {
-          const { runPostUpgradeReembedPrompt } = await import('../core/post-upgrade-reembed.ts');
-          const { getEmbeddingModel } = await import('../core/ai/gateway.ts');
-          let modelString = 'openai:text-embedding-3-large';
-          try { modelString = getEmbeddingModel(); } catch { /* gateway not configured — keep default */ }
-          const promptResult = await runPostUpgradeReembedPrompt(engine, modelString);
-          if (promptResult.proceeded) {
-            const { runReindex } = await import('./reindex.ts');
-            await runReindex(engine, ['--markdown']);
+          const { managedPersistenceEnabled } = await import('../core/persistence/ownership.ts');
+          const managed = await managedPersistenceEnabled(engine);
+          if (!managed) {
+            const { runPostUpgradeReembedPrompt } = await import('../core/post-upgrade-reembed.ts');
+            const { getEmbeddingModel } = await import('../core/ai/gateway.ts');
+            let modelString = 'openai:text-embedding-3-large';
+            try { modelString = getEmbeddingModel(); } catch { /* gateway not configured — keep default */ }
+            const promptResult = await runPostUpgradeReembedPrompt(engine, modelString);
+            if (promptResult.proceeded) {
+              const { runReindex } = await import('./reindex.ts');
+              await runReindex(engine, ['--markdown']);
+            }
           }
         } catch (re) {
           const msg = re instanceof Error ? re.message : String(re);
           console.warn(`\nChunker-bump reindex skipped: ${msg}`);
           console.warn('Run `gbrain reindex --markdown` manually when ready.');
+        }
+
+        // Fix wave 3: run the wave checks once (full, not --fast) and relay a
+        // preview-only recovery banner; applying stays the user's decision.
+        try {
+          const { postUpgradeRecoveryBanner } = await import('./doctor/upgrade-banner.ts');
+          const [brain] = await engine.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1').catch(() => []);
+          for (const line of await postUpgradeRecoveryBanner(engine, `host (${engine.kind}${brain ? `, id ${brain.brain_id}` : ''})`)) console.log(line);
+        } catch (be) {
+          console.warn(`\nRecovery checks skipped: ${be instanceof Error ? be.message : String(be)}. Run \`gbrain doctor --remediation-plan\` to preview.`);
         }
       } finally {
         try { await engine.disconnect(); } catch { /* best-effort */ }

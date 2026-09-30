@@ -1,0 +1,808 @@
+{
+ "only_typeof": [
+  [
+   "test/advisor-core.test.ts",
+   "reports stalled jobs and stale sync",
+   2
+  ],
+  [
+   "test/advisor-core.test.ts",
+   "embeddings disabled \u2192 warn",
+   1
+  ],
+  [
+   "test/brain-allowlist.serial.test.ts",
+   "execute() names a missing required parameter instead of crashing",
+   1
+  ],
+  [
+   "test/brain-allowlist.serial.test.ts",
+   "execute() normalizes optional absent idioms (null / \"\") before validation and the handler (wave review)",
+   1
+  ],
+  [
+   "test/budget-meter.test.ts",
+   "Anthropic pricing map covers the alias resolution targets",
+   3
+  ],
+  [
+   "test/cli-should-force-exit.test.ts",
+   "uses process.argv.slice(2) by default when called with no args",
+   1
+  ],
+  [
+   "test/code-callers-cli.test.ts",
+   "code-callers module exports runCodeCallers",
+   1
+  ],
+  [
+   "test/code-callers-cli.test.ts",
+   "code-callees module exports runCodeCallees",
+   1
+  ],
+  [
+   "test/code-def-refs.test.ts",
+   "ranks by slug + line number (deterministic)",
+   1
+  ],
+  [
+   "test/content-sanity.test.ts",
+   "null/undefined title does not throw and yields a normal result",
+   2
+  ],
+  [
+   "test/cross-modal-default-slots.test.ts",
+   "every default slot model has a canonical pricing entry",
+   1
+  ],
+  [
+   "test/cycle-abort.test.ts",
+   "signal field exists on CycleOpts interface",
+   1
+  ],
+  [
+   "test/cycle-pack-gating.test.ts",
+   "every ALL_PHASES entry has a PHASE_SCOPE entry (exhaustive map)",
+   1
+  ],
+  [
+   "test/db-pacer.test.ts",
+   "dispose releases blocked acquirers with a no-op permit",
+   1
+  ],
+  [
+   "test/db-pool-max-lifetime.test.ts",
+   "empty string falls through to the default (function)",
+   1
+  ],
+  [
+   "test/db-pool-max-lifetime.test.ts",
+   "wiring: the default reaches a real pool as a FUNCTION (per-connection jitter)",
+   1
+  ],
+  [
+   "test/default-alias-liveness.test.ts",
+   "every default target has a canonical pricing entry",
+   1
+  ],
+  [
+   "test/default-model-panels.test.ts",
+   "every default panel model prices via canonical AND the takes-quality allowlist",
+   2
+  ],
+  [
+   "test/default-model-panels.test.ts",
+   "every model the google recipe offers is priced",
+   1
+  ],
+  [
+   "test/degraded-engine.test.ts",
+   "covers the full PostgresEngine method surface (a new engine method can never miss the degraded path)",
+   1
+  ],
+  [
+   "test/dispatch-response-meta.serial.test.ts",
+   "metaHook failure never drops the retrieval key (per-key isolation)",
+   1
+  ],
+  [
+   "test/doctor.test.ts",
+   "doctor module exports runDoctor",
+   1
+  ],
+  [
+   "test/doctor.test.ts",
+   "LATEST_VERSION is importable from migrate",
+   1
+  ],
+  [
+   "test/doctor.test.ts",
+   "takesWeightGridCheck is exported as a pure function",
+   1
+  ],
+  [
+   "test/dry-fix.test.ts",
+   "skips when pattern matches more than once",
+   1
+  ],
+  [
+   "test/embedding-recovery.serial.test.ts",
+   "retained vector guard fails closed on unreadable registry or unknown counts",
+   1
+  ],
+  [
+   "test/enrichment-service.test.ts",
+   "module exports enrichEntity function",
+   1
+  ],
+  [
+   "test/enrichment-service.test.ts",
+   "module exports enrichEntities for batch processing",
+   1
+  ],
+  [
+   "test/enrichment-service.test.ts",
+   "module exports extractAndEnrich for text processing",
+   1
+  ],
+  [
+   "test/enrichment-service.test.ts",
+   "enrichment result includes tier fields",
+   1
+  ],
+  [
+   "test/eval-takes-quality-pricing.test.ts",
+   "returns pricing for the default 3-model panel",
+   3
+  ],
+  [
+   "test/eval-v041_2-scaffolds.test.ts",
+   "details carry the planned-evaluator pointer",
+   1
+  ],
+  [
+   "test/eval-whoknows.test.ts",
+   "module exports WhoknowsFn type alias",
+   1
+  ],
+  [
+   "test/extract.test.ts",
+   "is a function",
+   1
+  ],
+  [
+   "test/facts-meta-cache.test.ts",
+   "different allow-lists produce distinct cache entries",
+   2
+  ],
+  [
+   "test/features.test.ts",
+   "exports runFeatures",
+   1
+  ],
+  [
+   "test/features.test.ts",
+   "exports featuresTeaserForDoctor",
+   1
+  ],
+  [
+   "test/features.test.ts",
+   "covers all 7 recipes",
+   1
+  ],
+  [
+   "test/find-experts-op.test.ts",
+   "registered in the operations array",
+   1
+  ],
+  [
+   "test/founder-scorecard.test.ts",
+   "high drift score (>=0.5) fires a narrative_drift flag",
+   1
+  ],
+  [
+   "test/frontmatter-non-string-fields.test.ts",
+   "numeric type is coerced to a string (never crashes downstream)",
+   1
+  ],
+  [
+   "test/get-brain-identity.test.ts",
+   "is registered in operationsByName",
+   1
+  ],
+  [
+   "test/get-status-snapshot-op.test.ts",
+   "exists and is registered in the operations array",
+   2
+  ],
+  [
+   "test/get-timeline-op.test.ts",
+   "threads after/before/limit with federated source scope",
+   1
+  ],
+  [
+   "test/link-extraction.test.ts",
+   "extracts bare slug references in text",
+   1
+  ],
+  [
+   "test/lint-content-sanity.test.ts",
+   "respects custom bytes_warn override",
+   1
+  ],
+  [
+   "test/lint-content-sanity.test.ts",
+   "fires on access_denied body pattern",
+   1
+  ],
+  [
+   "test/lint-content-sanity.test.ts",
+   "junk_patterns_enabled=false suppresses operator literals AND built-ins via consumer wiring",
+   1
+  ],
+  [
+   "test/lint-content-sanity.test.ts",
+   "LLM preamble rule still fires",
+   1
+  ],
+  [
+   "test/markdown-validation.test.ts",
+   "opens but never closes, no heading",
+   1
+  ],
+  [
+   "test/memory-verbs-conformance.test.ts",
+   "timeline dates honor the string|null card contract in-process (PGLite returns Date objects)",
+   3
+  ],
+  [
+   "test/metric-glossary.test.ts",
+   "every retrieval-IR metric is present",
+   1
+  ],
+  [
+   "test/metric-glossary.test.ts",
+   "every stability metric is present",
+   1
+  ],
+  [
+   "test/metric-glossary.test.ts",
+   "every stat-significance metric is present",
+   1
+  ],
+  [
+   "test/metric-glossary.test.ts",
+   "every operational metric is present",
+   1
+  ],
+  [
+   "test/migrate.test.ts",
+   "runMigrations is exported and callable",
+   1
+  ],
+  [
+   "test/migration-orchestrator-v0_21_0.test.ts",
+   "phase functions exported for unit testing",
+   3
+  ],
+  [
+   "test/migrations-v0_12_0.test.ts",
+   "phase functions exported for unit testing",
+   6
+  ],
+  [
+   "test/migrations-v0_12_2.test.ts",
+   "phase functions exported for unit testing",
+   3
+  ],
+  [
+   "test/migrations-v0_13_0.test.ts",
+   "phase functions exported for unit testing",
+   3
+  ],
+  [
+   "test/model-config.serial.test.ts",
+   "cycle in aliases breaks at depth 2",
+   1
+  ],
+  [
+   "test/model-pricing.test.ts",
+   "cross-modal panel models are all priced from canonical",
+   1
+  ],
+  [
+   "test/oauth.test.ts",
+   "clientsStore exposes registerClient when dcrDisabled is false/unset",
+   1
+  ],
+  [
+   "test/oauth.test.ts",
+   "explicit client_secret_post \u2192 confidential client with secret",
+   1
+  ],
+  [
+   "test/oauth.test.ts",
+   "explicit client_secret_basic \u2192 confidential client with secret",
+   1
+  ],
+  [
+   "test/ollama-recipe.test.ts",
+   "declares a chat touchpoint",
+   2
+  ],
+  [
+   "test/openrouter-reranker-recipe.test.ts",
+   "declares a reranker touchpoint",
+   2
+  ],
+  [
+   "test/operations-descriptions.test.ts",
+   "all v0.29 ops in the allow-list resolve to a registered Operation",
+   1
+  ],
+  [
+   "test/operations-descriptions.test.ts",
+   "list_pages has new sort + updated_after params surfaced to MCP",
+   2
+  ],
+  [
+   "test/operations-embedding-column.test.ts",
+   "exists",
+   1
+  ],
+  [
+   "test/operations-embedding-column.test.ts",
+   "exists",
+   1
+  ],
+  [
+   "test/operations-trust-boundary.test.ts",
+   "every op declares a scope annotation",
+   1
+  ],
+  [
+   "test/operations-trust-boundary.test.ts",
+   "submit_job rejects shell with ctx.remote=true (HTTP MCP shell-job RCE class)",
+   1
+  ],
+  [
+   "test/provider-fixture-env.test.ts",
+   "covers every recipe credential and compatibility endpoint",
+   1
+  ],
+  [
+   "test/public-exports.test.ts",
+   "${entry.subpath} imports without throwing",
+   2
+  ],
+  [
+   "test/salience.test.ts",
+   "SalienceResult is a stable contract",
+   1
+  ],
+  [
+   "test/salience.test.ts",
+   "computeAnomaliesFromBuckets is exported and pure",
+   1
+  ],
+  [
+   "test/schema-pack-manifest-v041_2.test.ts",
+   "AggregatorKind type union covers exactly the enum values",
+   1
+  ],
+  [
+   "test/schema-pack-registry.test.ts",
+   "warn callback is optional (no opts arg works)",
+   1
+  ],
+  [
+   "test/search-op-source-id.test.ts",
+   "the op contract carries source_id (parity with query)",
+   2
+  ],
+  [
+   "test/sources-mcp.test.ts",
+   "include_archived: true returns archived sources",
+   1
+  ],
+  [
+   "test/sources.test.ts",
+   "orders default source first, then alphabetical",
+   1
+  ],
+  [
+   "test/spawn-helpers.test.ts",
+   "returns a string (smoke test only \u2014 actual presence depends on machine)",
+   1
+  ],
+  [
+   "test/sync-repo-source-routing.test.ts",
+   "explicit source_id param wins over the repo-derived source",
+   1
+  ],
+  [
+   "test/sync-repo-source-routing.test.ts",
+   "no conflict when ctx.sourceId matches the repo-derived source",
+   1
+  ],
+  [
+   "test/sync.test.ts",
+   "SyncResult exposes embedded count field",
+   1
+  ],
+  [
+   "test/takes-holder-validation.test.ts",
+   "users/garry \u2192 warning emitted",
+   1
+  ],
+  [
+   "test/think-pipeline.serial.test.ts",
+   "C3: remote caller with explicit bad model \u2192 op throws (modelExplicit wired)",
+   1
+  ],
+  [
+   "test/transcription.test.ts",
+   "module exports transcribe function",
+   1
+  ],
+  [
+   "test/transcription.test.ts",
+   "TranscriptionResult interface shape",
+   1
+  ],
+  [
+   "test/transcription.test.ts",
+   "detects provider from env vars",
+   1
+  ],
+  [
+   "test/v0_37_fix_wave.serial.test.ts",
+   "reinit-pglite module exports runReinitPglite",
+   1
+  ],
+  [
+   "test/v81-v82-smoke.test.ts",
+   "v82 accepts JSONB shape for per-source snapshot",
+   1
+  ],
+  [
+   "test/whoknows.test.ts",
+   "public surface: rankCandidates / findExperts / runWhoknows are functions",
+   3
+  ],
+  [
+   "test/ai/build-gateway-config.test.ts",
+   "importing buildGatewayConfig does NOT trigger main() (no help on stdout)",
+   2
+  ],
+  [
+   "test/ai/gateway-chat.test.ts",
+   "chat() function is exported with the expected signature",
+   1
+  ],
+  [
+   "test/ai/gateway-chat.test.ts",
+   "ChatBlock + ChatMessage + ChatResult types are exported",
+   1
+  ],
+  [
+   "test/ai/recipe-llama-server.test.ts",
+   "declares a probe function",
+   1
+  ],
+  [
+   "test/ai/recipe-ollama-thinking.test.ts",
+   "declares thinking_by_default as a per-model predicate",
+   1
+  ],
+  [
+   "test/chunkers/code.test.ts",
+   "large chunk stays independent",
+   1
+  ],
+  [
+   "test/code-intel/scope-walker-resolution.test.ts",
+   "Pattern 2: this.m() inside a class resolves to Class::m",
+   1
+  ],
+  [
+   "test/code-intel/scope-walker-resolution.test.ts",
+   "Pattern 3: new C().m() resolves to C::m via top-level binding",
+   1
+  ],
+  [
+   "test/code-intel/scope-walker-resolution.test.ts",
+   "Pattern 1: imported symbol resolves to module::method",
+   1
+  ],
+  [
+   "test/code-intel/scope-walker-resolution.test.ts",
+   "bare function call stays bare-token",
+   1
+  ],
+  [
+   "test/code-intel/scope-walker-resolution.test.ts",
+   "unresolvable member call falls back to bare token (no crash)",
+   1
+  ],
+  [
+   "test/code-intel/scope-walker-resolution.test.ts",
+   "Pattern 2: self.m() inside a class resolves to Class::m",
+   1
+  ],
+  [
+   "test/code-intel/scope-walker-resolution.test.ts",
+   "Pattern 1: from pkg import obj resolves to pkg::method",
+   1
+  ],
+  [
+   "test/code-intel/scope-walker-resolution.test.ts",
+   "Pattern 3: obj = ClassName() resolves to ClassName::method",
+   1
+  ],
+  [
+   "test/cycle/nightly-probe-adapters.test.ts",
+   "missing summary file \u2192 throws with paste-ready hint",
+   1
+  ],
+  [
+   "test/cycle/nightly-probe-adapters.test.ts",
+   "malformed summary JSON \u2192 throws with content prefix",
+   1
+  ],
+  [
+   "test/cycle/yield-during-phase-refresh.test.ts",
+   "returns a function when lock is present",
+   1
+  ],
+  [
+   "test/cycle/yield-during-phase-refresh.test.ts",
+   "returns a function when only outer is present",
+   1
+  ],
+  [
+   "test/e2e/mcp.test.ts",
+   "MCP server module can be imported",
+   2
+  ],
+  [
+   "test/e2e/schema-drift.test.ts",
+   "regression #588: ${sentinel} columns match across engines",
+   2
+  ],
+  [
+   "test/e2e/salience-anomalies-source-isolation-pglite.test.ts",
+   "sourceIds=[default,src-b] surfaces both cohorts",
+   2
+  ],
+  [
+   "test/helpers/agent-harness.unit.test.ts",
+   "resolveClaudeBinary returns a string or null",
+   1
+  ],
+  [
+   "test/helpers/agent-harness.unit.test.ts",
+   "resolveCodexBinary returns a string or null",
+   1
+  ],
+  [
+   "test/helpers/agent-harness.unit.test.ts",
+   "resolveHermesBinary returns a string or null",
+   1
+  ],
+  [
+   "test/helpers/agent-harness.unit.test.ts",
+   "hasHermesAuth returns a boolean",
+   1
+  ],
+  [
+   "test/search/modes-report-coverage.test.ts",
+   "the previously-hardcoded-out knobs now resolve (reranker + relational)",
+   1
+  ],
+  [
+   "test/search/query-op-adaptive-return.test.ts",
+   "query op exists",
+   1
+  ],
+  [
+   "test/search/query-op-autocut.test.ts",
+   "query op exists",
+   1
+  ]
+ ],
+ "restate": [
+  [
+   "test/bootstrap-status.serial.test.ts",
+   "PHASES matches BOOTSTRAP_PHASE_IDS exactly, in order",
+   "BOOTSTRAP_PHASE_IDS",
+   8
+  ],
+  [
+   "test/brainbench-fixtures.test.ts",
+   "toPublicTurn picks exactly the public fields \u2014 smuggled keys dropped",
+   "Object.keys(pub).sort()",
+   4
+  ],
+  [
+   "test/by-mention.test.ts",
+   "LINKABLE_ENTITY_TYPES exposes the hardcoded contract",
+   "LINKABLE_ENTITY_TYPES",
+   4
+  ],
+  [
+   "test/cjk.test.ts",
+   "CJK_CLAUSE_DELIMITERS covers \uff1b\uff1a\uff0c\u3001",
+   "CJK_CLAUSE_DELIMITERS",
+   4
+  ],
+  [
+   "test/codex-plugin-manifest.test.ts",
+   "deny-unknown-fields: only observed codex keys",
+   "Object.keys(server).sort()",
+   4
+  ],
+  [
+   "test/connect.test.ts",
+   "exposes the five supported agents",
+   "AGENT_IDS",
+   5
+  ],
+  [
+   "test/envelope-to-gbrain.test.ts",
+   "a provider string carrying a newline cannot inject frontmatter keys",
+   "Object.keys(parsed).sort()",
+   7
+  ],
+  [
+   "test/envelope-to-gbrain.test.ts",
+   "a created_at that %s cannot alter the frontmatter",
+   "Object.keys(parsed).sort()",
+   7
+  ],
+  [
+   "test/envelope-to-gbrain.test.ts",
+   "hostile message ids cannot inject frontmatter keys or break the page",
+   "Object.keys(frontmatter).sort()",
+   7
+  ],
+  [
+   "test/envelope-to-gbrain.test.ts",
+   "a hostile non-string ts cannot break the frontmatter",
+   "Object.keys(frontmatter).sort()",
+   7
+  ],
+  [
+   "test/eval-takes-quality-rubric.test.ts",
+   "dim names match plan + docs (codex review #5 strict-required-dim contract)",
+   "RUBRIC_DIMENSIONS",
+   5
+  ],
+  [
+   "test/get-agent-job.test.ts",
+   "returns only the trimmed keys \u2014 never data/prompt",
+   "Object.keys(r).sort()",
+   7
+  ],
+  [
+   "test/git-remote.test.ts",
+   "exact shape \u2014 global -c config flags only (spread BEFORE the verb)",
+   "[...GIT_SSRF_FLAGS]",
+   6
+  ],
+  [
+   "test/longmemeval-judge.test.ts",
+   "unpriced judge model \u2192 cost_usd null (never 0); the vocabulary is closed",
+   "JUDGE_ERROR_CLASSES",
+   6
+  ],
+  [
+   "test/longmemeval-judge.test.ts",
+   "denominators and sub-blocks",
+   "Object.keys(qa.by_type)",
+   4
+  ],
+  [
+   "test/migrate-engine-completeness.serial.test.ts",
+   "every row copies except denylisted keys, which are reported as skipped",
+   "[...result.skipped].sort()",
+   4
+  ],
+  [
+   "test/migration-ledger.test.ts",
+   "migrations block carries the four ledger keys",
+   "Object.keys(body.migrations).sort()",
+   4
+  ],
+  [
+   "test/migrations-v0_11_0.test.ts",
+   "includes exactly the seven v0.11.0 builtins",
+   "[...BUILTIN_HANDLERS].sort()",
+   7
+  ],
+  [
+   "test/migrations-v126.test.ts",
+   "table has expected columns with expected types and defaults",
+   "Object.keys(byName).sort()",
+   8
+  ],
+  [
+   "test/migrations-v94.test.ts",
+   "table has expected columns with expected types",
+   "Object.keys(byName).sort()",
+   6
+  ],
+  [
+   "test/minions-shell.test.ts",
+   "result shape includes all declared keys",
+   "Object.keys(res).sort()",
+   5
+  ],
+  [
+   "test/regression-v0_16_4.test.ts",
+   "JSON envelope shape is stable (keys unchanged from v0.16.4)",
+   "Object.keys(report).sort()",
+   5
+  ],
+  [
+   "test/regression-v0_16_4.test.ts",
+   "JSON envelope shape is stable (keys unchanged from v0.16.4)",
+   "Object.keys(report.summary).sort()",
+   5
+  ],
+  [
+   "test/replay-autocut-floor.test.ts",
+   "validate-live passes on a consistent capture and fails (exit 1) on a tampered one",
+   "Object.keys(out._meta.metric_glossary).sort()",
+   4
+  ],
+  [
+   "test/resolvers.test.ts",
+   "x_handle_to_tweet candidates declares full item shape with required + additionalProperties:false",
+   "Object.keys(props).sort()",
+   5
+  ],
+  [
+   "test/schema-pack-manifest-v041_2.test.ts",
+   "exposes exactly 4 v1 aggregator kinds",
+   "AGGREGATOR_KINDS",
+   4
+  ],
+  [
+   "test/scope.test.ts",
+   "list is sorted alphabetically (deterministic for wire/drift check)",
+   "[...ALLOWED_SCOPES_LIST]",
+   9
+  ],
+  [
+   "test/source-resolver-with-tier.test.ts",
+   "canonical order is 1=flag \u2192 7=seed_default with sole_non_default at 5.5",
+   "SOURCE_TIER_NAMES",
+   7
+  ],
+  [
+   "test/sync-isSyncable-shape.test.ts",
+   "SYNC_SKIP_FILES export contains the canonical structural metafiles",
+   "[...SYNC_SKIP_FILES]",
+   5
+  ],
+  [
+   "test/workspace-push.serial.test.ts",
+   "the deny list covers the documented classes",
+   "PUSH_DENY_GLOBS",
+   5
+  ],
+  [
+   "test/context/sync-ipc-validation.test.ts",
+   "field table and options interface stay in lockstep",
+   "Object.keys(DELEGATED_SYNC_OPTION_FIELDS).sort()",
+   11
+  ],
+  [
+   "test/e2e/client-grants.test.ts",
+   "legacy admin output stays compatible and raw incomplete agent grants return 400",
+   "Object.keys(body).sort()",
+   4
+  ]
+ ]
+}

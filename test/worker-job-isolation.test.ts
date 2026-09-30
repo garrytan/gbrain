@@ -13,6 +13,8 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { MinionQueue } from '../src/core/minions/queue.ts';
@@ -103,7 +105,7 @@ describe('worker with jobIsolation=process (PGLite + fake child)', () => {
     const j1 = await queue.add('isotest', {});
     const j2 = await queue.add('isotest', {});
     const j3 = await queue.add('isotest', {});
-    const worker = makeWorker('/nonexistent/gbrain-binary', []);
+    const worker = makeWorker(process.execPath, ['-e', 'process.exit(13)']);
     const unhealthy: unknown[] = [];
     worker.on('unhealthy', (i) => unhealthy.push(i));
     const run = worker.start();
@@ -200,7 +202,7 @@ describe('worker with jobIsolation=process (PGLite + fake child)', () => {
 
   test('spawn failure: RELEASED — still active, attempts NOT burned (infra class)', async () => {
     const job = await queue.add('isotest', {});
-    const worker = makeWorker('/nonexistent/gbrain-binary', []);
+    const worker = makeWorker(process.execPath, ['-e', 'process.exit(13)']);
     // The claim happens, the spawn fails, the job is released (stays
     // 'active' until lock expiry — the stall sweeper's requeue territory).
     const run = worker.start();
@@ -211,4 +213,85 @@ describe('worker with jobIsolation=process (PGLite + fake child)', () => {
     expect(row.status).toBe('active'); // NOT dead, NOT failed
     expect(row.attempts_made).toBe(0); // release = no failJob = no attempt burned
   }, 20_000);
+
+  test('missing executable blocks once and releases only the owned claim', async () => {
+    const first = await queue.add('isotest', {});
+    const second = await queue.add('isotest', {});
+    const worker = makeWorker('/nonexistent/gbrain-binary', []);
+    const events: unknown[] = [];
+    worker.on('unhealthy', event => events.push(event));
+    await worker.start();
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ reason: 'client_misconfigured', error: { reasonCode: 'child_executable_invalid' } });
+    expect(worker.configurationError?.reasonCode).toBe('child_executable_invalid');
+    expect((await jobRow(first.id)).status).toBe('delayed');
+    expect((await jobRow(first.id)).attempts_made).toBe(0);
+    expect((await jobRow(second.id)).status).toBe('waiting');
+    expect((await jobRow(second.id)).attempts_made).toBe(0);
+    expect(worker.configurationReleaseResults.map(result => result.outcome)).toEqual(['released']);
+  });
+
+  test('typed child outcomes block before cleanup and retain unconfirmed ownership', async () => {
+    const first = await queue.add('isotest', {});
+    const second = await queue.add('isotest', {});
+    const outcome = JSON.stringify({
+      outcome: 'error', errorKind: 'local_configuration', protocolVersion: 1,
+      reasonCode: 'postgres_cancellation_unavailable', message: 'fixture fault',
+    });
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-typed-unconfirmed-'));
+    const grandchildPid = join(dir, 'grandchild.pid');
+    const grandchild = join(dir, 'grandchild.cjs');
+    const parent = join(dir, 'parent.cjs');
+    writeFileSync(grandchild, `process.on('SIGTERM', () => {}); require('node:fs').writeFileSync(${JSON.stringify(grandchildPid)}, String(process.pid)); setInterval(() => {}, 1000);`);
+    writeFileSync(parent, `const fs = require('node:fs');
+      require('node:child_process').spawn(process.execPath, [${JSON.stringify(grandchild)}], { stdio: 'ignore' }).unref();
+      while (!fs.existsSync(${JSON.stringify(grandchildPid)})) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
+      fs.writeFileSync(process.env.GBRAIN_JOB_RESULT_PATH, ${JSON.stringify(outcome)});`);
+    try {
+      const worker = makeWorker(process.execPath, [parent]);
+      const internals = worker as unknown as {
+        configurationDeadline: number;
+        executions: Map<string, { promise: Promise<void> }>;
+      };
+      let execution: Promise<void> | undefined;
+      worker.on('unhealthy', event => {
+        if (event.reason !== 'client_misconfigured') return;
+        internals.configurationDeadline = performance.now() + 100;
+        execution = [...internals.executions.values()][0]?.promise;
+      });
+      const began = performance.now();
+      await worker.start();
+      expect(performance.now() - began).toBeLessThan(5000);
+      expect(worker.configurationError?.reasonCode).toBe('postgres_cancellation_unavailable');
+      expect((await jobRow(first.id)).status).toBe('active');
+      expect((await jobRow(first.id)).attempts_made).toBe(0);
+      expect((await jobRow(second.id)).status).toBe('waiting');
+      expect(worker.configurationReleaseResults.map(result => result.outcome)).toEqual(['unconfirmed']);
+      await execution;
+      expect((await jobRow(first.id)).status).toBe('active');
+      expect((await jobRow(first.id)).attempts_made).toBe(0);
+    } finally {
+      if (existsSync(grandchildPid)) { try { process.kill(Number(readFileSync(grandchildPid, 'utf8')), 'SIGKILL'); } catch {} }
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 35_000);
+
+  test.skipIf(process.platform !== 'linux')('typed child outcome with confirmed group cleanup releases the claim inside the configuration deadline', async () => {
+    const first = await queue.add('isotest', {});
+    const second = await queue.add('isotest', {});
+    const outcome = JSON.stringify({
+      outcome: 'error', errorKind: 'local_configuration', protocolVersion: 1,
+      reasonCode: 'postgres_cancellation_unavailable', message: 'fixture fault',
+    });
+    const program = `require('node:fs').writeFileSync(process.env.GBRAIN_JOB_RESULT_PATH, ${JSON.stringify(outcome)});`;
+    const worker = makeWorker(process.execPath, ['-e', program]);
+    const began = performance.now();
+    await worker.start();
+    expect(performance.now() - began).toBeLessThan(5000);
+    expect(worker.configurationError?.reasonCode).toBe('postgres_cancellation_unavailable');
+    expect(worker.configurationReleaseResults.map(result => result.outcome)).toEqual(['released']);
+    expect((await jobRow(first.id)).status).toBe('delayed');
+    expect((await jobRow(first.id)).attempts_made).toBe(0);
+    expect((await jobRow(second.id)).status).toBe('waiting');
+  }, 35_000);
 });

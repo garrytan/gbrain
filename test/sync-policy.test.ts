@@ -5,7 +5,13 @@
  * check is deliberately untouched — see sync-policy.ts's module doc).
  */
 import { describe, expect, test } from 'bun:test';
-import { isSyncDisabledConfig } from '../src/core/sync-policy.ts';
+import {
+  activationPendingSkipMessage,
+  firstActivationPendingSkip,
+  isSyncDisabledConfig,
+  loadActivationPendingSourceIds,
+  skipActivationPendingSync,
+} from '../src/core/sync-policy.ts';
 
 describe('isSyncDisabledConfig', () => {
   test('true when config.syncEnabled is explicitly false', () => {
@@ -33,5 +39,39 @@ describe('isSyncDisabledConfig', () => {
     // unwrap it the same way, not just check `typeof config === 'object'`.
     expect(isSyncDisabledConfig(JSON.stringify({ syncEnabled: false }))).toBe(true);
     expect(isSyncDisabledConfig(JSON.stringify({ syncEnabled: true }))).toBe(false);
+  });
+});
+
+describe('#5198: activation-pending sync skip', () => {
+  test('returns the bound source ids the query yields', async () => {
+    const engine = { executeRaw: async () => [{ source_id: 'alpha' }, { source_id: 'beta' }] };
+    expect(await loadActivationPendingSourceIds(engine as never)).toEqual(new Set(['alpha', 'beta']));
+  });
+
+  test('fails open to an empty set when the persistence tables are unreadable', async () => {
+    const engine = { executeRaw: async () => { throw new Error('relation "persistence_source_bindings" does not exist'); } };
+    expect(await loadActivationPendingSourceIds(engine as never)).toEqual(new Set());
+  });
+
+  test('reports each source once per process', () => {
+    expect(firstActivationPendingSkip('policy-once-a')).toBe(true);
+    expect(firstActivationPendingSkip('policy-once-a')).toBe(false);
+    expect(firstActivationPendingSkip('policy-once-b')).toBe(true);
+  });
+
+  test('skipActivationPendingSync skips only pending sources and writes the reason once', () => {
+    const lines: string[] = [];
+    const pending = new Set(['policy-guard-a']);
+    expect(skipActivationPendingSync(pending, 'policy-guard-b', 'x_skipped', true, l => lines.push(l))).toBe(false);
+    expect(skipActivationPendingSync(pending, 'policy-guard-a', 'x_skipped', true, l => lines.push(l))).toBe(true);
+    expect(skipActivationPendingSync(pending, 'policy-guard-a', 'x_skipped', true, l => lines.push(l))).toBe(true);
+    expect(lines.map(l => JSON.parse(l))).toEqual([{ event: 'x_skipped', source_id: 'policy-guard-a', reason: 'activation_pending' }]);
+  });
+
+  test('the skip message names the source, the refusal code and where to look', () => {
+    const message = activationPendingSkipMessage('alpha');
+    expect(message).toContain('source=alpha');
+    expect(message).toContain('writer_coordinator_required');
+    expect(message).toContain('gbrain sources writer status');
   });
 });

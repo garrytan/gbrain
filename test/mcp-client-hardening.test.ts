@@ -19,9 +19,11 @@ import {
   extractToolErrorCode,
   extractToolErrorDetail,
   buildAbortController,
+  buildMcpRequestOptions,
   RemoteMcpError,
   type CallRemoteToolOptions,
 } from '../src/core/mcp-client.ts';
+import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 
 const MCP_URL = 'https://brain-host.example/mcp';
 const PENDING_WRITE = { request_id: 'd7599b95-65c2-4d54-aa4e-cb5745af90cf', state: 'queued' as const, retry_after_ms: 1000 };
@@ -77,6 +79,14 @@ describe('toRemoteMcpError', () => {
     const controller = new AbortController();
     controller.abort(new DOMException('deadline', 'TimeoutError'));
     const out = toRemoteMcpError(new RemoteMcpError('network', 'probe failed'), MCP_URL, controller.signal);
+    expect(out.detail?.kind).toBe('timeout');
+  });
+
+  test('SDK RequestTimeout becomes network/timeout while the caller signal is still live', () => {
+    const controller = new AbortController();
+    const out = toRemoteMcpError(new McpError(ErrorCode.RequestTimeout, 'Request timed out', { timeout: 60_000 }), MCP_URL, controller.signal);
+    expect(controller.signal.aborted).toBe(false);
+    expect(out.reason).toBe('network');
     expect(out.detail?.kind).toBe('timeout');
   });
 
@@ -191,6 +201,19 @@ describe('extractToolErrorDetail', () => {
     expect(parsed.write_request).toEqual(PENDING_WRITE);
   });
 
+  test('preserves the optional health contract while stripping private nested metadata', () => {
+    const diagnostic = { age_ms: 120000, observed_at: '2026-09-23T00:00:00.000Z',
+      assessment: 'stalled', reason: 'cause_unknown', next_action: 'inspect_owner' } as const;
+    const parsed = extractToolErrorDetail(JSON.stringify({ error: 'unavailable', write_request: {
+      ...PENDING_WRITE, diagnostic: { ...diagnostic, predecessor_id: 'PRIVATE_PREDECESSOR', raw_error: 'PRIVATE_ERROR' },
+    } }));
+    expect(parsed.write_request).toEqual({ ...PENDING_WRITE, diagnostic });
+    expect(JSON.stringify(parsed)).not.toContain('PRIVATE_');
+    expect(extractToolErrorDetail(JSON.stringify({ error: 'unavailable', write_request: {
+      ...PENDING_WRITE, diagnostic: { ...diagnostic, age_ms: -1 },
+    } }))).toEqual({ code: 'unavailable' });
+  });
+
   test('retains backward compatibility with plain text tool errors', () => {
     expect(extractToolErrorDetail('missing scope write')).toEqual({ code: 'missing_scope' });
     expect(extractToolErrorDetail('failed')).toEqual({});
@@ -268,6 +291,18 @@ describe('buildAbortController', () => {
     // Inner signal stays whatever it was at cleanup time. Since neither timeout
     // nor pre-cleanup external abort fired, it must still be NOT aborted.
     expect(signal.aborted).toBe(false);
+  });
+});
+
+describe('buildMcpRequestOptions', () => {
+  test('forwards the caller timeout into the MCP SDK request deadline', () => {
+    const controller = new AbortController();
+    expect(buildMcpRequestOptions({ timeoutMs: 200_000 }, controller.signal)).toEqual({ signal: controller.signal, timeout: 200_000 });
+  });
+
+  test('leaves the SDK default untouched when no timeout was requested', () => {
+    const controller = new AbortController();
+    expect(buildMcpRequestOptions({}, controller.signal)).toEqual({ signal: controller.signal });
   });
 });
 

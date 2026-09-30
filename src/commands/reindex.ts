@@ -33,6 +33,7 @@ import { resolve } from 'path';
 // v0.41.15.0 (T10, D9): per-batch parallel workers.
 import { runSlidingPool } from '../core/worker-pool.ts';
 import { resolveWorkersWithClamp } from '../core/sync-concurrency.ts';
+import { refreshProjectionStatistics } from '../core/search/projection-statistics.ts';
 
 interface ReindexOpts {
   /** Cap total pages reindexed. Useful for triage runs on huge brains. */
@@ -81,6 +82,7 @@ USAGE
   gbrain reindex --markdown   [--type PAGE_TYPE] [--limit N] [--dry-run] [--no-embed] [--json] [--repo PATH]
   gbrain reindex --multimodal [--limit N] [--workers N] [--dry-run] [--cost-estimate] [--no-embed] [--yes] [--json]
   gbrain reindex --aliases    [--limit N] [--dry-run] [--json] [--source <id>]
+  gbrain reindex --vectors    [--dry-run] [--json]
 
 TARGETS (exactly one required)
   --markdown        Re-chunk markdown pages whose chunker_version lags the
@@ -90,6 +92,8 @@ TARGETS (exactly one required)
                     embedding pipeline (Voyage batches).
   --aliases         Backfill the free-text alias layer (page_aliases) for
                     pages whose frontmatter aliases predate the projection.
+  --vectors         Rebuild every HNSW vector index from the stored vectors
+                    (no re-embedding, no cost). Run after a PGLite WAL repair.
 
 OPTIONS
   --type <t>        --markdown only: restrict to one page type
@@ -456,6 +460,7 @@ export async function runReindex(engine: BrainEngine, args: string[]): Promise<R
 
   reporter.finish();
 
+  if (reindexed > 0) await refreshProjectionStatistics(engine);
   const pendingAfter = await countPending(engine, type, !!opts.noEmbed);
   if (failed > 0) setCliExitVerdict(1);
 

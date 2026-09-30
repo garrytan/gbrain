@@ -45,6 +45,7 @@
         "brain-ingest-gate": "gates what session content deserves brain ingestion — noise control",
         "data-loss-gate": "guards destructive operations touching brain data during coding work",
         "db-repair": "availability is the point: a coding session hitting GBRAIN_DB_ACCESS without the repair skill loses its brain mid-task",
+        "mcp-access": "coding harnesses need native OAuth setup and explicit owner handoffs when hosted memory access or client administration fails",
         "postgres-adopt": "engine detection by default is requirement one; the concurrency-heavy coding persona is exactly who outgrows PGLite"
       }
     },
@@ -70,6 +71,7 @@
         "research-compendium": "multi-source research compiled into a living compendium",
         "bulk-ingestion": "batch imports (folders, exports) with manifest discipline",
         "db-repair": "availability is the point: a daily-driver hitting GBRAIN_DB_ACCESS without the repair skill loses its brain mid-task",
+        "mcp-access": "daily harnesses need native OAuth setup and explicit owner handoffs when hosted memory access or client administration fails",
         "postgres-adopt": "engine detection by default is requirement one; 1000+ page daily brains are the pglite_scale upgrade audience"
       }
     }

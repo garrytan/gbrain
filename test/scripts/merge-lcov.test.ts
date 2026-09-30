@@ -288,6 +288,28 @@ describe("merge: lane manifests", () => {
     expect(readSummary(out.json).degraded).toBe(true);
   });
 
+  it('requires all four nightly E2E identities with their independent multi-process LCOV counts', () => {
+    const dirs = Array.from({ length: 4 }, (_, i) => {
+      const dir = laneDir(`nightly-e2e-${i}`, LANE_A, { lane: `e2e-${i + 1}`, sha: HEAD_SHA, lcovCount: 2, complete: true });
+      mkdirSync(join(dir, 'second'));
+      writeFileSync(join(dir, 'second/lcov.info'), LANE_B);
+      return dir;
+    });
+    const out = outPaths('nightly-e2e');
+    const args = ['--out-lcov', out.lcov, '--out-json', out.json, '--manifest-expect', 'e2e-1,e2e-2,e2e-3,e2e-4'];
+    runMerge([...args, ...dirs]);
+    expect(readSummary(out.json).degraded).toBe(false);
+    expect(readSummary(out.json).lanes.complete).toEqual(['e2e-1', 'e2e-2', 'e2e-3', 'e2e-4']);
+    for (let absent = 0; absent < 4; absent++) {
+      runMerge([...args, ...dirs.filter((_, index) => index !== absent)]);
+      expect(readSummary(out.json).degraded).toBe(true);
+    }
+    rmSync(join(dirs[3], 'second/lcov.info'));
+    runMerge([...args, ...dirs]);
+    expect(readSummary(out.json).degraded).toBe(true);
+    expect(readSummary(out.json).lanes.complete).not.toContain('e2e-4');
+  });
+
   it.each([
     ['missing count', { lcovCount: undefined }],
     ['wrong count', { lcovCount: 2 }],

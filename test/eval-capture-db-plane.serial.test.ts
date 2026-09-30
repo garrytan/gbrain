@@ -29,6 +29,7 @@ import { withEnv } from './helpers/with-env.ts';
 import { makeContext } from '../src/cli.ts';
 import { isEvalCaptureEnabled, isEvalScrubEnabled } from '../src/core/eval-capture.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { surfaceSource } from './helpers/source-surface.ts';
 
 /**
  * Stub engine whose config table holds exactly `dbConfig`. Mirrors the shape
@@ -193,7 +194,7 @@ describe('eval.capture set on the DB plane reaches the runtime gate (#1475)', ()
     // and nothing red. connectEngine is not exported and needs a live brain,
     // so this is a source-level guard, the same shape test/cycle-abort.test.ts
     // uses for its own hard-to-exercise seam.
-    const cli = await Bun.file(new URL('../src/cli.ts', import.meta.url).pathname).text();
+    const cli = surfaceSource('cli');
     expect(cli).toContain('MERGED_CONFIG_BY_ENGINE.set(engine, merged)');
     // Guard the guard: if the map is ever renamed, the assertion above must
     // not keep passing against a stale literal that no longer exists.
@@ -210,7 +211,7 @@ describe('eval.capture set on the DB plane reaches the runtime gate (#1475)', ()
     // connection silently re-merged the mount's DB plane again.
     // connectMountEngine is not exported and needs a live BrainRegistry, so
     // this is a source-level guard, same shape as the one above.
-    const cli = await Bun.file(new URL('../src/cli.ts', import.meta.url).pathname).text();
+    const cli = surfaceSource('cli');
     expect(cli).toContain('MOUNT_ENGINES.add(handle.engine)');
     // Guard the guard: if the set is ever renamed, the assertion above must
     // not keep passing against a stale literal that no longer exists.

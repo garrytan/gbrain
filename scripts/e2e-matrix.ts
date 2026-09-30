@@ -5,11 +5,22 @@ import { realpathSync, statSync } from "node:fs";
 import { resolve, relative, isAbsolute } from "node:path";
 import { loadWeights, partition, type WeightMap } from "./sharding.ts";
 
+// PR owner of the reconciliation crash suites is persistence-validation.yml
+// (called from test.yml on every PR; postgres x Bun 1.3.11/1.3.13; crash
+// manifests uploaded). Nightly full-corpus E2E still runs them.
+export const PERSISTENCE_VALIDATION_OWNED = new Set([
+  'test/e2e/reconcile-crash.test.ts',
+  'test/e2e/reconcile-crash-unactivated.test.ts',
+]);
+export function exclusionNotice(file: string): string {
+  return PERSISTENCE_VALIDATION_OWNED.has(file)
+    ? `excluded: ${file} (owned by persistence-validation.yml)`
+    : `excluded (named-job / live-key lane): ${file}`;
+}
 export const E2E_EXCLUSIONS = new Set([
   'test/e2e/op-checkpoint-jsonb-parity.test.ts',
   'test/e2e/jsonb-roundtrip.test.ts',
   'test/e2e/mechanical.test.ts',
-  'test/e2e/mcp.test.ts',
   'test/e2e/job-isolation.test.ts',
   'test/e2e/sync-reconcile-postgres.test.ts',
   'test/e2e/engine-parity.test.ts',
@@ -18,9 +29,9 @@ export const E2E_EXCLUSIONS = new Set([
   'test/e2e/sync-delegation-under-serve.serial.test.ts',
   'test/e2e/dream-synthesize-pglite.test.ts',
   'test/e2e/skills.test.ts',
-  'test/e2e/zeroentropy-live.test.ts',
   'test/e2e/voyage-rerank-live.test.ts',
   'test/e2e/voyage-multimodal.test.ts',
+  ...PERSISTENCE_VALIDATION_OWNED,
 ]);
 export interface E2ERow { shard: number; files: string[]; empty: boolean }
 function validatePath(file: unknown): asserts file is string {
@@ -33,7 +44,7 @@ export function prepareMatrix(files: string[], weights: WeightMap): { include: E
   if (new Set(files).size !== files.length) throw new Error("duplicate selected E2E file");
   const selected = files.filter(file => {
     if (!E2E_EXCLUSIONS.has(file)) return true;
-    console.error(`excluded (named-job / live-key lane): ${file}`);
+    console.error(exclusionNotice(file));
     return false;
   });
   if (!selected.length) return { include: [{ shard: 1, files: [], empty: true }] };
@@ -64,12 +75,22 @@ export async function runRow(value: unknown, root = process.cwd()): Promise<numb
   const env = { ...process.env };
   delete env.SHARD; // The prepared list is already partitioned.
   console.log(`selected E2E shard ${row.shard}: ${row.files.length} frozen files`);
-  const child = Bun.spawn(["bash", "scripts/run-e2e.sh", ...row.files], { cwd: root, env, stdout: "inherit", stderr: "inherit" });
-  const term = () => child.kill("SIGTERM");
-  const interrupt = () => child.kill("SIGINT");
+  let child: ReturnType<typeof Bun.spawn> | undefined;
+  let pendingSignal: "SIGTERM" | "SIGINT" | undefined;
+  const forward = (signal: "SIGTERM" | "SIGINT") => {
+    pendingSignal = signal;
+    child?.kill(signal);
+  };
+  const term = () => forward("SIGTERM");
+  const interrupt = () => forward("SIGINT");
   process.once("SIGTERM", term);
   process.once("SIGINT", interrupt);
-  try { return await child.exited; }
+  try {
+    child = Bun.spawn(["bash", "scripts/run-e2e.sh", ...row.files], { cwd: root, env, stdout: "inherit", stderr: "inherit" });
+    if (pendingSignal) child.kill(pendingSignal);
+    const code = await child.exited;
+    return pendingSignal ? (pendingSignal === "SIGINT" ? 130 : 143) : code;
+  }
   finally { process.off("SIGTERM", term); process.off("SIGINT", interrupt); }
 }
 async function main() {

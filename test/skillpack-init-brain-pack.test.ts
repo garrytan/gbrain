@@ -1,6 +1,6 @@
 /**
  * Tests for src/core/skillpack/init-brain-pack.ts (the brain-resident pack
- * scaffolder) and src/core/skillpack/brain-pack-lint.ts (E6 version-skew lint).
+ * scaffolder).
  */
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { mkdtempSync, rmSync, readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs';
@@ -12,7 +12,6 @@ import {
   InitBrainPackError,
 } from '../src/core/skillpack/init-brain-pack.ts';
 import { validateSkillpackManifest } from '../src/core/skillpack/manifest-v1.ts';
-import { lintBrainPackTools } from '../src/core/skillpack/brain-pack-lint.ts';
 import { VERSION } from '../src/version.ts';
 
 let dir: string;
@@ -59,25 +58,5 @@ describe('runInitBrainPack', () => {
 
   test('rejects non-kebab name', () => {
     expect(() => runInitBrainPack({ targetDir: dir, name: 'Deal Brain' })).toThrow(InitBrainPackError);
-  });
-});
-
-describe('lintBrainPackTools (E6)', () => {
-  test('flags a declared tool the serving op set does not have', () => {
-    runInitBrainPack({ targetDir: dir, name: 'deal-brain', firstSkillSlug: 'diligence' });
-    // Inject a tools: frontmatter with one known + one unknown op.
-    const skillMd = join(dir, 'skills/diligence/SKILL.md');
-    writeFileSync(
-      skillMd,
-      ['---', 'name: diligence', 'description: x', 'tools: [search, totally_made_up_op]', '---', '', '# diligence', ''].join('\n'),
-    );
-    const result = lintBrainPackTools(dir, new Set(['search', 'put_page']));
-    expect(result.unknownTools).toEqual([{ skill: 'skills/diligence', tool: 'totally_made_up_op' }]);
-  });
-
-  test('no findings when all tools known (fresh pack has no tools:)', () => {
-    runInitBrainPack({ targetDir: dir, name: 'deal-brain', firstSkillSlug: 'diligence' });
-    const result = lintBrainPackTools(dir, new Set(['search', 'put_page']));
-    expect(result.unknownTools).toEqual([]);
   });
 });

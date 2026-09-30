@@ -44,7 +44,7 @@ beforeEach(() => {
 
 function runCli(args: string[], env: Record<string, string | undefined>): { code: number; stdout: string; stderr: string } {
   const fullEnv: Record<string, string | undefined> = { ...(process.env as Record<string, string | undefined>), GBRAIN_HOME: tmpHome, ...env };
-  for (const k of ['OPENAI_API_KEY', 'VOYAGE_API_KEY', 'ZEROENTROPY_API_KEY', 'GOOGLE_GENERATIVE_AI_API_KEY', 'ANTHROPIC_API_KEY']) {
+  for (const k of ['OPENAI_API_KEY', 'VOYAGE_API_KEY', 'GOOGLE_GENERATIVE_AI_API_KEY', 'ANTHROPIC_API_KEY']) {
     if (!(k in env)) delete fullEnv[k];
   }
   for (const k of Object.keys(fullEnv)) if (fullEnv[k] === undefined) delete fullEnv[k];

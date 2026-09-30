@@ -97,6 +97,8 @@ export const STARTER_OPS: ReadonlySet<string> = new Set([
   // works if the starter surface actually lists it.
   'capture',
   'get_write_request', 'list_write_requests', 'cancel_write_request',
+  'list_skills', 'get_skill', 'list_brain_skillpack', 'get_skill_asset',
+  'join_brain', 'sync_brain_skills', 'leave_brain', 'put_skill', 'delete_skill',
 ]);
 
 /**
@@ -118,6 +120,8 @@ export const ALWAYS_INCLUDED_STARTER_OPS: ReadonlySet<string> = new Set([
   // evicting it as a zero-usage newcomer.
   'capture',
   'get_write_request', 'list_write_requests', 'cancel_write_request',
+  'list_skills', 'get_skill', 'list_brain_skillpack', 'get_skill_asset',
+  'join_brain', 'sync_brain_skills', 'leave_brain', 'put_skill', 'delete_skill',
 ]);
 
 /** Strict flag parser — unknown values reject loudly (parseStdioIdleTimeout pattern). */

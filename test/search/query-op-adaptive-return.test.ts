@@ -12,10 +12,6 @@ import { operationsByName } from '../../src/core/operations.ts';
 describe('query op — adaptive_return agent surface', () => {
   const query = operationsByName['query'];
 
-  test('query op exists', () => {
-    expect(query).toBeDefined();
-  });
-
   test('adaptive_return is a boolean param on query', () => {
     const param = query.params?.adaptive_return as { type?: string; description?: string } | undefined;
     expect(param).toBeDefined();

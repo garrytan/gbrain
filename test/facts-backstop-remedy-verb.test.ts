@@ -13,10 +13,10 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const REPO_ROOT = join(import.meta.dir, '..');
-// test-reads-source-ok: comment-contract pin — the warning's remedy TEXT is
+// test-reads-source-ok[prompt-byte]: comment-contract pin — the warning's remedy TEXT is
 // the product surface; cross-checked against the dispatcher's case labels.
 const backstopSrc = readFileSync(join(REPO_ROOT, 'src/core/facts/backstop.ts'), 'utf-8');
-// test-reads-source-ok: same pin — dispatcher side of the cross-check above.
+// test-reads-source-ok[prompt-byte]: same pin — dispatcher side of the cross-check above.
 const sourcesSrc = readFileSync(join(REPO_ROOT, 'src/commands/sources.ts'), 'utf-8');
 
 describe('facts backstop thin-client-fallback remedy verb (#4489)', () => {

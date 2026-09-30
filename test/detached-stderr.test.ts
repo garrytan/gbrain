@@ -25,6 +25,7 @@ import {
   openDetachedStderrSink,
   closeDetachedStderrSink,
 } from '../src/core/minions/detached-stderr.ts';
+import { surfaceSource } from './helpers/source-surface.ts';
 
 describe('openDetachedStderrSink (#4418)', () => {
   test('opens a durable append-mode log in the audit dir (GBRAIN_AUDIT_DIR honored)', async () => {
@@ -75,10 +76,7 @@ describe('openDetachedStderrSink (#4418)', () => {
 });
 
 describe('jobs.ts detach branch (source pin, #4418)', () => {
-  const jobsSource = readFileSync(
-    join(import.meta.dir, '..', 'src', 'commands', 'jobs.ts'),
-    'utf-8',
-  );
+  const jobsSource = surfaceSource('jobs');
 
   test('the detach spawn routes through spawnDetachedSupervisor', () => {
     expect(jobsSource).toContain('spawnDetachedSupervisor');

@@ -22,13 +22,9 @@
  */
 
 import { describe, test, expect } from 'bun:test';
-import { readFileSync } from 'fs';
-import { join } from 'path';
+import { surfaceFileSource } from './helpers/source-surface.ts';
 
-const SRC = readFileSync(
-  join(import.meta.dir, '..', 'src', 'core', 'postgres-engine.ts'),
-  'utf-8',
-);
+const SRC = surfaceFileSource('postgres-engine', 'src/core/postgres-engine.ts');
 
 describe('postgres-engine / search path timeout isolation', () => {
   test('no bare `SET statement_timeout` statement survives', () => {
@@ -83,7 +79,8 @@ describe('postgres-engine / search path timeout isolation', () => {
     const keyword = extractMethod(SRC, 'searchKeyword');
     const vector = extractMethod(SRC, 'searchVector');
     expect(keyword).toMatch(/SET\s+LOCAL\s+statement_timeout/);
-    expect(vector).toMatch(/SET\s+LOCAL\s+statement_timeout/);
+    expect(vector).toMatch(/set_config\('statement_timeout', \$\{String\(remainingVectorBudget\(deadline\)\)\}, true\)/);
+    expect(vector).toContain('withVectorSettings');
   });
 
   test('connect() with poolSize honors resolvePrepare (PgBouncer regression guard)', () => {

@@ -303,6 +303,7 @@ describe('runStatsCore — #2466 catch-narrowing (real count + error surfacing)'
       // dead-prefix LIKE query then throws a non-missing-table error, which
       // must surface through the narrowed sibling catch.
       const stubEngine = {
+        getConfig: async () => null,
         executeRaw: async (sql: string) => {
           if (/GROUP BY source_id/.test(sql)) return [];        // count query: empty brain, fine
           throw Object.assign(new Error('division by zero'), { code: '22012' });  // the LIKE query

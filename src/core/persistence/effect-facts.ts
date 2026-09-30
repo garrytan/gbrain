@@ -12,7 +12,7 @@ import type { WriteRequest } from './model.ts';
 
 export type FactsBackstopStatus = { queued: true } | { skipped: string };
 
-async function authorizeFactsBackstop(engine: BrainEngine, row: WriteRequest, lock = false): Promise<void> {
+export async function authorizeFactsBackstop(engine: BrainEngine, row: WriteRequest, lock = false): Promise<void> {
   if (row.authority.restrictedNamespace || row.authority.delegated || row.authority.slugPrefixes != null) {
     throw new OperationError('permission_denied', 'A confined writer cannot extract into unnamed entity pages.');
   }
@@ -35,8 +35,7 @@ export async function prepareFactsBackstop(engine: BrainEngine, row: WriteReques
   if (!(await isFactsExtractionEnabled(engine))) return { skipped: 'extraction_disabled' };
   const eligible = isFactsBackstopEligible(row.slug, page);
   if (!eligible.ok) return { skipped: eligible.reason };
-  const [brain] = await engine.executeRaw<{ enabled: boolean }>('SELECT enabled FROM persistence_brain WHERE singleton=1');
-  return brain?.enabled ? { skipped: 'writer_coordinator_required' } : { queued: true };
+  return { queued: true };
 }
 
 /** Optional fence on new durable jobs; old jobs retain their established input contract. */
@@ -44,7 +43,7 @@ export async function readFactsBackstopJobPage(engine: BrainEngine, data: Record
   const slug = typeof data.slug === 'string' ? data.slug : '';
   const sourceId = typeof data.sourceId === 'string' ? data.sourceId : 'default';
   const [brain] = await engine.executeRaw<{ enabled: boolean }>('SELECT enabled FROM persistence_brain WHERE singleton=1');
-  if (brain?.enabled) return { skipped: 'writer_coordinator_required' } as const;
+  if (brain?.enabled && data.persistence_request_id === undefined) return { skipped: 'missing_write_authority' } as const;
   const snapshot = await engine.readPageSnapshot(slug, { sourceId });
   if (!snapshot) return { skipped: 'page_missing' } as const;
   if (data.persistence_request_id !== undefined) {
@@ -66,10 +65,9 @@ export async function readFactsBackstopJobPage(engine: BrainEngine, data: Record
 export async function dispatchFactsBackstopEffect(engine: BrainEngine, effect: PersistenceEffect, hostId: string): Promise<void> {
   await engine.transaction(async tx => {
     await tx.executeRaw("SELECT set_config('synchronous_commit','on',true)");
-    const [brain] = await tx.executeRaw<{ enabled: boolean }>('SELECT enabled FROM persistence_brain WHERE singleton=1 FOR SHARE');
     await guardEffectSource(tx, effect, hostId);
     const [row] = await tx.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE id=$1::uuid', [effect.request_id]);
-    let skipped: string | undefined = brain?.enabled ? 'writer_coordinator_required' : undefined;
+    let skipped: string | undefined;
     if (!row || row.state !== 'committed') skipped = 'invalid_write_request';
     if (row && !skipped) {
       try { await authorizeFactsBackstop(tx, row, true); }

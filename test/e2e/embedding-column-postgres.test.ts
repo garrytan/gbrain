@@ -43,12 +43,12 @@ if (!dbUrl) {
     await engine.executeRaw(`DELETE FROM content_chunks`);
     await engine.executeRaw(`DELETE FROM pages WHERE slug LIKE 'docs/%'`);
 
-    // Add the ad-hoc Voyage + ZE columns + HNSW indexes.
+    // Add the ad-hoc Voyage + synthetic columns + HNSW indexes.
     await engine.executeRaw(
       `ALTER TABLE content_chunks ADD COLUMN IF NOT EXISTS embedding_voyage vector(1024)`,
     );
     await engine.executeRaw(
-      `ALTER TABLE content_chunks ADD COLUMN IF NOT EXISTS embedding_ze halfvec(2560)`,
+      `ALTER TABLE content_chunks ADD COLUMN IF NOT EXISTS embedding_fixture halfvec(2560)`,
     );
     await engine.executeRaw(
       `CREATE INDEX IF NOT EXISTS idx_chunks_embedding_voyage
@@ -83,8 +83,8 @@ if (!dbUrl) {
     const vec2560 = (v: number) => `[${new Array(2560).fill(v).join(',')}]`;
     await engine.executeRaw(`UPDATE content_chunks SET embedding_voyage = '${vec1024(0.5)}'::vector WHERE id = ${catId}`);
     await engine.executeRaw(`UPDATE content_chunks SET embedding_voyage = '${vec1024(0.7)}'::vector WHERE id = ${dogId}`);
-    await engine.executeRaw(`UPDATE content_chunks SET embedding_ze = '${vec2560(0.5)}'::halfvec WHERE id = ${catId}`);
-    await engine.executeRaw(`UPDATE content_chunks SET embedding_ze = '${vec2560(0.7)}'::halfvec WHERE id = ${dogId}`);
+    await engine.executeRaw(`UPDATE content_chunks SET embedding_fixture = '${vec2560(0.5)}'::halfvec WHERE id = ${catId}`);
+    await engine.executeRaw(`UPDATE content_chunks SET embedding_fixture = '${vec2560(0.7)}'::halfvec WHERE id = ${dogId}`);
   });
 
   afterAll(async () => {
@@ -95,10 +95,10 @@ if (!dbUrl) {
     test('halfvec(2560) cast accepted; results returned in expected cosine order', async () => {
       const queryVec = new Float32Array(2560).fill(0.5);
       const descriptor: ResolvedColumn = {
-        name: 'embedding_ze',
+        name: 'embedding_fixture',
         type: 'halfvec',
         dimensions: 2560,
-        embeddingModel: 'zeroentropyai:zembed-1',
+        embeddingModel: 'fixture-provider:embedding-v1',
       };
       const results = await engine.searchVector(queryVec, {
         embeddingColumn: descriptor,
@@ -155,7 +155,7 @@ if (!dbUrl) {
             AND c.relname = 'content_chunks'
             AND a.attname = ANY($1::text[])
             AND NOT a.attisdropped`,
-        [['embedding', 'embedding_voyage', 'embedding_ze']],
+        [['embedding', 'embedding_voyage', 'embedding_fixture']],
       );
       const byName = new Map<string, string>();
       for (const r of rows) byName.set(r.attname, r.formatted);
@@ -164,8 +164,8 @@ if (!dbUrl) {
       expect(byName.get('embedding')).toMatch(/^vector\(\d+\)/);
       // Voyage is vector(1024) per the ALTER above.
       expect(byName.get('embedding_voyage')).toBe('vector(1024)');
-      // ZE is halfvec(2560) per the ALTER above.
-      expect(byName.get('embedding_ze')).toBe('halfvec(2560)');
+      // synthetic is halfvec(2560) per the ALTER above.
+      expect(byName.get('embedding_fixture')).toBe('halfvec(2560)');
     });
 
     test('format_type catches dim drift: declared 1536 vs actual 1024', async () => {

@@ -1,0 +1,621 @@
+{
+  "golden": [
+    {
+      "argv": "mcp",
+      "exitCode": 0,
+      "stderr": [],
+      "stdout": [
+        "gbrain mcp — provision access on the host; install it inside the harness",
+        "",
+        "gbrain mcp grant NAME --harness ID --profile PROFILE --source SOURCE --url URL --credentials-out FILE",
+        "gbrain mcp grant NAME --client ID --if-version N --profile PROFILE --url URL --harness ID --dry-run",
+        "gbrain mcp verify --client ID --harness ID --url URL --credentials-file FILE [--delegate]",
+        "gbrain mcp admin --help",
+        "gbrain mcp adapters | profiles",
+        "gbrain mcp expose [--port N] [--funnel] [--surface verbs|starter|full] [--enable-dcr] [--no-tailscale] [--no-service] [--no-install] [--force] [--dry-run] [--yes] [--json]",
+        "gbrain mcp expose --status [--json]",
+        "gbrain mcp expose --remove [--yes] [--json]",
+        "",
+        "expose publishes the gbrain HTTP MCP server on your Tailscale tailnet (--funnel: public, for cloud agents)",
+        "and keeps it running as a user service. Engine-free. See: gbrain mcp expose --help",
+        "",
+        "--profile defaults to memory-writer for new clients; omitted profiles preserve existing grants.",
+        "New connections follow this brain's published skills within their approved read sources.",
+        "--skills follow|memory-only         Follow shared skills (new default) or use memory only; existing grants are unchanged when omitted",
+        "Following never grants skill editing, script execution, additional tools, or paid calls.",
+        "Delegation requires --bound-tools T1,T2.",
+        "--federated-read S1,S2              Explicit read sources",
+        "--bound-slug-prefixes P1/,P2/       Direct write fence",
+        "--delegated-slug-prefixes P1/,P2/   Delegated write fence",
+        "--delegated-namespace job|prefixes  Default: job namespace",
+        "--bound-max-concurrent N           Default for new clients: 1",
+        "--budget-usd-per-day USD|unlimited Default for new clients: unlimited",
+        "--token-ttl SECONDS                Override new access-token lifetime",
+        "--admin-token-file FILE            Owner credential; otherwise GBRAIN_ADMIN_BOOTSTRAP_TOKEN",
+        "--credentials-out FILE             Private credential handoff (required for creation)",
+        "--credentials-file FILE            Existing private handoff; never printed",
+        "--resume                           Recover the original private handoff for --client",
+        "--timeout-ms N                     Bound verification (default: 30000)",
+        "--delegate                         Execute a real worker check; may incur model charges",
+        "--dry-run                          Preview grant without mutation or credentials",
+        "--json                             Machine-readable redacted receipt",
+        "",
+        "Next, in the intended harness environment:",
+        "gbrain connect URL --harness ID --credentials-file FILE --install",
+        "Thin CLI adapters additionally require --root ABSOLUTE-PERSISTENT-DIRECTORY.",
+        ""
+      ]
+    },
+    {
+      "argv": "import",
+      "exitCode": 1,
+      "stderr": [
+        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "export",
+      "exitCode": 1,
+      "stderr": [
+        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "files",
+      "exitCode": 1,
+      "stderr": [
+        "`gbrain files` is not routable. `files list` and `files url` MCP ops are localOnly (paths live on the host filesystem). Use `gbrain files` on the host machine.",
+        "(thin-client of http://127.0.0.1:1/mcp)"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "embed",
+      "exitCode": 1,
+      "stderr": [
+        "`gbrain embed` is not routable. embed runs on the host. Run `gbrain embed` or `gbrain cycle` on the host machine.",
+        "(thin-client of http://127.0.0.1:1/mcp)"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "serve",
+      "exitCode": 1,
+      "stderr": [
+        "`gbrain serve` is not routable. serve starts a server. Run on the host, not the thin client.",
+        "(thin-client of http://127.0.0.1:1/mcp)"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "sweep",
+      "exitCode": 1,
+      "stderr": [
+        "`gbrain sweep` is not routable. sweep runs the serve-resident maintenance passes against the LOCAL engine. Run it on the host (the serve process also runs it automatically).",
+        "(thin-client of http://127.0.0.1:1/mcp)"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "config",
+      "exitCode": 1,
+      "stderr": [
+        "`gbrain config` is not routable. config reads/writes the host brain's config plane. Edit the host's .gbrain/config.json (file-plane keys) or run on the host with GBRAIN_HOME set.",
+        "(thin-client of http://127.0.0.1:1/mcp)"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "migrate",
+      "exitCode": 1,
+      "stderr": [
+        "`gbrain migrate` is not routable. migrate runs on the host's local engine. Run on the host machine.",
+        "(thin-client of http://127.0.0.1:1/mcp)"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "retrieval-upgrade",
+      "exitCode": 1,
+      "stderr": [
+        "`gbrain retrieval-upgrade` is not routable. retrieval-upgrade (embedding migration) rebuilds the host brain's schema + re-embeds. Run on the host machine.",
+        "(thin-client of http://127.0.0.1:1/mcp)"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "eval",
+      "exitCode": 1,
+      "stderr": [
+        "`gbrain eval` is not routable. `eval` export/prune/replay touch the local engine and have no MCP equivalents. Run `gbrain eval` on the host.",
+        "(thin-client of http://127.0.0.1:1/mcp)"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "jobs",
+      "exitCode": 1,
+      "stderr": [
+        "`gbrain jobs` is not routable. `jobs list`, `jobs get <id>`, and `jobs stats` are thin-client routable; this subcommand runs against the host queue. Use the submit_job / list_jobs / get_job / get_job_stats MCP tools from your agent, or run on the host with GBRAIN_HOME set.",
+        "(thin-client of http://127.0.0.1:1/mcp)"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "agent",
+      "exitCode": 1,
+      "stderr": [
+        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "book-mirror",
+      "exitCode": 1,
+      "stderr": [
+        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "sync",
+      "exitCode": 1,
+      "stderr": [
+        "`gbrain sync` is not routable. sync runs on the host. Use the dedicated `sync_brain` MCP operation, or run `gbrain sync` on the host.",
+        "(thin-client of http://127.0.0.1:1/mcp)"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "extract",
+      "exitCode": 1,
+      "stderr": [
+        "`gbrain extract` is not routable. extract runs on the host. Run `gbrain extract` or `gbrain cycle` on the host machine.",
+        "(thin-client of http://127.0.0.1:1/mcp)"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "extract-conversation-facts",
+      "exitCode": 1,
+      "stderr": [
+        "`gbrain extract-conversation-facts` is not routable. extract-conversation-facts runs on the host (requires local engine + chat gateway). Run on the host machine.",
+        "(thin-client of http://127.0.0.1:1/mcp)"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "enrich",
+      "exitCode": 1,
+      "stderr": [
+        "`gbrain enrich` is not routable. enrich runs on the host (requires local engine + chat gateway for grounded synthesis). Run on the host machine.",
+        "(thin-client of http://127.0.0.1:1/mcp)"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "features",
+      "exitCode": 1,
+      "stderr": [
+        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "autopilot",
+      "exitCode": 1,
+      "stderr": [
+        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "graph-query",
+      "exitCode": 1,
+      "stderr": [
+        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "reconcile-links",
+      "exitCode": 1,
+      "stderr": [
+        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "repair",
+      "exitCode": 1,
+      "stderr": [
+        "`gbrain repair` is not routable. repair runs on the brain host (it publishes coordinated page writes against the local engine). Run `gbrain repair` on the brain host.",
+        "(thin-client of http://127.0.0.1:1/mcp)"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "orphans",
+      "exitCode": 1,
+      "stderr": [
+        "`gbrain orphans` is not routable. orphans needs the host's brain. Run on the host or use the `find_orphans` MCP tool from your agent.",
+        "(thin-client of http://127.0.0.1:1/mcp)"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "maintain",
+      "exitCode": 1,
+      "stderr": [
+        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "reindex",
+      "exitCode": 1,
+      "stderr": [
+        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "salience",
+      "exitCode": 1,
+      "stderr": [
+        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "anomalies",
+      "exitCode": 1,
+      "stderr": [
+        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "status",
+      "exitCode": 0,
+      "stderr": [],
+      "stdout": [
+        "",
+        "GBrain Status",
+        "=============",
+        "Mode: thin-client  ·  v<version>  ·  <ts>",
+        "",
+        "Locks:",
+        "  local-only — N/A on remote brain",
+        "",
+        "Autopilot:",
+        "  local-only — N/A on remote brain",
+        "",
+        "Warnings:",
+        "  ! remote snapshot failed: OAuth discovery failed: OAuth discovery network error: Unable to connect. Is the computer able to access the url?"
+      ]
+    },
+    {
+      "argv": "advisor",
+      "exitCode": 1,
+      "stderr": [
+        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "conversation-parser",
+      "exitCode": 0,
+      "stderr": [],
+      "stdout": [
+        "Usage: gbrain conversation-parser <subcommand> [options]",
+        "",
+        "Subcommands:",
+        "  scan <slug>          Dry-run the parser on a page; report pattern hit.",
+        "  list-builtins        Print the built-in pattern registry.",
+        "  validate <file>      Validate a user-declared simple_pattern JSON spec.",
+        "                       (v1: simple_pattern compilation not yet implemented;",
+        "                        emits \"TODO v0.42+\" notice.)",
+        "",
+        "Examples:",
+        "  gbrain conversation-parser scan conversations/imessage/alice-example",
+        "  gbrain conversation-parser list-builtins --json",
+        "  gbrain conversation-parser validate ./my-pattern.json",
+        "",
+        "Global flags:",
+        "  --json               Emit JSON envelope on stdout (where applicable).",
+        "  --help, -h           Print this help."
+      ]
+    },
+    {
+      "argv": "edges-backfill",
+      "exitCode": 1,
+      "stderr": [
+        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "whoknows",
+      "exitCode": 1,
+      "stderr": [
+        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "brainstorm",
+      "exitCode": 1,
+      "stderr": [
+        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "lsd",
+      "exitCode": 1,
+      "stderr": [
+        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "skillopt",
+      "exitCode": 1,
+      "stderr": [
+        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "calibration",
+      "exitCode": 1,
+      "stderr": [
+        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "transcripts",
+      "exitCode": 1,
+      "stderr": [
+        "`gbrain transcripts` is not routable. transcripts is server-private (raw chat exports stay on the host). Read transcripts on the host machine.",
+        "(thin-client of http://127.0.0.1:1/mcp)"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "models",
+      "exitCode": 1,
+      "stderr": [
+        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "takes",
+      "exitCode": 1,
+      "stderr": [
+        "`gbrain takes` is not routable. takes list/search/scorecard/calibration + add/update/resolve/supersede route to the brain host automatically (takes_* MCP ops). This subcommand (extract/revisit) is host-bound: run it on the host machine.",
+        "(thin-client of http://127.0.0.1:1/mcp)"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "onboard",
+      "exitCode": 1,
+      "stderr": [
+        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "founder",
+      "exitCode": 1,
+      "stderr": [
+        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "think",
+      "exitCode": 0,
+      "stderr": [],
+      "stdout": [
+        "Usage: gbrain think \"<question>\" [options]",
+        "",
+        "Options:",
+        "  --anchor <slug>          Pull the entity subgraph around this slug",
+        "  --rounds N               Multi-pass synthesis (default 1; gap-driven loop ships in v0.29)",
+        "  --save                   Persist a synthesis page under synthesis/<slug>-<date>.md",
+        "  --take                   Append a take row to the anchor page (requires --anchor)",
+        "  --model <name>           Override the model: provider:model (preferred) or",
+        "                           provider/model or a bare alias. An explicit --model that",
+        "                           can't be resolved is a hard error (exit 1) — never a",
+        "                           silent no-LLM degrade.",
+        "  --source <id>            Scope evidence gathering to this source. An unknown",
+        "                           or archived source is a hard error (exit 1).",
+        "  --since YYYY-MM-DD       Start of temporal window",
+        "  --until YYYY-MM-DD       End of temporal window",
+        "  --with-calibration       Inject the active calibration profile (anti-bias rewrite)",
+        "  --calibration-holder <h> Holder whose calibration profile to use (default: self)",
+        "  --json                   Output as JSON",
+        "  --help                   Show this help",
+        "",
+        "Without --save, the synthesis is printed to stdout and discarded. With --save,",
+        "the synthesis page is persisted AND printed. If --save is given but no synthesis",
+        "was produced (no LLM available, or empty result), nothing is saved and the command",
+        "exits non-zero.",
+        "",
+        "Set ANTHROPIC_API_KEY (or run: gbrain config set anthropic_api_key ...) to run",
+        "real synthesis. Without it AND without --save, the gather phase still runs and",
+        "prints what would have been the input (exit 0).",
+        ""
+      ]
+    },
+    {
+      "argv": "recall",
+      "exitCode": 1,
+      "stderr": [
+        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "notability-eval",
+      "exitCode": 1,
+      "stderr": [
+        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "sources",
+      "exitCode": 1,
+      "stderr": [
+        "`gbrain sources` is not routable. sources commands manage local DB + config rows. Per-subcommand thin-client routing lands in v0.31.x. For now: use `sources_list` / `sources_status` MCP tools, or run on the host.",
+        "(thin-client of http://127.0.0.1:1/mcp)"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "waiting",
+      "exitCode": 1,
+      "stderr": [
+        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "loops",
+      "exitCode": 1,
+      "stderr": [
+        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "connectors",
+      "exitCode": 1,
+      "stderr": [
+        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "pages",
+      "exitCode": 1,
+      "stderr": [
+        "`gbrain pages` is not routable. `pages purge-deleted` is admin+localOnly (hard-deletes from the local DB). Run on the host.",
+        "(thin-client of http://127.0.0.1:1/mcp)"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "quarantine",
+      "exitCode": 1,
+      "stderr": [
+        "`gbrain quarantine` is not routable. `quarantine list` routes to the brain host automatically (quarantine_list MCP op). scan/clear are host-bound (bulk re-import; the clear trust decision) — run those on the host.",
+        "(thin-client of http://127.0.0.1:1/mcp)"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "watch",
+      "exitCode": 1,
+      "stderr": [
+        "`gbrain watch` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Run `watch` on the remote host, or use the corresponding MCP tool from your agent."
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "storage",
+      "exitCode": 1,
+      "stderr": [
+        "`gbrain storage` is not routable. storage operates on the local repo on disk. Run on the host.",
+        "(thin-client of http://127.0.0.1:1/mcp)"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "code-def",
+      "exitCode": 1,
+      "stderr": [
+        "`gbrain code-def` is not routable. `code-def` needs symbol-aware lookup that has no MCP op yet. Run on the host or use `search` from your agent with a symbol-shaped query.",
+        "(thin-client of http://127.0.0.1:1/mcp)"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "code-refs",
+      "exitCode": 1,
+      "stderr": [
+        "`gbrain code-refs` is not routable. `code-refs` has no MCP op yet. Run on the host.",
+        "(thin-client of http://127.0.0.1:1/mcp)"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "reindex-code",
+      "exitCode": 1,
+      "stderr": [
+        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "reindex-search-vector",
+      "exitCode": 1,
+      "stderr": [
+        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "reindex-frontmatter",
+      "exitCode": 1,
+      "stderr": [
+        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "backfill",
+      "exitCode": 1,
+      "stderr": [
+        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "code-callers",
+      "exitCode": 1,
+      "stderr": [
+        "`gbrain code-callers` is not routable. `code-callers` has no MCP op yet. Run on the host.",
+        "(thin-client of http://127.0.0.1:1/mcp)"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "code-callees",
+      "exitCode": 1,
+      "stderr": [
+        "`gbrain code-callees` is not routable. `code-callees` has no MCP op yet. Run on the host.",
+        "(thin-client of http://127.0.0.1:1/mcp)"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "repos",
+      "exitCode": 1,
+      "stderr": [
+        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+      ],
+      "stdout": []
+    }
+  ],
+  "normalizer": "cli-thin-client-v1"
+}

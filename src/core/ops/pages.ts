@@ -12,6 +12,8 @@ import { assertPurgeParams } from '../persistence/purge-params.ts';
 
 import { clampSearchLimit, type BrainEngine } from '../engine.ts';
 import type { Page } from '../types.ts';
+import { decodeDeepResearchId, deepResearchPageUrl } from '../deep-research-id.ts';
+import { PageSnapshotAmbiguousError, type PageSnapshot } from '../page-state/types.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
 import { isAutoLinkEnabled } from '../link-extraction.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
@@ -65,7 +67,8 @@ async function dropPrivateSlugs(
  * entirely, facts fence keeps only `world`-visibility rows.
  */
 function stripPrivacyFencesForRemoteReader(page: Page): Page {
-  return { ...page, compiled_truth: sanitizeRemoteBody(page.compiled_truth, { includeWithdrawn: true }), timeline: sanitizeRemoteBody(page.timeline ?? '', { includeWithdrawn: true }) };
+  const opts = { includeWithdrawn: true, keepMaterializedMarkers: true }; // #5567: markers round-trip remote edits
+  return { ...page, compiled_truth: sanitizeRemoteBody(page.compiled_truth, opts), timeline: sanitizeRemoteBody(page.timeline ?? '', opts) };
 }
 
 const get_page: Operation = {
@@ -109,7 +112,7 @@ const get_page: Operation = {
 
     let snapshot = await ctx.engine.readPageSnapshot(slug, { includeDeleted, excludePrivate, ...sourceOpts, resolveAlias: true });
     let page = snapshot?.page ?? null;
-    if (page && excludePrivate && isPrivatePage(page.frontmatter)) page = null;
+    if (page && excludePrivate && isPrivatePage(page)) page = null;
     let resolved_slug: string | undefined = page && page.slug !== slug ? page.slug : undefined;
 
     if (!page && fuzzy) {
@@ -123,7 +126,7 @@ const get_page: Operation = {
           ? await tx.readPageSnapshot(candidates[0], { includeDeleted, excludePrivate, ...sourceOpts }) : null };
       });
       if (fallback.candidates.length > 1) return { error: 'ambiguous_slug', candidates: fallback.candidates };
-      if (fallback.snapshot && !(excludePrivate && isPrivatePage(fallback.snapshot.page.frontmatter))) {
+      if (fallback.snapshot && !(excludePrivate && isPrivatePage(fallback.snapshot.page))) {
         snapshot = fallback.snapshot;
         page = snapshot.page;
         resolved_slug = page.slug;
@@ -142,7 +145,7 @@ const get_page: Operation = {
           // gbrain-allow-unscoped-getpage: read-only diagnostic existence probe —
           // deliberately spans all sources to name where the slug lives.
           const elsewhere = await ctx.engine.getPage(slug, { includeDeleted });
-          if (elsewhere && !(excludePrivate && isPrivatePage(elsewhere.frontmatter))) {
+          if (elsewhere && !(excludePrivate && isPrivatePage(elsewhere))) {
             hint = `Page exists in source '${elsewhere.source_id}' — pass --source ${elsewhere.source_id} (source_id: '${elsewhere.source_id}' over MCP). ${hint}`;
           }
         } catch {
@@ -199,44 +202,49 @@ const get_page: Operation = {
   cliHints: { name: 'get', positional: ['slug'] },
 };
 
-/**
- * #4039: OpenAI deep-research adapter. ChatGPT's deep research mode requires
- * an MCP server to expose a `search`/`fetch` PAIR with a fixed contract:
- * search results carry an `id`, and `fetch(id)` returns
- * `{ id, title, text, url, metadata }`. gbrain had `search` but no `fetch`,
- * so the connector worked in normal chat and failed in deep research. This
- * is a thin get_page adapter: id = slug (the `search` op stamps `id: slug`
- * on every result so the pair round-trips), same source scoping and
- * remote-reader privacy fences as get_page, no fuzzy resolution (deep
- * research always echoes back an id it was handed).
- */
 const fetch_page: Operation = {
   name: 'fetch',
-  description: "Fetch the full text of one search result by its `id` (OpenAI deep-research contract: the search/fetch pair). `id` is the page slug stamped on every `search` result. Returns { id, title, text, url, metadata } — `text` is the page's canonical markdown. For the richer gbrain-native read (fuzzy slugs, soft-delete recovery, lossless edit round-trips), use get_page.",
+  description: "Fetch the full text of one search result by its opaque, source-qualified `id` (OpenAI deep-research contract: the search/fetch pair). Pass the id unchanged; it does not grant access. Legacy slug ids work only when unambiguous within your current read scope. Returns { id, title, text, url, metadata } — `text` is the page's canonical markdown. For fuzzy slugs, soft-delete recovery, or lossless edit round-trips, use get_page.",
   params: {
-    id: { type: 'string', required: true, description: 'Result id from a prior `search` call (= the page slug).' },
+    id: { type: 'string', required: true, description: 'Opaque result id from a prior `search` call. Pass unchanged. Unambiguous legacy slugs are also accepted.' },
   },
   handler: async (ctx, p) => {
     const id = p.id as string;
     if (typeof id !== 'string' || !id.trim()) {
       throw new OperationError('invalid_params', 'fetch requires a non-empty id', 'Pass the `id` field from a `search` result.');
     }
-    const slug = id.trim();
-    // Same scope ladder as get_page's unqualified read: federated array >
-    // scalar > nothing — a remote caller only fetches what its grant spans.
-    const sourceOpts = federatedSearchScope(ctx);
-    const snapshot = await ctx.engine.readPageSnapshot(slug, sourceOpts);
-    let page = snapshot?.page ?? null;
-    // #4352 remediation: a `visibility: private` page reads as missing for
-    // untrusted callers (same resolveExcludePrivatePages gate as get_page —
-    // fetch is remote-facing by design, every MCP transport). Cheap row
-    // check first; the resolver short-circuits for trusted local callers.
-    if (page && isPrivatePage(page.frontmatter) && (await resolveExcludePrivatePages(ctx.engine, ctx.remote))) {
-      page = null;
+    let identity: ReturnType<typeof decodeDeepResearchId>;
+    try { identity = decodeDeepResearchId(id); }
+    catch { throw new OperationError('invalid_params', 'Invalid fetch result id', 'Pass the unchanged `id` field from a `search` result.'); }
+    const slug = identity?.slug ?? id.trim();
+    const missing = () => new OperationError('page_not_found', 'Page not found', 'Pass an id returned by a current `search` call.');
+    let sourceOpts: ReturnType<typeof federatedSearchScope>;
+    try { sourceOpts = federatedSearchScope(ctx); }
+    catch (error) {
+      if (error instanceof OperationError && error.code === 'permission_denied') throw missing();
+      throw error;
     }
-    if (!page) {
-      throw new OperationError('page_not_found', `Page not found: ${slug}`, 'Pass an id returned by a `search` call.');
+    if (ctx.remote !== false && sourceOpts.sourceIds === undefined && sourceOpts.sourceId === undefined) throw missing();
+    if (identity) {
+      if (ctx.remote !== false && (sourceOpts.sourceIds !== undefined
+        ? !sourceOpts.sourceIds.includes(identity.sourceId)
+        : sourceOpts.sourceId !== undefined && sourceOpts.sourceId !== identity.sourceId)) throw missing();
+      sourceOpts = { sourceId: identity.sourceId };
     }
+    const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
+    let snapshot: PageSnapshot | null;
+    try {
+      snapshot = await ctx.engine.readPageSnapshot(slug, {
+        ...sourceOpts, excludePrivate, resolveAlias: true, requireUnambiguous: identity === null, requireLiveSource: true, preserveExactIdentity: true,
+      });
+    } catch (error) {
+      if (error instanceof PageSnapshotAmbiguousError) {
+        throw new OperationError('ambiguous_id', 'The legacy id matches multiple readable pages', 'Search again and pass the source-qualified result id.');
+      }
+      throw error;
+    }
+    const page = snapshot?.page;
+    if (!page || (excludePrivate && isPrivatePage(page))) throw missing();
     bumpLastRetrievedAt(ctx.engine, [page.id]);
     const tags = snapshot!.tags;
     // Same privacy boundary as get_page: untrusted readers (ctx.remote ===
@@ -245,12 +253,12 @@ const fetch_page: Operation = {
       ? page
       : stripPrivacyFencesForRemoteReader(page);
     return {
-      id: page.slug,
+      id: identity ? id : page.slug,
       title: page.title,
       text: serializePageToMarkdown(visibleBody as Page, tags),
       // Pages have no public http home; a stable brain-local URI satisfies
       // the contract's citation slot without inventing a fake web URL.
-      url: `gbrain://page/${page.source_id}/${page.slug}`,
+      url: deepResearchPageUrl(page.source_id, page.slug),
       metadata: {
         revision: snapshot!.revision,
         type: page.type,
@@ -405,8 +413,8 @@ const purge_deleted_pages: Operation = {
   handler: async (ctx, p) => {
     const olderThanHours = (p.older_than_hours as number | undefined) ?? 72;
     if (ctx.dryRun) return { dry_run: true, action: 'purge_deleted_pages', older_than_hours: olderThanHours };
-    const result = await ctx.engine.purgeDeletedPages(olderThanHours);
-    return { status: 'purged', count: result.count, slugs: result.slugs };
+    const result = await (await import('../persistence/purge-deleted.ts')).purgeDeletedPagesCoordinated(ctx.engine, olderThanHours);
+    return { status: result.failed ? 'partial' : 'purged', count: result.count, slugs: result.slugs, ...(result.blocked.length ? { blocked: result.blocked } : {}) };
   },
   cliHints: { name: 'purge-deleted' },
 };
@@ -572,6 +580,7 @@ const capture: Operation = {
     ...PAGE_MUTATION_PARAMS,
     ...CAPTURE_EVENT_PARAMS,
     content: { type: 'string', required: true, description: 'Markdown or plain text to capture. File paths are NOT accepted over MCP — read the file yourself and pass its content (the CLI --file lane is local-only).' },
+    local_file: { type: 'string', required: false, description: 'Trusted local CLI only (--file): the absolute path of the captured file. Recorded as the page origin only when it lies inside the source and names the slug; the path itself is never stored. Remote callers are refused.' },
     slug: { type: 'string', required: false, description: "Target slug. Default: inbox/YYYY-MM-DD-<sha8-of-content> (stable per content — recapturing identical text hits the same slug); type diary/event routes under life/. Fenced clients: the default lands under your first bound prefix." },
     type: { type: 'string', required: false, description: "Page type for the stamped frontmatter. Omitted: the content's frontmatter `type:` when present, else 'note'. An explicit type (this param or a frontmatter `type:`) must be declared by the active schema pack; undeclared types are rejected before writing, naming the declared vocabulary." },
   },

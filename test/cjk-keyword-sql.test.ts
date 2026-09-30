@@ -5,7 +5,19 @@
  */
 import { describe, test, expect } from 'bun:test';
 import { buildCJKKeywordSql, type CjkKeywordCtx } from '../src/core/search/cjk-keyword-sql.ts';
-import { searchKeywordCJK as searchKeywordCJKPg } from '../src/core/postgres-engine/cjk-search.ts';
+import { searchKeywordCJK, type ScopedReadRunner } from '../src/core/engine-sql/cjk-search.ts';
+import { scopedRead } from '../src/core/engine-sql/brands.ts';
+import type { SqlExecutor } from '../src/core/engine-sql/executor.ts';
+
+/**
+ * Refactor wave 1 C14 (A10 re-point): the executor seam moved from a
+ * `(sql, params) => rows` runner to engine-sql's scoped-read hook; this adapts
+ * a runner of the old shape so the assertions below stay unchanged.
+ */
+function runnerScope(run: (sql: string, params: unknown[]) => Promise<Record<string, unknown>[]>): ScopedReadRunner {
+  const exec = { unsafe: async (sql: string, params: readonly unknown[]) => ({ rows: await run(sql, [...params]), affectedRows: 0 }) } as unknown as SqlExecutor;
+  return (read) => read(scopedRead(exec));
+}
 
 function ctx(overrides: Partial<CjkKeywordCtx> = {}): CjkKeywordCtx {
   return {
@@ -28,15 +40,27 @@ describe('buildCJKKeywordSql (#3986)', () => {
     expect(buildCJKKeywordSql('   ', ctx())).toBeNull();
   });
 
-  test('one ILIKE clause per term, AND-joined, with explicit ESCAPE', () => {
+  test('one case-safe LIKE clause per term, AND-joined, with explicit ESCAPE', () => {
     const built = buildCJKKeywordSql('東京 会議', ctx());
     expect(built).not.toBeNull();
-    const ilikeCount = (built!.sql.match(/ILIKE \$\d+ ESCAPE '\\'/g) || []).length;
-    expect(ilikeCount).toBe(2);
+    const likeCount = (built!.sql.match(/(?<!I)LIKE \$\d+ ESCAPE '\\'/g) || []).length;
+    expect(likeCount).toBe(2);
     // Escaped + wrapped LIKE params come first, raw terms after, raw query next.
     expect(built!.params.slice(0, 2)).toEqual(['%東京%', '%会議%']);
     expect(built!.params.slice(2, 4)).toEqual(['東京', '会議']);
     expect(built!.params[4]).toBe('東京 会議');
+  });
+
+  test('mixed Hangul and Latin terms select matching operators independently', () => {
+    const built = buildCJKKeywordSql('앨범 Example 기획', ctx());
+    expect(built!.sql).toContain("cc.chunk_text LIKE $1 ESCAPE '\\'");
+    expect(built!.sql).toContain("cc.chunk_text ILIKE $2 ESCAPE '\\'");
+    expect(built!.sql).toContain("cc.chunk_text LIKE $3 ESCAPE '\\'");
+  });
+
+  test('case-bearing letters remain case-insensitive within a mixed-script term', () => {
+    const built = buildCJKKeywordSql('東京Example', ctx());
+    expect(built!.sql).toContain("cc.chunk_text ILIKE $1 ESCAPE '\\'");
   });
 
   test('LIKE metacharacters in terms are escaped', () => {
@@ -110,11 +134,11 @@ describe('buildCJKKeywordSql (#3986)', () => {
   });
 });
 
-describe('postgres-engine searchKeywordCJK executor (#3986)', () => {
+describe('engine-sql searchKeywordCJK executor (#3986)', () => {
   test('runs the built SQL through the runner and maps rows to SearchResult', async () => {
     const calls: Array<{ sql: string; params: unknown[] }> = [];
-    const results = await searchKeywordCJKPg(
-      async (sql, params) => {
+    const results = await searchKeywordCJK(
+      runnerScope(async (sql, params) => {
         calls.push({ sql, params });
         return [{
           slug: 'notes/tokyo', page_id: 1, title: '東京', type: 'note', source_id: 'default',
@@ -123,12 +147,12 @@ describe('postgres-engine searchKeywordCJK executor (#3986)', () => {
           chunk_id: 10, chunk_index: 0, chunk_text: '東京の会議', chunk_source: 'compiled_truth',
           score: 1.5, stale: false,
         }];
-      },
+      }),
       '東京 会議',
       ctx(),
     );
     expect(calls.length).toBe(1);
-    expect(calls[0].sql).toContain('ILIKE');
+    expect(calls[0].sql).toContain("cc.chunk_text LIKE $1 ESCAPE '\\'");
     expect(calls[0].params[0]).toBe('%東京%');
     expect(results.length).toBe(1);
     expect(results[0].slug).toBe('notes/tokyo');
@@ -137,7 +161,7 @@ describe('postgres-engine searchKeywordCJK executor (#3986)', () => {
 
   test('empty query never touches the runner', async () => {
     let called = false;
-    const results = await searchKeywordCJKPg(async () => { called = true; return []; }, '', ctx());
+    const results = await searchKeywordCJK(runnerScope(async () => { called = true; return []; }), '', ctx());
     expect(results).toEqual([]);
     expect(called).toBe(false);
   });

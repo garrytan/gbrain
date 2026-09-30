@@ -73,7 +73,8 @@ describe('CLI-only persistence delegation before engine connection', () => {
       expect(calls[0].params).toEqual(calls[1].params);
       expect(calls[0].operation).toBe('capture');
       expect(calls[0].params).toMatchObject({ content: raw, request_id: ID, who: 'example-person', what: 'met', type: 'event',
-        source_kind: 'capture-cli', source_uri: `file://${file}` });
+        source_kind: 'capture-cli', local_file: file });
+      expect(calls[0].params).not.toHaveProperty('source_uri');
       expect(calls[0].params).not.toHaveProperty('slug');
       expect(calls[0].params.content).not.toContain('captured_at:');
       expect(calls[0].routing.source).toBe('client-source');
@@ -85,6 +86,17 @@ describe('CLI-only persistence delegation before engine connection', () => {
       const params = { slug: 'test/page', content: 'replacement', expected_revision: BRAIN, request_id: ID };
       await runDeferredPersistenceCommand('call', ['--source', 'call-source', 'put_page', JSON.stringify(params)], connect);
       expect(calls).toHaveLength(1);
+      expect(calls[0].params).toEqual(params);
+      expect(calls[0].routing.source).toBe('call-source');
+    });
+  });
+
+  test('fact extraction delegates stable input and request identity before connecting', async () => {
+    await withOwner(async (_dir, calls, connect) => {
+      const params = { turn_text: 'A synthetic recorded preference.', visibility: 'private', request_id: ID };
+      await runDeferredPersistenceCommand('call', ['--source', 'call-source', 'extract_facts', JSON.stringify(params)], connect);
+      expect(calls).toHaveLength(1);
+      expect(calls[0].operation).toBe('extract_facts');
       expect(calls[0].params).toEqual(params);
       expect(calls[0].routing.source).toBe('call-source');
     });

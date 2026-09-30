@@ -21,7 +21,7 @@
  * gateway-down errors are absorbed into NULL-embedding rows.
  */
 
-import { chat, embedOne, isAvailable } from '../ai/gateway.ts';
+import { chat, embedOne, isAvailable, getEmbeddingModel } from '../ai/gateway.ts';
 import { classifyGlobalLlmError } from '../ai/errors.ts';
 import { stripReasoningBlocks } from '../llm-json.ts';
 import type { ChatResult } from '../ai/gateway.ts';
@@ -31,6 +31,7 @@ import { normalizeModelId } from '../model-id.ts';
 import type { BrainEngine, NewFact, FactKind } from '../engine.ts';
 import { normalizeMetricLabel } from './extract-from-fence.ts';
 import { isNullLikeEntity } from './write-single.ts';
+import { isAIInvocationPolicyError } from '../ai/invocation-guard.ts';
 
 /**
  * v0.31 (D15): kill-switch for fact extraction.
@@ -164,6 +165,19 @@ export async function isJunkFilterEnabled(engine?: BrainEngine): Promise<boolean
   return !['false', '0', 'no', 'off'].includes(raw.trim().toLowerCase());
 }
 
+/**
+ * Confidence stored for a candidate whose confidence is missing, null or not
+ * a number. Legacy default 1.0; `facts.extraction_missing_confidence` (a
+ * number in 0..1) opts into a less certain value. Opt-in because confidence
+ * feeds hot-memory ordering and decay, and no matched eval has measured a
+ * different default.
+ */
+export async function getMissingConfidence(engine?: BrainEngine): Promise<number> {
+  const raw = engine ? await engine.getConfig('facts.extraction_missing_confidence').catch(() => null) : null;
+  const n = raw == null || raw.trim() === '' ? NaN : Number(raw.trim());
+  return Number.isFinite(n) && n >= 0 && n <= 1 ? n : 1.0;
+}
+
 export const ALL_EXTRACT_KINDS: readonly FactKind[] = [
   'event', 'preference', 'commitment', 'belief', 'fact', 'idea',
 ] as const;
@@ -178,6 +192,8 @@ export type FactNotability = 'high' | 'medium' | 'low';
  * fields) instead of living as an anonymous inline slice.
  */
 export const ENTITY_HINTS_CAP = 5;
+
+export interface FactEmbeddingSignature { model: string; dimensions: number; }
 
 export interface ExtractInput {
   turnText: string;
@@ -199,6 +215,7 @@ export interface ExtractInput {
   engine?: BrainEngine;
   /** Abort signal for shutdown propagation. */
   abortSignal?: AbortSignal;
+  embedding?: FactEmbeddingSignature | null;
   /** Cap on number of facts returned per turn. Defaults to 10. */
   maxFactsPerTurn?: number;
   /** Optional pre-embedding admission selector for extracted fact tiers. */
@@ -494,9 +511,10 @@ export async function extractFactsFromTurnWithOutcome(
   // because those reuse `extractorSystem`. Read AFTER the availability gate —
   // a chat_unavailable early return must not pay config round-trips (#4298
   // resolved the model/gate ordering; these reads sit behind it).
-  const [promptAppendix, junkFilterOn] = await Promise.all([
+  const [promptAppendix, junkFilterOn, missingConfidence] = await Promise.all([
     getFactsExtractionPromptAppendix(input.engine),
     isJunkFilterEnabled(input.engine),
+    getMissingConfidence(input.engine),
   ]);
   const extractorSystem = promptAppendix
     ? `${buildExtractorSystem(admitsLow)}\n\n${promptAppendix}`
@@ -607,6 +625,10 @@ export async function extractFactsFromTurnWithOutcome(
       `kept ${parsedShape.facts.length}\n`,
     );
   }
+  const unknownKinds = parsedShape.facts.filter(f => !ALL_EXTRACT_KINDS.includes(f.kind as FactKind)).length;
+  if (unknownKinds > 0) {
+    process.stderr.write(`[facts-extract] WARN: ${unknownKinds} candidate(s) carried an unknown kind; stored as 'fact'\n`);
+  }
   const parsedRaw = parsedShape.facts;
 
   const facts: ExtractedFact[] = [];
@@ -633,7 +655,7 @@ export async function extractFactsFromTurnWithOutcome(
       continue;
     }
 
-    const confidence = clampConfidence(candidate.confidence);
+    const confidence = clampConfidence(candidate.confidence, missingConfidence);
     const validTier = ['high', 'medium', 'low'].includes(candidate.notability ?? '');
     if (input.notabilityAdmission) {
       const tier = validTier ? candidate.notability as FactNotability : null;
@@ -644,10 +666,16 @@ export async function extractFactsFromTurnWithOutcome(
       : 'medium';
 
     let embedding: Float32Array | null = null;
+    let embeddingModel: string | null = null;
     try {
-      embedding = await embedOne(factText);
+      if (input.embedding !== null) {
+        embeddingModel = input.embedding?.model ?? getEmbeddingModel();
+        embedding = await embedOne(factText, { abortSignal: input.abortSignal, inputType: 'document', embeddingModel,
+          ...(input.embedding ? { embeddingModel: input.embedding.model, dimensions: input.embedding.dimensions } : {}) });
+      }
     } catch (err) {
-      if (isAbort(err)) throw err;
+      input.abortSignal?.throwIfAborted();
+      if (isAbort(err) || isAIInvocationPolicyError(err)) throw err;
       // Gateway-down → NULL embedding; classifier still runs without
       // fast-path. (eE8 distinction.)
       embedding = null;
@@ -681,6 +709,7 @@ export async function extractFactsFromTurnWithOutcome(
       confidence,
       notability,
       embedding,
+      embedding_model: embedding ? embeddingModel : null,
       claim_metric: claimMetric,
       claim_value:  claimValue,
       claim_unit:   claimUnit,
@@ -803,7 +832,14 @@ function tryArrayShapeDetailed(s: string): ParsedExtractorShape | null {
         fact: o.fact,
         kind: o.kind,
         entity: typeof o.entity === 'string' ? o.entity : null,
-        confidence: typeof o.confidence === 'number' ? o.confidence : 1.0,
+        // A missing / null / non-numeric confidence stays undefined here;
+        // clampConfidence applies the configured missing-confidence value. A
+        // numeric string ("0.3") is the model's stated confidence.
+        confidence: typeof o.confidence === 'number'
+          ? o.confidence
+          : typeof o.confidence === 'string' && /^\s*(?:\d+(?:\.\d+)?|\.\d+)\s*$/.test(o.confidence)
+            ? Number(o.confidence)
+            : undefined,
         notability: typeof o.notability === 'string' ? o.notability : undefined,
         // v0.35.4 (D-CDX-2) — typed-claim fields. Strict shape: metric/unit/period
         // must be string-or-null; value must be a finite number-or-null. Anything
@@ -821,14 +857,19 @@ function tryArrayShapeDetailed(s: string): ParsedExtractorShape | null {
   }
 }
 
-function clampConfidence(x: number | undefined): number {
-  if (typeof x !== 'number' || !Number.isFinite(x)) return 1.0;
+function clampConfidence(x: number | undefined, missing: number): number {
+  if (typeof x !== 'number' || !Number.isFinite(x)) return missing;
   if (x < 0) return 0;
   if (x > 1) return 1;
   return x;
 }
 
 function isAbort(err: unknown): boolean {
-  if (!(err instanceof Error)) return false;
-  return err.name === 'AbortError' || /aborted|cancell?ed/i.test(err.message);
+  const seen = new Set<Error>();
+  while (err instanceof Error && !seen.has(err)) {
+    if (err.name === 'AbortError' || /aborted|cancell?ed/i.test(err.message)) return true;
+    seen.add(err);
+    err = err.cause;
+  }
+  return false;
 }

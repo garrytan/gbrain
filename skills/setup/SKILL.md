@@ -40,8 +40,8 @@ Use the user's existing context; do not repeat choices they already made.
 | Add memory inside Grok Bot | First choice: use the brain on your own computer over MCP — [remote-mcp](../remote-mcp/SKILL.md) publishes it (`--funnel`, the Bot runs in the vendor cloud), then [hosted harness access](../../docs/guides/hosted-harness-access.md) installs the private handoff in the Bot. No always-on machine: follow [Grok Bot](../../docs/guides/grok-bot.md) and the isolated [setup helper](../../docs/guides/in-agent-setup.md). Root: `/workspace/gbrain`, with data under `.gbrain`. |
 | Add memory inside Muse | First choice: use the brain on your own computer over MCP — [remote-mcp](../remote-mcp/SKILL.md) publishes it (`--funnel`), then [hosted harness access](../../docs/guides/hosted-harness-access.md) installs the private handoff in Muse. No always-on machine: follow [Muse](../../docs/guides/muse.md). Either way, establish its durable user-files location first. Do not invent `MUSE.md`, a persistent path, or a native MCP mechanism. |
 | Add memory to another existing agent | Follow [INSTALL_FOR_AGENTS.md](../../INSTALL_FOR_AGENTS.md); the [coding-agent tutorial](../../docs/tutorials/connect-coding-agent.md) covers Claude Code and Codex. |
-| Connect an existing hosted brain | Follow [hosted harness access](../../docs/guides/hosted-harness-access.md). Provision on the host and install the private handoff inside the intended harness. |
-| Use the brain from other devices, apps or cloud agents over MCP | Follow [remote-mcp](../remote-mcp/SKILL.md): `gbrain mcp expose` publishes the local server on the Tailscale tailnet (Funnel only for cloud agents), then grant one scoped client per consumer. |
+| Connect an existing hosted brain | Follow [mcp-access](../mcp-access/SKILL.md) and [hosted harness access](../../docs/guides/hosted-harness-access.md). Select native OAuth/PKCE or a private machine handoff for the intended harness. |
+| Use the brain from other devices, apps or cloud agents over MCP | Follow [remote-mcp](../remote-mcp/SKILL.md): `gbrain mcp expose` publishes the local server on the Tailscale tailnet (Funnel only for cloud agents), then [mcp-access](../mcp-access/SKILL.md) / hosted access selects native OAuth or a private machine handoff for each consumer. |
 | Explicitly create a new personal agent with identity and a private repo | Follow [BOOTSTRAP_FOR_AGENTS.md](../../BOOTSTRAP_FOR_AGENTS.md). `gbrain bootstrap` is for this explicit request. |
 | Explicitly configure per-worktree code engines with shared artifacts | Follow [topologies](../../docs/architecture/topologies.md). Brain and source routing must be set independently. |
 
@@ -98,7 +98,13 @@ private and do not copy ambient secrets into file configuration.
 ### Hosted alternative
 
 Skip local database initialization, import, and maintenance installation.
-The owner provisions a `memory-writer` grant on the brain host or through its
+Read [mcp-access](../mcp-access/SKILL.md). If the target harness uses native
+OAuth/PKCE, use its [native path](../../docs/guides/hosted-harness-access.md#native-oauth-path):
+register the actual redirect URI and authentication method, initiate OAuth
+inside the client, and preserve the pending request through owner login and
+consent. Do not install a machine handoff in an OAuth-only client.
+
+For the machine path, the owner provisions a `memory-writer` grant through the
 authenticated admin API using `gbrain mcp grant` and a private
 `--credentials-out` file. Use the actual harness identifier. A running PGLite
 server must use its existing engine; do not open the live database in a second

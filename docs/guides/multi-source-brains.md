@@ -36,36 +36,37 @@ gbrain sync --source gstack
 Result: wiki pages and gstack plans are separate (different source_ids,
 different slug namespaces) but share the search surface.
 
-### 2. Purpose-separated brains (yc-media + garrys-list)
+### 2. Purpose-separated brains (news-desk + essays)
 
 You run two completely different content pipelines on the same backend.
-YC Media covers portfolio news and founder profiles. Garry's List is
-personal writing. You explicitly DON'T want them mixed in search — YC
-portfolio content leaking into essay searches is a bug, not a feature.
+`news-desk` covers company news and founder profiles. `essays` is
+personal writing. You explicitly DON'T want them mixed in search — news
+content leaking into essay searches is a bug, not a feature.
 
 ```bash
 # Two sources, both isolated (federated=false)
-gbrain sources add yc-media --path ~/yc-media --no-federated
-gbrain sources add garrys-list --path ~/writing --no-federated
+gbrain sources add news-desk --path ~/news-desk --no-federated
+gbrain sources add essays --path ~/writing --no-federated
 
 # Pin each checkout directory
-(cd ~/yc-media && gbrain sources attach yc-media)
-(cd ~/writing && gbrain sources attach garrys-list)
+(cd ~/news-desk && gbrain sources attach news-desk)
+(cd ~/writing && gbrain sources attach essays)
 
 # Sync each independently
-gbrain sync --source yc-media
-gbrain sync --source garrys-list
+gbrain sync --source news-desk
+gbrain sync --source essays
 ```
 
 Result: searching from neither directory returns the `default` source
-(your main brain). Searching from inside `~/yc-media` returns only yc-
-media hits. Searching from inside `~/writing` returns only garrys-list.
+(your main brain). Searching from inside `~/news-desk` returns only
+news-desk hits. Searching from inside `~/writing` returns only essays.
 Federation is opt-in, not leaked.
 
-To search across them explicitly on demand:
+To search across every source explicitly on demand (trusted local CLI;
+`--source` takes exactly one id):
 
 ```bash
-gbrain search "tech layoffs" --source yc-media,garrys-list
+gbrain search "tech layoffs" --source-id __all__
 ```
 
 ### 3. Mixed (wiki federated + sessions isolated)
@@ -198,6 +199,52 @@ automatically and recovers: either a full reimport (anchor object missing)
 or a direct tree-to-tree diff against the orphaned bookmark (anchor present
 but rewritten), advancing the anchor to the new HEAD when it completes.
 
+## Sources in a Git subfolder
+
+A `--path` source can point at a subfolder of a Git repository, for example
+`gbrain sources add vault-notes --path ~/vault/notes` where `~/vault` holds
+the `.git` directory. Such a source has two possible roots for its slugs and
+stored file paths, called its **slug-root mode**:
+
+| Mode | `~/vault/notes/people/alice-example.md` becomes | When it is chosen |
+| --- | --- | --- |
+| `source-root` | slug `people/alice-example`, stored path `people/alice-example.md` | The default for a new subfolder source: the same slugs a plain `gbrain import ~/vault/notes` would give. |
+| `git-root` | slug `notes/people/alice-example`, stored path `notes/people/alice-example.md` | When you sync with `gbrain sync --repo ~/vault --src-subpath notes` (you named the Git root as the base), or when the source already has pages whose slugs carry the `notes/` prefix. |
+
+The mode is decided once, by the first real sync or the first coordinated page
+write (such as `put_page`) that records a new file path, and pinned in the
+source's configuration. A few older write paths, such as saved brainstorm
+ideas, follow an existing pin but do not set one. Every later sync,
+write and reader obeys the pin, so an existing brain never has its slugs
+renamed. `gbrain sync --dry-run` works out the mode without pinning it. A
+source at the root of its repository, or outside Git, has only one root and no
+mode to choose.
+
+**Say to your agent:** *"Add my ~/vault/notes folder as its own source and
+keep its slugs relative to that folder."*
+
+**Write-through.** When a write creates a page in a subfolder source,
+gbrain writes `<source path>/<slug>.md` and records the stored path in the
+source's mode. In `source-root` mode the next sync of that file finds the
+same page instead of creating a twin. In `git-root` mode the recorded path
+adds the subfolder prefix that the unprefixed slug lacks, so the next sync
+can refuse that file with a slug/origin mismatch; there, add new pages as
+files in the checkout and sync them. Pages that already have a stored path
+keep writing to that file.
+
+**Older stored paths.** Before v0.60.5.0, write-through recorded
+Git-root-style paths (`notes/people/alice-example.md`) for pages in
+`source-root` sources, which made the next sync fail. Sync now accepts that
+older form when the rest of the path names the same page, and rewrites it on
+the next import. No command is needed.
+
+**`ambiguous_source_path`.** If both readings of an old stored path exist as
+files, for example `~/vault/notes/people/alice-example.md` and
+`~/vault/notes/notes/people/alice-example.md`, sync refuses instead of
+guessing. Rename or move one of the two files, commit, then run
+`gbrain sync --source vault-notes --no-pull --retry-failed`. The other
+refusal reasons are listed in [write refusal reasons](write-refusals.md).
+
 ## Citation format for agents
 
 When agents receive multi-source results they MUST cite pages in
@@ -238,6 +285,11 @@ without writing anything"* — your agent runs `gbrain sync --dry-run`.
 
 ## Durability: keep a brain repo in sync (auto-harden)
 
+This hardening path applies to unmanaged worktrees. After activating managed
+writers, Git effects belong to the persistence outbox; generated legacy push
+helpers refuse to run rather than bypass that ownership boundary. See the
+[concurrent-write guide](concurrent-writes.md).
+
 A long-lived agent that writes to a knowledge-wiki git repo needs three
 things to never lose work: pull before it edits, push every write, and not
 go stale while it sits idle. `gbrain sources harden` installs all of that,
@@ -269,9 +321,12 @@ What hardening guarantees:
   rebase conflict is aborted cleanly and flagged for attention, never left
   half-applied.
 - **Push is never deferred.** `scripts/brain-commit-push.sh "<msg>" <path>`
-  commits and pushes atomically and refuses to report success without a
-  confirmed push. The post-commit hook is a best-effort background fallback;
-  the helper is the guarantee.
+  commits and pushes, and refuses to report success without a successful push
+  or confirmation that the exact destination branch at every effective origin
+  push URL contains the attempted commit. A rejected push can still succeed when another process
+  already pushed that commit; a stale local tracking ref is not confirmation.
+  The post-commit hook is a best-effort background fallback; the helper is
+  the guarantee.
 - **No silent staleness.** A 30-minute background pull keeps an idle session
   current. It runs DB-free, so it never contends with a live brain for the
   PGLite single-writer lock.
@@ -280,6 +335,12 @@ Flags: `--no-cron` skips the scheduled pull, `--no-verify` skips the push
 probe, `--dry-run` reports what would change, `--json` emits a machine
 report, `--all` hardens every source with a remote (same-account only).
 `--no-harden` on `sources add` opts out of auto-harden.
+
+After upgrading GBrain, run `gbrain sources harden <source-id>` on each machine
+with an already-hardened source to refresh its local hook and
+`scripts/brain-commit-push.sh`. Upgrading the CLI alone does not update those
+installed scripts. Existing repo-local credentials are reused; no new token
+is required when that credential still works.
 
 Security: the push automation is installed locally per machine (never
 committed into the repo), the token is wired per-repo (an existing

@@ -196,6 +196,10 @@ describe('withdrawal survives stale imports and derived-index rebuilds', () => {
     await forgetFactInFence(engine, id);
     await engine.executeRaw('DELETE FROM facts');
     const renamed = 'people/renamed-example';
+    // Withdrawals are scoped to the entity, so the rename goes through the
+    // rename operation (which carries them); a different page that merely
+    // repeats the claim keeps it (test/facts-withdrawal-subject.test.ts).
+    expect(await engine.updateSlug(SLUG, renamed, { sourceId: 'default' })).toBe(1);
     await importFromContent(engine, renamed, FILE, { noEmbed: true, sourceId: 'default' });
     await runExtractFacts(engine, { slugs: [renamed] });
     const rows = await engine.executeRaw<{ expired_at: unknown }>('SELECT expired_at FROM facts WHERE source_markdown_slug=$1', [renamed]);

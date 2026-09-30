@@ -121,7 +121,7 @@ describe('buildGatewayConfig config-plane API-key folding', () => {
   // #2662: voyage_api_key was accepted at the file plane (config.json) but
   // never folded into the gateway env, so daemons/launchd/MCP callers with
   // no process-env export silently failed multimodal embeds. Same fold
-  // pattern as zeroentropy/openrouter above.
+  // pattern as Voyage/openrouter above.
   test('voyage_api_key folds into gateway env as VOYAGE_API_KEY', async () => {
     await withEnv({ VOYAGE_API_KEY: undefined }, async () => {
       const cfg = buildGatewayConfig({

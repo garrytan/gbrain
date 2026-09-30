@@ -5,6 +5,7 @@
  * single-source JSON envelope aligned without growing the sync command facade.
  */
 import type { BrainEngine } from './engine.ts';
+import { syncFailureJsonFields, type ManagedSyncFailure } from './persistence/sync-failures.ts';
 import { submitEmbedBackfill } from './embed-backfill-submit.ts';
 import { resolveWorkerBackedSyncEmbedMode } from './embedding.ts';
 import {
@@ -204,6 +205,13 @@ export function buildSingleSyncJsonEnvelope(
     deleted: number;
     chunksCreated: number;
     embedded: number;
+    failedFiles?: number;
+    failureCodes?: Array<{ code: string; count: number }>;
+    failures?: ManagedSyncFailure[];
+    runId?: string;
+    fromCommit?: string | null;
+    toCommit?: string;
+    bankedFiles?: number;
   },
   embedBackfill?: SyncEmbedBackfillOutcome,
   costGate?: Record<string, unknown>,
@@ -212,6 +220,7 @@ export function buildSingleSyncJsonEnvelope(
     schema_version: 1,
     source_id: sourceId,
     sync_status: result.status,
+    ...syncFailureJsonFields(result),
     ...(result.reason ? { reason: result.reason } : {}),
     added: result.added,
     modified: result.modified,

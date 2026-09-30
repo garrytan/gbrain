@@ -11,6 +11,7 @@
  */
 
 import { createHash } from 'node:crypto';
+import { renderAttachmentInspection, threadAttachmentReceipts } from './attachment-receipts.ts';
 
 import { emailCitation } from '../output/scaffold.ts';
 import type { CalendarEventData, ContactData, GmailThreadData } from './types.ts';
@@ -255,6 +256,7 @@ export function renderThreadPage(thread: GmailThreadData): RenderedPage | null {
     `date: ${yamlStr(last.dateIso)}`,
     `first_message_date: ${yamlStr(first.dateIso)}`,
     `message_count: ${thread.messages.length}`,
+    `gmail_attachment_receipts: ${JSON.stringify(threadAttachmentReceipts(thread))}`,
     `participants: ${yamlList([...participants].sort())}`,
     `senders: ${yamlList([...senders].sort())}`,
     `labels: ${yamlList([...new Set(thread.messages.flatMap((m) => m.labelIds))].sort())}`,
@@ -264,12 +266,12 @@ export function renderThreadPage(thread: GmailThreadData): RenderedPage | null {
 
   const body: string[] = ['', `# ${subject}`, ''];
   for (const m of thread.messages) {
-    const cite = emailCitation({
+    const cite = /^[A-Za-z0-9]{10,60}$/.test(m.id) ? emailCitation({
       account: thread.account,
       messageId: m.id,
       subject: m.subject || subject,
       dateISO: m.dateIso.slice(0, 10),
-    });
+    }) : 'Gmail message link unavailable.';
     const sent = m.labelIds.includes('SENT');
     body.push(
       `## ${sent ? '→ ' : ''}${m.from || m.fromAddress} · ${m.dateIso.slice(0, 16).replace('T', ' ')}`,
@@ -278,7 +280,7 @@ export function renderThreadPage(thread: GmailThreadData): RenderedPage | null {
       '',
     );
     if (m.to.length > 0) body.push(`To: ${m.to.join(', ')}${m.cc.length > 0 ? ` · Cc: ${m.cc.join(', ')}` : ''}`, '');
-    body.push(m.bodyText || '_empty message_', '');
+    body.push(m.bodyText || '_empty message_', '', renderAttachmentInspection(m.attachmentInspection), '');
   }
 
   return { relPath: threadRelPath(thread), markdown: fm.join('\n') + body.join('\n') + '\n' };

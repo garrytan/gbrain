@@ -1,11 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import { realpathSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { OperationContext } from '../ops/contract.ts';
 import { OperationError } from '../ops/contract.ts';
 import { enforceClientSlugFence, enforceSubagentSlugFence, normalizeSlugPrefix, parseSourceIdParam, requireWritablePage, validatePageSlug } from '../ops/context.ts';
 import { defaultSlug, detectBinaryNullByte, explicitCaptureType, mergeCaptureFrontmatter, normalizeForHash } from '../capture-content.ts';
 import { computeContentHash } from '../ingestion/types.ts';
+import { resolveSlugForPath } from '../sync.ts';
+import { scannerSlugRootMode, scannerSourcePath } from '../write-through.ts';
+import { sha256 } from './digest.ts';
 import { assertPersistenceAccepting, waitForWrite, writeResponse } from './service.ts';
 import { admitWrite, assertPageRequestIdentity, assertReplayIntent, getWriteRequest, intentDigest } from './journal.ts';
 import { submissionAuthority, authorizeStoredRequest } from './authority.ts';
@@ -15,6 +18,9 @@ import { parseMutationPrecondition } from './preconditions.ts';
 import { assertPurgeParams } from './purge-params.ts';
 import type { Principal } from './model.ts';
 import { normalizeSubagentPageInput } from './page-input.ts';
+import { assertKnowledgePublicationAllowed } from '../shared-skills/knowledge-guard.ts';
+import { readUnboundWritePolicy, unboundSourceError } from './unbound-source.ts';
+import { isConnectorSourceKind } from './connector-identity.ts';
 
 export async function requestPrincipalForContext(ctx: OperationContext): Promise<Principal> {
   if (ctx.auth?.principal) return { ...ctx.auth.principal };
@@ -37,13 +43,50 @@ export function pageMutationSource(ctx: OperationContext, params: Record<string,
   }
   return sourceId;
 }
+/**
+ * #5622: a trusted `capture --file` path becomes a source-relative physical path
+ * or 'cli-file'; the host path is never stored. Returns the slug sync would give
+ * that file, so only a capture under that slug binds the file as its origin.
+ */
+async function resolveCaptureFile(ctx: OperationContext, sourceId: string, p: Record<string, unknown>): Promise<string | null> {
+  if (Object.hasOwn(p, 'capture_path')) throw new OperationError('invalid_params', 'capture_path is reserved for the capture owner.');
+  if (p.local_file === undefined) return null;
+  if (ctx.remote !== false || typeof p.local_file !== 'string' || !isAbsolute(p.local_file)) {
+    throw new OperationError('invalid_params', 'Capture file paths are accepted only from the trusted local CLI.',
+      'Read the file yourself and pass its content; file capture runs through the gbrain capture command on the brain host.');
+  }
+  const file = p.local_file;
+  delete p.local_file;
+  const [source] = await ctx.engine.executeRaw<{ local_path: string | null }>('SELECT local_path FROM sources WHERE id=$1', [sourceId]);
+  const binding = await getWorktreeBinding(ctx.engine, sourceId);
+  const root = binding ? binding.owner_host_id === localHostId() && binding.local_path ? join(binding.local_path, binding.relative_path) : null
+    : source?.local_path || (sourceId === 'default' ? await ctx.engine.getConfig('sync.repo_path') : null);
+  let origin: string | null = null;
+  try { if (root) origin = relative(realpathSync(root), realpathSync(file)); } catch { /* unreadable or absent root */ }
+  if (!root || !origin || isAbsolute(origin) || origin === '..' || origin.startsWith(`..${sep}`) || !/\.mdx?$/i.test(origin)) {
+    p.source_uri = 'cli-file';
+    return null;
+  }
+  const capturePath = origin.split(sep).join('/');
+  p.capture_path = capturePath;
+  const canonicalRoot = realpathSync(root);
+  return resolveSlugForPath(scannerSourcePath(canonicalRoot, join(canonicalRoot, capturePath), await scannerSlugRootMode(ctx.engine, sourceId, canonicalRoot)));
+}
+
 export async function submitPageMutation(ctx: OperationContext,
-  input: { operation: string; params: Record<string, unknown>; waitMs?: number }): Promise<Record<string, unknown>> {
+  input: { operation: string; params: Record<string, unknown>; waitMs?: number; managedFileImport?: true }): Promise<Record<string, unknown>> {
+  if (input.operation === 'put_page' && ['kind', 'preview', 'backup_reference'].some(key => Object.hasOwn(input.params, key))) {
+    if (ctx.remote !== false || input.managedFileImport !== true || input.params.kind !== 'managed_file_import' ||
+      ['preview', 'backup_reference'].some(key => Object.hasOwn(input.params, key))) {
+      throw new OperationError('invalid_params', 'Reserved persistence fields cannot be submitted through put_page. Use trusted local reconciliation administration.');
+    }
+  }
   assertPersistenceAccepting(ctx.engine);
   const p: Record<string, unknown> = { ...input.params, ...parseMutationPrecondition(input.params) };
   const requestId = typeof p.request_id === 'string' ? p.request_id : randomUUID();
   const sourceId = pageMutationSource(ctx, p, input.operation);
   await initializeLocalPersistence(ctx);
+  const captureSlug = input.operation === 'capture' ? await resolveCaptureFile(ctx, sourceId, p) : null;
   const principal = await requestPrincipalForContext(ctx);
   await assertPageRequestIdentity(ctx.engine, principal, requestId);
   const prior = await getWriteRequest(ctx.engine, principal, requestId);
@@ -56,8 +99,8 @@ export async function submitPageMutation(ctx: OperationContext,
     return writeResponse(await waitForWrite(ctx.engine, prior, ctx.config, input.waitMs));
   }
   if (input.operation === 'delete_page') assertPurgeParams(p, ctx.remote);
-  const [source] = await ctx.engine.executeRaw<{ incarnation: string; archived: boolean; local_path: string | null }>(
-    'SELECT incarnation,archived,local_path FROM sources WHERE id=$1', [sourceId]);
+  const [source] = await ctx.engine.executeRaw<{ incarnation: string; archived: boolean; local_path: string | null; kind: string | null }>(
+    "SELECT incarnation,archived,local_path,config->>'kind' AS kind FROM sources WHERE id=$1", [sourceId]);
   if (!source || source.archived) throw new OperationError('source_changed', 'The write source is not active.');
   let slug = typeof p.slug === 'string' ? p.slug.toLowerCase() : '';
   const intent = ['takes_add','takes_update','takes_supersede','takes_resolve'].includes(input.operation)
@@ -82,6 +125,12 @@ export async function submitPageMutation(ctx: OperationContext,
     intent.content = mergeCaptureFrontmatter(p.content, { type, capturedVia: ctx.remote === false ? 'capture-cli' : 'capture-mcp',
       ...Object.fromEntries(['who','what','where','kind','depth'].filter(key => typeof p[key] === 'string').map(key => [key, p[key]])) });
     intent.capture_hash = computeContentHash(normalizeForHash(p.content));
+    // Only a file whose own path names this slug can be the page's origin; sync keys origins by path.
+    if (typeof intent.capture_path === 'string' && captureSlug !== slug) {
+      delete intent.capture_path;
+      intent.source_uri = 'cli-file';
+    }
+    if (typeof intent.capture_path === 'string') intent.capture_file_hash = sha256(p.content);
   }
   validatePageSlug(slug);
   enforceClientSlugFence(ctx, slug, input.operation);
@@ -92,6 +141,7 @@ export async function submitPageMutation(ctx: OperationContext,
   intent.slug = slug;
   if (ctx.remote !== false) Object.assign(intent, { source_kind: `mcp:${input.operation}`, source_uri: null, ingested_via: `mcp:${input.operation}` });
   const authority = await submissionAuthority(ctx, input.operation, sourceId, source.incarnation, slug);
+  await assertKnowledgePublicationAllowed(ctx.engine, { source_id: sourceId, source_incarnation: source.incarnation, slug });
   const snapshot = await ctx.engine.readPageSnapshot(slug, { sourceId, includeDeleted: true });
   let binding = await getWorktreeBinding(ctx.engine, sourceId);
   const sandbox = ctx.viaSubagent === true && !(ctx.allowedSlugPrefixes?.length);
@@ -113,9 +163,18 @@ export async function submitPageMutation(ctx: OperationContext,
     if (!matches) throw new OperationError('invalid_params', 'The CLI directory must match the selected source canonical root.',
       'Register the source canonical path, then omit --dir or use that same path.');
   }
-  if (writeThrough && root && !binding) {
-    if (ctx.engine.kind !== 'pglite') throw new OperationError('owner_unavailable', 'This source has no designated canonical owner.', 'Register its owner with sources writer claim before accepting writes.');
-    binding = await claimWorktree(ctx.engine, sourceId, root);
+  // A connector source without a canonical owner is database-only by design
+  // (connector_database): a page write never claims it or refuses as unbound.
+  if (writeThrough && root && !binding && isConnectorSourceKind(source.kind)) authority.databaseOnlyReason = 'connector_database';
+  else if (writeThrough && root && !binding) {
+    if (ctx.engine.kind === 'pglite') binding = await claimWorktree(ctx.engine, sourceId, root, undefined, undefined, { automatic: true });
+    else {
+      const scope = input.operation !== 'put_page' ? 'other' : snapshot?.page.source_path ? 'file_backed' : 'put_page';
+      if (scope !== 'put_page' || await readUnboundWritePolicy(ctx.engine) !== 'database_only') {
+        throw unboundSourceError(sourceId, ctx.remote === false ? root : null, scope);
+      }
+      authority.databaseOnlyReason = 'unbound_source';
+    }
   }
   const row = await admitWrite(ctx.engine, { principal, operation: input.operation, sourceId, sourceIncarnation: source.incarnation,
     slug, pageId: snapshot?.page.id ?? null, requestId, callerIntent, intent, authority,

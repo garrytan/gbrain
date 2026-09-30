@@ -45,6 +45,7 @@ export type ErrorCode =
   | 'provenance_required'  // remember: provenance missing or empty
   | 'unavailable'          // a required dependency cannot serve (no API key, gateway down, model refusal)
   | 'budget_unsatisfiable' // RESERVED in v1 — schema-listed, never returned
+  | 'embedding_budget_below_worst_case' // #5680: migration cap below its worst-case authorization; refused before any change
   // eslint-disable-next-line @typescript-eslint/ban-types
   | (string & {});      // OPEN union for forward-compat (eE7 / D13)
 
@@ -485,6 +486,7 @@ export interface Operation {
    * because the trust boundary there is the OS, not OAuth scopes.
    */
   scope?: 'read' | 'write' | 'admin' | 'sources_admin' | 'users_admin' | 'agent';
+  requiredScopes?: readonly string[];
   localOnly?: boolean;
   /**
    * WP1 honest catalog: the op is callable by remote callers only when this

@@ -45,6 +45,11 @@
       "description": "Add keyless GBrain memory to an existing agent, or connect a hosted brain while preserving identity and configuration"
     },
     {
+      "name": "mcp-access",
+      "path": "mcp-access/SKILL.md",
+      "description": "Open the owner dashboard, manage MCP clients and access, and connect native OAuth harnesses with the correct authority"
+    },
+    {
       "name": "publish",
       "path": "publish/SKILL.md",
       "description": "Share brain pages as beautiful password-protected HTML (code + skill pair, zero LLM calls)"

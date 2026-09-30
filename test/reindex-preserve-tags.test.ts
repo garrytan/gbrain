@@ -6,9 +6,9 @@
 // re-import (notably `gbrain reindex --markdown`, which re-imports with
 // forceRechunk) deleted all enrichment / dream / signal-detector tags.
 //
-// Fix: ADD-ONLY reconciliation. Re-import adds current frontmatter tags and
-// never deletes. Accepted trade-off: removing a frontmatter tag no longer
-// removes it from the DB (additive metadata; far better than wiping enrichment).
+// Fix: re-import never deletes enrichment tags. Since A14 tags carry
+// provenance (tags.tag_source), so removing a frontmatter tag removes only
+// that frontmatter-owned row (test/import-frontmatter-tag-removal.test.ts).
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
@@ -52,7 +52,7 @@ describe('#1621 add-only tag reconciliation', () => {
     expect(tags.sort()).toEqual(['founder', 'yc']);
   });
 
-  test('add-only: removing a frontmatter tag does NOT remove it (accepted trade-off)', async () => {
+  test('removing a frontmatter tag removes it; enrichment tags survive', async () => {
     await importFromContent(engine, 'people/xavi', page(['founder', 'yc']), { forceRechunk: true, noEmbed: true });
     await engine.addTag('people/xavi', 'enrichment-tag');
 
@@ -60,8 +60,8 @@ describe('#1621 add-only tag reconciliation', () => {
     await importFromContent(engine, 'people/xavi', page(['founder']), { forceRechunk: true, noEmbed: true });
 
     const tags = await engine.getTags('people/xavi');
-    // "yc" lingers (add-only); enrichment-tag preserved; founder present.
-    expect(tags.sort()).toEqual(['enrichment-tag', 'founder', 'yc']);
+    // "yc" left the frontmatter; enrichment-tag preserved; founder present.
+    expect(tags.sort()).toEqual(['enrichment-tag', 'founder']);
   });
 
   test('adding a new frontmatter tag on re-import works (idempotent add)', async () => {

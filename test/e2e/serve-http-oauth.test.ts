@@ -16,7 +16,7 @@ import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { createHash } from 'crypto';
 import { auth, extractWWWAuthenticateParams, type OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
 import type { OAuthTokens } from '@modelcontextprotocol/sdk/shared/auth.js';
-import { hasDatabase } from './helpers.ts';
+import { getEngine, hasDatabase, setupDB, teardownDB } from './helpers.ts';
 import { assertSafeE2eDatabaseUrl } from '../helpers/db-guard.ts';
 
 const skip = !hasDatabase();
@@ -45,6 +45,7 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
   const dcrClientIds: string[] = [];
 
   beforeAll(async () => {
+    await setupDB();
     const { execSync, spawn } = await import('child_process');
 
     // Register a test OAuth client via CLI.
@@ -125,6 +126,7 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
         console.error(`[afterAll] revoke-client cleanup failed for ${id}: ${e.message}`);
       }
     }
+    await teardownDB();
   }, 30_000);
 
   // Helper: mint a token with given scopes
@@ -226,7 +228,7 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
   }
 
   async function withSql<T>(fn: (sql: any) => Promise<T>): Promise<T> {
-    const postgres = (await import('postgres')).default;
+    const postgres = (await import('#postgres')).default;
     const sql = postgres(process.env.GBRAIN_DATABASE_URL || process.env.DATABASE_URL || '', { prepare: false });
     try {
       return await fn(sql);
@@ -266,7 +268,7 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
   ] as const) {
     test(`MCP enforces the ${label} persisted resource audience`, async () => {
       const { access_token } = await mintToken('read');
-      const { default: postgres } = await import('postgres');
+      const { default: postgres } = await import('#postgres');
       const sql = postgres(process.env.GBRAIN_DATABASE_URL || process.env.DATABASE_URL!, { max: 1 });
       try {
         await sql`UPDATE oauth_tokens SET resource = ${resource}
@@ -488,8 +490,61 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
     });
   });
 
+  // #5277: the challenge hints `read write`, so a writer connector that asks
+  // for exactly the hinted scope gets write, while grantScopes still caps a
+  // read-only row to read.
+  // #5222: the issuer origin is an alias of the canonical /mcp resource
+  // (ChatGPT sends the origin root); any other resource fails loudly at
+  // /authorize instead of minting a token /mcp refuses forever.
+  test('an origin-root resource completes OAuth and the token works at /mcp; a foreign resource is invalid_target', async () => {
+    const redirectUri = 'https://example.test/callback';
+    const registration = await fetch(`${BASE}/register`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ client_name: `e2e-origin-resource-${Date.now()}`, redirect_uris: [redirectUri],
+        grant_types: ['authorization_code', 'refresh_token'], response_types: ['code'], token_endpoint_auth_method: 'none', scope: 'read write' }) });
+    expect(registration.status).toBe(201);
+    const client = await registration.json() as any;
+    dcrClientIds.push(client.client_id);
+    const verifier = 'e2e-origin-resource-verifier-0123456789abcdefghijklmnop';
+    const authorizeUrl = (resource: string) => `${BASE}/authorize?${new URLSearchParams({ client_id: client.client_id,
+      response_type: 'code', redirect_uri: redirectUri, scope: 'read write', state: 'origin-state', resource,
+      code_challenge: createHash('sha256').update(verifier).digest('base64url'), code_challenge_method: 'S256' })}`;
+
+    const foreign = await fetch(authorizeUrl('https://different.example/'), { redirect: 'manual' });
+    expect(foreign.status).toBe(302);
+    const foreignRedirect = new URL(foreign.headers.get('location')!);
+    expect(foreignRedirect.searchParams.get('error')).toBe('invalid_target');
+    expect(foreignRedirect.searchParams.get('error_description')).toContain(`${BASE}/mcp`);
+
+    const pending = await fetch(authorizeUrl(`${BASE}/`), { redirect: 'manual' });
+    expect(pending.status).toBe(302);
+    const requestId = new URL(pending.headers.get('location')!, BASE).searchParams.get('oauth_request');
+    expect(requestId).toBeTruthy();
+    const login = await fetch(`${BASE}/admin/login`, { method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': '192.0.2.52' },
+      body: JSON.stringify({ token: ADMIN_BOOTSTRAP_TOKEN }) });
+    expect(login.status).toBe(200);
+    const cookie = `gbrain_admin=${login.headers.get('set-cookie')!.match(/gbrain_admin=([^;]+)/)![1]}`;
+    const details = await (await fetch(`${BASE}/admin/api/oauth-requests/${requestId}`, {
+      headers: { Cookie: cookie, 'X-Forwarded-For': '192.0.2.52' } })).json() as any;
+    expect(details.resource).toBe(`${BASE}/mcp`);
+    const approval = await fetch(`${BASE}/admin/api/oauth-requests/${requestId}`, { method: 'POST',
+      headers: { Cookie: cookie, 'Content-Type': 'application/json', 'X-Forwarded-For': '192.0.2.52' },
+      body: JSON.stringify({ decision: 'approve', csrf: details.csrf }) });
+    expect(approval.status).toBe(200);
+    const code = new URL((await approval.json() as any).redirectUrl).searchParams.get('code')!;
+    const tokenResponse = await fetch(`${BASE}/token`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ grant_type: 'authorization_code', code, redirect_uri: redirectUri, client_id: client.client_id,
+        code_verifier: verifier, resource: `${BASE}/` }) });
+    expect(tokenResponse.status).toBe(200);
+    const tokens = await tokenResponse.json() as any;
+    expect(tokens.scope).toBe('read write');
+    const listed = await mcpToolResult(tokens.access_token, 'tools/list');
+    expect(listed.tools.some((tool: any) => tool.name === 'put_page')).toBe(true);
+  });
+
   for (const [label, registeredScope, explicitScope, expectedRequest] of [
-    ['read-only discovery', 'read', undefined, 'read'],
+    ['read-only discovery', 'read', undefined, 'read write'],
+    ['writer discovery', 'read write', undefined, 'read write'],
     ['read-only overbroad hint', 'read', 'read write', 'read write'],
     ['explicit writer request', 'read write', 'read write', 'read write'],
   ] as const) {
@@ -542,7 +597,7 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
       const code = new URL((await approval.json() as any).redirectUrl).searchParams.get('code')!;
       expect(await auth(provider, { serverUrl: `${BASE}/mcp`, authorizationCode: code })).toBe('AUTHORIZED');
       expect(tokens!.scope).toBe(registeredScope);
-      if (label === 'read-only overbroad hint') expect(tokens!.scope).not.toBe(expectedRequest);
+      if (registeredScope !== expectedRequest) expect(tokens!.scope).not.toBe(expectedRequest);
       else expect(tokens!.scope).toBe(expectedRequest);
       const listed = await mcpToolResult(tokens!.access_token, 'tools/list');
       expect(listed.tools.some((tool: any) => tool.name === 'get_page')).toBe(true);
@@ -576,12 +631,21 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
 
   test('admin source access APIs enumerate sources and rescope an OAuth client', async () => {
     const cookie = await adminCookie();
+    const webhookSecret = `whsec-sentinel-${crypto.randomUUID()}`;
+    await getEngine().executeRaw(
+      `INSERT INTO sources (id, name, config) VALUES ('admin-hooked', 'admin-hooked', $1::text::jsonb)
+       ON CONFLICT (id) DO UPDATE SET config = EXCLUDED.config`,
+      [JSON.stringify({ federated: true, github_repo: 'acme-example/brain', webhook_secret: webhookSecret })],
+    );
     const sourcesRes = await fetch(`${BASE}/admin/api/sources`, {
       headers: { Cookie: cookie },
     });
     expect(sourcesRes.ok).toBe(true);
-    const sources = await sourcesRes.json() as Array<{ id: string; name: string; federated: boolean }>;
+    const sourcesBody = await sourcesRes.text();
+    const sources = JSON.parse(sourcesBody) as Array<{ id: string; name: string; federated: boolean }>;
     expect(sources.some(source => source.id === 'default')).toBe(true);
+    expect(sources.some(source => source.id === 'admin-hooked')).toBe(true);
+    expect(sourcesBody).not.toContain(webhookSecret);
 
     const rescopeRes = await fetch(`${BASE}/admin/api/rescope-client`, {
       method: 'POST',
@@ -871,7 +935,7 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
 
     const publicToken = `gbrain_at_public_${Date.now()}`;
     const tokenHash = createHash('sha256').update(publicToken).digest('hex');
-    const postgres = (await import('postgres')).default;
+    const postgres = (await import('#postgres')).default;
     const sql = postgres(process.env.GBRAIN_DATABASE_URL || process.env.DATABASE_URL || '', { prepare: false });
     try {
       // Plain-array bind, NOT `sql.array([...])`: sql.array resolves its
@@ -912,7 +976,7 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
     const suffix = Date.now().toString();
     const functionName = `e2e_fail_revoke_${suffix}`;
     const triggerName = `e2e_fail_revoke_trigger_${suffix}`;
-    const postgres = (await import('postgres')).default;
+    const postgres = (await import('#postgres')).default;
     const sql = postgres(process.env.GBRAIN_DATABASE_URL || process.env.DATABASE_URL || '', { prepare: false });
     try {
       await sql.unsafe(`
@@ -1127,7 +1191,7 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
   // and the row never appears.
 
   test('v0.26.3: /mcp request persists agent_name + params + error_message', async () => {
-    const postgres = (await import('postgres')).default;
+    const postgres = (await import('#postgres')).default;
     const sql = postgres(process.env.GBRAIN_DATABASE_URL || process.env.DATABASE_URL || '', { prepare: false });
     try {
       // Wipe any prior log rows for our test client so we can assert exact counts.
@@ -1238,7 +1302,7 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
   // mints a token, and asserts the response's expires_in matches.
 
   test('v0.26.3: per-client token_ttl is honored on token mint', async () => {
-    const postgres = (await import('postgres')).default;
+    const postgres = (await import('#postgres')).default;
     const sql = postgres(process.env.GBRAIN_DATABASE_URL || process.env.DATABASE_URL || '', { prepare: false });
     try {
       // Register a client + set a custom token_ttl (24 hours = 86400 seconds).
@@ -1349,7 +1413,7 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
   // auth lanes (oauth client + legacy api key).
 
   test('v0.26.3: agent_name resolves correctly for OAuth + legacy paths', async () => {
-    const postgres = (await import('postgres')).default;
+    const postgres = (await import('#postgres')).default;
     const sql = postgres(process.env.GBRAIN_DATABASE_URL || process.env.DATABASE_URL || '', { prepare: false });
     try {
       // Make an OAuth-authenticated request — agent_name should be the OAuth client_name.
@@ -1640,15 +1704,15 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
   // C6: adminAuthRateLimiter covers /admin/login + /admin/api/issue-magic-link
   // =========================================================================
   //
-  // The limiter (serve-http.ts adminAuthRateLimiter: windowMs 60s, max 10,
-  // shared bucket per IP across /admin/login, /admin/api/issue-magic-link,
-  // and /admin/auth/:token) previously guarded only the magic-link redeem
-  // route, leaving the two POST credential surfaces unmetered.
+  // Authentication has independent per-IP limits of 10 failed attempts and
+  // 60 total requests per minute across /admin/login,
+  // /admin/api/issue-magic-link, and /admin/auth/:token. Verified owner
+  // requests do not consume the failed-authentication allowance.
   //
-  // BUDGET NOTE: the bucket is shared across the whole suite run. Existing
-  // tests consume up to 6 limited requests; the non-exhaustion C6 test below
-  // consumes 4 more (worst case exactly at max=10 if everything lands in one
-  // 60s window — max requests are still allowed, max+1 is the first 429).
+  // BUDGET NOTE: each bucket is shared across this suite. The non-exhaustion
+  // C6 test adds two failed and two successful authentication requests;
+  // earlier invalid nonces also consume the failure allowance. Controls
+  // remain below both limits before the deliberate exhaustion below.
   // The exhaustion test MUST stay the last test in this file: it deliberately
   // drains the bucket, so any admin-route request after it would 429.
 
@@ -1661,7 +1725,7 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
     });
     expect(badLogin.status).toBe(401);
     expect(badLogin.headers.get('set-cookie') || '').not.toContain('gbrain_admin=');
-    expect(((await badLogin.json()) as any).error).toBe('Invalid token. Check your terminal output.');
+    expect(((await badLogin.json()) as any).error).toBe('Owner credential rejected. Use the protected bootstrap credential configured for this running server; an OAuth token cannot administer it.');
 
     // (a) Wrong bearer on /admin/api/issue-magic-link → 401, no URL minted.
     const badLink = await fetch(`${BASE}/admin/api/issue-magic-link`, {
@@ -1691,7 +1755,7 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
   // MUST REMAIN THE LAST TEST IN THIS FILE — drains the shared admin-auth
   // rate-limit bucket (see budget note above).
   test('C6: exceeding the admin-auth rate limit returns 429 with Retry-After', async () => {
-    // adminAuthRateLimiter: max 10 per 60s window. Drive wrong-token logins
+    // Failed-authentication limiter: max 10 per 60s window. Drive wrong-token logins
     // until the limiter trips. Prior tests may have consumed part of the
     // bucket (shared per-IP), so the 429 can arrive early; 23 attempts
     // guarantees crossing max+1 even if a fixed-window reset lands mid-loop.
@@ -1728,6 +1792,6 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
     // express-rate-limit serializes it as JSON, matching the /admin routes).
     const limitedBody = JSON.parse(await limited!.text()) as { error: string; message: string };
     expect(limitedBody.error).toBe('rate_limited');
-    expect(limitedBody.message).toContain('Too many admin auth attempts');
+    expect(limitedBody.message).toContain('Wait for Retry-After before trying again.');
   }, 60_000);
 });

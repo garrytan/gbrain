@@ -262,6 +262,13 @@ export interface RenderedPart {
   frontmatterId: string;
   part: number;
   of: number;
+  /** The keys this collector renders (and so owns on re-ingest), and the body. */
+  frontmatter: Record<string, unknown>;
+  body: string;
+}
+
+export function renderPartContent(frontmatter: Record<string, unknown>, body: string): string {
+  return `---\n${safeDump(frontmatter, { lineWidth: 1000 })}---\n\n${body}\n`;
 }
 
 export interface RenderSessionResult {
@@ -366,8 +373,7 @@ export function renderSessionParts(
       },
     };
     const body = group.join('\n\n');
-    const content = `---\n${safeDump(fm, { lineWidth: 1000 })}---\n\n${body}\n`;
-    return { slug, content, frontmatterId, part, of };
+    return { slug, content: renderPartContent(fm, body), frontmatterId, part, of, frontmatter: fm, body };
   });
 
   return { parts, baseSlug, dateIso };

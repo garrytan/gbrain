@@ -6,6 +6,7 @@ import type { BrainEngine } from '../engine.ts';
 import { OperationError } from '../ops/contract.ts';
 import { isValidSourceId } from '../source-id.ts';
 import { parseSourceConfig } from '../sources-load.ts';
+import { redactSourceConfig } from '../source-config-redact.ts';
 import { discoverGitRoot } from '../sync-git.ts';
 import { isInsideGitRepo, hasTrackedContent } from '../git-remote.ts';
 import { containsPath, getWorktreeBinding, type WorktreeBinding, worktreeManifest } from './ownership.ts';
@@ -15,9 +16,11 @@ import { priorTopologyChange, recordTopologyChange, topologyReceipt } from './to
 import { isWriteRequestId } from './types.ts';
 import { withCoordinatedWrite } from './context.ts';
 import { managedFilesystemDatastorePath, refreshManagedFilesystemRoots } from './filesystem-guard.ts';
-import { canonicalFilesystemPath } from './root-registry.ts';
+import { canonicalFilesystemPath, nativeFilesystemPath } from './root-registry.ts';
 import { flushTopologyDirectory } from './topology-filesystem.ts';
 import { claimPhysicalRoot } from './physical-root.ts';
+import { assertWriterAdminState, WRITER_INSPECTION_HINT } from './admin-intent.ts';
+import { assertWriterAdminUnlocked } from './admin-lock.ts';
 
 export interface SourceLifecycleInput {
   operation:'add'|'claim'|'archive'|'restore'|'remove'|'purge'|'rebind'|'reclone';
@@ -27,6 +30,8 @@ export interface SourceLifecycleInput {
   createDirectory?:boolean;
   expiredOnly?:boolean;
   requireGitContent?:boolean;
+  expectedAdminState?:string;
+  automaticClaim?:boolean;
 }
 interface SourceState {id:string;incarnation:string;archived:boolean;local_path:string|null;config:Record<string,unknown>;name:string;last_commit:string|null;}
 
@@ -44,7 +49,8 @@ export async function installTopologyBinding(tx:BrainEngine,sourceId:string,inca
   const others=await tx.executeRaw<{source_id:string;relative_path:string;local_path:string}>(`SELECT b.source_id,b.relative_path,h.local_path
     FROM persistence_source_bindings b JOIN persistence_host_bindings h ON h.worktree_id=b.worktree_id AND h.host_id=$1::uuid
     WHERE b.source_id<>$2`,[localHostId(),sourceId]);
-  if(others.some(other=>{const path=join(other.local_path,other.relative_path);return containsPath(path,root.source)||containsPath(root.source,path);}))
+  const sourcePath=nativeFilesystemPath(root.source);
+  if(others.some(other=>{const path=nativeFilesystemPath(join(other.local_path,other.relative_path));return containsPath(path,sourcePath)||containsPath(sourcePath,path);}))
     throw new OperationError('overlapping_path','Sources cannot claim overlapping canonical directories.');
   const compatible=bindings.find(binding=>binding.local_path && containsPath(binding.local_path,root.worktree));
   const overlapping=bindings.find(binding=>binding.local_path && containsPath(root.worktree,binding.local_path));
@@ -57,7 +63,7 @@ export async function installTopologyBinding(tx:BrainEngine,sourceId:string,inca
   if(!existing)await tx.executeRaw('INSERT INTO persistence_worktrees(id,owner_host_id,owner_epoch) VALUES($1::uuid,$2::uuid,1)',[id,localHostId()]);
   await tx.executeRaw(`INSERT INTO persistence_host_bindings(worktree_id,host_id,local_path,coordination_path) VALUES($1::uuid,$2::uuid,$3,$4)
     ON CONFLICT(worktree_id,host_id) DO NOTHING`,[id,localHostId(),worktree,physical.coordinationPath]);
-  const rel=relative(worktree,root.source).split(sep).join('/');
+  const rel=relative(nativeFilesystemPath(worktree),nativeFilesystemPath(root.source)).split(sep).join('/');
   await tx.executeRaw(`INSERT INTO persistence_source_bindings(source_id,source_incarnation,worktree_id,relative_path,topology_generation)
     SELECT $1,$2::uuid,$3::uuid,$4,topology_generation FROM persistence_worktrees WHERE id=$3::uuid
     ON CONFLICT(source_id) DO UPDATE SET source_incarnation=EXCLUDED.source_incarnation,worktree_id=EXCLUDED.worktree_id,
@@ -66,7 +72,10 @@ export async function installTopologyBinding(tx:BrainEngine,sourceId:string,inca
 }
 
 /** One source transition; shared-root members are fenced and invalidated together. */
-export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceLifecycleInput):Promise<Record<string,unknown>>{
+export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceLifecycleInput, admission?: {
+  before(tx: BrainEngine): Promise<void>;
+  after(tx: BrainEngine, incarnation: string): Promise<void>;
+}):Promise<Record<string,unknown>>{
   if(!['add','claim','archive','restore','remove','purge','rebind','reclone'].includes(input.operation)) throw new OperationError('invalid_params','Unknown source lifecycle operation.');
   for(const key of ['dryRun','refederate','confirmDestructive','createDirectory','expiredOnly','requireGitContent'] as const) if(input[key]!==undefined&&typeof input[key]!=='boolean') throw new OperationError('invalid_params',`${key} must be a boolean.`);
   for(const key of ['path','name','expectedIncarnation','requestId','remoteUrl'] as const) if(input[key]!==undefined&&(typeof input[key]!=='string'||input[key]!.length>8192)) throw new OperationError('invalid_params',`${key} must be a bounded string.`);
@@ -77,7 +86,7 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
     throw new OperationError('invalid_params','request_id and expected_incarnation must be UUIDs.');
   if(['remove','purge','archive'].includes(input.operation)&&input.sourceId==='default') throw new OperationError('invalid_params','The default source cannot be removed or archived.');
   const principal=await topologyPrincipal(engine);
-  const intent={...input,requestId:undefined,dryRun:undefined};
+  const intent={...input,requestId:undefined,dryRun:undefined,automaticClaim:undefined};
   const prior=await priorTopologyChange(engine,principal,requestId,intent);
   if(prior) return topologyReceipt(prior);
   if(input.requireGitContent&&input.path&&(!isInsideGitRepo(input.path)||!hasTrackedContent(input.path)))
@@ -103,25 +112,30 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
       manifests.set(path,manifest);
     }
     return topologyTransaction(engine,async tx=>{
+    await assertWriterAdminState(tx,input.expectedAdminState);
     await tx.executeRaw("SELECT set_config('synchronous_commit','on',true)");
     const sources=await lockTopologyRows(tx,input.sourceId,bindings);
+    if(input.operation==='claim'&&!input.automaticClaim) await assertWriterAdminUnlocked(tx);
     const [source]=await tx.executeRaw<SourceState>('SELECT id,incarnation,archived,local_path,config,name,last_commit FROM sources WHERE id=$1',[input.sourceId]);
     if(source)source.config=parseSourceConfig(source.config);
     const repeated=await priorTopologyChange(tx,principal,requestId,intent);
     if(repeated){await lockTopologyPrincipal(tx,principal);return topologyReceipt(repeated);}
     if((source?.incarnation??null)!==(before?.incarnation??null)) throw new OperationError('source_changed','The source changed during lifecycle preparation.');
+    if(admission) await admission.before(tx);
     if(input.operation==='add'&&source&&(!root||source.local_path!==null)) throw new OperationError('source_id_taken','Source ID is already registered.');
     if(input.operation==='purge'&&!input.expiredOnly&&!source?.archived) throw new OperationError('invalid_params','Only an archived source can be purged.');
     if(['remove','purge'].includes(input.operation)&&!input.confirmDestructive) throw new OperationError('invalid_params','Source removal requires explicit destructive confirmation.');
     const worktrees=bindings.map(binding=>binding.worktree_id);
     const currentBinding=bindings.find(binding=>binding.source_id===input.sourceId);
-    if(input.operation==='claim'&&currentBinding&&(currentBinding.local_path!==root!.worktree||join(currentBinding.local_path,currentBinding.relative_path)!==root!.source))
+    const sameBinding=!!root&&!!currentBinding?.local_path&&currentBinding.local_path===root.worktree
+      &&nativeFilesystemPath(join(currentBinding.local_path,currentBinding.relative_path))===nativeFilesystemPath(root.source);
+    if(input.operation==='claim'&&currentBinding&&!sameBinding)
       throw new OperationError('writer_transfer_required','The source already has a different canonical binding. Use rebind or verified ownership transfer.');
     if(input.operation==='claim'&&!currentBinding&&source?.local_path&&realpathSync(source.local_path)!==root!.source)
       throw new OperationError('source_changed','The requested claim path differs from the configured source root.');
     const expired=input.expiredOnly?await tx.executeRaw('SELECT id FROM sources WHERE id=$1 AND archived=true AND archive_expires_at<=now()',[input.sourceId]):null;
     const noop=expired?.length===0 || input.operation==='archive'&&source?.archived || input.operation==='restore'&&!source?.archived
-      || input.operation==='claim'&&!!currentBinding || input.operation==='rebind'&&currentBinding?.local_path===root!.worktree&&join(currentBinding.local_path,currentBinding.relative_path)===root!.source;
+      || input.operation==='claim'&&!!currentBinding || input.operation==='rebind'&&sameBinding;
     if(noop){
       await lockTopologyPrincipal(tx,principal);
       return topologyReceipt(await recordTopologyChange(tx,{principal,requestId,intent,operation:input.operation,sourceId:input.sourceId,incarnation:source!.incarnation,worktrees},
@@ -133,7 +147,7 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
     if(input.operation==='rebind'){
       const binding=bindings.find(value=>value.source_id===input.sourceId);
       if(!binding&&source?.local_path===null)throw new OperationError('writer_registration_required','This source has no canonical filesystem binding.',
-        `Use gbrain sources writer claim ${input.sourceId} --path <directory> for its first binding.`);
+        WRITER_INSPECTION_HINT);
       if(!binding?.local_path || !existsSync(binding.local_path)) throw new OperationError('recovery_required','The original checkout is unavailable; recover its last verified manifest before rebinding.');
       if(manifests.get(binding.local_path)!.digest!==manifests.get(root!.worktree)!.digest) throw new OperationError('writer_manifest_mismatch','The new checkout differs from the current canonical manifest, including deletions.');
     }
@@ -176,8 +190,9 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
       await refreshManagedFilesystemRoots(tx,managedFilesystemDatastorePath(engine));
       return {operation:input.operation,source_id:input.sourceId,source_incarnation:incarnation,invalidated_requests:invalidated,
         ...(root?{local_path:root.source}:{}),...(['remove','purge'].includes(input.operation)?{storage_retained:true,local_path:ownedSourcePath??null,pages_deleted:pagesDeleted}:{}),
-        ...(input.operation==='add'?{name:input.name??source?.name??input.sourceId,config:{...source?.config,...input.config},id:input.sourceId}: {})};
+        ...(input.operation==='add'?{name:input.name??source?.name??input.sourceId,config:redactSourceConfig({...source?.config,...input.config}),id:input.sourceId}: {})};
     });
+    if(admission) await admission.after(tx,String(result.source_incarnation));
     const row=await recordTopologyChange(tx,{principal,requestId,intent,operation:input.operation,sourceId:input.sourceId,incarnation:source?.incarnation??String(result.source_incarnation),worktrees},result);
     return topologyReceipt(row);
     });

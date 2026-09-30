@@ -22,7 +22,11 @@
 
 set -euo pipefail
 
-ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+# Self-test seam: GBRAIN_GUARD_ROOT points at a fixture tree. The scan covers
+# src/core and src/commands recursively, including refactor wave 1's module
+# dirs; code moved out of an ALLOWED façade into a new module needs its own
+# ALLOWED row (the doctor/checks/pglite-worker.ts precedent).
+ROOT=${GBRAIN_GUARD_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}
 cd "$ROOT"
 
 # Files that are allowed to touch the singleton today. Every other file
@@ -33,6 +37,8 @@ ALLOWED=(
   "src/commands/init.ts"                # first-time setup path, no engine yet
   "src/commands/doctor.ts"              # PR 1 refactors to accept engine
   "src/commands/doctor/checks/pglite-worker.ts"  # grandfathered doctor.ts call site, peeled verbatim (containment sprint); PR 1 refactors to accept engine
+  "src/commands/doctor/checks/schema-health.ts"  # grandfathered doctor.ts call sites (rls, rls_event_trigger), peeled verbatim (refactor wave 1 W4); PR 1 refactors to accept engine
+  "src/commands/doctor/checks/queue-assets.ts"   # grandfathered doctor.ts call site (index_audit), peeled verbatim (refactor wave 1 W4); PR 1 refactors to accept engine
   "src/commands/files.ts"               # PR 1 refactors to accept engine
   "src/commands/repair-jsonb.ts"        # PR 1 refactors
   "src/commands/serve-http.ts"          # PR 1 threads engine through the OAuth dispatch path

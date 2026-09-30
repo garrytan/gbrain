@@ -75,6 +75,7 @@ export function buildWriteCaptureRegistry(engine: BrainEngine): WriteCaptureRegi
   // Build the read-only base (same shape as rollout.ts uses).
   for (const op of operations) {
     if (!BRAIN_TOOL_ALLOWLIST.has(op.name)) continue;
+    if (op.mutating || op.localOnly) continue;
     if (WRITE_OPS.has(op.name)) continue; // skip write ops; virtual versions land below
     const toolName = `brain_${op.name}`;
     baseDefs.push({

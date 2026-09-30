@@ -43,6 +43,8 @@ export const SECTIONS: DocSection[] = [
       { title: "Grok Bot", path: "docs/guides/grok-bot.md", description: "Recommended: keep the brain on your computer, publish it with `gbrain mcp expose --funnel`, grant the Bot a client and install the thin CLI; local in-Bot memory as the no-host alternative. Native skill activation, shared-computer trust and dated evidence." },
       { title: "Muse personal agent", path: "docs/guides/muse.md", description: "Verify durable storage first; connect Muse to your published brain (`gbrain mcp expose --funnel` + thin CLI) or add local explicit memory with provenance alongside Muse's native memory; distinguish Muse Code and unverified native MCP." },
       { title: "Inside an existing agent", path: "docs/guides/in-agent-setup.md", description: "Isolated setup, absolute launcher, receipts, keyless maintenance, complete private backup and safe restoration." },
+      { title: "Memory boundaries", path: "docs/guides/memory-boundaries.md", description: "Durable shared preferences versus harness state; remote graph maintenance, provider text disclosure, authorization and full-backup limits.", includeInFull: false },
+      { title: "Brain versus session memory", path: "docs/guides/brain-vs-memory.md", description: "Route durable facts and preferences to shared memory, configuration to the harness, and temporary work to session state.", includeInFull: false },
       { title: "Connect a hosted brain", path: "docs/guides/hosted-harness-access.md", description: "Getting the HTTPS endpoint (`gbrain mcp expose`, admin token file), host-side grants, private credential handoff, harness installation, profile repair, delegation limits and honest verification." },
       { title: "Harness adapter reference", path: "docs/guides/harness-adapters.md", description: "Registry-generated transport, authentication lifetime and configuration facts.", includeInFull: false },
       { title: "Harness validation evidence", path: "docs/guides/harness-validation.md", description: "Local lifecycle and HTTP/worker proof, reproducible tests, and the remaining actual-harness acceptance checks.", includeInFull: false },
@@ -66,11 +68,8 @@ export const SECTIONS: DocSection[] = [
       {
         title: "docs/architecture/KEY_FILES.md",
         description:
-          "Per-file index for the gbrain repo: what each src/ file does + its load-bearing invariants. The on-demand detail CLAUDE.md's reference map routes to.",
+          "Bounded navigation index for subsystem references: find a source file's current behavior, invariants, and test evidence without loading the entire reference corpus.",
         path: "docs/architecture/KEY_FILES.md",
-        // Link-only until compressed to current-state (still large pre-compression).
-        // Flip to inlined once the doc-history compression lands and the bundle
-        // budget is re-measured.
         includeInFull: false,
       },
       {
@@ -170,6 +169,13 @@ export const SECTIONS: DocSection[] = [
         path: "docs/guides/push-context.md",
       },
       {
+        title: "docs/evidence-delivery.md",
+        description:
+          "Evidence delivery (`return_unit`): window / section / page / auto evidence instead of chunks on search, query, recall and think, packed into a token budget; response fields, fallback codes, authorization guarantees, latency, and the frozen-hit `assemble_evidence` interface for evals.",
+        path: "docs/evidence-delivery.md",
+        includeInFull: false,
+      },
+      {
         title: "docs/guides/github-source.md",
         description:
           "Mirror GitHub issues, PRs, comments, reviews and CI checks as brain pages. One key + one registration command to a searchable mirror; webhook-driven instant refresh, poll-sweep fallback, daily reconcile, App-credential option.",
@@ -192,18 +198,9 @@ export const SECTIONS: DocSection[] = [
     heading: "AI providers",
     entries: [
       {
-        title: "docs/ai-providers/zeroentropy.md",
-        description:
-          "ZeroEntropy (deprecated; hosted sunset 2026-09-04): the off-ramp for existing brains — migrate embeddings + reranker, self-host continuity, troubleshooting. Do not onboard.",
-        path: "docs/ai-providers/zeroentropy.md",
-        // Setup walkthrough — discoverable in the index, not inlined in the
-        // single-fetch bundle (keeps llms-full.txt under FULL_SIZE_BUDGET).
-        includeInFull: false,
-      },
-      {
         title: "docs/ai-providers/llama-server-reranker.md",
         description:
-          "Local reranker via llama.cpp --reranking: Qwen3-Reranker or self-hosted ZE weights, --alias setup, gbrain config keys, cold-start timeout, budget-cap interaction.",
+          "Local reranker via llama.cpp --reranking: Qwen3-Reranker, --alias setup, gbrain config keys, cold-start timeout, budget-cap interaction.",
         path: "docs/ai-providers/llama-server-reranker.md",
         includeInFull: false,
       },
@@ -222,6 +219,18 @@ export const SECTIONS: DocSection[] = [
         title: "docs/guides/minions-fix.md",
         description: "Troubleshooting the Minions job queue.",
         path: "docs/guides/minions-fix.md",
+      },
+      {
+        title: "docs/guides/repair.md",
+        description:
+          "`gbrain repair timeline|visibility|safe-chunks`: dry run vs --apply, --source/--limit/--json, resume, capacity stop, thin-client refusal, what each kind fixes and costs.",
+        path: "docs/guides/repair.md",
+      },
+      {
+        title: "docs/guides/write-refusals.md",
+        description:
+          "Refusal reasons (file_database_drift, ambiguous_source_path, physical_root_device_changed, cursor_processing_options_conflict, take_row_collision, invalid_source_uri, queue_capacity, parked effects) with the exact recovery command.",
+        path: "docs/guides/write-refusals.md",
       },
       {
         title: "docs/integrations/reliability-repair.md",
@@ -248,7 +257,7 @@ export const SECTIONS: DocSection[] = [
       {
         title: "skills/migrations/",
         description:
-          "Per-version agent-executable migration instructions (latest: v0.49.0.0 — isolated agent setup, hosted grant migration, and verification).",
+          "Per-version agent-executable migration instructions and post-upgrade verification.",
         path: "skills/migrations/",
       },
       {
@@ -329,6 +338,7 @@ export const INLINE_TIPS = [
   "`gbrain doctor [--json] [--fast] [--fix]` - built-in health checks.",
   "`gbrain orphans [--json]` - pages with zero inbound wikilinks.",
   "`gbrain repair-jsonb [--dry-run]` - repair v0.12.0 double-encoded JSONB rows.",
+  "`gbrain repair [<kind>] [--apply]` - preview, then fix timeline, visibility and safe-chunk damage doctor reports.",
   "`gbrain upgrade` runs post-upgrade + apply-migrations.",
 ];
 

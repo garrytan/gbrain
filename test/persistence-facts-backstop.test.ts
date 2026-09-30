@@ -72,23 +72,24 @@ test('page receipt and bounded extraction debt commit together; durable handoff 
   expect((await engine.readPageSnapshot(row.slug, { sourceId: row.source_id }))?.revision).toBe(current.revision);
 }));
 
-test('activation between preparation and publication returns an honest skip without accepting extraction debt', () => fixture(async () => {
+test('activation between preparation and publication retains durable coordinated extraction debt', () => fixture(async () => {
   const input = await prepare();
   await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
   const row = await publishMutation(engine, input.row, input.prepared);
   expect(row.state).toBe('committed');
-  expect(row.outcome?.facts_backstop).toEqual({ skipped: 'writer_coordinator_required' });
-  expect((await publicEffectsForRequest(engine, row.id)).some(effect => effect.kind === 'facts-backstop')).toBe(false);
+  expect(row.outcome?.facts_backstop).toEqual({ queued: true });
+  expect((await publicEffectsForRequest(engine, row.id)).some(effect => effect.kind === 'facts-backstop')).toBe(true);
   expect(await jobs()).toHaveLength(0);
 }));
 
-test('activation after publication skips old extraction debt without changing the committed canonical receipt', () => fixture(async () => {
+test('activation after publication dispatches coordinated extraction without changing the committed canonical receipt', () => fixture(async () => {
   const row = await publish(); const effect = await claimFacts(row);
   await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
   await dispatchFactsBackstopEffect(engine, effect, localHostId());
-  expect(await jobs()).toHaveLength(0);
+  expect(await jobs()).toHaveLength(1);
   expect((await getWriteRequestById(engine, row.id))?.outcome).toEqual(row.outcome);
-  expect((await publicEffectsForRequest(engine, row.id)).find(effect => effect.kind === 'facts-backstop')).toEqual({ kind: 'facts-backstop', state: 'skipped', reason: 'writer_coordinator_required' });
+  expect((await publicEffectsForRequest(engine, row.id)).find(effect => effect.kind === 'facts-backstop')).toEqual({ kind: 'facts-backstop', state: 'dispatched' });
+  expect('page' in await readFactsBackstopJobPage(engine, (await jobs())[0].data)).toBe(true);
 }));
 
 test('a superseded page cannot enqueue extraction from an obsolete receipt', () => fixture(async () => {
@@ -112,7 +113,7 @@ test('durable job execution rechecks revocation, grant narrowing, page revision 
   await engine.putPage(row.slug, { ...snapshot.page, compiled_truth: 'Changed after handoff' }, { sourceId: row.source_id });
   expect(await readFactsBackstopJobPage(engine, data)).toEqual({ skipped: 'superseded' });
   await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
-  expect(await readFactsBackstopJobPage(engine, data)).toEqual({ skipped: 'writer_coordinator_required' });
+  expect(await readFactsBackstopJobPage(engine, data)).toEqual({ skipped: 'superseded' });
 }));
 
 test('confined writers and disabled extraction never receive a queued claim', () => fixture(async () => {
