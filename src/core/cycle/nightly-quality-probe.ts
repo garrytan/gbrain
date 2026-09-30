@@ -45,7 +45,7 @@ export const NIGHTLY_PROBE_SEARCH_CONFIG_KEYS: ReadonlyArray<string> = Object.fr
 
 /** Result reported back to the cycle dispatcher / Minion handler. */
 export interface NightlyProbeResult {
-  outcome: 'pass' | 'fail' | 'inconclusive' | 'error' | 'budget_exceeded' | 'rate_limited' | 'no_embedding_key' | 'disabled';
+  outcome: 'pass' | 'fail' | 'inconclusive' | 'error' | 'budget_exceeded' | 'rate_limited' | 'no_embedding_key' | 'skipped_no_fixture' | 'disabled';
   exit_code: number;
   detail?: string;
 }
@@ -188,8 +188,8 @@ export async function runNightlyQualityProbe(deps: NightlyProbeDeps): Promise<Ni
     const detail = `nightly fixture not found at ${fixturePath}`;
     process.stderr.write(`[nightly-quality-probe] ${detail}\n`);
     logQualityProbeEvent({
-      outcome: 'error',
-      exit_code: 1,
+      outcome: 'skipped_no_fixture',
+      exit_code: 0,
       pass_count: 0,
       fail_count: 0,
       inconclusive_count: 0,
@@ -197,7 +197,7 @@ export async function runNightlyQualityProbe(deps: NightlyProbeDeps): Promise<Ni
       est_cost_usd: 0,
       detail,
     });
-    return { outcome: 'error', exit_code: 1, detail };
+    return { outcome: 'skipped_no_fixture', exit_code: 0, detail };
   }
 
   const fixtureSha8 = sha8File(fixturePath);

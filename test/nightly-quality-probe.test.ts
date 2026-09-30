@@ -219,14 +219,15 @@ describe('runNightlyQualityProbe (DI stub harness)', () => {
     });
   });
 
-  test('missing fixture → outcome: error', async () => {
+  test('missing fixture → outcome: skipped_no_fixture with audit row', async () => {
     await withEnv({ GBRAIN_AUDIT_DIR: auditTmp }, async () => {
       const r = await runNightlyQualityProbe(makeDeps({
         resolveRepoRoot: async () => '/this/repo/root/does/not/exist',
       }));
-      expect(r.outcome).toBe('error');
+      expect(r.outcome).toBe('skipped_no_fixture');
+      expect(r.exit_code).toBe(0);
       const events = await readEvents();
-      expect(events[0].outcome).toBe('error');
+      expect(events[0].outcome).toBe('skipped_no_fixture');
       expect(events[0].detail).toContain('not found');
     });
   });
@@ -395,6 +396,14 @@ describe('codex CDX-5 — doctor health: every non-PASS outcome surfaces', () =>
     expect(check.message).toMatch(/inconclusive=1/);
   });
 
+  test('skipped_no_fixture outcome → warn with an explicit count', async () => {
+    const { computeNightlyQualityProbeHealthCheck } = await import('../src/commands/doctor.ts');
+    const events = [{ outcome: 'skipped_no_fixture', ts: '2026-05-22T03:00:00Z' }];
+    const check = computeNightlyQualityProbeHealthCheck(true, events);
+    expect(check.status).toBe('warn');
+    expect(check.message).toMatch(/skipped_no_fixture=1/);
+  });
+
   test('counts include the new outcome buckets when mixed with pass/fail/error', async () => {
     const { computeNightlyQualityProbeHealthCheck } = await import('../src/commands/doctor.ts');
     const events = [
@@ -405,10 +414,11 @@ describe('codex CDX-5 — doctor health: every non-PASS outcome surfaces', () =>
       { outcome: 'budget_exceeded', ts: '2026-05-20T03:00:00Z' },
       { outcome: 'no_embedding_key', ts: '2026-05-21T03:00:00Z' },
       { outcome: 'rate_limited', ts: '2026-05-22T03:00:00Z' },
+      { outcome: 'skipped_no_fixture', ts: '2026-05-22T03:00:00Z' },
     ];
     const check = computeNightlyQualityProbeHealthCheck(true, events);
     expect(check.status).toBe('warn');
-    expect(check.message).toMatch(/6 non-PASS runs/); // 7 total, 1 pass, 6 bad
+    expect(check.message).toMatch(/7 non-PASS runs/); // 8 total, 1 pass, 7 bad
     expect(check.message).toMatch(/pass=1/);
     expect(check.message).toMatch(/fail=1/);
     expect(check.message).toMatch(/error=1/);
@@ -416,5 +426,6 @@ describe('codex CDX-5 — doctor health: every non-PASS outcome surfaces', () =>
     expect(check.message).toMatch(/budget=1/);
     expect(check.message).toMatch(/no_embed_key=1/);
     expect(check.message).toMatch(/rate_limited=1/);
+    expect(check.message).toMatch(/skipped_no_fixture=1/);
   });
 });
