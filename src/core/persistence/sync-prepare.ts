@@ -15,7 +15,7 @@ import { prepareCanonicalProjections } from './canonical-projections.ts';
 import { digest, sha256 } from './digest.ts';
 import { preserveProtectedTakes } from './protected-takes.ts';
 import { getWorktreeBinding } from './ownership.ts';
-import { assertConfiguredSyncRoot, assertSyncEntryOrigin, syncGit, syncRawHash, type SyncRename } from './sync-discovery.ts';
+import { assertConfiguredSyncRoot, assertSyncEntryOrigin, readSyncFile, syncGit, syncRawHash, type SyncRename } from './sync-discovery.ts';
 import { assertSyncPageOrigin, sameSyncOrigin, syncOriginPath, syncOriginScope, type SyncOriginScope } from './sync-origin.ts';
 import { assertManagedSyncActive, validateSyncAuthority, type SyncAuthority, type SyncProcessingOptions } from './sync-authority.ts';
 import type { PreparedContentImport } from './prepared-import.ts';
@@ -200,7 +200,17 @@ export async function prepareManagedSyncMutation(engine: BrainEngine, row: Write
     throw new OperationError('invalid_params', frontmatterSlugConflictMessage(p.sourcePath, parsedInput.slug, expectedSlug));
   }
   if (!p.companyApproval && base && !p.lineEndingOnly && p.rawHash !== sha256(p.content) && !sameCanonicalImport(base, parsedInput)) {
-    throw new OperationError('source_changed', 'Newer working-tree bytes and the current page disagree with this pinned Git import.');
+    // The pinned commit can simply trail the coordinator: a committed page write reaches the
+    // working tree before its Git effect lands. When the newer working-tree bytes are the
+    // current page itself, there is nothing to import and nothing to protect; the commit that
+    // carries them is imported as a no-op by a later run.
+    const working = renamed ? null : readSyncFile(root, p.path);
+    if (!working || sha256(working) !== p.rawHash
+      || !sameCanonicalImport(base, parseMarkdown(working.toString('utf8'), row.slug, { activePack }))) {
+      throw new OperationError('source_changed', 'Newer working-tree bytes and the current page disagree with this pinned Git import.');
+    }
+    return { observedRevision: snapshot?.revision ?? null, noop: true, contentUnchanged: true, validate,
+      apply: async () => ({ status: 'skipped', slug: row.slug, source_id: row.source_id, chunks: 0, noop: true, imported_file: true }) };
   }
   let importContent = p.content;
   if (row.authority.remote) {
