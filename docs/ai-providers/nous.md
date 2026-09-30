@@ -43,8 +43,10 @@ subagent, expansion and embedding tiers bill the same subscription.
    allowlist. Aliases: `nous:glm-flash`, `nous:glm`, `nous:luna`,
    `nous:terra`, `nous:astra`, `nous:haiku`, `nous:sonnet`, `nous:opus`.
 
-4. Optional: `provider_base_urls.nous` overrides the inference URL — for
-   example to point at Hermes Agent's local **subscription proxy**
+4. Optional: `NOUS_INFERENCE_BASE_URL` overrides the inference URL. Blank
+   values are ignored; `provider_base_urls.nous` takes precedence over the
+   environment variable. Both overrides apply to chat, expansion and
+   embedding calls. For example, point at Hermes Agent's local **subscription proxy**
    (`hermes-agent` docs → *subscription-proxy*), which attaches and refreshes
    your Portal OAuth credential so no static key is needed. The proxy ignores
    the bearer gbrain sends, so any placeholder `NOUS_API_KEY` satisfies the

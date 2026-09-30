@@ -29,6 +29,7 @@ const PASSTHROUGHS: Array<{ envVar: string; recipeId: string }> = [
   { envVar: 'LMSTUDIO_BASE_URL', recipeId: 'lmstudio' },
   { envVar: 'LITELLM_BASE_URL', recipeId: 'litellm' },
   { envVar: 'OPENROUTER_BASE_URL', recipeId: 'openrouter' },
+  { envVar: 'NOUS_INFERENCE_BASE_URL', recipeId: 'nous' },
 ];
 
 const TEST_VALUE = 'http://proxy.example.test/v1';
@@ -97,6 +98,30 @@ describe('buildGatewayConfig env-baseURL passthrough', () => {
       expect(cfg.provider_chat_options).toBe(options);
     });
   });
+
+  test('Nous override reaches the compatible transport; config takes precedence', async () => {
+    const { applyOpenAICompatConfig } = await import('../../src/core/ai/gateway.ts');
+    const { getRecipe } = await import('../../src/core/ai/recipes/index.ts');
+    const recipe = getRecipe('nous')!;
+    await withEnv({ NOUS_INFERENCE_BASE_URL: `  ${TEST_VALUE}  ` }, async () => {
+      expect(applyOpenAICompatConfig(recipe, buildGatewayConfig(baseConfig)).baseURL).toBe(TEST_VALUE);
+      const cfg = buildGatewayConfig({ ...baseConfig, provider_base_urls: { nous: 'http://config.example.test/v1' } });
+      expect(applyOpenAICompatConfig(recipe, cfg).baseURL).toBe('http://config.example.test/v1');
+    });
+  });
+
+  for (const value of [undefined, '', '   ']) {
+    test(`Nous blank override (${JSON.stringify(value)}) retains the Portal default`, async () => {
+      const { applyOpenAICompatConfig } = await import('../../src/core/ai/gateway.ts');
+      const { getRecipe } = await import('../../src/core/ai/recipes/index.ts');
+      const recipe = getRecipe('nous')!;
+      await withEnv({ NOUS_INFERENCE_BASE_URL: value }, async () => {
+        const cfg = buildGatewayConfig(baseConfig);
+        expect(cfg.base_urls?.nous).toBeUndefined();
+        expect(applyOpenAICompatConfig(recipe, cfg).baseURL).toBe(recipe.base_url_default!);
+      });
+    });
+  }
 });
 
 describe('buildGatewayConfig config-plane API-key folding', () => {
