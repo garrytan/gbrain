@@ -195,9 +195,9 @@ export const claudeCodeAdapter: TranscriptAdapter = {
     }
     // A file with NO turn-shaped records never had anything to import: a
     // title/metadata-only stub (`last-prompt` + `custom-title` and nothing
-    // else) or all-`isSidechain` subagent traffic. That is understood, not
-    // host-format drift, so it must not freeze the shared watermark — the
-    // same distinction grok draws with expectedEmpty. Turn records that stop
+    // else), explicitly non-human text, or all-`isSidechain` subagent traffic.
+    // That is understood, not host-format drift, so it must not freeze the
+    // shared watermark. As with grok's expectedEmpty, turn records that stop
     // yielding text (`turnShapedLines > 0` with zero turns) still drift, and
     // so does any file with unparseable lines.
     const expectedEmpty =
@@ -211,7 +211,7 @@ export const claudeCodeAdapter: TranscriptAdapter = {
       zeroSessionsReason:
         sessions === 0
           ? expectedEmpty
-            ? 'no turn records in file (title/metadata-only or all-subagent)'
+            ? 'no turn records in file (title/metadata-only, non-human text only, or all-subagent)'
             : 'no user or assistant turns in file'
           : undefined,
     };

@@ -16,7 +16,10 @@
  *     text blocks are extracted verbatim, non-text blocks become placeholders
  *     ([tool: name] / [tool result] / [thinking] / [image]) so the corpus
  *     records THAT a tool ran, never its payload.
- *   - isSidechain:true entries (subagent traffic) are skipped.
+ *   - root isSidechain/isMeta/isCompactSummary exactly true entries are skipped.
+ *   - user text with a non-empty structured origin.kind other than 'human'
+ *     is excluded; absent/unstructured origins stay compatible. Non-text
+ *     placeholders and assistant text are retained, not classified by origin.
  *   - type 'summary' entries and system/compact-boundary entries are skipped.
  *   - malformed lines are counted (skippedLines), never fatal.
  *
@@ -48,7 +51,9 @@ export const SPEC_TARGET: HostSpecTarget = {
     'block array ({type: "text"|"tool_use"|"tool_result"|"thinking"|"image", …}). ' +
     'Non-turn lines: {type: "summary"} and {type: "system", subtype: ' +
     '"compact_boundary"} among others — anything that is not a non-sidechain ' +
-    'user/assistant message is skipped. Unknown fields tolerated everywhere.',
+    'user/assistant message is skipped, as are root isMeta/isCompactSummary: true. ' +
+    'User text with a non-empty string origin.kind other than "human" is excluded; ' +
+    'missing/unstructured origins stay compatible. Unknown fields tolerated elsewhere.',
 };
 
 // ── Byte caps ───────────────────────────────────────────────────────────────
@@ -164,7 +169,7 @@ export interface ParsedTranscript {
   /** Conversation turns, oldest → newest (WindowTurn — the IPC window shape). */
   turns: WindowTurn[];
   /**
-   * Turn indexes whose user-role content contains genuine text. Claude records
+   * Turn indexes whose accepted user-role content contains genuine text. Claude records
    * tool results as user-role messages too, so role alone cannot identify a
    * human prompt. Kept parallel to `turns` instead of removing placeholders:
    * archival/corpus consumers still see that tools ran, while prompt-only
@@ -377,11 +382,21 @@ function isGenuineUserText(text: string): boolean {
   return text.replace(HARNESS_TAG_RE, '').trim().length > 0;
 }
 
+function isSkippedTurnEntry(e: Record<string, unknown>): boolean {
+  return e.isSidechain === true || e.isMeta === true || e.isCompactSummary === true;
+}
+
+function hasNonHumanOrigin(e: Record<string, unknown>): boolean {
+  if (typeof e.origin !== 'object' || e.origin === null) return false;
+  const kind = (e.origin as Record<string, unknown>).kind;
+  return typeof kind === 'string' && kind.length > 0 && kind !== 'human';
+}
+
 /** One transcript line → a turn plus its structural human-prompt origin. */
 function entryToTurn(entry: unknown): { turn: WindowTurn; genuineUser: boolean } | null {
   if (typeof entry !== 'object' || entry === null) return null;
   const e = entry as Record<string, unknown>;
-  if (e.isSidechain === true) return null; // subagent traffic — skipped
+  if (isSkippedTurnEntry(e)) return null;
   const type = e.type;
   if (type !== 'user' && type !== 'assistant') return null; // summary / system / compact boundary
   const msg = e.message;
@@ -389,11 +404,13 @@ function entryToTurn(entry: unknown): { turn: WindowTurn; genuineUser: boolean }
   const m = msg as Record<string, unknown>;
   const role: WindowTurn['role'] =
     m.role === 'assistant' || m.role === 'user' ? m.role : (type as WindowTurn['role']);
+  const acceptText = role !== 'user' || !hasNonHumanOrigin(e);
 
   const content = m.content;
   let text = '';
   let hasGenuineText = false;
   if (typeof content === 'string') {
+    if (!acceptText) return null;
     text = content;
     hasGenuineText = isGenuineUserText(content);
   } else if (Array.isArray(content)) {
@@ -403,7 +420,7 @@ function entryToTurn(entry: unknown): { turn: WindowTurn; genuineUser: boolean }
       const b = block as Record<string, unknown>;
       switch (b.type) {
         case 'text':
-          if (typeof b.text === 'string' && b.text.trim()) {
+          if (acceptText && typeof b.text === 'string' && b.text.trim()) {
             parts.push(b.text);
             if (isGenuineUserText(b.text)) hasGenuineText = true;
           }
@@ -463,7 +480,7 @@ interface ToolCallWithId extends ToolCallRecord {
 function entryContentBlocks(entry: unknown): unknown[] | null {
   if (typeof entry !== 'object' || entry === null) return null;
   const e = entry as Record<string, unknown>;
-  if (e.isSidechain === true) return null; // subagent traffic — skipped, same as entryToTurn
+  if (isSkippedTurnEntry(e)) return null;
   const msg = e.message;
   if (typeof msg !== 'object' || msg === null) return null;
   const content = (msg as Record<string, unknown>).content;
@@ -560,10 +577,10 @@ export interface ParsedClaudeSession {
   skippedLines: number;
   /**
    * Records that CLAIM to be importable turns: `type` user/assistant and not
-   * `isSidechain`. Zero of them means the file never had anything to import
-   * (a title/metadata-only stub, or all-subagent traffic) — understood, not
-   * host-format drift. Above zero with `turns` still empty is the real drift
-   * signal: turn records exist but no longer yield text.
+   * skipped by entry markers or explicit non-human origins. Zero of them means
+   * the file had nothing accepted to import (metadata or non-human text only) —
+   * understood, not host-format drift. Above zero with `turns` still empty is
+   * the real drift signal: turn records exist but no longer yield text.
    */
   turnShapedLines: number;
 }
@@ -602,10 +619,13 @@ export function parseClaudeSessionFile(
     const e = entry as Record<string, unknown>;
     if (!sessionId && typeof e.sessionId === 'string' && e.sessionId) sessionId = e.sessionId;
     if (!cwd && typeof e.cwd === 'string' && e.cwd) cwd = e.cwd;
-    if (e.isSidechain !== true && (e.type === 'user' || e.type === 'assistant')) {
+    const turn = entryToTurn(entry);
+    if (
+      !isSkippedTurnEntry(e) && (e.type === 'user' || e.type === 'assistant') &&
+      (turn || e.type === 'assistant' || !hasNonHumanOrigin(e))
+    ) {
       turnShapedLines++;
     }
-    const turn = entryToTurn(entry);
     if (!turn) continue;
     const timestamp = typeof e.timestamp === 'string' ? e.timestamp : '';
     turns.push({ role: turn.turn.role, text: turn.turn.text, timestamp });
