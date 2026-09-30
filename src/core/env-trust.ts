@@ -282,6 +282,7 @@ export const CWD_DOTENV_PROTECTED_TOOLCHAIN_KEYS: readonly string[] = [
   'LMSTUDIO_BASE_URL',
   'LLAMA_SERVER_BASE_URL',
   'LLAMA_SERVER_RERANKER_BASE_URL',
+  'NOUS_INFERENCE_BASE_URL',
 ];
 
 const PROTECTED_EXACT: ReadonlySet<string> = new Set([

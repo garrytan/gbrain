@@ -299,7 +299,7 @@ describe('non-GBRAIN hijack families (A2)', () => {
       'SSL_CERT_FILE', 'SSL_CERT_DIR', 'CURL_CA_BUNDLE', 'REQUESTS_CA_BUNDLE',
       'EDITOR', 'VISUAL', 'PAGER',
       'OPENROUTER_BASE_URL', 'LITELLM_BASE_URL', 'OLLAMA_BASE_URL', 'LMSTUDIO_BASE_URL',
-      'LLAMA_SERVER_BASE_URL', 'LLAMA_SERVER_RERANKER_BASE_URL',
+      'LLAMA_SERVER_BASE_URL', 'LLAMA_SERVER_RERANKER_BASE_URL', 'NOUS_INFERENCE_BASE_URL',
     ]) {
       expect(CWD_DOTENV_PROTECTED_TOOLCHAIN_KEYS).toContain(k);
       expect(isCwdDotenvProtectedKey(k)).toBe(true);
@@ -314,6 +314,25 @@ describe('non-GBRAIN hijack families (A2)', () => {
     for (const p of ['LD_', 'DYLD_', 'GIT_', 'BUN_', 'NPM_CONFIG_', 'npm_config_']) expect(CWD_DOTENV_PROTECTED_PREFIXES).toContain(p);
     expect(CWD_DOTENV_PROTECTED_TOOLCHAIN_KEYS).toContain('NODE_OPTIONS');
     expect(new Set(CWD_DOTENV_PROTECTED_TOOLCHAIN_KEYS).size).toBe(CWD_DOTENV_PROTECTED_TOOLCHAIN_KEYS.length);
+  });
+
+  test('a cwd .env cannot redirect the Nous key: NOUS_INFERENCE_BASE_URL is dropped, the shell value survives elsewhere', () => {
+    // The nous recipe reads NOUS_INFERENCE_BASE_URL in build-gateway-config.ts;
+    // the bearer (env or config.json nous_api_key) travels to whatever host it names.
+    const dir = tmpProject({ '.env': 'NOUS_INFERENCE_BASE_URL=https://planted.example.test/v1\nPROJECT_NAME=demo\n' });
+    const env: Record<string, string | undefined> = {
+      NOUS_INFERENCE_BASE_URL: 'https://planted.example.test/v1', NOUS_API_KEY: 'sk-nous-fixture', PROJECT_NAME: 'demo',
+    };
+    const warnings: string[] = [];
+    expect(quarantineCwdDotenv(env, dir, { warn: (m) => warnings.push(m) })).toEqual(['NOUS_INFERENCE_BASE_URL']);
+    expect('NOUS_INFERENCE_BASE_URL' in env).toBe(false);
+    expect(env.NOUS_API_KEY).toBe('sk-nous-fixture'); // keys stay loadable from a project .env, as for every provider
+    expect(env.PROJECT_NAME).toBe('demo');
+    expect(warnings).toHaveLength(1);
+    // Not planted by the cwd .env (exported in the shell or ~/.gbrain/.env): kept.
+    const shellEnv: Record<string, string | undefined> = { NOUS_INFERENCE_BASE_URL: 'http://127.0.0.1:8645/v1' };
+    expect(quarantineCwdDotenv(shellEnv, tmpProject({ '.env': 'PROJECT_NAME=demo\n' }), { warn: () => {} })).toEqual([]);
+    expect(shellEnv.NOUS_INFERENCE_BASE_URL).toBe('http://127.0.0.1:8645/v1');
   });
 
   test('a GIT_CONFIG_* injection planted by the cwd .env is dropped (prefix family), ONE warning naming the keys', () => {

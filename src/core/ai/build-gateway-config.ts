@@ -65,6 +65,8 @@ export function buildGatewayConfig(c: GBrainConfig): AIGatewayConfig {
   if (process.env.LMSTUDIO_BASE_URL) envBaseUrls['lmstudio'] = process.env.LMSTUDIO_BASE_URL;
   if (process.env.LITELLM_BASE_URL) envBaseUrls['litellm'] = process.env.LITELLM_BASE_URL;
   if (process.env.OPENROUTER_BASE_URL) envBaseUrls['openrouter'] = process.env.OPENROUTER_BASE_URL;
+  const nousBaseUrl = process.env.NOUS_INFERENCE_BASE_URL?.trim();
+  if (nousBaseUrl) envBaseUrls['nous'] = nousBaseUrl;
 
   // #3350: native base-URL fold — MUST read the file plane directly, not `c`
   // (callers can pass a DB-merged config; see foldNativeBaseUrlsFromFilePlane's
