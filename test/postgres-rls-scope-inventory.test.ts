@@ -19,7 +19,8 @@
  *
  * Reconciliation with the plan's "23 scoped sites": the source has 23 lines
  * naming `withScopedReadTransaction` = 1 definition + 22 call sites, in 21
- * methods (searchVector has 2). The golden pins the exact numbers.
+ * methods (searchVector has 2); evidence delivery's getChunkWindows adds one
+ * (23 call sites, 22 methods). The golden pins the exact numbers.
  */
 
 import { describe, expect, test } from 'bun:test';
@@ -147,8 +148,8 @@ describe('EO4 RLS scope inventory (master)', () => {
     const scoping = astScoping(capture.ast);
 
     const callSites = Object.values(capture.ast).reduce((a, m) => a + m.directCallSites, 0);
-    expect(callSites).toBe(22);
-    expect(Object.values(capture.ast).filter((m) => m.directCallSites > 0).length).toBe(21);
+    expect(callSites).toBe(23);
+    expect(Object.values(capture.ast).filter((m) => m.directCallSites > 0).length).toBe(22);
 
     const byMethod = new Map<string, RuntimeObservation[]>();
     for (const [key, obs] of Object.entries(capture.runtime)) {

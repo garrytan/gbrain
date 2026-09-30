@@ -366,6 +366,28 @@ before any other cell is read.
 
 Each stage is testable in isolation. Each stage is replaceable. The whole pipeline is < 1ms of orchestration cost; the latency budget goes to the upstream HTTP calls (embedding, rerank) and the index scans.
 
+## Evidence delivery: whole evidence after ranking
+
+Ranking decides which pages matter; the reader still needs enough of each page
+to answer. `return_unit` (`window`, `section`, `page`, `auto`; default `chunk`)
+adds an opt-in stage after ranking, cache and capture, and before output
+redaction and snippet capping, shared by `search`, `query`, `recall` and
+`think` (via `think.return_unit`). It groups the ranked hits by page, reads
+every needed neighbor chunk in ONE batched, page_id-keyed query that
+re-authorizes each page under the caller's current scope, sanitizes each
+page's complete body before slicing, locates the hit chunks in it (so chunk
+overlap never duplicates text), cuts the requested unit around the hits,
+and packs blocks by rank into the token budget with a per-page floor so lower
+ranked sessions keep their matching span. The strict protected-body sanitizer
+runs on the whole body first, so delivered evidence never contains more than
+`get_page` returns to the same caller. With the default `chunk` the stage does not run and responses are
+byte-identical. The measured motivation (full sessions 89/100 against
+top-5 chunks 65/100 on a fixed LongMemEval-S subset, reranker off) and the
+earlier failed lexical excerpt selector (`docs/eval/ANSWER_PACKET_RESULTS.md`)
+are why `page` is the reference and the default stays `chunk` until a matched
+study shows a benefit. Contract, algorithms and latency:
+[`docs/evidence-delivery.md`](../evidence-delivery.md).
+
 ## How to verify on your own brain
 
 ```bash

@@ -95,6 +95,30 @@
           }
         ]
       },
+      "getChunkWindows": {
+        "default": [
+          {
+            "paramCount": 8,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ],
+        "scopedPrivateSafe": [
+          {
+            "paramCount": 9,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
       "getChunks": {
         "default": [
           {
@@ -4362,7 +4386,7 @@
       "getLastSeen": {
         "asof+sourceId": [
           {
-            "paramCount": 6,
+            "paramCount": 7,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
@@ -4373,7 +4397,7 @@
         ],
         "default": [
           {
-            "paramCount": 3,
+            "paramCount": 4,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,

@@ -88,6 +88,7 @@
           "getCalibrationCurve: (opts: CalibrationCurveOpts, allowList: string[] | undefined) => Promise<CalibrationBucket[]>",
           "getCalleesOf: (qualifiedName: string, opts?: { sourceId?: string; allSources?: boolean; limit?: number; bareFallback?: boolean; }) => Promise<CodeEdgeResult[]>",
           "getCallersOf: (qualifiedName: string, opts?: { sourceId?: string; allSources?: boolean; limit?: number; }) => Promise<CodeEdgeResult[]>",
+          "getChunkWindows: (requests: ChunkWindowRequest[], opts: ChunkWindowOpts) => Promise<ChunkWindowPage[]>",
           "getChunks: (slug: string, opts?: PageReadScope & { includeEmbedding?: boolean; includeUnsealed?: boolean; }) => Promise<Chunk[]>",
           "getChunksWithEmbeddings: (slug: string, opts?: { sourceId?: string; includeUnsealed?: boolean; }) => Promise<Chunk[]>",
           "getConfig: (key: string) => Promise<string | null>",
@@ -980,6 +981,7 @@
           "getCalibrationCurve: (opts: CalibrationCurveOpts, allowList: string[] | undefined) => Promise<CalibrationBucket[]>",
           "getCalleesOf: (qualifiedName: string, opts?: { sourceId?: string; allSources?: boolean; limit?: number; bareFallback?: boolean; }) => Promise<CodeEdgeResult[]>",
           "getCallersOf: (qualifiedName: string, opts?: { sourceId?: string; allSources?: boolean; limit?: number; }) => Promise<CodeEdgeResult[]>",
+          "getChunkWindows: (requests: ChunkWindowRequest[], opts: ChunkWindowOpts) => Promise<ChunkWindowPage[]>",
           "getChunks: (slug: string, opts?: { sourceId?: string; sourceIds?: string[]; includeEmbedding?: boolean; excludePrivate?: boolean; requireSafeChunks?: boolean; includeUnsealed?: boolean; }) => Promise<Chunk[]>",
           "getChunksWithEmbeddings: (slug: string, opts?: { sourceId?: string; includeUnsealed?: boolean; }) => Promise<Chunk[]>",
           "getConfig: (key: string) => Promise<string | null>",
@@ -1288,6 +1290,7 @@
           "content_flag?: { reason: string; detail: string; } | undefined",
           "cosine?: number | undefined",
           "create_safety?: CreateSafety | undefined",
+          "delivered?: DeliveredEvidence | undefined",
           "effective_date?: string | null | undefined",
           "effective_date_source?: string | null | undefined",
           "evidence?: Evidence | undefined",
@@ -3000,6 +3003,7 @@
           "getCalibrationCurve: (opts: CalibrationCurveOpts, allowList: string[] | undefined) => Promise<CalibrationBucket[]>",
           "getCalleesOf: (qualifiedName: string, opts?: { sourceId?: string; allSources?: boolean; limit?: number; bareFallback?: boolean; }) => Promise<CodeEdgeResult[]>",
           "getCallersOf: (qualifiedName: string, opts?: { sourceId?: string; allSources?: boolean; limit?: number; }) => Promise<CodeEdgeResult[]>",
+          "getChunkWindows: (requests: ChunkWindowRequest[], opts: ChunkWindowOpts) => Promise<ChunkWindowPage[]>",
           "getChunks: (slug: string, opts?: PageReadScope & { includeEmbedding?: boolean; includeUnsealed?: boolean; }) => Promise<Chunk[]>",
           "getChunksWithEmbeddings: (slug: string, opts?: { sourceId?: string; includeUnsealed?: boolean; }) => Promise<Chunk[]>",
           "getConfig: (key: string) => Promise<string | null>",
@@ -5557,6 +5561,7 @@
           "getCalibrationCurve: (opts: CalibrationCurveOpts, allowList: string[] | undefined) => Promise<CalibrationBucket[]>",
           "getCalleesOf: (qualifiedName: string, opts?: { sourceId?: string; allSources?: boolean; limit?: number; bareFallback?: boolean; }) => Promise<CodeEdgeResult[]>",
           "getCallersOf: (qualifiedName: string, opts?: { sourceId?: string; allSources?: boolean; limit?: number; }) => Promise<CodeEdgeResult[]>",
+          "getChunkWindows: (requests: ChunkWindowRequest[], opts: ChunkWindowOpts) => Promise<ChunkWindowPage[]>",
           "getChunks: (slug: string, opts?: { sourceId?: string; sourceIds?: string[]; includeEmbedding?: boolean; excludePrivate?: boolean; requireSafeChunks?: boolean; includeUnsealed?: boolean; }) => Promise<Chunk[]>",
           "getChunksWithEmbeddings: (slug: string, opts?: { sourceId?: string; includeUnsealed?: boolean; }) => Promise<Chunk[]>",
           "getConfig: (key: string) => Promise<string | null>",
@@ -5938,6 +5943,357 @@
         "name": "releaseLock",
         "signature": [
           "(lock: LockHandle) => Promise<void>"
+        ]
+      }
+    ],
+    "./search/evidence-delivery": [
+      {
+        "kind": "interface",
+        "members": [
+          "budget_tokens?: number | undefined",
+          "caller?: { remote?: boolean; sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean; } | undefined",
+          "detail?: \"low\" | \"medium\" | \"high\" | undefined",
+          "hits: FrozenHit[]",
+          "return_unit: \"auto\" | \"chunk\" | \"window\" | \"section\" | \"page\"",
+          "return_window?: number | undefined"
+        ],
+        "name": "AssembleEvidenceInput"
+      },
+      {
+        "kind": "interface",
+        "members": [
+          "delivery: DeliveryMeta | null",
+          "results: (SearchResult & { delivered?: DeliveredEvidence; })[]",
+          "unresolved: number[]"
+        ],
+        "name": "AssembleEvidenceOutput"
+      },
+      {
+        "kind": "variable",
+        "name": "DEFAULT_REMOTE_BUDGET_MAX",
+        "signature": [
+          "32000"
+        ]
+      },
+      {
+        "kind": "variable",
+        "name": "DEFAULT_RETURN_BUDGET",
+        "signature": [
+          "6000"
+        ]
+      },
+      {
+        "kind": "interface",
+        "members": [
+          "liveHits?: boolean | undefined",
+          "timeoutMs?: number | undefined"
+        ],
+        "name": "DeliverOptions"
+      },
+      {
+        "kind": "interface",
+        "members": [
+          "chunk_ids: number[]",
+          "fallback_reason?: string | undefined",
+          "match_spans: MatchSpan[]",
+          "revision?: string | undefined",
+          "tokens: number",
+          "truncated: boolean",
+          "unit: DeliveredUnit",
+          "unmapped_chunk_ids?: number[] | undefined"
+        ],
+        "name": "DeliveredEvidence"
+      },
+      {
+        "kind": "type",
+        "name": "DeliveredSearchResult",
+        "signature": [
+          "SearchResult & { delivered: DeliveredEvidence; }"
+        ]
+      },
+      {
+        "kind": "type",
+        "name": "DeliveredUnit",
+        "signature": [
+          "\"chunk\" | \"window\" | \"section\" | \"page\""
+        ]
+      },
+      {
+        "kind": "interface",
+        "members": [
+          "applied_unit: \"auto\" | \"chunk\" | \"window\" | \"section\" | \"page\"",
+          "blocks: number",
+          "budget_clamped?: { requested: number; max: number; } | undefined",
+          "budget_tokens: number",
+          "budget_used: number",
+          "coordinates: \"utf16\"",
+          "dropped: number",
+          "dropped_reasons: Record<string, number>",
+          "fallbacks: string[]",
+          "requested_unit: \"auto\" | \"chunk\" | \"window\" | \"section\" | \"page\"",
+          "return_window: number",
+          "tokenizer: \"cl100k\" | \"heuristic\"",
+          "tokens_delivered: number"
+        ],
+        "name": "DeliveryMeta"
+      },
+      {
+        "kind": "interface",
+        "members": [
+          "detail?: \"low\" | \"medium\" | \"high\" | undefined",
+          "excludePrivate?: boolean | undefined",
+          "requireSafeChunks?: boolean | undefined",
+          "sourceId?: string | undefined",
+          "sourceIds?: string[] | undefined"
+        ],
+        "name": "DeliveryScope"
+      },
+      {
+        "kind": "variable",
+        "name": "EVIDENCE_BLOCK_CHAR_CAP",
+        "signature": [
+          "60000"
+        ]
+      },
+      {
+        "kind": "variable",
+        "name": "EVIDENCE_DELIVERY_MIN_SERVER_VERSION",
+        "signature": [
+          "\"0.60.13.0\""
+        ]
+      },
+      {
+        "kind": "variable",
+        "name": "EVIDENCE_FETCH_TIMEOUT_MS",
+        "signature": [
+          "5000"
+        ]
+      },
+      {
+        "kind": "variable",
+        "name": "EVIDENCE_OMISSION",
+        "signature": [
+          "\"\\n\\n[…]\\n\\n\""
+        ]
+      },
+      {
+        "kind": "interface",
+        "members": [
+          "budgetClamped?: { requested: number; max: number; } | undefined",
+          "budgetTokens: number",
+          "explicitUnit: boolean",
+          "requestedUnit: \"auto\" | \"chunk\" | \"window\" | \"section\" | \"page\"",
+          "unit: \"auto\" | \"window\" | \"section\" | \"page\"",
+          "window: number"
+        ],
+        "name": "EvidencePlan"
+      },
+      {
+        "kind": "interface",
+        "members": [
+          "chunk_id: number",
+          "slug: string",
+          "source_id: string"
+        ],
+        "name": "FrozenHit"
+      },
+      {
+        "kind": "variable",
+        "name": "MAX_ASSEMBLE_HITS",
+        "signature": [
+          "50"
+        ]
+      },
+      {
+        "kind": "interface",
+        "members": [
+          "chunk_id: number",
+          "end: number",
+          "start: number"
+        ],
+        "name": "MatchSpan"
+      },
+      {
+        "kind": "variable",
+        "name": "RETURN_BUDGET_DEFAULT_KEY",
+        "signature": [
+          "\"search.return_budget_default\""
+        ]
+      },
+      {
+        "kind": "variable",
+        "name": "RETURN_BUDGET_MAX_REMOTE_KEY",
+        "signature": [
+          "\"search.return_budget_max_remote\""
+        ]
+      },
+      {
+        "kind": "variable",
+        "name": "RETURN_UNITS",
+        "signature": [
+          "readonly [\"chunk\", \"window\", \"section\", \"page\", \"auto\"]"
+        ]
+      },
+      {
+        "kind": "variable",
+        "name": "RETURN_UNIT_CONFIG_KEY",
+        "signature": [
+          "\"search.return_unit\""
+        ]
+      },
+      {
+        "kind": "variable",
+        "name": "RETURN_WINDOW_CONFIG_KEY",
+        "signature": [
+          "\"search.return_window\""
+        ]
+      },
+      {
+        "kind": "interface",
+        "members": [
+          "budget: unknown",
+          "configKey?: string | undefined",
+          "op: string",
+          "remote: boolean | undefined",
+          "returnUnit: unknown",
+          "returnWindow: unknown",
+          "snippetCap: number",
+          "snippetChars: unknown",
+          "viaSubagent?: boolean | undefined"
+        ],
+        "name": "ResolvePlanInput"
+      },
+      {
+        "kind": "type",
+        "name": "ReturnUnit",
+        "signature": [
+          "\"auto\" | \"chunk\" | \"window\" | \"section\" | \"page\""
+        ]
+      },
+      {
+        "kind": "variable",
+        "name": "THINK_RETURN_UNIT_CONFIG_KEY",
+        "signature": [
+          "\"think.return_unit\""
+        ]
+      },
+      {
+        "kind": "variable",
+        "name": "TIMELINE_SEPARATOR",
+        "signature": [
+          "\"\\n\\n<!-- timeline -->\\n\\n\""
+        ]
+      },
+      {
+        "kind": "function",
+        "name": "assembleEvidenceForHits",
+        "signature": [
+          "(engine: BrainEngine, input: AssembleEvidenceInput) => Promise<AssembleEvidenceOutput>"
+        ]
+      },
+      {
+        "kind": "function",
+        "name": "capDeliveredSnippets",
+        "signature": [
+          "<T extends SearchResult & { delivered?: DeliveredEvidence; }>(results: T[], cap: number, delivery: DeliveryMeta) => T[]"
+        ]
+      },
+      {
+        "kind": "function",
+        "name": "countEvidenceTokens",
+        "signature": [
+          "(text: string, tokenizer?: \"cl100k\" | \"heuristic\") => number"
+        ]
+      },
+      {
+        "kind": "function",
+        "name": "deliverEvidence",
+        "signature": [
+          "(engine: BrainEngine, hits: SearchResult[], plan: EvidencePlan, scope: DeliveryScope, opts?: DeliverOptions) => Promise<{ results: DeliveredSearchResult[]; delivery: DeliveryMeta; }>"
+        ]
+      },
+      {
+        "kind": "function",
+        "name": "deliveryVersionSkewWarning",
+        "signature": [
+          "(opName: string, params: Record<string, unknown>, retrievalMeta: Record<string, unknown> | null | undefined, result: unknown) => string | null"
+        ]
+      },
+      {
+        "kind": "function",
+        "name": "evidenceFingerprint",
+        "signature": [
+          "(results: Array<{ source_id?: string; slug: string; chunk_text: string; chunk_id: number; delivered?: { unit: string; chunk_ids: number[]; }; }>) => string"
+        ]
+      },
+      {
+        "kind": "function",
+        "name": "evidenceTokenizer",
+        "signature": [
+          "() => \"cl100k\" | \"heuristic\""
+        ]
+      },
+      {
+        "kind": "function",
+        "name": "isConversationLabels",
+        "signature": [
+          "(labels: string[]) => boolean"
+        ]
+      },
+      {
+        "kind": "function",
+        "name": "locateChunks",
+        "signature": [
+          "(text: string, chunks: Array<{ id: number; chunk_index: number; chunk_text: string; }>) => Array<{ id: number; chunk_index: number; start: number; end: number; }>"
+        ]
+      },
+      {
+        "kind": "function",
+        "name": "pageEvidenceText",
+        "signature": [
+          "(page: { compiled_truth: string; timeline: string; }, includeTimeline: boolean) => { text: string; timelineAt: number; }"
+        ]
+      },
+      {
+        "kind": "function",
+        "name": "parseReturnUnit",
+        "signature": [
+          "(raw: unknown, op: string) => ReturnUnit | undefined"
+        ]
+      },
+      {
+        "kind": "function",
+        "name": "parseReturnWindow",
+        "signature": [
+          "(raw: unknown, op: string) => number | undefined"
+        ]
+      },
+      {
+        "kind": "function",
+        "name": "resolveEvidencePlan",
+        "signature": [
+          "(engine: BrainEngine, input: ResolvePlanInput) => Promise<EvidencePlan | null>"
+        ]
+      },
+      {
+        "kind": "function",
+        "name": "resolveFrozenHits",
+        "signature": [
+          "(engine: BrainEngine, hits: FrozenHit[], scope: PageReadScope) => Promise<{ rows: SearchResult[]; unresolved: number[]; }>"
+        ]
+      },
+      {
+        "kind": "function",
+        "name": "splitPieces",
+        "signature": [
+          "(text: string) => Array<{ start: number; end: number; lineStart: boolean; }>"
+        ]
+      },
+      {
+        "kind": "function",
+        "name": "unsupportedDelivery",
+        "signature": [
+          "(plan: EvidencePlan, reason: string) => DeliveryMeta"
         ]
       }
     ],
@@ -6404,6 +6760,7 @@
           "citations: ParsedCitation[]",
           "cost_usd?: number | undefined",
           "diagnostics: { pagesFromHybrid: number; takesFromKeyword: number; takesFromVector: number; graphHits: number; }",
+          "evidence_delivery?: DeliveryMeta | undefined",
           "extractive?: ExtractiveFallback | undefined",
           "gaps: string[]",
           "graphHits: number",
@@ -7443,6 +7800,7 @@
           "content_flag?: { reason: string; detail: string; } | undefined",
           "cosine?: number | undefined",
           "create_safety?: CreateSafety | undefined",
+          "delivered?: DeliveredEvidence | undefined",
           "effective_date?: string | null | undefined",
           "effective_date_source?: string | null | undefined",
           "evidence?: Evidence | undefined",

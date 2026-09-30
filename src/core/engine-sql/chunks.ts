@@ -36,6 +36,8 @@ import { privatePagesFilterFragment } from '../search/private-visibility.ts';
 import { splitEmbeddingSignature, lockEmbeddingSources } from '../embedding-invalidation.ts';
 import { EMBED_SKIP_FILTER_FRAGMENT } from '../embed-skip.ts';
 import { QUARANTINE_FILTER_FRAGMENT } from '../quarantine.ts';
+import { SAFE_FENCE_CHUNKER_VERSION } from '../search/safe-chunks.ts';
+import { mapChunkWindowRows, type ChunkWindowOpts, type ChunkWindowPage, type ChunkWindowRequest } from '../search/chunk-windows.ts';
 import type { SqlExecutor } from './executor.ts';
 import type { LegacyUnscopedRead, ScopedRead } from './brands.ts';
 import { joinFragments, renderFragment, sqlFragment, trustedSql, type SqlFragment } from './fragment.ts';
@@ -670,6 +672,62 @@ export async function getEmbeddingsByChunkIds(exec: LegacyUnscopedRead, ids: num
     }
     return result;
   }
+
+/**
+ * Evidence delivery: ONE batched read of chunk_index windows, keyed by
+ * page_id. Every requested page is re-authorized with the search legs'
+ * visibility predicate (source scope, deleted, current text projection,
+ * archived source, quarantine, private pages, safe chunks); pages that fail
+ * are absent. Page rows carry the raw body columns (the assembler sanitizes
+ * them whole before slicing); chunk rows (sealed pages only) anchor the hits
+ * in that text. Page rows and chunk
+ * rows come back in one UNION so the row cap never hides a page's
+ * authorization.
+ */
+export async function getChunkWindows(exec: ScopedRead, requests: ChunkWindowRequest[], opts: ChunkWindowOpts): Promise<ChunkWindowPage[]> {
+  if (requests.length === 0) return [];
+  const maxRows = Math.max(0, Math.floor(opts.maxRows));
+  const scopeSql = opts.sourceIds && opts.sourceIds.length > 0
+    ? sqlFragment`AND p.source_id = ANY(${opts.sourceIds}::text[])`
+    : opts.sourceId ? sqlFragment`AND p.source_id = ${opts.sourceId}` : sqlFragment``;
+  const privateSql = opts.excludePrivate ? trustedSql(`AND ${privatePagesFilterFragment('p')}`) : sqlFragment``;
+  const safeSql = requiresSafeChunks(opts) ? trustedSql(`AND ${safeChunksFilter('p')}`) : sqlFragment``;
+  const { rows } = await exec.run(sqlFragment`
+    WITH req AS (
+      SELECT * FROM unnest(${requests.map(r => r.page_id)}::int[], ${requests.map(r => r.from_index)}::int[],
+                           ${requests.map(r => r.to_index)}::int[], ${requests.map(r => r.priority)}::int[]) AS r(page_id, lo, hi, prio)
+    ), auth AS (
+      SELECT p.id, p.slug, p.source_id, p.type, p.knowledge_revision::text AS revision, p.compiled_truth, p.timeline,
+             (COALESCE(p.chunker_version, 0) >= ${SAFE_FENCE_CHUNKER_VERSION}) AS sealed,
+             (SELECT MIN(req.prio) FROM req WHERE req.page_id = p.id) AS prio
+        FROM pages p
+        JOIN sources s ON s.id = p.source_id
+       WHERE p.id = ANY(${[...new Set(requests.map(r => r.page_id))]}::int[]) ${scopeSql}
+         AND p.deleted_at IS NULL AND ${trustedSql(currentTextProjectionFilter('p'))} AND NOT s.archived
+         AND ${trustedSql(QUARANTINE_FILTER_FRAGMENT)} ${privateSql} ${safeSql}
+    ), chunk_rows AS (
+      SELECT cc.page_id, cc.id AS chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source, a.prio
+        FROM auth a
+        JOIN content_chunks cc ON cc.page_id = a.id
+       WHERE a.sealed
+         AND cc.chunk_source = ANY(${opts.chunkSources}::text[])
+         AND COALESCE(cc.modality, 'text') = 'text'
+         AND EXISTS (SELECT 1 FROM req r WHERE r.page_id = cc.page_id AND cc.chunk_index BETWEEN r.lo AND r.hi)
+       ORDER BY a.prio, cc.page_id, cc.chunk_index
+       LIMIT ${maxRows + 1}
+    )
+    SELECT 'page' AS kind, a.id AS page_id, a.slug, a.source_id, a.type, a.revision, a.sealed, a.prio,
+           (SELECT MAX(c2.chunk_index) FROM content_chunks c2 WHERE c2.page_id = a.id) AS max_chunk_index,
+           a.compiled_truth, a.timeline,
+           NULL::int AS chunk_id, NULL::int AS chunk_index, NULL::text AS chunk_text, NULL::text AS chunk_source
+      FROM auth a
+    UNION ALL
+    SELECT 'chunk' AS kind, c.page_id, NULL, NULL, NULL, NULL, NULL, c.prio,
+           NULL, NULL, NULL, c.chunk_id, c.chunk_index, c.chunk_text, c.chunk_source
+      FROM chunk_rows c
+  `);
+  return mapChunkWindowRows(rows, maxRows);
+}
 
 export async function getChunksWithEmbeddings(exec: LegacyUnscopedRead, slug: string, opts?: { sourceId?: string; includeUnsealed?: boolean }): Promise<Chunk[]> {
     const sourceId = opts?.sourceId;
