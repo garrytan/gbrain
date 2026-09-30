@@ -1,10 +1,24 @@
-import { execFile } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { dirname, join, relative, resolve as resolvePath, sep } from 'node:path';
 import { isDurabilityHardenedAsync } from '../brain-repo-durability.ts';
+import { divergenceSafePull, type PullOutcome } from '../git-remote.ts';
 import { OperationError } from '../ops/contract.ts';
 import { persistenceHome } from './identity.ts';
 import { nativeFileTarget } from './native-file-target.ts';
+
+/**
+ * Recovery for a `git_push_unavailable` failure out of `pushGitRoot`: fast-forward
+ * local onto origin via rebase so the next push attempt can land. `pushGitRoot` is a
+ * plain `git push` with no fallback of its own — origin advancing between one root's
+ * commit and its push permanently blocks every later push for that root too, since
+ * it is now also behind. Call this from the effect worker, which already holds the
+ * worktree lock; the commit/push helpers above must never pull/rebase themselves.
+ */
+export function reconcileDivergedPush(root: string): PullOutcome {
+  const branch = execFileSync('git', ['-C', root, 'symbolic-ref', '--quiet', '--short', 'HEAD'], { encoding: 'utf8' }).trim();
+  return divergenceSafePull(root, branch);
+}
 
 function git(root: string, hooks: string, args: string[], signal?: AbortSignal): Promise<{ stdout: string; code: number }> {
   return new Promise((resolve, reject) => {

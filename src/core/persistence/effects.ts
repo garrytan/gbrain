@@ -27,7 +27,7 @@ import { prepareFileTarget } from './page-prepare.ts';
 import { isSourceDbOnlySlug } from './source-storage.ts';
 import { advanceEffectCursor, claimCoalescedGitEffects, claimPersistenceEffect, completeEffect, failEffect, parkEffect, renewPersistenceEffectClaim, requeueEffect, retryEffect, singleFileGitEffect } from './effect-journal.ts';
 import { guardEffectSource, recoverEffectPublication, reserveEffectRecovery } from './effect-recovery.ts';
-import { commitGitTargets, publishGitEffect, pushGitRoot } from './effect-git.ts';
+import { commitGitTargets, publishGitEffect, pushGitRoot, reconcileDivergedPush } from './effect-git.ts';
 import { isDurabilityHardenedAsync } from '../brain-repo-durability.ts';
 import { dispatchFactsBackstopEffect } from './effect-facts.ts';
 import { PARK_AFTER_FAILURES, type EffectRecovery, type PersistenceEffect } from './effect-model.ts';
@@ -523,7 +523,17 @@ export async function runPersistenceEffects(engine: BrainEngine, config: GBrainC
     try {
       lock = await acquireWorktree(binding, 0, undefined, engine);
       if (!lock) throw new OperationError('writer_busy', 'The canonical worktree is busy.');
-      pushed = await pushGitRoot(root, opts.signal);
+      try {
+        pushed = await pushGitRoot(root, opts.signal);
+      } catch (error) {
+        // A plain push has no fallback of its own: origin advancing between this
+        // root's commit and its push otherwise blocks every later push too, since
+        // local stays behind forever. Reconcile once, still under the same lock,
+        // and retry before giving up.
+        if (!(error instanceof OperationError) || error.code !== 'git_push_unavailable') throw error;
+        reconcileDivergedPush(root);
+        pushed = await pushGitRoot(root, opts.signal);
+      }
     } catch (error) { failure = error; } finally { await lock?.release(); }
     for (const { effect, git, target } of items) {
       try {
