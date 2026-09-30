@@ -40,7 +40,7 @@ import type { Check } from '../../doctor.ts';
  *      to be re-embedded for the wrapper to apply. Paste-ready fix:
  *      `gbrain reindex --markdown`.
  *   2. Pages with contextual_retrieval_mode IS NULL — never evaluated
- *      against the CR ladder. Same fix as (1).
+ *      against the CR ladder. Fix: `gbrain repair contextual-mode` (#5621).
  *   3. Synopsis-failure events in the audit JSONL over the last 7 days
  *      — surfaces refusals + page-level fallbacks. >5% refusal rate
  *      warns; otherwise reported as informational.
@@ -98,7 +98,7 @@ export async function checkContextualRetrievalCoverage(
     }
 
     const needsReindex = chunkerDrift > 0 || modeNull > 0;
-    const details = { unsealed_pages: unsealed, unsealed_code_pages: unsealedCode, count: 'exact', repair: 'safe-chunks' };
+    const details = { unsealed_pages: unsealed, unsealed_code_pages: unsealedCode, mode_null_pages: modeNull, count: 'exact', repair: 'safe-chunks', mode_repair: 'contextual-mode' };
     if (!needsReindex && unsealed === 0 && failureSummaryLine === '') {
       return {
         name: 'contextual_retrieval_coverage',
@@ -119,7 +119,8 @@ export async function checkContextualRetrievalCoverage(
       parts.push(`${modeNull} page(s) never evaluated against CR ladder`);
     }
     const fixHint = (unsealed > 0 ? ' Preview the re-seal: gbrain repair safe-chunks — apply: gbrain repair safe-chunks --apply.' : '')
-      + (needsReindex ? ` Run \`gbrain reindex --markdown\` to align.` : '');
+      + (modeNull > 0 ? ' Preview the mode stamp (#5621): gbrain repair contextual-mode — apply: gbrain repair contextual-mode --apply.' : '')
+      + (chunkerDrift > 0 ? ` Run \`gbrain reindex --markdown\` to align.` : '');
     return {
       name: 'contextual_retrieval_coverage',
       status: needsReindex || unsealed > 0 ? 'warn' : 'ok',

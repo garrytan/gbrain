@@ -82,6 +82,7 @@ USAGE
   gbrain reindex --markdown   [--type PAGE_TYPE] [--limit N] [--dry-run] [--no-embed] [--json] [--repo PATH]
   gbrain reindex --multimodal [--limit N] [--workers N] [--dry-run] [--cost-estimate] [--no-embed] [--yes] [--json]
   gbrain reindex --aliases    [--limit N] [--dry-run] [--json] [--source <id>]
+  gbrain reindex --vectors    [--dry-run] [--json]
 
 TARGETS (exactly one required)
   --markdown        Re-chunk markdown pages whose chunker_version lags the
@@ -91,6 +92,8 @@ TARGETS (exactly one required)
                     embedding pipeline (Voyage batches).
   --aliases         Backfill the free-text alias layer (page_aliases) for
                     pages whose frontmatter aliases predate the projection.
+  --vectors         Rebuild every HNSW vector index from the stored vectors
+                    (no re-embedding, no cost). Run after a PGLite WAL repair.
 
 OPTIONS
   --type <t>        --markdown only: restrict to one page type

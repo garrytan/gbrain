@@ -58,7 +58,7 @@ describe('CI runner routing', () => {
 
   test('security matrix labels and native platform coverage retain their identities', () => {
     const security = load('test.yml').jobs['security-regressions'];
-    expect(security.strategy!.matrix.os).toEqual(['ubuntu-latest', 'macos-latest', 'windows-latest']);
+    expect(security.strategy!.matrix.os).toEqual(['ubuntu-latest', 'macos-26', 'windows-latest']);
     for (const os of security.strategy!.matrix.os!) {
       const expression = security['runs-on']!.replace(/^\$\{\{\s*|\s*\}\}$/g, '');
       expect(runInNewContext(expression, { matrix: { os } }, { timeout: 100 })).toBe(os === 'ubuntu-latest' ? small : os);
@@ -67,14 +67,25 @@ describe('CI runner routing', () => {
     expect(targetRunners(native.jobs.native)).toEqual({
       'linux-x64-glibc': single,
       'linux-arm64-glibc': arm,
-      'darwin-arm64': 'macos-15',
-      'darwin-x64': 'macos-15-intel',
+      'darwin-arm64': 'macos-26',
+      'darwin-x64': 'macos-26-intel',
       'win32-x64': 'windows-2022',
       'win32-arm64': 'windows-11-arm',
     });
     expect(native.jobs.native.strategy!.matrix.target).toEqual(Object.keys(targetRunners(native.jobs.native)));
     expect(targetRunners(native.jobs.musl)).toEqual({ 'linux-x64-musl': single, 'linux-arm64-musl': arm });
     expect(native.jobs.musl.strategy!.matrix.target).toEqual(['linux-x64-musl', 'linux-arm64-musl']);
+  });
+
+  test('macOS 26 validation is pinned, time-boxed, label-gated on pull requests and uses no secrets', () => {
+    const text = readFileSync(join(root, '.github/workflows/macos-validation.yml'), 'utf8');
+    const workflow = safeLoad(text) as { on: Record<string, unknown>; jobs: Record<string, Job & { 'timeout-minutes'?: number; if?: string }> };
+    expect(Object.keys(workflow.on).sort()).toEqual(['pull_request', 'schedule', 'workflow_dispatch']);
+    const job = workflow.jobs['macos-26']!;
+    expect(job['runs-on']).toBe('macos-26');
+    expect(job['timeout-minutes']).toBeGreaterThan(0);
+    expect(job.if).toContain("contains(github.event.pull_request.labels.*.name, 'macos-validation')");
+    expect(text).not.toMatch(/\$\{\{[^}]*secrets\./);
   });
 
   test('status and planning jobs stay small while coverage reports retain memory headroom', () => {

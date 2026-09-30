@@ -74,10 +74,25 @@ even if a custom base URL still serves its old model.
    gate in [spend-controls](../operations/spend-controls.md)). Unlike the pure
    cost gates there, `spend.posture=tokenmax` does **not** bypass this one:
    this gate guards both destructive work and bounded provider attempts.
-   `--yes` confirms the operation; it does not waive the cap. Retries retain
-   pre-dispatch debits, including requests with uncertain outcomes. Raising
-   the total cap explicitly authorizes more work. Unknown pricing or a
-   missing conservative provider input ceiling refuses before dispatch.
+   `--yes` confirms the operation; it does not waive the cap. The plan prints a
+   **worst-case authorization** beside the estimate: every planned provider
+   request (probes, chunks per page, chunks that projection recovery will
+   rebuild, fact batches, smoke-check queries) at its
+   maximum input size, where a request's maximum is one token per UTF-8 byte
+   of its texts. A cap below the worst case (plus any debits a resumed run
+   already holds) refuses with `embedding_budget_below_worst_case` before any
+   provider call or vector change; the refusal names your cap, the worst case
+   and the exact `--max-cost-usd` value that covers it. Each attempt reserves
+   its maximum, then settles to the provider's reported usage, so the unused
+   headroom returns and retries and batch splits draw from it. A provider
+   token-limit rejection bills nothing and releases its reservation, so the
+   gateway's split of that batch fits inside the same worst case. A response
+   without usage, or a crash before settlement, keeps the maximum debit.
+   Usage above the reservation is debited, recorded as overshoot, and stops
+   further dispatch until you re-run with `--max-cost-usd`. A reranker without
+   a price is left out of the worst case with a warning; its probe refuses
+   without dispatch and the switch is reported as failed. Raising the total
+   cap explicitly authorizes more work. Unknown pricing refuses before dispatch.
 3. **Live probe.** After checking environment and embedding-enabled policy,
    one tiny embed against the TARGET provider before any
    vector invalidation — validates the API key, model id, and dimension
@@ -168,7 +183,7 @@ brain selection when inspecting status; do not blindly retry or reset the migrat
 | Failure | Action before retrying | Partial state to inspect |
 | --- | --- | --- |
 | `locked` | Check the existing holder; let it finish or deliberately stop it, then inspect status. | A previous holder may have committed progress or debits. |
-| `refused` | Resolve the named environment mismatch or deliberately choose whether to resume or retarget. | An earlier migration and its authorization may still be live. |
+| `refused` | Resolve the named environment mismatch or deliberately choose whether to resume or retarget. For `embedding_budget_below_worst_case`, re-run with the printed `--max-cost-usd` value or keep the current model. | An earlier migration and its authorization may still be live. The budget refusal itself changed nothing. |
 | `probe_failed` (operation: `failed`) | Check provider configuration and the reported dimensions before authorizing another attempt. | An authorized probe debit may remain even when invalidation did not run. |
 | `apply_failed` (operation: `failed`) | Inspect the specific blocker first. Restore an archived source with `gbrain sources restore <id>` only after owner approval; unsealed unsupported projections need their original importer. Resolve configuration, database, or ownership errors before retrying. | Canonical repairs, schema/config changes, vectors, and debits may have committed in earlier phases. |
 | `retained_vectors_blocked` within `apply_failed` (operation: `failed`) | Inspect both the retained page-chunk/fact/take counts and the archived-page blocked-work count. Migration can lack an eligible rebuild path even when vectors are already missing. Preserve the data and obtain the owner's retention/recovery decision before retrying. | Refusal does not undo earlier committed progress or authorization debits. |
@@ -212,10 +227,12 @@ of prior debits. The CLI does not infer that a failure means zero writes.
    `gbrain migrate embeddings --to openai:text-embedding-3-small --dim 1536 --reranker off --max-cost-usd 1 --yes --json`.
    The dollar amount is an operator-chosen total limit, not a price quote.
    A batch size is not a spending cap. The preview character-based cost is
-   an estimate; admission reserves conservative per-attempt token ceilings.
+   an estimate; the cap must cover the printed worst-case authorization, and
+   each attempt reserves its maximum input size before settling to reported usage.
 4. An incomplete or failed apply exits nonzero. Read `--status` before
    repeating the same command. Already-correct chunks/facts are not sent
-   again. A crash, timeout or provider refusal does not refund a debit.
+   again. A crash, timeout or provider refusal without reported usage keeps
+   that attempt's maximum debit.
    If the cap is exhausted, fix the underlying provider problem and explicitly
    raise the **total** authorization to continue. Do not reset the marker.
    Projection recovery may have made durable progress even when migration

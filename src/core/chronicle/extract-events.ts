@@ -10,6 +10,8 @@
 // configured it returns zero events (auto-emit is a no-op, never an error).
 import type { BrainEngine } from '../engine.ts';
 import { computeContentHash } from '../ingestion/types.ts';
+import { maintenancePreflight, publishMaintenancePage } from '../persistence/prepared-maintenance.ts';
+import { serializeMarkdown } from '../markdown.ts';
 
 export interface ChronicleEventProposal {
   when: string;            // ISO datetime or YYYY-MM-DD
@@ -123,6 +125,9 @@ export async function runChronicleExtract(
     : typeof fm.date === 'string' ? fm.date
     : null;
   const attendees = collectAttendees(fm);
+  // #5523: a managed brain refuses the legacy putPage/projection writers.
+  // Claim maintenance authority before judge spend; null when unmanaged.
+  const maintenance = await maintenancePreflight(engine, sourceId);
 
   const judge = opts.judge ?? defaultJudge(engine);
   let result: ChronicleJudgeResult;
@@ -157,18 +162,27 @@ export async function runChronicleExtract(
     const day = isoDay(when, tz);
     const hash = computeContentHash(`${who.join(',')}|${ev.what}|${opts.slug}`).slice(0, 8);
     const eventSlug = `life/events/${day}-${hash}`;
+    const title = ev.what.slice(0, 120);
+    const compiledTruth = `${ev.what} — see [[${opts.slug}]].`;
+    const event = { when, who, what: ev.what, where: ev.where ?? null, kind: normalizeKind(ev.kind), depth: opts.slug };
+    if (maintenance) {
+      // Database-only: life/events/ is derived machine output. event_date feeds
+      // the importer's effective_date, matching the legacy column.
+      const snapshot = await engine.readPageSnapshot(eventSlug, { sourceId, includeDeleted: true });
+      if (snapshot?.page.deleted_at) continue; // an operator deleted this event; never resurrect it
+      await publishMaintenancePage(engine, maintenance, eventSlug,
+        serializeMarkdown({ event, event_date: when, captured_via: 'life-chronicle:auto' }, compiledTruth, '',
+          { type: 'event', title, tags: [] }),
+        { expectedRevision: snapshot?.revision ?? null, file: false,
+          eventProjection: { depth_slug: opts.slug, date: day, summary: ev.what } });
+      written++;
+      continue;
+    }
     await engine.putPage(eventSlug, {
       type: 'event',
-      title: ev.what.slice(0, 120),
-      compiled_truth: `${ev.what} — see [[${opts.slug}]].`,
-      frontmatter: {
-        type: 'event',
-        event: {
-          when, who, what: ev.what, where: ev.where ?? null,
-          kind: normalizeKind(ev.kind), depth: opts.slug,
-        },
-        captured_via: 'life-chronicle:auto',
-      },
+      title,
+      compiled_truth: compiledTruth,
+      frontmatter: { type: 'event', event, captured_via: 'life-chronicle:auto' },
       effective_date: safeDate(when),
     }, { sourceId });
     await engine.upsertEventProjection({

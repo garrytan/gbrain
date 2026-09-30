@@ -574,10 +574,12 @@ export function buildWalRepairNotice(receipt: WalRepairReceipt): string {
     '⚠️  gbrain repaired this brain\'s PGLite WAL in place.',
     `    Data dir: ${receipt.dataDir}`,
     `    Cause: torn WAL/checkpoint state from an unclean shutdown (issue #223 class).`,
-    `    Data files were preserved; transactions not checkpointed before the`,
-    `    corruption may be lost (the standard pg_resetwal caveat).`,
+    `    Transactions not checkpointed before the corruption may be lost, and`,
+    `    indexes are not rebuilt: pages written just before the crash can be`,
+    `    missing from vector search while keyword search still finds them.`,
     `    Pre-repair backup: ${receipt.backupPath}`,
-    `    Recommended: run \`gbrain doctor\` to verify brain integrity.`,
+    `    Next: rebuild the vector indexes with \`gbrain reindex --vectors\`,`,
+    `    then run \`gbrain doctor\` to verify brain integrity.`,
     `    Disable auto-repair with GBRAIN_PGLITE_WAL_REPAIR=off.`,
   ].join('\n');
 }

@@ -5,16 +5,17 @@
 // max_wal_size down with ALTER SYSTEM so a small machine exercises the same
 // eviction-plus-inline-checkpoint path as a multi-GB store, then spawns the
 // worker as a separate process and watches it from outside: worker CPU from
-// /proc, committed-page progress from the worker's progress file, WAL volume
+// /proc (from `ps` on macOS), committed-page progress from the worker's progress file, WAL volume
 // and checkpoint activity from the data directory. A wedge is a worker that
 // burns CPU with no committed page and no checkpoint progress for
 // --stall-sec. The run fails on a wedge, on the --timeout-sec cap, or when WAL
 // written since the last redo ever exceeds the guard threshold plus the
-// largest single transaction.
+// largest single transaction, or when --min-store-gb is set and the final
+// data directory is smaller than that many GiB.
 //
 //   bun scripts/pglite-checkpoint-harness/supervisor.ts --dir /tmp/h --pages 3000 \
 //     --shared-buffers 16MB --max-wal-size 32MB --stall-sec 120 --timeout-sec 1800
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync, rmSync, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
@@ -33,6 +34,7 @@ const stallSec = Number(arg('stall-sec', '600'));
 const timeoutSec = Number(arg('timeout-sec', '1800'));
 const fresh = process.argv.includes('--fresh');
 const expectWedge = process.argv.includes('--expect-wedge');
+const minStoreGb = Number(arg('min-store-gb', '0'));
 const dataDir = join(dir, 'brain.pglite');
 const progressPath = join(dir, 'progress.ndjson');
 
@@ -47,6 +49,13 @@ function dirBytes(path: string): number {
 }
 function cpuTicks(pid: number): number | null {
   try {
+    if (process.platform !== 'linux') {
+      // `ps` reports cumulative CPU as [[dd-]hh:]mm:ss.ss; convert to 1/100 s ticks.
+      const time = execFileSync('ps', ['-o', 'time=', '-p', String(pid)], { encoding: 'utf8' }).trim();
+      const [days, clock] = time.includes('-') ? time.split('-') as [string, string] : ['0', time];
+      const seconds = clock.split(':').reduce((total, part) => total * 60 + Number(part), 0) + Number(days) * 86400;
+      return Number.isFinite(seconds) ? Math.round(seconds * 100) : null;
+    }
     const fields = readFileSync(`/proc/${pid}/stat`, 'utf8').split(') ')[1]!.split(' ');
     return Number(fields[11]) + Number(fields[12]);
   } catch { return null; }
@@ -144,10 +153,13 @@ for (let k = 0; k < committed.length; k++) {
 }
 const walBound = guardThresholdBytes + maxTransactionWal;
 const walWithinBound = maxSinceRedo <= walBound;
+const storeBytes = dirBytes(dataDir);
+const storeLargeEnough = storeBytes >= minStoreGb * 2 ** 30;
 const report = { event: 'result', ...verdict, committed: committed.length, max_wal_since_redo: maxSinceRedo,
   max_transaction_wal: maxTransactionWal, wal_bound: Math.round(walBound), wal_within_bound: walWithinBound,
-  elapsed_sec: Math.round((Date.now() - started) / 1000) };
+  store_bytes: storeBytes, store_bytes_without_wal: storeBytes - dirBytes(join(dataDir, 'pg_wal')), min_store_gb: minStoreGb,
+  store_large_enough: storeLargeEnough, platform: `${process.platform}-${process.arch}`, elapsed_sec: Math.round((Date.now() - started) / 1000) };
 console.log(JSON.stringify(report));
 writeFileSync(join(dir, 'result.json'), JSON.stringify(report, null, 2));
 if (expectWedge) process.exit(verdict.verdict === 'wedged' ? 0 : 1);
-process.exit(verdict.verdict === 'completed' && walWithinBound ? 0 : 1);
+process.exit(verdict.verdict === 'completed' && walWithinBound && storeLargeEnough ? 0 : 1);

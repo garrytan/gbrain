@@ -55,7 +55,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 
 import type { BrainEngine } from '../engine.ts';
-import { assertUnmanagedCanonicalWriter } from '../persistence/maintenance.ts';
+import { managedDerivedFactsPreflight, withDerivedFactsWrite } from '../persistence/derived-facts.ts';
 import {
   resolveSupersededByRow,
   supersessionChainOf,
@@ -438,8 +438,12 @@ export async function runExtractFacts(
   engine: BrainEngine,
   opts: ExtractFactsOpts = {},
 ): Promise<ExtractFactsResult> {
-  await assertUnmanagedCanonicalWriter(engine, 'legacy fact-fence reconciliation');
   const sourceId = opts.sourceId ?? 'default';
+  // Managed brains reconcile the same way, but each database write commits
+  // inside the coordinator's source capability under the page key.
+  const managed = await managedDerivedFactsPreflight(engine, sourceId);
+  const transact = <T>(slugs: string[], fn: (tx: BrainEngine) => Promise<T>): Promise<T> =>
+    managed ? withDerivedFactsWrite(engine, sourceId, slugs, fn) : engine.transaction(fn);
   const result: ExtractFactsResult = {
     pagesScanned: 0,
     pagesWithFacts: 0,
@@ -601,7 +605,7 @@ export async function runExtractFacts(
   // forgotten claims expired). Rows of a page that simply has no DB row yet
   // (a fence write ahead of sync) are untouched.
   if (!opts.dryRun) {
-    const expired = await engine.executeRaw<{ id: number }>(
+    const expireDeleted = (db: BrainEngine) => db.executeRaw<{ id: number }>(
       `UPDATE facts f SET expired_at = now()
         WHERE f.source_id = $1 AND f.row_num IS NOT NULL AND f.expired_at IS NULL
           AND EXISTS (SELECT 1 FROM pages p
@@ -610,6 +614,9 @@ export async function runExtractFacts(
         RETURNING f.id`,
       [sourceId],
     );
+    // Managed: one page at a time under its key, so a concurrent restore is
+    // either seen as restored or waited for, never expired underneath it.
+    const expired = managed ? await expireDeletedPagesManaged(engine, sourceId, transact) : await expireDeleted(engine);
     result.factsExpiredForDeletedPages = expired.length;
   }
 
@@ -812,7 +819,7 @@ export async function runExtractFacts(
 
     const apply = async () => {
       try {
-        return await engine.transaction(async tx => {
+        return await transact([slug], async tx => {
           opts.signal?.throwIfAborted();
           const current = await tx.getPage(slug, { sourceId });
           if (!current || current.compiled_truth !== page.compiled_truth || current.timeline !== page.timeline) return null;
@@ -898,7 +905,8 @@ export async function runExtractFacts(
   // v0.42 Wave B3: receipt + rollup. extract_facts is deterministic
   // (fence reconcile, no LLM cost); receipt only when facts were
   // actually inserted; rollup always fires.
-  if (!opts.dryRun && result.factsInserted > 0) {
+  // Receipt pages are unmanaged-only, like extract_atoms'; the rollup below still books the run.
+  if (!opts.dryRun && !managed && result.factsInserted > 0) {
     const runId = `efacts-${Date.now().toString(36)}-${sourceId.slice(0, 4)}`;
     try {
       await writeReceipt(engine, {
@@ -930,4 +938,25 @@ export async function runExtractFacts(
   }
 
   return result;
+}
+
+async function expireDeletedPagesManaged(engine: BrainEngine, sourceId: string,
+  transact: <T>(slugs: string[], fn: (tx: BrainEngine) => Promise<T>) => Promise<T>): Promise<Array<{ id: number }>> {
+  const pages = await engine.executeRaw<{ slug: string }>(
+    `SELECT DISTINCT f.source_markdown_slug AS slug FROM facts f
+      WHERE f.source_id = $1 AND f.row_num IS NOT NULL AND f.expired_at IS NULL
+        AND EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id AND p.slug = f.source_markdown_slug AND p.deleted_at IS NOT NULL)`,
+    [sourceId],
+  );
+  const expired: Array<{ id: number }> = [];
+  for (const { slug } of pages) {
+    expired.push(...await transact([slug], tx => tx.executeRaw<{ id: number }>(
+      `UPDATE facts f SET expired_at = now()
+        WHERE f.source_id = $1 AND f.source_markdown_slug = $2 AND f.row_num IS NOT NULL AND f.expired_at IS NULL
+          AND EXISTS (SELECT 1 FROM pages p WHERE p.source_id = $1 AND p.slug = $2 AND p.deleted_at IS NOT NULL)
+        RETURNING f.id`,
+      [sourceId, slug],
+    )));
+  }
+  return expired;
 }

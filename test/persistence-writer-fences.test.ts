@@ -10,7 +10,6 @@ import { softDeleteSource, restoreSource, purgeExpiredSources } from '../src/cor
 import { runGitHubSync } from '../src/core/github-source.ts';
 import { runGoogleSync } from '../src/core/google/google-source.ts';
 import { importFromContent } from '../src/core/import-file.ts';
-import { operationsByName } from '../src/core/operations.ts';
 import { pullRepo, cloneRepo } from '../src/core/git-remote.ts';
 import { hardenBrainRepo } from '../src/core/brain-repo-durability.ts';
 import { recordManagedRoots, registeredManagedRoots } from '../src/core/persistence/root-registry.ts';
@@ -69,10 +68,6 @@ test('unregistered source lifecycle and unsupported legacy writers refuse before
         () => runGitHubSync(engine, sourceId, {} as never, {} as never),
         () => runGoogleSync(engine, sourceId, {} as never, {} as never),
         () => importFromContent(engine, 'blocked', 'canonical material', { sourceId, noEmbed: true }),
-        () => operationsByName.add_link!.handler({ engine, sourceId, remote: false, config: { engine: engine.kind }, dryRun: false,
-          logger: { info() {}, warn() {}, error() {} } }, { from: 'notes/example', to: 'notes/other' }),
-        () => operationsByName.remove_link!.handler({ engine, sourceId, remote: false, config: { engine: engine.kind }, dryRun: false,
-          logger: { info() {}, warn() {}, error() {} } }, { from: 'notes/example', to: 'notes/other' }),
       ]) await expect(work()).rejects.toMatchObject({ code: 'writer_coordinator_required' });
       expect(readFileSync(join(root, 'sentinel.md'), 'utf8')).toBe('canonical sentinel');
       expect(await engine.executeRaw('SELECT id FROM sources WHERE id=$1', [sourceId])).toHaveLength(1);

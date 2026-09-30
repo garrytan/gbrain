@@ -24,7 +24,7 @@ if (input.crash) {
   engine.transaction = async function <T>(this: BrainEngine, run: (tx: BrainEngine) => Promise<T>): Promise<T> {
     const result = await transaction.call(this, run);
     const row = result as Partial<WriteRequest> | undefined;
-    if (row?.state === 'committed' && row.intent?.kind === 'managed_connector_google_receipts') {
+    if (row?.state === 'committed' && row.intent?.kind === 'connector_v2_google_receipts') {
       if (outboundCalls) throw new Error('Historical lifecycle repair attempted outbound requests');
       writeSync(1, 'MEMORY_WAVE_CRASH after_metadata_commit\n');
       process.kill(process.pid, 'SIGKILL');

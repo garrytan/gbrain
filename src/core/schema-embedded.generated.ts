@@ -138,6 +138,10 @@ CREATE TABLE IF NOT EXISTS pages (
   -- path). Powers \`gbrain extract --stale\` + the \`links_extraction_lag\` doctor
   -- check. NULL = never extracted.
   links_extracted_at    TIMESTAMPTZ,
+  -- #5254 (migration v177): 'unbound_source' marks a page written database-only
+  -- while its filesystem source had no canonical owner. Writes and sync after
+  -- binding keep it database-only. NULL for every other page.
+  database_only_reason  TEXT,
   -- v0.40.3.0 contextual retrieval (renumbered from v81 to v90 on master
   -- merge). contextual_retrieval_mode is what tier the page was last embedded
   -- under (NULL = pre-v90 = treated as 'none' for drift detection).

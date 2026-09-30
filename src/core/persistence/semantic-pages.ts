@@ -9,6 +9,8 @@ import type { PreparedMutation } from './coordinator.ts';
 import type { WriteRequest } from './model.ts';
 import { assertPageRevision } from '../page-state/types.ts';
 import { engineMutationPrecondition, parseMutationPrecondition } from './preconditions.ts';
+import { materializedMarker } from '../timeline-marker.ts';
+import { isConnectorSourceKind } from './connector-identity.ts';
 
 function hasExactBlock(text: string, block: string): boolean {
   const wanted = block.trimEnd().split('\n');
@@ -33,12 +35,16 @@ export async function prepareSemanticPageMutation(engine: BrainEngine, row: Writ
   const entry = { date: String(p.date), summary: String(p.summary), source: String(p.source ?? ''), detail: String(p.detail ?? '') };
   const rendered = renderTimelineEntry(entry, row.slug);
   if (!rendered) throw new OperationError('invalid_params', 'The timeline entry cannot be represented losslessly in Markdown.');
-  const exact = hasExactBlock(snapshot.page.timeline, rendered.block);
+  // #5567: a connector re-renders its pages from the provider, which never holds this entry. The
+  // materialized marker makes the connector's preserving render carry the bullet forward instead of deleting it.
+  const [source] = await engine.executeRaw<{ kind: string | null }>("SELECT config->>'kind' AS kind FROM sources WHERE id=$1", [row.source_id]);
+  const block = isConnectorSourceKind(source?.kind) ? `${materializedMarker(rendered.canonical)}\n${rendered.block}` : rendered.block;
+  const exact = hasExactBlock(snapshot.page.timeline, block);
   const tuples = extractTimelineFromContent(`${snapshot.page.compiled_truth}\n<!-- timeline -->\n${snapshot.page.timeline}`, row.slug);
   if (!exact && tuples.some(tuple => tuple.date === rendered.canonical.date && tuple.source === rendered.canonical.source && tuple.summary === rendered.canonical.summary)) {
     throw new OperationError('invalid_params', 'This timeline identity already exists with different detail.', 'Read and conditionally edit the existing page to change that entry.');
   }
-  const page = { ...snapshot.page, timeline: exact ? snapshot.page.timeline : spliceTimelineBlock(snapshot.page.timeline, entry.date, rendered.block) };
+  const page = { ...snapshot.page, timeline: exact ? snapshot.page.timeline : spliceTimelineBlock(snapshot.page.timeline, entry.date, block) };
   const prepared = await preparePageMutation(engine, row, config, {
     expectedRevision: snapshot.revision, content: serializePageToMarkdown(page, snapshot.tags),
   });

@@ -413,8 +413,8 @@ const purge_deleted_pages: Operation = {
   handler: async (ctx, p) => {
     const olderThanHours = (p.older_than_hours as number | undefined) ?? 72;
     if (ctx.dryRun) return { dry_run: true, action: 'purge_deleted_pages', older_than_hours: olderThanHours };
-    const result = await ctx.engine.purgeDeletedPages(olderThanHours);
-    return { status: 'purged', count: result.count, slugs: result.slugs };
+    const result = await (await import('../persistence/purge-deleted.ts')).purgeDeletedPagesCoordinated(ctx.engine, olderThanHours);
+    return { status: result.failed ? 'partial' : 'purged', count: result.count, slugs: result.slugs, ...(result.blocked.length ? { blocked: result.blocked } : {}) };
   },
   cliHints: { name: 'purge-deleted' },
 };

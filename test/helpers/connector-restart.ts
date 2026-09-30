@@ -1,4 +1,5 @@
 import type { GBrainConfig } from '../../src/core/config.ts';
+import { withGoogleAccount } from './connector-fixture.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { PostgresEngine } from '../../src/core/postgres-engine.ts';
@@ -20,7 +21,7 @@ if (input.crash) {
     return transaction.call(this, async tx => {
       const result = await run(tx);
       const row = result as Partial<WriteRequest> | undefined;
-      if (row?.state === 'committed' && row.intent?.kind === 'managed_connector_import') {
+      if (row?.state === 'committed' && row.intent?.kind === 'connector_v2_import') {
         writeSync(1, 'CONNECTOR_AFTER_PUBLICATION_BEFORE_COMMIT\n');
         process.kill(process.pid, 'SIGKILL');
         await new Promise(() => {});
@@ -51,7 +52,7 @@ let failed = false;
 try {
   const options = { noEmbed: true, noExtract: true, noSchemaPack: true, retryFailed: input.retryFailed === true };
   const result = input.sourceConfig.kind === 'google'
-    ? await runGoogleSync(engine, input.sourceId, parseGoogleSourceConfig(input.sourceConfig, input.root), options, fetcher)
+    ? await runGoogleSync(engine, input.sourceId, parseGoogleSourceConfig(input.sourceConfig, input.root), options, withGoogleAccount(fetcher))
     : await runGitHubSync(engine, input.sourceId, parseGitHubSourceConfig(input.sourceConfig, input.root),
       { ...options, githubItem: { repo: 'acme-example/app', number: 1, kind: 'issue' } }, fetcher);
   process.stdout.write(`CONNECTOR_RESULT ${JSON.stringify(result)}\n`);

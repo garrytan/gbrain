@@ -24,6 +24,7 @@ import { FACT_WITHDRAWAL_SCHEMA_SQL, FACT_WITHDRAWAL_BACKFILL_SQL, FACT_WITHDRAW
 import { repairLegacyClientGrants } from './grants/migration.ts';
 import { PROJECTION_STATISTICS_SQL, verifyProjectionStatistics } from './search/projection-statistics.ts';
 import { SHARED_SKILLS_SCHEMA_SQL } from './shared-skills/schema-all.ts';
+import { migrateConnectorCheckpoints } from './persistence/connector-checkpoint-migration.ts';
 
 /**
  * When true, per-migration explanatory notices (e.g. the v123/v124 "here is
@@ -6776,6 +6777,52 @@ CREATE TRIGGER minion_queue_protocol BEFORE INSERT OR UPDATE ON minion_jobs
     name: 'tags_tag_source',
     idempotent: true,
     sql: `ALTER TABLE tags ADD COLUMN IF NOT EXISTS tag_source TEXT;`,
+  },
+  {
+    // #5686: connector checkpoints were keyed on the raw sources.config, which
+    // the cycle stamp rewrites after every run. Re-key each source's newest
+    // committed checkpoint receipt to the stable parsed-config identity, seed
+    // its connector state row (resumed or re-walking once), record the cutoff
+    // that classifies retired-format connector intents, and remove orphan
+    // checkpoint rows. Handler-only, statement-at-a-time, rerun-safe.
+    version: 176, name: 'connector_checkpoint_stable_identity', idempotent: true, sql: '',
+    handler: async engine => { await migrateConnectorCheckpoints(engine); },
+  },
+  {
+    // #5254: a page written database-only while its filesystem source had no
+    // canonical owner (persistence.unbound_write=database_only) is stamped
+    // 'unbound_source', so writes and sync after binding keep it database-only
+    // instead of materializing or overwriting it. Nullable, no backfill (no
+    // earlier binary could write such a page), no index (read per page; the
+    // doctor count scans only non-NULL rows; bootstrap-coverage: column-only).
+    // Keep in sync with src/schema.sql (regenerate schema-embedded.ts via
+    // build:schema) and src/core/pglite-schema.ts.
+    version: 177,
+    name: 'pages_database_only_reason',
+    idempotent: true,
+    sql: `ALTER TABLE pages ADD COLUMN IF NOT EXISTS database_only_reason TEXT;`,
+  },
+  {
+    // Writer-version stamps: each request records the binary version and host
+    // that admitted it and the ones that published it, so doctor's
+    // writer_version advisory can name an older writer still on the brain.
+    // Nullable and never backfilled (a past writer cannot be proven). The
+    // cutoff is the database clock at migration time: only requests admitted
+    // or published after it are expected to carry stamps. persistence_requests
+    // and persistence_brain are migration-created on PGLite and no index
+    // references these columns (bootstrap-coverage: column-only exemptions).
+    version: 178,
+    name: 'persistence_writer_version_stamps',
+    idempotent: true,
+    sql: `
+      ALTER TABLE persistence_requests ADD COLUMN IF NOT EXISTS admitter_version text;
+      ALTER TABLE persistence_requests ADD COLUMN IF NOT EXISTS admitter_host_id uuid;
+      ALTER TABLE persistence_requests ADD COLUMN IF NOT EXISTS consumer_version text;
+      ALTER TABLE persistence_requests ADD COLUMN IF NOT EXISTS consumer_host_id uuid;
+      ALTER TABLE persistence_requests ADD COLUMN IF NOT EXISTS published_at timestamptz;
+      ALTER TABLE persistence_brain ADD COLUMN IF NOT EXISTS writer_version_cutoff timestamptz;
+      UPDATE persistence_brain SET writer_version_cutoff=now() WHERE writer_version_cutoff IS NULL;
+    `,
   },
 ];
 

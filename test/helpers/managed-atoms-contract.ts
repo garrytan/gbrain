@@ -167,8 +167,9 @@ export async function exerciseManagedAtoms(engine: BrainEngine, scenario: Case):
         return;
       }
       if (scenario === 'deferred') {
-        expect(first.status).toBe('warn');
-        expect(first.details?.atoms_extracted).toBe(0);
+        // #5601: an atom batch the owner accepted but has not published is progress, not a failure.
+        expect(first.status).toBe('ok');
+        expect(first.details).toMatchObject({ write_pending: 1, failures: [] });
         expect(first.details?.write_requests).toEqual(expect.arrayContaining([expect.objectContaining({ state: 'queued' })]));
         await disposePersistenceConsumer(engine);
         const pending = await engine.executeRaw('SELECT request_id,state,outcome FROM persistence_requests WHERE source_id=$1 ORDER BY sequence', [sourceId]);

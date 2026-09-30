@@ -49,6 +49,7 @@ import { inspectLock } from '../core/db-lock.ts';
 import { registerCleanup } from '../core/process-cleanup.ts';
 import { loadAllSources, sourceConfigHasRemoteUrl, sourceLocalPathSkipWarning, relativeSourceLocalPathSkipWarning } from '../core/sources-load.ts';
 import { isSyncDisabledConfig } from '../core/sync-policy.ts';
+import { loadActivationPendingSourceIds, skipActivationPendingSync } from '../core/sync-policy.ts';
 import { resolveAutopilotDispatchTimeoutMs } from './autopilot-timeout.ts';
 import {
   autopilotRemediationIdempotencyKey,
@@ -63,6 +64,8 @@ import {
   autopilotLockPath,
   autopilotDisabledMarkerPath,
   autopilotPausedMarkerPath,
+  autopilotPaused,
+  autopilotPauseReason,
   autopilotDisableStrikesPath,
   autopilotLaunchdLabel,
   markerHolderAlive,
@@ -515,7 +518,7 @@ async function attemptAutopilotSelfUpgrade(
 }
 
 /** Flags that consume the following argv token as their value (#1525). */
-const AUTOPILOT_VALUE_FLAGS = new Set(['--repo', '--interval', '--target']);
+const AUTOPILOT_VALUE_FLAGS = new Set(['--repo', '--interval', '--target', '--reason']);
 
 /** Positional spellings → their canonical flags. A Map (not a plain object)
  * so prototype-chain words like `constructor` stay unknown positionals. */
@@ -523,6 +526,8 @@ const AUTOPILOT_POSITIONAL_ALIASES = new Map<string, string>([
   ['status', '--status'],
   ['install', '--install'],
   ['uninstall', '--uninstall'],
+  ['pause', '--pause'],
+  ['resume', '--resume'],
   ['help', '--help'],
 ]);
 
@@ -554,7 +559,7 @@ export function resolveAutopilotPositionals(args: string[]): string[] {
     }
     if (a === 'start') continue; // daemon start is the default action
     console.error(
-      `Unknown autopilot argument '${a}'. Expected one of: status, install, uninstall, start, help.\n` +
+      `Unknown autopilot argument '${a}'. Expected one of: status, install, uninstall, pause, resume, start, help.\n` +
       `Run 'gbrain autopilot --help' for usage.`,
     );
     process.exit(2);
@@ -598,7 +603,8 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
       'Usage: gbrain autopilot [--repo <path>] [--interval N] [--json] [--no-worker]\n' +
       '       gbrain autopilot --install [--repo <path>]\n' +
       '       gbrain autopilot --uninstall\n' +
-      '       gbrain autopilot --status [--json]\n\n' +
+      '       gbrain autopilot --status [--json]\n' +
+      '       gbrain autopilot pause [--reason <text>] | resume   (operator hold; upgrade and --install keep it)\n\n' +
       'Self-maintaining brain daemon. Runs the full maintenance cycle\n' +
       '(lint + backlinks + sync + extract + embed + orphans) on an interval.\n\n' +
       'For a one-shot cron-triggered cycle, see `gbrain dream`.',
@@ -618,6 +624,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
     runAutopilotStatus(args);
     return;
   }
+  if (args.includes('--pause') || args.includes('--resume')) return (await import('./autopilot-pause.ts')).runAutopilotPauseCommand(args);
 
   const repoPath = parseArg(args, '--repo') || await engine.getConfig('sync.repo_path');
   // Same NaN guard as the status path: a typo'd interval would otherwise
@@ -945,7 +952,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
     // heartbeat so a paused daemon still reads as alive, and BEFORE any DB
     // work so a cross-engine migration is not racing our writes into an
     // engine that is about to stop being the configured one.
-    if (existsSync(autopilotPausedMarkerPath())) {
+    if (autopilotPaused()) {
       // Self-heal an orphan: a migrate-owned marker whose recorded pid is dead
       // was leaked by a killed migration (SIGKILL, power loss — anything its
       // own cleanup could not catch). Nothing else ever deletes it, and an
@@ -960,7 +967,8 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
       if (orphaned) {
         console.log('[autopilot] clearing an orphaned pause marker (its migrate process is dead); resuming.');
         try { unlinkSync(autopilotPausedMarkerPath()); } catch { /* already gone */ }
-      } else {
+      }
+      if (autopilotPaused()) {
         if (!pausedAnnounced) {
           console.log('[autopilot] paused (autopilot-paused marker present) — skipping cycles until it clears.');
           pausedAnnounced = true;
@@ -1128,6 +1136,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
           const { isFederatedV2Enabled } = await import('../core/feature-flags.ts');
           if (await isFederatedV2Enabled(engine)) {
             const sources = await loadAllSources(engine);
+            const activationPending = await loadActivationPendingSourceIds(engine);
             const intervalMs = baseInterval * 1000;
             const now = Date.now();
             for (const src of sources) {
@@ -1136,6 +1145,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
               // sync (this loop, the full-cycle fan-out, `sync --all`); an
               // explicit `gbrain sync --source <id>` is unaffected.
               if (isSyncDisabledConfig(src.config)) continue;
+              if (skipActivationPendingSync(activationPending, src.id, 'freshness_sync_skipped', jsonMode, (l) => process.stderr.write(l + '\n'))) continue; // #5198
               // A local_path this machine cannot use — relative (#3696: cwd is
               // launchd's, not the registering shell's) or absent on disk and
               // not a managed clone sync can re-create — would sync a phantom
@@ -2653,10 +2663,7 @@ function showStatus(json: boolean, intervalSeconds: number) {
     disabledReason = readFileSync(autopilotDisabledMarkerPath(), 'utf-8').trim() || null;
   } catch { /* not self-disabled */ }
 
-  let pausedReason: string | null = null;
-  try {
-    pausedReason = readFileSync(autopilotPausedMarkerPath(), 'utf-8').trim() || 'pause marker present (no reason recorded)';
-  } catch { /* not paused */ }
+  const pausedReason = autopilotPauseReason();
 
   let heartbeatAgeSeconds: number | null = null;
   try {
@@ -2689,8 +2696,8 @@ function showStatus(json: boolean, intervalSeconds: number) {
         break;
       case 'paused':
         console.log(`Autopilot: PAUSED — ${report.paused_reason}`);
-        console.log('  A pause marker is parked at ' + autopilotPausedMarkerPath() + '.');
-        console.log('  Normal while `gbrain migrate` runs. A marker orphaned by a dead migration');
+        if (report.paused_reason?.startsWith('operator pause')) { console.log('  Operator pause on this host. Resume with: gbrain autopilot resume'); break; }
+        console.log('  A pause marker is parked at ' + autopilotPausedMarkerPath() + '. Normal while `gbrain migrate` runs. A marker orphaned by a dead migration');
         console.log('  clears itself on the daemon\'s next poll; only remove it by hand if the');
         console.log('  pid it names is dead and no daemon is running to clean it up.');
         break;

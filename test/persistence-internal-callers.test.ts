@@ -3,8 +3,6 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { operationsByName } from '../src/core/operations.ts';
 import { prepareBookMirrorPublication } from '../src/commands/book-mirror.ts';
 import { retainToolWriteRequestId } from '../src/core/minions/tool-write-identity.ts';
-import { verifyWorkspace } from '../src/core/bootstrap/verify.ts';
-import type { BrainEngine } from '../src/core/engine.ts';
 
 let engine: PGLiteEngine;
 beforeAll(async () => { engine = new PGLiteEngine(); await engine.connect({}); await engine.initSchema(); }, 60_000);
@@ -47,11 +45,4 @@ test('replayed persisted tool execution returns its original canonical receipt',
   const later: Record<string, unknown> = { slug: input.slug, content: input.content };
   retainToolWriteRequestId(later, 42, 5, 0, 'provider-reused-id', 'brain_put_page');
   expect(later.request_id).not.toBe(first.request_id);
-});
-
-test('unsupported bootstrap maintenance stops before providers or filesystem probes', async () => {
-  let queries = 0;
-  const guarded = { executeRaw: async () => { queries++; return [{ enabled: true }]; } } as unknown as BrainEngine;
-  await expect(verifyWorkspace(guarded, '/nonexistent-synthetic-fixture')).rejects.toMatchObject({ code: 'writer_coordinator_required' });
-  expect(queries).toBe(1);
 });

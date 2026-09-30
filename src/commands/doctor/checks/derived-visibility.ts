@@ -37,6 +37,6 @@ export async function derivedVisibilityCheck(engine: BrainEngine, sourceId?: str
       + `Preview: gbrain repair visibility — apply: gbrain repair visibility --apply` };
   } catch (e) {
     return { name, status: 'warn', message: `derived visibility check skipped: ${e instanceof Error ? e.message : String(e)}`,
-      details: { count: 'lower_bound', truncated: true } };
+      details: { count: 'lower_bound', truncated: true, health: 'unknown' } };
   }
 }

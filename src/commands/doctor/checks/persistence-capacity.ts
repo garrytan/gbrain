@@ -34,6 +34,6 @@ export async function checkPersistenceCapacity(engine: BrainEngine): Promise<Che
   } catch (error) {
     return { name: 'persistence_capacity', status: 'warn',
       message: `Managed write capacity could not be read: ${error instanceof Error ? error.message : String(error)}. Health is unknown.`,
-      details: { exact: false, inspected: 0, truncated: true } };
+      details: { exact: false, inspected: 0, truncated: true, health: 'unknown' } };
   }
 }

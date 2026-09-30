@@ -39,6 +39,8 @@ import { createHash } from 'node:crypto';
 import { slugifySegment } from '../sync.ts';
 import { validatePageSlug } from '../ops/context.ts';
 import { privatePagesFilterFragment, strictestVisibility, type Visibility } from '../search/private-visibility.ts';
+import { maintenancePreflight } from '../persistence/prepared-maintenance.ts';
+import { addManagedProvenanceLinks, CONCEPT_DEFERRAL_CODES, CONCEPT_HOLD_CODES, publishManagedConcept } from './concept-publication.ts';
 
 const DEFAULT_BUDGET_USD = 1.5;
 // Canonical-miss policy — mirrors skillopt/preflight.ts's lookupPrice:
@@ -287,6 +289,15 @@ export async function runPhaseSynthesizeConcepts(
     fallback: 'sonnet',
   });
   const synthMaxOutputTokens = resolveSynthMaxOutputTokens(synthModel);
+  // #5484: a managed brain refuses the legacy importFromContent writer. Claim
+  // maintenance authority before any model spend so a missing canonical owner
+  // fails fast; null on an unmanaged brain.
+  const maintenance = opts.dryRun ? null : await maintenancePreflight(engine, opts.sourceId ?? 'default', opts.brainDir);
+  // Managed publication outcomes, kept out of `failures` (LLM fallback). A
+  // deferred concept moved under a concurrent writer and is retried next run;
+  // a held concept cannot be republished without losing canonical material.
+  const publicationDeferred: Array<{ concept: string; reason: string }> = [];
+  const publicationHeld: Array<{ concept: string; reason: string }> = [];
   const skippedHumanOwned: string[] = [];
   const skippedUnchanged: string[] = [];
   const keptExistingNarrative: string[] = [];
@@ -294,7 +305,8 @@ export async function runPhaseSynthesizeConcepts(
     const conceptSlug = `concepts/${group.conceptSlug}`;
     // A concept page this phase did not write belongs to a human (or another
     // writer). Check before any spend; never replace its body.
-    const existing = await engine.getPage(conceptSlug, { sourceId: opts.sourceId ?? 'default' });
+    const existingSnapshot = await engine.readPageSnapshot(conceptSlug, { sourceId: opts.sourceId ?? 'default' });
+    const existing = existingSnapshot?.page ?? null;
     if (existing && !String(existing.frontmatter?.synthesized_by ?? '').startsWith('synthesize_concepts')) {
       skippedHumanOwned.push(conceptSlug);
       continue;
@@ -403,28 +415,48 @@ export async function runPhaseSynthesizeConcepts(
       // the page is chunked (+ embedded when a provider is configured) —
       // mirrors put_page's isAvailable('embedding') → noEmbed gate.
       const synthesizedAt = new Date().toISOString();
-      const publish = (pageVisibility: Visibility) => importFromContent(engine, conceptSlug, serializeMarkdown(
-        {
-          tier: group.tier,
-          mention_count: group.atomTitles.length,
-          composite_score: group.atomTitles.length,
-          synthesis_mode: synthesisMode,
-          member_hash: memberHash,
-          synthesized_at: synthesizedAt,
-          synthesized_by: 'synthesize_concepts-v0.41',
-          visibility: pageVisibility,
-        },
-        narrative,
-        '',
-        { type: 'concept', title: title.replace(/-/g, ' '), tags: [] },
-      ), {
-        noEmbed: !isAvailable('embedding'),
-        // #4416: target the cycle's resolved source, not the 'default' literal.
-        sourceId: opts.sourceId,
+      const synthesized = (pageVisibility: Visibility) => ({
+        tier: group.tier,
+        mention_count: group.atomTitles.length,
+        composite_score: group.atomTitles.length,
+        synthesis_mode: synthesisMode,
+        member_hash: memberHash,
+        synthesized_at: synthesizedAt,
+        synthesized_by: 'synthesize_concepts-v0.41',
+        visibility: pageVisibility,
       });
+      // Each managed publication is bound to the revision the narrative was
+      // synthesized from, then to the previous publication's result.
+      let conceptRevision = existingSnapshot?.revision ?? null;
+      const publish = async (pageVisibility: Visibility): Promise<void> => {
+        if (maintenance) {
+          conceptRevision = await publishManagedConcept(engine, maintenance, conceptSlug, synthesized(pageVisibility), narrative,
+            conceptRevision, opts.brainDir);
+          return;
+        }
+        await importFromContent(engine, conceptSlug, serializeMarkdown(synthesized(pageVisibility), narrative, '',
+          { type: 'concept', title: title.replace(/-/g, ' '), tags: [] }), {
+          noEmbed: !isAvailable('embedding'),
+          // #4416: target the cycle's resolved source, not the 'default' literal.
+          sourceId: opts.sourceId,
+        });
+      };
+      // A managed publication that lost a revision race or would lose canonical
+      // material is recorded and skipped; any other error stops the phase.
+      const publishOrRecord = async (pageVisibility: Visibility): Promise<boolean> => {
+        try { await publish(pageVisibility); return true; } catch (err) {
+          const code = (err as { code?: unknown }).code;
+          if (!maintenance || typeof code !== 'string') throw err;
+          const reason = `${code}: ${(err as Error).message}`;
+          if (CONCEPT_DEFERRAL_CODES.has(code)) publicationDeferred.push({ concept: group.conceptSlug, reason });
+          else if (CONCEPT_HOLD_CODES.has(code)) publicationHeld.push({ concept: group.conceptSlug, reason });
+          else throw err;
+          return false;
+        }
+      };
       // #5525: a world concept stays private until every member's provenance
       // edge is durable, because a later private flip reaches it through them.
-      await publish('private');
+      if (!await publishOrRecord('private')) continue;
       // #4589: bank concept<->member-atom provenance edges. The prompt forbids
       // enumerating atoms in the body and no frontmatter field maps to a link
       // verb, so without this every concept page lands with zero edges (graph
@@ -439,7 +471,8 @@ export async function runPhaseSynthesizeConcepts(
         { from_slug: atomSlug, to_slug: conceptSlug, link_type: 'synthesizes', link_source: 'concept-provenance', context: 'concept synthesized from this atom', from_source_id: src, to_source_id: src },
       ]);
       try {
-        const inserted = await engine.addLinksBatch(provenanceLinks, { auditSite: 'cycle.synthesize_concepts.provenance' }); // gbrain-allow-direct-insert: concept-provenance edges derived from the synthesis itself (no markdown body to reconcile from)
+        const inserted = maintenance ? await addManagedProvenanceLinks(engine, src, provenanceLinks)
+          : await engine.addLinksBatch(provenanceLinks, { auditSite: 'cycle.synthesize_concepts.provenance' }); // gbrain-allow-direct-insert: concept-provenance edges derived from the synthesis itself (no markdown body to reconcile from)
         // Zero rows back with edges requested means every member atom fell
         // out of the batch JOIN (not in this source) — unless a prior run
         // already banked them (ON CONFLICT DO NOTHING also returns 0). A
@@ -462,7 +495,7 @@ export async function runPhaseSynthesizeConcepts(
           JOIN pages c ON c.id=l.from_page_id JOIN pages a ON a.id=l.to_page_id
           WHERE c.source_id=$1 AND c.slug=$2 AND a.slug=ANY($3::text[]) AND l.link_source='concept-provenance' AND l.link_type='synthesized_from'`,
         [src, conceptSlug, members]);
-        if (Number(linked) === members.length) await publish('world');
+        if (Number(linked) === members.length && !await publishOrRecord('world')) continue;
       }
     }
     conceptsWritten++;
@@ -480,7 +513,9 @@ export async function runPhaseSynthesizeConcepts(
   // survives only as the fallback for legacy unscoped callers. Receipt only
   // fires when concepts were actually written; rollup always fires so doctor
   // sees the phase ran.
-  if (!opts.dryRun && conceptsWritten > 0) {
+  // Managed brains skip the receipt page (a legacy putPage), like extract_atoms;
+  // the rollup row below still records the run for doctor.
+  if (!opts.dryRun && !maintenance && conceptsWritten > 0) {
     const runId = `concepts-${Date.now().toString(36)}`;
     try {
       await writeReceipt(engine, {
@@ -507,14 +542,14 @@ export async function runPhaseSynthesizeConcepts(
       kind: 'concepts',
       source_id: opts.sourceId ?? 'default',
       cost_delta: estimatedSpendUsd,
-      round_completed_delta: failures.length === 0 ? 1 : 0,
+      round_completed_delta: failures.length === 0 && publicationDeferred.length === 0 && publicationHeld.length === 0 ? 1 : 0,
       halt_delta: failures.length > 0 ? 1 : 0,
     });
   }
 
   return {
     phase: 'synthesize_concepts',
-    status: failures.length > 0 || linkWarnings.length > 0 ? 'warn' : 'ok',
+    status: failures.length > 0 || linkWarnings.length > 0 || publicationDeferred.length > 0 || publicationHeld.length > 0 ? 'warn' : 'ok',
     duration_ms: 0,
     summary:
       `synthesize_concepts: ${conceptsWritten} concepts ` +
@@ -523,7 +558,9 @@ export async function runPhaseSynthesizeConcepts(
       (linkWarnings.length > 0 ? ` (${linkWarnings.length} provenance-link warning(s))` : '') +
       (skippedHumanOwned.length > 0 ? ` (${skippedHumanOwned.length} human-owned page(s) left untouched)` : '') +
       (skippedUnchanged.length > 0 ? ` (${skippedUnchanged.length} unchanged)` : '') +
-      (keptExistingNarrative.length > 0 ? ` (${keptExistingNarrative.length} existing narrative(s) kept)` : ''),
+      (keptExistingNarrative.length > 0 ? ` (${keptExistingNarrative.length} existing narrative(s) kept)` : '') +
+      (publicationDeferred.length > 0 ? ` (${publicationDeferred.length} publication(s) deferred: page changed, retried next run)` : '') +
+      (publicationHeld.length > 0 ? ` (${publicationHeld.length} publication(s) held: existing page needs import/repair)` : ''),
     details: {
       concepts_written: conceptsWritten,
       tier_counts: tierCounts,
@@ -535,6 +572,8 @@ export async function runPhaseSynthesizeConcepts(
       skipped_human_owned: skippedHumanOwned,
       skipped_unchanged: skippedUnchanged,
       kept_existing_narrative: keptExistingNarrative,
+      publication_deferred: publicationDeferred,
+      publication_held: publicationHeld,
       ...(abortedGlobalError ? { aborted_global_error: abortedGlobalError } : {}),
       estimated_spend_usd: estimatedSpendUsd,
       budget_usd: budgetCap,
