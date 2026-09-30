@@ -11,11 +11,10 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { reindexForceHint } from '../src/commands/reindex-code.ts';
 import { checkCodeChunkMetadata } from '../src/commands/doctor.ts';
+import { surfaceFileSource } from './helpers/source-surface.ts';
 
 describe('reindexForceHint (#3970 surface 3)', () => {
   test('all-skipped pass without --force → hint naming --force', () => {
@@ -106,7 +105,7 @@ describe('doctor code_chunk_metadata (#3970 surface 2)', () => {
 
 describe('CLI help line (#3970 surface 1)', () => {
   test('reindex-code help documents --force', () => {
-    const cli = readFileSync(join(import.meta.dir, '../src/cli.ts'), 'utf-8');
+    const cli = surfaceFileSource('cli', 'src/cli.ts');
     const line = cli.split('\n').find((l) => l.trimStart().startsWith('reindex-code ['));
     expect(line).toBeDefined();
     expect(line!).toContain('--force');

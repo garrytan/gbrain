@@ -156,6 +156,11 @@ writing or reviewing an operation, consult `src/core/operations.ts` for the cont
   [`docs/guides/open-loops.md`](./docs/guides/open-loops.md) (how detection
   works); the harness protocol lives in
   [`skills/google-loops/SKILL.md`](./skills/google-loops/SKILL.md).
+- **Contribute code:** [`CONTRIBUTING.md`, "Where does my change go?"](./CONTRIBUTING.md#where-does-my-change-go)
+  names the files, registry, regenerate command and smallest test for a storage method,
+  schema migration, doctor check, CLI-only command, HTTP route or sync phase. A branch written
+  before refactor wave 1: follow the moved-symbol map in
+  [`docs/architecture/wave-1-porting.md`](./docs/architecture/wave-1-porting.md).
 - **Everything else:** [`./llms.txt`](./llms.txt) is the full documentation map.
   [`./llms-full.txt`](./llms-full.txt) is the same map with core docs inlined for
   single-fetch ingestion.

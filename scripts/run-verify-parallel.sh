@@ -125,6 +125,30 @@ CHECKS=(
   "check:pg-url-redaction"
   # Containment sprint: module-size ratchet + structural-suite freshness.
   "check:module-size"
+  # W5 (refactor wave 1): per-function line ratchet over src/**/*.ts (TS AST,
+  # ~1.5s); baseline scripts/function-size-baseline.tsv.
+  "check:function-size"
+  # EO10 (refactor wave 1): engine-sql/ and schema-migrations/ never import
+  # back up into the engine façades or migrate.ts (ESM TDZ cycles).
+  "check:layering"
+  # Goal (a) (refactor wave 1): engine SQL only shrinks; baseline
+  # scripts/engine-sql-baseline.tsv.
+  "check:engine-sql-ratchet"
+  # CQ3 / EO17 (refactor wave 1): engine-sql splices only constant text, no
+  # composed $n, no expanded IN lists.
+  "check:engine-sql-dynamic"
+  # EO4 (refactor wave 1): RLS read brands stay unforgeable; brand factories
+  # importable only from their allowlists (never src/core/ops/**).
+  "check:engine-sql-brands"
+  # A17 (refactor wave 1, W4 sync): SyncRun mutable fields are read/written
+  # only as run.<field> over src/commands/sync/ (no destructuring or aliasing).
+  "check:sync-run-state"
+  "check:schema-migrations"
+  "check:schema-fresh"
+  # W7 (refactor wave 1): workflow phrases the wave retired stay out of the
+  # docs agents follow (CLAUDE.md, AGENTS.md, CONTRIBUTING.md, docs/, skills/).
+  "check:retired-phrases"
+  "check:schema-migration-order"
   "check:structural-manifest"
   # v0.50.5.0 security wave: compiled binaries must not autoload a cwd bunfig.toml.
   "check:compile-autoload"

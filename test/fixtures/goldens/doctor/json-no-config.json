@@ -1,0 +1,18 @@
+{
+  "golden": {
+    "args": [
+      "doctor",
+      "--json",
+      "--skills-dir",
+      "<home>/skills"
+    ],
+    "exit_code": 1,
+    "report": null,
+    "stderr": [
+      "GBRAIN_DB_ACCESS no_url",
+      "No brain configured. Run: gbrain init"
+    ],
+    "stdout": []
+  },
+  "normalizer": "doctor-json-v1"
+}

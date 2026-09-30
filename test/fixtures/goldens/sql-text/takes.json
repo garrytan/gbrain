@@ -1,0 +1,562 @@
+{
+  "golden": {
+    "domain": "takes",
+    "methods": {
+      "addSynthesisEvidence": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "array<number>",
+              "array<number>",
+              "array<number>",
+              "array<number>"
+            ],
+            "sql": "INSERT INTO synthesis_evidence (synthesis_page_id, take_page_id, take_row_num, citation_index) SELECT v.synthesis_page_id::int, v.take_page_id::int, v.take_row_num::int, v.citation_index::int FROM unnest( $1::int[], $2::int[], $3::int[], $4::int[] ) AS v(synthesis_page_id, take_page_id, take_row_num, citation_index) ON CONFLICT (synthesis_page_id, take_page_id, take_row_num) DO NOTHING RETURNING 1",
+            "textSha256": "a154642a98f3efd31610decdfdb273a5a1f8742a9a7bc9ea0dfaad67b1f1750d"
+          }
+        ]
+      },
+      "addTakesBatch": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "object"
+            ],
+            "sql": "INSERT INTO takes (page_id, row_num, claim, kind, holder, weight, since_date, until_date, source, superseded_by, active) SELECT v.page_id, v.row_num, v.claim, v.kind, v.holder, v.weight, v.since_date, v.until_date, v.source, v.superseded_by, v.active FROM jsonb_to_recordset(($1::jsonb)->'rows') AS v( page_id int, row_num int, claim text, kind text, holder text, weight real, since_date text, until_date text, source text, superseded_by int, active boolean ) ON CONFLICT (page_id, row_num) DO UPDATE SET claim = EXCLUDED.claim, kind = EXCLUDED.kind, holder = EXCLUDED.holder, weight = EXCLUDED.weight, since_date = EXCLUDED.since_date, until_date = EXCLUDED.until_date, source = EXCLUDED.source, superseded_by = EXCLUDED.superseded_by, active = EXCLUDED.active, updated_at = now() RETURNING 1",
+            "textSha256": "1232762c3affb0b239b2c6068a6848282f02b82713a2a7d4e0b44a9b2689a01b"
+          }
+        ]
+      },
+      "countStaleTakes": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [],
+            "sql": "SELECT count(*)::int AS count FROM takes WHERE active AND embedding IS NULL",
+            "textSha256": "f418172e9208f3e264814797db037b02a3a8b8fc93d51633c58966cbbfe39cea"
+          }
+        ]
+      },
+      "getCalibrationCurve": {
+        "allFilters": [
+          {
+            "lane": "pool",
+            "params": [
+              "number",
+              "number",
+              "string",
+              "array<string>",
+              "array<string>",
+              "number",
+              "number"
+            ],
+            "sql": "WITH binned AS ( SELECT LEAST(FLOOR(weight::numeric / $1::numeric)::int, $2::int)::int AS bucket_idx, weight, (resolved_quality = 'correct')::int AS hit FROM takes WHERE resolved_quality IN ('correct','incorrect') AND holder = $3 AND holder = ANY($4::text[]) AND EXISTS (SELECT 1 FROM pages p WHERE p.id = takes.page_id AND p.source_id = ANY($5::text[])) AND EXISTS (SELECT 1 FROM pages p WHERE p.id = takes.page_id AND (COALESCE(p.frontmatter->>'visibility', CASE WHEN (p.type = 'atom' OR (p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private' AND NOT (CASE WHEN p.type = 'atom' THEN EXISTS (SELECT 1 FROM pages derived_origin WHERE derived_origin.source_id = p.source_id AND derived_origin.slug = p.frontmatter->>'source_slug' AND derived_origin.frontmatter->>'visibility' = 'private') WHEN (p.type = 'atom' OR (p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL)) THEN EXISTS (SELECT 1 FROM links derived_input_link JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id WHERE derived_input_link.from_page_id = p.id AND derived_input_link.link_source = 'concept-provenance' AND derived_input_link.link_type = 'synthesized_from' AND (COALESCE(derived_input.frontmatter->>'visibility', CASE WHEN derived_input.type = 'atom' THEN 'private' ELSE 'world' END) = 'private' OR EXISTS (SELECT 1 FROM pages derived_input_origin WHERE derived_input_origin.source_id = derived_input.source_id AND derived_input_origin.slug = derived_input.frontmatter->>'source_slug' AND derived_input_origin.frontmatter->>'visibility' = 'private'))) ELSE false END))) ) SELECT (bucket_idx::numeric * $6::numeric)::float AS bucket_lo, ((bucket_idx + 1)::numeric * $7::numeric)::float AS bucket_hi, COUNT(*)::int AS n, AVG(hit)::float AS observed, AVG(weight)::float AS predicted FROM binned GROUP BY bucket_idx ORDER BY bucket_idx",
+            "textSha256": "ebb746a660bffe93c50dfef8755bbb6a6163430032684c5224ae2daa4eb6d67c"
+          }
+        ],
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "number",
+              "number",
+              "number",
+              "number"
+            ],
+            "sql": "WITH binned AS ( SELECT LEAST(FLOOR(weight::numeric / $1::numeric)::int, $2::int)::int AS bucket_idx, weight, (resolved_quality = 'correct')::int AS hit FROM takes WHERE resolved_quality IN ('correct','incorrect') ) SELECT (bucket_idx::numeric * $3::numeric)::float AS bucket_lo, ((bucket_idx + 1)::numeric * $4::numeric)::float AS bucket_hi, COUNT(*)::int AS n, AVG(hit)::float AS observed, AVG(weight)::float AS predicted FROM binned GROUP BY bucket_idx ORDER BY bucket_idx",
+            "textSha256": "1b3cea9994c0066e3716acf0c5f5c895c6c5b3cbf5d981ce335603dda9472a13"
+          }
+        ],
+        "sourceId": [
+          {
+            "lane": "pool",
+            "params": [
+              "number",
+              "number",
+              "string",
+              "number",
+              "number"
+            ],
+            "sql": "WITH binned AS ( SELECT LEAST(FLOOR(weight::numeric / $1::numeric)::int, $2::int)::int AS bucket_idx, weight, (resolved_quality = 'correct')::int AS hit FROM takes WHERE resolved_quality IN ('correct','incorrect') AND EXISTS (SELECT 1 FROM pages p WHERE p.id = takes.page_id AND p.source_id = $3) ) SELECT (bucket_idx::numeric * $4::numeric)::float AS bucket_lo, ((bucket_idx + 1)::numeric * $5::numeric)::float AS bucket_hi, COUNT(*)::int AS n, AVG(hit)::float AS observed, AVG(weight)::float AS predicted FROM binned GROUP BY bucket_idx ORDER BY bucket_idx",
+            "textSha256": "3b142287249207dc6ce1e78dd1e65cf0c058592106066317d623dfe6cd249e2b"
+          }
+        ]
+      },
+      "getContradictionCacheEntry": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "string",
+              "string",
+              "string"
+            ],
+            "sql": "SELECT verdict FROM eval_contradictions_cache WHERE chunk_a_hash = $1 AND chunk_b_hash = $2 AND model_id = $3 AND prompt_version = $4 AND truncation_policy = $5 AND expires_at > now() LIMIT 1",
+            "textSha256": "0f0c2ad8fd402917a7285f824d4c888de058d902fd79307595faf5669ebe1400"
+          }
+        ]
+      },
+      "getScorecard": {
+        "allFilters": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "string",
+              "string",
+              "array<string>",
+              "array<string>"
+            ],
+            "sql": "SELECT COUNT(*) FILTER (WHERE kind = 'bet')::int AS total_bets, COUNT(*) FILTER (WHERE resolved_quality IN ('correct','incorrect','partial'))::int AS resolved, COUNT(*) FILTER (WHERE resolved_quality = 'correct')::int AS correct, COUNT(*) FILTER (WHERE resolved_quality = 'incorrect')::int AS incorrect, COUNT(*) FILTER (WHERE resolved_quality = 'partial')::int AS partial, COUNT(*) FILTER (WHERE resolved_quality = 'unresolvable')::int AS unresolvable_count, AVG( CASE WHEN resolved_quality IN ('correct','incorrect') THEN POWER(weight - (CASE resolved_quality WHEN 'correct' THEN 1 ELSE 0 END), 2) END )::float AS brier FROM takes WHERE 1=1 AND holder = $1 AND EXISTS (SELECT 1 FROM pages p WHERE p.id = takes.page_id AND p.slug LIKE $2) AND since_date >= $3 AND since_date <= $4 AND holder = ANY($5::text[]) AND EXISTS (SELECT 1 FROM pages p WHERE p.id = takes.page_id AND p.source_id = ANY($6::text[])) AND EXISTS (SELECT 1 FROM pages p WHERE p.id = takes.page_id AND (COALESCE(p.frontmatter->>'visibility', CASE WHEN (p.type = 'atom' OR (p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private' AND NOT (CASE WHEN p.type = 'atom' THEN EXISTS (SELECT 1 FROM pages derived_origin WHERE derived_origin.source_id = p.source_id AND derived_origin.slug = p.frontmatter->>'source_slug' AND derived_origin.frontmatter->>'visibility' = 'private') WHEN (p.type = 'atom' OR (p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL)) THEN EXISTS (SELECT 1 FROM links derived_input_link JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id WHERE derived_input_link.from_page_id = p.id AND derived_input_link.link_source = 'concept-provenance' AND derived_input_link.link_type = 'synthesized_from' AND (COALESCE(derived_input.frontmatter->>'visibility', CASE WHEN derived_input.type = 'atom' THEN 'private' ELSE 'world' END) = 'private' OR EXISTS (SELECT 1 FROM pages derived_input_origin WHERE derived_input_origin.source_id = derived_input.source_id AND derived_input_origin.slug = derived_input.frontmatter->>'source_slug' AND derived_input_origin.frontmatter->>'visibility' = 'private'))) ELSE false END)))",
+            "textSha256": "c4e75fcb6e67f66b2a953c42de5bd5bf879f1ee2a484017f2cffcc410a48c81f"
+          }
+        ],
+        "default": [
+          {
+            "lane": "pool",
+            "params": [],
+            "sql": "SELECT COUNT(*) FILTER (WHERE kind = 'bet')::int AS total_bets, COUNT(*) FILTER (WHERE resolved_quality IN ('correct','incorrect','partial'))::int AS resolved, COUNT(*) FILTER (WHERE resolved_quality = 'correct')::int AS correct, COUNT(*) FILTER (WHERE resolved_quality = 'incorrect')::int AS incorrect, COUNT(*) FILTER (WHERE resolved_quality = 'partial')::int AS partial, COUNT(*) FILTER (WHERE resolved_quality = 'unresolvable')::int AS unresolvable_count, AVG( CASE WHEN resolved_quality IN ('correct','incorrect') THEN POWER(weight - (CASE resolved_quality WHEN 'correct' THEN 1 ELSE 0 END), 2) END )::float AS brier FROM takes WHERE 1=1",
+            "textSha256": "ac7b9f085f6dd4eb8df8c98197e0a360d123e1da449cd6225a540baba5707734"
+          }
+        ],
+        "sourceId": [
+          {
+            "lane": "pool",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT COUNT(*) FILTER (WHERE kind = 'bet')::int AS total_bets, COUNT(*) FILTER (WHERE resolved_quality IN ('correct','incorrect','partial'))::int AS resolved, COUNT(*) FILTER (WHERE resolved_quality = 'correct')::int AS correct, COUNT(*) FILTER (WHERE resolved_quality = 'incorrect')::int AS incorrect, COUNT(*) FILTER (WHERE resolved_quality = 'partial')::int AS partial, COUNT(*) FILTER (WHERE resolved_quality = 'unresolvable')::int AS unresolvable_count, AVG( CASE WHEN resolved_quality IN ('correct','incorrect') THEN POWER(weight - (CASE resolved_quality WHEN 'correct' THEN 1 ELSE 0 END), 2) END )::float AS brier FROM takes WHERE 1=1 AND EXISTS (SELECT 1 FROM pages p WHERE p.id = takes.page_id AND p.source_id = $1)",
+            "textSha256": "41cef131365daaf719eeb1780fd73477a349ad88a0d68a7b95b6b4ee9772e132"
+          }
+        ]
+      },
+      "getTakeEmbeddings": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "array<number>"
+            ],
+            "sql": "SELECT id, embedding FROM takes WHERE id = ANY($1::bigint[]) AND embedding IS NOT NULL",
+            "textSha256": "e70170659085d83279e6c824c9b5ce756bca2770216c4e2c10becc2009eaf66f"
+          }
+        ]
+      },
+      "listActiveTakesForPages": {
+        "allowList": [
+          {
+            "lane": "pool",
+            "params": [
+              "array<number>",
+              "array<string>",
+              "array<string>"
+            ],
+            "sql": "SELECT t.*, p.slug AS page_slug FROM takes t JOIN pages p ON p.id = t.page_id WHERE t.page_id = ANY($1::int[]) AND t.active = true AND ( $2::text[] IS NULL OR t.holder = ANY($3::text[]) ) ORDER BY t.page_id, t.row_num",
+            "textSha256": "6968d31ae6ee3feed1a13a505e7543f680cf653b5571792b8b928e0ca94c211b"
+          }
+        ],
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "array<number>",
+              "null",
+              "null"
+            ],
+            "sql": "SELECT t.*, p.slug AS page_slug FROM takes t JOIN pages p ON p.id = t.page_id WHERE t.page_id = ANY($1::int[]) AND t.active = true AND ( $2::text[] IS NULL OR t.holder = ANY($3::text[]) ) ORDER BY t.page_id, t.row_num",
+            "textSha256": "6968d31ae6ee3feed1a13a505e7543f680cf653b5571792b8b928e0ca94c211b"
+          }
+        ]
+      },
+      "listStaleTakes": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [],
+            "sql": "SELECT t.id AS take_id, p.slug AS page_slug, t.row_num, t.claim FROM takes t JOIN pages p ON p.id = t.page_id WHERE t.active AND t.embedding IS NULL ORDER BY t.id LIMIT 100000",
+            "textSha256": "1826fa7f471c17386dadfb4590a734fb155ead45b8818788c8025a3b07453165"
+          }
+        ]
+      },
+      "listTakes": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "null",
+              "null",
+              "null",
+              "null",
+              "null",
+              "null",
+              "null",
+              "null",
+              "boolean",
+              "boolean",
+              "null",
+              "null",
+              "null",
+              "null",
+              "null",
+              "string",
+              "string",
+              "string",
+              "number",
+              "number"
+            ],
+            "sql": "SELECT t.*, p.slug AS page_slug FROM takes t JOIN pages p ON p.id = t.page_id WHERE 1=1 AND ($1::int IS NULL OR t.page_id = $2::int) AND ($3::text IS NULL OR p.slug = $4::text) AND ($5::text IS NULL OR t.holder = $6::text) AND ($7::text IS NULL OR t.kind = $8::text) AND ($9::boolean IS NULL OR t.active = $10::boolean) AND ( $11::boolean IS NULL OR ($12::boolean = true AND t.resolved_at IS NOT NULL) OR ($13::boolean = false AND t.resolved_at IS NULL) ) AND ( $14::text[] IS NULL OR t.holder = ANY($15::text[]) ) ORDER BY CASE WHEN $16 = 'weight' THEN t.weight END DESC NULLS LAST, CASE WHEN $17 = 'since_date' THEN t.since_date END DESC NULLS LAST, CASE WHEN $18 = 'created_at' THEN t.created_at END DESC NULLS LAST LIMIT $19 OFFSET $20",
+            "textSha256": "974ece0b8fa9166ba0b1462f293fc6e19c1952e1fccac100b957afd1d2ceccbb"
+          }
+        ],
+        "sourceId": [
+          {
+            "lane": "pool",
+            "params": [
+              "null",
+              "null",
+              "null",
+              "null",
+              "null",
+              "null",
+              "null",
+              "null",
+              "boolean",
+              "boolean",
+              "null",
+              "null",
+              "null",
+              "null",
+              "null",
+              "string",
+              "string",
+              "string",
+              "string",
+              "number",
+              "number"
+            ],
+            "sql": "SELECT t.*, p.slug AS page_slug FROM takes t JOIN pages p ON p.id = t.page_id WHERE 1=1 AND ($1::int IS NULL OR t.page_id = $2::int) AND ($3::text IS NULL OR p.slug = $4::text) AND ($5::text IS NULL OR t.holder = $6::text) AND ($7::text IS NULL OR t.kind = $8::text) AND ($9::boolean IS NULL OR t.active = $10::boolean) AND ( $11::boolean IS NULL OR ($12::boolean = true AND t.resolved_at IS NOT NULL) OR ($13::boolean = false AND t.resolved_at IS NULL) ) AND ( $14::text[] IS NULL OR t.holder = ANY($15::text[]) ) AND p.source_id = $16 ORDER BY CASE WHEN $17 = 'weight' THEN t.weight END DESC NULLS LAST, CASE WHEN $18 = 'since_date' THEN t.since_date END DESC NULLS LAST, CASE WHEN $19 = 'created_at' THEN t.created_at END DESC NULLS LAST LIMIT $20 OFFSET $21",
+            "textSha256": "adad16434be36a3105641b3e645cc6cfb0cd0d90b1cb9b0dfc5eb861ac5ff0b1"
+          }
+        ],
+        "sourceIds+excludePrivate": [
+          {
+            "lane": "pool",
+            "params": [
+              "null",
+              "null",
+              "null",
+              "null",
+              "string",
+              "string",
+              "null",
+              "null",
+              "boolean",
+              "boolean",
+              "boolean",
+              "boolean",
+              "boolean",
+              "null",
+              "null",
+              "array<string>",
+              "string",
+              "string",
+              "string",
+              "number",
+              "number"
+            ],
+            "sql": "SELECT t.*, p.slug AS page_slug FROM takes t JOIN pages p ON p.id = t.page_id WHERE 1=1 AND (COALESCE(p.frontmatter->>'visibility', CASE WHEN (p.type = 'atom' OR (p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private' AND NOT (CASE WHEN p.type = 'atom' THEN EXISTS (SELECT 1 FROM pages derived_origin WHERE derived_origin.source_id = p.source_id AND derived_origin.slug = p.frontmatter->>'source_slug' AND derived_origin.frontmatter->>'visibility' = 'private') WHEN (p.type = 'atom' OR (p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL)) THEN EXISTS (SELECT 1 FROM links derived_input_link JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id WHERE derived_input_link.from_page_id = p.id AND derived_input_link.link_source = 'concept-provenance' AND derived_input_link.link_type = 'synthesized_from' AND (COALESCE(derived_input.frontmatter->>'visibility', CASE WHEN derived_input.type = 'atom' THEN 'private' ELSE 'world' END) = 'private' OR EXISTS (SELECT 1 FROM pages derived_input_origin WHERE derived_input_origin.source_id = derived_input.source_id AND derived_input_origin.slug = derived_input.frontmatter->>'source_slug' AND derived_input_origin.frontmatter->>'visibility' = 'private'))) ELSE false END)) AND ($1::int IS NULL OR t.page_id = $2::int) AND ($3::text IS NULL OR p.slug = $4::text) AND ($5::text IS NULL OR t.holder = $6::text) AND ($7::text IS NULL OR t.kind = $8::text) AND ($9::boolean IS NULL OR t.active = $10::boolean) AND ( $11::boolean IS NULL OR ($12::boolean = true AND t.resolved_at IS NOT NULL) OR ($13::boolean = false AND t.resolved_at IS NULL) ) AND ( $14::text[] IS NULL OR t.holder = ANY($15::text[]) ) AND p.source_id = ANY($16::text[]) ORDER BY CASE WHEN $17 = 'weight' THEN t.weight END DESC NULLS LAST, CASE WHEN $18 = 'since_date' THEN t.since_date END DESC NULLS LAST, CASE WHEN $19 = 'created_at' THEN t.created_at END DESC NULLS LAST LIMIT $20 OFFSET $21",
+            "textSha256": "640774eafff9936d59a938e39297baa1e347e16ccb75c3a2df8c0e173a55b571"
+          }
+        ]
+      },
+      "loadContradictionsTrend": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "Date"
+            ],
+            "sql": "SELECT run_id, ran_at, judge_model, queries_evaluated, queries_with_contradiction, total_contradictions_flagged, wilson_ci_lower, wilson_ci_upper, judge_errors_total, cost_usd_total, duration_ms, source_tier_breakdown, report_json FROM eval_contradictions_runs WHERE ran_at >= $1 ORDER BY ran_at DESC",
+            "textSha256": "b7969d67518f7b1e9c3b70d55885ad8bfd4f3ebe2f1a96b6c280fc979c1f85b3"
+          }
+        ]
+      },
+      "putContradictionCacheEntry": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "json",
+              "Date"
+            ],
+            "sql": "INSERT INTO eval_contradictions_cache ( chunk_a_hash, chunk_b_hash, model_id, prompt_version, truncation_policy, verdict, expires_at ) VALUES ( $1, $2, $3, $4, $5, $6, $7 ) ON CONFLICT (chunk_a_hash, chunk_b_hash, model_id, prompt_version, truncation_policy) DO UPDATE SET verdict = EXCLUDED.verdict, expires_at = EXCLUDED.expires_at, created_at = now()",
+            "textSha256": "a2c75f83ca48824980be668d4efd978717e3676dfb7b5c4a7f48eb84e2c75c87"
+          }
+        ]
+      },
+      "resolveTake": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "number",
+              "number"
+            ],
+            "sql": "SELECT resolved_at FROM takes WHERE page_id = $1 AND row_num = $2",
+            "textSha256": "907cab65ecf71b39c96aa513a82bab5de9b7e225d6e42458412b76a1ac699f9b"
+          },
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "boolean",
+              "null",
+              "null",
+              "null",
+              "string",
+              "number",
+              "number"
+            ],
+            "sql": "UPDATE takes SET resolved_at = now(), resolved_quality = $1::text, resolved_outcome = $2, resolved_value = $3::real, resolved_unit = $4::text, resolved_source = $5::text, resolved_by = $6, updated_at = now() WHERE page_id = $7 AND row_num = $8",
+            "textSha256": "b183618dced823bdc0a8dc2da1d0ea5f3bf834760b6327d2a9b2103e6b035198"
+          }
+        ]
+      },
+      "searchTakes": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "null",
+              "null",
+              "number"
+            ],
+            "sql": "SELECT t.id AS take_id, t.page_id, p.slug AS page_slug, t.row_num, t.claim, t.kind, t.holder, t.weight, word_similarity($1, t.claim)::real AS score FROM takes t JOIN pages p ON p.id = t.page_id WHERE t.active AND $2 <% t.claim AND ( $3::text[] IS NULL OR t.holder = ANY($4::text[]) ) ORDER BY score DESC, t.weight DESC LIMIT $5",
+            "textSha256": "34e67c5eb1d2c5f639547d25d2e1712cdc1b24d4f6d59629ca994375c2286648"
+          }
+        ],
+        "sourceId": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "null",
+              "null",
+              "string",
+              "number"
+            ],
+            "sql": "SELECT t.id AS take_id, t.page_id, p.slug AS page_slug, t.row_num, t.claim, t.kind, t.holder, t.weight, word_similarity($1, t.claim)::real AS score FROM takes t JOIN pages p ON p.id = t.page_id WHERE t.active AND $2 <% t.claim AND ( $3::text[] IS NULL OR t.holder = ANY($4::text[]) ) AND p.source_id = $5 ORDER BY score DESC, t.weight DESC LIMIT $6",
+            "textSha256": "d3cab7eb4b940a5fd1f1e04d8058b1a13d95083a9689df6a9b7e77ace4e50149"
+          }
+        ],
+        "sourceIds+excludePrivate": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "array<string>",
+              "array<string>",
+              "array<string>",
+              "number"
+            ],
+            "sql": "SELECT t.id AS take_id, t.page_id, p.slug AS page_slug, t.row_num, t.claim, t.kind, t.holder, t.weight, word_similarity($1, t.claim)::real AS score FROM takes t JOIN pages p ON p.id = t.page_id WHERE t.active AND $2 <% t.claim AND (COALESCE(p.frontmatter->>'visibility', CASE WHEN (p.type = 'atom' OR (p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private' AND NOT (CASE WHEN p.type = 'atom' THEN EXISTS (SELECT 1 FROM pages derived_origin WHERE derived_origin.source_id = p.source_id AND derived_origin.slug = p.frontmatter->>'source_slug' AND derived_origin.frontmatter->>'visibility' = 'private') WHEN (p.type = 'atom' OR (p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL)) THEN EXISTS (SELECT 1 FROM links derived_input_link JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id WHERE derived_input_link.from_page_id = p.id AND derived_input_link.link_source = 'concept-provenance' AND derived_input_link.link_type = 'synthesized_from' AND (COALESCE(derived_input.frontmatter->>'visibility', CASE WHEN derived_input.type = 'atom' THEN 'private' ELSE 'world' END) = 'private' OR EXISTS (SELECT 1 FROM pages derived_input_origin WHERE derived_input_origin.source_id = derived_input.source_id AND derived_input_origin.slug = derived_input.frontmatter->>'source_slug' AND derived_input_origin.frontmatter->>'visibility' = 'private'))) ELSE false END)) AND ( $3::text[] IS NULL OR t.holder = ANY($4::text[]) ) AND p.source_id = ANY($5::text[]) ORDER BY score DESC, t.weight DESC LIMIT $6",
+            "textSha256": "0cb724edd8c4c4c35ec4969fda74cc0013b62d6adf411dd6272baba22a3cff46"
+          }
+        ]
+      },
+      "searchTakesVector": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "null",
+              "null",
+              "string",
+              "number"
+            ],
+            "sql": "SELECT t.id AS take_id, t.page_id, p.slug AS page_slug, t.row_num, t.claim, t.kind, t.holder, t.weight, (1 - (t.embedding <=> $1::vector))::real AS score FROM takes t JOIN pages p ON p.id = t.page_id WHERE t.active AND t.embedding IS NOT NULL AND ( $2::text[] IS NULL OR t.holder = ANY($3::text[]) ) ORDER BY t.embedding <=> $4::vector LIMIT $5",
+            "textSha256": "28e886336542c1f9f448881d77ef271ea62d0ce5b4418da97faf94119e6d4c20"
+          }
+        ],
+        "sourceId": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "null",
+              "null",
+              "string",
+              "string",
+              "number"
+            ],
+            "sql": "SELECT t.id AS take_id, t.page_id, p.slug AS page_slug, t.row_num, t.claim, t.kind, t.holder, t.weight, (1 - (t.embedding <=> $1::vector))::real AS score FROM takes t JOIN pages p ON p.id = t.page_id WHERE t.active AND t.embedding IS NOT NULL AND ( $2::text[] IS NULL OR t.holder = ANY($3::text[]) ) AND p.source_id = $4 ORDER BY t.embedding <=> $5::vector LIMIT $6",
+            "textSha256": "cc06c98b52d8b78658b74fe07eb33390c82722dca85a92b2b879e537ad06b7da"
+          }
+        ],
+        "sourceIds+excludePrivate": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "null",
+              "null",
+              "array<string>",
+              "string",
+              "number"
+            ],
+            "sql": "SELECT t.id AS take_id, t.page_id, p.slug AS page_slug, t.row_num, t.claim, t.kind, t.holder, t.weight, (1 - (t.embedding <=> $1::vector))::real AS score FROM takes t JOIN pages p ON p.id = t.page_id WHERE t.active AND t.embedding IS NOT NULL AND (COALESCE(p.frontmatter->>'visibility', CASE WHEN (p.type = 'atom' OR (p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private' AND NOT (CASE WHEN p.type = 'atom' THEN EXISTS (SELECT 1 FROM pages derived_origin WHERE derived_origin.source_id = p.source_id AND derived_origin.slug = p.frontmatter->>'source_slug' AND derived_origin.frontmatter->>'visibility' = 'private') WHEN (p.type = 'atom' OR (p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL)) THEN EXISTS (SELECT 1 FROM links derived_input_link JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id WHERE derived_input_link.from_page_id = p.id AND derived_input_link.link_source = 'concept-provenance' AND derived_input_link.link_type = 'synthesized_from' AND (COALESCE(derived_input.frontmatter->>'visibility', CASE WHEN derived_input.type = 'atom' THEN 'private' ELSE 'world' END) = 'private' OR EXISTS (SELECT 1 FROM pages derived_input_origin WHERE derived_input_origin.source_id = derived_input.source_id AND derived_input_origin.slug = derived_input.frontmatter->>'source_slug' AND derived_input_origin.frontmatter->>'visibility' = 'private'))) ELSE false END)) AND ( $2::text[] IS NULL OR t.holder = ANY($3::text[]) ) AND p.source_id = ANY($4::text[]) ORDER BY t.embedding <=> $5::vector LIMIT $6",
+            "textSha256": "2769dfb60437ab510fbc5943501d0c227245967b2f5b91f8f398a53b27d35c73"
+          }
+        ]
+      },
+      "supersedeTake": {
+        "default": [
+          {
+            "event": "begin",
+            "lane": "tx"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "number",
+              "number"
+            ],
+            "sql": "SELECT resolved_at FROM takes WHERE page_id = $1 AND row_num = $2",
+            "textSha256": "a8cd80d254cd825ab3cf7d4056420550784c140873bd74ce0c8fb5768d5930f2"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "number"
+            ],
+            "sql": "SELECT COALESCE(MAX(row_num), 0) + 1 AS next FROM takes WHERE page_id = $1",
+            "textSha256": "79b9a8b3d17779eef46d05ead69baea5765ff04a5b5f7f4d6339d33def8d2a55"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "number",
+              "number",
+              "string",
+              "string",
+              "string",
+              "number",
+              "null",
+              "null",
+              "null",
+              "boolean"
+            ],
+            "sql": "INSERT INTO takes (page_id, row_num, claim, kind, holder, weight, since_date, until_date, source, active) VALUES ($1, $2, $3, $4, $5, $6, $7::text, $8::text, $9, $10)",
+            "textSha256": "30a0bb120a917483ba50e69c8c65d3e021137eddf3f8cad4a2e70c2021c6dca0"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "number",
+              "number",
+              "number"
+            ],
+            "sql": "UPDATE takes SET active = false, superseded_by = $1, updated_at = now() WHERE page_id = $2 AND row_num = $3",
+            "textSha256": "bf60fbc95cbd95fb02370d831d94bce044c35c93a33ae2ce53b4a054872f443e"
+          },
+          {
+            "event": "commit",
+            "lane": "tx"
+          }
+        ]
+      },
+      "sweepContradictionCache": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [],
+            "sql": "DELETE FROM eval_contradictions_cache WHERE expires_at <= now()",
+            "textSha256": "1d085aff53e8000b6b9b4f395a8b4bb1b45bac6c8c5da09fbff2da9e42c3a70b"
+          }
+        ]
+      },
+      "updateTake": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "null",
+              "string",
+              "null",
+              "number",
+              "number"
+            ],
+            "sql": "UPDATE takes SET weight = COALESCE($1::real, weight), since_date = COALESCE($2::text, since_date), source = COALESCE($3::text, source), updated_at = now() WHERE page_id = $4 AND row_num = $5 RETURNING 1",
+            "textSha256": "2a6d376639a7bb7d609e3e73f51e638b9313f174c815c7d9ba5c765b7287d9af"
+          }
+        ],
+        "weight": [
+          {
+            "lane": "pool",
+            "params": [
+              "number",
+              "null",
+              "null",
+              "number",
+              "number"
+            ],
+            "sql": "UPDATE takes SET weight = COALESCE($1::real, weight), since_date = COALESCE($2::text, since_date), source = COALESCE($3::text, source), updated_at = now() WHERE page_id = $4 AND row_num = $5 RETURNING 1",
+            "textSha256": "2a6d376639a7bb7d609e3e73f51e638b9313f174c815c7d9ba5c765b7287d9af"
+          }
+        ]
+      },
+      "updateTakeEmbeddings": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "object"
+            ],
+            "sql": "WITH updated AS ( UPDATE takes AS t SET embedding = v.embedding::vector, embedded_at = now(), updated_at = now() FROM jsonb_to_recordset(($1::jsonb)->'rows') AS v(take_id bigint, embedding text) WHERE t.id = v.take_id AND t.active RETURNING t.id ) SELECT id FROM updated",
+            "textSha256": "4ad900c932635917a67e63727f07e451aab97d92e159dcbdae478128d7b43765"
+          }
+        ]
+      },
+      "writeContradictionsRun": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "string",
+              "number",
+              "number",
+              "number",
+              "number",
+              "number",
+              "number",
+              "number",
+              "number",
+              "json",
+              "json"
+            ],
+            "sql": "INSERT INTO eval_contradictions_runs ( run_id, judge_model, prompt_version, queries_evaluated, queries_with_contradiction, total_contradictions_flagged, wilson_ci_lower, wilson_ci_upper, judge_errors_total, cost_usd_total, duration_ms, source_tier_breakdown, report_json ) VALUES ( $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13 ) ON CONFLICT (run_id) DO NOTHING",
+            "textSha256": "77d5d38edadc1619c77fbbdb0d8b399f4f187adf2369523422c8b23f511abfc4"
+          }
+        ]
+      }
+    }
+  },
+  "normalizer": "sql-text-v1"
+}

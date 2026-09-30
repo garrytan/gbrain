@@ -26,11 +26,12 @@ import { safeLoad } from 'js-yaml';
 import { KNOWN_CONFIG_KEYS } from '../src/core/config.ts';
 import { KNOWN_LINK_TYPES } from '../src/core/search/relational-intent.ts';
 import { operations } from '../src/core/operations.ts';
+import { surfaceFileSource } from './helpers/source-surface.ts';
 
 const REPO = path.join(import.meta.dir, '..');
 
 describe('jobs.ts wiring', () => {
-  const src = fs.readFileSync(path.join(REPO, 'src', 'commands', 'jobs.ts'), 'utf8');
+  const src = surfaceFileSource('jobs', 'src/commands/jobs.ts');
 
   test("GATEWAY_REFRESH_JOB_NAMES contains 'loops_extract'", () => {
     const m = src.match(/const GATEWAY_REFRESH_JOB_NAMES = new Set\(\[([\s\S]*?)\]\);/);

@@ -19,11 +19,9 @@
 import { describe, test, expect } from 'bun:test';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { surfaceFileSource } from './helpers/source-surface.ts';
 
-const JOBS_SRC = fs.readFileSync(
-  path.join(import.meta.dir, '..', 'src', 'commands', 'jobs.ts'),
-  'utf8',
-);
+const JOBS_SRC = surfaceFileSource('jobs', 'src/commands/jobs.ts');
 
 /** Extract the string entries of the GATEWAY_REFRESH_JOB_NAMES set literal. */
 function parseRefreshSet(src: string): string[] {

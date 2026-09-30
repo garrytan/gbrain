@@ -1,0 +1,221 @@
+{
+  "golden": [
+    {
+      "diagnostics": {
+        "poolMax": 10,
+        "tracked": {
+          "direct": 0,
+          "raw": 0,
+          "reserved": 0,
+          "tx": 0
+        }
+      },
+      "step": "idle"
+    },
+    {
+      "diagnostics": {
+        "poolMax": 10,
+        "tracked": {
+          "direct": 0,
+          "raw": 1,
+          "reserved": 0,
+          "tx": 0
+        }
+      },
+      "step": "executeRaw in flight"
+    },
+    {
+      "diagnostics": {
+        "poolMax": 10,
+        "tracked": {
+          "direct": 1,
+          "raw": 1,
+          "reserved": 0,
+          "tx": 0
+        }
+      },
+      "step": "+ executeRawDirect in flight"
+    },
+    {
+      "diagnostics": {
+        "poolMax": 10,
+        "tracked": {
+          "direct": 1,
+          "raw": 2,
+          "reserved": 0,
+          "tx": 1
+        }
+      },
+      "step": "+ transaction body executeRaw in flight"
+    },
+    {
+      "diagnostics": {
+        "poolMax": 10,
+        "tracked": {
+          "direct": 1,
+          "raw": 2,
+          "reserved": 0,
+          "tx": 1
+        }
+      },
+      "step": "+ nested savepoint executeRaw in flight (tx counted once)"
+    },
+    {
+      "diagnostics": {
+        "poolMax": 10,
+        "tracked": {
+          "direct": 1,
+          "raw": 2,
+          "reserved": 1,
+          "tx": 1
+        }
+      },
+      "step": "+ withReservedConnection in flight"
+    },
+    {
+      "diagnostics": {
+        "poolMax": 10,
+        "tracked": {
+          "direct": 1,
+          "raw": 2,
+          "reserved": 1,
+          "tx": 1
+        }
+      },
+      "step": "+ tagged-template query in flight (not tracked)"
+    },
+    {
+      "diagnostics": {
+        "poolMax": 10,
+        "tracked": {
+          "direct": 1,
+          "raw": 2,
+          "reserved": 1,
+          "tx": 1
+        }
+      },
+      "step": "+ getTags in flight (tagged domain SQL, not tracked)"
+    },
+    {
+      "diagnostics": {
+        "poolMax": 10,
+        "tracked": {
+          "direct": 1,
+          "raw": 3,
+          "reserved": 1,
+          "tx": 1
+        }
+      },
+      "step": "+ getBacklinkCounts in flight (executeRaw-backed, counted raw)"
+    },
+    {
+      "diagnostics": {
+        "poolMax": 10,
+        "tracked": {
+          "direct": 1,
+          "raw": 2,
+          "reserved": 1,
+          "tx": 1
+        }
+      },
+      "step": "getBacklinkCounts released"
+    },
+    {
+      "diagnostics": {
+        "poolMax": 10,
+        "tracked": {
+          "direct": 1,
+          "raw": 2,
+          "reserved": 1,
+          "tx": 1
+        }
+      },
+      "step": "getTags released"
+    },
+    {
+      "diagnostics": {
+        "poolMax": 10,
+        "tracked": {
+          "direct": 1,
+          "raw": 1,
+          "reserved": 1,
+          "tx": 1
+        }
+      },
+      "step": "raw released"
+    },
+    {
+      "diagnostics": {
+        "poolMax": 10,
+        "tracked": {
+          "direct": 0,
+          "raw": 1,
+          "reserved": 1,
+          "tx": 1
+        }
+      },
+      "step": "direct released"
+    },
+    {
+      "diagnostics": {
+        "poolMax": 10,
+        "tracked": {
+          "direct": 0,
+          "raw": 0,
+          "reserved": 1,
+          "tx": 0
+        }
+      },
+      "step": "transaction committed"
+    },
+    {
+      "diagnostics": {
+        "poolMax": 10,
+        "tracked": {
+          "direct": 0,
+          "raw": 0,
+          "reserved": 0,
+          "tx": 0
+        }
+      },
+      "step": "reserved released"
+    },
+    {
+      "diagnostics": {
+        "poolMax": 10,
+        "tracked": {
+          "direct": 0,
+          "raw": 0,
+          "reserved": 0,
+          "tx": 0
+        }
+      },
+      "step": "tagged released"
+    },
+    {
+      "diagnostics": {
+        "poolMax": 10,
+        "tracked": {
+          "direct": 0,
+          "raw": 1,
+          "reserved": 0,
+          "tx": 0
+        }
+      },
+      "step": "executeRaw in flight before rejection"
+    },
+    {
+      "diagnostics": {
+        "poolMax": 10,
+        "tracked": {
+          "direct": 0,
+          "raw": 0,
+          "reserved": 0,
+          "tx": 0
+        }
+      },
+      "step": "after rejected executeRaw (released)"
+    }
+  ],
+  "normalizer": "gauge-sequence-v1"
+}

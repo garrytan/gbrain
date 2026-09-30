@@ -9,6 +9,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { MinionQueue } from '../src/core/minions/queue.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { maybeRunWorkerStartupRecovery } from '../src/commands/jobs.ts';
+import { surfaceFileSource } from './helpers/source-surface.ts';
 
 const TEST_PID_FILE = '/tmp/gbrain-supervisor-test.pid';
 
@@ -603,13 +604,11 @@ describe('MinionSupervisor', () => {
   // classifier's reference heuristic can't leak onto sibling suites).
   describe('recovery hook timeout bound (structural)', () => {
     it('the hook bounds recovery in a Promise.race with a 30_000ms timeout', () => {
-      const supervisorSource = readFileSync(
-        join(import.meta.dir, '..', 'src', 'commands', 'jobs.ts'),
-        'utf8',
-      );
+      // W4 jobs: the hook moved with its only caller into src/commands/jobs/work.ts.
+      const supervisorSource = surfaceFileSource('jobs', 'src/commands/jobs/work.ts');
       const hookStart = supervisorSource.indexOf('export async function maybeRunWorkerStartupRecovery');
       expect(hookStart).toBeGreaterThan(-1);
-      const hookEnd = supervisorSource.indexOf('export async function runJobs(');
+      const hookEnd = supervisorSource.indexOf('export async function runJobsWork(');
       expect(hookEnd).toBeGreaterThan(hookStart);
       const body = supervisorSource.slice(hookStart, hookEnd);
       expect(body).toContain('Promise.race');

@@ -24,6 +24,7 @@ import {
   runEvalSynthesizeConcepts,
   runEvalSynthesizeConceptsCli,
 } from '../src/commands/eval-synthesize-concepts.ts';
+import { surfaceSource } from './helpers/source-surface.ts';
 
 describe('CLI entry (unit)', () => {
   test('--help exits 0 with dedicated help, no qrels text', async () => {
@@ -79,10 +80,7 @@ describe('CLI entry (unit)', () => {
 
 describe('dispatch-layer source pins (routing can’t regress silently)', () => {
   test('cli.ts carries the dedicated pre-engine branch', () => {
-    const src = readFileSync(
-      fileURLToPath(new URL('../src/cli.ts', import.meta.url)),
-      'utf8',
-    );
+    const src = surfaceSource('cli');
     expect(src).toContain("command === 'eval' && args[0] === 'synthesize-concepts'");
     expect(src).toContain('runEvalSynthesizeConceptsCli');
   });

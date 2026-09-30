@@ -1,0 +1,388 @@
+{
+  "golden": {
+    "addCodeEdges#resolved+unresolved": {},
+    "addLink#default": {},
+    "addLinksBatch#default": {
+      "raw": 1
+    },
+    "addSynthesisEvidence#default": {},
+    "addTag#default": {
+      "raw": 6,
+      "tx": 1
+    },
+    "addTag#frontmatter": {
+      "raw": 6,
+      "tx": 1
+    },
+    "addTakesBatch#default": {
+      "raw": 1
+    },
+    "addTimelineEntriesBatch#default": {
+      "raw": 1
+    },
+    "addTimelineEntry#default": {},
+    "batchLoadEmotionalInputs#default": {},
+    "batchLoadEmotionalInputs#slugs": {},
+    "consolidateFact#default": {},
+    "countChunklessPagesWithContent#default": {},
+    "countChunklessPagesWithContent#sourceId": {},
+    "countStaleChunks#default": {
+      "raw": 1
+    },
+    "countStaleChunks#signature+includeNullSignature": {
+      "raw": 1
+    },
+    "countStaleChunks#signature+sourceId": {
+      "raw": 1
+    },
+    "countStalePagesForExtraction#default": {},
+    "countStalePagesForExtraction#versionTs+sourceId": {},
+    "countStaleTakes#default": {},
+    "countUnconsolidatedFacts#default": {},
+    "createVersion#default": {
+      "raw": 5,
+      "tx": 1
+    },
+    "deleteChunks#default": {},
+    "deleteCodeEdgesForChunks#default": {},
+    "deleteFactsForPage#default": {},
+    "deleteFactsForPage#excludeSourcePrefixes+preserveExpiredLegacy": {},
+    "deletePage#default": {},
+    "deletePages#default": {},
+    "discoverOntologyDimensions#default": {},
+    "discoverOntologyDimensions#sourceIds": {},
+    "expireFact#default": {},
+    "expireFact#supersededBy": {},
+    "findAnomalies#default": {},
+    "findAnomalies#sourceId": {},
+    "findAnomalies#sourceIds": {},
+    "findByTitleFuzzy#default": {},
+    "findByTitleFuzzy#lowSimilarity": {},
+    "findByTitleFuzzy#sourceId": {},
+    "findCandidateDuplicates#default": {},
+    "findCandidateDuplicates#embedding": {},
+    "findDuplicatePage#default": {},
+    "findOntologyConflicts#default": {},
+    "findOntologyConflicts#sourceIds+excludePrivate": {},
+    "findOrphanPages#default": {},
+    "findOrphanPages#inbound": {},
+    "findOrphanPages#sourceId": {},
+    "findOrphanPages#sourceIds+excludePrivate": {},
+    "findTrajectory#default": {},
+    "findTrajectory#event": {},
+    "findTrajectory#sourceIds+metric+since+until": {},
+    "getAllSlugs#default": {},
+    "getAllSlugs#sourceId": {},
+    "getBacklinks#default": {},
+    "getBacklinks#excludePrivate": {},
+    "getBacklinks#sourceId": {},
+    "getBacklinks#sourceIds": {},
+    "getCalibrationCurve#allFilters": {},
+    "getCalibrationCurve#default": {},
+    "getCalibrationCurve#sourceId": {},
+    "getCalleesOf#bareFallback": {},
+    "getCalleesOf#default": {},
+    "getCalleesOf#sourceId": {},
+    "getCallersOf#default": {},
+    "getCallersOf#sourceId": {},
+    "getChunks#default": {
+      "raw": 1
+    },
+    "getChunks#excludePrivate": {
+      "raw": 1
+    },
+    "getChunks#includeEmbedding": {
+      "raw": 1
+    },
+    "getChunks#includeUnsealed": {
+      "raw": 1
+    },
+    "getChunks#requireSafeChunks": {
+      "raw": 1
+    },
+    "getChunks#sourceIds": {
+      "raw": 1
+    },
+    "getChunksWithEmbeddings#default": {},
+    "getChunksWithEmbeddings#sourceId+includeUnsealed": {},
+    "getContradictionCacheEntry#default": {},
+    "getEdgesByChunk#default": {},
+    "getEdgesByChunk#in+edgeType": {},
+    "getEdgesByChunk#out": {},
+    "getEmbeddingsByChunkIds#column": {},
+    "getEmbeddingsByChunkIds#default": {},
+    "getFactsHealth#default": {},
+    "getFile#default": {},
+    "getLastSeen#asof+sourceId": {},
+    "getLastSeen#default": {},
+    "getLinks#default": {},
+    "getLinks#excludePrivate": {},
+    "getLinks#sourceId": {},
+    "getLinks#sourceIds": {},
+    "getOnThisDay#date+sourceIds": {},
+    "getOnThisDay#default": {},
+    "getOntology#default": {},
+    "getOntology#sourceIds+excludePrivate": {},
+    "getPage#default": {},
+    "getPage#includeDeleted": {},
+    "getPage#sourceId": {},
+    "getPage#sourceIds": {},
+    "getPageTimestamps#default": {},
+    "getRecentSalience#default": {},
+    "getRecentSalience#slugPrefix+sourceId+recency": {},
+    "getRecentSalience#sourceIds": {},
+    "getScorecard#allFilters": {},
+    "getScorecard#default": {},
+    "getScorecard#sourceId": {},
+    "getSince#default": {},
+    "getSince#kind+sourceId": {},
+    "getTags#default": {},
+    "getTags#excludePrivate+liveOnly": {},
+    "getTags#sourceIds": {},
+    "getTakeEmbeddings#default": {},
+    "getTimeline#default": {},
+    "getTimeline#excludePrivate": {},
+    "getTimeline#sourceId": {},
+    "getTimeline#sourceIds+after+before": {},
+    "getTimelineForDate#default": {},
+    "getTimelineForDate#excludePrivate": {},
+    "getTimelineForDate#sourceIds+excludePrivate": {},
+    "getTimelineForDate#week+sourceId": {},
+    "getVersions#default": {},
+    "getVersions#excludePrivate": {},
+    "getVersions#sourceId": {},
+    "getVersions#sourceIds": {},
+    "insertFact#default": {},
+    "insertFact#noEntity": {},
+    "insertFact#supersedeId+embedding": {},
+    "insertFacts#default": {},
+    "insertFacts#deleteForPageFirst": {},
+    "invalidateContentDriftEmbeddings#default": {
+      "raw": 3,
+      "tx": 1
+    },
+    "invalidateContentDriftEmbeddings#sourceId": {
+      "raw": 3,
+      "tx": 1
+    },
+    "invalidateStaleSignatureEmbeddings#default": {
+      "raw": 3,
+      "tx": 1
+    },
+    "invalidateStaleSignatureEmbeddings#sourceId+includeNullSignature": {
+      "raw": 3,
+      "tx": 1
+    },
+    "listActiveTakesForPages#allowList": {},
+    "listActiveTakesForPages#default": {},
+    "listAllPageRefs#default": {},
+    "listAllSources#default": {},
+    "listChunklessPagesWithContent#afterPageId+sourceId": {},
+    "listChunklessPagesWithContent#default": {},
+    "listCorpusSample#default": {},
+    "listCorpusSample#seed": {
+      "tx": 1
+    },
+    "listEnrichCandidates#default": {},
+    "listEnrichCandidates#sourceId": {},
+    "listEnrichCandidates#sourceIds+reenrich": {},
+    "listFactsByEntity#allFilters": {},
+    "listFactsByEntity#default": {},
+    "listFactsBySession#allFilters": {},
+    "listFactsBySession#default": {},
+    "listFactsSince#allFilters": {},
+    "listFactsSince#default": {},
+    "listFilesForPage#default": {},
+    "listLinkSources#default": {},
+    "listLinkSources#sourceId": {},
+    "listLinkSources#sourceIds": {},
+    "listPages#default": {},
+    "listPages#effective_after": {},
+    "listPages#effective_before": {},
+    "listPages#excludePrivate": {},
+    "listPages#includeDeleted": {},
+    "listPages#slugPrefix": {},
+    "listPages#sort": {},
+    "listPages#sourceId": {},
+    "listPages#sourceIds": {},
+    "listPages#tag": {},
+    "listPages#type": {},
+    "listPages#updatedAfterKeyset": {},
+    "listPages#updated_after": {},
+    "listPrefixSampledPages#default": {},
+    "listPrefixSampledPages#sourceIds": {},
+    "listStaleChunks#default": {
+      "raw": 1
+    },
+    "listStaleChunks#sourceId": {
+      "raw": 1
+    },
+    "listStaleChunks#updated_desc": {
+      "raw": 1
+    },
+    "listStaleChunks#updated_desc+cursor": {
+      "raw": 1
+    },
+    "listStaleChunks#updated_desc+sourceId": {
+      "raw": 1
+    },
+    "listStaleChunks#updated_desc+sourceId+cursor": {
+      "raw": 1
+    },
+    "listStalePagesForExtraction#afterPageId+versionTs+sourceId": {},
+    "listStalePagesForExtraction#default": {},
+    "listStaleTakes#default": {},
+    "listSupersessions#default": {},
+    "listSupersessions#since+visibility": {},
+    "listTakes#default": {},
+    "listTakes#sourceId": {},
+    "listTakes#sourceIds+excludePrivate": {},
+    "loadContradictionsTrend#default": {},
+    "lockPageKeys#default": {
+      "raw": 4,
+      "tx": 1
+    },
+    "markPagesExtractedBatch#default": {},
+    "mergeOntologyFact#corroborate": {},
+    "mergeOntologyFact#insert": {},
+    "mergeOntologyFact#supersede": {},
+    "migrateFactsToCanonical#default": {},
+    "purgeDeletedPages#default": {},
+    "purgeDeletedPages#dryRun": {},
+    "putContradictionCacheEntry#default": {},
+    "putPage#blankBody": {
+      "raw": 4,
+      "tx": 1
+    },
+    "putPage#default": {
+      "raw": 4,
+      "tx": 1
+    },
+    "putPage#expectedRevision": {
+      "raw": 4,
+      "tx": 1
+    },
+    "readPageSnapshot#default": {},
+    "readPageSnapshot#sourceId": {},
+    "refreshPageBody#default": {},
+    "removeLink#default": {},
+    "removeLink#linkSource": {},
+    "removeLink#linkType": {},
+    "removeLink#linkType+linkSource": {},
+    "removeLinksByPagesAndSource#default": {
+      "raw": 1
+    },
+    "removeTag#default": {
+      "raw": 5,
+      "tx": 1
+    },
+    "replaceDerivedLinks#default": {
+      "raw": 11,
+      "tx": 1
+    },
+    "resolveSlugWithAlias#default": {},
+    "resolveSlugWithAliasDetailed#default": {},
+    "resolveSlugWithAliasDetailed#excludePrivate": {},
+    "resolveSlugs#exactHit": {},
+    "resolveSlugs#excludePrivate": {},
+    "resolveSlugs#fuzzy": {},
+    "resolveSlugs#sourceId": {},
+    "resolveSlugs#sourceIds": {},
+    "resolveSlugsByPaths#default": {},
+    "resolveTake#default": {},
+    "restorePage#default": {},
+    "restorePage#sourceId": {},
+    "revertToVersion#default": {},
+    "revertToVersion#sourceId": {},
+    "searchKeyword#cjk": {
+      "tx": 1
+    },
+    "searchKeyword#cjk+sourceIds+detailLow": {
+      "tx": 1
+    },
+    "searchKeywordChunks#cjk": {
+      "tx": 1
+    },
+    "searchKeywordChunks#cjk+sourceId": {
+      "tx": 1
+    },
+    "searchTakes#default": {},
+    "searchTakes#sourceId": {},
+    "searchTakes#sourceIds+excludePrivate": {},
+    "searchTakesVector#default": {},
+    "searchTakesVector#sourceId": {},
+    "searchTakesVector#sourceIds+excludePrivate": {},
+    "setEmotionalWeightBatch#default": {},
+    "setEmotionalWeightBatch#empty": {},
+    "setPageAliases#default": {
+      "raw": 6,
+      "tx": 1
+    },
+    "setPageAliases#empty": {
+      "raw": 5,
+      "tx": 1
+    },
+    "setPageEmbeddingSignature#default": {},
+    "softDeletePage#default": {},
+    "softDeletePage#sourceId": {},
+    "softDeletePages#default": {},
+    "sumStaleChunkChars#default": {
+      "raw": 1
+    },
+    "sumStaleChunkChars#signature": {
+      "raw": 1
+    },
+    "supersedeTake#default": {},
+    "sweepContradictionCache#default": {},
+    "traverseGraph#default": {},
+    "traverseGraph#excludePrivate": {},
+    "traverseGraph#frontierCap": {},
+    "traverseGraph#sourceId": {},
+    "traverseGraph#sourceIds": {},
+    "traversePaths#default": {},
+    "traversePathsDetailed#both": {},
+    "traversePathsDetailed#both+sourceIds+excludePrivate": {},
+    "traversePathsDetailed#default": {},
+    "traversePathsDetailed#in": {},
+    "traversePathsDetailed#out+sourceId+linkType": {},
+    "updatePageContextualRetrievalState#default": {},
+    "updateSlug#moved": {
+      "raw": 10,
+      "tx": 1
+    },
+    "updateSlug#noop": {
+      "raw": 1,
+      "tx": 1
+    },
+    "updateSourceConfig#default": {},
+    "updateTake#default": {},
+    "updateTake#weight": {},
+    "updateTakeEmbeddings#default": {
+      "raw": 1
+    },
+    "upsertChunks#default": {
+      "raw": 4,
+      "tx": 1
+    },
+    "upsertChunks#embedding": {
+      "raw": 4,
+      "tx": 1
+    },
+    "upsertChunks#embeddingColumn": {
+      "raw": 4,
+      "tx": 1
+    },
+    "upsertChunks#empty": {
+      "raw": 4,
+      "tx": 1
+    },
+    "upsertChunks#expectedRevision": {
+      "raw": 4,
+      "tx": 1
+    },
+    "upsertEventProjection#default": {},
+    "upsertFile#default": {},
+    "writeContradictionsRun#default": {}
+  },
+  "normalizer": "gauge-acquires-by-case-v1"
+}
