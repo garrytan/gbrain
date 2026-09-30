@@ -179,6 +179,7 @@ import { v175 } from './v175-tags-tag-source.ts';
 import { v176 } from './v176-connector-checkpoint-stable-identity.ts';
 import { v177 } from './v177-pages-database-only-reason.ts';
 import { v178 } from './v178-persistence-writer-version-stamps.ts';
+import { v179 } from './v179-sources-surrogate-sid-and-unique-local-path.ts';
 
 // Array order is historical (see HISTORICAL_ARRAY_ORDER in the generator); the
 // runner sorts by version before applying.
@@ -356,4 +357,5 @@ export const MIGRATIONS: Migration[] = [
   v176,
   v177,
   v178,
+  v179,
 ];
