@@ -27,6 +27,7 @@
  */
 
 import { detectTini } from './spawn-helpers.ts';
+import { OwnerProcessingState, type OwnerProcessingStatus } from './processing-state.ts';
 import { resolveDefaultMaxRssMb } from './rss-default.ts';
 import {
   ChildWorkerSupervisor,
@@ -46,9 +47,8 @@ import { dirname, resolve } from 'path';
 import { hostname } from 'os';
 import type { BrainEngine } from '../engine.ts';
 import { tryAcquireDbLock, waitForDbLockTakeover, inspectLock, isLockHolderLive, type DbLockHandle } from '../db-lock.ts';
-import { MinionQueue } from './queue.ts';
 import { currentBrainId, readWorkers } from './worker-registry.ts';
-import { autopilotPausedMarkerPath } from '../autopilot-paths.ts';
+import { autopilotOperatorPauseMarkerPath, autopilotPaused } from '../autopilot-paths.ts';
 import { resolveEnvNumber } from '../env-number.ts';
 
 export type SupervisorEvent =
@@ -82,6 +82,7 @@ export interface SupervisorOpts {
   healthInterval: number;
   /** Path to the gbrain CLI executable (MUST be a compiled binary; .ts sources cannot be spawned). */
   cliPath: string;
+  cliArgsPrefix?: string[];
   /** Allow shell jobs on child worker. Default: false. When true, sets GBRAIN_ALLOW_SHELL_JOBS=1 on the
    *  child env AND passes `--allow-shell-jobs` (buildWorkerArgs) so the worker's cwd-.env quarantine
    *  cannot silently drop the opt-in. */
@@ -425,13 +426,15 @@ async function probeQueueStateInner(
   }
 
   const workerAlive = supervisorLive || registeredWorker || sig.activeHealthy > 0;
-  const paused = existsSync(autopilotPausedMarkerPath());
+  const paused = autopilotPaused();
 
   // Same operator knob the doctor's queue_health depth check reads.
   const threshold = resolveEnvNumber('GBRAIN_QUEUE_WAITING_THRESHOLD', 10);
   const warnings: string[] = [];
   if (paused) {
-    warnings.push('system paused for migration — job will not start until the pause clears');
+    warnings.push(existsSync(autopilotOperatorPauseMarkerPath())
+      ? 'system paused by the operator (gbrain autopilot resume clears it) — job will not start until the pause clears'
+      : 'system paused for migration — job will not start until the pause clears');
   }
   if (!workerAlive) {
     warnings.push(
@@ -542,6 +545,13 @@ export function classifySupervisorSingleton(args: {
 }
 
 export class MinionSupervisor {
+  private processingState: OwnerProcessingState | null = null;
+
+  get processingStatus(): OwnerProcessingStatus | null { return this.processingState?.snapshot ?? null; }
+
+  private get configurationBlocked(): boolean {
+    return this.processingState?.blocked ?? false;
+  }
   private opts: SupervisorOpts;
   private engine: BrainEngine;
   /**
@@ -703,6 +713,8 @@ export class MinionSupervisor {
       process.exit(ExitCodes.PID_UNWRITABLE);
     }
 
+    this.processingState = new OwnerProcessingState('supervisor', resolve(this.opts.pidFile));
+
     // 2. Cleanup on process exit (covers any exit path including process.exit).
     //    Installed BEFORE the DB-lock acquisition below: acquirePidLock just
     //    wrote OUR pid into the pidfile, so any early `process.exit` after this
@@ -711,6 +723,7 @@ export class MinionSupervisor {
     //    only unlinks when the file still holds our pid, so it's a no-op on the
     //    'held'/'unwritable' paths above (those never created our pidfile).
     this.exitListener = () => {
+      this.processingState?.close();
       try {
         if (existsSync(this.opts.pidFile)) {
           const contents = readFileSync(this.opts.pidFile, 'utf8').trim().split('\n')[0];
@@ -830,6 +843,7 @@ export class MinionSupervisor {
 
     // 7. Run the supervise loop (respawn on crash, bounded by maxCrashes).
     await this.runSuperviseLoop();
+    if (this.configurationBlocked) await new Promise<void>(() => {});
   }
 
   /**
@@ -867,41 +881,23 @@ export class MinionSupervisor {
     }
   }
 
-  private async reconcileOrphanedPrivateQueuesBeforeWorkerSpawn(): Promise<void> {
-    try {
-      // 30s bound: a hanging DB call here would otherwise block EVERY worker
-      // respawn indefinitely (the hook is awaited in the supervise loop with
-      // isStopping unchecked during the await). Timeout → spawn proceeds; the
-      // next respawn retries recovery.
-      const result = await Promise.race([
-        new MinionQueue(this.engine).reconcileOrphanedPrivateQueues({
-          reason: 'supervisor startup recovery: orphaned dream-inline private queue',
-        }),
-        new Promise<never>((_, reject) => {
-          const t = setTimeout(() => reject(new Error('private-queue recovery timed out after 30s')), 30_000);
-          t.unref?.();
-        }),
-      ]);
-      if (result.cancelled_jobs > 0) {
-        this.emit('health_warn', {
-          reason: 'private_queue_startup_recovery',
-          ...result,
-        });
-      }
-    } catch (e) {
-      this.emit('health_warn', {
-        reason: 'private_queue_startup_recovery_failed',
-        error: e instanceof Error ? e.message : String(e),
-      });
-    }
-  }
-
   /** Unified shutdown path. Reason becomes the audit event name; exitCode is process exit. */
   private async shutdown(reason: string, exitCode: number): Promise<void> {
+    if (this.configurationBlocked && reason !== 'SIGTERM' && reason !== 'SIGINT') return;
     if (this.stopping) return;
     this.stopping = true;
 
     this.emit('shutting_down', { reason, exit_code: exitCode });
+
+    if (this.childSupervisor) {
+      this.childSupervisor.killChild('SIGTERM');
+      await this.childSupervisor.awaitChildExit(35_000);
+      if (this.childSupervisor.childAlive) this.childSupervisor.killChild('SIGKILL');
+    }
+    if (this.configurationBlocked && reason !== 'SIGTERM' && reason !== 'SIGINT') {
+      this.stopping = false;
+      return;
+    }
 
     if (this.healthTimer) {
       clearInterval(this.healthTimer);
@@ -919,15 +915,6 @@ export class MinionSupervisor {
       const lock = this.dbLock;
       this.dbLock = null;
       try { await lock.release(); } catch { /* best-effort; TTL fallback covers it */ }
-    }
-
-    if (this.childSupervisor) {
-      this.childSupervisor.killChild('SIGTERM');
-      await this.childSupervisor.awaitChildExit(35_000);
-      // If the child is still up after the 35s drain window, escalate.
-      if (this.childSupervisor.childAlive) {
-        this.childSupervisor.killChild('SIGKILL');
-      }
     }
 
     // Remove signal handlers so tests that spin up multiple supervisors on
@@ -972,6 +959,7 @@ export class MinionSupervisor {
     if (!this.dbLock || this.stopping) return;
     try {
       const stillOwned = await this.dbLock.refresh();
+      if (this.configurationBlocked) return;
       if (stillOwned === false) {
         // W0 fix-wave (D5.10): the fenced refresh matched 0 rows — the lock
         // was stolen or force-cleared. That is CERTAIN loss, not a blip:
@@ -990,6 +978,7 @@ export class MinionSupervisor {
       this.lockRefreshFailures = 0;
     } catch (e) {
       this.lockRefreshFailures++;
+      if (this.configurationBlocked) return;
       this.emit('health_warn', {
         reason: 'supervisor_lock_refresh_failed',
         consecutive_failures: this.lockRefreshFailures,
@@ -1121,8 +1110,16 @@ export class MinionSupervisor {
     env.GBRAIN_SUPERVISED = '1';
 
     this.childSupervisor = new ChildWorkerSupervisor({
+      processingState: this.processingState ?? undefined,
+      onConfigurationBlocked: (status) => {
+        this.emit('health_error', {
+          reason: 'configuration_blocked',
+          reason_code: status?.reason_code ?? null,
+          queue: this.opts.queue,
+        });
+      },
       cliPath: this.opts.cliPath,
-      args: workerArgs,
+      args: [...(this.opts.cliArgsPrefix ?? []), ...workerArgs],
       env,
       maxCrashes: this.opts.maxCrashes,
       // issue #1994: hard permanent-give-up ceiling (the runaway backstop).
@@ -1131,11 +1128,6 @@ export class MinionSupervisor {
       hardStopMaxCrashes: resolveHardStopMaxCrashes(this.opts.maxCrashes),
       _backoffFloorMs: this.opts._backoffFloorMs,
       isStopping: () => this.stopping,
-      // Run under the supervisor's queue-scoped DB singleton lock before every
-      // child spawn, not merely once when the supervisor starts. The supervisor
-      // intentionally survives worker crashes/watchdog drains, and those are
-      // exactly the exits that can strand a parent-owned private queue.
-      beforeSpawn: () => this.reconcileOrphanedPrivateQueuesBeforeWorkerSpawn(),
       onMaxCrashesExceeded: (count, max) => {
         this.emit('max_crashes_exceeded', {
           crash_count: count,
@@ -1158,6 +1150,9 @@ export class MinionSupervisor {
    */
   private relayChildEvent(event: ChildSupervisorEvent): void {
     switch (event.kind) {
+      case 'worker_startup_timeout':
+        this.emit('health_error', { reason: 'worker_startup_timeout', timeout_ms: event.timeoutMs, queue: this.opts.queue });
+        return;
       case 'worker_spawned':
         // issue #1801: anchor the startup grace + reset the wedge counter so a
         // fresh child is judged on its own forward progress, not the prior
@@ -1235,11 +1230,13 @@ export class MinionSupervisor {
    * connection shouldn't stack duplicate checks).
    */
   private async healthCheck(): Promise<void> {
-    if (this.healthInFlight) return;
+    if (this.healthInFlight || this.configurationBlocked || this.stopping) return;
+    if (this.processingState && !this.processingState.snapshot.processing_ready) return;
     this.healthInFlight = true;
 
     try {
       const sig = await queryWedgeSignals(this.engine, this.opts.queue, this.handlerNames);
+      if (this.configurationBlocked || this.stopping) return;
 
       // Reset consecutive failure counter on successful health check
       this.consecutiveHealthFailures = 0;
@@ -1325,6 +1322,7 @@ export class MinionSupervisor {
       }
     } catch (e) {
       this.consecutiveHealthFailures++;
+      if (this.configurationBlocked || this.stopping) return;
       const errMsg = e instanceof Error ? e.message : String(e);
 
       if (this.consecutiveHealthFailures >= 3) {
@@ -1382,6 +1380,7 @@ export class MinionSupervisor {
     waitingClaimable: number,
     minutesSinceCompletion: number | null,
   ): Promise<void> {
+    if (this.configurationBlocked || this.stopping) return;
     const cs = this.childSupervisor;
     if (!cs) return;
 

@@ -47,7 +47,7 @@ import {
 } from '../src/eval/longmemeval/diagnostics.ts';
 import { buildSlugToRawMap } from '../src/eval/longmemeval/metrics.ts';
 import { buildRunConfig, type RetrievalPins } from '../src/eval/longmemeval/run-config.ts';
-import type { LongMemEvalQuestion } from '../src/eval/longmemeval/adapter.ts';
+import { sessionSlug, type LongMemEvalQuestion } from '../src/eval/longmemeval/adapter.ts';
 import { createBenchmarkBrain } from '../src/eval/longmemeval/harness.ts';
 import { __setEmbedTransportForTests, configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 import { fnv1a } from '../src/eval/deterministic-embed.ts';
@@ -228,7 +228,8 @@ describe('receipt parsing, top-k reading, split membership, summary, glossary', 
   test('session rank builders: first row rank vs distinct-session rank through the slug→raw map', () => {
     const q = { question_id: 'q', question_type: 't', question: '', answer: '', haystack_sessions: [[], [], []], haystack_session_ids: ['Sess_A', 'Sess_B', 'Sess_C'], answer_session_ids: [] } as unknown as LongMemEvalQuestion;
     const map = buildSlugToRawMap(q);
-    const rows = [{ slug: 'chat/sess-a' }, { slug: 'chat/sess-a' }, { slug: 'chat/sess-c' }, { slug: 'chat/sess-b' }];
+    const [a, b, c] = ['Sess_A', 'Sess_B', 'Sess_C'].map(id => sessionSlug('q', id));
+    const rows = [{ slug: a }, { slug: a }, { slug: c }, { slug: b }];
     expect([...sessionRowRanks(rows, map)]).toEqual([['Sess_A', 1], ['Sess_C', 3], ['Sess_B', 4]]);
     expect([...sessionDistinctRanks(rows, map)]).toEqual([['Sess_A', 1], ['Sess_C', 2], ['Sess_B', 3]]);
   });

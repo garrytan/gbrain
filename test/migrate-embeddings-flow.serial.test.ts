@@ -2,8 +2,8 @@
  * #3390 — `gbrain migrate embeddings` END-TO-END on PGLite.
  *
  * The full command flow with a fake embedding transport:
- *   1. Disposable brain seeded via the REAL embed pipeline on a fake 1280d
- *      "zeroentropyai:zembed-1" provider (the shipped default).
+ *   1. Disposable brain seeded via the REAL embed pipeline on a fake 1024d
+ *      "voyage:voyage-4" provider (the shipped default).
  *   2. One page's embedding_signature NULLed (simulates a pre-v108 page,
  *      the #3391 class).
  *   3. Migration to a fake 1536d openai:text-embedding-3-small — with the
@@ -39,7 +39,7 @@ import {
   MIGRATION_COMPLETED_KEY,
 } from '../src/core/embedding-migration.ts';
 
-const FROM_DIMS = 1280;
+const FROM_DIMS = 1024;
 const TO_DIMS = 1536;
 const PAGES = ['page-1', 'page-2', 'page-3', 'page-4', 'page-5', 'page-6'];
 const PROBE_TEXT = 'gbrain embedding migration probe';
@@ -98,7 +98,7 @@ async function columnDims(): Promise<number> {
 
 beforeAll(async () => {
   // Isolate the file-plane config.
-  for (const k of ['GBRAIN_HOME', 'GBRAIN_EMBEDDING_MODEL', 'GBRAIN_EMBEDDING_DIMENSIONS', 'OPENAI_API_KEY', 'ZEROENTROPY_API_KEY', 'DATABASE_URL']) {
+  for (const k of ['GBRAIN_HOME', 'GBRAIN_EMBEDDING_MODEL', 'GBRAIN_EMBEDDING_DIMENSIONS', 'OPENAI_API_KEY', 'VOYAGE_API_KEY', 'DATABASE_URL']) {
     savedEnv[k] = process.env[k];
     delete process.env[k];
   }
@@ -107,17 +107,17 @@ beforeAll(async () => {
   mkdirSync(join(tmpHome, '.gbrain'), { recursive: true });
   writeFileSync(join(tmpHome, '.gbrain', 'config.json'), JSON.stringify({
     engine: 'pglite',
-    embedding_model: 'zeroentropyai:zembed-1',
+    embedding_model: 'voyage:voyage-4',
     embedding_dimensions: FROM_DIMS,
-    zeroentropy_api_key: 'ze-test-fake',
+    voyage_api_key: 'voyage-test-fake',
     openai_api_key: 'sk-test-fake',
   }, null, 2));
 
   resetGateway();
   configureGateway({
-    embedding_model: 'zeroentropyai:zembed-1',
+    embedding_model: 'voyage:voyage-4',
     embedding_dimensions: FROM_DIMS,
-    env: { ZEROENTROPY_API_KEY: 'ze-test-fake', OPENAI_API_KEY: 'sk-test-fake' },
+    env: { VOYAGE_API_KEY: 'voyage-test-fake', OPENAI_API_KEY: 'sk-test-fake' },
   });
   installTransport();
 
@@ -138,7 +138,7 @@ afterAll(async () => {
 });
 
 describe('migrate embeddings — full flow on PGLite', () => {
-  test('seed: 6 pages embedded at 1280d through the real embed pipeline', async () => {
+  test('seed: 6 pages embedded at 1024d through the real embed pipeline', async () => {
     expect(await columnDims()).toBe(FROM_DIMS);
     for (const slug of PAGES) {
       await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: `# ${slug}\n\ncontent for ${slug}` });
@@ -153,7 +153,7 @@ describe('migrate embeddings — full flow on PGLite', () => {
     // Simulate a pre-v108 page: embedded, but no recorded signature (#3391).
     await engine.executeRaw(`UPDATE pages SET embedding_signature = NULL WHERE slug = 'page-1'`);
     const sigs = await engine.executeRaw<{ n: number }>(
-      `SELECT count(*)::int AS n FROM pages WHERE embedding_signature = 'zeroentropyai:zembed-1:${FROM_DIMS}'`,
+      `SELECT count(*)::int AS n FROM pages WHERE embedding_signature = 'voyage:voyage-4:${FROM_DIMS}'`,
     );
     expect(Number(sigs[0]?.n)).toBe(PAGES.length - 1);
 
@@ -170,7 +170,7 @@ describe('migrate embeddings — full flow on PGLite', () => {
     expect(await engine.getConfig(MIGRATION_STATE_KEY)).toBeFalsy();
     // Config file untouched.
     const cfg = JSON.parse(readFileSync(join(tmpHome, '.gbrain', 'config.json'), 'utf-8'));
-    expect(cfg.embedding_model).toBe('zeroentropyai:zembed-1');
+    expect(cfg.embedding_model).toBe('voyage:voyage-4');
   });
 
   test('non-TTY without --yes refuses with exit 2 (cost gate)', async () => {
@@ -195,7 +195,7 @@ describe('migrate embeddings — full flow on PGLite', () => {
     failTexts = ['page-4', 'page-5']; // simulate dying mid-run on two pages
     embeddedTexts = [];
 
-    const code = await runMigrate(['--to', 'openai:text-embedding-3-small', '--yes']);
+    const code = await runMigrate(['--to', 'openai:text-embedding-3-small', '--yes', '--max-cost-usd', '1']);
     expect(code).toBe(1); // incomplete
 
     // Schema + config swapped BEFORE the re-embed, so the partial run is
@@ -223,7 +223,7 @@ describe('migrate embeddings — full flow on PGLite', () => {
     failTexts = [];
     embeddedTexts = [];
 
-    const code = await runMigrate(['--to', 'openai:text-embedding-3-small', '--yes']);
+    const code = await runMigrate(['--to', 'openai:text-embedding-3-small', '--yes', '--max-cost-usd', '1']);
     expect(code).toBe(0);
 
     // Only the two previously-failed pages were embedded this pass, plus the
@@ -275,7 +275,7 @@ describe('migrate embeddings — full flow on PGLite', () => {
 
   test('re-run on an already-migrated brain is a clean no-op', async () => {
     embeddedTexts = [];
-    const code = await runMigrate(['--to', 'openai:text-embedding-3-small', '--yes']);
+    const code = await runMigrate(['--to', 'openai:text-embedding-3-small', '--yes', '--max-cost-usd', '1']);
     expect(code).toBe(0);
     // Nothing re-embedded (probe excluded from embeddedTexts by design).
     expect(embeddedTexts.length).toBe(0);

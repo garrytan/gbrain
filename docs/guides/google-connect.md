@@ -270,3 +270,105 @@ copy the harness should relay verbatim is fenced in `[SHOW USER]` blocks.
 The whole setup is exactly two user interactions: (1) the GCP checklist +
 client JSON hand-back, (2) one consent click. Never pass secrets via argv —
 use `--client-json <path>`, stdin, or env.
+
+## Attachment receipts and historical repair
+
+Gmail attachment receipts record filenames, MIME types, byte sizes when supplied,
+account/message/part identity, and Gmail attachment IDs when available. They do
+**not** download attachments or index their contents. Calendar documents and
+inline parts are distinguished from ordinary documents; plain/HTML message-body
+parts are not attachment receipts. Receipt metadata inherits its message page's
+source and visibility. Filenames are inert data, not paths or executable links.
+
+Message rendering distinguishes four states:
+
+- **Not inspected:** a legacy message has no inspection receipt. Absence of a
+  receipt says nothing about whether an attachment exists.
+- **Inspection incomplete:** missing/malformed MIME data or a safety bound stopped
+  inspection. Any receipts already observed remain visible, but absence is unknown.
+- **Inspected; none found:** bounded inspection completed without attachments.
+- **Present; not downloaded; not indexed:** metadata exists, but attachment content
+  is not available to search. For example, `fixture.pdf — application/pdf; 17 bytes`.
+
+Each message MIME walk is iterative, capped at depth 32 and 512 visited parts.
+Attachment receipt payloads have a 64 KiB aggregate budget per fetched thread;
+over-limit metadata is incomplete rather than silently marked empty. Missing part
+IDs use deterministic MIME paths. Duplicate filenames remain separate receipts.
+Missing message IDs have deterministic fallback identities but no invented Gmail
+link. Pure-noise threads remain excluded by the existing ingestion policy.
+
+Historical repair requests a Gmail partial response containing message IDs and
+explicit MIME metadata fields; `body.data`, raw messages and snippets are never
+selected. The selection includes child-identity sentinels beyond depth 32 so a
+deeper MIME tree remains incomplete rather than appearing empty. Decoded metadata
+responses are capped at 2 MiB before JSON parsing; oversized responses fail without
+advancing repair. Ordinary sync's message-body requests are unchanged.
+
+Upgrading changes future ingestion, **not** every historical page. Ordinary
+incremental sync only revisits changed threads and its success does not establish
+historical inspection. To repair already-imported pages without replaying bodies:
+
+```sh
+gbrain google attachments backfill --brain host --source gmail-example --json
+gbrain google attachments backfill --brain host --source gmail-example --yes --limit 25 --json
+```
+
+This is a trusted **local, managed-persistence-only** command for both PGLite and
+PostgreSQL. Use an existing Google source and existing CLI writer registration on
+the selected canonical host. It never enables persistence, installs services, or
+silently registers a new repair writer. Keep old conflicting mutation workers
+quiesced without deleting their queued work. For PGLite, stop its resident owner
+cleanly first: this command does not delegate historical repair to a running owner.
+For PostgreSQL, use the configured host brain or an explicitly selected local
+PostgreSQL mount; source selection never switches the database. Unmanaged sources
+can continue ordinary ingestion, but this historical repair refuses them.
+
+The first command is read-only and makes no Google calls. Its `status: "preview"`
+names the effective brain, source, account, imported-page count and saved historical
+cursor (or `not_inspected`). Review that scope before applying `--yes`. The apply
+command processes at most 25 imported thread pages, patches only the
+`gmail_attachment_receipts` frontmatter field, and preserves current body, other
+frontmatter, tags, visibility and committed withdrawals. It never calls loop/fact
+extraction or an attachment-download/model API. Canonical text projections are
+rebuilt without provider calls; receipt filenames are not extracted as facts.
+
+A batch returning `status: "paused", complete: false` exits nonzero with its
+durable count and cursor. Repeat the **same command** to resume. The per-account
+cursor is checkpointed only after committed page receipts; interruption can repeat
+a page safely without duplicating receipt identities. `status: "complete"` means
+traversal of the fixed upper page-ID boundary captured at the first repair invocation
+is done, **not that every message was inspected or mailbox-wide coverage**.
+`inspected` counts fully inspected pages; `unavailable` counts pages with missing
+historical messages, and `unavailableMessages` counts those identities separately.
+`inspection_complete` is false when traversal is paused or any identity is unavailable.
+This scan has no date filter and does not import
+missing/deleted pages; new ingestion handles newly imported pages.
+
+A confirmed Gmail thread HTTP 404 or a missing historical message ID in an otherwise
+valid thread records `messages[].unavailable` (`thread_not_found` or
+`message_not_found`). Any prior receipt and inspection metadata stays intact; an
+identity without prior metadata has `inspection.state: not_inspected`, not `none`.
+The historical body, privacy and message IDs remain unchanged. The durable cursor
+can then continue to later pages without repeatedly blocking on upstream absence.
+Authorization/rate-limit errors, malformed responses, other HTTP errors and unknown
+ownership are not disappearance and do not authorize skipping the affected page.
+
+`incomplete` also exits nonzero and leaves the cursor before that page. A conflict
+(unknown receipt ownership, canonical edit during publication, delete/recreation,
+source/account change or lost lease) preserves existing content and stops progress.
+Inspect the retained write receipt and source before retrying. After resolving a
+terminal failed receipt, `--yes --retry-failed` explicitly authorizes its linked
+retry; never reset cursors, force overwrite, or restore an old backup to bypass a
+withdrawal. Completed partial work remains durable. Provider failure, unavailable
+owners and malformed metadata are not successful inspection.
+
+Verify with the preview command above and an authorized page read:
+
+```sh
+gbrain get emails/2026/09/example-thread --brain host --source gmail-example
+```
+
+Inspect `frontmatter.gmail_attachment_receipts.messages[].inspection` for the
+individual states and preserved attachment identities. The page's existing Gmail
+citation remains its navigation link; a missing message ID reports unavailable.
+Private pages and their receipts remain unavailable to unauthorized remote readers.

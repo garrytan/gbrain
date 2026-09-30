@@ -73,6 +73,10 @@ describe('generateOcrText budget accounting (#4121)', () => {
     expect(row.model).toBe('anthropic:claude-haiku-4-5-20251001');
     expect(row.input_tokens).toBe(900);
     expect(row.output_tokens).toBe(12);
+    expect(tracker.snapshot().models).toEqual([expect.objectContaining({
+      touchpoint: 'ocr', model: 'anthropic:claude-haiku-4-5-20251001', purpose: null,
+      calls: 1, attempts: 1, failed_calls: 0, input_tokens: 900, output_tokens: 12, cost_basis: 'measured',
+    })]);
   });
 
   test('transport failure records gateway.ocr.failed with a sane estimate and re-throws', async () => {
@@ -98,6 +102,9 @@ describe('generateOcrText budget accounting (#4121)', () => {
     expect(row.input_tokens).toBeGreaterThan(1000);
     expect(row.input_tokens).toBeLessThan(10_000);
     expect(row.output_tokens).toBeGreaterThan(0);
+    expect(tracker.snapshot().models).toEqual([expect.objectContaining({
+      touchpoint: 'ocr', calls: 1, failed_calls: 1, cost_basis: 'estimated',
+    })]);
   });
 
   test('outside any withBudgetTracker scope, OCR is a budget no-op', async () => {

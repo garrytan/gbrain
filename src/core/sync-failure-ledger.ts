@@ -68,6 +68,10 @@ const LOCK_TIMEOUT_MS = 5_000;
 export type SyncFailureState = 'open' | 'acknowledged' | 'auto_skipped';
 
 export interface SyncFailure {
+  managed_cursor_key?: string;
+  request_id?: string | null;
+  run_id?: string;
+  observation_id?: string;
   /** Owning source (#1939 Codex #2 — failures must not merge across sources). */
   source_id: string;
   path: string;
@@ -360,9 +364,9 @@ export function syncFailuresPath(): string {
   return _joinPath(_failuresDir(), 'sync-failures.jsonl');
 }
 
-function _ledgerKey(f: { source_id: string; path: string }): string {
+function _ledgerKey(f: { source_id: string; path: string; managed_cursor_key?: string }): string {
   // NUL separator can't appear in a source id or path.
-  return `${f.source_id}\u0000${f.path}`;
+  return `${f.source_id}\u0000${f.path}${f.managed_cursor_key ? `\u0000${f.managed_cursor_key}` : ''}`;
 }
 
 // ─── State mirror ───────────────────────────────────────────────────
@@ -405,6 +409,9 @@ function _normalizeRow(raw: Record<string, unknown>): SyncFailure {
       ? Math.floor(raw.attempts)
       : 1;
   const row: SyncFailure = {
+    ...(typeof raw.managed_cursor_key === 'string' ? { managed_cursor_key: raw.managed_cursor_key,
+      request_id: typeof raw.request_id === 'string' ? raw.request_id : null,
+      run_id: String(raw.run_id ?? ''), observation_id: String(raw.observation_id ?? '') } : {}),
     source_id,
     path: String(raw.path ?? ''),
     error,
@@ -478,8 +485,8 @@ export function loadSyncFailures(): SyncFailure[] {
 }
 
 /** Unresolved failures (open + auto_skipped). */
-export function unacknowledgedSyncFailures(): SyncFailure[] {
-  return loadSyncFailures().filter(e => e.state !== 'acknowledged');
+export function unacknowledgedSyncFailures(entries = loadSyncFailures()): SyncFailure[] {
+  return entries.filter(e => e.state !== 'acknowledged');
 }
 
 // ─── Concurrency: cross-process lock + atomic write ──────────────────
@@ -644,6 +651,26 @@ export function clearFailures(sourceId: string, paths: string[]): void {
   });
 }
 
+export function mirrorManagedSyncFailure(failure: { source_id: string; path: string; code: string; message: string; target: string | null;
+  cursor_key: string; request_id: string | null; run_id: string; observation_id: string; first_seen: string; attempts: number }): void {
+  withLedgerLock(() => {
+    const entries = loadSyncFailures();
+    const previous = entries.find(row => row.managed_cursor_key === failure.cursor_key);
+    if (previous?.observation_id === failure.observation_id) return;
+    const next = _applyMirror({ source_id: failure.source_id, path: failure.path, code: failure.code, error: failure.message,
+      commit: failure.target ?? '', managed_cursor_key: failure.cursor_key, request_id: failure.request_id, run_id: failure.run_id,
+      observation_id: failure.observation_id, first_seen: failure.first_seen, ts: new Date().toISOString(), attempts: failure.attempts, state: 'open' });
+    _writeAll([...entries.filter(row => row.managed_cursor_key !== failure.cursor_key), next]);
+  });
+}
+
+export function clearManagedSyncFailure(key: string): void {
+  withLedgerLock(() => {
+    const entries = loadSyncFailures(), kept = entries.filter(row => row.managed_cursor_key !== key);
+    if (kept.length !== entries.length) _writeAll(kept);
+  });
+}
+
 /**
  * Re-insert previously-cleared rows VERBATIM (attempts, first_seen, ts,
  * commit, state all preserved) — the undo half of a clear that a
@@ -677,6 +704,7 @@ export function acknowledgeFailures(sourceId?: string): AcknowledgeResult {
     const acked: SyncFailure[] = [];
     for (const e of entries) {
       if (e.state !== 'open' && e.state !== 'auto_skipped') continue;
+      if (e.managed_cursor_key) continue;
       if (sourceId !== undefined && e.source_id !== sourceId) continue;
       if (!isSkippablePath(e.path)) continue;
       e.state = 'acknowledged';

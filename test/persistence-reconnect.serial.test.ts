@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
 import { runPersistenceAdministration } from '../src/core/persistence/administration.ts';
+import { reviewedWriterIntent } from './helpers/writer-admin-intent.ts';
 import { disposePersistenceConsumer, persistenceConsumerStatus } from '../src/core/persistence/service.ts';
 import { withEnv } from './helpers/with-env.ts';
 
@@ -26,7 +27,7 @@ test('same-engine disk reconnect resumes managed writes and retained request rep
     };
     try {
       await engine.connect(config); await engine.initSchema();
-      await runPersistenceAdministration(engine, 'writer_activate', { confirm_quiesced: true });
+      await runPersistenceAdministration(engine, 'writer_activate', { confirm_quiesced: true, ...await reviewedWriterIntent(engine, 'writer_activate') });
       const params = { request_id: randomUUID(), slug: 'reconnect-example', content: '---\ntype: note\ntitle: Reconnect example\n---\nOriginal content' };
       const first = await submitPageMutation(ctx, { operation: 'put_page', params });
       expect(first.state).toBe('committed');

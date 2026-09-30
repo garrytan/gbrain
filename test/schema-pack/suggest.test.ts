@@ -9,8 +9,8 @@
  * emits at confidence EXACTLY 0.5, strictly below the 0.6 auto-apply floor
  * (codex finding #9: consumers MUST treat < 0.6 as manual-review-only), so a
  * keyless install can never auto-apply a schema change. 0.6 exists only as a
- * documented contract (suggest.ts comment, skills/eiirp/SKILL.md,
- * eval-schema-authoring's low_confidence_count) — the source-text guard below
+ * documented contract (suggest.ts comment, skills/eiirp/SKILL.md) — the
+ * source-text guard below
  * pins both literals so neither side can drift alone.
  *
  * The heuristic tests intentionally pass NO suggestFn: every branch of the
@@ -177,8 +177,7 @@ describe('runSuggest — heuristic fallback (no suggestFn)', () => {
 describe('runSuggest — source-text contract (structural)', () => {
   test('the 0.5 heuristic constant and the documented 0.6 floor stay in suggest.ts together', () => {
     // The 0.6 auto-apply floor has no exported constant — it is a documented
-    // contract (suggest.ts, skills/eiirp/SKILL.md, eval-schema-authoring's
-    // low_confidence_count). Pin both literals in the one file that carries
+    // contract (suggest.ts, skills/eiirp/SKILL.md). Pin both literals in the one file that carries
     // the safe-by-construction pairing, so a change to either side must
     // reconcile this test (and thus the other side) explicitly.
     const src = readFileSync(join(import.meta.dir, '..', '..', 'src', 'core', 'schema-pack', 'suggest.ts'), 'utf-8');

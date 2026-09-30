@@ -5,6 +5,7 @@ import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import type { GBrainConfig } from '../config.ts';
 import { shouldDropAgentEnv } from './environment.ts';
 import { shellQuote } from '../mcp-registration.ts';
+import type { LocalSharedSkillsResult } from './shared-skills.ts';
 
 export class AgentInstallError extends Error {
   constructor(public code: string, message: string) { super(message); this.name = 'AgentInstallError'; }
@@ -45,6 +46,8 @@ export interface AgentInstallReceipt {
   native: { skill_id: string; routine_id: string; verification: 'unverified' };
   capabilities?: { transport: 'local-cli'; engine: 'pglite'; finite_database_probe: 'passed'; native_runtime: 'unverified' };
   search_mode_confirmation_required: boolean;
+  skills_policy?: 'follow' | 'memory-only';
+  shared_skills?: LocalSharedSkillsResult;
   /** Non-secret, durable recovery and enablement state. Older receipts derive it on repair. */
   pending_steps?: string[];
   recovery?: { command: string; action: string };
@@ -82,14 +85,35 @@ export function assertNoSymlinks(path: string): void {
   }
 }
 
-export function confinedPath(root: string, relative: string): string {
-  if (!relative || isAbsolute(relative) || relative.includes('\\') || relative.split('/').some(p => !p || p === '.' || p === '..') || /[\0\r\n]/.test(relative)) {
+export function checkedRelativePath(relative: string): string {
+  if (!relative || /[\\<>:"|?*\x00-\x1f\x7f]/.test(relative)
+    || relative.split('/').some(p => !p || p === '.' || p === '..' || /[. ]$/.test(p)
+      || /^(?:con|prn|aux|nul|conin\$|conout\$|com[1-9¹²³]|lpt[1-9¹²³])(?: *\.| *$)/i.test(p))) {
     throw new AgentInstallError('invalid_relative_path', `Invalid managed relative path: ${JSON.stringify(relative)}`);
   }
-  const target = resolve(root, relative);
-  if (!target.startsWith(root + sep)) throw new AgentInstallError('path_escape', 'Managed path escapes storage root.');
+  return relative;
+}
+
+export function confinedPath(root: string, relative: string): string {
+  checkedRelativePath(relative);
+  const base = checkedRoot(root);
+  const target = resolve(base, relative);
+  if (!target.startsWith(base.endsWith(sep) ? base : base + sep)) throw new AgentInstallError('path_escape', 'Managed path escapes storage root.');
   assertNoSymlinks(target);
   return target;
+}
+
+export function syncDirectory(path: string): void {
+  let fd: number | undefined;
+  try {
+    fd = openSync(path, 'r');
+    fsyncSync(fd);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (!(process.platform === 'win32' && ['EISDIR', 'EPERM', 'EINVAL', 'ENOTSUP'].includes(code ?? ''))) throw error;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
 }
 
 export function privateWrite(path: string, contents: string | Uint8Array, mode = 0o600): void {
@@ -103,8 +127,7 @@ export function privateWrite(path: string, contents: string | Uint8Array, mode =
     fsyncSync(fd);
     closeSync(fd); fd = undefined;
     renameSync(tmp, path);
-    const dir = openSync(dirname(path), 'r');
-    try { fsyncSync(dir); } finally { closeSync(dir); }
+    syncDirectory(dirname(path));
   } catch (error) {
     if (fd !== undefined) closeSync(fd);
     try { unlinkSync(tmp); } catch { /* no temporary file after a failed write */ }
@@ -115,15 +138,17 @@ export function privateWrite(path: string, contents: string | Uint8Array, mode =
 export function installReceiptPath(root: string): string { return join(root, '.gbrain', 'agent-install', 'receipt.json'); }
 
 /** A data inventory cannot include installer internals, credentials or another inventory root. */
-export function checkedManagedPaths(root: string, input: unknown): string[] {
+export function checkedManagedPaths(root: string | null, input: unknown): string[] {
   if (!Array.isArray(input) || input.some(path => typeof path !== 'string')) throw new AgentInstallError('invalid_managed_paths', 'Invalid managed path inventory.');
   const paths = input as string[];
   for (const path of paths) {
-    confinedPath(root, path);
-    const first = path.split('/')[0];
+    if (root === null) checkedRelativePath(path);
+    else confinedPath(root, path);
+    const first = path.split('/')[0].toLowerCase();
     if (['.gbrain', 'runtime', 'bin', 'restore-receipt.json'].includes(first) || first.startsWith('.restore-') || first.startsWith('.gbrain-')) throw new AgentInstallError('invalid_managed_paths', 'Managed data cannot include installer, credential or restore state.');
   }
-  if (paths.some((path, i) => paths.some((other, j) => i !== j && (path === other || path.startsWith(other + '/'))))) throw new AgentInstallError('invalid_managed_paths', 'Managed inventory paths overlap.');
+  const keys = paths.map(path => path.normalize('NFC').toLowerCase());
+  if (keys.some((path, i) => keys.some((other, j) => i !== j && (path === other || path.startsWith(other + '/'))))) throw new AgentInstallError('invalid_managed_paths', 'Managed inventory paths overlap.');
   return paths;
 }
 
@@ -137,6 +162,7 @@ export function readInstallReceipt(root: string): AgentInstallReceipt | null {
   if (!value || value.format_version !== 1 || !value.installation_id || !['grok-bot', 'muse'].includes(value.harness) || typeof value.source_id !== 'string' || !value.native || !value.owned_files || typeof value.owned_files !== 'object' || !['installing', 'ready'].includes(value.state)) {
     throw new AgentInstallError('invalid_receipt', `Unsupported or invalid install receipt: ${path}`);
   }
+  if (value.skills_policy !== undefined && !['follow', 'memory-only'].includes(value.skills_policy)) throw new AgentInstallError('invalid_receipt', 'Invalid recorded shared-skills choice; preserve the receipt before recovery.');
   if (value.root !== root || value.database_path !== join(root, '.gbrain', 'brain.pglite')) {
     throw new AgentInstallError('receipt_mismatch', 'Install receipt belongs to a different root/database; use backup restore to relocate it.');
   }
@@ -156,6 +182,7 @@ export function writeInstallReceipt(receipt: AgentInstallReceipt): void {
     ...(receipt.pending_runtime_migration ? ['migrate_database'] : []),
     ...(receipt.state !== 'ready' ? ['verify_local_installation'] : []),
     ...(receipt.search_mode_confirmation_required ? ['confirm_search_mode'] : []),
+    ...(receipt.skills_policy === undefined ? ['approve_shared_skills_follow'] : []),
     'enable_native_skill', 'enable_native_maintenance', 'verify_new_conversation',
   ];
   const helper = join(receipt.root, 'bin', 'gbrain-setup');

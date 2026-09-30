@@ -14,23 +14,33 @@
  * cycle reverse-write check but fail source add.
  *
  * v0.38 consolidated both paths through `src/core/source-id.ts` and chose
- * the strict regex as canonical. This test pins that change: the regex
- * used at the cycle reverse-write sites must be the strict one, and the
- * import path must be the consolidated one.
- *
- * IRON-RULE: this is a structural regression test. If a future refactor
- * splits the import path or widens the regex, this test fails first.
+ * the strict regex as canonical. This test pins that change at both
+ * boundaries: the re-exported validator rejects exactly what the canonical
+ * one rejects, and the patterns + synthesize reverse-write helpers refuse an
+ * underscore or traversal source_id BEFORE any file lands under
+ * `brainDir/.sources/<id>/`.
  */
 import { describe, test, expect } from 'bun:test';
-import { readFileSync } from 'fs';
+import { existsSync, mkdtempSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
 import { join } from 'path';
 import { validateSourceId } from '../src/core/utils.ts';
 import {
   SOURCE_ID_RE,
   assertValidSourceId,
 } from '../src/core/source-id.ts';
+import { __testing as patterns } from '../src/core/cycle/patterns.ts';
+import { __testing as synthesize } from '../src/core/cycle/synthesize.ts';
+import type { BrainEngine } from '../src/core/engine.ts';
 
-const REPO_ROOT = join(import.meta.dir, '..');
+// Every slug resolves to a page, so the only thing standing between a bad
+// source_id and a file write is the validator.
+const pageEngine = {
+  getPage: async (slug: string) => ({
+    slug, type: 'note', title: slug, compiled_truth: 'body', timeline: '', frontmatter: {},
+  }),
+  getTags: async () => [],
+} as unknown as BrainEngine;
 
 describe('strict-regex blast radius — patterns.ts + synthesize.ts (codex r2 P1-D)', () => {
   describe('utils.ts re-export contract', () => {
@@ -63,54 +73,28 @@ describe('strict-regex blast radius — patterns.ts + synthesize.ts (codex r2 P1
     });
   });
 
-  describe('cycle reverse-write call sites use the consolidated path', () => {
-    test('patterns.ts imports validateSourceId from utils.ts', () => {
-      const src = readFileSync(join(REPO_ROOT, 'src/core/cycle/patterns.ts'), 'utf8');
-      // Whichever import shape — relative path varies — must reach utils.ts
-      // (which now re-exports the strict assertValidSourceId).
-      expect(src).toMatch(/import\s+\{[^}]*validateSourceId[^}]*\}\s+from\s+['"]\.\.\/utils\.ts['"]/);
-    });
-
-    test('synthesize.ts imports validateSourceId from utils.ts', () => {
-      const src = readFileSync(join(REPO_ROOT, 'src/core/cycle/synthesize.ts'), 'utf8');
-      expect(src).toMatch(/import\s+\{[^}]*validateSourceId[^}]*\}\s+from\s+['"]\.\.\/utils\.ts['"]/);
-    });
-
-    test('patterns.ts calls validateSourceId before reverse-write join (defense ordering)', () => {
-      const src = readFileSync(join(REPO_ROOT, 'src/core/cycle/patterns.ts'), 'utf8');
-      // Look for the canonical reverseWriteRefs body: validateSourceId(source_id)
-      // must appear inside a function that later calls join(brainDir, '.sources', source_id, ...).
-      const validatePos = src.indexOf('validateSourceId(source_id)');
-      const joinPos = src.indexOf(".sources', source_id");
-      expect(validatePos).toBeGreaterThan(-1);
-      expect(joinPos).toBeGreaterThan(-1);
-      expect(validatePos).toBeLessThan(joinPos);
-    });
-
-    test('synthesize.ts calls validateSourceId before reverse-write join', () => {
-      const src = readFileSync(join(REPO_ROOT, 'src/core/cycle/synthesize.ts'), 'utf8');
-      const validatePos = src.indexOf('validateSourceId(source_id)');
-      const joinPos = src.indexOf(".sources', source_id");
-      expect(validatePos).toBeGreaterThan(-1);
-      expect(joinPos).toBeGreaterThan(-1);
-      expect(validatePos).toBeLessThan(joinPos);
-    });
-  });
-
-  describe('utils.ts no longer carries an inline permissive regex', () => {
-    test('utils.ts source text contains no `^[a-z0-9_-]+$` regex literal', () => {
-      // Pre-v0.38 had this exact regex. The blast-radius fix tightened it.
-      // If a future refactor reintroduces a permissive shape in utils.ts,
-      // this test fails first.
-      const src = readFileSync(join(REPO_ROOT, 'src/core/utils.ts'), 'utf8');
-      expect(src).not.toMatch(/\/\^\[a-z0-9_-\]\+\$\//);
-    });
-
-    test('utils.ts re-exports assertValidSourceId from source-id.ts as validateSourceId', () => {
-      const src = readFileSync(join(REPO_ROOT, 'src/core/utils.ts'), 'utf8');
-      // Either named alias re-export or any other shape that produces the
-      // same observable contract (validateSourceId === assertValidSourceId).
-      expect(src).toMatch(/assertValidSourceId\s+as\s+validateSourceId.*from\s+['"]\.\/source-id\.ts['"]/);
-    });
+  describe('cycle reverse-write helpers reject non-canonical source ids before writing', () => {
+    for (const [name, reverseWriteRefs] of [
+      ['patterns', patterns.reverseWriteRefs],
+      ['synthesize', synthesize.reverseWriteRefs],
+    ] as const) {
+      test(`${name}: snake_id and traversal ids throw and write nothing`, async () => {
+        const brainDir = mkdtempSync(join(tmpdir(), `gbrain-strict-source-${name}-`));
+        try {
+          for (const bad of ['snake_id', '../escape']) {
+            await expect(
+              reverseWriteRefs(pageEngine, brainDir, [{ slug: 'wiki/x', source_id: bad }], 'default'),
+            ).rejects.toThrow();
+            expect(existsSync(join(brainDir, '.sources', bad, 'wiki/x.md'))).toBe(false);
+          }
+          expect(existsSync(join(brainDir, 'escape'))).toBe(false);
+          const written = await reverseWriteRefs(pageEngine, brainDir, [{ slug: 'wiki/x', source_id: 'my-source' }], 'default');
+          expect(written).toBe(1);
+          expect(existsSync(join(brainDir, '.sources', 'my-source', 'wiki/x.md'))).toBe(true);
+        } finally {
+          rmSync(brainDir, { recursive: true, force: true });
+        }
+      });
+    }
   });
 });

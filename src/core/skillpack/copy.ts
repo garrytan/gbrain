@@ -14,6 +14,7 @@
  * CopyError BEFORE the filesystem is touched. Either every safe item
  * gets a chance to copy, or nothing does.
  */
+import { assertLegacySkillFilesystemWrite } from './writer-guard.ts';
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'fs';
 import { createHash } from 'crypto';
 import { dirname, join, relative, sep } from 'path';
@@ -134,6 +135,7 @@ function walk(rootSrc: string, curSrc: string, rootDst: string, out: CopyItem[])
  */
 export function copyArtifacts(items: CopyItem[], opts: CopyArtifactsOpts = {}): CopyResult {
   const dryRun = opts.dryRun ?? false;
+  if (!dryRun) for (const item of items) assertLegacySkillFilesystemWrite(item.target);
 
   // Pre-flight: realpath the containment root once (validation only —
   // confineRealpath itself must exist for the gate to be meaningful).
@@ -198,6 +200,7 @@ export function copyArtifacts(items: CopyItem[], opts: CopyArtifactsOpts = {}): 
     if (!dryRun) {
       try {
         const content = item.content != null ? item.content : readFileSync(item.source);
+        assertLegacySkillFilesystemWrite(item.target);
         mkdirSync(dirname(item.target), { recursive: true });
         writeFileSync(item.target, content);
         if (opts.computeSha256) {

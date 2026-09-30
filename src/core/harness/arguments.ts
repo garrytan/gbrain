@@ -28,6 +28,6 @@ export const MCP_GRANT_ARGUMENTS = {
   values: ['--harness', '--profile', '--source', '--url', '--client', '--if-version',
     '--federated-read', '--bound-tools', '--bound-source', '--bound-brain', '--bound-slug-prefixes',
     '--delegated-slug-prefixes', '--delegated-namespace', '--bound-max-concurrent', '--budget-usd-per-day',
-    '--token-ttl', '--admin-token-file', '--credentials-out'],
+    '--token-ttl', '--admin-token-file', '--credentials-out', '--skills'],
   flags: ['--resume', '--dry-run', '--json'], aliases: { '--agent': '--harness' },
 } as const;

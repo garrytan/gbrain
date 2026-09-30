@@ -146,7 +146,7 @@ describe('runChronicleExtract', () => {
     // The default judge is not exported; pin the load-bearing line so the
     // bare-`{events: []}` regression can't silently return.
     const { readFileSync } = await import('fs');
-    // test-reads-source-ok: defaultJudge is module-private and needs a live gateway; the text pin is the only unit-testable seam (#2608)
+    // test-reads-source-ok[structural]: defaultJudge is module-private and needs a live gateway; the text pin is the only unit-testable seam (#2608)
     const src = readFileSync('src/core/chronicle/extract-events.ts', 'utf8');
     expect(src).toMatch(/isAvailable\('chat'\)\)\s*return \{ events: \[\], failure: 'llm_unavailable' \}/);
   });

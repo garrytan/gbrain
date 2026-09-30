@@ -33,7 +33,7 @@ import {
   existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync, rmSync, statSync, renameSync,
 } from 'fs';
 import { join, dirname, relative, isAbsolute } from 'path';
-import { execFileSync, execSync } from 'child_process';
+import { execFile, execFileSync, execSync } from 'child_process';
 import {
   GIT_ENV, GIT_ENV_AUTH, divergenceSafePull, detectDefaultBranch, pushProbe,
   type PullOutcome, type PushProbeResult,
@@ -450,6 +450,33 @@ function uninstallLocalHook(repoPath: string): boolean {
 export function isDurabilityHardened(repoPath: string): boolean {
   try {
     const { dir } = resolveHooksDir(repoPath);
+    const hookPath = join(dir, 'post-commit');
+    return existsSync(hookPath) && readFileSync(hookPath, 'utf-8').includes(HOOK_BANNER);
+  } catch {
+    return false;
+  }
+}
+
+/** A git probe that does not block the event loop; a failed probe reads as ''. */
+function gitOutput(repoPath: string, args: string[]): Promise<string> {
+  return new Promise(resolve => {
+    execFile('git', ['-C', repoPath, ...args], { encoding: 'utf8', timeout: 10_000, env: { ...process.env, ...GIT_ENV } },
+      (error, stdout) => resolve(error ? '' : stdout.trim()));
+  });
+}
+
+/**
+ * {@link isDurabilityHardened} for long-running owners: the same two git
+ * probes, run concurrently as child processes the event loop does not wait on.
+ */
+export async function isDurabilityHardenedAsync(repoPath: string): Promise<boolean> {
+  try {
+    const [hooksPath, gitHooks] = await Promise.all([gitOutput(repoPath, ['config', '--get', 'core.hooksPath']),
+      gitOutput(repoPath, ['rev-parse', '--git-path', 'hooks'])]);
+    const reported = hooksPath || gitHooks;
+    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- repoPath is a registered local worktree root and the hooks path comes from git itself, resolved exactly as resolveHooksDir/gitDirPath do
+    const dir = !reported ? join(repoPath, '.git', 'hooks') : isAbsolute(reported) ? reported : join(repoPath, reported);
+    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- fixed hook filename inside the git-reported hooks directory, as in isDurabilityHardened
     const hookPath = join(dir, 'post-commit');
     return existsSync(hookPath) && readFileSync(hookPath, 'utf-8').includes(HOOK_BANNER);
   } catch {

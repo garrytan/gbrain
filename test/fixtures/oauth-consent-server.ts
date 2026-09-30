@@ -8,6 +8,7 @@ await engine.initSchema();
 try {
   await runServeHttp(engine, {
     port: Number(process.env.GBRAIN_TEST_HTTP_PORT), tokenTtl: 3600,
+    publicUrl: `http://127.0.0.1:${process.env.GBRAIN_TEST_HTTP_PORT}/`,
     enableDcr: true, bind: '127.0.0.1',
   });
 } finally { await engine.disconnect(); }

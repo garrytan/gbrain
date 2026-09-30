@@ -24,6 +24,15 @@ cost_estimate: "$8/mo for Hobby tier (fixed domain). Free tier works but URLs ch
 
 # Public Tunnel: Fixed URL for Your Brain
 
+> **Alternative path.** For MCP alone, `gbrain mcp expose` publishes the
+> server on your Tailscale tailnet over HTTPS and keeps it running as a user
+> service, with no ngrok account (`--funnel` for agents that run in a
+> vendor's cloud). That is the recommended shape; see
+> [use your brain from anywhere over MCP](../docs/guides/remote-mcp.md).
+> Use this recipe when you need a public fixed URL beyond MCP (Twilio
+> webhooks for voice-to-brain) or prefer ngrok. **Say to your agent:**
+> *"use my brain over mcp"*.
+
 Your GBrain MCP server and voice agent need public URLs so Claude Desktop,
 Perplexity, and Twilio can reach them. ngrok gives you a fixed domain that
 never changes.

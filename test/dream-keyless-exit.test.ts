@@ -30,7 +30,7 @@
  * ALLOWLIST, so every provider credential the canonical fold recognizes
  * (src/core/ai/provider-env.ts mergedProviderEnv: ANTHROPIC_API_KEY,
  * OPENAI_API_KEY, GEMINI_API_KEY, GOOGLE_GENERATIVE_AI_API_KEY,
- * VOYAGE_API_KEY, OPENROUTER_API_KEY, ZEROENTROPY_API_KEY,
+ * VOYAGE_API_KEY, OPENROUTER_API_KEY, VOYAGE_API_KEY,
  * DASHSCOPE_API_KEY, AZURE_OPENAI_*) is absent by construction, and the
  * fixture's config.json sets no config-based keys either.
  */

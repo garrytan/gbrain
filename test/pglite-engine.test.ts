@@ -19,7 +19,7 @@ let engine: PGLiteEngine;
 // the gateway is configured (potentially leaked from another shard-6 test
 // file in the same bun process) and falls back to DEFAULT_EMBEDDING_DIMENSIONS
 // (currently 1280) otherwise. Hard-coding 1536 here would explode under any
-// gateway config, including the new ZE default.
+// gateway config, including the configured default.
 let CHUNK_EMBED_DIM = 0;
 
 beforeAll(async () => {

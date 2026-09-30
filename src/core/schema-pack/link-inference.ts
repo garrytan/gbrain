@@ -57,20 +57,19 @@ export function inferLinkTypeFromPack(
   pageType: string,
   context: string,
   budget?: PageRegexBudget,
+  targetType?: string,
 ): string | null {
-  // Pass 1: page-type-bound verbs (e.g. meeting → attended). These
-  // are deterministic; no regex needed.
-  for (const lt of pack.link_types) {
-    if (lt.inference?.page_type && lt.inference.page_type === pageType) {
-      return lt.name;
-    }
-  }
-  // Pass 2: regex matchers under the ReDoS guard.
-  // Caller passes a PageRegexBudget instance so cumulative regex
-  // time on this page stays capped at LINK_EXTRACTION_TOTAL_BUDGET_MS.
-  for (const lt of pack.link_types) {
-    const pattern = lt.inference?.regex;
-    if (!pattern) continue;
+  const rules = [
+    ...pack.link_types.filter(lt => lt.inference?.page_type),
+    ...pack.link_types.filter(lt => !lt.inference?.page_type),
+  ];
+  for (const lt of rules) {
+    const rule = lt.inference;
+    if (!rule || (!rule.page_type && !rule.target_type && !rule.regex)) continue;
+    if (rule.page_type && rule.page_type !== pageType) continue;
+    if (rule.target_type && rule.target_type !== targetType) continue;
+    const pattern = rule.regex;
+    if (!pattern) return lt.name;
     if (budget) {
       const match = budget.runBounded(lt.name, pattern, context);
       if (match === undefined) {

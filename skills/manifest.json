@@ -45,6 +45,11 @@
       "description": "Add keyless GBrain memory to an existing agent, or connect a hosted brain while preserving identity and configuration"
     },
     {
+      "name": "mcp-access",
+      "path": "mcp-access/SKILL.md",
+      "description": "Open the owner dashboard, manage MCP clients and access, and connect native OAuth harnesses with the correct authority"
+    },
+    {
       "name": "publish",
       "path": "publish/SKILL.md",
       "description": "Share brain pages as beautiful password-protected HTML (code + skill pair, zero LLM calls)"
@@ -368,6 +373,11 @@
       "name": "postgres-adopt",
       "path": "postgres-adopt/SKILL.md",
       "description": "Detect the active engine (PGLite vs Postgres), prefer/install Postgres for harness installs, wrap the guarded engine migration"
+    },
+    {
+      "name": "remote-mcp",
+      "path": "remote-mcp/SKILL.md",
+      "description": "Publish the user's own gbrain over MCP with `gbrain mcp expose` (Tailscale by default, Funnel only for cloud agents), keep the server alive as a user service, then grant, install and verify one least-privilege client per consumer."
     }
   ],
   "dependencies": {

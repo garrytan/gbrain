@@ -2,11 +2,11 @@
  * #5004 (pre-landing review) — the `safe_index_pending` probe in
  * `src/core/ops/search.ts` (`hasUnsealedPagesInScope`) runs on EVERY empty
  * remote search/query. On a fully sealed brain it must be an index probe, not
- * a walk of every markdown page: `NOT (COALESCE(chunker_version, 0) >= N)` is
- * not sargable, so the partial btree `pages_chunker_version_idx` can only be
- * scanned whole with the predicate as a post-scan Filter. `pages.chunker_version`
- * is `SMALLINT NOT NULL DEFAULT 1` (cjk_wave migration), so the plain range
- * `chunker_version < N` is the same set and lets the planner use an Index Cond.
+ * a walk of every page: `NOT (COALESCE(chunker_version, 0) >= N)` is not
+ * sargable. `pages.chunker_version` is `SMALLINT NOT NULL DEFAULT 1` (cjk_wave
+ * migration), so the plain range `chunker_version < N` is the same set and
+ * matches the partial `pages_safe_chunk_pending_idx`, which holds only unsealed
+ * pages. #5247: the probe counts pages of every kind, not just markdown.
  *
  * Pins both layers: the SQL text the probe issues, and the PGLite plan for it
  * (seq scans disabled so a non-sargable predicate cannot hide behind a small
@@ -59,22 +59,23 @@ function recordingCtx(): OperationContext {
 }
 
 describe('safe_index_pending probe stays sargable (#5004)', () => {
-  test('an empty remote search issues a plain chunker_version range the partial index serves as an Index Cond', async () => {
+  test('a remote search issues a plain chunker_version range over every page kind that the unsealed-only index serves', async () => {
     captured.length = 0;
     const rows = await operationsByName.search.handler(recordingCtx(), { query: 'nosuchtokenanywhere', limit: 5 });
     expect(rows).toEqual([]);
 
-    const probe = captured.find(c => c.sql.includes("page_kind = 'markdown'") && /LIMIT 1/.test(c.sql));
+    const probe = captured.find(c => c.sql.includes(`p.chunker_version < ${SAFE_FENCE_CHUNKER_VERSION}`) && /LIMIT 1/.test(c.sql));
     expect(probe).toBeDefined();
-    expect(probe!.sql).not.toContain('COALESCE');
+    expect(probe!.sql).not.toContain('page_kind');
+    expect(probe!.sql).not.toContain('COALESCE(p.chunker_version');
     expect(probe!.sql).toContain(`p.chunker_version < ${SAFE_FENCE_CHUNKER_VERSION}`);
 
     await engine.executeRaw('SET enable_seqscan = off');
     try {
       const plan = (await engine.executeRaw<Record<string, string>>(`EXPLAIN ${probe!.sql}`, probe!.params))
         .map(r => Object.values(r)[0]).join('\n');
-      expect(plan).toContain('Index Scan using pages_chunker_version_idx');
-      expect(plan).toContain(`Index Cond: (chunker_version < ${SAFE_FENCE_CHUNKER_VERSION})`);
+      expect(plan).toContain('pages_safe_chunk_pending_idx');
+      expect(plan).not.toContain('Seq Scan');
     } finally {
       await engine.executeRaw('RESET enable_seqscan');
     }

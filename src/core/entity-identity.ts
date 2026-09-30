@@ -79,8 +79,12 @@ async function resolvePageId(
 /**
  * Link a page into an identity group (upsert on the page: re-linking MOVES
  * the page to the new identity — explicit manual intent). `canonical: true`
- * demotes the group's previous canonical member first; the partial unique
- * index is the backstop against a race leaving two canonicals.
+ * demotes the group's previous canonical member first, in the same
+ * transaction as the link, so a failed link never leaves the group without
+ * its canonical. Omitting `canonical` keeps a re-linked member's canonical
+ * flag within the same group (a confidence update must not demote it);
+ * `canonical: false` demotes explicitly. The partial unique index is the
+ * backstop against a race leaving two canonicals.
  */
 export async function linkEntityIdentity(
   engine: BrainEngine,
@@ -99,26 +103,30 @@ export async function linkEntityIdentity(
     throw new Error(`confidence must be in [0,1], got ${opts.confidence}`);
   }
   const establishedBy = (opts.establishedBy ?? 'manual').trim() || 'manual';
-  const canonical = opts.canonical === true;
+  const canonical = typeof opts.canonical === 'boolean' ? opts.canonical : null;
   const pageId = await resolvePageId(engine, opts.slug, opts.sourceId);
 
-  if (canonical) {
-    await engine.executeRaw(
-      `UPDATE entity_identities SET canonical = false WHERE entity_id = $1 AND canonical`,
-      [entityId],
+  await engine.transaction(async (tx) => {
+    if (canonical === true) {
+      await tx.executeRaw(
+        `UPDATE entity_identities SET canonical = false WHERE entity_id = $1 AND canonical`,
+        [entityId],
+      );
+    }
+    await tx.executeRaw(
+      `INSERT INTO entity_identities (entity_id, source_id, page_id, confidence, established_by, canonical)
+       VALUES ($1, $2, $3, $4, $5, COALESCE($6::boolean, false))
+       ON CONFLICT (source_id, page_id) DO UPDATE SET
+         entity_id = EXCLUDED.entity_id,
+         confidence = EXCLUDED.confidence,
+         established_by = EXCLUDED.established_by,
+         canonical = CASE WHEN $6::boolean IS NULL
+           THEN entity_identities.canonical AND entity_identities.entity_id = EXCLUDED.entity_id
+           ELSE EXCLUDED.canonical END,
+         established_at = now()`,
+      [entityId, opts.sourceId, pageId, confidence, establishedBy, canonical],
     );
-  }
-  await engine.executeRaw(
-    `INSERT INTO entity_identities (entity_id, source_id, page_id, confidence, established_by, canonical)
-     VALUES ($1, $2, $3, $4, $5, $6)
-     ON CONFLICT (source_id, page_id) DO UPDATE SET
-       entity_id = EXCLUDED.entity_id,
-       confidence = EXCLUDED.confidence,
-       established_by = EXCLUDED.established_by,
-       canonical = EXCLUDED.canonical,
-       established_at = now()`,
-    [entityId, opts.sourceId, pageId, confidence, establishedBy, canonical],
-  );
+  });
 
   const members = await listEntityIdentities(engine, { entityId });
   const me = members.find(m => m.slug === opts.slug && m.source_id === opts.sourceId);

@@ -75,7 +75,7 @@ function runCli(args: string[], env: Record<string, string | undefined>): { code
   // Strip ALL provider keys by default — the preflight test is about
   // the OPENAI path; other keys would route preflight elsewhere and
   // muddy the test signal.
-  for (const k of ['OPENAI_API_KEY', 'VOYAGE_API_KEY', 'ZEROENTROPY_API_KEY', 'GOOGLE_GENERATIVE_AI_API_KEY', 'ANTHROPIC_API_KEY']) {
+  for (const k of ['OPENAI_API_KEY', 'VOYAGE_API_KEY', 'GOOGLE_GENERATIVE_AI_API_KEY', 'ANTHROPIC_API_KEY']) {
     if (!(k in env)) delete fullEnv[k];
   }
   // Strip any undefined-explicitly-set vars (signals "unset").

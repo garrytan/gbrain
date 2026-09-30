@@ -564,6 +564,25 @@ export interface CodexTurnOpts {
    *  to thread GBRAIN_BIN/GBRAIN_HOME/GBRAIN_SOURCE through codex's env_vars
    *  passthrough into the plugin-launched MCP server. */
   extraEnv?: Record<string, string>;
+  /** Explicit approvals for tools on fixture-owned MCP servers only. Neither
+   * global approval policy nor shell sandbox permissions are changed. */
+  mcpToolApprovals?: Array<{ server: string; plugin?: string; tools: readonly string[] }>;
+  /** Wait for the fixture server's bounded startup before presenting tools. */
+  waitForMcpStartup?: boolean;
+}
+
+/** Codex's -c paths use literal dot-separated segments, not TOML quoted keys.
+ * Reject separators so fixture names cannot change the override's scope. */
+export function codexMcpApprovalArgs(approvals: CodexTurnOpts['mcpToolApprovals'] = []): string[] {
+  return approvals.flatMap(({ server, plugin, tools }) => {
+    for (const name of [server, ...(plugin === undefined ? [] : [plugin]), ...tools]) {
+      if (!/^[A-Za-z0-9_@-]+$/.test(name)) throw new Error('Fixture MCP approval names must be single config-path segments');
+    }
+    const prefix = plugin === undefined ? 'mcp_servers' : `plugins.${plugin}.mcp_servers`;
+    return [...new Set(tools)].flatMap((tool) => [
+      '-c', `${prefix}.${server}.tools.${tool}.approval_mode="approve"`,
+    ]);
+  });
 }
 
 export interface CodexTurnResult {
@@ -573,6 +592,7 @@ export interface CodexTurnResult {
   /** MCP tool invocations ({server, tool}) — see ParsedCodexJsonl.mcpToolCalls. */
   mcpToolCalls: Array<{ server: string; tool: string }>;
   rawLines: string[];
+  stderrText: string;
   exitCode: number | null;
   timedOut: boolean;
 }
@@ -604,7 +624,8 @@ export async function codexExecTurn(opts: CodexTurnOpts): Promise<CodexTurnResul
 
   // EV12: spawn the RESOLVED binary (see claudeHeadlessTurn).
   const codexBin = resolveCodexBinary() ?? 'codex';
-  const proc = Bun.spawn([codexBin, 'exec', opts.prompt, '--json', '-s', sandbox], {
+  const startupArgs = opts.waitForMcpStartup ? ['-c', 'mcp_optional_startup_grace_ms=0'] : [];
+  const proc = Bun.spawn([codexBin, ...codexMcpApprovalArgs(opts.mcpToolApprovals), ...startupArgs, 'exec', opts.prompt, '--json', '-s', sandbox], {
     cwd: opts.cwd,
     env: hermeticChildEnv({ HOME: opts.home, ...opts.extraEnv }, { extraAllow: ['OPENAI_API_KEY', 'CODEX_*'] }),
     stdout: 'pipe',
@@ -622,7 +643,7 @@ export async function codexExecTurn(opts: CodexTurnOpts): Promise<CodexTurnResul
   }, timeoutMs);
 
   await stdoutDone;
-  await stderrDone.catch(() => '');
+  const stderrText = await stderrDone.catch(() => '');
   const exitCode = await proc.exited;
   clearTimeout(timer);
 
@@ -633,6 +654,7 @@ export async function codexExecTurn(opts: CodexTurnOpts): Promise<CodexTurnResul
     reasoning: parsed.reasoning,
     mcpToolCalls: parsed.mcpToolCalls,
     rawLines,
+    stderrText,
     exitCode: timedOut ? 124 : exitCode,
     timedOut,
   };
@@ -1041,27 +1063,33 @@ export function hasOpencodeAuth(): boolean {
  * Hermetic env for spawning opencode itself: HOME + BOTH XDG dirs redirected
  * (config/auth/data all move — verified on macOS; belt-and-suspenders), the
  * env half of the double autoupdate kill, ANTHROPIC_API_KEY re-admitted
- * explicitly for the paid leg (default-deny stays intact for every other
+ * only with paid: true (default-deny stays intact for every other
  * child). Deletes the OTHER providers' keys (single-auth-source discipline —
  * the paid leg pins an anthropic/* model) and the OPENCODE_CONFIG* trio
  * (observed inert in 1.18.18, but a future release activating them must not
  * let ambient values shadow the hermetic config). GITHUB_* step-metadata
  * scrub via the shared factory.
  */
-export const opencodeChildEnv = makeAgentChildEnv({
+const keylessOpencodeChildEnv = makeAgentChildEnv({
   overrides: (home) => ({
     HOME: home,
     XDG_CONFIG_HOME: path.join(home, '.config'),
     XDG_DATA_HOME: path.join(home, '.local', 'share'),
     OPENCODE_DISABLE_AUTOUPDATE: '1',
-    ANTHROPIC_API_KEY: promotedEnv(process.env).ANTHROPIC_API_KEY?.trim() || undefined,
   }),
   deleteKeys: [
+    'ANTHROPIC_API_KEY', 'ANTHROPIC_BASE_URL',
     'OPENAI_API_KEY', 'XAI_API_KEY', 'OPENROUTER_API_KEY',
     'GOOGLE_GENERATIVE_AI_API_KEY', 'GEMINI_API_KEY', 'ANTHROPIC_AUTH_TOKEN',
     'OPENCODE_CONFIG', 'OPENCODE_CONFIG_DIR', 'OPENCODE_CONFIG_CONTENT',
   ],
 });
+
+export function opencodeChildEnv(home: string, opts?: { binDir?: string; paid?: boolean }): NodeJS.ProcessEnv {
+  const env = keylessOpencodeChildEnv(home, opts);
+  if (opts?.paid) env.ANTHROPIC_API_KEY = promotedEnv(process.env).ANTHROPIC_API_KEY?.trim() || undefined;
+  return env;
+}
 
 /**
  * Seed a hermetic <XDG_CONFIG_HOME>/opencode/opencode.json BEFORE any
@@ -1100,6 +1128,7 @@ export interface OpencodeTurnOpts {
   /** Staged gbrain bin dir — PATH-prepended so a PATH-resolved registration
    *  resolves when opencode spawns the server during the turn. */
   binDir?: string;
+  paid?: boolean;
 }
 
 /**
@@ -1114,12 +1143,12 @@ export async function opencodeOneShotTurn(opts: OpencodeTurnOpts): Promise<OneSh
   if (!bin) throw new Error('opencodeOneShotTurn: opencode binary not found');
   return runOneShotSpawn({
     argv: [
-      bin, 'run', opts.prompt,
+      bin, 'run', opts.prompt, '--pure',
       '--format', opts.format ?? 'default',
       ...(opts.model ? ['-m', opts.model] : []),
     ],
     cwd: opts.cwd,
-    env: opencodeChildEnv(opts.home, { binDir: opts.binDir }),
+    env: opencodeChildEnv(opts.home, { binDir: opts.binDir, paid: opts.paid }),
     timeoutMs: opts.timeoutMs ?? 240_000,
   });
 }

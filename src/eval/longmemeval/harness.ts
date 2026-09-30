@@ -62,3 +62,39 @@ export async function withBenchmarkBrain<T>(
     await engine.disconnect();
   }
 }
+
+/** #5092: questions per harness-owned benchmark brain before it is replaced. */
+export const LME_BRAIN_RECYCLE_EVERY = 40;
+
+/**
+ * #5092 — TRUNCATE between questions never returns PGLite's WASM memory,
+ * which grows with every question's vectors (~30 MB per 500-chunk question)
+ * until a long single-process run stalls at 100% CPU around question 90-120.
+ * `next()` hands out the brain for the next question, replacing it with a
+ * fresh, re-configured one every `every` questions (0 = never). `close()`
+ * disconnects a replacement; the first brain stays its owner's to close.
+ */
+export function brainRecycler(
+  first: PGLiteEngine,
+  every: number,
+  create: () => Promise<PGLiteEngine>,
+  configure: (engine: PGLiteEngine) => Promise<void>,
+): { next(): Promise<PGLiteEngine>; close(): Promise<void> } {
+  let brain = first;
+  let served = 0;
+  return {
+    async next() {
+      if (every > 0 && served === every) {
+        await brain.disconnect();
+        brain = await create();
+        await configure(brain);
+        served = 0;
+      }
+      served++;
+      return brain;
+    },
+    async close() {
+      if (brain !== first) await brain.disconnect();
+    },
+  };
+}

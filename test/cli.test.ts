@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
-// Read cli.ts source for structural checks
+// test-reads-source-ok[structural]: two kept pins need the dispatcher's text: the handleCliOnly case-label census (switch labels cannot be enumerated at runtime) and the local-op normalize call site (bigints only reach it from Postgres, never PGLite).
 const cliSource = readFileSync(new URL('../src/cli.ts', import.meta.url), 'utf-8');
 const repoRoot = new URL('..', import.meta.url).pathname;
 
@@ -19,35 +19,30 @@ function isolatedEnv(home: string): Record<string, string> {
 }
 
 describe('CLI structure', () => {
-  test('imports operations from operations.ts', () => {
-    expect(cliSource).toContain("from './core/operations.ts'");
-  });
-
-  test('builds cliOps map from operations', () => {
-    expect(cliSource).toContain('cliOps');
-  });
-
-  test('CLI_ONLY set contains expected commands', () => {
-    expect(cliSource).toContain("'init'");
-    expect(cliSource).toContain("'upgrade'");
-    expect(cliSource).toContain("'import'");
-    expect(cliSource).toContain("'export'");
-    expect(cliSource).toContain("'embed'");
-    expect(cliSource).toContain("'files'");
-  });
-
-  // v0.41.11 #1451 regression — `reindex` had a `case 'reindex':` handler
-  // at src/cli.ts:1334 but was missing from CLI_ONLY, so the dispatcher
-  // rejected `gbrain reindex` with "Unknown command: reindex" before the
-  // handler ever ran. Cherry-picked from kylma-code-adjacent PR #1354.
-  test('reindex is in CLI_ONLY (does not get "Unknown command")', () => {
-    const onlyMatch = cliSource.match(/const CLI_ONLY = new Set\(\[([\s\S]*?)\]\)/);
-    expect(onlyMatch).not.toBeNull();
-    expect(onlyMatch![1]).toContain(`'reindex'`);
-  });
-
-  test('has formatResult function for CLI output', () => {
-    expect(cliSource).toContain('function formatResult');
+  // #1451 regression class: a command with a live handleCliOnly case but no
+  // CLI_ONLY entry is rejected as "Unknown command" before its handler runs
+  // (reindex shipped that way). Spawned so dispatch, not the set, is judged.
+  test('CLI-only commands reach their handlers instead of "Unknown command"', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-cli-only-'));
+    try {
+      const results = await Promise.all(['reindex', 'import', 'export', 'embed', 'files'].map(async (command) => {
+        const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', command, '--help'], {
+          cwd: repoRoot,
+          stdout: 'pipe',
+          stderr: 'pipe',
+          env: isolatedEnv(home),
+        });
+        const [stdout, stderr] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
+        await proc.exited;
+        return { command, output: stdout + stderr };
+      }));
+      for (const { command, output } of results) {
+        expect(output, command).not.toContain('Unknown command');
+      }
+      expect(results.find(r => r.command === 'reindex')!.output).toContain('gbrain reindex');
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 
   // #2035-class dispatch-gap guard: every `case '...'` label inside
@@ -150,9 +145,16 @@ describe('CLI version', () => {
 });
 
 describe('ask alias', () => {
-  test('ask alias maps to query in source', () => {
-    expect(cliSource).toContain("if (command === 'ask')");
-    expect(cliSource).toContain("command = 'query'");
+  test('ask dispatches to the query op', async () => {
+    const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'ask', '--help'], {
+      cwd: repoRoot,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    const stdout = await new Response(proc.stdout).text();
+    const exitCode = await proc.exited;
+    expect(stdout).toContain('Usage: gbrain query');
+    expect(exitCode).toBe(0);
   });
 
   test('ask does NOT appear in --tools-json output', async () => {

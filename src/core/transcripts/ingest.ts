@@ -35,8 +35,13 @@ import { detectAdapter } from './detect.ts';
 import {
   loadImportRedactionPatterns,
   redactSession,
+  renderPartContent,
   renderSessionParts,
+  type RenderedPart,
+  type RenderSessionResult,
 } from './render.ts';
+import { RECONCILE_SAFETY_KEYS } from '../persistence/reconcile-safety.ts';
+import { ATOMS_SCAN_HASH_KEY } from '../utils.ts';
 
 export interface IngestActivePack {
   page_types: ReadonlyArray<{ name: string; path_prefixes: ReadonlyArray<string> }>;
@@ -88,6 +93,8 @@ export interface IngestSessionOutcome {
   redactions: number;
   imperatives: number;
   error?: string;
+  /** C-19: a session with no timestamps is skipped (never fabricated), not errored. */
+  skipped?: 'no_timestamp';
 }
 
 export interface IngestFileOutcome {
@@ -108,6 +115,8 @@ export interface TranscriptsIngestResult {
   sessionsImported: number;
   sessionsFiltered: number;
   sessionsErrored: number;
+  /** Sessions with no timestamps at all: reported, not imported, not an error (C-19). */
+  sessionsSkippedNoTimestamp: number;
   redactions: number;
   imperatives: number;
   partsDeleted: number;
@@ -162,6 +171,7 @@ export async function runTranscriptsIngest(
     sessionsImported: 0,
     sessionsFiltered: 0,
     sessionsErrored: 0,
+    sessionsSkippedNoTimestamp: 0,
     redactions: 0,
     imperatives: 0,
     partsDeleted: 0,
@@ -257,6 +267,16 @@ export async function runTranscriptsIngest(
         };
         fileOutcome.sessions.push(outcome);
 
+        // C-19: a session with no timestamps can never render (provenance is
+        // never fabricated), so retrying it is pointless; report the skip and
+        // keep the scan clean instead of freezing the --since checkpoint.
+        if (!session.meta.startedAt && !session.messages.some(m => m.timestamp)) {
+          outcome.skipped = 'no_timestamp';
+          result.sessionsSkippedNoTimestamp++;
+          step = await gen.next();
+          continue;
+        }
+
         try {
           const redacted = redactSession(session, {
             userPatternsPath: opts.userPatternsPath,
@@ -283,9 +303,12 @@ export async function runTranscriptsIngest(
             // title or corrected start date) — raw-data writes and stale-part
             // reconciliation must follow the page that actually exists, or
             // every re-run aborts on a nonexistent slug.
+            await adoptExistingBaseSlug(engine, opts.sourceId ?? 'default', rendered);
+            outcome.baseSlug = rendered.baseSlug;
             let resolvedBaseSlug = rendered.baseSlug;
             for (const part of rendered.parts) {
               try {
+                await preserveForeignFrontmatter(engine, opts.sourceId ?? 'default', part);
                 const r = await importFromContent(engine, part.slug, part.content, {
                   noEmbed: !opts.embed,
                   sourceId: opts.sourceId,
@@ -453,4 +476,37 @@ export async function runTranscriptsIngest(
 
   if (opts.dryRun) result.cleanScan = false; // dry-runs never advance watermarks
   return result;
+}
+
+/**
+ * The slug embeds the title (and start day) for export formats, so a rename
+ * renders a new slug for the same session. Import at the slug the session's
+ * pages already live at: the content is then an in-place update. At a new
+ * slug, the importer's cross-slug identity dedup skipped it as a duplicate
+ * and every message added since the last import was silently dropped.
+ */
+/**
+ * Re-ingest replaces only what the collector renders (#5431): keys another
+ * tool or the operator added to an imported conversation page (a review flag,
+ * say) are carried onto the re-rendered part. Gate- and phase-owned markers
+ * are re-derived from the new content, so they are never carried.
+ */
+async function preserveForeignFrontmatter(engine: BrainEngine, sourceId: string, part: RenderedPart): Promise<void> {
+  const existing = await engine.getPage(part.slug, { sourceId });
+  const foreign = Object.entries(existing?.frontmatter ?? {})
+    .filter(([key]) => !Object.hasOwn(part.frontmatter, key) && !RE_DERIVED_KEYS.has(key));
+  if (foreign.length === 0) return;
+  part.content = renderPartContent({ ...part.frontmatter, ...Object.fromEntries(foreign) }, part.body);
+}
+
+const RE_DERIVED_KEYS = new Set([...RECONCILE_SAFETY_KEYS, ATOMS_SCAN_HASH_KEY]);
+
+async function adoptExistingBaseSlug(engine: BrainEngine, sourceId: string, rendered: RenderSessionResult): Promise<void> {
+  const [existing] = await engine.executeRaw<{ slug: string }>(
+    `SELECT slug FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND frontmatter->>'id' = $2 ORDER BY id LIMIT 1`,
+    [sourceId, rendered.parts[0].frontmatterId],
+  );
+  if (!existing || existing.slug === rendered.baseSlug) return;
+  rendered.baseSlug = existing.slug;
+  for (const part of rendered.parts) part.slug = part.part === 1 ? existing.slug : `${existing.slug}-p${part.part}`;
 }

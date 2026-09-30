@@ -321,23 +321,23 @@ describe('installEmbedCache — gateway seam', () => {
 
   test('query-side embeds are cached under the query key, not the document key', async () => {
     const cache = new EmbeddingCache(join(dir, 'side.sqlite'));
-    // Use an asymmetric provider so the gateway emits input_type (zembed-1's
-    // smallest supported Matryoshka dims is 40).
-    const ZE_DIMS = 40;
-    const real = fakeTransport(ZE_DIMS);
+    // Use an asymmetric provider so the gateway emits input_type (Voyage's
+    // smallest supported Matryoshka dims is 256).
+    const VOYAGE_DIMS = 256;
+    const real = fakeTransport(VOYAGE_DIMS);
     configureGateway({
-      embedding_model: 'zeroentropyai:zembed-1',
-      embedding_dimensions: ZE_DIMS,
-      env: { ZEROENTROPY_API_KEY: 'sk-fake' },
+      embedding_model: 'voyage:voyage-4',
+      embedding_dimensions: VOYAGE_DIMS,
+      env: { VOYAGE_API_KEY: 'sk-fake' },
     });
     const inst = installEmbedCache(cache, { realTransport: real.fn });
-    expect(inst.model).toBe('zeroentropyai:zembed-1');
-    expect(inst.dims).toBe(ZE_DIMS);
+    expect(inst.model).toBe('voyage:voyage-4');
+    expect(inst.dims).toBe(VOYAGE_DIMS);
     await embedQuery('aa');
     await embed(['aa']);
     expect(real.calls.length).toBe(2); // the two sides never alias
-    expect(cache.get('zeroentropyai:zembed-1', ZE_DIMS, 'aa', 'query')).toEqual(vec(2, ZE_DIMS));
-    expect(cache.get('zeroentropyai:zembed-1', ZE_DIMS, 'aa', 'document')).toEqual(vec(2, ZE_DIMS));
+    expect(cache.get('voyage:voyage-4', VOYAGE_DIMS, 'aa', 'query')).toEqual(vec(2, VOYAGE_DIMS));
+    expect(cache.get('voyage:voyage-4', VOYAGE_DIMS, 'aa', 'document')).toEqual(vec(2, VOYAGE_DIMS));
     await embedQuery('aa');
     expect(real.calls.length).toBe(2); // query-side hit
     inst.uninstall();
@@ -468,5 +468,68 @@ describe('installEmbedCache — gateway seam', () => {
     await expect(embed(['aa'])).rejects.toThrow(/integrity/);
     inst.uninstall();
     cache.close();
+  });
+});
+
+describe('EmbeddingCache — concurrent runs sharing one cache file', () => {
+  test('withTransaction does not hold the SQLite write lock across its async body', async () => {
+    const path = join(dir, 'shared.sqlite');
+    const a = new EmbeddingCache(path);
+    a.open();
+    let lockedDuringBody: string | null = 'not-probed';
+    await a.withTransaction(async () => {
+      a.put(MODEL, DIMS, 'a-1', vec(1));
+      await Promise.resolve();
+      const other = new Database(path);
+      try {
+        other.exec('PRAGMA busy_timeout = 0');
+        other.exec('BEGIN IMMEDIATE');
+        other.exec('ROLLBACK');
+        lockedDuringBody = null;
+      } catch (err) {
+        lockedDuringBody = (err as Error).message;
+      } finally {
+        other.close();
+      }
+    });
+    expect(lockedDuringBody).toBeNull();
+    expect(a.get(MODEL, DIMS, 'a-1')).toEqual(vec(1));
+    a.close();
+  });
+
+  test('a run whose read snapshot predates another run\'s commit still lands its writes', async () => {
+    const path = join(dir, 'shared.sqlite');
+    const a = new EmbeddingCache(path);
+    const b = new EmbeddingCache(path);
+    a.open();
+    b.open();
+    let releaseA!: () => void;
+    const gateA = new Promise<void>((r) => { releaseA = r; });
+    const runA = a.withTransaction(async () => {
+      a.put(MODEL, DIMS, 'a-1', vec(1));
+      await gateA;
+    });
+    await b.withTransaction(async () => {
+      expect(b.get(MODEL, DIMS, 'b-1')).toBeNull();
+      releaseA();
+      await runA;
+      b.put(MODEL, DIMS, 'b-1', vec(2));
+    });
+    expect(b.get(MODEL, DIMS, 'a-1')).toEqual(vec(1));
+    expect(a.get(MODEL, DIMS, 'b-1')).toEqual(vec(2));
+    expect(a.stats().infra_faults + b.stats().infra_faults).toBe(0);
+    a.close();
+    b.close();
+  });
+
+  test('reads inside a transaction see that transaction\'s own buffered writes', async () => {
+    const c = new EmbeddingCache(join(dir, 'own.sqlite'));
+    c.open();
+    await c.withTransaction(async () => {
+      c.put(MODEL, DIMS, 'x', vec(3));
+      expect(c.get(MODEL, DIMS, 'x')).toEqual(vec(3));
+    });
+    expect(c.size()).toBe(1);
+    c.close();
   });
 });

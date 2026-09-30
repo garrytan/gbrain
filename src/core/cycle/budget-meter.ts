@@ -12,9 +12,13 @@
  * Per Codex P1 #10: each subagent submit estimates max-cost from
  * `model + max_output_tokens`, accumulates per-cycle, refuses next submit
  * if cumulative > budget. Pricing resolves through the canonical chat table
- * (`canonicalLookup`), so any provider carried there is gated. Only a model
- * absent from canonical too bypasses the gate, with a
- * `BUDGET_METER_NO_PRICING` warn (once per process).
+ * (`canonicalLookup`), so any provider carried there is gated. A model absent
+ * from canonical (a router or proxy alias) is metered at a conservative
+ * Sonnet-tier fallback rate with a `BUDGET_METER_NO_PRICING` warn (once per
+ * process); `dream.budget.allow_unpriced=true` restores the old bypass.
+ * Local model servers (Ollama, LM Studio, llama-server) cost $0.
+ *
+ * Budget values: 0 spends nothing, `Infinity` (config `unlimited`) is no cap.
  *
  * Ledger lives at `~/.gbrain/audit/dream-budget-YYYY-Www.jsonl` (ISO-week
  * rotation, same pattern as shell-audit; filename math now goes through
@@ -26,11 +30,40 @@ import { mkdirSync, appendFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { isoWeekFilename, resolveAuditDir } from '../audit-week-file.ts';
 import { estimateMaxCostUsd, ANTHROPIC_PRICING } from '../anthropic-pricing.ts';
-import { canonicalLookup } from '../model-pricing.ts';
+import { canonicalLookup, type ModelPricing } from '../model-pricing.ts';
+import type { BrainEngine } from '../engine.ts';
+import { splitProviderModelId } from '../model-id.ts';
+
+/** Local model servers bill nothing; their models are priced at $0, never at the fallback. */
+const LOCAL_MODEL_PROVIDERS = new Set(['ollama', 'lmstudio', 'llama-server']);
+
+/** Rate for models absent from the canonical table: Sonnet tier, derived from canonical. */
+const FALLBACK_PRICING: ModelPricing = canonicalLookup('anthropic:claude-sonnet-4-6') ?? { input: 3.0, output: 15.0 };
+
+/**
+ * Parse a dream budget config value. `0` (or a negative value) spends
+ * nothing, `unlimited` is no cap (Infinity); an empty or non-numeric value
+ * uses `fallback`.
+ */
+export function parseBudgetUsd(raw: string | number | null | undefined, fallback: number): number {
+  if (typeof raw === 'string' && raw.trim().toLowerCase() === 'unlimited') return Infinity;
+  if (raw === null || raw === undefined || (typeof raw === 'string' && raw.trim() === '')) return fallback;
+  const value = Number(raw);
+  return Number.isFinite(value) ? Math.max(0, value) : fallback;
+}
+
+/** `dream.budget.allow_unpriced=true` lets unpriced models bypass the gate. */
+export async function loadAllowUnpriced(engine: Pick<BrainEngine, 'getConfig'>): Promise<boolean> {
+  // An unreadable config keeps the default: unpriced models are metered.
+  const raw = await Promise.resolve(engine.getConfig?.('dream.budget.allow_unpriced')).catch(() => null);
+  return typeof raw === 'string' && ['true', '1', 'yes', 'on'].includes(raw.trim().toLowerCase());
+}
 
 export interface BudgetMeterOpts {
-  /** USD cap for the whole cycle. 0 or negative disables the gate. */
+  /** USD cap for the whole cycle. 0 (or negative) spends nothing; Infinity is no cap. */
   budgetUsd: number;
+  /** Let models absent from the pricing table bypass the gate (default: meter them at the fallback rate). */
+  allowUnpriced?: boolean;
   /** Phase label for telemetry: 'auto_think' | 'drift'. */
   phase: string;
   /** Optional override for the audit file path (tests). */
@@ -54,7 +87,7 @@ export interface BudgetCheckResult {
   cumulativeCostUsd: number;
   budgetUsd: number;
   reason?: string;
-  /** True when the model wasn't in the pricing map (cycle runs unbounded for that submit). */
+  /** True when the model wasn't in the pricing map (metered at the fallback rate, or bypassed when allowed). */
   unpriced?: boolean;
 }
 
@@ -99,6 +132,7 @@ export class BudgetMeter {
    * caller keeps the existing warn-and-allow behaviour for those.
    */
   private estimateCost(estimate: SubmitEstimate): number | null {
+    if (LOCAL_MODEL_PROVIDERS.has(splitProviderModelId(estimate.modelId).provider ?? '')) return 0;
     const p = canonicalLookup(estimate.modelId);
     const raw = p
       ? (estimate.estimatedInputTokens / 1_000_000) * p.input +
@@ -127,18 +161,23 @@ export class BudgetMeter {
    * Caller is responsible for skipping the actual LLM call when allowed=false.
    */
   check(estimate: SubmitEstimate): BudgetCheckResult {
-    const cost = this.estimateCost(estimate);
+    const priced = this.estimateCost(estimate);
+    const budgetUsd = Math.max(0, this.opts.budgetUsd);
 
-    // Codex P1 #10: models absent from the canonical table bypass the gate.
-    if (cost === null) {
+    if (priced === null) {
       this.unpricedSubmitsThisCycle++;
       if (!_unpricedWarnings.has(estimate.modelId)) {
         _unpricedWarnings.add(estimate.modelId);
         process.stderr.write(
           `[budget] BUDGET_METER_NO_PRICING: model "${estimate.modelId}" has no canonical pricing. ` +
-          `Budget gate disabled for this submit. (Per-provider pricing modules: TODO v0.29.)\n`,
+          (this.opts.allowUnpriced
+            ? `Budget gate disabled for this model (dream.budget.allow_unpriced=true).\n`
+            : `Metering it at the Sonnet-tier fallback rate; set dream.budget.allow_unpriced=true to bypass.\n`),
         );
       }
+    }
+    // An unpriced model bypasses the gate only when the operator opted in.
+    if (priced === null && this.opts.allowUnpriced) {
       writeLedgerLine(this.auditPath, {
         schema_version: 1,
         phase: this.opts.phase,
@@ -146,6 +185,7 @@ export class BudgetMeter {
         event: 'submit_unpriced',
         model: estimate.modelId,
         label: estimate.label,
+        allowed: true,
         estimated_input_tokens: estimate.estimatedInputTokens,
         max_output_tokens: estimate.maxOutputTokens,
       });
@@ -153,30 +193,44 @@ export class BudgetMeter {
         allowed: true,
         estimatedCostUsd: 0,
         cumulativeCostUsd: this.cumulativeUsd,
-        budgetUsd: this.opts.budgetUsd,
+        budgetUsd,
         unpriced: true,
       };
     }
+    const cost = priced ?? (
+      (estimate.estimatedInputTokens / 1_000_000) * FALLBACK_PRICING.input +
+      (estimate.maxOutputTokens / 1_000_000) * FALLBACK_PRICING.output
+    );
 
-    // Budget disabled (<= 0)
-    if (this.opts.budgetUsd <= 0) {
-      this.cumulativeUsd += cost;
+    if (priced === null) {
+      const allowed = this.cumulativeUsd + cost <= budgetUsd;
+      if (allowed) this.cumulativeUsd += cost;
       writeLedgerLine(this.auditPath, {
         schema_version: 1,
         phase: this.opts.phase,
         ts: new Date().toISOString(),
-        event: 'submit',
+        event: 'submit_unpriced',
         model: estimate.modelId,
         label: estimate.label,
+        allowed,
+        estimated_input_tokens: estimate.estimatedInputTokens,
+        max_output_tokens: estimate.maxOutputTokens,
         estimated_cost_usd: cost,
         cumulative_cost_usd: this.cumulativeUsd,
-        budget_usd: this.opts.budgetUsd,
+        budget_usd: budgetUsd,
       });
-      return { allowed: true, estimatedCostUsd: cost, cumulativeCostUsd: this.cumulativeUsd, budgetUsd: this.opts.budgetUsd };
+      return {
+        allowed,
+        estimatedCostUsd: cost,
+        cumulativeCostUsd: this.cumulativeUsd,
+        budgetUsd,
+        unpriced: true,
+        ...(allowed ? {} : { reason: `BUDGET_EXHAUSTED: projected $${(this.cumulativeUsd + cost).toFixed(4)} > cap $${budgetUsd.toFixed(2)} (unpriced model at fallback rate)` }),
+      };
     }
 
     const projected = this.cumulativeUsd + cost;
-    if (projected > this.opts.budgetUsd) {
+    if (projected > budgetUsd) {
       writeLedgerLine(this.auditPath, {
         schema_version: 1,
         phase: this.opts.phase,
@@ -186,14 +240,14 @@ export class BudgetMeter {
         label: estimate.label,
         estimated_cost_usd: cost,
         cumulative_cost_usd: this.cumulativeUsd,
-        budget_usd: this.opts.budgetUsd,
+        budget_usd: budgetUsd,
       });
       return {
         allowed: false,
         estimatedCostUsd: cost,
         cumulativeCostUsd: this.cumulativeUsd,
-        budgetUsd: this.opts.budgetUsd,
-        reason: `BUDGET_EXHAUSTED: projected $${projected.toFixed(4)} > cap $${this.opts.budgetUsd.toFixed(2)}`,
+        budgetUsd,
+        reason: `BUDGET_EXHAUSTED: projected $${projected.toFixed(4)} > cap $${budgetUsd.toFixed(2)}`,
       };
     }
 
@@ -207,15 +261,15 @@ export class BudgetMeter {
       label: estimate.label,
       estimated_cost_usd: cost,
       cumulative_cost_usd: this.cumulativeUsd,
-      budget_usd: this.opts.budgetUsd,
+      budget_usd: budgetUsd,
     });
-    return { allowed: true, estimatedCostUsd: cost, cumulativeCostUsd: this.cumulativeUsd, budgetUsd: this.opts.budgetUsd };
+    return { allowed: true, estimatedCostUsd: cost, cumulativeCostUsd: this.cumulativeUsd, budgetUsd };
   }
 
   /** Cumulative cost spent so far this cycle. */
   get totalSpent(): number { return this.cumulativeUsd; }
 
-  /** Count of submits that bypassed the gate due to missing pricing. */
+  /** Count of submits whose model had no canonical pricing. */
   get unpricedSubmits(): number { return this.unpricedSubmitsThisCycle; }
 }
 

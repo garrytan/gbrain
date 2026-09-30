@@ -13,15 +13,12 @@
  *  - `default_model: 'voyage-4'` on the embedding touchpoint — array order is
  *    quality-sorted (voyage-4-large first) and must NOT drive selection.
  *  - voyage-code-4 is in the embedding models AND in the flexible-dims set.
- *  - The zeroentropyai recipe carries `sunset` metadata with per-touchpoint
- *    replacements pointing at the voyage models.
  *  - Pricing rows exist for the voyage rerankers (budget-tracker's rerank
  *    metering falls back to the embedding pricing table).
  */
 
 import { describe, test, expect } from 'bun:test';
 import { voyage } from '../../src/core/ai/recipes/voyage.ts';
-import { zeroentropyai } from '../../src/core/ai/recipes/zeroentropyai.ts';
 import { getRecipe } from '../../src/core/ai/recipes/index.ts';
 import { EMBEDDING_PRICING, lookupEmbeddingPrice } from '../../src/core/embedding-pricing.ts';
 import { supportsVoyageOutputDimension } from '../../src/core/ai/dims.ts';
@@ -109,19 +106,6 @@ describe('voyage canonical embedding model (v0.46.3)', () => {
   });
 });
 
-describe('zeroentropyai sunset metadata (v0.46.3)', () => {
-  test('recipe carries sunset date + per-touchpoint replacements', () => {
-    expect(zeroentropyai.sunset).toBeDefined();
-    expect(zeroentropyai.sunset!.date).toBe('2026-09-04');
-    expect(zeroentropyai.sunset!.replacement?.embedding).toBe('voyage:voyage-4');
-    expect(zeroentropyai.sunset!.replacement?.reranker).toBe('voyage:rerank-2.5');
-  });
-
-  test('voyage carries NO sunset (it is the replacement, not the deprecated)', () => {
-    expect(voyage.sunset).toBeUndefined();
-  });
-});
-
 describe('voyage reranker pricing rows (v0.46.3)', () => {
   test('rerank-2.5 + rerank-2.5-lite are priced (budget-tracker fallback)', () => {
     expect(EMBEDDING_PRICING['voyage:rerank-2.5']?.pricePerMTok).toBe(0.05);
@@ -130,9 +114,6 @@ describe('voyage reranker pricing rows (v0.46.3)', () => {
   });
 
   test('#4938: every allowlisted reranker resolves a price (no TX2 no_pricing)', () => {
-    // lookupPricing(kind: 'rerank') falls through to the embedding table; a
-    // miss returns null and `--max-cost` callers hard-fail with no_pricing.
-    // An allowlisted-but-unpriced model would make the fix a new footgun.
     for (const m of voyage.touchpoints.reranker!.models) {
       const hit = lookupEmbeddingPrice(`voyage:${m}`);
       expect(hit.kind).toBe('known');
@@ -140,9 +121,6 @@ describe('voyage reranker pricing rows (v0.46.3)', () => {
   });
 
   test('#4938: rerank-3 pair carries the post-free-tier list rate', () => {
-    // Priced at the list rate, NOT 0: the 200M complimentary grant is
-    // per-account and unknowable from here, so over-reporting inside the
-    // grant beats under-reporting past it.
     expect(EMBEDDING_PRICING['voyage:rerank-3']?.pricePerMTok).toBe(0.05);
     expect(EMBEDDING_PRICING['voyage:rerank-3-lite']?.pricePerMTok).toBe(0.02);
   });

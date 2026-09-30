@@ -325,6 +325,15 @@ export function parseWbFileName(name: string): { sessionId: string; hash: string
   return m ? { sessionId: m[1], hash: m[2], ...(m[3] ? { sourceId: m[3] } : {}) } : null;
 }
 
+/**
+ * The harness session a `.txt` corpus file belongs to: the session-end
+ * `<sessionId>.txt`, a checkpoint segment or a writeback turn file. Used to
+ * classify gbrain's own claude-cli sessions (#5413) across every form.
+ */
+export function corpusFileSessionId(name: string): string {
+  return parseSegmentFileName(name)?.sessionId ?? parseWbFileName(name)?.sessionId ?? name.replace(/\.txt$/, '');
+}
+
 /** The TERMINAL writeback_off `.ingested` sidecar payload — the wb state
  * machine's one terminal skip, written identically by the serve harvest and
  * the sweep backstop (shape drift between the two writers would be invisible

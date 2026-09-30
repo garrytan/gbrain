@@ -1,10 +1,12 @@
 import { hasSourceFilesystemLock, withSourceFilesystemLock, currentSourceFilesystemSignal } from '../core/minions/source-filesystem.ts';
 import { readdirSync, lstatSync, existsSync, mkdirSync } from 'fs';
 import { execFileSync } from 'child_process';
-import { isAbsolute, join, relative, resolve, sep } from 'path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'path';
 import { cpus, totalmem } from 'os';
 import type { BrainEngine } from '../core/engine.ts';
 import { importFile, importImageFile, isImageFilePath } from '../core/import-file.ts';
+import { gitFirstCommitDates } from '../core/git-first-commit.ts';
+import { currentCompanyBrainSync, getCompanyBrainProfile, importCompanyBrainFile } from '../core/company-brain/profile.ts';
 import { loadConfig, gbrainPath } from '../core/config.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
@@ -30,6 +32,11 @@ import {
 } from '../core/import-checkpoint.ts';
 import { realpathOrResolve } from '../core/path-confine.ts';
 import { slog } from '../core/console-prefix.ts';
+import { refreshProjectionStatistics } from '../core/search/projection-statistics.ts';
+import { importManagedFile } from '../core/persistence/import-mutations.ts';
+import { acceptedPendingReceipt } from '../core/persistence/accepted-pending.ts';
+import { estimateCostFromChars, lookupEmbeddingPrice } from '../core/embedding-pricing.ts';
+import { getEmbeddingModel } from '../core/ai/gateway.ts';
 
 /** Return a refusal when an import target lies outside every admitted root. */
 export function configuredRootImportError(dir: string, configuredRoots: string[]): string | null {
@@ -154,6 +161,14 @@ export function shouldLogIngest(
   return counts.imported > 0 || counts.errors > 0 || counts.chunksCreated > 0;
 }
 
+/** Embedding cost of the chunks a safe-chunk re-seal left without vectors; null when the model has no known price. */
+function resealEmbeddingUsd(chars: number): number | null {
+  try {
+    const price = lookupEmbeddingPrice(getEmbeddingModel());
+    return price.kind === 'known' ? estimateCostFromChars(chars, price.pricePerMTok) : null;
+  } catch { return null; }
+}
+
 /** Bug 9 — surface per-file failures so callers (performFullSync) can gate state advances. */
 export interface RunImportResult {
   imported: number;
@@ -165,6 +180,8 @@ export interface RunImportResult {
   malformedSkipped?: number;
   /** Aggregated alias/undeclared explicit-type warnings (schema.type_warnings). */
   type_warnings?: Array<{ kind: 'alias_of' | 'undeclared'; type: string; canonical?: string; directory?: string; count: number }>;
+  /** #5050: unchanged pages re-sealed at the safe-chunk fence, and the embedding work that left. */
+  resealed?: { pages: number; pending_chunks: number; embedding_usd: number | null };
 }
 
 export async function runImport(
@@ -266,22 +283,6 @@ export async function runImport(
       throw e;
     }
   }
-  // v0.39 T1.5: load active pack ONCE at runImport entry; thread to every
-  // per-file importFile call below. Codex perf finding #7 — never per-file.
-  let importActivePack: { page_types: ReadonlyArray<{ name: string; path_prefixes: ReadonlyArray<string>; aliases?: ReadonlyArray<string> }> } | undefined;
-  try {
-    const { loadActivePack } = await import('../core/schema-pack/load-active.ts');
-    const { loadConfig } = await import('../core/config.ts');
-    const resolved = await loadActivePack({
-      cfg: loadConfig(),
-      remote: false, // CLI import is trusted
-      sourceId: opts.sourceId,
-    });
-    importActivePack = { page_types: resolved.manifest.page_types };
-  } catch {
-    importActivePack = undefined;
-  }
-
   // v0.30.x follow-up to PR #707: programmatic sourceId support so internal
   // callers (performFullSync, future Step 6 paths) can route to a named
   // source.
@@ -382,6 +383,19 @@ export async function runImport(
       }
     }
   }
+  if (!currentCompanyBrainSync(sourceId) && await getCompanyBrainProfile(engine, sourceId ?? 'default')) {
+    console.error('This source accepts only its approved committed company-brain manifest. Use sources resume or sync; ordinary import cannot write back to this read-only repository.');
+    throw new ImportAbortError('company-brain sources require approved committed ingestion');
+  }
+  let importActivePack: { page_types: ReadonlyArray<{ name: string; path_prefixes: ReadonlyArray<string>; aliases?: ReadonlyArray<string> }> } | undefined;
+  try {
+    const { loadActivePackForEngine } = await import('../core/schema-pack/engine-resolution.ts');
+    const resolved = await loadActivePackForEngine(engine, { remote: false, sourceId });
+    importActivePack = { page_types: resolved.manifest.page_types };
+  } catch {
+    importActivePack = undefined;
+  }
+
   const workersIdx = args.indexOf('--workers');
   const workersArg = workersIdx !== -1 ? args[workersIdx + 1] : null;
   // v0.22.13 (PR #490 Q2): shared parseWorkers helper rejects bad input
@@ -424,7 +438,13 @@ export async function runImport(
     throw new ImportAbortError(`import target not readable: ${dirArg}`);
   }
 
-  if (!hasSourceFilesystemLock(dir)) {
+  const [persistence] = await engine.executeRaw<{ enabled: boolean }>('SELECT enabled FROM persistence_brain WHERE singleton=1');
+  const managedImport = persistence?.enabled === true;
+  if (managedImport && dir !== resolve(dirArg)) throw new ImportAbortError('managed import refuses a symlinked input root');
+  const singleFile = managedImport && lstatSync(dir).isFile();
+  const importRoot = singleFile ? dirname(dir) : dir;
+
+  if (!managedImport && !hasSourceFilesystemLock(dir)) {
     let entered = false;
     try {
       return await withSourceFilesystemLock(engine, dir, () => {
@@ -476,7 +496,9 @@ export async function runImport(
   const _walkT0 = Date.now();
   console.error(`[gbrain phase] import.collect_files start dir=${dir} strategy=${strategy}`);
   const malformedExcluded: string[] = [];
-  let allFiles = collectSyncableFiles(dir, {
+  const company = currentCompanyBrainSync(sourceId);
+  let allFiles = company ? company.plan.manifest.filter(entry => entry.disposition === 'included').map(entry => join(dir, entry.path))
+    : singleFile ? [dir] : collectSyncableFiles(dir, {
     strategy, includeGitignored,
     includeHidden: opts.includeHidden,
     onExcluded: (rel) => { malformedExcluded.push(rel); },
@@ -495,7 +517,7 @@ export async function runImport(
   const fileTypeLabel = strategy === 'code' ? 'code'
     : strategy === 'auto' ? 'syncable' : 'markdown';
   // #753/#774: apply --exclude glob patterns (threaded by performFullSync).
-  if (opts.exclude && opts.exclude.length > 0) {
+  if (!company && opts.exclude && opts.exclude.length > 0) {
     const beforeExclude = allFiles.length;
     allFiles = allFiles.filter(abs => !matchesAnyGlob(relative(dir, abs), opts.exclude));
     info(
@@ -522,7 +544,11 @@ export async function runImport(
   // (parallel-import silent-skip and failed-file no-retry).
   const checkpointPath = gbrainPath('import-checkpoint.json');
   const completed = new Set<string>();
-  if (!fresh) {
+  if (company) {
+    await company.protect([{ op: 'company-brain-content', fingerprint: company.receiptId, kind: 'content' }]);
+    const [row] = await engine.executeRaw<{ completed_keys: string[] }>("SELECT completed_keys FROM op_checkpoints WHERE op='company-brain-content' AND fingerprint=$1", [company.receiptId]);
+    for (const path of row?.completed_keys ?? []) completed.add(path);
+  } else if (!fresh && !managedImport) {
     const cp = loadCheckpoint(checkpointPath, dir);
     if (cp) {
       for (const p of cp.completedPaths) completed.add(p);
@@ -578,6 +604,7 @@ export async function runImport(
   let lastCheckpointMs = Date.now();
   let lastCheckpointSize = completed.size;
   let chunksCreated = 0;
+  const resealed = { pages: 0, pendingChunks: 0, pendingChars: 0 };
   const importedSlugs: string[] = [];
   const errorCounts: Record<string, number> = {};
   const errorSamples: Record<string, string> = {};
@@ -607,14 +634,18 @@ export async function runImport(
     progress.tick(1, `imported=${imported} skipped=${skipped} errors=${errors}`);
   }
 
+  // A12 (opt-in): git first-commit dates anchor undated new pages instead of clone-time mtimes.
+  const firstCommits = !singleFile && await engine.getConfig('sync.git_first_commit_dates').catch(() => null) === 'true'
+    ? gitFirstCommitDates(dir) : null;
+
   async function processFile(eng: BrainEngine, filePath: string) {
     if (signal?.aborted) return;
-    const relativePath = relative(dir, filePath);
+    const relativePath = singleFile ? basename(filePath) : relative(dir, filePath);
     // #753/#774: slug + source_path base. When performFullSync syncs a
     // monorepo subdir, slugRoot is the git root so slugs stay git-root-
     // relative (matching the incremental path's git-diff paths). The
     // checkpoint (`completed`) stays dir-relative — resumeFilter's contract.
-    const importRelPath = opts.slugRoot ? relative(opts.slugRoot, filePath) : relativePath;
+    const importRelPath = opts.slugRoot ? relative(opts.slugRoot, filePath) : relative(importRoot, filePath);
     // v0.31.2 (D5): per-file slow-path log. Fires only when a single
     // file takes >5s. The user's hang surfaces as one file taking
     // forever — without this, the agent can't see which file.
@@ -624,9 +655,11 @@ export async function runImport(
       // multimodal is enabled. The walker (collectMarkdownFiles) only picks
       // up images when GBRAIN_EMBEDDING_MULTIMODAL=true so this branch is
       // unreachable when the gate is off; defense-in-depth check anyway.
-      const result = isImageFilePath(relativePath) && process.env.GBRAIN_EMBEDDING_MULTIMODAL === 'true'
+      const result = company ? await importCompanyBrainFile(eng, filePath, sourceId!) : managedImport
+        ? await importManagedFile(eng, filePath, importRelPath, { noEmbed, sourceId, activePack: importActivePack, signal, slugRoot: opts.slugRoot })
+        : isImageFilePath(relativePath) && process.env.GBRAIN_EMBEDDING_MULTIMODAL === 'true'
         ? await importImageFile(eng, filePath, importRelPath, { noEmbed, sourceId })
-        : await importFile(eng, filePath, importRelPath, { noEmbed, sourceId, activePack: importActivePack });
+        : await importFile(eng, filePath, importRelPath, { noEmbed, sourceId, activePack: importActivePack, firstCommitAt: firstCommits?.get(filePath) });
       // An import that landed while cancellation arrived is still complete.
       // Account for it before stopping, so resume never loses a successful path.
       noteTypeWarning((result as { type_warning?: Parameters<typeof noteTypeWarning>[0] }).type_warning);
@@ -643,6 +676,11 @@ export async function runImport(
         succeededPaths.push(importRelPath); // #3839
       } else {
         skipped++;
+        if ('resealed' in result && result.resealed) {
+          resealed.pages++;
+          resealed.pendingChunks += result.resealed.pendingChunks;
+          resealed.pendingChars += result.resealed.pendingChars;
+        }
         if (result.skip_reason === 'malformed_path') {
           // Informational skip (bracket/control-char filename): never a
           // failure-ledger row, and stable across runs — checkpoint as done.
@@ -669,19 +707,27 @@ export async function runImport(
         if (e !== signal.reason && !(e instanceof Error && e.name === 'AbortError')) throw e;
         return;
       }
-      const msg = e instanceof Error ? e.message : String(e);
-      const { count, sample } = recordImportFailure(errorCounts, errorSamples, msg);
-      if (count <= 5) {
-        console.error(`  Warning: skipped ${relativePath}: ${msg}`);
-      } else if (count === 6) {
-        console.error(`  (suppressing further "${sample.slice(0, 60)}..." errors)`);
+      // #5600: an accepted managed import still publishing is not a failure; the next run resumes its request.
+      if (acceptedPendingReceipt(e)) { skipped++; console.error(`  Pending: ${relativePath} was accepted and is still publishing; rerun to confirm it.`); } else {
+        const msg = e instanceof Error ? e.message : String(e);
+        const { count, sample } = recordImportFailure(errorCounts, errorSamples, msg);
+        if (count <= 5) {
+          console.error(`  Warning: skipped ${relativePath}: ${msg}`);
+        } else if (count === 6) {
+          console.error(`  (suppressing further "${sample.slice(0, 60)}..." errors)`);
+        }
+        errors++;
+        skipped++;
+        failures.push({ path: importRelPath, error: msg });
       }
-      errors++;
-      skipped++;
-      failures.push({ path: importRelPath, error: msg });
     }
     processed++;
     tickProgress();
+    if (company) {
+      await engine.executeRaw("INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES('company-brain-content',$1,$2::text::jsonb) ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=EXCLUDED.completed_keys,updated_at=now()",
+        [company.receiptId, JSON.stringify([...completed])]);
+      return;
+    }
     // Save checkpoint every 100 SUCCESSFUL adds (not every 100 processed).
     // Failed files never enter `completed`, so a flaky file can't push the
     // checkpoint past it — the next run will retry it.
@@ -804,6 +850,7 @@ export async function runImport(
   // Save the successful tail on interruption/failure. Keep this synchronous:
   // checkpoint and cancellation decisions must not race another worker.
   function preserveCompletedPaths(): void {
+    if (company) return;
     if (completed.size <= lastCheckpointSize) return;
     try {
       mkdirSync(gbrainPath(), { recursive: true });
@@ -909,7 +956,7 @@ export async function runImport(
   // ledger + bookmark via the shared gate (applySyncFailureGate). Skipping the
   // internal handling here prevents double-recording (which would double-count
   // the auto-skip `attempts` streak) and a competing bookmark write.
-  if (gitHead && !opts.managedBookmark) {
+  if (gitHead && !opts.managedBookmark && !managedImport) {
     // Record failures into the central JSONL so doctor can surface them.
     // Use gitHead as the commit so a later sync can tell "same broken
     // state as last time" from "new broken state." Source-scoped (#1939 #2).
@@ -996,7 +1043,7 @@ export async function runImport(
   // that silently dropped files isn't "clean" for freshness purposes even
   // with zero recorded failures.
   const totalMalformed = malformedExcluded.length + malformedFileSkips;
-  if (sourceId && failures.length === 0 && totalMalformed === 0 && !opts.managedBookmark) {
+  if (sourceId && failures.length === 0 && totalMalformed === 0 && !opts.managedBookmark && !managedImport) {
     try {
       const [row] = await engine.executeRaw<{ local_path: string | null; config: unknown }>(
         `SELECT local_path, config FROM sources WHERE id = $1`,
@@ -1049,10 +1096,13 @@ export async function runImport(
 
   throwIfInterrupted();
   // Only a fully completed run removes resume state, including async metadata.
-  if (errors === 0) clearCheckpoint(checkpointPath);
+  if (errors === 0 && !company) clearCheckpoint(checkpointPath);
   else if (existsSync(checkpointPath)) info(`  Checkpoint preserved (${errors} errors). Run again to retry failed files.`);
 
   const totalTime = ((Date.now() - startTime) / 1000).toFixed(1);
+  const resealSummary = resealed.pages > 0
+    ? { pages: resealed.pages, pending_chunks: resealed.pendingChunks, embedding_usd: resealEmbeddingUsd(resealed.pendingChars) }
+    : null;
   if (jsonOutput) {
     // `skipped` includes every per-file failure importFile RETURNS (invalid
     // frontmatter, oversize, symlink, slug mismatch) as well as content-hash
@@ -1064,6 +1114,7 @@ export async function runImport(
     console.log(JSON.stringify({
       status: errors > 0 ? 'partial' : 'success', duration_s: parseFloat(totalTime),
       imported, skipped, errors, chunks: chunksCreated,
+      ...(resealSummary ? { resealed: resealSummary } : {}),
       total_files: allFiles.length,
       unchanged: skipped - failures.length - malformedFileSkips,
       malformed_skipped: malformedFileSkips,
@@ -1076,10 +1127,16 @@ export async function runImport(
     slog(`  ${imported} pages imported`);
     slog(`  ${skipped} pages skipped (${skipped - failures.length - malformedFileSkips} unchanged, ${errors} errors, ${malformedFileSkips} malformed filenames)`);
     slog(`  ${chunksCreated} chunks created`);
+    if (resealSummary) {
+      slog(`  ${resealSummary.pages} unchanged page(s) re-sealed for remote search; ${resealSummary.pending_chunks} chunk(s) need embedding`
+        + `${resealSummary.embedding_usd === null ? '' : ` (~$${resealSummary.embedding_usd.toFixed(4)})`}${noEmbed ? ' — run gbrain embed --stale' : ''}`);
+    }
   }
 
+  if (imported > 0 && !opts.managedBookmark) await refreshProjectionStatistics(engine);
   return {
     imported, skipped, errors, chunksCreated, failures,
+    ...(resealSummary ? { resealed: resealSummary } : {}),
     ...(totalMalformed > 0 ? { malformedSkipped: totalMalformed } : {}),
     ...(typeWarningCounts.size > 0 && typeWarningsEnabled
       ? { type_warnings: [...typeWarningCounts.values()] }

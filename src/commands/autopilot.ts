@@ -31,6 +31,8 @@ import {
   isPidAlive,
 } from '../core/autopilot-lock.ts';
 import { ChildWorkerSupervisor } from '../core/minions/child-worker-supervisor.ts';
+import { resolveChildCliInvocation } from '../core/minions/job-isolation.ts';
+import { OwnerProcessingState, readAutopilotProcessingStatus } from '../core/minions/processing-state.ts';
 import { VERSION } from '../version.ts';
 import {
   canSelfUpdate,
@@ -47,6 +49,7 @@ import { inspectLock } from '../core/db-lock.ts';
 import { registerCleanup } from '../core/process-cleanup.ts';
 import { loadAllSources, sourceConfigHasRemoteUrl, sourceLocalPathSkipWarning, relativeSourceLocalPathSkipWarning } from '../core/sources-load.ts';
 import { isSyncDisabledConfig } from '../core/sync-policy.ts';
+import { loadActivationPendingSourceIds, skipActivationPendingSync } from '../core/sync-policy.ts';
 import { resolveAutopilotDispatchTimeoutMs } from './autopilot-timeout.ts';
 import {
   autopilotRemediationIdempotencyKey,
@@ -61,6 +64,8 @@ import {
   autopilotLockPath,
   autopilotDisabledMarkerPath,
   autopilotPausedMarkerPath,
+  autopilotPaused,
+  autopilotPauseReason,
   autopilotDisableStrikesPath,
   autopilotLaunchdLabel,
   markerHolderAlive,
@@ -366,6 +371,30 @@ async function computeAutopilotIdle(engine: BrainEngine, engineType: string): Pr
   }
 }
 
+export function guardAutopilotEngine(engine: BrainEngine, state: OwnerProcessingState): BrainEngine {
+  const refuse = (): never => {
+    throw new Error('Autopilot processing is configuration-blocked; repair and restart the owner.');
+  };
+  return new Proxy(engine, {
+    get(target, property) {
+      const value = Reflect.get(target, property);
+      if (typeof value !== 'function') return value;
+      return (...args: unknown[]) => {
+        if (property !== 'disconnect' && state.blocked) refuse();
+        if (property === 'transaction' || property === 'transactionDirect') {
+          const fn = args[0] as (tx: BrainEngine) => Promise<unknown>;
+          return Reflect.apply(value, target, [async (tx: BrainEngine) => {
+            const result = await fn(guardAutopilotEngine(tx, state));
+            if (state.blocked) refuse();
+            return result;
+          }]);
+        }
+        return Reflect.apply(value, target, args);
+      };
+    },
+  });
+}
+
 /**
  * The autopilot silent self-upgrade channel. Opt-in (`self_upgrade.mode=auto`).
  * Fires only when behind + idle + in quiet hours + the install can self-update
@@ -378,6 +407,7 @@ async function attemptAutopilotSelfUpgrade(
   engine: BrainEngine,
   engineType: string,
   lockPath: string,
+  mayContinue: () => boolean = () => true,
 ): Promise<void> {
   try {
     const cfg = loadConfig();
@@ -430,6 +460,7 @@ async function attemptAutopilotSelfUpgrade(
       return;
     }
 
+    if (!mayContinue()) return;
     // Apply. Breadcrumb first so a crash-on-launch is attributable.
     cfg.self_upgrade = { ...(cfg.self_upgrade ?? {}), attempting_version: latestVersion };
     saveConfig(cfg);
@@ -463,6 +494,7 @@ async function attemptAutopilotSelfUpgrade(
       return;
     }
 
+    if (!mayContinue()) return;
     // Swap done + smoke-verified by `upgrade --swap-only`. Exit cleanly so the
     // supervisor relaunches the NEW binary, which reconciles the breadcrumb.
     logSelfUpgrade({
@@ -486,7 +518,7 @@ async function attemptAutopilotSelfUpgrade(
 }
 
 /** Flags that consume the following argv token as their value (#1525). */
-const AUTOPILOT_VALUE_FLAGS = new Set(['--repo', '--interval', '--target']);
+const AUTOPILOT_VALUE_FLAGS = new Set(['--repo', '--interval', '--target', '--reason']);
 
 /** Positional spellings → their canonical flags. A Map (not a plain object)
  * so prototype-chain words like `constructor` stay unknown positionals. */
@@ -494,6 +526,8 @@ const AUTOPILOT_POSITIONAL_ALIASES = new Map<string, string>([
   ['status', '--status'],
   ['install', '--install'],
   ['uninstall', '--uninstall'],
+  ['pause', '--pause'],
+  ['resume', '--resume'],
   ['help', '--help'],
 ]);
 
@@ -525,7 +559,7 @@ export function resolveAutopilotPositionals(args: string[]): string[] {
     }
     if (a === 'start') continue; // daemon start is the default action
     console.error(
-      `Unknown autopilot argument '${a}'. Expected one of: status, install, uninstall, start, help.\n` +
+      `Unknown autopilot argument '${a}'. Expected one of: status, install, uninstall, pause, resume, start, help.\n` +
       `Run 'gbrain autopilot --help' for usage.`,
     );
     process.exit(2);
@@ -569,7 +603,8 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
       'Usage: gbrain autopilot [--repo <path>] [--interval N] [--json] [--no-worker]\n' +
       '       gbrain autopilot --install [--repo <path>]\n' +
       '       gbrain autopilot --uninstall\n' +
-      '       gbrain autopilot --status [--json]\n\n' +
+      '       gbrain autopilot --status [--json]\n' +
+      '       gbrain autopilot pause [--reason <text>] | resume   (operator hold; upgrade and --install keep it)\n\n' +
       'Self-maintaining brain daemon. Runs the full maintenance cycle\n' +
       '(lint + backlinks + sync + extract + embed + orphans) on an interval.\n\n' +
       'For a one-shot cron-triggered cycle, see `gbrain dream`.',
@@ -589,6 +624,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
     runAutopilotStatus(args);
     return;
   }
+  if (args.includes('--pause') || args.includes('--resume')) return (await import('./autopilot-pause.ts')).runAutopilotPauseCommand(args);
 
   const repoPath = parseArg(args, '--repo') || await engine.getConfig('sync.repo_path');
   // Same NaN guard as the status path: a typo'd interval would otherwise
@@ -679,6 +715,9 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
 
   let stopping = false;
   let childSupervisor: ChildWorkerSupervisor | null = null;
+  const processingState = spawnManagedWorker ? new OwnerProcessingState('autopilot', 'default') : null;
+  const configurationBlocked = () => processingState?.blocked ?? false;
+  if (processingState) engine = guardAutopilotEngine(engine, processingState);
 
   // #1872: graceful engine shutdown. On PGLite the cycle steps run INLINE in
   // this process, so a hard `process.exit` mid-write (systemctl stop →
@@ -713,7 +752,8 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
   const deregisterEngineClose = registerCleanup('autopilot-engine-close', closeEngine);
 
   if (spawnManagedWorker) {
-    const cliPath = resolveGbrainCliPath();
+    const invocation = resolveChildCliInvocation({}, process.execPath, process.argv[1], resolveGbrainCliPath);
+    if (!invocation) throw new Error('Could not resolve the worker CLI. Repair the current GBrain installation.');
     // Cgroup-aware auto-sized RSS watchdog cap (issue #1678). The old flat
     // 2048MB killed legit embed work (~10GB) on every cycle → silent
     // ~400×/24h respawn loop. resolveDefaultMaxRssMb clamps 0.5×min(cgroup,
@@ -722,17 +762,12 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
     const { resolveDefaultMaxRssMb } = await import('../core/minions/rss-default.ts');
     const autopilotMaxRssMb = resolveDefaultMaxRssMb();
     childSupervisor = new ChildWorkerSupervisor({
-      cliPath,
-      // Orphaned-private-queue recovery runs INSIDE each spawned worker's
-      // startup (jobs.ts 'work', gated on GBRAIN_SUPERVISED !== '1', which
-      // autopilot children never set) — so every spawn AND crash-respawn
-      // recovers without a parent-side beforeSpawn double-running the scan.
-      args: ['jobs', 'work', '--max-rss', String(autopilotMaxRssMb)],
-      // process.env clone; autopilot doesn't gate shell jobs the way the
-      // standalone supervisor does (autopilot is the operator-trust path).
-      // GBRAIN_SUPERVISED is stripped explicitly: worker-startup recovery is
-      // autopilot's ONLY private-queue recovery lane, and an inherited =1
-      // (operator export, nested supervision) would silently disable it.
+      processingState: processingState ?? undefined,
+      onConfigurationBlocked: (status) => {
+        console.error(`[autopilot] processing configuration-blocked (${status?.reason_code ?? 'unknown'}); repair the worker/child installation and explicitly restart autopilot.`);
+      },
+      cliPath: invocation.cmd,
+      args: [...invocation.argsPrefix, 'jobs', 'work', '--max-rss', String(autopilotMaxRssMb)],
       env: { ...process.env, GBRAIN_SUPERVISED: undefined } as Record<string, string | undefined>,
       maxCrashes: 5,
       isStopping: () => stopping,
@@ -744,7 +779,9 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
         // Route ChildWorkerSupervisor events to autopilot's stderr log.
         // Matches the prior console output shape so operators reading
         // existing logs see the same lines.
-        if (event.kind === 'worker_spawned') {
+        if (event.kind === 'worker_startup_timeout') {
+          console.error(`[autopilot] worker readiness was not confirmed within ${event.timeoutMs}ms; stopping this worker and retrying with bounded backoff.`);
+        } else if (event.kind === 'worker_spawned') {
           console.log(
             `[autopilot] Minions worker spawned (pid: ${event.pid}, watchdog: ${autopilotMaxRssMb}MB${event.tini ? ', tini: active' : ''})`,
           );
@@ -796,6 +833,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
   // No `process.on('exit')` handler — its callback runs synchronously and
   // cannot await the worker's drain.
   const shutdown = async (sig: string) => {
+    if (configurationBlocked() && sig !== 'SIGTERM' && sig !== 'SIGINT') return;
     if (stopping) return;
     stopping = true;
     console.log(`Autopilot stopping (${sig}).`);
@@ -806,10 +844,15 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
         childSupervisor.killChild('SIGKILL');
       }
     }
+    if (configurationBlocked() && sig !== 'SIGTERM' && sig !== 'SIGINT') {
+      stopping = false;
+      return;
+    }
     // #1872: abort the in-flight inline cycle and close the engine BEFORE
     // process.exit — a hard exit mid-write corrupts PGLite's WASM Postgres.
     await closeEngine();
     deregisterEngineClose();
+    processingState?.close();
     try { unlinkSync(lockPath); } catch { /* already gone */ }
     process.exit(sig === 'max_crashes' || sig === 'cycle-failure-cap' ? 1 : 0);
   };
@@ -861,6 +904,11 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
     // declare the instance stale after 10 minutes (Codex C).
     try { utimesSync(lockPath, new Date(), new Date()); } catch { /* best-effort */ }
 
+    if (processingState && !processingState.snapshot.processing_ready) {
+      await new Promise(r => setTimeout(r, 250));
+      continue;
+    }
+
     // #2608: loud once-per-process signal when no chat provider is servable.
     // Without this a keyless daemon looks healthy forever while every LLM
     // phase quietly skips.
@@ -904,7 +952,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
     // heartbeat so a paused daemon still reads as alive, and BEFORE any DB
     // work so a cross-engine migration is not racing our writes into an
     // engine that is about to stop being the configured one.
-    if (existsSync(autopilotPausedMarkerPath())) {
+    if (autopilotPaused()) {
       // Self-heal an orphan: a migrate-owned marker whose recorded pid is dead
       // was leaked by a killed migration (SIGKILL, power loss — anything its
       // own cleanup could not catch). Nothing else ever deletes it, and an
@@ -919,7 +967,8 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
       if (orphaned) {
         console.log('[autopilot] clearing an orphaned pause marker (its migrate process is dead); resuming.');
         try { unlinkSync(autopilotPausedMarkerPath()); } catch { /* already gone */ }
-      } else {
+      }
+      if (autopilotPaused()) {
         if (!pausedAnnounced) {
           console.log('[autopilot] paused (autopilot-paused marker present) — skipping cycles until it clears.');
           pausedAnnounced = true;
@@ -953,6 +1002,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
       await engine.getConfig('version');
       autopilotReconnectFails = 0; // reset on success
     } catch (probeErr) {
+      if (configurationBlocked()) continue;
       try {
         // #2034: use reconnect() — it restores the config captured at connect()
         // and avoids the null-connection window. The previous
@@ -963,6 +1013,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
         await engine.reconnect({ error: probeErr });
         autopilotReconnectFails = 0;
       } catch (e) {
+        if (configurationBlocked()) continue;
         logError('reconnect', e);
         autopilotReconnectFails++;
         const klass = classifyReconnectError(e);
@@ -1000,7 +1051,9 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
     // v0.42 self-upgrade silent channel (opt-in self_upgrade.mode=auto). Runs
     // each tick; cache TTL throttles the actual GitHub fetch. On apply it swaps
     // + exits for supervisor relaunch (never returns). No-op unless mode=auto.
-    await attemptAutopilotSelfUpgrade(engine, engineType, lockPath);
+    if (configurationBlocked()) continue;
+    await attemptAutopilotSelfUpgrade(engine, engineType, lockPath, () => !configurationBlocked());
+    if (configurationBlocked()) continue;
 
     // --no-worker peer-liveness probe (v0.19.1). Runs every cycle, cheap
     // (single SELECT). See NO_WORKER_WARN_TICKS comment above for caveats.
@@ -1083,6 +1136,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
           const { isFederatedV2Enabled } = await import('../core/feature-flags.ts');
           if (await isFederatedV2Enabled(engine)) {
             const sources = await loadAllSources(engine);
+            const activationPending = await loadActivationPendingSourceIds(engine);
             const intervalMs = baseInterval * 1000;
             const now = Date.now();
             for (const src of sources) {
@@ -1091,6 +1145,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
               // sync (this loop, the full-cycle fan-out, `sync --all`); an
               // explicit `gbrain sync --source <id>` is unaffected.
               if (isSyncDisabledConfig(src.config)) continue;
+              if (skipActivationPendingSync(activationPending, src.id, 'freshness_sync_skipped', jsonMode, (l) => process.stderr.write(l + '\n'))) continue; // #5198
               // A local_path this machine cannot use — relative (#3696: cwd is
               // launchd's, not the registering shell's) or absent on disk and
               // not a managed clone sync can re-create — would sync a phantom
@@ -1303,6 +1358,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
           // doctor's planner (file plane, per the #2662 rule above) said was
           // missing, so autopilot dispatched chat jobs doctor called blocked.
           hasChatApiKey: chatApiKeyConfigured(fileCfg),
+          staleExtractionBlocked: await (await import('../core/remediation/context.ts')).staleExtractionBlocked(engine).catch(() => undefined),
         };
         // v0.41.18.0 (A5 + A19 + A22, T15): consult onboard recommendations
         // ALONGSIDE doctor's brain-score recommendations. Onboard's 4 new
@@ -1516,6 +1572,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
       } catch (e) { logError('cycle-inline', e); cycleOk = false; }
     }
 
+    if (configurationBlocked()) continue;
     // 4. Health check + adaptive interval (same for both paths)
     let interval = baseInterval;
     try {
@@ -1534,13 +1591,15 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
       }
     } catch (e) { logError('health', e); }
 
+    if (configurationBlocked()) continue;
     if (cycleOk) {
       consecutiveErrors = 0;
     } else {
       consecutiveErrors++;
       if (consecutiveErrors >= 5) {
         console.error('5 consecutive cycle failures. Stopping autopilot.');
-        void shutdown('cycle-failure-cap');
+        await shutdown('cycle-failure-cap');
+        if (!stopping) continue;
         break;
       }
     }
@@ -2604,10 +2663,7 @@ function showStatus(json: boolean, intervalSeconds: number) {
     disabledReason = readFileSync(autopilotDisabledMarkerPath(), 'utf-8').trim() || null;
   } catch { /* not self-disabled */ }
 
-  let pausedReason: string | null = null;
-  try {
-    pausedReason = readFileSync(autopilotPausedMarkerPath(), 'utf-8').trim() || 'pause marker present (no reason recorded)';
-  } catch { /* not paused */ }
+  const pausedReason = autopilotPauseReason();
 
   let heartbeatAgeSeconds: number | null = null;
   try {
@@ -2625,9 +2681,10 @@ function showStatus(json: boolean, intervalSeconds: number) {
     intervalSeconds,
     lastLog: lastLine,
   });
+  const processing = readAutopilotProcessingStatus();
 
   if (json) {
-    console.log(JSON.stringify(report));
+    console.log(JSON.stringify({ ...report, ...processing }));
   } else {
     switch (report.state) {
       case 'not_installed':
@@ -2639,8 +2696,8 @@ function showStatus(json: boolean, intervalSeconds: number) {
         break;
       case 'paused':
         console.log(`Autopilot: PAUSED — ${report.paused_reason}`);
-        console.log('  A pause marker is parked at ' + autopilotPausedMarkerPath() + '.');
-        console.log('  Normal while `gbrain migrate` runs. A marker orphaned by a dead migration');
+        if (report.paused_reason?.startsWith('operator pause')) { console.log('  Operator pause on this host. Resume with: gbrain autopilot resume'); break; }
+        console.log('  A pause marker is parked at ' + autopilotPausedMarkerPath() + '. Normal while `gbrain migrate` runs. A marker orphaned by a dead migration');
         console.log('  clears itself on the daemon\'s next poll; only remove it by hand if the');
         console.log('  pid it names is dead and no daemon is running to clean it up.');
         break;
@@ -2659,6 +2716,11 @@ function showStatus(json: boolean, intervalSeconds: number) {
           `${report.heartbeat_age_seconds}s ago.`,
         );
         break;
+    }
+    if (processing) {
+      console.log(`Processing: ${processing.processing_state}${processing.reason_code ? ` (${processing.reason_code})` : ''}`);
+      console.log(`Stage: ${processing.processing_stage}${processing.retry_at ? `; next retry ${processing.retry_at}` : ''}`);
+      if (processing.processing_state === 'configuration_blocked') console.log('Repair the worker and selected child installation, then explicitly restart autopilot.');
     }
     if (lastLine) console.log(`Last log: ${lastLine}`);
   }

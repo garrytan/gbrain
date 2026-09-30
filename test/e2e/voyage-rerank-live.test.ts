@@ -8,7 +8,9 @@
  * accepts both data[] and the legacy results[] dialect). Also round-trips one
  * voyage-4 embed at the new-install width (1024).
  *
- * Run: VOYAGE_API_KEY=... bun test test/e2e/voyage-rerank-live.test.ts
+ * No CI job provides VOYAGE_API_KEY, so scripts/run-e2e.sh leaves this file
+ * out of its default glob. Run it by name (the runner keeps provider keys):
+ *   VOYAGE_API_KEY=... bash scripts/run-e2e.sh test/e2e/voyage-rerank-live.test.ts
  */
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';

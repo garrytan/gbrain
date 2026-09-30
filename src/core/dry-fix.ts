@@ -15,6 +15,7 @@
 
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { join } from 'path';
+import { assertLegacySkillFilesystemWrite, confinedSkillChildWrite } from './skillpack/writer-guard.ts';
 import {
   CROSS_CUTTING_PATTERNS,
   DRY_PROXIMITY_LINES,
@@ -249,6 +250,7 @@ export function autoFixDryViolations(
   const fixed: FixOutcome[] = [];
   const skipped: FixOutcome[] = [];
   const { skills: manifest } = loadOrDeriveManifest(skillsDir);
+  if (!opts.dryRun) for (const skill of manifest) confinedSkillChildWrite(skillsDir, skill.path);
 
   for (const skill of manifest) {
     const skillPath = join(skillsDir, skill.path);
@@ -453,6 +455,7 @@ function attemptInsertFix(
     };
   }
 
+  assertLegacySkillFilesystemWrite(skillPath);
   try {
     writeFileSync(skillPath, next, 'utf-8');
   } catch {
@@ -560,6 +563,7 @@ function attemptFix(
     };
   }
 
+  assertLegacySkillFilesystemWrite(skillPath);
   try {
     writeFileSync(skillPath, next, 'utf-8');
   } catch {

@@ -15,14 +15,18 @@ import { doctorSource, doctorFileSource } from './helpers/doctor-source.ts';
 afterEach(() => resetGateway());
 
 describe('doctor command', () => {
-  test('doctor module exports runDoctor', async () => {
-    const { runDoctor } = await import('../src/commands/doctor.ts');
-    expect(typeof runDoctor).toBe('function');
-  });
-
-  test('LATEST_VERSION is importable from migrate', async () => {
-    const { LATEST_VERSION } = await import('../src/core/migrate.ts');
-    expect(typeof LATEST_VERSION).toBe('number');
+  test('dimension recovery previews existing brains without recommending reinitialization', () => {
+    const source = doctorFileSource('doctor.ts');
+    const start = source.indexOf('if (totalChunks > 0)');
+    const end = source.indexOf('surfacedUnconfiguredDrift = true;', start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    const hint = source.slice(start, end);
+    expect(hint).toContain('--dry-run');
+    expect(hint).toContain('--yes --max-cost-usd <approved-total>');
+    expect(hint).toContain('docs/guides/embedding-migration.md#recovery');
+    expect(hint).not.toContain('init --force');
+    expect(source).not.toContain('manual ALTER recipe');
   });
 
   test('CLI registers doctor command', async () => {
@@ -182,7 +186,7 @@ describe('doctor command', () => {
             reason: 'unknown',
             query_hash: `unknown${i}`,
             doc_count: 30,
-            error_summary: 'ZeroEntropy reranker requires ZEROENTROPY_API_KEY.',
+            error_summary: 'Voyage reranker requires VOYAGE_API_KEY.',
           });
         }
         const check = await checkRerankerHealth({
@@ -193,7 +197,7 @@ describe('doctor command', () => {
         expect(check.status).toBe('warn');
         expect(check.message).toContain('unknown');
         // v0.46.3: the hint names the reranker provider's key generically
-        // (VOYAGE_API_KEY example) — ZE is sunsetting.
+        // (VOYAGE_API_KEY example).
         expect(check.message).toContain('VOYAGE_API_KEY');
       });
     } finally {
@@ -602,16 +606,8 @@ describe('doctor command', () => {
     expect(src).not.toContain('gbrain timeline-extract');
   });
 
-  // v0.32 — takes_weight_grid pure-helper export.
-  // Codex review #7 demanded the check be extracted as a pure function so
-  // tests target it directly with stubbed engines instead of running the
-  // full runDoctor pipeline. This block validates the export shape and the
-  // 4 branches (no-takes / fail / warn / ok) behaviorally against PGLite.
-  test('takesWeightGridCheck is exported as a pure function', async () => {
-    const mod = await import('../src/commands/doctor.ts');
-    expect(typeof mod.takesWeightGridCheck).toBe('function');
-  });
-
+  // takes_weight_grid pure helper: the 4 branches (no-takes / fail / warn / ok)
+  // run behaviorally against PGLite.
   test('takes_weight_grid: 0 takes → ok with "No takes yet"', async () => {
     const { PGLiteEngine } = await import('../src/core/pglite-engine.ts');
     const { takesWeightGridCheck } = await import('../src/commands/doctor.ts');

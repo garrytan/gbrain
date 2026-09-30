@@ -179,7 +179,7 @@ export async function finishTopologyClone(engine:BrainEngine,id:string,hooks:Clo
 
 const recoveryCursors=new WeakMap<BrainEngine,string>();
 /** A bounded rotating scan keeps persistent conflicts from starving other roots. */
-export async function recoverSourceTopologies(engine:BrainEngine,opts:{hostId?:string;limit?:number}={}):Promise<number>{
+export async function recoverSourceTopologies(engine:BrainEngine,opts:{hostId?:string;limit?:number;onAttempt?:(id:string,recovered:boolean)=>void}={}):Promise<number>{
   const host=opts.hostId??localHostId(),limit=Math.max(1,Math.min(16,opts.limit??2));
   const scan=async(after:string|null)=>engine.executeRaw<TopologyChange>(`SELECT c.* FROM persistence_topology_changes c
     JOIN persistence_worktrees w ON w.id=(c.recovery->>'worktreeId')::uuid
@@ -190,8 +190,10 @@ export async function recoverSourceTopologies(engine:BrainEngine,opts:{hostId?:s
   if(rows.length)recoveryCursors.set(engine,rows[rows.length-1].id);
   let recovered=0;
   for(const row of rows){
-    try{await withTopologyLocks(engine,row.source_id,async()=>{const done=await finishTopologyClone(engine,row.id);if(!done.recovery)recovered++;},undefined,0);}
+    let finished=false;
+    try{await withTopologyLocks(engine,row.source_id,async()=>{const done=await finishTopologyClone(engine,row.id);if(!done.recovery){recovered++;finished=true;}},undefined,0);}
     catch(error){if(!(error instanceof OperationError&&['write_pending','recovery_required'].includes(error.code)))throw error;}
+    finally{opts.onAttempt?.(row.id,finished);}
   }
   return recovered;
 }

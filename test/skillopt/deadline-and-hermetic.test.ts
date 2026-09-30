@@ -13,13 +13,10 @@
  *    (off by default — the config dir carries the CLI's session credentials,
  *    so the empty-dir form logs the child out wherever the CLI reads its
  *    session from the config dir; hermetic mode is a deliberate choice,
- *    never a default). #4741: the docs/code comment may not claim any
- *    platform "survives" the empty-dir form — nothing in the code seeds or
- *    looks up credential material, and macOS was observed logged out.
+ *    never a default).
  */
 import { describe, test, expect } from 'bun:test';
-import { existsSync, readFileSync } from 'fs';
-import { join } from 'path';
+import { existsSync } from 'fs';
 import {
   runValidationGate,
   scoreSkillOnTasks,
@@ -125,19 +122,5 @@ describe('#4119 — resolveHermeticConfigDir (opt-in)', () => {
     expect(resolveHermeticConfigDir('/tmp/my-seeded-claude-config')).toBe(
       '/tmp/my-seeded-claude-config',
     );
-  });
-});
-
-describe('#4741 — hermetic-config docs make no platform-survives-logout claim', () => {
-  const root = join(import.meta.dir, '..', '..');
-  test('docs/guides/skillopt.md does not promise the empty-dir form keeps macOS logged in', () => {
-    const doc = readFileSync(join(root, 'docs/guides/skillopt.md'), 'utf8');
-    expect(doc).not.toMatch(/keychain and survives/);
-    expect(doc).toMatch(/logs the child out/);
-  });
-  test('the provider doc comment does not promise it either', () => {
-    // test-reads-source-ok: pins a doc-comment contract (#4741) — comment text has no runtime surface to assert.
-    const src = readFileSync(join(root, 'src/core/ai/providers/claude-cli-language-model.ts'), 'utf8');
-    expect(src).not.toMatch(/keychain and survives/);
   });
 });

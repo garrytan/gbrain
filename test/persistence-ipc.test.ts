@@ -153,6 +153,24 @@ describe('dedicated persistence IPC', () => {
     }
   });
 
+  test('optional safe health survives IPC without private nested fields', async () => {
+    const path = socketPath();
+    const diagnostic = { age_ms: 120000, assessment: 'stalled' as const,
+      reason: 'cause_unknown' as const, next_action: 'inspect_owner' as const };
+    await bind(path, async () => {
+      const error = new OperationError('write_pending', 'Still pending.');
+      error.writeRequest = { request_id: ID, state: 'queued', retry_after_ms: 30000,
+        diagnostic: { ...diagnostic, ...{ predecessor_id: 'PRIVATE_PREDECESSOR' } } };
+      throw error;
+    });
+    try { await requestPersistenceOperation(path, request()); throw new Error('Expected pending error.'); }
+    catch (error) {
+      const body = (error as OperationError).toJSON();
+      expect(body).toMatchObject({ write_request: { request_id: ID, diagnostic } });
+      expect(JSON.stringify(body)).not.toContain('PRIVATE_PREDECESSOR');
+    }
+  });
+
   test('lost acknowledgement is unknown, keeps original ID, and never auto-retries', async () => {
     const path = socketPath();
     let calls = 0;

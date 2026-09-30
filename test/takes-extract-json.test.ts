@@ -55,6 +55,9 @@ describe('gbrain takes extract --from-pages --json (#3962)', () => {
       pages_skipped: 0,
       skipped: [],
       mirror_warnings: 0,
+      // B-14: budget stop + fence dedupe accounting.
+      budget_exhausted: false,
+      duplicates_skipped: 0,
     });
   });
 });

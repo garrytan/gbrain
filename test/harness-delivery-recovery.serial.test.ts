@@ -23,6 +23,8 @@ test('live client secret gates journal recovery after rotation; resumed credenti
       await expect(provisionHarnessGrant(engine, { ...input, clientId: created.grant.clientId, resume: true }, 'test')).rejects.toThrow('credential_delivery_stale');
       expect(await engine.executeRaw('SELECT client_secret_hash FROM oauth_clients WHERE client_id = $1', [created.grant.clientId])).toEqual([{ client_secret_hash: rotatedHash }]);
       expect(await engine.executeRaw('SELECT count(*)::int AS n FROM oauth_clients WHERE client_name = $1', [input.name])).toEqual([{ n: 1 }]);
+      await engine.executeRaw('UPDATE oauth_clients SET client_secret_hash=$1, client_secret_expires_at=1 WHERE client_id=$2', [hashToken(created.credentials!.client_secret!), created.grant.clientId]);
+      await expect(provisionHarnessGrant(engine, { ...input, clientId: created.grant.clientId, resume: true }, 'test')).rejects.toThrow('Client secret expired');
     });
   } finally { await engine.disconnect(); rmSync(root, { recursive: true, force: true }); }
 }, 60_000);

@@ -153,7 +153,7 @@ const run_doctor: Operation = {
     // unscoped ctx = brain-wide.
     const scope = sourceScopeOpts(ctx);
     const sourceIds = scope.sourceIds ?? (scope.sourceId ? [scope.sourceId] : undefined);
-    return doctorReportRemote(ctx.engine, { sourceIds });
+    return doctorReportRemote(ctx.engine, { sourceIds, remote: ctx.remote });
   },
   scope: 'admin',
   localOnly: false,

@@ -1,33 +1,3 @@
-/**
- * Embedding-key validation at `gbrain init` (issue #1780 Gap 2).
- *
- * Before this, `gbrain init` persisted `--embedding-model` to config.json but
- * never checked the provider key was present/working. The failure surfaced only
- * at first sync (`embedBatch` throws, pages import but `embedded=0`), and
- * combined with Gap 1 the call graph silently never built.
- *
- * This runs two checks at init time, both non-fatal (loud warning, init still
- * exits 0 — `--no-embedding` is the deferred-setup escape hatch):
- *   1. `diagnoseEmbedding()` — config-only, zero-network. Catches a missing key
- *      for ANY provider.
- *   2. `liveTestEmbed()` — a best-effort 1-token embed (5s timeout) when a key
- *      IS present. Catches invalid/expired keys. Network/timeout/offline →
- *      warn only, never blocks.
- *
- * Both run against the EFFECTIVE gateway config — process.env overlaid with
- * every file-plane provider key config.json carries (openai / anthropic /
- * voyage / zeroentropy / dashscope / google — whatever buildGatewayConfig
- * folds, #2662) and `opts.apiKey`, plus provider base URLs — built via the
- * same `buildGatewayConfig` runtime uses. Without that, the config-only check would
- * false-warn on config.json-keyed users, and the live probe could hit the
- * wrong endpoint (custom OpenAI base URL, llama-server, etc.).
- *
- * Skips entirely on `--no-embedding`, `--skip-embed-check`, or
- * `GBRAIN_INIT_SKIP_EMBED_CHECK=1`. Warnings go to stderr; the caller folds the
- * returned `InitEmbedCheckResult` into init's `--json` envelope as
- * `embedding_check`.
- */
-
 import type { GBrainConfig } from './config.ts';
 import { loadConfigFileOnly } from './config.ts';
 import { buildGatewayConfig } from './ai/build-gateway-config.ts';

@@ -325,8 +325,11 @@ counting. Graph enrichment uses the same source and page-visibility policy.
 
 **Page-level `visibility: private` is enforced for remote callers by default.**
 The exact frontmatter value `private` hides that concrete page row;
-`visibility: local`, absent visibility, and other values do not. Trusted local
-CLI callers retain access. Operator settings can opt out of private-page
+`visibility: local`, absent visibility, and other values do not, except on
+derived pages: an extracted atom or synthesized concept with no `visibility`
+is private, an atom whose origin page is private is hidden, and so is a
+synthesized concept built from a private atom. Trusted local CLI callers
+retain access. Operator settings can opt out of private-page
 filtering, so source grants remain an independent boundary: keep content in an
 ungranted source when remote callers must have no access to that source.
 

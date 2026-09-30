@@ -329,12 +329,12 @@ describe('v0.40.6.1 — reranker_timeout_ms threads recipe default through resol
     expect(r.reranker_timeout_ms).toBe(100);
   });
 
-  test('ZE (no recipe default) regression: still gets bundle default of 5000ms', () => {
-    // ZeroEntropy's recipe does not declare default_timeout_ms — its hosted
+  test('Voyage (no recipe default) regression: still gets bundle default of 5000ms', () => {
+    // Voyage's recipe does not declare default_timeout_ms — its hosted
     // path is fast enough that the bundle default suffices.
     const r = resolveSearchMode({
       mode: 'balanced',
-      overrides: { reranker_model: 'zeroentropyai:zerank-2' },
+      overrides: { reranker_model: 'voyage:rerank-2.5' },
     });
     expect(r.reranker_timeout_ms).toBe(5000);
   });
@@ -446,7 +446,7 @@ describe('knobsHash determinism + cross-mode separation (CDX-4)', () => {
     // v0.43: bumped 9→10 for the relational recall arm (rel=/reld=) — a
     // relational-on write must not be served to a relational-off lookup.
     // #1400: bumped 10→11 for the asymmetric input_type fix — embedQuery()
-    // now produces query-side vectors for asymmetric providers (zembed-1,
+    // now produces query-side vectors for asymmetric providers (voyage-4,
     // Voyage v3+), so rows keyed on pre-fix document-side query vectors
     // must not be served to post-fix lookups.
     // #2825: bumped 11→12 to fold the resolved hard-exclude prefix list

@@ -37,7 +37,7 @@ import {
   dcrScopeViolation,
 } from './scope.ts';
 import type { AuthInfo as CoreAuthInfo } from './operations.ts';
-import { parseLegacyTokenScope, parseTakesHoldersAllowList, coerceLegacyPermissions, normalizeTokenScopes } from './legacy-token-scope.ts';
+import { parseLegacyTokenScope, parseTakesHoldersAllowList, coerceLegacyPermissions, normalizeTokenScopes, parseLegacyOperationGrant } from './legacy-token-scope.ts';
 import { grantFromRow, normalizeGrantBrain, intersectGrantedScopes, type GrantPatch } from './grants/model.ts';
 import { assertValidSlugPrefixes, pgArray } from './grants/encoding.ts';
 import { rescopeOAuthClient, type RescopeClientOptions, type RescopeClientResult } from './grants/rescope.ts';
@@ -239,6 +239,8 @@ interface GBrainOAuthProviderOptions {
    * before mcpAuthRouter ran).
    */
   dcrDisabled?: boolean;
+  /** #5222: the canonical /mcp resource from the configured public URL; grants canonicalize `resource` against it. */
+  resourceUrl?: URL;
   /**
    * Allow the consent-bypassing `client_credentials` grant on the unauthenticated
    * Dynamic Client Registration path. Default false (#1353): a self-registered
@@ -558,7 +560,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     this.dcrDisabled = options.dcrDisabled === true;
     this.tokenTtl = options.tokenTtl || 3600;
     this.refreshTtl = options.refreshTtl || 30 * 24 * 3600;
-    this.grants = new OAuthGrants({ sql: this.sql, transaction: options.transaction, tokenTtl: this.tokenTtl, refreshTtl: this.refreshTtl });
+    this.grants = new OAuthGrants({ sql: this.sql, transaction: options.transaction, tokenTtl: this.tokenTtl, refreshTtl: this.refreshTtl, resourceUrl: options.resourceUrl });
     // #2179 fail-closed: an unset DCR max is bounded by the operator's own
     // token TTL — never a fixed permissive ceiling — so a self-registering
     // client cannot elect a longer-lived token than the server default
@@ -958,6 +960,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         principal: { kind: 'legacy_token', id: String(legacyRows[0].id) },
         clientName: name,
         scopes: grantedScopes ?? ['read', 'write', 'admin'],
+        ...(permissions?.allowed_operations === undefined ? {} : { allowedOperations: parseLegacyOperationGrant(permissions.allowed_operations) }),
         expiresAt: Math.floor(Date.now() / 1000) + 365 * 24 * 3600, // Legacy tokens never expire — set 1yr future
         // Legacy tokens without an explicit permissions.source_id grant keep
         // the historical 'default' source floor. Array grants become

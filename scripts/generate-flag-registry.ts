@@ -56,9 +56,13 @@ const EXTRA_FLAGS: Record<string, string[]> = {
  * its flag literals belong to the commands it routes (takes/search/jobs/cache/
  * quarantine), and each of those declares its own flags in its own case block;
  * scanning the router bleeds takes/quarantine flags into jobs (whose case
- * block imports it for the `jobs stats` thin-client route).
+ * block imports it for the `jobs stats` thin-client route). job-isolation.ts
+ * builds the INTERNAL `jobs run-child` argv (`--job-id`, `--allow-shell-jobs`):
+ * those literals are what a worker passes to its child, not flags an importer
+ * parses — autopilot imports it only to resolve the child CLI, and `jobs`
+ * declares both flags in its own source.
  */
-const EXCLUDED_MODULES = ['thin-client-routing.ts', 'persistence-delegate.ts'];
+const EXCLUDED_MODULES = ['thin-client-routing.ts', 'persistence-delegate.ts', 'job-isolation.ts'];
 
 function isExcludedModule(p: string): boolean {
   // Basename comparison is path-separator agnostic: on Windows p ends in
@@ -123,6 +127,11 @@ function facadeExpansion(p: string): string[] {
     return out;
   };
   if (rel === 'src/core/operations.ts') return collect(join(ROOT, 'src/core/ops'));
+  if (rel === 'src/commands/migrate-embeddings.ts') return [join(ROOT, 'src/core/embedding-migration-cli.ts')];
+  if (rel === 'src/commands/mcp.ts') return [
+    join(ROOT, 'src/commands/mcp-admin.ts'),
+    join(ROOT, 'src/commands/mcp-admin-http.ts'),
+  ];
   if (rel === 'src/commands/doctor.ts') return collect(join(ROOT, 'src/commands/doctor'));
   if (rel === 'src/commands/skillpack.ts') return collect(join(ROOT, 'src/commands/skillpack'));
   // connectors is a peeled command dir (index.ts dispatches to auth/sync/status);

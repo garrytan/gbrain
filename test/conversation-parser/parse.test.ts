@@ -11,9 +11,8 @@
  *   - Disabled-builtin honored
  *   - Timezone warning (D19) emitted when frontmatter timezone missing
  *
- * Pure-function tests; no PGLite, no LLM. The LLM polish/fallback
- * tests live in `llm-base.test.ts`, `llm-polish.test.ts`,
- * `llm-fallback.test.ts` (T4).
+ * Pure-function tests; no PGLite, no LLM. The LLM fallback tests
+ * live in `llm-base.test.ts` and `llm-fallback.test.ts` (T4).
  */
 
 import { describe, expect, test } from 'bun:test';

@@ -36,7 +36,7 @@ describe('embeddingProviderConfigured (recipe-aware helper)', () => {
 
   test('behavior-change: voyage judged by VOYAGE_API_KEY, not an OpenAI key', () => {
     // New (correct) behavior — pre-fix doctor judged voyage by whether any
-    // openai/ZE key existed.
+    // openai/Voyage key existed.
     expect(embeddingProviderConfigured('voyage:voyage-3', (k) => k === 'VOYAGE_API_KEY')).toBe(true);
     expect(embeddingProviderConfigured('voyage:voyage-3', (k) => k === 'OPENAI_API_KEY')).toBe(false);
   });
@@ -59,7 +59,6 @@ describe('embeddingProviderConfigured (recipe-aware helper)', () => {
   // would make the provider look "configured" and dispatch a doomed embed job.
   test('HOSTED_EMBED_KEY_CONFIG only maps gateway-propagated config keys', () => {
     expect(HOSTED_EMBED_KEY_CONFIG.OPENAI_API_KEY).toBe('openai_api_key');
-    expect(HOSTED_EMBED_KEY_CONFIG.ZEROENTROPY_API_KEY).toBe('zeroentropy_api_key');
     // #2662: buildGatewayConfig now folds voyage_api_key → VOYAGE_API_KEY,
     // so this producer-facing map must recognize it as gateway-propagated.
     expect(HOSTED_EMBED_KEY_CONFIG.VOYAGE_API_KEY).toBe('voyage_api_key');

@@ -13,6 +13,7 @@
  * scaffold command.
  */
 
+import { assertLegacySkillFilesystemWrite } from './writer-guard.ts';
 import { existsSync, mkdirSync, writeFileSync } from 'fs';
 import { join } from 'path';
 
@@ -70,6 +71,7 @@ export function applyWritePlan(
   plan: WritePlanEntry[],
   opts: { dryRun?: boolean } = {},
 ): { written: string[]; skipped: string[] } {
+  if (!opts.dryRun) for (const p of plan) assertLegacySkillFilesystemWrite(p.path);
   const written: string[] = [];
   const skipped: string[] = [];
   for (const p of plan) {
@@ -78,6 +80,7 @@ export function applyWritePlan(
       continue;
     }
     if (!opts.dryRun) {
+      assertLegacySkillFilesystemWrite(p.path);
       mkdirSync(join(p.path, '..'), { recursive: true });
       writeFileSync(p.path, p.content);
     }

@@ -1,4 +1,5 @@
 import { WRITE_REQUEST_PARAM } from '../persistence/params.ts';
+import { randomUUID } from 'node:crypto';
 import { readHolders } from './context.ts';
 /**
  * Hot-memory (facts) operation cluster — pure move from operations.ts
@@ -16,7 +17,7 @@ import { readHolders } from './context.ts';
 
 import type { Operation } from './contract.ts';
 import { OperationError, verbError } from './contract.ts';
-import { federatedSearchScope, sourceScopeOpts, stampEvidenceSafe } from './context.ts';
+import { assertExplicitSourceLive, federatedSearchScope, parseSourceIdParam, sourceScopeOpts, stampEvidenceSafe } from './context.ts';
 import { markKeywordHits } from '../search/evidence.ts';
 import { hybridSearchCached, stampContentFlags } from '../search/hybrid.ts';
 import { dedupResults } from '../search/dedup.ts';
@@ -40,6 +41,7 @@ const extract_facts: Operation = {
   description:
     'v0.31: extract personal-knowledge facts (events, preferences, commitments, beliefs, ideas, and plain facts) from a conversation turn into the per-source hot memory. Sanitizes turn_text via INJECTION_PATTERNS, calls the configured extraction model (key-aware: any servable provider — OpenAI or Anthropic key both work), runs the cosine fast-path + classifier dedup pipeline, INSERTs into facts. Returns counts by status. With NO servable chat model, returns skipped: extraction_unavailable + an agent_action telling YOU to extract and write via `remember` (visibility: "private"). Skips extraction when the turn is dream-generated content (anti-loop). For agent memory writes of a SINGLE already-formed fact, prefer the `remember` verb (zero LLM, mandatory provenance).',
   params: {
+    request_id: { ...WRITE_REQUEST_PARAM, description: `${WRITE_REQUEST_PARAM.description} Managed extraction returns durable receipts; when omitted, each call gets a new UUID. Unmanaged extraction retains its legacy non-journaled behavior.` },
     turn_text: { type: 'string', required: true, description: 'The user message or page body to extract facts from. Sanitized via INJECTION_PATTERNS before the LLM call.' },
     session_id: { type: 'string', description: 'Opaque session id (e.g. topic-id from MCP _meta.session_id, or CLI --session). Stored on each fact for the recall --session filter. Not an auth surface. NOTE (#4206): the session survives on the DB row at insert time, but the `## Facts` fence has no session column — a fence rebuild/reconcile re-derives rows session-less. Treat fence-backed facts as session-less across rebuilds.' },
     entity_hints: { type: 'array', items: { type: 'string' }, description: `Existing canonical entity slugs the agent has already resolved. Helps the extractor pick the right slug. Only the first ${ENTITY_HINTS_CAP} are forwarded to the extractor (#4209) — the response reports entity_hints_used / entity_hints_dropped; pass the most load-bearing slugs first.` },
@@ -108,6 +110,9 @@ const extract_facts: Operation = {
 
     const r = await runFactsPipeline(p.turn_text as string, {
       engine: ctx.engine,
+      operationContext: ctx,
+      requestId: typeof p.request_id === 'string' ? p.request_id : randomUUID(),
+      requestIntent: { ...p, request_id: undefined },
       sourceId,
       sessionId: typeof p.session_id === 'string' ? p.session_id : null,
       entityHints,
@@ -165,6 +170,7 @@ const extract_facts: Operation = {
       duplicate: r.duplicate,
       superseded: r.superseded,
       fact_ids: r.fact_ids,
+      ...(r.write_requests ? { write_requests: r.write_requests } : {}),
       ...hintAccounting,
     };
   },
@@ -178,6 +184,8 @@ const recall: Operation = {
     entity: { type: 'string', description: 'Entity slug (canonical). Returns facts about this entity newest first.' },
     query: { type: 'string', description: 'MEMORY_VERBS v1: free-text retrieval over pages (hybrid search arm). Response adds results[] (slug, title, chunk, evidence, create_safety, provenance). Combinable with entity (both arms run). Degrades to keyword-only search when no embedding provider is configured (search_degraded notes it; never an error).' },
     budget_tokens: { type: 'number', description: 'MEMORY_VERBS v1: server-side token budget (char/4 estimate). Facts pack first, then results. Response adds budget_tokens, budget_used, dropped_count.' },
+    budget_policy: { type: 'string', enum: ['facts_first', 'query_first'], description: 'Optional packing order. facts_first preserves legacy behavior (default). query_first packs the ranked page prefix before facts only with a nonblank query and positive finite budget; a positive budget below one token keeps neither arm. No query or inactive budget preserves legacy behavior. Neither policy skips oversized items or truncates. Supplying this option adds budget_packing accounting. Keep fact-focused/entity-filtered questions on facts_first.' },
+    source_id: { type: 'string', description: 'Optional concrete source id for both facts and page results. Narrows the caller’s authorized scope, including an explicit default; a denied, missing, or archived source fails rather than widening. Omit to preserve the existing context/grant scope.' },
     since: { type: 'string', description: 'ISO 8601 datetime or duration shorthand (e.g. "8 hours ago"). Filters the FACTS arm only, on event time (valid_from, falling back to created_at); composes with `entity` and `session_id`. An unparseable value is rejected (invalid_params).' },
     session_id: { type: 'string', description: 'Source session id (e.g. topic-A). Returns facts captured in that session.' },
     include_expired: { type: 'boolean', description: 'When true, include expired_at IS NOT NULL rows. Default false.' },
@@ -202,7 +210,22 @@ const recall: Operation = {
     // source and merges newest-first; a single-source caller takes exactly
     // the pre-v1 single-query path. A trusted-local `__all__` ({}) has no
     // enumerable grant and keeps the resolved-scalar behavior.
-    const scope = sourceScopeOpts(ctx);
+    let sourceIdParam: string | undefined;
+    let scope: ReturnType<typeof sourceScopeOpts>;
+    try {
+      sourceIdParam = parseSourceIdParam(p.source_id, 'recall');
+      scope = sourceIdParam === undefined ? sourceScopeOpts(ctx) : federatedSearchScope(ctx, sourceIdParam);
+      await assertExplicitSourceLive(ctx, sourceIdParam);
+    } catch (error) {
+      if (!(error instanceof OperationError) || p.source_id === undefined || p.source_id === null) throw error;
+      const code = error.code === 'permission_denied' ? 'scope_denied'
+        : error.code === 'unknown_source' ? 'not_found'
+          : error.code === 'invalid_params' ? 'invalid_params' : null;
+      if (code === null) throw error;
+      throw verbError(code, error.message,
+        error.suggestion ?? 'Choose a permitted active source, or omit source_id to use your existing scope.',
+        error.detail ?? error.code);
+    }
     // Set-dedupe: a grant carrying a repeated id (or the scalar source again)
     // must not fan out the same source twice into the merge.
     const factSources: string[] = [...new Set(
@@ -387,7 +410,7 @@ const recall: Operation = {
       // like search/query/get_page/list_pages/resolve_slugs. sourceScopeOpts
       // alone pinned this arm to the scalar source, so a `federated: true`
       // source was invisible to recall while visible to every sibling read op.
-      const searchScope = federatedSearchScope(ctx);
+      const searchScope = federatedSearchScope(ctx, sourceIdParam);
       // #4352 — recall's page-search arm enforces `visibility: private` for
       // untrusted callers (matches the facts arms' world-only filter above).
       const { resolveExcludePrivatePages } = await import('../search/private-visibility.ts');
@@ -413,15 +436,24 @@ const recall: Operation = {
       bumpLastRetrievedAt(ctx.engine, searchResults.map(r => r.page_id));
     }
 
-    // ── MEMORY_VERBS v1 — server-side budget packing. Facts pack first (cheap,
-    // high-precision one-liners, per-arm limit-capped so starvation is bounded),
-    // then search results take the remainder. packToBudget treats budget<=0 as
-    // a no-op, so an exhausted remainder must drop explicitly.
     let packedFacts = rows;
     let packedResults = searchResults;
     let budgetUsed: number | undefined;
     let droppedCount: number | undefined;
-    if (budgetTokens !== null) {
+    const queryFirst = p.budget_policy === 'query_first' && queryText !== null && budgetTokens !== null;
+    if (queryFirst) {
+      const resultsPack = budgetTokens > 0
+        ? packToBudget(searchResults, resultTokens, budgetTokens)
+        : { items: [] as SearchResult[], meta: { used: 0, dropped: searchResults.length } };
+      packedResults = resultsPack.items;
+      const remaining = budgetTokens - resultsPack.meta.used;
+      const factsPack = remaining > 0
+        ? packToBudget(rows, r => estimateTokens(r.fact), remaining)
+        : { items: [] as FactRows, meta: { used: 0, dropped: rows.length } };
+      packedFacts = factsPack.items;
+      budgetUsed = resultsPack.meta.used + factsPack.meta.used;
+      droppedCount = resultsPack.meta.dropped + factsPack.meta.dropped;
+    } else if (budgetTokens !== null) {
       const factsPack = packToBudget(rows, r => estimateTokens(r.fact), budgetTokens);
       packedFacts = factsPack.items;
       const remaining = budgetTokens - factsPack.meta.used;
@@ -433,6 +465,31 @@ const recall: Operation = {
       budgetUsed = factsPack.meta.used + resultsPack.meta.used;
       droppedCount = factsPack.meta.dropped + resultsPack.meta.dropped;
     }
+
+    const budgetPacking = p.budget_policy === 'facts_first' || p.budget_policy === 'query_first'
+      ? {
+          policy: queryFirst ? 'query_first' : 'facts_first',
+          applied: budgetTokens !== null && (queryFirst || (p.budget_policy === 'facts_first' && budgetTokens > 0)),
+          reason: p.budget_policy === 'query_first' && !queryText ? 'no_query'
+            : budgetTokens === null ? 'no_positive_finite_budget'
+              : budgetTokens === 0 ? 'budget_below_one'
+                : rows.length + searchResults.length === 0 ? 'no_candidates'
+                  : packedFacts.length + packedResults.length === 0 ? 'first_items_exceed_budget'
+                    : 'packed',
+          facts: {
+            candidates: rows.length,
+            kept: packedFacts.length,
+            dropped: rows.length - packedFacts.length,
+            used: packedFacts.reduce((sum, r) => sum + estimateTokens(r.fact), 0),
+          },
+          results: {
+            candidates: searchResults.length,
+            kept: packedResults.length,
+            dropped: searchResults.length - packedResults.length,
+            used: packedResults.reduce((sum, r) => sum + resultTokens(r), 0),
+          },
+        }
+      : undefined;
 
     return {
       facts: packedFacts.map(r => ({
@@ -485,6 +542,7 @@ const recall: Operation = {
       ...(budgetTokens !== null
         ? { budget_tokens: budgetTokens, budget_used: budgetUsed, dropped_count: droppedCount }
         : {}),
+      ...(budgetPacking ? { budget_packing: budgetPacking } : {}),
     };
   },
 };

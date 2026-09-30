@@ -6,6 +6,12 @@ per-turn context, session-triggered schedules, and a private GitHub repo as the
 agent's durable, portable body. This guide is the full contract — what gets
 installed, what runs when, what it can and cannot do, and how to undo all of it.
 
+Use that identity-building path only when creating a new personal agent is
+explicitly requested. Adding memory or shared skills to an existing agent does
+not require an interview, a new identity, or a private repository. Use
+[hosted access](hosted-harness-access.md) or
+[in-agent setup](in-agent-setup.md), preserving unrelated instructions.
+
 Normative design docs: [AGENT_BOOTSTRAP_DESIGN.md](../designs/AGENT_BOOTSTRAP_DESIGN.md)
 (scope) and [AGENT_BOOTSTRAP_PLAN.md](../designs/AGENT_BOOTSTRAP_PLAN.md)
 (implementation). The paste block lives in the README; the runbook your agent
@@ -170,6 +176,27 @@ you'd apply to any journal: write what you'd be comfortable persisting.
 
 ## Local harness mode (`gbrain bootstrap harness`)
 
+Fresh local harness wiring defaults to `--skills follow`, and
+`--skills memory-only` opts out. Re-runs preserve the recorded choice; an older
+receipt with no choice stays memory-only until explicitly changed. Fresh brain
+content setup supplies a limited packaged-prose policy, while an existing
+brain may still need owner follow approval.
+
+Bootstrap mints separate owned credentials and operation snapshots for each
+independent harness. Supplying one token for several harnesses leaves skill
+enrollment pending rather than pretending they are independent principals.
+Existing grants or missing owner follow approval can leave memory connected
+with skills pending.
+
+Claude Code, Codex, and opencode receive owned native routers after successful
+enrollment, with `restart_required` and native activation unverified. Read the
+receipt's `shared_skills` entries, restart, and observe a new conversation.
+The router is advisory; it is not an enforced vendor invocation hook. Following
+revisions changes neither capture consent nor spending/tool authority. The
+parent harness follows the same canonical revisions as other members. See
+[shared brain skills](shared-brain-skills.md) for migration, conflicts, and the
+separate protocol/files/native acceptance checks.
+
 The workspace install above is built for a human's laptop. A box run by an
 agent framework (your OpenClaw, or anything that shells out to `claude -p` /
 codex exec) already hosts a brain and a running `gbrain serve --http` — and
@@ -263,9 +290,12 @@ downgrade after a harness install, revoke the scoped tokens first
 
 Clone your agent repo on machine two and run `gbrain bootstrap attach` — it
 validates the manifest, wires this machine (source registration, hooks repair,
-MCP), and verifies. The brain database is derived state, rebuilt from `brain/` +
-re-ingestion; hot facts extracted only on machine one arrive via the repo's pages
-and fences. Simultaneous editing from two machines is ordinary git conflict
+MCP), and verifies. Content projections can be rebuilt from `brain/` + re-ingestion;
+hot facts extracted only on machine one arrive via the repo's pages and fences.
+Shared-skill grants, policies, memberships, revocations, and durable receipts are
+operational database state, not reconstructible from Git alone. Keep a protected
+database backup, and do not clone live enrollment identities into an independent
+brain. Simultaneous editing from two machines is ordinary git conflict
 territory — `sources push` pulls divergence-safely (commit first, rebase pull,
 loud on conflicts).
 

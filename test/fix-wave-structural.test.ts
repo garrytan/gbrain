@@ -65,7 +65,7 @@ describe('v0.36.1.x #1090 — admin embed two-tier resolution', () => {
 
 describe('v0.36.1.x #1077 — admin register-client supports PKCE public clients', () => {
   test('admin endpoint reads grantTypes / redirectUris / tokenEndpointAuthMethod from request body', () => {
-    const src = readFileSync('src/commands/serve-http.ts', 'utf8');
+    const src = readFileSync('src/commands/serve-http-registration.ts', 'utf8');
     // The destructure must surface name / tokenTtl / grantTypes /
     // redirectUris / tokenEndpointAuthMethod from req.body. v0.39.3.0
     // WARN-9 (PR #1308) moved `scopes` to a separate read line that
@@ -126,15 +126,6 @@ describe('v0.41.37.0 #1605 — v0.11.0 phaseASchema routes in-process for ALL en
   test('apply-migrations skips pre-flight schema-version probe on PGLite', () => {
     const src = readFileSync('src/commands/apply-migrations.ts', 'utf8');
     expect(src).toMatch(/skipPreflight\s*=\s*cfg\.engine\s*===\s*'pglite'/);
-  });
-});
-
-describe('v0.36.1.x #1124 — query --no-expand actually negates expand', () => {
-  test("cli.ts parseOpArgs handles --no-<key> as boolean negation", () => {
-    const src = readFileSync('src/cli.ts', 'utf8');
-    expect(src).toMatch(/arg\.startsWith\(['"]--no-['"]\)/);
-    expect(src).toMatch(/positiveDef\?\.type\s*===\s*'boolean'/);
-    expect(src).toMatch(/params\[positiveKey\]\s*=\s*false/);
   });
 });
 
@@ -302,15 +293,6 @@ describe('#2084 — cli.ts owns process-exit teardown via finishCliTeardown', ()
 });
 
 describe('v0.41.8.0 #1340 — PGLite WASM init classifier', () => {
-  test('pglite-engine.ts exports classifyPgliteInitError + buildPgliteInitErrorMessage', () => {
-    const src = readFileSync('src/core/pglite-engine.ts', 'utf8');
-    expect(src).toMatch(/export function classifyPgliteInitError/);
-    expect(src).toMatch(/export function buildPgliteInitErrorMessage/);
-    // Per Codex finding #9: regex tightened to $$bunfs OR ENOENT+pglite.data
-    expect(src).toMatch(/\$\$bunfs/);
-    expect(src).toMatch(/ENOENT/);
-  });
-
   test('pglite-engine.ts connect catch block routes through the classifier', () => {
     const src = readFileSync('src/core/pglite-engine.ts', 'utf8');
     expect(src).toMatch(/classifyPgliteInitError\(original\)/);

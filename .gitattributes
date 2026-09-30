@@ -35,3 +35,4 @@ native/locks/prebuilds/*.node binary
 # Preserve the vendored upstream license byte-for-byte, including indentation.
 native/locks/vendor/node-v22.15.0/LICENSE -whitespace
 scripts/native/** text eol=lf
+src/core/chunkers/symbol-resolver.ts diff

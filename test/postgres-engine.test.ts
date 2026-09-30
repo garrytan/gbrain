@@ -83,7 +83,8 @@ describe('postgres-engine / search path timeout isolation', () => {
     const keyword = extractMethod(SRC, 'searchKeyword');
     const vector = extractMethod(SRC, 'searchVector');
     expect(keyword).toMatch(/SET\s+LOCAL\s+statement_timeout/);
-    expect(vector).toMatch(/SET\s+LOCAL\s+statement_timeout/);
+    expect(vector).toMatch(/set_config\('statement_timeout', \$\{String\(remainingVectorBudget\(deadline\)\)\}, true\)/);
+    expect(vector).toContain('withVectorSettings');
   });
 
   test('connect() with poolSize honors resolvePrepare (PgBouncer regression guard)', () => {

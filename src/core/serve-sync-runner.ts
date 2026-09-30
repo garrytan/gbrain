@@ -335,6 +335,14 @@ export async function maybeDrainDeferredEmbeds(engine: BrainEngine): Promise<voi
   if (!state.pending.size) return;
   if (isDelegatedSyncRunning()) return;
   const work = (async () => {
+    const { companyBrainProfile, getCompanyBrainProfile } = await import('./company-brain/profile.ts');
+    if (state.pending.has(undefined)) {
+      state.pending.delete(undefined);
+      const sources = await engine.executeRaw<{ id: string; config: unknown }>('SELECT id,config FROM sources WHERE NOT archived');
+      for (const source of sources) if (!companyBrainProfile(source.config)) state.pending.add(source.id);
+    }
+    for (const source of [...state.pending]) if (source && await getCompanyBrainProfile(engine, source)) state.pending.delete(source);
+    if (!state.pending.size) return;
     const { detectCapabilities } = await import('./capability.ts');
     if (!detectCapabilities().embeddings.available) return;
     const { runEmbedCore } = await import('../commands/embed.ts');

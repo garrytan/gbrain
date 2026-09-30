@@ -27,6 +27,7 @@ import {
 } from '../src/core/minions/child-job-runner.ts';
 import { UnrecoverableError } from '../src/core/minions/types.ts';
 import { RateLeaseUnavailableError } from '../src/core/minions/handlers/subagent.ts';
+import { LocalConfigurationError } from '../src/core/minions/configuration-error.ts';
 
 const TEST_TIMEOUT_MS = 30_000;
 
@@ -184,12 +185,12 @@ describe('runJobInChild (real children)', () => {
     await expect(runJobInChild(opts)).rejects.toThrow(/terminated after abort/);
   }, TEST_TIMEOUT_MS);
 
-  test('spawn ENOENT → ChildSpawnInfraError (infra release, not a job defect)', async () => {
+  test('spawn ENOENT → typed executable configuration failure', async () => {
     const opts = {
       ...baseOpts('/nonexistent'),
       invocation: { cmd: '/nonexistent/gbrain-binary', argsPrefix: [] },
     };
-    await expect(runJobInChild(opts)).rejects.toBeInstanceOf(ChildSpawnInfraError);
+    await expect(runJobInChild(opts)).rejects.toBeInstanceOf(LocalConfigurationError);
   }, TEST_TIMEOUT_MS);
 
   test('worker shutdown: child finishes + reports during the drain window → normal success', async () => {

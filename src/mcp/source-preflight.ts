@@ -17,8 +17,8 @@ import { isEngineDegraded } from '../core/degraded-marker.ts';
  * source-resolver.ts, whose `archived = false` predicate this mirrors).
  *
  * Scope: only the stdio server calls this. HTTP tokens carry their own
- * source grant. `__all__` and malformed values keep their existing handling
- * (malformed already falls back to the seed tier in the resolver).
+ * source grant. `__all__` warns without changing its fail-closed scope;
+ * malformed values still fall back to the seed tier in the resolver.
  * A transient engine error does NOT block startup — this guards config, not
  * connectivity — and a degraded engine is never touched, so a boot under
  * the degraded proxy does not spend its reconnect attempt here.
@@ -28,7 +28,17 @@ export async function assertStdioSourceBindable(
   env: string | undefined = process.env.GBRAIN_SOURCE,
 ): Promise<void> {
   if (!env) return;
-  if (env === ALL_SOURCES || !isValidSourceId(env)) return;
+  if (env === ALL_SOURCES) {
+    process.stderr.write(
+      '[gbrain] GBRAIN_SOURCE=__all__ does not grant all-source access to stdio MCP; ' +
+      'this binding remains fail-closed and reads return no results. In the MCP server environment, ' +
+      'set GBRAIN_SOURCE to a registered source id, or remove it to use normal source resolution ' +
+      '(not unrestricted access), then restart the server. ' +
+      'See docs/mcp/DEPLOY.md#stdio-source-binding.\n',
+    );
+    return;
+  }
+  if (!isValidSourceId(env)) return;
   if (isEngineDegraded(engine)) return;
   let rows: Array<{ id: string }>;
   try {

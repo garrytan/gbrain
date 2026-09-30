@@ -28,6 +28,8 @@ OUT_BIN="$BUILD_DIR/chunker-smoketest"
 trap 'rm -rf "$BUILD_DIR"' EXIT
 mkdir -p "$BUILD_DIR/scripts"
 cp -R "$REPO_ROOT/src" "$BUILD_DIR/src"
+cp -R "$REPO_ROOT/vendor" "$BUILD_DIR/vendor"
+cp "$REPO_ROOT/package.json" "$BUILD_DIR/package.json"
 cp "$REPO_ROOT/scripts/chunker-smoketest.ts" "$BUILD_DIR/scripts/chunker-smoketest.ts"
 ln -s "$REPO_ROOT/node_modules" "$BUILD_DIR/node_modules"
 

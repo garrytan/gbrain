@@ -1,15 +1,19 @@
 import { tryAcquirePoolLongHold, PoolCapacityError } from './pool-budget.ts';
+import { replaceDerivedLinks, type DerivedLinkOrigin, type DerivedLinkReplacementOptions } from './derived-links.ts';
 import { mutatePageTag } from './page-state/tags.ts';
 import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } from './page-state/types.ts';
 import { assertPageRevision } from './page-state/types.ts';
 import { lockPageKeys as acquirePageKeys } from './page-state/guards.ts';
 import { readPageSnapshot as readCanonicalPageSnapshot } from './page-state/snapshot.ts';
 import { createPageVersion } from './page-state/versions.ts';
+import { moveSlugBindings, recordRenameAlias } from './page-state/rename-alias.ts';
 import { composablePostgresTransaction } from './page-state/transactions.ts';
 import type { PageReadScope } from './types.ts';
 import type { PageReadPolicy } from './types.ts';
 import { readRelationalFanout, readAliases, readBacklinkCounts, readAdjacencyBoosts, readContentFlags, readExtractionStates, readEffectiveDates, readSalienceScores } from './search/read-enrichment.ts';
-import postgres from 'postgres';
+import postgres from '#postgres'
+import { hasPostgresCancellationCapability, postgresCancellationUnavailable, reserveWithCancellation } from './postgres-engine/cancellation.ts';
+export { hasPostgresCancellationCapability } from './postgres-engine/cancellation.ts';
 import type {
   BrainEngine,
   BatchOpts,
@@ -54,7 +58,9 @@ import { sanitizeForJsonb, sanitizeText, buildLinkRows, buildTimelineRows } from
 import { runMigrations } from './migrate.ts';
 import { SCHEMA_SQL } from './schema-embedded.generated.ts';
 import { verifySchema } from './schema-verify.ts';
-import { applyChunkEmbeddingIndexPolicy, dropZombieIndexes, hnswEfSearchFor, hnswIndexExpected, HNSW_EF_SEARCH_MAX } from './vector-index.ts';
+import { applyChunkEmbeddingIndexPolicy, dropZombieIndexes, hnswIndexExpected, supportsHnswIterativeScan } from './vector-index.ts';
+import { searchVectorPool, readVectorPool, remainingVectorBudget } from './search/vector-pool.ts';
+import { withVectorSettings } from './search/vector-settings.ts';
 import {
   normalizeEngineColumn,
   buildVectorCastFragment,
@@ -66,7 +72,7 @@ import {
   EmbeddingColumnNotRegisteredError,
 } from './search/embedding-column.ts';
 import { getFtsLanguage, applyFtsLanguagePolicy } from './fts-language.ts';
-import { splitEmbeddingSignature, currentSpaceChunkPredicate } from './embedding-invalidation.ts';
+import { splitEmbeddingSignature, currentSpaceChunkPredicate, lockEmbeddingSources } from './embedding-invalidation.ts';
 import { SAFE_FENCE_CHUNKER_VERSION, bodyWriteChunkVersion, chunkWriteInvalidation, currentTextProjectionFilter, requiresSafeChunks, safeChunksFilter } from './search/safe-chunks.ts';
 import type {
   Page, PageInput, PageFilters, PageType,
@@ -97,10 +103,11 @@ import { drainBackgroundWorkBeforeDisconnect } from './background-work.ts';
 import { validateSlug, contentHash, isBlankBody, rowToPage, rowToStalePage, rowToChunk, rowToSearchResult, parseEmbedding, tryParseEmbedding, isUndefinedTableError, warnOncePerProcess } from './utils.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
 import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildBestPerPagePoolCte, buildOrFallbackWebsearchQuery, boundWebsearchQuery } from './search/sql-ranking.ts';
-import { privatePagesFilterFragment, privateLinkOriginFilterFragment, privateTimelineEventFilterFragment, privateProvenanceFilterFragment } from './search/private-visibility.ts';
+import { privatePagesFilterFragment, privateSnapshotFilterFragment, privateLinkOriginFilterFragment, privateTimelineEventFilterFragment, privateProvenanceFilterFragment } from './search/private-visibility.ts';
 import { unverifiedExtractionFragment } from './extraction-review.ts';
 import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } from './ai/defaults.ts';
-import { DELETE_BATCH_SIZE, TRAVERSE_PATH_ROW_CAP } from './engine-constants.ts';
+import { readStoredEmbeddingIdentity } from './stored-embedding-identity.ts';
+import { DELETE_BATCH_SIZE, TRAVERSE_PATH_ROW_CAP, TRAVERSE_WALK_ROW_CAP } from './engine-constants.ts';
 import { PageMissingError } from './engine-errors.ts';
 import { SOURCE_CONFIG_OBJECT_SQL } from './source-config-sql.ts';
 import { shouldExcludeFromOrphanReporting, loadOrphanPolicyOverrides } from './orphan-policy.ts';
@@ -151,6 +158,7 @@ export function getPostgresSchema(
 // follow-up that will reintroduce a typed retry mechanism.
 
 export class PostgresEngine implements BrainEngine {
+  private vectorIterativeScan?: Promise<boolean>;
   /** Transaction clones keep chunk invalidation and replacement atomic. */
   private _chunkWritesInTransaction = false;
   readonly kind = 'postgres' as const;
@@ -306,6 +314,7 @@ export class PostgresEngine implements BrainEngine {
 
   // Lifecycle
   async connect(config: EngineConfig & { poolSize?: number; parentConnectionManager?: ConnectionManager }): Promise<void> {
+    this.vectorIterativeScan = undefined;
     this._savedConfig = config;
     const url = config.database_url;
     if (config.poolSize) {
@@ -380,6 +389,7 @@ export class PostgresEngine implements BrainEngine {
   }
 
   async disconnect(): Promise<void> {
+    this.vectorIterativeScan = undefined;
     if (this._disconnectPromise) return this._disconnectPromise;
     const work = this.disconnectInternal();
     this._disconnectPromise = work;
@@ -447,11 +457,6 @@ export class PostgresEngine implements BrainEngine {
       ? await this.connectionManager.ddl()
       : this.sql;
 
-    // Resolve the embedding dim/model from the gateway. v0.37 fix wave:
-    // fallbacks track the canonical defaults in `ai/defaults.ts` instead of
-    // stale v0.13 OpenAI literals, AND we store the full `provider:model`
-    // string in the DB config table — consumers like ze-switch and doctor
-    // expect the provider prefix. (Round-1 CDX-4 + A.8.)
     let dims: number = DEFAULT_EMBEDDING_DIMENSIONS;
     let model: string = DEFAULT_EMBEDDING_MODEL;
     try {
@@ -464,6 +469,12 @@ export class PostgresEngine implements BrainEngine {
       model = gw.getEmbeddingModel();
     } catch { /* gateway not yet configured — use defaults */ }
 
+    const storedIdentity = await readStoredEmbeddingIdentity(this);
+    if (storedIdentity) {
+      if (!storedIdentity.model) throw new Error('Stored embedding model is unknown. Run gbrain migrate embeddings --status and explicitly migrate before schema initialization.');
+      dims = storedIdentity.dimensions;
+      model = storedIdentity.model;
+    }
     const sqlText = getPostgresSchema(dims, model);
 
     // Advisory lock prevents concurrent initSchema() calls from deadlocking
@@ -681,9 +692,10 @@ export class PostgresEngine implements BrainEngine {
    */
   async findDuplicatePage(
     sourceId: string,
-    opts: { hash: string; frontmatterId?: string | null },
+    opts: { hash: string; frontmatterId?: string | null; excludeSlug?: string },
   ): Promise<{ slug: string; id: number } | null> {
     const fmId = opts.frontmatterId ?? null;
+    const excludeSlug = opts.excludeSlug ?? null;
     // RLS scope binding: sourceId is positional here.
     return await this.withScopedReadTransaction(undefined, sourceId, async (tx) => {
       const rows = await tx`
@@ -691,7 +703,8 @@ export class PostgresEngine implements BrainEngine {
         WHERE source_id = ${sourceId}
           AND deleted_at IS NULL
           AND (content_hash = ${opts.hash} OR (frontmatter->>'id' = ${fmId} AND ${fmId}::text IS NOT NULL))
-        ORDER BY id
+          AND (${excludeSlug}::text IS NULL OR slug <> ${excludeSlug})
+        ORDER BY (frontmatter->>'id' IS NOT DISTINCT FROM ${fmId}::text) DESC, id
         LIMIT 1
       `;
       if (rows.length === 0) return null;
@@ -1429,7 +1442,7 @@ export class PostgresEngine implements BrainEngine {
     // (test/, attachments/, .raw/ by default) filter at the chunk-rank stage
     // so they never enter the candidate set. (archive/ is demoted, not
     // excluded — issue #1777.)
-    const boostMap = resolveBoostMap();
+    const boostMap = opts?.source_boosts ?? resolveBoostMap();
     const sourceFactorCase = buildSourceFactorCase('p.slug', boostMap, opts?.detail);
     const hardExcludePrefixes = resolveHardExcludes(opts?.exclude_slug_prefixes, opts?.include_slug_prefixes);
     const hardExcludeClause = buildHardExcludeClause('p.slug', hardExcludePrefixes);
@@ -1441,7 +1454,7 @@ export class PostgresEngine implements BrainEngine {
     if (hasCJK(query)) {
       return this._searchKeywordCJK(query, {
         limit, offset, innerLimit, sourceFactorCase, hardExcludeClause,
-        visibilityClause: buildVisibilityClause('p', 's'),
+        visibilityClause: buildVisibilityClause('p', 's', opts),
         detailFilter: detailLow ? `AND cc.chunk_source = 'compiled_truth'` : '',
         opts, dedup: true,
       });
@@ -1479,12 +1492,12 @@ export class PostgresEngine implements BrainEngine {
     let afterDateClause = '';
     if (opts?.afterDate) {
       params.push(opts.afterDate);
-      afterDateClause = `AND COALESCE(p.effective_date, p.updated_at, p.created_at) > $${params.length}::timestamptz`;
+      afterDateClause = `AND COALESCE(p.effective_date, p.updated_at, p.created_at) ${opts?.afterDateInclusive ? '>=' : '>'} $${params.length}::text::timestamptz`;
     }
     let beforeDateClause = '';
     if (opts?.beforeDate) {
       params.push(opts.beforeDate);
-      beforeDateClause = `AND COALESCE(p.effective_date, p.updated_at, p.created_at) < $${params.length}::timestamptz`;
+      beforeDateClause = `AND COALESCE(p.effective_date, p.updated_at, p.created_at) ${opts?.beforeDateInclusive ? '<=' : '<'} $${params.length}::text::timestamptz`;
     }
     // v0.34.1 (#861 — P0 leak seal): source-isolation filter. When the
     // caller's auth scope is set, narrow the inner CTE candidate set so
@@ -1548,7 +1561,7 @@ export class PostgresEngine implements BrainEngine {
           -- doesn't drown text-page hits. Image search runs a separate
           -- vector path on embedding_image.
           AND cc.modality = 'text'
-        ORDER BY score DESC
+        ORDER BY score DESC, page_id ASC, chunk_id ASC
         LIMIT ${innerLimitParam}
       ),
       ${buildBestPerPagePoolCte('ranked_chunks')}
@@ -1558,7 +1571,7 @@ export class PostgresEngine implements BrainEngine {
         chunk_id, chunk_index, chunk_text, chunk_source, score,
         false AS stale
       FROM best_per_page
-      ORDER BY score DESC
+      ORDER BY score DESC, page_id ASC, chunk_id ASC
       LIMIT ${limitParam}
       OFFSET ${offsetParam}
     `;
@@ -1569,12 +1582,16 @@ export class PostgresEngine implements BrainEngine {
     // the GUC can never leak onto a pooled connection). Flag off → the
     // wrap is identical to master's; flag on → set_config('app.scopes')
     // shares the same transaction as the timeout.
-    const runKeyword = (queryText: string) =>
+    const runKeyword = (queryText: string, relaxed = false) =>
       this.withScopedReadTransaction(opts?.sourceIds, opts?.sourceId, async (tx) => {
         await tx`SET LOCAL statement_timeout = '8s'`;
+        const previous = relaxed ? await tx`SHOW enable_seqscan` : [];
+        if (relaxed) await tx`SET LOCAL enable_seqscan = off`;
         const boundParams = [...params];
         boundParams[0] = queryText;
-        return await tx.unsafe(rawQuery, boundParams as Parameters<typeof tx.unsafe>[1]);
+        const rows = await tx.unsafe(rawQuery, boundParams as Parameters<typeof tx.unsafe>[1]);
+        if (relaxed) await tx`SELECT set_config('enable_seqscan', ${previous[0].enable_seqscan}, true)`;
+        return rows;
       }, { alwaysTransaction: true });
     let rows = await runKeyword(query);
     // D2 fix (fix/title-retrieval-arm): websearch AND semantics at chunk
@@ -1589,7 +1606,7 @@ export class PostgresEngine implements BrainEngine {
     if (rows.length === 0 && opts?.orFallback) {
       const orQuery = buildOrFallbackWebsearchQuery(query);
       if (orQuery) {
-        rows = await runKeyword(orQuery);
+        rows = await runKeyword(orQuery, true);
         // 2026-09 (#3617 follow-up): relaxed rows are TAGGED so hybrid's
         // fusion can demote them — an OR-of-common-terms match must not
         // outvote a healthy vector arm (SearchResult.keyword_relaxed doc).
@@ -1622,7 +1639,7 @@ export class PostgresEngine implements BrainEngine {
       console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${MAX_SEARCH_LIMIT}`);
     }
 
-    const boostMap = resolveBoostMap();
+    const boostMap = opts?.source_boosts ?? resolveBoostMap();
     const sourceFactorCase = buildSourceFactorCase('p.slug', boostMap, opts?.detail);
     const hardExcludePrefixes = resolveHardExcludes(opts?.exclude_slug_prefixes, opts?.include_slug_prefixes);
     const hardExcludeClause = buildHardExcludeClause('p.slug', hardExcludePrefixes);
@@ -1654,12 +1671,12 @@ export class PostgresEngine implements BrainEngine {
     let afterDateClause = '';
     if (opts?.afterDate) {
       params.push(opts.afterDate);
-      afterDateClause = `AND COALESCE(p.effective_date, p.updated_at, p.created_at) > $${params.length}::timestamptz`;
+      afterDateClause = `AND COALESCE(p.effective_date, p.updated_at, p.created_at) ${opts?.afterDateInclusive ? '>=' : '>'} $${params.length}::text::timestamptz`;
     }
     let beforeDateClause = '';
     if (opts?.beforeDate) {
       params.push(opts.beforeDate);
-      beforeDateClause = `AND COALESCE(p.effective_date, p.updated_at, p.created_at) < $${params.length}::timestamptz`;
+      beforeDateClause = `AND COALESCE(p.effective_date, p.updated_at, p.created_at) ${opts?.beforeDateInclusive ? '<=' : '<'} $${params.length}::text::timestamptz`;
     }
     let sourceClause = '';
     if (opts?.sourceIds && opts.sourceIds.length > 0) {
@@ -1723,18 +1740,23 @@ export class PostgresEngine implements BrainEngine {
     // the SET LOCAL statement_timeout needs a transaction regardless of the
     // GBRAIN_RLS_SCOPE_BINDING flag). The OR retry re-executes through the
     // same scoped wrapper.
-    const runTitles = (queryText: string) =>
+    const runTitles = (queryText: string, relaxed = false) =>
       this.withScopedReadTransaction(opts?.sourceIds, opts?.sourceId, async (tx) => {
         await tx`SET LOCAL statement_timeout = '8s'`;
+        const preferIndex = relaxed && !requiresSafeChunks(opts);
+        const previous = preferIndex ? await tx`SHOW enable_seqscan` : [];
+        if (preferIndex) await tx`SET LOCAL enable_seqscan = off`;
         const boundParams = [...params];
         boundParams[0] = queryText;
-        return await tx.unsafe(rawQuery, boundParams as Parameters<typeof tx.unsafe>[1]);
+        const rows = await tx.unsafe(rawQuery, boundParams as Parameters<typeof tx.unsafe>[1]);
+        if (preferIndex) await tx`SELECT set_config('enable_seqscan', ${previous[0].enable_seqscan}, true)`;
+        return rows;
       }, { alwaysTransaction: true });
     let rows = await runTitles(params[0] as string);
     if (rows.length === 0) {
       const orQuery = buildOrFallbackWebsearchQuery(params[0] as string);
       if (orQuery) {
-        rows = await runTitles(boundWebsearchQuery(orQuery));
+        rows = await runTitles(boundWebsearchQuery(orQuery), true);
         // 2026-09 (#3617 follow-up): same relaxed-row tagging as the keyword
         // arm — see SearchResult.keyword_relaxed.
         return rows.map((r) => ({ ...rowToSearchResult(r), keyword_relaxed: true as const }));
@@ -1769,7 +1791,7 @@ export class PostgresEngine implements BrainEngine {
     // chunk-grain anchor primitive that two-pass retrieval (Layer 7) uses,
     // so curated-vs-bulk dampening should affect the anchor pool. Same
     // detail-gate, same hard-exclude behavior as searchKeyword.
-    const boostMap = resolveBoostMap();
+    const boostMap = opts?.source_boosts ?? resolveBoostMap();
     const sourceFactorCase = buildSourceFactorCase('p.slug', boostMap, opts?.detail);
     const hardExcludePrefixes = resolveHardExcludes(opts?.exclude_slug_prefixes, opts?.include_slug_prefixes);
     const hardExcludeClause = buildHardExcludeClause('p.slug', hardExcludePrefixes);
@@ -1781,7 +1803,7 @@ export class PostgresEngine implements BrainEngine {
         limit, offset,
         innerLimit: 0,             // unused on chunk-grain (no inner CTE)
         sourceFactorCase, hardExcludeClause,
-        visibilityClause: buildVisibilityClause('p', 's'),
+        visibilityClause: buildVisibilityClause('p', 's', opts),
         detailFilter: detailLow ? `AND cc.chunk_source = 'compiled_truth'` : '',
         opts, dedup: false,
       });
@@ -1819,12 +1841,12 @@ export class PostgresEngine implements BrainEngine {
     let afterDateClause = '';
     if (opts?.afterDate) {
       params.push(opts.afterDate);
-      afterDateClause = `AND COALESCE(p.effective_date, p.updated_at, p.created_at) > $${params.length}::timestamptz`;
+      afterDateClause = `AND COALESCE(p.effective_date, p.updated_at, p.created_at) ${opts?.afterDateInclusive ? '>=' : '>'} $${params.length}::text::timestamptz`;
     }
     let beforeDateClause = '';
     if (opts?.beforeDate) {
       params.push(opts.beforeDate);
-      beforeDateClause = `AND COALESCE(p.effective_date, p.updated_at, p.created_at) < $${params.length}::timestamptz`;
+      beforeDateClause = `AND COALESCE(p.effective_date, p.updated_at, p.created_at) ${opts?.beforeDateInclusive ? '<=' : '<'} $${params.length}::text::timestamptz`;
     }
     // v0.34.1 (#861 — P0 leak seal): source-isolation. Anchor primitive
     // for two-pass retrieval, so cross-source anchors would let the walk
@@ -1874,7 +1896,7 @@ export class PostgresEngine implements BrainEngine {
         ${sourceClause}
         ${hardExcludeClause}
         ${visibilityClause}
-      ORDER BY score DESC
+      ORDER BY score DESC, page_id ASC, chunk_id ASC
       LIMIT ${limitParam}
       OFFSET ${offsetParam}
     `;
@@ -1930,7 +1952,7 @@ export class PostgresEngine implements BrainEngine {
     //
     // innerLimit scales with offset to preserve the pagination contract:
     // a fixed cap of 100 would silently empty offset > 100.
-    const boostMap = resolveBoostMap();
+    const boostMap = opts?.source_boosts ?? resolveBoostMap();
     // issue #160: the guard predicate is projected as `unverified_stub` in
     // hnsw_candidates (frontmatter isn't otherwise available at re-rank), so
     // unverified auto-extracted stubs get factor 1.0, not the people/ 1.2x.
@@ -1944,22 +1966,18 @@ export class PostgresEngine implements BrainEngine {
     // (Hoisted above innerLimit so the escalation cap can key off the
     // column's index eligibility.)
     const resolvedCol = normalizeEngineColumn(opts?.embeddingColumn);
-    // v0.46.15 (retrieval-cathedral P1): innerLimit counts CHUNKS before the
-    // best-per-page DISTINCT collapse — one dense page (150+ chunks near the
-    // query) could consume the whole pool and underfill the PAGE result. The
-    // execution below runs a bounded escalation loop (×4, ≤3 times) when the
-    // page set comes back short while the candidate pool was FULL (more
-    // candidates existed). Cap policy (outside-voice R2-10 + codex ship
-    // review): for HNSW-backed columns the scan returns at most ef_search
-    // rows and the GUC ceilings at 1000, so inner limits beyond that are
-    // fictitious. Columns ABOVE the index dim ceiling (e.g. vector >2000d)
-    // fall back to exact scans where ef_search is irrelevant — capping their
-    // SQL LIMIT would make offset >= 1000 permanently empty; they stay
-    // bounded by the escalation count instead.
-    const innerCap = hnswIndexExpected(resolvedCol.type, resolvedCol.dimensions)
-      ? HNSW_EF_SEARCH_MAX
-      : Number.MAX_SAFE_INTEGER;
-    const innerLimit = Math.min(offset + Math.max(limit * 5, 100), innerCap);
+    const indexed = hnswIndexExpected(resolvedCol.type, resolvedCol.dimensions);
+    const innerLimit = offset + Math.max(limit * 5, 100);
+    this.vectorIterativeScan ??= this.executeRaw<{ extversion: string }>(
+      `SELECT extversion FROM pg_extension WHERE extname = 'vector'`,
+    ).then(rows => supportsHnswIterativeScan(rows[0]?.extversion));
+    const probe = this.vectorIterativeScan;
+    let iterative: boolean;
+    try { iterative = await probe; }
+    catch (error) {
+      if (this.vectorIterativeScan === probe) this.vectorIterativeScan = undefined;
+      throw error;
+    }
 
     const params: unknown[] = [vecStr];
     let typeClause = '';
@@ -1993,12 +2011,12 @@ export class PostgresEngine implements BrainEngine {
     let afterDateClause = '';
     if (opts?.afterDate) {
       params.push(opts.afterDate);
-      afterDateClause = `AND COALESCE(p.effective_date, p.updated_at, p.created_at) > $${params.length}::timestamptz`;
+      afterDateClause = `AND COALESCE(p.effective_date, p.updated_at, p.created_at) ${opts?.afterDateInclusive ? '>=' : '>'} $${params.length}::text::timestamptz`;
     }
     let beforeDateClause = '';
     if (opts?.beforeDate) {
       params.push(opts.beforeDate);
-      beforeDateClause = `AND COALESCE(p.effective_date, p.updated_at, p.created_at) < $${params.length}::timestamptz`;
+      beforeDateClause = `AND COALESCE(p.effective_date, p.updated_at, p.created_at) ${opts?.beforeDateInclusive ? '<=' : '<'} $${params.length}::text::timestamptz`;
     }
     // v0.34.1 (#861, F2 — P0 leak seal): source-isolation in the INNER CTE
     // specifically. Pushing the filter inside narrows the HNSW candidate set
@@ -2012,6 +2030,12 @@ export class PostgresEngine implements BrainEngine {
     } else if (opts?.sourceId) {
       params.push(opts.sourceId);
       sourceClause = `AND p.source_id = $${params.length}`;
+    }
+    let generationClause = '';
+    if (resolvedCol.name === 'embedding') {
+      params.push(resolvedCol.embeddingModel || null);
+      generationClause = `AND ((cc.model=$${params.length} AND (cc.embedded_text_hash=md5(cc.chunk_text) OR cc.embedded_text_hash IS NULL))
+        OR ($${params.length}::text IS NULL AND NOT EXISTS(SELECT 1 FROM config WHERE key='embedding_migration.state')))`;
     }
     params.push(innerLimit);
     const innerLimitIdx = params.length - 1; // mutated by the escalation loop
@@ -2041,19 +2065,7 @@ export class PostgresEngine implements BrainEngine {
       modalityFilter = `AND cc.modality = 'text'`;
     }
 
-    const rawQuery = `
-      WITH hnsw_candidates AS (
-        SELECT
-          p.slug, p.id as page_id, p.title, p.type, p.source_id,
-          p.effective_date, p.effective_date_source,
-          CASE WHEN NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
-            THEN p.frontmatter->>'message_id' END AS message_id, p.frontmatter->>'thread_id' AS thread_id,
-          CASE WHEN NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
-            THEN NULLIF(p.frontmatter->>'subject', '') END AS source_subject,
-          cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
-          (${unverifiedExtractionFragment('p')}) AS unverified_stub,
-          1 - (cc.${col} <=> ${castSql}) AS raw_score
-        FROM content_chunks cc
+    const candidateFrom = `FROM content_chunks cc
         JOIN pages p ON p.id = cc.page_id
         JOIN sources s ON s.id = p.source_id
         WHERE cc.${col} IS NOT NULL ${modalityFilter}
@@ -2066,9 +2078,23 @@ export class PostgresEngine implements BrainEngine {
           ${afterDateClause}
           ${beforeDateClause}
           ${sourceClause}
+          ${generationClause}
           ${hardExcludeClause}
-          ${visibilityClause}
-        ORDER BY cc.${col} <=> ${castSql}
+          ${visibilityClause}`;
+    const rawQuery = (exact: boolean) => `
+      WITH hnsw_candidates AS (
+        SELECT
+          p.slug, p.id as page_id, p.title, p.type, p.source_id,
+          p.effective_date, p.effective_date_source,
+          CASE WHEN NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
+            THEN p.frontmatter->>'message_id' END AS message_id, p.frontmatter->>'thread_id' AS thread_id,
+          CASE WHEN NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
+            THEN NULLIF(p.frontmatter->>'subject', '') END AS source_subject,
+          cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
+          (${unverifiedExtractionFragment('p')}) AS unverified_stub,
+          1 - (cc.${col} <=> ${castSql}) AS raw_score
+        ${candidateFrom}
+        ORDER BY ${exact ? '(' : ''}cc.${col} <=> ${castSql}${exact ? ') + 0' : ''}
         LIMIT ${innerLimitParam}
       ),
       -- score computed as a select-list expr (NOT in the inner ORDER BY, which
@@ -2081,62 +2107,55 @@ export class PostgresEngine implements BrainEngine {
       -- over the full candidate set before the user LIMIT, so a page's strong
       -- chunk can't be crowded out of the result by weaker chunks of other
       -- pages. Shared builder keeps keyword + vector × postgres + pglite in lockstep.
-      ${buildBestPerPagePoolCte('scored')}
+      ${buildBestPerPagePoolCte('scored')},
+      page_results AS (
       SELECT
         slug, page_id, title, type, source_id,
         effective_date, effective_date_source,
         message_id, thread_id, source_subject,
         chunk_id, chunk_index, chunk_text, chunk_source,
         score,
-        false AS stale,
-        (SELECT count(*) FROM hnsw_candidates)::int AS candidate_pool
+        false AS stale
       FROM best_per_page
       -- v0.41.13: stable tiebreaker for tied scores. See pglite-engine for
       -- rationale (basis-vector test fixtures, planner-dependent ordering).
       ORDER BY score DESC, page_id ASC, chunk_id ASC
       LIMIT ${limitParam}
       OFFSET ${offsetParam}
+      )
+      SELECT page_results.*, pool.candidate_pool
+      FROM (SELECT count(*)::int AS candidate_pool FROM hnsw_candidates) pool
+      LEFT JOIN page_results ON true
+      ORDER BY score DESC NULLS LAST, page_id ASC, chunk_id ASC
     `;
 
-    // RLS scope binding + search-only timeout. alwaysTransaction: master
-    // already wrapped this in sql.begin() for the SET LOCAL; flag off is
-    // identical to that wrap, flag on adds set_config in the same tx.
-    //
-    // hnsw.ef_search: an HNSW scan returns at most ef_search rows (default
-    // 40), so the inner CTE's LIMIT past 40 was silently unreachable — see
-    // hnswEfSearchFor. Transaction-local (is_local=true); non-HNSW plans
-    // (seq scan, or corpora without the index) ignore the GUC.
-    //
-    // v0.46.15 bounded escalation (identical logic in pglite-engine —
-    // engine-parity pinned): retry ×4 up to 3 times while the PAGE set is
-    // short but the pre-collapse candidate pool was FULL. A short page with
-    // a non-full pool is a genuine final page (corpus/filter exhausted) —
-    // no retry, no event. Zero rows with offset>0 escalates (deep
-    // pagination) but never emits: pool state is unknowable there.
-    const runOnce = async (il: number) =>
-      await this.withScopedReadTransaction(opts?.sourceIds, opts?.sourceId, async (tx) => {
-        await tx`SET LOCAL statement_timeout = '8s'`;
-        await tx`SELECT set_config('hnsw.ef_search', ${String(hnswEfSearchFor(il))}, true)`;
-        return await tx.unsafe(rawQuery, params as Parameters<typeof tx.unsafe>[1]);
-      }, { alwaysTransaction: true });
-    let escalations = 0;
-    let rows = await runOnce(innerLimit);
-    for (;;) {
-      const il = params[innerLimitIdx] as number;
-      if (rows.length >= limit) break;
-      const pool = rows.length > 0 ? Number((rows[0] as { candidate_pool?: number }).candidate_pool ?? 0) : null;
-      const shouldEscalate = pool !== null ? pool >= il : offset > 0;
-      if (!shouldEscalate) break;
-      if (il >= innerCap || escalations >= 3) {
-        if (pool !== null && pool >= il) {
-          opts?.onVectorPoolMeta?.({ underfilled: true, escalations, innerLimit: il });
-        }
-        break;
-      }
-      params[innerLimitIdx] = Math.min(il * 4, innerCap);
-      escalations++;
-      rows = await runOnce(params[innerLimitIdx] as number);
-    }
+    const rows = await searchVectorPool(limit, innerLimit, iterative, indexed, 'postgres',
+      async ({ innerLimit: requested, maxScanTuples, remainingMs, exact }) => {
+        const deadline = performance.now() + remainingMs;
+        return this.withScopedReadTransaction(opts?.sourceIds, opts?.sourceId, async tx => {
+          return withVectorSettings((sql, values) => tx.unsafe(sql, values as Parameters<typeof tx.unsafe>[1]), iterative, requested, maxScanTuples, async () => {
+            const bound = [...params];
+            bound[innerLimitIdx] = exact ? null : requested;
+            await tx`SELECT set_config('statement_timeout', ${String(remainingVectorBudget(deadline))}, true)`;
+            return { ...readVectorPool(await tx.unsafe(rawQuery(exact), bound as Parameters<typeof tx.unsafe>[1])), exhausted: exact };
+          }, deadline);
+        }, { alwaysTransaction: true });
+      },
+      async (pool, remainingMs) => {
+        const deadline = performance.now() + remainingMs;
+        return this.withScopedReadTransaction(opts?.sourceIds, opts?.sourceId, async tx => {
+          const previous = await tx`SHOW statement_timeout`;
+          await tx`SELECT set_config('statement_timeout', ${String(remainingVectorBudget(deadline))}, true)`;
+          const bound = [...params.slice(0, innerLimitIdx), pool + 1];
+          const rows = await tx.unsafe(`SELECT count(*)::int AS eligible FROM (
+            SELECT 1 ${candidateFrom} AND $1::text IS NOT NULL LIMIT $${bound.length}
+          ) eligible`, bound as Parameters<typeof tx.unsafe>[1]);
+          await tx`SELECT set_config('statement_timeout', ${previous[0].statement_timeout}, true)`;
+          return Number(rows[0].eligible) > pool;
+        }, { alwaysTransaction: true });
+      },
+      opts?.onVectorPoolMeta,
+    );
     return rows.map(rowToSearchResult);
   }
 
@@ -2335,43 +2354,29 @@ export class PostgresEngine implements BrainEngine {
     // #4246: embedded_text_hash records md5(chunk_text) AT EMBED TIME so a
     // later text rewrite that keeps the vector is detectable as content
     // drift (invalidateContentDriftEmbeddings). NULL when no embedding lands.
-    const cols = `(page_id, chunk_index, chunk_text, chunk_source, ${writeColId}, model, token_count, embedded_at, embedded_text_hash, language, symbol_name, symbol_type, start_line, end_line, parent_symbol_path, doc_comment, symbol_name_qualified, modality, embedding_image)`;
+    const cols = `(page_id, chunk_index, chunk_text, chunk_source, ${writeColId}, model, token_count, embedded_at, embedded_text_hash, embedding_input_hash, language, symbol_name, symbol_type, start_line, end_line, parent_symbol_path, doc_comment, symbol_name_qualified, modality, embedding_image)`;
     const rows: string[] = [];
     const params: unknown[] = [];
     let paramIdx = 1;
 
-    // Provenance fallback for chunks that don't carry an explicit `model`:
-    // resolve the model the gateway ACTUALLY uses at runtime, not the
-    // compile-time DEFAULT_EMBEDDING_MODEL constant. Callers like `embed`
-    // build ChunkInputs without a `model` field (src/commands/embed.ts), so
-    // the old `chunk.model || DEFAULT_EMBEDDING_MODEL` fallback stamped the
-    // hardcoded default (e.g. zeroentropyai:zembed-1) onto rows whose vectors
-    // were produced by a different, config-resolved model — corrupting the
-    // provenance that signature-drift staleness + dim-migration logic trust.
-    //
-    // #3461: getEmbeddingModel() THROWS when the gateway is unconfigured —
-    // it never returns falsy — so an `||` guard here is dead code and the
-    // catch path used to stamp the compile-time default onto rows whose
-    // vectors came from the config-resolved provider. On the throw path we
-    // now fall back to the brain's own `config.embedding_model` row (kept
-    // current by init / migrate / retrieval-upgrade), which names the model
-    // that actually produced this brain's vectors. The compile-time default
-    // is the LAST resort (fresh brain whose config row doesn't exist yet).
     let resolvedModel: string | null = null;
     try {
       // Keep the gateway lazy so module-load failure remains inside this soft
       // fallback boundary; eager evaluation would bypass the config-row fallback.
       const gw = await import('./ai/gateway.ts'); // engine-dynamic-import-ok
-      resolvedModel = gw.getEmbeddingModel();
-    } catch {
+      resolvedModel = gw.getEmbeddingModelProvenance();
+    } catch {}
+    if (!resolvedModel) {
       try {
         const cfg = await sql`SELECT value FROM config WHERE key = 'embedding_model'`;
         resolvedModel = (cfg[0]?.value as string | undefined) ?? null;
-      } catch {
-        // config table unreadable — fall through to the compile-time default.
-      }
+      } catch {}
     }
-    if (!resolvedModel) resolvedModel = DEFAULT_EMBEDDING_MODEL;
+    resolvedModel = writeCol.embeddingModel || resolvedModel;
+    if (!resolvedModel && chunks.some(chunk => chunk.embedding && !chunk.model)) {
+      throw new Error('Embedding model provenance is unknown. Supply an explicit chunk model or run gbrain migrate embeddings --status before an explicit migration.');
+    }
+    if (!resolvedModel) resolvedModel = 'unconfigured';
 
     for (const chunk of chunks) {
       const embeddingStr = chunk.embedding
@@ -2391,10 +2396,13 @@ export class PostgresEngine implements BrainEngine {
       // #4246: hash in SQL (not JS) so stamp + drift comparison share ONE
       // md5 implementation. Binds chunk_text a second time.
       const embeddedTextHashPh = embeddingStr ? `md5($${paramIdx++})` : 'NULL';
+      // #5553: embedding-input provenance travels only with the vector it describes.
+      const embeddingInputHash = embeddingStr ? chunk.embedding_input_hash ?? null : null;
+      const embeddingInputHashPh = embeddingInputHash ? `$${paramIdx++}` : 'NULL';
 
       rows.push(
         `($${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, ` +
-        `${embeddingPh}, $${paramIdx++}, $${paramIdx++}, ${embeddedAtPh}, ${embeddedTextHashPh}, ` +
+        `${embeddingPh}, $${paramIdx++}, $${paramIdx++}, ${embeddedAtPh}, ${embeddedTextHashPh}, ${embeddingInputHashPh}, ` +
         `$${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, ` +
         `$${paramIdx++}::text[], $${paramIdx++}, $${paramIdx++}, ` +
         `$${paramIdx++}, ${embeddingImagePh})`,
@@ -2407,6 +2415,7 @@ export class PostgresEngine implements BrainEngine {
       if (embeddingStr) params.push(embeddingStr);
       if (embeddingImageStr) params.push(embeddingImageStr);
       if (embeddingStr) params.push(sanitizedChunkText); // embedded_text_hash md5() input
+      if (embeddingInputHash) params.push(embeddingInputHash);
       params.push(
         pageId, chunk.chunk_index, sanitizedChunkText, chunk.chunk_source,
         chunk.model || resolvedModel, chunk.token_count || null,
@@ -2485,6 +2494,14 @@ export class PostgresEngine implements BrainEngine {
                 THEN EXCLUDED.embedded_text_hash
            ELSE content_chunks.embedded_text_hash
          END,
+         embedding_input_hash = CASE
+           WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.embedding_input_hash
+           WHEN content_chunks.${writeColId} IS NULL THEN EXCLUDED.embedding_input_hash
+           WHEN EXCLUDED.embedded_at IS NOT NULL
+                AND (content_chunks.embedded_at IS NULL OR EXCLUDED.embedded_at > content_chunks.embedded_at)
+                THEN EXCLUDED.embedding_input_hash
+           ELSE content_chunks.embedding_input_hash
+         END,
          language = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.language ELSE COALESCE(EXCLUDED.language, content_chunks.language) END,
          symbol_name = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.symbol_name ELSE COALESCE(EXCLUDED.symbol_name, content_chunks.symbol_name) END,
          symbol_type = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.symbol_type ELSE COALESCE(EXCLUDED.symbol_type, content_chunks.symbol_type) END,
@@ -2553,7 +2570,7 @@ export class PostgresEngine implements BrainEngine {
    */
   private buildStaleChunkWhere(staleColRef: string, opts?: { sourceId?: string; signature?: string; includeNullSignature?: boolean }): { where: string; params: unknown[] } {
     const params: unknown[] = [];
-    const conds: string[] = [];
+    const conds: string[] = ['p.deleted_at IS NULL'];
     if (opts?.signature !== undefined) {
       params.push(opts.signature);
       conds.push(
@@ -2637,18 +2654,23 @@ export class PostgresEngine implements BrainEngine {
       ? `(p.embedding_signature IS NULL OR p.embedding_signature <> $1)`
       : `p.embedding_signature IS NOT NULL
           AND p.embedding_signature <> $1`;
-    const rows = await this.sql.unsafe(
-      `UPDATE content_chunks cc
-          SET ${colId} = NULL, embedded_at = NULL
-         FROM pages p
-        WHERE cc.page_id = p.id
-          AND cc.${colId} IS NOT NULL
-          AND NOT ${currentSpaceChunkPredicate(colId, 2, 3)}
-          AND ${sigClause}${srcClause}
-        RETURNING cc.page_id`,
-      params as Parameters<typeof this.sql.unsafe>[1],
-    );
-    return (rows as unknown[]).length;
+    return this.transaction(async tx => {
+      params.push(await lockEmbeddingSources(tx, opts.sourceId));
+      const rows = await tx.executeRaw(
+        `UPDATE content_chunks cc
+            SET ${colId} = NULL, embedded_at = NULL
+           FROM pages p
+          WHERE cc.page_id = p.id
+            AND p.source_id=ANY($${params.length}::text[])
+            AND EXISTS (SELECT 1 FROM sources s WHERE s.id=p.source_id AND NOT s.archived)
+            AND cc.${colId} IS NOT NULL
+            AND NOT ${currentSpaceChunkPredicate(colId, 2, 3)}
+            AND ${sigClause}${srcClause}
+          RETURNING cc.page_id`,
+        params,
+      );
+      return (rows as unknown[]).length;
+    });
   }
 
   async invalidateContentDriftEmbeddings(opts?: { sourceId?: string }): Promise<number> {
@@ -2668,20 +2690,25 @@ export class PostgresEngine implements BrainEngine {
       params.push(opts.sourceId);
       srcClause = ` AND p.source_id = $${params.length}`;
     }
-    const sql = this.sql;
-    const rows = await sql.unsafe(
-      `UPDATE content_chunks cc
-          SET ${colId} = NULL, embedded_at = NULL, embedded_text_hash = NULL
-         FROM pages p
-        WHERE cc.page_id = p.id
-          AND cc.${colId} IS NOT NULL
-          AND cc.embedded_text_hash IS NOT NULL
-          AND cc.embedded_text_hash <> md5(cc.chunk_text)
-          AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')${srcClause}
-        RETURNING cc.page_id`,
-      params as Parameters<typeof sql.unsafe>[1],
-    );
-    return (rows as unknown[]).length;
+    return this.transaction(async tx => {
+      params.push(await lockEmbeddingSources(tx, opts?.sourceId));
+      const rows = await tx.executeRaw(
+        `UPDATE content_chunks cc
+            SET ${colId} = NULL, embedded_at = NULL, embedded_text_hash = NULL
+           FROM pages p
+          WHERE cc.page_id = p.id
+            AND p.source_id=ANY($${params.length}::text[])
+            AND EXISTS (SELECT 1 FROM sources s WHERE s.id=p.source_id AND NOT s.archived)
+            AND p.deleted_at IS NULL
+            AND cc.${colId} IS NOT NULL
+            AND cc.embedded_text_hash IS NOT NULL
+            AND cc.embedded_text_hash <> md5(cc.chunk_text)
+            AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')${srcClause}
+          RETURNING cc.page_id`,
+        params,
+      );
+      return (rows as unknown[]).length;
+    });
   }
 
   async listStaleChunks(opts?: {
@@ -2717,7 +2744,7 @@ export class PostgresEngine implements BrainEngine {
                    p.updated_at
             FROM content_chunks cc
             JOIN pages p ON p.id = cc.page_id
-            WHERE cc.${tx.unsafe(staleColId)} IS NULL
+            WHERE cc.${tx.unsafe(staleColId)} IS NULL AND p.deleted_at IS NULL
               AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')
             ORDER BY p.updated_at DESC NULLS LAST, p.id ASC, cc.chunk_index ASC
             LIMIT ${limit}
@@ -2727,7 +2754,7 @@ export class PostgresEngine implements BrainEngine {
                    p.updated_at
             FROM content_chunks cc
             JOIN pages p ON p.id = cc.page_id
-            WHERE cc.${tx.unsafe(staleColId)} IS NULL
+            WHERE cc.${tx.unsafe(staleColId)} IS NULL AND p.deleted_at IS NULL
               AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')
               AND (
                 p.updated_at < ${afterUpdated}::timestamptz
@@ -2745,7 +2772,7 @@ export class PostgresEngine implements BrainEngine {
                  p.updated_at
           FROM content_chunks cc
           JOIN pages p ON p.id = cc.page_id
-          WHERE cc.${tx.unsafe(staleColId)} IS NULL
+          WHERE cc.${tx.unsafe(staleColId)} IS NULL AND p.deleted_at IS NULL
             AND p.source_id = ${opts.sourceId}
             AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')
           ORDER BY p.updated_at DESC NULLS LAST, p.id ASC, cc.chunk_index ASC
@@ -2756,7 +2783,7 @@ export class PostgresEngine implements BrainEngine {
                  p.updated_at
           FROM content_chunks cc
           JOIN pages p ON p.id = cc.page_id
-          WHERE cc.${tx.unsafe(staleColId)} IS NULL
+          WHERE cc.${tx.unsafe(staleColId)} IS NULL AND p.deleted_at IS NULL
             AND p.source_id = ${opts.sourceId}
             AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')
             AND (
@@ -2776,7 +2803,7 @@ export class PostgresEngine implements BrainEngine {
                  cc.model, cc.token_count, p.source_id, cc.page_id
           FROM content_chunks cc
           JOIN pages p ON p.id = cc.page_id
-          WHERE cc.${tx.unsafe(staleColId)} IS NULL
+          WHERE cc.${tx.unsafe(staleColId)} IS NULL AND p.deleted_at IS NULL
             AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')
             AND (cc.page_id, cc.chunk_index) > (${afterPid}, ${afterIdx})
           ORDER BY cc.page_id, cc.chunk_index
@@ -2789,7 +2816,7 @@ export class PostgresEngine implements BrainEngine {
                cc.model, cc.token_count, p.source_id, cc.page_id
         FROM content_chunks cc
         JOIN pages p ON p.id = cc.page_id
-        WHERE cc.${tx.unsafe(staleColId)} IS NULL
+        WHERE cc.${tx.unsafe(staleColId)} IS NULL AND p.deleted_at IS NULL
           AND p.source_id = ${opts.sourceId}
           AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')
           AND (cc.page_id, cc.chunk_index) > (${afterPid}, ${afterIdx})
@@ -3019,6 +3046,10 @@ export class PostgresEngine implements BrainEngine {
   async addLinksBatch(links: LinkBatchInput[], opts?: BatchOpts): Promise<number> {
     if (links.length === 0) return 0;
     return this.batchRetry(opts?.auditSite ?? 'addLinksBatch', opts?.signal, () => this._addLinksBatchOnce(links), links.length);
+  }
+
+  async replaceDerivedLinks(origin: DerivedLinkOrigin, links: LinkBatchInput[], opts?: DerivedLinkReplacementOptions) {
+    return replaceDerivedLinks(this, origin, links, opts);
   }
 
   private async _addLinksBatchOnce(links: LinkBatchInput[]): Promise<number> {
@@ -3444,7 +3475,8 @@ export class PostgresEngine implements BrainEngine {
            WHERE l2.from_page_id = g.id AND p3.deleted_at IS NULL ${privacy('p3', 'l2')} ${aggScope}),
           '[]'::jsonb
         ) as links
-      FROM graph g
+      FROM (SELECT DISTINCT id, slug, title, type, depth
+            FROM (SELECT id, slug, title, type, depth FROM graph LIMIT ${TRAVERSE_WALK_ROW_CAP}) capped) g
       ORDER BY g.depth, g.slug
     `;
 
@@ -3523,15 +3555,18 @@ export class PostgresEngine implements BrainEngine {
           FROM walk w
           JOIN links l ON l.from_page_id = w.id
           JOIN pages p2 ON p2.id = l.to_page_id
-          WHERE w.depth < ${depth}
+          WHERE w.depth + 1 < ${depth}
             AND NOT (p2.id = ANY(w.visited))
             AND p2.deleted_at IS NULL ${privacy('p2', 'l')}
             AND (${!linkTypeMatches} OR l.link_type = ${linkType ?? ''})
             ${stepScope}
-        )
-        SELECT w.slug as from_slug, p2.slug as to_slug,
+        ),
+        capped AS (SELECT id, slug, depth FROM walk LIMIT ${TRAVERSE_WALK_ROW_CAP + 1}),
+        nodes AS (SELECT DISTINCT id, slug, depth FROM capped)
+        SELECT (SELECT count(*) FROM capped) > ${TRAVERSE_WALK_ROW_CAP} AS walk_truncated,
+               w.slug as from_slug, p2.slug as to_slug,
                l.link_type, l.context, w.depth + 1 as depth
-        FROM walk w
+        FROM nodes w
         JOIN links l ON l.from_page_id = w.id
         JOIN pages p2 ON p2.id = l.to_page_id
         WHERE w.depth < ${depth}
@@ -3551,15 +3586,18 @@ export class PostgresEngine implements BrainEngine {
           FROM walk w
           JOIN links l ON l.to_page_id = w.id
           JOIN pages p2 ON p2.id = l.from_page_id
-          WHERE w.depth < ${depth}
+          WHERE w.depth + 1 < ${depth}
             AND NOT (p2.id = ANY(w.visited))
             AND p2.deleted_at IS NULL ${privacy('p2', 'l')}
             AND (${!linkTypeMatches} OR l.link_type = ${linkType ?? ''})
             ${stepScope}
-        )
-        SELECT p2.slug as from_slug, w.slug as to_slug,
+        ),
+        capped AS (SELECT id, slug, depth FROM walk LIMIT ${TRAVERSE_WALK_ROW_CAP + 1}),
+        nodes AS (SELECT DISTINCT id, slug, depth FROM capped)
+        SELECT (SELECT count(*) FROM capped) > ${TRAVERSE_WALK_ROW_CAP} AS walk_truncated,
+               p2.slug as from_slug, w.slug as to_slug,
                l.link_type, l.context, w.depth + 1 as depth
-        FROM walk w
+        FROM nodes w
         JOIN links l ON l.to_page_id = w.id
         JOIN pages p2 ON p2.id = l.from_page_id
         WHERE w.depth < ${depth}
@@ -3579,15 +3617,18 @@ export class PostgresEngine implements BrainEngine {
           FROM walk w
           JOIN links l ON (l.from_page_id = w.id OR l.to_page_id = w.id)
           JOIN pages p2 ON p2.id = CASE WHEN l.from_page_id = w.id THEN l.to_page_id ELSE l.from_page_id END
-          WHERE w.depth < ${depth}
+          WHERE w.depth + 1 < ${depth}
             AND NOT (p2.id = ANY(w.visited))
             AND p2.deleted_at IS NULL ${privacy('p2', 'l')}
             AND (${!linkTypeMatches} OR l.link_type = ${linkType ?? ''})
             ${stepScope}
-        )
-        SELECT pf.slug as from_slug, pt.slug as to_slug,
+        ),
+        capped AS (SELECT id, depth FROM walk LIMIT ${TRAVERSE_WALK_ROW_CAP + 1}),
+        nodes AS (SELECT DISTINCT id, depth FROM capped)
+        SELECT (SELECT count(*) FROM capped) > ${TRAVERSE_WALK_ROW_CAP} AS walk_truncated,
+               pf.slug as from_slug, pt.slug as to_slug,
                l.link_type, l.context, w.depth + 1 as depth
-        FROM walk w
+        FROM nodes w
         JOIN links l ON (l.from_page_id = w.id OR l.to_page_id = w.id)
         JOIN pages pf ON pf.id = l.from_page_id
         JOIN pages pt ON pt.id = l.to_page_id
@@ -3604,7 +3645,7 @@ export class PostgresEngine implements BrainEngine {
 
     // Row cap: the LIMIT above fetched CAP + 1 rows; the probe row only tells
     // us the walk overflowed and is dropped with everything past the cap.
-    const truncated = rows.length > TRAVERSE_PATH_ROW_CAP;
+    const truncated = rows.length > TRAVERSE_PATH_ROW_CAP || (rows as Array<{ walk_truncated?: boolean }>).some((r) => r.walk_truncated === true);
     const bounded = (truncated ? rows.slice(0, TRAVERSE_PATH_ROW_CAP) : rows) as Record<string, unknown>[];
     // Dedup edges (same edge can appear via multiple visited paths).
     const seen = new Set<string>();
@@ -3727,15 +3768,15 @@ export class PostgresEngine implements BrainEngine {
   }
 
   // Tags
-  async addTag(slug: string, tag: string, opts?: { sourceId?: string }): Promise<void> {
-    return mutatePageTag(this, { sourceId: opts?.sourceId ?? 'default', slug }, tag, true);
+  async addTag(slug: string, tag: string, opts?: { sourceId?: string; tagSource?: 'frontmatter' }): Promise<void> {
+    return mutatePageTag(this, { sourceId: opts?.sourceId ?? 'default', slug }, tag, true, opts?.tagSource);
   }
 
   async removeTag(slug: string, tag: string, opts?: { sourceId?: string }): Promise<void> {
     return mutatePageTag(this, { sourceId: opts?.sourceId ?? 'default', slug }, tag, false);
   }
 
-  async getTags(slug: string, opts?: { sourceId?: string; sourceIds?: string[] }): Promise<string[]> {
+  async getTags(slug: string, opts?: { sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean; liveOnly?: boolean }): Promise<string[]> {
     const sql = this.sql;
     // #2200: federated grant (sourceIds[]) wins over scalar sourceId. Use
     // `page_id IN (subquery)` — NOT `= (subquery)` — because a federated read of
@@ -3746,9 +3787,11 @@ export class PostgresEngine implements BrainEngine {
       opts?.sourceIds && opts.sourceIds.length > 0
         ? sql`source_id = ANY(${opts.sourceIds}::text[])`
         : sql`source_id = ${opts?.sourceId ?? 'default'}`;
+    const privacy = opts?.excludePrivate ? sql.unsafe(`AND ${privatePagesFilterFragment('pages')}`) : sql``;
+    const live = opts?.liveOnly ? sql`AND deleted_at IS NULL` : sql``;
     const rows = await sql`
       SELECT DISTINCT tag FROM tags
-      WHERE page_id IN (SELECT id FROM pages WHERE slug = ${slug} AND ${scope})
+      WHERE page_id IN (SELECT id FROM pages WHERE slug = ${slug} AND ${scope} ${privacy} ${live})
       ORDER BY tag
     `;
     return rows.map((r) => r.tag as string);
@@ -4335,11 +4378,6 @@ export class PostgresEngine implements BrainEngine {
    */
   private _factsEmbeddingCastSuffix: '::vector' | '::halfvec' | null = null;
 
-  /** Test seam: clear the cached cast suffix so tests can re-probe. */
-  __resetFactsEmbeddingCastCacheForTest(): void {
-    this._factsEmbeddingCastSuffix = null;
-  }
-
   private async resolveFactsEmbeddingCast(): Promise<'::vector' | '::halfvec'> {
     if (this._factsEmbeddingCastSuffix !== null) return this._factsEmbeddingCastSuffix;
     const sql = this.sql;
@@ -4442,7 +4480,7 @@ export class PostgresEngine implements BrainEngine {
     source_id: string,
     entitySlug: string,
     factText: string,
-    opts?: { k?: number; embedding?: Float32Array },
+    opts?: { k?: number; embedding?: Float32Array; embeddingModel?: string | null },
   ): Promise<FactRow[]> {
     return factsImpl.findCandidateDuplicates(this.factsDeps, source_id, entitySlug, factText, opts);
   }
@@ -4619,7 +4657,7 @@ export class PostgresEngine implements BrainEngine {
   async getVersions(slug: string, opts?: { sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean }): Promise<PageVersion[]> {
     const sql = this.sql;
     const privacy = opts?.excludePrivate
-      ? sql.unsafe(`AND ${privatePagesFilterFragment('p')} AND ${privatePagesFilterFragment('pv')}`) : sql``;
+      ? sql.unsafe(`AND ${privatePagesFilterFragment('p')} AND ${privateSnapshotFilterFragment('pv')}`) : sql``;
     if (opts?.sourceIds && opts.sourceIds.length > 0) {
       const rows = await sql`
         SELECT pv.* FROM page_versions pv
@@ -4816,7 +4854,7 @@ export class PostgresEngine implements BrainEngine {
         -- cannot move it and 'doctor --remediate' re-plans it every pass.
         (SELECT count(*) FROM content_chunks cc
            JOIN scoped_pages p ON p.id = cc.page_id
-          WHERE cc.${sql.unsafe(colId)} IS NULL
+          WHERE cc.${sql.unsafe(colId)} IS NULL AND p.deleted_at IS NULL
             AND NOT jsonb_exists(COALESCE(p.frontmatter, '{}'::jsonb), 'embed_skip')
         ) as missing_embeddings,
         (SELECT count(*) FROM links l
@@ -5000,15 +5038,24 @@ export class PostgresEngine implements BrainEngine {
   // Sync
   async updateSlug(oldSlug: string, newSlug: string, opts?: { sourceId?: string }): Promise<number> {
     newSlug = validateSlug(newSlug);
-    const sql = this.sql;
     const sourceId = opts?.sourceId ?? 'default';
     // Source-qualify so a rename in source A doesn't sweep up same-slug rows
     // in sources B/C/D (which would either rename them all OR fail the
     // (source_id, slug) UNIQUE if the new slug already exists in another source).
-    const result = await sql`UPDATE pages SET slug = ${newSlug}, updated_at = now() WHERE slug = ${oldSlug} AND source_id = ${sourceId}`;
-    // #3056: rows moved — a zero-row UPDATE does not throw, so the count is
-    // the only way callers can see the no-op.
-    return result.count ?? 0;
+    // The rename and its slug alias commit together.
+    return this.transaction(async tx => {
+      const moved = await tx.executeRaw(
+        `UPDATE pages SET slug = $1, updated_at = now() WHERE slug = $2 AND source_id = $3 RETURNING id`,
+        [newSlug, oldSlug, sourceId],
+      );
+      if (moved.length > 0) {
+        await recordRenameAlias(tx, sourceId, oldSlug, newSlug);
+        await moveSlugBindings(tx, sourceId, oldSlug, newSlug);
+      }
+      // #3056: rows moved — a zero-row UPDATE does not throw, so the count is
+      // the only way callers can see the no-op.
+      return moved.length;
+    });
   }
 
   async rewriteLinks(_oldSlug: string, _newSlug: string): Promise<void> {
@@ -5287,14 +5334,8 @@ export class PostgresEngine implements BrainEngine {
   /**
    * Shared body for executeRaw / executeRawDirect: run a raw statement on the
    * given connection and wire AbortSignal cancellation onto the pending query.
-   * The ONLY difference between the two public methods is which connection they
-   * pick (read pool vs direct session pool), so the cancellation plumbing lives
-   * here in one place rather than being copy-pasted.
-   *
-   * v0.41.18.0 (A20, codex #7): real cancellation via postgres.js's .cancel()
-   * on the pending query. Init nudge (3s wallclock cap) is the first consumer;
-   * the AbortSignal fires when the timer trips. An already-aborted signal
-   * short-circuits before the network round-trip.
+   * Cancellable statements retain an exclusive connection through query and
+   * cancellation settlement so a late CancelRequest cannot hit its successor.
    */
   private runUnsafe<T>(
     conn: ReturnType<typeof postgres>,
@@ -5302,30 +5343,38 @@ export class PostgresEngine implements BrainEngine {
     params?: unknown[],
     opts?: { signal?: AbortSignal },
   ): Promise<T[]> {
-    // #4145 R2-2 preflight: an ALREADY-aborted signal must short-circuit
-    // BEFORE the query is dispatched — the previous order created the
-    // pending query first and cancelled it after, which still burned a
-    // round-trip (and on a saturated pool, a slot). Cancellation remains
-    // BEST-EFFORT overall (PG protocol cancel is async); callers that need
-    // correctness must rely on their own fencing, not this signal.
     if (opts?.signal?.aborted) {
       throw new DOMException('aborted', 'AbortError');
     }
-    const pending = conn.unsafe(sql, params as Parameters<typeof conn.unsafe>[1]);
-    if (opts?.signal) {
-      const onAbort = () => {
+    return (async () => {
+      const signal = opts?.signal;
+      let reserved: postgres.ReservedSql | undefined;
+      let pending: ReturnType<typeof conn.unsafe> | undefined;
+      let cancellation: Promise<void> | undefined;
+      let retired = false;
+      let owner: postgres.TransactionSql | postgres.ReservedSql = conn as unknown as postgres.TransactionSql;
+      signal?.addEventListener('abort', onAbort, { once: true });
+      try {
+        reserved = signal && typeof conn.reserve === 'function' ? await reserveWithCancellation(opts => conn.reserve(opts), signal) : undefined;
+        if (reserved) conn = reserved;
+        owner = reserved ?? conn as unknown as postgres.TransactionSql;
+        if (signal?.aborted) throw new DOMException('aborted', 'AbortError');
+        if (signal && !hasPostgresCancellationCapability(owner)) throw postgresCancellationUnavailable();
+        pending = conn.unsafe(sql, params as Parameters<typeof conn.unsafe>[1], { cancelFence: !!signal });
+        return await pending as unknown as T[];
+      } finally {
+        signal?.removeEventListener('abort', onAbort);
         try {
-          (pending as unknown as { cancel?: () => void }).cancel?.();
-        } catch {
-          // best-effort; the .finally below settles regardless
-        }
-      };
-      opts.signal.addEventListener('abort', onAbort, { once: true });
-      return (pending as unknown as Promise<T[]>).finally(() => {
-        opts.signal?.removeEventListener('abort', onAbort);
-      });
-    }
-    return pending as unknown as Promise<T[]>;
+          if (cancellation) await cancellation;
+          if (retired) owner.discard();
+        } finally { reserved?.release(); }
+      }
+      function onAbort() {
+        if (!pending || cancellation) return;
+        try { cancellation = pending.cancel().catch(() => { retired = true; }); }
+        catch { retired = true; }
+      }
+    })();
   }
 
   async executeRaw<T = Record<string, unknown>>(

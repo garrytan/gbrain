@@ -290,32 +290,6 @@ describe('chat touchpoint — config alias resolution', () => {
   });
 });
 
-describe('chat touchpoint — chat() smoke + stop-reason mapping (Codex D8)', () => {
-  // We exercise chat() against a mocked AI-SDK 'generateText' to assert the
-  // gateway's structural-signal mapping (mapStopReason) covers refusal,
-  // content_filter, tool_calls, end, length without the regex layer (commit 3).
-  // A full integration test against real provider HTTP lives in
-  // test/e2e/agent-multi-provider.test.ts (commit 2).
-  //
-  // We can't easily monkey-patch ESM imports inside Bun's runtime; instead we
-  // write an end-to-end assertion against the resolver logic + verify the
-  // chat() function exists with the documented signature.
-
-  test('chat() function is exported with the expected signature', async () => {
-    const mod = await import('../../src/core/ai/gateway.ts');
-    expect(typeof mod.chat).toBe('function');
-    // Signature check: must accept ChatOpts. We don't call it without a real
-    // provider key — that's the e2e job.
-  });
-
-  test('ChatBlock + ChatMessage + ChatResult types are exported', async () => {
-    // Type-only assertion: if these imports compile, we're good. The test
-    // body is just a runtime touch.
-    const mod = await import('../../src/core/ai/gateway.ts');
-    expect(mod).toBeDefined();
-  });
-});
-
 describe('chat touchpoint — provider_chat_options passthrough', () => {
   beforeEach(() => {
     resetGateway();

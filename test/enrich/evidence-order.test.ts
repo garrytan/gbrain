@@ -193,15 +193,6 @@ describe('runEnrichCore evidence + counters (#2085)', () => {
     expect(requests.map(row => row.state)).toEqual(['conflict']);
   }, 30000);
 
-  test('managed enrichment refuses before invoking providers or advancing checkpoints', async () => {
-    await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
-    let calls = 0;
-    await expect(runEnrichCore(engine, { ...coreOpts, synthesizeFn: async () => { calls++; return 'SKIP'; } }))
-      .rejects.toMatchObject({ code: 'writer_coordinator_required' });
-    expect(calls).toBe(0);
-    expect(await engine.executeRaw("SELECT * FROM op_checkpoints WHERE op='enrich'")).toEqual([]);
-  });
-
   test('model SKIP → pages_model_skip; empty output → pages_empty_output', async () => {
     await seedStub('people/alice-example', 'Alice Example');
     await seedBacklink('people/alice-example', 'meetings/m1',

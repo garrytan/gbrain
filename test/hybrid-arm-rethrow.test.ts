@@ -100,3 +100,27 @@ describe('hybridSearch both-lexical-arms-FAILED rethrow', () => {
     expect(results).toEqual([]);
   });
 });
+
+describe('a failed lexical arm is stamped in meta.degraded (#5324)', () => {
+  test('keyword arm failure → keyword_arm_failed; title arm failure → title_arm_failed', async () => {
+    const run = async (arms: Parameters<typeof fakeEngine>[0]) => {
+      let degraded: Array<{ stage: string; reason?: string }> = [];
+      await hybridSearch(fakeEngine(arms), QUERY, { limit: 5, onMeta: (m) => { degraded = (m.degraded ?? []) as typeof degraded; } });
+      return degraded;
+    };
+    expect(await run({ searchKeyword: () => Promise.reject(new Error('boom')), searchTitles: async () => [] }))
+      .toContainEqual({ stage: 'keyword_arm_failed', reason: 'provider_error' });
+    const titles = await run({ searchKeyword: async () => [], searchTitles: () => Promise.reject(new Error('boom')) });
+    expect(titles).toContainEqual({ stage: 'title_arm_failed', reason: 'provider_error' });
+    expect(titles.map(d => d.stage)).not.toContain('keyword_arm_failed');
+  });
+
+  test('healthy arms stamp neither stage', async () => {
+    let degraded: Array<{ stage: string }> = [];
+    await hybridSearch(fakeEngine({ searchKeyword: async () => [], searchTitles: async () => [] }), QUERY, {
+      limit: 5, onMeta: (m) => { degraded = (m.degraded ?? []) as typeof degraded; },
+    });
+    expect(degraded.map(d => d.stage)).not.toContain('keyword_arm_failed');
+    expect(degraded.map(d => d.stage)).not.toContain('title_arm_failed');
+  });
+});

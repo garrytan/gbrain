@@ -61,13 +61,13 @@ describe('autopilot.ts ↔ ChildWorkerSupervisor wiring', () => {
     expect(AUTOPILOT_SRC).not.toContain("'--max-rss', '2048'");
   });
 
-  it('strips GBRAIN_SUPERVISED from the spawned worker env (worker-startup recovery lane)', () => {
-    // Worker-startup recovery (jobs.ts 'work') is autopilot's ONLY
-    // private-queue recovery lane and is gated on GBRAIN_SUPERVISED !== '1'.
-    // An inherited =1 (operator export, nested supervision) would silently
-    // disable it, so the spawn env must strip it explicitly. Behavioral
-    // proof lives in child-worker-supervisor.test.ts ("GBRAIN_SUPERVISED
-    // env strip"); this pins that autopilot's construction uses the strip.
+  it('uses managed processing state and strips GBRAIN_SUPERVISED so the worker keeps stall detection', () => {
+    // Mandatory readiness publication keys on the status channel env that
+    // processingState hands off, not on GBRAIN_SUPERVISED. An inherited =1
+    // would disable the worker's stall detection, and autopilot has no
+    // progress watchdog to replace it. Behavioral proof lives in
+    // supervisor-configuration-blocked.test.ts.
+    expect(AUTOPILOT_SRC).toContain('processingState: processingState ?? undefined');
     expect(AUTOPILOT_SRC).toMatch(
       /env:\s*\{\s*\.\.\.process\.env,\s*GBRAIN_SUPERVISED:\s*undefined\s*\}/,
     );

@@ -25,13 +25,33 @@ export function isAIInvocationPolicyError(error: unknown): boolean {
 }
 
 /** Isolated to this async job; concurrent local work never inherits its owner. */
-export function withAIInvocationGuard<T>(guard: AIInvocationGuard, run: () => Promise<T>): Promise<T> {
-  return guards.run(guard, run);
+export function withAIInvocationGuard<T>(guard: AIInvocationGuard, run: () => Promise<T>, opts: { inherit?: boolean } = {}): Promise<T> {
+  const parent = opts.inherit ? guards.getStore() : undefined;
+  if (!parent) return guards.run(guard, run);
+  return guards.run(async call => {
+    const outer = await parent(call);
+    let inner: AIInvocationPermit;
+    try { inner = await guard(call); }
+    catch (error) { await outer.settle(null); throw error; }
+    return { settle: async usage => { await outer.settle(usage); await inner.settle(usage); } };
+  }, run);
+}
+export function withAIInvocationPreflight<T>(preflight: (call: AIInvocation) => Promise<void>, run: () => Promise<T>): Promise<T> {
+  const parent = guards.getStore();
+  return guards.run(async call => {
+    await preflight(call);
+    return parent ? parent(call) : { settle: async () => {} };
+  }, run);
 }
 export function hasAIInvocationGuard(): boolean { return guards.getStore() !== undefined; }
 
-/** One provider attempt. No guessed usage, no release on an ambiguous failure. */
-export async function invokeAI<T>(call: AIInvocation, run: () => Promise<T>, usage: (result: T) => AIInvocationUsage | null | Promise<AIInvocationUsage | null>): Promise<T> {
+/**
+ * One provider attempt. No guessed usage, no release on an ambiguous failure:
+ * a failed attempt settles null (keep the maximum) unless `rejected` proves the
+ * provider refused the request unbilled.
+ */
+export async function invokeAI<T>(call: AIInvocation, run: () => Promise<T>, usage: (result: T) => AIInvocationUsage | null | Promise<AIInvocationUsage | null>,
+  rejected?: (error: unknown) => AIInvocationUsage | null): Promise<T> {
   const guard = guards.getStore();
   if (!guard) return run();
   let permit: AIInvocationPermit;
@@ -42,7 +62,7 @@ export async function invokeAI<T>(call: AIInvocation, run: () => Promise<T>, usa
   }
   let result: T;
   try { result = await run(); }
-  catch (error) { await permit.settle(null); throw error; }
+  catch (error) { await permit.settle(rejected?.(error) ?? null); throw error; }
   let measured: AIInvocationUsage | null;
   try { measured = await usage(result); }
   catch (error) { await permit.settle(null); throw error; }

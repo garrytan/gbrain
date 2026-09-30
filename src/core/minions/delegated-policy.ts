@@ -1,6 +1,6 @@
 import type { BrainEngine } from '../engine.ts';
 import { delegationReasons, type ClientGrant } from '../grants/model.ts';
-import { validGrantPrefixes, normalizeGrantBrain } from '../grants/model.ts';
+import { validGrantPrefixes, normalizeGrantBrain, GrantError } from '../grants/model.ts';
 import { hasScope } from '../scope.ts';
 import { normalizeSlugPrefix } from '../ops/context.ts';
 import { UnrecoverableError } from './errors.ts';
@@ -25,7 +25,9 @@ export interface DelegationSnapshot {
 
 export class DelegationDeniedError extends UnrecoverableError {
   constructor(public readonly reasons: string[]) {
-    super(`agent_bindings_invalid: ${reasons.join(', ')}. Repair with gbrain auth rescope-client; this job never changes its submitted source.`);
+    super(`agent_bindings_invalid: ${reasons.join(', ')}. ${reasons.includes('client_deleted')
+      ? 'Ask the server administrator to inspect registrations with gbrain mcp admin clients and, if replacement is intended, grant a new client and submit a new job. This job cannot regain authority.'
+      : 'Repair with gbrain auth rescope-client; this job never changes its submitted source.'}`);
     this.name = 'DelegationDeniedError';
   }
 }
@@ -50,7 +52,12 @@ export async function currentDelegationGrant(engine: BrainEngine, clientId: stri
   // Grant services expose profiles backed by the full operation catalog.
   // Queued writer modules may load this policy while that catalog is initializing.
   const { readClientGrant, grantValidationContext } = await import('../grants/service.ts');
-  const grant = await readClientGrant(engine, clientId);
+  let grant: ClientGrant;
+  try { grant = await readClientGrant(engine, clientId); }
+  catch (error) {
+    if (error instanceof GrantError && error.code === 'client_not_found') throw new DelegationDeniedError(['client_deleted']);
+    throw error; // Database outages remain retryable; absence is terminal.
+  }
   const reasons = delegationReasons(grant, await grantValidationContext(engine, servingBrainId));
   if (grant.allowedOperations !== null && !grant.allowedOperations.includes('submit_agent')) reasons.push('delegation_operation_withdrawn');
   if (reasons.length) throw new DelegationDeniedError(reasons);

@@ -20,7 +20,7 @@ condition = "AND"
 paths = [
   '''^test/(auth-register-client-output-pin|claw-test-cli|config|config-get-plane|google-access|google-auth|mcp-registration-blocks|secret-scan|session-receipts|tty-harness|transcript-render)\.test\.ts$''',
   '''^test/creds-vault\.serial\.test\.ts$''',
-  '''^test/e2e/transcripts-ingest-pglite\.test\.ts$''',
+  '''^test/transcripts-ingest-pglite\.test\.ts$''',
   '''^\.claude/skills/gstack/(browse/test/commands|test/skill-e2e-cso)\.test\.ts$''',
 ]
 regexTarget = "secret"

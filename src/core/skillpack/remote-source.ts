@@ -21,6 +21,7 @@
  * registry layer.
  */
 
+import { assertLegacySkillFilesystemWrite } from './writer-guard.ts';
 import { execFileSync } from 'child_process';
 import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from 'fs';
 import { isAbsolute, join, resolve } from 'path';
@@ -215,6 +216,8 @@ function resolveGitSource(
 
   // Stage in a sibling .tmp dir so a failed clone doesn't poison the cache slot.
   const stageDir = cacheDir + '.tmp-' + process.pid + '-' + Date.now();
+  assertLegacySkillFilesystemWrite(cacheDir);
+  assertLegacySkillFilesystemWrite(stageDir);
   mkdirSync(stageDir, { recursive: true });
   try {
     cloneRepo(parsedSafe.toString(), stageDir, { depth: 1, timeoutMs: 600_000 });
@@ -258,6 +261,7 @@ function resolveGitSource(
     } catch {}
   } else {
     mkdirSync(join(cacheDir, '..'), { recursive: true });
+    assertLegacySkillFilesystemWrite(cacheDir);
     renameSync(stageDir, cacheDir);
   }
 
@@ -309,6 +313,8 @@ function resolveTarballSource(
   }
 
   const stageDir = cacheDir + '.tmp-' + process.pid + '-' + Date.now();
+  assertLegacySkillFilesystemWrite(cacheDir);
+  assertLegacySkillFilesystemWrite(stageDir);
   mkdirSync(stageDir, { recursive: true });
   try {
     extractTarball({ tgzPath: tarballPath, destDir: stageDir });
@@ -325,6 +331,7 @@ function resolveTarballSource(
     } catch {}
   } else {
     mkdirSync(join(cacheDir, '..'), { recursive: true });
+    assertLegacySkillFilesystemWrite(cacheDir);
     renameSync(stageDir, cacheDir);
   }
 
