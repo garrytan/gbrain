@@ -539,6 +539,25 @@ describe('GoogleApiClient retry exhaustion + 403 mapping', () => {
 // ── GmailClient ──────────────────────────────────────────────────────────────
 
 describe('GmailClient', () => {
+  // Protect well-formed capped bodies sent to managed receipt JSON. Raw slice
+  // regresses this; the existing cap test is ASCII-only. Uses the existing
+  // injectable fetch seam, not a new production-only test hook.
+  test.each(['text/plain', 'text/html'])('getThread never splits a surrogate pair at the final %s body cap', async (mimeType) => {
+    const prefix = 'x'.repeat(7_999);
+    const body = `${prefix}🚀tail`;
+    const h = makeHarness(() => json({
+      id: '17aa5555dddd6666',
+      messages: [{
+        id: '18c2f4a9b3d21e04',
+        payload: { mimeType, body: { data: b64url(mimeType === 'text/html' ? `<p>${body}</p>` : body) } },
+      }],
+    }));
+    const gmail = new GmailClient(h.tokens, h.fetchImpl, () => {}, CLIENT_ID);
+    const thread = await gmail.getThread('17aa5555dddd6666', 'a@example.com');
+    expect(thread.messages[0].bodyText.isWellFormed()).toBe(true);
+    expect(thread.messages[0].bodyText).toBe(`${prefix}\n[truncated]`);
+  });
+
   test('listMessageIds passes q through and drains pages', async () => {
     const seenQ: Array<string | null> = [];
     const h = makeHarness((u) => {
@@ -559,6 +578,23 @@ describe('GmailClient', () => {
       { id: '18c2f4a9b3d21e02', threadId: '17aa3333cccc4444' },
     ]);
     expect(seenQ).toEqual(['after:123 before:456', 'after:123 before:456']);
+  });
+
+  test('getThread never splits a surrogate pair before HTML conversion', async () => {
+    // The removable tags put the emoji across the 8 * 16 raw cap. After
+    // conversion the output is below 8 chars, so the final cap cannot repair it.
+    const rawBody = `${'<b></b>'.repeat(18)}x🚀tail`;
+    const h = makeHarness(() => json({
+      id: '17aa5555dddd6666',
+      messages: [{
+        id: '18c2f4a9b3d21e04',
+        payload: { mimeType: 'text/html', body: { data: b64url(rawBody) } },
+      }],
+    }));
+    const gmail = new GmailClient(h.tokens, h.fetchImpl, () => {}, CLIENT_ID);
+    const thread = await gmail.getThread('17aa5555dddd6666', 'a@example.com', { bodyCapChars: 8 });
+    expect(thread.messages[0].bodyText.isWellFormed()).toBe(true);
+    expect(thread.messages[0].bodyText).toBe('x');
   });
 
   test('listHistoryThreadIds dedupes thread ids across record kinds and returns the new cursor', async () => {

@@ -23,6 +23,7 @@ import type { GoogleAccessProvider } from './access.ts';
 import { apiEnableLink } from '../creds/providers/google.ts';
 import { parseRetryAfterMs } from '../github-source.ts';
 import { readBoundedHttpBody } from '../guarded-http.ts';
+import { truncateUtf8 } from '../text-safe.ts';
 import {
   bareAddress,
   DEFAULT_CALENDAR_ID,
@@ -388,10 +389,10 @@ export class GmailClient extends GoogleApiClient {
       // Pre-truncate before conversion: only the first `cap` output chars
       // survive, so a multi-hundred-KB marketing email must not pay ~15
       // full-body regex passes in htmlToText inside the per-thread hot loop.
-      const text = rawText.length > cap * 16 ? rawText.slice(0, cap * 16) : rawText;
+      const text = truncateUtf8(rawText, cap * 16);
       let bodyText = isHtml ? htmlToText(text) : text;
       bodyText = trimQuotedReply(bodyText);
-      if (bodyText.length > cap) bodyText = bodyText.slice(0, cap) + '\n[truncated]';
+      if (bodyText.length > cap) bodyText = truncateUtf8(bodyText, cap) + '\n[truncated]';
       const internalDateMs = Number(m.internalDate ?? 0);
       const attachmentInspection = inspectGmailAttachments(m.payload, account, messageId, receiptBudget);
       receiptBudget -= Buffer.byteLength(JSON.stringify(attachmentInspection));
