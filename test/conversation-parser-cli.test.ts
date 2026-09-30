@@ -16,6 +16,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runConversationParser } from '../src/commands/conversation-parser.ts';
 import { BUILTIN_PATTERNS } from '../src/core/conversation-parser/builtins.ts';
+import type { BrainEngine } from '../src/core/engine.ts';
 
 // Capture process.stdout.write + process.stderr.write + process.exit.
 function captureStdio() {
@@ -179,6 +180,41 @@ describe('runConversationParser — scan', () => {
       cap.restore();
     }
     expect(cap.getExitCode()).toBe(2);
+  });
+});
+
+describe('runConversationParser — scan diagnostics', () => {
+  // A telegram anchor with a non-English month can't rebuild its ISO date;
+  // parse() opens the message anyway and counts it in date_fallback_count.
+  // That count MUST surface in both scan outputs or the operator has no way
+  // to see that timestamps in the page were inherited rather than parsed.
+  const body = [
+    'Alice Doe, [Mar 15, 2024 at 6:37:00 PM]', 'hello',
+    'Bob Roe, [Xyz 15, 2024 at 6:38:00 PM]', 'bad month',
+    'Alice Doe, [Mar 15, 2024 at 6:39:00 PM]', 'bye',
+  ].join('\n');
+  const page = { slug: 'chats/alice-bob', title: 'chat', type: 'conversation', compiled_truth: body, timeline: '', frontmatter: {} };
+  const engine = { getPage: async () => page } as unknown as BrainEngine;
+
+  test('--json carries date_fallback_count', async () => {
+    const cap = captureStdio();
+    try {
+      await runConversationParser(engine, ['scan', 'chats/alice-bob', '--json']);
+    } finally {
+      cap.restore();
+    }
+    const parsed = JSON.parse(cap.out.join('')) as { date_fallback_count?: number };
+    expect(parsed.date_fallback_count).toBe(1);
+  });
+
+  test('human output carries date_fallbacks', async () => {
+    const cap = captureStdio();
+    try {
+      await runConversationParser(engine, ['scan', 'chats/alice-bob']);
+    } finally {
+      cap.restore();
+    }
+    expect(cap.out.join('')).toContain('date_fallbacks: 1');
   });
 });
 

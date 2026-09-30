@@ -18,6 +18,7 @@
 import { readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { claudeProjectsDir } from '../../bootstrap/host-specs.ts';
 
 /** Basename prefix of the per-PID cwd the claude-cli subprocess runs in. */
 export const CLAUDE_CLI_CWD_PREFIX = 'gbrain-claude-cli-cwd-';
@@ -41,6 +42,38 @@ export function claudeCliConfigDir(pid: number = process.pid): string {
  */
 export function isClaudeCliSelfTranscriptPath(path: string): boolean {
   return path.includes(CLAUDE_CLI_CWD_PREFIX);
+}
+
+/**
+ * #5413 — session ids of gbrain's own claude-cli subprocess sessions, read
+ * from the harness transcripts Claude Code keeps under
+ * `<projectsRoot>/<slugified scratch cwd>/<session id>.jsonl`. The
+ * session-end hook names each corpus file `<session id>.txt`, so a corpus
+ * file whose stem is in this set is a self-capture from before the hook
+ * refused them. Best-effort: a capture whose harness transcript Claude Code
+ * has since pruned is unclassifiable and stays in the corpus.
+ */
+export function claudeCliSelfSessionIds(projectsRoot: string = claudeProjectsDir()): Set<string> {
+  const ids = new Set<string>();
+  let projects: string[];
+  try {
+    projects = readdirSync(projectsRoot);
+  } catch {
+    return ids;
+  }
+  for (const project of projects) {
+    if (!isClaudeCliSelfTranscriptPath(project)) continue;
+    let files: string[];
+    try {
+      files = readdirSync(join(projectsRoot, project));
+    } catch {
+      continue;
+    }
+    for (const file of files) {
+      if (file.endsWith('.jsonl')) ids.add(file.slice(0, -'.jsonl'.length));
+    }
+  }
+  return ids;
 }
 
 function isPidAlive(pid: number): boolean {

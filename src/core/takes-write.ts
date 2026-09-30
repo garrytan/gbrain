@@ -52,7 +52,7 @@ import {
 } from './takes-fence.ts';
 import { withPageLock } from './page-lock.ts';
 import { resolvePageFilePath, resolveSourceLocalFilePath } from './markdown.ts';
-import { sanitizeRecordedSourcePath, recordedPathFromFileUri } from './write-through.ts';
+import { sanitizeRecordedSourcePath, recordedPathFromFileUri, scannerSlugRootMode } from './write-through.ts';
 import { isWriteTargetContained, msysToNativePath } from './path-confine.ts';
 import { atomicWriteFileSync } from './atomic-write.ts';
 
@@ -168,7 +168,7 @@ async function resolveTakesFilePath(
   const recordedUri = rows[0]?.source_uri ?? null;
   if (sourceLocalPath) {
     const recordedPath =
-      resolveSourceLocalFilePath(sourceLocalPath, recordedSourcePath, slug) ??
+      (recordedSourcePath ? resolveSourceLocalFilePath(sourceLocalPath, recordedSourcePath, slug, await scannerSlugRootMode(engine, src, sourceLocalPath)) : null) ??
       (() => {
         const fromUri = recordedPathFromFileUri(recordedUri, sourceLocalPath);
         return fromUri ? join(sourceLocalPath, fromUri) : null;
@@ -778,3 +778,6 @@ export async function resolveTakeOnPage(
     return { rowNum, quality: input.quality, mirror: { written: true, path, ...(mirrorWarning ? { mirror_warning: mirrorWarning } : {}) } };
   });
 }
+
+/** Pure fence primitives shared by durable semantic preparation and legacy callers. */
+export const takesPreparation = { assertHolderAllowed, assertSafeCellText, assertValidWeight, assertValidSinceDate, findFenceRow, assertFenceRoundTrips, replaceFence, toBatchInput };

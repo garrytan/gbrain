@@ -1,3 +1,10 @@
+import { SOURCE_INGESTION_RECEIPTS_SCHEMA_SQL } from './company-brain/receipt-schema.ts';
+import { PERSISTENCE_SCHEMA_STATEMENTS } from './persistence/schema.ts';
+import { PERSISTENCE_TOPOLOGY_SCHEMA_SQL } from './persistence/topology-schema.ts';
+import { PAGE_PROJECTION_SCHEMA_SQL } from './page-state/projection-schema.ts';
+import { LEASE_TOKEN_SCHEMA_SQL } from './lease-schema.ts';
+import { PAGE_STATE_SCHEMA_SQL } from './page-state/schema.ts';
+import { SHARED_SKILLS_SCHEMA_SQL } from './shared-skills/schema-all.ts';
 /**
  * PGLite schema — derived from schema-embedded.ts (Postgres schema).
  *
@@ -58,8 +65,10 @@ CREATE TABLE IF NOT EXISTS sources (
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Avoid firing managed BEFORE INSERT guards for an existing seed on restart.
 INSERT INTO sources (id, name, config)
-  VALUES ('default', 'default', '{"federated": true}'::jsonb)
+  SELECT 'default', 'default', '{"federated": true}'::jsonb
+  WHERE NOT EXISTS (SELECT 1 FROM sources WHERE id = 'default')
   ON CONFLICT (id) DO NOTHING;
 
 -- v0.40 Federated Sync v2: partial expression index on config->>'github_repo'
@@ -106,6 +115,9 @@ CREATE TABLE IF NOT EXISTS pages (
   -- (mirrors src/schema.sql). NULL = never extracted. Powers
   -- gbrain extract --stale + the links_extraction_lag doctor check.
   links_extracted_at    TIMESTAMPTZ,
+  -- #5254 (migration v177; mirrors src/schema.sql): 'unbound_source' marks a
+  -- page written database-only while its source had no canonical owner.
+  database_only_reason  TEXT,
   -- v0.40.3.0 contextual retrieval (renumbered from v81 to v90 on master
   -- merge; mirrors src/schema.sql).
   -- contextual_retrieval_mode is the tier the page was last embedded under;
@@ -232,6 +244,8 @@ CREATE TABLE IF NOT EXISTS content_chunks (
   -- #4246 (v133): md5(chunk_text) at embed time. NULL = no embedding or
   -- pre-v133 row (grandfathered by invalidateContentDriftEmbeddings).
   embedded_text_hash TEXT,
+  -- #5553 (v171): embedding-input provenance written with the vector.
+  embedding_input_hash TEXT,
   created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
   -- v0.19.0: code chunk metadata (markdown chunks leave NULL).
   language        TEXT,
@@ -320,6 +334,8 @@ CREATE TABLE IF NOT EXISTS tags (
   id      SERIAL PRIMARY KEY,
   page_id INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
   tag     TEXT    NOT NULL,
+  -- 'frontmatter' (import-owned, deleted when it leaves the frontmatter), 'added', or NULL (legacy).
+  tag_source TEXT,
   UNIQUE(page_id, tag)
 );
 
@@ -656,6 +672,7 @@ CREATE TABLE IF NOT EXISTS gbrain_cycle_locks (
   last_refreshed_at  TIMESTAMPTZ
 );
 CREATE INDEX IF NOT EXISTS idx_cycle_locks_ttl ON gbrain_cycle_locks(ttl_expires_at);
+${LEASE_TOKEN_SCHEMA_SQL}
 
 -- Eval capture (v0.25.0). PGLite ignores RLS — see src/schema.sql for the
 -- cross-engine spec.
@@ -1204,7 +1221,7 @@ $$ LANGUAGE plpgsql;
 
 DROP TRIGGER IF EXISTS trg_pages_search_vector ON pages;
 CREATE TRIGGER trg_pages_search_vector
-  BEFORE INSERT OR UPDATE ON pages
+  BEFORE INSERT OR UPDATE OF title,timeline ON pages
   FOR EACH ROW
   EXECUTE FUNCTION update_page_search_vector();
 
@@ -1251,16 +1268,35 @@ CREATE INDEX IF NOT EXISTS page_aliases_lookup_idx
   ON page_aliases (source_id, alias_norm);
 CREATE INDEX IF NOT EXISTS page_aliases_slug_idx
   ON page_aliases (source_id, slug);
+${PAGE_STATE_SCHEMA_SQL}
+${PERSISTENCE_SCHEMA_STATEMENTS.join(';\n')};
+${PAGE_PROJECTION_SCHEMA_SQL}
+${PERSISTENCE_TOPOLOGY_SCHEMA_SQL}
+${SOURCE_INGESTION_RECEIPTS_SCHEMA_SQL}
+${SHARED_SKILLS_SCHEMA_SQL}
+
+CREATE TABLE IF NOT EXISTS extract_atoms_page_state (
+  source_incarnation UUID NOT NULL REFERENCES sources(incarnation) ON DELETE CASCADE,
+  page_id INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+  content_hash TEXT NOT NULL,
+  fail_count INTEGER NOT NULL DEFAULT 0 CHECK (fail_count >= 0),
+  tombstoned BOOLEAN NOT NULL DEFAULT false,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (source_incarnation, page_id, content_hash)
+);
+CREATE INDEX IF NOT EXISTS extract_atoms_page_state_tombstoned_idx
+  ON extract_atoms_page_state (source_incarnation, content_hash, page_id) WHERE tombstoned;
+CREATE INDEX IF NOT EXISTS extract_atoms_page_state_page_idx ON extract_atoms_page_state (page_id);
+-- Durable record that a transcript was synthesized; survives minion_jobs pruning.
+CREATE TABLE IF NOT EXISTS dream_synthesis_completions (
+  source_id TEXT NOT NULL,
+  idempotency_key TEXT NOT NULL,
+  completed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (source_id, idempotency_key)
+);
+
 `;
 
-/**
- * Return the PGLite schema SQL with embedding vector dim + model name substituted.
- * Defaults come from the AI gateway (v0.36+: zeroentropyai:zembed-1 / 1280d).
- *
- * v0.37.x fix wave: defaults track gateway constants instead of stale v0.13
- * OpenAI literals so the pre-computed `PGLITE_SCHEMA_SQL` constant doesn't
- * size the column to 1536 while the runtime default model emits 1280.
- */
 export function getPGLiteSchema(
   dims: number = DEFAULT_EMBEDDING_DIMENSIONS,
   model: string = DEFAULT_EMBEDDING_MODEL,

@@ -109,6 +109,34 @@ describe('identity helpers — (source_id, slug) is the key', () => {
     expect(moved[0]!.slug).toBe('people/alice');
   });
 
+  test('B-19: re-linking the canonical member without `canonical` keeps it canonical', async () => {
+    await seedTwoSourceAlice();
+    await linkEntityIdentity(engine, { entityId: 'alice-chen', slug: 'people/alice', sourceId: 'default', canonical: true });
+    await linkEntityIdentity(engine, { entityId: 'alice-chen', slug: 'people/alice', sourceId: 'default', confidence: 0.6 });
+    const [me] = (await listEntityIdentities(engine, { entityId: 'alice-chen' })).filter(m => m.slug === 'people/alice');
+    expect(me).toMatchObject({ canonical: true, confidence: 0.6 });
+    // An explicit canonical:false still demotes.
+    await linkEntityIdentity(engine, { entityId: 'alice-chen', slug: 'people/alice', sourceId: 'default', canonical: false });
+    expect((await listEntityIdentities(engine, { entityId: 'alice-chen' })).some(m => m.canonical)).toBe(false);
+  });
+
+  test('B-19: a failed canonical link leaves the previous canonical in place', async () => {
+    await seedTwoSourceAlice();
+    await linkEntityIdentity(engine, { entityId: 'alice-chen', slug: 'people/alice', sourceId: 'default', canonical: true });
+    await engine.executeRaw(`CREATE OR REPLACE FUNCTION test_reject_identity() RETURNS trigger LANGUAGE plpgsql AS $fn$
+      BEGIN RAISE EXCEPTION 'identity insert rejected'; END $fn$`);
+    await engine.executeRaw('CREATE TRIGGER test_reject_identity BEFORE INSERT ON entity_identities FOR EACH ROW EXECUTE FUNCTION test_reject_identity()');
+    try {
+      await expect(linkEntityIdentity(engine, {
+        entityId: 'alice-chen', slug: 'people/alice-chen', sourceId: 'team-brain', canonical: true,
+      })).rejects.toThrow('identity insert rejected');
+    } finally {
+      await engine.executeRaw('DROP TRIGGER IF EXISTS test_reject_identity ON entity_identities');
+    }
+    const members = await listEntityIdentities(engine, { entityId: 'alice-chen' });
+    expect(members.filter(m => m.canonical).map(m => m.slug)).toEqual(['people/alice']);
+  });
+
   test('a new canonical demotes the previous one (at most one per group)', async () => {
     await linkEntityIdentity(engine, { entityId: 'alice-chen', slug: 'people/alice', sourceId: 'default', canonical: true });
     await linkEntityIdentity(engine, { entityId: 'alice-chen', slug: 'people/alice-chen', sourceId: 'team-brain', canonical: true });

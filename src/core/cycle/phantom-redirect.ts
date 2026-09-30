@@ -8,20 +8,18 @@
  * fence, soft-deletes the phantom, unlinks the `.md`. Bounded at 50
  * phantoms per cycle (configurable via `GBRAIN_PHANTOM_REDIRECT_LIMIT`).
  *
- * Reuses existing infrastructure where it can: `softDeletePage`,
- * `rewriteLinks`, `deleteFactsForPage`, fence parser. Adds TWO new
- * primitives (codex outside-voice round of /plan-eng-review):
- *
- *   1. `resolvePhantomCanonical` (src/core/entities/resolve.ts) bypasses
- *      `resolveEntitySlug`'s exact-self-match step, which would have
- *      returned the phantom slug itself and made the whole pass a no-op.
- *
- *   2. `engine.migrateFactsToCanonical` (BrainEngine) is a DB-side
- *      UPDATE that preserves every fact-row column (embedding,
- *      validUntil, kind, status, source_session, ...). `writeFactsToFence`
- *      was tempting to reuse but is APPEND-only-with-new-row-numbers and
- *      drops embeddings + supersession metadata, so migrating through it
- *      would resurrect forgotten facts and lose embeddings.
+ * Reuses existing infrastructure where it can: `softDeletePage`, the shared
+ * write-target resolver (`resolvePageWriteTarget`, so the canonical fence
+ * lands in the page's file of record), `recordRenameAlias`, fence parser.
+ * The merge is lossless: `resolvePhantomCanonical` bypasses
+ * `resolveEntitySlug`'s exact-self-match step and takes a fuzzy hit only
+ * with a clear margin, a canonical that disagrees with the single prefix
+ * candidate is ambiguous, every phantom fact row moves to the canonical by
+ * id (rows appended to the canonical fence take exactly the row numbers
+ * written to disk; history and duplicates move expired and detached, never
+ * deleted), `superseded by #N` references follow the renumber, the
+ * phantom's links move to the canonical page id, and the phantom slug is
+ * recorded in `slug_aliases`.
  *
  * Lock contract: single `gbrain-sync` writer-lock acquisition at the top
  * of the pass, held across all up-to-50 phantoms. Single 30s timeout.
@@ -57,6 +55,10 @@ import { parseMarkdown, splitBody, serializeMarkdown } from '../markdown.ts';
 import { tryAcquireDbLock, syncLockId, type DbLockHandle } from '../db-lock.ts';
 import { isAborted } from '../abort-check.ts';
 import { logPhantomEvent, type PhantomOutcome } from '../facts/phantom-audit.ts';
+import { MOVE_WITHDRAWAL_SUBJECT_SQL } from '../facts/withdrawal-schema.ts';
+import { resolvePageWriteTarget } from '../write-through.ts';
+import { recordRenameAlias } from '../page-state/rename-alias.ts';
+import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 
 /** Tagged-union outcome of a single phantom-redirect attempt. */
 export type RedirectOutcome =
@@ -202,7 +204,13 @@ async function acquireLockWithRetry(
  * Append the phantom's fact rows to the canonical's disk fence, dedup-
  * guarded by (claim, valid_from). Atomic via `.tmp` + rename.
  *
- * Returns the count of rows actually appended (i.e. NOT counting dedupped).
+ * New rows number from past both the file's and the DB's highest row number
+ * (the DB may hold numbers the file lost), and `superseded by #N` references
+ * are rewritten to the canonical numbering. Returns the phantom row number
+ * -> canonical row number map, including rows that dedup onto an existing
+ * canonical fence row (a retry after a crash between the disk write and the
+ * DB move finds every row already on disk).
+ *
  * The disk write happens BEFORE the DB migration in the redirect handler,
  * so if this throws (rename fails, disk full, parse-validation rejects)
  * the DB migration won't run and the cycle can retry next run.
@@ -210,39 +218,11 @@ async function acquireLockWithRetry(
 function appendPhantomFenceRowsToCanonical(
   canonicalPath: string,
   phantomFacts: ParsedFact[],
-): number {
-  if (phantomFacts.length === 0) return 0;
-  const body = fs.readFileSync(canonicalPath, 'utf-8');
-  const { facts: existingFacts } = parseFactsFence(body);
-
-  // Dedup key combines claim + valid_from. We deliberately do NOT include
-  // valid_until or status in the key so that a "fact about Alice" already
-  // present at canonical doesn't get duplicated even if the strike-through
-  // state differs between phantom and canonical (the operator can
-  // reconcile manually after redirect).
-  const existingKeys = new Set(
-    existingFacts.map((f) => `${f.claim}|${f.validFrom ?? ''}`),
-  );
-  let nextRowNum = existingFacts.length > 0
-    ? Math.max(...existingFacts.map((f) => f.rowNum)) + 1
-    : 1;
-
-  let appended = 0;
-  const merged: ParsedFact[] = [...existingFacts];
-  for (const pf of phantomFacts) {
-    const key = `${pf.claim}|${pf.validFrom ?? ''}`;
-    if (existingKeys.has(key)) continue;
-    merged.push({ ...pf, rowNum: nextRowNum });
-    existingKeys.add(key);
-    nextRowNum += 1;
-    appended += 1;
-  }
-
-  if (appended === 0) return 0;
-
-  // Shared placement rule (#4756): replace in place, else insert ABOVE the
-  // timeline sentinel — never a blind EOF append below `## Timeline`.
-  const newBody = replaceOrInsertFactsFence(body, renderFactsTable(merged));
+  dbMaxRowNum: number,
+): Map<number, number> {
+  if (phantomFacts.length === 0) return new Map<number, number>();
+  const { body: newBody, renumber } = mergePhantomFenceRows(fs.readFileSync(canonicalPath, 'utf-8'), phantomFacts, dbMaxRowNum);
+  if (newBody === null) return renumber;
 
   // Atomic write: .tmp first, parse-validate, rename.
   const tmpPath = `${canonicalPath}.tmp`;
@@ -255,7 +235,135 @@ function appendPhantomFenceRowsToCanonical(
     );
   }
   fs.renameSync(tmpPath, canonicalPath);
-  return appended;
+  return renumber;
+}
+
+/**
+ * The canonical body with the phantom's rows appended (null when every row
+ * dedups onto an existing canonical row) and the phantom -> canonical row
+ * number map. Shared by the file writer above and the managed redirect.
+ */
+export function mergePhantomFenceRows(
+  body: string,
+  phantomFacts: ParsedFact[],
+  dbMaxRowNum: number,
+): { body: string | null; renumber: Map<number, number> } {
+  const renumber = new Map<number, number>();
+  const { facts: existingFacts } = parseFactsFence(body);
+
+  // Dedup key combines claim + valid_from. We deliberately do NOT include
+  // valid_until or status in the key so that a "fact about Alice" already
+  // present at canonical doesn't get duplicated even if the strike-through
+  // state differs between phantom and canonical (the operator can
+  // reconcile manually after redirect).
+  const existingByKey = new Map(existingFacts.map((f) => [`${f.claim}|${f.validFrom ?? ''}`, f.rowNum]));
+  let nextRowNum = Math.max(dbMaxRowNum, 0, ...existingFacts.map((f) => f.rowNum)) + 1;
+
+  const pending: ParsedFact[] = [];
+  for (const pf of phantomFacts) {
+    const key = `${pf.claim}|${pf.validFrom ?? ''}`;
+    const existing = existingByKey.get(key);
+    if (existing !== undefined) {
+      renumber.set(pf.rowNum, existing);
+      continue;
+    }
+    renumber.set(pf.rowNum, nextRowNum);
+    existingByKey.set(key, nextRowNum);
+    pending.push({ ...pf, rowNum: nextRowNum });
+    nextRowNum += 1;
+  }
+
+  if (pending.length === 0) return { body: null, renumber };
+
+  const merged: ParsedFact[] = [...existingFacts, ...pending.map((f) => {
+    const target = f.supersededBy === undefined ? undefined : renumber.get(f.supersededBy);
+    if (target === undefined) return f;
+    return { ...f, supersededBy: target, context: f.context?.replace(/superseded by #\d+/i, `superseded by #${target}`) };
+  })];
+
+  // Shared placement rule (#4756): replace in place, else insert ABOVE the
+  // timeline sentinel — never a blind EOF append below `## Timeline`.
+  return { body: replaceOrInsertFactsFence(body, renderFactsTable(merged)), renumber };
+}
+
+/**
+ * Move every phantom fact row to the canonical in one transaction, keeping
+ * ids, embeddings and history. A row takes exactly the canonical row number
+ * its fence row has on disk, so the canonical's next reconcile matches it
+ * instead of replacing it. A row whose number the canonical index already
+ * holds (a duplicate of a canonical fact) or that is absent from the fence
+ * moves expired and detached (row_num NULL) instead of being deleted.
+ * Returns the number of rows that moved into the canonical fence.
+ */
+async function migratePhantomFacts(
+  engine: BrainEngine,
+  sourceId: string,
+  phantomSlug: string,
+  canonicalSlug: string,
+  rowMap: ReadonlyMap<number, number>,
+): Promise<number> {
+  return engine.transaction(tx => movePhantomFacts(tx, sourceId, phantomSlug, canonicalSlug, rowMap));
+}
+
+/** The body of migratePhantomFacts inside the caller's transaction. */
+export async function movePhantomFacts(
+  tx: BrainEngine,
+  sourceId: string,
+  phantomSlug: string,
+  canonicalSlug: string,
+  rowMap: ReadonlyMap<number, number>,
+): Promise<number> {
+  const rows = await tx.executeRaw<{ id: number; row_num: number | null }>(
+    'SELECT id, row_num FROM facts WHERE source_id = $1 AND source_markdown_slug = $2',
+    [sourceId, phantomSlug],
+  );
+  const taken = new Set((await tx.executeRaw<{ row_num: number }>(
+    'SELECT row_num FROM facts WHERE source_id = $1 AND source_markdown_slug = $2 AND row_num IS NOT NULL',
+    [sourceId, canonicalSlug],
+  )).map(r => Number(r.row_num)));
+  let moved = 0;
+  for (const row of rows) {
+    const mapped = row.row_num == null ? undefined : rowMap.get(Number(row.row_num));
+    const target = mapped !== undefined && !taken.has(mapped) ? mapped : undefined;
+    if (target !== undefined) {
+      taken.add(target);
+      moved += 1;
+    }
+    await tx.executeRaw(
+      `UPDATE facts SET entity_slug = $3, source_markdown_slug = $3, row_num = $4::integer,
+          expired_at = CASE WHEN $4::integer IS NULL THEN COALESCE(expired_at, now()) ELSE expired_at END
+        WHERE id = $1 AND source_id = $2`,
+      [row.id, sourceId, canonicalSlug, target ?? null],
+    );
+  }
+  return moved;
+}
+
+/**
+ * Point the phantom's links at the canonical page (a merge between two page
+ * ids, not a rename, so nothing else moves them). A link the canonical
+ * already carries, or one that would become a self-link, stays on the
+ * soft-deleted phantom.
+ */
+export async function mergePhantomLinks(engine: BrainEngine, phantomId: number, canonicalId: number): Promise<void> {
+  await engine.executeRaw(
+    `UPDATE links l SET to_page_id = $2
+      WHERE l.to_page_id = $1 AND l.from_page_id <> $2
+        AND NOT EXISTS (SELECT 1 FROM links d
+          WHERE d.from_page_id = l.from_page_id AND d.to_page_id = $2 AND d.link_type = l.link_type
+            AND d.link_source IS NOT DISTINCT FROM l.link_source
+            AND d.origin_page_id IS NOT DISTINCT FROM l.origin_page_id)`,
+    [phantomId, canonicalId],
+  );
+  await engine.executeRaw(
+    `UPDATE links l SET from_page_id = $2
+      WHERE l.from_page_id = $1 AND l.to_page_id <> $2
+        AND NOT EXISTS (SELECT 1 FROM links d
+          WHERE d.from_page_id = $2 AND d.to_page_id = l.to_page_id AND d.link_type = l.link_type
+            AND d.link_source IS NOT DISTINCT FROM l.link_source
+            AND d.origin_page_id IS NOT DISTINCT FROM l.origin_page_id)`,
+    [phantomId, canonicalId],
+  );
 }
 
 /**
@@ -343,6 +451,18 @@ async function materializeCanonicalToDisk(
   fs.writeFileSync(canonicalPath, body, 'utf-8');
 }
 
+/** Frontmatter a bare phantom stub may carry; any other key is residue. */
+const PHANTOM_STUB_FRONTMATTER = new Set(['title', 'type', 'tags']);
+
+/** Anything a redirect would lose: body beyond the fence, timeline text or rows, custom frontmatter. */
+export async function phantomHasResidue(engine: BrainEngine, page: Page): Promise<boolean> {
+  const residue = stripFenceAndFrontmatterAndLeadingH1(page.compiled_truth ?? '')
+    + (page.timeline ?? '').trim()
+    + Object.keys(page.frontmatter ?? {}).filter(key => !PHANTOM_STUB_FRONTMATTER.has(key)).join(',');
+  if (residue.length > 0) return true;
+  return (await engine.executeRaw('SELECT 1 FROM timeline_entries WHERE page_id=$1 LIMIT 1', [page.id])).length > 0;
+}
+
 /**
  * Single-phantom redirect. Caller (the pass) is responsible for the
  * outer lock + the audit-log cap.
@@ -359,9 +479,10 @@ export async function tryRedirectPhantom(
 
   // A3 + codex #2: strict zero-residue body-shape gate. Real top-level
   // pages have prose; phantoms have only the stub-shape `# slug` + maybe
-  // a facts fence.
-  const residue = stripFenceAndFrontmatterAndLeadingH1(page.compiled_truth ?? '');
-  if (residue.length > 0) {
+  // a facts fence. Only fence rows migrate, so anything else the page holds
+  // (timeline text or rows, custom frontmatter) is residue that a redirect
+  // would delete.
+  if (await phantomHasResidue(engine, page)) {
     logPhantomEvent({
       phantom_slug: page.slug,
       outcome: 'not_phantom_has_residue',
@@ -381,9 +502,11 @@ export async function tryRedirectPhantom(
     return { outcome: 'no_canonical' };
   }
 
-  // D5 + codex #11: standalone ambiguity query.
+  // D5 + codex #11: standalone ambiguity query. A canonical that is not the
+  // single prefix candidate (e.g. a fuzzy hit on another page) is ambiguous
+  // too.
   const candidates = await findPrefixCandidates(engine, sourceId, page.slug);
-  if (candidates.length > 1) {
+  if (candidates.length > 1 || (candidates.length === 1 && candidates[0].slug !== canonical)) {
     logPhantomEvent({
       phantom_slug: page.slug,
       outcome: 'ambiguous',
@@ -406,25 +529,44 @@ export async function tryRedirectPhantom(
   // D10: dry-run preview — no FS / DB / audit writes.
   if (dryRun) return { outcome: 'redirected', canonical };
 
+  if (await managedPersistenceEnabled(engine)) {
+    const { redirectManagedPhantom } = await import('./phantom-redirect-managed.ts');
+    return redirectManagedPhantom(engine, page, canonical, sourceId);
+  }
+
   // ─── Commit phase (codex #3/#4/#6/#7) ─────────────────────────────
-  const canonicalPath = path.join(brainDir, `${canonical}.md`);
+  // The canonical file is the page's file of record (recorded source_path,
+  // own-local_path roots), resolved like every other fence writer. Only a
+  // brain with no configured root falls back to the pass's brainDir.
+  const writeTarget = await resolvePageWriteTarget(engine, canonical, sourceId);
+  if (!writeTarget.ok && writeTarget.skipped !== 'no_repo_configured') {
+    logPhantomEvent({
+      phantom_slug: page.slug,
+      outcome: 'drift',
+      source_id: sourceId,
+      reason: `canonical write target unavailable: ${writeTarget.skipped}`,
+    });
+    return { outcome: 'drift', canonical };
+  }
+  const canonicalPath = writeTarget.ok ? writeTarget.filePath : path.join(brainDir, `${canonical}.md`);
   await materializeCanonicalToDisk(engine, canonical, sourceId, canonicalPath);
 
   // Disk-side first: parse phantom's fence and append to canonical's
   // disk fence (dedup-guarded). If this throws, no DB state has moved
   // and the cycle can retry next run.
   const phantomFence = parseFactsFence(page.compiled_truth ?? '');
-  appendPhantomFenceRowsToCanonical(canonicalPath, phantomFence.facts);
+  const [dbMax] = await engine.executeRaw<{ n: number | string | null }>(
+    'SELECT MAX(row_num) AS n FROM facts WHERE source_id = $1 AND source_markdown_slug = $2',
+    [sourceId, canonical],
+  );
+  const rowMap = appendPhantomFenceRowsToCanonical(canonicalPath, phantomFence.facts, Number(dbMax?.n ?? 0));
 
   // Codex #7: refresh canonical's compiled_truth + content_hash so the
   // next `gbrain sync` sees the canonical as unchanged. We re-parse the
   // disk body and recompute the hash with the SHARED canonical helper
   // (`utils.ts:contentHash` — the #3694 single formula: ephemeral
   // frontmatter keys stripped, tags-key deleted, timeline||''), so the
-  // idempotency check round-trips byte-for-byte. A private copy of the
-  // shape lived here before and drifted (no ephemeral strip), so any
-  // captured canonical got a hash the importer never reproduced and the
-  // next sync re-chunked + re-embedded it.
+  // idempotency check round-trips byte-for-byte.
   const newCanonicalBody = fs.readFileSync(canonicalPath, 'utf-8');
   const reparsed = parseMarkdown(newCanonicalBody, `${canonical}.md`);
   const canonicalTags = await engine.getTags(canonical, { sourceId });
@@ -444,20 +586,20 @@ export async function tryRedirectPhantom(
     newContentHash,
   );
 
-  // Codex #3/#4/#12: lossless DB migration. Re-runs return migrated=0.
-  const migrated = await engine.migrateFactsToCanonical(page.slug, canonical, sourceId);
+  // Withdrawals are scoped to the entity; the phantom was the canonical
+  // entity. Moved first, so the withdrawal trigger honors them as the
+  // phantom's rows take the canonical subject.
+  await engine.executeRaw(MOVE_WITHDRAWAL_SUBJECT_SQL, [sourceId, page.slug, canonical]);
+  const migrated = await migratePhantomFacts(engine, sourceId, page.slug, canonical, rowMap);
 
-  // D6: DB FK rewrite for the links table (wiki-link text rewrite is a
-  // documented follow-up — codex #5).
-  await engine.rewriteLinks(page.slug, canonical);
+  const canonicalPage = await engine.getPage(canonical, { sourceId });
+  if (canonicalPage) await mergePhantomLinks(engine, page.id, canonicalPage.id);
+  await recordRenameAlias(engine, sourceId, page.slug, canonical);
 
   // Round 19/20: soft-delete + unlink. Order matters — softDelete first
   // so a concurrent sync that observes the phantom .md gone treats it as
   // a normal deletion (not a regression).
   await engine.softDeletePage(page.slug, { sourceId });
-  // Wipe any stale phantom DB facts that may have escaped the migration
-  // (e.g. expired rows that the migration WHERE clause skipped).
-  await engine.deleteFactsForPage(page.slug, sourceId);
   const phantomPath = path.join(brainDir, `${page.slug}.md`);
   if (fs.existsSync(phantomPath)) {
     try {
@@ -480,7 +622,7 @@ export async function tryRedirectPhantom(
     phantom_slug: page.slug,
     canonical_slug: canonical,
     outcome: 'redirected',
-    fact_count: migrated.migrated,
+    fact_count: migrated,
     source_id: sourceId,
   });
   return { outcome: 'redirected', canonical };

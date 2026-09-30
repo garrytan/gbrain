@@ -58,9 +58,9 @@ describe('#3190 gate 1 — same-directory markdown links', () => {
     expect(refs[0].sameDir).toBe(true);
   });
 
-  test('scheme/anchor/dir targets never match the sameDir pass', () => {
+  test('scheme/dir targets never match the sameDir pass; anchors are stripped (#4995)', () => {
     expect(extractEntityRefs('[x](https://example.com/a.md)').filter(r => r.sameDir)).toEqual([]);
-    expect(extractEntityRefs('[x](beta.md#section)').filter(r => r.sameDir)).toEqual([]);
+    expect(extractEntityRefs('[x](beta.md#section)').filter(r => r.sameDir).map(r => r.slug)).toEqual(['beta']);
     // dir-shaped targets belong to pass 1, not the sameDir pass
     const dirRefs = extractEntityRefs('[x](people/beta.md)');
     expect(dirRefs).toHaveLength(1);
@@ -108,8 +108,8 @@ describe('#3190 gate 1 — same-directory markdown links', () => {
       { skipFrontmatter: true },
     );
     expect(candidates.map(c => c.targetSlug)).toEqual([slugifyPath('docs/i18n/README.vi')]);
-    // Anchors and schemes stay excluded on the ./ arm too.
-    expect(extractEntityRefs('[x](./beta.md#section)').filter(r => r.sameDir)).toEqual([]);
+    // Schemes stay excluded on the ./ arm too; anchors are stripped (#4995).
+    expect(extractEntityRefs('[x](./beta.md#section)').filter(r => r.sameDir).map(r => r.slug)).toEqual(['beta']);
     expect(extractEntityRefs('[x](./https://example.com/a.md)').filter(r => r.sameDir)).toEqual([]);
   });
 });

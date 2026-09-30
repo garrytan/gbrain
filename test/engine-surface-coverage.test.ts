@@ -48,9 +48,9 @@ const DIM = 1536;
  */
 const INTERFACE_METHODS: readonly string[] = [
   // Lifecycle
-  'connect', 'disconnect', 'reconnect', 'initSchema', 'transaction', 'withReservedConnection',
+  'connect', 'disconnect', 'reconnect', 'initSchema', 'transaction', 'transactionDirect', 'registerBeforeDisconnect', 'withReservedConnection',
   // Pages CRUD
-  'getPage', 'putPage', 'findDuplicatePage', 'deletePage', 'deletePages', 'resolveSlugsByPaths',
+  'getPage', 'readPageSnapshot', 'lockPageKeys', 'putPage', 'findDuplicatePage', 'deletePage', 'deletePages', 'resolveSlugsByPaths',
   'softDeletePage', 'softDeletePages', 'restorePage', 'purgeDeletedPages', 'listPages', 'resolveSlugs', 'getAllSlugs',
   'listAllPageRefs', 'listAllSources', 'updateSourceConfig', 'listPrefixSampledPages', 'listCorpusSample',
   // Search
@@ -62,7 +62,7 @@ const INTERFACE_METHODS: readonly string[] = [
   // Extraction watermark
   'countStalePagesForExtraction', 'listStalePagesForExtraction', 'markPagesExtractedBatch',
   // Links + graph
-  'addLink', 'addLinksBatch', 'removeLink', 'getLinks', 'getBacklinks', 'listLinkSources',
+  'addLink', 'addLinksBatch', 'replaceDerivedLinks', 'removeLink', 'getLinks', 'getBacklinks', 'listLinkSources',
   'findByTitleFuzzy', 'traverseGraph', 'traversePaths', 'traversePathsDetailed', 'relationalFanout', 'getBacklinkCounts',
   'getAdjacencyBoosts', 'getContentFlagsByPageIds', 'getUnverifiedExtractionPageIds',
   'getPageTimestamps', 'getEffectiveDates', 'getSalienceScores', 'findOrphanPages',
@@ -123,6 +123,7 @@ const INTERFACE_METHODS: readonly string[] = [
  */
 const ENGINE_INTERNAL_HELPERS: readonly string[] = [
   'db',
+  'connectForRestore',
   'applyForwardReferenceBootstrap',
   'getBulkRetryOpts',
   'batchRetry',

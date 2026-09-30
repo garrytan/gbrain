@@ -89,5 +89,46 @@ export function isTitlePhraseMatch(query: string, title: string): boolean {
   return containsTokenRun(tTokens, qTokens);
 }
 
-// Exported for unit tests.
-export const __test__ = { tokenizeTitle, contentTokens, containsTokenRun, STOPWORDS, MIN_CONTENT_TOKENS };
+/** A one-content-token title must be at least this long to count as mentioned. */
+const MIN_SINGLE_TOKEN_TITLE_CHARS = 4;
+
+/**
+ * The reverse direction of `isTitlePhraseMatch`: is `title` mentioned INSIDE
+ * `query` as a contiguous token run? "who is Alice Example" mentions the page
+ * "Alice Example"; framed entity questions never equal a title, so the
+ * exact-match boost needs this to fire at all. Guarded against generic titles:
+ * the title needs >= MIN_CONTENT_TOKENS content tokens, or one content token of
+ * at least MIN_SINGLE_TOKEN_TITLE_CHARS characters.
+ */
+export function isTitleMentionedInQuery(query: string, title: string): boolean {
+  const qTokens = tokenizeTitle(query);
+  const tTokens = tokenizeTitle(title);
+  if (tTokens.length === 0 || tTokens.length > qTokens.length) return false;
+  const tContent = contentTokens(tTokens);
+  if (tContent.length === 0) return false;
+  if (tContent.length < MIN_CONTENT_TOKENS && tContent[0].length < MIN_SINGLE_TOKEN_TITLE_CHARS) return false;
+  return containsTokenRun(qTokens, tTokens);
+}
+
+/** Share of the query's distinct content tokens a title must supply to count as the query's subject. */
+const TITLE_SUBJECT_MIN_COVERAGE = 0.5;
+
+/**
+ * The strict form used under intents without an exact-match boost (#4694):
+ * returns the title's tokens when `title` (>= MIN_CONTENT_TOKENS content
+ * tokens) is mentioned in `query` AND supplies at least half of the query's
+ * distinct content tokens — the query asks for this document by name ("Which
+ * document is <title>?"). A title mentioned inside a longer question about
+ * something else ("Which amendment superseded the <title>?") does not
+ * qualify: on the #4694 benchmark boosting those sent the mentioned page
+ * above the right answer. Returns null otherwise.
+ */
+export function titleAsQuerySubject(query: string, title: string): string[] | null {
+  const tTokens = tokenizeTitle(title);
+  const tContent = contentTokens(tTokens);
+  if (tContent.length < MIN_CONTENT_TOKENS || !isTitleMentionedInQuery(query, title)) return null;
+  const qContent = new Set(contentTokens(tokenizeTitle(query)));
+  return tContent.length / qContent.size >= TITLE_SUBJECT_MIN_COVERAGE ? tTokens : null;
+}
+
+export { containsTokenRun };

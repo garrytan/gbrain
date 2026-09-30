@@ -43,6 +43,11 @@ import {
   skillPath,
 } from '../../src/core/skillopt/version-store.ts';
 import { loadRejectedBuffer } from '../../src/core/skillopt/rejected-buffer.ts';
+import {
+  _resetAuditWriterForTests,
+  currentAuditFilename,
+  resolveAuditDir,
+} from '../../src/core/skillopt/audit.ts';
 import type { EditOp } from '../../src/core/skillopt/types.ts';
 
 let engine: PGLiteEngine;
@@ -441,13 +446,26 @@ describe('skillopt full-loop E2E (happy path + broken cases)', () => {
     }
   });
 
-  test('broken: malformed reflect JSON (no edits parsed, no acceptance)', async () => {
-    // The optimizer returns syntactically broken JSON. The reflect module's
-    // forgiving parser yields zero valid edits; applyEditBatch sees an empty
-    // batch; the orchestrator hits the "no_edits_applied" branch; the sel
-    // gate is never invoked. SKILL.md stays untouched. Critically: the run
-    // does NOT crash on malformed optimizer output (graceful degradation).
+  test('broken: malformed reflect JSON ends errored (optimizer_output_unusable), early-stops, keeps the checkpoint', async () => {
+    // The optimizer returns syntactically broken JSON. Every reflect call
+    // records reflect_<mode>_no_parseable_edits; the orchestrator hits the
+    // zero-candidate branch; the sel gate is never invoked. SKILL.md stays
+    // untouched and the run does NOT crash.
+    //
+    // #4741: a step where the optimizer proposed NOTHING is said on stderr
+    // and logs reason 'no_edits_proposed' (distinct from apply-rejected).
+    // #5584: a run where the optimizer NEVER produced a usable reply is not a
+    // `no_improvement` measurement — it ends `errored` with
+    // abort_detail 'optimizer_output_unusable: ...', stops after 2 fully
+    // unusable steps, keeps its checkpoint and carries remediation + the
+    // exact resume command.
     const fixture = setupFixture(SKILL_PEOPLE_ONLY);
+    const stderrLines: string[] = [];
+    const realWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = ((chunk: string | Uint8Array) => {
+      stderrLines.push(String(chunk));
+      return true;
+    }) as typeof process.stderr.write;
     try {
       installStub({
         // Adversarial: looks like JSON but isn't. Different broken shapes
@@ -456,19 +474,42 @@ describe('skillopt full-loop E2E (happy path + broken cases)', () => {
       });
       try {
         await withEnv({ GBRAIN_AUDIT_DIR: fixture.skillsDir }, async () => {
+          _resetAuditWriterForTests();
           const result = await runOnce(fixture);
 
-          expect(result.outcome).toBe('no_improvement');
+          expect(result.outcome).toBe('errored');
+          expect(result.receipt.abort_reason).toBe('error');
+          expect(result.receipt.abort_detail).toMatch(/^optimizer_output_unusable: reflect_(failure|success)_no_parseable_edits: /);
+          expect(result.receipt.stop_reason).toBe('early_stop_unusable_output');
+          expect(result.receipt.total_steps).toBe(2);
+          expect(result.receipt.reflect_errors!.length).toBeGreaterThan(0);
+          expect(result.receipt.remediation!.map((r) => r.code)).toContain('reflect_no_parseable_edits');
+          expect(result.receipt.resume_command).toContain(`--resume ${result.receipt.run_id}`);
+          expect(fs.existsSync(path.join(fixture.skillsDir, SKILL, 'skillopt', `checkpoint-${result.receipt.run_id}.json`))).toBe(true);
           expect(result.mutatedSkillFile).toBe(false);
           expect(fs.readFileSync(skillPath(fixture.skillsDir, SKILL), 'utf8'))
             .toBe(SKILL_PEOPLE_ONLY);
           expect(loadHistory(fixture.skillsDir, SKILL).filter((r) => r.status === 'committed'))
             .toHaveLength(0);
+
+          // #4741: the operator is told, per step, that no candidate existed.
+          const stderrText = stderrLines.join('');
+          expect(stderrText).toMatch(/optimizer proposed no edits/);
+          expect(stderrText).toMatch(/stopped after 2 steps of reflect_no_parseable_edits; remaining budget not spent/);
+          // …and the audit step carries a reason distinct from apply-rejected.
+          const auditFile = path.join(resolveAuditDir(), currentAuditFilename());
+          const steps = fs.readFileSync(auditFile, 'utf8').trim().split('\n')
+            .map((l) => JSON.parse(l) as { kind: string; reason?: string })
+            .filter((e) => e.kind === 'step');
+          expect(steps.length).toBe(2);
+          for (const st of steps) expect(st.reason).toMatch(/^no_edits_proposed: reflect_/);
         });
       } finally {
         uninstallStub();
       }
     } finally {
+      process.stderr.write = realWrite;
+      _resetAuditWriterForTests();
       fixture.cleanup();
     }
   });

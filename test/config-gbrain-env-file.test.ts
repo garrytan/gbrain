@@ -72,19 +72,19 @@ describe('loadConfig — ~/.gbrain/.env secrets file (#3893)', () => {
       [
         'ANTHROPIC_API_KEY="sk-quoted-value"',
         "OPENROUTER_API_KEY='sk-single-quoted'",
-        'ZEROENTROPY_API_KEY=sk-inline # trailing comment',
+        'VOYAGE_API_KEY=sk-inline # trailing comment',
         '',
       ].join('\n'),
       {
         ANTHROPIC_API_KEY: undefined,
         OPENROUTER_API_KEY: undefined,
-        ZEROENTROPY_API_KEY: undefined,
+        VOYAGE_API_KEY: undefined,
       },
       () => {
         loadConfig();
         expect(process.env.ANTHROPIC_API_KEY).toBe('sk-quoted-value');
         expect(process.env.OPENROUTER_API_KEY).toBe('sk-single-quoted');
-        expect(process.env.ZEROENTROPY_API_KEY).toBe('sk-inline');
+        expect(process.env.VOYAGE_API_KEY).toBe('sk-inline');
       },
     );
   });
@@ -109,6 +109,19 @@ describe('loadConfig — ~/.gbrain/.env secrets file (#3893)', () => {
         expect(loadConfig()).not.toBeNull();
         expect(process.env.GBRAIN_TEST_ENV_FILE_EMPTY).toBeUndefined();
         expect(process.env.GBRAIN_TEST_ENV_FILE_OK).toBe('yes');
+      },
+    );
+  });
+
+  test('a bare CR terminates a line, as in Bun\'s own loader (grammar shared with env-trust.ts)', async () => {
+    await withEnvFile(
+      'GBRAIN_TEST_ENV_FILE_A=first\rGBRAIN_TEST_ENV_FILE_B=second\r\nGBRAIN_TEST_ENV_FILE_C=third\n',
+      { GBRAIN_TEST_ENV_FILE_A: undefined, GBRAIN_TEST_ENV_FILE_B: undefined, GBRAIN_TEST_ENV_FILE_C: undefined },
+      () => {
+        loadConfig();
+        expect(process.env.GBRAIN_TEST_ENV_FILE_A).toBe('first');
+        expect(process.env.GBRAIN_TEST_ENV_FILE_B).toBe('second');
+        expect(process.env.GBRAIN_TEST_ENV_FILE_C).toBe('third');
       },
     );
   });

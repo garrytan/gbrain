@@ -99,7 +99,7 @@ const file_upload: Operation = {
     const { createStorage } = await import('../storage.ts');
     const storage = await createStorage(ctx.config.storage as any);
 
-    const { sqlQueryForEngine } = await import('../sql-query.ts');
+    const { sqlQueryForEngine, executeRawJsonb, FILES_METADATA_MERGE_SQL } = await import('../sql-query.ts');
     const sql = sqlQueryForEngine(ctx.engine);
     const existing = await sql`SELECT id FROM files WHERE content_hash = ${hash} AND storage_path = ${storagePath}`;
     if (existing.length > 0) {
@@ -121,14 +121,22 @@ const file_upload: Operation = {
     }
 
     try {
-      await sql`
-        INSERT INTO files (page_slug, filename, storage_path, mime_type, size_bytes, content_hash, metadata)
-        VALUES (${pageSlug}, ${filename}, ${storagePath}, ${mimeType}, ${stat.size}, ${hash}, ${'{}'}::jsonb)
-        ON CONFLICT (storage_path) DO UPDATE SET
-          content_hash = EXCLUDED.content_hash,
-          size_bytes = EXCLUDED.size_bytes,
-          mime_type = EXCLUDED.mime_type
-      `;
+      // #4910: stamp the storage lane (doctor image_assets / files verify
+      // classify on it) and merge metadata on conflict so legacy `{}` rows
+      // heal on their next content change. Real object via executeRawJsonb —
+      // never a JSON string into ::jsonb (#2339).
+      await executeRawJsonb(
+        ctx.engine,
+        `INSERT INTO files (page_slug, filename, storage_path, mime_type, size_bytes, content_hash, metadata)
+         VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+         ON CONFLICT (storage_path) DO UPDATE SET
+           content_hash = EXCLUDED.content_hash,
+           size_bytes = EXCLUDED.size_bytes,
+           mime_type = EXCLUDED.mime_type,
+           ${FILES_METADATA_MERGE_SQL}`,
+        [pageSlug, filename, storagePath, mimeType, stat.size, hash],
+        [{ storage: (ctx.config.storage as { backend: string }).backend }],
+      );
     } catch (dbErr) {
       // Rollback: clean up storage if DB write failed
       try {

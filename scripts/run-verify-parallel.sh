@@ -58,9 +58,12 @@ CHECKS=(
   # scripts/guards-manifest.tsv (package.json's stale `check:all` copy deleted).
   "check:guard-self-test"
   # B4 (test-gap wave 2): runtime-reachability walk over src/** — hard-fails
-  # true orphans (unreachable from every entrypoint AND every test), ratchets
-  # the test-only-reachable tier. Whole-tree readFileSync walk, ~1s.
+  # true orphans (unreachable from every entrypoint AND every test) and any
+  # test-only module without a reasoned PERMITTED_TEST_ONLY entry. ~1s.
   "check:orphan-modules"
+  # No-op placeholder assertions (expect(true).toBe(true) and friends) in
+  # test/**/*.test.ts; TypeScript AST scan, ~3s over the full corpus.
+  "check:test-placeholders"
   # Chronicle eval: $0, deterministic, exit-0-only-on-perfect (6 gold tasks).
   # Boots its own PGLite — budget ≤60s under a saturated pool; if it breaches
   # ~100s under contention, move it into the serial-tests CI job instead.
@@ -123,6 +126,8 @@ CHECKS=(
   # Containment sprint: module-size ratchet + structural-suite freshness.
   "check:module-size"
   "check:structural-manifest"
+  # v0.50.5.0 security wave: compiled binaries must not autoload a cwd bunfig.toml.
+  "check:compile-autoload"
 )
 
 if [ "${#CHECKS[@]}" -eq 0 ]; then

@@ -9,6 +9,7 @@
 import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import { MEMORY_VERBS_VERSION } from '../verbs.ts';
+import { publicWriteReceipt, type WriteErrorCode, type WriteReceipt } from '../persistence/types.ts';
 
 // --- Types ---
 
@@ -22,6 +23,7 @@ import { MEMORY_VERBS_VERSION } from '../verbs.ts';
  * v0.31 added: 'rate_limited', 'extraction_failed', 'fact_not_found'.
  */
 export type ErrorCode =
+  | WriteErrorCode
   | 'page_not_found'
   | 'invalid_params'
   | 'embedding_failed'
@@ -43,6 +45,7 @@ export type ErrorCode =
   | 'provenance_required'  // remember: provenance missing or empty
   | 'unavailable'          // a required dependency cannot serve (no API key, gateway down, model refusal)
   | 'budget_unsatisfiable' // RESERVED in v1 — schema-listed, never returned
+  | 'embedding_budget_below_worst_case' // #5680: migration cap below its worst-case authorization; refused before any change
   // eslint-disable-next-line @typescript-eslint/ban-types
   | (string & {});      // OPEN union for forward-compat (eE7 / D13)
 
@@ -55,6 +58,8 @@ export class OperationError extends Error {
    */
   public detail?: string;
   public protocolVersion?: number;
+  public writeRequest?: WriteReceipt;
+  public writeError?: WriteErrorCode;
 
   constructor(
     public code: ErrorCode,
@@ -74,6 +79,8 @@ export class OperationError extends Error {
       docs: this.docs,
       detail: this.detail,
       protocol_version: this.protocolVersion,
+      ...(this.writeRequest ? { write_request: publicWriteReceipt(this.writeRequest) } : {}),
+      ...(this.writeError ? { write_error: this.writeError } : {}),
     };
   }
 }
@@ -479,6 +486,7 @@ export interface Operation {
    * because the trust boundary there is the OS, not OAuth scopes.
    */
   scope?: 'read' | 'write' | 'admin' | 'sources_admin' | 'users_admin' | 'agent';
+  requiredScopes?: readonly string[];
   localOnly?: boolean;
   /**
    * WP1 honest catalog: the op is callable by remote callers only when this

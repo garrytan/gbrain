@@ -6,6 +6,12 @@ per-turn context, session-triggered schedules, and a private GitHub repo as the
 agent's durable, portable body. This guide is the full contract — what gets
 installed, what runs when, what it can and cannot do, and how to undo all of it.
 
+Use that identity-building path only when creating a new personal agent is
+explicitly requested. Adding memory or shared skills to an existing agent does
+not require an interview, a new identity, or a private repository. Use
+[hosted access](hosted-harness-access.md) or
+[in-agent setup](in-agent-setup.md), preserving unrelated instructions.
+
 Normative design docs: [AGENT_BOOTSTRAP_DESIGN.md](../designs/AGENT_BOOTSTRAP_DESIGN.md)
 (scope) and [AGENT_BOOTSTRAP_PLAN.md](../designs/AGENT_BOOTSTRAP_PLAN.md)
 (implementation). The paste block lives in the README; the runbook your agent
@@ -23,8 +29,9 @@ follows is `BOOTSTRAP_FOR_AGENTS.md` at the repo root, fetched at the
 | Hooks (Claude Code, ON by default) | local installs: `.claude/settings.local.json` (gitignored); cloud sandboxes: the COMMITTED `.claude/settings.json` (PATH-resolved, fail-open commands) | each prompt; fail-open; `--no-hooks` opts out at install, `GBRAIN_HOOKS=0` disables at runtime |
 | Codex SessionEnd hook (session capture only) | user-global `hooks.json` + a config.toml trust entry under CODEX_HOME (both managed by bootstrap — codex hooks are silently inert without the trust entry) | at codex session end, machine-wide; `--no-hooks` opts out, `GBRAIN_HOOKS=0` disables |
 | Memorable relay (OFF by default, disclosure-gated) | receipt + relay spawn from the session-end hooks / OpenClaw compaction; the third-party `memorable` CLI sends the redacted trace off-machine — see `docs/memorable-agents.md` | only after `gbrain config set integrations.memorable.enabled true` is accepted by a human; `GBRAIN_MEMORABLE=0` kills it |
-| Per-turn persistence | Stop hook → debounced, detached scan-gated push (per workspace; 5 min default, every turn in cloud sandboxes) | after each assistant turn; `GBRAIN_STOP_PUSH=0` disables; `GBRAIN_STOP_PUSH_DEBOUNCE_MIN` / config `hooks.stop_push_debounce_min` tune it |
-| Session persistence | SessionEnd hook → scan-gated commit+push | at session end (note: the harness never fires SessionEnd on `/exit` — the per-turn push is what covers that) |
+| Per-turn persistence | Stop hook → debounced, detached scan-gated push (per workspace; 5 min default, every turn in cloud sandboxes) | after each assistant turn; `GBRAIN_STOP_PUSH=0` disables; `GBRAIN_STOP_PUSH_DEBOUNCE_MIN` / config `hooks.stop_push_debounce_min` tune it (Stop path only — the two rows below have neither) |
+| Session persistence | SessionEnd hook → detached scan-gated commit+push; no per-path switch or debounce — spawns on every SessionEnd (the child commits only when the tree is dirty and otherwise just pushes); `GBRAIN_HOOKS=0` is the only off-switch | at session end (note: the harness never fires SessionEnd on `/exit` — the per-turn push is what covers that); heartbeat `session-end` entries carry `reason: push_spawned`, so an auto-commit can be attributed to this path |
+| Crash recovery | SessionStart hook → detached scan-gated push when the workspace has uncommitted changes or commits ahead of origin (bootstrap workspaces only, after the repo phase completes); no switch or debounce beyond `GBRAIN_HOOKS=0` | at session start; heartbeat `session-start` entries carry `reason: push_spawned` |
 | Compaction checkpoints | PreCompact hook → secret-scanned boundary segment banked to the corpus dir; a live serve harvests it into facts + `brain://` links (see `docs/guides/checkpoint-compaction.md`) | at each Claude Code compaction; links render as `## Compaction checkpoints` on the post-compaction session start |
 | Ambient-writeback instruction blocks (OFF by default — only when `memory.auto_writeback` is enabled, and installed by HARNESS mode, not the workspace install) | managed `<!-- gbrain:ambient-writeback -->` blocks in user-scope `CLAUDE.md` (Claude Code) + `$CODEX_HOME/AGENTS.md` (Codex); the Stop-hook backstop banks gated user turns for serve-side extraction (see `docs/guides/ambient-writeback.md`) | while enabled; re-run `bootstrap harness` after config changes; off-mode re-runs remove the blocks |
 | Push-failure visibility | next turn's context + a user-visible notice; re-announces every 30 min while failing | whenever a background push fails |
@@ -169,6 +176,27 @@ you'd apply to any journal: write what you'd be comfortable persisting.
 
 ## Local harness mode (`gbrain bootstrap harness`)
 
+Fresh local harness wiring defaults to `--skills follow`, and
+`--skills memory-only` opts out. Re-runs preserve the recorded choice; an older
+receipt with no choice stays memory-only until explicitly changed. Fresh brain
+content setup supplies a limited packaged-prose policy, while an existing
+brain may still need owner follow approval.
+
+Bootstrap mints separate owned credentials and operation snapshots for each
+independent harness. Supplying one token for several harnesses leaves skill
+enrollment pending rather than pretending they are independent principals.
+Existing grants or missing owner follow approval can leave memory connected
+with skills pending.
+
+Claude Code, Codex, and opencode receive owned native routers after successful
+enrollment, with `restart_required` and native activation unverified. Read the
+receipt's `shared_skills` entries, restart, and observe a new conversation.
+The router is advisory; it is not an enforced vendor invocation hook. Following
+revisions changes neither capture consent nor spending/tool authority. The
+parent harness follows the same canonical revisions as other members. See
+[shared brain skills](shared-brain-skills.md) for migration, conflicts, and the
+separate protocol/files/native acceptance checks.
+
 The workspace install above is built for a human's laptop. A box run by an
 agent framework (your OpenClaw, or anything that shells out to `claude -p` /
 codex exec) already hosts a brain and a running `gbrain serve --http` — and
@@ -262,9 +290,12 @@ downgrade after a harness install, revoke the scoped tokens first
 
 Clone your agent repo on machine two and run `gbrain bootstrap attach` — it
 validates the manifest, wires this machine (source registration, hooks repair,
-MCP), and verifies. The brain database is derived state, rebuilt from `brain/` +
-re-ingestion; hot facts extracted only on machine one arrive via the repo's pages
-and fences. Simultaneous editing from two machines is ordinary git conflict
+MCP), and verifies. Content projections can be rebuilt from `brain/` + re-ingestion;
+hot facts extracted only on machine one arrive via the repo's pages and fences.
+Shared-skill grants, policies, memberships, revocations, and durable receipts are
+operational database state, not reconstructible from Git alone. Keep a protected
+database backup, and do not clone live enrollment identities into an independent
+brain. Simultaneous editing from two machines is ordinary git conflict
 territory — `sources push` pulls divergence-safely (commit first, rebase pull,
 loud on conflicts).
 

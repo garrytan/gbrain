@@ -12,11 +12,15 @@
  */
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
+import { splitDotenvLines } from './env-trust.ts';
 
 // KEY=VALUE with a POSIX-shaped name. `export KEY=...` is deliberately not
 // accepted: this is an env FILE, not a shell script (same stance as Bun's
-// own .env loader).
-const ASSIGNMENT = /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/;
+// own .env loader). Line grammar is shared with the cwd-.env guard
+// (env-trust.ts): `\n`, `\r\n` AND a bare `\r` terminate a line, a leading
+// BOM is stripped, and the RHS is "everything up to the terminator" — never
+// `.*$`, which cannot match past a `\r` or U+2028 and would hide the line.
+const ASSIGNMENT = /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([^\r\n]*)$/;
 
 /**
  * Parse `<dir>/.env` and fill process.env with its assignments.
@@ -30,7 +34,7 @@ export function loadGbrainEnvFile(resolveDir: () => string): void {
     const envPath = join(resolveDir(), '.env');
     if (!existsSync(envPath)) return;
     const raw = readFileSync(envPath, 'utf-8');
-    for (const rawLine of raw.split('\n')) {
+    for (const rawLine of splitDotenvLines(raw)) {
       const line = rawLine.trim();
       if (!line || line.startsWith('#')) continue;
       const m = line.match(ASSIGNMENT);

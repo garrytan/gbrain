@@ -87,7 +87,8 @@ const FIXTURES: MiniFixture[] = [
 //   - an EXACT quote (survives untouched),
 //   - a normalized-drift quote (straight apostrophe + hyphen where the
 //     transcript has none → actually: whitespace drift) → repaired verbatim,
-//   - a FABRICATED quote → stripped (text kept, marks removed),
+//   - a FABRICATED quote → its unit is quarantined (out of the body, kept in
+//     frontmatter `unverified_claims`),
 // plus every expected salient unit as plain prose (the presence canary).
 const FABRICATED = 'we should rewrite the entire product in a weekend, obviously';
 
@@ -198,7 +199,7 @@ describe('F-Eval: hermetic write-path mini-eval (real phase, scripted transport)
         verdicts: Array<{ filePath: string; worth: boolean; rescued?: boolean; score: number | null }>;
         triage: { rescue_fired: number; rescue_checked: number; below_threshold: number; tokens_in: number };
         synthesis: {
-          quote_verify: { pages_checked: number; quotes_total: number; exact: number; normalized_fixed: number; near_fixed: number; stripped: number; pages_repaired: number; errors: number } | null;
+          quote_verify: { pages_checked: number; quotes_total: number; exact: number; normalized_fixed: number; near_fixed: number; quarantined_claims: number; quote_not_in_source: number; pages_repaired: number; errors: number } | null;
           spend: { cost_basis: string; children: { tokens_in: number }; triage: { tokens_in: number } };
           children_zero_pages: number;
         };
@@ -216,13 +217,14 @@ describe('F-Eval: hermetic write-path mini-eval (real phase, scripted transport)
       expect(details.triage.below_threshold).toBe(1); // routine only — rescued is NOT below-threshold
       expect(details.pages_written).toBe(2);
 
-      // ── Repair ladder on the REAL written pages (per page: 1 exact, 1 repaired, 1 stripped).
+      // ── Repair ladder on the REAL written pages (per page: 1 exact, 1 repaired, 1 quarantined).
       const qv = details.synthesis.quote_verify!;
       expect(qv.pages_checked).toBe(2);
       expect(qv.errors).toBe(0);
       expect(qv.exact).toBe(2);
       expect(qv.normalized_fixed).toBe(2);
-      expect(qv.stripped).toBe(2);
+      expect(qv.quote_not_in_source).toBe(2);
+      expect(qv.quarantined_claims).toBe(2);
       expect(qv.pages_repaired).toBe(2);
 
       // ── Salient-unit presence canary: every expected unit, normalized, in a written page body.
@@ -246,8 +248,16 @@ describe('F-Eval: hermetic write-path mini-eval (real phase, scripted transport)
       const mdPaths = details.written_slugs.map(s => join(brainDir, `${s}.md`));
       for (const p of mdPaths) expect(existsSync(p)).toBe(true);
       const mdAll = mdPaths.map(p => readFileSync(p, 'utf8')).join('\n');
-      expect(normForGrounding(mdAll)).toContain(normForGrounding(FABRICATED));
-      expect(mdAll).not.toContain(`"${FABRICATED}"`); // stripped, not quoted
+      // The fabricated quote is out of every page body (no chunks, no
+      // search) and preserved for review in frontmatter.
+      for (const slug of details.written_slugs) {
+        const page = await engine.getPage(slug, { sourceId: 'default' });
+        expect(normForGrounding(`${page!.compiled_truth}\n${page!.timeline}`)).not.toContain(normForGrounding(FABRICATED));
+        const records = page!.frontmatter.unverified_claims as Array<{ text: string; reason: string }>;
+        expect(records.map(r => r.reason)).toEqual(['quote_not_in_source']);
+        expect(records[0].text).toContain(FABRICATED);
+      }
+      expect(mdAll).toContain('unverified_claims:');
       // The drifted quote was repaired to a verbatim transcript slice.
       expect(normForGrounding(mdAll)).toContain(normForGrounding('rewrite renewal emails as value receipts sixty days before the invoice'));
 
@@ -258,7 +268,7 @@ describe('F-Eval: hermetic write-path mini-eval (real phase, scripted transport)
     }
   }, 120_000);
 
-  test('kill switch: quote_verify=false leaves fabricated quotes intact and reports quote_verify null; a declining child counts in children_zero_pages', async () => {
+  test('kill switch: quote_verify=false leaves fabricated quotes intact and reports quote_verify null; a declining child completes and counts in children_zero_pages (#5590)', async () => {
     const brainDir2 = mkdtempSync(join(tmpdir(), 'gbrain-minieval-brain2-'));
     const corpusDir2 = mkdtempSync(join(tmpdir(), 'gbrain-minieval-corpus2-'));
     try {
@@ -295,9 +305,12 @@ describe('F-Eval: hermetic write-path mini-eval (real phase, scripted transport)
       const result = await withEnv({ ANTHROPIC_API_KEY: 'sk-test-mini-eval' }, () =>
         runPhaseSynthesize(engine, { brainDir: brainDir2, dryRun: false }));
       expect(result.status).toBe('ok');
-      const d = result.details as { written_slugs: string[]; synthesis: { quote_verify: unknown; children_zero_pages: number } };
+      const d = result.details as { written_slugs: string[]; child_outcomes: Array<{ status: string }>; synthesis: { quote_verify: unknown; children_zero_pages: number; non_completed_jobs: number } };
       expect(d.synthesis.quote_verify).toBeNull();               // pass skipped entirely
       expect(d.synthesis.children_zero_pages).toBe(1);           // rule-D decliner counted
+      expect(d.synthesis.non_completed_jobs).toBe(0);
+      expect(d.child_outcomes.every(child => child.status === 'completed')).toBe(true);
+      expect(await engine.getConfig('dream.synthesize.last_completion_ts')).not.toBe('');
       const killSlug = d.written_slugs.find(s => s.includes('killswitch'));
       expect(killSlug).toBeDefined();
       const page = await engine.getPage(killSlug!, { sourceId: 'default' });

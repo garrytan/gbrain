@@ -1,8 +1,10 @@
+import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { installPageProjection, readProjectionSnapshot } from '../src/core/page-state/projections.ts';
 /**
  * SUP-3874 — heal already-stored chunks that exceed the embedding input cap.
  */
 
-import { describe, test, expect, beforeEach, afterAll } from 'bun:test';
+import { describe, test, expect, beforeAll, beforeEach, afterAll } from 'bun:test';
 import {
   healOversizedChunks,
   healedChunksToStaleRows,
@@ -183,113 +185,43 @@ describe('healOversizedChunks', () => {
   });
 });
 
-describe('healOversizedPageChunks (load → split → upsert → reload orchestrator)', () => {
-  test('no-op path: every chunk fits → returns the loaded chunks, never calls upsertChunks', async () => {
-    const existing = [
-      chunkRow({ chunk_index: 0, chunk_text: 'fits fine' }),
-      chunkRow({ id: 2, chunk_index: 1, chunk_text: 'also fits' }),
-    ];
-    const methodCalls: string[] = [];
-    const engine = {
-      getChunks: async () => {
-        methodCalls.push('getChunks');
-        return existing;
-      },
-      upsertChunks: async () => {
-        methodCalls.push('upsertChunks');
-      },
-    };
+describe('healOversizedPageChunks with guarded database projections', () => {
+  let engine: PGLiteEngine;
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+  }, 120_000);
+  afterAll(async () => { await engine.disconnect(); });
 
-    const onSplitCalls: number[] = [];
-    const res = await healOversizedPageChunks(engine as never, 'notes/fits', {
-      maxTokens: MXBAI_CAP,
-      onSplit: (n) => onSplitCalls.push(n),
-    });
+  async function seed(slug: string, body: string) {
+    await engine.putPage(slug, { type: 'note', title: 'Example', compiled_truth: body });
+    const prepared = (await readProjectionSnapshot(engine, slug, 'default', { allowUnsealed: true }))!;
+    await installPageProjection(engine, prepared,
+      [{ chunk_index: 0, chunk_text: body, chunk_source: 'compiled_truth' }], { seal: true });
+    return prepared.snapshot;
+  }
 
-    expect(res.changed).toBe(false);
-    expect(res.splitCount).toBe(0);
-    // The SAME loaded array comes back — no reload, no write, no onSplit.
-    expect(res.chunks).toBe(existing);
-    expect(methodCalls).toEqual(['getChunks']);
-    expect(onSplitCalls).toEqual([]);
+  test('small chunks retain their stored identity and canonical revision', async () => {
+    const snapshot = await seed('oversize-small', 'A short example.');
+    const before = await engine.getChunks('oversize-small');
+    const result = await healOversizedPageChunks(engine, 'oversize-small', { maxTokens: MXBAI_CAP });
+    expect(result.changed).toBe(false);
+    expect(result.chunks.map(c => c.id)).toEqual(before.map(c => c.id));
+    expect((await engine.readPageSnapshot('oversize-small'))!.revision).toBe(snapshot.revision);
   });
 
-  test('changed path: fires onSplit(n), upserts split pieces scoped to the source, returns the RELOADED chunks', async () => {
-    const oversized = fatParagraph(40);
-    const initial = [chunkRow({ chunk_index: 0, chunk_text: oversized, token_count: 5000 })];
-    const reloaded = [
-      chunkRow({ chunk_index: 0, chunk_text: 'reloaded piece one' }),
-      chunkRow({ id: 2, chunk_index: 1, chunk_text: 'reloaded piece two' }),
-    ];
-    let getCalls = 0;
-    const getOptsSeen: unknown[] = [];
-    let upserted: Array<{ chunk_text: string }> | undefined;
-    let upsertOpts: unknown;
-    const engine = {
-      getChunks: async (_slug: string, opts?: unknown) => {
-        getCalls++;
-        getOptsSeen.push(opts);
-        // Read 1 = snapshot, read 2 = the freshness-guard recheck (must match
-        // the snapshot or the heal skips), read 3 = the post-upsert reload.
-        return getCalls <= 2 ? initial : reloaded;
-      },
-      upsertChunks: async (_slug: string, chunks: Array<{ chunk_text: string }>, opts?: unknown) => {
-        upserted = chunks;
-        upsertOpts = opts;
-      },
-    };
-
-    const onSplitCalls: number[] = [];
-    const res = await healOversizedPageChunks(engine as never, 'notes/fat', {
-      sourceId: 'src-a',
-      maxTokens: MXBAI_CAP,
-      onSplit: (n) => onSplitCalls.push(n),
-    });
-
-    expect(onSplitCalls).toEqual([1]);
-    expect(res.changed).toBe(true);
-    expect(res.splitCount).toBe(1);
-    // The result is the RE-LOADED chunk list (post-upsert DB truth), not the
-    // in-memory split — callers feed it to healedChunksToStaleRows.
-    expect(res.chunks).toBe(reloaded);
-    // The upsert received the split pieces, each within the cap.
-    expect(upserted).toBeDefined();
-    expect(upserted!.length).toBeGreaterThan(1);
-    for (const c of upserted!) {
-      expect(estimateEmbedTokens(c.chunk_text)).toBeLessThanOrEqual(MXBAI_CAP);
-    }
-    // All three reads (snapshot, freshness recheck, reload) and the write
-    // stay scoped to the caller's source.
-    expect(getOptsSeen).toEqual([{ sourceId: 'src-a' }, { sourceId: 'src-a' }, { sourceId: 'src-a' }]);
-    expect(upsertOpts).toEqual({ sourceId: 'src-a' });
+  test('oversized chunks split atomically and remain readable under the same canonical revision', async () => {
+    const snapshot = await seed('oversize-large', fatParagraph(40));
+    const splits: number[] = [];
+    const result = await healOversizedPageChunks(engine, 'oversize-large', { maxTokens: MXBAI_CAP, onSplit: n => splits.push(n) });
+    expect(result.changed).toBe(true);
+    expect(splits).toEqual([1]);
+    expect(result.chunks.length).toBeGreaterThan(1);
+    for (const c of result.chunks) expect(estimateEmbedTokens(c.chunk_text)).toBeLessThanOrEqual(MXBAI_CAP);
+    expect(await engine.getChunks('oversize-large', { requireSafeChunks: true })).toHaveLength(result.chunks.length);
+    expect((await engine.readPageSnapshot('oversize-large'))!.revision).toBe(snapshot.revision);
   });
-
-  test('freshness guard: a concurrent rewrite between snapshot and write skips the heal (no clobber)', async () => {
-    const oversized = fatParagraph(40);
-    const initial = [chunkRow({ chunk_index: 0, chunk_text: oversized, token_count: 5000 })];
-    // Simulate a sync import rewriting the page mid-heal: the recheck sees a
-    // different chunk set. Upserting the stale splits would silently desync
-    // chunk_text from the page content — the guard must skip instead.
-    const rewritten = [chunkRow({ chunk_index: 0, chunk_text: 'fresh synced content' })];
-    let getCalls = 0;
-    let upsertCalled = false;
-    const engine = {
-      getChunks: async () => (++getCalls === 1 ? initial : rewritten),
-      upsertChunks: async () => {
-        upsertCalled = true;
-      },
-    };
-
-    const onSplitCalls: number[] = [];
-    const res = await healOversizedPageChunks(engine as never, 'notes/racing', {
-      maxTokens: MXBAI_CAP,
-      onSplit: (n) => onSplitCalls.push(n),
-    });
-
-    expect(upsertCalled).toBe(false);
-    expect(onSplitCalls).toEqual([]);
-    expect(res.changed).toBe(false);
-    // The caller gets the FRESH rows, so the drain proceeds on current truth.
-    expect(res.chunks).toBe(rewritten);
-  });
+  // Stale-revision and same-revision/different-chunk races are exercised on
+  // both real engines in page-projection-concurrency.test.ts.
 });

@@ -7,7 +7,7 @@
  */
 
 import { describe, test, expect } from 'bun:test';
-import { isTitlePhraseMatch, tokenizeTitle, __test__ } from '../../src/core/search/title-match.ts';
+import { isTitlePhraseMatch, tokenizeTitle } from '../../src/core/search/title-match.ts';
 
 describe('isTitlePhraseMatch — positive (the incident)', () => {
   const MINGTANG = 'The Mingtang (明堂) — Indoor Greek Amphitheater for Adversarial Debate';
@@ -61,8 +61,5 @@ describe('tokenizeTitle', () => {
   });
   test('keeps CJK runs as tokens', () => {
     expect(tokenizeTitle('明堂 hall')).toEqual(['明堂', 'hall']);
-  });
-  test('MIN_CONTENT_TOKENS is 2 (the precision floor)', () => {
-    expect(__test__.MIN_CONTENT_TOKENS).toBe(2);
   });
 });

@@ -26,6 +26,8 @@ import {
   JOB_CHILD_EXIT_NOT_CLAIMED,
 } from '../src/core/minions/worker-exit-codes.ts';
 import { UnrecoverableError, type MinionHandler } from '../src/core/minions/types.ts';
+import { LocalConfigurationError } from '../src/core/minions/configuration-error.ts';
+import { reconstructHandlerError } from '../src/core/minions/job-isolation.ts';
 
 let engine: PGLiteEngine;
 let queue: MinionQueue;
@@ -77,6 +79,18 @@ function handlers(map: Record<string, MinionHandler>) {
 }
 
 describe('runChildJobEntry', () => {
+  test('handler configuration error preserves typed provenance in the actual outcome file', async () => {
+    const job = await addAndClaim('sync');
+    const resultPath = join(dir, `configuration-${job.id}.json`);
+    const code = await runChildJobEntry(engine,
+      { jobId: job.id, lockToken: 'parent-tok-1', resultPath, parentPid: 0 },
+      handlers({ sync: async () => { throw new LocalConfigurationError('postgres_cancellation_unavailable', 'private-password'); } }));
+    expect(code).toBe(0);
+    const outcome = decodeChildOutcomeFile(resultPath);
+    if (outcome.outcome !== 'error') throw new Error('expected error');
+    expect(reconstructHandlerError(outcome)).toBeInstanceOf(LocalConfigurationError);
+    expect(outcome.message).not.toContain('private-password');
+  });
   test('success: outcome file carries the handler result; exit 0; ctx wired to the job row', async () => {
     const job = await addAndClaim('sync', { full: true });
     const resultPath = join(dir, `ok-${job.id}.json`);

@@ -1,21 +1,3 @@
-/**
- * buildGatewayConfig — translate a stored GBrainConfig into the gateway's
- * AIGatewayConfig (env dict + base_urls + model strings).
- *
- * v0.42 (#1780 Gap 2): extracted from src/cli.ts into a core module so
- * `src/core/init-embed-check.ts` can reuse it without importing the CLI
- * entrypoint (which would create a load-time cycle). cli.ts re-exports
- * `buildGatewayConfig` for back-compat with existing callers + tests that
- * import it from `../../src/cli.ts`.
- *
- * The single ownership site for: (a) folding file-plane API keys
- * (openai/anthropic/zeroentropy/openrouter/voyage/dashscope/google) into the gateway env, and (b) threading
- * local-server `*_BASE_URL` env vars into base_urls. Both matter for the
- * init-time embedding-key probe — without (a) it would false-warn on
- * config.json-keyed users, and without (b) a live probe could hit the wrong
- * endpoint (custom OpenAI base URL, llama-server, etc.).
- */
-
 import type { GBrainConfig } from '../config.ts';
 import { loadConfig } from '../config.ts';
 import type { AIGatewayConfig } from './types.ts';
@@ -96,6 +78,7 @@ export function buildGatewayConfig(c: GBrainConfig): AIGatewayConfig {
 
   return {
     embedding_model: c.embedding_model,
+    embedding_identity_unverified: !c.embedding_model?.trim(),
     embedding_dimensions: c.embedding_dimensions,
     embedding_multimodal_model: c.embedding_multimodal_model,
     embedding_image_ocr_model: c.embedding_image_ocr_model,

@@ -17,7 +17,8 @@ import {
   configureGateway,
   resetGateway,
 } from '../src/core/ai/gateway.ts';
-import { hybridSearch } from '../src/core/search/hybrid.ts';
+import { cosineSimilarity, hybridSearch } from '../src/core/search/hybrid.ts';
+import { installPageProjection, readProjectionSnapshot } from '../src/core/page-state/projections.ts';
 import { runReindexMultimodal } from '../src/commands/reindex-multimodal.ts';
 
 let engine: PGLiteEngine;
@@ -122,6 +123,46 @@ describe('hybridSearch unified routing (Phase 3)', () => {
     await hybridSearch(engine, 'totally text query', { limit: 5 });
     // Unified routing: text query forced to multimodal endpoint.
     expect(voyageCalled).toBeGreaterThanOrEqual(1);
+  });
+
+  test('read-path audit #7: the unified rescore hydrates embedding_multimodal, not the text column', async () => {
+    await engine.setConfig('search.unified_multimodal', 'true');
+    fetchHandler = async (url) => new Response(JSON.stringify({
+      data: [{ embedding: Array.from({ length: url.includes('multimodalembeddings') ? 1024 : 1536 }, () => 0.1), index: 0 }],
+    }), { status: 200 });
+    await engine.putPage('notes/mm', { type: 'note', title: 'MM', compiled_truth: 'multimodal body text' } as any);
+    const snap = (await readProjectionSnapshot(engine, 'notes/mm', 'default', { allowUnsealed: true }))!;
+    const textVec = new Float32Array(1536); textVec[3] = 1;
+    await installPageProjection(engine, snap, [{
+      chunk_index: 0, chunk_text: 'multimodal body text', chunk_source: 'compiled_truth', embedding: textVec, token_count: 5,
+    }] as any, { seal: true });
+    await engine.executeRaw(
+      `UPDATE content_chunks SET embedding_multimodal = $1::vector WHERE page_id = (SELECT id FROM pages WHERE slug = 'notes/mm')`,
+      ['[' + Array.from({ length: 1024 }, () => 0.1).join(',') + ']'],
+    );
+    const columns: string[] = [];
+    const original = engine.getEmbeddingsByChunkIds.bind(engine);
+    (engine as any).getEmbeddingsByChunkIds = async (ids: number[], column?: string) => {
+      columns.push(column ?? 'embedding');
+      return original(ids, column);
+    };
+    try {
+      const results = await hybridSearch(engine, 'multimodal body', { limit: 5 });
+      expect(columns).toContain('embedding_multimodal');
+      expect(columns).not.toContain('embedding');
+      const hit = results.find(r => r.slug === 'notes/mm')!;
+      expect(hit.cosine).toBeCloseTo(1, 5);
+    } finally {
+      (engine as any).getEmbeddingsByChunkIds = original;
+    }
+  });
+
+  test('cosineSimilarity refuses vectors from different spaces (length mismatch → 0, never NaN)', () => {
+    const q = new Float32Array(1024).fill(0.1);
+    const d = new Float32Array(1536).fill(0.1);
+    expect(cosineSimilarity(q, d)).toBe(0);
+    expect(cosineSimilarity(d, q)).toBe(0);
+    expect(cosineSimilarity(q, q)).toBeCloseTo(1, 6);
   });
 
   test('D8 fail-open: empty unified column + not strict → falls back to text', async () => {

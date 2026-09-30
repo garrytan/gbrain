@@ -14,9 +14,8 @@
 //     so bare `gbrain capture` keeps working even under a pack that does
 //     not declare 'note'.
 
-import { loadConfigFileOnly } from '../config.ts';
 import type { BrainEngine } from '../engine.ts';
-import { loadActivePack } from './load-active.ts';
+import { loadActivePackForEngine } from './engine-resolution.ts';
 import type { ResolvedPack } from './registry.ts';
 
 export interface WriteVocabularyContext {
@@ -37,18 +36,10 @@ export interface WriteVocabularyContext {
 export async function loadActivePackForWriteVocabulary(
   ctx: WriteVocabularyContext,
 ): Promise<ResolvedPack | null> {
-  let dbConfig: string | undefined;
   try {
-    dbConfig = (await ctx.engine.getConfig('schema_pack'))?.trim() || undefined;
-  } catch {
-    dbConfig = undefined;
-  }
-  try {
-    return await loadActivePack({
-      cfg: loadConfigFileOnly(),
+    return await loadActivePackForEngine(ctx.engine, {
       remote: ctx.remote === false ? false : true,
       sourceId: ctx.sourceId,
-      dbConfig,
     });
   } catch {
     return null;

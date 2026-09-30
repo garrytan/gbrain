@@ -24,19 +24,22 @@
  *                  binary, so the group signal falls back to POSIX
  *                  /bin/kill when needed.
  *
- * Handler-error semantics survive the boundary: the child encodes the two
+ * Handler-error semantics survive the boundary: the child encodes the
  * error classes executeJob branches on (UnrecoverableError → 'dead',
  * RateLeaseUnavailableError → lease release, no attempt burned) and
  * `reconstructHandlerError` rebuilds real instances parent-side so the
  * existing `instanceof` branches work verbatim. Everything else degrades to
  * a generic Error → the normal delayed/dead backoff path, same as inline.
+ * Versioned local-configuration outcomes preserve the typed permanent fault.
  */
 
-import { readFileSync, writeFileSync, renameSync, statSync } from 'node:fs';
+import { accessSync, constants, readdirSync, readFileSync, writeFileSync, renameSync, statSync } from 'node:fs';
 import { readFile, stat } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { UnrecoverableError } from './types.ts';
 import { RateLeaseUnavailableError } from './handlers/subagent.ts';
+import { LocalConfigurationError, isLocalConfigurationError } from './configuration-error.ts';
+import { basename, delimiter, resolve } from 'node:path';
 
 /** Grace between group-SIGTERM and group-SIGKILL on abort. Deliberately
  *  inside the worker's 30s force-evict window so the evict path stays a
@@ -69,7 +72,25 @@ export const CHILD_ENV = {
   childPoolSize: 'GBRAIN_JOB_CHILD_POOL_SIZE',
 } as const;
 
-export type ChildErrorKind = 'unrecoverable' | 'rate_lease' | 'generic';
+export const CHILD_OUTCOME_PROTOCOL_VERSION = 1;
+export const CHILD_CONFIGURATION_REASONS = [
+  'postgres_cancellation_unavailable', 'child_executable_invalid', 'child_protocol_incompatible',
+] as const;
+
+export function isChildConfigurationReason(value: unknown): value is typeof CHILD_CONFIGURATION_REASONS[number] {
+  return CHILD_CONFIGURATION_REASONS.some((reason) => reason === value);
+}
+
+export function childConfigurationError(reason: typeof CHILD_CONFIGURATION_REASONS[number]): LocalConfigurationError {
+  const messages = {
+    postgres_cancellation_unavailable: 'The PostgreSQL driver lacks required cancellation support. Reinstall a known-good GBrain release or run bun install in the checkout to repair the shipped driver.',
+    child_executable_invalid: 'The selected job child executable is missing or not executable. Fix GBRAIN_JOB_CHILD_CLI or repair the current GBrain executable path.',
+    child_protocol_incompatible: 'The selected job child uses an incompatible readiness or outcome protocol. Reinstall the selected child with a compatible GBrain release.',
+  };
+  return new LocalConfigurationError(reason, `${messages[reason]} Verify worker and child readiness, then restart. See docs/guides/minions-fix.md#configuration-blocked.`);
+}
+
+export type ChildErrorKind = 'unrecoverable' | 'rate_lease' | 'generic' | 'local_configuration';
 
 export type ChildOutcome =
   | { outcome: 'success'; result: unknown }
@@ -79,10 +100,20 @@ export type ChildOutcome =
       message: string;
       stack?: string;
       lease?: { key: string; active: number; max: number };
+      protocolVersion?: number;
+      reasonCode?: typeof CHILD_CONFIGURATION_REASONS[number];
     };
 
 /** Child-side: classify a handler throw into the wire shape. */
 export function encodeHandlerError(err: unknown): ChildOutcome {
+  if (isLocalConfigurationError(err)) {
+    return {
+      outcome: 'error', errorKind: 'local_configuration',
+      protocolVersion: CHILD_OUTCOME_PROTOCOL_VERSION,
+      reasonCode: err.reasonCode,
+      message: childConfigurationError(err.reasonCode).message,
+    };
+  }
   if (err instanceof RateLeaseUnavailableError) {
     return {
       outcome: 'error',
@@ -111,6 +142,9 @@ export function encodeHandlerError(err: unknown): ChildOutcome {
  * file is same-user-written but a malformed kind must not crash the worker).
  */
 export function reconstructHandlerError(o: Extract<ChildOutcome, { outcome: 'error' }>): Error {
+  if (o.errorKind === 'local_configuration' && o.protocolVersion === CHILD_OUTCOME_PROTOCOL_VERSION && isChildConfigurationReason(o.reasonCode)) {
+    return childConfigurationError(o.reasonCode);
+  }
   if (o.errorKind === 'rate_lease' && o.lease) {
     return new RateLeaseUnavailableError(o.lease.key, o.lease.active, o.lease.max);
   }
@@ -158,6 +192,9 @@ export function parseChildOutcome(raw: string, size: number, maxBytes = CHILD_OU
   if (o && o.outcome === 'success') return { outcome: 'success', result: (o as { result?: unknown }).result };
   if (o && o.outcome === 'error' && typeof (o as { message?: unknown }).message === 'string') {
     const kind = (o as { errorKind?: unknown }).errorKind;
+    if (kind === 'local_configuration' && o.protocolVersion === CHILD_OUTCOME_PROTOCOL_VERSION && isChildConfigurationReason(o.reasonCode)) {
+      return encodeHandlerError(childConfigurationError(o.reasonCode));
+    }
     const rawLease = (o as { lease?: unknown }).lease as
       | { key?: unknown; active?: unknown; max?: unknown }
       | undefined;
@@ -221,9 +258,17 @@ export async function decodeChildOutcomeFileAsync(
   return parseChildOutcome(await readFile(path, 'utf8'), size, maxBytes);
 }
 
-/** argv for the child invocation (appended after the resolved CLI). */
-export function buildChildArgs(jobId: number): string[] {
-  return ['jobs', 'run-child', '--job-id', String(jobId)];
+/**
+ * argv for the child invocation (appended after the resolved CLI). The shell
+ * opt-in travels as a FLAG as well as env: the child is a fresh gbrain process
+ * that re-runs the startup cwd-.env quarantine (core/env-trust.ts) in the
+ * worker's cwd and would drop GBRAIN_ALLOW_SHELL_JOBS again whenever a .env
+ * there assigns it; `jobs run-child` re-asserts the env var from the flag.
+ */
+export function buildChildArgs(jobId: number, env: Record<string, string | undefined> = process.env): string[] {
+  const args = ['jobs', 'run-child', '--job-id', String(jobId)];
+  if (env.GBRAIN_ALLOW_SHELL_JOBS === '1') args.push('--allow-shell-jobs');
+  return args;
 }
 
 export interface ChildCliInvocation {
@@ -232,15 +277,99 @@ export interface ChildCliInvocation {
   argsPrefix: string[];
 }
 
+export function validateChildExecutable(cmd: string, env: Record<string, string | undefined>): string {
+  const candidates = cmd.includes('/') || (process.platform === 'win32' && cmd.includes('\\'))
+    ? [resolve(cmd)]
+    : (env.PATH ?? '/usr/bin:/bin').split(delimiter).map(directory => resolve(directory || '.', cmd));
+  for (const candidate of candidates) {
+    try {
+      accessSync(candidate, constants.X_OK);
+      if (statSync(candidate).isFile()) return candidate;
+    } catch (error) {
+      if (!['ENOENT', 'EACCES', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '')) {
+        throw new Error('Selected job child executable accessibility could not be checked.');
+      }
+    }
+  }
+  throw childConfigurationError('child_executable_invalid');
+}
+
+interface ProcessSnapshotEntry {
+  pid: number;
+  parent: number;
+  group: number;
+  start: string;
+  state: string;
+}
+
+export interface ChildCleanupSnapshot {
+  groups: Set<number>;
+  observed: ProcessSnapshotEntry[];
+  supported: boolean;
+}
+
+function readProcessSnapshot(): ProcessSnapshotEntry[] | null {
+  if (process.platform !== 'linux') return null;
+  const deadline = performance.now() + 200;
+  try {
+    const names = readdirSync('/proc').filter(name => /^\d+$/.test(name));
+    if (names.length > 8192) return null;
+    const entries: ProcessSnapshotEntry[] = [];
+    for (const name of names) {
+      if (performance.now() > deadline) return null;
+      try {
+        const raw = readFileSync(`/proc/${name}/stat`, 'utf8');
+        const fields = raw.slice(raw.lastIndexOf(')') + 2).split(' ');
+        if (fields.length < 20) return null;
+        entries.push({ pid: Number(name), parent: Number(fields[1]), group: Number(fields[2]), start: fields[19], state: fields[0] });
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT' && (error as NodeJS.ErrnoException).code !== 'ESRCH') return null;
+      }
+    }
+    return entries.some(entry => entry.pid === process.pid) ? entries : null;
+  } catch { return null; }
+}
+
+export function captureChildCleanup(pid: number, groups: Set<number>): ChildCleanupSnapshot {
+  const entries = readProcessSnapshot();
+  if (!entries) return { groups: new Set(groups), observed: [], supported: false };
+  const children = new Map<number, number[]>();
+  for (const entry of entries) {
+    const siblings = children.get(entry.parent) ?? [];
+    siblings.push(entry.pid);
+    children.set(entry.parent, siblings);
+  }
+  const owned = new Set([pid, ...entries.filter(entry => groups.has(entry.group)).map(entry => entry.pid)]);
+  const pending = [...owned];
+  for (let index = 0; index < pending.length; index++) {
+    for (const child of children.get(pending[index]) ?? []) {
+      if (!owned.has(child)) { owned.add(child); pending.push(child); }
+    }
+  }
+  const observed = entries.filter(entry => owned.has(entry.pid));
+  return {
+    groups: new Set(groups), observed,
+    supported: groups.size > 0 && observed.every(entry => groups.has(entry.group)),
+  };
+}
+
+export function confirmChildCleanup(snapshot: ChildCleanupSnapshot): boolean {
+  if (!snapshot.supported) return false;
+  const entries = readProcessSnapshot();
+  if (!entries) return false;
+  const observed = new Map(snapshot.observed.map(entry => [entry.pid, entry.start]));
+  return !entries.some(entry => entry.state !== 'Z' && entry.state !== 'X' && (
+    snapshot.groups.has(entry.group) || observed.get(entry.pid) === entry.start
+  ));
+}
+
 /**
  * Resolve how to invoke the gbrain CLI for a child process. Pure — all
  * inputs injected:
  *
  *   1. GBRAIN_JOB_CHILD_CLI env override (ops/test escape hatch)
- *   2. resolveBinary() — the compiled-binary resolver
- *      (resolveGbrainCliPath; never returns a .ts path)
- *   3. bun-dev fallback: running from `bun src/cli.ts` → invoke
- *      `<execPath> <argv1>` so dev and tests work without a compiled binary
+ *   2. Current compiled executable or source CLI entrypoint
+ *   3. resolveBinary() — PATH fallback when the current entrypoint is not a CLI
  *
  * Returns null when nothing resolves — the caller must fail fast at worker
  * startup (one bad path must not dead-letter a queue job-by-job).
@@ -255,26 +384,25 @@ export function resolveChildCliInvocation(
   if (override && override.trim() !== '') {
     return { cmd: override, argsPrefix: [] };
   }
-  try {
-    const bin = resolveBinary();
-    if (bin) return { cmd: bin, argsPrefix: [] };
-  } catch {
-    // fall through to the dev fallback
+  if (execPath && !['bun', 'bun.exe', 'node', 'node.exe'].includes(basename(execPath))) {
+    return { cmd: execPath, argsPrefix: [] };
   }
   if (argv1 && (argv1.endsWith('/cli.ts') || argv1.endsWith('\\cli.ts') || argv1 === 'cli.ts')) {
     return { cmd: execPath, argsPrefix: [argv1] };
   }
+  try {
+    const bin = resolveBinary();
+    if (bin) return { cmd: bin, argsPrefix: [] };
+  } catch {}
   return null;
 }
 
 /**
  * Signal an entire process GROUP.
  *
- * Children are spawned `detached: true` (own group) so this reaches the
- * handler grandchildren even under a tini wrapper — SIGKILL on the tini pid
- * alone kills tini and ORPHANS the still-running handler (tini cannot
- * forward SIGKILL; that failure mode would silently void issue #5's
- * headline guarantee exactly in container deployments).
+ * Children are spawned `detached: true`. Tini creates another group for its
+ * child, so callers must also signal that observed group. Neither group
+ * signalling nor subreaping contains descendants that create a new session.
  *
  * Bun's process.kill() rejects negative pids (oven-sh/bun#15791), so on any
  * throw other than ESRCH we fall back to POSIX /bin/kill, which
@@ -303,4 +431,18 @@ export function killProcessGroup(pid: number, signal: 'SIGTERM' | 'SIGKILL'): bo
       return false;
     }
   }
+}
+
+export function observeTiniChildProcessGroups(pid: number, groups: Set<number>): void {
+  if (process.platform !== 'linux' || !Number.isInteger(pid) || pid <= 1) return;
+  try {
+    const children = readFileSync(`/proc/${pid}/task/${pid}/children`, 'utf8').trim().split(/\s+/);
+    for (const value of children) {
+      const childPid = Number(value);
+      if (!Number.isInteger(childPid) || childPid <= 1) continue;
+      const stat = readFileSync(`/proc/${childPid}/stat`, 'utf8');
+      const fields = stat.slice(stat.lastIndexOf(')') + 2).split(' ');
+      if (Number(fields[1]) === pid && Number(fields[2]) === childPid) groups.add(childPid);
+    }
+  } catch {}
 }

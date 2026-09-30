@@ -22,7 +22,8 @@
  * Run: bun test test/e2e/dream-patterns-pglite.test.ts
  */
 
-import { describe, test, expect } from 'bun:test';
+import { describe, expect } from 'bun:test';
+import { keylessDreamTest as test } from '../helpers/keyless-dream-test.ts';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { runPhasePatterns } from '../../src/core/cycle/patterns.ts';
 import { withoutAnthropicKey } from '../helpers/no-anthropic-key.ts';
@@ -173,7 +174,7 @@ describe('E2E patterns — insufficient_evidence', () => {
 });
 
 describe('E2E patterns — no reachable provider', () => {
-  test('enough reflections, no Anthropic key in env OR config → skipped no_provider', async () => {
+  test('enough reflections, no provider keys in env OR config → skipped no_provider', async () => {
     const rig = await setupRig();
     try {
       await seedReflections(rig.engine, 5); // above default min_evidence (3)

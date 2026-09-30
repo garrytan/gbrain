@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import { installFixtureChunks } from '../helpers/page-projection.ts';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { PostgresEngine } from '../../src/core/postgres-engine.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
@@ -60,6 +61,12 @@ for (const kind of ['pglite', 'postgres'] as const) {
       return Number(rows[0].id);
     }
 
+    async function indexedPage(slug: string, source = A, frontmatter: Record<string, unknown> = {}): Promise<number> {
+      const id = await page(slug, source, frontmatter);
+      await installFixtureChunks(engine, slug, [{ chunk_index: 0, chunk_source: 'compiled_truth', chunk_text: `Public fixture ${slug}` }], { sourceId: source });
+      return id;
+    }
+
     async function edge(from: number, to: number, origin: number | null = null, linkType = 'related', linkSource = 'manual') {
       await engine.executeRaw('INSERT INTO links (from_page_id, to_page_id, origin_page_id, link_type, link_source) VALUES ($1, $2, $3, $4, $5)', [from, to, origin, linkType, linkSource]);
     }
@@ -99,16 +106,16 @@ for (const kind of ['pglite', 'postgres'] as const) {
     });
 
     test('relational retrieval authorizes private seeds, intermediate pages and actual origins before limits', async () => {
-      const start = await page('people/relational-start');
-      const bridge = await page('people/relational-a-private', A, { visibility: 'private' });
-      await page('people/relational-a-private', B); // A public namesake cannot authorize the bridge.
-      const beyond = await page('people/relational-beyond');
-      const visible = await page('people/relational-visible');
-      const hiddenOrigin = await page('people/relational-hidden-origin', B, { visibility: 'private' });
-      const foreignOrigin = await page('people/relational-foreign-origin', FOREIGN);
-      const grantedOrigin = await page('people/relational-granted-origin', B);
-      const hiddenTarget = await page('people/relational-hidden-target');
-      const foreignTarget = await page('people/relational-foreign-target');
+      const start = await indexedPage('people/relational-start');
+      const bridge = await indexedPage('people/relational-a-private', A, { visibility: 'private' });
+      await indexedPage('people/relational-a-private', B); // A public namesake cannot authorize the bridge.
+      const beyond = await indexedPage('people/relational-beyond');
+      const visible = await indexedPage('people/relational-visible');
+      const hiddenOrigin = await indexedPage('people/relational-hidden-origin', B, { visibility: 'private' });
+      const foreignOrigin = await indexedPage('people/relational-foreign-origin', FOREIGN);
+      const grantedOrigin = await indexedPage('people/relational-granted-origin', B);
+      const hiddenTarget = await indexedPage('people/relational-hidden-target');
+      const foreignTarget = await indexedPage('people/relational-foreign-target');
       await edge(start, bridge);
       await edge(bridge, beyond);
       await edge(start, visible, grantedOrigin);
@@ -128,11 +135,12 @@ for (const kind of ['pglite', 'postgres'] as const) {
     });
 
     test('relational snippets sanitize every protected fence before truncation, including page-visibility opt-outs', async () => {
-      const start = await page('people/snippet-start');
-      const target = await page('people/snippet-target');
+      const start = await indexedPage('people/snippet-start');
+      const target = await indexedPage('people/snippet-target');
       await edge(start, target);
       const take = `${TAKES_FENCE_BEGIN}\n${'PRIVATE_RELATIONAL_TAKE '.repeat(30)}\n${TAKES_FENCE_END}`;
       await engine.executeRaw('UPDATE pages SET compiled_truth = $2 WHERE id = $1', [target, `${take}\n${take}\nPUBLIC_RELATIONAL_SNIPPET`]);
+      await installFixtureChunks(engine, 'people/snippet-target', [{ chunk_index: 0, chunk_source: 'compiled_truth', chunk_text: 'PUBLIC_RELATIONAL_SNIPPET' }], { sourceId: A });
       for (const excludePrivate of [true, false]) {
         const rows = await buildRelationalArm(engine, 'who introduced me to people/snippet-start', { sourceId: A, excludePrivate, takesHoldersAllowList: [] });
         expect(rows).toHaveLength(1);
@@ -150,7 +158,7 @@ for (const kind of ['pglite', 'postgres'] as const) {
       const query = 'titleprobe -negationcanary';
       const [raw] = await engine.executeRaw<{ matched: boolean }>(
         "SELECT search_vector @@ websearch_to_tsquery('english', $1) AS matched FROM pages WHERE source_id = $2 AND slug = $3", [query, A, slug]);
-      expect(raw.matched).toBe(false); // The old full-page prefilter would reject it.
+      expect(raw.matched).toBe(true); // Publication sanitizes the stored page vector too.
       for (const excludePrivate of [true, false]) {
         const rows = await engine.searchTitles(query, { sourceId: A, requireSafeChunks: true, excludePrivate });
         expect(rows.map(row => row.slug)).toEqual([slug]);

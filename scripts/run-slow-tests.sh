@@ -16,13 +16,31 @@ unset DATABASE_URL GBRAIN_DATABASE_URL
 unset GBRAIN_HOME
 cd "$(dirname "$0")/.."
 
-. scripts/lib/test-env.sh
-ensure_pglite_snapshot "run-slow-tests"
+# --dry-run-list prints the selection; positional FILE arguments replace
+# discovery (scripts/ci-ubicloud.ts dispatches explicit batches).
+DRY_RUN=0
+if [ "${1:-}" = "--dry-run-list" ]; then
+  DRY_RUN=1
+  shift
+fi
 
 slow_files=()
-while IFS= read -r f; do
-  slow_files+=("$f")
-done < <(find test -name '*.slow.test.ts' -not -path 'test/e2e/*' | sort)
+if [ "$#" -gt 0 ]; then
+  slow_files=("$@")
+else
+  while IFS= read -r f; do
+    slow_files+=("$f")
+  done < <(find test -name '*.slow.test.ts' -not -path 'test/e2e/*' | sort)
+fi
+
+if [ "$DRY_RUN" = "1" ]; then
+  if [ "${#slow_files[@]}" -gt 0 ]; then printf '%s\n' "${slow_files[@]}"; fi
+  exit 0
+fi
+
+. scripts/lib/test-env.sh
+ensure_pglite_snapshot "run-slow-tests"
+ensure_default_pglite_snapshot "run-slow-tests"
 
 if [ "${#slow_files[@]}" -eq 0 ]; then
   echo "[run-slow-tests] no *.slow.test.ts files; nothing to do."

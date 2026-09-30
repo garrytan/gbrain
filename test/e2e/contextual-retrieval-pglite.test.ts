@@ -35,6 +35,9 @@ import {
 import { MARKDOWN_CHUNKER_VERSION } from '../../src/core/chunkers/recursive.ts';
 import { operationsByName } from '../../src/core/operations.ts';
 import type { OperationContext } from '../../src/core/operations.ts';
+import { randomUUID } from 'node:crypto';
+import { runEmbedCore } from '../../src/commands/embed.ts';
+import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
 import { runReindex } from '../../src/commands/reindex.ts';
 import { resetPgliteState } from '../helpers/reset-pglite.ts';
 
@@ -217,7 +220,7 @@ describe('per-source CR mode on the import path (#3885)', () => {
   function putPageCtx(sourceId: string): OperationContext {
     return {
       engine,
-      config: { engine: 'pglite' as const },
+      config: { engine: 'pglite' as const, embedding_disabled: true },
       logger: { info: () => {}, warn: () => {}, error: () => {} },
       dryRun: false,
       remote: false,
@@ -247,11 +250,15 @@ describe('per-source CR mode on the import path (#3885)', () => {
     await seedSource(sourceId, 'none');
     const slug = 'inbox/source-none-capture';
     const result = await operationsByName['put_page']!.handler(putPageCtx(sourceId), {
-      slug,
+      slug, request_id: randomUUID(),
       content: '---\ntitle: "Capture None"\n---\n\nCaptured body for CR source override.',
     });
-    expect(['imported', 'created_or_updated']).toContain((result as { status: string }).status);
+    expect(result).toMatchObject({ state: 'committed', status: 'created_or_updated' });
     expect(await pageMode(slug, sourceId)).toBe('none');
+    expect(embedderInputs).toEqual([]); // canonical publication does not wait on a provider
+    await disposePersistenceConsumer(engine);
+    const embedded = await runEmbedCore(engine, { slugs: [slug], sourceId, quiet: true });
+    expect(embedded.embedded).toBeGreaterThan(0);
     expect(embedderInputs.flat()[0]).not.toContain('<context>');
   });
 

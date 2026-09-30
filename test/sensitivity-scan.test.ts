@@ -258,3 +258,33 @@ describe('PII refactor regression — scrubPii bytes + findPii semantics', () =>
     expect(findPii('')).toEqual([]);
   });
 });
+
+describe('secret-scan owns the jwt/bearer shapes — no double report with the PII pass', () => {
+  // Runtime-joined synthetic values (never committed as one literal).
+  const JWT = [
+    'eyJhbGciOiJIUzI1NiJ9',
+    'eyJyb2xlIjoic2VydmljZV9yb2xlIiwiaWF0IjoxNzAwMDAwMDAwfQ',
+    'c2lnbmF0dXJlLXBsYWNlaG9sZGVyLTAwMDA',
+  ].join('.');
+  const OPAQUE = ['opaque', 'Token0123456789abcdefXYZ'].join('');
+
+  test('one JWT → exactly one finding, attributed to the secret scanner', () => {
+    const findings = scanSensitive(`service role ${JWT} here`, makeConfig(ws()));
+    expect(findings.map((f) => f.family)).toEqual(['secret:jwt']);
+  });
+
+  test('one opaque Bearer header → exactly one finding (secret:bearer), not pii:bearer as well', () => {
+    const findings = scanSensitive(`Authorization: Bearer ${OPAQUE}`, makeConfig(ws()));
+    expect(findings.map((f) => f.family)).toEqual(['secret:bearer']);
+  });
+
+  test('Bearer <vendor key> → one vendor finding only', () => {
+    const findings = scanSensitive(`Bearer ${ANTHROPIC}`, makeConfig(ws()));
+    expect(findings.map((f) => f.family)).toEqual(['secret:anthropic']);
+  });
+
+  test('a short bearer token (below the secret-scan floor) still reaches pii:bearer — coverage is not lost', () => {
+    const findings = scanSensitive('Bearer abcdef1234', makeConfig(ws()));
+    expect(findings.map((f) => f.family)).toEqual(['pii:bearer']);
+  });
+});

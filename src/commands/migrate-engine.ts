@@ -1,3 +1,4 @@
+import { assertLegacyEngineMigration, assertUnmanagedCanonicalWriter } from '../core/persistence/maintenance.ts';
 /**
  * Engine migration: transfer brain data between PGLite and Postgres.
  *
@@ -24,6 +25,7 @@ import { registerCleanup } from '../core/process-cleanup.ts';
 import { autopilotPausedMarkerPath, autopilotLockPath, markerHolderAlive, MIGRATE_PAUSE_MARKER_PREFIX } from '../core/autopilot-paths.ts';
 export { MIGRATE_PAUSE_MARKER_PREFIX };
 import { listLiveLocks } from '../core/db-lock.ts';
+import { queuePageProjection } from '../core/page-state/projections.ts';
 
 interface MigrateOpts {
   targetEngine: 'postgres' | 'pglite';
@@ -368,27 +370,6 @@ export async function copyMigrationFacts(
   return result;
 }
 
-/**
- * #4350: engine-LOCAL config rows that must not follow the data to the
- * target. Everything else in the config table copies verbatim — the pre-fix
- * allowlist of 3 keys silently dropped sync anchors (`sync.repo_path`),
- * search settings, feature toggles: everything an operator had tuned.
- *
- * - 'engine': the seeded engine-identity row; the target's own initSchema
- *   stamped the correct value for itself.
- * - 'version': the schema-migration ledger position. The target's own
- *   initSchema stamped it at the current latest; overwriting it with the
- *   source's (potentially older) value would make apply-migrations re-run
- *   against a schema that already has them.
- * - 'embedding_columns' / 'search_embedding_column': registry of (and active
- *   pointer into) PHYSICAL vector columns added to the source database by
- *   ze-switch DDL. The copy does not create those columns on the target, so
- *   carrying the registry would advertise columns that don't exist — and
- *   break search outright if the active pointer names one. Re-run
- *   `gbrain ze switch` on the target to rebuild them.
- *
- * Skipped keys are printed in the migration summary — never silent.
- */
 export const MIGRATE_CONFIG_ENGINE_LOCAL_KEYS: ReadonlySet<string> = new Set([
   'engine',
   'version',
@@ -518,8 +499,9 @@ export async function copyPageToTarget(
     );
   }
 
-  // Copy chunks with embeddings.
-  const chunks = await source.getChunksWithEmbeddings(page.slug, sourceOpts);
+  // Migration preserves stored data even when it is not a verified search
+  // projection. The target rebuilds sanitized text under its new revision.
+  const chunks = await source.getChunksWithEmbeddings(page.slug, { ...sourceOpts, includeUnsealed: true });
   if (chunks.length > 0) {
     await target.upsertChunks(page.slug, chunks.map(c => ({
       chunk_index: c.chunk_index,
@@ -551,11 +533,14 @@ export async function copyPageToTarget(
     }, sourceOpts);
   }
 
-  // Copy raw data
-  const rawData = await source.getRawData(page.slug, undefined, sourceOpts);
+  // Copy raw data (includeDeleted: a migration copies whatever the page row
+  // carries — the page list already decided which rows travel).
+  const rawData = await source.getRawData(page.slug, undefined, { ...sourceOpts, includeDeleted: true });
   for (const rd of rawData) {
     await target.putRawData(page.slug, rd.source, rd.data, sourceOpts);
   }
+
+  await queuePageProjection(target, page.source_id ?? 'default', page.slug, 'engine_migration');
 
   return {
     chunks: chunks.length,
@@ -794,6 +779,8 @@ export async function quiesceAutopilot(engine?: BrainEngine): Promise<(() => voi
 }
 
 export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]): Promise<void> {
+  await assertUnmanagedCanonicalWriter(sourceEngine, 'engine migration');
+  await assertLegacyEngineMigration(sourceEngine);
   const opts = parseArgs(args);
   const config = loadConfig();
   if (!config) {
@@ -844,6 +831,13 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
   const targetEngine = await createEngine(targetConfig);
   await targetEngine.connect(targetConfig);
   await targetEngine.initSchema();
+  try {
+    await assertUnmanagedCanonicalWriter(targetEngine, 'engine migration');
+    await assertLegacyEngineMigration(targetEngine);
+  } catch (error) {
+    try { await targetEngine.disconnect(); } finally { resumeAutopilot(); }
+    throw error;
+  }
 
   // Load or create manifest for resume. Checked BEFORE the non-empty-target
   // guard below: a manifest matching this exact target means the target's

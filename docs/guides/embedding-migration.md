@@ -1,14 +1,13 @@
 # Embedding migration — moving a brain to another embedding provider
 
-`gbrain migrate embeddings` re-embeds an entire brain onto a different
-embedding provider/model, safely and resumably. It is the forward path off a
-sunsetting provider (for example ZeroEntropy's hosted API, which shuts down
-2026-09-04 and remains the configless runtime fallback for existing brains
-that never picked a model — new installs default to `voyage:voyage-4`) — but
-it is provider-agnostic: any configured `provider:model` works as a target.
+`gbrain migrate embeddings` re-embeds an entire brain onto a supported
+embedding provider/model, safely and resumably. It requires an explicit target
+and approval; upgrading or changing a default does not convert stored vectors.
+Inspect the intended brain with `--status`, keep a verified full backup, and
+coordinate quiescing embedding writers before approving a live run.
 
-Also reachable as `gbrain retrieval-upgrade` — the alias that `gbrain doctor`
-repair hints and the README point at.
+`gbrain retrieval-upgrade` is an alias for the same provider-agnostic migration
+command. It uses the same flags, preview, consent and verification workflow.
 
 ## Quick start
 
@@ -16,21 +15,16 @@ repair hints and the README point at.
 # Preview the work + cost. Changes nothing.
 gbrain migrate embeddings --to voyage:voyage-4 --dim 1024 --dry-run
 
-# Run it (interactive confirm shows chunk count + $ estimate first).
-gbrain migrate embeddings --to voyage:voyage-4 --dim 1024
+# After reviewing the plan, run with interactive confirmation.
+gbrain migrate embeddings --to voyage:voyage-4 --dim 1024 --max-cost-usd 1
 
-# Non-interactive (cron / scripts): --yes is required, else exit 2.
-gbrain migrate embeddings --to voyage:voyage-4 --dim 1024 --yes
+# Only after explicit approval: --yes is required non-interactively, else exit 2.
+gbrain migrate embeddings --to voyage:voyage-4 --dim 1024 --max-cost-usd 1 --yes
 ```
 
 `--dim <N>` overrides the target width; it defaults to the provider recipe's
 declared width and is required for recipes that don't declare one (litellm,
 llama-server, and other bring-your-own-model providers).
-
-Targets on a provider with an announced shutdown are refused (a paid re-embed
-onto a dying API would strand the brain). Self-hosting a wire-compatible
-endpoint behind a `provider_base_urls` override? `--force-sunset-target` is
-the explicit escape hatch.
 
 ## Recommended targets
 
@@ -55,44 +49,17 @@ plane, which the provider pipeline reads), or by editing
 **Pick `--dim` = your brain's current column width when the target supports
 it.** A different width triggers the destructive schema transition (column +
 index rebuild across all three dim-pinned tables); the same width skips it
-entirely. `gbrain doctor` (check `provider_sunset`, for providers with an
-announced shutdown) prints target-aware paste-ready commands — the Voyage
-command at its valid 1024 width, plus an OpenAI keep-width alternative with
-your actual width filled in when that width is valid there — reading the real
-`vector(N)` column, not the config value, which can drift.
+entirely, but still requires re-embedding into the target model's space.
 
-## How affected brains find out (provider sunsets)
-
-Three surfaces flag a brain whose embedding model, reranker, or custom
-embedding columns are on a provider with an announced hosted-API shutdown,
-such as ZeroEntropy (2026-09-04):
-
-- **`gbrain doctor`** — the `provider_sunset` check warns on every run until
-  the brain is off the provider. After the shutdown date it escalates to
-  `fail` only when embedded vectors actually exist on the dead provider
-  (retrieval is genuinely down); a zero-vector brain whose config merely
-  resolves to the dead default stays `warn`, so doctor-as-CI-gate setups
-  don't start exiting 1 on the date. The reranker side resolves through the
-  same plane search actually reranks with (the mode bundle +
-  `search.reranker.*` overrides), and ZE-backed custom `embedding_columns`
-  entries are flagged too. The message carries target-aware paste-ready
-  migration commands (Voyage at 1024; OpenAI keep-width when your width is
-  valid there). Accepted the risk?
-  `gbrain config set doctor.suppress_provider_sunset true` silences it.
-- **`gbrain upgrade`** — a one-shot banner (gated by
-  `ze_sunset_notice_shown`) with the same two fixes, plus a stage-2 banner
-  per brain.
-- **The `v0_46_3` version migration** (runs via `gbrain upgrade` /
-  `gbrain apply-migrations`) — detect-and-notify only: it checks the host
-  brain's exposure (embedding, reranker, custom columns), prints the ACTION
-  REQUIRED block, and files an agent action item pointing at
-  `skills/migrations/v0.46.3.0.md` in
-  `~/.gbrain/migrations/pending-host-work.jsonl`. It never changes config or
-  spends money on your behalf.
-
-All of them state the full consequence: after the shutdown, **existing
-vectors become unqueryable** — query embedding uses the same endpoint as
-ingestion — not just new content.
+Keeping the width does not make different models' vectors compatible. A model
+change still invalidates old fact and take vectors and clears the semantic
+query cache before publishing the new identity. The underlying memory text
+remains. Invalidation and its checkpoint commit with the database identity,
+so a same-target retry does not erase companion vectors already regenerated
+for the new model. Use `--status` to inspect remaining fact embeddings.
+Inspect the real column widths with `--status`; a configured dimension can
+drift from the database. An unsupported provider is not a migration target,
+even if a custom base URL still serves its old model.
 
 ## What it does, in order
 
@@ -101,18 +68,42 @@ ingestion — not just new content.
    (pages whose chunks were embedded without a provenance stamp). Prices the re-embed
    from the pricing table; unknown providers print "estimate unavailable"
    instead of a fabricated number.
-2. **Consent gate.** Prints the plan; requires an interactive `y` or `--yes`.
+2. **Consent gate.** Prints the plan; requires an interactive `y` or `--yes`,
+   plus a finite `--max-cost-usd` total authorization for a new migration.
    Non-TTY without `--yes` refuses with exit 2 (mirrors the `reindex-code`
    gate in [spend-controls](../operations/spend-controls.md)). Unlike the pure
    cost gates there, `spend.posture=tokenmax` does **not** bypass this one:
-   posture waives the spend *ceiling*, and this gate also guards a
-   destructive schema rebuild. Under `tokenmax` the dollar figure is marked
-   informational and the confirmation is still asked. `--yes` is the single
-   scripted bypass.
-3. **Live probe.** One tiny embed against the TARGET provider before any
-   mutation — validates the API key, model id, and dimension support in a
-   single call. A bad key fails here, with nothing changed.
-4. **Env-override gate.** When `GBRAIN_EMBEDDING_MODEL` /
+   this gate guards both destructive work and bounded provider attempts.
+   `--yes` confirms the operation; it does not waive the cap. The plan prints a
+   **worst-case authorization** beside the estimate: every planned provider
+   request (probes, chunks per page, chunks that projection recovery will
+   rebuild, fact batches, smoke-check queries) at its
+   maximum input size, where a request's maximum is one token per UTF-8 byte
+   of its texts. A cap below the worst case (plus any debits a resumed run
+   already holds) refuses with `embedding_budget_below_worst_case` before any
+   provider call or vector change; the refusal names your cap, the worst case
+   and the exact `--max-cost-usd` value that covers it. Each attempt reserves
+   its maximum, then settles to the provider's reported usage, so the unused
+   headroom returns and retries and batch splits draw from it. A provider
+   token-limit rejection bills nothing and releases its reservation, so the
+   gateway's split of that batch fits inside the same worst case. A response
+   without usage, or a crash before settlement, keeps the maximum debit.
+   Usage above the reservation is debited, recorded as overshoot, and stops
+   further dispatch until you re-run with `--max-cost-usd`. A reranker without
+   a price is left out of the worst case with a warning; its probe refuses
+   without dispatch and the switch is reported as failed. Raising the total
+   cap explicitly authorizes more work. Unknown pricing refuses before dispatch.
+3. **Live probe.** After checking environment and embedding-enabled policy,
+   one tiny embed against the TARGET provider before any
+   vector invalidation — validates the API key, model id, and dimension
+   support in a single call. A bad key preserves vectors; its authorization
+   debit and resumable marker remain. Pending projections are then rebuilt
+   through the canonical queue/snapshot/install path in batches of at most
+   100 pages. Unsupported or still-pending projections refuse migration-wide
+   invalidation and retain their recovery work.
+   Pending projections in archived sources also block a brain-wide schema
+   rebuild; restore the source deliberately before attempting its repair.
+4. **Env-override policy (checked before the probe).** When `GBRAIN_EMBEDDING_MODEL` /
    `GBRAIN_EMBEDDING_DIMENSIONS` are set and DISAGREE with the target, the
    live run refuses (config-says-new / runtime-embeds-old silently splits a brain
    across two embedding spaces); `--ignore-env-override` for deliberate experiments. When they
@@ -142,15 +133,173 @@ ingestion — not just new content.
 6. **Re-embed.** The standard embed pipeline (`embed --stale --catch-up`)
    with per-source single-flight locks, rate-limit backoff, stderr progress,
    and optional DB-contention pacing (`--pace[=mode]`).
+   Active facts are repaired through the same guarded document-embedding
+   path as `embed --facts --stale`, including same-width model swaps and
+   facts-only brains. Expired, withdrawn, superseded and audit rows are not
+   work. Unknown legacy fact provenance is never inferred from new config.
+
+## Recovery
+
+Legacy saved facts have no recorded embedding model until they are repaired.
+Exact-text duplicate detection still works, but semantic duplicate detection
+and consolidation do not compare these unverified vectors. Preview the scoped
+work with `gbrain embed --facts --stale --source 'source-example' --dry-run --json`;
+repair requires explicit `--yes --max-cost-usd <amount>` authorization. No paid
+re-embedding is started automatically on upgrade. Existing page vectors with a
+matching model and a legacy NULL text hash remain searchable, including after a
+failed migration attempt; this does not relabel vectors from another model.
+
+Stop older GBrain mutation workers before repair; this release does not prove
+mixed-version mutation compatibility. Preserve their durable queued work.
+Select the intended brain using the ordinary global `--brain` option. This
+migration is brain-wide: both `gbrain migrate embeddings` and `gbrain retrieval-upgrade`
+reject `--source` and `--slugs`, including `--flag=value`
+forms, before planning or opening the brain. Neither flag narrows schema work.
+
+Both routes accept only their documented migration controls and the global
+`--brain`, `--quiet`, `--progress-json`, and `--progress-interval` controls.
+Flags from embed/import, such as `--facts`, `--limit`, or `--background`, are
+unsupported; so is `--timeout` (migration has no CLI deadline implementation).
+Validation checks the original arguments even when global parsing consumes a
+flag. Unsupported controls, duplicate flags, missing values, and invalid numbers
+refuse before opening the brain rather than silently widening work.
+
+Use separate values for `--to`, `--dim`, `--batch-size`, `--max-cost-usd`, and
+`--reranker`; their `--flag=value` forms are unsupported. Dimensions must be an
+integer from 1 through 100000, batch size an integer from 1 through 10000, and the
+cost cap finite and nonnegative. Values are never truncated or clamped. Pacing
+accepts bare `--pace` (balanced), `--pace=off|gentle|balanced|aggressive`, and
+`--pace-max-concurrency N` or `--pace-max-concurrency=N` with a positive safe
+integer. Empty or unknown pace modes refuse rather than falling back to off.
+Pacing's existing configuration/environment precedence is unchanged.
+
+Unsuccessful CLI JSON and local `migrate_embeddings` operation envelopes retain
+their existing status and reason fields and add a `recovery` object with the status
+command, this guide, and partial-state and authorization cautions. Human stderr
+prints the same guidance after the case-specific advice. The operation remains
+local-only and admin-scoped; its `failed` discriminator is unchanged. Reuse the same
+brain selection when inspecting status; do not blindly retry or reset the migration marker.
+
+| Failure | Action before retrying | Partial state to inspect |
+| --- | --- | --- |
+| `locked` | Check the existing holder; let it finish or deliberately stop it, then inspect status. | A previous holder may have committed progress or debits. |
+| `refused` | Resolve the named environment mismatch or deliberately choose whether to resume or retarget. For `embedding_budget_below_worst_case`, re-run with the printed `--max-cost-usd` value or keep the current model. | An earlier migration and its authorization may still be live. The budget refusal itself changed nothing. |
+| `probe_failed` (operation: `failed`) | Check provider configuration and the reported dimensions before authorizing another attempt. | An authorized probe debit may remain even when invalidation did not run. |
+| `apply_failed` (operation: `failed`) | Inspect the specific blocker first. Restore an archived source with `gbrain sources restore <id>` only after owner approval; unsealed unsupported projections need their original importer. Resolve configuration, database, or ownership errors before retrying. | Canonical repairs, schema/config changes, vectors, and debits may have committed in earlier phases. |
+| `retained_vectors_blocked` within `apply_failed` (operation: `failed`) | Inspect both the retained page-chunk/fact/take counts and the archived-page blocked-work count. Migration can lack an eligible rebuild path even when vectors are already missing. Preserve the data and obtain the owner's retention/recovery decision before retrying. | Refusal does not undo earlier committed progress or authorization debits. |
+| `retained_vector_check_failed` within `apply_failed` (operation: `failed`) | Rebuildability could not be established. Inspect the same selected brain's status and database/schema/embedding-registry access; restore reliable inspection before retrying. Do not interpret an unavailable census as zero blockers. | This phase is refused; the failed check does not establish that previous phases made no changes or spent nothing. |
+| `incomplete` | Inspect remaining work, provider health, and ownership; resume only after resolving the blocker. | Completed chunks/facts and prior debits remain; incomplete is not a rollback. |
+
+Keeping the current model, or leaving an in-flight migration paused, is valid until
+the owner chooses an eligible recovery path. Preserve deletion and `embed_skip`
+intent: do not automatically restore pages or remove skip policy to bypass a
+refusal. A width change may refuse because of retained deleted/skip vectors even
+when a same-width migration can leave those vectors untouched and complete.
+Archived blocked work can include NULL vectors, contentful chunkless pages,
+unsealed projections, or signature/legacy text-hash drift. At preflight, known
+archived blockers refuse migration before new authorization or provider calls.
+Standalone brain-wide `embed --stale` can repair active work while explicitly
+reporting archived blockers as incomplete; it does not dispatch archived text.
+Restoring an archived source still requires the owner's deliberate approval.
+Unsealed unsupported media needs its original importer; a sealed imported image
+with usable stored chunks can migrate through the existing embedder. These are
+phase-local checks, not a purge path or permission for raw SQL, a forced marker
+reset, or a new override. `--status` and `--dry-run` describe runnable work and
+estimates; they do not prove that the live retained-vector check will pass.
+
+Use `gbrain migrate embeddings --status --json` on the selected brain. Increasing
+`--max-cost-usd` is renewed authorization for a larger **total** cap, not a reset
+of prior debits. The CLI does not infer that a failure means zero writes.
+
+1. Inspect without mutations or provider calls:
+   `gbrain migrate embeddings --status --json`, then a target-specific
+   `--dry-run`. Inspect chunks, facts, projection blockers, target dimensions,
+   reranker action and whether pricing is known.
+2. Verify a full database backup on an isolated restore. For PGLite, stop all
+   processes using the brain, wait for a clean close/checkpoint, and copy the
+   entire database directory plus configuration. Open a **copy** with the
+   matching binary. For PostgreSQL, use the PostgreSQL backup tools against
+   the selected database and restore into a separate database with compatible
+   pgvector/extensions. Compare canonical pages, facts, withdrawal ledger and
+   queued intent. Markdown export is not a database backup. Follow the
+   [engine-specific backup and isolated-restore examples](../embedding-migrations.md#backup-and-isolated-restore).
+3. Authorize a bounded migration, for example:
+   `gbrain migrate embeddings --to openai:text-embedding-3-small --dim 1536 --reranker off --max-cost-usd 1 --yes --json`.
+   The dollar amount is an operator-chosen total limit, not a price quote.
+   A batch size is not a spending cap. The preview character-based cost is
+   an estimate; the cap must cover the printed worst-case authorization, and
+   each attempt reserves its maximum input size before settling to reported usage.
+4. An incomplete or failed apply exits nonzero. Read `--status` before
+   repeating the same command. Already-correct chunks/facts are not sent
+   again. A crash, timeout or provider refusal without reported usage keeps
+   that attempt's maximum debit.
+   If the cap is exhausted, fix the underlying provider problem and explicitly
+   raise the **total** authorization to continue. Do not reset the marker.
+   Projection recovery may have made durable progress even when migration
+   invalidation was refused. Unsealed unsupported media needs its original
+   importer; never stamp projection revisions with SQL.
+5. Verify `facts_pending`, remaining chunks and the completion receipt with
+   `--status --json`, then perform a known-positive retrieval in the same
+   brain and a genuine miss. `--no-embed` is deliberately deferred, not
+   complete. A cursor reaching EOF does not mean blocked work completed.
+
+For a synthetic brain containing one pending page and one active fact, the
+tested PostgreSQL and PGLite runs returned this subset of the JSON result:
+
+```json
+{"status":"completed","remaining":0,"facts_embedded":1,"facts_remaining":0,"blocked_projection_pages":0}
+```
+
+Repeating the same completed migration, including `--reranker off`, returned
+`{"status":"skipped_no_work"}` without new provider work. These are synthetic
+recovery checks, not a prediction of a personal brain's counts or provider cost.
+
+For a brain already missing page vectors, `gbrain embed --stale
+--include-null-signature` uses the same bounded canonical projection recovery.
+For source-scoped facts, preview `gbrain embed --facts --stale --source
+'source-example' --dry-run --json`; explicit repair requires `--yes
+--max-cost-usd 1` and supports `--max-facts` bounded work. Use the brain-wide
+migration command when durable authorization across interruptions is required.
+
+Prefer forward recovery. A binary rollback does not restore vectors or undo
+the schema. Restoring an older backup over a brain with intervening writes or
+committed withdrawals can resurrect forgotten content and is unsafe; do not
+do that without a separately reviewed reconciliation of all later intent.
+
+### Verify a known result and a genuine miss
+
+After status reports completion, keep the same brain and source selection and
+check content you already know exists. Authorize any provider calls separately;
+a search on an embedded brain can contact its configured provider. In the
+network-isolated keyless fixture used for this release, these exact commands ran
+against an existing synthetic page:
+
+```bash
+gbrain --brain host search amberbadgerfixtureproof --source default --json
+gbrain --brain host search zzzgenuinemissfixtureproof --source default --json
+```
+
+The first returned `concepts/keyless-fixture-example` with `keyword_hit: true`;
+the second returned `[]`, and both exited zero. These tokens belong only to that
+fixture. For your brain, substitute an existing non-sensitive phrase and a
+deliberately absent phrase, and check the expected source/slug rather than merely
+counting results. A clean miss must remain a miss. Those recorded keyless results
+prove content persistence and keyword retrieval, **not vector repair**: that
+fixture explicitly reported keyword-only degradation. On an approved embedded
+brain, also inspect migration completion and retrieval degradation; a keyword
+hit alone does not establish semantic recovery. Do not paste private content
+into diagnostic reports.
 
 ## What the rebuild deletes
 
-The dimension change **deletes every stored embedding vector** in the brain —
+The dimension change **deletes the stored vectors in the dim-pinned text columns** —
 they are in the old model's space and unusable. They are not recoverable:
 going back to the previous provider means paying for a second full re-embed.
-`content_chunks` vectors are rebuilt by the re-embed pass, the query cache
-refills on the next query, and fact embeddings are rewritten on their next
-write (or a `gbrain extract` pass).
+`content_chunks` vectors are rebuilt by the re-embed pass. Semantic result
+caching remains disabled. Eligible fact vectors are repaired in the same
+consented migration; a separate source-scoped repair is also available in
+[fact-vector repair](../embedding-migrations.md#repair-missing-fact-vectors-deliberately). Image and
+multimodal columns are not part of this text-space rebuild.
 
 ## Resume after a kill
 
@@ -177,13 +326,19 @@ fully-embedded page. Without it a large brain would report "incomplete" and the
 re-run would pay again for those pages. `--batch-size N` tunes the batch
 (default 2000).
 
-`--no-embed` applies schema + config + invalidation and stops, so you can run
-the (potentially long) re-embed later or in the background:
+`--no-embed` applies schema + config + invalidation and stops with deliberately
+deferred work. Inspect status, then resume the migration without `--no-embed` so
+the existing total authorization and completion checks still cover the repair:
 
 ```bash
-gbrain migrate embeddings --to openai:text-embedding-3-small --yes --no-embed
-gbrain embed --stale --catch-up --include-null-signature --background
+gbrain migrate embeddings --to openai:text-embedding-3-small --yes --no-embed --max-cost-usd 1
+gbrain migrate embeddings --status --json
+gbrain migrate embeddings --to openai:text-embedding-3-small --yes --max-cost-usd 1
 ```
+
+The example cap must be approved by the operator. The resumed command retains
+earlier debits; it does not authorize another dollar. A standalone/background
+embedding invocation does not inherit this migration's durable allowance.
 
 ## During the migration
 
@@ -208,8 +363,8 @@ vector spaces in one index, degrading retrieval with nothing in the logs.
 
 The migration handles the reranker in the same run (`--reranker auto` is the
 default): when the ACTIVE reranker — resolved through the mode bundles, so
-the common no-explicit-config case counts — is on the outgoing provider or a
-sunsetting one, and the target provider ships a reranker, the run probes it
+the common no-explicit-config case counts — is unsupported or is on the
+outgoing provider, and the target provider ships a reranker, the run probes it
 live and switches `search.reranker.model` under the same consent gate (config
 write + query-cache purge in one transaction). Overrides: `--reranker off`
 disables reranking, `--reranker keep` leaves it, `--reranker
@@ -235,23 +390,24 @@ run.
 ## Custom embedding columns
 
 There is **no automated off-ramp for custom `embedding_columns` entries**:
-`migrate embeddings` covers the primary column only. Re-declare each custom
-column's config on the new provider and re-embed its content, or drop the
-column config.
+`migrate embeddings` covers the primary column only. Changing a custom
+column's model label does not convert its vectors. Plan a separate replacement
+and re-embed, or remove it, only with the owner's explicit approval.
 
-## Self-hosting instead of migrating
+## Local targets and unsupported provider IDs
 
-If the outgoing model's weights are available (zembed-1's are Apache-2.0),
-self-hosting preserves your existing vectors — no re-embed at all — but only
-when the embedding signature doesn't change: keep the SAME model id
-(`zeroentropyai:zembed-1`) and point its base URL at your endpoint with
-`gbrain config set provider_base_urls.zeroentropyai <url>`. The endpoint
-must speak ZeroEntropy's wire dialect (`/models/embed`,
-`{results: [...]}` responses) — the model id routes through a ZE-specific
-compat fetch, so a generic OpenAI-compatible `llama-server` or Ollama
-endpoint will NOT work without a compat proxy in front. Switching the
-provider id instead (e.g. `llama-server:zembed-1`) changes
-`pages.embedding_signature`, and the next stale-embed pass re-embeds
-everything — a full re-embed, not a zero-cost move. This path lasts only
-until the `zeroentropyai` recipe is deleted (scheduled for a September 2026 release). The
-migration command is for when you'd rather move to a hosted provider.
+Fresh installs use `voyage:voyage-4` at 1024 dimensions. An existing brain
+without an explicit embedding model does not inherit that default: semantic
+embedding is unavailable, while keyword search, page reads and migration
+status remain usable. Schema initialization preserves a recorded model and
+column width; if the stored model is missing, it refuses rather than guessing.
+Re-running `init` cannot assign a different model to populated vectors, even
+when the widths match. Inspect `--status`, keep a verified backup and preview
+an explicit migration instead of editing labels to make the warning disappear.
+
+Local providers such as Ollama, llama-server and LM Studio can be explicit
+migration targets. Select the model actually served and its output width;
+changing a provider ID changes the embedding signature and is not proof that
+old vectors are compatible. Do not rewrite stored signatures to bypass the
+re-embed. Removed provider IDs and their former base-URL compatibility paths
+are no longer supported; use a supported recipe and an approved migration.

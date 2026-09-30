@@ -206,11 +206,13 @@ class TailBuffer {
 export async function shellHandler(ctx: MinionJobContext): Promise<ShellJobResult> {
   if (process.env.GBRAIN_ALLOW_SHELL_JOBS !== '1') {
     const warning =
-      `[shell] Job #${ctx.id} rejected: GBRAIN_ALLOW_SHELL_JOBS=1 not set on this worker.\n` +
-      '        Shell jobs require the env var on the worker process.';
+      `[shell] Job #${ctx.id} rejected: shell jobs are not enabled on this worker.\n` +
+      '        Start it with `gbrain jobs work --allow-shell-jobs` (or export GBRAIN_ALLOW_SHELL_JOBS=1\n' +
+      '        from your shell; a .env in the working directory cannot set it).';
     console.warn(warning);
     throw new UnrecoverableError(
-      'shell handler disabled on this worker (set GBRAIN_ALLOW_SHELL_JOBS=1 to execute shell jobs)',
+      'shell handler disabled on this worker (start it with --allow-shell-jobs or ' +
+      'GBRAIN_ALLOW_SHELL_JOBS=1 to execute shell jobs)',
     );
   }
 

@@ -35,13 +35,16 @@
  * config; it never writes config.
  */
 
-import { existsSync, mkdirSync, appendFileSync } from 'fs';
+import { existsSync, mkdirSync, appendFileSync, chmodSync } from 'fs';
 import { join } from 'path';
 
 import type { Migration, OrchestratorOpts, OrchestratorResult, OrchestratorPhaseResult } from './types.ts';
 import { loadConfig, toEngineConfig, gbrainPath } from '../../core/config.ts';
 import { createEngine } from '../../core/engine-factory.ts';
 import type { BrainEngine } from '../../core/engine.ts';
+import { managedPersistenceEnabled } from '../../core/persistence/ownership.ts';
+import { admitCanonicalGrandfather } from '../../core/persistence/grandfather.ts';
+import { OperationError } from '../../core/ops/contract.ts';
 // Bug 3 — ledger writes moved to the runner (apply-migrations.ts).
 
 // Lazy: GBRAIN_HOME may be set after module load.
@@ -104,11 +107,18 @@ const GRANDFATHER_WHERE =
 // (same rationale as engine-constants.ts DELETE_BATCH_SIZE).
 const CHUNK_SIZE = 1000;
 
+// Grandfather writes admitted before the step waits for them (#5530).
+const GRANDFATHER_WINDOW = 50;
+
+/** A page this run grandfathered and the revision its write produced. */
+export interface GrandfatheredPage { id: number; revision: string | null; }
+
 interface GrandfatherResult {
   touched: number;
   skipped: number;
   failed: number;
   failures: string[];
+  grandfathered: GrandfatheredPage[];
 }
 
 // Exported for direct hermetic testing against a PGLite engine (the config /
@@ -117,7 +127,7 @@ export async function phaseCGrandfather(
   engine: BrainEngine,
   opts: OrchestratorOpts,
 ): Promise<{ result: OrchestratorPhaseResult; detail: GrandfatherResult }> {
-  const gf: GrandfatherResult = { touched: 0, skipped: 0, failed: 0, failures: [] };
+  const gf: GrandfatherResult = { touched: 0, skipped: 0, failed: 0, failures: [], grandfathered: [] };
 
   try {
     if (opts.dryRun) {
@@ -141,27 +151,75 @@ export async function phaseCGrandfather(
       `SELECT id FROM pages WHERE ${GRANDFATHER_WHERE} ORDER BY id`,
     );
     const ids = idRows.map(r => Number(r.id));
+    const managed = await managedPersistenceEnabled(engine);
 
     for (let i = 0; i < ids.length; i += CHUNK_SIZE) {
       const chunk = ids.slice(i, i + CHUNK_SIZE);
       try {
+        if (managed) {
+          const selected = await engine.executeRaw<{ id: number; slug: string; source_id: string; source_incarnation: string }>(
+            'SELECT p.id,p.slug,p.source_id,s.incarnation AS source_incarnation FROM pages p JOIN sources s ON s.id=p.source_id WHERE p.id=ANY($1::int[]) AND NOT s.archived ORDER BY p.id', [chunk]);
+          gf.skipped += chunk.length - selected.length;
+          const fail = (page: { id: number }, error: unknown) => {
+            gf.failed++;
+            const reason = error instanceof OperationError
+              ? `${error.code}${error.writeRequest ? ` request_id=${error.writeRequest.request_id}` : ''}`
+              : error instanceof Error ? error.message : String(error);
+            gf.failures.push(`page#${page.id}: ${reason}`.slice(0, 120));
+          };
+          // #5530: admit a bounded window before waiting (below the principal's
+          // outstanding-request limit), so the pages' Git effects are ready
+          // together and the effect runner commits and pushes them as groups.
+          for (let w = 0; w < selected.length; w += GRANDFATHER_WINDOW) {
+            const admitted: { page: typeof selected[number]; complete: () => Promise<{ revision: string | null }> }[] = [];
+            for (const page of selected.slice(w, w + GRANDFATHER_WINDOW)) {
+              try {
+                const outcome = await admitCanonicalGrandfather(engine, page, snapshot => appendRollbackBatch([snapshot]));
+                if (outcome.status === 'skipped') gf.skipped++;
+                else admitted.push({ page, complete: outcome.complete });
+              } catch (error) { fail(page, error); }
+            }
+            for (const { page, complete } of admitted) {
+              try {
+                const outcome = await complete();
+                gf.touched++;
+                gf.grandfathered.push({ id: page.id, revision: outcome.revision });
+              } catch (error) { fail(page, error); }
+            }
+          }
+          continue;
+        }
         // Rollback log BEFORE mutation: one SELECT per chunk (bounded memory),
         // one appendFileSync per chunk. Carries source_id so rollback is
         // unambiguous across same-slug-different-source pages.
-        const snap = await engine.executeRaw<{
-          id: number; slug: string; source_id: string | null; frontmatter: Record<string, unknown> | null;
-        }>(
-          'SELECT id, slug, source_id, frontmatter FROM pages WHERE id = ANY($1::int[])',
-          [chunk],
-        );
-        appendRollbackBatch(snap);
-
-        await engine.executeRaw(
-          `UPDATE pages SET frontmatter = jsonb_set(COALESCE(frontmatter, '{}'::jsonb), '{validate}', 'false'::jsonb) ` +
-          'WHERE id = ANY($1::int[])',
-          [chunk],
-        );
-        gf.touched += chunk.length;
+        const touched = await engine.transaction(async tx => {
+          const keys = await tx.executeRaw<{ id: number; slug: string; source_id: string }>(
+            'SELECT id, slug, source_id FROM pages WHERE id = ANY($1::int[])', [chunk]);
+          await tx.lockPageKeys(keys.map(row => ({ sourceId: row.source_id, slug: row.slug })));
+          const snap = await tx.executeRaw<{
+            id: number; slug: string; source_id: string; frontmatter: Record<string, unknown> | null;
+            knowledge_revision: string; text_projection_revision: string | null;
+          }>(`SELECT id, slug, source_id, frontmatter, knowledge_revision, text_projection_revision
+              FROM pages WHERE id = ANY($1::int[]) AND ${GRANDFATHER_WHERE} FOR UPDATE`, [chunk]);
+          const identities = new Map(keys.map(row => [row.id, row]));
+          if (snap.some(row => identities.get(row.id)?.source_id !== row.source_id || identities.get(row.id)?.slug !== row.slug)) {
+            throw new Error('Page identity changed during grandfathering; retry the migration.');
+          }
+          appendRollbackBatch(snap);
+          // The revision trigger advances knowledge_revision on this update;
+          // verification keys on it to tell a later rewrite from a lost write.
+          const written = await tx.executeRaw<{ id: number; knowledge_revision: string }>(
+            `UPDATE pages SET frontmatter = jsonb_set(COALESCE(frontmatter, '{}'::jsonb), '{validate}', 'false'::jsonb) ` +
+            'WHERE id = ANY($1::int[]) RETURNING id, knowledge_revision::text AS knowledge_revision', [snap.map(row => row.id)]);
+          const sealed = snap.filter(row => row.text_projection_revision === row.knowledge_revision).map(row => row.id);
+          if (sealed.length) {
+            await tx.executeRaw('UPDATE pages SET text_projection_revision=knowledge_revision WHERE id = ANY($1::int[])', [sealed]);
+          }
+          return written.map(row => ({ id: Number(row.id), revision: row.knowledge_revision }));
+        });
+        gf.touched += touched.length;
+        gf.skipped += chunk.length - touched.length;
+        gf.grandfathered.push(...touched);
       } catch (e) {
         gf.failed += chunk.length;
         const msg = e instanceof Error ? e.message : String(e);
@@ -174,7 +232,7 @@ export async function phaseCGrandfather(
   }
 
   const status: OrchestratorPhaseResult['status'] = gf.failed > 0 ? 'failed' : 'complete';
-  const detailStr = `touched=${gf.touched} skipped=${gf.skipped} failed=${gf.failed}`;
+  const detailStr = `touched=${gf.touched} skipped=${gf.skipped} failed=${gf.failed}${gf.failed ? `; ${gf.failures.slice(0, 2).join('; ')}` : ''}`;
   return {
     result: { name: 'grandfather', status, detail: detailStr },
     detail: gf,
@@ -183,24 +241,47 @@ export async function phaseCGrandfather(
 
 // ---------------------------------------------------------------------------
 // Phase D — verify
+//
+// Checks only the pages this run grandfathered. A page whose knowledge_revision
+// moved past the one our write produced (or that was deleted) was rewritten by
+// a concurrent writer, such as a connector re-import; it is reported as
+// `rewritten_concurrently`, not failed. A page still at our revision without
+// `validate: false` means the write did not land, and fails the phase. A null
+// revision (a replayed receipt that recorded none) cannot prove a rewrite, so
+// the flag must be present.
 // ---------------------------------------------------------------------------
 
-async function phaseDVerify(engine: BrainEngine, expectedTouched: number): Promise<OrchestratorPhaseResult> {
-  if (expectedTouched === 0) {
+// Exported for direct hermetic testing, like phaseCGrandfather.
+export async function phaseDVerify(engine: BrainEngine, grandfathered: GrandfatheredPage[]): Promise<OrchestratorPhaseResult> {
+  if (grandfathered.length === 0) {
     return { name: 'verify', status: 'complete', detail: 'nothing to verify' };
   }
   try {
-    // Count pages whose frontmatter has `validate` = false via raw SQL.
-    const rows = await engine.executeRaw<{ count: string | number }>(
-      "SELECT COUNT(*) AS count FROM pages WHERE (frontmatter->>'validate')::text = 'false'",
-    );
-    const count = rows[0]?.count ?? 0;
-    const n = typeof count === 'string' ? parseInt(count, 10) : Number(count);
-    return {
-      name: 'verify',
-      status: n >= expectedTouched ? 'complete' : 'failed',
-      detail: `pages with validate=false: ${n} (expected >= ${expectedTouched})`,
-    };
+    let verified = 0;
+    let rewritten = 0;
+    const missing: number[] = [];
+    for (let i = 0; i < grandfathered.length; i += CHUNK_SIZE) {
+      const chunk = grandfathered.slice(i, i + CHUNK_SIZE);
+      const rows = await engine.executeRaw<{ id: number; state: 'verified' | 'rewritten' | 'missing' }>(
+        `SELECT t.id,
+           CASE WHEN p.id IS NULL OR (t.revision IS NOT NULL AND p.knowledge_revision::text <> t.revision) THEN 'rewritten'
+                WHEN p.frontmatter->>'validate' = 'false' THEN 'verified'
+                ELSE 'missing' END AS state
+         FROM unnest($1::int[], $2::text[]) AS t(id, revision)
+         LEFT JOIN pages p ON p.id = t.id`,
+        [chunk.map(page => page.id), chunk.map(page => page.revision)],
+      );
+      for (const row of rows) {
+        if (row.state === 'verified') verified++;
+        else if (row.state === 'rewritten') rewritten++;
+        else missing.push(Number(row.id));
+      }
+    }
+    const detail = `verified=${verified} rewritten_concurrently=${rewritten}`;
+    return missing.length === 0
+      ? { name: 'verify', status: 'complete', detail }
+      : { name: 'verify', status: 'failed',
+          detail: `${detail} missing_validate=${missing.length} (${missing.slice(0, 5).map(id => `page#${id}`).join(', ')})` };
   } catch (e) {
     return {
       name: 'verify',
@@ -237,7 +318,7 @@ async function orchestrator(opts: OrchestratorOpts): Promise<OrchestratorResult>
     filesRewritten = gfDetail.touched;
 
     if (!opts.dryRun) {
-      const verifyRes = await phaseDVerify(engine, gfDetail.touched);
+      const verifyRes = await phaseDVerify(engine, gfDetail.grandfathered);
       phases.push(verifyRes);
     }
 
@@ -263,14 +344,15 @@ async function orchestrator(opts: OrchestratorOpts): Promise<OrchestratorResult>
 
 function ensureRollbackDir(): void {
   const dir = getRollbackDir();
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
 }
 
 // v0.41.37.0 #1581: batch rollback writer. One appendFileSync per chunk, bounded
 // memory. Each line carries id + slug + source_id so a rollback is unambiguous
 // across same-slug-different-source pages (pages.slug is not globally unique).
 function appendRollbackBatch(
-  rows: ReadonlyArray<{ id: number; slug: string; source_id: string | null; frontmatter: Record<string, unknown> | null }>,
+  rows: ReadonlyArray<{ id: number; slug: string; source_id: string | null; frontmatter: Record<string, unknown> | null;
+    source_incarnation?: string; knowledge_revision?: string; request_id?: string }>,
 ): void {
   if (rows.length === 0) return;
   const ts = new Date().toISOString();
@@ -280,9 +362,13 @@ function appendRollbackBatch(
     id: r.id,
     slug: r.slug,
     source_id: r.source_id ?? 'default',
+    source_incarnation: r.source_incarnation,
+    knowledge_revision: r.knowledge_revision,
+    request_id: r.request_id,
     pre_frontmatter: r.frontmatter ?? {},
   })).join('\n') + '\n';
-  appendFileSync(getRollbackFile(), lines, 'utf-8');
+  appendFileSync(getRollbackFile(), lines, { encoding: 'utf-8', mode: 0o600 });
+  chmodSync(getRollbackFile(), 0o600);
 }
 
 // ---------------------------------------------------------------------------

@@ -117,8 +117,10 @@ honest about what needs operator judgment:
   explicit `<replacement claim>` placeholder for you to fill from the
   report — the classifier picks an action, not a winner, and will not
   fabricate a take from arbitrary chunk prose.
-- `gbrain dream --phase synthesize --slug <slug>` — compiled_truth for
-  the curated entity needs an update (cross_slug curated-vs-bulk).
+- `gbrain dream --phase synthesize  # re-synthesize; contradiction on <slug>`
+  — compiled_truth for the curated entity needs an update (cross_slug
+  curated-vs-bulk). The synthesize phase has no per-slug flag, so the
+  comment names the page to check after the run.
 - `# manual review: ...` — intentional-disagreement (debate) findings and
   judge-unsure findings render as a manual-review comment; a
   mark-as-debate subcommand does not exist yet, so nothing is minted that

@@ -30,7 +30,7 @@
  * by default.
  */
 
-import { BudgetMeter, type SubmitEstimate, type BudgetCheckResult } from './budget-meter.ts';
+import { BudgetMeter, loadAllowUnpriced, parseBudgetUsd, type SubmitEstimate, type BudgetCheckResult } from './budget-meter.ts';
 import { sourceScopeOpts, type OperationContext } from '../operations.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { CyclePhase, PhaseResult, PhaseStatus, PhaseError } from '../cycle.ts';
@@ -49,7 +49,12 @@ export interface ScopedReadOpts {
 export interface BasePhaseOpts {
   /** Optional progress reporter. Phases call tick() / start() through the base. */
   reporter?: ProgressReporter;
-  /** Dry-run mode propagated from cycle opts. Subclasses honor this in process(). */
+  /**
+   * Dry-run mode propagated from cycle opts. Honored in run(): the phase is
+   * skipped (`status: 'skipped'`, `reason: 'no_dry_run_support'`) before
+   * process() is called — every subclass bills LLM calls and INSERTs rows and
+   * has no dry-run path of its own (#4823). `ctx.dryRun` is honored too.
+   */
   dryRun?: boolean;
   /** Optional explicit budget override in USD. Otherwise base reads config. */
   budgetUsd?: number;
@@ -179,12 +184,7 @@ export abstract class BaseCyclePhase {
   private resolveBudgetUsd(ctx: OperationContext, opts: BasePhaseOpts): number {
     if (typeof opts.budgetUsd === 'number') return opts.budgetUsd;
     const raw = (ctx.config as unknown as Record<string, unknown>)[this.budgetUsdKey];
-    if (typeof raw === 'number' && Number.isFinite(raw) && raw >= 0) return raw;
-    if (typeof raw === 'string') {
-      const parsed = Number.parseFloat(raw);
-      if (Number.isFinite(parsed) && parsed >= 0) return parsed;
-    }
-    return this.budgetUsdDefault;
+    return parseBudgetUsd(typeof raw === 'number' || typeof raw === 'string' ? raw : undefined, this.budgetUsdDefault);
   }
 
   /**
@@ -198,10 +198,25 @@ export abstract class BaseCyclePhase {
     // to thread this would have been the v0.34.1 leak class. Now structural.
     const scope = sourceScopeOpts(ctx);
 
+    // `--dry-run` promises "preview without writing". No subclass has a
+    // dry-run path (LLM calls + INSERT take_proposals / take_grade_cache /
+    // calibration_profiles), so skip here — one guard for all three, the same
+    // shape extract / resolve_symbol_edges use (#4823). Read both channels so
+    // a caller that forgets to thread opts.dryRun still can't bill.
+    if (opts.dryRun || ctx.dryRun === true) {
+      return {
+        phase: this.name,
+        status: 'skipped',
+        duration_ms: Date.now() - t0,
+        summary: `dry-run: ${this.name} skipped (LLM calls + DB writes)`,
+        details: { dryRun: true, reason: 'no_dry_run_support' },
+      };
+    }
+
     // Budget meter construction. The default path reads config; tests inject.
     if (!opts.meter) {
       const budgetUsd = this.resolveBudgetUsd(ctx, opts);
-      this.meter = new BudgetMeter({ budgetUsd, phase: this.name });
+      this.meter = new BudgetMeter({ budgetUsd, phase: this.name, allowUnpriced: await loadAllowUnpriced(ctx.engine) });
     } else {
       this.meter = opts.meter;
     }

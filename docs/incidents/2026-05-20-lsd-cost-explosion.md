@@ -220,7 +220,7 @@ architectural rounds shipped in the budget-cathedral wave that followed:
   `reason: 'cost' | 'runtime' | 'no_pricing'`. `record()` throws when
   cumulative spend exceeds the cap (TX1). `reserve()` hard-fails on
   `no_pricing` when the cap is set + model missing from pricing maps (TX2).
-- **P6 (payload-fitter):** `src/core/diarize/payload-fitter.ts` with
+- **P6 (payload-fitter; never wired, removed in the test-reduction fix wave):** `src/core/diarize/payload-fitter.ts` with
   `'batch'` and `'summarize'` strategies. Summarize embed-clusters
   (k=ceil(items/4)), Haiku-summarizes each cluster in parallel via
   `Promise.allSettled` at parallelism=4. Surfaces `degraded: true` flag

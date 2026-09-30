@@ -90,6 +90,28 @@ describe('embed-backfill handler — happy path', () => {
 });
 
 describe('embed-backfill handler — D2 lock contract', () => {
+  test('threads the job deadline and a transaction-fenced source lease into the drain', async () => {
+    const job = fakeJob({ sourceId: 'default' });
+    const deadline = Date.now() + 60_000;
+    job.deadlineAtMs = deadline;
+    let checked = false;
+    const handler = makeEmbedBackfillHandler(engine, {
+      runStale: async (_engine, _source, opts) => {
+        expect(opts?.deadline).toBe(deadline);
+        expect(opts?.assertOwned).toBeDefined();
+        await opts!.assertOwned!();
+        await engine.transaction(tx => opts!.assertOwned!(tx));
+        await engine.executeRaw("UPDATE gbrain_cycle_locks SET acquisition_token=gen_random_uuid() WHERE id='gbrain-embed-backfill:default'");
+        await expect(engine.transaction(tx => opts!.assertOwned!(tx))).rejects.toThrow('stolen');
+        expect(opts!.signal!.aborted).toBe(true);
+        checked = true;
+        return { embedded: 0, chunksProcessed: 0, pagesProcessed: 0, invalidated: 0, lastCursor: null, done: false, aborted: true };
+      },
+    });
+    expect((await handler(job)).status).toBe('aborted');
+    expect(checked).toBe(true);
+  });
+
   test('IRON-RULE: second call returns already_in_progress when lock is held', async () => {
     // Hold the per-source lock externally
     const lock = await tryAcquireDbLock(engine, 'gbrain-embed-backfill:default', 60);

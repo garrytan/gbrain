@@ -38,6 +38,8 @@ beforeAll(async () => {
   // Publish gates OFF on the DB plane (wins over any dev-machine file config)
   // so the advisor gate backstop fires deterministically.
   await engine.setConfig('mcp.publish_advisor', 'false');
+  await engine.executeRaw(`INSERT INTO oauth_clients(client_id,client_name,scope,source_id,bound_slug_prefixes)
+    VALUES ('bound-client','Synthetic bound client','read write','default',$1::text[])`, [['notes/']]);
 }, 120_000);
 
 afterAll(async () => {
@@ -45,7 +47,8 @@ afterAll(async () => {
 });
 
 function boundAuth(): AuthInfo {
-  return { token: 't', clientId: 'bound-client', scopes: ['read', 'write'], boundSlugPrefixes: ['notes/'] } as AuthInfo;
+  return { token: 't', clientId: 'bound-client', principal: { kind: 'oauth_client', id: 'bound-client' },
+    scopes: ['read', 'write'], sourceId: 'default', boundSlugPrefixes: ['notes/'] } as AuthInfo;
 }
 
 const HTTP = { remote: true, transport: 'http' as const, sourceId: 'default' };

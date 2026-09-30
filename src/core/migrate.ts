@@ -1,7 +1,15 @@
+import { SOURCE_INGESTION_RECEIPTS_SCHEMA_SQL } from './company-brain/receipt-schema.ts';
+import { MANAGED_WRITER_GUARD_SQL } from './persistence/writer-guard-schema.ts';
+import { PERSISTENCE_TOPOLOGY_SCHEMA_SQL } from './persistence/topology-schema.ts';
+import { PERSISTENCE_SCHEMA_STATEMENTS, PERSISTENCE_REQUEST_RECOVERY_INDEX_SQL, PERSISTENCE_DATABASE_PENDING_INDEX_SQL } from './persistence/schema.ts';
+import { PERSISTENCE_EFFECT_PARKED_INDEX_SQL, PERSISTENCE_EFFECT_SCHEMA_SQL } from './persistence/effect-schema.ts';
+import { PAGE_PROJECTION_SCHEMA_SQL, PAGE_PROJECTION_ACTIVATION_SQL } from './page-state/projection-schema.ts';
+import { LEASE_TOKEN_SCHEMA_SQL } from './lease-schema.ts';
+import { PAGE_STATE_SCHEMA_SQL, PAGE_VERSION_DELETION_SCHEMA_SQL } from './page-state/schema.ts';
 import type { BrainEngine } from './engine.ts';
 import { slugifyPath } from './sync.ts';
 import { getFtsLanguage } from './fts-language.ts';
-import { hnswMaxDimsForType } from './vector-index.ts';
+import { hnswMaxDimsForType, readExistingEmbeddingShape } from './vector-index.ts';
 // runMigrations executes while an initialized engine is live. Keep its helper
 // modules in the static graph rather than importing them from async handlers.
 import {
@@ -10,9 +18,13 @@ import {
 } from './retry-matcher.ts';
 import { repairTimelineDedupIndex, repairLegacyTimelineSourceRows } from './timeline-dedup-repair.ts';
 import { repairPagesUpsertArbiter } from './pages-upsert-arbiter.ts';
+import { repairLinkSourceCheck, LINK_SOURCE_GATE_MIGRATION_VERSION } from './link-source-check-repair.ts';
 import { GRANT_COLUMNS_SQL, GRANT_AUDIT_SCHEMA_SQL, GRANT_SPEND_COLUMNS_SQL } from './grants/schema.ts';
-import { FACT_WITHDRAWAL_SCHEMA_SQL, FACT_WITHDRAWAL_BACKFILL_SQL } from './facts/withdrawal-schema.ts';
+import { FACT_WITHDRAWAL_SCHEMA_SQL, FACT_WITHDRAWAL_BACKFILL_SQL, FACT_WITHDRAWAL_SUBJECT_SQL, FACT_WITHDRAWAL_NORMALIZED_SQL } from './facts/withdrawal-schema.ts';
 import { repairLegacyClientGrants } from './grants/migration.ts';
+import { PROJECTION_STATISTICS_SQL, verifyProjectionStatistics } from './search/projection-statistics.ts';
+import { SHARED_SKILLS_SCHEMA_SQL } from './shared-skills/schema-all.ts';
+import { migrateConnectorCheckpoints } from './persistence/connector-checkpoint-migration.ts';
 
 /**
  * When true, per-migration explanatory notices (e.g. the v123/v124 "here is
@@ -2363,14 +2375,15 @@ export const MIGRATIONS: Migration[] = [
         useHalfvec = true;
       }
 
-      const columnType = useHalfvec ? 'halfvec' : 'vector';
+      const existingShape = await readExistingEmbeddingShape(engine, 'facts');
+      const columnType = existingShape?.type ?? (useHalfvec ? 'halfvec' : 'vector');
       const vecType = columnType.toUpperCase();
       // HNSW operator class must match the column type:
       //   VECTOR(n)  → vector_cosine_ops
       //   HALFVEC(n) → halfvec_cosine_ops
-      const opclass = useHalfvec ? 'halfvec_cosine_ops' : 'vector_cosine_ops';
+      const opclass = columnType === 'halfvec' ? 'halfvec_cosine_ops' : 'vector_cosine_ops';
       const hnswMaxDims = hnswMaxDimsForType(columnType);
-      const factsEmbeddingIndexSql = embeddingDim <= hnswMaxDims
+      const factsEmbeddingIndexSql = (existingShape?.dimensions ?? embeddingDim) <= hnswMaxDims
         ? `CREATE INDEX IF NOT EXISTS idx_facts_embedding_hnsw
           ON facts USING hnsw (embedding ${opclass})
           WHERE embedding IS NOT NULL AND expired_at IS NULL;`
@@ -2963,11 +2976,12 @@ export const MIGRATIONS: Migration[] = [
         useHalfvec = true;
       }
 
-      const columnType = useHalfvec ? 'halfvec' : 'vector';
+      const existingShape = await readExistingEmbeddingShape(engine, 'query_cache');
+      const columnType = existingShape?.type ?? (useHalfvec ? 'halfvec' : 'vector');
       const vecType = columnType.toUpperCase();
-      const opclass = useHalfvec ? 'halfvec_cosine_ops' : 'vector_cosine_ops';
+      const opclass = columnType === 'halfvec' ? 'halfvec_cosine_ops' : 'vector_cosine_ops';
       const hnswMaxDims = hnswMaxDimsForType(columnType);
-      const queryCacheEmbeddingIndexSql = embeddingDim <= hnswMaxDims
+      const queryCacheEmbeddingIndexSql = (existingShape?.dimensions ?? embeddingDim) <= hnswMaxDims
         ? `CREATE INDEX IF NOT EXISTS idx_query_cache_embedding_hnsw
           ON query_cache USING hnsw (embedding ${opclass})
           WHERE embedding IS NOT NULL;`
@@ -6206,15 +6220,6 @@ export const MIGRATIONS: Migration[] = [
   {
     version: 142,
     name: 'takes_embedding_dimension_matches_config',
-    // #2089: takes was created with a hard-coded vector(1536), while the
-    // configured embedding model can emit another width (for example the
-    // default zembed-1 2560d). The vector writer cannot be useful until the
-    // column shares the configured dimension with content_chunks/facts.
-    // Renumbered v141 → v142: the wave-k branch shipped this AS v141 while
-    // master consumed v141 for extract_rollup_expected_limit (#4482), so a
-    // brain that ran the branch pre-merge recorded version 141 and would
-    // skip master's v141 forever. The guarded DDL below re-applies it here
-    // as a redundant first statement — idempotent, a no-op on fresh paths.
     idempotent: true,
     sql: '',
     handler: async (engine) => {
@@ -6549,6 +6554,274 @@ $protocol$ LANGUAGE plpgsql;
 DROP TRIGGER IF EXISTS minion_queue_protocol ON minion_jobs;
 CREATE TRIGGER minion_queue_protocol BEFORE INSERT OR UPDATE ON minion_jobs
   FOR EACH ROW EXECUTE FUNCTION enforce_minion_queue_protocol();
+    `,
+  },
+  { version: 150, name: 'canonical_page_revisions_and_guards', idempotent: true, sql: PAGE_STATE_SCHEMA_SQL },
+  { version: 151, name: 'durable_concurrent_persistence', idempotent: true, sql: PERSISTENCE_SCHEMA_STATEMENTS.join(';\n') + ';' },
+  { version: 152, name: 'unique_lock_acquisition_tokens', idempotent: true, sql: LEASE_TOKEN_SCHEMA_SQL },
+  { version: 153, name: 'verified_text_projection_activation', idempotent: true, sql: PAGE_PROJECTION_SCHEMA_SQL + PAGE_PROJECTION_ACTIVATION_SQL },
+  { version: 154, name: 'preserve_sanitized_page_search_vectors', idempotent: true, sql: PAGE_PROJECTION_SCHEMA_SQL },
+  { version: 155, name: 'recoverable_postcommit_persistence_effects', idempotent: true, sql: PERSISTENCE_EFFECT_SCHEMA_SQL },
+  { version: 156, name: 'managed_alias_and_source_checkpoint_guards', idempotent: true, sql: MANAGED_WRITER_GUARD_SQL },
+  { version: 157, name: 'recoverable_source_topology', idempotent: true, sql: PERSISTENCE_TOPOLOGY_SCHEMA_SQL },
+  { version: 158, name: 'canonical_version_deletion_state', idempotent: true, sql: PAGE_VERSION_DELETION_SCHEMA_SQL },
+  { version: 159, name: 'index_retained_publication_recovery', idempotent: true, sql: PERSISTENCE_REQUEST_RECOVERY_INDEX_SQL + ';' },
+  {
+    version: 160,
+    name: 'current_text_projection_planner_statistics',
+    idempotent: true,
+    sql: PROJECTION_STATISTICS_SQL,
+    sqlFor: { postgres: "SET LOCAL statement_timeout = '30s'; SET LOCAL lock_timeout = '2s';" + PROJECTION_STATISTICS_SQL },
+    handler: verifyProjectionStatistics,
+  },
+  {
+    version: 161,
+    name: 'index_pending_text_projections',
+    idempotent: true,
+    sql: `CREATE INDEX IF NOT EXISTS idx_pages_projection_pending
+      ON pages(source_id, page_kind, slug)
+      WHERE deleted_at IS NULL AND text_projection_revision IS DISTINCT FROM knowledge_revision;`,
+    sqlFor: {
+      postgres: `SET LOCAL statement_timeout = '30s'; SET LOCAL lock_timeout = '2s';
+        CREATE INDEX IF NOT EXISTS idx_pages_projection_pending
+        ON pages(source_id, page_kind, slug)
+        WHERE deleted_at IS NULL AND text_projection_revision IS DISTINCT FROM knowledge_revision;`,
+    },
+  },
+  { version: 162, name: 'source_ingestion_receipts_with_policy', idempotent: true, sql: SOURCE_INGESTION_RECEIPTS_SCHEMA_SQL },
+  {
+    version: 163,
+    name: 'derived_atom_page_scan_state',
+    idempotent: true,
+    sql: `
+      CREATE TABLE IF NOT EXISTS extract_atoms_page_state (
+        source_incarnation UUID NOT NULL REFERENCES sources(incarnation) ON DELETE CASCADE,
+        page_id INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+        content_hash TEXT NOT NULL,
+        fail_count INTEGER NOT NULL DEFAULT 0 CHECK (fail_count >= 0),
+        tombstoned BOOLEAN NOT NULL DEFAULT false,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        PRIMARY KEY (source_incarnation, page_id, content_hash)
+      );
+      CREATE INDEX IF NOT EXISTS extract_atoms_page_state_tombstoned_idx
+        ON extract_atoms_page_state (source_incarnation, content_hash, page_id) WHERE tombstoned;
+      CREATE INDEX IF NOT EXISTS extract_atoms_page_state_page_idx ON extract_atoms_page_state (page_id);
+      CREATE OR REPLACE FUNCTION gbrain_clear_atom_page_state() RETURNS trigger LANGUAGE plpgsql AS $fn$
+      BEGIN
+        IF NEW.deleted_at IS DISTINCT FROM OLD.deleted_at OR NEW.source_id IS DISTINCT FROM OLD.source_id THEN
+          DELETE FROM extract_atoms_page_state WHERE page_id=OLD.id;
+        END IF;
+        RETURN NEW;
+      END $fn$;
+      DROP TRIGGER IF EXISTS pages_clear_atom_scan_state ON pages;
+      CREATE TRIGGER pages_clear_atom_scan_state AFTER UPDATE ON pages
+        FOR EACH ROW EXECUTE FUNCTION gbrain_clear_atom_page_state();
+      INSERT INTO extract_atoms_page_state (source_incarnation, page_id, content_hash, fail_count, tombstoned)
+        SELECT s.incarnation, p.id, p.content_hash,
+          CASE WHEN p.frontmatter ? 'atoms_fail_count' THEN (p.frontmatter->>'atoms_fail_count')::integer ELSE 0 END,
+          COALESCE(p.frontmatter->>'atoms_scan_hash'=substring(p.content_hash from 1 for 16), false)
+        FROM pages p JOIN sources s ON s.id=p.source_id
+        WHERE p.deleted_at IS NULL AND p.content_hash ~ '^[0-9a-f]{64}$'
+          AND p.frontmatter ?| ARRAY['atoms_scan_hash','atoms_fail_hash','atoms_fail_count']
+          AND (NOT (p.frontmatter ? 'atoms_scan_hash') OR
+            (jsonb_typeof(p.frontmatter->'atoms_scan_hash')='string'
+             AND p.frontmatter->>'atoms_scan_hash'=substring(p.content_hash from 1 for 16)))
+          AND (NOT (p.frontmatter ?| ARRAY['atoms_fail_hash','atoms_fail_count']) OR
+            (jsonb_typeof(p.frontmatter->'atoms_fail_hash')='string'
+             AND p.frontmatter->>'atoms_fail_hash'=substring(p.content_hash from 1 for 16)
+             AND CASE WHEN jsonb_typeof(p.frontmatter->'atoms_fail_count')='number'
+               AND p.frontmatter->>'atoms_fail_count' ~ '^[1-9][0-9]{0,9}$'
+               THEN (p.frontmatter->>'atoms_fail_count')::numeric <= 2147483647 ELSE false END))
+        ON CONFLICT (source_incarnation, page_id, content_hash) DO NOTHING;
+      DO $rls$ BEGIN
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname=current_user AND rolbypassrls) THEN
+          ALTER TABLE extract_atoms_page_state ENABLE ROW LEVEL SECURITY;
+        END IF;
+      END $rls$;
+    `,
+  },
+  {
+    version: 164,
+    name: 'shared_brain_skills_and_membership',
+    idempotent: true,
+    sql: SHARED_SKILLS_SCHEMA_SQL,
+    verify: async (engine) => {
+      const [row] = await engine.executeRaw<{ heads: string | null; members: string | null; protocol: boolean }>(
+        `SELECT to_regclass('shared_skill_heads')::text AS heads,
+          to_regclass('shared_skill_members')::text AS members,
+          EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema()
+            AND table_name='persistence_requests' AND column_name='target_kind') AS protocol`);
+      return Boolean(row?.heads && row?.members && row?.protocol);
+    },
+  },
+  {
+    version: 165, name: 'index_database_only_pending_writes', idempotent: true, transaction: false, sql: '',
+    handler: async engine => {
+      if (engine.kind === 'postgres') await dropInvalidConcurrentIndex(engine, 165, 'persistence_requests_database_pending');
+      await engine.runMigration(165, engine.kind === 'postgres'
+        ? PERSISTENCE_DATABASE_PENDING_INDEX_SQL.replace('CREATE INDEX', 'CREATE INDEX CONCURRENTLY')
+        : PERSISTENCE_DATABASE_PENDING_INDEX_SQL);
+    },
+  },
+  {
+    version: 166, name: 'fact_embedding_identity', idempotent: true,
+    sql: `ALTER TABLE facts ADD COLUMN IF NOT EXISTS embedding_model TEXT;
+      ALTER TABLE facts ADD COLUMN IF NOT EXISTS embedded_text_hash TEXT;
+      ${MANAGED_WRITER_GUARD_SQL}`,
+  },
+  {
+    // A legacy DB-only row can name a fence row as its successor. The fence
+    // reconcile deletes and reinserts that row, so a NO ACTION reference made
+    // the page fail to reconcile on every cycle. The superseded row stays
+    // expired; only the pointer to the replaced row clears.
+    version: 167,
+    name: 'facts_superseded_by_set_null',
+    idempotent: true,
+    sql: `
+      ALTER TABLE facts DROP CONSTRAINT IF EXISTS facts_superseded_by_fkey;
+      ALTER TABLE facts ADD CONSTRAINT facts_superseded_by_fkey
+        FOREIGN KEY (superseded_by) REFERENCES facts(id) ON DELETE SET NULL NOT VALID;
+      ALTER TABLE facts VALIDATE CONSTRAINT facts_superseded_by_fkey;
+    `,
+  },
+  {
+    // The only record that a transcript was synthesized was its completed
+    // subagent job row, which `jobs prune` deletes after 30 days; the next
+    // cycle then paid to synthesize it again. Prune archives the keys here.
+    version: 168,
+    name: 'dream_synthesis_completions',
+    idempotent: true,
+    sql: `
+      CREATE TABLE IF NOT EXISTS dream_synthesis_completions (
+        source_id TEXT NOT NULL,
+        idempotency_key TEXT NOT NULL,
+        completed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        PRIMARY KEY (source_id, idempotency_key)
+      );
+    `,
+  },
+  {
+    // A withdrawal keyed only on the claim text expired and blocked that claim
+    // for every entity in the source. New withdrawals carry the forgotten
+    // row's subject; existing rows keep the source-wide '*' subject.
+    version: 169,
+    name: 'fact_withdrawal_subject',
+    idempotent: true,
+    sql: FACT_WITHDRAWAL_SUBJECT_SQL,
+  },
+  {
+    version: 170, name: 'index_parked_persistence_effects', idempotent: true, transaction: false, sql: '',
+    handler: async engine => {
+      if (engine.kind === 'postgres') await dropInvalidConcurrentIndex(engine, 170, 'persistence_effects_parked');
+      await engine.runMigration(170, engine.kind === 'postgres'
+        ? PERSISTENCE_EFFECT_PARKED_INDEX_SQL.replace('CREATE INDEX', 'CREATE INDEX CONCURRENTLY')
+        : PERSISTENCE_EFFECT_PARKED_INDEX_SQL);
+    },
+  },
+  {
+    version: 171,
+    name: 'content_chunks_embedding_input_hash',
+    // #5553: per-chunk embedding-input provenance, written in the same
+    // statement as the vector (src/core/embedding-input-hash.ts). A projection
+    // rebuild keeps a vector only when the stored hash equals the recomputed
+    // one. Same shape as v133 and v166's fact provenance: nullable, no
+    // backfill (a hash cannot be proven for an existing vector), no index
+    // (read only per page during a rebuild; bootstrap-coverage: column-only).
+    // NULL on a contextual page is nulled once and stamped by its re-embed.
+    // Keep in sync with src/schema.sql (regenerate schema-embedded.ts via
+    // build:schema) and src/core/pglite-schema.ts.
+    idempotent: true,
+    sql: `
+      ALTER TABLE content_chunks ADD COLUMN IF NOT EXISTS embedding_input_hash TEXT;
+    `,
+  },
+  {
+    version: 172, name: 'pages_safe_chunk_pending_index', idempotent: true, transaction: false, sql: '',
+    // #5050/#5247: the safe_index_pending probe (ops/search.ts) runs on every
+    // remote search and now counts pages of every kind below the safe-chunk
+    // fence, so the markdown-only partial pages_chunker_version_idx no longer
+    // serves it. This partial index holds only unsealed pages (empty on a
+    // sealed brain). The literal 4 is SAFE_FENCE_CHUNKER_VERSION when this
+    // migration shipped; a later fence bump needs its own index.
+    handler: async engine => {
+      if (engine.kind === 'postgres') await dropInvalidConcurrentIndex(engine, 172, 'pages_safe_chunk_pending_idx');
+      await engine.runMigration(172, `CREATE INDEX ${engine.kind === 'postgres' ? 'CONCURRENTLY ' : ''}IF NOT EXISTS pages_safe_chunk_pending_idx
+        ON pages (source_id) WHERE chunker_version < 4`);
+    },
+  },
+  {
+    // Paid-loop breaker (dream-breaker.ts) and its doctor check count dead
+    // subagent submissions by finish time over the last 24 h.
+    version: 173, name: 'minion_jobs_dead_subagent_finished_index', idempotent: true, transaction: false, sql: '',
+    handler: async engine => {
+      if (engine.kind === 'postgres') await dropInvalidConcurrentIndex(engine, 173, 'idx_minion_jobs_dead_subagent_finished');
+      await engine.runMigration(173, `CREATE INDEX ${engine.kind === 'postgres' ? 'CONCURRENTLY ' : ''}IF NOT EXISTS idx_minion_jobs_dead_subagent_finished
+        ON minion_jobs (finished_at) WHERE name = 'subagent' AND status = 'dead'`);
+    },
+  },
+  {
+    // Exact-text fingerprints let a punctuation or casing variant of a
+    // forgotten claim come back on re-extraction (write-path audit B-9).
+    // Fingerprints now fold punctuation; legacy exact rows keep matching.
+    version: 174,
+    name: 'fact_withdrawal_normalized_fingerprint',
+    idempotent: true,
+    sql: FACT_WITHDRAWAL_NORMALIZED_SQL,
+  },
+  {
+    // Frontmatter tags were add-only because a tag row carried no provenance:
+    // removing a tag from frontmatter never removed it. The importer stamps
+    // 'frontmatter' and deletes only those rows; explicit adds stamp 'added'
+    // and legacy rows stay NULL — neither is ever deleted by an import.
+    version: 175,
+    name: 'tags_tag_source',
+    idempotent: true,
+    sql: `ALTER TABLE tags ADD COLUMN IF NOT EXISTS tag_source TEXT;`,
+  },
+  {
+    // #5686: connector checkpoints were keyed on the raw sources.config, which
+    // the cycle stamp rewrites after every run. Re-key each source's newest
+    // committed checkpoint receipt to the stable parsed-config identity, seed
+    // its connector state row (resumed or re-walking once), record the cutoff
+    // that classifies retired-format connector intents, and remove orphan
+    // checkpoint rows. Handler-only, statement-at-a-time, rerun-safe.
+    version: 176, name: 'connector_checkpoint_stable_identity', idempotent: true, sql: '',
+    handler: async engine => { await migrateConnectorCheckpoints(engine); },
+  },
+  {
+    // #5254: a page written database-only while its filesystem source had no
+    // canonical owner (persistence.unbound_write=database_only) is stamped
+    // 'unbound_source', so writes and sync after binding keep it database-only
+    // instead of materializing or overwriting it. Nullable, no backfill (no
+    // earlier binary could write such a page), no index (read per page; the
+    // doctor count scans only non-NULL rows; bootstrap-coverage: column-only).
+    // Keep in sync with src/schema.sql (regenerate schema-embedded.ts via
+    // build:schema) and src/core/pglite-schema.ts.
+    version: 177,
+    name: 'pages_database_only_reason',
+    idempotent: true,
+    sql: `ALTER TABLE pages ADD COLUMN IF NOT EXISTS database_only_reason TEXT;`,
+  },
+  {
+    // Writer-version stamps: each request records the binary version and host
+    // that admitted it and the ones that published it, so doctor's
+    // writer_version advisory can name an older writer still on the brain.
+    // Nullable and never backfilled (a past writer cannot be proven). The
+    // cutoff is the database clock at migration time: only requests admitted
+    // or published after it are expected to carry stamps. persistence_requests
+    // and persistence_brain are migration-created on PGLite and no index
+    // references these columns (bootstrap-coverage: column-only exemptions).
+    version: 178,
+    name: 'persistence_writer_version_stamps',
+    idempotent: true,
+    sql: `
+      ALTER TABLE persistence_requests ADD COLUMN IF NOT EXISTS admitter_version text;
+      ALTER TABLE persistence_requests ADD COLUMN IF NOT EXISTS admitter_host_id uuid;
+      ALTER TABLE persistence_requests ADD COLUMN IF NOT EXISTS consumer_version text;
+      ALTER TABLE persistence_requests ADD COLUMN IF NOT EXISTS consumer_host_id uuid;
+      ALTER TABLE persistence_requests ADD COLUMN IF NOT EXISTS published_at timestamptz;
+      ALTER TABLE persistence_brain ADD COLUMN IF NOT EXISTS writer_version_cutoff timestamptz;
+      UPDATE persistence_brain SET writer_version_cutoff=now() WHERE writer_version_cutoff IS NULL;
     `,
   },
 ];
@@ -6924,6 +7197,27 @@ export async function runMigrations(engine: BrainEngine): Promise<{ applied: num
       );
     }
   } catch { /* best-effort; doctor reports the drift if this couldn't run */ }
+
+  // #4613: same drift class for links_link_source_check. A brain stamped past
+  // v114 whose CHECK still carries the pre-v114 allowlist rejects every kebab
+  // provenance write; the version counter can't see it. Refuses loudly on
+  // violators. Ledger-gated: below v114 the pending loop replays v114 itself
+  // (the repair would rewrite the constraint twice; pre-v11 has no column).
+  if (current >= LINK_SOURCE_GATE_MIGRATION_VERSION) {
+    try {
+      const l = await repairLinkSourceCheck(engine);
+      if (l.repaired) {
+        console.error(`[migrate] restored links_link_source_check to the v114 kebab-case gate (#4613)`);
+      } else if (l.reason === 'violations') {
+        console.error(
+          `[migrate] cannot restore links_link_source_check: ${l.violations} links row(s) have a ` +
+          `non-kebab link_source — fix or delete them, then re-run (#4613). See \`gbrain doctor\`.`,
+        );
+      }
+    } catch (e) {
+      console.error(`[migrate] links_link_source_check self-heal could not run (#4613): ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
 
   if (pending.length === 0) {
     return { applied: 0, current };

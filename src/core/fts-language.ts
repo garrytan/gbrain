@@ -24,6 +24,16 @@
 const VALID_CONFIG_NAME = /^[a-z][a-z0-9_]*$/;
 const DEFAULT_LANGUAGE = 'english';
 
+/**
+ * Config-table key `gbrain reindex-search-vector` sets (value = target
+ * language) before it flips the trigger functions and clears only after both
+ * backfills finish. While present, rows written after the flip and rows not
+ * yet backfilled are tokenized under different configurations, so keyword
+ * search matches only part of the corpus; doctor's `fts_reindex_incomplete`
+ * check fails on it (#4795).
+ */
+export const FTS_REINDEX_MARKER_KEY = 'fts.reindex_in_progress';
+
 let cachedLanguage: string | null = null;
 
 /**

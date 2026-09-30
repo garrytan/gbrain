@@ -37,6 +37,12 @@ export function utcDate(instant = new Date()): string {
   return instant.toISOString().slice(0, 10);
 }
 
+/** Calendar arithmetic on a YYYY-MM-DD date string (no timezone involved). */
+export function shiftCalendarDate(date: string, days: number): string {
+  const [y, m, d] = date.split('-').map(Number);
+  return new Date(Date.UTC(y!, m! - 1, d! + days)).toISOString().slice(0, 10);
+}
+
 function formatDateInTimeZone(instant: Date, timeZone: string): string {
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone,

@@ -1,3 +1,4 @@
+import { installFixtureChunks } from './helpers/page-projection.ts';
 /**
  * v0.20.0 Cathedral II Layer 3 (1b) — chunk-grain FTS.
  *
@@ -74,7 +75,7 @@ describe('Cathedral II Layer 3 — searchKeyword external contract', () => {
       compiled_truth: 'placeholder',
       timeline: '',
     });
-    await engine.upsertChunks('guides/refactor-large-fns', [
+    await installFixtureChunks(engine, 'guides/refactor-large-fns', [
       { chunk_index: 0, chunk_text: 'First, refactor the function into smaller units.', chunk_source: 'compiled_truth' },
       { chunk_index: 1, chunk_text: 'Then refactor further using extract-method patterns.', chunk_source: 'compiled_truth' },
     ]);
@@ -84,7 +85,7 @@ describe('Cathedral II Layer 3 — searchKeyword external contract', () => {
       compiled_truth: 'placeholder',
       timeline: '',
     });
-    await engine.upsertChunks('guides/refactor-patterns', [
+    await installFixtureChunks(engine, 'guides/refactor-patterns', [
       { chunk_index: 0, chunk_text: 'The strangler-fig refactor is the safest approach.', chunk_source: 'compiled_truth' },
       { chunk_index: 1, chunk_text: 'Refactor incrementally; never boil the ocean at once.', chunk_source: 'compiled_truth' },
     ]);
@@ -95,7 +96,7 @@ describe('Cathedral II Layer 3 — searchKeyword external contract', () => {
       compiled_truth: 'placeholder',
       timeline: '',
     });
-    await engine.upsertChunks('guides/unrelated', [
+    await installFixtureChunks(engine, 'guides/unrelated', [
       { chunk_index: 0, chunk_text: 'Ship to production on a Tuesday, never a Friday.', chunk_source: 'compiled_truth' },
     ]);
   });
@@ -142,7 +143,7 @@ describe('Cathedral II Layer 3 — searchKeywordChunks (internal primitive)', ()
       compiled_truth: 'placeholder',
       timeline: '',
     });
-    await engine.upsertChunks('guides/multi-chunk', [
+    await installFixtureChunks(engine, 'guides/multi-chunk', [
       { chunk_index: 0, chunk_text: 'refactor is a core engineering practice.', chunk_source: 'compiled_truth' },
       { chunk_index: 1, chunk_text: 'refactor safely using characterization tests.', chunk_source: 'compiled_truth' },
       { chunk_index: 2, chunk_text: 'refactor tools can automate common patterns.', chunk_source: 'compiled_truth' },
@@ -189,7 +190,7 @@ describe('Cathedral II Layer 3 — doc-comment weight precedence (A4 foundation)
       compiled_truth: 'placeholder',
       timeline: '',
     });
-    await engine.upsertChunks('pages/alpha', [
+    await installFixtureChunks(engine, 'pages/alpha', [
       { chunk_index: 0, chunk_text: 'Some boilerplate text without the term.', chunk_source: 'compiled_truth' },
     ]);
     await engine.putPage('pages/beta', {
@@ -198,7 +199,7 @@ describe('Cathedral II Layer 3 — doc-comment weight precedence (A4 foundation)
       compiled_truth: 'placeholder',
       timeline: '',
     });
-    await engine.upsertChunks('pages/beta', [
+    await installFixtureChunks(engine, 'pages/beta', [
       { chunk_index: 0, chunk_text: 'The hexagon term appears only inside body text here.', chunk_source: 'compiled_truth' },
     ]);
 

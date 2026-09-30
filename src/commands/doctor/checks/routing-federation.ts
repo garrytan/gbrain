@@ -9,7 +9,17 @@ import type { BrainEngine } from '../../../core/engine.ts';
 import { gbrainPath } from '../../../core/config.ts';
 import { embedBackfillWorkerSurface } from '../../../core/minions/embed-backfill-admission.ts';
 import { isUndefinedTableError, isUndefinedColumnError } from '../../../core/utils.ts';
+import { ALLOWED_SCOPES_LIST, DCR_REGISTRABLE_SCOPES } from '../../../core/scope.ts';
 import type { Check } from '../../doctor.ts';
+
+/**
+ * Scopes beyond the anonymous-DCR ceiling — DERIVED as the complement of
+ * `DCR_REGISTRABLE_SCOPES` over `ALLOWED_SCOPES_LIST` (never hand-copied), so
+ * a scope added to scope.ts is audited by arm (c) below automatically.
+ */
+export const DCR_PRIVILEGED_SCOPES: ReadonlyArray<string> = Object.freeze(
+  ALLOWED_SCOPES_LIST.filter((s) => !DCR_REGISTRABLE_SCOPES.has(s)),
+);
 
 /**
  * v0.37.7.0 — Tier 5K source_routing_health (D5 lock: 200-page total cap).
@@ -264,7 +274,52 @@ export async function checkOauthClientScopeHealth(engine: BrainEngine): Promise<
       if (!(isUndefinedTableError(e) && /facts/i.test(msg))) throw e;
       orphaned = await engine.executeRaw<{ id: string }>(orphanSql(false), [WORKSPACE_SUFFIX]);
     }
+    // (c) PRIVILEGED SELF-REGISTERED CLIENTS — an active row whose scope
+    // exceeds the DCR ceiling (read/write) AND carries the anonymous-DCR
+    // signature: grant_revision = 0 with no oauth_grant_audit 'register' row
+    // (every operator path writes one). Nothing sweeps such rows on upgrade,
+    // so this is the operator's visibility into clients that were registered
+    // before the ceiling existed (or that predate the grant audit log — the
+    // same signature, hence ADVISORY). Fail-open to "unknown" when the audit
+    // table / revision column is absent: without them the signature cannot be
+    // evaluated and guessing would either lie green or cry wolf.
+    let privilegedDcr: Array<{ client_id: string; client_name: string | null; scope: string }> = [];
+    let privilegedDcrNote: string | null = null;
+    // Word-bounded match over the DERIVED complement (scope ids are [a-z_]+,
+    // so the alternation needs no escaping); bound as a parameter, never
+    // interpolated into the SQL text.
+    const privilegedScopeRegex = `(^|[[:space:]])(${DCR_PRIVILEGED_SCOPES.join('|')})([[:space:]]|$)`;
+    const dcrCeiling = [...DCR_REGISTRABLE_SCOPES];
+    try {
+      privilegedDcr = await engine.executeRaw<{ client_id: string; client_name: string | null; scope: string }>(
+        `SELECT c.client_id, c.client_name, c.scope
+           FROM oauth_clients c
+          WHERE c.deleted_at IS NULL
+            AND COALESCE(c.grant_revision, 0) = 0
+            AND COALESCE(c.scope, '') ~ $1
+            AND NOT EXISTS (
+              SELECT 1 FROM oauth_grant_audit a
+               WHERE a.client_id = c.client_id AND a.action = 'register'
+            )
+          ORDER BY c.client_id`,
+        [privilegedScopeRegex],
+      );
+    } catch (e) {
+      if (!(isUndefinedTableError(e) || isUndefinedColumnError(e, 'grant_revision'))) throw e;
+      privilegedDcrNote = 'self-registered-client scope audit skipped: grant audit schema not present (run `gbrain apply-migrations --yes`), so privileged self-registered clients are unknown';
+    }
     const problems: string[] = [];
+    if (privilegedDcr.length > 0) {
+      const shown = privilegedDcr.slice(0, 5)
+        .map(c => `"${c.client_name ?? c.client_id}" (${c.client_id}) scope=${c.scope}`);
+      problems.push(
+        `${privilegedDcr.length} active OAuth client(s) hold a scope beyond the self-registration ceiling (${dcrCeiling.join('/')}) ` +
+        `and look self-registered (no operator grant record): ${shown.join('; ')}` +
+        (privilegedDcr.length > 5 ? ` (+${privilegedDcr.length - 5} more)` : '') +
+        `. If you did not register these yourself, narrow with \`gbrain auth rescope-client <client_id> --scopes ${dcrCeiling.join(',')}\` ` +
+        `or remove with \`gbrain auth revoke-client <client_id>\`.`,
+      );
+    }
     if (dangling.length > 0) {
       const byClient = new Map<string, { name: string | null; grants: string[] }>();
       for (const d of dangling) {
@@ -298,7 +353,8 @@ export async function checkOauthClientScopeHealth(engine: BrainEngine): Promise<
     return {
       name: 'oauth_client_scope_health',
       status: 'ok',
-      message: 'Scoped-client grants consistent (no dangling federated reads, no orphaned workspace sources)',
+      message: 'Scoped-client grants consistent (no dangling federated reads, no orphaned workspace sources' +
+        (privilegedDcrNote ? `; ${privilegedDcrNote})` : ', no privileged self-registered clients)'),
     };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

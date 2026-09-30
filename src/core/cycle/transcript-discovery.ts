@@ -10,9 +10,11 @@
  */
 
 import { readFileSync, readdirSync, statSync } from 'node:fs';
-import { join, basename } from 'node:path';
+import { join, basename, sep } from 'node:path';
 import { createHash } from 'node:crypto';
 import { pruneDir } from '../sync.ts';
+import { realpathOrResolve, resolvedPrefixContained } from '../path-confine.ts';
+import { corpusFileSessionId } from '../context/corpus-segments.ts';
 
 export interface DiscoveredTranscript {
   /** Absolute path to the transcript file. */
@@ -48,6 +50,20 @@ export interface DiscoverOpts {
    * that would let any caller silently re-trigger the loop bug.
    */
   bypassGuard?: boolean;
+  /**
+   * #5471: absolute directories the dream phases write their outputs into
+   * (reflections, originals, patterns, cycle summaries under the brain
+   * checkout). A file whose resolved path sits inside one is skipped whatever
+   * its frontmatter says, so an output left unmarked by a failed postprocess
+   * is never re-synthesized. Matched on resolved paths, never on content.
+   */
+  excludeDirs?: string[];
+  /**
+   * #5413: session ids of gbrain's own claude-cli subprocess sessions
+   * (`claudeCliSelfSessionIds`). A `.txt` corpus file of one of these
+   * sessions (`corpusFileSessionId`) is a self-capture and is skipped.
+   */
+  selfCaptureSessionIds?: ReadonlySet<string>;
 }
 
 const DATE_RE = /^(\d{4}-\d{2}-\d{2})/;
@@ -257,6 +273,8 @@ function listTextFiles(dir: string): string[] {
  *  - aren't `.txt`
  *  - have date-prefixed basenames outside the requested window
  *  - have content shorter than `minChars`
+ *  - are gbrain claude-cli self-captures (`selfCaptureSessionIds`) or sit under a
+ *    dream output directory (`excludeDirs`); each class is counted in one stderr line
  *  - carry the `dream_generated: true` self-consumption marker (unless `bypassGuard`)
  *  - match any compiled exclude pattern (case-insensitive word-boundary by default);
  *    these are summarised in ONE stderr line at the end (count + pattern labels,
@@ -272,6 +290,9 @@ export function discoverTranscripts(opts: DiscoverOpts): DiscoveredTranscript[] 
   const dirs = [opts.corpusDir, opts.meetingTranscriptsDir].filter(
     (d): d is string => typeof d === 'string' && d.length > 0,
   );
+  const outputDirs = (opts.excludeDirs ?? []).map(realpathOrResolve);
+  let outputSkips = 0;
+  let selfCaptureSkips = 0;
 
   const results: DiscoveredTranscript[] = [];
   for (const dir of dirs) {
@@ -281,6 +302,17 @@ export function discoverTranscripts(opts: DiscoverOpts): DiscoveredTranscript[] 
       const dateMatch = DATE_RE.exec(baseName);
       const inferredDate = dateMatch ? dateMatch[1] : null;
       if (!isInDateRange(inferredDate, opts)) continue;
+      if (ext === '.txt' && opts.selfCaptureSessionIds?.has(corpusFileSessionId(basename(filePath)))) {
+        selfCaptureSkips += 1;
+        continue;
+      }
+      if (outputDirs.length > 0) {
+        const resolved = realpathOrResolve(filePath);
+        if (outputDirs.some(d => resolvedPrefixContained(resolved, d, sep))) {
+          outputSkips += 1;
+          continue;
+        }
+      }
 
       let content: string;
       try {
@@ -310,6 +342,12 @@ export function discoverTranscripts(opts: DiscoverOpts): DiscoveredTranscript[] 
   }
 
   tally.report();
+  if (selfCaptureSkips > 0) {
+    process.stderr.write(`[dream] skipped ${selfCaptureSkips} corpus file(s) captured from gbrain's own claude-cli sessions\n`);
+  }
+  if (outputSkips > 0) {
+    process.stderr.write(`[dream] skipped ${outputSkips} file(s) under dream output directories (self-consumption guard)\n`);
+  }
   return results.sort((a, b) => a.filePath.localeCompare(b.filePath));
 }
 

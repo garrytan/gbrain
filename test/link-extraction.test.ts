@@ -61,13 +61,13 @@ describe('extractEntityRefs', () => {
   test('extracts filesystem-relative refs ([Name](../people/slug.md))', () => {
     const refs = extractEntityRefs('Met with [Alice Chen](../people/alice-chen.md) at the office.');
     expect(refs.length).toBe(1);
-    expect(refs[0]).toEqual({ name: 'Alice Chen', slug: 'people/alice-chen', dir: 'people', upLevels: 1 });
+    expect(refs[0]).toEqual({ name: 'Alice Chen', slug: 'people/alice-chen', dir: 'people', upLevels: 1, index: 9 });
   });
 
   test('extracts engine-style slug refs ([Name](people/slug))', () => {
     const refs = extractEntityRefs('See [Alice Chen](people/alice-chen) for context.');
     expect(refs.length).toBe(1);
-    expect(refs[0]).toEqual({ name: 'Alice Chen', slug: 'people/alice-chen', dir: 'people' });
+    expect(refs[0]).toEqual({ name: 'Alice Chen', slug: 'people/alice-chen', dir: 'people', index: 4 });
   });
 
   test('extracts company refs', () => {
@@ -1591,7 +1591,7 @@ describe("extractEntityRefs — v0.18.0 qualified wikilinks", () => {
   test("[[gstack:projects/foo|Display Name]] preserves display + sourceId", () => {
     const refs = extractEntityRefs("See [[gstack:projects/foo|The Foo Project]] for details.");
     expect(refs.length).toBe(1);
-    expect(refs[0]).toEqual({ name: "The Foo Project", slug: "projects/foo", dir: "projects", sourceId: "gstack" });
+    expect(refs[0]).toEqual({ name: "The Foo Project", slug: "projects/foo", dir: "projects", sourceId: "gstack", index: 4 });
   });
 
   test("qualified source-id format is validated (must match [a-z0-9-]+ kebab rules)", () => {
@@ -2050,6 +2050,133 @@ describe('#4062 — bare [[name]] emits a root-exact direct candidate flag-off',
   });
 });
 
+// ─── Role-prior suppression in Timeline / See-also / machine-list sections ─
+//
+// The page-role prior (advisor/employee/partner bio language biasing bare
+// person→company links) must not type list-shaped links inside Timeline or
+// See-also sections — that is what re-minted thousands of unevidenced
+// works_at/advises edges on re-import. Per-edge verbs still win everywhere.
+describe('extractPageLinks — role prior suppressed in Timeline/See-also', () => {
+  // Real entity pages separate the bio from Timeline/See-also by far more
+  // than the 240-char per-edge window; the padding keeps the fixtures from
+  // letting per-edge verb regexes see bio text (that bleed is pre-existing
+  // behavior, not what these tests exercise).
+  const advisorBio =
+    'Jane is an advisor to several startups and serves as advisor across fintech.\n' +
+    'Filler context about the neighborhood, the weather, and travel plans. '.repeat(6) + '\n';
+
+  test('advisor bio no longer types a Timeline company link (advises -> mentions)', async () => {
+    const content =
+      advisorBio +
+      '\n## Timeline\n' +
+      '- 2026-05-12 — met with [Acme](companies/acme) about the roadmap\n';
+    const { candidates } = await extractPageLinks('people/jane', content, {}, 'person', allowAllResolver);
+    const acme = candidates.find(c => c.targetSlug === 'companies/acme');
+    expect(acme).toBeDefined();
+    expect(acme!.linkType).toBe('mentions');
+  });
+
+  test('advisor bio still types a prose company link outside those sections', async () => {
+    const content =
+      advisorBio +
+      '\nShe spends most weeks with [Acme](companies/acme) and the broader group.\n' +
+      '\n## Timeline\n- 2026-05-12 — quarterly review\n';
+    const { candidates } = await extractPageLinks('people/jane', content, {}, 'person', allowAllResolver);
+    const acme = candidates.find(c => c.targetSlug === 'companies/acme');
+    expect(acme).toBeDefined();
+    expect(acme!.linkType).toBe('advises');
+  });
+
+  test('per-edge verb inside Timeline still wins over suppression', async () => {
+    const content =
+      advisorBio +
+      '\n## Timeline\n' +
+      '- 2026-05-12 — Jane is an advisor to [Acme](companies/acme) as of this week\n';
+    const { candidates } = await extractPageLinks('people/jane', content, {}, 'person', allowAllResolver);
+    const acme = candidates.find(c => c.targetSlug === 'companies/acme');
+    expect(acme).toBeDefined();
+    expect(acme!.linkType).toBe('advises');
+  });
+
+  test('See-also bare wikilink stays mentions despite employee bio', async () => {
+    const content =
+      'Jane is a senior engineer at somewhere important.\n' +
+      'Filler context about the neighborhood, the weather, and travel plans. '.repeat(6) + '\n' +
+      '\n## See also\n- [[companies/acme]]\n';
+    const { candidates } = await extractPageLinks('people/jane', content, {}, 'person', allowAllResolver);
+    const acme = candidates.find(c => c.targetSlug === 'companies/acme');
+    expect(acme).toBeDefined();
+    expect(acme!.linkType).toBe('mentions');
+  });
+
+  test('section ends at the next same-level heading — prior applies again after', async () => {
+    const content =
+      advisorBio +
+      '\n## Timeline\n- 2026-05-12 — planning\n' +
+      '\n## Work\nCurrent focus is [Acme](companies/acme) strategy.\n';
+    const { candidates } = await extractPageLinks('people/jane', content, {}, 'person', allowAllResolver);
+    const acme = candidates.find(c => c.targetSlug === 'companies/acme');
+    expect(acme).toBeDefined();
+    expect(acme!.linkType).toBe('advises');
+  });
+
+  test('a `## Timeline` line inside a fenced code block does not open a suppression range', async () => {
+    // Headings are matched on the code-stripped content (same length-preserving
+    // mask the passes use), so a fence quoting a heading never blanks the
+    // prior for the prose that follows it.
+    const content =
+      advisorBio +
+      '\n```md\n## Timeline\n```\n' +
+      '\nShe spends most weeks with [Acme](companies/acme) and the broader group.\n';
+    const { candidates } = await extractPageLinks('people/jane', content, {}, 'person', allowAllResolver);
+    const acme = candidates.find(c => c.targetSlug === 'companies/acme');
+    expect(acme).toBeDefined();
+    expect(acme!.linkType).toBe('advises');
+  });
+
+  test('machine-list sections (Related / Email mention links) are suppressed too', async () => {
+    const content =
+      'Jane is an advisor to several startups and serves as advisor across fintech.\n' +
+      'Filler context about the neighborhood, the weather, and travel plans. '.repeat(6) + '\n' +
+      '\n## Related\n- [[companies/acme]]\n' +
+      '\n## Email mention links\n- mentions [[companies/beta-corp]] — forwarded thread\n';
+    const { candidates } = await extractPageLinks('people/jane', content, {}, 'person', allowAllResolver);
+    for (const t of ['companies/acme', 'companies/beta-corp']) {
+      const c = candidates.find(x => x.targetSlug === t);
+      expect(c).toBeDefined();
+      expect(c!.linkType).toBe('mentions');
+    }
+  });
+
+  // EntityRef.index half: the display text also appears in the bio, so
+  // first-occurrence anchoring (content.indexOf) lands in the bio and its
+  // 'advisor to' verb types the Timeline link even with suppression alone.
+  test('Timeline link to a bio-named entity anchors at the link, not the bio mention', async () => {
+    const content =
+      'Jane is an advisor to Acme and serves as advisor across fintech.\n' +
+      'Filler context about the neighborhood, the weather, and travel plans. '.repeat(6) + '\n' +
+      '\n## Timeline\n' +
+      '- 2026-05-12 — met with [Acme](companies/acme) about the roadmap\n';
+    const { candidates } = await extractPageLinks('people/jane', content, {}, 'person', allowAllResolver);
+    const acme = candidates.find(c => c.targetSlug === 'companies/acme');
+    expect(acme).toBeDefined();
+    expect(acme!.linkType).toBe('mentions');
+  });
+
+  // A column-0 tag line (`#links`) is not an ATX heading — it must not open
+  // a suppression span that runs to EOF.
+  test('a `#links` tag line at column 0 does not suppress the prior', async () => {
+    const content =
+      advisorBio +
+      '#links\n' +
+      'She spends most weeks with [Acme](companies/acme) and the broader group.\n';
+    const { candidates } = await extractPageLinks('people/jane', content, {}, 'person', allowAllResolver);
+    const acme = candidates.find(c => c.targetSlug === 'companies/acme');
+    expect(acme).toBeDefined();
+    expect(acme!.linkType).toBe('advises');
+  });
+});
+
 // #4062 lane, #4855 grammar: the flag-off root-exact candidate tried ONLY
 // slugifyPath, which keeps stroke letters (`đuc-example`) while a brain that
 // synced the folded name lives at `duc-example`. Try both grammars — exact
@@ -2109,5 +2236,50 @@ describe('makeResolver — dir-hint step tries both slug grammars (#4855)', () =
   test('folded ASCII page slug resolves from the same display name', async () => {
     const r = makeResolver(pagesOnly(['people/duc-example']));
     expect(await r.resolve('Đức Example', 'people')).toBe('people/duc-example');
+  });
+});
+
+// #4995: markdown links carrying a `#anchor` either produced an unmatchable
+// slug (pass 1 kept `x.md#anchor` in the slug) or matched nothing (sameDir
+// pass excluded `#`), while every wikilink regex already stripped anchors. A
+// brain that links with anchors had an empty graph. Pass-1 targets are also
+// lowercased: validateSlug stores every slug lowercase on both engines, so a
+// mixed-case candidate could never resolve.
+describe('#4995 — markdown link anchors are stripped, pass-1 targets lowercased', () => {
+  test('pass-1 dir-shaped link drops the anchor and the .md', () => {
+    expect(extractEntityRefs('[D](registry/sessions/tally.md#x)')).toEqual([
+      { name: 'D', slug: 'registry/sessions/tally', dir: 'registry', index: 0 },
+    ]);
+    expect(extractEntityRefs('[D](registry/sessions/tally#x)')[0].slug).toBe('registry/sessions/tally');
+    expect(extractEntityRefs('[D](../registry/tally.md#a b)')[0]).toEqual(
+      { name: 'D', slug: 'registry/tally', dir: 'registry', upLevels: 1, index: 0 },
+    );
+  });
+
+  test('sameDir link drops the anchor (bare and ./ arms)', () => {
+    expect(extractEntityRefs('See [see](b.md#section).').filter(r => r.sameDir)).toEqual([
+      { name: 'see', slug: 'b', dir: '', sameDir: true, index: 4 },
+    ]);
+    const dot = extractEntityRefs('[x](./beta.md#section)').filter(r => r.sameDir);
+    expect(dot).toHaveLength(1);
+    expect(dot[0].slug).toBe('beta');
+  });
+
+  test('extractPageLinks emits the anchored sibling as a candidate', async () => {
+    const { candidates } = await extractPageLinks(
+      'a', 'See [see](b.md#section).', {}, 'concept', nullResolver, { skipFrontmatter: true },
+    );
+    expect(candidates.map(c => c.targetSlug)).toEqual(['b']);
+  });
+
+  test('extractPageLinks lowercases pass-1 and wikilink targets', async () => {
+    const md = await extractPageLinks(
+      'x', '[D](registry/DECISIONS.md)', {}, 'concept', nullResolver, { skipFrontmatter: true },
+    );
+    expect(md.candidates.map(c => c.targetSlug)).toEqual(['registry/decisions']);
+    const wiki = await extractPageLinks(
+      'x', 'See [[people/Alice]].', {}, 'concept', nullResolver, { skipFrontmatter: true, globalBasename: false },
+    );
+    expect(wiki.candidates.map(c => c.targetSlug)).toContain('people/alice');
   });
 });

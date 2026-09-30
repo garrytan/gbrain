@@ -14,6 +14,7 @@ import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import type { HybridSearchMeta, SearchResult } from '../src/core/types.ts';
+import { installFixtureChunks } from './helpers/page-projection.ts';
 
 const { hybridSearch, hybridSearchCached, awaitPendingSearchCacheWrites } = await import('../src/core/search/hybrid.ts');
 const {
@@ -21,7 +22,6 @@ const {
   resetGateway,
   __setEmbedTransportForTests,
   __setRerankTransportForTests,
-  _resetSunsetWarningsForTest,
 } = await import('../src/core/ai/gateway.ts');
 const { PGLiteEngine } = await import('../src/core/pglite-engine.ts');
 
@@ -61,7 +61,7 @@ beforeAll(async () => {
   for (const [slug, title, type] of fixtures) {
     const truth = `${title} is a builder shipping reranker plumbing.`;
     await engine.putPage(slug, { type, title, compiled_truth: truth });
-    await engine.upsertChunks(slug, [
+    await installFixtureChunks(engine, slug, [
       { chunk_index: 0, chunk_text: truth, chunk_source: 'compiled_truth' },
     ]);
   }
@@ -74,7 +74,6 @@ afterEach(() => {
 afterAll(async () => {
   __setEmbedTransportForTests(null);
   __setRerankTransportForTests(null);
-  _resetSunsetWarningsForTest();
   resetGateway();
   if (savedGbrainHome === undefined) delete process.env.GBRAIN_HOME;
   else process.env.GBRAIN_HOME = savedGbrainHome;
@@ -106,8 +105,7 @@ async function run(query: string): Promise<{ results: SearchResult[]; meta: Hybr
 describe('balanced search without VOYAGE_API_KEY (v0.48.2)', () => {
   test('stamps reranker_skipped (no_key) on meta, keeps results, prints nothing', async () => {
     configure(false);
-    _resetSunsetWarningsForTest();
-    let rerankCalls = 0;
+      let rerankCalls = 0;
     __setRerankTransportForTests(async () => {
       rerankCalls++;
       return new Response(JSON.stringify({ results: [] }), { status: 200 });
@@ -128,8 +126,7 @@ describe('balanced search without VOYAGE_API_KEY (v0.48.2)', () => {
 
   test('fresh cached-wrapper searches retain reranker_skipped metadata with effective cache disabled', async () => {
     configure(false);
-    _resetSunsetWarningsForTest();
-    __setRerankTransportForTests(async () => new Response(JSON.stringify({ results: [] }), { status: 200 }));
+      __setRerankTransportForTests(async () => new Response(JSON.stringify({ results: [] }), { status: 200 }));
     await engine.executeRaw('DELETE FROM query_cache');
     await engine.setConfig('search.cache.enabled', 'true');
     for (let attempt = 0; attempt < 2; attempt++) {

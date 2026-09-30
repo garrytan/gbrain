@@ -8,7 +8,7 @@
  * adapter validates providerOptions against a fixed schema and silently
  * drops `input_type` before building the HTTP body. Without the
  * `__embedInputTypeStore` recovery in the per-recipe fetch shims, every
- * query was encoded document-side (ZE shim's hard default) or with no
+ * query was encoded document-side (a document-side default) or with no
  * input_type at all (Voyage, llama-server) — asymmetric retrieval silently
  * collapsed while the providerOptions-level test stayed green.
  *
@@ -51,18 +51,6 @@ function openAIShapedResponse(dims: number, count: number): Response {
   );
 }
 
-/** ZE-shaped /v1/models/embed response (zeroEntropyCompatFetch rewrites results→data). */
-function zeShapedResponse(dims: number, count: number): Response {
-  const vec = Array.from({ length: dims }, () => 0.1);
-  return new Response(
-    JSON.stringify({
-      results: Array.from({ length: count }, () => ({ embedding: vec })),
-      usage: { total_bytes: 12, total_tokens: 3 },
-    }),
-    { status: 200, headers: { 'Content-Type': 'application/json' } },
-  );
-}
-
 /** Voyage-shaped response: base64 Float32 LE embeddings (rewriter decodes). */
 function voyageShapedResponse(dims: number, count: number): Response {
   const b64 = Buffer.from(new Float32Array(dims).fill(0.1).buffer).toString('base64');
@@ -75,44 +63,6 @@ function voyageShapedResponse(dims: number, count: number): Response {
   );
 }
 
-describe('ZeroEntropy hosted — input_type reaches the wire body', () => {
-  function configureZE() {
-    configureGateway({
-      embedding_model: 'zeroentropyai:zembed-1',
-      embedding_dimensions: 1280,
-      env: { ZEROENTROPY_API_KEY: 'sk-fake' },
-    });
-  }
-
-  test('embedQuery sends input_type=query (not the document default)', async () => {
-    configureZE();
-    let capturedUrl = '';
-    let capturedBody: any = null;
-    fetchHandler = async (url, init) => {
-      capturedUrl = url;
-      capturedBody = JSON.parse(init.body as string);
-      return zeShapedResponse(1280, 1);
-    };
-
-    await embedQuery('what does foo bar do?');
-    // Sanity: the ZE shim ran (URL path rewritten).
-    expect(capturedUrl).toContain('/models/embed');
-    expect(capturedBody.input_type).toBe('query');
-  });
-
-  test('embed (index path) sends input_type=document', async () => {
-    configureZE();
-    let capturedBody: any = null;
-    fetchHandler = async (_url, init) => {
-      capturedBody = JSON.parse(init.body as string);
-      return zeShapedResponse(1280, 1);
-    };
-
-    await embed(['this is a document being indexed']);
-    expect(capturedBody.input_type).toBe('document');
-  });
-});
-
 describe('openai-compatible recipes (local/proxy asymmetric models) — input_type reaches the wire body', () => {
   function configureLlamaServer(modelId: string, dims: number) {
     configureGateway({
@@ -122,14 +72,14 @@ describe('openai-compatible recipes (local/proxy asymmetric models) — input_ty
     });
   }
 
-  test('embedQuery against a local zembed-1 sends input_type=query', async () => {
-    configureLlamaServer('zembed-1', 1280);
+  test('embedQuery against a local voyage-4 sends input_type=query', async () => {
+    configureLlamaServer('voyage-4', 1024);
     let capturedUrl = '';
     let capturedBody: any = null;
     fetchHandler = async (url, init) => {
       capturedUrl = url;
       capturedBody = JSON.parse(init.body as string);
-      return openAIShapedResponse(1280, 1);
+      return openAIShapedResponse(1024, 1);
     };
 
     await embedQuery('what does foo bar do?');
@@ -139,15 +89,15 @@ describe('openai-compatible recipes (local/proxy asymmetric models) — input_ty
     expect(capturedBody.input_type).toBe('query');
   });
 
-  test('embed (index path) against a local zembed-1 sends input_type=document', async () => {
-    configureLlamaServer('zembed-1', 1280);
+  test('embed (index path) against a local voyage-4 sends input_type=document', async () => {
+    configureLlamaServer('voyage-4', 1024);
     let capturedBody: any = null;
     fetchHandler = async (_url, init) => {
       capturedBody = JSON.parse(init.body as string);
-      return openAIShapedResponse(1280, 1);
+      return openAIShapedResponse(1024, 1);
     };
 
-    await embed(['this is a document being indexed']);
+    await embed(['this is a document being indexed'], { inputType: 'document' });
     expect(capturedBody.input_type).toBe('document');
   });
 
@@ -170,18 +120,18 @@ describe('openai-compatible recipes (local/proxy asymmetric models) — input_ty
   test('litellm proxying an asymmetric model: embedQuery sends input_type=query', async () => {
     // The shim is the fallthrough default for every openai-compatible
     // recipe without its own compat fetch — dims.ts threads input_type by
-    // model id, so a zembed-1 behind a LiteLLM proxy (e.g. fronting vLLM)
+    // model id, so a voyage-4 behind a LiteLLM proxy (e.g. fronting vLLM)
     // gets the same signal as llama-server.
     configureGateway({
-      embedding_model: 'litellm:zembed-1',
-      embedding_dimensions: 1280,
+      embedding_model: 'litellm:voyage-4',
+      embedding_dimensions: 1024,
       env: { LITELLM_API_KEY: 'sk-fake' },
       base_urls: { litellm: 'http://localhost:4000' },
     });
     let capturedBody: any = null;
     fetchHandler = async (_url, init) => {
       capturedBody = JSON.parse(init.body as string);
-      return openAIShapedResponse(1280, 1);
+      return openAIShapedResponse(1024, 1);
     };
 
     await embedQuery('what does foo bar do?');
@@ -190,14 +140,14 @@ describe('openai-compatible recipes (local/proxy asymmetric models) — input_ty
 
   test('ollama serving an asymmetric model: embedQuery sends input_type=query', async () => {
     configureGateway({
-      embedding_model: 'ollama:zembed-1',
-      embedding_dimensions: 1280,
+      embedding_model: 'ollama:voyage-4',
+      embedding_dimensions: 1024,
       env: {},
     });
     let capturedBody: any = null;
     fetchHandler = async (_url, init) => {
       capturedBody = JSON.parse(init.body as string);
-      return openAIShapedResponse(1280, 1);
+      return openAIShapedResponse(1024, 1);
     };
 
     await embedQuery('what does foo bar do?');

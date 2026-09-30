@@ -123,3 +123,37 @@ describe('parseQuestionsJsonl', () => {
     expect(qs[1].forbidden).toEqual(['b']);
   });
 });
+
+describe('search errors count as errors (read-path audit #10)', () => {
+  const qs: NamedThingQuestion[] = [
+    { family: 'hard-negative', query: 'boom', forbidden: ['bad'] },
+    { family: 'title-substring', query: 'ok', relevant: ['a'] },
+  ];
+  const searchFn = async (query: string) => {
+    if (query === 'boom') throw new Error('search down');
+    return ['a'];
+  };
+
+  test('a thrown search is a miss, never a clean hard-negative', async () => {
+    const report = await runRetrievalQuality(qs, searchFn);
+    const boom = report.questions.find(q => q.query === 'boom')!;
+    expect(boom.errored).toBe(true);
+    expect(boom.hit_at_1).toBe(false);
+    expect(boom.hit_at_3).toBe(false);
+    expect(boom.reciprocal_rank).toBe(0);
+    expect(boom.negative_clean).toBe(false);
+    expect(report.errored).toBe(1);
+    expect(report.families.find(f => f.family === 'hard-negative')!.errored).toBe(1);
+    expect(report.families.find(f => f.family === 'hard-negative')!.hit_at_1).toBe(0);
+    expect(report.questions.find(q => q.query === 'ok')!.errored).toBeUndefined();
+  });
+
+  test('any errored question fails the gate', async () => {
+    const gate = evaluateGate(await runRetrievalQuality(qs, searchFn));
+    expect(gate.errored).toBe(1);
+    expect(gate.pass).toBe(false);
+    const clean = evaluateGate(await runRetrievalQuality(qs.slice(1), searchFn));
+    expect(clean.errored).toBe(0);
+    expect(clean.pass).toBe(true);
+  });
+});

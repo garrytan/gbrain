@@ -107,6 +107,15 @@ describe('maxOutputTokensFor — thinking-default headroom', () => {
     expect(maxOutputTokensFor('zhipu:glm-4-plus')).toBe(4000);
     expect(maxOutputTokensFor('zhipu:glm-3-turbo')).toBe(4000);
   });
+
+  test('gbrain#4727 — GLM-4.5+/5.x behind the ollama and openrouter recipes get the same headroom', () => {
+    // The issue body names other prefixes exposing GLM; a reporter hit the
+    // 4000 cap on GLM-5.3-flash via Ollama cloud. Same predicate, same cap.
+    expect(maxOutputTokensFor('ollama:glm-5.3-flash:cloud')).toBe(16000);
+    expect(maxOutputTokensFor('ollama:glm-4.6')).toBe(16000);
+    expect(maxOutputTokensFor('openrouter:z-ai/glm-5')).toBe(16000);
+    expect(maxOutputTokensFor('ollama:glm-4:9b')).toBe(4000);
+  });
 });
 
 describe('runThink — max_tokens truncation labeling (gbrain#4375)', () => {

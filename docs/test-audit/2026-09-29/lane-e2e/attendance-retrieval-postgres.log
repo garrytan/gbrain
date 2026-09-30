@@ -1,0 +1,1728 @@
+bun test v1.3.14 (0d9b296a)
+
+test/e2e/attendance-retrieval-postgres.test.ts:
+  Setting up brain schema (v166)...
+  161 migration(s) applied
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-sync: ordinary meeting links are replaced like put_page [236.25ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-sync: unchanged DB-only attendance survives and real evidence removal retracts it [190.99ms]
+[extract.incremental] start
+[extract.incremental] 2/2 (100%)
+[extract.incremental] 2/2 (100%) done
+[extract.incremental] start
+[extract.incremental] 2/2 (100%)
+[extract.incremental] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-incremental: ordinary meeting links are replaced like put_page [144.87ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+[extract.incremental] start
+[extract.incremental] 1/2 (50%) done
+[extract.incremental] start
+[extract.incremental] 1/2 (50%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-incremental: unchanged DB-only attendance survives and real evidence removal retracts it [130.76ms]
+[extract.links_fs] start
+[extract.links_fs] 2/2 (100%)
+[extract.links_fs] 2/2 (100%) done
+[extract.links_fs] start
+[extract.links_fs] 2/2 (100%)
+[extract.links_fs] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-batch: ordinary meeting links keep additive filesystem handling [101.56ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+[extract.links_fs] start
+[extract.links_fs] 1/1 (100%)
+[extract.links_fs] 1/1 (100%) done
+[extract.links_fs] start
+[extract.links_fs] 1/1 (100%)
+[extract.links_fs] 1/1 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-batch: unchanged DB-only attendance survives and real evidence removal retracts it [108.16ms]
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-sync: source-selected gbrain-base overrides global attendance-fixture [63.74ms]
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-sync: source-selected attendance-fixture overrides global gbrain-base [59.67ms]
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-sync: source-selected attendance-fixture overrides global missing-example-pack [89.76ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-sync: unavailable source-selected ontology preserves graph and watermark [109.69ms]
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-sync: inline commented people do not become attendees [137.19ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-sync: unavailable ontology cannot reverse existing pack-owned attendance [89.31ms]
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-sync: a unique bare attendee resolves, survives re-extraction, and retracts with its evidence [140.17ms]
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-sync: HTML-commented attendance retracts the claim without asserting hidden evidence [118.84ms]
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-sync: missing display-label slugs do not make actual attendance incomplete [65.14ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-sync: explicit foreign attendance survives complete resolution [170.97ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-sync: federated-default foreign attendance survives complete resolution [109.15ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-sync: unresolved attendance cannot retract owned graph or mark success [95.16ms]
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-sync: section-nested ~~~ examples never persist attendance [62.29ms]
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-sync: section-nested ``` examples never persist attendance [65.99ms]
+[extract.incremental] start
+[extract.incremental] 2/2 (100%)
+[extract.incremental] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-incremental: source-selected gbrain-base overrides global attendance-fixture [113.29ms]
+[extract.incremental] start
+[extract.incremental] 2/2 (100%)
+[extract.incremental] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-incremental: source-selected attendance-fixture overrides global gbrain-base [68.16ms]
+[extract.incremental] start
+[extract.incremental] 2/2 (100%)
+[extract.incremental] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-incremental: source-selected attendance-fixture overrides global missing-example-pack [82.94ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+[extract.incremental] start
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-incremental: unavailable source-selected ontology preserves graph and watermark [79.93ms]
+[extract.incremental] start
+[extract.incremental] 2/2 (100%)
+[extract.incremental] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-incremental: inline commented people do not become attendees [77.90ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+[extract.incremental] start
+[extract.incremental] start
+[extract.incremental] 2/2 (100%)
+[extract.incremental] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-incremental: unavailable ontology cannot reverse existing pack-owned attendance [99.45ms]
+[extract.incremental] start
+[extract.incremental] 2/2 (100%)
+[extract.incremental] 2/2 (100%) done
+[extract.incremental] start
+[extract.incremental] 2/2 (100%)
+[extract.incremental] 2/2 (100%) done
+[extract.incremental] start
+[extract.incremental] 2/2 (100%)
+[extract.incremental] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-incremental: a unique bare attendee resolves, survives re-extraction, and retracts with its evidence [149.64ms]
+[extract.incremental] start
+[extract.incremental] 2/2 (100%)
+[extract.incremental] 2/2 (100%) done
+[extract.incremental] start
+[extract.incremental] 2/2 (100%)
+[extract.incremental] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-incremental: HTML-commented attendance retracts the claim without asserting hidden evidence [101.03ms]
+[extract.incremental] start
+[extract.incremental] 2/2 (100%)
+[extract.incremental] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-incremental: missing display-label slugs do not make actual attendance incomplete [88.57ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+[extract.incremental] start
+[extract.incremental] 2/2 (100%)
+[extract.incremental] 2/2 (100%) done
+[extract.incremental] start
+[extract.incremental] 1/2 (50%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-incremental: explicit foreign attendance survives complete resolution [109.36ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+[extract.incremental] start
+[extract.incremental] 2/2 (100%)
+[extract.incremental] 2/2 (100%) done
+[extract.incremental] start
+[extract.incremental] 1/2 (50%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-incremental: federated-default foreign attendance survives complete resolution [99.26ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+[extract.incremental] start
+[extract.incremental] 1/2 (50%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-incremental: unresolved attendance cannot retract owned graph or mark success [111.82ms]
+[extract.incremental] start
+[extract.incremental] 2/2 (100%)
+[extract.incremental] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-incremental: section-nested ~~~ examples never persist attendance [72.11ms]
+[extract.incremental] start
+[extract.incremental] 2/2 (100%)
+[extract.incremental] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-incremental: section-nested ``` examples never persist attendance [61.34ms]
+[extract.links_fs] start
+[extract.links_fs] 2/2 (100%)
+[extract.links_fs] 2/2 (100%) done
+[extract.timeline_fs] start
+[extract.timeline_fs] 2/2 (100%)
+[extract.timeline_fs] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-batch: source-selected gbrain-base overrides global attendance-fixture [53.94ms]
+[extract.links_fs] start
+[extract.links_fs] 2/2 (100%)
+[extract.links_fs] 2/2 (100%) done
+[extract.timeline_fs] start
+[extract.timeline_fs] 2/2 (100%)
+[extract.timeline_fs] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-batch: source-selected attendance-fixture overrides global gbrain-base [55.97ms]
+[extract.links_fs] start
+[extract.links_fs] 2/2 (100%)
+[extract.links_fs] 2/2 (100%) done
+[extract.timeline_fs] start
+[extract.timeline_fs] 2/2 (100%)
+[extract.timeline_fs] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-batch: source-selected attendance-fixture overrides global missing-example-pack [56.38ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-batch: unavailable source-selected ontology preserves graph and watermark [99.41ms]
+[extract.links_fs] start
+[extract.links_fs] 3/3 (100%)
+[extract.links_fs] 3/3 (100%) done
+[extract.timeline_fs] start
+[extract.timeline_fs] 3/3 (100%)
+[extract.timeline_fs] 3/3 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-batch: inline commented people do not become attendees [96.66ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+[extract.links_fs] start
+[extract.links_fs] 2/2 (100%)
+[extract.links_fs] 2/2 (100%) done
+[extract.timeline_fs] start
+[extract.timeline_fs] 2/2 (100%)
+[extract.timeline_fs] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-batch: unavailable ontology cannot reverse existing pack-owned attendance [95.06ms]
+[extract.links_fs] start
+[extract.links_fs] 2/2 (100%)
+[extract.links_fs] 2/2 (100%) done
+[extract.timeline_fs] start
+[extract.timeline_fs] 2/2 (100%)
+[extract.timeline_fs] 2/2 (100%) done
+[extract.links_fs] start
+[extract.links_fs] 2/2 (100%)
+[extract.links_fs] 2/2 (100%) done
+[extract.timeline_fs] start
+[extract.timeline_fs] 2/2 (100%)
+[extract.timeline_fs] 2/2 (100%) done
+[extract.links_fs] start
+[extract.links_fs] 2/2 (100%)
+[extract.links_fs] 2/2 (100%) done
+[extract.timeline_fs] start
+[extract.timeline_fs] 2/2 (100%)
+[extract.timeline_fs] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-batch: a unique bare attendee resolves, survives re-extraction, and retracts with its evidence [167.68ms]
+[extract.links_fs] start
+[extract.links_fs] 2/2 (100%)
+[extract.links_fs] 2/2 (100%) done
+[extract.links_fs] start
+[extract.links_fs] 2/2 (100%)
+[extract.links_fs] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-batch: HTML-commented attendance retracts the claim without asserting hidden evidence [103.86ms]
+[extract.links_fs] start
+[extract.links_fs] 2/2 (100%)
+[extract.links_fs] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-batch: missing display-label slugs do not make actual attendance incomplete [62.89ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+[extract.links_fs] start
+[extract.links_fs] 2/2 (100%)
+[extract.links_fs] 2/2 (100%) done
+[extract.timeline_fs] start
+[extract.timeline_fs] 2/2 (100%)
+[extract.timeline_fs] 2/2 (100%) done
+[extract.links_fs] start
+[extract.links_fs] 1/2 (50%) done
+[extract.timeline_fs] start
+[extract.timeline_fs] 2/2 (100%)
+[extract.timeline_fs] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-batch: explicit foreign attendance survives complete resolution [103.23ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+[extract.links_fs] start
+[extract.links_fs] 2/2 (100%)
+[extract.links_fs] 2/2 (100%) done
+[extract.timeline_fs] start
+[extract.timeline_fs] 2/2 (100%)
+[extract.timeline_fs] 2/2 (100%) done
+[extract.links_fs] start
+[extract.links_fs] 1/2 (50%) done
+[extract.timeline_fs] start
+[extract.timeline_fs] 2/2 (100%)
+[extract.timeline_fs] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-batch: federated-default foreign attendance survives complete resolution [90.48ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+[extract.links_fs] start
+[extract.links_fs] 1/2 (50%) done
+[extract.timeline_fs] start
+[extract.timeline_fs] 2/2 (100%)
+[extract.timeline_fs] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-batch: unresolved attendance cannot retract owned graph or mark success [88.24ms]
+[extract.links_fs] start
+[extract.links_fs] 2/2 (100%)
+[extract.links_fs] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-batch: section-nested ~~~ examples never persist attendance [50.26ms]
+[extract.links_fs] start
+[extract.links_fs] 2/2 (100%)
+[extract.links_fs] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-batch: section-nested ``` examples never persist attendance [75.35ms]
+(pass) non-overridden canonical attendance lifecycle (pglite) > prepare: source-selected gbrain-base overrides global attendance-fixture [82.38ms]
+(pass) non-overridden canonical attendance lifecycle (pglite) > prepare: source-selected attendance-fixture overrides global gbrain-base [83.85ms]
+(pass) non-overridden canonical attendance lifecycle (pglite) > prepare: source-selected attendance-fixture overrides global missing-example-pack [105.69ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > prepare: unavailable source-selected ontology preserves graph and watermark [65.40ms]
+(pass) non-overridden canonical attendance lifecycle (pglite) > prepare: inline commented people do not become attendees [97.82ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > prepare: unavailable ontology cannot reverse existing pack-owned attendance [103.42ms]
+(pass) non-overridden canonical attendance lifecycle (pglite) > prepare: a unique bare attendee resolves, survives re-extraction, and retracts with its evidence [209.31ms]
+(pass) non-overridden canonical attendance lifecycle (pglite) > prepare: HTML-commented attendance retracts the claim without asserting hidden evidence [109.03ms]
+(pass) non-overridden canonical attendance lifecycle (pglite) > prepare: missing display-label slugs do not make actual attendance incomplete [66.76ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > prepare: explicit foreign attendance survives complete resolution [95.28ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > prepare: federated-default foreign attendance survives complete resolution [94.90ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > prepare: unresolved attendance cannot retract owned graph or mark success [90.45ms]
+(pass) non-overridden canonical attendance lifecycle (pglite) > prepare: section-nested ~~~ examples never persist attendance [61.90ms]
+(pass) non-overridden canonical attendance lifecycle (pglite) > prepare: section-nested ``` examples never persist attendance [67.24ms]
+(pass) non-overridden canonical attendance lifecycle (pglite) > sweep: source-selected gbrain-base overrides global attendance-fixture [100.73ms]
+(pass) non-overridden canonical attendance lifecycle (pglite) > sweep: source-selected attendance-fixture overrides global gbrain-base [55.29ms]
+(pass) non-overridden canonical attendance lifecycle (pglite) > sweep: source-selected attendance-fixture overrides global missing-example-pack [71.54ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > sweep: unavailable source-selected ontology preserves graph and watermark [87.29ms]
+(pass) non-overridden canonical attendance lifecycle (pglite) > sweep: inline commented people do not become attendees [92.79ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > sweep: unavailable ontology cannot reverse existing pack-owned attendance [106.35ms]
+(pass) non-overridden canonical attendance lifecycle (pglite) > sweep: a unique bare attendee resolves, survives re-extraction, and retracts with its evidence [167.36ms]
+(pass) non-overridden canonical attendance lifecycle (pglite) > sweep: HTML-commented attendance retracts the claim without asserting hidden evidence [118.45ms]
+(pass) non-overridden canonical attendance lifecycle (pglite) > sweep: missing display-label slugs do not make actual attendance incomplete [88.60ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > sweep: explicit foreign attendance survives complete resolution [91.80ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > sweep: federated-default foreign attendance survives complete resolution [101.92ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > sweep: unresolved attendance cannot retract owned graph or mark success [99.00ms]
+(pass) non-overridden canonical attendance lifecycle (pglite) > sweep: section-nested ~~~ examples never persist attendance [57.78ms]
+(pass) non-overridden canonical attendance lifecycle (pglite) > sweep: section-nested ``` examples never persist attendance [56.78ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+[extract.timeline_db] start
+[extract.timeline_db] 2/2 (100%)
+[extract.timeline_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > db: source-selected gbrain-base overrides global attendance-fixture [53.13ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+[extract.timeline_db] start
+[extract.timeline_db] 2/2 (100%)
+[extract.timeline_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > db: source-selected attendance-fixture overrides global gbrain-base [58.84ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+[extract.timeline_db] start
+[extract.timeline_db] 2/2 (100%)
+[extract.timeline_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > db: source-selected attendance-fixture overrides global missing-example-pack [60.62ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > db: unavailable source-selected ontology preserves graph and watermark [63.52ms]
+[extract.links_db] start
+[extract.links_db] 3/3 (100%)
+[extract.links_db] 3/3 (100%) done
+[extract.timeline_db] start
+[extract.timeline_db] 3/3 (100%)
+[extract.timeline_db] 3/3 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > db: inline commented people do not become attendees [91.46ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+[extract.timeline_db] start
+[extract.timeline_db] 2/2 (100%)
+[extract.timeline_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > db: unavailable ontology cannot reverse existing pack-owned attendance [84.10ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+[extract.timeline_db] start
+[extract.timeline_db] 2/2 (100%)
+[extract.timeline_db] 2/2 (100%) done
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+[extract.timeline_db] start
+[extract.timeline_db] 2/2 (100%)
+[extract.timeline_db] 2/2 (100%) done
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+[extract.timeline_db] start
+[extract.timeline_db] 2/2 (100%)
+[extract.timeline_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > db: a unique bare attendee resolves, survives re-extraction, and retracts with its evidence [150.97ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > db: HTML-commented attendance retracts the claim without asserting hidden evidence [99.07ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > db: missing display-label slugs do not make actual attendance incomplete [59.59ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+[extract.timeline_db] start
+[extract.timeline_db] 2/2 (100%)
+[extract.timeline_db] 2/2 (100%) done
+[extract.links_db] start
+[extract.links_db] 1/2 (50%) done
+[extract.timeline_db] start
+[extract.timeline_db] 2/2 (100%)
+[extract.timeline_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > db: explicit foreign attendance survives complete resolution [94.91ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+[extract.timeline_db] start
+[extract.timeline_db] 2/2 (100%)
+[extract.timeline_db] 2/2 (100%) done
+[extract.links_db] start
+[extract.links_db] 1/2 (50%) done
+[extract.timeline_db] start
+[extract.timeline_db] 2/2 (100%)
+[extract.timeline_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > db: federated-default foreign attendance survives complete resolution [91.94ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+[extract.links_db] start
+[extract.links_db] 1/2 (50%) done
+[extract.timeline_db] start
+[extract.timeline_db] 2/2 (100%)
+[extract.timeline_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > db: unresolved attendance cannot retract owned graph or mark success [90.83ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > db: section-nested ~~~ examples never persist attendance [60.00ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > db: section-nested ``` examples never persist attendance [55.18ms]
+[extract.stale] start
+[extract.stale] 2/2 (100%)
+[extract.stale] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > stale: source-selected gbrain-base overrides global attendance-fixture [61.65ms]
+[extract.stale] start
+[extract.stale] 2/2 (100%)
+[extract.stale] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > stale: source-selected attendance-fixture overrides global gbrain-base [58.85ms]
+[extract.stale] start
+[extract.stale] 2/2 (100%)
+[extract.stale] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > stale: source-selected attendance-fixture overrides global missing-example-pack [61.77ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+[extract.stale] start
+(pass) non-overridden canonical attendance lifecycle (pglite) > stale: unavailable source-selected ontology preserves graph and watermark [59.83ms]
+[extract.stale] start
+[extract.stale] 3/3 (100%)
+[extract.stale] 3/3 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > stale: inline commented people do not become attendees [83.58ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+[extract.stale] start
+[extract.stale] start
+[extract.stale] 2/2 (100%)
+[extract.stale] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > stale: unavailable ontology cannot reverse existing pack-owned attendance [130.33ms]
+[extract.stale] start
+[extract.stale] 2/2 (100%)
+[extract.stale] 2/2 (100%) done
+[extract.stale] start
+[extract.stale] 1/1 (100%)
+[extract.stale] 1/1 (100%) done
+[extract.stale] start
+[extract.stale] 1/1 (100%)
+[extract.stale] 1/1 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > stale: a unique bare attendee resolves, survives re-extraction, and retracts with its evidence [133.98ms]
+[extract.stale] start
+[extract.stale] 2/2 (100%)
+[extract.stale] 2/2 (100%) done
+[extract.stale] start
+[extract.stale] 1/1 (100%)
+[extract.stale] 1/1 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > stale: HTML-commented attendance retracts the claim without asserting hidden evidence [117.85ms]
+[extract.stale] start
+[extract.stale] 2/2 (100%)
+[extract.stale] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > stale: missing display-label slugs do not make actual attendance incomplete [64.80ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+[extract.stale] start
+[extract.stale] 2/2 (100%)
+[extract.stale] 2/2 (100%) done
+[extract.stale] start
+[extract.stale] done
+(pass) non-overridden canonical attendance lifecycle (pglite) > stale: explicit foreign attendance survives complete resolution [98.50ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+[extract.stale] start
+[extract.stale] 2/2 (100%)
+[extract.stale] 2/2 (100%) done
+[extract.stale] start
+[extract.stale] done
+(pass) non-overridden canonical attendance lifecycle (pglite) > stale: federated-default foreign attendance survives complete resolution [84.75ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+[extract.stale] start
+[extract.stale] 1/2 (50%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > stale: unresolved attendance cannot retract owned graph or mark success [87.55ms]
+[extract.stale] start
+[extract.stale] 2/2 (100%)
+[extract.stale] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > stale: section-nested ~~~ examples never persist attendance [74.04ms]
+[extract.stale] start
+[extract.stale] 2/2 (100%)
+[extract.stale] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > stale: section-nested ``` examples never persist attendance [56.75ms]
+[extract.incremental] start
+[extract.incremental] 1/1 (100%)
+[extract.incremental] 1/1 (100%) done
+[extract.incremental] start
+[extract.incremental] 1/1 (100%)
+[extract.incremental] 1/1 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-incremental: imported hidden meetings get guarded canonical attendance [83.61ms]
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-sync: imported hidden meetings get guarded canonical attendance [85.75ms]
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-sync: an ordinary missing target does not discard later links or processed status [56.31ms]
+[extract.incremental] start
+[extract.incremental] 1/1 (100%)
+[extract.incremental] 1/1 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-incremental: file-only meeting declarations cannot bypass the database origin type [49.72ms]
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-sync: file-only meeting declarations cannot bypass the database origin type [49.47ms]
+[extract.links_db] start
+[extract.links_db] 3/3 (100%)
+[extract.links_db] 3/3 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > db: display-label person slugs do not assert extra attendees [87.43ms]
+[extract.links_db] start
+[extract.links_db] 3/4 (75%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > db: ambiguous bare references do not assert either attendee [107.68ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > db: actual extraction persists, queries and removes meeting-owned Markdown [141.95ms]
+[extract.stale] start
+[extract.stale] 3/3 (100%)
+[extract.stale] 3/3 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > stale: display-label person slugs do not assert extra attendees [83.60ms]
+[extract.stale] start
+[extract.stale] 3/4 (75%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > stale: ambiguous bare references do not assert either attendee [95.40ms]
+[extract.stale] start
+[extract.stale] 2/2 (100%)
+[extract.stale] 2/2 (100%) done
+[extract.stale] start
+[extract.stale] 1/1 (100%)
+[extract.stale] 1/1 (100%) done
+[extract.stale] start
+[extract.stale] 1/1 (100%)
+[extract.stale] 1/1 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > stale: actual extraction persists, queries and removes meeting-owned Markdown [122.66ms]
+[extract.links_fs] start
+[extract.links_fs] 3/3 (100%)
+[extract.links_fs] 3/3 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-batch: display-label person slugs do not assert extra attendees [72.71ms]
+[extract.links_fs] start
+[extract.links_fs] 3/4 (75%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-batch: ambiguous bare references do not assert either attendee [87.67ms]
+[extract.links_fs] start
+[extract.links_fs] 2/2 (100%)
+[extract.links_fs] 2/2 (100%) done
+[extract.links_fs] start
+[extract.links_fs] 2/2 (100%)
+[extract.links_fs] 2/2 (100%) done
+[extract.links_fs] start
+[extract.links_fs] 2/2 (100%)
+[extract.links_fs] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-batch: actual extraction persists, queries and removes meeting-owned Markdown [120.04ms]
+[extract.incremental] start
+[extract.incremental] 2/2 (100%)
+[extract.incremental] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-incremental: display-label person slugs do not assert extra attendees [78.01ms]
+[extract.incremental] start
+[extract.incremental] 1/2 (50%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-incremental: ambiguous bare references do not assert either attendee [90.46ms]
+[extract.incremental] start
+[extract.incremental] 2/2 (100%)
+[extract.incremental] 2/2 (100%) done
+[extract.incremental] start
+[extract.incremental] 2/2 (100%)
+[extract.incremental] 2/2 (100%) done
+[extract.incremental] start
+[extract.incremental] 2/2 (100%)
+[extract.incremental] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-incremental: actual extraction persists, queries and removes meeting-owned Markdown [145.30ms]
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-sync: display-label person slugs do not assert extra attendees [83.44ms]
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-sync: ambiguous bare references do not assert either attendee [95.41ms]
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-sync: actual extraction persists, queries and removes meeting-owned Markdown [156.64ms]
+(pass) non-overridden canonical attendance lifecycle (pglite) > prepare: display-label person slugs do not assert extra attendees [122.32ms]
+(pass) non-overridden canonical attendance lifecycle (pglite) > prepare: ambiguous bare references do not assert either attendee [107.49ms]
+(pass) non-overridden canonical attendance lifecycle (pglite) > prepare: actual extraction persists, queries and removes meeting-owned Markdown [174.45ms]
+(pass) non-overridden canonical attendance lifecycle (pglite) > sweep: display-label person slugs do not assert extra attendees [143.88ms]
+(pass) non-overridden canonical attendance lifecycle (pglite) > sweep: ambiguous bare references do not assert either attendee [162.51ms]
+(pass) non-overridden canonical attendance lifecycle (pglite) > sweep: actual extraction persists, queries and removes meeting-owned Markdown [140.77ms]
+[extract.links_db] start
+[extract.links_db] 4/4 (100%)
+[extract.links_db] 4/4 (100%) done
+[extract.timeline_db] start
+[extract.timeline_db] 4/4 (100%)
+[extract.timeline_db] 4/4 (100%) done
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+[extract.timeline_db] start
+[extract.timeline_db] 2/2 (100%)
+[extract.timeline_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > db: mixed-source extraction resolves each origin's pack for identical slugs [153.45ms]
+[extract.stale] start
+[extract.stale] 4/4 (100%)
+[extract.stale] 4/4 (100%) done
+[extract.stale] start
+[extract.stale] 1/1 (100%)
+[extract.stale] 1/1 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > stale: mixed-source extraction resolves each origin's pack for identical slugs [176.51ms]
+[extract.links_db] start
+[extract.links_db] 1/3 (33%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > db: type-filtered extraction does not load an unrelated source pack [58.90ms]
+(pass) non-overridden canonical attendance lifecycle (pglite) > db: unavailable selected source fails preflight before any healthy graph or combined watermark changes [71.23ms]
+[extract.stale] start
+[extract.stale] 2/4 (50%) done
+[extract.stale] start
+[extract.stale] 1/3 (33%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > stale: an unavailable first source does not starve healthy later batches or become successful [146.56ms]
+(pass) non-overridden canonical attendance lifecycle (pglite) > local publication: source-selected attendance-fixture/gbrain-base overrides global attendance-fixture [407.70ms]
+(pass) non-overridden canonical attendance lifecycle (pglite) > local publication: source-selected attendance-fixture/attendance-fixture overrides global gbrain-base [143.37ms]
+(pass) non-overridden canonical attendance lifecycle (pglite) > local publication: source-selected attendance-fixture/attendance-fixture overrides global missing-example-pack [190.08ms]
+(pass) non-overridden canonical attendance lifecycle (pglite) > local publication: unavailable source-selected attendance-fixture pack saves the note but preserves the graph [272.51ms]
+(pass) non-overridden canonical attendance lifecycle (pglite) > local publication: source-selected default/gbrain-base overrides global attendance-fixture [154.60ms]
+(pass) non-overridden canonical attendance lifecycle (pglite) > local publication: source-selected default/attendance-fixture overrides global gbrain-base [154.24ms]
+(pass) non-overridden canonical attendance lifecycle (pglite) > local publication: source-selected default/attendance-fixture overrides global missing-example-pack [147.79ms]
+(pass) non-overridden canonical attendance lifecycle (pglite) > local publication: unavailable source-selected default pack saves the note but preserves the graph [266.73ms]
+(pass) non-overridden canonical attendance lifecycle (pglite) > local publication discovers typed pack frontmatter before admitting edges and preserves unchanged row identity [262.76ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > local publication keeps the note and prior graph when an endpoint changes after preparation: edit [152.03ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > local publication keeps the note and prior graph when an endpoint changes after preparation: retype [163.56ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > local publication keeps the note and prior graph when an endpoint changes after preparation: delete [156.95ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > local publication does not swallow unrelated graph storage failures [149.81ms]
+(pass) non-overridden canonical attendance lifecycle (pglite) > local publication admits the visible attendee but not a live person inside an inline comment [136.99ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > local publication preserves pack-owned attendance and reports unavailable ontology without losing the note [160.89ms]
+(pass) non-overridden canonical attendance lifecycle (pglite) > local publication does not admit a non-person into typed pack attendance [126.47ms]
+(pass) non-overridden canonical attendance lifecycle (pglite) > local publication retains typed pack attendance when resolved endpoint metadata is unavailable [151.96ms]
+(pass) non-overridden canonical attendance lifecycle (pglite) > typed pack attendance preserves prior edges when the new target cannot be resolved [58.42ms]
+(pass) non-overridden canonical attendance lifecycle (pglite) > local put_page and remote deferred sweep preserve the actual Markdown producer [247.91ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > local put_page commits unresolved attendance content while preserving retryable graph [141.13ms]
+[gbrain] vector search unavailable (missing_env) — results are keyword-only. Run `gbrain doctor` to diagnose.
+(pass) non-overridden canonical attendance lifecycle (pglite) > actual put_page and query operations retain and remove the supported attendee [528.56ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+Links: created 2 from 2 pages (db source)
+
+Done: 2 links, 0 timeline entries from 2 pages
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+Links: created 0 from 2 pages (db source)
+
+Done: 0 links, 0 timeline entries from 2 pages
+(pass) non-overridden canonical attendance lifecycle (pglite) > canonical frontmatter and body keep distinct provenance without duplicate people [102.06ms]
+[extract.links_db] start
+[extract.links_db] 3/4 (75%) done
+Links: created 0 from 3 pages (db source)
+Skipped 1 page(s) with unresolved attendance; prior links and extraction watermarks were preserved.
+Unresolved frontmatter refs: 2 total
+  1× attendees:Shared name
+  1× attendees:people/company-example
+
+Done: 0 links, 0 timeline entries from 3 pages
+(pass) non-overridden canonical attendance lifecycle (pglite) > ambiguous or non-person canonical frontmatter stays unresolved [103.03ms]
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-sync: canonical frontmatter persists and removes under its meeting origin [178.96ms]
+[extract.incremental] start
+[extract.incremental] 2/2 (100%)
+[extract.incremental] 2/2 (100%) done
+[extract.incremental] start
+[extract.incremental] 2/2 (100%)
+[extract.incremental] 2/2 (100%) done
+[extract.incremental] start
+[extract.incremental] 2/2 (100%)
+[extract.incremental] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-incremental: canonical frontmatter persists and removes under its meeting origin [150.11ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > private attendees and unsealed projections remain excluded from remote retrieval [99.52ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > single and batch writers round-trip Markdown origin without exposing an ungranted origin [73.33ms]
+(pass) non-overridden canonical attendance lifecycle (pglite) > failed filesystem attendance replacement stays retryable and preserves the last good graph [106.04ms]
+[extract.links_fs] start
+[extract.links_fs] 2/2 (100%)
+[extract.links_fs] 2/2 (100%) done
+[extract.timeline_fs] start
+[extract.timeline_fs] 2/2 (100%)
+[extract.timeline_fs] 2/2 (100%) done
+[extract.links_fs] start
+[extract.links_fs] 2/2 (100%)
+[extract.links_fs] 2/2 (100%) done
+[extract.timeline_fs] start
+[extract.timeline_fs] 2/2 (100%)
+[extract.timeline_fs] 2/2 (100%) done
+[extract.links_fs] start
+[extract.links_fs] 2/2 (100%)
+[extract.links_fs] 2/2 (100%) done
+[extract.timeline_fs] start
+[extract.timeline_fs] 2/2 (100%)
+[extract.timeline_fs] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-batch: failed attendance replacement does not advance its watermark [121.29ms]
+[extract.incremental] start
+[extract.incremental] 2/2 (100%)
+[extract.incremental] 2/2 (100%) done
+[extract.incremental] start
+  link replacement error for people/alice-example (0 rows not written): Injected replacement failure
+[extract.incremental] 2/2 (100%)
+[extract.incremental] 2/2 (100%) done
+[extract.incremental] start
+[extract.incremental] 2/2 (100%)
+[extract.incremental] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-incremental: failed attendance replacement does not advance its watermark [130.54ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+Links: created 2 from 2 pages (db source)
+
+Done: 2 links, 0 timeline entries from 2 pages
+(pass) non-overridden canonical attendance lifecycle (pglite) > gbrain-base: pack_semantics_preserved [82.47ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+Links: created 2 from 2 pages (db source)
+
+Done: 2 links, 0 timeline entries from 2 pages
+(pass) non-overridden canonical attendance lifecycle (pglite) > company-brain: pack_semantics_preserved [76.51ms]
+[extract.links_db] start
+[extract.links_db] 3/3 (100%)
+[extract.links_db] 3/3 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > manual and other-origin rows survive exact meeting removal [129.62ms]
+(pass) non-overridden canonical attendance lifecycle (pglite) > prepare/attendance-fixture: retained link identities refresh their evidence [119.37ms]
+(pass) non-overridden canonical attendance lifecycle (pglite) > prepare/gbrain-base: retained link identities refresh their evidence [104.88ms]
+(pass) non-overridden canonical attendance lifecycle (pglite) > sweep/attendance-fixture: retained link identities refresh their evidence [150.53ms]
+[extract.links_fs] start
+[extract.links_fs] 2/2 (100%)
+[extract.links_fs] 2/2 (100%) done
+[extract.links_fs] start
+[extract.links_fs] 2/2 (100%)
+[extract.links_fs] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-batch/attendance-fixture: retained link identities refresh their evidence [101.63ms]
+[extract.incremental] start
+[extract.incremental] 2/2 (100%)
+[extract.incremental] 2/2 (100%) done
+[extract.incremental] start
+[extract.incremental] 2/2 (100%)
+[extract.incremental] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-incremental/attendance-fixture: retained link identities refresh their evidence [100.41ms]
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-sync/attendance-fixture: retained link identities refresh their evidence [95.88ms]
+[extract.links_fs] start
+[extract.links_fs] 2/2 (100%)
+[extract.links_fs] 2/2 (100%) done
+[extract.links_fs] start
+[extract.links_fs] 2/2 (100%)
+[extract.links_fs] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-batch: unknown legacy producers survive attendance reconciliation [93.73ms]
+[extract.incremental] start
+[extract.incremental] 2/2 (100%)
+[extract.incremental] 2/2 (100%) done
+[extract.incremental] start
+[extract.incremental] 2/2 (100%)
+[extract.incremental] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-incremental: unknown legacy producers survive attendance reconciliation [125.13ms]
+(pass) non-overridden canonical attendance lifecycle (pglite) > fs-sync: unknown legacy producers survive attendance reconciliation [146.77ms]
+(pass) non-overridden canonical attendance lifecycle (pglite) > reversed Markdown validation requires matching origin, types and captured endpoint revisions [95.92ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > source identities are resolved before reversing qualified Markdown [120.51ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > DB does not promote unsupported evidence: [Alice](../people/alice-example.md) did not attend. [77.41ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > DB does not promote unsupported evidence: Invited [Alice](../people/alice-example.md) for next month. [60.91ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > DB does not promote unsupported evidence: Discussed a proposal from [Alice](../people/alice-example.md). [77.69ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > DB does not promote unsupported evidence: Attendees: [Alice](../people/alice-example.md) (absent) [77.93ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > DB does not promote unsupported evidence: ## Attendees
+- [Alice](../people/alice-example.md) was invited [63.64ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (pglite) > DB does not promote unsupported evidence: ```md
+Attendees: [Alice](../people/alice-example.md)
+``` [69.10ms]
+  Setting up brain schema (v166)...
+  161 migration(s) applied
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-sync: ordinary meeting links are replaced like put_page [273.43ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-sync: unchanged DB-only attendance survives and real evidence removal retracts it [187.59ms]
+[extract.incremental] start
+[extract.incremental] 2/2 (100%)
+[extract.incremental] 2/2 (100%) done
+[extract.incremental] start
+[extract.incremental] 2/2 (100%)
+[extract.incremental] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-incremental: ordinary meeting links are replaced like put_page [162.66ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+[extract.incremental] start
+[extract.incremental] 1/2 (50%) done
+[extract.incremental] start
+[extract.incremental] 1/2 (50%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-incremental: unchanged DB-only attendance survives and real evidence removal retracts it [155.74ms]
+[extract.links_fs] start
+[extract.links_fs] 2/2 (100%)
+[extract.links_fs] 2/2 (100%) done
+[extract.links_fs] start
+[extract.links_fs] 2/2 (100%)
+[extract.links_fs] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-batch: ordinary meeting links keep additive filesystem handling [108.95ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+[extract.links_fs] start
+[extract.links_fs] 1/1 (100%)
+[extract.links_fs] 1/1 (100%) done
+[extract.links_fs] start
+[extract.links_fs] 1/1 (100%)
+[extract.links_fs] 1/1 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-batch: unchanged DB-only attendance survives and real evidence removal retracts it [152.21ms]
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-sync: source-selected gbrain-base overrides global attendance-fixture [81.77ms]
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-sync: source-selected attendance-fixture overrides global gbrain-base [82.43ms]
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-sync: source-selected attendance-fixture overrides global missing-example-pack [89.54ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-sync: unavailable source-selected ontology preserves graph and watermark [106.92ms]
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-sync: inline commented people do not become attendees [115.61ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-sync: unavailable ontology cannot reverse existing pack-owned attendance [125.22ms]
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-sync: a unique bare attendee resolves, survives re-extraction, and retracts with its evidence [191.72ms]
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-sync: HTML-commented attendance retracts the claim without asserting hidden evidence [130.38ms]
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-sync: missing display-label slugs do not make actual attendance incomplete [95.47ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-sync: explicit foreign attendance survives complete resolution [130.31ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-sync: federated-default foreign attendance survives complete resolution [133.58ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-sync: unresolved attendance cannot retract owned graph or mark success [123.65ms]
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-sync: section-nested ~~~ examples never persist attendance [81.69ms]
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-sync: section-nested ``` examples never persist attendance [79.01ms]
+[extract.incremental] start
+[extract.incremental] 2/2 (100%)
+[extract.incremental] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-incremental: source-selected gbrain-base overrides global attendance-fixture [82.55ms]
+[extract.incremental] start
+[extract.incremental] 2/2 (100%)
+[extract.incremental] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-incremental: source-selected attendance-fixture overrides global gbrain-base [78.24ms]
+[extract.incremental] start
+[extract.incremental] 2/2 (100%)
+[extract.incremental] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-incremental: source-selected attendance-fixture overrides global missing-example-pack [81.83ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+[extract.incremental] start
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-incremental: unavailable source-selected ontology preserves graph and watermark [93.54ms]
+[extract.incremental] start
+[extract.incremental] 2/2 (100%)
+[extract.incremental] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-incremental: inline commented people do not become attendees [106.76ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+[extract.incremental] start
+[extract.incremental] start
+[extract.incremental] 2/2 (100%)
+[extract.incremental] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-incremental: unavailable ontology cannot reverse existing pack-owned attendance [106.69ms]
+[extract.incremental] start
+[extract.incremental] 2/2 (100%)
+[extract.incremental] 2/2 (100%) done
+[extract.incremental] start
+[extract.incremental] 2/2 (100%)
+[extract.incremental] 2/2 (100%) done
+[extract.incremental] start
+[extract.incremental] 2/2 (100%)
+[extract.incremental] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-incremental: a unique bare attendee resolves, survives re-extraction, and retracts with its evidence [167.68ms]
+[extract.incremental] start
+[extract.incremental] 2/2 (100%)
+[extract.incremental] 2/2 (100%) done
+[extract.incremental] start
+[extract.incremental] 2/2 (100%)
+[extract.incremental] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-incremental: HTML-commented attendance retracts the claim without asserting hidden evidence [145.32ms]
+[extract.incremental] start
+[extract.incremental] 2/2 (100%)
+[extract.incremental] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-incremental: missing display-label slugs do not make actual attendance incomplete [72.32ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+[extract.incremental] start
+[extract.incremental] 2/2 (100%)
+[extract.incremental] 2/2 (100%) done
+[extract.incremental] start
+[extract.incremental] 1/2 (50%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-incremental: explicit foreign attendance survives complete resolution [135.00ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+[extract.incremental] start
+[extract.incremental] 2/2 (100%)
+[extract.incremental] 2/2 (100%) done
+[extract.incremental] start
+[extract.incremental] 1/2 (50%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-incremental: federated-default foreign attendance survives complete resolution [125.91ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+[extract.incremental] start
+[extract.incremental] 1/2 (50%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-incremental: unresolved attendance cannot retract owned graph or mark success [113.39ms]
+[extract.incremental] start
+[extract.incremental] 2/2 (100%)
+[extract.incremental] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-incremental: section-nested ~~~ examples never persist attendance [78.40ms]
+[extract.incremental] start
+[extract.incremental] 2/2 (100%)
+[extract.incremental] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-incremental: section-nested ``` examples never persist attendance [72.67ms]
+[extract.links_fs] start
+[extract.links_fs] 2/2 (100%)
+[extract.links_fs] 2/2 (100%) done
+[extract.timeline_fs] start
+[extract.timeline_fs] 2/2 (100%)
+[extract.timeline_fs] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-batch: source-selected gbrain-base overrides global attendance-fixture [67.98ms]
+[extract.links_fs] start
+[extract.links_fs] 2/2 (100%)
+[extract.links_fs] 2/2 (100%) done
+[extract.timeline_fs] start
+[extract.timeline_fs] 2/2 (100%)
+[extract.timeline_fs] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-batch: source-selected attendance-fixture overrides global gbrain-base [85.34ms]
+[extract.links_fs] start
+[extract.links_fs] 2/2 (100%)
+[extract.links_fs] 2/2 (100%) done
+[extract.timeline_fs] start
+[extract.timeline_fs] 2/2 (100%)
+[extract.timeline_fs] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-batch: source-selected attendance-fixture overrides global missing-example-pack [69.61ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-batch: unavailable source-selected ontology preserves graph and watermark [76.55ms]
+[extract.links_fs] start
+[extract.links_fs] 3/3 (100%)
+[extract.links_fs] 3/3 (100%) done
+[extract.timeline_fs] start
+[extract.timeline_fs] 3/3 (100%)
+[extract.timeline_fs] 3/3 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-batch: inline commented people do not become attendees [106.96ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+[extract.links_fs] start
+[extract.links_fs] 2/2 (100%)
+[extract.links_fs] 2/2 (100%) done
+[extract.timeline_fs] start
+[extract.timeline_fs] 2/2 (100%)
+[extract.timeline_fs] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-batch: unavailable ontology cannot reverse existing pack-owned attendance [87.20ms]
+[extract.links_fs] start
+[extract.links_fs] 2/2 (100%)
+[extract.links_fs] 2/2 (100%) done
+[extract.timeline_fs] start
+[extract.timeline_fs] 2/2 (100%)
+[extract.timeline_fs] 2/2 (100%) done
+[extract.links_fs] start
+[extract.links_fs] 2/2 (100%)
+[extract.links_fs] 2/2 (100%) done
+[extract.timeline_fs] start
+[extract.timeline_fs] 2/2 (100%)
+[extract.timeline_fs] 2/2 (100%) done
+[extract.links_fs] start
+[extract.links_fs] 2/2 (100%)
+[extract.links_fs] 2/2 (100%) done
+[extract.timeline_fs] start
+[extract.timeline_fs] 2/2 (100%)
+[extract.timeline_fs] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-batch: a unique bare attendee resolves, survives re-extraction, and retracts with its evidence [167.39ms]
+[extract.links_fs] start
+[extract.links_fs] 2/2 (100%)
+[extract.links_fs] 2/2 (100%) done
+[extract.links_fs] start
+[extract.links_fs] 2/2 (100%)
+[extract.links_fs] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-batch: HTML-commented attendance retracts the claim without asserting hidden evidence [96.43ms]
+[extract.links_fs] start
+[extract.links_fs] 2/2 (100%)
+[extract.links_fs] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-batch: missing display-label slugs do not make actual attendance incomplete [60.08ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+[extract.links_fs] start
+[extract.links_fs] 2/2 (100%)
+[extract.links_fs] 2/2 (100%) done
+[extract.timeline_fs] start
+[extract.timeline_fs] 2/2 (100%)
+[extract.timeline_fs] 2/2 (100%) done
+[extract.links_fs] start
+[extract.links_fs] 1/2 (50%) done
+[extract.timeline_fs] start
+[extract.timeline_fs] 2/2 (100%)
+[extract.timeline_fs] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-batch: explicit foreign attendance survives complete resolution [93.41ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+[extract.links_fs] start
+[extract.links_fs] 2/2 (100%)
+[extract.links_fs] 2/2 (100%) done
+[extract.timeline_fs] start
+[extract.timeline_fs] 2/2 (100%)
+[extract.timeline_fs] 2/2 (100%) done
+[extract.links_fs] start
+[extract.links_fs] 1/2 (50%) done
+[extract.timeline_fs] start
+[extract.timeline_fs] 2/2 (100%)
+[extract.timeline_fs] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-batch: federated-default foreign attendance survives complete resolution [100.75ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+[extract.links_fs] start
+[extract.links_fs] 1/2 (50%) done
+[extract.timeline_fs] start
+[extract.timeline_fs] 2/2 (100%)
+[extract.timeline_fs] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-batch: unresolved attendance cannot retract owned graph or mark success [86.50ms]
+[extract.links_fs] start
+[extract.links_fs] 2/2 (100%)
+[extract.links_fs] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-batch: section-nested ~~~ examples never persist attendance [54.30ms]
+[extract.links_fs] start
+[extract.links_fs] 2/2 (100%)
+[extract.links_fs] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-batch: section-nested ``` examples never persist attendance [51.09ms]
+(pass) non-overridden canonical attendance lifecycle (postgres) > prepare: source-selected gbrain-base overrides global attendance-fixture [75.07ms]
+(pass) non-overridden canonical attendance lifecycle (postgres) > prepare: source-selected attendance-fixture overrides global gbrain-base [71.88ms]
+(pass) non-overridden canonical attendance lifecycle (postgres) > prepare: source-selected attendance-fixture overrides global missing-example-pack [92.37ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > prepare: unavailable source-selected ontology preserves graph and watermark [80.66ms]
+(pass) non-overridden canonical attendance lifecycle (postgres) > prepare: inline commented people do not become attendees [103.09ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > prepare: unavailable ontology cannot reverse existing pack-owned attendance [102.85ms]
+(pass) non-overridden canonical attendance lifecycle (postgres) > prepare: a unique bare attendee resolves, survives re-extraction, and retracts with its evidence [185.08ms]
+(pass) non-overridden canonical attendance lifecycle (postgres) > prepare: HTML-commented attendance retracts the claim without asserting hidden evidence [121.56ms]
+(pass) non-overridden canonical attendance lifecycle (postgres) > prepare: missing display-label slugs do not make actual attendance incomplete [70.99ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > prepare: explicit foreign attendance survives complete resolution [112.35ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > prepare: federated-default foreign attendance survives complete resolution [115.32ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > prepare: unresolved attendance cannot retract owned graph or mark success [110.36ms]
+(pass) non-overridden canonical attendance lifecycle (postgres) > prepare: section-nested ~~~ examples never persist attendance [70.04ms]
+(pass) non-overridden canonical attendance lifecycle (postgres) > prepare: section-nested ``` examples never persist attendance [69.14ms]
+(pass) non-overridden canonical attendance lifecycle (postgres) > sweep: source-selected gbrain-base overrides global attendance-fixture [67.21ms]
+(pass) non-overridden canonical attendance lifecycle (postgres) > sweep: source-selected attendance-fixture overrides global gbrain-base [62.86ms]
+(pass) non-overridden canonical attendance lifecycle (postgres) > sweep: source-selected attendance-fixture overrides global missing-example-pack [67.90ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > sweep: unavailable source-selected ontology preserves graph and watermark [61.96ms]
+(pass) non-overridden canonical attendance lifecycle (postgres) > sweep: inline commented people do not become attendees [92.53ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > sweep: unavailable ontology cannot reverse existing pack-owned attendance [78.76ms]
+(pass) non-overridden canonical attendance lifecycle (postgres) > sweep: a unique bare attendee resolves, survives re-extraction, and retracts with its evidence [129.26ms]
+(pass) non-overridden canonical attendance lifecycle (postgres) > sweep: HTML-commented attendance retracts the claim without asserting hidden evidence [99.49ms]
+(pass) non-overridden canonical attendance lifecycle (postgres) > sweep: missing display-label slugs do not make actual attendance incomplete [79.62ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > sweep: explicit foreign attendance survives complete resolution [112.44ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > sweep: federated-default foreign attendance survives complete resolution [108.92ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > sweep: unresolved attendance cannot retract owned graph or mark success [107.44ms]
+(pass) non-overridden canonical attendance lifecycle (postgres) > sweep: section-nested ~~~ examples never persist attendance [65.90ms]
+(pass) non-overridden canonical attendance lifecycle (postgres) > sweep: section-nested ``` examples never persist attendance [66.65ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+[extract.timeline_db] start
+[extract.timeline_db] 2/2 (100%)
+[extract.timeline_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > db: source-selected gbrain-base overrides global attendance-fixture [67.65ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+[extract.timeline_db] start
+[extract.timeline_db] 2/2 (100%)
+[extract.timeline_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > db: source-selected attendance-fixture overrides global gbrain-base [78.19ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+[extract.timeline_db] start
+[extract.timeline_db] 2/2 (100%)
+[extract.timeline_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > db: source-selected attendance-fixture overrides global missing-example-pack [65.80ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > db: unavailable source-selected ontology preserves graph and watermark [66.77ms]
+[extract.links_db] start
+[extract.links_db] 3/3 (100%)
+[extract.links_db] 3/3 (100%) done
+[extract.timeline_db] start
+[extract.timeline_db] 3/3 (100%)
+[extract.timeline_db] 3/3 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > db: inline commented people do not become attendees [95.96ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+[extract.timeline_db] start
+[extract.timeline_db] 2/2 (100%)
+[extract.timeline_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > db: unavailable ontology cannot reverse existing pack-owned attendance [95.47ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+[extract.timeline_db] start
+[extract.timeline_db] 2/2 (100%)
+[extract.timeline_db] 2/2 (100%) done
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+[extract.timeline_db] start
+[extract.timeline_db] 2/2 (100%)
+[extract.timeline_db] 2/2 (100%) done
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+[extract.timeline_db] start
+[extract.timeline_db] 2/2 (100%)
+[extract.timeline_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > db: a unique bare attendee resolves, survives re-extraction, and retracts with its evidence [171.69ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > db: HTML-commented attendance retracts the claim without asserting hidden evidence [118.20ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > db: missing display-label slugs do not make actual attendance incomplete [64.06ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+[extract.timeline_db] start
+[extract.timeline_db] 2/2 (100%)
+[extract.timeline_db] 2/2 (100%) done
+[extract.links_db] start
+[extract.links_db] 1/2 (50%) done
+[extract.timeline_db] start
+[extract.timeline_db] 2/2 (100%)
+[extract.timeline_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > db: explicit foreign attendance survives complete resolution [130.96ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+[extract.timeline_db] start
+[extract.timeline_db] 2/2 (100%)
+[extract.timeline_db] 2/2 (100%) done
+[extract.links_db] start
+[extract.links_db] 1/2 (50%) done
+[extract.timeline_db] start
+[extract.timeline_db] 2/2 (100%)
+[extract.timeline_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > db: federated-default foreign attendance survives complete resolution [119.41ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+[extract.links_db] start
+[extract.links_db] 1/2 (50%) done
+[extract.timeline_db] start
+[extract.timeline_db] 2/2 (100%)
+[extract.timeline_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > db: unresolved attendance cannot retract owned graph or mark success [99.73ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > db: section-nested ~~~ examples never persist attendance [56.78ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > db: section-nested ``` examples never persist attendance [58.80ms]
+[extract.stale] start
+[extract.stale] 2/2 (100%)
+[extract.stale] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > stale: source-selected gbrain-base overrides global attendance-fixture [73.05ms]
+[extract.stale] start
+[extract.stale] 2/2 (100%)
+[extract.stale] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > stale: source-selected attendance-fixture overrides global gbrain-base [77.56ms]
+[extract.stale] start
+[extract.stale] 2/2 (100%)
+[extract.stale] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > stale: source-selected attendance-fixture overrides global missing-example-pack [75.57ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+[extract.stale] start
+(pass) non-overridden canonical attendance lifecycle (postgres) > stale: unavailable source-selected ontology preserves graph and watermark [81.51ms]
+[extract.stale] start
+[extract.stale] 3/3 (100%)
+[extract.stale] 3/3 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > stale: inline commented people do not become attendees [110.36ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+[extract.stale] start
+[extract.stale] start
+[extract.stale] 2/2 (100%)
+[extract.stale] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > stale: unavailable ontology cannot reverse existing pack-owned attendance [101.42ms]
+[extract.stale] start
+[extract.stale] 2/2 (100%)
+[extract.stale] 2/2 (100%) done
+[extract.stale] start
+[extract.stale] 1/1 (100%)
+[extract.stale] 1/1 (100%) done
+[extract.stale] start
+[extract.stale] 1/1 (100%)
+[extract.stale] 1/1 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > stale: a unique bare attendee resolves, survives re-extraction, and retracts with its evidence [150.81ms]
+[extract.stale] start
+[extract.stale] 2/2 (100%)
+[extract.stale] 2/2 (100%) done
+[extract.stale] start
+[extract.stale] 1/1 (100%)
+[extract.stale] 1/1 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > stale: HTML-commented attendance retracts the claim without asserting hidden evidence [111.73ms]
+[extract.stale] start
+[extract.stale] 2/2 (100%)
+[extract.stale] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > stale: missing display-label slugs do not make actual attendance incomplete [73.08ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+[extract.stale] start
+[extract.stale] 2/2 (100%)
+[extract.stale] 2/2 (100%) done
+[extract.stale] start
+[extract.stale] done
+(pass) non-overridden canonical attendance lifecycle (postgres) > stale: explicit foreign attendance survives complete resolution [94.23ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+[extract.stale] start
+[extract.stale] 2/2 (100%)
+[extract.stale] 2/2 (100%) done
+[extract.stale] start
+[extract.stale] done
+(pass) non-overridden canonical attendance lifecycle (postgres) > stale: federated-default foreign attendance survives complete resolution [99.96ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+[extract.stale] start
+[extract.stale] 1/2 (50%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > stale: unresolved attendance cannot retract owned graph or mark success [102.34ms]
+[extract.stale] start
+[extract.stale] 2/2 (100%)
+[extract.stale] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > stale: section-nested ~~~ examples never persist attendance [68.13ms]
+[extract.stale] start
+[extract.stale] 2/2 (100%)
+[extract.stale] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > stale: section-nested ``` examples never persist attendance [72.43ms]
+[extract.incremental] start
+[extract.incremental] 1/1 (100%)
+[extract.incremental] 1/1 (100%) done
+[extract.incremental] start
+[extract.incremental] 1/1 (100%)
+[extract.incremental] 1/1 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-incremental: imported hidden meetings get guarded canonical attendance [95.98ms]
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-sync: imported hidden meetings get guarded canonical attendance [105.93ms]
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-sync: an ordinary missing target does not discard later links or processed status [60.06ms]
+[extract.incremental] start
+[extract.incremental] 1/1 (100%)
+[extract.incremental] 1/1 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-incremental: file-only meeting declarations cannot bypass the database origin type [56.15ms]
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-sync: file-only meeting declarations cannot bypass the database origin type [44.78ms]
+[extract.links_db] start
+[extract.links_db] 3/3 (100%)
+[extract.links_db] 3/3 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > db: display-label person slugs do not assert extra attendees [90.00ms]
+[extract.links_db] start
+[extract.links_db] 3/4 (75%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > db: ambiguous bare references do not assert either attendee [110.00ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > db: actual extraction persists, queries and removes meeting-owned Markdown [159.36ms]
+[extract.stale] start
+[extract.stale] 3/3 (100%)
+[extract.stale] 3/3 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > stale: display-label person slugs do not assert extra attendees [99.61ms]
+[extract.stale] start
+[extract.stale] 3/4 (75%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > stale: ambiguous bare references do not assert either attendee [118.53ms]
+[extract.stale] start
+[extract.stale] 2/2 (100%)
+[extract.stale] 2/2 (100%) done
+[extract.stale] start
+[extract.stale] 1/1 (100%)
+[extract.stale] 1/1 (100%) done
+[extract.stale] start
+[extract.stale] 1/1 (100%)
+[extract.stale] 1/1 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > stale: actual extraction persists, queries and removes meeting-owned Markdown [156.41ms]
+[extract.links_fs] start
+[extract.links_fs] 3/3 (100%)
+[extract.links_fs] 3/3 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-batch: display-label person slugs do not assert extra attendees [85.38ms]
+[extract.links_fs] start
+[extract.links_fs] 3/4 (75%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-batch: ambiguous bare references do not assert either attendee [91.25ms]
+[extract.links_fs] start
+[extract.links_fs] 2/2 (100%)
+[extract.links_fs] 2/2 (100%) done
+[extract.links_fs] start
+[extract.links_fs] 2/2 (100%)
+[extract.links_fs] 2/2 (100%) done
+[extract.links_fs] start
+[extract.links_fs] 2/2 (100%)
+[extract.links_fs] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-batch: actual extraction persists, queries and removes meeting-owned Markdown [138.71ms]
+[extract.incremental] start
+[extract.incremental] 2/2 (100%)
+[extract.incremental] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-incremental: display-label person slugs do not assert extra attendees [88.92ms]
+[extract.incremental] start
+[extract.incremental] 1/2 (50%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-incremental: ambiguous bare references do not assert either attendee [95.05ms]
+[extract.incremental] start
+[extract.incremental] 2/2 (100%)
+[extract.incremental] 2/2 (100%) done
+[extract.incremental] start
+[extract.incremental] 2/2 (100%)
+[extract.incremental] 2/2 (100%) done
+[extract.incremental] start
+[extract.incremental] 2/2 (100%)
+[extract.incremental] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-incremental: actual extraction persists, queries and removes meeting-owned Markdown [170.07ms]
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-sync: display-label person slugs do not assert extra attendees [88.45ms]
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-sync: ambiguous bare references do not assert either attendee [104.68ms]
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-sync: actual extraction persists, queries and removes meeting-owned Markdown [156.55ms]
+(pass) non-overridden canonical attendance lifecycle (postgres) > prepare: display-label person slugs do not assert extra attendees [99.54ms]
+(pass) non-overridden canonical attendance lifecycle (postgres) > prepare: ambiguous bare references do not assert either attendee [115.41ms]
+(pass) non-overridden canonical attendance lifecycle (postgres) > prepare: actual extraction persists, queries and removes meeting-owned Markdown [161.40ms]
+(pass) non-overridden canonical attendance lifecycle (postgres) > sweep: display-label person slugs do not assert extra attendees [101.16ms]
+(pass) non-overridden canonical attendance lifecycle (postgres) > sweep: ambiguous bare references do not assert either attendee [135.37ms]
+(pass) non-overridden canonical attendance lifecycle (postgres) > sweep: actual extraction persists, queries and removes meeting-owned Markdown [154.00ms]
+[extract.links_db] start
+[extract.links_db] 4/4 (100%)
+[extract.links_db] 4/4 (100%) done
+[extract.timeline_db] start
+[extract.timeline_db] 4/4 (100%)
+[extract.timeline_db] 4/4 (100%) done
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+[extract.timeline_db] start
+[extract.timeline_db] 2/2 (100%)
+[extract.timeline_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > db: mixed-source extraction resolves each origin's pack for identical slugs [147.86ms]
+[extract.stale] start
+[extract.stale] 4/4 (100%)
+[extract.stale] 4/4 (100%) done
+[extract.stale] start
+[extract.stale] 1/1 (100%)
+[extract.stale] 1/1 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > stale: mixed-source extraction resolves each origin's pack for identical slugs [138.44ms]
+[extract.links_db] start
+[extract.links_db] 1/3 (33%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > db: type-filtered extraction does not load an unrelated source pack [74.15ms]
+(pass) non-overridden canonical attendance lifecycle (postgres) > db: unavailable selected source fails preflight before any healthy graph or combined watermark changes [59.20ms]
+[extract.stale] start
+[extract.stale] 2/4 (50%) done
+[extract.stale] start
+[extract.stale] 1/3 (33%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > stale: an unavailable first source does not starve healthy later batches or become successful [102.41ms]
+(pass) non-overridden canonical attendance lifecycle (postgres) > local publication: source-selected attendance-fixture/gbrain-base overrides global attendance-fixture [167.91ms]
+(pass) non-overridden canonical attendance lifecycle (postgres) > local publication: source-selected attendance-fixture/attendance-fixture overrides global gbrain-base [148.28ms]
+(pass) non-overridden canonical attendance lifecycle (postgres) > local publication: source-selected attendance-fixture/attendance-fixture overrides global missing-example-pack [143.96ms]
+(pass) non-overridden canonical attendance lifecycle (postgres) > local publication: unavailable source-selected attendance-fixture pack saves the note but preserves the graph [498.76ms]
+(pass) non-overridden canonical attendance lifecycle (postgres) > local publication: source-selected default/gbrain-base overrides global attendance-fixture [147.61ms]
+(pass) non-overridden canonical attendance lifecycle (postgres) > local publication: source-selected default/attendance-fixture overrides global gbrain-base [144.99ms]
+(pass) non-overridden canonical attendance lifecycle (postgres) > local publication: source-selected default/attendance-fixture overrides global missing-example-pack [149.30ms]
+(pass) non-overridden canonical attendance lifecycle (postgres) > local publication: unavailable source-selected default pack saves the note but preserves the graph [482.66ms]
+(pass) non-overridden canonical attendance lifecycle (postgres) > local publication discovers typed pack frontmatter before admitting edges and preserves unchanged row identity [544.69ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > local publication keeps the note and prior graph when an endpoint changes after preparation: edit [228.43ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > local publication keeps the note and prior graph when an endpoint changes after preparation: retype [194.98ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > local publication keeps the note and prior graph when an endpoint changes after preparation: delete [190.22ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > local publication does not swallow unrelated graph storage failures [184.10ms]
+(pass) non-overridden canonical attendance lifecycle (postgres) > local publication admits the visible attendee but not a live person inside an inline comment [181.27ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > local publication preserves pack-owned attendance and reports unavailable ontology without losing the note [194.03ms]
+(pass) non-overridden canonical attendance lifecycle (postgres) > local publication does not admit a non-person into typed pack attendance [166.51ms]
+(pass) non-overridden canonical attendance lifecycle (postgres) > local publication retains typed pack attendance when resolved endpoint metadata is unavailable [171.56ms]
+(pass) non-overridden canonical attendance lifecycle (postgres) > typed pack attendance preserves prior edges when the new target cannot be resolved [80.10ms]
+(pass) non-overridden canonical attendance lifecycle (postgres) > local put_page and remote deferred sweep preserve the actual Markdown producer [520.49ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > local put_page commits unresolved attendance content while preserving retryable graph [196.48ms]
+(pass) non-overridden canonical attendance lifecycle (postgres) > actual put_page and query operations retain and remove the supported attendee [545.02ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+Links: created 2 from 2 pages (db source)
+
+Done: 2 links, 0 timeline entries from 2 pages
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+Links: created 0 from 2 pages (db source)
+
+Done: 0 links, 0 timeline entries from 2 pages
+(pass) non-overridden canonical attendance lifecycle (postgres) > canonical frontmatter and body keep distinct provenance without duplicate people [173.09ms]
+[extract.links_db] start
+[extract.links_db] 3/4 (75%) done
+Links: created 0 from 3 pages (db source)
+Skipped 1 page(s) with unresolved attendance; prior links and extraction watermarks were preserved.
+Unresolved frontmatter refs: 2 total
+  1× attendees:Shared name
+  1× attendees:people/company-example
+
+Done: 0 links, 0 timeline entries from 3 pages
+(pass) non-overridden canonical attendance lifecycle (postgres) > ambiguous or non-person canonical frontmatter stays unresolved [108.52ms]
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-sync: canonical frontmatter persists and removes under its meeting origin [158.04ms]
+[extract.incremental] start
+[extract.incremental] 2/2 (100%)
+[extract.incremental] 2/2 (100%) done
+[extract.incremental] start
+[extract.incremental] 2/2 (100%)
+[extract.incremental] 2/2 (100%) done
+[extract.incremental] start
+[extract.incremental] 2/2 (100%)
+[extract.incremental] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-incremental: canonical frontmatter persists and removes under its meeting origin [162.21ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > private attendees and unsealed projections remain excluded from remote retrieval [117.83ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > single and batch writers round-trip Markdown origin without exposing an ungranted origin [65.34ms]
+(pass) non-overridden canonical attendance lifecycle (postgres) > failed filesystem attendance replacement stays retryable and preserves the last good graph [128.27ms]
+[extract.links_fs] start
+[extract.links_fs] 2/2 (100%)
+[extract.links_fs] 2/2 (100%) done
+[extract.timeline_fs] start
+[extract.timeline_fs] 2/2 (100%)
+[extract.timeline_fs] 2/2 (100%) done
+[extract.links_fs] start
+[extract.links_fs] 2/2 (100%)
+[extract.links_fs] 2/2 (100%) done
+[extract.timeline_fs] start
+[extract.timeline_fs] 2/2 (100%)
+[extract.timeline_fs] 2/2 (100%) done
+[extract.links_fs] start
+[extract.links_fs] 2/2 (100%)
+[extract.links_fs] 2/2 (100%) done
+[extract.timeline_fs] start
+[extract.timeline_fs] 2/2 (100%)
+[extract.timeline_fs] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-batch: failed attendance replacement does not advance its watermark [124.00ms]
+[extract.incremental] start
+[extract.incremental] 2/2 (100%)
+[extract.incremental] 2/2 (100%) done
+[extract.incremental] start
+  link replacement error for people/alice-example (0 rows not written): Injected replacement failure
+[extract.incremental] 2/2 (100%)
+[extract.incremental] 2/2 (100%) done
+[extract.incremental] start
+[extract.incremental] 2/2 (100%)
+[extract.incremental] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-incremental: failed attendance replacement does not advance its watermark [124.22ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+Links: created 2 from 2 pages (db source)
+
+Done: 2 links, 0 timeline entries from 2 pages
+(pass) non-overridden canonical attendance lifecycle (postgres) > gbrain-base: pack_semantics_preserved [65.67ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+Links: created 2 from 2 pages (db source)
+
+Done: 2 links, 0 timeline entries from 2 pages
+(pass) non-overridden canonical attendance lifecycle (postgres) > company-brain: pack_semantics_preserved [65.83ms]
+[extract.links_db] start
+[extract.links_db] 3/3 (100%)
+[extract.links_db] 3/3 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > manual and other-origin rows survive exact meeting removal [140.08ms]
+(pass) non-overridden canonical attendance lifecycle (postgres) > prepare/attendance-fixture: retained link identities refresh their evidence [120.99ms]
+(pass) non-overridden canonical attendance lifecycle (postgres) > prepare/gbrain-base: retained link identities refresh their evidence [113.90ms]
+(pass) non-overridden canonical attendance lifecycle (postgres) > sweep/attendance-fixture: retained link identities refresh their evidence [92.94ms]
+[extract.links_fs] start
+[extract.links_fs] 2/2 (100%)
+[extract.links_fs] 2/2 (100%) done
+[extract.links_fs] start
+[extract.links_fs] 2/2 (100%)
+[extract.links_fs] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-batch/attendance-fixture: retained link identities refresh their evidence [95.60ms]
+[extract.incremental] start
+[extract.incremental] 2/2 (100%)
+[extract.incremental] 2/2 (100%) done
+[extract.incremental] start
+[extract.incremental] 2/2 (100%)
+[extract.incremental] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-incremental/attendance-fixture: retained link identities refresh their evidence [100.62ms]
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-sync/attendance-fixture: retained link identities refresh their evidence [100.28ms]
+[extract.links_fs] start
+[extract.links_fs] 2/2 (100%)
+[extract.links_fs] 2/2 (100%) done
+[extract.links_fs] start
+[extract.links_fs] 2/2 (100%)
+[extract.links_fs] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-batch: unknown legacy producers survive attendance reconciliation [90.97ms]
+[extract.incremental] start
+[extract.incremental] 2/2 (100%)
+[extract.incremental] 2/2 (100%) done
+[extract.incremental] start
+[extract.incremental] 2/2 (100%)
+[extract.incremental] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-incremental: unknown legacy producers survive attendance reconciliation [108.79ms]
+(pass) non-overridden canonical attendance lifecycle (postgres) > fs-sync: unknown legacy producers survive attendance reconciliation [98.72ms]
+(pass) non-overridden canonical attendance lifecycle (postgres) > reversed Markdown validation requires matching origin, types and captured endpoint revisions [88.14ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > source identities are resolved before reversing qualified Markdown [98.24ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > DB does not promote unsupported evidence: [Alice](../people/alice-example.md) did not attend. [56.00ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > DB does not promote unsupported evidence: Invited [Alice](../people/alice-example.md) for next month. [61.80ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > DB does not promote unsupported evidence: Discussed a proposal from [Alice](../people/alice-example.md). [58.20ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > DB does not promote unsupported evidence: Attendees: [Alice](../people/alice-example.md) (absent) [59.09ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > DB does not promote unsupported evidence: ## Attendees
+- [Alice](../people/alice-example.md) was invited [57.91ms]
+[extract.links_db] start
+[extract.links_db] 2/2 (100%)
+[extract.links_db] 2/2 (100%) done
+(pass) non-overridden canonical attendance lifecycle (postgres) > DB does not promote unsupported evidence: ```md
+Attendees: [Alice](../people/alice-example.md)
+``` [57.40ms]
+(pass) shared and filesystem canonical attendance grammar > large malformed lists are bounded and never accept a valid prefix [6.95ms]
+(pass) shared and filesystem canonical attendance grammar > nonmatching constrained attendance rules preserve pack ownership and outgoing mentions [1.73ms]
+(pass) shared and filesystem canonical attendance grammar > ambiguous bare attendance names stay nonassertive without changing ordinary expansion [1.99ms]
+(pass) shared and filesystem canonical attendance grammar > a canonical mention does not reverse a separate pack-owned edge to the same target [1.71ms]
+(pass) shared and filesystem canonical attendance grammar > Attendees: [Alice](../people/alice-example.md) [0.66ms]
+(pass) shared and filesystem canonical attendance grammar > Attendees: [Alice](people/alice-example.md) [0.45ms]
+(pass) shared and filesystem canonical attendance grammar > Attendees: [[people/alice-example]] [0.26ms]
+(pass) shared and filesystem canonical attendance grammar > Attendees: [Alice](/people/alice-example.md) [0.26ms]
+(pass) shared and filesystem canonical attendance grammar > ## Attendees
+- [Alice](../people/alice-example.md)
+
+## Notes
+Discussed work. [0.39ms]
+(pass) shared and filesystem canonical attendance grammar > not evidence: Attendees: [Company](../people/company-example.md) [0.73ms]
+(pass) shared and filesystem canonical attendance grammar > not evidence: Attendees: [Missing](../people/missing.md) [0.30ms]
+(pass) shared and filesystem canonical attendance grammar > not evidence: Attendees: [Alice](../people/alice-example.md) maybe [0.25ms]
+(pass) shared and filesystem canonical attendance grammar > not evidence: Attendees: `not` [Alice](../people/alice-example.md) [0.38ms]
+(pass) shared and filesystem canonical attendance grammar > not evidence: ~~~md
+Attendees: [Alice](../people/alice-example.md)
+~~~ [0.23ms]
+(pass) shared and filesystem canonical attendance grammar > not evidence:     Attendees: [Alice](../people/alice-example.md) [0.23ms]
+(pass) shared and filesystem canonical attendance grammar > not evidence: ## Attendees
+- [Alice](../people/alice-example.md)
+Nobody attended. [0.31ms]
+(pass) shared and filesystem canonical attendance grammar > not evidence: Reference to [Alice](../people/alice-example.md).
+## Attendees
+Nobody attended. [0.30ms]
+
+ 387 pass
+ 0 fail
+ 1475 expect() calls
+Ran 387 tests across 1 file. [47.21s]

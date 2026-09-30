@@ -147,6 +147,9 @@ export async function resolveSourceId(
   engine: BrainEngine,
   explicit: string | null | undefined,
   cwd: string = process.cwd(),
+  // Local IPC already evaluated the client's flag/env/dotfile tiers. The
+  // owner's environment must never redirect that client's unscoped request.
+  opts: { skipLocalSignals?: boolean } = {},
 ): Promise<string> {
   // 1. Explicit flag wins. The __all__ sentinel passes through verbatim
   //    (#1712) — it is not a source id, so it skips both the regex and
@@ -161,7 +164,7 @@ export async function resolveSourceId(
   }
 
   // 2. Env var. Same __all__ pass-through (#2140).
-  const env = process.env.GBRAIN_SOURCE;
+  const env = opts.skipLocalSignals ? undefined : process.env.GBRAIN_SOURCE;
   if (env && env.length > 0) {
     if (env === ALL_SOURCES) return ALL_SOURCES;
     if (!SOURCE_ID_RE.test(env)) {
@@ -172,7 +175,7 @@ export async function resolveSourceId(
   }
 
   // 3. .gbrain-source dotfile walk-up.
-  const dotfile = readDotfileWalk(cwd);
+  const dotfile = opts.skipLocalSignals ? null : readDotfileWalk(cwd);
   if (dotfile) {
     await assertSourceExists(engine, dotfile);
     return dotfile;
@@ -597,15 +600,6 @@ export async function assessUnscopedDefaultWrite(
   const assessment = await assessDefaultWriteGuard(engine);
   if (assessment.failed) return { warning: null, assessed: false };
   return { warning: assessment.shouldGuard ? formatDefaultWriteWarning(assessment) : null, assessed: true };
-}
-
-/** The warning-only projection of assessUnscopedDefaultWrite. */
-export async function maybeWarnUnscopedDefaultWrite(
-  engine: BrainEngine,
-  tier: SourceTier,
-  mutating: boolean,
-): Promise<string | null> {
-  return (await assessUnscopedDefaultWrite(engine, tier, mutating)).warning;
 }
 
 async function assertSourceExists(engine: BrainEngine, id: string): Promise<void> {

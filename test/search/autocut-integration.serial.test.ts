@@ -19,6 +19,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { installFixtureChunks } from '../helpers/page-projection.ts';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { hybridSearch } from '../../src/core/search/hybrid.ts';
 import {
@@ -53,7 +54,7 @@ beforeAll(async () => {
   ];
   for (const [slug, page, chunkText] of pages) {
     await engine.putPage(slug, page);
-    await engine.upsertChunks(slug, [
+    await installFixtureChunks(engine, slug, [
       { chunk_index: 0, chunk_text: chunkText, chunk_source: 'compiled_truth' },
     ]);
   }
@@ -193,7 +194,7 @@ describe('autocut — search.autocut_min_keep floors the cut (config wiring)', (
     ];
     for (const [slug, page, chunkText] of extra) {
       await engine.putPage(slug, page);
-      await engine.upsertChunks(slug, [
+      await installFixtureChunks(engine, slug, [
         { chunk_index: 0, chunk_text: chunkText, chunk_source: 'compiled_truth' },
       ]);
     }

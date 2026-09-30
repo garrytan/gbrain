@@ -20,7 +20,7 @@
 import { quarantineFilterFragment } from '../quarantine.ts';
 import { unverifiedExtractionFragment } from '../extraction-review.ts';
 import { privatePagesFilterFragment } from './private-visibility.ts';
-import { requiresSafeChunks, safeChunksFilter } from './safe-chunks.ts';
+import { currentTextProjectionFilter, requiresSafeChunks, safeChunksFilter } from './safe-chunks.ts';
 
 /**
  * Escape `%`, `_`, and `\` so a string can be used as a LIKE prefix literal.
@@ -177,7 +177,8 @@ export function buildVisibilityClause(
   opts?: {
     /**
      * #4352 — untrusted-caller predicate: hide pages whose frontmatter
-     * carries `visibility: private` (absent visibility defaults to 'world').
+     * carries `visibility: private` (absent visibility defaults to 'world',
+     * or to 'private' on derived atoms and synthesized concepts).
      * Set from SearchOpts.excludePrivate by both engines; callers resolve
      * trust + the config gate via resolveExcludePrivatePages
      * (search/private-visibility.ts). Off by default — trusted local reads
@@ -196,7 +197,7 @@ export function buildVisibilityClause(
     ? ` AND ${privatePagesFilterFragment(pageAlias)}`
     : '';
   const chunksClause = requiresSafeChunks(opts) ? ` AND ${safeChunksFilter(pageAlias)}` : '';
-  return `AND ${pageAlias}.deleted_at IS NULL AND NOT ${sourceAlias}.archived AND ${quarantine}${privateClause}${chunksClause}`;
+  return `AND ${pageAlias}.deleted_at IS NULL AND ${currentTextProjectionFilter(pageAlias)} AND NOT ${sourceAlias}.archived AND ${quarantine}${privateClause}${chunksClause}`;
 }
 
 // ============================================================

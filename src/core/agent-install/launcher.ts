@@ -2,7 +2,7 @@ import { shellQuote } from '../mcp-registration.ts';
 import { AGENT_ENV_SHELL_PATTERN } from './environment.ts';
 
 /** Shared by local PGLite and hosted thin-client installs. No shell profiles or cwd routing. */
-export function renderAgentLauncher(p: { root: string; bunPath: string; cliPath?: string; sourceId?: string; repairHint?: string; mode: 'local' | 'thin-client' }): string {
+export function renderAgentLauncher(p: { root: string; bunPath: string; cliPath?: string; sourceId?: string; repairHint?: string; mode?: 'local' | 'thin-client' }): string {
   const missing = `! -x ${shellQuote(p.bunPath)}` + (p.cliPath ? ` || ! -f ${shellQuote(p.cliPath)}` : '');
   const invocation = shellQuote(p.bunPath) + (p.cliPath ? ` --no-env-file ${shellQuote(p.cliPath)}` : '');
   const repair = p.repairHint ?? 'Restore the runtime used by this launcher, then repeat this installation.';

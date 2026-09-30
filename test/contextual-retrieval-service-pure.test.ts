@@ -25,9 +25,12 @@ import {
   type ChatResult,
 } from '../src/core/ai/gateway.ts';
 import type { ChunkInput } from '../src/core/types.ts';
+import { MARKDOWN_CHUNKER_VERSION } from '../src/core/chunkers/recursive.ts';
+import { mockEmbedProjectionEngine } from './helpers/embed-projection-mock.ts';
 import { withEnv } from './helpers/with-env.ts';
 
 const TEST_DIMS = 1536;
+const TEST_EMBEDDING_MODEL = 'openai:text-embedding-3-large';
 
 afterEach(() => {
   __setChatTransportForTests(null);
@@ -120,19 +123,27 @@ describe('computeCorpusGeneration', () => {
 
 describe('inline import contextual synopsis containment', () => {
   test('uses the shared default without starting paid synopsis generation', () => {
+    // The inline import's mode resolution lives in import-contextual-mode.ts (#5621 peel, shared with repair).
     const importSource = readFileSync(
       new URL('../src/core/import-file.ts', import.meta.url),
       'utf8',
     );
+    // test-reads-source-ok[structural]: the #5621 peel moved the inline mode resolution here; pins the paid-synopsis containment.
+    const resolverSource = readFileSync(
+      new URL('../src/core/import-contextual-mode.ts', import.meta.url),
+      'utf8',
+    );
 
-    expect(importSource).toContain(
+    expect(importSource).toContain('await resolveImportContextualMode(');
+    expect(resolverSource).toContain(
       "import { DEFAULT_SYNOPSIS_MODEL } from './page-summary.ts';",
     );
-    expect(importSource).toContain('synopsisModel: DEFAULT_SYNOPSIS_MODEL');
-    expect(importSource).toContain(
+    expect(resolverSource).toContain('synopsisModel: DEFAULT_SYNOPSIS_MODEL');
+    expect(resolverSource).toContain(
       "effectiveCRMode = resolution.mode === 'per_chunk_synopsis' ? 'title' : resolution.mode;",
     );
     expect(importSource).not.toContain('generatePerChunkSynopsis');
+    expect(resolverSource).not.toContain('generatePerChunkSynopsis');
   });
 });
 
@@ -410,7 +421,7 @@ async function runWithChatStub(opts: {
   releaseSynopsisLease?: (lease?: unknown) => Promise<void>;
 }) {
   configureGateway({
-    embedding_model: 'openai:text-embedding-3-large',
+    embedding_model: TEST_EMBEDDING_MODEL,
     embedding_dimensions: TEST_DIMS,
     env: { OPENAI_API_KEY: 'sk-test' },
   });
@@ -432,7 +443,7 @@ async function runWithChatStub(opts: {
     return chatSuccess(`Synopsis for ${chunk}`);
   }));
 
-  const engine = makeServiceEngine(opts.chunks);
+  const { engine, embeddedChunks } = makeServiceEngine(opts.chunks);
   const result = await reembedPageWithContextualRetrieval({
     engine,
     pageSlug: 'wiki/concepts/concurrency-test',
@@ -448,13 +459,18 @@ async function runWithChatStub(opts: {
   return {
     result,
     embedInputs: embedInputs.flat(),
-    embeddedChunks: engine.embeddedChunks as ChunkInput[],
+    embeddedChunks,
   };
 }
 
 function makeServiceEngine(chunks: ChunkInput[]) {
-  const engine: any = {
-    embeddedChunks: [] as ChunkInput[],
+  const embeddedChunks: ChunkInput[] = [];
+  // Model an existing sealed projection, including stable row identities.
+  // The shared fake supplies coherent snapshots and re-entrant transactions.
+  const storedChunks = chunks.map((chunk, index) => ({
+    ...chunk, id: index + 1, page_id: 1, embedded_at: null, embedded_text_hash: null,
+  }));
+  const engine = mockEmbedProjectionEngine({
     async getPage() {
       return {
         id: 1,
@@ -470,7 +486,29 @@ function makeServiceEngine(chunks: ChunkInput[]) {
         deleted_at: null,
       };
     },
-    async executeRaw() {
+    async executeRaw(sql: string, params: unknown[] = []) {
+      if (sql.includes('FROM config')) return [
+        { key: 'embedding_columns', value: JSON.stringify({ embedding: {
+          type: 'vector', dimensions: TEST_DIMS, provider: TEST_EMBEDDING_MODEL,
+        } }) },
+        { key: 'embedding_dimensions', value: String(TEST_DIMS) },
+        { key: 'embedding_model', value: TEST_EMBEDDING_MODEL },
+      ];
+      if (sql.startsWith('SELECT chunker_version')) {
+        return [{ chunker_version: MARKDOWN_CHUNKER_VERSION, corpus_generation: null }];
+      }
+      if (sql.startsWith('UPDATE content_chunks SET')) {
+        const original = storedChunks.find(chunk => chunk.id === params[0]);
+        if (!original || params[4] !== original.page_id || params[5] !== original.chunk_text) {
+          throw new Error('Embedding update must address the existing chunk row and text');
+        }
+        embeddedChunks.push({ ...original,
+          embedding: params[1] == null ? undefined : new Float32Array(JSON.parse(String(params[1]))),
+          model: typeof params[3] === 'string' ? params[3] : undefined,
+        });
+        return [];
+      }
+      if (!sql.includes('FROM sources')) throw new Error(`Unexpected fixture SQL: ${sql}`);
       return [{
         id: 'default',
         name: 'Default',
@@ -484,19 +522,14 @@ function makeServiceEngine(chunks: ChunkInput[]) {
       }];
     },
     async getChunks() {
-      return chunks;
+      return storedChunks;
     },
-    async transaction(fn: (tx: any) => Promise<void>) {
-      await fn({
-        upsertChunks: async (_slug: string, embedded: ChunkInput[]) => {
-          engine.embeddedChunks = embedded;
-        },
-        updatePageContextualRetrievalState: async () => {},
-      });
+    async upsertChunks() {
+      throw new Error('Embedding must not replace canonical chunks');
     },
     async updatePageContextualRetrievalState() {},
-  };
-  return engine;
+  });
+  return { engine, embeddedChunks };
 }
 
 function extractChunk(opts: ChatOpts): string {

@@ -117,9 +117,12 @@ tasks where no LLM reasoning loop is needed.
 
 ### Preconditions (read before submitting your first shell job)
 
-- **`GBRAIN_ALLOW_SHELL_JOBS=1` must be set on the worker environment.**
-  Without it, the shell handler refuses to register and submissions sit in
-  `waiting` silently. Gate lives in `src/core/minions/handlers/shell.ts`.
+- **The worker must be started with `gbrain jobs work --allow-shell-jobs`** (equivalently `GBRAIN_ALLOW_SHELL_JOBS=1` exported on the worker; a `.env` in the worker's directory cannot set it).
+  The shell handler is always registered but guarded: an unflagged worker that
+  claims a shell job dead-letters it immediately (`UnrecoverableError`, straight
+  to `dead`, no retries) with the flag named in `error_text`. A job that sits in
+  `waiting` means NO worker is running at all — check
+  `gbrain jobs supervisor status`. Gate lives in `src/core/minions/handlers/shell.ts`.
 - **Security:** flipping `GBRAIN_ALLOW_SHELL_JOBS=1` authorizes arbitrary
   command execution on the worker. On a shared queue, this is a remote code
   execution surface. Treat as privileged infrastructure authorization.
@@ -314,7 +317,8 @@ bare background shell except this skill saying don't.
 ### Rung 1 — Minion job + deadman (Postgres + worker)
 
 Requires: Postgres engine, a running `gbrain jobs work` worker, and — for
-the shell lane — `GBRAIN_ALLOW_SHELL_JOBS=1` on the worker. All the
+the shell lane — a worker started with `--allow-shell-jobs` (or
+`GBRAIN_ALLOW_SHELL_JOBS=1` exported on it). All the
 Preconditions above still hold: the flag defaults OFF, shell submission is
 CLI-only across the MCP trust boundary, and PGLite has no worker daemon
 (see Rung 3). Nothing in this section loosens that contract.

@@ -2,7 +2,7 @@
  * W0 ship-review coverage (GAP-2) — the snapshot loader's shape + hash guards.
  *
  * The fixture is default-on for every `bun run test`, so a wrong snapshot
- * poisons the whole suite (the 1280-vs-1536 incident: 115 failures from one
+ * poisons the whole suite (the 1024-vs-1536 incident: 115 failures from one
  * root cause). These tests pin the three refusal paths and the
  * handler-aware hash (D5.13).
  */
@@ -84,7 +84,7 @@ test('memo: shape refusal is per-call, never cached as terminal — and costs ze
   // Hash matches but dims mismatch: the version entry is memoized yet every
   // call re-runs the shape gate against the CURRENT gateway config — an
   // engine with a matching config later in the same process could still
-  // load this snapshot (the zembed/1280 poisoning guard staying hot behind
+  // load this snapshot (the voyage-4/1024 poisoning guard staying hot behind
   // the memo). The 42MB tar read is deferred until a shape-MATCHING caller,
   // so a process that only ever refuses never reads it at all.
   const tar = writeFixture(`${currentHash()}\ndims=99999\nmodel=${getEmbeddingModel()}\n`);
@@ -105,9 +105,13 @@ test('memo: stale hash is terminal — tar never read, repeat calls short-circui
 
 const schemaInputs = [
   'migrate.ts', 'pglite-schema.ts', 'fts-language.ts', 'vector-index.ts', 'ai/defaults.ts',
+  'search/projection-statistics.ts',
+  'company-brain/receipt-schema.ts',
+  'shared-skills/schema-all.ts', 'shared-skills/schema.ts', 'shared-skills/membership-schema.ts', 'shared-skills/persistence-schema.ts',
+  'shared-skills/access-schema.ts',
   'timeline-dedup-repair.ts', 'pages-upsert-arbiter.ts', 'link-extraction.ts',
   'grants/schema.ts', 'grants/migration.ts', 'grants/model.ts', 'grants/service.ts', 'grants/profiles.ts',
-  'scope.ts', 'sql-query.ts', 'minions/tools/brain-allowlist.ts', 'facts/withdrawal-schema.ts',
+  'page-state/schema.ts', 'lease-schema.ts', 'page-state/projection-schema.ts', 'persistence/schema.ts', 'persistence/effect-schema.ts', 'persistence/writer-guard-schema.ts', 'persistence/topology-schema.ts', 'scope.ts', 'sql-query.ts', 'minions/tools/brain-allowlist.ts', 'facts/withdrawal-schema.ts',
 ];
 
 test('D5.13: the coverage-immune hash includes schema entry modules and imported migration dependencies', () => {
@@ -123,7 +127,7 @@ test('D5.13: the coverage-immune hash includes schema entry modules and imported
   expected.update('files:v3\n');
   for (const file of schemaInputs) {
     expected.update(`${file}\n`);
-    // test-reads-source-ok: independent raw-byte hash contract, including imported SQL/handlers.
+    // test-reads-source-ok[raw-bytes]: independent raw-byte hash contract, including imported SQL/handlers.
     expected.update(readFileSync(`src/core/${file}`));
     expected.update('\n--\n');
   }
@@ -137,7 +141,7 @@ test.each(schemaInputs)('editing imported snapshot input %s invalidates the cach
   const changedFs = {
     ...fsModule,
     readFileSync: (path: Parameters<typeof fsModule.readFileSync>[0]) => {
-      // test-reads-source-ok: emulate a changed source without mutating shared checkout files.
+      // test-reads-source-ok[raw-bytes]: emulate a changed source without mutating shared checkout files.
       const bytes = fsModule.readFileSync(path);
       return String(path).endsWith(`/src/core/${file}`)
         ? Buffer.concat([bytes, Buffer.from('\n// schema dependency changed\n')]) : bytes;
@@ -151,7 +155,7 @@ test('an unreadable imported schema dependency disables snapshot reuse', () => {
     ...fsModule,
     readFileSync: (path: Parameters<typeof fsModule.readFileSync>[0]) => {
       if (String(path).endsWith('/grants/schema.ts')) throw new Error('ENOENT');
-      // test-reads-source-ok: raw-byte hash failure-path regression.
+      // test-reads-source-ok[raw-bytes]: raw-byte hash failure-path regression.
       return fsModule.readFileSync(path);
     },
   } as typeof fsModule;

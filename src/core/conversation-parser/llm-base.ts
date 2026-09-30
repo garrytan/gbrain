@@ -307,6 +307,6 @@ function splitCacheKey(key: string): [string?, string?, string?] {
 }
 
 // Tolerant LLM-output JSON decoder. Re-exported from the leaf util so existing
-// importers (llm-fallback, llm-polish) keep their import path while the gateway
+// importers (llm-fallback) keep their import path while the gateway
 // can reuse it without a dependency cycle.
 export { parseLlmJson } from '../llm-json.ts';

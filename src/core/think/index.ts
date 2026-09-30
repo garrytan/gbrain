@@ -18,6 +18,7 @@
  */
 
 import type Anthropic from '@anthropic-ai/sdk';
+import { OperationTimeoutError, withTimeout } from '../timeout.ts';
 import type { BrainEngine, SynthesisEvidenceInput } from '../engine.ts';
 import type { SearchResult } from '../types.ts';
 import { runGather, renderPagesBlock, pagesBlockExcerptLen, takesHitToTakeForPrompt, selectRelevantExcerpt } from './gather.ts';
@@ -624,9 +625,9 @@ export async function runThink(
                 if (resolved.source === 'fallback_slugify') return null;
                 if (seenSlugs.has(resolved.slug)) return null;
                 seenSlugs.add(resolved.slug);
-                // 5s per-candidate timeout. Promise.race resolves with the
-                // first to land; the timeout returns [] (empty trajectory).
-                const points = await Promise.race([
+                // 5s per-candidate timeout (cleared on settle); a timeout
+                // is an empty trajectory, any other error rejects as before.
+                const points = await withTimeout(
                   engine.findTrajectory({
                     entitySlug: resolved.slug,
                     ...(opts.sourceId !== undefined ? { sourceId: opts.sourceId } : {}),
@@ -635,10 +636,12 @@ export async function runThink(
                     kind: 'all',
                     limit: 100,
                   }),
-                  new Promise<import('../engine.ts').TrajectoryPoint[]>(resolve => {
-                    setTimeout(() => resolve([]), 5000);
-                  }),
-                ]);
+                  5000,
+                  'findTrajectory',
+                ).catch((err: unknown) => {
+                  if (err instanceof OperationTimeoutError) return [];
+                  throw err;
+                });
                 const boundedPoints = window ? points.filter(point => {
                   const ms = point.valid_from.getTime();
                   const outside = (window.startMs !== null && ms < window.startMs)

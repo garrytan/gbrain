@@ -9,7 +9,7 @@ bun install
 bun test
 ```
 
-Requires Bun 1.0+.
+Requires Bun 1.3.11 or newer, matching `package.json`.
 
 ### Windows
 
@@ -52,6 +52,8 @@ src/
     operations.ts         Operation contract assembly (façade over ops/)
     ops/                  Contract types + security fences + the op domain modules
     engine.ts             BrainEngine interface
+    page-state/           Canonical snapshots, revisions, versions and guarded projections
+    persistence/          Durable requests, owner coordination, recovery and writer enforcement
     engine-factory.ts     Engine factory (dynamic import of the configured engine)
     postgres-engine.ts    Postgres + pgvector implementation (façade)
     postgres-engine/      Narrow-deps engine modules (facts, takes, code-edges, salience)
@@ -83,9 +85,8 @@ skills/                   Fat markdown skills for AI agents
 test/                     Unit tests (bun test, no DB required)
 test/e2e/                 E2E tests (requires DATABASE_URL, real Postgres+pgvector)
   fixtures/               Miniature realistic brain corpus (16 files)
-  helpers.ts              DB lifecycle, fixture import, timing
+  helpers.ts              DB lifecycle, fixture import, diagnostics
   mechanical.test.ts      All operations against real DB
-  mcp.test.ts             MCP tool generation verification
   skills.test.ts          Tier 2 skill tests (requires OpenClaw + API keys)
 docs/                     Architecture docs
 ```
@@ -106,7 +107,7 @@ bun test test/markdown.test.ts    # specific unit test
 # Pre-push gate (50+ parallel checks + typecheck)
 bun run verify
 
-# Pre-merge sanity (everything CI runs)
+# Pre-merge local suites (platform/persistence matrices run separately)
 bun run test:full                 # verify + parallel unit + slow + smart e2e
 
 # Slow / serial / e2e in isolation
@@ -133,6 +134,12 @@ refusal message walks you through it; details in
 the database name must carry "test" as a word segment (like `gbrain_test`
 above) or destructive tests refuse to run — opt a differently-named database
 in one-shot with `GBRAIN_E2E_ALLOW_DB=<name>`.
+
+Changes to durable persistence also require the native/runtime, process-crash,
+soak, deployment-matrix and read-latency gates in
+[`docs/TESTING.md`](docs/TESTING.md#durable-persistence-schedules-and-process-crashes).
+`test:full` alone does not execute those complete platform and runtime matrices.
+Keep each result tied to its tested revision and disclose skipped cells.
 
 Use `bun run verify` before pushing. It runs 50+ guard checks in parallel
 (`scripts/run-verify-parallel.sh`), including: banned fork-name leaks
@@ -206,11 +213,21 @@ Vacuous-assertion shapes to avoid (they recur):
 - asserting a substring that would also appear in the broken output —
   assert parsed structure instead.
 
-Relatedly: a test whose only assertion is a regex over `readFileSync`'d
-source text pins spelling, not behavior. New tests that read `src/` text
-need a `test-reads-source-ok: <why>` comment (or a behavioral assertion
-alongside); `test/test-reads-source-smell.test.ts` enforces this for new
-files and ratchets the pre-existing list down.
+Before adding a test, answer the four questions in the
+[authoring gate](docs/TESTING.md#authoring-gate); before deleting one, follow
+[Retiring a test](docs/TESTING.md#retiring-a-test) and record its evidence
+table in the PR body.
+
+Relatedly: a test whose only assertion is a regex over source text pins
+spelling, not behavior. A test that reads `src/` text (`readFileSync`,
+`readFile` or `Bun.file` on a `src/` path, directly or through a path
+constant) needs a tagged marker on or just above the read:
+`// test-reads-source-ok[<category>]: <why>`, with the category one of
+`prompt-byte`, `trust-boundary`, `generated-artifact`, `structural` or
+`raw-bytes`. `test/test-reads-source-smell.test.ts` enforces this and ratchets
+pre-existing files by their exact count of unjustified read sites. It counts
+read sites only, so new assertions over an existing source binding still need
+the authoring gate. See [Source reads in tests](docs/TESTING.md#source-reads-in-tests).
 
 ### Local CI gate (recommended before pushing)
 
@@ -218,6 +235,8 @@ files and ratchets the pre-existing list down.
 bun run ci:local         # full gate: gitleaks + guards/typecheck + 4-shard parallel unit + E2E
 bun run ci:local:diff    # gate with diff-aware E2E selector
 bun run ci:select-e2e    # print which E2E files the selector would run
+bun run ci:ubicloud      # the same gate fanned out across ephemeral Ubicloud VMs (~5 min)
+bun run ci:ubicloud:diff # Ubicloud gate with the diff-aware E2E selector
 ```
 
 `ci:local` spins up four pgvector services plus a transaction-mode PgBouncer via
@@ -226,6 +245,11 @@ sharded 4 ways in parallel, then tears down. Named volumes keep the install warm
 across runs. Requires Docker (Docker Desktop, OrbStack, or Colima) and `gitleaks`
 on host (`brew install gitleaks`). Override the postgres host port with
 `GBRAIN_CI_PG_PORT=5435 bun run ci:local` if 5434 collides.
+
+`ci:ubicloud` needs no Docker or gitleaks locally, only `UBICLOUD_API_KEY` (or
+`UBICLOUD_API_TOKEN`) for a Ubicloud project. It tests the working tree,
+uncommitted edits included; see "Ubicloud fan-out" in
+[`docs/TESTING.md`](docs/TESTING.md).
 
 Fail-closed selector: an unmapped `src/` change runs ALL E2E files. Hand-tune
 narrower mappings via `scripts/e2e-test-map.ts`.
@@ -243,7 +267,7 @@ scanning" for details.
 ## Building
 
 ```bash
-bun build --compile --outfile bin/gbrain src/cli.ts
+bun build --compile --no-compile-autoload-bunfig --outfile bin/gbrain src/cli.ts
 ```
 
 ## Adding a new operation

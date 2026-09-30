@@ -1,162 +1,180 @@
 #!/usr/bin/env bun
-// scripts/build-pglite-snapshot.ts
-//
-// TZ pinned to UTC BEFORE any PGLite work: dumpDataDir bakes this process's
-// TimeZone into the tar's cluster defaults. Building under the host zone made
-// restored engines run sessions in the build machine's zone (the engine also
-// re-pins at restore — this is the belt to that suspender, and it keeps any
-// OTHER zone-derived state baked into the tar deterministic across hosts).
-process.env.TZ = 'UTC';
-//
-// Tier 3 fast-restore: boot a fresh PGLite, run the full initSchema (forward
-// bootstrap + PGLITE_SCHEMA_SQL + every migration), dump the post-init state
-// to a tar fixture. Test files that read GBRAIN_PGLITE_SNAPSHOT can skip the
-// 1-3 seconds of cold init and load the post-schema state directly.
-//
-// Output: test/fixtures/pglite-snapshot.tar (binary, gitignored)
-//         test/fixtures/pglite-snapshot.version (SHA256 of schema/migration source FILE BYTES, including imported helpers)
-//
-// The version file lets the engine detect snapshot staleness — if the tar's
-// recorded version doesn't match the current schema-file hash, the engine
-// ignores the snapshot and runs a normal initSchema.
-//
-// Run: bun run scripts/build-pglite-snapshot.ts
-//      (or: bun run build:pglite-snapshot)
-//
-// Re-run whenever schema SQL or a migration helper changes.
+/** Build validated schema fixtures; legacy is the unit-test shape, default the bare CLI shape. */
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import * as fsModule from 'node:fs';
+import * as crypto from 'node:crypto';
+import { join } from 'node:path';
+import { hostname, tmpdir } from 'node:os';
+import { configureGateway } from '../src/core/ai/gateway.ts';
+import { DEFAULT_EMBEDDING_DIMENSIONS, DEFAULT_EMBEDDING_MODEL } from '../src/core/ai/defaults.ts';
+import { PGLiteEngine, computeSnapshotSchemaHash } from '../src/core/pglite-engine.ts';
+import { LEGACY_EMBEDDING_CONFIG } from '../test/helpers/legacy-embedding-config.ts';
 
-import { writeFileSync, mkdirSync, existsSync, readFileSync, rmdirSync, rmSync, mkdtempSync, statSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { tmpdir } from "node:os";
-import * as crypto from "node:crypto";
-import * as fsModule from "node:fs";
+export type SnapshotProfile = 'legacy' | 'default';
 
-import { configureGateway, getEmbeddingDimensions, getEmbeddingModel } from "../src/core/ai/gateway.ts";
-import { LEGACY_EMBEDDING_CONFIG } from "../test/helpers/legacy-embedding-config.ts";
-
-import { PGLiteEngine, computeSnapshotSchemaHash } from "../src/core/pglite-engine.ts";
-
-function computeSchemaHash(): string {
-  // File-bytes hash (see computeSnapshotSchemaHash) — identical between this
-  // plain-`bun run` builder and a coverage-instrumented test process.
-  const h = computeSnapshotSchemaHash(crypto, fsModule);
-  if (!h) throw new Error('build-pglite-snapshot: cannot read schema/migration source dependencies — run from a source checkout');
-  return h;
+export function parseSnapshotProfile(args: string[]): SnapshotProfile {
+  if (args.length === 0) return 'legacy';
+  if (args.length === 2 && args[0] === '--profile' && (args[1] === 'legacy' || args[1] === 'default')) return args[1];
+  throw new Error('Usage: build-pglite-snapshot.ts [--profile legacy|default]');
 }
 
-async function main() {
-  const fixturePath = "test/fixtures/pglite-snapshot.tar";
-  const versionPath = "test/fixtures/pglite-snapshot.version";
-  const lockPath = "test/fixtures/.pglite-snapshot.lock";
-  mkdirSync(dirname(fixturePath), { recursive: true });
-
-  // W0 fix-wave: build under the EXACT embedding shape the test suite pins.
-  // bunfig.toml preloads test/helpers/legacy-embedding-preload.ts, which
-  // configures the gateway to the shared LEGACY_EMBEDDING_CONFIG (OpenAI
-  // 1536-d) for every `bun test` file — so the snapshot's baked vector(dims)
-  // columns MUST match that shape, not the builder machine's ambient config
-  // (nor the shipped 1280-d default an unconfigured gateway falls back to).
-  // Set in main(), not module scope: ESM hoists imports, so module-scope
-  // placement implied an ordering it never had — config reads are lazy.
-  configureGateway({ ...LEGACY_EMBEDDING_CONFIG, env: { ...process.env } });
-
-  const schemaHash = computeSchemaHash();
-
-  // W0 fix-wave (Tier-1 #16): idempotent short-circuit. Runners now call this
-  // script UNCONDITIONALLY (build-if-missing left stale-but-present snapshots
-  // permanently on the warn+slow path); a fresh snapshot exits in ~ms.
-  const isFresh = () => {
-    if (!existsSync(fixturePath) || !existsSync(versionPath)) return false;
-    const lines = readFileSync(versionPath, "utf-8").trim().split("\n");
-    return lines[0] === schemaHash
-      && lines[1] === `dims=${getEmbeddingDimensions()}`
-      && lines[2] === `model=${getEmbeddingModel()}`;
+export function snapshotProfile(profile: SnapshotProfile, fixtureDir = 'test/fixtures') {
+  const stem = profile === 'legacy' ? 'pglite-snapshot' : 'pglite-snapshot-default';
+  return {
+    shape: profile === 'legacy' ? LEGACY_EMBEDDING_CONFIG : {
+      embedding_model: DEFAULT_EMBEDDING_MODEL,
+      embedding_dimensions: DEFAULT_EMBEDDING_DIMENSIONS,
+    },
+    tar: join(fixtureDir, `${stem}.tar`),
+    version: join(fixtureDir, `${stem}.version`),
+    lock: join(fixtureDir, `.${stem}.lock`),
   };
-  if (isFresh()) {
-    console.log(`[build-pglite-snapshot] up to date (hash ${schemaHash.slice(0, 16)}...) — nothing to do`);
-    return;
+}
+
+type LockIdentity = { platform: NodeJS.Platform; hostname: string; pidNamespace: string | null };
+type LockOwner = { pid: number; token: string; protocol?: number } & Partial<LockIdentity>;
+
+export function snapshotLockIdentity(): LockIdentity {
+  let pidNamespace: string | null = null;
+  if (process.platform === 'linux') {
+    try { pidNamespace = readlinkSync('/proc/self/ns/pid'); } catch { /* unknown, never reclaim */ }
   }
+  return { platform: process.platform, hostname: hostname(), pidNamespace };
+}
 
-  // GBRAIN_HOME isolation is only needed once we actually BUILD (the engine
-  // boot reads config). Red-team catch: creating it before the isFresh()
-  // short-circuit leaked one temp dir per invocation on the COMMON path
-  // (this script runs on every `bun run test`).
-  const hermeticHome = mkdtempSync(join(tmpdir(), "gbrain-snapshot-hermetic-"));
-  process.env.GBRAIN_HOME = hermeticHome;
-
-  // W0 fix-wave (D5.8): concurrency lock. Parallel shard runners / concurrent
-  // Conductor workspaces invoking this simultaneously must not tear the tar.
-  // mkdir is atomic; the loser polls until the winner finishes, then
-  // re-checks freshness and exits.
-  let ownLock = false;
+function readOwner(lock: string): LockOwner | null {
   try {
-    mkdirSync(lockPath);
-    ownLock = true;
-  } catch {
-    console.log(`[build-pglite-snapshot] another builder holds ${lockPath}; waiting...`);
-    const timeoutMs = Number(process.env.GBRAIN_SNAPSHOT_LOCK_TIMEOUT_MS) || 120_000;
-    const deadline = Date.now() + timeoutMs;
-    while (existsSync(lockPath) && Date.now() < deadline) {
-      await new Promise(r => setTimeout(r, 250));
-    }
-    if (isFresh()) {
-      console.log(`[build-pglite-snapshot] concurrent builder finished; snapshot fresh`);
-      return;
-    }
-    // Stale lock (crashed builder) or still-stale snapshot: TAKE OVER.
-    // W0 ship-review catch: mkdirSync on a still-existing dir always throws
-    // EEXIST — the original retry could never acquire, so a single crashed
-    // builder left every future rebuild waiting the full deadline and then
-    // proceeding UNLOCKED forever (the stale dir was never removed).
-    // Red-team refinement: verify STALENESS (lock dir mtime older than the
-    // full wait window) before the rmdir — two exhausted waiters would
-    // otherwise each rmdir+mkdir and the second would steal the first's
-    // just-created LIVE lock, re-opening the torn-tar window.
-    try {
-      if (existsSync(lockPath)) {
-        const ageMs = Date.now() - statSync(lockPath).mtimeMs;
-        if (ageMs > timeoutMs) {
-          console.log(`[build-pglite-snapshot] stale lock (age ${Math.round(ageMs / 1000)}s > ${Math.round(timeoutMs / 1000)}s) — taking over`);
-          rmdirSync(lockPath);
-        }
-      }
-      mkdirSync(lockPath);
-      ownLock = true;
-    } catch { /* lock is LIVE (fresh mtime) or takeover raced; proceed unlocked as last resort */ }
-  }
+    const value = JSON.parse(readFileSync(join(lock, 'owner.json'), 'utf8'));
+    return Number.isSafeInteger(value.pid) && value.pid > 0 && typeof value.token === 'string' && value.token ? value : null;
+  } catch { return null; }
+}
+
+function isConfirmedDead(owner: LockOwner): boolean {
+  const here = snapshotLockIdentity();
+  // Older builders removed their lock on normal release. A delayed observer
+  // cannot safely reclaim those records after another owner acquires the path.
+  if (owner.protocol !== 1) return false;
+  // Host and container share the checkout, but their PIDs need not refer to
+  // the same processes. Missing/foreign identities are unknown, never dead.
+  if (!here.hostname || (here.platform === 'linux' && !here.pidNamespace) ||
+      owner.platform !== here.platform || owner.hostname !== here.hostname || owner.pidNamespace !== here.pidNamespace) return false;
+  try { process.kill(owner.pid, 0); return false; }
+  catch (err) { return (err as NodeJS.ErrnoException).code === 'ESRCH'; }
+}
+
+/** An observed owner may be stale: concurrent reapers must never move its replacement. */
+export function reclaimDeadSnapshotOwner(lock: string, owner: LockOwner | null = readOwner(lock)): boolean {
+  if (!owner || !isConfirmedDead(owner)) return false;
+  return retireSnapshotOwner(lock, owner);
+}
+
+function retireSnapshotOwner(lock: string, owner: LockOwner): boolean {
+  // Normal release and every reaper target the SAME tombstone. It remains
+  // nonempty forever, so atomic directory rename cannot overwrite it. A late
+  // observer cannot move a new live lock after either release or recovery.
+  // No separate reaper mutex exists to become stranded by cancellation. These
+  // tiny ownership records are gitignored; do not delete them while builders run.
+  const tokenHash = crypto.createHash('sha256').update(owner.token).digest('hex');
+  const tombstone = `${lock}.dead-${tokenHash}`;
   try {
-  console.log(`[build-pglite-snapshot] schema hash: ${schemaHash.slice(0, 16)}...`);
-  console.log(`[build-pglite-snapshot] booting PGLite (in-memory)...`);
-  const engine = new PGLiteEngine();
-
-  // Bypass the env-aware short-circuit: we WANT a real init here.
-  delete process.env.GBRAIN_PGLITE_SNAPSHOT;
-
-  await engine.connect({});
-  console.log(`[build-pglite-snapshot] running initSchema (forward bootstrap + full migration replay)...`);
-  const t0 = Date.now();
-  await engine.initSchema();
-  console.log(`[build-pglite-snapshot] initSchema completed in ${Date.now() - t0}ms`);
-
-  console.log(`[build-pglite-snapshot] dumping data dir...`);
-  const dump = await engine.db.dumpDataDir("none");
-  const buffer = Buffer.from(await dump.arrayBuffer());
-
-  // Write tar first, version LAST — the version file is the commit point, so
-  // a crash between the writes leaves a stale-hash (ignored) snapshot, never
-  // a fresh-looking torn one. Lines 2-3 record the embedding shape the
-  // snapshot was baked with; the loader refuses a shape-mismatched snapshot
-  // (the W0 1280-vs-1536 incident class).
-  writeFileSync(fixturePath, buffer);
-  writeFileSync(versionPath, `${schemaHash}\ndims=${getEmbeddingDimensions()}\nmodel=${getEmbeddingModel()}\n`);
-  await engine.disconnect();
-
-  console.log(`[build-pglite-snapshot] wrote ${fixturePath} (${buffer.length} bytes)`);
-  console.log(`[build-pglite-snapshot] wrote ${versionPath}`);
-  } finally {
-    if (ownLock) { try { rmdirSync(lockPath); } catch { /* best effort */ } }
-    try { rmSync(hermeticHome, { recursive: true, force: true }); } catch { /* best effort */ }
+    renameSync(lock, tombstone);
+    return true;
+  } catch (err) {
+    if (['ENOENT', 'EEXIST', 'ENOTEMPTY'].includes((err as NodeJS.ErrnoException).code ?? '')) return false;
+    throw err;
   }
 }
 
-await main();
+async function bakeData(shape: ReturnType<typeof snapshotProfile>['shape']): Promise<Uint8Array> {
+  const scratch = mkdtempSync(join(tmpdir(), 'gbrain-snapshot-hermetic-'));
+  const saved = { home: process.env.GBRAIN_HOME, snapshot: process.env.GBRAIN_PGLITE_SNAPSHOT, tz: process.env.TZ };
+  const engine = new PGLiteEngine();
+  try {
+    process.env.GBRAIN_HOME = scratch;
+    process.env.TZ = 'UTC';
+    delete process.env.GBRAIN_PGLITE_SNAPSHOT;
+    configureGateway({ ...shape, env: {} });
+    await engine.connect({});
+    await engine.initSchema();
+    return new Uint8Array(await (await engine.db.dumpDataDir('none')).arrayBuffer());
+  } finally {
+    try { await engine.disconnect(); }
+    finally {
+      for (const [key, value] of [['GBRAIN_HOME', saved.home], ['GBRAIN_PGLITE_SNAPSHOT', saved.snapshot], ['TZ', saved.tz]] as const) {
+        if (value === undefined) delete process.env[key]; else process.env[key] = value;
+      }
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  }
+}
+
+/** The byte-producing seam lets lock/publication tests run without booting WASM. */
+export async function buildPgliteSnapshot(profile: SnapshotProfile, opts: {
+  fixtureDir?: string;
+  lockTimeoutMs?: number;
+  buildData?: typeof bakeData;
+  log?: (line: string) => void;
+} = {}): Promise<'fresh' | 'built'> {
+  const paths = snapshotProfile(profile, opts.fixtureDir);
+  const log = opts.log ?? console.log;
+  const hash = computeSnapshotSchemaHash(crypto, fsModule);
+  if (!hash) throw new Error('Cannot read snapshot schema dependencies; run from a source checkout.');
+  const version = `${hash}\ndims=${paths.shape.embedding_dimensions}\nmodel=${paths.shape.embedding_model}\n`;
+  const fresh = () => {
+    try { return existsSync(paths.tar) && readFileSync(paths.version, 'utf8') === version; }
+    catch { return false; }
+  };
+  mkdirSync(opts.fixtureDir ?? 'test/fixtures', { recursive: true });
+  if (fresh()) { log(`[build-pglite-snapshot] ${profile} up to date`); return 'fresh'; }
+
+  const owner: LockOwner = { ...snapshotLockIdentity(), pid: process.pid, token: crypto.randomUUID(), protocol: 1 };
+  const configuredTimeout = opts.lockTimeoutMs ?? Number(process.env.GBRAIN_SNAPSHOT_LOCK_TIMEOUT_MS ?? 120_000);
+  const timeout = Number.isFinite(configuredTimeout) && configuredTimeout >= 0 ? configuredTimeout : 120_000;
+  const deadline = Date.now() + timeout;
+  while (true) {
+    try { mkdirSync(paths.lock); }
+    catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+      if (fresh()) { log(`[build-pglite-snapshot] ${profile} concurrent builder finished`); return 'fresh'; }
+      reclaimDeadSnapshotOwner(paths.lock);
+      if (!existsSync(paths.lock)) continue;
+      if (Date.now() >= deadline) throw new Error(`Snapshot lock timeout: ${paths.lock}; refusing to build without ownership.`);
+      await Bun.sleep(Math.min(50, Math.max(1, deadline - Date.now())));
+      continue;
+    }
+    try { writeFileSync(join(paths.lock, 'owner.json'), JSON.stringify(owner), { flag: 'wx' }); }
+    catch (err) { rmSync(paths.lock, { recursive: true, force: true }); throw err; }
+    break;
+  }
+
+  const tarTemp = `${paths.tar}.${owner.token}.tmp`;
+  const versionTemp = `${paths.version}.${owner.token}.tmp`;
+  try {
+    if (fresh()) return 'fresh';
+    log(`[build-pglite-snapshot] building ${profile} (${paths.shape.embedding_model}@${paths.shape.embedding_dimensions})`);
+    const data = await (opts.buildData ?? bakeData)(paths.shape);
+    writeFileSync(tarTemp, data, { flag: 'wx' });
+    writeFileSync(versionTemp, version, { flag: 'wx' });
+    if (readOwner(paths.lock)?.token !== owner.token) throw new Error('Snapshot lock ownership lost; refusing publication.');
+    // Same-filesystem atomic renames; the sidecar is the last commit point.
+    // A crash cannot expose a partially written tar or a fresh-looking new version.
+    renameSync(tarTemp, paths.tar);
+    renameSync(versionTemp, paths.version);
+    log(`[build-pglite-snapshot] wrote ${paths.tar} (${data.byteLength} bytes)`);
+    return 'built';
+  } finally {
+    rmSync(tarTemp, { force: true });
+    rmSync(versionTemp, { force: true });
+    if (readOwner(paths.lock)?.token === owner.token) retireSnapshotOwner(paths.lock, owner);
+  }
+}
+
+if (import.meta.main) {
+  try { await buildPgliteSnapshot(parseSnapshotProfile(process.argv.slice(2))); }
+  catch (err) {
+    console.error(`[build-pglite-snapshot] ${(err as Error).message}`);
+    // PGLite can overwrite process.exitCode asynchronously; make a failed
+    // build unambiguously nonzero so runners select their cold-init fallback.
+    process.exit(1);
+  }
+}

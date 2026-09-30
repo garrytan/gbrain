@@ -1,0 +1,409 @@
+[
+  {
+    "id": "01-longmemeval",
+    "title": "LongMemEval: Benchmarking Chat Assistants on Long-Term Interactive Memory",
+    "url": "https://arxiv.org/abs/2410.10813v2",
+    "version": "arXiv v2; ICLR 2025 conference paper",
+    "source_type": "Conference paper",
+    "retrieved": "2026-09-24",
+    "original_sha256": "05c5d055201466a241a56e082cdd02d39ad566fa04b3804891983e4e069a3fda",
+    "public_retention": "citation-and-short-support-spans-only",
+    "source": "sources/01-longmemeval.md",
+    "summary": "summaries/01-longmemeval.md",
+    "claims": [
+      {
+        "claim": "Replacing sessions or rounds with summaries or extracted facts loses information and generally harms QA; multi-session reasoning is an exception.",
+        "quote": "replacing sessions or rounds with extracted summaries or facts negatively impacts QA performance due to information loss.",
+        "locator": "Section 5.2, p. 8"
+      },
+      {
+        "claim": "The reading-format experiment is oracle retrieval, not noisy live retrieval; JSON alone is not consistently better.",
+        "quote": "when CoN is not applied, JSON format does not consistently outperform the natural language format.",
+        "locator": "Section 5.5 and Figure 6, p. 10"
+      },
+      {
+        "claim": "Chain-of-Note extracts information before reasoning, rather than heuristically deleting source turns before the reader sees them.",
+        "quote": "instructing the LLM to first extract information from each memory item and then reason based on these notes.",
+        "locator": "Section 5.5, p. 10"
+      },
+      {
+        "claim": "Fact expansion augments the search key while keeping the original value available.",
+        "quote": "the compressed information is concatenated with the original value to form the key during indexing",
+        "locator": "Section 5.3 and Table 3, p. 9"
+      }
+    ]
+  },
+  {
+    "id": "02-chain-of-note",
+    "title": "Chain-of-Note: Enhancing Robustness in Retrieval-Augmented Language Models",
+    "url": "https://aclanthology.org/2024.emnlp-main.813/",
+    "version": "EMNLP 2024 proceedings, pp. 14672–14685",
+    "source_type": "Conference paper",
+    "retrieved": "2026-09-24",
+    "original_sha256": "851af70dadc3fb225086cfb15b7c4eaa869ee87312a844ad0dbb4082f3f25904",
+    "public_retention": "citation-and-short-support-spans-only",
+    "source": "sources/02-chain-of-note.md",
+    "summary": "summaries/02-chain-of-note.md",
+    "claims": [
+      {
+        "claim": "The Llama-2 full-test-set mean exact-match improvement is 1.97 percentage points, not the larger all-noise subset result.",
+        "quote": "an average improvement of +1.97 in EM scores across all three datasets when using LLaMa-2 as backbone language model.",
+        "locator": "Section 3.2 and Table 2, p. 14677"
+      },
+      {
+        "claim": "Explicit notes increase inference cost; the hybrid-training result is a separate trained system.",
+        "quote": "One major limitation of the C HAIN - OF -N OTE (C O N) approach is its increased inference cost due to the sequential generation of notes.",
+        "locator": "Section 6 and Table 5, p. 14679"
+      },
+      {
+        "claim": "The RealTimeQA rejection-rate table is 6.1 to 13.0, a 6.9 percentage-point change; the prose's +10.5 claim does not match that table.",
+        "quote": "Retrieve-Read (Shi et al., 2023c) 15.6 19.9 6.1",
+        "locator": "Table 4 versus Section 3.4, p. 14678"
+      }
+    ]
+  },
+  {
+    "id": "03-sufficient-context",
+    "title": "Sufficient Context: A New Lens on Retrieval Augmented Generation Systems",
+    "url": "https://proceedings.iclr.cc/paper_files/paper/2025/file/33dffa2e3d2ab74a783d1a8c292f66d9-Paper-Conference.pdf",
+    "version": "ICLR 2025 proceedings",
+    "source_type": "Conference paper",
+    "retrieved": "2026-09-24",
+    "original_sha256": "1d48ccb637e44694bf41fbef81d087c60aa2e38a31bb9641554b422c47de8f3e",
+    "public_retention": "citation-and-short-support-spans-only",
+    "source": "sources/03-sufficient-context.md",
+    "summary": "summaries/03-sufficient-context.md",
+    "claims": [
+      {
+        "claim": "The sufficiency classifier's reported 93% accuracy was evaluated on 115 annotated instances, not all memory questions.",
+        "quote": "Gemini 1.5 Pro (1-shot) 0.935 0.930 0.935 0.935",
+        "locator": "Section 3.2 and Table 1, pp. 4–5"
+      },
+      {
+        "claim": "Selective generation trades answer coverage for correctness among answered questions; it is not an unconditional total-answer accuracy gain.",
+        "quote": "denotes the portion of inputs on which the model does not abstain",
+        "locator": "Section 5.1, p. 9"
+      },
+      {
+        "claim": "The sufficiency signal is not always additive: Gemma 27B on Musique showed no added benefit beyond confidence.",
+        "quote": "there is no added benefit from the sufficient context signal.",
+        "locator": "Section 5.1, p. 9"
+      }
+    ]
+  },
+  {
+    "id": "04-contextual-judge",
+    "title": "Does Context Matter? ContextualJudgeBench for Evaluating LLM-based Judges in Contextual Settings",
+    "url": "https://aclanthology.org/2025.acl-long.470/",
+    "version": "ACL 2025 proceedings",
+    "source_type": "Conference paper",
+    "retrieved": "2026-09-24",
+    "original_sha256": "e7b53cec12e8ab02042ec623336cccb8a88db4ef6a4b84958f68c049bda81edd",
+    "public_retention": "citation-and-short-support-spans-only",
+    "source": "sources/04-contextual-judge.md",
+    "summary": "summaries/04-contextual-judge.md",
+    "claims": [
+      {
+        "claim": "Consistent accuracy requires the judge to be correct in both response orders, with random performance at 25%; it is not ordinary one-pass accuracy.",
+        "quote": "A judge is considered correct if it selects the correct response for both runs.",
+        "locator": "Section 4.1, metric definition"
+      },
+      {
+        "claim": "The best reported model has 55.3% consistent accuracy on this contextual benchmark, not on the GBrain LongMemEval judge task.",
+        "quote": "performing models are o1 (55.3), o3-mini (52.6)",
+        "locator": "Section 4.2 and Table 3"
+      }
+    ]
+  },
+  {
+    "id": "05-lost-in-the-middle",
+    "title": "Lost in the Middle: How Language Models Use Long Contexts",
+    "url": "https://arxiv.org/abs/2307.03172v2",
+    "version": "arXiv v2 (2023-07-31); work later published in TACL 2024",
+    "source_type": "TACL work; archived arXiv revision",
+    "retrieved": "2026-09-24",
+    "original_sha256": "34d741ddffad9a1256b0429f578a54aa4278dba486ba9cb88646c76b367fa069",
+    "public_retention": "citation-and-short-support-spans-only",
+    "source": "sources/05-lost-in-the-middle.md",
+    "summary": "summaries/05-lost-in-the-middle.md",
+    "claims": [
+      {
+        "claim": "Relevant evidence in the middle of a 10–30-document context can perform worse than no retrieved context.",
+        "quote": "performance can drop by more than 20%—at its nadir, performance in 20- and 30-document settings is lower than performance without any input documents (i.e., closed-book performance; 56.1%).",
+        "locator": "§2.3, Results and Discussion; Table 1 reports GPT-3.5-Turbo 56.1% closed-book and 88.3% oracle."
+      },
+      {
+        "claim": "Increasing retrieved-document count can give only marginal gains.",
+        "quote": "using more than 20 retrieved documents only marginally improves performance (∼1.5% for GPT-3.5-Turbo and ∼1% for claude-1.3)",
+        "locator": "§1, Introduction."
+      }
+    ]
+  },
+  {
+    "id": "06-recomp",
+    "title": "RECOMP: Improving Retrieval-Augmented LMs with Compression and Selective Augmentation",
+    "url": "https://arxiv.org/abs/2310.04408v1",
+    "version": "ICLR 2024 conference paper; arXiv v1",
+    "source_type": "ICLR work; archived arXiv revision",
+    "retrieved": "2026-09-24",
+    "original_sha256": "9d8aa7881e786d6b3593fe6c60bc2e52944aee82ab6ca577097618baf8d21066",
+    "public_retention": "citation-and-short-support-spans-only",
+    "source": "sources/06-recomp.md",
+    "summary": "summaries/06-recomp.md",
+    "claims": [
+      {
+        "claim": "A trained abstractive compressor reduced Natural Questions evidence from 660 to 36 tokens while retaining near-baseline performance.",
+        "quote": "Top 5 documents 660 39.39 48.28",
+        "locator": "Table 2, Open-domain QA results with Flan-UL2 (20B), Natural Questions columns (EM/F1)."
+      },
+      {
+        "claim": "Lexical bag-of-words/named-entity compression performed worse than full evidence in language-modeling evaluation.",
+        "quote": "disfluency of the prepended text",
+        "locator": "§4.2, Results, discussion of Table 1."
+      }
+    ]
+  },
+  {
+    "id": "07-longllmlingua",
+    "title": "LongLLMLingua: Accelerating and Enhancing LLMs in Long Context Scenarios via Prompt Compression",
+    "url": "https://arxiv.org/abs/2310.06839v2",
+    "version": "ACL 2024 long paper; arXiv v2",
+    "source_type": "ACL work; archived arXiv revision",
+    "retrieved": "2026-09-24",
+    "original_sha256": "a81090e2589fcef37f310ee2a265076e4560a296a59864c9d43a6e9b62fe3997",
+    "public_retention": "citation-and-short-support-spans-only",
+    "source": "sources/07-longllmlingua.md",
+    "summary": "summaries/07-longllmlingua.md",
+    "claims": [
+      {
+        "claim": "Question-aware compression improved NaturalQuestions QA when the answer passage appeared at position 10 while cutting prompt length.",
+        "quote": "21.4% on NaturalQuestions",
+        "locator": "§5, Conclusions; NaturalQuestions multi-document QA setup and results."
+      },
+      {
+        "claim": "Question-aware compression requires recomputation per query.",
+        "quote": "re-compression for different questions",
+        "locator": "§6, Limitation."
+      }
+    ]
+  },
+  {
+    "id": "08-llmlingua-2",
+    "title": "LLMLingua-2: Data Distillation for Efficient and Faithful Task-Agnostic Prompt Compression",
+    "url": "https://arxiv.org/abs/2403.12968v2",
+    "version": "Findings of ACL 2024; arXiv v2",
+    "source_type": "ACL Findings work; archived arXiv revision",
+    "retrieved": "2026-09-24",
+    "original_sha256": "8c0fcd9baa621ef7951c45838eefe841356a8d6e1eb025cecd92373930f536d9",
+    "public_retention": "citation-and-short-support-spans-only",
+    "source": "sources/08-llmlingua-2.md",
+    "summary": "summaries/08-llmlingua-2.md",
+    "claims": [
+      {
+        "claim": "On MeetingBank, learned token classification compressed prompts to about one third of original length with QA EM close to the original.",
+        "quote": "LLMLingua-2 86.92 17.37 48.64 22.96 34.24 88.27 970 3.1x Original 87.75 22.34 47.28 26.66 35.15 88.96 3,003 1.0x",
+        "locator": "Table 1, In-domain evaluation on MeetingBank; QA EM and token count columns."
+      },
+      {
+        "claim": "At 3,000-token constraint, LLMLingua-2’s LongBench average was below original-prompt average and the task-aware LongLLMLingua baseline.",
+        "quote": "LongLLMLingua† 40.7 46.2 27.2 70.6 53.0 55.2 48.8",
+        "locator": "Table 2, Out-of-domain evaluation, 3,000-token constraint, LongBench AVG column; LLMLingua-2 42.4 and Original Prompt 44.0 in same table."
+      }
+    ]
+  },
+  {
+    "id": "09-ruler",
+    "title": "RULER: What’s the Real Context Size of Your Long-Context Language Models?",
+    "url": "https://arxiv.org/abs/2404.06654v3",
+    "version": "arXiv v3 (header date 2024-08-06); COLM 2024 conference version",
+    "source_type": "COLM work; archived arXiv revision",
+    "retrieved": "2026-09-24",
+    "original_sha256": "8a4bc6ca28d84570eec7f42652400c2121f4c8bc361701634e596772e396fc22",
+    "public_retention": "citation-and-short-support-spans-only",
+    "source": "sources/09-ruler.md",
+    "summary": "summaries/09-ruler.md",
+    "claims": [
+      {
+        "claim": "About half of the benchmarked models met the paper’s chosen satisfactory-performance threshold at 32K, despite claimed context windows of at least 32K.",
+        "quote": "only half of them can maintain satisfactory performance at the length of 32K",
+        "locator": "Abstract; §4.3 defines satisfactory via exceeding the 4K Llama2-7B mean of 85.6%."
+      },
+      {
+        "claim": "More complex distractor needles caused a large degradation for Yi-34B at 256K.",
+        "quote": "Yi dropping by ∼40 points at 256K in the extreme version, where the context is full of irrelevant needles (#K=FULL).",
+        "locator": "§5, Task Error Analysis, “Failure to ignore distractors”; Figure 2."
+      }
+    ]
+  },
+  {
+    "id": "10-ircot",
+    "title": "Interleaving Retrieval with Chain-of-Thought Reasoning for Knowledge-Intensive Multi-Step Questions",
+    "url": "https://arxiv.org/abs/2212.10509v2",
+    "version": "arXiv v2 (also published at ACL 2023, paper 557)",
+    "source_type": "ACL work; archived arXiv revision",
+    "retrieved": "2026-09-24",
+    "original_sha256": "8bb43c0bd11fafc8bdac7655eef0649b28fd9fbb44fca877b1d31d7b4527759a",
+    "public_retention": "citation-and-short-support-spans-only",
+    "source": "sources/10-ircot.md",
+    "summary": "summaries/10-ircot.md",
+    "claims": [
+      {
+        "claim": "IRCoT alternates CoT sentence generation and retrieval, using the last reasoning sentence as the next retrieval query.",
+        "quote": "use the last CoT sentence as a query to retrieve",
+        "locator": "§3.1, ‘Interleaved Retrieval’"
+      },
+      {
+        "claim": "On the authors’ fixed-budget optimal recall metric, GPT-3 IRCoT improves gold-paragraph recall over OneR by 11.3 points on HotpotQA and 22.6 on 2WikiMultiHopQA.",
+        "quote": "For GPT3, this improvement is by 11.3, 22.6,",
+        "locator": "§5, discussion of Fig. 3; see also Fig. 4 for QA F1 and IIRC exception"
+      },
+      {
+        "claim": "Although the retrieval recall rises on IIRC, the figure caption says GPT-3 IRCoT QA does not outperform the one-step/no-retriever variants there.",
+        "quote": "except for GPT3 on IIRC.",
+        "locator": "Fig. 4 caption; §5 discussion explains that GPT-3 IRCoT did not improve the IIRC QA score despite improved retrieval"
+      },
+      {
+        "claim": "The paper’s retrieval metric is not conventional Recall@k because total retrieved paragraphs vary by question and run.",
+        "quote": "not applicable as metrics for any given k.",
+        "locator": "Footnote 7, §4 Experimental Setup"
+      }
+    ]
+  },
+  {
+    "id": "11-crag",
+    "title": "Corrective Retrieval Augmented Generation",
+    "url": "https://arxiv.org/abs/2401.15884v3",
+    "version": "arXiv v3 (preprint; no peer-reviewed venue asserted here)",
+    "source_type": "Archived preprint",
+    "retrieved": "2026-09-24",
+    "original_sha256": "975aa1fd3c1b603126e93ff99d6504858b61301bf1d34c9df88ebe53a0b026cb",
+    "public_retention": "citation-and-brief-summary-only",
+    "source": "sources/11-crag.md",
+    "summary": "summaries/11-crag.md",
+    "claims": [
+      {
+        "locator": "§1 Introduction",
+        "support_sha256": "a9d70aac5ea41c509f5cfe243e94a118a3e2e37367121a681cdcdb06a00ffa35"
+      },
+      {
+        "locator": "Table 1, PopQA column; LLaMA2-hf-7b and SelfRAG-LLaMA2-7b rows",
+        "support_sha256": "bbb5078d3f68f3eecb9d7ff3887fea193e62290de899d0107ba0d339c03c2c0b"
+      },
+      {
+        "locator": "Table 3, PopQA accuracy",
+        "support_sha256": "2581a6d839b16877fc41ccfa335819f23051f58ae977922c7ae36e5e4c576551"
+      }
+    ]
+  },
+  {
+    "id": "12-contextual-retrieval",
+    "title": "Contextual Retrieval",
+    "url": "https://www.anthropic.com/engineering/contextual-retrieval",
+    "version": "Anthropic Engineering report, original web article; vendor report",
+    "source_type": "Vendor engineering report",
+    "retrieved": "2026-09-24",
+    "original_sha256": "a71cd74735b4e65805c871bc53f9bd41c2e24dcdd999709584e01489b2be06a6",
+    "public_retention": "citation-and-brief-summary-only",
+    "source": "sources/12-contextual-retrieval.md",
+    "summary": "summaries/12-contextual-retrieval.md",
+    "claims": [
+      {
+        "locator": "‘Introducing Contextual Retrieval’ section",
+        "support_sha256": "76d3f13ba0af33a65efefe505e9e7f55e357ba23500b469e99b36e9a20617968"
+      },
+      {
+        "locator": "‘Performance improvements’ section; reranking result in following paragraph",
+        "support_sha256": "b44cd331dbea126b3e5a0c03a9747e01d0600fe701776c1d356c68b62b1dfcbb"
+      },
+      {
+        "locator": "Methodology section",
+        "support_sha256": "341f2a80bf7e781aade96018f1df4d35e3a572a070a5172c2c751862928fc05c"
+      }
+    ]
+  },
+  {
+    "id": "13-mem0",
+    "title": "Mem0: Building Production-Ready AI Agents with Scalable Long-Term Memory",
+    "url": "https://arxiv.org/abs/2504.19413v1",
+    "version": "arXiv v1 (preprint)",
+    "source_type": "Archived preprint",
+    "retrieved": "2026-09-24",
+    "original_sha256": "bec870b657aa73405275a6d8fe27bcd4271799e028bc62986ab9c4cd27a3712d",
+    "public_retention": "citation-and-brief-summary-only",
+    "source": "sources/13-mem0.md",
+    "summary": "summaries/13-mem0.md",
+    "claims": [
+      {
+        "locator": "§2.2 Mem0g, retrieval-functionality description",
+        "support_sha256": "9b8c7dd8cb4d34ce158470c432e457498262adfe77d6163f3cf3a6bdd85a2c75"
+      },
+      {
+        "locator": "Table 1, F1 columns by question category",
+        "support_sha256": "904851a79c74ac3a2aa5892dd1aca878fce6c16310213deba3317c63dadc45b6"
+      },
+      {
+        "locator": "§3 Evaluation setup, paragraph preceding §3.2",
+        "support_sha256": "97fcc67432872881792ad8e80926c24c66e5570089c4f00daf8481c07df719af"
+      }
+    ]
+  },
+  {
+    "id": "14-hindsight",
+    "title": "Hindsight is 20/20: Building Agent Memory that Retains, Recalls, and Reflects",
+    "url": "https://arxiv.org/abs/2512.12818v1",
+    "version": "arXiv v1 (preprint)",
+    "source_type": "Archived preprint",
+    "retrieved": "2026-09-24",
+    "original_sha256": "1c0bb9fd4e53f45107e587766d6fc3b4b3441877567b17bdbbb5172015c120d4",
+    "public_retention": "citation-and-short-support-spans-only",
+    "source": "sources/14-hindsight.md",
+    "summary": "summaries/14-hindsight.md",
+    "claims": [
+      {
+        "claim": "Hindsight uses four memory networks and separate retain, recall, and reflect operations.",
+        "quote": "At the core of H INDSIGHT is a memory bank organized into four logical networks, each serving a distinct epistemic role.",
+        "locator": "§1 Introduction, architecture overview"
+      },
+      {
+        "claim": "On LongMemEval-S, Hindsight OSS-20B is reported at 83.6% versus 39.0% for full-context OSS-20B; larger Hindsight configurations are 89.0% OSS-120B and 91.4% Gemini-3 Pro.",
+        "quote": "Overall 60.2 39.0 71.2 81.6 84.6 85.2 83.6 89.0 91.4",
+        "locator": "Table 3, Overall row (LongMemEval-S, 500 questions)"
+      },
+      {
+        "claim": "The authors use GPT-OSS-120B as judge for their own results but take several LongMemEval baseline scores from another technical report.",
+        "quote": "Our Hindsight results on both benchmarks are evaluated with a GPT-OSS-120B LLM-as-a-judge",
+        "locator": "§7.2, Baseline results paragraph"
+      }
+    ]
+  },
+  {
+    "id": "15-simplemem",
+    "title": "SimpleMem: Efficient Lifelong Memory for LLM Agents",
+    "url": "https://arxiv.org/abs/2601.02553v3",
+    "version": "arXiv v3 (preprint; latest archived revision as of research date)",
+    "source_type": "Archived preprint",
+    "retrieved": "2026-09-24",
+    "original_sha256": "8752aa223e004ca286995bc1e8cbde8e89e67ad3aeb9ba0266f3ccab3cc11078",
+    "public_retention": "citation-and-brief-summary-only",
+    "source": "sources/15-simplemem.md",
+    "summary": "summaries/15-simplemem.md",
+    "claims": [
+      {
+        "locator": "Abstract and §2 architecture",
+        "support_sha256": "8cd06b3845156a271b97d1d61444649b33696263cea3f53f1a1658000a0ca8be"
+      },
+      {
+        "locator": "Table 5, Average F1 column",
+        "support_sha256": "9529f8fac6c355d333c9eb0a3d89ba0cd4d0cde4d39e2d6d6193b18e5d4df177"
+      },
+      {
+        "locator": "Table 5, component ablation by question type",
+        "support_sha256": "42ebe01398fa683625893f5ef9e9bfa24f0eca0c0e6ca35d0a2600b0a317d85f"
+      },
+      {
+        "locator": "Table 2, GPT-4.1-mini row; LongMemEval-S judge protocol in Appendix A.4",
+        "support_sha256": "ea3b8b1457ab8c64dc152a4674b607fd16df957a78468765fe177fd212da0bfa"
+      }
+    ]
+  }
+]

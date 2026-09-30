@@ -62,12 +62,12 @@ export function maxInputTokensForModel(recipe: Recipe, modelId: string): number 
 }
 
 /**
- * Effective chunk-token cap for the active embedding model. See module doc.
+ * Effective chunk-token cap for the active embedding model (or `model`). See module doc.
  * Never exceeds DEFAULT_MAX_CHUNK_TOKENS (existing downstream sizing —
  * tsvector limits, context assembly — calibrates to it) and never goes below
  * MIN_CHUNK_TOKENS.
  */
-export function resolveMaxChunkTokens(env: Record<string, string | undefined> = process.env): number {
+export function resolveMaxChunkTokens(env: Record<string, string | undefined> = process.env, model?: string): number {
   const raw = env.GBRAIN_MAX_CHUNK_TOKENS;
   if (raw !== undefined && raw.trim() !== '') {
     const n = Number(raw);
@@ -84,7 +84,7 @@ export function resolveMaxChunkTokens(env: Record<string, string | undefined> = 
     }
   }
   try {
-    const { parsed, recipe } = resolveRecipe(getEmbeddingModel());
+    const { parsed, recipe } = resolveRecipe(model ?? getEmbeddingModel());
     const declared = maxInputTokensForModel(recipe, parsed.modelId);
     if (declared !== undefined) {
       return Math.min(

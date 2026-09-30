@@ -25,12 +25,14 @@
  * Intent weighting is the new DEFAULT, and replaces the expansion call
  * for the common case (simple queries, no API key, fast loop).
  *
- * Pure module. No DB, no LLM, no async. Tested in
+ * Pure module. No DB, no LLM. The one async helper (`applyAliasMentionBoost`)
+ * takes its alias resolver as a parameter. Tested in
  * test/intent-weights.test.ts.
  */
 
 import type { QueryIntent } from './query-intent.ts';
 import type { SearchResult } from '../types.ts';
+import { containsTokenRun, isTitleMentionedInQuery, titleAsQuerySubject, tokenizeTitle } from './title-match.ts';
 
 /**
  * Weight adjustments to apply for a classified intent. All factors are
@@ -125,8 +127,11 @@ export function effectiveRrfK(baseK: number, weight: number): number {
 /**
  * Apply exact-match boost in place. Mutates each result's score by
  * `weights.exactMatchBoost` when the result's slug or title (lowercased,
- * trimmed) matches the lowercased query exactly. No-op when the boost
- * is 1.0. Caller re-sorts after.
+ * trimmed) matches the lowercased query exactly, OR when the title or the
+ * slug's last segment is mentioned inside the query as a token run
+ * (`isTitleMentionedInQuery`: "who is Alice Example" → "Alice Example").
+ * Entity intent is defined by framing words, so without the mention form the
+ * boost could never fire. No-op when the boost is 1.0. Caller re-sorts after.
  *
  * Normalization: slug is matched as-is (slugs are already canonicalized
  * lowercase-kebab); title is lowercased + trimmed. The query is
@@ -145,11 +150,96 @@ export function applyExactMatchBoost(
   for (const r of results) {
     const slug = (r.slug ?? '').toLowerCase();
     const title = (r.title ?? '').toLowerCase().trim();
-    if (slug === q || slug === qKebab || slug.endsWith(`/${qKebab}`) || title === q) {
+    const exact = slug === q || slug === qKebab || slug.endsWith(`/${qKebab}`) || title === q;
+    const mentioned = isTitleMentionedInQuery(q, title) || isTitleMentionedInQuery(q, slug.slice(slug.lastIndexOf('/') + 1));
+    if (exact || mentioned) {
       r.score *= weights.exactMatchBoost;
       // v0.40.4 attribution stamp (D12=A) — formatter reads this for
       // --explain output. Only stamped when boost actually fires.
       r.exact_match_boost = weights.exactMatchBoost;
     }
+  }
+}
+
+/**
+ * #4694 — score multiplier under general and temporal intent (no
+ * exact-match boost; concept intent is excluded, see hybrid.ts) for a result whose multi-token title or slug
+ * tail is the query's subject (`titleAsQuerySubject`: "Which document is
+ * <title>?" classifies as general, so the entity-intent boost never reached
+ * it).
+ */
+export const TITLE_MENTION_BOOST = 1.18;
+
+/**
+ * Apply TITLE_MENTION_BOOST in place. When several qualifying titles are
+ * mentioned and one is a sub-run of another ("Budget Review" inside
+ * "Offsite Budget Review"), only the longest is boosted. Stamps
+ * `exact_match_boost` for --explain. Caller re-sorts.
+ */
+export function applyTitleMentionBoost(results: SearchResult[], query: string): void {
+  const subjects = new Map<SearchResult, string[]>();
+  for (const r of results) {
+    const slug = r.slug ?? '';
+    const tokens = titleAsQuerySubject(query, r.title ?? '')
+      ?? titleAsQuerySubject(query, slug.slice(slug.lastIndexOf('/') + 1));
+    if (tokens) subjects.set(r, tokens);
+  }
+  const all = [...subjects.values()];
+  for (const [r, tokens] of subjects) {
+    if (all.some((other) => other.length > tokens.length && containsTokenRun(other, tokens))) continue;
+    r.score *= TITLE_MENTION_BOOST;
+    r.exact_match_boost = TITLE_MENTION_BOOST;
+  }
+}
+
+/** Longest alias n-gram looked up for a query mention (tokens). */
+const MAX_ALIAS_MENTION_TOKENS = 5;
+
+/**
+ * Query n-grams (1..MAX_ALIAS_MENTION_TOKENS tokens, normalized like
+ * `page_aliases` rows) that could be a declared alias mentioned in the query.
+ * Single tokens need at least 4 characters so "who"/"is" never probe.
+ */
+export function aliasMentionCandidates(query: string): string[] {
+  const tokens = tokenizeTitle(query);
+  const out = new Set<string>();
+  for (let n = 1; n <= MAX_ALIAS_MENTION_TOKENS; n++) {
+    for (let i = 0; i + n <= tokens.length; i++) {
+      if (n === 1 && tokens[i].length < 4) continue;
+      out.add(tokens.slice(i, i + n).join(' '));
+    }
+  }
+  return [...out];
+}
+
+/**
+ * Alias half of the mention boost: a result whose page declares an alias that
+ * occurs inside the query gets the same `exactMatchBoost` (once — a row the
+ * title/slug path already boosted is skipped). Present rows only; injection
+ * stays the alias hop's job. Fail-open: a resolver error changes nothing.
+ */
+export async function applyAliasMentionBoost(
+  results: SearchResult[],
+  query: string,
+  weights: IntentWeights,
+  resolveAliases: (aliasNorms: string[]) => Promise<Map<string, Array<{ slug: string; source_id: string }>>>,
+): Promise<void> {
+  if (weights.exactMatchBoost === 1.0 || results.length === 0) return;
+  const candidates = aliasMentionCandidates(query);
+  if (candidates.length === 0) return;
+  let refs: Map<string, Array<{ slug: string; source_id: string }>>;
+  try {
+    refs = await resolveAliases(candidates);
+  } catch {
+    return;
+  }
+  const pages = new Set<string>();
+  for (const list of refs.values()) for (const ref of list) pages.add(`${ref.source_id}:${ref.slug}`);
+  if (pages.size === 0) return;
+  for (const r of results) {
+    if (r.exact_match_boost !== undefined) continue;
+    if (!pages.has(`${r.source_id ?? 'default'}:${r.slug}`)) continue;
+    r.score *= weights.exactMatchBoost;
+    r.exact_match_boost = weights.exactMatchBoost;
   }
 }

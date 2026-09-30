@@ -10,8 +10,10 @@
  *
  * 2. Opt-in hermetic config for claude-cli children: resolveHermeticConfigDir
  *    maps GBRAIN_CLAUDE_CLI_HERMETIC_CONFIG to the child's CLAUDE_CONFIG_DIR
- *    (off by default — the config dir carries OAuth credentials on non-macOS
- *    installs, so hermetic mode is a deliberate choice, never a default).
+ *    (off by default — the config dir carries the CLI's session credentials,
+ *    so the empty-dir form logs the child out wherever the CLI reads its
+ *    session from the config dir; hermetic mode is a deliberate choice,
+ *    never a default).
  */
 import { describe, test, expect } from 'bun:test';
 import { existsSync } from 'fs';

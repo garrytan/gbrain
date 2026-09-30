@@ -22,7 +22,7 @@
 import { readFileSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import type { BrainEngine, TakeBatchInput } from '../engine.ts';
-import { parseTakesFence, type ParsedTake } from '../takes-fence.ts';
+import { parseTakesFence, TAKES_FENCE_BEGIN, type ParsedTake } from '../takes-fence.ts';
 import { walkMarkdownFiles } from '../../commands/extract.ts';
 
 export interface ExtractTakesOpts {
@@ -69,12 +69,32 @@ export interface ExtractTakesResult {
  * Resolve a slug to its DB page_id. Returns null when no row exists for
  * that slug (e.g. file on disk that hasn't been imported yet).
  */
-async function getPageIdForSlug(engine: BrainEngine, slug: string): Promise<number | null> {
+async function getPageIdForSlug(engine: BrainEngine, slug: string, sourceId: string): Promise<number | null> {
   const rows = await engine.executeRaw<{ id: number }>(
-    `SELECT id FROM pages WHERE slug = $1 LIMIT 1`,
-    [slug],
+    `SELECT id FROM pages WHERE slug = $1 AND source_id = $2 AND deleted_at IS NULL LIMIT 1`,
+    [slug, sourceId],
   );
   return rows[0]?.id ?? null;
+}
+
+/**
+ * Remove takes whose rows left the page's fence. Only a fence that parsed
+ * cleanly is authoritative (a skipped malformed row is not a deletion), and a
+ * page without a fence keeps whatever the index holds.
+ */
+async function pruneRemovedTakes(
+  engine: BrainEngine,
+  pageId: number,
+  body: string,
+  takes: ParsedTake[],
+  warnings: string[],
+  dryRun: boolean,
+): Promise<void> {
+  if (dryRun || warnings.length > 0 || !body.includes(TAKES_FENCE_BEGIN)) return;
+  await engine.executeRaw(
+    'DELETE FROM takes WHERE page_id = $1 AND NOT (row_num = ANY($2::integer[]))',
+    [pageId, takes.map(t => t.rowNum)],
+  );
 }
 
 function parsedTakeToBatchInput(pageId: number, t: ParsedTake): TakeBatchInput {
@@ -117,8 +137,9 @@ async function flushBatch(
  */
 export async function extractTakesFromFs(
   engine: BrainEngine,
-  opts: { repoPath: string; slugs?: string[]; dryRun?: boolean; rebuild?: boolean },
+  opts: { repoPath: string; slugs?: string[]; dryRun?: boolean; rebuild?: boolean; sourceId?: string },
 ): Promise<ExtractTakesResult> {
+  const sourceId = opts.sourceId ?? 'default';
   const result: ExtractTakesResult = {
     pagesScanned: 0, pagesWithTakes: 0, takesUpserted: 0, warnings: [], failedFiles: [],
   };
@@ -150,13 +171,15 @@ export async function extractTakesFromFs(
         }
       }
     }
-    if (takes.length === 0) continue;
+    if (takes.length === 0 && !body.includes(TAKES_FENCE_BEGIN)) continue;
 
-    const pageId = await getPageIdForSlug(engine, slug);
+    const pageId = await getPageIdForSlug(engine, slug, sourceId);
     if (pageId === null) {
-      result.warnings.push(`TAKES_PAGE_NOT_IN_DB: slug=${slug} has takes fence but no page row; run 'gbrain sync' first`);
+      if (takes.length > 0) result.warnings.push(`TAKES_PAGE_NOT_IN_DB: slug=${slug} has takes fence but no page row; run 'gbrain sync' first`);
       continue;
     }
+    await pruneRemovedTakes(engine, pageId, body, takes, warnings, dryRun);
+    if (takes.length === 0) continue;
 
     if (opts.rebuild && !dryRun) {
       await engine.executeRaw(`DELETE FROM takes WHERE page_id = $1`, [pageId]);
@@ -191,12 +214,10 @@ export async function extractTakesFromDb(
     pagesScanned: 0, pagesWithTakes: 0, takesUpserted: 0, warnings: [], failedFiles: [],
   };
   const dryRun = opts.dryRun ?? false;
-  // v0.32.8: when caller supplies bare slugs, default sourceId='default'
-  // (back-compat with pre-v0.32.8 callers). When no slugs supplied, enumerate
-  // every (slug, source_id) pair across all sources.
-  const refs: Array<{ slug: string; source_id: string }> = opts.slugs && opts.slugs.length > 0
-    ? opts.slugs.map(slug => ({ slug, source_id: 'default' }))
-    : await engine.listAllPageRefs();
+  // Every (slug, source_id) pair across all sources; bare slugs re-extract
+  // the page in every source that holds that slug.
+  const slugFilter = opts.slugs && opts.slugs.length > 0 ? new Set(opts.slugs) : null;
+  const refs = (await engine.listAllPageRefs()).filter(ref => !slugFilter || slugFilter.has(ref.slug));
   const buffer: TakeBatchInput[] = [];
 
   for (const { slug, source_id } of refs) {
@@ -216,6 +237,7 @@ export async function extractTakesFromDb(
         }
       }
     }
+    await pruneRemovedTakes(engine, page.id, body, takes, warnings, dryRun);
     if (takes.length === 0) continue;
 
     if (opts.rebuild && !dryRun) {

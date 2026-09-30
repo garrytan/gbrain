@@ -1,0 +1,73 @@
+# Managed-brain census of mutating operations and CLI-only writers (fix wave 3).
+# Every operation with `mutating: true` in the assembled registry needs a row; test/canonical-writer-inventory.test.ts enforces it.
+# kind	name	class	reason
+# class: coordinator (publishes through the persistence coordinator), no_canonical_write (writes no guarded canonical table or file),
+#        early_refusal (refuses on a managed brain before any write), engine_guard (the managed writer trigger refuses its canonical write).
+op	remember	coordinator	submitRememberMutation admits a journaled page mutation.
+op	forget	coordinator	submitForgetMutation records a coordinated withdrawal.
+op	put_page	coordinator	submitPageMutation; unbound Postgres sources refuse unless persistence.unbound_write=database_only.
+op	delete_page	coordinator	submitPageMutation soft delete or trusted-local purge.
+op	restore_page	coordinator	submitPageMutation restores a recorded version.
+op	purge_deleted_pages	coordinator	purgeDeletedPagesCoordinated purges each expired tombstone through delete_page purge.
+op	capture	coordinator	submitPageMutation admits a journaled page mutation.
+op	cancel_write_request	no_canonical_write	Cancels a queued journal request; no canonical row changes.
+op	add_tag	coordinator	submitPageMutation admits a journaled page mutation.
+op	remove_tag	coordinator	submitPageMutation admits a journaled page mutation.
+op	add_link	coordinator	coordinatedManualLinkWrite: durable authority, withCoordinatedWrite, both endpoint page keys locked; database-only.
+op	remove_link	coordinator	coordinatedManualLinkWrite, same boundary as add_link.
+op	add_timeline_entry	coordinator	submitPageMutation admits a journaled page mutation.
+op	revert_version	coordinator	submitPageMutation admits a journaled page mutation.
+op	put_skill	coordinator	Shared-skill publication through the persistence journal.
+op	delete_skill	coordinator	Shared-skill publication through the persistence journal.
+op	set_skill_policy	no_canonical_write	Shared-skill policy row, epoch-guarded; no page content.
+op	prune_skill_revisions	no_canonical_write	Shared-skill revision retention only.
+op	retain_skill_revision	no_canonical_write	Shared-skill revision retention only.
+op	import_skill_proposal	coordinator	Imports a proposal through shared-skill publication.
+op	join_brain	no_canonical_write	Mount registration in local configuration.
+op	sync_brain_skills	no_canonical_write	Refreshes mounted skill copies outside the brain database.
+op	leave_brain	no_canonical_write	Mount removal in local configuration.
+op	sync_brain	coordinator	Managed sync admits each changed file through the coordinator.
+op	put_raw_data	no_canonical_write	raw_data side table; not guarded canonical content.
+op	log_ingest	no_canonical_write	ingest_log audit rows only.
+op	file_upload	no_canonical_write	File storage objects and their index rows, confined to the upload root.
+op	submit_job	no_canonical_write	Queues a minion job; its handler owns any write and its own boundary.
+op	cancel_job	no_canonical_write	Minion queue state only.
+op	retry_job	no_canonical_write	Minion queue state only.
+op	pause_job	no_canonical_write	Minion queue state only.
+op	resume_job	no_canonical_write	Minion queue state only.
+op	replay_job	no_canonical_write	Minion queue state only.
+op	send_job_message	no_canonical_write	Minion inbox rows only.
+op	submit_agent	no_canonical_write	Queues a subagent job; its tools write through put_page.
+op	think	engine_guard	Remote callers are read-only; a local --save persists through engine.putPage, which the managed writer trigger refuses on a managed brain.
+op	takes_add	coordinator	submitPageMutation takes intent.
+op	takes_update	coordinator	submitPageMutation takes intent.
+op	takes_resolve	coordinator	submitPageMutation takes intent.
+op	takes_supersede	coordinator	submitPageMutation takes intent.
+op	sources_add	early_refusal	Deliberate administrative refusal on managed brains; source topology changes through writer administration.
+op	sources_remove	early_refusal	Deliberate administrative refusal on managed brains; source topology changes through writer administration.
+op	request_tools	no_canonical_write	Persists the calling client's MCP tool surface on oauth_clients.
+op	connector_sync	coordinator	Managed connector sync admits pages and checkpoints through the coordinator.
+op	ontology_propose	engine_guard	mergeOntologyFact inserts into facts; the managed writer trigger refuses it on a managed brain.
+op	chronicle_backfill	no_canonical_write	Queues chronicle jobs; the chronicle extractor publishes through publishMaintenancePage.
+op	extract_entities	early_refusal	enrichment-service writes through direct importFromContent, which refuses on managed brains.
+op	extraction_review	no_canonical_write	Review queue state only.
+op	entity_identity_link	no_canonical_write	entity_identity side table.
+op	entity_identity_unlink	no_canonical_write	entity_identity side table.
+op	extract_facts	coordinator	The facts backstop publishes through the managed facts session on managed brains.
+op	forget_fact	coordinator	submitForgetMutation records a coordinated fact withdrawal.
+op	code_traversal_cache_clear	no_canonical_write	Derived traversal cache only.
+op	migrate_embeddings	no_canonical_write	Embedding projections under the migration budget; no canonical content.
+op	schema_apply_mutations	no_canonical_write	Schema-pack files outside the brain database.
+op	run_onboard	no_canonical_write	Runs remediation steps; each step keeps its own writer boundary.
+op	run_skillopt	no_canonical_write	Skill files and proposals outside the brain database.
+op	loops_close	no_canonical_write	open_loops state rows.
+op	loops_mute	no_canonical_write	Loop suppression rows.
+op	loops_unmute	no_canonical_write	Loop suppression rows.
+cli	src/commands/enrich.ts	coordinator	gbrain enrich preflights maintenance authority, then publishMaintenancePage per page.
+cli	src/commands/extract-conversation-facts.ts	coordinator	Bulk conversation facts commit through the coordinator capability after a derived-facts preflight.
+cli	src/commands/pages.ts	coordinator	gbrain pages purge-deleted runs purgeDeletedPagesCoordinated.
+cli	src/core/bootstrap/verify.ts	coordinator	gbrain bootstrap verify writes probes with put_page and purges them through delete_page purge.
+cli	src/core/google/loops-extract.ts	coordinator	Loop commitments publish through writeSingleFact's managed facts path.
+cli	src/core/facts/fence-write.ts	coordinator	Direct fence writes publish through publishManagedEntityFacts.
+cli	src/core/chronicle/extract-events.ts	coordinator	Chronicle events and their depth timeline rows publish through publishMaintenancePage.
+cli	src/core/persistence/purge-deleted.ts	coordinator	Shared purge used by the cycle, the purge job, the operation and the CLI.

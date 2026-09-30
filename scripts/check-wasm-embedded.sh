@@ -28,13 +28,15 @@ OUT_BIN="$BUILD_DIR/chunker-smoketest"
 trap 'rm -rf "$BUILD_DIR"' EXIT
 mkdir -p "$BUILD_DIR/scripts"
 cp -R "$REPO_ROOT/src" "$BUILD_DIR/src"
+cp -R "$REPO_ROOT/vendor" "$BUILD_DIR/vendor"
+cp "$REPO_ROOT/package.json" "$BUILD_DIR/package.json"
 cp "$REPO_ROOT/scripts/chunker-smoketest.ts" "$BUILD_DIR/scripts/chunker-smoketest.ts"
 ln -s "$REPO_ROOT/node_modules" "$BUILD_DIR/node_modules"
 
 # Build a minimal smoketest binary that imports the chunker. We compile this
 # instead of the full gbrain CLI so the failure mode is laser-focused on
 # chunker + WASM path resolution, not unrelated CLI wiring.
-if ! (cd "$BUILD_DIR" && bun build --compile --outfile "$OUT_BIN" scripts/chunker-smoketest.ts >/dev/null); then
+if ! (cd "$BUILD_DIR" && bun build --compile --no-compile-autoload-bunfig --outfile "$OUT_BIN" scripts/chunker-smoketest.ts >/dev/null); then
   echo "[check-wasm-embedded] FAIL: bun could not compile the smoketest binary." >&2
   exit 1
 fi
@@ -72,6 +74,12 @@ fi
 if [[ "$OUTPUT" != *'"calculateScore"'* ]]; then
   echo "[check-wasm-embedded] FAIL: tree-sitter did not extract the calculateScore function symbol." >&2
   echo "[check-wasm-embedded] Output was:" >&2
+  echo "$OUTPUT" >&2
+  exit 1
+fi
+
+if [[ "$OUTPUT" != *'"has_bash_case_symbol": true'* ]]; then
+  echo "[check-wasm-embedded] FAIL: Bash case statement lost its function symbol." >&2
   echo "$OUTPUT" >&2
   exit 1
 fi

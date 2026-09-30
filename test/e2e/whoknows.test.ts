@@ -19,6 +19,7 @@ import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import type { ChunkInput } from '../../src/core/types.ts';
 import { findExperts } from '../../src/commands/whoknows.ts';
 import { readFixture } from '../../src/commands/eval-whoknows.ts';
+import { installFixtureChunks } from '../helpers/page-projection.ts';
 
 let engine: PGLiteEngine;
 
@@ -56,7 +57,7 @@ async function seedPerson(
       token_count: 10,
     },
   ];
-  await engine.upsertChunks(slug, chunks);
+  await installFixtureChunks(engine, slug, chunks);
 }
 
 async function seedCompany(
@@ -80,7 +81,7 @@ async function seedCompany(
       token_count: 15,
     },
   ];
-  await engine.upsertChunks(slug, chunks);
+  await installFixtureChunks(engine, slug, chunks);
 }
 
 async function seedConcept(
@@ -104,7 +105,7 @@ async function seedConcept(
       token_count: 12,
     },
   ];
-  await engine.upsertChunks(slug, chunks);
+  await installFixtureChunks(engine, slug, chunks);
 }
 
 beforeAll(async () => {

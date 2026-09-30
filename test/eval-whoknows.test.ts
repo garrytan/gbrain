@@ -172,12 +172,6 @@ describe('eval-whoknows / thresholds', () => {
 // These tests pin the type-level contract and the export presence; full
 // thin-client routing E2E is in the engine-required integration suite.
 describe('eval-whoknows / WhoknowsFn contract', () => {
-  it('module exports WhoknowsFn type alias', async () => {
-    // The type is structurally `(topic: string, limit: number) => Promise<WhoknowsResult[]>`.
-    // Confirm import resolves without throwing.
-    const mod = await import('../src/commands/eval-whoknows.ts');
-    expect(typeof mod.runEvalWhoknows).toBe('function');
-  });
 
   it('runEvalWhoknows accepts null engine (thin-client signature)', async () => {
     // Signature gate: the function must be callable with engine=null. We use

@@ -9,6 +9,7 @@
  */
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { installFixtureChunks } from './helpers/page-projection.ts';
 import { operations, type OperationContext } from '../src/core/operations.ts';
 import type { SearchResult } from '../src/core/types.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -45,7 +46,7 @@ beforeAll(async () => {
       compiled_truth: `the zebra telescope appears in this ${type} page`,
       frontmatter: {},
     });
-    await engine.upsertChunks(slug, [
+    await installFixtureChunks(engine, slug, [
       { chunk_index: 0, chunk_text: `the zebra telescope appears in this ${type} page`, chunk_source: 'compiled_truth' },
     ]);
   }

@@ -188,7 +188,6 @@ exit 0
   delete runEnv.GBRAIN_PGBOUNCER_URL;
   delete runEnv.GBRAIN_PGBOUNCER_DIRECT_URL;
   delete runEnv.VOYAGE_API_KEY;
-  delete runEnv.ZEROENTROPY_API_KEY;
   delete runEnv.OPENAI_API_KEY;
   delete runEnv.ANTHROPIC_API_KEY;
   delete runEnv.GOOGLE_API_KEY;

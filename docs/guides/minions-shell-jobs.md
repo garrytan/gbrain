@@ -39,12 +39,15 @@ pass:
    `ctx.remote === true` (MCP callers). Independent of the env flag. Remote
    agents can never submit shell jobs. `MinionQueue.add('shell', ...)` has its
    own guard too, so an in-process handler can't programmatically bypass this.
-2. **Env flag.** The shell handler is ALWAYS registered on the worker, but it
-   is guarded: unless `GBRAIN_ALLOW_SHELL_JOBS=1` is set on the worker process,
-   a claimed shell job throws `UnrecoverableError` and goes straight to `dead`
-   (no retries). Default: off. Your agent opts in per-host. (Always-registered
-   guarded mode — not "unregistered", so unflagged workers fail shell jobs
-   loudly instead of leaving them `waiting` forever.)
+2. **Worker opt-in.** The shell handler is ALWAYS registered on the worker, but
+   it is guarded: unless the worker was started with
+   `gbrain jobs work --allow-shell-jobs` (equivalently, `GBRAIN_ALLOW_SHELL_JOBS=1`
+   exported in the worker's environment), a claimed shell job throws
+   `UnrecoverableError` and goes straight to `dead` (no retries). Default: off.
+   Your agent opts in per-host. A `.env` file in the worker's working directory
+   cannot set the variable — gbrain ignores it there. (Always-registered guarded
+   mode — not "unregistered", so unflagged workers fail shell jobs loudly
+   instead of leaving them `waiting` forever.)
 
 **What the env allowlist does AND does not do.** Shell jobs run with a minimal
 env: `PATH, HOME, USER, LANG, TZ, NODE_ENV`. Your secrets like `OPENAI_API_KEY`
@@ -76,7 +79,7 @@ secrets in `env:` instead.
 On one terminal, start a persistent worker:
 
 ```bash
-GBRAIN_ALLOW_SHELL_JOBS=1 gbrain jobs work
+gbrain jobs work --allow-shell-jobs        # or: GBRAIN_ALLOW_SHELL_JOBS=1 gbrain jobs work
 ```
 
 Rewrite crontab to submit shell jobs (no `--follow`):
@@ -112,7 +115,9 @@ Note: `--follow` blocks the crontab slot until the job finishes. If 14 shell
 crons land at the same minute and each takes 30s, they serialize through
 crontab's spawning limits. Postgres + persistent worker scales better.
 
-### Calling `gbrain` itself from a shell job — use `inherit:` for DATABASE_URL {#secrets}
+<a id="secrets"></a>
+
+### Calling `gbrain` itself from a shell job — use `inherit:` for DATABASE_URL
 
 A common pattern is submitting shell jobs that run `gbrain` CLI commands:
 
@@ -161,7 +166,7 @@ child-spawn time:
 - `inherit: ["openai_api_key"]` → child env `OPENAI_API_KEY`
 - `inherit: ["openrouter_api_key"]` → child env `OPENROUTER_API_KEY`
 - `inherit: ["voyage_api_key"]` → child env `VOYAGE_API_KEY`
-- `inherit: ["groq_api_key", "zeroentropy_api_key"]` → both injected
+- `inherit: ["groq_api_key"]` → child env `GROQ_API_KEY`
 - Or any arbitrary config-key your worker has (`my_custom_field` →
   `MY_CUSTOM_FIELD`)
 
@@ -252,8 +257,8 @@ cat ~/.gbrain/audit/shell-jobs-*.jsonl | jq '.'
 # First-time failure mode: submitted without env flag on the worker.
 # The handler is always registered but guarded: an unflagged worker that claims
 # a shell job dead-letters it immediately (UnrecoverableError, no retries).
-gbrain jobs list --status dead --name shell
-# → error_text: "shell handler disabled on this worker (set GBRAIN_ALLOW_SHELL_JOBS=1 ...)"
+gbrain jobs list --status dead --json | jq '.[] | select(.name == "shell")'
+# → error_text: "shell handler disabled on this worker (start it with --allow-shell-jobs or GBRAIN_ALLOW_SHELL_JOBS=1 ...)"
 # `waiting` pileups mean NO worker is running at all (flagged or not) — check
 # `gbrain jobs supervisor status` in that case.
 ```
@@ -274,7 +279,9 @@ gbrain jobs list --status dead --name shell
 
 ---
 
-## Errors {#errors}
+<a id="errors"></a>
+
+## Errors
 
 | Error | What it means | Fix |
 |---|---|---|

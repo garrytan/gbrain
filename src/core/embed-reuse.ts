@@ -26,10 +26,16 @@ export interface EmbeddingReusePlan {
   needsEmbedIndexes: number[];
 }
 
-/** Match new chunks against stored ones by header-stripped body. */
+/**
+ * Match new chunks against stored ones by header-stripped body (code), or by
+ * the caller's `key` (markdown keys on chunk source + exact text).
+ */
+type ChunkKey = (chunk: { chunk_text: string; chunk_source?: string | null }) => string;
+
 export function planEmbeddingReuse(
-  existing: readonly ReusableChunk[],
-  next: readonly { chunk_text: string }[],
+  existing: readonly (ReusableChunk & { chunk_source?: string | null })[],
+  next: readonly { chunk_text: string; chunk_source?: string | null }[],
+  key: ChunkKey = chunk => stripChunkHeader(chunk.chunk_text),
 ): EmbeddingReusePlan {
   const reuse = new Map<number, ReusableChunk>();
   const needsEmbedIndexes: number[] = [];
@@ -38,13 +44,13 @@ export function planEmbeddingReuse(
   const byBody = new Map<string, ReusableChunk[]>();
   for (const ec of existing) {
     if (!ec.embedding) continue;
-    const body = stripChunkHeader(ec.chunk_text);
+    const body = key(ec);
     const bucket = byBody.get(body);
     if (bucket) bucket.push(ec);
     else byBody.set(body, [ec]);
   }
   for (let i = 0; i < next.length; i++) {
-    const matched = byBody.get(stripChunkHeader(next[i]!.chunk_text))?.shift();
+    const matched = byBody.get(key(next[i]!))?.shift();
     if (matched) reuse.set(i, matched);
     else needsEmbedIndexes.push(i);
   }

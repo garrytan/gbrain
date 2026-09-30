@@ -10,6 +10,9 @@
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import * as fs from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { operations, OperationError } from '../src/core/operations.ts';
 import {
@@ -20,11 +23,17 @@ import {
 } from '../src/core/minions/tools/brain-allowlist.ts';
 import type { GBrainConfig } from '../src/core/config.ts';
 import type { ToolCtx } from '../src/core/minions/types.ts';
+import { withEnv } from './helpers/with-env.ts';
+import { loadActivePackForWriteVocabulary } from '../src/core/schema-pack/write-vocabulary.ts';
+import { classifyStoredType } from '../src/core/schema-pack/type-usage.ts';
+import { MAX_FILE_SIZE } from '../src/core/import-file.ts';
 
 let engine: PGLiteEngine;
+let fixtureDir: string;
 const config: GBrainConfig = { engine: 'pglite' } as GBrainConfig;
 
 beforeAll(async () => {
+  fixtureDir = fs.mkdtempSync(join(tmpdir(), 'gbrain-brain-tools-'));
   engine = new PGLiteEngine();
   await engine.connect({ database_url: '' });
   await engine.initSchema();
@@ -32,6 +41,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   if (engine) await engine.disconnect();
+  if (fixtureDir) fs.rmSync(fixtureDir, { recursive: true, force: true });
 }, 60_000);
 
 beforeEach(async () => {
@@ -184,11 +194,13 @@ describe('buildBrainTools', () => {
   test('execute() on put_page writes to the configured sourceId (#1586)', async () => {
     // Write-through needs a real directory for this source's local_path —
     // put_page now rejects a write whose file can't be written to disk.
-    fs.mkdirSync('/tmp/mybrain', { recursive: true });
+    const sourceRoot = join(fixtureDir, 'mybrain');
+    fs.mkdirSync(sourceRoot);
     await engine.executeRaw(
       `INSERT INTO sources (id, name, local_path, config, archived, created_at)
-       VALUES ('mybrain', 'My Brain', '/tmp/mybrain', '{}'::jsonb, false, now())
+       VALUES ('mybrain', 'My Brain', $1, '{}'::jsonb, false, now())
        ON CONFLICT (id) DO NOTHING`,
+      [sourceRoot],
     );
     const tools = buildBrainTools({
       subagentId: 42,
@@ -256,5 +268,118 @@ describe('sanitizeToolName', () => {
 
   test('replaces non-conforming chars with _', () => {
     expect(__testing.sanitizeToolName('foo.bar')).toBe('brain_foo_bar');
+  });
+});
+
+// #4852: trusted-workspace subagents (dream synth agentic lane, patterns,
+// delegated jobs) author page content model-side and mint types no bundled
+// pack declares (`reflection` / `original` / `pattern`); the reverse-write puts
+// that type on disk as explicit frontmatter and every `gbrain sync` warns.
+// The oneshot lane already pins its output to 'note' (F5); the seam extends
+// that rule: an EXPLICIT undeclared type rewrites to 'note' + legacy_type.
+describe('brain_put_page pins undeclared model-authored types (#4852)', () => {
+  const PREFIXES = ['wiki/personal/patterns/*'];
+
+  async function putUnderPack(slug: string, content: string, allowedSlugPrefixes?: readonly string[]) {
+    const ctx: ToolCtx = { engine, jobId: 1, remote: true };
+    await withEnv({ GBRAIN_SCHEMA_PACK: 'gbrain-base-v2' }, async () => {
+      const tools = buildBrainTools({ subagentId: 42, engine, config, allowedSlugPrefixes });
+      const putPage = tools.find(t => t.name === 'brain_put_page');
+      await putPage!.execute({ slug, content }, ctx);
+    });
+    return (await engine.getPage(slug, { sourceId: 'default' }))!;
+  }
+
+  test('explicit undeclared type under a slug allow-list → note + frontmatter.legacy_type', async () => {
+    const page = await putUnderPack(
+      'wiki/personal/patterns/recurring-theme',
+      '---\ntype: pattern\ntitle: Recurring theme\n---\n\nBody [[wiki/personal/reflections/x]]',
+      PREFIXES,
+    );
+    expect(page.type).toBe('note');
+    expect(page.frontmatter.legacy_type).toBe('pattern');
+    expect(page.title).toBe('Recurring theme');
+    expect(page.compiled_truth).toContain('Body [[wiki/personal/reflections/x]]');
+    // The sync type-warning path has nothing to say about the stored type.
+    const pack = await withEnv({ GBRAIN_SCHEMA_PACK: 'gbrain-base-v2' }, () =>
+      loadActivePackForWriteVocabulary({ engine, remote: true }));
+    expect(classifyStoredType(page.type, pack!.manifest).kind).toBe('canonical');
+  });
+
+  test('same request UUID replays frozen normalized content after the active pack changes', async () => {
+    const slug = 'wiki/personal/patterns/frozen-type';
+    const args = { slug, request_id: randomUUID(), content: '---\ntype: pattern\ntitle: Frozen type\n---\nOriginal model-authored observation.' };
+    const tools = buildBrainTools({ subagentId: 42, engine, config, allowedSlugPrefixes: PREFIXES });
+    const tool = tools.find(t => t.name === 'brain_put_page')!;
+    const ctx: ToolCtx = { engine, jobId: 1, remote: true };
+    const first = await withEnv({ GBRAIN_SCHEMA_PACK: 'gbrain-base-v2' }, () => tool.execute(args, ctx)) as Record<string, unknown>;
+    expect(first.state).toBe('committed');
+    const before = await engine.readPageSnapshot(slug, { sourceId: 'default' });
+    expect(before?.page.type).toBe('note');
+    const replay = await withEnv({ GBRAIN_SCHEMA_PACK: 'missing-fixture-pack' }, () => tool.execute(args, ctx)) as Record<string, unknown>;
+    expect(replay.request_id).toBe(args.request_id);
+    expect(replay.revision).toBe(first.revision);
+    expect(await engine.readPageSnapshot(slug, { sourceId: 'default' })).toEqual(before);
+    expect(await engine.executeRaw('SELECT id FROM page_versions WHERE page_id=$1', [before!.page.id])).toHaveLength(0);
+    const rows = await engine.executeRaw<{digest:string;intent:{content:string}}>('SELECT digest,intent FROM persistence_requests WHERE request_id=$1::uuid', [args.request_id]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].intent.content).toContain('type: note');
+    expect(args.content).toContain('type: pattern');
+  });
+
+  test('scoped normalization retains raw-size and sanitized YAML rejection guards', async () => {
+    const tools = buildBrainTools({ subagentId: 42, engine, config, allowedSlugPrefixes: PREFIXES });
+    const tool = tools.find(t => t.name === 'brain_put_page')!;
+    await withEnv({ GBRAIN_SCHEMA_PACK: 'gbrain-base-v2' }, async () => {
+      for (const [content, code] of [
+        ['---\ntype: pattern\ntitle: Example\n---\nBody' + ' '.repeat(MAX_FILE_SIZE), 'request_too_large'],
+        ['---\ntype: pattern\nprivate_marker: [\n---\nPrivate fixture text', 'invalid_params'],
+      ]) {
+        const error = await tool.execute({ slug: 'wiki/personal/patterns/rejected', content, request_id: randomUUID() },
+          { engine, jobId: 1, remote: true }).then(() => null, error => error);
+        expect(error).toMatchObject({ code, writeRequest: { state: 'failed' } });
+        expect(error.message).not.toContain('private_marker');
+        expect(await engine.getPage('wiki/personal/patterns/rejected', { sourceId: 'default' })).toBeNull();
+      }
+    });
+  });
+
+  test('declared type is stored untouched (no legacy_type)', async () => {
+    const page = await putUnderPack(
+      'wiki/personal/patterns/declared',
+      '---\ntype: note\ntitle: Declared\n---\n\nBody',
+      PREFIXES,
+    );
+    expect(page.type).toBe('note');
+    expect(page.frontmatter.legacy_type).toBeUndefined();
+  });
+
+  test('declared alias is stored literally (alias_of stays a sync warning, not a rewrite)', async () => {
+    const page = await putUnderPack(
+      'wiki/personal/patterns/aliased',
+      '---\ntype: insight\ntitle: Aliased\n---\n\nBody',
+      PREFIXES,
+    );
+    expect(page.type).toBe('insight');
+    expect(page.frontmatter.legacy_type).toBeUndefined();
+  });
+
+  test('no explicit type → pack inference untouched', async () => {
+    const page = await putUnderPack(
+      'wiki/personal/patterns/inferred',
+      '---\ntitle: Inferred\n---\n\nBody',
+      PREFIXES,
+    );
+    expect(page.type).toBe('concept');
+    expect(page.frontmatter.legacy_type).toBeUndefined();
+  });
+
+  test('same write WITHOUT a slug allow-list (legacy agents namespace) stores the literal type', async () => {
+    const page = await putUnderPack(
+      'wiki/agents/42/pattern-literal',
+      '---\ntype: pattern\ntitle: Literal\n---\n\nBody',
+    );
+    expect(page.type).toBe('pattern');
+    expect(page.frontmatter.legacy_type).toBeUndefined();
   });
 });

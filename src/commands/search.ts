@@ -58,6 +58,7 @@ import {
 function formatModesText(report: SearchModesReport): string {
   const lines: string[] = [];
   lines.push('Search mode (active): ' + report.active_mode + (report.active_mode_valid ? '' : '  (unset — using balanced fallback)'));
+  lines.push(`Note: ${report.per_call_note}`);
   lines.push('');
   lines.push('Resolved knobs:');
   for (const [knob, attr] of Object.entries(report.resolved)) {
@@ -93,9 +94,6 @@ function formatModesText(report: SearchModesReport): string {
   for (const [k, desc] of Object.entries(KNOB_DESCRIPTIONS)) {
     lines.push(`  ${k.padEnd(28)} ${desc}`);
   }
-  // #4604: the dashboard shows brain-level resolution only.
-  lines.push('');
-  lines.push(`Note: ${report.per_call_note}`);
   return lines.join('\n');
 }
 

@@ -32,6 +32,7 @@ import {
   type ChildSupervisorEvent,
 } from '../src/core/minions/child-worker-supervisor.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { detectTini } from '../src/core/minions/spawn-helpers.ts';
 
 /**
  * Per-test bun timeout for the spawn-driving tests. Generous because each test
@@ -835,7 +836,7 @@ describe('ChildWorkerSupervisor', () => {
       };
     }
 
-    it('settles the run loop instead of hanging, and counts each failure as a crash', async () => {
+    it('settles the run loop instead of hanging, and counts each failure as a crash', async () => withEnv({ PATH: '' }, async () => {
       const h = makeUnlaunchableHarness('enoent');
       const { events, maxCrashesFired } = await runUntilTerminal(h, {
         maxCrashes: 2,
@@ -874,6 +875,17 @@ describe('ChildWorkerSupervisor', () => {
       );
       expect(backoffs.length).toBeGreaterThanOrEqual(1);
       expect(backoffs.every((b) => b.reason === 'crash')).toBe(true);
+    }), TEST_TIMEOUT_MS);
+
+    it.skipIf(!detectTini())('bounds a missing executable behind tini at the same hard ceiling', async () => {
+      const { events, maxCrashesFired } = await runUntilTerminal(makeUnlaunchableHarness('tini-enoent'), {
+        maxCrashes: 2, hardStopMaxCrashes: 3, _backoffFloorMs: 1,
+      });
+      expect(maxCrashesFired).toEqual({ count: 3, max: 3 });
+      const exits = events.filter((e): e is Extract<ChildSupervisorEvent, { kind: 'worker_exited' }> => e.kind === 'worker_exited');
+      expect(exits).toHaveLength(3);
+      expect(exits.map(e => e.crashCount)).toEqual([1, 2, 3]);
+      expect(exits.every(e => e.code === 127)).toBe(true);
     }, TEST_TIMEOUT_MS);
 
     it('honours isStopping so a shutdown mid-failure does not keep respawning', async () => {

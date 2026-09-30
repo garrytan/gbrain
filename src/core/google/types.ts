@@ -70,6 +70,16 @@ export interface GoogleSourceState {
   calendar_id?: string | null;
   contacts_sync_token: string | null;
   last_full_at: string | null;
+  gmail_attachment_backfill?: {
+    version: 1;
+    account: string;
+    afterPageId: number;
+    throughPageId: number;
+    inspected: number;
+    unavailable?: number;
+    unavailableMessages?: number;
+    complete: boolean;
+  };
 }
 
 /**
@@ -113,6 +123,39 @@ export interface GmailMessageMeta {
   calendarMethod?: string | null;
   /** Extracted, HTML-stripped, quote-trimmed, capped body text. */
   bodyText: string;
+  attachmentInspection?: GmailAttachmentInspection;
+}
+
+export interface GmailAttachmentReceipt {
+  id: string;
+  account: string;
+  messageId: string;
+  partId: string;
+  filename: string;
+  mimeType: string;
+  size: number | null;
+  attachmentId: string | null;
+  kind: 'document' | 'inline' | 'calendar';
+  fetched: false;
+  indexed: false;
+}
+
+export interface GmailAttachmentInspection {
+  state: 'not_inspected' | 'incomplete' | 'none' | 'present';
+  attachments: GmailAttachmentReceipt[];
+  reason?: 'missing_payload' | 'malformed_part' | 'depth_limit' | 'part_limit' | 'receipt_bytes_limit';
+}
+
+export interface GmailThreadAttachmentReceipts {
+  version: 1;
+  account: string;
+  threadId: string;
+  unavailable?: 'thread_not_found';
+  messages: Array<{
+    messageId: string;
+    inspection: GmailAttachmentInspection;
+    unavailable?: 'thread_not_found' | 'message_not_found';
+  }>;
 }
 
 export interface GmailThreadData {

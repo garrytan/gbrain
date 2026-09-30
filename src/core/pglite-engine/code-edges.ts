@@ -4,6 +4,7 @@
  * never the whole engine class.
  */
 import type { PGlite } from '@electric-sql/pglite';
+import { currentCodeEdgeFilter } from '../code-intel/read-scope.ts';
 
 // PGLite's parameter bridge corrupts the current engine session when a single
 // statement crosses the signed-int16 bind ceiling (32,767 parameters). Keep
@@ -104,11 +105,13 @@ export async function getCallersOf(
               edge_type, edge_metadata, source_id, true as resolved
          FROM code_edges_chunk
          WHERE to_symbol_qualified = $1 ${sourceClause}
+           AND ${currentCodeEdgeFilter('code_edges_chunk', true)}
        UNION ALL
        SELECT id, from_chunk_id, NULL as to_chunk_id, from_symbol_qualified, to_symbol_qualified,
               edge_type, edge_metadata, source_id, false as resolved
          FROM code_edges_symbol
          WHERE to_symbol_qualified = $1 ${sourceClause}
+           AND ${currentCodeEdgeFilter('code_edges_symbol', false)}
        LIMIT $2`,
       [qualifiedName, limit],
     );
@@ -118,25 +121,38 @@ export async function getCallersOf(
 export async function getCalleesOf(
   deps: PgliteCodeEdgesDeps,
     qualifiedName: string,
-    opts?: { sourceId?: string; allSources?: boolean; limit?: number },
+    opts?: { sourceId?: string; allSources?: boolean; limit?: number; bareFallback?: boolean },
   ): Promise<import('../types.ts').CodeEdgeResult[]> {
     const limit = Math.min(opts?.limit ?? 100, 500);
     const sourceClause = opts?.allSources || !opts?.sourceId
       ? ''
       : `AND source_id = '${opts.sourceId.replace(/'/g, "''")}'`;
-    const { rows } = await deps.db.query(
+    const run = (fromPredicate: string) => deps.db.query(
       `SELECT id, from_chunk_id, to_chunk_id, from_symbol_qualified, to_symbol_qualified,
               edge_type, edge_metadata, source_id, true as resolved
          FROM code_edges_chunk
-         WHERE from_symbol_qualified = $1 ${sourceClause}
+         WHERE ${fromPredicate} ${sourceClause}
+           AND ${currentCodeEdgeFilter('code_edges_chunk', true)}
        UNION ALL
        SELECT id, from_chunk_id, NULL as to_chunk_id, from_symbol_qualified, to_symbol_qualified,
               edge_type, edge_metadata, source_id, false as resolved
          FROM code_edges_symbol
-         WHERE from_symbol_qualified = $1 ${sourceClause}
+         WHERE ${fromPredicate} ${sourceClause}
+           AND ${currentCodeEdgeFilter('code_edges_symbol', false)}
        LIMIT $2`,
       [qualifiedName, limit],
     );
+    let { rows } = await run('from_symbol_qualified = $1');
+    // #4670: nested chunks (C#/Java/Ruby/Rust, TS class methods) store a
+    // QUALIFIED from_symbol_qualified, so the exact path misses the bare
+    // method name the op contract accepts. Opt-in only (code_callees op +
+    // CLI): on a zero-row miss for a delimiter-free input, re-key the same
+    // UNION on content_chunks.symbol_name — exact + indexed, never LIKE (`_`
+    // is a wildcard). Off for the code_flow BFS, whose bare leaf names must
+    // not inherit a same-named class method's callees.
+    if (rows.length === 0 && opts?.bareFallback && !/[.#:]/.test(qualifiedName)) {
+      ({ rows } = await run('from_chunk_id IN (SELECT id FROM content_chunks WHERE symbol_name = $1)'));
+    }
     return (rows as Record<string, unknown>[]).map(rowToCodeEdge);
   }
 

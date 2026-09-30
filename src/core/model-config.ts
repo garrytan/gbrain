@@ -402,6 +402,42 @@ export type ResolveSource =
   | 'fallback';
 
 /**
+ * A resolved model plus the chain step that produced it. When the subagent
+ * capability gate replaced the configured model, `substituted_from` is what
+ * was configured and `substitution_reason` says why (`no_tools`,
+ * `no_subagent_loop`, `unknown_provider`).
+ */
+export interface ResolvedModel {
+  model: string;
+  source: ResolveSource;
+  substituted_from?: string;
+  substitution_reason?: SubagentSubstitutionReason;
+}
+
+export type SubagentSubstitutionReason = 'no_tools' | 'no_subagent_loop' | 'unknown_provider';
+
+/**
+ * Human-facing origin of a resolution step: the flag, config key or env var
+ * that supplied the model (`models.tier.deep`, `models.default`,
+ * `GBRAIN_MODEL`), or `built-in default`. Key names only, never values.
+ */
+export function describeResolveOrigin(
+  source: ResolveSource,
+  opts: Pick<ResolveModelOpts, 'configKey' | 'deprecatedConfigKey' | 'envVar' | 'tier'> & { flag?: string },
+): string {
+  switch (source) {
+    case 'cli_flag': return opts.flag ?? 'flag';
+    case 'config_key': return opts.configKey ?? 'config';
+    case 'deprecated_key': return opts.deprecatedConfigKey ?? 'config';
+    case 'tier_config': return `models.tier.${opts.tier}`;
+    case 'models_default': return 'models.default';
+    case 'env': return opts.envVar ?? 'GBRAIN_MODEL';
+    case 'tier_default':
+    case 'fallback': return 'built-in default';
+  }
+}
+
+/**
  * Resolve a model name through the precedence chain, reporting WHICH step
  * produced it. Async because it reads config from the engine. Pass
  * `engine: null` for callsites that don't have an engine (rare; usually CLI
@@ -413,7 +449,7 @@ export type ResolveSource =
 export async function resolveModelDetailed(
   engine: ConfigReader | null,
   opts: ResolveModelOpts,
-): Promise<{ model: string; source: ResolveSource }> {
+): Promise<ResolvedModel> {
   const envVar = opts.envVar ?? 'GBRAIN_MODEL';
 
   // 1. CLI flag wins
@@ -454,7 +490,7 @@ export async function resolveModelDetailed(
       const tierVal = await engine.getConfig(`models.tier.${opts.tier}`);
       if (tierVal && tierVal.trim()) {
         const resolved = await resolveAlias(engine, tierVal.trim());
-        return { model: enforceSubagentCapable(resolved, opts.tier, `models.tier.${opts.tier}`), source: 'tier_config' };
+        return withSubagentGate(resolved, opts.tier, `models.tier.${opts.tier}`, 'tier_config');
       }
     }
 
@@ -462,7 +498,7 @@ export async function resolveModelDetailed(
     const def = await engine.getConfig('models.default');
     if (def && def.trim()) {
       const resolved = await resolveAlias(engine, def.trim());
-      return { model: enforceSubagentCapable(resolved, opts.tier, 'models.default'), source: 'models_default' };
+      return withSubagentGate(resolved, opts.tier, 'models.default', 'models_default');
     }
   }
 
@@ -470,7 +506,7 @@ export async function resolveModelDetailed(
   const env = process.env[envVar];
   if (env && env.trim()) {
     const resolved = await resolveAlias(engine, env.trim());
-    return { model: enforceSubagentCapable(resolved, opts.tier, `env:${envVar}`), source: 'env' };
+    return withSubagentGate(resolved, opts.tier, `env:${envVar}`, 'env');
   }
 
   // 7. Key-aware tier default — when no override beats us, the tier's
@@ -478,7 +514,7 @@ export async function resolveModelDetailed(
   //    caller-supplied fallback.
   if (opts.tier && TIER_DEFAULTS[opts.tier]) {
     const resolved = await resolveAlias(engine, resolveTierDefault(opts.tier));
-    return { model: enforceSubagentCapable(resolved, opts.tier, 'tier-default'), source: 'tier_default' };
+    return withSubagentGate(resolved, opts.tier, 'tier-default', 'tier_default');
   }
 
   // 8. Hardcoded fallback (caller-supplied)
@@ -528,7 +564,22 @@ export async function resolveModel(
  * suppression key) so doctor + first-call surfaces don't double-warn.
  */
 function enforceSubagentCapable(resolved: string, tier: ModelTier | undefined, source: string): string {
-  if (tier !== 'subagent') return resolved;
+  return subagentGate(resolved, tier, source).model;
+}
+
+function withSubagentGate(resolved: string, tier: ModelTier | undefined, sourceLabel: string, source: ResolveSource): ResolvedModel {
+  const gate = subagentGate(resolved, tier, sourceLabel);
+  return gate.reason
+    ? { model: gate.model, source, substituted_from: resolved, substitution_reason: gate.reason }
+    : { model: gate.model, source };
+}
+
+function subagentGate(
+  resolved: string,
+  tier: ModelTier | undefined,
+  source: string,
+): { model: string; reason?: SubagentSubstitutionReason } {
+  if (tier !== 'subagent') return { model: resolved };
 
   // Lazy import keeps capabilities.ts out of model-config's eager-load surface
   // (capabilities → model-resolver → recipes; this would create a cycle if
@@ -546,26 +597,29 @@ function enforceSubagentCapable(resolved: string, tier: ModelTier | undefined, s
     // If the import fails (e.g. malformed recipe registry during boot), be
     // permissive and just return the resolved model — surface the underlying
     // issue at gateway call time.
-    return resolved;
+    return { model: resolved };
   }
 
   const key = `${source}:${resolved}`;
   if (verdict === 'unusable:no_tools' || verdict === 'unusable:no_subagent_loop' || verdict === 'unknown') {
+    const reason: SubagentSubstitutionReason = verdict === 'unusable:no_tools'
+      ? 'no_tools'
+      : verdict === 'unusable:no_subagent_loop' ? 'no_subagent_loop' : 'unknown_provider';
     if (!_subagentTierWarningsEmitted.has(key)) {
       _subagentTierWarningsEmitted.add(key);
-      const reason = verdict === 'unusable:no_tools'
+      const prose = reason === 'no_tools'
         ? `lacks tool-calling support`
-        : verdict === 'unusable:no_subagent_loop'
+        : reason === 'no_subagent_loop'
           ? `declares the subagent loop unsupported (supports_subagent_loop: false)`
           : `is an unrecognized provider`;
       process.stderr.write(
-        `[models] tier.subagent resolved to "${resolved}" via "${source}", which ${reason}. ` +
+        `[models] tier.subagent resolved to "${resolved}" via "${source}", which ${prose}. ` +
         `The subagent tool loop cannot run on this model — falling back to ${TIER_DEFAULTS.subagent}. ` +
         `Fix: gbrain config set models.tier.subagent <provider>:<model> ` +
         `(the provider's recipe must declare supports_subagent_loop: true)\n`,
       );
     }
-    return TIER_DEFAULTS.subagent;
+    return { model: TIER_DEFAULTS.subagent, reason };
   }
 
   if (verdict === 'degraded:no_caching') {
@@ -579,7 +633,7 @@ function enforceSubagentCapable(resolved: string, tier: ModelTier | undefined, s
     }
   }
   // degraded:no_parallel and ok return resolved unchanged (no warn).
-  return resolved;
+  return { model: resolved };
 }
 
 /**

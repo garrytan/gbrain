@@ -4,7 +4,7 @@
 <!-- Regenerate: bun run scripts/generate-tool-catalog.ts -->
 <!-- Freshness-guarded by scripts/check-tool-catalog-fresh.sh (bun run verify). -->
 
-Every non-localOnly operation on the MCP surface: 122 tools across 23 areas. **Starter** marks membership in the ~26-op `starter` surface (`src/mcp/surface.ts`); **Gate** names the config key that must be true before remote callers see/call the op (`gbrain config set <key> true`). What a given token actually sees is further filtered per request by scope, bound-client fence, publish gates, and the per-client surface — see `docs/operations/mcp-surface-runbook.md`. Area names are non-contractual groupings.
+Every non-localOnly operation on the MCP surface: 133 tools across 23 areas. **Starter** marks membership in the ~38-op `starter` surface (`src/mcp/surface.ts`); **Gate** names the config key that must be true before remote callers see/call the op (`gbrain config set <key> true`). What a given token actually sees is further filtered per request by scope, bound-client fence, publish gates, and the per-client surface — see `docs/operations/mcp-surface-runbook.md`. Area names are non-contractual groupings.
 
 ## admin
 
@@ -157,18 +157,21 @@ Every non-localOnly operation on the MCP surface: 122 tools across 23 areas. **S
 
 | Tool | Description | Scope | Starter | Gate |
 |---|---|---|---|---|
+| `cancel_write_request` | Cancel your accepted write before publication starts. | write | yes |  |
 | `capture` | Capture a quick note into the brain — the "just remember this" write. | write | yes |  |
-| `delete_page` | Soft-delete a page. | write |  |  |
-| `fetch` | Fetch the full text of one search result by its `id` (OpenAI deep-research contract: the search/fetch pair). | read |  |  |
+| `delete_page` | Soft-delete a page and remove its markdown file from the source working tree (the source local_path, or sync.repo_path when the source has none). | write |  |  |
+| `fetch` | Fetch the full text of one search result by its opaque, source-qualified `id` (OpenAI deep-research contract: the search/fetch pair). | read |  |  |
 | `get_chunks` | Get content chunks for a page | read |  |  |
 | `get_page` | Read a page by slug (supports optional fuzzy matching). | read | yes |  |
-| `get_raw_data` | Retrieve raw data for a page | read |  |  |
+| `get_raw_data` | Retrieve raw data for a page. | read |  |  |
 | `get_versions` | Page version history | read |  |  |
+| `get_write_request` | Read your durable write receipt by request_id. | write | yes |  |
 | `list_pages` | List pages with optional filters. | read | yes |  |
-| `put_page` | Write or replace a page (markdown with frontmatter). | write | yes |  |
+| `list_write_requests` | List your currently authorized write receipts in one source, newest first. | write | yes |  |
+| `put_page` | Replace a complete canonical Markdown page. | write | yes |  |
 | `put_raw_data` | Store raw API response data for a page | write |  |  |
 | `resolve_slugs` | Fuzzy-resolve a partial slug to matching page slugs | read | yes |  |
-| `restore_page` | v0.26.5 — restore a soft-deleted page (clear deleted_at). | write |  |  |
+| `restore_page` | v0.26.5 — restore a soft-deleted page (clear deleted_at) and re-create its markdown file on disk (the counterpart to delete_page removing it; the result write_through field reports the outcome). | write |  |  |
 | `revert_version` | Revert page to a previous version | write |  |  |
 
 ## schema
@@ -201,9 +204,17 @@ Every non-localOnly operation on the MCP surface: 122 tools across 23 areas. **S
 
 | Tool | Description | Scope | Starter | Gate |
 |---|---|---|---|---|
-| `get_skill` | Fetch one skill's full instructions by name. | read |  | `mcp.publish_skills` |
-| `list_brain_skillpack` | List brain-resident skillpacks this brain ships (per-source). | read |  | `mcp.publish_skills` |
-| `list_skills` | List the skills this agent's brain publishes. | read |  | `mcp.publish_skills` |
+| `delete_skill` | CAS-delete a canonical shared skill and revoke future managed activation. | write + skill_editor | yes |  |
+| `get_skill` | Fetch one skill's full instructions by name. | read | yes | `mcp.publish_skills` |
+| `get_skill_asset` | Read a bounded, owner-approved file from an exact sealed skill revision. | read | yes | `mcp.publish_skills` |
+| `get_skill_policy` | Read the owner publication policy and CAS epoch, including when sharing is disabled. | admin + skill_publisher |  |  |
+| `join_brain` | Enroll this authenticated principal to follow approved shared skills. | read + skills_member_self | yes |  |
+| `leave_brain` | Stop only this principal’s enrollment. | read + skills_member_self | yes |  |
+| `list_brain_skillpack` | List brain-resident skillpacks this brain ships (per-source). | read | yes | `mcp.publish_skills` |
+| `list_skills` | List the skills this agent's brain publishes. | read | yes | `mcp.publish_skills` |
+| `put_skill` | Publish a complete file-canonical skill revision with CAS and a durable receipt. | write + skill_editor | yes |  |
+| `set_skill_policy` | Explicitly approve a versioned shared-skill disclosure and follow policy. | admin + skill_publisher |  |  |
+| `sync_brain_skills` | Get a complete authorized shared-skills view and optionally record an own issued-batch delivery acknowledgment. | read + skills_member_self | yes |  |
 
 ## sources
 
@@ -240,6 +251,6 @@ Every non-localOnly operation on the MCP surface: 122 tools across 23 areas. **S
 
 | Tool | Description | Scope | Starter | Gate |
 |---|---|---|---|---|
-| `add_timeline_entry` | Add timeline entry to a page. | write | yes |  |
+| `add_timeline_entry` | Append an entry to the canonical Markdown timeline and structured timeline store in one committed write. | write | yes |  |
 | `get_timeline` | Get timeline entries for a page, optionally filtered by date window | read |  |  |
 

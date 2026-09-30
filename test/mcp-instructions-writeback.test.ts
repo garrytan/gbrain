@@ -8,8 +8,8 @@
  * (stdio + OAuth enabled-state coverage rides the hermetic e2e fixture,
  * test/e2e/ambient-writeback-lifecycle.serial.test.ts — those transports need
  * a real subprocess/app boot. The three existing byte-exact OFF pins are
- * test/e2e/serve-stdio-roundtrip.test.ts, test/http-transport.test.ts, and
- * test/e2e/connect-bearer.test.ts and run unchanged.)
+ * test/serve-stdio-roundtrip.test.ts, test/http-transport.test.ts, and
+ * test/connect-bearer.test.ts and run unchanged.)
  */
 import { describe, test, expect, afterAll } from 'bun:test';
 import { createHash } from 'node:crypto';

@@ -8,11 +8,11 @@
  * Scenarios:
  *   1. Concurrent sync: second exits with PID + age + --break-lock hint
  *      (per eng-review D10).
- *   2. SIGTERM during sync: lock row deleted within 3s
- *      (per process-cleanup registry contract).
- *   3. SIGPIPE via real `head -5` pipe: clean exit, next sync runs
- *      without "Another sync is in progress" (per outside-voice F14 /
- *      eng-review D19).
+ *   2. SIGTERM during sync (lock observed held first): exit 143, lock row
+ *      deleted (per process-cleanup registry contract).
+ *   3. Output pipe closed mid-sync (lock observed held first): the
+ *      broken-pipe cleanup route exits early, deletes the lock row, and the
+ *      next sync runs without "Another sync is in progress".
  *   4. --break-lock with dead local PID: clears the row.
  *   5. --break-lock with alive local PID: refuses with --force-break-lock hint.
  *   6. --force-break-lock with alive PID: clears (with warning).
@@ -179,83 +179,117 @@ describeE2E('v0.41.6.0 — sync lock recovery scenarios', () => {
     expect(snap).toBeNull();
   });
 
-  test('SIGTERM during sync releases the lock within 3s', async () => {
-    // Start a sync subprocess that will hold the lock briefly.
-    // We'd ideally watch for the lock row to appear, then SIGTERM. Since
-    // sync is fast on a 5-file repo, we use a tight polling loop with
-    // an early-exit if we see the row.
+  // Both abnormal-termination cases below observe the boundary before acting:
+  // the lock row carries the child's PID AND the child has printed import
+  // progress (so the lock's cleanup callback is registered). A run that never
+  // reaches that point fails instead of passing vacuously. The bulk repo keeps
+  // the sync busy long enough that "exited early" is observable: a child that
+  // finished the whole import did not take the abnormal-exit path.
+  const BULK_FILES = 1000;
+
+  function makeBulkRepo(dirName: string): string {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-lock-recovery-bulk-'));
+    mkdirSync(join(dir, dirName), { recursive: true });
+    for (let i = 0; i < BULK_FILES; i++) {
+      writeFileSync(join(dir, dirName, `note-${i}.md`), `---\ntype: note\ntitle: Bulk note ${i}\n---\n\nPlaceholder note ${i}.\n`);
+    }
+    execFileSync('git', ['init', '-q'], { cwd: dir });
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: dir });
+    execFileSync('git', ['config', 'user.name', 'Test'], { cwd: dir });
+    execFileSync('git', ['add', '.'], { cwd: dir });
+    execFileSync('git', ['commit', '-q', '-m', 'bulk'], { cwd: dir });
+    return dir;
+  }
+
+  async function startSyncAtLockBoundary(dir: string, opts: { importStarted: boolean } = { importStarted: true }) {
     const eng = getEngine();
-    const sigtermProc = spawn(CLI[0], [...CLI.slice(1), 'sync', '--repo', repoDir, '--full', '--yes', '--no-embed'], {
-      env: {
-        ...process.env,
-        GBRAIN_HOME: tmpHome,
-        DATABASE_URL: process.env.DATABASE_URL!,
-      } as Record<string, string>,
+    const child = spawn(CLI[0], [...CLI.slice(1), 'sync', '--repo', dir, '--full', '--yes', '--no-embed'], {
+      env: { ...process.env, GBRAIN_HOME: tmpHome, DATABASE_URL: process.env.DATABASE_URL! } as Record<string, string>,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
-
-    // Wait up to 5s for the lock row to appear, then SIGTERM.
-    let lockSeen = false;
-    for (let i = 0; i < 50; i++) {
-      const snap = await inspectLock(eng, 'gbrain-sync:default');
-      if (snap && snap.holder_pid === sigtermProc.pid) { lockSeen = true; break; }
-      await new Promise(r => setTimeout(r, 100));
-    }
-    if (!lockSeen) {
-      // Sync may have completed before we caught the lock. That's also fine.
-      sigtermProc.kill('SIGTERM');
-      await new Promise(r => sigtermProc.on('exit', r));
-      // Skip the rest of the assertion.
-      return;
-    }
-
-    sigtermProc.kill('SIGTERM');
-    await new Promise(r => sigtermProc.on('exit', r));
-
-    // Within 3s of exit, lock should be gone.
-    let lockGone = false;
-    for (let i = 0; i < 30; i++) {
-      const snap = await inspectLock(eng, 'gbrain-sync:default');
-      if (!snap || snap.holder_pid !== sigtermProc.pid) { lockGone = true; break; }
-      await new Promise(r => setTimeout(r, 100));
-    }
-    expect(lockGone).toBe(true);
-  });
-
-  // v0.41.7+ follow-up: this test's timing is brittle on slow CI.
-  // The SIGPIPE cleanup-registry codepath IS exercised structurally by
-  // unit test/process-cleanup.test.ts. The SIGTERM-during-sync E2E above
-  // verifies the lock-release on abnormal termination. Re-enable once
-  // the head-pipe scenario can be made deterministic across CI runners.
-  test.skip('pipe through `head -5` exits cleanly, next sync runs without lock-busy', async () => {
-    // Run `gbrain sync ... | head -5` via shell.
-    const cmd = `${CLI.join(' ')} sync --repo ${repoDir} --full --yes --no-embed 2>&1 | head -5`;
-    const result = spawnSync('sh', ['-c', cmd], {
-      env: {
-        ...process.env,
-        GBRAIN_HOME: tmpHome,
-        DATABASE_URL: process.env.DATABASE_URL!,
-      } as Record<string, string>,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      encoding: 'utf8',
-      timeout: 30_000,
+    let stderr = '';
+    child.stderr!.on('data', d => { stderr += d; });
+    child.stdout!.on('data', () => {});
+    let exit: { code: number | null; signal: NodeJS.Signals | null } | null = null;
+    const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(resolve => {
+      child.on('exit', (code, signal) => { exit = { code, signal }; resolve(exit); });
     });
-    // head closes the pipe → SIGPIPE → cleanup → exit. Exit code from `sh` is
-    // last command (head) which exited 0 since it read its 5 lines.
-    expect(result.status).toBe(0);
-
-    // Next sync should NOT report "Another sync is in progress" — give the
-    // cleanup pass up to 5s to clear the lock.
-    let nextResult: ReturnType<typeof runCli>;
-    let nextOk = false;
-    for (let i = 0; i < 5; i++) {
-      nextResult = runCli(['sync', '--repo', repoDir, '--full', '--yes', '--no-embed']);
-      if (!/Another sync is in progress/.test(nextResult.stderr + nextResult.stdout)) {
-        nextOk = true;
-        break;
+    const deadline = Date.now() + 30_000;
+    let lockHeld = false;
+    const atBoundary = () => lockHeld && (!opts.importStarted || /\[import\.files\] \d+\//.test(stderr));
+    while (!exit && Date.now() < deadline && !atBoundary()) {
+      if (!lockHeld) {
+        const snap = await inspectLock(eng, 'gbrain-sync:default');
+        lockHeld = !!snap && snap.holder_pid === child.pid;
       }
-      await new Promise(r => setTimeout(r, 1000));
+      await new Promise(r => setTimeout(r, 20));
     }
-    expect(nextOk).toBe(true);
+    if (exit || !atBoundary()) {
+      child.kill('SIGKILL');
+      await exited;
+      throw new Error(`sync never reached the held-lock boundary (lockHeld=${lockHeld}, exit=${JSON.stringify(exit)}):\n${stderr.slice(-2000)}`);
+    }
+    return { child, exited, stderr: () => stderr };
+  }
+
+  async function importedCount(dirName: string): Promise<number> {
+    const rows = await (getEngine() as any).sql`SELECT count(*)::int AS n FROM pages WHERE slug LIKE ${dirName + '/%'}`;
+    return rows[0].n;
+  }
+
+  test('SIGTERM during sync releases the lock', async () => {
+    const dir = makeBulkRepo('sigterm-bulk');
+    try {
+      const run = await startSyncAtLockBoundary(dir);
+      run.child.kill('SIGTERM');
+      const exit = await run.exited;
+
+      expect(exit.code, run.stderr().slice(-2000)).toBe(143);
+      expect(await inspectLock(getEngine(), 'gbrain-sync:default')).toBeNull();
+      expect(await importedCount('sigterm-bulk')).toBeLessThan(BULK_FILES);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   }, 60_000);
+
+  test('closing the output pipe as soon as the lock row appears still releases the lock', async () => {
+    // The early close delivers a second broken-pipe signal while the first
+    // cleanup pass is still deleting the lock row; that signal must wait for
+    // the pass instead of exiting ahead of the DELETE.
+    const dir = makeBulkRepo('lock-row-pipe-bulk');
+    try {
+      const run = await startSyncAtLockBoundary(dir, { importStarted: false });
+      run.child.stdout!.destroy();
+      run.child.stderr!.destroy();
+      const exit = await run.exited;
+
+      expect([0, 141] as Array<number | null>).toContain(exit.code);
+      expect(await inspectLock(getEngine(), 'gbrain-sync:default')).toBeNull();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  test('closing the output pipe mid-sync routes through cleanup and releases the lock', async () => {
+    const dir = makeBulkRepo('sigpipe-bulk');
+    try {
+      const run = await startSyncAtLockBoundary(dir);
+      run.child.stdout!.destroy();
+      run.child.stderr!.destroy();
+      const exit = await run.exited;
+
+      // Bun raises SIGPIPE (handler exits 141); runtimes that surface EPIPE
+      // on the stream instead take triggerCleanupAndExit(0). Either way the
+      // child must stop early and leave no lock row behind.
+      expect([0, 141] as Array<number | null>).toContain(exit.code);
+      expect(await importedCount('sigpipe-bulk')).toBeLessThan(BULK_FILES);
+      expect(await inspectLock(getEngine(), 'gbrain-sync:default')).toBeNull();
+
+      const next = runCli(['sync', '--repo', repoDir, '--full', '--yes', '--no-embed']);
+      expect(next.stdout + next.stderr).not.toMatch(/Another sync is in progress/);
+      expect(next.code).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 90_000);
 });

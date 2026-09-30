@@ -45,20 +45,24 @@ describe('BudgetMeter', () => {
     expect(r2.reason).toContain('BUDGET_EXHAUSTED');
   });
 
-  test('budget=0 disables the gate (cycle runs unbounded)', () => {
-    const meter = new BudgetMeter({ budgetUsd: 0, phase: 'drift', auditPath });
+  test('budget=0 spends nothing; Infinity is the explicit no-cap value (C-16)', () => {
+    const zero = new BudgetMeter({ budgetUsd: 0, phase: 'drift', auditPath });
+    expect(zero.check({ modelId: 'claude-opus-4-7', estimatedInputTokens: 100_000, maxOutputTokens: 100_000, label: 'huge' }).allowed).toBe(false);
+    const meter = new BudgetMeter({ budgetUsd: Infinity, phase: 'drift', auditPath });
     const r = meter.check({ modelId: 'claude-opus-4-7', estimatedInputTokens: 100_000, maxOutputTokens: 100_000, label: 'huge' });
     expect(r.allowed).toBe(true);
   });
 
-  test('non-Anthropic model bypasses gate with warn-once + ledger entry', () => {
+  test('an unpriced model is metered at the fallback rate with warn-once + ledger entry (C-16)', () => {
     const meter = new BudgetMeter({ budgetUsd: 0.001, phase: 'auto_think', auditPath });
     const r1 = meter.check({ modelId: 'gemini-3-pro', estimatedInputTokens: 1000, maxOutputTokens: 1000, label: 'gem1' });
     const r2 = meter.check({ modelId: 'gemini-3-pro', estimatedInputTokens: 1000, maxOutputTokens: 1000, label: 'gem2' });
-    expect(r1.allowed).toBe(true);
+    expect(r1.allowed).toBe(false);
     expect(r1.unpriced).toBe(true);
-    expect(r2.allowed).toBe(true);
+    expect(r2.allowed).toBe(false);
     expect(meter.unpricedSubmits).toBe(2);
+    const bypass = new BudgetMeter({ budgetUsd: 0.001, phase: 'auto_think', auditPath, allowUnpriced: true });
+    expect(bypass.check({ modelId: 'gemini-3-pro', estimatedInputTokens: 1000, maxOutputTokens: 1000, label: 'gem3' }).allowed).toBe(true);
   });
 
   test('a canonical-priced non-Anthropic model is gated, not waved through', () => {
@@ -79,16 +83,16 @@ describe('BudgetMeter', () => {
     expect(readLedger().at(-1)!.event).toBe('submit_denied');
   });
 
-  test('a model absent from the canonical table keeps the documented bypass', () => {
-    // Unchanged behaviour: gemini-3-pro is in neither table. Whether these
-    // should also be gated (via a conservative fallback rate, as
-    // synthesize-concepts and skillopt/preflight do) is a policy call and is
-    // deliberately not decided here.
+  test('a model absent from the canonical table is gated at a conservative fallback rate (C-16)', () => {
+    // gemini-3-pro is in neither table. Like synthesize-concepts and
+    // skillopt/preflight, it is metered at Sonnet-tier rates;
+    // dream.budget.allow_unpriced=true is the explicit bypass.
     const meter = new BudgetMeter({ budgetUsd: 0.001, phase: 'auto_think', auditPath });
     const r = meter.check({ modelId: 'gemini-3-pro', estimatedInputTokens: 1000, maxOutputTokens: 1000, label: 'absent' });
     expect(r.unpriced).toBe(true);
-    expect(r.allowed).toBe(true);
+    expect(r.allowed).toBe(false);
     expect(readLedger().at(-1)!.event).toBe('submit_unpriced');
+    expect(readLedger().at(-1)!.allowed).toBe(false);
   });
 
   test('Anthropic ids price identically through canonical and the derived view', () => {

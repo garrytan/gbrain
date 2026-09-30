@@ -115,6 +115,28 @@ describe('findTrajectory — chronological ordering (R3)', () => {
   });
 });
 
+describe('findTrajectory — a capped series keeps its NEWEST points (read-path audit #4)', () => {
+  test('limit returns the newest N, still chronological, so the latest value is current', async () => {
+    const day0 = Date.UTC(2024, 0, 1);
+    for (let i = 0; i < 150; i++) {
+      await insertTyped({ entity_slug: 'traj-cap', metric: 'mrr', value: i, valid_from: new Date(day0 + i * 86_400_000) });
+    }
+    const points = await engine.findTrajectory({ entitySlug: 'traj-cap', remote: false, limit: 100 });
+    expect(points.length).toBe(100);
+    expect(points[points.length - 1].value).toBe(149);
+    expect(points[0].value).toBe(50);
+    expect(points.map(p => p.value)).toEqual(Array.from({ length: 100 }, (_, i) => i + 50));
+  });
+
+  test('same-day ties break on id, newest id last', async () => {
+    const d = new Date('2026-03-01');
+    const ids = [];
+    for (let i = 0; i < 3; i++) ids.push(await insertTyped({ entity_slug: 'traj-tie', metric: 'mrr', value: i, valid_from: d }));
+    const points = await engine.findTrajectory({ entitySlug: 'traj-tie', remote: false, limit: 2 });
+    expect(points.map(p => p.fact_id)).toEqual([ids[1], ids[2]]);
+  });
+});
+
 describe('findTrajectory — source scoping (D-CDX-6)', () => {
   test('scalar sourceId returns only that source', async () => {
     await insertTyped({ source_id: 'traj-src-A', entity_slug: 'traj-srcscope', metric: 'mrr', value: 50000, valid_from: new Date('2026-01-15') });

@@ -22,6 +22,7 @@ describe('KNOWN_CONFIG_KEYS', () => {
     expect(KNOWN_CONFIG_KEYS).toContain('embedding_model');
     expect(KNOWN_CONFIG_KEYS).toContain('embedding_dimensions');
     expect(KNOWN_CONFIG_KEYS).toContain('embedding_disabled');  // v0.37 D9
+    expect(KNOWN_CONFIG_KEYS).toContain('auto_timeline');  // #4987 off switch
     expect(KNOWN_CONFIG_KEYS).toContain('expansion_model');
     expect(KNOWN_CONFIG_KEYS).toContain('chat_model');
     expect(KNOWN_CONFIG_KEYS).toContain('openrouter_api_key');
@@ -83,16 +84,7 @@ describe('KNOWN_CONFIG_KEYS', () => {
     // or `config set` rejects the wave's own enable command without --force.
     expect(KNOWN_CONFIG_KEYS).toContain('agent.use_gateway_loop');
     expect(KNOWN_CONFIG_KEYS).toContain('openrouter_api_key');
-    expect(KNOWN_CONFIG_KEYS).toContain('zeroentropy_api_key');
     expect(KNOWN_CONFIG_KEYS).toContain('deepseek_api_key');
-  });
-
-  test('registers the provider_sunset suppression key (v0.46.3 documented command)', () => {
-    // doctor.ts + docs/guides/embedding-migration.md both document
-    // `gbrain config set doctor.suppress_provider_sunset true`; the key must
-    // be registered or the documented command exits 1 with "Unknown config
-    // key". Exact key, deliberately not a 'doctor.' prefix.
-    expect(KNOWN_CONFIG_KEYS).toContain('doctor.suppress_provider_sunset');
   });
 
   test('contains the working-tree sync toggle (untracked-gap fix)', () => {
@@ -333,6 +325,25 @@ describe('#2753 — the doctor-proposed gateway-loop command is accepted by `con
 
     expect(exit).toBe(1);
     expect(errs.join('\n')).toContain('valid IANA timezone');
+    expect(setCalls).toEqual([]);
+  });
+
+  test('persistence.limits.*: accepted without --force and never called unread (#5470)', async () => {
+    for (const key of ['persistence.limits.principal_terminal_bytes', 'persistence.limits.principal_lifetime_ids', 'persistence.receipt_retention_days']) {
+      const { engine, setCalls } = setStubEngine();
+      const { errs, exit } = await runConfigCapture(engine, ['set', key, '268435456']);
+      expect(exit).toBeNull();
+      expect(errs.join('\n')).not.toContain('Unknown config key');
+      expect(errs.join('\n')).not.toContain('Nothing in gbrain reads this');
+      expect(setCalls).toEqual([[key, '268435456']]);
+    }
+  });
+
+  test('persistence.limits.*: rejects a value every admission would refuse (#5470)', async () => {
+    const { engine, setCalls } = setStubEngine();
+    const { errs, exit } = await runConfigCapture(engine, ['set', 'persistence.limits.principal_lifetime_ids', '1.5e6']);
+    expect(exit).toBe(1);
+    expect(errs.join('\n')).toContain('expected a nonnegative integer');
     expect(setCalls).toEqual([]);
   });
 

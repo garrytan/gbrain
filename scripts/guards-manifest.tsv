@@ -46,6 +46,7 @@ check-key-files-current-state.sh	scanner	todo
 check-exports-count.sh	scanner	todo	was reachable from neither verify nor CI pre-W0 (check:all only)
 check-trailing-newline.sh	scanner	todo	was reachable from neither verify nor CI pre-W0 (check:all only)
 check-test-isolation.sh	scanner	todo	allowlist data file: check-test-isolation.allowlist
+check-compile-autoload.sh	scanner	yes	every `bun build --compile` invocation (CLI one-liners + TS spawn arrays) in package.json/.github/scripts/docs/CLAUDE.md/CONTRIBUTING.md must carry --no-compile-autoload-bunfig (a cwd bunfig.toml preload runs before cli-preflight in a compiled binary)
 check-admin-build.sh	buildfresh	exempt	runs the admin build; the build is the test
 check-admin-embedded.sh	buildfresh	exempt	embed freshness diff; not in verify CHECKS: duplicates check:admin-build's build
 check-admin-scope-drift.sh	buildfresh	exempt	regenerates + diffs
@@ -67,5 +68,6 @@ check-structural-manifest.sh	buildfresh	exempt	regenerate+diff of structural-sui
 check-opencode-pin.sh	repostate	exempt	pin-stamp drift check (OPENCODE-CLI-PIN.md stamps vs heavy-tests opencode-door env); own bun guard tests in test/check-bootstrap-guards.test.ts
 check-pin-doc-privacy.sh	repostate	exempt	PIN-doc placeholder discipline (no operator paths/key material/emails in docs/mcp/*-CLI-PIN.md); own bun guard tests in test/check-bootstrap-guards.test.ts
 check-getpage-scoped-write.mjs	scanner	yes	unscoped-getPage + write co-occurrence scanner (source-isolation bug class); argv root override; fixtures under test/fixtures/guards/; also in verify CHECKS
-check-orphan-modules.mjs	scanner	yes	runtime-reachability walk (static+dynamic relative imports) from cli/mcp/plugin/admin entrypoints + package.json exports; hard-fails untested orphans, ratchets the test-only tier; fixture root via argv/GBRAIN_GUARD_ROOT; knip v5 evaluated + rejected (crashes on repo layout — see script header)
+check-orphan-modules.mjs	scanner	yes	runtime-reachability walk (static+dynamic relative imports) from cli/mcp/plugin/admin entrypoints + package.json exports; hard-fails untested orphans, requires a reasoned PERMITTED_TEST_ONLY entry per test-only module (stale entries fail); fixture root via argv/GBRAIN_GUARD_ROOT; knip v5 evaluated + rejected (crashes on repo layout — see script header)
+check-test-placeholders.mjs	scanner	yes	TypeScript AST (CallExpression) scan of test/**/*.test.ts for no-op expect(true)/expect(1) placeholders; path+test+count allowlist (disabled in fixture mode); fixture root via argv/GBRAIN_GUARD_ROOT; in verify CHECKS
 check-test-discriminates.sh	buildfresh	exempt	manual per-PR discrimination helper (#3665): reverts named source files to their pre-fix state and runs the named test file to prove it fails without the fix — the test run IS the check; not in verify CHECKS or CI

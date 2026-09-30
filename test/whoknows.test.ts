@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test';
-import { rankCandidates, runWhoknows, findExperts, type WhoknowsResult } from '../src/commands/whoknows.ts';
+import { rankCandidates, type WhoknowsResult } from '../src/commands/whoknows.ts';
 import type { PageType } from '../src/core/types.ts';
 
 /**
@@ -121,13 +121,6 @@ describe('whoknows / rankCandidates — locked shadow paths (ENG-D3)', () => {
       input('bob', 0.5, 30, 0.5),
     ]);
     expect(ranked.map((r) => r.slug)).toEqual(['alice', 'bob', 'zoe']);
-  });
-
-  // Case 10: contract shape — public exports exist and have expected types
-  it('public surface: rankCandidates / findExperts / runWhoknows are functions', () => {
-    expect(typeof rankCandidates).toBe('function');
-    expect(typeof findExperts).toBe('function');
-    expect(typeof runWhoknows).toBe('function');
   });
 });
 

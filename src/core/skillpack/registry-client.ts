@@ -17,6 +17,7 @@
  * effectively free.
  */
 
+import { assertLegacySkillFilesystemWrite } from './writer-guard.ts';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, statSync } from 'fs';
 import { createHash } from 'crypto';
 import { dirname, join } from 'path';
@@ -148,13 +149,16 @@ function readCache(cacheFile: string): RegistryCacheFile | null {
 
 /** Atomically write a cache file. */
 function writeCache(cacheFile: string, payload: RegistryCacheFile): void {
+  assertLegacySkillFilesystemWrite(cacheFile);
   mkdirSync(dirname(cacheFile), { recursive: true });
   const tmp = cacheFile + '.tmp';
+  assertLegacySkillFilesystemWrite(tmp);
   writeFileSync(tmp, JSON.stringify(payload, null, 2));
   // Use renameSync via fs writeFileSync followed by manual rename to atomically replace.
   // Bun's fs.renameSync is in node:fs.
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { renameSync } = require('fs');
+  assertLegacySkillFilesystemWrite(cacheFile);
   renameSync(tmp, cacheFile);
 }
 

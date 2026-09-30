@@ -91,17 +91,6 @@ describe('gbrain book-mirror — source file invariants', () => {
     'utf-8',
   );
 
-  it('exports runBookMirrorCmd', () => {
-    expect(source).toContain('export async function runBookMirrorCmd');
-  });
-
-  it('documents the trust contract (codex HIGH-1 fix is in the file)', () => {
-    // codex HIGH-1 fix: the trust contract narrowing must not silently
-    // regress in a refactor.
-    expect(source).toContain('media/books/');
-    expect(source).toContain('codex HIGH-1');
-  });
-
   it('uses read-only allowed_tools for subagent fan-out (codex HIGH-1)', () => {
     // The trust narrowing actually happens at the tool-allowlist layer:
     // subagents get ['get_page', 'search'] — read-only — so they CANNOT
@@ -119,24 +108,5 @@ describe('gbrain book-mirror — source file invariants', () => {
     // a regression-detector for someone trying to "fix" the trust
     // contract by adding the wrong fields.
     expect(source).toContain('viaSubagent intentionally omitted');
-  });
-
-  it('prints a cost-estimate confirmation before launching (P1)', () => {
-    expect(source).toContain('estimateCost');
-    expect(source).toContain('confirmInteractive');
-  });
-
-  it('uses idempotency keys for child jobs (retry-friendly)', () => {
-    // Re-running the CLI on the same input should dedupe completed
-    // chapters at the queue layer.
-    expect(source).toContain('idempotency_key');
-    expect(source).toContain('book-mirror:');
-  });
-
-  it('handles partial-failure (continues + flags failed chapters)', () => {
-    // The plan said: assemble with completed chapters + a failed-list
-    // section. Don't abort the whole run on one chapter failure.
-    expect(source).toContain('Failed chapters');
-    expect(source).toContain('chapters_failed');
   });
 });

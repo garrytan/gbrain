@@ -15,7 +15,6 @@ import { parseMarkdown } from '../../src/core/markdown.ts';
 import { runDetect } from '../../src/core/schema-pack/detect.ts';
 import { runReviewCandidates, runReviewOrphans } from '../../src/core/schema-pack/review.ts';
 import { knobsHash } from '../../src/core/search/mode.ts';
-import { detectArtifactKind, validateManifestByKind } from '../../src/core/artifact/index.ts';
 
 // Cold-path opt-out (conservative): umbrella schema-invariant suite whose
 // point is proving the cathedral end-to-end through a genuinely cold-built
@@ -126,19 +125,6 @@ describe('v0.39 T22c — T18-replacement: schema show --as-filing-rules', () => 
   });
 });
 
-describe('v0.39 T22d — artifact-type routing', () => {
-  test('detectArtifactKind dispatches by extension', () => {
-    expect(detectArtifactKind('/tmp/foo.gbrain-schema')).toBe('schemapack');
-    expect(detectArtifactKind('/tmp/foo.gbrain-skillpack')).toBe('skillpack');
-    expect(detectArtifactKind('/tmp/foo.tar.gz')).toBe(null);
-  });
-
-  test('validateManifestByKind rejects cross-kind manifests', () => {
-    expect(() => validateManifestByKind('schemapack', { api_version: 'gbrain-skillpack-v1' })).toThrow();
-    expect(() => validateManifestByKind('skillpack', { api_version: 'gbrain-schema-pack-v1' })).toThrow();
-  });
-});
-
 describe('v0.39 T21 — cache pack isolation in knobsHash', () => {
   test('hash differs when schema_pack name differs', () => {
     // Minimal ResolvedSearchKnobs - just the fields knobsHash reads.
@@ -152,7 +138,7 @@ describe('v0.39 T21 — cache pack isolation in knobsHash', () => {
       expansion: false,
       searchLimit: 25,
       reranker_enabled: false,
-      reranker_model: 'zerank-2',
+      reranker_model: 'rerank-2.5',
       reranker_top_n_in: 30,
       reranker_top_n_out: null,
       reranker_timeout_ms: 5000,

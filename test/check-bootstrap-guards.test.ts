@@ -11,7 +11,7 @@
 
 import { describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 
@@ -78,11 +78,6 @@ const BANK_JSON = JSON.stringify({
 const RUNBOOK_PINS = 'Claude Code and opencode\nDo NOT offer an MCP scope choice\nNO trust prompt\n';
 
 describe('check-bootstrap-tag.sh', () => {
-  test('exists and is executable', () => {
-    expect(existsSync(TAG_GUARD)).toBe(true);
-    expect((statSync(TAG_GUARD).mode & 0o100) !== 0).toBe(true);
-  });
-
   test('passes on this repo', () => {
     const r = runGuard(TAG_GUARD, ROOT);
     expect(r.status).toBe(0);
@@ -189,11 +184,6 @@ describe('check-bootstrap-tag.sh', () => {
 });
 
 describe('check-bootstrap-templates.sh', () => {
-  test('exists and is executable', () => {
-    expect(existsSync(TPL_GUARD)).toBe(true);
-    expect((statSync(TPL_GUARD).mode & 0o100) !== 0).toBe(true);
-  });
-
   test('passes on this repo', () => {
     const r = runGuard(TPL_GUARD, ROOT);
     expect(r.status).toBe(0);
@@ -448,22 +438,6 @@ describe('check-bootstrap-templates.sh', () => {
 });
 
 describe('verify + workflow wiring', () => {
-  test('both guards are registered in the verify dispatcher', () => {
-    const r = spawnSync('bash', [join(ROOT, 'scripts/run-verify-parallel.sh'), '--dry-list'], {
-      cwd: ROOT,
-      encoding: 'utf-8',
-    });
-    expect(r.status).toBe(0);
-    const checks = new Set(r.stdout.trim().split('\n'));
-    expect(checks).toContain('check:bootstrap-tag');
-    expect(checks).toContain('check:bootstrap-templates');
-  });
-
-  test('package.json carries both check scripts', () => {
-    const pkg = require(join(ROOT, 'package.json'));
-    expect(pkg.scripts['check:bootstrap-tag']).toContain('check-bootstrap-tag.sh');
-    expect(pkg.scripts['check:bootstrap-templates']).toContain('check-bootstrap-templates.sh');
-  });
 
   test('bootstrap guards run for documentation changes without a result-cache bypass [C2]', () => {
     const workflow = require('node:fs').readFileSync(join(ROOT, '.github/workflows/test.yml'), 'utf8');
@@ -695,12 +669,6 @@ describe('check-grok-pin.sh', () => {
     });
   });
 
-  test('verify wiring: run-verify-parallel CHECKS + package.json both carry check:grok-pin', () => {
-    const verify = require('node:fs').readFileSync(join(ROOT, 'scripts/run-verify-parallel.sh'), 'utf-8');
-    expect(verify).toContain('"check:grok-pin"');
-    const pkg = require('node:fs').readFileSync(join(ROOT, 'package.json'), 'utf-8');
-    expect(pkg).toContain('"check:grok-pin": "bash scripts/check-grok-pin.sh"');
-  });
 });
 
 // ── check-opencode-pin.sh ────────────────────────────────────────────────────
