@@ -11,6 +11,8 @@
  * derived index. `gbrain extract takes --rebuild` deletes all takes for
  * the affected pages first, then re-inserts. Without --rebuild, ON CONFLICT
  * (page_id, row_num) DO UPDATE keeps the table in sync incrementally.
+ * On a managed brain the db path publishes each page's rows through the
+ * persistence coordinator (the `takes` guard refuses any other writer).
  *
  * Sync-failure surfacing: malformed table rows produce
  * `TAKES_TABLE_MALFORMED` and `TAKES_ROW_NUM_COLLISION` warnings. v0.28
@@ -24,6 +26,8 @@ import { join, relative, sep } from 'node:path';
 import type { BrainEngine, TakeBatchInput } from '../engine.ts';
 import { parseTakesFence, TAKES_FENCE_BEGIN, type ParsedTake } from '../takes-fence.ts';
 import { walkMarkdownFiles } from '../../commands/extract.ts';
+import { withCoordinatedWrite } from '../persistence/context.ts';
+import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 
 export interface ExtractTakesOpts {
   /** Brain repo root. Required for source='fs'. */
@@ -214,37 +218,27 @@ export async function extractTakesFromDb(
     pagesScanned: 0, pagesWithTakes: 0, takesUpserted: 0, warnings: [], failedFiles: [],
   };
   const dryRun = opts.dryRun ?? false;
+  const rebuild = opts.rebuild ?? false;
   // Every (slug, source_id) pair across all sources; bare slugs re-extract
   // the page in every source that holds that slug.
   const slugFilter = opts.slugs && opts.slugs.length > 0 ? new Set(opts.slugs) : null;
   const refs = (await engine.listAllPageRefs()).filter(ref => !slugFilter || slugFilter.has(ref.slug));
   const buffer: TakeBatchInput[] = [];
+  const coordinated = !dryRun && await managedPersistenceEnabled(engine);
 
   for (const { slug, source_id } of refs) {
     result.pagesScanned++;
     const page = await engine.getPage(slug, { sourceId: source_id });
     if (!page) continue;
-    const body = `${page.compiled_truth ?? ''}\n${page.timeline ?? ''}`;
-    const { takes, warnings } = parseTakesFence(body);
-    if (warnings.length) {
-      for (const w of warnings) {
-        result.warnings.push(`${slug}: ${w}`);
-        if (w.startsWith('TAKES_HOLDER_INVALID')) {
-          // DB-source path: no on-disk file path, use slug as the failedFiles
-          // identifier. recordSyncFailures' dedup-by-(path, commit, error)
-          // works the same against slug-shaped paths.
-          result.failedFiles.push({ path: slug, error: w });
-        }
+    if (coordinated) {
+      // A page with no takes marker at all yields no prune, no upsert and no
+      // warning; near-miss and unbalanced markers still reach the parser.
+      if (`${page.compiled_truth ?? ''}\n${page.timeline ?? ''}`.includes('gbrain:takes:')) {
+        await reextractCoordinated(engine, slug, source_id, rebuild, result);
       }
+      continue;
     }
-    await pruneRemovedTakes(engine, page.id, body, takes, warnings, dryRun);
-    if (takes.length === 0) continue;
-
-    if (opts.rebuild && !dryRun) {
-      await engine.executeRaw(`DELETE FROM takes WHERE page_id = $1`, [page.id]);
-    }
-
-    result.pagesWithTakes++;
+    const takes = await reconcilePageTakes(engine, page, slug, rebuild, dryRun, result);
     for (const t of takes) {
       buffer.push(parsedTakeToBatchInput(page.id, t));
       if (buffer.length >= BATCH_SIZE) await flushBatch(engine, buffer, result, dryRun);
@@ -252,6 +246,69 @@ export async function extractTakesFromDb(
   }
   await flushBatch(engine, buffer, result, dryRun);
   return result;
+}
+
+/**
+ * Parse one page's body and record its warnings, then prune rows that left a
+ * cleanly parsed fence (and, under rebuild, clear the page). Returns the takes
+ * the caller upserts.
+ */
+async function reconcilePageTakes(
+  db: BrainEngine,
+  page: { id: number; compiled_truth: string | null; timeline: string | null },
+  slug: string,
+  rebuild: boolean,
+  dryRun: boolean,
+  result: ExtractTakesResult,
+): Promise<ParsedTake[]> {
+  const body = `${page.compiled_truth ?? ''}\n${page.timeline ?? ''}`;
+  const { takes, warnings } = parseTakesFence(body);
+  for (const w of warnings) {
+    result.warnings.push(`${slug}: ${w}`);
+    if (w.startsWith('TAKES_HOLDER_INVALID')) {
+      // DB-source path: no on-disk file path, use slug as the failedFiles
+      // identifier. recordSyncFailures' dedup-by-(path, commit, error)
+      // works the same against slug-shaped paths.
+      result.failedFiles.push({ path: slug, error: w });
+    }
+  }
+  await pruneRemovedTakes(db, page.id, body, takes, warnings, dryRun);
+  if (takes.length === 0) return [];
+  if (rebuild && !dryRun) {
+    await db.executeRaw(`DELETE FROM takes WHERE page_id = $1`, [page.id]);
+  }
+  result.pagesWithTakes++;
+  return takes;
+}
+
+/**
+ * Managed brains guard `takes` (#5728): each page publishes as a coordinated
+ * write under its page lock, against the text read inside that transaction.
+ * Rows carry the `superseded_by` the canonical publication projects (keep in
+ * lockstep with src/core/persistence/canonical-projections.ts), so a page it
+ * already projected keeps the same values. Resolution columns stay untouched,
+ * as on the unmanaged path: some resolutions live only in the database.
+ */
+async function reextractCoordinated(
+  engine: BrainEngine,
+  slug: string,
+  sourceId: string,
+  rebuild: boolean,
+  result: ExtractTakesResult,
+): Promise<void> {
+  await engine.transaction(tx => withCoordinatedWrite(tx, [sourceId], async () => {
+    await tx.lockPageKeys([{ sourceId, slug }]);
+    const [page] = await tx.executeRaw<{ id: number; compiled_truth: string | null; timeline: string | null }>(
+      'SELECT id, compiled_truth, timeline FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL',
+      [sourceId, slug]);
+    if (!page) return;
+    const takes = await reconcilePageTakes(tx, page, slug, rebuild, false, result);
+    if (takes.length === 0) return;
+    result.takesUpserted += await tx.addTakesBatch(takes.map(t => ({
+      ...parsedTakeToBatchInput(page.id, t),
+      superseded_by: t.active ? null : Number(t.source?.match(/superseded by #(\d+)/)?.[1]) || null,
+    })));
+  }));
 }
 
 /** Single-entry dispatch for `gbrain extract takes` and the v0_28_0 orchestrator. */

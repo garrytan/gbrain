@@ -123,7 +123,7 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   "src/core/sync-*.ts": ["test/e2e/sync-sigkill-resume-postgres.test.ts", "test/e2e/sync-lock-overlap-postgres.test.ts"],
   // v0.32.8 multi-source bug class regression suite — fires on any cycle
   // phase, extract, integrity, embed, or migrate-engine change.
-  "src/core/cycle/extract-takes.ts": ["test/e2e/multi-source-bug-class.test.ts"],
+  "src/core/cycle/extract-takes.ts": ["test/e2e/multi-source-bug-class.test.ts", "test/e2e/extract-takes-managed.test.ts"],
   // Takes write-op layer (fence-first write + page-lock journey on real PG).
   "src/core/ops/takes.ts": ["test/e2e/takes-write-ops-postgres.test.ts"],
   "src/core/takes-write.ts": ["test/e2e/takes-write-ops-postgres.test.ts"],
