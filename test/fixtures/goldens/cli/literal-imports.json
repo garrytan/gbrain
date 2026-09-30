@@ -1,0 +1,200 @@
+{
+  "golden": {
+    "switchCaseImports": {
+      "advisor": [
+        "./commands/advisor.ts"
+      ],
+      "agent": [
+        "./commands/agent.ts"
+      ],
+      "anomalies": [
+        "./commands/anomalies.ts"
+      ],
+      "autopilot": [
+        "./commands/autopilot.ts"
+      ],
+      "backfill": [
+        "./commands/backfill.ts"
+      ],
+      "book-mirror": [
+        "./commands/book-mirror.ts"
+      ],
+      "brainstorm": [
+        "./commands/brainstorm.ts"
+      ],
+      "calibration": [
+        "./commands/calibration.ts"
+      ],
+      "code-callees": [
+        "./commands/code-callees.ts"
+      ],
+      "code-callers": [
+        "./commands/code-callers.ts"
+      ],
+      "code-def": [
+        "./commands/code-def.ts"
+      ],
+      "code-refs": [
+        "./commands/code-refs.ts"
+      ],
+      "config": [
+        "./commands/config.ts"
+      ],
+      "connectors": [
+        "./commands/connectors/index.ts"
+      ],
+      "conversation-parser": [
+        "./commands/conversation-parser.ts"
+      ],
+      "edges-backfill": [
+        "./commands/edges-backfill.ts"
+      ],
+      "embed": [
+        "./commands/embed.ts"
+      ],
+      "enrich": [
+        "./commands/enrich.ts"
+      ],
+      "eval": [
+        "./commands/eval-takes-quality.ts",
+        "./commands/eval.ts"
+      ],
+      "export": [
+        "./commands/export.ts"
+      ],
+      "extract": [
+        "./commands/extract.ts"
+      ],
+      "extract-conversation-facts": [
+        "./commands/extract-conversation-facts.ts"
+      ],
+      "features": [
+        "./commands/features.ts"
+      ],
+      "files": [
+        "./commands/files.ts"
+      ],
+      "founder": [
+        "./commands/founder-scorecard.ts"
+      ],
+      "graph-query": [
+        "./commands/graph-query.ts"
+      ],
+      "import": [
+        "./commands/import.ts"
+      ],
+      "jobs": [
+        "./commands/jobs.ts"
+      ],
+      "loops": [
+        "./commands/loops.ts"
+      ],
+      "lsd": [
+        "./commands/lsd.ts"
+      ],
+      "maintain": [
+        "./commands/maintain.ts"
+      ],
+      "mcp": [
+        "./commands/mcp.ts"
+      ],
+      "migrate": [
+        "./commands/migrate-embeddings.ts",
+        "./commands/migrate-engine.ts"
+      ],
+      "models": [
+        "./commands/models.ts"
+      ],
+      "notability-eval": [
+        "./commands/notability-eval.ts"
+      ],
+      "onboard": [
+        "./commands/onboard.ts"
+      ],
+      "orphans": [
+        "./commands/orphans.ts"
+      ],
+      "pages": [
+        "./commands/pages.ts"
+      ],
+      "quarantine": [
+        "./commands/quarantine.ts"
+      ],
+      "recall": [
+        "./commands/recall.ts"
+      ],
+      "reconcile-links": [
+        "./commands/reconcile-links.ts"
+      ],
+      "reindex": [
+        "./commands/reindex.ts",
+        "./commands/reindex-multimodal.ts",
+        "./core/sync-concurrency.ts",
+        "./commands/reindex-vectors.ts",
+        "./commands/reindex-aliases.ts",
+        "./commands/reindex.ts"
+      ],
+      "reindex-code": [
+        "./commands/reindex-code.ts"
+      ],
+      "reindex-frontmatter": [
+        "./commands/reindex-frontmatter.ts"
+      ],
+      "reindex-search-vector": [
+        "./commands/reindex-search-vector.ts"
+      ],
+      "repair": [
+        "./commands/repair.ts"
+      ],
+      "repos": [
+        "./commands/sources.ts"
+      ],
+      "retrieval-upgrade": [
+        "./commands/migrate-embeddings.ts"
+      ],
+      "salience": [
+        "./commands/salience.ts"
+      ],
+      "serve": [
+        "./commands/serve.ts"
+      ],
+      "skillopt": [
+        "./commands/skillopt.ts"
+      ],
+      "sources": [
+        "./commands/sources.ts"
+      ],
+      "status": [
+        "./commands/status.ts"
+      ],
+      "storage": [
+        "./commands/storage.ts"
+      ],
+      "sweep": [
+        "./commands/sweep.ts"
+      ],
+      "sync": [
+        "./commands/sync.ts"
+      ],
+      "takes": [
+        "./commands/takes.ts"
+      ],
+      "think": [
+        "./commands/think.ts"
+      ],
+      "transcripts": [
+        "./commands/transcripts.ts"
+      ],
+      "waiting": [
+        "./commands/loops.ts"
+      ],
+      "watch": [
+        "./commands/watch.ts"
+      ],
+      "whoknows": [
+        "./commands/whoknows.ts"
+      ]
+    }
+  },
+  "normalizer": "cli-ast-v1"
+}

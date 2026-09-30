@@ -1,0 +1,275 @@
+{
+  "golden": {
+    "domain": "salience",
+    "methods": {
+      "batchLoadEmotionalInputs": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [],
+            "sql": "WITH page_tags AS ( SELECT page_id, array_agg(DISTINCT tag) AS tags FROM tags GROUP BY page_id ), page_takes AS ( SELECT page_id, json_agg(json_build_object( 'holder', holder, 'weight', weight, 'kind', kind, 'active', active )) AS takes FROM takes WHERE active = TRUE GROUP BY page_id ) SELECT p.slug, p.source_id, COALESCE(pt.tags, ARRAY[]::text[]) AS tags, COALESCE(pk.takes, '[]'::json) AS takes FROM pages p LEFT JOIN page_tags pt ON pt.page_id = p.id LEFT JOIN page_takes pk ON pk.page_id = p.id",
+            "textSha256": "299bff9decd634701f54f9009f8bd3dc914780ded7583f02f3c80ec65d0c0395"
+          }
+        ],
+        "slugs": [
+          {
+            "lane": "pool",
+            "params": [
+              "array<string>"
+            ],
+            "sql": "WITH page_tags AS ( SELECT page_id, array_agg(DISTINCT tag) AS tags FROM tags GROUP BY page_id ), page_takes AS ( SELECT page_id, json_agg(json_build_object( 'holder', holder, 'weight', weight, 'kind', kind, 'active', active )) AS takes FROM takes WHERE active = TRUE GROUP BY page_id ) SELECT p.slug, p.source_id, COALESCE(pt.tags, ARRAY[]::text[]) AS tags, COALESCE(pk.takes, '[]'::json) AS takes FROM pages p LEFT JOIN page_tags pt ON pt.page_id = p.id LEFT JOIN page_takes pk ON pk.page_id = p.id WHERE p.slug = ANY($1::text[])",
+            "textSha256": "46d9e845728591c514669e7b3e31f7e8eacc0c446823fc6322b42ddb8813c4d0"
+          }
+        ]
+      },
+      "findAnomalies": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string"
+            ],
+            "sql": "WITH days AS ( SELECT day::date FROM generate_series( $1::date, $2::date - 1, '1 day'::interval ) AS day ), cohort_keys AS ( SELECT DISTINCT t.tag FROM tags t JOIN pages p ON p.id = t.page_id WHERE p.updated_at >= $3::timestamptz AND p.updated_at < $4::timestamptz AND p.deleted_at IS NULL AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') AND EXISTS (SELECT 1 FROM sources read_source WHERE read_source.id = p.source_id AND NOT read_source.archived) ), touched AS ( SELECT t.tag, date_trunc('day', p.updated_at)::date AS day, COUNT(DISTINCT p.id) AS cnt FROM tags t JOIN pages p ON p.id = t.page_id WHERE p.updated_at >= $5::timestamptz AND p.updated_at < $6::timestamptz AND p.deleted_at IS NULL AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') AND EXISTS (SELECT 1 FROM sources read_source WHERE read_source.id = p.source_id AND NOT read_source.archived) GROUP BY 1, 2 ) SELECT cd.tag AS cohort_value, d.day::text AS day, COALESCE(t.cnt, 0)::int AS count FROM cohort_keys cd CROSS JOIN days d LEFT JOIN touched t ON t.tag = cd.tag AND t.day = d.day",
+            "textSha256": "e35f58facd140492a0d9629d31f593e5b6e38289fa0a6f6affb9de02ba8f263a"
+          },
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string"
+            ],
+            "sql": "WITH days AS ( SELECT day::date FROM generate_series( $1::date, $2::date - 1, '1 day'::interval ) AS day ), cohort_keys AS ( SELECT DISTINCT p.type FROM pages p WHERE p.updated_at >= $3::timestamptz AND p.updated_at < $4::timestamptz AND p.deleted_at IS NULL AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') AND EXISTS (SELECT 1 FROM sources read_source WHERE read_source.id = p.source_id AND NOT read_source.archived) ), touched AS ( SELECT p.type, date_trunc('day', p.updated_at)::date AS day, COUNT(DISTINCT p.id) AS cnt FROM pages p WHERE p.updated_at >= $5::timestamptz AND p.updated_at < $6::timestamptz AND p.deleted_at IS NULL AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') AND EXISTS (SELECT 1 FROM sources read_source WHERE read_source.id = p.source_id AND NOT read_source.archived) GROUP BY 1, 2 ) SELECT cd.type AS cohort_value, d.day::text AS day, COALESCE(t.cnt, 0)::int AS count FROM cohort_keys cd CROSS JOIN days d LEFT JOIN touched t ON t.type = cd.type AND t.day = d.day",
+            "textSha256": "9351dac76241bade4fd49adbbb5257ebe4e26c54346cb12bb9e0714590a8af15"
+          },
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT t.tag AS cohort_value, COUNT(DISTINCT p.id)::int AS count, array_agg(DISTINCT p.slug) AS slugs FROM tags t JOIN pages p ON p.id = t.page_id WHERE p.updated_at >= $1::timestamptz AND p.updated_at < $2::timestamptz AND p.deleted_at IS NULL AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') AND EXISTS (SELECT 1 FROM sources read_source WHERE read_source.id = p.source_id AND NOT read_source.archived) GROUP BY 1",
+            "textSha256": "d012b5dd7cfc273afe60d2b6d4f6ad59f5363a6dadea116662dc198f01066d9a"
+          },
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT p.type AS cohort_value, COUNT(DISTINCT p.id)::int AS count, array_agg(DISTINCT p.slug) AS slugs FROM pages p WHERE p.updated_at >= $1::timestamptz AND p.updated_at < $2::timestamptz AND p.deleted_at IS NULL AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') AND EXISTS (SELECT 1 FROM sources read_source WHERE read_source.id = p.source_id AND NOT read_source.archived) GROUP BY 1",
+            "textSha256": "03539ec4206ef3ed9abc4acc8070de9fc644de810e3e4ef3dac2104ea532a31e"
+          }
+        ],
+        "sourceId": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string"
+            ],
+            "sql": "WITH days AS ( SELECT day::date FROM generate_series( $1::date, $2::date - 1, '1 day'::interval ) AS day ), cohort_keys AS ( SELECT DISTINCT t.tag FROM tags t JOIN pages p ON p.id = t.page_id WHERE p.updated_at >= $3::timestamptz AND p.updated_at < $4::timestamptz AND p.source_id = $5 AND (COALESCE(p.frontmatter->>'visibility', CASE WHEN (p.type = 'atom' OR (p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private' AND NOT (CASE WHEN p.type = 'atom' THEN EXISTS (SELECT 1 FROM pages derived_origin WHERE derived_origin.source_id = p.source_id AND derived_origin.slug = p.frontmatter->>'source_slug' AND derived_origin.frontmatter->>'visibility' = 'private') WHEN (p.type = 'atom' OR (p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL)) THEN EXISTS (SELECT 1 FROM links derived_input_link JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id WHERE derived_input_link.from_page_id = p.id AND derived_input_link.link_source = 'concept-provenance' AND derived_input_link.link_type = 'synthesized_from' AND (COALESCE(derived_input.frontmatter->>'visibility', CASE WHEN derived_input.type = 'atom' THEN 'private' ELSE 'world' END) = 'private' OR EXISTS (SELECT 1 FROM pages derived_input_origin WHERE derived_input_origin.source_id = derived_input.source_id AND derived_input_origin.slug = derived_input.frontmatter->>'source_slug' AND derived_input_origin.frontmatter->>'visibility' = 'private'))) ELSE false END)) AND p.deleted_at IS NULL AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') AND EXISTS (SELECT 1 FROM sources read_source WHERE read_source.id = p.source_id AND NOT read_source.archived) ), touched AS ( SELECT t.tag, date_trunc('day', p.updated_at)::date AS day, COUNT(DISTINCT p.id) AS cnt FROM tags t JOIN pages p ON p.id = t.page_id WHERE p.updated_at >= $6::timestamptz AND p.updated_at < $7::timestamptz AND p.source_id = $8 AND (COALESCE(p.frontmatter->>'visibility', CASE WHEN (p.type = 'atom' OR (p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private' AND NOT (CASE WHEN p.type = 'atom' THEN EXISTS (SELECT 1 FROM pages derived_origin WHERE derived_origin.source_id = p.source_id AND derived_origin.slug = p.frontmatter->>'source_slug' AND derived_origin.frontmatter->>'visibility' = 'private') WHEN (p.type = 'atom' OR (p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL)) THEN EXISTS (SELECT 1 FROM links derived_input_link JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id WHERE derived_input_link.from_page_id = p.id AND derived_input_link.link_source = 'concept-provenance' AND derived_input_link.link_type = 'synthesized_from' AND (COALESCE(derived_input.frontmatter->>'visibility', CASE WHEN derived_input.type = 'atom' THEN 'private' ELSE 'world' END) = 'private' OR EXISTS (SELECT 1 FROM pages derived_input_origin WHERE derived_input_origin.source_id = derived_input.source_id AND derived_input_origin.slug = derived_input.frontmatter->>'source_slug' AND derived_input_origin.frontmatter->>'visibility' = 'private'))) ELSE false END)) AND p.deleted_at IS NULL AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') AND EXISTS (SELECT 1 FROM sources read_source WHERE read_source.id = p.source_id AND NOT read_source.archived) GROUP BY 1, 2 ) SELECT cd.tag AS cohort_value, d.day::text AS day, COALESCE(t.cnt, 0)::int AS count FROM cohort_keys cd CROSS JOIN days d LEFT JOIN touched t ON t.tag = cd.tag AND t.day = d.day",
+            "textSha256": "4889c1a5bcbe1fc05650cb67e5603deaa54191bf3ddc61ad621744395e0eec5f"
+          },
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string"
+            ],
+            "sql": "WITH days AS ( SELECT day::date FROM generate_series( $1::date, $2::date - 1, '1 day'::interval ) AS day ), cohort_keys AS ( SELECT DISTINCT p.type FROM pages p WHERE p.updated_at >= $3::timestamptz AND p.updated_at < $4::timestamptz AND p.source_id = $5 AND (COALESCE(p.frontmatter->>'visibility', CASE WHEN (p.type = 'atom' OR (p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private' AND NOT (CASE WHEN p.type = 'atom' THEN EXISTS (SELECT 1 FROM pages derived_origin WHERE derived_origin.source_id = p.source_id AND derived_origin.slug = p.frontmatter->>'source_slug' AND derived_origin.frontmatter->>'visibility' = 'private') WHEN (p.type = 'atom' OR (p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL)) THEN EXISTS (SELECT 1 FROM links derived_input_link JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id WHERE derived_input_link.from_page_id = p.id AND derived_input_link.link_source = 'concept-provenance' AND derived_input_link.link_type = 'synthesized_from' AND (COALESCE(derived_input.frontmatter->>'visibility', CASE WHEN derived_input.type = 'atom' THEN 'private' ELSE 'world' END) = 'private' OR EXISTS (SELECT 1 FROM pages derived_input_origin WHERE derived_input_origin.source_id = derived_input.source_id AND derived_input_origin.slug = derived_input.frontmatter->>'source_slug' AND derived_input_origin.frontmatter->>'visibility' = 'private'))) ELSE false END)) AND p.deleted_at IS NULL AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') AND EXISTS (SELECT 1 FROM sources read_source WHERE read_source.id = p.source_id AND NOT read_source.archived) ), touched AS ( SELECT p.type, date_trunc('day', p.updated_at)::date AS day, COUNT(DISTINCT p.id) AS cnt FROM pages p WHERE p.updated_at >= $6::timestamptz AND p.updated_at < $7::timestamptz AND p.source_id = $8 AND (COALESCE(p.frontmatter->>'visibility', CASE WHEN (p.type = 'atom' OR (p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private' AND NOT (CASE WHEN p.type = 'atom' THEN EXISTS (SELECT 1 FROM pages derived_origin WHERE derived_origin.source_id = p.source_id AND derived_origin.slug = p.frontmatter->>'source_slug' AND derived_origin.frontmatter->>'visibility' = 'private') WHEN (p.type = 'atom' OR (p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL)) THEN EXISTS (SELECT 1 FROM links derived_input_link JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id WHERE derived_input_link.from_page_id = p.id AND derived_input_link.link_source = 'concept-provenance' AND derived_input_link.link_type = 'synthesized_from' AND (COALESCE(derived_input.frontmatter->>'visibility', CASE WHEN derived_input.type = 'atom' THEN 'private' ELSE 'world' END) = 'private' OR EXISTS (SELECT 1 FROM pages derived_input_origin WHERE derived_input_origin.source_id = derived_input.source_id AND derived_input_origin.slug = derived_input.frontmatter->>'source_slug' AND derived_input_origin.frontmatter->>'visibility' = 'private'))) ELSE false END)) AND p.deleted_at IS NULL AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') AND EXISTS (SELECT 1 FROM sources read_source WHERE read_source.id = p.source_id AND NOT read_source.archived) GROUP BY 1, 2 ) SELECT cd.type AS cohort_value, d.day::text AS day, COALESCE(t.cnt, 0)::int AS count FROM cohort_keys cd CROSS JOIN days d LEFT JOIN touched t ON t.type = cd.type AND t.day = d.day",
+            "textSha256": "1c84cc29623f79f178068d60e2a178b70e80c60f7441a0dd0b3f1e14271e47cc"
+          },
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "string"
+            ],
+            "sql": "SELECT t.tag AS cohort_value, COUNT(DISTINCT p.id)::int AS count, array_agg(DISTINCT p.slug) AS slugs FROM tags t JOIN pages p ON p.id = t.page_id WHERE p.updated_at >= $1::timestamptz AND p.updated_at < $2::timestamptz AND p.source_id = $3 AND (COALESCE(p.frontmatter->>'visibility', CASE WHEN (p.type = 'atom' OR (p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private' AND NOT (CASE WHEN p.type = 'atom' THEN EXISTS (SELECT 1 FROM pages derived_origin WHERE derived_origin.source_id = p.source_id AND derived_origin.slug = p.frontmatter->>'source_slug' AND derived_origin.frontmatter->>'visibility' = 'private') WHEN (p.type = 'atom' OR (p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL)) THEN EXISTS (SELECT 1 FROM links derived_input_link JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id WHERE derived_input_link.from_page_id = p.id AND derived_input_link.link_source = 'concept-provenance' AND derived_input_link.link_type = 'synthesized_from' AND (COALESCE(derived_input.frontmatter->>'visibility', CASE WHEN derived_input.type = 'atom' THEN 'private' ELSE 'world' END) = 'private' OR EXISTS (SELECT 1 FROM pages derived_input_origin WHERE derived_input_origin.source_id = derived_input.source_id AND derived_input_origin.slug = derived_input.frontmatter->>'source_slug' AND derived_input_origin.frontmatter->>'visibility' = 'private'))) ELSE false END)) AND p.deleted_at IS NULL AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') AND EXISTS (SELECT 1 FROM sources read_source WHERE read_source.id = p.source_id AND NOT read_source.archived) GROUP BY 1",
+            "textSha256": "840525e3c177492a46a8caea095c9ded6bf1fca657c99050444b5dfb8e8032cb"
+          },
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "string"
+            ],
+            "sql": "SELECT p.type AS cohort_value, COUNT(DISTINCT p.id)::int AS count, array_agg(DISTINCT p.slug) AS slugs FROM pages p WHERE p.updated_at >= $1::timestamptz AND p.updated_at < $2::timestamptz AND p.source_id = $3 AND (COALESCE(p.frontmatter->>'visibility', CASE WHEN (p.type = 'atom' OR (p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private' AND NOT (CASE WHEN p.type = 'atom' THEN EXISTS (SELECT 1 FROM pages derived_origin WHERE derived_origin.source_id = p.source_id AND derived_origin.slug = p.frontmatter->>'source_slug' AND derived_origin.frontmatter->>'visibility' = 'private') WHEN (p.type = 'atom' OR (p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL)) THEN EXISTS (SELECT 1 FROM links derived_input_link JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id WHERE derived_input_link.from_page_id = p.id AND derived_input_link.link_source = 'concept-provenance' AND derived_input_link.link_type = 'synthesized_from' AND (COALESCE(derived_input.frontmatter->>'visibility', CASE WHEN derived_input.type = 'atom' THEN 'private' ELSE 'world' END) = 'private' OR EXISTS (SELECT 1 FROM pages derived_input_origin WHERE derived_input_origin.source_id = derived_input.source_id AND derived_input_origin.slug = derived_input.frontmatter->>'source_slug' AND derived_input_origin.frontmatter->>'visibility' = 'private'))) ELSE false END)) AND p.deleted_at IS NULL AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') AND EXISTS (SELECT 1 FROM sources read_source WHERE read_source.id = p.source_id AND NOT read_source.archived) GROUP BY 1",
+            "textSha256": "56922bf935ebc61d88cb08c0ef04cac41c1097b1b1e91ac232eff7429191d8b0"
+          }
+        ],
+        "sourceIds": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "string",
+              "string",
+              "array<string>",
+              "string",
+              "string",
+              "array<string>"
+            ],
+            "sql": "WITH days AS ( SELECT day::date FROM generate_series( $1::date, $2::date - 1, '1 day'::interval ) AS day ), cohort_keys AS ( SELECT DISTINCT t.tag FROM tags t JOIN pages p ON p.id = t.page_id WHERE p.updated_at >= $3::timestamptz AND p.updated_at < $4::timestamptz AND p.source_id = ANY($5::text[]) AND p.deleted_at IS NULL AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') AND EXISTS (SELECT 1 FROM sources read_source WHERE read_source.id = p.source_id AND NOT read_source.archived) ), touched AS ( SELECT t.tag, date_trunc('day', p.updated_at)::date AS day, COUNT(DISTINCT p.id) AS cnt FROM tags t JOIN pages p ON p.id = t.page_id WHERE p.updated_at >= $6::timestamptz AND p.updated_at < $7::timestamptz AND p.source_id = ANY($8::text[]) AND p.deleted_at IS NULL AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') AND EXISTS (SELECT 1 FROM sources read_source WHERE read_source.id = p.source_id AND NOT read_source.archived) GROUP BY 1, 2 ) SELECT cd.tag AS cohort_value, d.day::text AS day, COALESCE(t.cnt, 0)::int AS count FROM cohort_keys cd CROSS JOIN days d LEFT JOIN touched t ON t.tag = cd.tag AND t.day = d.day",
+            "textSha256": "cbbbd9fcef838e1db54fe1ab987f48bf0e6e7f88f7e0a5de242dc924a057012f"
+          },
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "string",
+              "string",
+              "array<string>",
+              "string",
+              "string",
+              "array<string>"
+            ],
+            "sql": "WITH days AS ( SELECT day::date FROM generate_series( $1::date, $2::date - 1, '1 day'::interval ) AS day ), cohort_keys AS ( SELECT DISTINCT p.type FROM pages p WHERE p.updated_at >= $3::timestamptz AND p.updated_at < $4::timestamptz AND p.source_id = ANY($5::text[]) AND p.deleted_at IS NULL AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') AND EXISTS (SELECT 1 FROM sources read_source WHERE read_source.id = p.source_id AND NOT read_source.archived) ), touched AS ( SELECT p.type, date_trunc('day', p.updated_at)::date AS day, COUNT(DISTINCT p.id) AS cnt FROM pages p WHERE p.updated_at >= $6::timestamptz AND p.updated_at < $7::timestamptz AND p.source_id = ANY($8::text[]) AND p.deleted_at IS NULL AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') AND EXISTS (SELECT 1 FROM sources read_source WHERE read_source.id = p.source_id AND NOT read_source.archived) GROUP BY 1, 2 ) SELECT cd.type AS cohort_value, d.day::text AS day, COALESCE(t.cnt, 0)::int AS count FROM cohort_keys cd CROSS JOIN days d LEFT JOIN touched t ON t.type = cd.type AND t.day = d.day",
+            "textSha256": "cc181aeb8ed697882123b2ffd6c0e6e828d16c59101eb538f6573695609e71ec"
+          },
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "array<string>"
+            ],
+            "sql": "SELECT t.tag AS cohort_value, COUNT(DISTINCT p.id)::int AS count, array_agg(DISTINCT p.slug) AS slugs FROM tags t JOIN pages p ON p.id = t.page_id WHERE p.updated_at >= $1::timestamptz AND p.updated_at < $2::timestamptz AND p.source_id = ANY($3::text[]) AND p.deleted_at IS NULL AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') AND EXISTS (SELECT 1 FROM sources read_source WHERE read_source.id = p.source_id AND NOT read_source.archived) GROUP BY 1",
+            "textSha256": "a1eb9a1d33429badb79ed71edefaa246077b41dbd0f1bcc69eacd52868fdff12"
+          },
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "array<string>"
+            ],
+            "sql": "SELECT p.type AS cohort_value, COUNT(DISTINCT p.id)::int AS count, array_agg(DISTINCT p.slug) AS slugs FROM pages p WHERE p.updated_at >= $1::timestamptz AND p.updated_at < $2::timestamptz AND p.source_id = ANY($3::text[]) AND p.deleted_at IS NULL AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') AND EXISTS (SELECT 1 FROM sources read_source WHERE read_source.id = p.source_id AND NOT read_source.archived) GROUP BY 1",
+            "textSha256": "aff7a35a1c54050264ff3749bd3eccd531875bcf0e1543ce68d649c3f53c6c1f"
+          }
+        ]
+      },
+      "getRecentSalience": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "number"
+            ],
+            "sql": "SELECT p.slug, p.source_id, p.title, p.type, p.updated_at, p.emotional_weight AS emotional_weight, COUNT(DISTINCT t.id) AS take_count, COALESCE(AVG(t.weight), 0) AS take_avg_weight, (p.emotional_weight * 5) + ln(1 + COUNT(DISTINCT t.id)) + (1 * 1.0 / (1.0 + EXTRACT(EPOCH FROM (NOW() - p.updated_at)) / 86400.0)) AS score FROM pages p LEFT JOIN takes t ON t.page_id = p.id AND t.active = TRUE WHERE GREATEST(p.updated_at, COALESCE(p.salience_touched_at, p.updated_at)) >= $1::timestamptz AND p.slug NOT LIKE 'briefings/%' AND p.deleted_at IS NULL AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') AND EXISTS (SELECT 1 FROM sources read_source WHERE read_source.id = p.source_id AND NOT read_source.archived) GROUP BY p.id ORDER BY score DESC LIMIT $2",
+            "textSha256": "6817d4dc355990c92355ec1b5214d223f075e6c07c5e974de4b41366dcc9d25a"
+          }
+        ],
+        "slugPrefix+sourceId+recency": [
+          {
+            "lane": "pool",
+            "params": [
+              "array<string>",
+              "string",
+              "string",
+              "string",
+              "number"
+            ],
+            "sql": "SELECT p.slug, p.source_id, p.title, p.type, p.updated_at, 0 AS emotional_weight, COUNT(DISTINCT t.id) AS take_count, COALESCE(AVG(t.weight), 0) AS take_avg_weight, (0 * 5) + ln(1 + COUNT(DISTINCT t.id)) + (CASE WHEN p.slug LIKE 'media/articles/%' THEN 0.5 * 90.0 / (90.0 + EXTRACT(EPOCH FROM (NOW() - COALESCE(p.effective_date, p.updated_at))) / 86400.0) WHEN p.slug LIKE 'originals/%' THEN 0.5 * 180.0 / (180.0 + EXTRACT(EPOCH FROM (NOW() - COALESCE(p.effective_date, p.updated_at))) / 86400.0) WHEN p.slug LIKE 'companies/%' THEN 0.3 * 365.0 / (365.0 + EXTRACT(EPOCH FROM (NOW() - COALESCE(p.effective_date, p.updated_at))) / 86400.0) WHEN p.slug LIKE 'concepts/%' THEN 0 WHEN p.slug LIKE 'meetings/%' THEN 1 * 60.0 / (60.0 + EXTRACT(EPOCH FROM (NOW() - COALESCE(p.effective_date, p.updated_at))) / 86400.0) WHEN p.slug LIKE 'writing/%' THEN 0.4 * 365.0 / (365.0 + EXTRACT(EPOCH FROM (NOW() - COALESCE(p.effective_date, p.updated_at))) / 86400.0) WHEN p.slug LIKE 'media/x/%' THEN 1.5 * 7.0 / (7.0 + EXTRACT(EPOCH FROM (NOW() - COALESCE(p.effective_date, p.updated_at))) / 86400.0) WHEN p.slug LIKE 'people/%' THEN 0.3 * 365.0 / (365.0 + EXTRACT(EPOCH FROM (NOW() - COALESCE(p.effective_date, p.updated_at))) / 86400.0) WHEN p.slug LIKE 'daily/%' THEN 1.5 * 14.0 / (14.0 + EXTRACT(EPOCH FROM (NOW() - COALESCE(p.effective_date, p.updated_at))) / 86400.0) WHEN p.slug LIKE 'deals/%' THEN 0.5 * 180.0 / (180.0 + EXTRACT(EPOCH FROM (NOW() - COALESCE(p.effective_date, p.updated_at))) / 86400.0) WHEN p.slug LIKE 'chat/%' THEN 1 * 7.0 / (7.0 + EXTRACT(EPOCH FROM (NOW() - COALESCE(p.effective_date, p.updated_at))) / 86400.0) ELSE 0.3 * 90.0 / (90.0 + EXTRACT(EPOCH FROM (NOW() - COALESCE(p.effective_date, p.updated_at))) / 86400.0) END) AS score FROM pages p LEFT JOIN takes t ON t.page_id = p.id AND t.active = TRUE AND t.holder = ANY($1::text[]) WHERE p.updated_at >= $2::timestamptz AND p.slug LIKE $3 ESCAPE '\\' AND p.slug NOT LIKE 'briefings/%' AND p.source_id = $4 AND (COALESCE(p.frontmatter->>'visibility', CASE WHEN (p.type = 'atom' OR (p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private' AND NOT (CASE WHEN p.type = 'atom' THEN EXISTS (SELECT 1 FROM pages derived_origin WHERE derived_origin.source_id = p.source_id AND derived_origin.slug = p.frontmatter->>'source_slug' AND derived_origin.frontmatter->>'visibility' = 'private') WHEN (p.type = 'atom' OR (p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL)) THEN EXISTS (SELECT 1 FROM links derived_input_link JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id WHERE derived_input_link.from_page_id = p.id AND derived_input_link.link_source = 'concept-provenance' AND derived_input_link.link_type = 'synthesized_from' AND (COALESCE(derived_input.frontmatter->>'visibility', CASE WHEN derived_input.type = 'atom' THEN 'private' ELSE 'world' END) = 'private' OR EXISTS (SELECT 1 FROM pages derived_input_origin WHERE derived_input_origin.source_id = derived_input.source_id AND derived_input_origin.slug = derived_input.frontmatter->>'source_slug' AND derived_input_origin.frontmatter->>'visibility' = 'private'))) ELSE false END)) AND p.deleted_at IS NULL AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') AND EXISTS (SELECT 1 FROM sources read_source WHERE read_source.id = p.source_id AND NOT read_source.archived) GROUP BY p.id ORDER BY score DESC LIMIT $5",
+            "textSha256": "92022735d56ee9b08eafbc31dd61ea8e5290892951e2a7ee88c4e0507b154565"
+          }
+        ],
+        "sourceIds": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "array<string>",
+              "number"
+            ],
+            "sql": "SELECT p.slug, p.source_id, p.title, p.type, p.updated_at, p.emotional_weight AS emotional_weight, COUNT(DISTINCT t.id) AS take_count, COALESCE(AVG(t.weight), 0) AS take_avg_weight, (p.emotional_weight * 5) + ln(1 + COUNT(DISTINCT t.id)) + (1 * 1.0 / (1.0 + EXTRACT(EPOCH FROM (NOW() - p.updated_at)) / 86400.0)) AS score FROM pages p LEFT JOIN takes t ON t.page_id = p.id AND t.active = TRUE WHERE GREATEST(p.updated_at, COALESCE(p.salience_touched_at, p.updated_at)) >= $1::timestamptz AND p.slug NOT LIKE 'briefings/%' AND p.source_id = ANY($2::text[]) AND p.deleted_at IS NULL AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') AND EXISTS (SELECT 1 FROM sources read_source WHERE read_source.id = p.source_id AND NOT read_source.archived) GROUP BY p.id ORDER BY score DESC LIMIT $3",
+            "textSha256": "41459fd1a06bb8d6cf3eeb905b6561bca95e43fe9e0621cb8c74b32d960c3346"
+          }
+        ]
+      },
+      "listEnrichCandidates": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "array<string>",
+              "number",
+              "number"
+            ],
+            "sql": "SELECT p.slug, p.source_id, p.title, p.type, (char_length(p.compiled_truth) + char_length(COALESCE(p.timeline, ''))) AS body_len, COALESCE(( SELECT COUNT(*) FROM links l WHERE l.to_page_id = p.id AND l.link_source IS DISTINCT FROM 'mentions' ), 0)::int AS inbound_count FROM pages p WHERE p.deleted_at IS NULL AND p.type = ANY($1::text[]) AND (char_length(p.compiled_truth) + char_length(COALESCE(p.timeline, ''))) < $2 AND (p.frontmatter ->> 'dream_generated') IS DISTINCT FROM 'true' ORDER BY inbound_count DESC, p.source_id ASC, p.slug ASC LIMIT $3",
+            "textSha256": "3338bd2f96f229be17a9f3405af5556f88263be691c24990ac2ae0db4c358661"
+          }
+        ],
+        "sourceId": [
+          {
+            "lane": "pool",
+            "params": [
+              "array<string>",
+              "number",
+              "string",
+              "number"
+            ],
+            "sql": "SELECT p.slug, p.source_id, p.title, p.type, (char_length(p.compiled_truth) + char_length(COALESCE(p.timeline, ''))) AS body_len, COALESCE(( SELECT COUNT(*) FROM links l WHERE l.to_page_id = p.id AND l.link_source IS DISTINCT FROM 'mentions' ), 0)::int AS inbound_count FROM pages p WHERE p.deleted_at IS NULL AND p.type = ANY($1::text[]) AND (char_length(p.compiled_truth) + char_length(COALESCE(p.timeline, ''))) < $2 AND p.source_id = $3 AND (p.frontmatter ->> 'dream_generated') IS DISTINCT FROM 'true' ORDER BY inbound_count DESC, p.source_id ASC, p.slug ASC LIMIT $4",
+            "textSha256": "d66d07de0d8a4b29e1a7f730e8bfae4ca1f52e8afc12cf356552eb151d4ddfdb"
+          }
+        ],
+        "sourceIds+reenrich": [
+          {
+            "lane": "pool",
+            "params": [
+              "array<string>",
+              "number",
+              "array<string>",
+              "string",
+              "number"
+            ],
+            "sql": "SELECT p.slug, p.source_id, p.title, p.type, (char_length(p.compiled_truth) + char_length(COALESCE(p.timeline, ''))) AS body_len, COALESCE(( SELECT COUNT(*) FROM links l WHERE l.to_page_id = p.id AND l.link_source IS DISTINCT FROM 'mentions' ), 0)::int AS inbound_count FROM pages p WHERE p.deleted_at IS NULL AND p.type = ANY($1::text[]) AND (char_length(p.compiled_truth) + char_length(COALESCE(p.timeline, ''))) < $2 AND p.source_id = ANY($3::text[]) AND NOT ( p.frontmatter ->> 'enriched_at' IS NOT NULL AND p.frontmatter ->> 'enriched_at' > $4 ) AND (p.frontmatter ->> 'dream_generated') IS DISTINCT FROM 'true' ORDER BY inbound_count DESC, p.source_id ASC, p.slug ASC LIMIT $5",
+            "textSha256": "99c6dc60239a138d17df8f52076ceb9020c9404507aa45fa608be039f3b90d4d"
+          }
+        ]
+      },
+      "setEmotionalWeightBatch": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "array<string>",
+              "array<string>",
+              "array<number>"
+            ],
+            "sql": "UPDATE pages SET emotional_weight = u.weight, salience_touched_at = now() FROM unnest($1::text[], $2::text[], $3::real[]) AS u(slug, source_id, weight) WHERE pages.slug = u.slug AND pages.source_id = u.source_id AND pages.emotional_weight IS DISTINCT FROM u.weight RETURNING 1",
+            "textSha256": "d56ad1bc2dbcec200c39c6f56722d9236d66026a08a9f492327c4b635238a435"
+          }
+        ],
+        "empty": []
+      }
+    }
+  },
+  "normalizer": "sql-text-v1"
+}

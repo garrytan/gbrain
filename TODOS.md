@@ -1,5 +1,26 @@
 # TODOS
 
+## Refactor wave 1 follow-ups (filed 2026-09-30; plan: docs/designs/REFACTOR_WAVE_1.md, review record: docs/designs/refactor-wave-1/)
+
+- [ ] **P2 — Wave 2: decompose the remaining >300-line functions (plan D1).**
+  **What:** every row of `scripts/function-size-baseline.tsv` outside the wave 1 files: `runCycle`, `applyHarness`, `runPhaseSynthesizeInner`, `runImport`, `importFromContent`, `makeSubagentHandler`, `runConfig` and the rest. **Why:** the W5 ratchet only freezes them; they are the same bug-farm class wave 1 split. **Pros:** shrinks the baseline with proven patterns (state object, registry, named stages, handler table). **Cons:** path churn against open PRs. **Depends on:** wave 1 merged plus its 72-hour revert-clean window. **Effort:** L. **Priority:** P2.
+- [ ] **P3 — `src/core/` regroup and `ai/gateway.ts` provider adapters (plan D2).**
+  **What:** group `src/core/` by subsystem and split the gateway into per-provider adapters. **Why:** the next layer of navigability. **Cons:** large path churn; the adapter interface is an open design question. **Depends on:** wave 2 in part. **Effort:** L. **Priority:** P3.
+- [ ] **P2 — Phase-named sync errors (plan T3).**
+  **What:** errors and timeouts raised inside a `SyncRun` phase (`src/commands/sync/`: preflight, deletes, renames, imports, finalize) name the phase. **Why:** the phase breadcrumbs added for the PGLite sync-hang report (see "Mitigation in v0.41.8.0" further down) only log; the error text still does not say which phase failed. **Cons:** changes error text pinned by goldens (an intentional, reviewed change). **Depends on:** wave 1 W4 sync. **Effort:** S. **Priority:** P2 (first follow-up).
+- [ ] **P3 — Timestamp-based schema migration versions.**
+  **What:** replace sequential `v<NNN>` versions with collision-free ones. **Why:** concurrent branches pick the same next number; today `bun run build:schema-migrations` fails loudly on a duplicate and `check:schema-migration-order` rejects an out-of-order landing, but the fix is still a manual renumber. **Cons:** changes `schema_version` semantics and the runner's ordering. **Depends on:** wave 1 W3. **Effort:** M. **Priority:** P3.
+- [ ] **P3 — Router-level admin auth for `serve --http`.**
+  **What:** mount `/admin/api/*` on an `express.Router` with `router.use(requireAdmin)` in `src/commands/serve-http-admin-api.ts` instead of attaching `requireAdmin` per route. **Why:** a forgotten per-route guard becomes impossible rather than caught by `test/serve-http-admin-route-guard.test.ts`. **Cons:** changes the middleware order pinned by the route goldens. **Depends on:** wave 1 W4 serve-http. **Effort:** S. **Priority:** P3.
+- [ ] **P3 — Wave 1 re-measure at +3 months (run on or after 2026-12-30).**
+  **What:** rerun the outcome baseline (`docs/designs/refactor-wave-1/outcome-baseline.md`, "Re-measure at +3 months") and add four numbers: (1) the share of storage commits (touching either engine path or `src/core/engine-sql/`) that still edit both engine files, against the 74.3% last-90-day baseline; (2) conflicts on target paths per merged PR, via the GitHub API: for each merged PR touching the target paths, the other PRs merged between its creation and merge that touched the same file, computed for 2026-07-01..2026-09-30 and for the re-measure window with one method; (3) remaining baseline rows: `grep -c '^method' scripts/engine-sql-baseline.tsv` and the data rows of `scripts/function-size-baseline.tsv`; (4) median rebase-to-merge time (last head update to merge) for PRs touching target paths. **Why:** criterion (e) and O19. **Effort:** M. **Priority:** P3.
+- [ ] **P2 — Extend RLS scope binding to reads master left unscoped (E-TODO-1).**
+  **What:** move `LegacyUnscopedRead` reads (salience, facts, takes, code-edges and the others in the EO4 inventory, `test/fixtures/goldens/rls-scope-inventory.json`) to `ScopedRead`. **Why:** RLS layer 2 covers only the reads master scoped. **Pros:** defense in depth on hosted Postgres; the brands make it a type edit per method. **Cons:** with `GBRAIN_RLS_SCOPE_BINDING=1` each read gains a transaction and a pool hold (the #1794 class), so it needs a PgBouncer load test. **Depends on:** wave 1 W1. **Effort:** M. **Priority:** P2.
+- [ ] **P3 — Collapse per-domain parity tests into executor contract tests (E-TODO-3).**
+  **What:** once every storage domain is migrated to `src/core/engine-sql/`, replace duplicated per-domain PGLite/Postgres parity scenarios with the executor contract tests plus one shared scenario suite per domain. **Why:** the parity files exist because the SQL was written twice. **Cons:** each retirement needs its evidence table (docs/TESTING.md "Retiring a test"). **Depends on:** all domains migrated. **Effort:** M. **Priority:** P3.
+- [ ] **P3 — Align PGLite `getEdgesByChunk` with Postgres.**
+  **What:** PGLite keeps its own `getEdgesByChunk` (`src/core/pglite-engine/code-edges.ts`, a `method` row in `scripts/engine-sql-baseline.tsv`) because its SQL is one `UNION ALL` under a single shared `LIMIT`, and for direction `both` its edge-type filter binds only to the `to_chunk_id` arm (operator precedence); Postgres runs two statements with their own limits and a parenthesized filter (`docs/designs/refactor-wave-1/w1-inventory.md`). Move PGLite onto `src/core/engine-sql/code-edges.ts` and drop the row. PGLite also splices `edgeType` into the SQL text instead of binding it. **Why:** one implementation, and the filter precedence looks like a bug. **Cons:** a behavior change for PGLite results (limits and filtering). **Effort:** S. **Priority:** P3.
+
 ## Fix wave 3 follow-ups (filed 2026-09-29, follow-up from v0.60.11.0)
 
 ### Recovery layer
@@ -64,7 +85,7 @@ Evidence for each item is in `docs/test-audit/2026-09-29/`.
 - [ ] **P3 — Per-symbol review of 136 dead-in-prod exported functions.**
   **What:** `docs/test-audit/2026-09-29/lane-seams/seams.md` §3.4 lists 136 exported functions with no reference outside tests (beyond the test-seam names and dead modules the plan already handles). **Fix:** review each: wire it, make it module-private, or delete it with its tests, one small PR per subsystem. **Effort:** M. **Priority:** P3.
 - [ ] **P2 — Extract a testable autopilot tick function, then retire the 8 autopilot wiring greps.**
-  **What:** 8 test files (~75 tests: auto-drain, cycle-failure-classification, fanout-wiring, nightly-probe-wiring, parser-probe-wiring, shutdown-engine-close, supervisor-wiring, self-upgrade) pin the inline autopilot tick body as source text because no callable tick exists. **Fix:** extract the tick into an exported function with injected clock, engine and job submitter, cover each wiring behavior with a real call, then delete the source greps. **Effort:** M. **Priority:** P2.
+  **What:** 8 test files (~75 tests: auto-drain, cycle-failure-classification, fanout-wiring, nightly-probe-wiring, parser-probe-wiring, shutdown-engine-close, supervisor-wiring, self-upgrade) pin the inline autopilot tick body as source text because no callable tick exists. **Fix:** extract the tick into an exported function with injected clock, engine and job submitter, cover each wiring behavior with a real call, then delete the source greps. **Effort:** M. **Priority:** P2. **Coordination (refactor wave 1, E-TODO-2):** the tick now runs as named steps in `src/commands/autopilot-daemon.ts` (`probeDatabaseOrReconnect`, `probeNoWorkerPeer`, `runInlineCycle`, `adaptiveInterval`), `dispatchAutopilotTick` in `autopilot-dispatch.ts` and the probes in `autopilot-probes.ts`, and the greps read them through `test/helpers/source-surface.ts`; extract the injectable tick from `runAutopilotDaemon` in the same change that retires the greps, so they are re-pointed once.
 - [ ] **P3 — Speed passes on `test/helpers/reset-pglite.test.ts` (~15 s) and `test/docs-navigation.test.ts` (~3.5 s).**
   **What:** the two most expensive files in their audit lanes. `docs-navigation` is the only Markdown link and fragment checker, so it must stay; scope or cache its parsing instead. **Fix:** profile both and cut repeated setup (shared engine or fixture reuse for the reset helper; parse each doc once for the link checker). **Effort:** S. **Priority:** P3.
 - [ ] **P3 — CONTRIBUTING.md "first green test" block.**
@@ -212,8 +233,8 @@ Evidence for each item is in `docs/test-audit/2026-09-29/`.
   **What:** `src/core/context/turn-context.ts` fetches delta facts with `listFactsSince(..., { limit: 50 })` ordered `created_at DESC` and never sets `has_more` for facts, so more than 50 new facts since the cursor silently drop the OLDEST ones as the page cursor advances past them. **Why:** the v0.50.1.0 pre-landing review found it while simplifying the delta cursor; the fix is an ascending keyset fetch plus `has_more` when the window is full (an engine-options change, so it was left out of the wave). **Effort:** M. **Priority:** P2.
 - [ ] **P2 — `session_context_state` cursor upsert: GREATEST, not COALESCE.**
   **What:** `src/core/context/session-state.ts` upserts `last_wake_at = COALESCE(EXCLUDED.last_wake_at, …)` (last-writer-wins) while its own doc and `src/mcp/context-pack-handler.ts` assume a monotonic GREATEST, so a `context_pack` push after a `delta` wake can move the shared cursor forward past items the delta never delivered. **Why:** pre-existing, surfaced by the v0.50.1.0 review; fix the SQL to GREATEST and pin it. **Effort:** S. **Priority:** P2.
-- [ ] **P3 — `schema lint --with-db` has no test.**
-  **What:** the v0.50.1.0 wave re-plumbed `gbrain schema lint --with-db` inside `withConnectedEngine` (tier-4 `schema_pack` read + `process.exit(1)` on a missing pack) and nothing in `test/` drives it. **Why:** a regression there would ship green. **Effort:** S. **Priority:** P3.
+- [x] **P3 — `schema lint --with-db` has no test.** **Completed:** v0.60.15.0 (2026-09-30). `test/schema-cli-lint-with-db.test.ts` drives isolated CLI subprocesses for DB-plane pack resolution, flag ordering, missing packs, JSON output, invalid arguments, and plain-lint separation (12 cases).
+  **What (as filed):** the v0.50.1.0 wave re-plumbed `gbrain schema lint --with-db` inside `withConnectedEngine` (tier-4 `schema_pack` read + `process.exit(1)` on a missing pack) and nothing in `test/` drives it. **Why:** a regression there would ship green. **Effort:** S. **Priority:** P3.
 - [ ] **P3 — recompute_emotional_weight: pin `pages_recomputed` semantics and the lock-steal path.**
   **What:** `pages_recomputed` now counts evaluated rows (`details.pages_updated` counts writes) and feeds `totals.pages_emotional_weight_recomputed`; the phase moved under `racedTimePhase` with no lock-steal test, and its Postgres SQL twin runs only in the nightly e2e lane. **Why:** the coverage audit flagged both as unpinned behavior changes. **Effort:** S. **Priority:** P3.
 - [ ] **P3 — minion `put_page` type pin: round-trip fidelity test + delegated-lane wording.**
@@ -1918,8 +1939,13 @@ deferred M-effort issues above are NOT repeated here.
   write lock for the build. Fine for typical brains; a busy multi-tenant
   install would want `CONCURRENTLY` (which needs the migration runner to
   support non-transactional steps). **Effort:** M. **Priority:** P3.
-- [ ] **P3 — full 3-way schema-blob parity test.** **What:**
-  `pglite-schema.ts` / `schema-embedded.generated.ts` / `schema.sql` have no general
+- [x] **P3 — full 3-way schema-blob parity test.** **Completed: refactor wave 1 (W2).**
+  Schema text has one hand-edited copy (`src/schema.sql` + its TS fragments);
+  `bun run build:schema` generates the schema.sql fragment regions,
+  `schema-embedded.generated.ts` and the PGLite template `pglite-schema.generated.ts`,
+  `check:schema-fresh` regenerates the whole chain and names the source to edit on drift,
+  and the E4 catalog goldens pin the end state on both engines. Original entry:
+  `pglite-schema.ts` / `schema-embedded.generated.ts` / `schema.sql` had no general
   drift guard; v0.46.25.0 added a private-queue-scoped parity pin
   (test/private-queue-schema-parity.test.ts) — generalize it to the whole
   blob surface (normalized statement diff). **Effort:** M. **Priority:** P3.
@@ -2006,23 +2032,31 @@ deferred M-effort issues above are NOT repeated here.
   (test/scripts/coverage-gate-enforced.test.ts, to be authored in that PR), flips ONLY
   the two PR-lane sites in test.yml (`:481`,`:486`), and leaves e2e.yml's fullCorpus
   occurrence advisory — a separate decision. Criteria stay verbatim; do not loosen.
-- [ ] **P2 — Wave 4a: decompose performSyncInner (own plan).** **What:** the 1,923-line
+- [x] **P2 — Wave 4a: decompose performSyncInner (own plan).** **What:** the 1,923-line
   procedure inside src/commands/sync.ts → sync-phase-{deletes,renames,imports} modules.
-  **Why:** the six pure clusters are peeled (sync.ts 5,991→4,121); the remaining bulk is one
-  function. **Blocked by:** re-pointing the two positional source-text guards
-  (test/sync.test.ts #132 prelude scan, test/redos-hardening.test.ts ordering) at the phase
-  modules — needs its own plan. **Effort:** L→M with CC. **Priority:** P2.
-- [ ] **P2 — Wave 4b: hoist buildChecks' ~220 inline checks.push literals into named
-  functions, then finish the doctor split (own plan).** **What:** doctor.ts is 4,177 lines,
-  ~3,240 of them buildChecks. Hoisting the inline literals into named check functions makes
-  them movable into the checks/ bundles. **Why:** completes the assessment's #1 named peel
-  target. **Effort:** L→M with CC. **Priority:** P2.
+  **Completed:** refactor wave 1, W4 sync. `performSyncInner` is a phase orchestrator over a
+  `SyncRun` state object in `src/commands/sync/` (preflight, deletes, renames, imports,
+  finalize; `runSyncInner` flag parsing in `sync/args.ts`; `performFullSync` decomposed);
+  `sync.ts` is the façade. The two positional guards were re-pointed at
+  `src/commands/sync/imports.ts`, plus a cross-file #132 guard with a mutation fixture. See the
+  `src/commands/sync/` entry in docs/architecture/key-files/commands-6.md.
+- [x] **P2 — Wave 4b: hoist buildChecks' ~220 inline checks.push literals into named
+  functions, then finish the doctor split (own plan).** **Completed: refactor wave 1 (W4
+  doctor).** Every `buildChecks` block now lives verbatim in a registry entry under
+  `src/commands/doctor/checks/` and runs through `DOCTOR_CHECK_REGISTRY` in
+  `src/commands/doctor/registry.ts`; `buildChecks` is the flag parse plus the runner call and
+  doctor.ts is 653 lines. Pinned by the W0 registry / early-stop / `--json` goldens,
+  `test/doctor-registry.test.ts` and `test/doctor-mode-matrix.serial.test.ts`.
 - [ ] **P2 — CLI subprocess coverage.** **What:** investigate an in-process CLI-invocation
   harness for a coverage lane (import cli.ts main instead of spawning) and track bun
   child-process coverage support upstream. **Why:** E2E-spawned `bun src/cli.ts` children are
   invisible to bun's coverage (the documented 15.2% cli.ts undercount);
   src/cli.ts sits in the gate exemption list until this closes. **Effort:** M. **Priority:** P2.
-- [ ] **P3 — Migrate-runner extraction (revisit only on evidence).** **What:** the ~668
+- [x] **P3 — Migrate-runner extraction (revisit only on evidence).** **Completed: refactor
+  wave 1 (W3).** Every migration moved to its own file in `src/core/schema-migrations/`
+  (static-import `registry.generated.ts`), so `src/core/migrate.ts` is only the runner
+  (599 lines, ratcheted like any file); the region policy is retired and the slice-window
+  assertions were re-pointed at the files that hold the code. Original entry: the ~668
   region-guarded runner lines in src/core/migrate.ts could move to migrate-runner.ts.
   **Why deferred:** 9 slice-window source-text assertions in test/migrate.test.ts pin
   locality; the region-exempt ratchet already forbids logic growth. Revisit if the region
@@ -4489,7 +4523,12 @@ single canonical `src/core/model-pricing.ts` with `canonicalLookup`.
   documented as additive) and add `atoms_inserted` +
   `concepts_inserted` next to `facts_consolidated`.
 
-- **TODO-V19-C (P3)**: Check-registry refactor for `gbrain doctor`. The
+- **TODO-V19-C (P3)** — **Completed: refactor wave 1 (W4 doctor).** The check registry
+  landed as `DOCTOR_CHECK_REGISTRY` (`src/commands/doctor/registry.ts`): ordered
+  `{ name, emits, run(ctx) }` entries with an explicit `DoctorContext`; categories stay in
+  `src/core/doctor-categories.ts` (no per-entry category field), enforced by
+  `test/doctor-registry.test.ts`. `--scope` gates stay inside the entries; a future scope
+  dimension can filter entries instead of adding inline gates. Original entry: Check-registry refactor for `gbrain doctor`. The
   v0.41.19.0 `--scope=brain` uses explicit early-skip gates inline at
   each call site (~40 LOC across resolver + skill_conformance +
   skill_brain_first + whoknows). If we want to add more scope

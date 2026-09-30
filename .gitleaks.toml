@@ -34,7 +34,7 @@ regexes = [
 description = "SQL column and prose identifiers misclassified as API keys"
 targetRules = ["generic-api-key"]
 condition = "AND"
-paths = ['''^src/(schema\.sql|core/(pglite-schema|schema-embedded(?:\.generated)?|link-extraction)\.ts)$''']
+paths = ['''^src/(schema\.sql|core/(pglite-schema(?:\.generated)?|schema-embedded(?:\.generated)?|link-extraction)\.ts)$''']
 regexTarget = "secret"
 regexes = ['''^(receipt_sha8_corpus|raw/lower/slugified)$''']
 

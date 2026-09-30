@@ -250,6 +250,31 @@ export async function listEntityIdentities(
   }
 }
 
+/**
+ * The identity group of each given (source_id, slug) page that belongs to one,
+ * keyed `${source_id}:${slug}`. Pages outside any group are absent.
+ */
+export async function identityIdsForPages(
+  engine: BrainEngine,
+  pages: Array<{ sourceId: string; slug: string }>,
+): Promise<Map<string, string>> {
+  if (pages.length === 0) return new Map();
+  const wanted = new Set(pages.map(p => `${p.sourceId}:${p.slug}`));
+  try {
+    const rows = await engine.executeRaw<{ entity_id: string; source_id: string; slug: string }>(
+      `SELECT ei.entity_id, ei.source_id, p.slug
+         FROM entity_identities ei
+         JOIN pages p ON p.id = ei.page_id AND p.source_id = ei.source_id AND p.deleted_at IS NULL
+        WHERE ei.source_id = ANY($1::text[]) AND p.slug = ANY($2::text[])`,
+      [[...new Set(pages.map(p => p.sourceId))], [...new Set(pages.map(p => p.slug))]],
+    );
+    return new Map(rows.map((r): [string, string] => [`${r.source_id}:${r.slug}`, r.entity_id]).filter(([k]) => wanted.has(k)));
+  } catch (e) {
+    if (isUndefinedTableError(e)) return new Map();
+    throw e;
+  }
+}
+
 /** Is the flag-gated retrieval union on? Fail-closed on any read error. */
 export async function isIdentityUnionEnabled(engine: BrainEngine): Promise<boolean> {
   try {

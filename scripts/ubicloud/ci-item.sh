@@ -9,6 +9,7 @@
 #   serial   scripts/run-serial-tests.sh FILE  (DATABASE_URL unset)
 #   slow     scripts/run-slow-tests.sh FILE    (DATABASE_URL unset)
 #   e2e      scripts/run-e2e.sh FILE against this slot's own postgres + pgbouncer
+#            (backend-matrix files also run through the slot's pgbouncer)
 #   verify   check-bun-test-timeout.sh + bun run verify (no FILE)
 #   gitleaks the ci:local host scans (no FILE)
 #
@@ -47,6 +48,7 @@ run_item() {
       DATABASE_URL="$pg/gbrain_test" \
       GBRAIN_PGBOUNCER_URL="$pgb/gbrain_pgbouncer_test" \
       GBRAIN_PGBOUNCER_DIRECT_URL="$pg/gbrain_test" \
+      GBRAIN_PGBOUNCER_E2E_URL="$pgb/gbrain_test?prepare=false" \
       GBRAIN_CI_REQUIRE_PGBOUNCER=1 \
       GBRAIN_TEST_DB=1 \
       bash scripts/run-e2e.sh "$1"

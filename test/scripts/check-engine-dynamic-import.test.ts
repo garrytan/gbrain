@@ -30,10 +30,10 @@ function fixture(name: string, content: string): string {
  */
 function expectedDefaultScanCount(): number {
   let count = 3;
-  for (const dir of ['src/core/pglite-engine', 'src/core/postgres-engine']) {
+  for (const dir of ['src/core/pglite-engine', 'src/core/postgres-engine', 'src/core/engine-sql', 'src/core/schema-migrations']) {
     const full = join(REPO_ROOT, dir);
     if (!existsSync(full)) continue;
-    count += readdirSync(full).filter((f) => f.endsWith('.ts')).length;
+    count += readdirSync(full, { recursive: true }).filter((f) => String(f).endsWith('.ts')).length;
   }
   return count;
 }

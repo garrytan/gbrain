@@ -1,0 +1,27 @@
+{
+  "golden": [
+    "trg:facts.managed_writer_guard",
+    "trg:minion_jobs.minion_queue_protocol",
+    "trg:page_aliases.managed_writer_guard",
+    "trg:pages.bump_page_generation_clock_trg",
+    "trg:pages.bump_page_generation_trg",
+    "trg:pages.managed_writer_guard",
+    "trg:pages.pages_knowledge_revision",
+    "trg:pages.pages_projection_queue",
+    "trg:pages.trg_pages_search_vector",
+    "trg:persistence_brain.gbrain_protocol_activation",
+    "trg:persistence_effects.gbrain_effect_protocol",
+    "trg:persistence_requests.gbrain_request_protocol",
+    "trg:shared_skill_delivery_batches.shared_skill_delivery_lease",
+    "trg:shared_skill_heads.gbrain_skill_publication",
+    "trg:shared_skill_packs.gbrain_skill_publication",
+    "trg:shared_skill_revisions.gbrain_skill_publication",
+    "trg:slug_aliases.managed_writer_guard",
+    "trg:sources.managed_writer_guard",
+    "trg:tags.managed_writer_guard",
+    "trg:tags.tags_knowledge_revision",
+    "trg:takes.managed_writer_guard",
+    "trg:timeline_entries.managed_writer_guard"
+  ],
+  "normalizer": "oid-churn-keys-v1"
+}

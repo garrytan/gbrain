@@ -92,7 +92,7 @@ describeBoth('v0.29 engine parity — getRecentSalience', () => {
 // ---------------------------------------------------------------------------
 // D5 — setEmotionalWeightBatch + getSalienceScores write/read parity.
 //
-// Pinned engine shapes (src/core/{pglite,postgres}-engine/salience.ts +
+// Pinned engine shapes (src/core/engine-sql/salience.ts +
 // the getSalienceScores methods on both engine classes):
 //   - setEmotionalWeightBatch(rows: {slug, source_id, weight}[]) → number of
 //     CHANGED pages (composite (slug, source_id) join against unnest filtered

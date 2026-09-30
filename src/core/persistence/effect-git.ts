@@ -1,22 +1,18 @@
-import { execFile } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { dirname, join, relative, resolve as resolvePath, sep } from 'node:path';
-import { isDurabilityHardenedAsync } from '../brain-repo-durability.ts';
+import { execFileBounded, isDurabilityHardenedAsync } from '../brain-repo-durability.ts';
 import { OperationError } from '../ops/contract.ts';
 import { persistenceHome } from './identity.ts';
 import { nativeFileTarget } from './native-file-target.ts';
 
-function git(root: string, hooks: string, args: string[], signal?: AbortSignal): Promise<{ stdout: string; code: number }> {
-  return new Promise((resolve, reject) => {
-    execFile('git', ['--literal-pathspecs', '-C', root, '-c', `core.hooksPath=${hooks}`, '-c', 'commit.gpgsign=false', ...args], {
-      encoding: 'utf8', timeout: 20_000, maxBuffer: 1024 * 1024, signal,
-      env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'Never',
-        GIT_GLOB_PATHSPECS: '0', GIT_NOGLOB_PATHSPECS: '0', GIT_ICASE_PATHSPECS: '0' },
-    }, (error, stdout) => {
-      if (error && (error.killed || typeof error.code !== 'number')) reject(new OperationError('git_unavailable', 'Git execution did not finish within its bounded attempt.'));
-      else resolve({ stdout, code: error?.code as number ?? 0 });
-    });
+async function git(root: string, hooks: string, args: string[], signal?: AbortSignal): Promise<{ stdout: string; code: number }> {
+  const { error, stdout } = await execFileBounded('git', ['--literal-pathspecs', '-C', root, '-c', `core.hooksPath=${hooks}`, '-c', 'commit.gpgsign=false', ...args], {
+    timeout: 20_000, maxBuffer: 1024 * 1024, signal,
+    env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'Never',
+      GIT_GLOB_PATHSPECS: '0', GIT_NOGLOB_PATHSPECS: '0', GIT_ICASE_PATHSPECS: '0' },
   });
+  if (error && (error.killed || typeof error.code !== 'number')) throw new OperationError('git_unavailable', 'Git execution did not finish within its bounded attempt.');
+  return { stdout, code: error?.code as number ?? 0 };
 }
 
 type GitOutcome = { git: string; reason?: string; push?: string };

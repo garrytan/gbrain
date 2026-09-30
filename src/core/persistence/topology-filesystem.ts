@@ -54,7 +54,7 @@ export async function cloneTopologyCheckout(url:string,destination:string,maxByt
   const hooks=mkdtempSync(join(base,'clone-'));
   const child=spawn('git',[...durableSsrfFlags(),'-c',`core.hooksPath=${hooks}`, 'clone',...GIT_SSRF_SUBCOMMAND_FLAGS,'--depth=1','--',url,destination],
     {stdio:['ignore','ignore','ignore'],detached:process.platform!=='win32',env:{...process.env,...GIT_ENV}});
-  let failure:unknown,check:Promise<void>|undefined,stopping:Promise<void>|undefined;
+  let failure:unknown,check:Promise<void>|undefined,stopping:Promise<void>|undefined,abandon=()=>{};
   const stop=(error:unknown)=>{
     failure??=error;
     if(stopping)return;
@@ -67,13 +67,14 @@ export async function cloneTopologyCheckout(url:string,destination:string,maxByt
         killer.once('exit',()=>resolve());killer.once('error',()=>{child.kill('SIGKILL');resolve();});
       }else{try{process.kill(-child.pid,'SIGKILL');}catch{}resolve();}
     });
+    abandon();
   };
   const monitor=setInterval(()=>{
     if(!check)check=topologyDirectoryBytes(destination,maxBytes).then(()=>{}).catch(stop).finally(()=>{check=undefined;});
   },50);
   const timer=setTimeout(()=>stop(new OperationError('storage_error','The staged clone exceeded its execution deadline.')),timeoutMs);
   try{
-    const code=await new Promise<number|null>((resolve,reject)=>{child.once('error',reject);child.once('exit',resolve);});
+    const code=await new Promise<number|null>((resolve,reject)=>{child.once('error',reject);child.once('exit',resolve);abandon=()=>resolve(null);});
     await check;await stopping;
     if(failure)throw failure;
     if(code!==0)throw new OperationError('storage_error','The reserved source clone failed.','Inspect the configured remote and owner Git credentials.');

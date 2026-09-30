@@ -24,13 +24,11 @@
  */
 
 import { describe, expect, it } from 'bun:test';
-import { readFileSync } from 'fs';
-import { join } from 'path';
+import { surfaceFileSource, surfaceSource } from './helpers/source-surface.ts';
 
-const AUTOPILOT_SRC = readFileSync(
-  join(import.meta.dir, '..', 'src', 'commands', 'autopilot.ts'),
-  'utf8',
-);
+// W4 autopilot: containment reads the autopilot surface; positional spans name the module that holds the daemon code.
+const AUTOPILOT_SRC = surfaceSource('autopilot');
+const DAEMON_SRC = surfaceFileSource('autopilot', 'src/commands/autopilot-daemon.ts');
 
 describe('autopilot.ts ↔ ChildWorkerSupervisor wiring', () => {
   it('imports ChildWorkerSupervisor from the shared core', () => {
@@ -85,7 +83,7 @@ describe('autopilot.ts ↔ ChildWorkerSupervisor wiring', () => {
     // crash counter tripped, bypassing its own dispatch-loop cleanup and
     // lockfile removal. Post-refactor: the callback routes through
     // shutdown('max_crashes') so cleanup runs.
-    expect(AUTOPILOT_SRC).toMatch(/onMaxCrashesExceeded:[\s\S]{0,300}shutdown\('max_crashes'\)/);
+    expect(DAEMON_SRC).toMatch(/onMaxCrashesExceeded:[\s\S]{0,300}shutdown\('max_crashes'\)/);
   });
 
   it('shutdown drains via supervisor.killChild + awaitChildExit (not workerProc.kill)', () => {

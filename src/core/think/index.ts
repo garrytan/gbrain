@@ -33,6 +33,7 @@ import { normalizeModelId } from '../model-id.ts';
 import { hasAnthropicKey } from '../ai/anthropic-key.ts';
 import { parseTemporalWindow } from './temporal-window.ts';
 import { resolveExcludePrivatePages } from '../search/private-visibility.ts';
+import { deliverEvidence, resolveEvidencePlan, EVIDENCE_BLOCK_CHAR_CAP, THINK_RETURN_UNIT_CONFIG_KEY, type DeliveryMeta } from '../search/evidence-delivery.ts';
 
 /** Anthropic Messages client interface — same shape used by subagent.ts so test stubs can be shared. */
 export interface ThinkLLMClient {
@@ -201,6 +202,8 @@ export interface ThinkResult {
    * The synthesize verb maps this to its frozen `cost` block.
    */
   usage?: { input_tokens: number; output_tokens: number } | null;
+  /** Evidence delivery meta, present only when think.return_unit is not chunk. */
+  evidence_delivery?: import('../search/evidence-delivery.ts').DeliveryMeta;
   /** Only set when --save was true and the caller persisted a synthesis page. */
   savedSlug?: string;
   /** Diagnostics for `--explain` callers (CLI surface for v0.29). */
@@ -474,6 +477,25 @@ async function persistCitations(
 }
 
 /**
+ * Render the <pages> block. Evidence delivery (think.return_unit, default
+ * chunk) replaces the gathered pages with budgeted delivered blocks, which
+ * the renderer passes through whole instead of cutting its own excerpts.
+ */
+async function renderThinkPages(engine: BrainEngine, opts: RunThinkOpts, pages: SearchResult[]): Promise<{ pagesBlock: string; evidenceDelivery?: DeliveryMeta }> {
+  const plan = await resolveEvidencePlan(engine, {
+    remote: opts.remote, returnUnit: undefined, returnWindow: undefined, budget: undefined,
+    snippetChars: undefined, snippetCap: 0, configKey: THINK_RETURN_UNIT_CONFIG_KEY, op: 'think',
+  });
+  if (!plan) return { pagesBlock: renderPagesBlock(pages, pagesBlockExcerptLen(pages.length), opts.question) };
+  const delivered = await deliverEvidence(engine, pages, plan, {
+    ...(opts.allowedSources !== undefined && opts.allowedSources.length > 0 ? { sourceIds: opts.allowedSources } : opts.sourceId !== undefined ? { sourceId: opts.sourceId } : {}),
+    excludePrivate: opts.excludePrivate ?? await resolveExcludePrivatePages(engine, opts.remote),
+    requireSafeChunks: opts.remote !== false,
+  });
+  return { pagesBlock: renderPagesBlock(delivered.results, EVIDENCE_BLOCK_CHAR_CAP, opts.question, { verbatim: true }), evidenceDelivery: delivered.delivery };
+}
+
+/**
  * Run the think pipeline. Returns a ThinkResult — caller decides whether
  * to print, persist as synthesis page, or surface as MCP response.
  */
@@ -545,7 +567,7 @@ export async function runThink(
   // budget-aware — 600 chars is the FLOOR (a big gather never collapses each
   // page below it) and a small gather spreads the block budget into much
   // larger, often complete, per-page windows.
-  const pagesBlock = renderPagesBlock(gather.pages, pagesBlockExcerptLen(gather.pages.length), opts.question);
+  const { pagesBlock, evidenceDelivery } = await renderThinkPages(engine, opts, gather.pages);
   const takesForPrompt = gather.takes.map(takesHitToTakeForPrompt);
   const { rendered: takesBlock, sanitizedCount } = renderTakesBlock(takesForPrompt);
   if (sanitizedCount > 0) {
@@ -918,7 +940,7 @@ export async function runThink(
     synthesisOk: synthesisOk && response.answer.trim().length > 0,
     synthesis_status: synthesisStatus,
     ...(extractive ? { extractive } : {}),
-    usage,
+    usage, ...(evidenceDelivery ? { evidence_delivery: evidenceDelivery } : {}),
     diagnostics: {
       pagesFromHybrid: gather.diagnostics.pagesFromHybrid,
       takesFromKeyword: gather.diagnostics.takesFromKeyword,

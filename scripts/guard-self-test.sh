@@ -8,8 +8,9 @@
 #
 # This harness makes that class structurally impossible for scanner guards:
 # every guard marked `selftest yes` in scripts/guards-manifest.tsv is run
-# against test/fixtures/guards/<guard>/bad (MUST exit non-zero) and
-# .../good (MUST exit 0), via the GBRAIN_GUARD_ROOT override each guard
+# against test/fixtures/guards/<guard>/bad and every bad-<variant> sibling
+# (EACH must exit non-zero on its own) and .../good (MUST exit 0), via the
+# GBRAIN_GUARD_ROOT override each guard
 # honors. Adding a self-test to a `todo` scanner = flip the manifest flag +
 # drop two fixture files.
 #
@@ -41,6 +42,7 @@ run_guard() {
   local guard="$1" fixture_root="$2"
   case "$guard" in
     *.mjs) GBRAIN_GUARD_ROOT="$fixture_root" node "scripts/$guard" "$fixture_root" >/dev/null 2>&1 ;;
+    *.ts)  GBRAIN_GUARD_ROOT="$fixture_root" bun "scripts/$guard" >/dev/null 2>&1 ;;
     *)     GBRAIN_GUARD_ROOT="$fixture_root" bash "scripts/$guard" >/dev/null 2>&1 ;;
   esac
 }
@@ -58,22 +60,33 @@ while IFS=$'\t' read -r guard klass selftest _notes; do
     continue
   fi
 
-  if run_guard "$guard" "$bad"; then
-    echo "FAIL  $guard: did NOT flag the known-bad fixture — the guard is a no-op (the check-no-double-retry class)"
-    failures=$((failures + 1))
-  elif ! run_guard "$guard" "$good"; then
+  # bad/ plus any bad-<variant>/ trees (e.g. one per refactor-wave-1 module
+  # dir): each must fail ON ITS OWN, proving the guard scans that location.
+  guard_ok=1
+  variants=0
+  for bad_tree in "$bad" "$FIXTURES/$guard"/bad-*; do
+    [ -d "$bad_tree" ] || continue
+    variants=$((variants + 1))
+    if run_guard "$guard" "$bad_tree"; then
+      echo "FAIL  $guard: did NOT flag the known-bad fixture $(basename "$bad_tree") — the guard is a no-op there (the check-no-double-retry class)"
+      failures=$((failures + 1))
+      guard_ok=0
+    fi
+  done
+  if ! run_guard "$guard" "$good"; then
     echo "FAIL  $guard: flagged the known-good fixture — false positive"
     failures=$((failures + 1))
-  else
-    echo "ok    $guard (bad→fail, good→pass)"
+  elif [ "$guard_ok" = "1" ]; then
+    echo "ok    $guard (bad→fail x$variants, good→pass)"
   fi
 done < "$MANIFEST"
 
 # Manifest completeness: every scripts/check-* guard must have a manifest row
 # (new guards can't silently skip classification).
-for f in scripts/check-*.sh scripts/check-*.mjs; do
+for f in scripts/check-*.sh scripts/check-*.mjs scripts/check-*.ts; do
   base="$(basename "$f")"
   # The .ts companion of check-engine-dynamic-import is an implementation file.
+  [ "$base" = "check-engine-dynamic-import.ts" ] && continue
   if ! grep -q "^${base}	" "$MANIFEST"; then
     echo "FAIL  $base: no row in $MANIFEST — classify it (scanner|buildfresh|repostate)"
     failures=$((failures + 1))
