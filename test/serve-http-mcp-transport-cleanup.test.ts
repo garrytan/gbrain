@@ -20,10 +20,11 @@
  * throw inside handleRequest) still tears both objects down.
  */
 import { describe, test, expect } from 'bun:test';
-import { readFileSync } from 'node:fs';
+import { surfaceFileSource, surfaceSource } from './helpers/source-surface.ts';
 
 describe('POST /mcp transport cleanup (#2844)', () => {
-  const src = readFileSync('src/commands/serve-http.ts', 'utf8');
+  // Refactor wave 1: the POST /mcp handler lives in serve-http-mcp.ts.
+  const src = surfaceFileSource('serve-http', 'src/commands/serve-http-mcp.ts');
 
   test('res.on(close) cleanup sits between transport construction and handleRequest', () => {
     const constructIdx = src.indexOf('new StreamableHTTPServerTransport(');
@@ -31,6 +32,7 @@ describe('POST /mcp transport cleanup (#2844)', () => {
     // Exactly one per-request construction site — a second one would need
     // its own cleanup wiring and this pin extended to cover it.
     expect(src.indexOf('new StreamableHTTPServerTransport(', constructIdx + 1)).toBe(-1);
+    expect(surfaceSource('serve-http').split('new StreamableHTTPServerTransport(').length - 1).toBe(1);
 
     const handleIdx = src.indexOf('transport.handleRequest(', constructIdx);
     expect(handleIdx).toBeGreaterThan(constructIdx);

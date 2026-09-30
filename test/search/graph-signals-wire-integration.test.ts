@@ -22,6 +22,7 @@ import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { hybridSearch } from '../../src/core/search/hybrid.ts';
 import { importFromContent } from '../../src/core/import-file.ts';
+import { surfaceSource } from '../helpers/source-surface.ts';
 
 let engine: PGLiteEngine;
 
@@ -101,7 +102,7 @@ describe('v0.40.4 — source-grep regression guard', () => {
     // changes shape, update the regex to match the new wiring — but the
     // semantic ("graph_signals from resolvedMode reaches PostFusionOpts")
     // must remain true.
-    const source = await Bun.file(new URL('../../src/core/search/hybrid.ts', import.meta.url)).text();
+    const source = surfaceSource('hybrid');
     expect(source).toMatch(/graphSignalsEnabled:\s*resolvedMode\.graph_signals/);
   });
 });

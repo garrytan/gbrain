@@ -150,6 +150,7 @@ for _e2e_var in $(env | grep -oE '^(CONDUCTOR_|MCP_|OPENCLAW_|HERMES_|GROK_|OPEN
     GBRAIN_CI_DISABLE_TEST_ENV_FILE) ;;  # CI forbids loading checkout-local .env.testing — keep through Bun startup
     GBRAIN_TEST_DB) ;;  # explicit schema-reset opt-in for service hosts; schema-drift still requires a test-shaped DB name
     GBRAIN_PGBOUNCER_URL|GBRAIN_PGBOUNCER_DIRECT_URL|GBRAIN_CI_REQUIRE_PGBOUNCER) ;; # explicit pooler test target and execution requirement
+    GBRAIN_PGBOUNCER_E2E_URL|GBRAIN_PGBOUNCER_E2E_DB) ;; # backend-matrix pooled target (scripts/e2e-backend-matrix.txt)
     GBRAIN_E2E_FILE_TIMEOUT) ;;  # per-file cap override — read AFTER this scrub, so it must survive it
     GBRAIN_E2E_ALLOW_DB) ;;  # #3485 name-floor opt-in — the guard's own error
                              # message tells operators to set it; stripping it
@@ -240,6 +241,47 @@ ensure_pglite_snapshot "run-e2e"
 if [ -n "${GBRAIN_PGLITE_SNAPSHOT:-}" ] && [ "${GBRAIN_PGLITE_SNAPSHOT#/}" = "$GBRAIN_PGLITE_SNAPSHOT" ]; then
   export GBRAIN_PGLITE_SNAPSHOT="$PWD/$GBRAIN_PGLITE_SNAPSHOT"
 fi
+
+# Backend matrix (refactor wave 1): files listed in scripts/e2e-backend-matrix.txt
+# run a second time with DATABASE_URL pointed at the transaction-mode PgBouncer
+# (GBRAIN_PGBOUNCER_E2E_URL, same database, reached through the pooler). The
+# pooler's prepare mode must be explicit in that URL, because only the 6543
+# port auto-detects it and CI poolers listen elsewhere. Both passes must
+# execute the same, non-zero number of tests.
+BACKEND_MATRIX_FILE="scripts/e2e-backend-matrix.txt"
+backend_matrix=" "
+backend_matrix_timeouts=" "
+[ -f "$BACKEND_MATRIX_FILE" ] && while IFS= read -r line || [ -n "$line" ]; do
+  case "$line" in ''|'#'*|'!'*) continue ;; esac
+  backend_matrix+="${line%%[[:space:]]*} "
+  case "$line" in
+    *pooled-timeout=*) backend_matrix_timeouts+="${line%%[[:space:]]*}=${line##*pooled-timeout=} " ;;
+  esac
+done < "$BACKEND_MATRIX_FILE"
+# The pooled target is either a full URL (GBRAIN_PGBOUNCER_E2E_URL) or a
+# database name behind the pooler named by GBRAIN_PGBOUNCER_URL
+# (GBRAIN_PGBOUNCER_E2E_DB); the second form creates that database through
+# GBRAIN_PGBOUNCER_DIRECT_URL on first use and always pins prepare=false.
+PGBOUNCER_E2E_URL="${GBRAIN_PGBOUNCER_E2E_URL:-}"
+PGBOUNCER_E2E_DB="${GBRAIN_PGBOUNCER_E2E_DB:-}"
+if [ -z "$PGBOUNCER_E2E_URL" ] && [ -n "$PGBOUNCER_E2E_DB" ]; then
+  if [ -z "${GBRAIN_PGBOUNCER_URL:-}" ]; then
+    echo "ERROR: GBRAIN_PGBOUNCER_E2E_DB needs GBRAIN_PGBOUNCER_URL (the pooler to reach it through)." >&2
+    exit 2
+  fi
+  PGBOUNCER_E2E_URL="${GBRAIN_PGBOUNCER_URL%/*}/${PGBOUNCER_E2E_DB}?prepare=false"
+fi
+pooled_db_ready=0
+if [ -n "$PGBOUNCER_E2E_URL" ]; then
+  case "$PGBOUNCER_E2E_URL" in
+    *[?\&]prepare=false|*[?\&]prepare=false\&*) ;;
+    *)
+      echo "ERROR: GBRAIN_PGBOUNCER_E2E_URL must set the pooler prepare mode explicitly (?prepare=false)." >&2
+      exit 2
+      ;;
+  esac
+fi
+backend_matrix_report=()
 
 pass_files=0
 fail_files=0
@@ -361,19 +403,67 @@ for f in "${files[@]}"; do
   else
     TIMEOUT_CMD=""
   fi
-  FILE_HOME="$E2E_TMP_HOME/file-$file_idx"
-  mkdir -p "$FILE_HOME/.gbrain"
-  rc=0
-  rm -f "$E2E_TMP_HOME/current.junit.xml"
-  HOME="$FILE_HOME" GBRAIN_HOME="$FILE_HOME" $TIMEOUT_CMD bun test --timeout=60000 --reporter=junit --reporter-outfile="$E2E_TMP_HOME/current.junit.xml" ${COVERAGE_ARGS[@]+"${COVERAGE_ARGS[@]}"} "$f" > "$E2E_TMP_HOME/current.log" 2>&1 &
-  ACTIVE_E2E_PID=$!
-  wait "$ACTIVE_E2E_PID" || rc=$?
-  ACTIVE_E2E_PID=""
-  output=$(cat "$E2E_TMP_HOME/current.log")
-  rm -rf "$FILE_HOME"
-  if [ "$rc" -eq 0 ] && ! p=$(completed_e2e_passes "$f"); then
-    echo "FAILED: $name did not produce a complete native Bun report for the selected file"
-    rc=1
+  in_backend_matrix=0
+  case "$backend_matrix" in *" ${f#./} "*) in_backend_matrix=1 ;; esac
+  run_e2e_pass() {
+    # $1 = pass label; remaining args = env assignments for this pass.
+    local pass_label="$1"
+    shift
+    FILE_HOME="$E2E_TMP_HOME/file-$file_idx-$pass_label"
+    mkdir -p "$FILE_HOME/.gbrain"
+    rc=0
+    p=0
+    rm -f "$E2E_TMP_HOME/current.junit.xml"
+    env "$@" HOME="$FILE_HOME" GBRAIN_HOME="$FILE_HOME" $TIMEOUT_CMD bun test --timeout=60000 --reporter=junit --reporter-outfile="$E2E_TMP_HOME/current.junit.xml" ${COVERAGE_ARGS[@]+"${COVERAGE_ARGS[@]}"} "$f" > "$E2E_TMP_HOME/current.log" 2>&1 &
+    ACTIVE_E2E_PID=$!
+    wait "$ACTIVE_E2E_PID" || rc=$?
+    ACTIVE_E2E_PID=""
+    output=$(cat "$E2E_TMP_HOME/current.log")
+    rm -rf "$FILE_HOME"
+    if [ "$rc" -eq 0 ] && ! p=$(completed_e2e_passes "$f"); then
+      echo "FAILED: $name did not produce a complete native Bun report for the selected file"
+      rc=1
+    fi
+  }
+  if [ "$in_backend_matrix" = "1" ]; then
+    run_e2e_pass direct GBRAIN_TEST_BACKEND=postgres-direct
+  else
+    run_e2e_pass direct
+  fi
+  if [ "$rc" -eq 0 ] && [ "$in_backend_matrix" = "1" ] && [ -n "${DATABASE_URL:-}" ]; then
+    direct_passes="$p"
+    if [ -z "$PGBOUNCER_E2E_URL" ]; then
+      if [ "${GBRAIN_CI_REQUIRE_PGBOUNCER:-0}" = "1" ]; then
+        echo "$output" | tail -8
+        echo "FAILED: $name is in $BACKEND_MATRIX_FILE but neither GBRAIN_PGBOUNCER_E2E_URL nor GBRAIN_PGBOUNCER_E2E_DB is set, so its PgBouncer pass cannot run"
+        rc=1
+      fi
+    else
+      echo "--- $name [pgbouncer] ---"
+      echo "$output" | tail -8
+      psql "$DATABASE_URL" -At -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE pid != pg_backend_pid() AND datname = current_database()" >/dev/null 2>&1 || true
+      if [ "$pooled_db_ready" = "0" ] && [ -n "$PGBOUNCER_E2E_DB" ] && [ -n "${GBRAIN_PGBOUNCER_DIRECT_URL:-}" ]; then
+        bun scripts/lib/ensure-e2e-database.ts "$GBRAIN_PGBOUNCER_DIRECT_URL" "$PGBOUNCER_E2E_DB" || echo "WARN: could not create $PGBOUNCER_E2E_DB; the pooled pass will report the connection error"
+        pooled_db_ready=1
+      fi
+      pooled_timeout_cmd="$TIMEOUT_CMD"
+      case "$backend_matrix_timeouts" in
+        *" ${f#./}="*)
+          pooled_timeout="${backend_matrix_timeouts#* "${f#./}"=}"
+          pooled_timeout="${pooled_timeout%% *}"
+          case "$pooled_timeout" in ''|*[!0-9]*) ;; *) [ -n "$TIMEOUT_CMD" ] && TIMEOUT_CMD="${TIMEOUT_CMD%% *} $pooled_timeout" ;; esac
+          ;;
+      esac
+      run_e2e_pass pgbouncer DATABASE_URL="$PGBOUNCER_E2E_URL" GBRAIN_TEST_BACKEND=pgbouncer
+      TIMEOUT_CMD="$pooled_timeout_cmd"
+      if [ "$rc" -eq 0 ] && { [ "$p" -eq 0 ] || [ "$p" -ne "$direct_passes" ]; }; then
+        echo "$output"
+        echo "FAILED: $name executed $direct_passes tests on postgres-direct but $p on pgbouncer (must be equal and non-zero)"
+        rc=1
+      fi
+      backend_matrix_report+=("$name postgres-direct=$direct_passes pgbouncer=$p")
+      [ "$rc" -eq 0 ] && p=$((p + direct_passes))
+    fi
   fi
   if [ "$rc" -eq 0 ]; then
     if [ "$f" = "test/e2e/pgbouncer-teardown.test.ts" ] && \
@@ -408,6 +498,12 @@ echo "E2E SUMMARY (sequential execution)"
 echo "========================================"
 echo "Files: $((pass_files + fail_files)) total, $pass_files passed, $fail_files failed"
 echo "Tests: $total_pass passed, $total_fail failed"
+if [ "${#backend_matrix_report[@]}" -gt 0 ]; then
+  echo "Backend matrix (executed tests per backend):"
+  for line in "${backend_matrix_report[@]}"; do
+    echo "  $line"
+  done
+fi
 
 # --- HOME isolation verification: fail loud on any out-of-isolation write ---
 # Runs regardless of test pass/fail; isolation breach is higher-severity than

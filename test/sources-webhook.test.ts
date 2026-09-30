@@ -16,8 +16,8 @@
  */
 import { describe, test, expect } from 'bun:test';
 import { createHmac } from 'node:crypto';
-import { readFileSync } from 'node:fs';
 import { safeHexEqual } from '../src/core/timing-safe.ts';
+import { surfaceFileSource } from './helpers/source-surface.ts';
 
 const GITHUB_SECRET = 'super-secret-webhook-key';
 
@@ -127,10 +127,7 @@ describe('Branch ref construction (D5)', () => {
 
 describe('Webhook sync job extraction contract', () => {
   test('opts into extraction before the pushed commit is consumed', () => {
-    const serveSource = readFileSync(
-      new URL('../src/commands/serve-http.ts', import.meta.url),
-      'utf8',
-    );
+    const serveSource = surfaceFileSource('serve-http', 'src/commands/serve-http-webhooks.ts');
     const routeStart = serveSource.indexOf("'/webhooks/github'");
     const queueStart = serveSource.indexOf('const job = await queue.add(', routeStart);
     const responseStart = serveSource.indexOf('res.status(202)', queueStart);

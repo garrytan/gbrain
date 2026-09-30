@@ -14,6 +14,7 @@ import { join } from 'node:path';
 import { withEnv } from './helpers/with-env.ts';
 import { chatApiKeyConfigured } from '../src/core/brain-score-recommendations.ts';
 import { setGatewayAnthropicKeySnapshot } from '../src/core/ai/anthropic-key.ts';
+import { surfaceSource } from './helpers/source-surface.ts';
 
 describe('#3944 chatApiKeyConfigured', () => {
   test('no env, no file key → false (a DB-only key is invisible by design)', async () => {
@@ -52,7 +53,7 @@ describe('#3944 both planner surfaces share the helper (source guard)', () => {
   // structurally. The helper's BEHAVIOR is covered above.
   test('autopilot no longer probes the DB plane for the chat key', () => {
     // test-reads-source-ok[structural]: the dispatch loop cannot run hermetically; this pins that the DB-plane read does not creep back.
-    const src = readFileSync(join(import.meta.dir, '../src/commands/autopilot.ts'), 'utf-8');
+    const src = surfaceSource('autopilot');
     expect(src).not.toContain("getConfig('anthropic_api_key')");
     expect(src).toContain('chatApiKeyConfigured(fileCfg)');
   });

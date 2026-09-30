@@ -1,0 +1,53 @@
+{
+  "golden": {
+    "domain": "files",
+    "methods": {
+      "getFile": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT id, source_id, page_slug, page_id, filename, storage_path, mime_type, size_bytes, content_hash, metadata, created_at FROM files WHERE source_id = $1 AND storage_path = $2 LIMIT 1",
+            "textSha256": "af88be257db7da5204f7b2f17c1ed2e6a1b5096349f16735151c277b7a295654"
+          }
+        ]
+      },
+      "listFilesForPage": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "number"
+            ],
+            "sql": "SELECT id, source_id, page_slug, page_id, filename, storage_path, mime_type, size_bytes, content_hash, metadata, created_at FROM files WHERE page_id = $1 ORDER BY created_at ASC",
+            "textSha256": "07f8e614d275b21487341340a4e273afda90822171f0d900c54cda5a75b3d0c5"
+          }
+        ]
+      },
+      "upsertFile": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "null",
+              "null",
+              "string",
+              "string",
+              "null",
+              "null",
+              "string",
+              "json"
+            ],
+            "sql": "INSERT INTO files (source_id, page_slug, page_id, filename, storage_path, mime_type, size_bytes, content_hash, metadata) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) ON CONFLICT (storage_path) DO UPDATE SET page_slug = EXCLUDED.page_slug, page_id = EXCLUDED.page_id, filename = EXCLUDED.filename, mime_type = EXCLUDED.mime_type, size_bytes = EXCLUDED.size_bytes, content_hash = EXCLUDED.content_hash, metadata = EXCLUDED.metadata RETURNING id, (xmax = 0) AS created",
+            "textSha256": "4e8e402844f06b2265da83bad6f624f7e5aaafb55f477e1f5d5207376a8eb1cb"
+          }
+        ]
+      }
+    }
+  },
+  "normalizer": "sql-text-v1"
+}

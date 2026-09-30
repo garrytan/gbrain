@@ -1,0 +1,4149 @@
+{
+  "golden": {
+    "cjk": {
+      "cached_cold": [
+        {
+          "chunk_id": 93,
+          "chunk_index": 0,
+          "page_id": 49,
+          "score": 1.0915073509461095,
+          "slug": "concepts/knowledge-graph-zh",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 94,
+          "chunk_index": 0,
+          "page_id": 50,
+          "score": 0.8109990773030933,
+          "slug": "concepts/knowledge-graph-zh-team",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 1,
+          "chunk_index": 0,
+          "page_id": 1,
+          "score": 0.2258064516129032,
+          "slug": "notes/widget-example-0",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 2,
+          "chunk_index": 0,
+          "page_id": 2,
+          "score": 0.22222222222222218,
+          "slug": "concepts/garden-example-1",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 4,
+          "chunk_index": 0,
+          "page_id": 3,
+          "score": 0.21875,
+          "slug": "people/quantum-example-2",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 7,
+          "chunk_index": 0,
+          "page_id": 4,
+          "score": 0.2153846153846154,
+          "slug": "companies/recipe-example-3",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 8,
+          "chunk_index": 0,
+          "page_id": 5,
+          "score": 0.21212121212121213,
+          "slug": "notes/roadmap-example-4",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 10,
+          "chunk_index": 0,
+          "page_id": 6,
+          "score": 0.20895522388059698,
+          "slug": "concepts/graph-example-5",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 13,
+          "chunk_index": 0,
+          "page_id": 7,
+          "score": 0.20588235294117643,
+          "slug": "people/widget-example-6",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 14,
+          "chunk_index": 0,
+          "page_id": 8,
+          "score": 0.20289855072463767,
+          "slug": "companies/garden-example-7",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 16,
+          "chunk_index": 0,
+          "page_id": 9,
+          "score": 0.19999999999999998,
+          "slug": "notes/quantum-example-8",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 19,
+          "chunk_index": 0,
+          "page_id": 10,
+          "score": 0.19718309859154928,
+          "slug": "concepts/recipe-example-9",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 20,
+          "chunk_index": 0,
+          "page_id": 11,
+          "score": 0.1944444444444444,
+          "slug": "people/roadmap-example-10",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 22,
+          "chunk_index": 0,
+          "page_id": 12,
+          "score": 0.1917808219178082,
+          "slug": "companies/graph-example-11",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 25,
+          "chunk_index": 0,
+          "page_id": 13,
+          "score": 0.1891891891891892,
+          "slug": "notes/widget-example-12",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 26,
+          "chunk_index": 0,
+          "page_id": 14,
+          "score": 0.18666666666666665,
+          "slug": "concepts/garden-example-13",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 28,
+          "chunk_index": 0,
+          "page_id": 15,
+          "score": 0.18421052631578946,
+          "slug": "people/quantum-example-14",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 31,
+          "chunk_index": 0,
+          "page_id": 16,
+          "score": 0.1818181818181818,
+          "slug": "companies/recipe-example-15",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 32,
+          "chunk_index": 0,
+          "page_id": 17,
+          "score": 0.17948717948717946,
+          "slug": "notes/roadmap-example-16",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 34,
+          "chunk_index": 0,
+          "page_id": 18,
+          "score": 0.1772151898734177,
+          "slug": "concepts/graph-example-17",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 37,
+          "chunk_index": 0,
+          "page_id": 19,
+          "score": 0.175,
+          "slug": "people/widget-example-18",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 38,
+          "chunk_index": 0,
+          "page_id": 20,
+          "score": 0.1728395061728395,
+          "slug": "companies/garden-example-19",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 40,
+          "chunk_index": 0,
+          "page_id": 21,
+          "score": 0.17073170731707316,
+          "slug": "notes/quantum-example-20",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 43,
+          "chunk_index": 0,
+          "page_id": 22,
+          "score": 0.1686746987951807,
+          "slug": "concepts/recipe-example-21",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 44,
+          "chunk_index": 0,
+          "page_id": 23,
+          "score": 0.16666666666666666,
+          "slug": "people/roadmap-example-22",
+          "source_id": "default"
+        }
+      ],
+      "cached_warm": [
+        {
+          "chunk_id": 93,
+          "chunk_index": 0,
+          "page_id": 49,
+          "score": 1.0915073509461095,
+          "slug": "concepts/knowledge-graph-zh",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 94,
+          "chunk_index": 0,
+          "page_id": 50,
+          "score": 0.8109990773030933,
+          "slug": "concepts/knowledge-graph-zh-team",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 1,
+          "chunk_index": 0,
+          "page_id": 1,
+          "score": 0.2258064516129032,
+          "slug": "notes/widget-example-0",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 2,
+          "chunk_index": 0,
+          "page_id": 2,
+          "score": 0.22222222222222218,
+          "slug": "concepts/garden-example-1",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 4,
+          "chunk_index": 0,
+          "page_id": 3,
+          "score": 0.21875,
+          "slug": "people/quantum-example-2",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 7,
+          "chunk_index": 0,
+          "page_id": 4,
+          "score": 0.2153846153846154,
+          "slug": "companies/recipe-example-3",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 8,
+          "chunk_index": 0,
+          "page_id": 5,
+          "score": 0.21212121212121213,
+          "slug": "notes/roadmap-example-4",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 10,
+          "chunk_index": 0,
+          "page_id": 6,
+          "score": 0.20895522388059698,
+          "slug": "concepts/graph-example-5",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 13,
+          "chunk_index": 0,
+          "page_id": 7,
+          "score": 0.20588235294117643,
+          "slug": "people/widget-example-6",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 14,
+          "chunk_index": 0,
+          "page_id": 8,
+          "score": 0.20289855072463767,
+          "slug": "companies/garden-example-7",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 16,
+          "chunk_index": 0,
+          "page_id": 9,
+          "score": 0.19999999999999998,
+          "slug": "notes/quantum-example-8",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 19,
+          "chunk_index": 0,
+          "page_id": 10,
+          "score": 0.19718309859154928,
+          "slug": "concepts/recipe-example-9",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 20,
+          "chunk_index": 0,
+          "page_id": 11,
+          "score": 0.1944444444444444,
+          "slug": "people/roadmap-example-10",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 22,
+          "chunk_index": 0,
+          "page_id": 12,
+          "score": 0.1917808219178082,
+          "slug": "companies/graph-example-11",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 25,
+          "chunk_index": 0,
+          "page_id": 13,
+          "score": 0.1891891891891892,
+          "slug": "notes/widget-example-12",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 26,
+          "chunk_index": 0,
+          "page_id": 14,
+          "score": 0.18666666666666665,
+          "slug": "concepts/garden-example-13",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 28,
+          "chunk_index": 0,
+          "page_id": 15,
+          "score": 0.18421052631578946,
+          "slug": "people/quantum-example-14",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 31,
+          "chunk_index": 0,
+          "page_id": 16,
+          "score": 0.1818181818181818,
+          "slug": "companies/recipe-example-15",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 32,
+          "chunk_index": 0,
+          "page_id": 17,
+          "score": 0.17948717948717946,
+          "slug": "notes/roadmap-example-16",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 34,
+          "chunk_index": 0,
+          "page_id": 18,
+          "score": 0.1772151898734177,
+          "slug": "concepts/graph-example-17",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 37,
+          "chunk_index": 0,
+          "page_id": 19,
+          "score": 0.175,
+          "slug": "people/widget-example-18",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 38,
+          "chunk_index": 0,
+          "page_id": 20,
+          "score": 0.1728395061728395,
+          "slug": "companies/garden-example-19",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 40,
+          "chunk_index": 0,
+          "page_id": 21,
+          "score": 0.17073170731707316,
+          "slug": "notes/quantum-example-20",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 43,
+          "chunk_index": 0,
+          "page_id": 22,
+          "score": 0.1686746987951807,
+          "slug": "concepts/recipe-example-21",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 44,
+          "chunk_index": 0,
+          "page_id": 23,
+          "score": 0.16666666666666666,
+          "slug": "people/roadmap-example-22",
+          "source_id": "default"
+        }
+      ],
+      "hybrid": [
+        {
+          "chunk_id": 93,
+          "chunk_index": 0,
+          "page_id": 49,
+          "score": 1.0915073509461095,
+          "slug": "concepts/knowledge-graph-zh",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 94,
+          "chunk_index": 0,
+          "page_id": 50,
+          "score": 0.8109990773030933,
+          "slug": "concepts/knowledge-graph-zh-team",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 1,
+          "chunk_index": 0,
+          "page_id": 1,
+          "score": 0.2258064516129032,
+          "slug": "notes/widget-example-0",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 2,
+          "chunk_index": 0,
+          "page_id": 2,
+          "score": 0.22222222222222218,
+          "slug": "concepts/garden-example-1",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 4,
+          "chunk_index": 0,
+          "page_id": 3,
+          "score": 0.21875,
+          "slug": "people/quantum-example-2",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 7,
+          "chunk_index": 0,
+          "page_id": 4,
+          "score": 0.2153846153846154,
+          "slug": "companies/recipe-example-3",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 8,
+          "chunk_index": 0,
+          "page_id": 5,
+          "score": 0.21212121212121213,
+          "slug": "notes/roadmap-example-4",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 10,
+          "chunk_index": 0,
+          "page_id": 6,
+          "score": 0.20895522388059698,
+          "slug": "concepts/graph-example-5",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 13,
+          "chunk_index": 0,
+          "page_id": 7,
+          "score": 0.20588235294117643,
+          "slug": "people/widget-example-6",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 14,
+          "chunk_index": 0,
+          "page_id": 8,
+          "score": 0.20289855072463767,
+          "slug": "companies/garden-example-7",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 16,
+          "chunk_index": 0,
+          "page_id": 9,
+          "score": 0.19999999999999998,
+          "slug": "notes/quantum-example-8",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 19,
+          "chunk_index": 0,
+          "page_id": 10,
+          "score": 0.19718309859154928,
+          "slug": "concepts/recipe-example-9",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 20,
+          "chunk_index": 0,
+          "page_id": 11,
+          "score": 0.1944444444444444,
+          "slug": "people/roadmap-example-10",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 22,
+          "chunk_index": 0,
+          "page_id": 12,
+          "score": 0.1917808219178082,
+          "slug": "companies/graph-example-11",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 25,
+          "chunk_index": 0,
+          "page_id": 13,
+          "score": 0.1891891891891892,
+          "slug": "notes/widget-example-12",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 26,
+          "chunk_index": 0,
+          "page_id": 14,
+          "score": 0.18666666666666665,
+          "slug": "concepts/garden-example-13",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 28,
+          "chunk_index": 0,
+          "page_id": 15,
+          "score": 0.18421052631578946,
+          "slug": "people/quantum-example-14",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 31,
+          "chunk_index": 0,
+          "page_id": 16,
+          "score": 0.1818181818181818,
+          "slug": "companies/recipe-example-15",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 32,
+          "chunk_index": 0,
+          "page_id": 17,
+          "score": 0.17948717948717946,
+          "slug": "notes/roadmap-example-16",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 34,
+          "chunk_index": 0,
+          "page_id": 18,
+          "score": 0.1772151898734177,
+          "slug": "concepts/graph-example-17",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 37,
+          "chunk_index": 0,
+          "page_id": 19,
+          "score": 0.175,
+          "slug": "people/widget-example-18",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 38,
+          "chunk_index": 0,
+          "page_id": 20,
+          "score": 0.1728395061728395,
+          "slug": "companies/garden-example-19",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 40,
+          "chunk_index": 0,
+          "page_id": 21,
+          "score": 0.17073170731707316,
+          "slug": "notes/quantum-example-20",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 43,
+          "chunk_index": 0,
+          "page_id": 22,
+          "score": 0.1686746987951807,
+          "slug": "concepts/recipe-example-21",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 44,
+          "chunk_index": 0,
+          "page_id": 23,
+          "score": 0.16666666666666666,
+          "slug": "people/roadmap-example-22",
+          "source_id": "default"
+        }
+      ]
+    },
+    "keyword-heavy": {
+      "cached_cold": [
+        {
+          "chunk_id": 13,
+          "chunk_index": 0,
+          "page_id": 7,
+          "score": 0.8332784974957957,
+          "slug": "people/widget-example-6",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 37,
+          "chunk_index": 0,
+          "page_id": 19,
+          "score": 0.8218030876597302,
+          "slug": "people/widget-example-18",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 61,
+          "chunk_index": 0,
+          "page_id": 31,
+          "score": 0.8106978523345054,
+          "slug": "people/widget-example-30",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 85,
+          "chunk_index": 0,
+          "page_id": 43,
+          "score": 0.7999451641624624,
+          "slug": "people/widget-example-42",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 25,
+          "chunk_index": 0,
+          "page_id": 13,
+          "score": 0.7895284974957958,
+          "slug": "notes/widget-example-12",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 49,
+          "chunk_index": 0,
+          "page_id": 25,
+          "score": 0.779432343649642,
+          "slug": "notes/widget-example-24",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 73,
+          "chunk_index": 0,
+          "page_id": 37,
+          "score": 0.7696421338594321,
+          "slug": "notes/widget-example-36",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 1,
+          "chunk_index": 0,
+          "page_id": 1,
+          "score": 0.7521560320794746,
+          "slug": "notes/widget-example-0",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 2,
+          "chunk_index": 0,
+          "page_id": 2,
+          "score": 0.7102290688007845,
+          "slug": "concepts/garden-example-1",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 26,
+          "chunk_index": 0,
+          "page_id": 14,
+          "score": 0.7012776621511682,
+          "slug": "concepts/garden-example-13",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 50,
+          "chunk_index": 0,
+          "page_id": 26,
+          "score": 0.6925820099772552,
+          "slug": "concepts/garden-example-25",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 74,
+          "chunk_index": 0,
+          "page_id": 38,
+          "score": 0.6841313057519031,
+          "slug": "concepts/garden-example-37",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 14,
+          "chunk_index": 0,
+          "page_id": 8,
+          "score": 0.6759153433105884,
+          "slug": "companies/garden-example-7",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 38,
+          "chunk_index": 0,
+          "page_id": 20,
+          "score": 0.6679244757306798,
+          "slug": "companies/garden-example-19",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 62,
+          "chunk_index": 0,
+          "page_id": 32,
+          "score": 0.6601495775448227,
+          "slug": "companies/garden-example-31",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 86,
+          "chunk_index": 0,
+          "page_id": 44,
+          "score": 0.6525820099772551,
+          "slug": "companies/garden-example-43",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 90,
+          "chunk_index": 0,
+          "page_id": 46,
+          "score": 0.607403834697885,
+          "slug": "companies/acme-example",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 21,
+          "chunk_index": 1,
+          "page_id": 11,
+          "score": 0.5976778422412548,
+          "slug": "people/roadmap-example-10",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 45,
+          "chunk_index": 1,
+          "page_id": 23,
+          "score": 0.5906848352482477,
+          "slug": "people/roadmap-example-22",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 69,
+          "chunk_index": 1,
+          "page_id": 35,
+          "score": 0.5838688664069625,
+          "slug": "people/roadmap-example-34",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 88,
+          "chunk_index": 0,
+          "page_id": 45,
+          "score": 0.5772232967867093,
+          "slug": "people/alice-example",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 9,
+          "chunk_index": 1,
+          "page_id": 5,
+          "score": 0.5707418153052278,
+          "slug": "notes/roadmap-example-4",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 33,
+          "chunk_index": 1,
+          "page_id": 17,
+          "score": 0.5644184187379289,
+          "slug": "notes/roadmap-example-16",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 57,
+          "chunk_index": 1,
+          "page_id": 29,
+          "score": 0.5582473931722515,
+          "slug": "notes/roadmap-example-28",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 81,
+          "chunk_index": 1,
+          "page_id": 41,
+          "score": 0.5522232967867093,
+          "slug": "notes/roadmap-example-40",
+          "source_id": "default"
+        }
+      ],
+      "cached_warm": [
+        {
+          "chunk_id": 13,
+          "chunk_index": 0,
+          "page_id": 7,
+          "score": 0.8332784974957957,
+          "slug": "people/widget-example-6",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 37,
+          "chunk_index": 0,
+          "page_id": 19,
+          "score": 0.8218030876597302,
+          "slug": "people/widget-example-18",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 61,
+          "chunk_index": 0,
+          "page_id": 31,
+          "score": 0.8106978523345054,
+          "slug": "people/widget-example-30",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 85,
+          "chunk_index": 0,
+          "page_id": 43,
+          "score": 0.7999451641624624,
+          "slug": "people/widget-example-42",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 25,
+          "chunk_index": 0,
+          "page_id": 13,
+          "score": 0.7895284974957958,
+          "slug": "notes/widget-example-12",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 49,
+          "chunk_index": 0,
+          "page_id": 25,
+          "score": 0.779432343649642,
+          "slug": "notes/widget-example-24",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 73,
+          "chunk_index": 0,
+          "page_id": 37,
+          "score": 0.7696421338594321,
+          "slug": "notes/widget-example-36",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 1,
+          "chunk_index": 0,
+          "page_id": 1,
+          "score": 0.7521560320794746,
+          "slug": "notes/widget-example-0",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 2,
+          "chunk_index": 0,
+          "page_id": 2,
+          "score": 0.7102290688007845,
+          "slug": "concepts/garden-example-1",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 26,
+          "chunk_index": 0,
+          "page_id": 14,
+          "score": 0.7012776621511682,
+          "slug": "concepts/garden-example-13",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 50,
+          "chunk_index": 0,
+          "page_id": 26,
+          "score": 0.6925820099772552,
+          "slug": "concepts/garden-example-25",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 74,
+          "chunk_index": 0,
+          "page_id": 38,
+          "score": 0.6841313057519031,
+          "slug": "concepts/garden-example-37",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 14,
+          "chunk_index": 0,
+          "page_id": 8,
+          "score": 0.6759153433105884,
+          "slug": "companies/garden-example-7",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 38,
+          "chunk_index": 0,
+          "page_id": 20,
+          "score": 0.6679244757306798,
+          "slug": "companies/garden-example-19",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 62,
+          "chunk_index": 0,
+          "page_id": 32,
+          "score": 0.6601495775448227,
+          "slug": "companies/garden-example-31",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 86,
+          "chunk_index": 0,
+          "page_id": 44,
+          "score": 0.6525820099772551,
+          "slug": "companies/garden-example-43",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 90,
+          "chunk_index": 0,
+          "page_id": 46,
+          "score": 0.607403834697885,
+          "slug": "companies/acme-example",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 21,
+          "chunk_index": 1,
+          "page_id": 11,
+          "score": 0.5976778422412548,
+          "slug": "people/roadmap-example-10",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 45,
+          "chunk_index": 1,
+          "page_id": 23,
+          "score": 0.5906848352482477,
+          "slug": "people/roadmap-example-22",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 69,
+          "chunk_index": 1,
+          "page_id": 35,
+          "score": 0.5838688664069625,
+          "slug": "people/roadmap-example-34",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 88,
+          "chunk_index": 0,
+          "page_id": 45,
+          "score": 0.5772232967867093,
+          "slug": "people/alice-example",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 9,
+          "chunk_index": 1,
+          "page_id": 5,
+          "score": 0.5707418153052278,
+          "slug": "notes/roadmap-example-4",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 33,
+          "chunk_index": 1,
+          "page_id": 17,
+          "score": 0.5644184187379289,
+          "slug": "notes/roadmap-example-16",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 57,
+          "chunk_index": 1,
+          "page_id": 29,
+          "score": 0.5582473931722515,
+          "slug": "notes/roadmap-example-28",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 81,
+          "chunk_index": 1,
+          "page_id": 41,
+          "score": 0.5522232967867093,
+          "slug": "notes/roadmap-example-40",
+          "source_id": "default"
+        }
+      ],
+      "hybrid": [
+        {
+          "chunk_id": 13,
+          "chunk_index": 0,
+          "page_id": 7,
+          "score": 0.8332784974957957,
+          "slug": "people/widget-example-6",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 37,
+          "chunk_index": 0,
+          "page_id": 19,
+          "score": 0.8218030876597302,
+          "slug": "people/widget-example-18",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 61,
+          "chunk_index": 0,
+          "page_id": 31,
+          "score": 0.8106978523345054,
+          "slug": "people/widget-example-30",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 85,
+          "chunk_index": 0,
+          "page_id": 43,
+          "score": 0.7999451641624624,
+          "slug": "people/widget-example-42",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 25,
+          "chunk_index": 0,
+          "page_id": 13,
+          "score": 0.7895284974957958,
+          "slug": "notes/widget-example-12",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 49,
+          "chunk_index": 0,
+          "page_id": 25,
+          "score": 0.779432343649642,
+          "slug": "notes/widget-example-24",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 73,
+          "chunk_index": 0,
+          "page_id": 37,
+          "score": 0.7696421338594321,
+          "slug": "notes/widget-example-36",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 1,
+          "chunk_index": 0,
+          "page_id": 1,
+          "score": 0.7521560320794746,
+          "slug": "notes/widget-example-0",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 2,
+          "chunk_index": 0,
+          "page_id": 2,
+          "score": 0.7102290688007845,
+          "slug": "concepts/garden-example-1",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 26,
+          "chunk_index": 0,
+          "page_id": 14,
+          "score": 0.7012776621511682,
+          "slug": "concepts/garden-example-13",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 50,
+          "chunk_index": 0,
+          "page_id": 26,
+          "score": 0.6925820099772552,
+          "slug": "concepts/garden-example-25",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 74,
+          "chunk_index": 0,
+          "page_id": 38,
+          "score": 0.6841313057519031,
+          "slug": "concepts/garden-example-37",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 14,
+          "chunk_index": 0,
+          "page_id": 8,
+          "score": 0.6759153433105884,
+          "slug": "companies/garden-example-7",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 38,
+          "chunk_index": 0,
+          "page_id": 20,
+          "score": 0.6679244757306798,
+          "slug": "companies/garden-example-19",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 62,
+          "chunk_index": 0,
+          "page_id": 32,
+          "score": 0.6601495775448227,
+          "slug": "companies/garden-example-31",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 86,
+          "chunk_index": 0,
+          "page_id": 44,
+          "score": 0.6525820099772551,
+          "slug": "companies/garden-example-43",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 90,
+          "chunk_index": 0,
+          "page_id": 46,
+          "score": 0.607403834697885,
+          "slug": "companies/acme-example",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 21,
+          "chunk_index": 1,
+          "page_id": 11,
+          "score": 0.5976778422412548,
+          "slug": "people/roadmap-example-10",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 45,
+          "chunk_index": 1,
+          "page_id": 23,
+          "score": 0.5906848352482477,
+          "slug": "people/roadmap-example-22",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 69,
+          "chunk_index": 1,
+          "page_id": 35,
+          "score": 0.5838688664069625,
+          "slug": "people/roadmap-example-34",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 88,
+          "chunk_index": 0,
+          "page_id": 45,
+          "score": 0.5772232967867093,
+          "slug": "people/alice-example",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 9,
+          "chunk_index": 1,
+          "page_id": 5,
+          "score": 0.5707418153052278,
+          "slug": "notes/roadmap-example-4",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 33,
+          "chunk_index": 1,
+          "page_id": 17,
+          "score": 0.5644184187379289,
+          "slug": "notes/roadmap-example-16",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 57,
+          "chunk_index": 1,
+          "page_id": 29,
+          "score": 0.5582473931722515,
+          "slug": "notes/roadmap-example-28",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 81,
+          "chunk_index": 1,
+          "page_id": 41,
+          "score": 0.5522232967867093,
+          "slug": "notes/roadmap-example-40",
+          "source_id": "default"
+        }
+      ]
+    },
+    "mixed-entities": {
+      "cached_cold": [
+        {
+          "chunk_id": 89,
+          "chunk_index": 1,
+          "page_id": 45,
+          "score": 0.914330352493528,
+          "slug": "people/alice-example",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 90,
+          "chunk_index": 0,
+          "page_id": 46,
+          "score": 0.8226886688139218,
+          "slug": "companies/acme-example",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 58,
+          "chunk_index": 0,
+          "page_id": 30,
+          "score": 0.7321916105892262,
+          "slug": "concepts/graph-example-29",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 82,
+          "chunk_index": 0,
+          "page_id": 42,
+          "score": 0.7214389224171832,
+          "slug": "concepts/graph-example-41",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 10,
+          "chunk_index": 0,
+          "page_id": 6,
+          "score": 0.7110222557505166,
+          "slug": "concepts/graph-example-5",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 34,
+          "chunk_index": 0,
+          "page_id": 18,
+          "score": 0.7009261019043628,
+          "slug": "concepts/graph-example-17",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 22,
+          "chunk_index": 0,
+          "page_id": 12,
+          "score": 0.6911358921141529,
+          "slug": "companies/graph-example-11",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 46,
+          "chunk_index": 0,
+          "page_id": 24,
+          "score": 0.6816379273923077,
+          "slug": "companies/graph-example-23",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 70,
+          "chunk_index": 0,
+          "page_id": 36,
+          "score": 0.6724193145740459,
+          "slug": "companies/graph-example-35",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 76,
+          "chunk_index": 0,
+          "page_id": 39,
+          "score": 0.6624042677268704,
+          "slug": "people/quantum-example-38",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 4,
+          "chunk_index": 0,
+          "page_id": 3,
+          "score": 0.6537086155529575,
+          "slug": "people/quantum-example-2",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 28,
+          "chunk_index": 0,
+          "page_id": 15,
+          "score": 0.6452579113276053,
+          "slug": "people/quantum-example-14",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 52,
+          "chunk_index": 0,
+          "page_id": 27,
+          "score": 0.6370419488862907,
+          "slug": "people/quantum-example-26",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 16,
+          "chunk_index": 0,
+          "page_id": 9,
+          "score": 0.6304835624104602,
+          "slug": "notes/quantum-example-8",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 40,
+          "chunk_index": 0,
+          "page_id": 21,
+          "score": 0.621276183120525,
+          "slug": "notes/quantum-example-20",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 64,
+          "chunk_index": 0,
+          "page_id": 33,
+          "score": 0.6137086155529574,
+          "slug": "notes/quantum-example-32",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 94,
+          "chunk_index": 0,
+          "page_id": 50,
+          "score": 0.5699520870230571,
+          "slug": "concepts/knowledge-graph-zh-team",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 13,
+          "chunk_index": 0,
+          "page_id": 7,
+          "score": 0.5508956173303705,
+          "slug": "people/widget-example-6",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 37,
+          "chunk_index": 0,
+          "page_id": 19,
+          "score": 0.5439026103373634,
+          "slug": "people/widget-example-18",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 61,
+          "chunk_index": 0,
+          "page_id": 31,
+          "score": 0.5370866414960782,
+          "slug": "people/widget-example-30",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 85,
+          "chunk_index": 0,
+          "page_id": 43,
+          "score": 0.530441071875825,
+          "slug": "people/widget-example-42",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 25,
+          "chunk_index": 0,
+          "page_id": 13,
+          "score": 0.5239595903943436,
+          "slug": "notes/widget-example-12",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 49,
+          "chunk_index": 0,
+          "page_id": 25,
+          "score": 0.5176361938270446,
+          "slug": "notes/widget-example-24",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 73,
+          "chunk_index": 0,
+          "page_id": 37,
+          "score": 0.5114651682613672,
+          "slug": "notes/widget-example-36",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 1,
+          "chunk_index": 0,
+          "page_id": 1,
+          "score": 0.5051149575460285,
+          "slug": "notes/widget-example-0",
+          "source_id": "default"
+        }
+      ],
+      "cached_warm": [
+        {
+          "chunk_id": 89,
+          "chunk_index": 1,
+          "page_id": 45,
+          "score": 0.914330352493528,
+          "slug": "people/alice-example",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 90,
+          "chunk_index": 0,
+          "page_id": 46,
+          "score": 0.8226886688139218,
+          "slug": "companies/acme-example",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 58,
+          "chunk_index": 0,
+          "page_id": 30,
+          "score": 0.7321916105892262,
+          "slug": "concepts/graph-example-29",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 82,
+          "chunk_index": 0,
+          "page_id": 42,
+          "score": 0.7214389224171832,
+          "slug": "concepts/graph-example-41",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 10,
+          "chunk_index": 0,
+          "page_id": 6,
+          "score": 0.7110222557505166,
+          "slug": "concepts/graph-example-5",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 34,
+          "chunk_index": 0,
+          "page_id": 18,
+          "score": 0.7009261019043628,
+          "slug": "concepts/graph-example-17",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 22,
+          "chunk_index": 0,
+          "page_id": 12,
+          "score": 0.6911358921141529,
+          "slug": "companies/graph-example-11",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 46,
+          "chunk_index": 0,
+          "page_id": 24,
+          "score": 0.6816379273923077,
+          "slug": "companies/graph-example-23",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 70,
+          "chunk_index": 0,
+          "page_id": 36,
+          "score": 0.6724193145740459,
+          "slug": "companies/graph-example-35",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 76,
+          "chunk_index": 0,
+          "page_id": 39,
+          "score": 0.6624042677268704,
+          "slug": "people/quantum-example-38",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 4,
+          "chunk_index": 0,
+          "page_id": 3,
+          "score": 0.6537086155529575,
+          "slug": "people/quantum-example-2",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 28,
+          "chunk_index": 0,
+          "page_id": 15,
+          "score": 0.6452579113276053,
+          "slug": "people/quantum-example-14",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 52,
+          "chunk_index": 0,
+          "page_id": 27,
+          "score": 0.6370419488862907,
+          "slug": "people/quantum-example-26",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 16,
+          "chunk_index": 0,
+          "page_id": 9,
+          "score": 0.6304835624104602,
+          "slug": "notes/quantum-example-8",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 40,
+          "chunk_index": 0,
+          "page_id": 21,
+          "score": 0.621276183120525,
+          "slug": "notes/quantum-example-20",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 64,
+          "chunk_index": 0,
+          "page_id": 33,
+          "score": 0.6137086155529574,
+          "slug": "notes/quantum-example-32",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 94,
+          "chunk_index": 0,
+          "page_id": 50,
+          "score": 0.5699520870230571,
+          "slug": "concepts/knowledge-graph-zh-team",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 13,
+          "chunk_index": 0,
+          "page_id": 7,
+          "score": 0.5508956173303705,
+          "slug": "people/widget-example-6",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 37,
+          "chunk_index": 0,
+          "page_id": 19,
+          "score": 0.5439026103373634,
+          "slug": "people/widget-example-18",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 61,
+          "chunk_index": 0,
+          "page_id": 31,
+          "score": 0.5370866414960782,
+          "slug": "people/widget-example-30",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 85,
+          "chunk_index": 0,
+          "page_id": 43,
+          "score": 0.530441071875825,
+          "slug": "people/widget-example-42",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 25,
+          "chunk_index": 0,
+          "page_id": 13,
+          "score": 0.5239595903943436,
+          "slug": "notes/widget-example-12",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 49,
+          "chunk_index": 0,
+          "page_id": 25,
+          "score": 0.5176361938270446,
+          "slug": "notes/widget-example-24",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 73,
+          "chunk_index": 0,
+          "page_id": 37,
+          "score": 0.5114651682613672,
+          "slug": "notes/widget-example-36",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 1,
+          "chunk_index": 0,
+          "page_id": 1,
+          "score": 0.5051149575460285,
+          "slug": "notes/widget-example-0",
+          "source_id": "default"
+        }
+      ],
+      "hybrid": [
+        {
+          "chunk_id": 89,
+          "chunk_index": 1,
+          "page_id": 45,
+          "score": 0.914330352493528,
+          "slug": "people/alice-example",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 90,
+          "chunk_index": 0,
+          "page_id": 46,
+          "score": 0.8226886688139218,
+          "slug": "companies/acme-example",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 58,
+          "chunk_index": 0,
+          "page_id": 30,
+          "score": 0.7321916105892262,
+          "slug": "concepts/graph-example-29",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 82,
+          "chunk_index": 0,
+          "page_id": 42,
+          "score": 0.7214389224171832,
+          "slug": "concepts/graph-example-41",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 10,
+          "chunk_index": 0,
+          "page_id": 6,
+          "score": 0.7110222557505166,
+          "slug": "concepts/graph-example-5",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 34,
+          "chunk_index": 0,
+          "page_id": 18,
+          "score": 0.7009261019043628,
+          "slug": "concepts/graph-example-17",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 22,
+          "chunk_index": 0,
+          "page_id": 12,
+          "score": 0.6911358921141529,
+          "slug": "companies/graph-example-11",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 46,
+          "chunk_index": 0,
+          "page_id": 24,
+          "score": 0.6816379273923077,
+          "slug": "companies/graph-example-23",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 70,
+          "chunk_index": 0,
+          "page_id": 36,
+          "score": 0.6724193145740459,
+          "slug": "companies/graph-example-35",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 76,
+          "chunk_index": 0,
+          "page_id": 39,
+          "score": 0.6624042677268704,
+          "slug": "people/quantum-example-38",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 4,
+          "chunk_index": 0,
+          "page_id": 3,
+          "score": 0.6537086155529575,
+          "slug": "people/quantum-example-2",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 28,
+          "chunk_index": 0,
+          "page_id": 15,
+          "score": 0.6452579113276053,
+          "slug": "people/quantum-example-14",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 52,
+          "chunk_index": 0,
+          "page_id": 27,
+          "score": 0.6370419488862907,
+          "slug": "people/quantum-example-26",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 16,
+          "chunk_index": 0,
+          "page_id": 9,
+          "score": 0.6304835624104602,
+          "slug": "notes/quantum-example-8",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 40,
+          "chunk_index": 0,
+          "page_id": 21,
+          "score": 0.621276183120525,
+          "slug": "notes/quantum-example-20",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 64,
+          "chunk_index": 0,
+          "page_id": 33,
+          "score": 0.6137086155529574,
+          "slug": "notes/quantum-example-32",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 94,
+          "chunk_index": 0,
+          "page_id": 50,
+          "score": 0.5699520870230571,
+          "slug": "concepts/knowledge-graph-zh-team",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 13,
+          "chunk_index": 0,
+          "page_id": 7,
+          "score": 0.5508956173303705,
+          "slug": "people/widget-example-6",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 37,
+          "chunk_index": 0,
+          "page_id": 19,
+          "score": 0.5439026103373634,
+          "slug": "people/widget-example-18",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 61,
+          "chunk_index": 0,
+          "page_id": 31,
+          "score": 0.5370866414960782,
+          "slug": "people/widget-example-30",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 85,
+          "chunk_index": 0,
+          "page_id": 43,
+          "score": 0.530441071875825,
+          "slug": "people/widget-example-42",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 25,
+          "chunk_index": 0,
+          "page_id": 13,
+          "score": 0.5239595903943436,
+          "slug": "notes/widget-example-12",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 49,
+          "chunk_index": 0,
+          "page_id": 25,
+          "score": 0.5176361938270446,
+          "slug": "notes/widget-example-24",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 73,
+          "chunk_index": 0,
+          "page_id": 37,
+          "score": 0.5114651682613672,
+          "slug": "notes/widget-example-36",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 1,
+          "chunk_index": 0,
+          "page_id": 1,
+          "score": 0.5051149575460285,
+          "slug": "notes/widget-example-0",
+          "source_id": "default"
+        }
+      ]
+    },
+    "multi-source-limit": {
+      "cached_cold": [
+        {
+          "chunk_id": 76,
+          "chunk_index": 0,
+          "page_id": 39,
+          "score": 0.8490998632821949,
+          "slug": "people/quantum-example-38",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 4,
+          "chunk_index": 0,
+          "page_id": 3,
+          "score": 0.8376244534461293,
+          "slug": "people/quantum-example-2",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 28,
+          "chunk_index": 0,
+          "page_id": 15,
+          "score": 0.8265192181209046,
+          "slug": "people/quantum-example-14",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 52,
+          "chunk_index": 0,
+          "page_id": 27,
+          "score": 0.8157665299488616,
+          "slug": "people/quantum-example-26",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 16,
+          "chunk_index": 0,
+          "page_id": 9,
+          "score": 0.8093265574228543,
+          "slug": "notes/quantum-example-8",
+          "source_id": "team-example"
+        }
+      ],
+      "cached_warm": [
+        {
+          "chunk_id": 76,
+          "chunk_index": 0,
+          "page_id": 39,
+          "score": 0.8490998632821949,
+          "slug": "people/quantum-example-38",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 4,
+          "chunk_index": 0,
+          "page_id": 3,
+          "score": 0.8376244534461293,
+          "slug": "people/quantum-example-2",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 28,
+          "chunk_index": 0,
+          "page_id": 15,
+          "score": 0.8265192181209046,
+          "slug": "people/quantum-example-14",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 52,
+          "chunk_index": 0,
+          "page_id": 27,
+          "score": 0.8157665299488616,
+          "slug": "people/quantum-example-26",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 16,
+          "chunk_index": 0,
+          "page_id": 9,
+          "score": 0.8093265574228543,
+          "slug": "notes/quantum-example-8",
+          "source_id": "team-example"
+        }
+      ],
+      "hybrid": [
+        {
+          "chunk_id": 76,
+          "chunk_index": 0,
+          "page_id": 39,
+          "score": 0.8490998632821949,
+          "slug": "people/quantum-example-38",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 4,
+          "chunk_index": 0,
+          "page_id": 3,
+          "score": 0.8376244534461293,
+          "slug": "people/quantum-example-2",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 28,
+          "chunk_index": 0,
+          "page_id": 15,
+          "score": 0.8265192181209046,
+          "slug": "people/quantum-example-14",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 52,
+          "chunk_index": 0,
+          "page_id": 27,
+          "score": 0.8157665299488616,
+          "slug": "people/quantum-example-26",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 16,
+          "chunk_index": 0,
+          "page_id": 9,
+          "score": 0.8093265574228543,
+          "slug": "notes/quantum-example-8",
+          "source_id": "team-example"
+        }
+      ]
+    },
+    "semantic": {
+      "cached_cold": [
+        {
+          "chunk_id": 2,
+          "chunk_index": 0,
+          "page_id": 2,
+          "score": 0.7606091526731326,
+          "slug": "concepts/garden-example-1",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 26,
+          "chunk_index": 0,
+          "page_id": 14,
+          "score": 0.749133742837067,
+          "slug": "concepts/garden-example-13",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 50,
+          "chunk_index": 0,
+          "page_id": 26,
+          "score": 0.7380285075118422,
+          "slug": "concepts/garden-example-25",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 74,
+          "chunk_index": 0,
+          "page_id": 38,
+          "score": 0.7272758193397992,
+          "slug": "concepts/garden-example-37",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 14,
+          "chunk_index": 0,
+          "page_id": 8,
+          "score": 0.7168591526731326,
+          "slug": "companies/garden-example-7",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 38,
+          "chunk_index": 0,
+          "page_id": 20,
+          "score": 0.7067629988269788,
+          "slug": "companies/garden-example-19",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 62,
+          "chunk_index": 0,
+          "page_id": 32,
+          "score": 0.696972789036769,
+          "slug": "companies/garden-example-31",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 86,
+          "chunk_index": 0,
+          "page_id": 44,
+          "score": 0.6874748243149237,
+          "slug": "companies/garden-example-43",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 92,
+          "chunk_index": 0,
+          "page_id": 48,
+          "score": 0.6535039171035611,
+          "slug": "notes/garden-news-archive",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 11,
+          "chunk_index": 1,
+          "page_id": 6,
+          "score": 0.6340502798157684,
+          "slug": "concepts/graph-example-5",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 35,
+          "chunk_index": 1,
+          "page_id": 18,
+          "score": 0.6253546276418555,
+          "slug": "concepts/graph-example-17",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 59,
+          "chunk_index": 1,
+          "page_id": 30,
+          "score": 0.6169039234165034,
+          "slug": "concepts/graph-example-29",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 83,
+          "chunk_index": 1,
+          "page_id": 42,
+          "score": 0.6086879609751887,
+          "slug": "concepts/graph-example-41",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 91,
+          "chunk_index": 0,
+          "page_id": 47,
+          "score": 0.6080751492888234,
+          "slug": "notes/garden-news-latest",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 23,
+          "chunk_index": 1,
+          "page_id": 12,
+          "score": 0.592922195209423,
+          "slug": "companies/graph-example-11",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 47,
+          "chunk_index": 1,
+          "page_id": 24,
+          "score": 0.5853546276418554,
+          "slug": "companies/graph-example-23",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 71,
+          "chunk_index": 1,
+          "page_id": 36,
+          "score": 0.5779862065892238,
+          "slug": "companies/graph-example-35",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 30,
+          "chunk_index": 2,
+          "page_id": 15,
+          "score": 0.568421315525074,
+          "slug": "people/quantum-example-14",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 54,
+          "chunk_index": 2,
+          "page_id": 27,
+          "score": 0.5614283085320669,
+          "slug": "people/quantum-example-26",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 78,
+          "chunk_index": 2,
+          "page_id": 39,
+          "score": 0.5546123396907817,
+          "slug": "people/quantum-example-38",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 6,
+          "chunk_index": 2,
+          "page_id": 3,
+          "score": 0.5466224991046933,
+          "slug": "people/quantum-example-2",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 18,
+          "chunk_index": 2,
+          "page_id": 9,
+          "score": 0.5420978432752742,
+          "slug": "notes/quantum-example-8",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 42,
+          "chunk_index": 2,
+          "page_id": 21,
+          "score": 0.5351618920217481,
+          "slug": "notes/quantum-example-20",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 66,
+          "chunk_index": 2,
+          "page_id": 33,
+          "score": 0.5289908664560707,
+          "slug": "notes/quantum-example-32",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 1,
+          "chunk_index": 0,
+          "page_id": 1,
+          "score": 0.5,
+          "slug": "notes/widget-example-0",
+          "source_id": "default"
+        }
+      ],
+      "cached_warm": [
+        {
+          "chunk_id": 2,
+          "chunk_index": 0,
+          "page_id": 2,
+          "score": 0.7606091526731326,
+          "slug": "concepts/garden-example-1",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 26,
+          "chunk_index": 0,
+          "page_id": 14,
+          "score": 0.749133742837067,
+          "slug": "concepts/garden-example-13",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 50,
+          "chunk_index": 0,
+          "page_id": 26,
+          "score": 0.7380285075118422,
+          "slug": "concepts/garden-example-25",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 74,
+          "chunk_index": 0,
+          "page_id": 38,
+          "score": 0.7272758193397992,
+          "slug": "concepts/garden-example-37",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 14,
+          "chunk_index": 0,
+          "page_id": 8,
+          "score": 0.7168591526731326,
+          "slug": "companies/garden-example-7",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 38,
+          "chunk_index": 0,
+          "page_id": 20,
+          "score": 0.7067629988269788,
+          "slug": "companies/garden-example-19",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 62,
+          "chunk_index": 0,
+          "page_id": 32,
+          "score": 0.696972789036769,
+          "slug": "companies/garden-example-31",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 86,
+          "chunk_index": 0,
+          "page_id": 44,
+          "score": 0.6874748243149237,
+          "slug": "companies/garden-example-43",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 92,
+          "chunk_index": 0,
+          "page_id": 48,
+          "score": 0.6535039171035611,
+          "slug": "notes/garden-news-archive",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 11,
+          "chunk_index": 1,
+          "page_id": 6,
+          "score": 0.6340502798157684,
+          "slug": "concepts/graph-example-5",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 35,
+          "chunk_index": 1,
+          "page_id": 18,
+          "score": 0.6253546276418555,
+          "slug": "concepts/graph-example-17",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 59,
+          "chunk_index": 1,
+          "page_id": 30,
+          "score": 0.6169039234165034,
+          "slug": "concepts/graph-example-29",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 83,
+          "chunk_index": 1,
+          "page_id": 42,
+          "score": 0.6086879609751887,
+          "slug": "concepts/graph-example-41",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 91,
+          "chunk_index": 0,
+          "page_id": 47,
+          "score": 0.6080751492888234,
+          "slug": "notes/garden-news-latest",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 23,
+          "chunk_index": 1,
+          "page_id": 12,
+          "score": 0.592922195209423,
+          "slug": "companies/graph-example-11",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 47,
+          "chunk_index": 1,
+          "page_id": 24,
+          "score": 0.5853546276418554,
+          "slug": "companies/graph-example-23",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 71,
+          "chunk_index": 1,
+          "page_id": 36,
+          "score": 0.5779862065892238,
+          "slug": "companies/graph-example-35",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 30,
+          "chunk_index": 2,
+          "page_id": 15,
+          "score": 0.568421315525074,
+          "slug": "people/quantum-example-14",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 54,
+          "chunk_index": 2,
+          "page_id": 27,
+          "score": 0.5614283085320669,
+          "slug": "people/quantum-example-26",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 78,
+          "chunk_index": 2,
+          "page_id": 39,
+          "score": 0.5546123396907817,
+          "slug": "people/quantum-example-38",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 6,
+          "chunk_index": 2,
+          "page_id": 3,
+          "score": 0.5466224991046933,
+          "slug": "people/quantum-example-2",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 18,
+          "chunk_index": 2,
+          "page_id": 9,
+          "score": 0.5420978432752742,
+          "slug": "notes/quantum-example-8",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 42,
+          "chunk_index": 2,
+          "page_id": 21,
+          "score": 0.5351618920217481,
+          "slug": "notes/quantum-example-20",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 66,
+          "chunk_index": 2,
+          "page_id": 33,
+          "score": 0.5289908664560707,
+          "slug": "notes/quantum-example-32",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 1,
+          "chunk_index": 0,
+          "page_id": 1,
+          "score": 0.5,
+          "slug": "notes/widget-example-0",
+          "source_id": "default"
+        }
+      ],
+      "hybrid": [
+        {
+          "chunk_id": 2,
+          "chunk_index": 0,
+          "page_id": 2,
+          "score": 0.7606091526731326,
+          "slug": "concepts/garden-example-1",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 26,
+          "chunk_index": 0,
+          "page_id": 14,
+          "score": 0.749133742837067,
+          "slug": "concepts/garden-example-13",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 50,
+          "chunk_index": 0,
+          "page_id": 26,
+          "score": 0.7380285075118422,
+          "slug": "concepts/garden-example-25",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 74,
+          "chunk_index": 0,
+          "page_id": 38,
+          "score": 0.7272758193397992,
+          "slug": "concepts/garden-example-37",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 14,
+          "chunk_index": 0,
+          "page_id": 8,
+          "score": 0.7168591526731326,
+          "slug": "companies/garden-example-7",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 38,
+          "chunk_index": 0,
+          "page_id": 20,
+          "score": 0.7067629988269788,
+          "slug": "companies/garden-example-19",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 62,
+          "chunk_index": 0,
+          "page_id": 32,
+          "score": 0.696972789036769,
+          "slug": "companies/garden-example-31",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 86,
+          "chunk_index": 0,
+          "page_id": 44,
+          "score": 0.6874748243149237,
+          "slug": "companies/garden-example-43",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 92,
+          "chunk_index": 0,
+          "page_id": 48,
+          "score": 0.6535039171035611,
+          "slug": "notes/garden-news-archive",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 11,
+          "chunk_index": 1,
+          "page_id": 6,
+          "score": 0.6340502798157684,
+          "slug": "concepts/graph-example-5",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 35,
+          "chunk_index": 1,
+          "page_id": 18,
+          "score": 0.6253546276418555,
+          "slug": "concepts/graph-example-17",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 59,
+          "chunk_index": 1,
+          "page_id": 30,
+          "score": 0.6169039234165034,
+          "slug": "concepts/graph-example-29",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 83,
+          "chunk_index": 1,
+          "page_id": 42,
+          "score": 0.6086879609751887,
+          "slug": "concepts/graph-example-41",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 91,
+          "chunk_index": 0,
+          "page_id": 47,
+          "score": 0.6080751492888234,
+          "slug": "notes/garden-news-latest",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 23,
+          "chunk_index": 1,
+          "page_id": 12,
+          "score": 0.592922195209423,
+          "slug": "companies/graph-example-11",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 47,
+          "chunk_index": 1,
+          "page_id": 24,
+          "score": 0.5853546276418554,
+          "slug": "companies/graph-example-23",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 71,
+          "chunk_index": 1,
+          "page_id": 36,
+          "score": 0.5779862065892238,
+          "slug": "companies/graph-example-35",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 30,
+          "chunk_index": 2,
+          "page_id": 15,
+          "score": 0.568421315525074,
+          "slug": "people/quantum-example-14",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 54,
+          "chunk_index": 2,
+          "page_id": 27,
+          "score": 0.5614283085320669,
+          "slug": "people/quantum-example-26",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 78,
+          "chunk_index": 2,
+          "page_id": 39,
+          "score": 0.5546123396907817,
+          "slug": "people/quantum-example-38",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 6,
+          "chunk_index": 2,
+          "page_id": 3,
+          "score": 0.5466224991046933,
+          "slug": "people/quantum-example-2",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 18,
+          "chunk_index": 2,
+          "page_id": 9,
+          "score": 0.5420978432752742,
+          "slug": "notes/quantum-example-8",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 42,
+          "chunk_index": 2,
+          "page_id": 21,
+          "score": 0.5351618920217481,
+          "slug": "notes/quantum-example-20",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 66,
+          "chunk_index": 2,
+          "page_id": 33,
+          "score": 0.5289908664560707,
+          "slug": "notes/quantum-example-32",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 1,
+          "chunk_index": 0,
+          "page_id": 1,
+          "score": 0.5,
+          "slug": "notes/widget-example-0",
+          "source_id": "default"
+        }
+      ]
+    },
+    "source-filter": {
+      "cached_cold": [
+        {
+          "chunk_id": 12,
+          "chunk_index": 2,
+          "page_id": 6,
+          "score": 0.8359895241734874,
+          "slug": "concepts/graph-example-5",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 60,
+          "chunk_index": 2,
+          "page_id": 30,
+          "score": 0.8245141143374218,
+          "slug": "concepts/graph-example-29",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 84,
+          "chunk_index": 2,
+          "page_id": 42,
+          "score": 0.813408879012197,
+          "slug": "concepts/graph-example-41",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 36,
+          "chunk_index": 2,
+          "page_id": 18,
+          "score": 0.802656190840154,
+          "slug": "concepts/graph-example-17",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 48,
+          "chunk_index": 2,
+          "page_id": 24,
+          "score": 0.7922395241734874,
+          "slug": "companies/graph-example-23",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 72,
+          "chunk_index": 2,
+          "page_id": 36,
+          "score": 0.7821433703273336,
+          "slug": "companies/graph-example-35",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 24,
+          "chunk_index": 2,
+          "page_id": 12,
+          "score": 0.7723531605371238,
+          "slug": "companies/graph-example-11",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 5,
+          "chunk_index": 1,
+          "page_id": 3,
+          "score": 0.7201161524658225,
+          "slug": "people/quantum-example-2",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 29,
+          "chunk_index": 1,
+          "page_id": 15,
+          "score": 0.7108975396475607,
+          "slug": "people/quantum-example-14",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 53,
+          "chunk_index": 1,
+          "page_id": 27,
+          "score": 0.7019461329979444,
+          "slug": "people/quantum-example-26",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 77,
+          "chunk_index": 1,
+          "page_id": 39,
+          "score": 0.6932504808240314,
+          "slug": "people/quantum-example-38",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 17,
+          "chunk_index": 1,
+          "page_id": 9,
+          "score": 0.6847997765986793,
+          "slug": "notes/quantum-example-8",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 41,
+          "chunk_index": 1,
+          "page_id": 21,
+          "score": 0.6765838141573647,
+          "slug": "notes/quantum-example-20",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 65,
+          "chunk_index": 1,
+          "page_id": 33,
+          "score": 0.668592946577456,
+          "slug": "notes/quantum-example-32",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 94,
+          "chunk_index": 0,
+          "page_id": 50,
+          "score": 0.5675675675675675,
+          "slug": "concepts/knowledge-graph-zh-team",
+          "source_id": "team-example"
+        }
+      ],
+      "cached_warm": [
+        {
+          "chunk_id": 12,
+          "chunk_index": 2,
+          "page_id": 6,
+          "score": 0.8359895241734874,
+          "slug": "concepts/graph-example-5",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 60,
+          "chunk_index": 2,
+          "page_id": 30,
+          "score": 0.8245141143374218,
+          "slug": "concepts/graph-example-29",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 84,
+          "chunk_index": 2,
+          "page_id": 42,
+          "score": 0.813408879012197,
+          "slug": "concepts/graph-example-41",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 36,
+          "chunk_index": 2,
+          "page_id": 18,
+          "score": 0.802656190840154,
+          "slug": "concepts/graph-example-17",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 48,
+          "chunk_index": 2,
+          "page_id": 24,
+          "score": 0.7922395241734874,
+          "slug": "companies/graph-example-23",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 72,
+          "chunk_index": 2,
+          "page_id": 36,
+          "score": 0.7821433703273336,
+          "slug": "companies/graph-example-35",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 24,
+          "chunk_index": 2,
+          "page_id": 12,
+          "score": 0.7723531605371238,
+          "slug": "companies/graph-example-11",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 5,
+          "chunk_index": 1,
+          "page_id": 3,
+          "score": 0.7201161524658225,
+          "slug": "people/quantum-example-2",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 29,
+          "chunk_index": 1,
+          "page_id": 15,
+          "score": 0.7108975396475607,
+          "slug": "people/quantum-example-14",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 53,
+          "chunk_index": 1,
+          "page_id": 27,
+          "score": 0.7019461329979444,
+          "slug": "people/quantum-example-26",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 77,
+          "chunk_index": 1,
+          "page_id": 39,
+          "score": 0.6932504808240314,
+          "slug": "people/quantum-example-38",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 17,
+          "chunk_index": 1,
+          "page_id": 9,
+          "score": 0.6847997765986793,
+          "slug": "notes/quantum-example-8",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 41,
+          "chunk_index": 1,
+          "page_id": 21,
+          "score": 0.6765838141573647,
+          "slug": "notes/quantum-example-20",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 65,
+          "chunk_index": 1,
+          "page_id": 33,
+          "score": 0.668592946577456,
+          "slug": "notes/quantum-example-32",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 94,
+          "chunk_index": 0,
+          "page_id": 50,
+          "score": 0.5675675675675675,
+          "slug": "concepts/knowledge-graph-zh-team",
+          "source_id": "team-example"
+        }
+      ],
+      "hybrid": [
+        {
+          "chunk_id": 12,
+          "chunk_index": 2,
+          "page_id": 6,
+          "score": 0.8359895241734874,
+          "slug": "concepts/graph-example-5",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 60,
+          "chunk_index": 2,
+          "page_id": 30,
+          "score": 0.8245141143374218,
+          "slug": "concepts/graph-example-29",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 84,
+          "chunk_index": 2,
+          "page_id": 42,
+          "score": 0.813408879012197,
+          "slug": "concepts/graph-example-41",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 36,
+          "chunk_index": 2,
+          "page_id": 18,
+          "score": 0.802656190840154,
+          "slug": "concepts/graph-example-17",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 48,
+          "chunk_index": 2,
+          "page_id": 24,
+          "score": 0.7922395241734874,
+          "slug": "companies/graph-example-23",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 72,
+          "chunk_index": 2,
+          "page_id": 36,
+          "score": 0.7821433703273336,
+          "slug": "companies/graph-example-35",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 24,
+          "chunk_index": 2,
+          "page_id": 12,
+          "score": 0.7723531605371238,
+          "slug": "companies/graph-example-11",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 5,
+          "chunk_index": 1,
+          "page_id": 3,
+          "score": 0.7201161524658225,
+          "slug": "people/quantum-example-2",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 29,
+          "chunk_index": 1,
+          "page_id": 15,
+          "score": 0.7108975396475607,
+          "slug": "people/quantum-example-14",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 53,
+          "chunk_index": 1,
+          "page_id": 27,
+          "score": 0.7019461329979444,
+          "slug": "people/quantum-example-26",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 77,
+          "chunk_index": 1,
+          "page_id": 39,
+          "score": 0.6932504808240314,
+          "slug": "people/quantum-example-38",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 17,
+          "chunk_index": 1,
+          "page_id": 9,
+          "score": 0.6847997765986793,
+          "slug": "notes/quantum-example-8",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 41,
+          "chunk_index": 1,
+          "page_id": 21,
+          "score": 0.6765838141573647,
+          "slug": "notes/quantum-example-20",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 65,
+          "chunk_index": 1,
+          "page_id": 33,
+          "score": 0.668592946577456,
+          "slug": "notes/quantum-example-32",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 94,
+          "chunk_index": 0,
+          "page_id": 50,
+          "score": 0.5675675675675675,
+          "slug": "concepts/knowledge-graph-zh-team",
+          "source_id": "team-example"
+        }
+      ]
+    },
+    "temporal-recency": {
+      "cached_cold": [
+        {
+          "chunk_id": 91,
+          "chunk_index": 0,
+          "page_id": 47,
+          "score": 1.3526386087404616,
+          "slug": "notes/garden-news-latest",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 92,
+          "chunk_index": 0,
+          "page_id": 48,
+          "score": 0.4781673917943123,
+          "slug": "notes/garden-news-archive",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 15,
+          "chunk_index": 1,
+          "page_id": 8,
+          "score": 0.4768555619627832,
+          "slug": "companies/garden-example-7",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 39,
+          "chunk_index": 1,
+          "page_id": 20,
+          "score": 0.46572636059817796,
+          "slug": "companies/garden-example-19",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 63,
+          "chunk_index": 1,
+          "page_id": 32,
+          "score": 0.4527263825038185,
+          "slug": "companies/garden-example-31",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 87,
+          "chunk_index": 1,
+          "page_id": 44,
+          "score": 0.44296245710877985,
+          "slug": "companies/garden-example-43",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 13,
+          "chunk_index": 0,
+          "page_id": 7,
+          "score": 0.43084706115873855,
+          "slug": "people/widget-example-6",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 37,
+          "chunk_index": 0,
+          "page_id": 19,
+          "score": 0.4219197281365182,
+          "slug": "people/widget-example-18",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 61,
+          "chunk_index": 0,
+          "page_id": 31,
+          "score": 0.41136075536767414,
+          "slug": "people/widget-example-30",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 27,
+          "chunk_index": 1,
+          "page_id": 14,
+          "score": 0.4050470498933969,
+          "slug": "concepts/garden-example-13",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 85,
+          "chunk_index": 0,
+          "page_id": 43,
+          "score": 0.403429876498049,
+          "slug": "people/widget-example-42",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 51,
+          "chunk_index": 1,
+          "page_id": 26,
+          "score": 0.3947906396369867,
+          "slug": "concepts/garden-example-25",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 25,
+          "chunk_index": 0,
+          "page_id": 13,
+          "score": 0.38518999122830333,
+          "slug": "notes/widget-example-12",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 75,
+          "chunk_index": 1,
+          "page_id": 38,
+          "score": 0.3851465523809592,
+          "slug": "concepts/garden-example-37",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 49,
+          "chunk_index": 0,
+          "page_id": 25,
+          "score": 0.37680868346547397,
+          "slug": "notes/widget-example-24",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 73,
+          "chunk_index": 0,
+          "page_id": 37,
+          "score": 0.36817748122461497,
+          "slug": "notes/widget-example-36",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 1,
+          "chunk_index": 0,
+          "page_id": 1,
+          "score": 0.3521094947307734,
+          "slug": "notes/widget-example-0",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 3,
+          "chunk_index": 1,
+          "page_id": 2,
+          "score": 0.34339782879867786,
+          "slug": "concepts/garden-example-1",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 94,
+          "chunk_index": 0,
+          "page_id": 50,
+          "score": 0.31304857383118245,
+          "slug": "concepts/knowledge-graph-zh-team",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 4,
+          "chunk_index": 0,
+          "page_id": 3,
+          "score": 0.2969442780107849,
+          "slug": "people/quantum-example-2",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 93,
+          "chunk_index": 0,
+          "page_id": 49,
+          "score": 0.2968066515797859,
+          "slug": "concepts/knowledge-graph-zh",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 7,
+          "chunk_index": 0,
+          "page_id": 4,
+          "score": 0.2946348217376255,
+          "slug": "companies/recipe-example-3",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 20,
+          "chunk_index": 0,
+          "page_id": 11,
+          "score": 0.29016776980143577,
+          "slug": "people/roadmap-example-10",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 22,
+          "chunk_index": 0,
+          "page_id": 12,
+          "score": 0.289392088696796,
+          "slug": "companies/graph-example-11",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 88,
+          "chunk_index": 0,
+          "page_id": 45,
+          "score": 0.27691521249569734,
+          "slug": "people/alice-example",
+          "source_id": "default"
+        }
+      ],
+      "cached_warm": [
+        {
+          "chunk_id": 91,
+          "chunk_index": 0,
+          "page_id": 47,
+          "score": 1.3526386087404616,
+          "slug": "notes/garden-news-latest",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 92,
+          "chunk_index": 0,
+          "page_id": 48,
+          "score": 0.4781673917943123,
+          "slug": "notes/garden-news-archive",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 15,
+          "chunk_index": 1,
+          "page_id": 8,
+          "score": 0.4768555619627832,
+          "slug": "companies/garden-example-7",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 39,
+          "chunk_index": 1,
+          "page_id": 20,
+          "score": 0.46572636059817796,
+          "slug": "companies/garden-example-19",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 63,
+          "chunk_index": 1,
+          "page_id": 32,
+          "score": 0.4527263825038185,
+          "slug": "companies/garden-example-31",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 87,
+          "chunk_index": 1,
+          "page_id": 44,
+          "score": 0.44296245710877985,
+          "slug": "companies/garden-example-43",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 13,
+          "chunk_index": 0,
+          "page_id": 7,
+          "score": 0.43084706115873855,
+          "slug": "people/widget-example-6",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 37,
+          "chunk_index": 0,
+          "page_id": 19,
+          "score": 0.4219197281365182,
+          "slug": "people/widget-example-18",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 61,
+          "chunk_index": 0,
+          "page_id": 31,
+          "score": 0.41136075536767414,
+          "slug": "people/widget-example-30",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 27,
+          "chunk_index": 1,
+          "page_id": 14,
+          "score": 0.4050470498933969,
+          "slug": "concepts/garden-example-13",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 85,
+          "chunk_index": 0,
+          "page_id": 43,
+          "score": 0.403429876498049,
+          "slug": "people/widget-example-42",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 51,
+          "chunk_index": 1,
+          "page_id": 26,
+          "score": 0.3947906396369867,
+          "slug": "concepts/garden-example-25",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 25,
+          "chunk_index": 0,
+          "page_id": 13,
+          "score": 0.38518999122830333,
+          "slug": "notes/widget-example-12",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 75,
+          "chunk_index": 1,
+          "page_id": 38,
+          "score": 0.3851465523809592,
+          "slug": "concepts/garden-example-37",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 49,
+          "chunk_index": 0,
+          "page_id": 25,
+          "score": 0.37680868346547397,
+          "slug": "notes/widget-example-24",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 73,
+          "chunk_index": 0,
+          "page_id": 37,
+          "score": 0.36817748122461497,
+          "slug": "notes/widget-example-36",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 1,
+          "chunk_index": 0,
+          "page_id": 1,
+          "score": 0.3521094947307734,
+          "slug": "notes/widget-example-0",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 3,
+          "chunk_index": 1,
+          "page_id": 2,
+          "score": 0.34339782879867786,
+          "slug": "concepts/garden-example-1",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 94,
+          "chunk_index": 0,
+          "page_id": 50,
+          "score": 0.31304857383118245,
+          "slug": "concepts/knowledge-graph-zh-team",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 4,
+          "chunk_index": 0,
+          "page_id": 3,
+          "score": 0.2969442780107849,
+          "slug": "people/quantum-example-2",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 93,
+          "chunk_index": 0,
+          "page_id": 49,
+          "score": 0.2968066515797859,
+          "slug": "concepts/knowledge-graph-zh",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 7,
+          "chunk_index": 0,
+          "page_id": 4,
+          "score": 0.2946348217376255,
+          "slug": "companies/recipe-example-3",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 20,
+          "chunk_index": 0,
+          "page_id": 11,
+          "score": 0.29016776980143577,
+          "slug": "people/roadmap-example-10",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 22,
+          "chunk_index": 0,
+          "page_id": 12,
+          "score": 0.289392088696796,
+          "slug": "companies/graph-example-11",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 88,
+          "chunk_index": 0,
+          "page_id": 45,
+          "score": 0.27691521249569734,
+          "slug": "people/alice-example",
+          "source_id": "default"
+        }
+      ],
+      "hybrid": [
+        {
+          "chunk_id": 91,
+          "chunk_index": 0,
+          "page_id": 47,
+          "score": 1.3526386087404616,
+          "slug": "notes/garden-news-latest",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 92,
+          "chunk_index": 0,
+          "page_id": 48,
+          "score": 0.4781673917943123,
+          "slug": "notes/garden-news-archive",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 15,
+          "chunk_index": 1,
+          "page_id": 8,
+          "score": 0.4768555619627832,
+          "slug": "companies/garden-example-7",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 39,
+          "chunk_index": 1,
+          "page_id": 20,
+          "score": 0.46572636059817796,
+          "slug": "companies/garden-example-19",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 63,
+          "chunk_index": 1,
+          "page_id": 32,
+          "score": 0.4527263825038185,
+          "slug": "companies/garden-example-31",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 87,
+          "chunk_index": 1,
+          "page_id": 44,
+          "score": 0.44296245710877985,
+          "slug": "companies/garden-example-43",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 13,
+          "chunk_index": 0,
+          "page_id": 7,
+          "score": 0.43084706115873855,
+          "slug": "people/widget-example-6",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 37,
+          "chunk_index": 0,
+          "page_id": 19,
+          "score": 0.4219197281365182,
+          "slug": "people/widget-example-18",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 61,
+          "chunk_index": 0,
+          "page_id": 31,
+          "score": 0.41136075536767414,
+          "slug": "people/widget-example-30",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 27,
+          "chunk_index": 1,
+          "page_id": 14,
+          "score": 0.4050470498933969,
+          "slug": "concepts/garden-example-13",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 85,
+          "chunk_index": 0,
+          "page_id": 43,
+          "score": 0.403429876498049,
+          "slug": "people/widget-example-42",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 51,
+          "chunk_index": 1,
+          "page_id": 26,
+          "score": 0.3947906396369867,
+          "slug": "concepts/garden-example-25",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 25,
+          "chunk_index": 0,
+          "page_id": 13,
+          "score": 0.38518999122830333,
+          "slug": "notes/widget-example-12",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 75,
+          "chunk_index": 1,
+          "page_id": 38,
+          "score": 0.3851465523809592,
+          "slug": "concepts/garden-example-37",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 49,
+          "chunk_index": 0,
+          "page_id": 25,
+          "score": 0.37680868346547397,
+          "slug": "notes/widget-example-24",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 73,
+          "chunk_index": 0,
+          "page_id": 37,
+          "score": 0.36817748122461497,
+          "slug": "notes/widget-example-36",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 1,
+          "chunk_index": 0,
+          "page_id": 1,
+          "score": 0.3521094947307734,
+          "slug": "notes/widget-example-0",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 3,
+          "chunk_index": 1,
+          "page_id": 2,
+          "score": 0.34339782879867786,
+          "slug": "concepts/garden-example-1",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 94,
+          "chunk_index": 0,
+          "page_id": 50,
+          "score": 0.31304857383118245,
+          "slug": "concepts/knowledge-graph-zh-team",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 4,
+          "chunk_index": 0,
+          "page_id": 3,
+          "score": 0.2969442780107849,
+          "slug": "people/quantum-example-2",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 93,
+          "chunk_index": 0,
+          "page_id": 49,
+          "score": 0.2968066515797859,
+          "slug": "concepts/knowledge-graph-zh",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 7,
+          "chunk_index": 0,
+          "page_id": 4,
+          "score": 0.2946348217376255,
+          "slug": "companies/recipe-example-3",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 20,
+          "chunk_index": 0,
+          "page_id": 11,
+          "score": 0.29016776980143577,
+          "slug": "people/roadmap-example-10",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 22,
+          "chunk_index": 0,
+          "page_id": 12,
+          "score": 0.289392088696796,
+          "slug": "companies/graph-example-11",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 88,
+          "chunk_index": 0,
+          "page_id": 45,
+          "score": 0.27691521249569734,
+          "slug": "people/alice-example",
+          "source_id": "default"
+        }
+      ]
+    },
+    "title-exact": {
+      "cached_cold": [
+        {
+          "chunk_id": 90,
+          "chunk_index": 0,
+          "page_id": 46,
+          "score": 1.4575970103807563,
+          "slug": "companies/acme-example",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 88,
+          "chunk_index": 0,
+          "page_id": 45,
+          "score": 0.7834742522783664,
+          "slug": "people/alice-example",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 89,
+          "chunk_index": 1,
+          "page_id": 45,
+          "score": 0.4953475521093488,
+          "slug": "people/alice-example",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 94,
+          "chunk_index": 0,
+          "page_id": 50,
+          "score": 0.2456220586014417,
+          "slug": "concepts/knowledge-graph-zh-team",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 1,
+          "chunk_index": 0,
+          "page_id": 1,
+          "score": 0.22467771639042353,
+          "slug": "notes/widget-example-0",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 2,
+          "chunk_index": 0,
+          "page_id": 2,
+          "score": 0.22116712707182318,
+          "slug": "concepts/garden-example-1",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 4,
+          "chunk_index": 0,
+          "page_id": 3,
+          "score": 0.21776455588610286,
+          "slug": "people/quantum-example-2",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 7,
+          "chunk_index": 0,
+          "page_id": 4,
+          "score": 0.21446509291813157,
+          "slug": "companies/recipe-example-3",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 8,
+          "chunk_index": 0,
+          "page_id": 5,
+          "score": 0.21126412138204004,
+          "slug": "notes/roadmap-example-4",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 10,
+          "chunk_index": 0,
+          "page_id": 6,
+          "score": 0.20815729606759828,
+          "slug": "concepts/graph-example-5",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 13,
+          "chunk_index": 0,
+          "page_id": 7,
+          "score": 0.2051405236608215,
+          "slug": "people/widget-example-6",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 14,
+          "chunk_index": 0,
+          "page_id": 8,
+          "score": 0.20220994475138115,
+          "slug": "companies/garden-example-7",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 16,
+          "chunk_index": 0,
+          "page_id": 9,
+          "score": 0.19936191736051664,
+          "slug": "notes/quantum-example-8",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 19,
+          "chunk_index": 0,
+          "page_id": 10,
+          "score": 0.19659300184162057,
+          "slug": "concepts/recipe-example-9",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 20,
+          "chunk_index": 0,
+          "page_id": 11,
+          "score": 0.19389994702187235,
+          "slug": "people/roadmap-example-10",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 22,
+          "chunk_index": 0,
+          "page_id": 12,
+          "score": 0.19127967746752275,
+          "slug": "companies/graph-example-11",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 25,
+          "chunk_index": 0,
+          "page_id": 13,
+          "score": 0.1887292817679558,
+          "slug": "notes/widget-example-12",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 26,
+          "chunk_index": 0,
+          "page_id": 14,
+          "score": 0.18624600174469316,
+          "slug": "concepts/garden-example-13",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 28,
+          "chunk_index": 0,
+          "page_id": 15,
+          "score": 0.18382722250125563,
+          "slug": "people/quantum-example-14",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 31,
+          "chunk_index": 0,
+          "page_id": 16,
+          "score": 0.181470463238419,
+          "slug": "companies/recipe-example-15",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 32,
+          "chunk_index": 0,
+          "page_id": 17,
+          "score": 0.17917336876704662,
+          "slug": "notes/roadmap-example-16",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 34,
+          "chunk_index": 0,
+          "page_id": 18,
+          "score": 0.17693370165745856,
+          "slug": "concepts/graph-example-17",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 37,
+          "chunk_index": 0,
+          "page_id": 19,
+          "score": 0.1747493349703294,
+          "slug": "people/widget-example-18",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 38,
+          "chunk_index": 0,
+          "page_id": 20,
+          "score": 0.17261824551947175,
+          "slug": "companies/garden-example-19",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 40,
+          "chunk_index": 0,
+          "page_id": 21,
+          "score": 0.1705385076216468,
+          "slug": "notes/quantum-example-20",
+          "source_id": "team-example"
+        }
+      ],
+      "cached_warm": [
+        {
+          "chunk_id": 90,
+          "chunk_index": 0,
+          "page_id": 46,
+          "score": 1.4575970103807563,
+          "slug": "companies/acme-example",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 88,
+          "chunk_index": 0,
+          "page_id": 45,
+          "score": 0.7834742522783664,
+          "slug": "people/alice-example",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 89,
+          "chunk_index": 1,
+          "page_id": 45,
+          "score": 0.4953475521093488,
+          "slug": "people/alice-example",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 94,
+          "chunk_index": 0,
+          "page_id": 50,
+          "score": 0.2456220586014417,
+          "slug": "concepts/knowledge-graph-zh-team",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 1,
+          "chunk_index": 0,
+          "page_id": 1,
+          "score": 0.22467771639042353,
+          "slug": "notes/widget-example-0",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 2,
+          "chunk_index": 0,
+          "page_id": 2,
+          "score": 0.22116712707182318,
+          "slug": "concepts/garden-example-1",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 4,
+          "chunk_index": 0,
+          "page_id": 3,
+          "score": 0.21776455588610286,
+          "slug": "people/quantum-example-2",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 7,
+          "chunk_index": 0,
+          "page_id": 4,
+          "score": 0.21446509291813157,
+          "slug": "companies/recipe-example-3",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 8,
+          "chunk_index": 0,
+          "page_id": 5,
+          "score": 0.21126412138204004,
+          "slug": "notes/roadmap-example-4",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 10,
+          "chunk_index": 0,
+          "page_id": 6,
+          "score": 0.20815729606759828,
+          "slug": "concepts/graph-example-5",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 13,
+          "chunk_index": 0,
+          "page_id": 7,
+          "score": 0.2051405236608215,
+          "slug": "people/widget-example-6",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 14,
+          "chunk_index": 0,
+          "page_id": 8,
+          "score": 0.20220994475138115,
+          "slug": "companies/garden-example-7",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 16,
+          "chunk_index": 0,
+          "page_id": 9,
+          "score": 0.19936191736051664,
+          "slug": "notes/quantum-example-8",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 19,
+          "chunk_index": 0,
+          "page_id": 10,
+          "score": 0.19659300184162057,
+          "slug": "concepts/recipe-example-9",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 20,
+          "chunk_index": 0,
+          "page_id": 11,
+          "score": 0.19389994702187235,
+          "slug": "people/roadmap-example-10",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 22,
+          "chunk_index": 0,
+          "page_id": 12,
+          "score": 0.19127967746752275,
+          "slug": "companies/graph-example-11",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 25,
+          "chunk_index": 0,
+          "page_id": 13,
+          "score": 0.1887292817679558,
+          "slug": "notes/widget-example-12",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 26,
+          "chunk_index": 0,
+          "page_id": 14,
+          "score": 0.18624600174469316,
+          "slug": "concepts/garden-example-13",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 28,
+          "chunk_index": 0,
+          "page_id": 15,
+          "score": 0.18382722250125563,
+          "slug": "people/quantum-example-14",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 31,
+          "chunk_index": 0,
+          "page_id": 16,
+          "score": 0.181470463238419,
+          "slug": "companies/recipe-example-15",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 32,
+          "chunk_index": 0,
+          "page_id": 17,
+          "score": 0.17917336876704662,
+          "slug": "notes/roadmap-example-16",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 34,
+          "chunk_index": 0,
+          "page_id": 18,
+          "score": 0.17693370165745856,
+          "slug": "concepts/graph-example-17",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 37,
+          "chunk_index": 0,
+          "page_id": 19,
+          "score": 0.1747493349703294,
+          "slug": "people/widget-example-18",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 38,
+          "chunk_index": 0,
+          "page_id": 20,
+          "score": 0.17261824551947175,
+          "slug": "companies/garden-example-19",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 40,
+          "chunk_index": 0,
+          "page_id": 21,
+          "score": 0.1705385076216468,
+          "slug": "notes/quantum-example-20",
+          "source_id": "team-example"
+        }
+      ],
+      "hybrid": [
+        {
+          "chunk_id": 90,
+          "chunk_index": 0,
+          "page_id": 46,
+          "score": 1.4575970103807563,
+          "slug": "companies/acme-example",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 88,
+          "chunk_index": 0,
+          "page_id": 45,
+          "score": 0.7834742522783664,
+          "slug": "people/alice-example",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 89,
+          "chunk_index": 1,
+          "page_id": 45,
+          "score": 0.4953475521093488,
+          "slug": "people/alice-example",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 94,
+          "chunk_index": 0,
+          "page_id": 50,
+          "score": 0.2456220586014417,
+          "slug": "concepts/knowledge-graph-zh-team",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 1,
+          "chunk_index": 0,
+          "page_id": 1,
+          "score": 0.22467771639042353,
+          "slug": "notes/widget-example-0",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 2,
+          "chunk_index": 0,
+          "page_id": 2,
+          "score": 0.22116712707182318,
+          "slug": "concepts/garden-example-1",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 4,
+          "chunk_index": 0,
+          "page_id": 3,
+          "score": 0.21776455588610286,
+          "slug": "people/quantum-example-2",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 7,
+          "chunk_index": 0,
+          "page_id": 4,
+          "score": 0.21446509291813157,
+          "slug": "companies/recipe-example-3",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 8,
+          "chunk_index": 0,
+          "page_id": 5,
+          "score": 0.21126412138204004,
+          "slug": "notes/roadmap-example-4",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 10,
+          "chunk_index": 0,
+          "page_id": 6,
+          "score": 0.20815729606759828,
+          "slug": "concepts/graph-example-5",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 13,
+          "chunk_index": 0,
+          "page_id": 7,
+          "score": 0.2051405236608215,
+          "slug": "people/widget-example-6",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 14,
+          "chunk_index": 0,
+          "page_id": 8,
+          "score": 0.20220994475138115,
+          "slug": "companies/garden-example-7",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 16,
+          "chunk_index": 0,
+          "page_id": 9,
+          "score": 0.19936191736051664,
+          "slug": "notes/quantum-example-8",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 19,
+          "chunk_index": 0,
+          "page_id": 10,
+          "score": 0.19659300184162057,
+          "slug": "concepts/recipe-example-9",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 20,
+          "chunk_index": 0,
+          "page_id": 11,
+          "score": 0.19389994702187235,
+          "slug": "people/roadmap-example-10",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 22,
+          "chunk_index": 0,
+          "page_id": 12,
+          "score": 0.19127967746752275,
+          "slug": "companies/graph-example-11",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 25,
+          "chunk_index": 0,
+          "page_id": 13,
+          "score": 0.1887292817679558,
+          "slug": "notes/widget-example-12",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 26,
+          "chunk_index": 0,
+          "page_id": 14,
+          "score": 0.18624600174469316,
+          "slug": "concepts/garden-example-13",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 28,
+          "chunk_index": 0,
+          "page_id": 15,
+          "score": 0.18382722250125563,
+          "slug": "people/quantum-example-14",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 31,
+          "chunk_index": 0,
+          "page_id": 16,
+          "score": 0.181470463238419,
+          "slug": "companies/recipe-example-15",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 32,
+          "chunk_index": 0,
+          "page_id": 17,
+          "score": 0.17917336876704662,
+          "slug": "notes/roadmap-example-16",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 34,
+          "chunk_index": 0,
+          "page_id": 18,
+          "score": 0.17693370165745856,
+          "slug": "concepts/graph-example-17",
+          "source_id": "team-example"
+        },
+        {
+          "chunk_id": 37,
+          "chunk_index": 0,
+          "page_id": 19,
+          "score": 0.1747493349703294,
+          "slug": "people/widget-example-18",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 38,
+          "chunk_index": 0,
+          "page_id": 20,
+          "score": 0.17261824551947175,
+          "slug": "companies/garden-example-19",
+          "source_id": "default"
+        },
+        {
+          "chunk_id": 40,
+          "chunk_index": 0,
+          "page_id": 21,
+          "score": 0.1705385076216468,
+          "slug": "notes/quantum-example-20",
+          "source_id": "team-example"
+        }
+      ]
+    }
+  },
+  "normalizer": "hybrid-ranked-v1"
+}

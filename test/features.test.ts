@@ -8,6 +8,7 @@ import { RECIPE_META, featuresTeaserForDoctor, runFeatures } from '../src/comman
 import { VERSION } from '../src/version.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { surfaceSource } from './helpers/source-surface.ts';
 
 // #2789: the x-to-brain secret name must be the one the resolver actually
 // reads. The recipe + RECIPE_META used to pin X_BEARER_TOKEN while the
@@ -113,12 +114,12 @@ describe('brain_score calculation', () => {
 // CLI routing
 describe('CLI routing', () => {
   it('features is in CLI_ONLY set', async () => {
-    const cliSource = await Bun.file('src/cli.ts').text();
+    const cliSource = surfaceSource('cli');
     expect(cliSource).toContain("'features'");
   });
 
   it('help text mentions features', async () => {
-    const cliSource = await Bun.file('src/cli.ts').text();
+    const cliSource = surfaceSource('cli');
     expect(cliSource).toContain('features [--json] [--auto-fix]');
   });
 });

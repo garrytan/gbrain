@@ -12,6 +12,7 @@ import { withEnv, emptyHome } from './helpers/with-env.ts';
 import { autopilotOperatorPauseMarkerPath, autopilotPaused, autopilotPausedMarkerPath } from '../src/core/autopilot-paths.ts';
 import { runAutopilotPauseCommand } from '../src/commands/autopilot-pause.ts';
 import { resolveAutopilotPositionals, runAutopilot, runAutopilotStatus } from '../src/commands/autopilot.ts';
+import { surfaceSource } from './helpers/source-surface.ts';
 
 function out(run: () => unknown): string {
   const lines: string[] = [];
@@ -82,7 +83,7 @@ describe('autopilot operator pause', () => {
   test('the daemon loop and job workers consult both markers', () => {
     const root = join(import.meta.dir, '..', 'src');
     // test-reads-source-ok[structural]: no in-process autopilot tick or worker claim harness exists (TODOS: extract a testable tick); pin both markers at the gates.
-    const daemon = readFileSync(join(root, 'commands', 'autopilot.ts'), 'utf8');
+    const daemon = surfaceSource('autopilot');
     const worker = readFileSync(join(root, 'core', 'minions', 'worker.ts'), 'utf8');
     expect(daemon).toContain('if (autopilotPaused()) {\n      // Self-heal an orphan');
     expect(worker.match(/existsSync\(autopilotPausedMarkerPath\(\)\) \|\| existsSync\(autopilotOperatorPauseMarkerPath\(\)\)/g)?.length).toBe(2);

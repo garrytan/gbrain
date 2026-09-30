@@ -20,4 +20,6 @@ src/core/pglite-engine.ts
 src/core/postgres-engine/
 src/core/pglite-engine/
 src/core/migrate.ts
+# Transferred with the MIGRATIONS array from migrate.ts (refactor wave 1, W3 split).
+src/core/schema-migrations/
 src/cli.ts

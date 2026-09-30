@@ -36,6 +36,8 @@ import {
 import { CLAUDE_HOOK_OUTPUT_CAP_CHARS } from '../src/core/bootstrap/host-specs.ts';
 import { writeReceipt } from '../src/core/bootstrap/format.ts';
 import type { RepoReceipt } from '../src/core/bootstrap/repo.ts';
+import { surfaceFileSource } from './helpers/source-surface.ts';
+import { STARTUP_HOOK_SKIP_COMMANDS } from '../src/cli/command-table.ts';
 
 const FIXTURE = join(import.meta.dir, 'fixtures', 'conversation-formats', 'claude-code.jsonl');
 const ENV_KEYS = [
@@ -406,12 +408,15 @@ describe('user-prompt', () => {
   });
 
   test('hook ∈ STARTUP_HOOK_SKIP_COMMANDS (source grep — maybeEmitUpdateMarker no-ops under NODE_ENV=test, so no runtime test can pin this)', () => {
-    const cliSrc = readFileSync(join(import.meta.dir, '..', 'src', 'cli.ts'), 'utf8');
-    const m = cliSrc.match(/const STARTUP_HOOK_SKIP_COMMANDS = new Set\(\[[\s\S]*?\]\);/);
+    // Refactor wave 1 (W4 cli): STARTUP_HOOK_SKIP_COMMANDS is derived from the
+    // command table; the hook record carries the membership.
+    const tableSrc = surfaceFileSource('cli', 'src/cli/command-table.ts');
+    const m = tableSrc.match(/\{ name: 'hook', [^\n]*\},/);
     expect(m).not.toBeNull();
     // user-prompt fires once per user PROMPT: a stale update cache would
     // otherwise spawn a detached check-update child per prompt.
-    expect(m![0]).toContain("'hook'");
+    expect(m![0]).toContain('skipStartupHooks: true');
+    expect(STARTUP_HOOK_SKIP_COMMANDS.has('hook')).toBe(true);
   });
 
   test('confinement rejection aborts: heartbeat + exit 0 empty [S3#8]', async () => {

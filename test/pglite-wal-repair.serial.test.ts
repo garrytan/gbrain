@@ -14,6 +14,7 @@ import { join, dirname, basename } from 'node:path';
 import { withEnv } from './helpers/with-env.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import type { EngineConfig } from '../src/core/types.ts';
+import { surfaceFileSource } from './helpers/source-surface.ts';
 
 const COLD_START_TIMEOUT = 120_000;
 
@@ -187,7 +188,7 @@ describe('WAL auto-repair — real-brain regression (#223/#1670/#2575)', () => {
   }, COLD_START_TIMEOUT);
 
   test('gate shape: the seam only runs for wasm-abort + persistent dataDir (structural pin)', () => {
-    const src = readFileSync('src/core/pglite-engine.ts', 'utf-8');
+    const src = surfaceFileSource('pglite-engine', 'src/core/pglite-engine.ts');
     expect(src).toMatch(/if \(verdict === 'wasm-abort'\)/);
     expect(src).toMatch(/if \(!dataDir\) \{\s*\n\s*ctx = \{ repair: 'in-memory' \}/);
     // The seam call sits INSIDE the wasm-abort branch (no call site outside it).

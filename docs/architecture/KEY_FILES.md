@@ -14,6 +14,10 @@ The ranges below use the first path in each entry; grouped entries can document
 several related files. Search is the fallback when a path crosses subsystems.
 Edit the subsystem entry, not this routing page, when behavior changes.
 Keep entries current-state: release history belongs in `CHANGELOG.md` and Git.
+Where a new storage method, migration, doctor check, command, route or sync
+phase goes: [CONTRIBUTING.md](../../CONTRIBUTING.md#where-does-my-change-go).
+A branch written before refactor wave 1 follows the generated
+[porting guide](wave-1-porting.md) ([JSON map](wave-1-moves.json)).
 `scripts/check-key-files-current-state.sh` checks every subsystem for history,
 duplicate file entries, and size growth. Split a growing subsystem at a useful
 boundary and add its link here rather than raising the cap.

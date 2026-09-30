@@ -299,7 +299,7 @@ async function runLinksTimelinePass(
 
   // #4196: honor the watermark this pass stamps, or repeated bounded sweeps
   // re-select the same newest batchLimit rows forever and page batchLimit+1
-  // is never reached. Same predicate as the engines' buildStalePagesWhere
+  // is never reached. Same predicate as engine-sql/pages.ts stalePagesWhere
   // (no versionTs branch — extractor-version catch-up is `extract --stale`'s
   // job; the sweep is a recency back-stop). The µs to_char projection is the
   // #1768 stamp discipline: stamp the row's READ updated_at, not now(), so an

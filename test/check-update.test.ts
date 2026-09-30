@@ -5,6 +5,7 @@ import {
   isNewerVersion,
   extractChangelogBetween,
 } from '../src/commands/check-update.ts';
+import { surfaceSource } from './helpers/source-surface.ts';
 
 describe('parseSemver', () => {
   test('parses standard version', () => {
@@ -165,9 +166,7 @@ describe('extractChangelogBetween', () => {
 
 describe('check-update CLI', () => {
   test('check-update is in CLI_ONLY set', async () => {
-    const source = await Bun.file(
-      new URL('../src/cli.ts', import.meta.url).pathname
-    ).text();
+    const source = surfaceSource('cli');
     expect(source).toContain("'check-update'");
   });
 

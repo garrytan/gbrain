@@ -7,9 +7,9 @@
  * route through this helper.
  */
 import { describe, test, expect } from 'bun:test';
-import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { safeHexEqual } from '../src/core/timing-safe.ts';
+import { surfaceSource } from './helpers/source-surface.ts';
 
 describe('safeHexEqual behavior', () => {
   test('returns true for identical hex strings', () => {
@@ -43,7 +43,9 @@ describe('safeHexEqual behavior', () => {
 
 describe('extraction contract', () => {
   test('IRON-RULE: serve-http.ts imports safeHexEqual from timing-safe.ts (not redefined)', () => {
-    const src = readFileSync('src/commands/serve-http.ts', 'utf8');
+    // Containment over the whole serve-http surface: the constant-time
+    // compare moved with the admin, OAuth and webhook routes (refactor wave 1).
+    const src = surfaceSource('serve-http');
     // Must import from the canonical location
     expect(src).toMatch(/import\s*\{[^}]*\bsafeHexEqual\b[^}]*\}\s*from\s*['"]\.\.\/core\/timing-safe\.ts['"]/);
     // Must NOT redefine the function inside the file
