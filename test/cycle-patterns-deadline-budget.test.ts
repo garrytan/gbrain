@@ -22,6 +22,7 @@ import {
   CYCLE_DEADLINE_RESERVE_MS,
   MIN_PATTERNS_SUBAGENT_BUDGET_MS,
 } from '../src/core/cycle/patterns.ts';
+import { surfaceSource } from './helpers/source-surface.ts';
 
 const CONFIG = {
   subagentTimeoutMs: 30 * 60 * 1000,
@@ -124,7 +125,7 @@ describe('deadline plumbing wiring (structural)', () => {
   // (shared with `jobs run-child` for process isolation) — the deadlineAtMs
   // derivation lives there now; worker.ts calls buildJobContext.
   const jobContextSrc = readFileSync(new URL('../src/core/minions/job-context.ts', import.meta.url), 'utf-8');
-  const jobsSrc = readFileSync(new URL('../src/commands/jobs.ts', import.meta.url), 'utf-8');
+  const jobsSrc = surfaceSource('jobs');
   const cycleSrc = readFileSync(new URL('../src/core/cycle.ts', import.meta.url), 'utf-8');
   const patternsSrc = readFileSync(new URL('../src/core/cycle/patterns.ts', import.meta.url), 'utf-8');
 

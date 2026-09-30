@@ -36,10 +36,19 @@ export interface RerankerOpts {
   rerankerFn?: (input: RerankInput) => Promise<RerankResult[]>;
 
   onSkip?: (reason: RerankSkipReason) => void;
+  /**
+   * Fired when the reranker call failed hard (HTTP error, timeout, budget,
+   * network, …) and the results passed through in RRF order. hybridSearch
+   * stamps it as the `rerank_failed` degraded stage. Best-effort.
+   */
+  onFailure?: (reason: RerankFailedReason) => void;
 }
 
 /** The two skip classes (no HTTP call, no per-query audit row). */
 export type RerankSkipReason = 'no_key';
+
+/** A reranker call that threw (anything but a missing key), as stamped on the wire. */
+export type RerankFailedReason = 'timeout' | 'budget' | 'provider_error';
 
 /** SHA-256 prefix (8 chars) of the query text for privacy-preserving audit. */
 function hashQuery(query: string): string {
@@ -149,6 +158,8 @@ export async function applyReranker(
     } catch {
       // Audit logging must never break search.
     }
+    const failed: RerankFailedReason = reason === 'timeout' || reason === 'budget' ? reason : 'provider_error';
+    try { opts.onFailure?.(failed); } catch { /* caller hook must never break search */ }
     return results;
   }
 
@@ -195,9 +206,26 @@ export async function applyReranker(
   // (so a top_n response with fewer items than head.length naturally
   // drops the missing ones — but since we don't pass top_n by default,
   // every input gets a score).
+  // #5428: exact score ties carry no cross-encoder preference, and providers
+  // emit tied rows in arbitrary (call-to-call unstable) order. Within each run
+  // of adjacent, exactly equal finite scores, keep the fused (input) order.
+  // Rows never cross a different score.
+  const ordered = [...reranked];
+  for (let start = 0; start < ordered.length; ) {
+    let end = start + 1;
+    const score = ordered[start].relevanceScore;
+    if (Number.isFinite(score)) {
+      while (end < ordered.length && ordered[end].relevanceScore === score) end++;
+      if (end - start > 1) {
+        const run = ordered.slice(start, end).sort((a, b) => a.index - b.index);
+        ordered.splice(start, run.length, ...run);
+      }
+    }
+    start = end;
+  }
   const seen = new Set<number>();
   const reorderedHead: SearchResult[] = [];
-  for (const r of reranked) {
+  for (const r of ordered) {
     if (r.index >= 0 && r.index < head.length && !seen.has(r.index)) {
       seen.add(r.index);
       const item = head[r.index]!;

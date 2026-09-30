@@ -88,6 +88,22 @@ describe('test-shard.sh — exclusion contract', () => {
     expect(workflow.jobs['test-status'].needs).toContain('slow-entity-resolve-perf');
   });
 
+  it('runs export-scale and reconcile-crash exactly once per event outside the unit matrix', () => {
+    const allFiles = [1, 2, 3, 4].flatMap(s => dryRunList(s, 4));
+    expect(allFiles).not.toContain('test/export-scale.slow.test.ts');
+    expect(allFiles).not.toContain('test/reconcile-crash.slow.test.ts');
+    const fs = require('fs');
+    const yaml = require('js-yaml');
+    const workflow = yaml.load(fs.readFileSync(resolve(REPO_ROOT, '.github/workflows/test.yml'), 'utf8'));
+    const exportStep = workflow.jobs['slow-entity-resolve-perf'].steps.find((step: { run?: string }) =>
+      step.run?.includes('bun test test/export-scale.slow.test.ts'));
+    expect(exportStep.env.GBRAIN_TEST_EXPORT_SCALE_PAGES).toContain("'100001'");
+    const persistence = yaml.load(fs.readFileSync(resolve(REPO_ROOT, '.github/workflows/persistence-validation.yml'), 'utf8'));
+    expect(persistence.jobs.reconciliation.strategy.matrix.engine).toContain('pglite');
+    expect(persistence.jobs.reconciliation.steps.some((step: { run?: string }) =>
+      step.run?.includes('test/reconcile-crash.slow.test.ts'))).toBe(true);
+  });
+
   it('INCLUDES *.slow.test.ts files (CI matrix is where slow files run)', () => {
     const allFiles = [1, 2, 3, 4].flatMap(s => dryRunList(s, 4));
     const slowFiles = allFiles.filter(f => /\.slow\.test\.ts$/.test(f));
@@ -154,7 +170,7 @@ describe('test-shard.sh — LPT balance contract', () => {
 
   // CI runs THIS many shards (test.yml matrix). The old version of this
   // test asserted 4- and 6-shard splits — configurations nothing runs.
-  const CI_SHARDS = 10;
+  const CI_SHARDS = 8;
 
   it('CI_SHARDS matches the test.yml matrix (parsed, not regexed)', () => {
     const fs = require('fs');

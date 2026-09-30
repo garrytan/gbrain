@@ -9,6 +9,7 @@ description: |
 triggers:
   - any brain read/write/lookup/citation
 tools:
+  - recall
   - search
   - query
   - get_page
@@ -49,6 +50,18 @@ suppresses writes for that turn, including when standing capture is enabled.
 > `put_page` / `add_link` / `add_timeline_entry` stay the page/graph write path.
 > Fall back to the classic ops when the verbs aren't on the surface. Contract:
 > `docs/protocol/MEMORY_VERBS_v1.md`.
+>
+> **Tight-budget page questions:** explicitly use
+> `recall({query: "zebra telescope", budget_tokens: 75, budget_policy: "query_first"})`
+> so ranked page evidence packs before recent facts. CLI:
+> `gbrain recall --query 'zebra telescope' --budget-tokens 75 --budget-policy query_first --json`.
+> Keep entity-first, event/session-filtered and fact-focused questions on their
+> existing facts-first route; do not change `context_pack`. Costs are character-based
+> estimates, and an oversized first item is dropped without skipping or truncation.
+> Read `budget_packing` before interpreting an empty result as missing memory.
+> See `skills/query/SKILL.md` for the MCP request and caller example. Guidance is
+> not native-harness activation: adoption remains unverified until a fresh
+> conversation is observed making the opted-in call.
 >
 > **Choose a readback path that can see the intended visibility.** Trusted local
 > CLI callers can recall and withdraw private facts. Every MCP caller, including

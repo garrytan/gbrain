@@ -31,6 +31,7 @@
  */
 
 import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import type { BrainEngine } from '../core/engine.ts';
 import { loadConfig, isThinClient } from '../core/config.ts';
 import { callRemoteTool, unpackToolResult, RemoteMcpError } from '../core/mcp-client.ts';
@@ -376,7 +377,8 @@ export async function runCapture(engine: BrainEngine | null, args: string[], opt
       ...(parsed.kind ? { kind: parsed.kind } : {}),
       ...(parsed.depth ? { depth: parsed.depth } : {}),
       source_kind: 'capture-cli',
-      source_uri: parsed.filePath ? `file://${parsed.filePath}` : parsed.stdin ? 'stdin' : 'cli-positional',
+      // #5622: the owner maps a local file to its source-relative origin (or 'cli-file'); no file URI or home path is stored.
+      ...(parsed.filePath ? isThinClient(cfg) ? {} : { local_file: resolve(parsed.filePath) } : { source_uri: parsed.stdin ? 'stdin' : 'cli-positional' }),
       ingested_via: 'capture-cli',
     };
     let result: Record<string, unknown>;

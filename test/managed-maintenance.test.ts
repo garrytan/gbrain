@@ -25,16 +25,20 @@ import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { withSubmissionAuthority } from '../src/core/minions/submission-authority.ts';
 import type { WriteRequest } from '../src/core/persistence/model.ts';
+import { testBackends } from './helpers/test-backends.ts';
 
+const backends = testBackends();
 const engines: BrainEngine[] = [];
 const dataDir = mkdtempSync(join(tmpdir(), 'gbrain-maintenance-db-'));
 let closePostgres: (() => Promise<void>) | undefined;
 beforeAll(async () => {
   configureGateway({ embedding_model: 'openai:text-embedding-3-large', embedding_dimensions: 1536, env: {} });
-  const engine = new PGLiteEngine();
-  await engine.connect({ database_path: dataDir }); await engine.initSchema(); engines.push(engine);
-  if (process.env.DATABASE_URL) {
-    const pg = await isolatedPersistencePostgres(process.env.DATABASE_URL);
+  if (backends.includes('pglite')) {
+    const engine = new PGLiteEngine();
+    await engine.connect({ database_path: dataDir }); await engine.initSchema(); engines.push(engine);
+  }
+  if (backends.includes('postgres')) {
+    const pg = await isolatedPersistencePostgres(process.env.DATABASE_URL!);
     engines.push(pg.engine); closePostgres = pg.close;
   }
 }, 120_000);
@@ -79,8 +83,8 @@ async function seed(engine: BrainEngine, sourceId: string, slug = 'people/exampl
 async function seedFacts(engine: BrainEngine, sourceId: string, slug: string, visibility = 'world') {
   const vector = `[${[1, ...Array(1535).fill(0)].join(',')}]`;
   for (let i = 0; i < 3; i++) {
-    await engine.executeRaw(`INSERT INTO facts(source_id,entity_slug,fact,kind,source,visibility,confidence,valid_from,embedding)
-      VALUES($1,$2,$3,'fact','test',$4,$5,$6::timestamptz,$7::vector)`,
+    await engine.executeRaw(`INSERT INTO facts(source_id,entity_slug,fact,kind,source,visibility,confidence,valid_from,embedding,embedding_model,embedded_text_hash)
+      VALUES($1,$2,$3,'fact','test',$4,$5,$6::timestamptz,$7::vector,'openai:text-embedding-3-large',md5($3))`,
     [sourceId, slug, `Example claim ${i}`, visibility, 0.9 - i / 10, `2026-01-0${i + 1}T00:00:00Z`, vector]);
   }
 }

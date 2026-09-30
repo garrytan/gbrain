@@ -1,7 +1,7 @@
 /**
  * Guard for the evals/ → CI-matrix collection (scripts/test-shard.sh).
  *
- * evals/**\/*.test.ts files run in the keyless 10-shard matrix. This repo's
+ * evals/**\/*.test.ts files run in the keyless 8-shard matrix. This repo's
  * eval HARNESSES are key-requiring by default (Anthropic/OpenAI), so a new
  * test file dropped under evals/ could silently start spending tokens in CI
  * or fail keyless. Growth is therefore allowlist-gated: every collected

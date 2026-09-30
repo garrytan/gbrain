@@ -31,6 +31,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
+import { errorFor } from '../../src/core/errors.ts';
 import { resetPgliteState } from '../helpers/reset-pglite.ts';
 
 // ─── Fixture skills trees (benchmark file existence is all the phase reads;
@@ -55,12 +56,16 @@ let runnerCalls: Array<Record<string, unknown>> = [];
 let stubCosts: number[] = [];
 /** Optional per-call hook (used by the abort tests). */
 let onRunnerCall: ((opts: Record<string, unknown>, idx: number) => void) | null = null;
+/** Optional per-call result override (used by the errored-run tests). */
+let stubResult: ((idx: number) => { outcome: string; receipt: Record<string, unknown> } | null) | null = null;
 
 mock.module('../../src/core/skillopt/orchestrator.ts', () => ({
   runSkillOpt: async (opts: Record<string, unknown>) => {
     const idx = runnerCalls.length;
     runnerCalls.push(opts);
     onRunnerCall?.(opts, idx);
+    const override = stubResult?.(idx);
+    if (override) return { ...override, finalText: 'stub', mutatedSkillFile: false };
     return {
       outcome: 'accepted',
       receipt: { final_cost_usd: stubCosts[idx] ?? 0 },
@@ -106,6 +111,7 @@ beforeEach(async () => {
   runnerCalls = [];
   stubCosts = [];
   onRunnerCall = null;
+  stubResult = null;
 });
 
 async function enableFlag(): Promise<void> {
@@ -243,6 +249,57 @@ describe('runPhaseSkillopt cost caps', () => {
   });
 });
 
+describe('runPhaseSkillopt reservation refusals (#5585)', () => {
+  const refuse = () => {
+    throw errorFor({ class: 'CostCapExceeded', code: 'cost_cap_exceeded', message: 'reservation_exceeds_cap: a single optimizer call reserves $0.80' });
+  };
+
+  test('refusal under a brain-wide-reduced cap is brain_wide_cap_reached and writes no last_skip', async () => {
+    await enableFlag();
+    currentSkillsDir = skills2Dir;
+    await engine.setConfig('cycle.skillopt.per_skill_cap_usd', '0.8');
+    await engine.setConfig('cycle.skillopt.brain_wide_cap_usd', '1');
+    stubCosts = [0.5];
+    // Call 1 spends $0.50; call 2 gets min(0.8, 0.5) = $0.50 and is refused.
+    onRunnerCall = (_opts, idx) => { if (idx === 1) refuse(); };
+    const res = await runPhaseSkillopt({ engine });
+    expect(runnerCalls.length).toBe(2);
+    expect(runnerCalls[1]!.maxCostUsd).toBe(0.5);
+    const d = res.details as PhaseDetails;
+    expect(d.results![1]).toEqual({ skill: d.results![1]!.skill, outcome: 'skipped', cost_usd: 0, reason: 'brain_wide_cap_reached' });
+    expect(d.skipped_brain_wide_cap).toBe(1);
+    // Not a per-skill budget skip: tomorrow's full per-skill cap may fit it.
+    expect(await engine.getConfig(`cycle.skillopt.last_skip.${d.results![1]!.skill}`)).toBeNull();
+  });
+
+  test('an unreadable benchmark never throws the phase: the skill is re-admitted', async () => {
+    await enableFlag();
+    const root = mkdtempSync(join(tmpdir(), 'cycle-phase-caps-unreadable-'));
+    try {
+      // The benchmark path exists but is a directory, so reading it fails.
+      mkdirSync(join(root, 'skill-x', 'skillopt-benchmark.jsonl'), { recursive: true });
+      currentSkillsDir = root;
+      await engine.setConfig('cycle.skillopt.last_skip.skill-x', '{"stale":"fingerprint"}');
+      const res = await runPhaseSkillopt({ engine });
+      expect(runnerCalls.length).toBe(1);
+      expect((res.details as PhaseDetails).results![0]!.skill).toBe('skill-x');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('refusal at the full per-skill cap is skipped_budget and records last_skip', async () => {
+    await enableFlag();
+    currentSkillsDir = skills1Dir;
+    onRunnerCall = refuse;
+    const res = await runPhaseSkillopt({ engine });
+    const row = (res.details as PhaseDetails).results![0]!;
+    expect(row.outcome).toBe('skipped_budget');
+    expect(await engine.getConfig('cycle.skillopt.last_skip.skill-a')).toContain('"benchmark_sha8"');
+    expect(await engine.getConfig('cycle.skillopt.last_error.skill-a')).toBeNull();
+  });
+});
+
 describe('runPhaseSkillopt abort signal', () => {
   test('abort during the first run stops the loop — no further runner calls, no skipped rows', async () => {
     await enableFlag();
@@ -268,5 +325,67 @@ describe('runPhaseSkillopt abort signal', () => {
     expect(runnerCalls.length).toBe(0);
     expect((res.details as PhaseDetails).results!.length).toBe(0);
     expect(res.status).toBe('ok');
+  });
+});
+
+describe('runPhaseSkillopt errored runs (#5584)', () => {
+  const REMEDIATION = [{ code: 'reflect_truncated', fix: 'raise the cap', docs: 'docs/guides/skillopt.md#reflect_truncated' }];
+  const ERRORED = {
+    outcome: 'errored',
+    receipt: {
+      final_cost_usd: 0.2,
+      run_id: 'run-err',
+      abort_reason: 'error',
+      abort_detail: 'optimizer_output_unusable: reflect_failure_truncated: 32000 output tokens, max_tokens=32000',
+      remediation: REMEDIATION,
+    },
+  };
+
+  test('errored run forwards diagnostics, leaves last_run unset, records last_error', async () => {
+    await enableFlag();
+    currentSkillsDir = skills1Dir;
+    stubResult = () => ERRORED;
+    const res = await runPhaseSkillopt({ engine });
+    const row = (res.details as PhaseDetails).results![0] as Record<string, unknown>;
+    expect(row).toEqual({
+      skill: 'skill-a',
+      outcome: 'errored',
+      cost_usd: 0.2,
+      abort_reason: 'error',
+      abort_detail: ERRORED.receipt.abort_detail,
+      run_id: 'run-err',
+      remediation: REMEDIATION,
+    });
+    expect(res.status).toBe('warn');
+    expect(await engine.getConfig('cycle.skillopt.last_run.skill-a')).toBeNull();
+    expect(Number(await engine.getConfig('cycle.skillopt.last_error.skill-a'))).toBeGreaterThan(0);
+  });
+
+  test('an errored skill is not retried within 24h of its last error, and is retried after', async () => {
+    await enableFlag();
+    currentSkillsDir = skills1Dir;
+    stubResult = () => ERRORED;
+    await runPhaseSkillopt({ engine });
+    expect(runnerCalls.length).toBe(1);
+
+    const again = await runPhaseSkillopt({ engine });
+    expect(runnerCalls.length).toBe(1);
+    expect(again.summary).toBe('no stale skills with benchmarks; nothing to optimize');
+
+    await engine.setConfig('cycle.skillopt.last_error.skill-a', String(Date.now() - 25 * 3600 * 1000));
+    stubResult = null;
+    await runPhaseSkillopt({ engine });
+    expect(runnerCalls.length).toBe(2);
+    expect(await engine.getConfig('cycle.skillopt.last_run.skill-a')).not.toBeNull();
+  });
+
+  test('a thrown run error also records last_error instead of last_run', async () => {
+    await enableFlag();
+    currentSkillsDir = skills1Dir;
+    onRunnerCall = () => { throw new Error('d_sel_too_small'); };
+    const res = await runPhaseSkillopt({ engine });
+    expect((res.details as PhaseDetails).results![0]).toEqual({ skill: 'skill-a', outcome: 'errored', cost_usd: 0, reason: 'd_sel_too_small' });
+    expect(await engine.getConfig('cycle.skillopt.last_run.skill-a')).toBeNull();
+    expect(await engine.getConfig('cycle.skillopt.last_error.skill-a')).not.toBeNull();
   });
 });

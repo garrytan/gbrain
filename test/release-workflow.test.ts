@@ -32,7 +32,7 @@ describe('release.yml ↔ binary-self-update asset contract', () => {
     expect(compiler).toBe('1.4.2');
     const native = readFileSync(join(ROOT, '.github/workflows/native-locks.yml'), 'utf8');
     const matrices = [...native.matchAll(/bun:\s*\[([^\]]+)\]/g)];
-    expect(matrices).toHaveLength(2);
+    expect(matrices).toHaveLength(4);
     for (const matrix of matrices) {
       expect(matrix[1]).toContain(`'${compiler}'`);
     }

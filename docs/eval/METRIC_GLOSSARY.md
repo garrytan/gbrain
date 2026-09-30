@@ -92,11 +92,11 @@ Every metric `gbrain eval *` and `gbrain search stats` reports has a plain-Engli
 
 ## Statistical-Significance Metrics
 
-### p-value (paired bootstrap)
+### p-value (paired sign-flip randomization test)
 
 **Key:** `p_value`
 
-**Plain English:** How likely the observed difference between two modes is just noise. Lower = stronger evidence the difference is real. We compute paired bootstrap with 10,000 resamples and Bonferroni correction across the 12 comparisons (3 modes × 4 metrics).
+**Plain English:** How likely the observed difference between two runs is just noise. Lower = stronger evidence the difference is real. Computed from per-question rows by randomly flipping which run each question's result belongs to, then Holm-corrected across every comparison in the report.
 
 **Range:** 0..1, lower = stronger signal. Below 0.05 is the common "statistically significant" threshold; below 0.01 is strong evidence.
 
@@ -104,7 +104,7 @@ Every metric `gbrain eval *` and `gbrain search stats` reports has a plain-Engli
 
 **Key:** `confidence_interval`
 
-**Plain English:** The range we're 95% sure the true value falls inside, given the sample we measured. Narrower CI = more reliable estimate. Computed via bootstrap resampling.
+**Plain English:** The range we're 95% sure the true value falls inside, given the sample we measured. Narrower CI = more reliable estimate. Computed by resampling questions with replacement (paired bootstrap).
 
 **Range:** Two-tuple [low, high]. If 0 is inside the CI for a Δ, the difference isn't statistically significant.
 

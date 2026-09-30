@@ -5,7 +5,7 @@
  * surface in lockstep:
  *   - src/schema.sql              (authoring source; build:schema input)
  *   - src/core/schema-embedded.generated.ts (generated Postgres blob)
- *   - src/core/pglite-schema.ts   (PGLite blob)
+ *   - src/core/pglite-schema.generated.ts (PGLite blob, generated from schema.sql)
  *
  * A blob missing the columns re-introduces the v121 wedge class (its own
  * CREATE INDEX references a column its CREATE TABLE no longer declares on a
@@ -27,7 +27,7 @@ import { resolve as resolvePath } from 'path';
 const BLOBS = [
   'src/schema.sql',
   'src/core/schema-embedded.generated.ts',
-  'src/core/pglite-schema.ts',
+  'src/core/pglite-schema.generated.ts',
 ] as const;
 
 /**

@@ -23,7 +23,9 @@ import {
 } from '../../../core/storage-config.ts';
 import { slugifyPath, slugifyCodePath, isCodeFilePath } from '../../../core/sync.ts';
 import { resolveSourceLocalFilePath } from '../../../core/markdown.ts';
+import { scannerSlugRootMode } from '../../../core/write-through.ts';
 import { unverifiedExtractionFragment } from '../../../core/extraction-review.ts';
+import { isSyncDisabledConfig } from '../../../core/sync-policy.ts';
 import type { Check } from '../../doctor.ts';
 import { ownedContentFreshness } from '../../../core/shared-skills/content-freshness.ts';
 
@@ -410,10 +412,11 @@ export async function checkUndeclaredDbOnlyPages(engine: BrainEngine): Promise<C
       );
       if (rows.length === 0) continue;
       let backedWithoutSourcePath: Set<string> | null = null;
+      const mode = await scannerSlugRootMode(engine, src.id, src.local_path!);
       for (const { slug, source_path: sourcePath } of rows) {
         if (dbOnlyDirs.some(dir => slug.startsWith(dir))) continue;
         if (sourcePath) {
-          const filePath = resolveSourceLocalFilePath(src.local_path!, sourcePath, slug);
+          const filePath = resolveSourceLocalFilePath(src.local_path!, sourcePath, slug, mode);
           if (filePath && existsSync(filePath)) continue;
         } else {
           backedWithoutSourcePath ??= collectMarkdownSlugs(src.local_path!);
@@ -1144,39 +1147,36 @@ export async function computeExtractHealthCheck(
   }
 }
 
+async function loadSyncFreshnessSources(engine: BrainEngine) {
+  type FreshnessSourceRow = {
+    id: string;
+    name: string;
+    local_path: string | null;
+    last_sync_at: Date | null;
+    last_commit: string | null;
+    chunker_version: string | null;
+    newest_content_at: Date | null;
+    config: unknown;
+  };
+  let sources: FreshnessSourceRow[];
+  try {
+    sources = await engine.executeRaw<FreshnessSourceRow>(
+      `SELECT id, name, local_path, last_sync_at, last_commit, chunker_version, newest_content_at, config FROM sources WHERE local_path IS NOT NULL AND archived IS NOT TRUE`,
+    );
+  } catch {
+    sources = await engine.executeRaw<FreshnessSourceRow>(
+      `SELECT id, name, local_path, last_sync_at, last_commit, chunker_version, newest_content_at, config FROM sources WHERE local_path IS NOT NULL`,
+    );
+  }
+  return sources.filter((source) => !isSyncDisabledConfig(source.config));
+}
+
 export async function checkSyncFreshness(
   engine: BrainEngine,
   opts?: { nowMs?: number; localOnly?: boolean },
 ): Promise<Check> {
   try {
-    // v0.41.27.0: SELECT widens to carry last_commit + chunker_version so
-    // the git short-circuit gate (below) can compare against what
-    // `gbrain sync`'s up-to-date predicate at sync.ts:1057+1075 checks.
-    // Columns existed pre-v0.41 (writeSyncAnchor / writeChunkerVersion);
-    // no schema migration needed.
-    type FreshnessSourceRow = {
-      id: string;
-      name: string;
-      local_path: string | null;
-      last_sync_at: Date | null;
-      last_commit: string | null;
-      chunker_version: string | null;
-      newest_content_at: Date | null;
-    };
-    // v0.41.32.0: newest_content_at feeds the REMOTE (non-localOnly) lag so
-    // doctorReportRemote never shells out to git on a DB-supplied local_path.
-    // #3880: archived sources don't participate in freshness health (v34
-    // legacy fallback).
-    let sources: FreshnessSourceRow[];
-    try {
-      sources = await engine.executeRaw<FreshnessSourceRow>(
-        `SELECT id, name, local_path, last_sync_at, last_commit, chunker_version, newest_content_at FROM sources WHERE local_path IS NOT NULL AND archived IS NOT TRUE`,
-      );
-    } catch {
-      sources = await engine.executeRaw<FreshnessSourceRow>(
-        `SELECT id, name, local_path, last_sync_at, last_commit, chunker_version, newest_content_at FROM sources WHERE local_path IS NOT NULL`,
-      );
-    }
+    const sources = await loadSyncFreshnessSources(engine);
 
     if (sources.length === 0) {
       return {

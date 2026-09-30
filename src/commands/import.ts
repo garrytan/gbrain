@@ -5,6 +5,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'pat
 import { cpus, totalmem } from 'os';
 import type { BrainEngine } from '../core/engine.ts';
 import { importFile, importImageFile, isImageFilePath } from '../core/import-file.ts';
+import { gitFirstCommitDates } from '../core/git-first-commit.ts';
 import { currentCompanyBrainSync, getCompanyBrainProfile, importCompanyBrainFile } from '../core/company-brain/profile.ts';
 import { loadConfig, gbrainPath } from '../core/config.ts';
 import { createProgress } from '../core/progress.ts';
@@ -33,6 +34,9 @@ import { realpathOrResolve } from '../core/path-confine.ts';
 import { slog } from '../core/console-prefix.ts';
 import { refreshProjectionStatistics } from '../core/search/projection-statistics.ts';
 import { importManagedFile } from '../core/persistence/import-mutations.ts';
+import { acceptedPendingReceipt } from '../core/persistence/accepted-pending.ts';
+import { estimateCostFromChars, lookupEmbeddingPrice } from '../core/embedding-pricing.ts';
+import { getEmbeddingModel } from '../core/ai/gateway.ts';
 
 /** Return a refusal when an import target lies outside every admitted root. */
 export function configuredRootImportError(dir: string, configuredRoots: string[]): string | null {
@@ -157,6 +161,14 @@ export function shouldLogIngest(
   return counts.imported > 0 || counts.errors > 0 || counts.chunksCreated > 0;
 }
 
+/** Embedding cost of the chunks a safe-chunk re-seal left without vectors; null when the model has no known price. */
+function resealEmbeddingUsd(chars: number): number | null {
+  try {
+    const price = lookupEmbeddingPrice(getEmbeddingModel());
+    return price.kind === 'known' ? estimateCostFromChars(chars, price.pricePerMTok) : null;
+  } catch { return null; }
+}
+
 /** Bug 9 — surface per-file failures so callers (performFullSync) can gate state advances. */
 export interface RunImportResult {
   imported: number;
@@ -168,6 +180,8 @@ export interface RunImportResult {
   malformedSkipped?: number;
   /** Aggregated alias/undeclared explicit-type warnings (schema.type_warnings). */
   type_warnings?: Array<{ kind: 'alias_of' | 'undeclared'; type: string; canonical?: string; directory?: string; count: number }>;
+  /** #5050: unchanged pages re-sealed at the safe-chunk fence, and the embedding work that left. */
+  resealed?: { pages: number; pending_chunks: number; embedding_usd: number | null };
 }
 
 export async function runImport(
@@ -525,9 +539,6 @@ export async function runImport(
   // See src/core/sort-newest-first.ts for the policy.
   sortNewestFirst(allFiles);
 
-  // Resume from checkpoint if available. v0.33.2: path-based resume —
-  // see src/core/import-checkpoint.ts for the bug-class this fixes
-  // (parallel-import silent-skip and failed-file no-retry).
   const checkpointPath = gbrainPath('import-checkpoint.json');
   const completed = new Set<string>();
   if (company) {
@@ -537,11 +548,10 @@ export async function runImport(
   } else if (!fresh && !managedImport) {
     const cp = loadCheckpoint(checkpointPath, dir);
     if (cp) {
-      for (const p of cp.completedPaths) completed.add(p);
-      info(`Resuming from checkpoint: skipping ${completed.size} already-processed files`);
+      info(`Resuming from checkpoint: re-checking current files via content_hash (${cp.completedPaths.length} previously completed)`);
     }
   }
-  const files = resumeFilter(allFiles, dir, completed);
+  const files = company ? resumeFilter(allFiles, dir, completed) : allFiles;
 
   // Determine actual worker count. Import owns the same per-worker Postgres
   // pools as sync, so it must honor the shared opt-in connection budget too
@@ -590,6 +600,7 @@ export async function runImport(
   let lastCheckpointMs = Date.now();
   let lastCheckpointSize = completed.size;
   let chunksCreated = 0;
+  const resealed = { pages: 0, pendingChunks: 0, pendingChars: 0 };
   const importedSlugs: string[] = [];
   const errorCounts: Record<string, number> = {};
   const errorSamples: Record<string, string> = {};
@@ -619,13 +630,17 @@ export async function runImport(
     progress.tick(1, `imported=${imported} skipped=${skipped} errors=${errors}`);
   }
 
+  // A12 (opt-in): git first-commit dates anchor undated new pages instead of clone-time mtimes.
+  const firstCommits = !singleFile && await engine.getConfig('sync.git_first_commit_dates').catch(() => null) === 'true'
+    ? gitFirstCommitDates(dir) : null;
+
   async function processFile(eng: BrainEngine, filePath: string) {
     if (signal?.aborted) return;
     const relativePath = singleFile ? basename(filePath) : relative(dir, filePath);
     // #753/#774: slug + source_path base. When performFullSync syncs a
     // monorepo subdir, slugRoot is the git root so slugs stay git-root-
     // relative (matching the incremental path's git-diff paths). The
-    // checkpoint (`completed`) stays dir-relative — resumeFilter's contract.
+    // checkpoint (`completed`) stays dir-relative.
     const importRelPath = opts.slugRoot ? relative(opts.slugRoot, filePath) : relative(importRoot, filePath);
     // v0.31.2 (D5): per-file slow-path log. Fires only when a single
     // file takes >5s. The user's hang surfaces as one file taking
@@ -640,7 +655,7 @@ export async function runImport(
         ? await importManagedFile(eng, filePath, importRelPath, { noEmbed, sourceId, activePack: importActivePack, signal, slugRoot: opts.slugRoot })
         : isImageFilePath(relativePath) && process.env.GBRAIN_EMBEDDING_MULTIMODAL === 'true'
         ? await importImageFile(eng, filePath, importRelPath, { noEmbed, sourceId })
-        : await importFile(eng, filePath, importRelPath, { noEmbed, sourceId, activePack: importActivePack });
+        : await importFile(eng, filePath, importRelPath, { noEmbed, sourceId, activePack: importActivePack, firstCommitAt: firstCommits?.get(filePath) });
       // An import that landed while cancellation arrived is still complete.
       // Account for it before stopping, so resume never loses a successful path.
       noteTypeWarning((result as { type_warning?: Parameters<typeof noteTypeWarning>[0] }).type_warning);
@@ -657,6 +672,11 @@ export async function runImport(
         succeededPaths.push(importRelPath); // #3839
       } else {
         skipped++;
+        if ('resealed' in result && result.resealed) {
+          resealed.pages++;
+          resealed.pendingChunks += result.resealed.pendingChunks;
+          resealed.pendingChars += result.resealed.pendingChars;
+        }
         if (result.skip_reason === 'malformed_path') {
           // Informational skip (bracket/control-char filename): never a
           // failure-ledger row, and stable across runs — checkpoint as done.
@@ -683,16 +703,19 @@ export async function runImport(
         if (e !== signal.reason && !(e instanceof Error && e.name === 'AbortError')) throw e;
         return;
       }
-      const msg = e instanceof Error ? e.message : String(e);
-      const { count, sample } = recordImportFailure(errorCounts, errorSamples, msg);
-      if (count <= 5) {
-        console.error(`  Warning: skipped ${relativePath}: ${msg}`);
-      } else if (count === 6) {
-        console.error(`  (suppressing further "${sample.slice(0, 60)}..." errors)`);
+      // #5600: an accepted managed import still publishing is not a failure; the next run resumes its request.
+      if (acceptedPendingReceipt(e)) { skipped++; console.error(`  Pending: ${relativePath} was accepted and is still publishing; rerun to confirm it.`); } else {
+        const msg = e instanceof Error ? e.message : String(e);
+        const { count, sample } = recordImportFailure(errorCounts, errorSamples, msg);
+        if (count <= 5) {
+          console.error(`  Warning: skipped ${relativePath}: ${msg}`);
+        } else if (count === 6) {
+          console.error(`  (suppressing further "${sample.slice(0, 60)}..." errors)`);
+        }
+        errors++;
+        skipped++;
+        failures.push({ path: importRelPath, error: msg });
       }
-      errors++;
-      skipped++;
-      failures.push({ path: importRelPath, error: msg });
     }
     processed++;
     tickProgress();
@@ -1073,6 +1096,9 @@ export async function runImport(
   else if (existsSync(checkpointPath)) info(`  Checkpoint preserved (${errors} errors). Run again to retry failed files.`);
 
   const totalTime = ((Date.now() - startTime) / 1000).toFixed(1);
+  const resealSummary = resealed.pages > 0
+    ? { pages: resealed.pages, pending_chunks: resealed.pendingChunks, embedding_usd: resealEmbeddingUsd(resealed.pendingChars) }
+    : null;
   if (jsonOutput) {
     // `skipped` includes every per-file failure importFile RETURNS (invalid
     // frontmatter, oversize, symlink, slug mismatch) as well as content-hash
@@ -1084,6 +1110,7 @@ export async function runImport(
     console.log(JSON.stringify({
       status: errors > 0 ? 'partial' : 'success', duration_s: parseFloat(totalTime),
       imported, skipped, errors, chunks: chunksCreated,
+      ...(resealSummary ? { resealed: resealSummary } : {}),
       total_files: allFiles.length,
       unchanged: skipped - failures.length - malformedFileSkips,
       malformed_skipped: malformedFileSkips,
@@ -1096,11 +1123,16 @@ export async function runImport(
     slog(`  ${imported} pages imported`);
     slog(`  ${skipped} pages skipped (${skipped - failures.length - malformedFileSkips} unchanged, ${errors} errors, ${malformedFileSkips} malformed filenames)`);
     slog(`  ${chunksCreated} chunks created`);
+    if (resealSummary) {
+      slog(`  ${resealSummary.pages} unchanged page(s) re-sealed for remote search; ${resealSummary.pending_chunks} chunk(s) need embedding`
+        + `${resealSummary.embedding_usd === null ? '' : ` (~$${resealSummary.embedding_usd.toFixed(4)})`}${noEmbed ? ' — run gbrain embed --stale' : ''}`);
+    }
   }
 
   if (imported > 0 && !opts.managedBookmark) await refreshProjectionStatistics(engine);
   return {
     imported, skipped, errors, chunksCreated, failures,
+    ...(resealSummary ? { resealed: resealSummary } : {}),
     ...(totalMalformed > 0 ? { malformedSkipped: totalMalformed } : {}),
     ...(typeWarningCounts.size > 0 && typeWarningsEnabled
       ? { type_warnings: [...typeWarningCounts.values()] }

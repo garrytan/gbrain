@@ -24,10 +24,14 @@ grant authority: profiles, token scopes, operation snapshots, sources, and write
 fences still restrict requests. A `memory-writer` thin client gains neither
 administration nor delegation from its full surface.
 
-OAuth bootstrap challenges advertise `scope="read"` without enforcing it as a
-literal transport requirement. Existing writer, administrator, and delegated
-tokens keep their granted authority. New generic connections following the
-hint start read-only; writing requires an explicit authorized scope request.
+OAuth bootstrap challenges advertise `scope="read write"` without enforcing it
+as a literal transport requirement. Existing writer, administrator, and
+delegated tokens keep their granted authority. A connection following the hint
+receives only what its client row allows (`grantScopes` caps every request to
+the row's `scope`), so a read-only row still yields a read-only token. The hint
+lists `write` because some authorization_code clients (claude.ai custom
+connectors) request exactly the hinted scope and never step up after an
+`insufficient_scope` tool error, which left writer rows permanently read-only.
 Discovery excludes `agent`, which DCR cannot grant, while explicit DCR requests
 for delegation remain rejected.
 
@@ -58,6 +62,14 @@ carries the routing-seam picture):
   `RemoteMcpErrorReason` union the dispatcher's `never` switch keys off.
   Full symbol-level detail: the `src/core/mcp-client.ts` entry in
   [`KEY_FILES.md`](./KEY_FILES.md).
+- `src/commands/recall.ts` — explicit `--budget-policy` calls bypass the local
+  engine in the CLI dispatcher and use the remote recall operation. The dispatcher
+  reuses the command's parser, so a query value that resembles a policy flag does
+  not activate this route. An explicit `--brain` is rejected as on the shared
+  thin route. `--source`/`--source-id`, environment and dotfile scope use the
+  engine-free resolver; an explicit `default` is forwarded, not dropped.
+  The host's declared `recall.source_id` narrows both arms through the existing
+  authorization resolver. Omitted-policy CLI behavior is unchanged.
 - `src/core/cli-options.ts` — `parseGlobalFlags` supports `--timeout=Ns`
   (accepts `30s`, `2m`, `500ms`, plain ms). Default `null` = per-command
   default (30s for most ops, 180s for `think`). `parseTimeout(s)` exported

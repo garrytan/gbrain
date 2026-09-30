@@ -14,6 +14,8 @@
 set -euo pipefail
 
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+# Self-test seam: GBRAIN_GUARD_ROOT points at a fixture tree.
+ROOT="${GBRAIN_GUARD_ROOT:-$ROOT}"
 cd "$ROOT"
 
 # Allowlist: SELECT shapes that legitimately don't need source_id (single-col
@@ -26,6 +28,12 @@ cd "$ROOT"
 
 FOUND_BAD=0
 
+# Word boundaries are spelled (^|[^A-Za-z0-9_])word([^A-Za-z0-9_]|$) because
+# mawk (the default awk on Ubuntu CI runners) has no \b: with \b this guard
+# matched nothing and was permanently green there. Recursive graph-walk seed
+# rows (`... 0 as depth, ARRAY[p.id] as visited`) feed traversal results, not
+# rowToPage, and are skipped.
+#
 # Use multiline-aware grep so the SELECT can span lines. pcre2grep would be
 # cleaner but isn't universally available; do a simple two-pass instead:
 # 1. Pull each SELECT-from-pages block.
@@ -39,14 +47,14 @@ check_file() {
     /SELECT/ {
       buf = $0
       lines = 1
-      while (lines < 12 && (!match(buf, /FROM[[:space:]]+pages\b/))) {
+      while (lines < 12 && (!match(buf, /FROM[[:space:]]+pages([^A-Za-z0-9_]|$)/))) {
         if ((getline next_line) <= 0) break
         buf = buf " " next_line
         lines++
       }
-      if (match(buf, /FROM[[:space:]]+pages\b/)) {
+      if (match(buf, /FROM[[:space:]]+pages([^A-Za-z0-9_]|$)/)) {
         # Has id, slug, type, title (rowToPage feeder) but NO source_id?
-        if (match(buf, /\bid\b/) && match(buf, /\bslug\b/) && match(buf, /\btype\b/) && match(buf, /\btitle\b/) && !match(buf, /\bsource_id\b/)) {
+        if (match(buf, /(^|[^A-Za-z0-9_])id([^A-Za-z0-9_]|$)/) && match(buf, /(^|[^A-Za-z0-9_])slug([^A-Za-z0-9_]|$)/) && match(buf, /(^|[^A-Za-z0-9_])type([^A-Za-z0-9_]|$)/) && match(buf, /(^|[^A-Za-z0-9_])title([^A-Za-z0-9_]|$)/) && !match(buf, /(^|[^A-Za-z0-9_])source_id([^A-Za-z0-9_]|$)/) && !match(buf, /[Aa][Ss] visited/)) {
           print FILENAME ": SELECT projection missing source_id:"
           print "  " buf
           exit 1
@@ -60,13 +68,22 @@ check_file() {
 EXIT=0
 
 # The engine surface = the two façade files plus every method module peeled
-# into their sibling dirs — SQL moved out of the façades must stay scanned.
-ENGINE_FILES=(src/core/postgres-engine.ts src/core/pglite-engine.ts)
-for d in src/core/postgres-engine src/core/pglite-engine; do
+# into their sibling dirs, plus the shared engine SQL (refactor wave 1,
+# src/core/engine-sql/) — SQL moved out of the façades must stay scanned.
+ENGINE_FILES=()
+for f in src/core/postgres-engine.ts src/core/pglite-engine.ts; do
+  [ -f "$f" ] && ENGINE_FILES+=("$f")
+done
+for d in src/core/postgres-engine src/core/pglite-engine src/core/engine-sql; do
   if [ -d "$d" ]; then
     while IFS= read -r ef; do ENGINE_FILES+=("$ef"); done < <(find "$d" -name '*.ts' | sort)
   fi
 done
+
+if [ "${#ENGINE_FILES[@]}" -eq 0 ]; then
+  echo "ERROR: no engine files found under $ROOT"
+  exit 1
+fi
 
 for f in "${ENGINE_FILES[@]}"; do
   if ! check_file "$f"; then
@@ -86,7 +103,7 @@ for f in "${ENGINE_FILES[@]}"; do
         buf = buf " " next_line
         lines++
       }
-      if (match(buf, /\bid\b/) && match(buf, /\bslug\b/) && match(buf, /\btype\b/) && match(buf, /\btitle\b/) && !match(buf, /\bsource_id\b/)) {
+      if (match(buf, /(^|[^A-Za-z0-9_])id([^A-Za-z0-9_]|$)/) && match(buf, /(^|[^A-Za-z0-9_])slug([^A-Za-z0-9_]|$)/) && match(buf, /(^|[^A-Za-z0-9_])type([^A-Za-z0-9_]|$)/) && match(buf, /(^|[^A-Za-z0-9_])title([^A-Za-z0-9_]|$)/) && !match(buf, /(^|[^A-Za-z0-9_])source_id([^A-Za-z0-9_]|$)/)) {
         print FILENAME ": RETURNING projection missing source_id:"
         print "  " buf
         exit 1

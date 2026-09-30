@@ -657,20 +657,35 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
 
         // v0.32.7 CJK wave: chunker-version bump → re-embed sweep.
         // Idempotent — `runReindex` short-circuits when no pages are pending.
+        // A managed brain refuses the markdown reindex; name its drain instead.
         try {
-          const { runPostUpgradeReembedPrompt } = await import('../core/post-upgrade-reembed.ts');
-          const { getEmbeddingModel } = await import('../core/ai/gateway.ts');
-          let modelString = 'openai:text-embedding-3-large';
-          try { modelString = getEmbeddingModel(); } catch { /* gateway not configured — keep default */ }
-          const promptResult = await runPostUpgradeReembedPrompt(engine, modelString);
-          if (promptResult.proceeded) {
-            const { runReindex } = await import('./reindex.ts');
-            await runReindex(engine, ['--markdown']);
+          const { managedPersistenceEnabled } = await import('../core/persistence/ownership.ts');
+          const managed = await managedPersistenceEnabled(engine);
+          if (!managed) {
+            const { runPostUpgradeReembedPrompt } = await import('../core/post-upgrade-reembed.ts');
+            const { getEmbeddingModel } = await import('../core/ai/gateway.ts');
+            let modelString = 'openai:text-embedding-3-large';
+            try { modelString = getEmbeddingModel(); } catch { /* gateway not configured — keep default */ }
+            const promptResult = await runPostUpgradeReembedPrompt(engine, modelString);
+            if (promptResult.proceeded) {
+              const { runReindex } = await import('./reindex.ts');
+              await runReindex(engine, ['--markdown']);
+            }
           }
         } catch (re) {
           const msg = re instanceof Error ? re.message : String(re);
           console.warn(`\nChunker-bump reindex skipped: ${msg}`);
           console.warn('Run `gbrain reindex --markdown` manually when ready.');
+        }
+
+        // Fix wave 3: run the wave checks once (full, not --fast) and relay a
+        // preview-only recovery banner; applying stays the user's decision.
+        try {
+          const { postUpgradeRecoveryBanner } = await import('./doctor/upgrade-banner.ts');
+          const [brain] = await engine.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1').catch(() => []);
+          for (const line of await postUpgradeRecoveryBanner(engine, `host (${engine.kind}${brain ? `, id ${brain.brain_id}` : ''})`)) console.log(line);
+        } catch (be) {
+          console.warn(`\nRecovery checks skipped: ${be instanceof Error ? be.message : String(be)}. Run \`gbrain doctor --remediation-plan\` to preview.`);
         }
       } finally {
         try { await engine.disconnect(); } catch { /* best-effort */ }

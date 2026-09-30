@@ -67,7 +67,8 @@ describe('native lock distribution integrity', () => {
 
   test('required CI executes every declared target at both supported Bun versions', () => {
     type NativeJob = {
-      strategy: { matrix: { bun: string[]; target: string[]; include: Array<{ runner: string; target: string }> } };
+      'runs-on': string;
+      strategy: { matrix: { bun: string[]; target: string[] } };
       steps: Array<{ run?: string }>;
     };
     const workflow = safeLoad(readFileSync(join(repo, '.github/workflows/native-locks.yml'), 'utf8')) as {
@@ -100,8 +101,9 @@ describe('native lock distribution integrity', () => {
       expect(lockTests!).toContain('test/local-ipc-path.test.ts');
       expect(script).toContain('bun scripts/native/compiled-smoke.ts');
       expect(script).toContain('bun scripts/native/verify.ts --rebuilt');
+      const runners = JSON.parse(/fromJSON\('([^']+)'\)\[matrix\.target\]/.exec(job['runs-on'])![1]!) as Record<string, string>;
+      expect(Object.keys(runners).sort()).toEqual([...matrix.target].sort());
       for (const target of matrix.target) {
-        expect(matrix.include.filter(entry => entry.target === target).length).toBe(1);
         for (const bun of matrix.bun) pairs.push(`${target}/${bun}`);
       }
     }

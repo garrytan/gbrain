@@ -14,6 +14,9 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { MinionWorker } from '../src/core/minions/worker.ts';
 import { registerBuiltinHandlers } from '../src/commands/jobs.ts';
 import { configureGateway, getChatModel, resetGateway } from '../src/core/ai/gateway.ts';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 
 let engine: PGLiteEngine;
 let worker: MinionWorker;
@@ -280,4 +283,46 @@ describe('autopilot-cycle handler — phase passthrough', () => {
     expect(phaseNames).toContain('sync');
     expect(phaseNames).toContain('embed');
   }, 30_000);
+});
+
+describe('backlinks handler — empty payload checks, never rewrites pages', () => {
+  // Post-ingestion sync→embed→backlinks chains submit backlinks jobs with an
+  // empty payload. Those must report gaps without writing generated
+  // "Referenced in" bullets into tracked brain pages; 'fix' is opt-in.
+  function makeBrainWithGap(): string {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-backlinks-handler-'));
+    mkdirSync(join(dir, 'people'));
+    mkdirSync(join(dir, 'companies'));
+    writeFileSync(join(dir, 'people/alice-example.md'), '# Alice\n\nWorks at [Acme](../companies/acme-example.md).\n');
+    writeFileSync(join(dir, 'companies/acme-example.md'), '# Acme\n\nNo links back.\n');
+    return dir;
+  }
+
+  test('no action in job.data → check: gap reported, target page untouched', async () => {
+    const dir = makeBrainWithGap();
+    try {
+      const before = readFileSync(join(dir, 'companies/acme-example.md'), 'utf8');
+      const handler = (worker as any).handlers.get('backlinks');
+      const result = await handler({ data: { dir }, signal: { aborted: false } as any, job: { id: 20, name: 'backlinks' } as any });
+      expect(result.action).toBe('check');
+      expect(result.gaps_found).toBe(1);
+      expect(result.fixed).toBe(0);
+      expect(readFileSync(join(dir, 'companies/acme-example.md'), 'utf8')).toBe(before);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("explicit action 'fix' still rewrites the gap (the fixture is fixable)", async () => {
+    const dir = makeBrainWithGap();
+    try {
+      const handler = (worker as any).handlers.get('backlinks');
+      const result = await handler({ data: { dir, action: 'fix' }, signal: { aborted: false } as any, job: { id: 21, name: 'backlinks' } as any });
+      expect(result.action).toBe('fix');
+      expect(result.fixed).toBe(1);
+      expect(readFileSync(join(dir, 'companies/acme-example.md'), 'utf8')).toContain('alice-example');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

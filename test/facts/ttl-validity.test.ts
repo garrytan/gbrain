@@ -11,6 +11,7 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
+import { createHash } from 'node:crypto';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 
 let engine: PGLiteEngine;
@@ -121,23 +122,30 @@ describe('WP5 read-time TTL validity — active reads', () => {
     expect(column.dims).toBeGreaterThan(0);
     const emb = new Float32Array(column.dims);
     emb[0] = 1.0;
+    const embeddingModel = 'test:ttl-validity';
     const embEntity = 'people/ttl-embed-example';
     const lapsedEmb = await engine.insertFact(
       {
         fact: 'embed lapsed fact', kind: 'fact', entity_slug: embEntity,
-        source: 'test', valid_until: past(), embedding: emb,
+        source: 'test', valid_until: past(), embedding: emb, embedding_model: embeddingModel,
       },
       { source_id: SOURCE },
     );
     const liveEmb = await engine.insertFact(
       {
         fact: 'embed live fact', kind: 'fact', entity_slug: embEntity,
-        source: 'test', embedding: emb,
+        source: 'test', embedding: emb, embedding_model: embeddingModel,
       },
       { source_id: SOURCE },
     );
+    const stored = await engine.listFactsByEntity(SOURCE, embEntity, { activeOnly: false });
+    expect(stored).toHaveLength(2);
+    for (const row of stored) {
+      expect(row.embedding_model).toBe(embeddingModel);
+      expect(row.embedded_text_hash).toBe(createHash('md5').update(row.fact).digest('hex'));
+    }
     const candidates = await engine.findCandidateDuplicates(
-      SOURCE, embEntity, 'embed lapsed fact', { embedding: emb },
+      SOURCE, embEntity, 'embed lapsed fact', { embedding: emb, embeddingModel },
     );
     const ids = candidates.map(r => r.id);
     expect(ids).not.toContain(lapsedEmb.id);

@@ -50,7 +50,6 @@ markdown files (tool-agnostic, work with both CLI and plugin contexts).
 strict behavior when unset.
 
 **Cross-cutting invariants (must-never-violate, regardless of which file you touch).**
-These used to be buried across the per-file index; they live here so they always load.
 Per-file detail is in `docs/architecture/KEY_FILES.md`.
 
 - **Trust is fail-closed.** `OperationContext.remote` is REQUIRED on the type. Anything not
@@ -72,35 +71,35 @@ Per-file detail is in `docs/architecture/KEY_FILES.md`.
   text, the cast parses it). Guarded by `scripts/check-jsonb-pattern.sh` (template grep) +
   `scripts/check-jsonb-params.mjs` (positional AST scanner); the real backstop is the DATABASE_URL-gated
   e2e parity tests, since PGLite can't surface the bug. Full rule in `docs/ENGINES.md`.
-- **Engine-live paths avoid runtime dynamic `import()` for helper dependencies.** In
-  `src/core/pglite-engine.ts`, `src/core/postgres-engine.ts`, and
-  `src/core/migrate.ts`, dependencies previously reached through runtime dynamic
-  imports use static top-level imports. Besides the snapshot loader's lazy
-  `require()` cluster in `pglite-engine.ts:tryLoadSnapshot` (fs/crypto + one
-  gateway shape lookup — lazy so production builds without the test-fixture
-  path don't eager-load; the snapshot hash reads migrate.ts/pglite-schema.ts
-  FILE BYTES, never the loaded modules, so coverage instrumentation can't
-  skew it; the guard now matches `require()` calls too), the only
-  dynamic-`import()` exceptions
-  are the four `ai/gateway.ts` lookups in both engines'
-  `initSchema()` and `_upsertChunksOnce()` methods; each remains lazy inside a
-  local `try/catch` because the gateway has a large provider/config closure and,
-  more importantly, eager evaluation would occur before the catch and could
-  turn a recoverable default/config-row fallback into a module-load failure.
-  Every exception carries `engine-dynamic-import-ok` on the import line.
-  `scripts/check-engine-dynamic-import.sh` enforces the rule. For history, use
-  `git log -G'await[[:space:]]+import\\('`, not `git log -S`: a dynamic-to-static
-  rewrite can preserve the searched token while changing its context.
-- **Engine parity.** `src/core/postgres-engine.ts` and `src/core/pglite-engine.ts` move in
-  lockstep — a new method/SQL shape lands in BOTH, pinned by `test/e2e/engine-parity.test.ts`.
-  Forward-referenced columns/indexes go in the bootstrap probe set (guarded by
-  `test/schema-bootstrap-coverage.test.ts`).
+- **Engine-live paths avoid runtime dynamic `import()` for helper dependencies.** In both
+  engines, `src/core/migrate.ts`, `src/core/engine-sql/` and `src/core/schema-migrations/`,
+  helpers use static top-level imports. Exceptions: the snapshot loader's lazy `require()`
+  cluster in `pglite-engine.ts:tryLoadSnapshot` (lazy so production builds skip the
+  test-fixture path; the snapshot hash reads the FILE BYTES of the schema import closure,
+  `src/core/snapshot-schema-inputs.ts`, never loaded modules, so coverage can't skew it) and
+  the four `ai/gateway.ts` lookups in both engines' `initSchema()` and `_upsertChunksOnce()`,
+  each lazy inside a local `try/catch` because eagerly evaluating the gateway's large
+  provider/config closure could turn a recoverable default/config-row fallback into a
+  module-load failure. Each exception carries `engine-dynamic-import-ok` on the import line;
+  `scripts/check-engine-dynamic-import.sh` enforces the rule (it matches `require()` too).
+  For history use `git log -G'await[[:space:]]+import\\('`, not `-S`: a dynamic-to-static
+  rewrite can keep the token while changing its context.
+- **Engine parity.** Both engines implement every `BrainEngine` method. A migrated storage
+  domain's SQL lives once in `src/core/engine-sql/<domain>.ts` and both engines delegate to it
+  (domains: the `migrated` rows of `scripts/engine-sql-baseline.tsv`; `check:engine-sql-ratchet`
+  fails on new SQL in an engine; mark truly dialect-specific code `// engine-sql-ok: <reason>`).
+  Executor contract, RLS read brands, capabilities: `docs/ENGINES.md` ("Storage domains and
+  engine-sql"). Pinned by `test/e2e/engine-parity.test.ts`. Forward-referenced columns/indexes
+  go in `src/core/engine-sql/bootstrap.ts` (guarded by `test/schema-bootstrap-coverage.test.ts`).
 - **Contract-first.** `src/core/operations.ts` is the single source; CLI + MCP are generated
   from it. Every op carries `scope: 'read'|'write'|'admin'` + optional `localOnly`. HTTP
   dispatch enforces scope/localOnly before the handler runs.
-- **Migrations.** Schema DDL lives in the `MIGRATIONS` array in `src/core/migrate.ts`.
-  `CREATE INDEX CONCURRENTLY` needs `transaction: false` (pre-drop invalid remnants on
-  Postgres; plain `CREATE INDEX` on PGLite via `sqlFor.pglite`).
+- **Migrations + schema text.** One file per schema migration in `src/core/schema-migrations/`
+  (`bun run new:migration <name>`; `migrate.ts` is the runner; regenerate `registry.generated.ts`,
+  never hand-merge it). Fresh-install DDL has one hand-edited copy, `src/schema.sql` + its TS
+  fragments; `bun run build:schema` generates both engine blobs. `CREATE INDEX CONCURRENTLY`
+  needs `transaction: false` (pre-drop invalid remnants on Postgres; plain `CREATE INDEX` on
+  PGLite via `sqlFor.pglite`).
 - **Multi-source.** Slug uniqueness is `(source_id, slug)`, not slug. Key batch ops and
   reverse-writes on the composite key; `validateSourceId` before any `source_id` path join.
 - **One canonical chat-pricing table.** All paid-cloud chat/completion prices live ONCE in
@@ -116,17 +115,21 @@ Per-file detail is in `docs/architecture/KEY_FILES.md`.
   (`check:module-size` in verify): growth over a ceiling, >50 lines of stale slack after a
   shrink, a row for a deleted file, and any UNLISTED src file over 1,500 lines all fail.
   Raise a ceiling only via a reviewer-visible TSV edit in the same commit; lower it in the
-  same commit as any peel. migrate.ts is `region-exempt` (the MIGRATIONS array grows freely;
-  the runner logic around it is ratcheted).
-- **Peeled façades keep their surface.** operations.ts (`src/core/ops/*`), doctor.ts
-  (`src/commands/doctor/*`), sync.ts (`src/core/sync-*`), skillpack.ts
-  (`src/commands/skillpack/*`), and both engines
-  (`src/core/{postgres,pglite}-engine/*`) are façades re-exporting everything they always
+  same commit as any peel. `check:function-size` ratchets functions the same way
+  (`scripts/function-size-baseline.tsv`): no new function over 300 lines.
+- **Peeled façades keep their surface.** operations.ts (`src/core/ops/*`), both engines
+  (`src/core/engine-sql/*`, `src/core/{postgres,pglite}-engine/*`), migrate.ts
+  (`src/core/schema-migrations/*`), doctor.ts (`src/commands/doctor/registry.ts` +
+  `checks/*`), sync.ts (`src/commands/sync/*`; reusable clusters in `src/core/sync-*`),
+  serve-http.ts (`serve-http-<area>.ts` `mount<Area>(app, ctx)` modules), cli.ts
+  (`src/cli/command-table.ts` + `src/cli/commands/*`), jobs.ts (`src/commands/jobs/*`,
+  handlers in `src/core/minions/handlers/*`), hybrid.ts (`src/core/search/hybrid/*` stages),
+  autopilot.ts and skillpack.ts (`src/commands/skillpack/*`) re-export everything they always
   exported — import sites and published package exports never chase the peel. New code goes
-  in the module dirs, not back into the façades. Engine modules take narrow explicit deps
-  (never an engine-shaped bag); doctor source-text guards read `test/helpers/doctor-source.ts`,
-  and the flag-registry generator's `facadeExpansion` keeps peeled flag text in each command's
-  scan surface.
+  in the module dirs, not back into the façades (CONTRIBUTING.md "Where does my change go?").
+  Engine modules take narrow explicit deps (never an engine-shaped bag); source-text guards
+  read `test/helpers/source-surface.ts`, and the flag-registry generator's `facadeExpansion`
+  keeps peeled flag text in each command's scan surface.
 - **Coverage is measured, honestly.** CI merges per-lane lcov (`scripts/merge-lcov.ts`) into
   a PR-corpus report on every run (advisory until the diff gate graduates via
   `COVERAGE_GATE_ENFORCE`) and a nightly fullCorpus number incl. the full e2e glob. bun
@@ -138,9 +141,7 @@ Per-file detail is in `docs/architecture/KEY_FILES.md`.
 ## Reference map (load on demand)
 
 CLAUDE.md is the always-loaded orientation + dispatcher. Detailed reference loads
-on demand — read the linked doc before working in that area. (Same two-layer
-pattern gbrain ships for its own skills: thin router in `skills/RESOLVER.md`, fat
-detail on demand.)
+on demand — read the linked doc before working in that area.
 
 | When you're working on... | Read first |
 |---|---|
@@ -160,7 +161,8 @@ detail on demand.)
 | publishing the brain's MCP server to other devices and agents (`gbrain mcp expose`, Tailscale default, Grok Bot / Muse hosted path) | `docs/guides/remote-mcp.md` + `docs/mcp/DEPLOY.md` + the `remote-mcp` skill |
 | memory verbs / MCP tool surface (`--surface`) / conformance | `docs/protocol/MEMORY_VERBS_v1.md` + the `verbs*`/`surface.ts`/`protocol.ts` entries in `KEY_FILES.md` |
 | the CLI surface (commands + flags) | `gbrain --help` / `gbrain --tools-json`, plus the relevant `KEY_FILES.md` entry |
-| running or writing tests | `docs/TESTING.md` |
+| adding a storage method, migration, doctor check, CLI-only command, HTTP route or sync phase | `CONTRIBUTING.md` ("Where does my change go?"); branches from before refactor wave 1: `docs/architecture/wave-1-porting.md` |
+| running, writing or retiring tests | `docs/TESTING.md` ([authoring gate](docs/TESTING.md#authoring-gate), [retiring](docs/TESTING.md#retiring-a-test)) |
 | bulk-command progress wiring | `docs/progress-events.md` |
 | eval methodology / metrics | `docs/eval/` |
 | brains vs sources / topology | `docs/architecture/brains-and-sources.md`, `topologies.md` |
@@ -170,17 +172,10 @@ detail on demand.)
 | agent bootstrap (paste-in install, hooks, `gbrain bootstrap`, sweep, keyless) | `docs/guides/bootstrap.md` + `docs/designs/AGENT_BOOTSTRAP_PLAN.md` + the KEY_FILES bootstrap cluster |
 | shipping a release / CHANGELOG / PR conventions | `docs/RELEASING.md` (ship IRON RULES stay inline below) |
 
-The per-file index (`## Key files`), the thin-client routing seam, and the testing
-discipline used to live inline here. They moved to the docs above so this file
-stays small enough to load every session. Nothing was lost — the pre-move content
-is in git, and the docs carry every load-bearing invariant (compressed to
-current-state).
-
 ## Maintaining CLAUDE.md and the reference docs
 
-CLAUDE.md grew to ~592KB / ~147k tokens once the per-file index became append-only
-(one `**vX.Y.Z:**` clause per release per file). That is the exact anti-pattern
-gbrain exists to fix. The rules that keep it from recurring:
+An append-only per-file index once grew CLAUDE.md to ~592KB. The rules that keep it
+from recurring:
 
 - **CLAUDE.md is orientation, not the implementation spec.** It carries the North
   Star, the two axes, architecture + cross-cutting invariants, the resolver, and
@@ -352,11 +347,8 @@ four numeric segments are required first. Historical 3-segment versions
   CLAUDE.md edit MUST be followed by `bun run build:llms` in the same commit
   (or a follow-up commit before push).** The committed bundles are checked
   against fresh generator output by `test/build-llms.test.ts`, which runs in
-  CI shard 1. If you edited CLAUDE.md and didn't regenerate, CI will fail.
-  This has bitten the wave 3 times — every CLAUDE.md edit gets a `bun run
-  build:llms` chaser, no exceptions. (The `verify` gate doesn't run this
-  test; only the full unit suite does. So `bun run typecheck` clean is NOT
-  enough to know you can push after a CLAUDE.md edit.)
+  CI shard 1, not in `verify`: a clean typecheck does not mean a CLAUDE.md
+  edit can be pushed.
 
 **Historical (DO NOT bump on release):**
 
@@ -374,16 +366,11 @@ four numeric segments are required first. Historical 3-segment versions
   (e.g. "v0.21.0 Code Cathedral"); update only when the README's marketing
   copy is intentionally being refreshed, NOT on every micro/patch bump.
 
-**The /ship workflow's version idempotency check:** Step 12 reads
-`VERSION` and `package.json`, classifies as FRESH / ALREADY_BUMPED /
-DRIFT_STALE_PKG / DRIFT_UNEXPECTED, and refuses to proceed on
-DRIFT_UNEXPECTED. This is why the two must move together.
-
-**The CI version-gate** rejects pushes where `VERSION` and
-`package.json` disagree, OR where `VERSION` is not strictly greater
-than master's VERSION. If a queue collision claims your version on
-master before yours lands, /ship's queue-aware allocator (Step 12)
-will detect drift and re-bump on the next run.
+**Always use PATCH without asking**, including the initial release choice;
+override `/ship`'s MINOR/MAJOR prompts. Auto-allocate past collisions, sync all
+version stamps and the PR title, then report the number. This changes numbering
+only: scope, merge, deployment, paid-work and validation approvals still apply.
+CI rejects mismatched `VERSION`/`package.json` or versions not newer than master.
 
 ### Version consistency and conflict recovery
 

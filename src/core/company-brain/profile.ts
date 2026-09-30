@@ -89,7 +89,7 @@ export async function importCompanyBrainFile(engine: BrainEngine, filePath: stri
       if (ready.slug !== entry.page!.slug || ready.observedRevision !== (snapshot?.revision ?? null)) {
         throw new OperationError('revision_conflict', 'The approved file no longer names the same page revision.');
       }
-      const project = prepareCanonicalProjections(ready.parsedPage, ready.slug, sourceId);
+      const project = await prepareCanonicalProjections(engine, ready.parsedPage, ready.slug, sourceId, snapshot, 'immutable');
       await withCompanyBrainSource(engine, sourceId, async tx => { await ready.apply(tx); await project(tx); });
       return ready.result;
     } }).catch(error => {

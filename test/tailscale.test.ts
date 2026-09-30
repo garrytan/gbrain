@@ -57,6 +57,21 @@ describe('parseTailscaleStatus', () => {
     expect(cap({ Capabilities: ['https://tailscale.com/cap/ssh'] })).toBe(false);
     expect(cap({ CapMap: {}, Capabilities: ['https://tailscale.com/cap/funnel'] })).toBe(true);
   });
+  test('funnelCapable: current Tailscale CapMap forms (`funnel`, `…/cap/funnel-ports?ports=`) are Funnel-capable (#5599)', () => {
+    const cap = (self: Record<string, unknown>) => parseTailscaleStatus(JSON.stringify({ ...STATUS_DOC, Self: { ...STATUS_DOC.Self, ...self } }))!.funnelCapable;
+    // Tailscale 1.102.4 `Self` shape from the report: CapMap without the legacy URL key, Capabilities null.
+    expect(cap({ Capabilities: null, CapMap: {
+      'default-auto-update': [], funnel: [], https: [],
+      'https://tailscale.com/cap/file-sharing': [],
+      'https://tailscale.com/cap/funnel-ports?ports=443,8443,10000': [],
+      'https://tailscale.com/cap/is-admin': [], 'https://tailscale.com/cap/is-owner': [], 'https://tailscale.com/cap/ssh': [],
+    } })).toBe(true);
+    expect(cap({ CapMap: { funnel: [] } })).toBe(true);
+    expect(cap({ CapMap: { 'https://tailscale.com/cap/funnel-ports?ports=443': [] } })).toBe(true);
+    expect(cap({ CapMap: { 'https://tailscale.com/cap/funnel-ports': [] } })).toBe(true);
+    expect(cap({ Capabilities: ['funnel'] })).toBe(true);
+    expect(cap({ CapMap: { 'https://tailscale.com/cap/funnel-portsx': [], funnelish: [], 'https://tailscale.com/cap/https': [] } })).toBe(false);
+  });
   test('non-JSON / non-object output → null', () => {
     expect(parseTailscaleStatus('')).toBeNull();
     expect(parseTailscaleStatus('failed to connect to local Tailscale service')).toBeNull();

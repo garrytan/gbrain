@@ -196,6 +196,7 @@ export type EffectiveDateSource =
   | 'date'
   | 'published'
   | 'filename'
+  | 'created'
   | 'fallback';
 
 // `image` (v0.27.1): multimodal ingestion path, parallel to markdown + code.
@@ -759,6 +760,8 @@ export interface ChunkInput {
    */
   chunk_source: 'compiled_truth' | 'timeline' | 'fenced_code' | 'image_asset';
   embedding?: Float32Array;
+  /** #5553: embedding-input provenance (see embedding-input-hash.ts); written only with `embedding`. */
+  embedding_input_hash?: string;
   model?: string;
   token_count?: number;
   /**
@@ -1033,6 +1036,8 @@ export interface SearchResult {
    * incident's duplicate-stub class.
    */
   create_safety?: import('./search/evidence.ts').CreateSafety;
+  /** Evidence delivery (`return_unit`): present only when a non-chunk unit applied. */
+  delivered?: import('./search/evidence-delivery.ts').DeliveredEvidence;
 }
 
 /**
@@ -1157,6 +1162,12 @@ export interface SearchOpts extends PageReadPolicy {
    * via DEFAULT_SOURCE_BOOSTS so archived content stays findable by default.
    */
   exclude_slug_prefixes?: string[];
+  /**
+   * Resolved source-boost map (prefix → factor) for the ranking arms. Set by
+   * hybridSearch from the brain's `search.source_boosts` config; engines
+   * fall back to `resolveBoostMap()` (defaults + env) when absent.
+   */
+  source_boosts?: Record<string, number>;
   /**
    * Opt-back-in list — subtracts entries from the resolved hard-exclude set.
    * E.g. `include_slug_prefixes: ['test/']` lets a query see test/ pages even
@@ -1294,9 +1305,9 @@ export interface SearchOpts extends PageReadPolicy {
   /**
    * #4352 — page-level `visibility: private` enforcement for untrusted
    * callers. When true, both engines' search paths (keyword, titles,
-   * keyword-chunks, vector) add
-   * `COALESCE(p.frontmatter->>'visibility','world') <> 'private'` to the
-   * visibility clause. Callers resolve trust + the config gate via
+   * keyword-chunks, vector) add `privatePagesFilterFragment` to the
+   * visibility clause (absent visibility is world, except on derived atoms
+   * and synthesized concepts, where it is private). Callers resolve trust + the config gate via
    * `resolveExcludePrivatePages` (search/private-visibility.ts):
    * ctx.remote !== false → true unless the operator opted out. Omitted /
    * false = pre-fix behavior (trusted local reads see everything).
@@ -1836,12 +1847,15 @@ export const DEGRADED_STAGES = [
   'expansion_partial',
   'rescore_skipped',
   'vector_arm_failed',
+  'keyword_arm_failed',
+  'title_arm_failed',
   'budget_dropped_all',
   'budget_truncated',
   'keyword_zero',
   'cache_prestamp',
   'reranker_skipped',
   'rerank_passthrough',
+  'rerank_failed',
   'keyword_relaxed_carried',
   'safe_index_pending',
   'vector_candidates_incomplete',
@@ -1867,6 +1881,7 @@ export const DEGRADED_REASONS = [
   // #4648 — rerank_passthrough reasons (mirror RerankPassThroughReason).
   'empty_result_set',
   'malformed_shape',
+  'budget',
   'candidate_budget',
   'iterative_scan_unavailable',
 ] as const;
@@ -1891,6 +1906,7 @@ export interface DegradedStageEntry {
  *     short degraded TTL lets the next query recover a reranked result set
  *     (master's v0.48.1.0 behavior, kept at the merge). It never reaches the
  *     empty-result copy because a pass-through implies a non-empty batch.
+ *   - `rerank_failed` (the call threw: timeout / provider_error / budget) is transient too.
  *   - `keyword_relaxed_carried` is recall-shaped by definition (see above).
  * Pinned by test/degraded-stages-recall.test.ts; a new fail-open stage must be
  * classified here in the same commit that adds it.

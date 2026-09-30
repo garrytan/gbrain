@@ -4,7 +4,14 @@ import { dirname, isAbsolute } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { family, GLIBC, MUSL } from 'detect-libc';
 
-interface NativeBinding {
+export interface NativeExportPublisher {
+  beginExport(absoluteDestination: string): object;
+  publishExportFile(handle: object, relativePath: string, data: Buffer): void;
+  completeExport(handle: object): void;
+  closeExport(handle: object): void;
+}
+
+interface NativeBinding extends NativeExportPublisher {
   target: string;
   openLock(path: string): object;
   tryLock(handle: object): boolean;
@@ -85,6 +92,15 @@ async function loadBinding(): Promise<NativeBinding> {
 export async function nativeLockCapability(): Promise<{ target: string; napi: 3 }> {
   const binding = await (bindingPromise ??= loadBinding());
   return { target: binding.target, napi: 3 };
+}
+
+export async function nativeExportPublisher(): Promise<NativeExportPublisher> {
+  const binding = await (bindingPromise ??= loadBinding());
+  if (typeof binding.beginExport !== 'function' || typeof binding.publishExportFile !== 'function' ||
+      typeof binding.completeExport !== 'function' || typeof binding.closeExport !== 'function') {
+    throw new NativeLockUnavailableError('Installed native addon lacks safe export publication support');
+  }
+  return binding;
 }
 
 function budget(value: number | undefined, fallback: number, minimum: number): number {

@@ -37,6 +37,18 @@ describe('classify-tests detectors', () => {
     expect(classifyFile('test/fake.test.ts', src).rows).toHaveLength(0);
   });
 
+  test('a dynamic import of src/ beside a non-repo read is behavioral', () => {
+    const src = [
+      "describe('init writes config', () => {",
+      "  test('reads its own config', async () => {",
+      "    const cfg = JSON.parse(readFileSync(cfgPath, 'utf-8'));",
+      "    const { PGLiteEngine } = await import('../src/core/pglite-engine.ts');",
+      '  });',
+      '});',
+    ].join('\n');
+    expect(classifyFile('test/fake.test.ts', src).rows).toHaveLength(0);
+  });
+
   test('Bun.file reader on src/ is structural', () => {
     const src = [
       "const text = await Bun.file(new URL('../src/core/migrate.ts', import.meta.url)).text();",
@@ -78,6 +90,19 @@ describe('classify-tests detectors', () => {
     const rows = classifyFile('test/fake.test.ts', src).rows;
     expect(rows).toHaveLength(1);
     expect(rows[0].detector).toBe('doctor-source-helper');
+  });
+
+  test('per-surface source helpers (A10) mark the suite structural', () => {
+    const src = [
+      "import { surfaceFileSource, surfaceSource } from './helpers/source-surface.ts';",
+      "describe('sync pin', () => {",
+      "  test('contains', () => { expect(surfaceSource('sync')).toContain('x'); });",
+      "  test('orders', () => { const s = surfaceFileSource('sync', 'src/commands/sync.ts'); expect(s.indexOf('a')).toBeLessThan(s.indexOf('b')); });",
+      '});',
+    ].join('\n');
+    const rows = classifyFile('test/fake.test.ts', src).rows;
+    expect(rows).toHaveLength(1);
+    expect(rows[0].detector).toBe('source-surface-helper');
   });
 
   test('detector outside any describe attributes to file-level pseudo-suite', () => {

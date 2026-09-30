@@ -25,7 +25,11 @@ import { localHostId } from '../src/core/persistence/identity.ts';
 import { currentExitCode, _resetCliExitVerdictForTests } from '../src/core/cli-force-exit.ts';
 import { prepareRemoteJob, withSubmissionAuthority } from '../src/core/minions/submission-authority.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
+import { testBackends } from './helpers/test-backends.ts';
+import { recordFactWithdrawal } from '../src/core/facts/withdrawal.ts';
+import { renderFactsTable, parseFactsFence } from '../src/core/facts-fence.ts';
 
+const backends = testBackends();
 const home = mkdtempSync(join(tmpdir(), 'gbrain-sync-failures-'));
 const engines: BrainEngine[] = [];
 let closePostgres: (() => Promise<void>) | undefined;
@@ -44,9 +48,38 @@ async function fixture(engine: BrainEngine, files: Record<string, string>) {
   return { id, root, head };
 }
 beforeAll(async () => {
-  const lite = new PGLiteEngine(); await lite.connect({}); await lite.initSchema(); engines.push(lite);
-  if (process.env.DATABASE_URL) { const pg = await isolatedPersistencePostgres(process.env.DATABASE_URL); engines.push(pg.engine); closePostgres = pg.close; }
+  if (backends.includes('pglite')) {
+    const lite = new PGLiteEngine(); await lite.connect({}); await lite.initSchema(); engines.push(lite);
+  }
+  if (backends.includes('postgres')) { const pg = await isolatedPersistencePostgres(process.env.DATABASE_URL!); engines.push(pg.engine); closePostgres = pg.close; }
 }, 120_000);
+
+test('withdrawal-conflicted sync resumes only through explicit guarded rediscovery and cannot restore the fact', async () => withEnv(env, async () => {
+  for (const engine of engines) {
+    const body = renderFactsTable([{ rowNum: 1, claim: 'synthetic sync withdrawal', visibility: 'world', kind: 'fact', confidence: 1,
+      notability: 'medium', active: true }]);
+    const f = await fixture(engine, { 'a.md': 'First stable observation.\n', 'z.md': body });
+    const options = { sourceId: f.id, noPull: true, noEmbed: true, noExtract: true };
+    expect((await performManagedSync(engine, options)).status).toBe('first_sync');
+    const fact = await engine.transaction(tx => withCoordinatedWrite(tx, [f.id], () =>
+      tx.insertFact({ fact: 'synthetic sync withdrawal', source: 'synthetic', visibility: 'world' }, { source_id: f.id })));
+    writeFileSync(join(f.root, 'a.md'), 'First updated observation.\n');
+    writeFileSync(join(f.root, 'z.md'), `Preserve this new prose.\n${body}`); commit(f.root);
+    expect((await performManagedSync(engine, options, { maxPages: 1, maxMs: 1000 })).status).toBe('partial');
+    await disposePersistenceConsumer(engine);
+    await engine.transaction(tx => withCoordinatedWrite(tx, [f.id], () => recordFactWithdrawal(tx, fact.id, f.id)));
+    await expect(performManagedSync(engine, options)).rejects.toMatchObject({ code: 'revision_conflict' });
+    expect(await readManagedSyncFailures(engine, [f.id])).toEqual([expect.objectContaining({ phase: 'freeze', path: 'z.md', code: 'revision_conflict' })]);
+    await expect(performManagedSync(engine, options)).rejects.toMatchObject({ code: 'revision_conflict' });
+    const repaired = await performManagedSync(engine, { ...options, retryFailed: true });
+    expect(repaired.status).toBe('synced');
+    const current = (await engine.readPageSnapshot('z', { sourceId: f.id }))!;
+    expect(current.page.compiled_truth).toContain('Preserve this new prose.');
+    expect(parseFactsFence(current.page.compiled_truth).facts[0].forgotten).toBe(true);
+    expect(parseFactsFence(readFileSync(join(f.root, 'z.md'), 'utf8')).facts[0].forgotten).toBe(true);
+    expect(await readManagedSyncFailures(engine, [f.id])).toHaveLength(0);
+  }
+}), 120_000);
 afterAll(async () => {
   for (const engine of engines) { await disposePersistenceConsumer(engine); await engine.disconnect(); }
   await closePostgres?.(); rmSync(home, { recursive: true, force: true });
@@ -273,7 +306,7 @@ test('local single and all-source CLI JSON carry durable diagnostics and fail th
   }
 }), 120_000);
 
-test('a new process reads the same failed receipt from a persisted PGLite brain', async () => withEnv(env, async () => {
+test.skipIf(!backends.includes('pglite'))('a new process reads the same failed receipt from a persisted PGLite brain', async () => withEnv(env, async () => {
   const database = join(home, 'restart-db');
   const engine = new PGLiteEngine(); await engine.connect({ database_path: database }); await engine.initSchema();
   let expected: Awaited<ReturnType<typeof performManagedSync>>, sourceId: string;

@@ -31,12 +31,10 @@ import { createAnthropic } from '@ai-sdk/anthropic';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { z } from 'zod';
 
-import { truncateUtf8 } from '../text-safe.ts';
-import {
-  BudgetTracker,
-  extractUsageFromError as _extractUsageFromError,
-  type BudgetKind,
-} from '../budget/budget-tracker.ts';
+import { DEFAULT_CHARS_PER_TOKEN, DEFAULT_SAFETY_FACTOR, embedRequestMaxInputTokens, planEmbedRequests, rerankRequestMaxInputTokens, truncateEmbedInputs } from './embed-batch-plan.ts';
+export { splitByTokenBudget, capBatchItems, NO_BATCH_CAP_SUB_BATCH_ITEMS } from './embed-batch-plan.ts';
+import { BudgetTracker, type BudgetKind } from '../budget/budget-tracker.ts';
+import { failedCallUsage, recordOnTracker } from './budget-record.ts';
 import type {
   AIGatewayConfig,
   EmbedMultimodalOpts,
@@ -54,11 +52,13 @@ import {
 } from './recipes/openrouter.ts';
 import { resolveModelDetailed, resolveEffectiveChatModel, resolveEffectiveExpansionModel } from '../model-config.ts';
 import { snapshotConfigReader } from '../config-snapshot.ts';
+import { clearGatewayModelSources, gatewayModelSource, setGatewayModelSource } from './gateway-model-sources.ts';
 import { parseLlmJson } from '../llm-json.ts';
 import type { BrainEngine } from '../engine.ts';
 import { dimsProviderOptions } from './dims.ts';
 import { hasAnthropicKey, stashGatewayAnthropicKeyFromEnv } from './anthropic-key.ts';
 import { AIConfigError, AITransientError, isStructuredOutputRejection, normalizeAIError } from './errors.ts';
+import { isEmbeddingZeroNormError, screenAlignedEmbeddings, screenEmbeddings, sendableEmbeddingInputs } from './embedding-guard.ts';
 import { getProviderCapabilities } from './capabilities.ts';
 import { runGuardrails, hasGuardrails, type GuardrailHook } from '../guardrails.ts';
 import { loadConfig } from '../config.ts';
@@ -105,7 +105,6 @@ function withDefaultTimeout(caller: AbortSignal | undefined, timeoutMs: number):
   return caller ? AbortSignal.any([caller, timeout]) : timeout;
 }
 
-const MAX_CHARS = 8000;
 export { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } from './defaults.ts';
 import {
   DEFAULT_EMBEDDING_MODEL,
@@ -199,10 +198,6 @@ const _shrinkState = new Map<string, ShrinkEntry>();
 const SHRINK_FLOOR = 0.05;
 /** Successful batches needed before the factor heals back toward recipe default. */
 const SHRINK_HEAL_AFTER = 10;
-/** Default chars-per-token when a recipe omits it. Matches OpenAI tiktoken on English. */
-const DEFAULT_CHARS_PER_TOKEN = 4;
-/** Default safety factor when a recipe omits it. */
-const DEFAULT_SAFETY_FACTOR = 0.8;
 
 /**
  * v0.31.8 (D2 + D10): hard ceiling on Voyage response size, sized as
@@ -567,12 +562,11 @@ export async function reconfigureGatewayWithEngine(engine: BrainEngine): Promise
       fileCfg = null;
     }
   }
-  const newChat = needsFileCfg(chatDetailed.source)
-    ? resolveEffectiveChatModel(fileCfg, cfg.env ?? process.env).model
-    : chatDetailed.model;
-  const newExpansion = needsFileCfg(expansionDetailed.source)
-    ? resolveEffectiveExpansionModel(fileCfg, cfg.env ?? process.env).model
-    : expansionDetailed.model;
+  const env = cfg.env ?? process.env;
+  const chatEffective = needsFileCfg(chatDetailed.source) ? resolveEffectiveChatModel(fileCfg, env) : null;
+  const expansionEffective = needsFileCfg(expansionDetailed.source) ? resolveEffectiveExpansionModel(fileCfg, env) : null;
+  const newChat = chatEffective?.model ?? chatDetailed.model;
+  const newExpansion = expansionEffective?.model ?? expansionDetailed.model;
 
   // Resolved values are bare model ids (e.g. `claude-sonnet-4-6`) — prepend
   // the existing provider prefix from cfg so the gateway keeps routing to
@@ -582,6 +576,8 @@ export async function reconfigureGatewayWithEngine(engine: BrainEngine): Promise
   const chatFull = newChat.includes(':') ? newChat : prefixWithProviderFrom(cfg.chat_model ?? DEFAULT_CHAT_MODEL, newChat);
 
   _config = { ...cfg, expansion_model: expansionFull, chat_model: chatFull };
+  setGatewayModelSource('expansion', expansionFull, gatewayModelSource('expansion', expansionDetailed, expansionEffective));
+  setGatewayModelSource('chat', chatFull, gatewayModelSource('chat', chatDetailed, chatEffective));
   _modelCache.clear();
   _shrinkState.clear();
   return _config;
@@ -662,6 +658,7 @@ export function __setGatewayResetBaselineForTests(
 /** Clear every piece of module state. Shared by both reset flavors. */
 function clearGatewayState(): void {
   _config = null;
+  clearGatewayModelSources();
   stashGatewayAnthropicKeyFromEnv(undefined); // gateway-owned snapshot dies with the config
   _modelCache.clear();
   _shrinkState.clear();
@@ -1348,9 +1345,6 @@ export const perplexityCompatFetch = (async (input: RequestInfo | URL, init?: Re
  * line on every search, and today's keyless state is stderr-silent.
  */
 const _noKeyNoticed = new Set<string>();
-export function _resetRerankWarningsForTest(): void {
-  _noKeyNoticed.clear();
-}
 function noKeyOnce(modelStr: string, keyName: string, query: string, docCount: number): void {
   try {
     if (_noKeyNoticed.has(modelStr)) return;
@@ -1464,30 +1458,14 @@ function instantiateEmbedding(recipe: Recipe, modelId: string, cfg: AIGatewayCon
 const MIN_SUB_BATCH = 1;
 
 /**
- * #3875: default per-call item cap for `no_batch_cap` recipes (Ollama,
- * LiteLLM proxy). These recipes declare no static token/item cap because the
- * backend's capacity is user-launched — but the per-SDK-call
- * AI_EMBED_TIMEOUT_MS (60s default) then bounded a whole FILE's chunks in one
- * request. A slow local model (CPU Ollama) embedding a large file timed out
- * deterministically and every retry re-sent the same oversized batch. Capping
- * items per sub-batch makes the 60s timeout a per-BATCH budget: 16 chunks per
- * call finishes comfortably even on CPU-bound local models, and a genuinely
- * wedged provider still surfaces the timeout loudly on the first sub-batch.
- * An explicit `max_batch_items` on the recipe always wins over this default.
- *
- * @internal exported for tests; not part of the public gateway API.
- */
-export const NO_BATCH_CAP_SUB_BATCH_ITEMS = 16;
-
-/**
- * Embed many texts. Truncates to MAX_CHARS, then dispatches based on whether
+ * Embed many texts. Truncates to EMBED_MAX_CHARS, then dispatches based on whether
  * the recipe declares a per-batch token budget.
  *
  * Flow:
  * ```
  * embed(texts)
  *   ├─ resolve recipe + model
- *   ├─ truncate each text to MAX_CHARS (8000)
+ *   ├─ truncate each text to EMBED_MAX_CHARS (8000)
  *   ├─ read recipe.touchpoints.embedding.{max_batch_tokens, chars_per_token, safety_factor}
  *   │
  *   ├─ if max_batch_tokens declared (Voyage path):
@@ -1567,7 +1545,7 @@ export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32A
   const resolveTarget = opts?.embeddingModel ?? getEmbeddingModel();
   const tracker = __budgetStore.getStore() ?? null;
   const { model, recipe, modelId } = await resolveEmbeddingProvider(resolveTarget);
-  const truncated = texts.map(t => truncateUtf8(t ?? '', MAX_CHARS));
+  const truncated = truncateEmbedInputs(texts);
 
   // Reserve up front for the worst-case batch token count. Embeddings have
   // no output rate, so maxOutputTokens=0. record() at the end uses the
@@ -1597,43 +1575,14 @@ export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32A
   );
   const expected = effectiveDims;
 
-  const embedding = recipe.touchpoints?.embedding;
   // GBRAIN_EMBED_MAX_BATCH_TOKENS (#3622): operator-declared cap for recipes
-  // that ship without one (ollama/llama-server/litellm declare no_batch_cap
-  // because real capacity depends on the operator's local server). Without
-  // any cap, a page's entire chunk set goes out as ONE request — on a serial
-  // local server that can outlive the embed timeout and starve the queue.
-  // Recipe-declared caps always win; invalid values are ignored. Read from
-  // the configure-time env snapshot (Codex C3), never process.env at call
-  // time — buildGatewayConfig folds the operator's process env into it.
+  // that ship without one. Read from the configure-time env snapshot (Codex
+  // C3), never process.env at call time; invalid values are ignored.
   const envCapRaw = parseInt(cfg.env?.GBRAIN_EMBED_MAX_BATCH_TOKENS ?? '', 10);
   const envCap = Number.isFinite(envCapRaw) && envCapRaw > 0 ? envCapRaw : undefined;
-  const maxBatchTokens = embedding?.max_batch_tokens ?? envCap;
-  const charsPerToken = embedding?.chars_per_token ?? DEFAULT_CHARS_PER_TOKEN;
-
-  // Pre-split is gated on max_batch_tokens. Recipes without it (e.g. OpenAI)
-  // ride the fast path: one embedMany call, no recursion safety net.
-  const tokenBatches = maxBatchTokens
-    ? splitByTokenBudget(truncated, Math.floor(maxBatchTokens * effectiveSafetyFactor(recipe)), charsPerToken)
-    : [truncated];
-
-  // Hard COUNT cap (e.g. llama-server's "maximum allowed batch size 32").
-  // Token budget can't bound item count, so re-split any oversized batch.
-  //
-  // #3875: recipes that declare `no_batch_cap` (Ollama, LiteLLM proxy) have
-  // NO static token cap AND no item cap, so a large file used to ride to the
-  // provider as ONE request — and the 60s AI_EMBED_TIMEOUT_MS (per SDK call)
-  // became a per-FILE budget. A slow local model embedding hundreds of chunks
-  // hit the timeout deterministically, and no amount of retrying could ever
-  // succeed. Default those recipes to a conservative item cap so the per-call
-  // timeout bounds a fixed amount of work; an explicit max_batch_items still
-  // wins.
-  const maxBatchItems =
-    embedding?.max_batch_items ??
-    (embedding?.no_batch_cap === true ? NO_BATCH_CAP_SUB_BATCH_ITEMS : undefined);
-  const batches = maxBatchItems
-    ? tokenBatches.flatMap(b => capBatchItems(b, maxBatchItems))
-    : tokenBatches;
+  // #4616: empty inputs never reach the provider; screenEmbeddings refuses them per item.
+  const sent = sendableEmbeddingInputs(truncated);
+  const batches = sent.length ? planEmbedRequests(sent.map(i => truncated[i]!), recipe, effectiveSafetyFactor(recipe), envCap) : [];
 
   const allEmbeddings: Float32Array[] = [];
   let _embedThrew = false;
@@ -1642,7 +1591,7 @@ export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32A
       const result = await embedSubBatch(batch, model, providerOpts, expected, recipe, modelId, opts);
       allEmbeddings.push(...result);
     }
-    return allEmbeddings;
+    return screenEmbeddings(truncated, sent, allEmbeddings, `${recipe.id}:${modelId}`);
   } catch (err) {
     _embedThrew = true;
     throw err;
@@ -1655,76 +1604,18 @@ export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32A
       // the worst case.
       const charsPerToken = recipe.touchpoints?.embedding?.chars_per_token ?? DEFAULT_CHARS_PER_TOKEN;
       const totalChars = truncated.reduce((s, t) => s + t.length, 0);
-      const inputTokens = Math.ceil(totalChars / Math.max(charsPerToken, 1));
-      try {
-        tracker.record({
-          modelId: `${recipe.id}:${modelId}`,
-          inputTokens,
-          outputTokens: 0,
-          embeddingDims: expected,
-          kind: 'embed',
-          label: _embedThrew ? 'gateway.embed.failed' : 'gateway.embed',
-        });
-      } catch {
-        // BudgetExhausted (TX1) — original throw (if any) wins.
-      }
+      recordOnTracker(tracker, {
+        modelId: `${recipe.id}:${modelId}`,
+        requestedModelId: resolveTarget,
+        inputTokens: Math.ceil(totalChars / Math.max(charsPerToken, 1)),
+        outputTokens: 0,
+        embeddingDims: expected,
+        kind: 'embed',
+        label: _embedThrew ? 'gateway.embed.failed' : 'gateway.embed',
+        estimated: true,
+      });
     }
   }
-}
-
-/**
- * Split texts into sub-batches that stay under the provided budget. Pure;
- * no module state. Exported for the adaptive-embed-batch test suite.
- *
- * @param texts - The texts to partition. Each text counts as
- *   `Math.ceil(text.length / charsPerToken)` tokens for budget purposes.
- * @param budgetTokens - The token ceiling for each sub-batch. Caller is
- *   responsible for applying any safety-factor shrink before passing in.
- * @param charsPerToken - Provider-specific character density. Defaults to
- *   `DEFAULT_CHARS_PER_TOKEN` (4) when omitted, matching OpenAI tiktoken.
- *
- * @internal exported for tests; not part of the public gateway API.
- */
-export function splitByTokenBudget(
-  texts: string[],
-  budgetTokens: number,
-  charsPerToken: number = DEFAULT_CHARS_PER_TOKEN,
-): string[][] {
-  const ratio = charsPerToken > 0 ? charsPerToken : DEFAULT_CHARS_PER_TOKEN;
-  const batches: string[][] = [];
-  let current: string[] = [];
-  let currentTokens = 0;
-
-  for (const text of texts) {
-    const estTokens = Math.ceil(text.length / ratio);
-    if (current.length > 0 && currentTokens + estTokens > budgetTokens) {
-      batches.push(current);
-      current = [];
-      currentTokens = 0;
-    }
-    current.push(text);
-    currentTokens += estTokens;
-  }
-  if (current.length > 0) batches.push(current);
-
-  return batches;
-}
-
-/**
- * Split a batch into sub-batches of at most `maxItems` inputs. Enforces a
- * hard COUNT cap that the token-budget split can't (many tiny inputs fit
- * under any token budget). Used for endpoints like llama.cpp's llama-server
- * that reject requests exceeding their launch batch size.
- *
- * @internal exported for tests; not part of the public gateway API.
- */
-export function capBatchItems(texts: string[], maxItems: number): string[][] {
-  if (maxItems <= 0 || texts.length <= maxItems) return [texts];
-  const batches: string[][] = [];
-  for (let i = 0; i < texts.length; i += maxItems) {
-    batches.push(texts.slice(i, i + maxItems));
-  }
-  return batches;
 }
 
 /**
@@ -1807,10 +1698,7 @@ async function embedSubBatch(
 ): Promise<Float32Array[]> {
   try {
     const callTransport = () => invokeAI({ operation: 'gateway.embed', kind: 'embedding', model: `${recipe.id}:${modelId}`,
-      maxInputTokens: recipe.touchpoints.embedding?.max_batch_tokens
-        ?? (recipe.touchpoints.embedding?.max_input_tokens?.[modelId] !== undefined
-          ? recipe.touchpoints.embedding.max_input_tokens[modelId]! * texts.length : undefined),
-      maxOutputTokens: 0 }, () => _embedTransport({
+      maxInputTokens: embedRequestMaxInputTokens(texts, recipe, modelId), maxOutputTokens: 0 }, () => _embedTransport({
       model,
       values: texts,
       providerOptions: providerOpts,
@@ -1820,7 +1708,7 @@ async function embedSubBatch(
       // deadline) — shorter wins.
       abortSignal: withDefaultTimeout(opts?.abortSignal, AI_EMBED_TIMEOUT_MS),
       ...(hasAIInvocationGuard() ? { maxRetries: 0 } : opts?.maxRetries !== undefined ? { maxRetries: opts.maxRetries } : {}),
-    }), sdkInvocationUsage);
+    }), sdkInvocationUsage, err => isTokenLimitError(err) ? { inputTokens: 0, outputTokens: 0 } : null);
     // Carry the threaded input_type across the SDK boundary via
     // __embedInputTypeStore (the adapter strips it from providerOptions —
     // see the store's doc comment). Populated only when dimsProviderOptions
@@ -2063,7 +1951,7 @@ export async function embedMultimodal(
     }
   }
 
-  return allEmbeddings;
+  return screenAlignedEmbeddings(allEmbeddings, `${recipe.id}:${parsed.modelId}`);
 }
 
 // Documentation pointer: callers must size-check before calling. Voyage caps
@@ -2224,7 +2112,7 @@ async function embedMultimodalOpenAICompat(
     allEmbeddings.push(new Float32Array(row.embedding));
   }
 
-  return allEmbeddings;
+  return screenAlignedEmbeddings(allEmbeddings, `${recipe.id}:${modelId}`);
 }
 
 // ---- v0.36 cross-modal wave: query-side multimodal embedding + safe variant ----
@@ -2319,6 +2207,10 @@ export async function embedMultimodalSafe(
     } catch (err) {
       if (isAIInvocationPolicyError(err)) throw err;
       lastError = err instanceof Error ? err : new Error(String(err));
+      if (isEmbeddingZeroNormError(err)) {
+        err.vectors.forEach((v, i) => { if (v) embeddings[startIdx + i] = v; else failedIndices.push(startIdx + i); });
+        return;
+      }
       // AIConfigError = permanent misconfig. Retrying smaller won't help.
       if (lastError instanceof AIConfigError) {
         for (let i = 0; i < items.length; i++) failedIndices.push(startIdx + i);
@@ -2452,26 +2344,6 @@ function normalizeSdkUsage(usage: unknown): { inputTokens: number; outputTokens:
 }
 
 /**
- * #4121 — one fail-open record wrapper for every uninstrumented-path spend
- * site (expand + OCR): no-tracker is a no-op; BudgetExhausted from record()
- * (TX1) is swallowed exactly like chat()'s _recordBudget — the breach
- * surfaces on the NEXT reserve(), never here.
- */
-function recordSpendOnTracker(
-  tracker: ReturnType<typeof getCurrentBudgetTracker>,
-  modelId: string,
-  label: string,
-  tokens: { inputTokens: number; outputTokens: number },
-): void {
-  if (!tracker) return;
-  try {
-    tracker.record({ modelId, inputTokens: tokens.inputTokens, outputTokens: tokens.outputTokens, label });
-  } catch {
-    // BudgetExhausted (TX1) — surfaced via the next reserve().
-  }
-}
-
-/**
  * Expand a search query into up to 4 related queries.
  * Returns the original query PLUS expansions. On failure, returns just the original.
  * Caller is responsible for sanitizing the query (prompt-injection boundary stays in expansion.ts).
@@ -2505,31 +2377,27 @@ export async function expand(query: string): Promise<string[]> {
   // provider tokens; the viaText fallback then bills its own call, so one
   // expand() can legitimately produce TWO records). Fail-open (no tracker →
   // no-op) and swallow BudgetExhausted the same way chat()'s _recordBudget
-  // does — TX1 surfaces on the NEXT reserve(), not here.
+  // does — TX1 surfaces on the NEXT reserve(), not here. The fallback's
+  // record is an extra attempt of the same operation (countsAsCall: false).
   const tracker = getCurrentBudgetTracker();
-  const recordExpansion = (
-    modelLabel: string,
-    label: 'gateway.expand' | 'gateway.expand.failed',
-    tokens: { inputTokens: number; outputTokens: number },
-  ): void => recordSpendOnTracker(tracker, modelLabel, label, tokens);
-  const recordExpansionUsage = (modelLabel: string, usage: unknown): void =>
-    recordExpansion(modelLabel, 'gateway.expand', normalizeSdkUsage(usage));
   const estimatedPromptTokens = estimateChatInputTokens({
     messages: [{ content: expansionPrompt }],
   });
-  const recordExpansionFailure = (modelLabel: string, err: unknown): void =>
-    recordExpansion(
-      modelLabel,
-      'gateway.expand.failed',
-      _extractUsageFromError(err, {
-        inputTokens: estimatedPromptTokens,
-        outputTokens: EXPANSION_FAILED_PESSIMISTIC_OUTPUT_TOKENS,
-      }),
-    );
 
   try {
-    const { model, recipe, modelId } = await resolveExpansionProvider(getExpansionModel());
+    const requestedModelId = getExpansionModel();
+    const { model, recipe, modelId } = await resolveExpansionProvider(requestedModelId);
     const modelLabel = `${recipe.id}:${modelId}`;
+    const recordExpansionUsage = (usage: unknown, countsAsCall: boolean): void =>
+      recordOnTracker(tracker, { modelId: modelLabel, requestedModelId, label: 'gateway.expand', countsAsCall, ...normalizeSdkUsage(usage) });
+    const recordExpansionFailure = (err: unknown, countsAsCall: boolean): void =>
+      recordOnTracker(tracker, {
+        modelId: modelLabel,
+        requestedModelId,
+        label: 'gateway.expand.failed',
+        countsAsCall,
+        ...failedCallUsage(err, { inputTokens: estimatedPromptTokens, outputTokens: EXPANSION_FAILED_PESSIMISTIC_OUTPUT_TOKENS }),
+      });
 
     let expansions: string[];
 
@@ -2537,7 +2405,7 @@ export async function expand(query: string): Promise<string[]> {
     // support is unknown: the AI SDK can't send a json_schema response_format
     // there, so generateObject would warn and silently degrade. generateText + a
     // tolerant parse recovers the queries instead. Fresh abortSignal per call.
-    const viaText = async (): Promise<string[]> => {
+    const viaText = async (countsAsCall = true): Promise<string[]> => {
       let textResult: Awaited<ReturnType<GenerateTextFn>>;
       try {
         textResult = await guardedGeneration(modelLabel, _generateTextTransport, {
@@ -2547,10 +2415,10 @@ export async function expand(query: string): Promise<string[]> {
         });
       } catch (err) {
         if (isAIInvocationPolicyError(err)) throw err;
-        recordExpansionFailure(modelLabel, err); // failed call still billed upstream
+        recordExpansionFailure(err, countsAsCall); // failed call still billed upstream
         throw err; // outer catch degrades to [query]
       }
-      recordExpansionUsage(modelLabel, textResult.usage);
+      recordExpansionUsage(textResult.usage, countsAsCall);
       return parseExpansionResponse(textResult.text) ?? [];
     };
 
@@ -2604,10 +2472,10 @@ export async function expand(query: string): Promise<string[]> {
         });
       } catch (err) {
         if (isAIInvocationPolicyError(err)) throw err;
-        recordExpansionFailure(modelLabel, err);
+        recordExpansionFailure(err, true);
         throw err; // outer catch degrades to [query]
       }
-      recordExpansionUsage(modelLabel, result.usage);
+      recordExpansionUsage(result.usage, true);
       const parsed = ExpansionSchema.safeParse(result.object);
       expansions = parsed.success ? parsed.data.queries : [];
     } else if (recipeSupportsStructuredOutputs(recipe) && !_structuredOutputRejectedRecipes.has(recipe.id)) {
@@ -2627,18 +2495,18 @@ export async function expand(query: string): Promise<string[]> {
           abortSignal: withDefaultTimeout(undefined, AI_CHAT_TIMEOUT_MS),
           prompt: expansionPrompt,
         });
-        recordExpansionUsage(modelLabel, result.usage);
+        recordExpansionUsage(result.usage, true);
         const parsed = ExpansionSchema.safeParse(result.object);
         expansions = parsed.success ? parsed.data.queries : [];
       } catch (err) {
         if (isAIInvocationPolicyError(err)) throw err;
         // The rejected structured attempt billed real tokens — record it
         // before the fallback bills its own call (two records, both true).
-        recordExpansionFailure(modelLabel, err);
+        recordExpansionFailure(err, true);
         // Adversarial F5: don't re-pay this attempt on every call — the
         // capability mis-declaration is stable for the process lifetime.
         _structuredOutputRejectedRecipes.add(recipe.id);
-        expansions = await viaText();
+        expansions = await viaText(false);
       }
     } else {
       // openai-compatible backend, structured-output support unknown: skip the
@@ -2709,8 +2577,8 @@ export async function generateOcrText(imageBytes: Buffer, mime: string): Promise
   const estimatedOcrInputTokens =
     estimateChatInputTokens({ system: systemPrompt, messages: [{ content: 'Extract visible text only.' }] }) +
     OCR_IMAGE_INPUT_TOKEN_ESTIMATE;
-  const recordOcr = (label: 'gateway.ocr' | 'gateway.ocr.failed', tokens: { inputTokens: number; outputTokens: number }): void =>
-    recordSpendOnTracker(tracker, ocrModelId, label, tokens);
+  const recordOcr = (label: 'gateway.ocr' | 'gateway.ocr.failed', usage: { inputTokens: number; outputTokens: number }): void =>
+    recordOnTracker(tracker, { modelId: ocrModelId, requestedModelId: ocrModel, label, ...usage });
   let result: Awaited<ReturnType<GenerateTextFn>>;
   try {
     result = await guardedGeneration(ocrModelId, _generateTextTransport, {
@@ -2736,7 +2604,7 @@ export async function generateOcrText(imageBytes: Buffer, mime: string): Promise
     });
   } catch (err) {
     if (isAIInvocationPolicyError(err)) throw err;
-    recordOcr('gateway.ocr.failed', _extractUsageFromError(err, {
+    recordOcr('gateway.ocr.failed', failedCallUsage(err, {
       inputTokens: estimatedOcrInputTokens,
       outputTokens: DEFAULT_MAX_OUTPUT_TOKENS,
     }));
@@ -3144,6 +3012,8 @@ export interface ChatOpts {
    * validating it themselves (see `jsonSchemaOutput`).
    */
   responseSchema?: { name: string; description?: string; schema: Record<string, unknown> };
+  /** Caller purpose (`skillopt.judge`, …) stamped on the BudgetTracker ledger row. */
+  purpose?: string;
 }
 
 /**
@@ -3529,6 +3399,7 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
   }
   const estimatedInputTokens = estimateChatInputTokens(opts);
   const maxOutputTokens = opts.maxTokens ?? defaultMaxOutputTokens(modelStrEarly);
+  const chatRecord = { requestedModelId: modelStrEarly, purpose: opts.purpose, label: 'gateway.chat' };
 
   // TX5: reserve BEFORE the provider call. Throws BudgetExhausted on cost,
   // runtime, or no_pricing (when cap is set). Pre-resolution model id is
@@ -3570,34 +3441,9 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
       threw = err;
       throw err;
     } finally {
-      if (tracker) {
-        try {
-          if (res) {
-            tracker.record({
-              modelId: res.model ?? modelStrEarly,
-              inputTokens: res.usage.input_tokens,
-              outputTokens: res.usage.output_tokens,
-              label: 'gateway.chat',
-            });
-          } else {
-            const usage = _extractUsageFromError(threw, {
-              inputTokens: estimatedInputTokens,
-              outputTokens: maxOutputTokens,
-            });
-            tracker.record({
-              modelId: modelStrEarly,
-              inputTokens: usage.inputTokens,
-              outputTokens: usage.outputTokens,
-              label: 'gateway.chat',
-            });
-          }
-        } catch {
-          // record() can throw BudgetExhausted (TX1) — suppress here so the
-          // original error (if any) wins; the BudgetExhausted is surfaced
-          // on the NEXT call via reserve(). For test transport this branch
-          // is rare in practice.
-        }
-      }
+      recordOnTracker(tracker, res
+        ? { ...chatRecord, modelId: res.model ?? modelStrEarly, inputTokens: res.usage.input_tokens, outputTokens: res.usage.output_tokens }
+        : { ...chatRecord, modelId: modelStrEarly, ...failedCallUsage(threw, { inputTokens: estimatedInputTokens, outputTokens: maxOutputTokens }) });
     }
   }
 
@@ -3687,19 +3533,10 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
   }
 
   let _budgetRecorded = false;
-  const _recordBudget = (modelLabel: string, inputTokens: number, outputTokens: number): void => {
-    if (!tracker || _budgetRecorded) return;
+  const _recordBudget = (usage: { inputTokens: number; outputTokens: number; failed?: boolean; estimated?: boolean }): void => {
+    if (_budgetRecorded) return;
     _budgetRecorded = true;
-    try {
-      tracker.record({
-        modelId: modelLabel,
-        inputTokens,
-        outputTokens,
-        label: 'gateway.chat',
-      });
-    } catch {
-      // BudgetExhausted (TX1) raised here; surface via next reserve()
-    }
+    recordOnTracker(tracker, { ...chatRecord, modelId: `${recipe.id}:${modelId}`, ...usage });
   };
 
   // The actual Anthropic system-prompt cache breakpoint. A bare string
@@ -3814,7 +3651,7 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
     const anthropicCache = providerMetadata?.anthropic ?? {};
 
     const { inputTokens: inTok, outputTokens: outTok } = normalizeSdkUsage(usage);
-    _recordBudget(`${recipe.id}:${modelId}`, inTok, outTok);
+    _recordBudget({ inputTokens: inTok, outputTokens: outTok });
 
     const usageOut = {
       input_tokens: inTok,
@@ -3847,11 +3684,7 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
     if (isAIInvocationPolicyError(err)) throw err;
     // Pessimistic fallback (A3 amended): when err.usage isn't there, charge
     // the worst-case ceiling — better to overcount on failure than under.
-    const fallback = _extractUsageFromError(err, {
-      inputTokens: estimatedInputTokens,
-      outputTokens: maxOutputTokens,
-    });
-    _recordBudget(`${recipe.id}:${modelId}`, fallback.inputTokens, fallback.outputTokens);
+    _recordBudget(failedCallUsage(err, { inputTokens: estimatedInputTokens, outputTokens: maxOutputTokens }));
     throw normalizeAIError(err, `chat(${recipe.id}:${modelId})`);
   }
 }
@@ -3909,6 +3742,8 @@ export interface ToolLoopOpts {
    * Silently ignored on recipes that declare no prompt caching.
    */
   cacheSystem?: boolean;
+  /** Forwarded to every `chat()` turn; see `ChatOpts.purpose`. */
+  purpose?: string;
 
   /** Crash-replay state. When set, the loop resumes from the recorded position. */
   replayState?: ToolLoopReplayState;
@@ -4057,6 +3892,7 @@ export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
           ? (opts.abortSignal ? AbortSignal.any([opts.abortSignal, turnPermitSignal]) : turnPermitSignal)
           : opts.abortSignal,
         cacheSystem: opts.cacheSystem,
+        purpose: opts.purpose,
       });
     } catch (err) {
       if (isAIInvocationPolicyError(err)) throw err;
@@ -4407,25 +4243,24 @@ export async function rerank(input: RerankInput): Promise<RerankResult[]> {
   }
 
   let _rerankRecorded = false;
-  const _rerankRecord = (): void => {
-    if (!tracker || _rerankRecorded) return;
+  const _rerankRecord = (failed: boolean): void => {
+    if (_rerankRecorded) return;
     _rerankRecorded = true;
-    try {
-      const totalChars = input.query.length + input.documents.reduce((s, d) => s + d.length, 0);
-      tracker.record({
-        modelId: modelStr,
-        inputTokens: Math.ceil(totalChars / 4),
-        outputTokens: 0,
-        kind: 'rerank',
-        label: 'gateway.rerank',
-      });
-    } catch {
-      // BudgetExhausted (TX1) suppressed; surfaces on next reserve().
-    }
+    const totalChars = input.query.length + input.documents.reduce((s, d) => s + d.length, 0);
+    recordOnTracker(tracker, {
+      modelId: modelStr,
+      inputTokens: Math.ceil(totalChars / 4),
+      outputTokens: 0,
+      kind: 'rerank',
+      label: 'gateway.rerank',
+      estimated: true,
+      failed,
+    });
   };
   try {
     const transport: RerankTransport = _rerankTransport ?? ((u, init) => fetch(u, init));
-    const resp = await invokeAI({ operation: 'gateway.rerank', kind: 'rerank', model: modelStr }, () => transport(url, {
+    const maxInputTokens = rerankRequestMaxInputTokens(input.query, input.documents);
+    const resp = await invokeAI({ operation: 'gateway.rerank', kind: 'rerank', model: modelStr, maxInputTokens }, () => transport(url, {
       method: 'POST',
       headers,
       body,
@@ -4466,11 +4301,11 @@ export async function rerank(input: RerankInput): Promise<RerankResult[]> {
       index: typeof r.index === 'number' ? r.index : 0,
       relevanceScore: typeof r.relevance_score === 'number' ? r.relevance_score : 0,
     }));
-    _rerankRecord();
+    _rerankRecord(false);
     return mapped;
   } catch (err) {
     if (isAIInvocationPolicyError(err)) throw err;
-    _rerankRecord();
+    _rerankRecord(true);
     if (err instanceof RerankError) throw err;
     // AbortError on timeout — classify cleanly.
     if (err && typeof err === 'object' && (err as any).name === 'AbortError') {

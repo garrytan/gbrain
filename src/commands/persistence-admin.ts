@@ -20,6 +20,8 @@ export const WRITER_HELP = `Usage:
   gbrain sources writer activate --confirm-quiesced [--cleanup-dead-local-locks] [--shared-skills] [administration options] [--dry-run] [--json]
   gbrain sources writer transfer prepare <source> [--self-transfer] [administration options] [--dry-run] [--json]
   gbrain sources writer transfer accept <source> --path <worktree-root> --expected-epoch <n> --manifest <sha256> [--self-transfer] [administration options] [--dry-run] [--json]
+  gbrain sources writer lock [--json]
+  gbrain sources writer unlock [--json]
 
 Inspect status first. Routine diagnosis, doctor --fix, startup, and maintenance
 must not change ownership or activate managed persistence. Read the operator
@@ -31,7 +33,9 @@ Explicit noninteractive administration is supported. Stale state is rejected.
 Use --brain <id> to select a database. Prepare drains the current owner and records
 an exact manifest; accept requires that epoch and matching bytes on the successor.
 Before activation, upgrade and stop older writers on every host, claim every
-filesystem source, and inspect/release remaining legacy locks. --confirm-quiesced
+filesystem source, and inspect/release remaining legacy locks. A claim alone
+fences legacy sync, sources push and lint --fix for that checkout; claim output
+says so while persistence is not activated. --confirm-quiesced
 attests quiescence but does not grant administration intent. --dry-run never enables.
 Self-transfer is opt-in on both phases and only repairs this host's recorded
 canonical root; it never relocates a checkout. Inspect status again after prepare.
@@ -39,10 +43,22 @@ Activation may explicitly remove exact dead local legacy holders with
 --cleanup-dead-local-locks; expiry alone is never evidence of death.
 --shared-skills activates recoverable skill bundles and blocks older writers.
 No command takes over an owner based on a stale heartbeat.
-retry-effects handles embedding effects only: it reconciles existing complete
-vectors or explicitly authorizes one additional bounded retry cycle per request.
-Repeating the command never renews that allowance. --dry-run never queues work.
-It never changes ownership or activation and needs no topology admin-intent.`;
+retry-effects handles parked Git/withdrawal effects and failed embedding effects.
+A Git or withdrawal target parks after five consecutive failures; the command
+previews parked targets with --dry-run and otherwise authorizes one more attempt
+per parked target (a target that fails again parks again). For embeddings it
+reconciles existing complete vectors or authorizes one additional bounded retry
+cycle per request; repeating it never renews that allowance. --dry-run never queues work.
+It never changes ownership or activation and needs no topology admin-intent.
+lock sets an opt-in, brain-level writer admin lock (config key persistence.writer_admin_lock)
+and unlock clears it; both are local-only, idempotent and print the resulting state.
+While locked, writer claim, activate and transfer (prepare and accept) are refused with
+writer_admin_locked for every caller; ordinary writes continue. lock refuses while a transfer
+is prepared and not yet accepted. There is no --force: the escape hatch is the local unlock
+(operator workflow: unlock, administer, lock). The lock guards against routine or accidental
+agent administration; it is not a security boundary against a caller with the same shell.
+Binaries older than this release do not consult the lock. status shows admin_lock,
+local_host_id, blocking effects and the latest admitter/consumer versions per host.`;
 
 export const LOCAL_WRITER_HELP = `Usage:
   gbrain auth local-writer list [--limit <1-1000>] [--before <uuid>] [--json]
@@ -100,11 +116,13 @@ export function parsePersistenceAdminArgs(group: Group, args: string[]): {
     else if (verb === 'retry-effects') operation = 'writer_retry_effects';
     else if (verb === 'claim') operation = 'writer_claim';
     else if (verb === 'activate') operation = 'writer_activate';
+    else if (verb === 'lock') operation = 'writer_lock';
+    else if (verb === 'unlock') operation = 'writer_unlock';
     else if (verb === 'transfer') {
       const phase = positional.shift();
       if (phase !== 'prepare' && phase !== 'accept') throw new OperationError('invalid_params', 'Transfer requires prepare or accept.');
       operation = phase === 'prepare' ? 'writer_transfer_prepare' : 'writer_transfer_accept';
-    } else throw new OperationError('invalid_params', 'Writer administration requires status, retry-effects, claim, activate, or transfer.');
+    } else throw new OperationError('invalid_params', 'Writer administration requires status, retry-effects, claim, activate, transfer, lock, or unlock.');
     const source = positional.shift();
     if (source !== undefined) {
       if (params.source_id !== undefined) throw new OperationError('invalid_params', 'Specify the source once.');
@@ -146,6 +164,7 @@ export async function runPersistenceAdminCli(group: Group, args: string[], conne
       result = await runPersistenceAdministration(connected ?? owned!, parsed.operation, parsed.params, config,
         brainId === 'host' ? 'owner' : 'mounted_database');
     }
+    if (['writer_status', 'writer_lock', 'writer_unlock'].includes(parsed.operation)) result = { selected_brain: brainId, ...(result as Record<string, unknown>) };
     await writeStdoutFinal(JSON.stringify(result, bigintToStringReplacer, 2) + '\n');
   } catch (error) {
     if (!await reportPersistenceCliError(error, args.includes('--json'))) {

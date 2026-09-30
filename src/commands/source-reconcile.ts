@@ -28,7 +28,10 @@ export const RECONCILE_HELP = `Usage:
   gbrain sources reconcile <source> <slug> --brain <id> --backups [--limit <1-100>] [--after <request-uuid>] [--json]
   gbrain sources reconcile <source> <slug> --brain <id> --remove-backup <exact-reference> [--json]
 
-Preview is the default and never changes canonical content. --out creates a new
+Preview is the default and never changes canonical content. A database-only
+page (no recorded origin, for example one written while the source was unbound)
+is previewed against the canonical file at its slug path; apply records that
+file as the page's origin. --out creates a new
 private file outside canonical worktrees; it never replaces an existing file.
 Resolve conflicts with JSON-Pointer decisions and inspect the resolved preview
 before applying. Apply preserves both originals and uses the current canonical

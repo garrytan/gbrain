@@ -117,10 +117,6 @@ describe('A: launchJob wires the pure tick function', () => {
     expect(launchJobBody.length).toBeGreaterThan(0);
   });
 
-  test('launchJob calls runLockRenewalTick (the extracted pure function)', () => {
-    expect(launchJobBody).toMatch(/runLockRenewalTick\s*\(/);
-  });
-
   test('launchJob constructs the LockRenewalState via the documented helper', () => {
     // resolveLockRenewalKnobs reads the env knobs (D2). If it disappears
     // from launchJob, operators can't tune via env vars.

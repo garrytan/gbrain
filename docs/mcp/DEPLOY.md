@@ -71,6 +71,29 @@ No server, no tunnel, no token needed. Works on both PGLite and Postgres engines
 `--surface starter` sits between (~27 ops: the verbs plus the daily-driver set);
 omit the flag (default `full`) for every operation.
 
+#### Stdio source binding
+
+Do not inherit `GBRAIN_SOURCE=__all__` from a trusted CLI session into a
+stdio MCP server. It does not grant all-source access: the server keeps a
+fail-closed scope, so searches can return healthy empty results even when
+the trusted CLI finds pages. Startup stderr warns about this binding before
+the MCP handshake; it does not inspect or reveal private pages.
+
+In the MCP host's server environment, set `GBRAIN_SOURCE` to the intended
+registered source id, or remove it to use normal source resolution and its
+configured federation rules. Inspect registered ids with `gbrain sources list`
+on the brain host, then restart the MCP server and check a known world-visible
+page in the intended source. Removing the variable is not unrestricted access:
+dotfiles and other source-resolution settings still apply. No memory writes or
+index repair are needed to correct this environment binding.
+
+This differs from the per-call `source_id: "__all__"` argument, which searches
+only the caller's granted sources. MCP callers also exclude private pages by
+default; a private-only miss is not evidence of a broken index. For a concrete
+source binding that still misses a known visible page, retain the version,
+engine, schema pack, effective source/grants, and retrieval metadata for a
+sanitized reproduction rather than broadening permissions.
+
 ### Tailscale (recommended): `gbrain mcp expose`
 
 ```bash
@@ -697,6 +720,25 @@ for a bearer-only LAN endpoint — both shapes are in
 plain-HTTP OAuth discovery on a private network you fully control: the SDK's
 own `MCP_DANGEROUSLY_ALLOW_INSECURE_ISSUER_URL=1` opt-in. Bearer auth works
 either way; OAuth clients may still refuse a non-HTTPS issuer.
+
+**A connector loops back to sign-in, or the token endpoint returns `invalid_target`**
+Every OAuth authorization, token, refresh and bearer check uses one resource:
+`<origin of --public-url>/mcp`. The bare origin is accepted as an alias. A
+requested resource that is anything else, such as an old tunnel hostname,
+`http` for an `https` server or a query string, gets `invalid_target` naming
+the accepted URL. A bearer token bound to another resource gets
+`invalid_token`, and a stored grant for a resource this server no longer
+serves gets `invalid_grant` on refresh. Point the client at the accepted URL
+or fix `--public-url`, then reconnect. ChatGPT specifics
+are in [CHATGPT.md](CHATGPT.md#troubleshooting).
+
+**A claude.ai connector can search but not save**
+The `/mcp` challenge hints `read write`, and each token is capped to the
+client's registered scope. A connector approved before v0.60.5.0 was
+approved with the old `read` hint and keeps a read-only grant. Remove and
+re-add the connector, and approve `write` on the consent screen. If the
+client is registered with `read` only, widen it first
+([ADMIN.md](ADMIN.md#inspect-clients-and-edit-access)).
 
 **Claude Desktop doesn't connect**
 Remote servers must be added via Settings > Integrations, NOT

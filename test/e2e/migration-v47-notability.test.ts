@@ -115,7 +115,7 @@ async function readNamedCheckExists(): Promise<boolean> {
 
 describeE2E('migration v47: facts.notability ALTER', () => {
   beforeAll(async () => {
-    await setupDB();
+    await setupDB({ replayMigrations: true });
     // setupDB() runs db.initSchema() (SCHEMA_SQL only, no migrations).
     // Advance to LATEST_VERSION so v45 lands and the facts table exists.
     await runMigrationsUpTo(getEngine(), LATEST_VERSION);

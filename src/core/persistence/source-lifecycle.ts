@@ -6,6 +6,7 @@ import type { BrainEngine } from '../engine.ts';
 import { OperationError } from '../ops/contract.ts';
 import { isValidSourceId } from '../source-id.ts';
 import { parseSourceConfig } from '../sources-load.ts';
+import { redactSourceConfig } from '../source-config-redact.ts';
 import { discoverGitRoot } from '../sync-git.ts';
 import { isInsideGitRepo, hasTrackedContent } from '../git-remote.ts';
 import { containsPath, getWorktreeBinding, type WorktreeBinding, worktreeManifest } from './ownership.ts';
@@ -19,6 +20,7 @@ import { canonicalFilesystemPath, nativeFilesystemPath } from './root-registry.t
 import { flushTopologyDirectory } from './topology-filesystem.ts';
 import { claimPhysicalRoot } from './physical-root.ts';
 import { assertWriterAdminState, WRITER_INSPECTION_HINT } from './admin-intent.ts';
+import { assertWriterAdminUnlocked } from './admin-lock.ts';
 
 export interface SourceLifecycleInput {
   operation:'add'|'claim'|'archive'|'restore'|'remove'|'purge'|'rebind'|'reclone';
@@ -29,6 +31,7 @@ export interface SourceLifecycleInput {
   expiredOnly?:boolean;
   requireGitContent?:boolean;
   expectedAdminState?:string;
+  automaticClaim?:boolean;
 }
 interface SourceState {id:string;incarnation:string;archived:boolean;local_path:string|null;config:Record<string,unknown>;name:string;last_commit:string|null;}
 
@@ -83,7 +86,7 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
     throw new OperationError('invalid_params','request_id and expected_incarnation must be UUIDs.');
   if(['remove','purge','archive'].includes(input.operation)&&input.sourceId==='default') throw new OperationError('invalid_params','The default source cannot be removed or archived.');
   const principal=await topologyPrincipal(engine);
-  const intent={...input,requestId:undefined,dryRun:undefined};
+  const intent={...input,requestId:undefined,dryRun:undefined,automaticClaim:undefined};
   const prior=await priorTopologyChange(engine,principal,requestId,intent);
   if(prior) return topologyReceipt(prior);
   if(input.requireGitContent&&input.path&&(!isInsideGitRepo(input.path)||!hasTrackedContent(input.path)))
@@ -112,6 +115,7 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
     await assertWriterAdminState(tx,input.expectedAdminState);
     await tx.executeRaw("SELECT set_config('synchronous_commit','on',true)");
     const sources=await lockTopologyRows(tx,input.sourceId,bindings);
+    if(input.operation==='claim'&&!input.automaticClaim) await assertWriterAdminUnlocked(tx);
     const [source]=await tx.executeRaw<SourceState>('SELECT id,incarnation,archived,local_path,config,name,last_commit FROM sources WHERE id=$1',[input.sourceId]);
     if(source)source.config=parseSourceConfig(source.config);
     const repeated=await priorTopologyChange(tx,principal,requestId,intent);
@@ -186,7 +190,7 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
       await refreshManagedFilesystemRoots(tx,managedFilesystemDatastorePath(engine));
       return {operation:input.operation,source_id:input.sourceId,source_incarnation:incarnation,invalidated_requests:invalidated,
         ...(root?{local_path:root.source}:{}),...(['remove','purge'].includes(input.operation)?{storage_retained:true,local_path:ownedSourcePath??null,pages_deleted:pagesDeleted}:{}),
-        ...(input.operation==='add'?{name:input.name??source?.name??input.sourceId,config:{...source?.config,...input.config},id:input.sourceId}: {})};
+        ...(input.operation==='add'?{name:input.name??source?.name??input.sourceId,config:redactSourceConfig({...source?.config,...input.config}),id:input.sourceId}: {})};
     });
     if(admission) await admission.after(tx,String(result.source_incarnation));
     const row=await recordTopologyChange(tx,{principal,requestId,intent,operation:input.operation,sourceId:input.sourceId,incarnation:source?.incarnation??String(result.source_incarnation),worktrees},result);

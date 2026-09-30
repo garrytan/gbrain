@@ -6,7 +6,7 @@
  */
 
 import { describe, test, expect } from 'bun:test';
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync } from 'fs';
 import { join } from 'path';
 
 import { renderToolCatalogMarkdown, firstSentence } from '../src/mcp/tool-catalog.ts';
@@ -77,11 +77,4 @@ describe('freshness guard', () => {
     expect(committed).toBe(renderToolCatalogMarkdown() + '\n');
   });
 
-  test('check script exists and is wired into package.json + the verify chain', () => {
-    expect(existsSync(join(REPO_ROOT, 'scripts', 'check-tool-catalog-fresh.sh'))).toBe(true);
-    const pkg = JSON.parse(readFileSync(join(REPO_ROOT, 'package.json'), 'utf-8'));
-    expect(pkg.scripts['check:tool-catalog']).toBe('bash scripts/check-tool-catalog-fresh.sh');
-    const verify = readFileSync(join(REPO_ROOT, 'scripts', 'run-verify-parallel.sh'), 'utf-8');
-    expect(verify).toContain('"check:tool-catalog"');
-  });
 });

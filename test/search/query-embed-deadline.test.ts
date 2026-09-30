@@ -12,7 +12,7 @@
  * insufficient against a wedged provider), and that a shared/elapsed deadline
  * makes a second embed fail FAST (worst case ~one timeout, not two).
  */
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
 import {
   configureGateway,
   resetGateway,
@@ -98,5 +98,29 @@ describe('embedQueryBounded — query-embed deadline', () => {
     const out = await embedQueryBounded('q', undefined, dl);
     expect(out).toBeInstanceOf(Float32Array);
     expect(out.length).toBe(1024);
+  });
+
+  test('retains the local timeout reason when the gateway wraps transport cancellation', async () => {
+    const controller = new AbortController();
+    const reason = new DOMException('synthetic query deadline', 'TimeoutError');
+    const timeout = spyOn(AbortSignal, 'timeout').mockReturnValue(controller.signal);
+    __setEmbedTransportForTests(async () => {
+      controller.abort(reason);
+      throw reason;
+    });
+    try {
+      await expect(embedQueryBounded('fixture', undefined, {
+        signal: controller.signal, deadlineAt: Date.now() + 6_000,
+      })).rejects.toBe(reason);
+    } finally {
+      timeout.mockRestore();
+    }
+  });
+
+  test('does not relabel a provider failure before the local deadline', async () => {
+    __setEmbedTransportForTests(async () => { throw new Error('synthetic provider failure'); });
+    await expect(embedQueryBounded('fixture', undefined, makeQueryEmbedDeadline())).rejects.toMatchObject({
+      name: 'AITransientError', message: expect.stringContaining('synthetic provider failure'),
+    });
   });
 });

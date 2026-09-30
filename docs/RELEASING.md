@@ -23,6 +23,10 @@ Two equivalent paths:
   (`scripts/select-e2e.ts`), falling back to ALL E2E files on unmapped src/
   paths or schema/skills/package.json changes. Fast iteration during a focused
   branch.
+- `bun run ci:ubicloud` (and `ci:ubicloud:diff`) runs the same lanes across ten
+  ephemeral Ubicloud VMs in about five minutes instead of one Docker host. Needs
+  `UBICLOUD_API_KEY` or `UBICLOUD_API_TOKEN`; see "Ubicloud fan-out" in
+  [docs/TESTING.md](TESTING.md).
 
 **Path B — manual lifecycle (still supported):**
 - `bun test` — unit tests (no database required)

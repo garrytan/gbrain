@@ -777,7 +777,7 @@ export async function requireWritablePage(
     includeDeleted: true,
   });
   if (writable) {
-    if (ctx.viaSubagent === true && ctx.auth && isPrivatePage(writable.frontmatter)
+    if (ctx.viaSubagent === true && ctx.auth && isPrivatePage(writable)
       && await resolveExcludePrivatePages(ctx.engine, ctx.remote)) {
       throw new OperationError('permission_denied', `${operation}: this page is outside your write visibility.`);
     }

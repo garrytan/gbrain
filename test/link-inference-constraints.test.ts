@@ -46,10 +46,14 @@ describe('conjunctive link inference', () => {
   test('legacy meeting inference does not label decision or unknown links attended', async () => {
     expect(inferLinkType('meeting', 'Attendees', undefined, 'decisions/choice')).toBe('mentions');
     for (const active of [null, pack, { ...pack, link_types: [{ name: 'attended', inference: { page_type: 'meeting' } }] }]) {
-      const result = await extractPageLinks('sessions/weekly', 'See [[choices/choice]] and [[members/alice-example]].', {}, 'meeting',
+      const result = await extractPageLinks('sessions/weekly', 'Attendees: [[choices/choice]], [[members/alice-example]]', {}, 'meeting',
         { resolve: async () => null }, { pack: active, targetType: slug => slug.startsWith('members/') ? 'person' : 'decision' });
       expect(result.candidates.find(c => c.targetSlug === 'choices/choice')?.linkType).toBe('mentions');
       expect(result.candidates.find(c => c.targetSlug === 'members/alice-example')?.linkType).toBe('attended');
+      const withoutEvidence = await extractPageLinks('sessions/weekly', 'See [[choices/choice]] and [[members/alice-example]].', {}, 'meeting',
+        { resolve: async () => null }, { pack: active, targetType: slug => slug.startsWith('members/') ? 'person' : 'decision' });
+      expect(withoutEvidence.candidates.find(c => c.targetSlug === 'choices/choice')?.linkType).toBe('mentions');
+      expect(withoutEvidence.candidates.find(c => c.targetSlug === 'members/alice-example')?.linkType).toBe(active ? 'attended' : 'mentions');
     }
   });
 

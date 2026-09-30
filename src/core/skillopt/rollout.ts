@@ -22,7 +22,7 @@ import { paramDefToSchema } from '../../mcp/tool-defs.ts';
 import { operations, type OperationContext } from '../operations.ts';
 import { loadConfig } from '../config.ts';
 import type { BrainEngine } from '../engine.ts';
-import type { BenchmarkTask, Trajectory } from './types.ts';
+import { SKILLOPT_PURPOSE, type BenchmarkTask, type Trajectory } from './types.ts';
 import { sharedSkillToolAccess } from '../shared-skills/tool-access.ts';
 import { authorizeSkillRead } from '../shared-skills/policy.ts';
 
@@ -110,6 +110,7 @@ export async function runRollout(opts: RolloutOpts): Promise<Trajectory> {
     maxTurns: opts.maxTurns ?? 20,
     cacheSystem: true, // D11: candidate skill is stable for a step's batch.
     abortSignal: opts.abortSignal,
+    purpose: SKILLOPT_PURPOSE.target,
     onToolCallStart: async (_turnIdx, _messageIdx, _ordinal, toolName, input, providerToolCallId) => {
       const gbrainToolUseId = `skillopt-${nextOrdinal++}-${providerToolCallId}`;
       const idx = toolCalls.length;

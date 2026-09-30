@@ -1235,12 +1235,14 @@ async function runStatus(engine: BrainEngine, args: string[]): Promise<void> {
     }),
   );
 
+  const connectors = await (await import('../core/persistence/connector-status.ts')).readConnectorSourceStatuses(engine);
   if (json) {
     const enriched = metrics.map((m) => ({
       ...m,
       sync_running: syncRunning.has(m.source_id),
       sync_holder: syncRunning.get(m.source_id) ?? null,
       ...(ingestion.get(m.source_id) ? { ingestion: ingestion.get(m.source_id) } : {}),
+      ...(connectors.get(m.source_id) ? { connector: connectors.get(m.source_id) } : {}),
     }));
     console.log(JSON.stringify({ schema_version: 1, sources: enriched }, null, 2));
     return;
@@ -1278,6 +1280,8 @@ async function runStatus(engine: BrainEngine, args: string[]): Promise<void> {
     console.log(`  ${m.source_id.padEnd(20)}  ${lag.padEnd(8)}  ${embed.padEnd(7)}  ${backfill.padEnd(9)}  ${fails.padEnd(6)}  ${queue.padEnd(6)}  ${pages.padStart(8)}  ${sync}`);
   }
   console.log('');
+  const { connectorStatusLines } = await import('../core/persistence/connector-status.ts');
+  for (const [sourceId, status] of connectors) for (const line of connectorStatusLines(sourceId, status)) console.log(line);
   for (const m of metrics) {
     const warns: string[] = [];
     if (!m.local_path) warns.push('no local_path');
@@ -1373,7 +1377,7 @@ async function runWebhookSet(engine: BrainEngine, args: string[]): Promise<void>
 
   console.log(`Webhook configured for source "${id}":`);
   if (githubRepo) console.log(`  github_repo:    ${githubRepo}`);
-  console.log(`  webhook_secret: ${secret}`);
+  console.log('  webhook_secret: (shown once below)');
   console.log('');
   console.log('--- Paste this into GitHub repo settings → Webhooks → Add webhook ---');
   console.log('  Payload URL:  <your gbrain serve --http URL>/webhooks/github');

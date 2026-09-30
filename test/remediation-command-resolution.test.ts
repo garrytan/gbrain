@@ -28,26 +28,16 @@
  *      build expects" would drown the signal) — documented limitation.
  *
  * The companion sibling is test/docs-cli-commands.test.ts (#3502), which
- * gates verbs in README/docs/skills.
+ * gates verbs (and flags) in README/docs/skills; both share the scanner in
+ * test/helpers/cli-command-surface.ts.
  */
 import { describe, expect, test } from 'bun:test';
 import { readdirSync, readFileSync, statSync } from 'fs';
 import { dirname, join, relative } from 'path';
-import { CLI_ONLY, cliAliases } from '../src/cli.ts';
-import { operations } from '../src/core/operations.ts';
 import { CLI_FLAG_REGISTRY } from '../src/core/cli-flag-registry.generated.ts';
+import { codeRegions, gbrainInvocations, liveCliVerbs } from './helpers/cli-command-surface.ts';
 
 const ROOT = dirname(import.meta.dir);
-
-function validCommands(): Set<string> {
-  const valid = new Set<string>(CLI_ONLY);
-  for (const op of operations) {
-    const name = op.cliHints?.name;
-    if (name && !op.cliHints?.hidden) valid.add(name);
-  }
-  for (const alias of cliAliases.keys()) valid.add(alias);
-  return valid;
-}
 
 /** Flags accepted globally (parsed before command dispatch) or so widely
  *  shared that a per-command registry miss would be a false positive. */
@@ -89,36 +79,13 @@ function topChangelogEntry(): string {
   return second === -1 ? text.slice(first) : text.slice(first, second);
 }
 
-function commandPosition(prefix: string): boolean {
-  const p = prefix.trimEnd();
-  return p === '' || /[|;&`(={[]$/.test(p) || /\$$/.test(p);
-}
-
 function scanChangelogTopEntry(): string[] {
-  const valid = validCommands();
+  const valid = liveCliVerbs();
   const violations: string[] = [];
-  const lines = topChangelogEntry().split('\n');
-  let inFence = false;
-  for (let i = 0; i < lines.length; i++) {
-    const l = lines[i]!;
-    if (/^\s*(```|~~~)/.test(l)) { inFence = !inFence; continue; }
-    const candidates: string[] = [];
-    if (inFence) {
-      const t = l.trim();
-      if (/^(#|\/\/|--|\*)/.test(t)) continue;
-      candidates.push(l);
-    } else {
-      for (const m of l.matchAll(/`(gbrain [^`]+)`/g)) candidates.push(m[1]!);
-    }
-    for (const code of candidates) {
-      for (const m of code.matchAll(/\bgbrain\s+([A-Za-z][\w-]*)/g)) {
-        const verb = m[1]!;
-        if (!/^[a-z][a-z0-9_-]{2,}$/.test(verb)) continue;
-        if (!commandPosition(code.slice(0, m.index))) continue;
-        if (valid.has(verb)) continue;
-        if (CHANGELOG_ALLOWLIST.has(verb)) continue;
-        violations.push(`CHANGELOG.md (top entry): \`gbrain ${verb}\` is not a real command — ${code.trim().slice(0, 90)}`);
-      }
+  for (const { code } of codeRegions(topChangelogEntry())) {
+    for (const { verb } of gbrainInvocations(code)) {
+      if (valid.has(verb) || CHANGELOG_ALLOWLIST.has(verb)) continue;
+      violations.push(`CHANGELOG.md (top entry): \`gbrain ${verb}\` is not a real command — ${code.trim().slice(0, 90)}`);
     }
   }
   return violations;
@@ -146,7 +113,7 @@ function srcExcluded(rel: string): boolean {
 }
 
 function scanSrcStrings(): string[] {
-  const valid = validCommands();
+  const valid = liveCliVerbs();
   const violations: string[] = [];
   for (const file of tsFiles(join(ROOT, 'src'))) {
     const rel = relative(ROOT, file);
@@ -208,7 +175,7 @@ describe('#3697 — remediation text resolves against the live CLI surface', () 
   // gate is itself the #3665 pattern (an assertion nobody checks discriminates).
   test('scanner self-check: the historical rot shapes would have been caught', () => {
     // fake verb: never a command
-    expect(validCommands().has('reinit-everything')).toBe(false);
+    expect(liveCliVerbs().has('reinit-everything')).toBe(false);
     // fake flag on a real verb: the shipped #3697 instances. If a future
     // registry regen adds these flags, the commands grew them for real and
     // this pin should flip WITH the hint text.

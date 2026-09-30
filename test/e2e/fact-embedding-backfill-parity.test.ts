@@ -80,7 +80,7 @@ for (const kind of ['pglite', 'postgres'] as const) {
       await seed('pending');
       await seed('private pending', { visibility: 'private' });
       await seed('expired', { expired_at: new Date('2020-01-01') });
-      await seed('already embedded', { embedding: new Float32Array(1536).fill(0.5) });
+      await seed('already embedded', { embedding: new Float32Array(1536).fill(0.5), embedding_model: 'openai:text-embedding-3-small' });
       await seed('audit', { source: AUDIT_ROW_SOURCES[0] });
       await seed('neighbor pending', {}, neighbor);
       const before = await state();
@@ -222,7 +222,7 @@ for (const kind of ['pglite', 'postgres'] as const) {
     test('managed repair updates only physical vectors and preserves canonical rows and guards', async () => {
       await seed('private pending', { visibility: 'private' });
       await seed('neighbor pending', {}, neighbor);
-      const canonical = async () => Array.from(await engine.executeRaw(`SELECT to_jsonb(f)-ARRAY['embedding','embedded_at'] AS row
+      const canonical = async () => Array.from(await engine.executeRaw(`SELECT to_jsonb(f)-ARRAY['embedding','embedded_at','embedding_model','embedded_text_hash'] AS row
         FROM facts f WHERE source_id=ANY($1::text[]) ORDER BY id`, [[sourceId, neighbor]]));
       const before = await canonical();
       await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');

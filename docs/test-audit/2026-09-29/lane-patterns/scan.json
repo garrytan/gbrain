@@ -1,0 +1,2387 @@
+{
+ "not_toThrow": [
+  [
+   "test/core/budget/budget-tracker.test.ts",
+   19
+  ],
+  [
+   "test/sources-mcp.test.ts",
+   18
+  ],
+  [
+   "test/file-upload-security.test.ts",
+   14
+  ],
+  [
+   "test/ai/gateway-chat.test.ts",
+   13
+  ],
+  [
+   "test/ingestion/test-harness.test.ts",
+   9
+  ],
+  [
+   "test/skillpack-manifest-v1.test.ts",
+   6
+  ],
+  [
+   "test/sync-json-stdout-clean.test.ts",
+   6
+  ],
+  [
+   "test/jobs-child-readiness.serial.test.ts",
+   5
+  ],
+  [
+   "test/skillpack-registry-schema.test.ts",
+   5
+  ],
+  [
+   "test/e2e/multi-source-bug-class.test.ts",
+   5
+  ],
+  [
+   "test/search/embedding-column.serial.test.ts",
+   5
+  ],
+  [
+   "test/progress.test.ts",
+   4
+  ],
+  [
+   "test/ai/recipe-openrouter.test.ts",
+   4
+  ],
+  [
+   "test/budget/free-local-chat-pricing.test.ts",
+   4
+  ],
+  [
+   "test/auth-register-client-args.test.ts",
+   3
+  ]
+ ],
+ "expect_true_any": [
+  [
+   "test/backoff.test.ts",
+   "concurrent process limit blocks when exceeded"
+  ],
+  [
+   "test/backoff.test.ts",
+   "complete decrements active process count"
+  ],
+  [
+   "test/extract-stale.test.ts",
+   "markPagesExtractedBatch: empty input is a no-op"
+  ],
+  [
+   "test/operation-context-sourceid-required.test.ts",
+   "omitting sourceId from an OperationContext literal is a type error"
+  ],
+  [
+   "test/operation-context-sourceid-required.test.ts",
+   "passing undefined for sourceId is a type error"
+  ],
+  [
+   "test/real-home-guard-preload.test.ts",
+   "detects writes to ${path} without blaming subsequent tests"
+  ],
+  [
+   "test/seed-pglite.serial.test.ts",
+   "creates parent directories when needed"
+  ],
+  [
+   "test/v0_37_fix_wave.serial.test.ts",
+   "GBrainConfig type includes voyage_api_key field (TS compile guard)"
+  ],
+  [
+   "test/core/background-work.test.ts",
+   "empty registry (no test drainers) resolves fast"
+  ],
+  [
+   "test/e2e/cjk-roundtrip.test.ts",
+   "vector path skip-gracefully without OPENAI_API_KEY"
+  ],
+  [
+   "test/e2e/embedding-column-postgres.test.ts",
+   "skipped"
+  ],
+  [
+   "test/e2e/graph-signals-eval.test.ts",
+   "Gate 1 (QUALITY): no statistically significant regression in wrong direction"
+  ],
+  [
+   "test/e2e/sync-credential-preflight.test.ts",
+   "does NOT write 565 identical entries to sync-failures.jsonl"
+  ],
+  [
+   "test/e2e/upsert-chunks-registry-column.test.ts",
+   "skipped"
+  ],
+  [
+   "test/regressions/v0.36.1.0-iron-rule.test.ts",
+   "this regression is covered by existing v0.34.1 source-isolation suite"
+  ],
+  [
+   "test/regressions/v0.36.1.0-iron-rule.test.ts",
+   "this regression is covered by existing search-mode test suite"
+  ]
+ ],
+ "self_compare": [
+  [
+   "test/backoff.test.ts",
+   "expect(true).toBe(true)"
+  ],
+  [
+   "test/backoff.test.ts",
+   "expect(true).toBe(true)"
+  ],
+  [
+   "test/backoff.test.ts",
+   "expect(true).toBe(true)"
+  ],
+  [
+   "test/extract-stale.test.ts",
+   "expect(true).toBe(true)"
+  ],
+  [
+   "test/operation-context-sourceid-required.test.ts",
+   "expect(true).toBe(true)"
+  ],
+  [
+   "test/operation-context-sourceid-required.test.ts",
+   "expect(true).toBe(true)"
+  ],
+  [
+   "test/real-home-guard-preload.test.ts",
+   "expect(true).toBe(true)"
+  ],
+  [
+   "test/seed-pglite.serial.test.ts",
+   "expect(true).toBe(true)"
+  ],
+  [
+   "test/skillpack-rubric-doctor.test.ts",
+   "expect(1).toBe(1)"
+  ],
+  [
+   "test/skillpack-rubric-doctor.test.ts",
+   "expect(1).toBe(1)"
+  ],
+  [
+   "test/v0_37_fix_wave.serial.test.ts",
+   "expect(true).toBe(true)"
+  ],
+  [
+   "test/core/background-work.test.ts",
+   "expect(true).toBe(true)"
+  ],
+  [
+   "test/e2e/cjk-roundtrip.test.ts",
+   "expect(true).toBe(true)"
+  ],
+  [
+   "test/e2e/embedding-column-postgres.test.ts",
+   "expect(true).toBe(true)"
+  ],
+  [
+   "test/e2e/graph-signals-eval.test.ts",
+   "expect(true).toBe(true)"
+  ],
+  [
+   "test/e2e/sync-credential-preflight.test.ts",
+   "expect(true).toBe(true)"
+  ],
+  [
+   "test/e2e/upsert-chunks-registry-column.test.ts",
+   "expect(true).toBe(true)"
+  ],
+  [
+   "test/regressions/v0.36.1.0-iron-rule.test.ts",
+   "expect(true).toBe(true)"
+  ],
+  [
+   "test/regressions/v0.36.1.0-iron-rule.test.ts",
+   "expect(true).toBe(true)"
+  ],
+  [
+   "test/scripts/check-test-isolation.test.ts",
+   "expect(1).toBe(1)"
+  ],
+  [
+   "test/scripts/check-test-isolation.test.ts",
+   "expect(1).toBe(1)"
+  ],
+  [
+   "test/scripts/check-test-isolation.test.ts",
+   "expect(1).toBe(1)"
+  ],
+  [
+   "test/scripts/classify-tests.test.ts",
+   "expect(1).toBe(1)"
+  ],
+  [
+   "test/scripts/classify-tests.test.ts",
+   "expect(1).toBe(1)"
+  ],
+  [
+   "test/scripts/e2e-runner.test.ts",
+   "expect(1).toBe(1)"
+  ],
+  [
+   "test/scripts/e2e-runner.test.ts",
+   "expect(1).toBe(1)"
+  ],
+  [
+   "test/scripts/run-serial-pool.test.ts",
+   "expect(1).toBe(1)"
+  ],
+  [
+   "test/scripts/run-unit-parallel.test.ts",
+   "expect(1).toBe(1)"
+  ]
+ ],
+ "test_no_assert": [
+  [
+   "test/bootstrap-interview.serial.test.ts",
+   "newer state version \u2192 typed error naming the upgrade path",
+   6,
+   [
+    "expectErr",
+    "interviewStatePath",
+    "makeWs",
+    "mkdirSync",
+    "readInterviewState",
+    "stringify",
+    "writeFileSync"
+   ]
+  ],
+  [
+   "test/bootstrap-interview.serial.test.ts",
+   "unknown key \u2192 typed error",
+   4,
+   [
+    "expectErr",
+    "makeWs",
+    "setAnswer"
+   ]
+  ],
+  [
+   "test/bootstrap-uninstall.serial.test.ts",
+   "missing home entirely \u2192 NO_RECEIPT refusal",
+   3,
+   [
+    "expectRefusal",
+    "uninstallWorkspace"
+   ]
+  ],
+  [
+   "test/bootstrap-uninstall.serial.test.ts",
+   "GBRAIN_HOME + homeExplicit but home outside the workspace \u2192 HOME_GUARD",
+   5,
+   [
+    "expectRefusal",
+    "seedHome",
+    "uninstallWorkspace"
+   ]
+  ],
+  [
+   "test/bootstrap-uninstall.serial.test.ts",
+   "GBRAIN_HOME + homeExplicit but missing gbrain-home signature \u2192 HOME_GUARD",
+   18,
+   [
+    "expectRefusal",
+    "mkdirSync",
+    "uninstallWorkspace",
+    "writeReceipt"
+   ]
+  ],
+  [
+   "test/candidate-audit.test.ts",
+   "best-effort: unwritable audit dir warns but does not throw",
+   10,
+   [
+    "logCandidate",
+    "withEnv",
+    "writeFileSync"
+   ]
+  ],
+  [
+   "test/child-worker-supervisor.test.ts",
+   "settles the run loop instead of hanging, and counts each failure as a crash",
+   1,
+   []
+  ],
+  [
+   "test/company-brain-policy.test.ts",
+   "malformed or valid changed policy never broadens the approved one-page selection after plan GC",
+   1,
+   []
+  ],
+  [
+   "test/company-brain-policy.test.ts",
+   "explicit federation preserves keyless import approval and cannot enqueue automatic enrichment",
+   3,
+   []
+  ],
+  [
+   "test/company-brain-policy.test.ts",
+   "old extractor approval refuses same-commit, changed-commit, and full sync without a new receipt",
+   1,
+   []
+  ],
+  [
+   "test/company-brain-policy.test.ts",
+   "preview replays only the exact prior request, source incarnation, principal, repository and approval",
+   1,
+   []
+  ],
+  [
+   "test/company-brain-runtime.test.ts",
+   "admission is local-only, atomic and replayable without repository or host schema edits",
+   1,
+   []
+  ],
+  [
+   "test/company-brain-runtime.test.ts",
+   "connect verifies content and ownership, preserves history, and ordinary sync reconciles new targets",
+   1,
+   []
+  ],
+  [
+   "test/company-brain-runtime.test.ts",
+   "graph failure retains real cursors beyond GC and zero-diff resume completes only missing phases",
+   1,
+   []
+  ],
+  [
+   "test/company-brain-runtime.test.ts",
+   "interrupted content reads the approved commit after detached HEAD and missing working files",
+   1,
+   []
+  ],
+  [
+   "test/company-brain-runtime.test.ts",
+   "verification catches missing explicit edges and repairs them on zero-diff retry",
+   1,
+   []
+  ],
+  [
+   "test/company-brain-runtime.test.ts",
+   "same-source frontmatter reattribution cannot cross the completion fence",
+   1,
+   []
+  ],
+  [
+   "test/company-brain-runtime.test.ts",
+   "canonical tag overlays refuse source writeback instead of changing approved bytes",
+   1,
+   []
+  ],
+  [
+   "test/company-brain-runtime.test.ts",
+   "private audience and incompatible destination schema never register a source",
+   1,
+   []
+  ],
+  [
+   "test/company-brain-runtime.test.ts",
+   "unchanged origins gain newly resolvable edges and lose edges after target retyping or deletion",
+   1,
+   []
+  ],
+  [
+   "test/contextual-synopsis-model.serial.test.ts",
+   "handler registers canonical native synopsis model before service gateway chat",
+   6,
+   [
+    "expectHandlerRegistersNativeSynopsisRoute"
+   ]
+  ],
+  [
+   "test/contextual-synopsis-model.serial.test.ts",
+   "handler registers deprecated native synopsis model before service gateway chat",
+   6,
+   [
+    "expectHandlerRegistersNativeSynopsisRoute"
+   ]
+  ],
+  [
+   "test/contextual-synopsis-model.serial.test.ts",
+   "handler registers env native synopsis model before service gateway chat",
+   5,
+   [
+    "expectHandlerRegistersNativeSynopsisRoute"
+   ]
+  ],
+  [
+   "test/creds-relay-client.test.ts",
+   "a malformed (non-conformant) response \u2192 relay_unreachable",
+   8,
+   [
+    "createSession",
+    "expectCode",
+    "json"
+   ]
+  ],
+  [
+   "test/creds-relay-client.test.ts",
+   "an expired/unknown session \u2192 relay_session_expired (404)",
+   8,
+   [
+    "expectCode",
+    "instantSleep",
+    "pollClaim",
+    "relay"
+   ]
+  ],
+  [
+   "test/creds-relay-client.test.ts",
+   "a network-refused base URL \u2192 relay_unreachable",
+   15,
+   [
+    "Response",
+    "expectCode",
+    "instantSleep",
+    "pollClaim",
+    "serve",
+    "stop"
+   ]
+  ],
+  [
+   "test/creds-relay-client.test.ts",
+   "200 with a malformed claim body \u2192 relay_unreachable (fail closed, no partial claim)",
+   14,
+   [
+    "expectCode",
+    "instantSleep",
+    "json",
+    "pollClaim"
+   ]
+  ],
+  [
+   "test/creds-relay-client.test.ts",
+   "401 from the relay \u2192 invalid_grant_revoked",
+   4,
+   [
+    "expectCode",
+    "refreshViaRelay",
+    "relay",
+    "relayEntry"
+   ]
+  ],
+  [
+   "test/cycle-pack-gating.test.ts",
+   "only extract_atoms + synthesize_concepts dispatch sites reference packDeclaresPhase",
+   6,
+   [
+    "exec",
+    "match"
+   ]
+  ],
+  [
+   "test/detached-stderr.test.ts",
+   "closeDetachedStderrSink is idempotent and ignore-safe",
+   6,
+   [
+    "closeDetachedStderrSink",
+    "openDetachedStderrSink"
+   ]
+  ],
+  [
+   "test/embed-backfill-submit.test.ts",
+   "allows re-submission after cooldown elapses",
+   15,
+   [
+    "MinionQueue",
+    "NOW",
+    "add",
+    "executeRaw",
+    "expectStatus",
+    "submitWithWorker"
+   ]
+  ],
+  [
+   "test/embed-backfill-submit.test.ts",
+   "config-overridable cooldown (via embed.backfill_cooldown_min)",
+   12,
+   [
+    "MinionQueue",
+    "NOW",
+    "add",
+    "executeRaw",
+    "expectStatus",
+    "setConfig",
+    "submitWithWorker"
+   ]
+  ],
+  [
+   "test/embed-backfill-submit.test.ts",
+   "admits when spend24hFn returns < cap",
+   8,
+   [
+    "expectStatus",
+    "submitWithWorker"
+   ]
+  ],
+  [
+   "test/embed-backfill-submit.test.ts",
+   "cap \"off\" \u2192 submits even at huge spend (Infinity cap never tripped)",
+   8,
+   [
+    "expectStatus",
+    "setConfig",
+    "submitWithWorker"
+   ]
+  ],
+  [
+   "test/embed-backfill-submit.test.ts",
+   "tokenmax does NOT bypass the cooldown (axis split \u2014 churn protection stays)",
+   15,
+   [
+    "MinionQueue",
+    "NOW",
+    "add",
+    "executeRaw",
+    "expectStatus",
+    "submitWithWorker"
+   ]
+  ],
+  [
+   "test/embed-backfill-submit.test.ts",
+   "cooldown is per-source, not global",
+   12,
+   [
+    "CONFLICT",
+    "MinionQueue",
+    "VALUES",
+    "add",
+    "executeRaw",
+    "expectStatus",
+    "sources",
+    "submitWithWorker"
+   ]
+  ],
+  [
+   "test/eval-prune.test.ts",
+   "accepts multiple duration units",
+   6,
+   [
+    "runEvalPrune",
+    "withSilencedStdout"
+   ]
+  ],
+  [
+   "test/file-upload-remote-default.test.ts",
+   "remote: true takes the same strict path (undefined \u2261 untrusted, not a third mode)",
+   6,
+   [
+    "ctxWithRemote",
+    "expectInvalidParams",
+    "handler"
+   ]
+  ],
+  [
+   "test/file-upload-remote-default.test.ts",
+   "final-component symlink is rejected in BOTH modes \u2014 loose mode relaxes confinement only",
+   16,
+   [
+    "ctxWithRemote",
+    "expectInvalidParams",
+    "handler",
+    "rmSync",
+    "symlinkSync"
+   ]
+  ],
+  [
+   "test/google-auth.test.ts",
+   "rejects a Web-application client with client_json_wrong_type",
+   9,
+   [
+    "expectCodeSync",
+    "parseClientJson",
+    "stringify"
+   ]
+  ],
+  [
+   "test/google-auth.test.ts",
+   "rejects garbage with client_json_unreadable",
+   3,
+   [
+    "expectCodeSync",
+    "parseClientJson"
+   ]
+  ],
+  [
+   "test/google-auth.test.ts",
+   "rejects a missing client_id with client_json_unreadable",
+   6,
+   [
+    "expectCodeSync",
+    "parseClientJson",
+    "stringify"
+   ]
+  ],
+  [
+   "test/google-auth.test.ts",
+   "rejects bad shapes with client_shape_invalid",
+   5,
+   [
+    "expectCodeSync",
+    "validateClientPair"
+   ]
+  ],
+  [
+   "test/google-auth.test.ts",
+   "200 WITHOUT a refresh_token \u2192 no_refresh_token",
+   4,
+   [
+    "exchangeCode",
+    "expectCode",
+    "fakeFetch",
+    "jsonResponse"
+   ]
+  ],
+  [
+   "test/google-auth.test.ts",
+   "400 invalid_grant with a Date header skewed >60s \u2192 invalid_grant_clock_skew",
+   5,
+   [
+    "Date",
+    "exchangeCode",
+    "expectCode",
+    "fakeFetch",
+    "jsonResponse",
+    "now",
+    "toUTCString"
+   ]
+  ],
+  [
+   "test/google-auth.test.ts",
+   "400 invalid_grant with an accurate Date header \u2192 code_reused",
+   5,
+   [
+    "Date",
+    "exchangeCode",
+    "expectCode",
+    "fakeFetch",
+    "jsonResponse",
+    "toUTCString"
+   ]
+  ],
+  [
+   "test/google-auth.test.ts",
+   "401 invalid_client \u2192 invalid_client",
+   4,
+   [
+    "exchangeCode",
+    "expectCode",
+    "fakeFetch",
+    "jsonResponse"
+   ]
+  ],
+  [
+   "test/google-auth.test.ts",
+   "7 days stale + consent_publish_state unknown \u2192 invalid_grant_testing_expiry",
+   9,
+   [
+    "expectCode",
+    "invalidGrant",
+    "makeEntry",
+    "refreshAccessToken"
+   ]
+  ],
+  [
+   "test/google-auth.test.ts",
+   "7 days stale but consent_publish_state production \u2192 invalid_grant_revoked",
+   13,
+   [
+    "expectCode",
+    "invalidGrant",
+    "makeEntry",
+    "refreshAccessToken"
+   ]
+  ],
+  [
+   "test/google-auth.test.ts",
+   "fresh proof-of-life (1 day ago) \u2192 invalid_grant_revoked even in unknown state",
+   9,
+   [
+    "expectCode",
+    "invalidGrant",
+    "makeEntry",
+    "refreshAccessToken"
+   ]
+  ],
+  [
+   "test/google-auth.test.ts",
+   "unknown credential id \u2192 not_connected",
+   4,
+   [
+    "GoogleTokenProvider",
+    "MemoryVault",
+    "expectCode",
+    "fakeFetch",
+    "getAccessToken"
+   ]
+  ],
+  [
+   "test/google-redirect.test.ts",
+   "the consent-page URL (accounts.google.com) \u2192 pasted_wrong_url",
+   9,
+   [
+    "expectCodeSync",
+    "parsePastedRedirect"
+   ]
+  ],
+  [
+   "test/google-redirect.test.ts",
+   "a consent-page URL carrying a stray code= param is still rejected by host, not sniffed as legit",
+   11,
+   [
+    "expectCodeSync",
+    "parsePastedRedirect"
+   ]
+  ],
+  [
+   "test/google-redirect.test.ts",
+   "a scheme-less consent-page URL (address bar without https://) \u2192 pasted_wrong_url",
+   13,
+   [
+    "expectCodeSync",
+    "parsePastedRedirect"
+   ]
+  ],
+  [
+   "test/google-redirect.test.ts",
+   "consent-host anchor: a port or userinfo on the consent host is still the consent page",
+   22,
+   [
+    "expectCodeSync",
+    "parsePastedRedirect"
+   ]
+  ],
+  [
+   "test/google-redirect.test.ts",
+   "state mismatch \u2192 state_mismatch",
+   6,
+   [
+    "expectCodeSync",
+    "parsePastedRedirect"
+   ]
+  ],
+  [
+   "test/google-redirect.test.ts",
+   "error=access_denied in the query \u2192 access_denied_test_user",
+   6,
+   [
+    "expectCodeSync",
+    "parsePastedRedirect"
+   ]
+  ],
+  [
+   "test/google-redirect.test.ts",
+   "empty paste \u2192 pasted_wrong_url",
+   3,
+   [
+    "expectCodeSync",
+    "parsePastedRedirect"
+   ]
+  ],
+  [
+   "test/google-redirect.test.ts",
+   "rejects with consent_timeout when nothing arrives within timeoutMs",
+   8,
+   [
+    "close",
+    "expectRejectsCode",
+    "startLoopback"
+   ]
+  ],
+  [
+   "test/google-redirect.test.ts",
+   "a busy port \u2192 CredentialError port_in_use (thrown synchronously)",
+   9,
+   [
+    "Response",
+    "expectCodeSync",
+    "serve",
+    "startLoopback",
+    "stop"
+   ]
+  ],
+  [
+   "test/grandfather-managed.test.ts",
+   "managed grandfathering publishes metadata without changing vectors or spending on derived effects",
+   1,
+   []
+  ],
+  [
+   "test/grandfather-managed.test.ts",
+   "a concurrent explicit validation choice is not overwritten by grandfathering",
+   1,
+   []
+  ],
+  [
+   "test/grandfather-managed.test.ts",
+   "human file edits abort managed grandfathering without replacing either version",
+   1,
+   []
+  ],
+  [
+   "test/grandfather-managed.test.ts",
+   "pending grandfathering reuses its admitted request and its original rollback snapshot",
+   1,
+   []
+  ],
+  [
+   "test/grandfather-managed.test.ts",
+   "archived sources and non-Markdown artifacts are not rewritten by managed grandfathering",
+   1,
+   []
+  ],
+  [
+   "test/harness-access.serial.test.ts",
+   "PGLite live server: private handoff, recovery, seven verbs, live grants and atomic delegation",
+   3,
+   [
+    "harnessAccessJourney"
+   ]
+  ],
+  [
+   "test/import-abort-error.test.ts",
+   "missing dir arg \u2192 typed abort, not process death",
+   3,
+   [
+    "expectAbort"
+   ]
+  ],
+  [
+   "test/import-abort-error.test.ts",
+   "invalid --workers \u2192 typed abort",
+   3,
+   [
+    "expectAbort"
+   ]
+  ],
+  [
+   "test/import-abort-error.test.ts",
+   "unreadable import target \u2192 typed abort",
+   3,
+   [
+    "expectAbort"
+   ]
+  ],
+  [
+   "test/jobs-lifecycle-ops.test.ts",
+   "unknown id \u2192 invalid_params \"Job not found\"",
+   3,
+   [
+    "ctxOf",
+    "expectOpError"
+   ]
+  ],
+  [
+   "test/legacy-fact-extraction-dedup.test.ts",
+   "legacy extraction deduplicates exact old facts without inferring their vector identity or crossing visibility",
+   4,
+   []
+  ],
+  [
+   "test/legacy-vector-compatibility.test.ts",
+   "legacy same-model NULL hashes stay searchable through failed migrations without trusting wrong generations or stale hashes",
+   4,
+   []
+  ],
+  [
+   "test/managed-atom-regressions.test.ts",
+   "atom retry fault stays scoped while an older source retry drains",
+   3,
+   [
+    "exerciseAtomRetryFence",
+    "test"
+   ]
+  ],
+  [
+   "test/managed-atom-regressions.test.ts",
+   "atom retry ${state} preserves reviewed target ${edit}",
+   3,
+   [
+    "exerciseAtomWriteThroughPolicy",
+    "test"
+   ]
+  ],
+  [
+   "test/managed-atom-regressions.test.ts",
+   "atom write-through ${value} with ${owner} owner",
+   3,
+   [
+    "exerciseAtomDisabledAuthority",
+    "test"
+   ]
+  ],
+  [
+   "test/managed-extract-atoms.test.ts",
+   "managed atom ${scenario}",
+   1,
+   []
+  ],
+  [
+   "test/managed-extract-atoms.test.ts",
+   "managed atom batch ${scenario}",
+   1,
+   []
+  ],
+  [
+   "test/memory-safety-wave.serial.test.ts",
+   "sync, remember, withdraw, metadata repair, migration, export and HTTP MCP retain source and privacy boundaries",
+   4,
+   []
+  ],
+  [
+   "test/migrations-v0_27_1.test.ts",
+   "handler is idempotent \u2014 running twice on a clean brain does not error",
+   9,
+   [
+    "find"
+   ]
+  ],
+  [
+   "test/minions-submission-authority.test.ts",
+   "controlled migration drains active work, preserves legacy rows and excludes old binaries",
+   4,
+   [
+    "import",
+    "rehearseMinionAuthorityUpgrade"
+   ]
+  ],
+  [
+   "test/oauth-dcr-scope-ceiling.test.ts",
+   "agent scope keeps the specific operator-approved wording",
+   4,
+   [
+    "authCodeMetadata",
+    "expectRejected",
+    "makeProvider"
+   ]
+  ],
+  [
+   "test/oauth-dcr-scope-ceiling.test.ts",
+   "client_credentials + \"read write\" \u2192 rejected naming write",
+   4,
+   [
+    "expectRejected",
+    "machineMetadata",
+    "makeProvider"
+   ]
+  ],
+  [
+   "test/oauth-dcr-scope-ceiling.test.ts",
+   "client_credentials + \"admin\" \u2192 rejected naming admin",
+   4,
+   [
+    "expectRejected",
+    "machineMetadata",
+    "makeProvider"
+   ]
+  ],
+  [
+   "test/oauth-dcr-scope-ceiling.test.ts",
+   "client_credentials + \"read\" (inside the machine ceiling) is still refused for the same reason",
+   7,
+   [
+    "expectRejected",
+    "machineMetadata",
+    "makeProvider"
+   ]
+  ],
+  [
+   "test/oauth.test.ts",
+   "revoking already-revoked token is a no-op",
+   8,
+   [
+    "getClient"
+   ]
+  ],
+  [
+   "test/operations-source-isolation-matrix.test.ts",
+   "BRAIN-WIDE ${row.name} \u2014 ${row.rationale}",
+   3,
+   [
+    "handler",
+    "scopedScalar"
+   ]
+  ],
+  [
+   "test/page-projection-code-recovery.test.ts",
+   "managed reindex uses a durable guarded receipt without canonical writes or paid effects",
+   1,
+   []
+  ],
+  [
+   "test/persistence-commit-durability.test.ts",
+   "recovery, cancellation, transfer drain and successor epoch force durable commits under an async session",
+   1,
+   []
+  ],
+  [
+   "test/persistence-effect-recovery-fairness.test.ts",
+   "mirror recovery passes held roots and revisits them after cursor wrap",
+   1,
+   []
+  ],
+  [
+   "test/persistence-managed-sync.test.ts",
+   "managed schema restart preserves source and brain identities without triggering a seed write",
+   1,
+   []
+  ],
+  [
+   "test/persistence-managed-sync.test.ts",
+   "imports files without rewriting bytes and checkpoints only committed page receipts",
+   1,
+   []
+  ],
+  [
+   "test/persistence-managed-sync.test.ts",
+   "interrupted cursor resumes its pinned target before a newer HEAD and never advances early",
+   1,
+   []
+  ],
+  [
+   "test/persistence-managed-sync.test.ts",
+   "attached working-tree changes require opt-in and delete retains exact physical identity",
+   1,
+   []
+  ],
+  [
+   "test/persistence-managed-sync.test.ts",
+   "repeated slices reuse one manifest and still reject an intervening page identity change",
+   1,
+   []
+  ],
+  [
+   "test/persistence-managed-sync.test.ts",
+   "managed discovery unions persisted hidden-path waivers with explicit patterns",
+   1,
+   []
+  ],
+  [
+   "test/persistence-managed-sync.test.ts",
+   "subpath exclusions and unsupported code/pull paths refuse before canonical writes",
+   1,
+   []
+  ],
+  [
+   "test/persistence-managed-sync.test.ts",
+   "a write between batches cannot be overwritten by an older enumerated Git page",
+   1,
+   []
+  ],
+  [
+   "test/persistence-managed-sync.test.ts",
+   "remote sync keeps submit_job authority and rejects option upgrades and current grant revocation",
+   1,
+   []
+  ],
+  [
+   "test/persistence-managed-sync.test.ts",
+   "raw bytes changing after preparation conflict without publishing and the same request replays",
+   1,
+   []
+  ],
+  [
+   "test/persistence-managed-sync.test.ts",
+   "managed terminal receipts survive a missing ledger and corrected retry uses a new ID (CRLF=%s)",
+   1,
+   []
+  ],
+  [
+   "test/persistence-managed-sync.test.ts",
+   "pending durable sync retries keep the same request ID and do not claim committed imports",
+   1,
+   []
+  ],
+  [
+   "test/persistence-managed-sync.test.ts",
+   "continuous foreground arrivals cannot starve a bounded sync batch",
+   1,
+   []
+  ],
+  [
+   "test/persistence-onboarding.test.ts",
+   "read-only preflight identifies both blocked states and explicit onboarding restores writes and sync",
+   1,
+   []
+  ],
+  [
+   "test/persistence-recovery-capacity.test.ts",
+   "standalone page and withdrawal recovery respect occupied pool capacity and retain a control connection",
+   1,
+   []
+  ],
+  [
+   "test/persistence-recovery-fairness.test.ts",
+   "sixteen blocked recovery roots cannot starve a later recoverable root or release a blocked FIFO head",
+   1,
+   []
+  ],
+  [
+   "test/persistence-root-refresh.test.ts",
+   "unchanged bound roots retain their durable records without replacement",
+   1,
+   []
+  ],
+  [
+   "test/persistence-root-refresh.test.ts",
+   "unbound and moved source paths remain fenced alongside the original bound root",
+   1,
+   []
+  ],
+  [
+   "test/persistence-staging.test.ts",
+   "journaled flush failure removes owned stage and releases accounting only after rollback",
+   1,
+   []
+  ],
+  [
+   "test/persistence-staging.test.ts",
+   "blocked file ancestor settles failed publication and releases its worktree (${index})",
+   1,
+   []
+  ],
+  [
+   "test/persistence-staging.test.ts",
+   "unexpected/partial staging is retained without releasing recovery capacity (${index})",
+   1,
+   []
+  ],
+  [
+   "test/persistence-staging.test.ts",
+   "terminal recovery survives index upgrade and fences its worktree until staging cleanup completes",
+   1,
+   []
+  ],
+  [
+   "test/persistence-staging.test.ts",
+   "legacy recovery gains durable restoration staging before rewriting the old file",
+   1,
+   []
+  ],
+  [
+   "test/persistence-staging.test.ts",
+   "withdrawal mirror staging preserves unexpected bytes and only finishes forward",
+   1,
+   []
+  ],
+  [
+   "test/persistence-sync-failures.serial.test.ts",
+   "local single and all-source CLI JSON carry durable diagnostics and fail the exit verdict",
+   1,
+   []
+  ],
+  [
+   "test/persistence-sync-options.serial.test.ts",
+   "fresh processes resume persisted pending opt-outs under the original request and persist synthetic vectors only for opt-in",
+   1,
+   []
+  ],
+  [
+   "test/persistence-topology-recovery-fairness.test.ts",
+   "bounded topology recovery rotates past a persistent conflict, wraps, and releases only settled reservations",
+   1,
+   []
+  ],
+  [
+   "test/persistence-topology-recovery.test.ts",
+   "clone recovery rejects malformed staging tokens and target prefix collisions",
+   8,
+   [
+    "basename",
+    "expectValidation",
+    "slice",
+    "toUpperCase"
+   ]
+  ],
+  [
+   "test/persistence-topology-recovery.test.ts",
+   "clone recovery retains parent, canonical path, aside prefix and owner checks",
+   14,
+   [
+    "basename",
+    "expectValidation",
+    "randomUUID",
+    "toUpperCase"
+   ]
+  ],
+  [
+   "test/persistence-withdrawal-retry.test.ts",
+   "${boundary}: retry releases the whole transaction and commits one withdrawal, quota reservation and receipt",
+   1,
+   []
+  ],
+  [
+   "test/persistence-withdrawal-retry.test.ts",
+   "Postgres withdrawal retries a real source lock timeout with its original request ID",
+   1,
+   []
+  ],
+  [
+   "test/pg-access-classify.test.ts",
+   "run_command argv[0] is always gbrain",
+   8,
+   [
+    "classifyPgAccessError",
+    "diagnoseDbConfig",
+    "everyFix"
+   ]
+  ],
+  [
+   "test/pglite-engine.test.ts",
+   "skipExistenceCheck=true: silent no-op on missing page",
+   9,
+   [
+    "addTimelineEntry"
+   ]
+  ],
+  [
+   "test/put-page-dedup-fence.test.ts",
+   "delegated subagent (allow-list, NO auth) cannot rewrite an out-of-fence page",
+   10,
+   [
+    "expectFenced",
+    "makeCtx",
+    "putEchoingVictimId"
+   ]
+  ],
+  [
+   "test/put-page-dedup-fence.test.ts",
+   "legacy sandbox subagent (namespace fence, no allow-list) cannot either",
+   4,
+   [
+    "expectFenced",
+    "makeCtx",
+    "putEchoingVictimId"
+   ]
+  ],
+  [
+   "test/put-page-dedup-fence.test.ts",
+   "slug-bound OAuth client cannot (the v0.42.72.0 case, still fenced)",
+   4,
+   [
+    "boundAuth",
+    "expectFenced",
+    "makeCtx",
+    "putEchoingVictimId"
+   ]
+  ],
+  [
+   "test/put-page-dedup-fence.test.ts",
+   "a caller under BOTH confinements is fenced (requested slug satisfies both)",
+   9,
+   [
+    "boundAuth",
+    "expectFenced",
+    "makeCtx",
+    "putEchoingVictimId"
+   ]
+  ],
+  [
+   "test/real-home-guard-preload.test.ts",
+   "mutating probe",
+   1,
+   [
+    "stringify"
+   ]
+  ],
+  [
+   "test/real-home-guard-preload.test.ts",
+   "innocent probe",
+   1,
+   []
+  ],
+  [
+   "test/real-home-guard-preload.test.ts",
+   "create",
+   1,
+   []
+  ],
+  [
+   "test/real-home-guard-preload.test.ts",
+   "isolated",
+   1,
+   []
+  ],
+  [
+   "test/real-home-guard-preload.test.ts",
+   "deliberate",
+   1,
+   []
+  ],
+  [
+   "test/remote-ping-status-field.test.ts",
+   "unpack generics type the lifecycle field as status",
+   4,
+   [
+    "match"
+   ]
+  ],
+  [
+   "test/remote-privacy-sweep.test.ts",
+   "${op.name} [${shape}]",
+   3,
+   [
+    "runCase"
+   ]
+  ],
+  [
+   "test/remote-privacy-sweep.test.ts",
+   "${op.name} [${shape}]",
+   3,
+   [
+    "runCase"
+   ]
+  ],
+  [
+   "test/schema-bootstrap-coverage.test.ts",
+   "after bootstrap, PGLITE_SCHEMA_SQL replays without crashing on missing forward references",
+   76,
+   [
+    "PGLiteEngine",
+    "UNIQUE",
+    "WP4",
+    "applyForwardReferenceBootstrap",
+    "columns",
+    "connect",
+    "disconnect",
+    "exec"
+   ]
+  ],
+  [
+   "test/schema-engine-isolation.serial.test.ts",
+   "all engine-backed loaders use the selected brain without changing host config",
+   1,
+   []
+  ],
+  [
+   "test/schema-engine-isolation.serial.test.ts",
+   "absent brain and source keys still permit ordinary file fallback",
+   1,
+   []
+  ],
+  [
+   "test/schema-engine-isolation.serial.test.ts",
+   "failed ${failedKey} lookup never uses host vocabulary in typed reads",
+   1,
+   []
+  ],
+  [
+   "test/schema-engine-isolation.serial.test.ts",
+   "general CLI/env precedence remains intact while strict approval rejects conflicts",
+   1,
+   []
+  ],
+  [
+   "test/schema-engine-isolation.serial.test.ts",
+   "strict approval proposes only a selected-DB binding and fails closed on unreadable config",
+   1,
+   []
+  ],
+  [
+   "test/schema-engine-isolation.serial.test.ts",
+   "per-source overrides are read from the selected DB and mixed-schema reads refuse",
+   1,
+   []
+  ],
+  [
+   "test/schema-engine-isolation.serial.test.ts",
+   "strict approval detects parent changes within the registry TTL without child or alias changes",
+   1,
+   []
+  ],
+  [
+   "test/schema-engine-isolation.serial.test.ts",
+   "CLI import honors target schema after resolving the source flag",
+   1,
+   []
+  ],
+  [
+   "test/schema-engine-isolation.serial.test.ts",
+   "CLI-selected source schema is resolved after argument precedence",
+   1,
+   []
+  ],
+  [
+   "test/schema-engine-isolation.serial.test.ts",
+   "first and incremental legacy sync use the target schema",
+   1,
+   []
+  ],
+  [
+   "test/schema-engine-isolation.serial.test.ts",
+   "typed query closure uses the target pack in keyword and hybrid reads",
+   1,
+   []
+  ],
+  [
+   "test/schema-engine-isolation.serial.test.ts",
+   "managed prepared import retains target types and leaves committed source bytes unchanged",
+   1,
+   []
+  ],
+  [
+   "test/shared-content-freshness.test.ts",
+   "receipt-proven content roots are explicitly writer-owned without inventing sync timestamps",
+   1,
+   []
+  ],
+  [
+   "test/shared-content-freshness.test.ts",
+   "external roots and absent, incomplete, unowned or mismatched receipts still fail never-synced health",
+   1,
+   []
+  ],
+  [
+   "test/shared-content-freshness.test.ts",
+   "source incarnation and canonical host-binding changes invalidate the owned-root proof",
+   1,
+   []
+  ],
+  [
+   "test/shared-content-freshness.test.ts",
+   "pending and recovering canonical writes remain visible separately and remote checks never read filesystem paths",
+   1,
+   []
+  ],
+  [
+   "test/skillpack-brain-resident-locate.test.ts",
+   "boundary: a 64-char slug passes the shape gate (fails later as not_found)",
+   9,
+   [
+    "ctxFor",
+    "expectOpError",
+    "fakeEngine",
+    "getResidentSkillDetail",
+    "repeat"
+   ]
+  ],
+  [
+   "test/skillpack-brain-resident-locate.test.ts",
+   "federated-array scope pointing away from the source \u2192 not_found",
+   5,
+   [
+    "ctxFor",
+    "expectOpError",
+    "fakeEngine",
+    "getResidentSkillDetail"
+   ]
+  ],
+  [
+   "test/skillpack-brain-resident-locate.test.ts",
+   "scalar ctx.sourceId pointing away from the source \u2192 not_found",
+   5,
+   [
+    "ctxFor",
+    "expectOpError",
+    "fakeEngine",
+    "getResidentSkillDetail"
+   ]
+  ],
+  [
+   "test/skillpack-rubric-doctor.test.ts",
+   "x",
+   1,
+   []
+  ],
+  [
+   "test/skillpack-rubric-doctor.test.ts",
+   "e2e",
+   1,
+   []
+  ],
+  [
+   "test/sources-mcp.test.ts",
+   "bound by a federated grant with NO write source: nothing is removable",
+   8,
+   [
+    "base",
+    "ctxRemote",
+    "notFound",
+    "withoutSourceId"
+   ]
+  ],
+  [
+   "test/sources-mcp.test.ts",
+   "the __all__ sentinel is never a write source for an untrusted caller",
+   5,
+   [
+    "base",
+    "notFound"
+   ]
+  ],
+  [
+   "test/storage.test.ts",
+   "delete is idempotent (missing file is ok)",
+   4,
+   [
+    "delete"
+   ]
+  ],
+  [
+   "test/supervisor-configuration-blocked.test.ts",
+   "startup timeout also reaps an unready direct worker without tini",
+   1,
+   []
+  ],
+  [
+   "test/supervisor-configuration-blocked.test.ts",
+   "managed spawns leave GBRAIN_SUPERVISED to the owner and always hand off the status channel",
+   1,
+   []
+  ],
+  [
+   "test/thin-client-launcher-routing.test.ts",
+   "thin launcher preserves explicit arguments without pinning the grant write source: %j",
+   1,
+   []
+  ],
+  [
+   "test/thin-client-routing.test.ts",
+   "takes search with no query",
+   3,
+   [
+    "expectUsageExit"
+   ]
+  ],
+  [
+   "test/thin-client-routing.test.ts",
+   "takes add missing --claim/--kind/--who",
+   3,
+   [
+    "expectUsageExit"
+   ]
+  ],
+  [
+   "test/thin-client-routing.test.ts",
+   "takes update missing --row",
+   3,
+   [
+    "expectUsageExit"
+   ]
+  ],
+  [
+   "test/thin-client-routing.test.ts",
+   "takes resolve missing --quality and --outcome",
+   3,
+   [
+    "expectUsageExit"
+   ]
+  ],
+  [
+   "test/thin-client-routing.test.ts",
+   "takes resolve with a non-boolean --outcome",
+   3,
+   [
+    "expectUsageExit"
+   ]
+  ],
+  [
+   "test/thin-client-routing.test.ts",
+   "takes supersede missing --claim",
+   3,
+   [
+    "expectUsageExit"
+   ]
+  ],
+  [
+   "test/upgrade-reference-sweep.test.ts",
+   "zero drift (skills present but identical) \u2192 silent",
+   12,
+   [
+    "postUpgradeReferenceSweep",
+    "scratchHostWithSkill",
+    "withEnv"
+   ]
+  ],
+  [
+   "test/upgrade-reference-sweep.test.ts",
+   "errors swallowed silently \u2014 never blocks post-upgrade",
+   11,
+   [
+    "postUpgradeReferenceSweep",
+    "withEnv"
+   ]
+  ],
+  [
+   "test/worker-renewal-configuration.test.ts",
+   "$name preserves configuration provenance and execution ownership",
+   1,
+   []
+  ],
+  [
+   "test/brainstorm/eval-brainstorm.test.ts",
+   "_cleanup_",
+   3,
+   [
+    "rmSync"
+   ]
+  ],
+  [
+   "test/e2e/jsonb-roundtrip.test.ts",
+   "no ${JSON.stringify(x)}::jsonb pattern remains in fixed sites",
+   6,
+   []
+  ],
+  [
+   "test/e2e/managed-atom-regressions.test.ts",
+   "retry fault stays scoped while an older source retry drains",
+   5,
+   [
+    "close",
+    "exerciseAtomRetrySourceIsolation",
+    "isolatedPersistencePostgres"
+   ]
+  ],
+  [
+   "test/e2e/managed-atom-regressions.test.ts",
+   "retry ${state} preserves reviewed target ${edit}",
+   3,
+   [
+    "exerciseAtomWriteThroughPolicy",
+    "test"
+   ]
+  ],
+  [
+   "test/e2e/managed-atom-regressions.test.ts",
+   "write-through ${value} with ${owner} owner",
+   3,
+   [
+    "exerciseAtomDisabledAuthority",
+    "test"
+   ]
+  ],
+  [
+   "test/e2e/managed-extract-atoms.test.ts",
+   "batch ${scenario}",
+   1,
+   []
+  ],
+  [
+   "test/e2e/mechanical.test.ts",
+   "import + search + link performance",
+   24,
+   [
+    "callOp",
+    "floor",
+    "sort",
+    "time",
+    "toFixed"
+   ]
+  ],
+  [
+   "test/e2e/minions-authority-parity.test.ts",
+   "controlled queue protocol cutover matches PGLite",
+   4,
+   [
+    "getEngine",
+    "import",
+    "rehearseMinionAuthorityUpgrade"
+   ]
+  ],
+  [
+   "test/e2e/mounts-routing-pglite.test.ts",
+   "(2) unflagged read routes by cwd: mount path-prefix (tier 4) vs host fallback (tier 6)",
+   6,
+   [
+    "expectServedBy",
+    "gbrain"
+   ]
+  ],
+  [
+   "test/e2e/mounts-routing-pglite.test.ts",
+   "(3) .gbrain-mount dotfile in an UNRELATED cwd routes to the named mount (tier 3)",
+   4,
+   [
+    "dirWithDotfile",
+    "expectServedBy",
+    "gbrain"
+   ]
+  ],
+  [
+   "test/e2e/mounts-routing-pglite.test.ts",
+   "(4) dotfile BEATS path-prefix: content `host` inside the mount opts back to host",
+   11,
+   [
+    "dirWithDotfile",
+    "expectServedBy",
+    "gbrain",
+    "mkdirSync"
+   ]
+  ],
+  [
+   "test/e2e/mounts-routing-pglite.test.ts",
+   "(5) upper tiers: GBRAIN_BRAIN_ID (tier 2) beats dotfile; --brain flag (tier 1) beats env",
+   20,
+   [
+    "dirWithDotfile",
+    "expectServedBy",
+    "gbrain"
+   ]
+  ],
+  [
+   "test/e2e/openclaw-plugin-load-real.test.ts",
+   "${flagged.stdout}\\n${flagged.stderr}`)) {\n    return runOpenclaw(['plugins', 'inspect', id, '--json'], { timeoutMs: 30_000 });\n  }\n  return flagged;\n}\n\nfunction cleanup() {\n  if (!OPENCLAW) return;\n\n\n  try {\n    runOpenclaw(['plugins', 'uninstall', '--force', PLUGIN_ID], { timeoutMs: 30_000 });\n  } catch {  }\n  try {\n    if (existsSync(PROFILE_DIR)) rmSync(PROFILE_DIR, { recursive: true, force: true });\n  } catch {  }\n  try {\n    if (fixtureDir && existsSync(fixtureDir)) rmSync(fixtureDir, { recursive: true, force: true });\n  } catch {  }\n}\n\ndescribe('openclaw-plugin-load-real (Tier 2 e2e)', () => {\n  beforeAll(async () => {\n    if (SKIP) {\n      console.warn(SKIP_MSG);\n      return;\n    }\n\n    repoRoot = spawnSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' })\n      .stdout.trim();\n    if (!repoRoot) throw new Error('not in a git repo \u2014 cannot resolve plugin source path');\n\n    fixtureDir = mkdtempSync(join(tmpdir(), 'gbrain-ctx-plugin-real-'));\n\n    const fixtureTemplate = join(repoRoot, 'test', 'fixtures', 'openclaw-plugin-real');\n    writeFileSync(\n      join(fixtureDir, 'package.json'),\n      readFileSync(join(fixtureTemplate, 'package.json.template'), 'utf8'),\n    );\n    writeFileSync(\n      join(fixtureDir, 'openclaw.plugin.json'),\n      readFileSync(join(fixtureTemplate, 'openclaw.plugin.json.template'), 'utf8'),\n    );\n\n\n\n\n\n\n\n\n\n\n\n\n\n    const buildResult = spawnSync(\n      'bun',\n      [\n        'build',\n        join(repoRoot, 'src', 'openclaw-context-engine.ts'),\n        '--target=bun',\n        '--outdir',\n        fixtureDir,\n        '--entry-naming',\n        '[dir]/entry.[ext]',\n      ],\n      { encoding: 'utf8', timeout: 60_000 },\n    );\n    if (buildResult.status !== 0) {\n      throw new Error(`bun build failed (exit ${buildResult.status}): ${buildResult.stderr}`);\n    }\n    if (!existsSync(join(fixtureDir, 'entry.js'))) {\n      throw new Error('bun build did not produce entry.js');\n    }\n\n\n\n\n\n    const install = runOpenclaw([\n      'plugins', 'install',\n      '--link',\n      '--dangerously-force-unsafe-install',\n      fixtureDir,\n    ], { timeoutMs: 60_000 });\n    if (install.exitCode !== 0) {\n      throw new Error(\n        `openclaw plugins install failed (exit ${install.exitCode}).\\n` +\n        `stdout: ${install.stdout}\\nstderr: ${install.stderr}",
+   3,
+   [
+    "cleanup"
+   ]
+  ],
+  [
+   "test/e2e/persistence-phase-liveness.test.ts",
+   "stopping before driver dispatch recognizes its prefixed cancellation error",
+   1,
+   []
+  ],
+  [
+   "test/e2e/persistence-phase-liveness.test.ts",
+   "stopping during reservation recognizes an earlier abort without reporting a storage failure",
+   1,
+   []
+  ],
+  [
+   "test/e2e/persistence-phase-liveness.test.ts",
+   "a slow PostgreSQL receipt read cannot hide an independently committed request",
+   1,
+   []
+  ],
+  [
+   "test/e2e/persistence-phase-liveness.test.ts",
+   "an expired locked head does not stall independent roots or skip its own follower",
+   1,
+   []
+  ],
+  [
+   "test/e2e/persistence-phase-liveness.test.ts",
+   "${phase} stopping cancels its blocked query without reporting a storage failure",
+   1,
+   []
+  ],
+  [
+   "test/e2e/persistence-phase-liveness.test.ts",
+   "${phase} cancels a real table-lock wait and retains fail-closed scheduling",
+   1,
+   []
+  ],
+  [
+   "test/e2e/persistence-phase-liveness.test.ts",
+   "a blocked recovery operation keeps reservations and retries after its SQL bound",
+   1,
+   []
+  ],
+  [
+   "test/e2e/persistence-phase-liveness.test.ts",
+   "ordinary pool saturation cancels queued scheduler reads without accumulating work",
+   1,
+   []
+  ],
+  [
+   "test/e2e/persistence-phase-liveness.test.ts",
+   "capacity marking names and cancels its real row-lock wait before shutdown",
+   1,
+   []
+  ],
+  [
+   "test/e2e/persistence-phase-liveness.test.ts",
+   "a queued direct-pool BEGIN stays tracked and cannot prepare after shutdown",
+   1,
+   []
+  ],
+  [
+   "test/e2e/persistence-phase-liveness.test.ts",
+   "a ${outcome} cold direct initialization remains observed until settlement",
+   1,
+   []
+  ],
+  [
+   "test/e2e/persistence-phase-liveness.test.ts",
+   "claim renewal cancels its actual SQL wait without a late lease extension",
+   1,
+   []
+  ],
+  [
+   "test/ingestion/test-harness.test.ts",
+   "stop() before run() is a no-op",
+   4,
+   [
+    "IngestionTestHarness",
+    "stop"
+   ]
+  ],
+  [
+   "test/ingestion/sources/file-watcher.test.ts",
+   "resolves start() on chokidar ready",
+   12,
+   [
+    "IngestionTestHarness",
+    "createFileWatcherSource",
+    "fireReady",
+    "makeStubWatcher",
+    "run",
+    "stop"
+   ]
+  ],
+  [
+   "test/scripts/ci-gates.test.ts",
+   "DATABASE_URL=$database E2E exit=$e2eExit",
+   1,
+   []
+  ],
+  [
+   "test/scripts/ci-local-rendering.test.ts",
+   "required=${required}, executed=${passes}, Bun exit=${testExit}, parent coverage exists=${parentCoverageExists}${outputBytes ? ",
+   1,
+   []
+  ],
+  [
+   "test/scripts/e2e-runner.test.ts",
+   "failure",
+   1,
+   [
+    "rmSync"
+   ]
+  ],
+  [
+   "test/scripts/e2e-runner.test.ts",
+   "failure",
+   1,
+   []
+  ],
+  [
+   "test/scripts/e2e-runner.test.ts",
+   "child",
+   1,
+   []
+  ],
+  [
+   "test/scripts/run-serial-pool.test.ts",
+   "hangs forever",
+   1,
+   []
+  ],
+  [
+   "test/scripts/run-serial-pool.test.ts",
+   "keeps a child alive",
+   5,
+   [
+    "setInterval",
+    "spawn",
+    "stringify",
+    "writeFileSync"
+   ]
+  ],
+  [
+   "test/scripts/run-serial-pool.test.ts",
+   "allows exclusive registration cleanup to finish",
+   20,
+   [
+    "existsSync",
+    "exit",
+    "kill",
+    "on",
+    "readFileSync",
+    "stringify",
+    "writeFileSync"
+   ]
+  ],
+  [
+   "test/scripts/run-unit-parallel.test.ts",
+   "sleeps past the shard cap",
+   1,
+   [
+    "sleep"
+   ]
+  ],
+  [
+   "test/search/attribution-stamping.test.ts",
+   "empty results \u2192 no-op (no stamping)",
+   6,
+   [
+    "runPostFusionStages"
+   ]
+  ]
+ ],
+ "typeof_function": [
+  [
+   "test/bootstrap-status.serial.test.ts",
+   "p.detect"
+  ],
+  [
+   "test/code-callers-cli.test.ts",
+   "mod.runCodeCallers"
+  ],
+  [
+   "test/code-callers-cli.test.ts",
+   "mod.runCodeCallees"
+  ],
+  [
+   "test/cycle-abort.test.ts",
+   "mod.runCycle"
+  ],
+  [
+   "test/db-pool-max-lifetime.test.ts",
+   "v"
+  ],
+  [
+   "test/db-pool-max-lifetime.test.ts",
+   "v"
+  ],
+  [
+   "test/db-pool-max-lifetime.test.ts",
+   "v"
+  ],
+  [
+   "test/db-pool-max-lifetime.test.ts",
+   "v"
+  ],
+  [
+   "test/distribution-import-boundary.test.ts",
+   "dist.extractTarball"
+  ],
+  [
+   "test/distribution-import-boundary.test.ts",
+   "dist.packTarball"
+  ],
+  [
+   "test/distribution-import-boundary.test.ts",
+   "dist.askTrust"
+  ],
+  [
+   "test/distribution-import-boundary.test.ts",
+   "dist.loadRegistry"
+  ],
+  [
+   "test/distribution-import-boundary.test.ts",
+   "dist.resolveSource"
+  ],
+  [
+   "test/distribution-import-boundary.test.ts",
+   "dist.classifySpec"
+  ],
+  [
+   "test/distribution-import-boundary.test.ts",
+   "dist.effectiveTier"
+  ],
+  [
+   "test/distribution-import-boundary.test.ts",
+   "dist.validateRegistryCatalog"
+  ],
+  [
+   "test/distribution-import-boundary.test.ts",
+   "dist.runScaffoldThirdParty"
+  ],
+  [
+   "test/doctor.test.ts",
+   "runDoctor"
+  ],
+  [
+   "test/doctor.test.ts",
+   "mod.takesWeightGridCheck"
+  ],
+  [
+   "test/enrichment-service.test.ts",
+   "mod.enrichEntity"
+  ],
+  [
+   "test/enrichment-service.test.ts",
+   "mod.enrichEntities"
+  ],
+  [
+   "test/enrichment-service.test.ts",
+   "mod.extractAndEnrich"
+  ],
+  [
+   "test/eval-whoknows.test.ts",
+   "mod.runEvalWhoknows"
+  ],
+  [
+   "test/extract.test.ts",
+   "walkMarkdownFiles"
+  ],
+  [
+   "test/features.test.ts",
+   "mod.runFeatures"
+  ],
+  [
+   "test/features.test.ts",
+   "mod.featuresTeaserForDoctor"
+  ],
+  [
+   "test/migrate.test.ts",
+   "runMigrations"
+  ],
+  [
+   "test/migration-orchestrator-v0_21_0.test.ts",
+   "__testing.phaseASchema"
+  ],
+  [
+   "test/migration-orchestrator-v0_21_0.test.ts",
+   "__testing.phaseBBackfillPrompt"
+  ],
+  [
+   "test/migration-orchestrator-v0_21_0.test.ts",
+   "__testing.phaseCVerify"
+  ],
+  [
+   "test/migrations-registry.test.ts",
+   "m.orchestrator"
+  ],
+  [
+   "test/migrations-v0_12_0.test.ts",
+   "__testing.phaseASchema"
+  ],
+  [
+   "test/migrations-v0_12_0.test.ts",
+   "__testing.phaseBConfigCheck"
+  ],
+  [
+   "test/migrations-v0_12_0.test.ts",
+   "__testing.phaseCBackfillLinks"
+  ],
+  [
+   "test/migrations-v0_12_0.test.ts",
+   "__testing.phaseDBackfillTimeline"
+  ],
+  [
+   "test/migrations-v0_12_0.test.ts",
+   "__testing.phaseEVerify"
+  ],
+  [
+   "test/migrations-v0_12_0.test.ts",
+   "__testing.readStats"
+  ],
+  [
+   "test/migrations-v0_12_2.test.ts",
+   "__testing.phaseASchema"
+  ],
+  [
+   "test/migrations-v0_12_2.test.ts",
+   "__testing.phaseBRepair"
+  ],
+  [
+   "test/migrations-v0_12_2.test.ts",
+   "__testing.phaseCVerify"
+  ],
+  [
+   "test/migrations-v0_13_0.test.ts",
+   "__testing.phaseASchema"
+  ],
+  [
+   "test/migrations-v0_13_0.test.ts",
+   "__testing.phaseBBackfill"
+  ],
+  [
+   "test/migrations-v0_13_0.test.ts",
+   "__testing.phaseCVerify"
+  ],
+  [
+   "test/migrations-v0_22_4.test.ts",
+   "v0_22_4.orchestrator"
+  ],
+  [
+   "test/oauth.test.ts",
+   "store.getClient"
+  ],
+  [
+   "test/oauth.test.ts",
+   "dcrOn.clientsStore.registerClient"
+  ],
+  [
+   "test/parity.test.ts",
+   "op.handler"
+  ],
+  [
+   "test/postgres-driver-vendor.test.ts",
+   "postgres"
+  ],
+  [
+   "test/postgres-engine-rls-scope.test.ts",
+   "received"
+  ],
+  [
+   "test/salience.test.ts",
+   "computeAnomaliesFromBuckets"
+  ],
+  [
+   "test/serve-http-cors.test.ts",
+   "fn"
+  ],
+  [
+   "test/sql-ranking.test.ts",
+   "topLevelEscapeLikePattern"
+  ],
+  [
+   "test/think-embed-question-wiring.serial.test.ts",
+   "embedQuestion"
+  ],
+  [
+   "test/transcription.test.ts",
+   "mod.transcribe"
+  ],
+  [
+   "test/transcription.test.ts",
+   "mod.transcribe"
+  ],
+  [
+   "test/transcripts-claude-code-workflow-drift.test.ts",
+   "isArtifact"
+  ],
+  [
+   "test/v0_37_fix_wave.serial.test.ts",
+   "EmbeddingDimMismatchError"
+  ],
+  [
+   "test/v0_37_fix_wave.serial.test.ts",
+   "mod.runReinitPglite"
+  ],
+  [
+   "test/whoknows.test.ts",
+   "rankCandidates"
+  ],
+  [
+   "test/whoknows.test.ts",
+   "findExperts"
+  ],
+  [
+   "test/whoknows.test.ts",
+   "runWhoknows"
+  ],
+  [
+   "test/ai/build-gateway-config.test.ts",
+   "mod.buildGatewayConfig"
+  ],
+  [
+   "test/ai/gateway-chat.test.ts",
+   "mod.chat"
+  ],
+  [
+   "test/ai/recipe-azure-openai.test.ts",
+   "cfg.fetch"
+  ],
+  [
+   "test/ai/recipe-azure-openai.test.ts",
+   "result.fetch"
+  ],
+  [
+   "test/ai/recipe-llama-server.test.ts",
+   "r.probe"
+  ],
+  [
+   "test/ai/recipe-lmstudio.test.ts",
+   "recipe.probe"
+  ],
+  [
+   "test/ai/recipe-ollama-thinking.test.ts",
+   "chat.thinking_by_default"
+  ],
+  [
+   "test/ai/recipe-openrouter.test.ts",
+   "loop"
+  ],
+  [
+   "test/cycle/yield-during-phase-refresh.test.ts",
+   "fn"
+  ],
+  [
+   "test/cycle/yield-during-phase-refresh.test.ts",
+   "fn"
+  ],
+  [
+   "test/e2e/mcp.test.ts",
+   "mod.startMcpServer"
+  ],
+  [
+   "test/e2e/mcp.test.ts",
+   "mod.handleToolCall"
+  ],
+  [
+   "test/e2e/openclaw-context-engine-plugin.test.ts",
+   "entry.register"
+  ],
+  [
+   "test/e2e/openclaw-plugin-load-real.test.ts",
+   "registerContextEngine"
+  ],
+  [
+   "test/e2e/openclaw-plugin-load-real.test.ts",
+   "engine.ingest"
+  ],
+  [
+   "test/e2e/openclaw-plugin-load-real.test.ts",
+   "engine.assemble"
+  ],
+  [
+   "test/e2e/openclaw-plugin-load-real.test.ts",
+   "engine.compact"
+  ]
+ ],
+ "file_no_expect": [
+  "test/company-brain-receipts.test.ts",
+  "test/facts-worker-config.test.ts",
+  "test/harness-access.serial.test.ts",
+  "test/managed-atom-compaction.test.ts",
+  "test/managed-atom-regressions.test.ts",
+  "test/managed-facts-compaction.test.ts",
+  "test/managed-facts-embedding.test.ts",
+  "test/shared-skills-transports.test.ts",
+  "test/e2e/attendance-repair-postgres.test.ts",
+  "test/e2e/attendance-retrieval-postgres.test.ts",
+  "test/e2e/deep-research-source-id.test.ts",
+  "test/e2e/embedding-recovery-parity.test.ts",
+  "test/e2e/export-snapshot-postgres.test.ts",
+  "test/e2e/extract-timeline-attendance-postgres.test.ts",
+  "test/e2e/facts-worker-config.test.ts",
+  "test/e2e/google-attachments-postgres.test.ts",
+  "test/e2e/harness-access.test.ts",
+  "test/e2e/legacy-fact-extraction-dedup-postgres.test.ts",
+  "test/e2e/legacy-vector-compatibility-postgres.test.ts",
+  "test/e2e/managed-atom-compaction.test.ts",
+  "test/e2e/managed-atom-regressions.test.ts",
+  "test/e2e/managed-connector-fencing.test.ts",
+  "test/e2e/managed-connector-recovery.test.ts",
+  "test/e2e/managed-connector-retry.test.ts",
+  "test/e2e/managed-connector-routing.test.ts",
+  "test/e2e/managed-extract-atoms.test.ts",
+  "test/e2e/managed-facts-backstop.test.ts",
+  "test/e2e/managed-facts-compaction.test.ts",
+  "test/e2e/managed-facts-embedding.test.ts",
+  "test/e2e/managed-maintenance.test.ts",
+  "test/e2e/managed-sync-failures.test.ts",
+  "test/e2e/managed-synthesis-postprocess.test.ts",
+  "test/e2e/memory-safety-wave-postgres.test.ts",
+  "test/e2e/migration-vector-replay-postgres.test.ts",
+  "test/e2e/persistence-embedding-effects.test.ts",
+  "test/e2e/persistence-publication-parity.test.ts",
+  "test/e2e/persistence-recovery.test.ts",
+  "test/e2e/persistence-sync-company-parity.test.ts",
+  "test/e2e/persistence-sync-options-parity.test.ts",
+  "test/e2e/persistence-sync-origin-parity.test.ts",
+  "test/e2e/projection-recovery-parity.test.ts",
+  "test/e2e/shared-skills-transports.test.ts",
+  "test/e2e/unsupported-embedding-identity-postgres.test.ts",
+  "test/e2e/withdrawal-bounded-safety-postgres.test.ts",
+  "test/e2e/withdrawal-crash-postgres.test.ts",
+  "test/search/search-query-contract.test.ts"
+ ],
+ "expect_true_only": [
+  [
+   "test/extract-stale.test.ts",
+   "markPagesExtractedBatch: empty input is a no-op"
+  ],
+  [
+   "test/operation-context-sourceid-required.test.ts",
+   "omitting sourceId from an OperationContext literal is a type error"
+  ],
+  [
+   "test/operation-context-sourceid-required.test.ts",
+   "passing undefined for sourceId is a type error"
+  ],
+  [
+   "test/seed-pglite.serial.test.ts",
+   "creates parent directories when needed"
+  ],
+  [
+   "test/v0_37_fix_wave.serial.test.ts",
+   "GBrainConfig type includes voyage_api_key field (TS compile guard)"
+  ],
+  [
+   "test/core/background-work.test.ts",
+   "empty registry (no test drainers) resolves fast"
+  ],
+  [
+   "test/e2e/cjk-roundtrip.test.ts",
+   "vector path skip-gracefully without OPENAI_API_KEY"
+  ],
+  [
+   "test/e2e/embedding-column-postgres.test.ts",
+   "skipped"
+  ],
+  [
+   "test/e2e/graph-signals-eval.test.ts",
+   "Gate 1 (QUALITY): no statistically significant regression in wrong direction"
+  ],
+  [
+   "test/e2e/upsert-chunks-registry-column.test.ts",
+   "skipped"
+  ],
+  [
+   "test/regressions/v0.36.1.0-iron-rule.test.ts",
+   "this regression is covered by existing v0.34.1 source-isolation suite"
+  ],
+  [
+   "test/regressions/v0.36.1.0-iron-rule.test.ts",
+   "this regression is covered by existing search-mode test suite"
+  ]
+ ],
+ "dup_bodies_crossfile": [
+  [
+   [
+    "test/artifact-abstraction.test.ts",
+    "detectArtifactKind by extension"
+   ],
+   [
+    "test/e2e/schema-cathedral.test.ts",
+    "detectArtifactKind dispatches by extension"
+   ]
+  ],
+  [
+   [
+    "test/link-extraction-dir-whitelist-2576.test.ts",
+    "verb inference works for non-whitelisted dirs (typed edge, not just mentions)"
+   ],
+   [
+    "test/link-extraction-relative-path.test.ts",
+    "flat layout unchanged: verb inference still fires on the resolved slug"
+   ]
+  ],
+  [
+   [
+    "test/links-timeline-jsonb-poison.test.ts",
+    "strips embedded NUL but preserves the rest"
+   ],
+   [
+    "test/e2e/jsonb-batch-poison-postgres.test.ts",
+    "strips embedded NUL in link context"
+   ]
+  ],
+  [
+   [
+    "test/links-timeline-jsonb-poison.test.ts",
+    "round-trips free-text summary/detail/source without throwing"
+   ],
+   [
+    "test/e2e/jsonb-batch-poison-postgres.test.ts",
+    "addTimelineEntriesBatch round-trips poison summary/detail/source"
+   ]
+  ],
+  [
+   [
+    "test/list-all-sources.test.ts",
+    "filters archived by default"
+   ],
+   [
+    "test/e2e/list-all-sources-postgres.test.ts",
+    "filters archived by default"
+   ]
+  ],
+  [
+   [
+    "test/e2e/openrouter-anthropic-subagent-replay.live.test.ts",
+    "persisted tool-call ids stay byte-identical across resume"
+   ],
+   [
+    "test/e2e/openrouter-deepseek-subagent-replay.live.test.ts",
+    "persisted tool-call ids stay byte-identical across resume"
+   ]
+  ]
+ ]
+}

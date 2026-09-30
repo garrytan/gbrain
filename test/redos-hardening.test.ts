@@ -17,6 +17,7 @@ import {
 import { inferLinkTypeFromPack } from '../src/core/schema-pack/link-inference.ts';
 import { linkRegexCatastrophicBacktrack } from '../src/core/schema-pack/lint-rules.ts';
 import type { SchemaPackManifest } from '../src/core/schema-pack/manifest-v1.ts';
+import { surfaceFileSource, surfaceSource } from './helpers/source-surface.ts';
 
 describe('#1569 input-length cap', () => {
   test('runRegexBounded throws RegexInputTooLargeError over the cap', () => {
@@ -122,7 +123,10 @@ describe('#1569 star-height lint rule', () => {
 });
 
 describe('#1569 --no-schema-pack + heartbeat wiring (structural)', () => {
-  const SYNC = readFileSync(join(import.meta.dir, '..', 'src', 'commands', 'sync.ts'), 'utf-8');
+  // A10: containment pins read the whole sync surface; the ordering pin names
+  // the single file that holds the import loop.
+  const SYNC = surfaceSource('sync');
+  const SYNC_IMPORTS = surfaceFileSource('sync', 'src/commands/sync/imports.ts');
 
   test('SyncOpts carries noSchemaPack and it gates loadActivePack', () => {
     expect(SYNC).toContain('noSchemaPack?: boolean');
@@ -131,8 +135,8 @@ describe('#1569 --no-schema-pack + heartbeat wiring (structural)', () => {
   });
 
   test('begin heartbeat fires before importFile (GBRAIN_SYNC_TRACE)', () => {
-    const beginIdx = SYNC.indexOf('begin import:');
-    const importIdx = SYNC.indexOf('importFile(eng, filePath, path');
+    const beginIdx = SYNC_IMPORTS.indexOf('begin import:');
+    const importIdx = SYNC_IMPORTS.indexOf('importFile(eng, filePath, path');
     expect(beginIdx).toBeGreaterThan(0);
     expect(importIdx).toBeGreaterThan(0);
     expect(beginIdx).toBeLessThan(importIdx);

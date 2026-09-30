@@ -244,11 +244,12 @@ test('full backup restores DB-only facts/files, rebases sources, quarantines all
   await writeBackupArchive(renamedArchive, {}, [{ path: 'private-record', file: join(root, 'memory', 'prior.gbrain-backup') }]);
   writeFileSync(join(root, 'memory', 'credentials.md'), '# Remembered credential rotation procedure\nNo actual credential.\n');
   const connectorCommandMarker = join(temporary, 'connector-command-ran');
+  const webhookSecret = `whsec-sentinel-${crypto.randomUUID()}`;
   await withFixtureWrite(root, ['google-fixture'], async engine => {
     await engine.executeRaw("SELECT set_config('gbrain.topology_change','on',true)");
     await engine.executeRaw('INSERT INTO sources (id, name, local_path, config) VALUES ($1, $2, $3, $4::text::jsonb)', [
       'google-fixture', 'Google fixture', join(root, 'memory', 'google'),
-      JSON.stringify({ kind: 'google', federated: true, g_account: 'fixture-account', g_services: 'gmail', g_access: 'command', g_token_command: `touch '${connectorCommandMarker}'`, syncEnabled: true }),
+      JSON.stringify({ kind: 'google', federated: true, g_account: 'fixture-account', g_services: 'gmail', g_access: 'command', g_token_command: `touch '${connectorCommandMarker}'`, syncEnabled: true, webhook_secret: webhookSecret }),
     ]);
     await engine.setConfig('connectors.chatgpt.auto_sync', 'true');
     await engine.setConfig('autopilot.auto_drain.enabled', 'true');
@@ -257,6 +258,9 @@ test('full backup restores DB-only facts/files, rebases sources, quarantines all
   });
   const created = await createPgliteBackup({ root, output: archive });
   expect(created.manifest.classification).toBe('sensitive-full-database-state');
+  // Source-config secrets stay inside the documented full-database payload,
+  // never in backup metadata or the restore log.
+  expect(JSON.stringify(created.manifest)).not.toContain(webhookSecret);
   expect(statSync(archive).mode & 0o777).toBe(0o600);
   expect(created.manifest.entries.some(e => e.path.includes('credential-deliveries'))).toBe(false);
   for (const path of excludedManaged) expect(created.manifest.entries.some(e => e.path === `files/${path}`)).toBe(false);
@@ -269,6 +273,8 @@ test('full backup restores DB-only facts/files, rebases sources, quarantines all
   const restored = join(temporary, 'restored');
   const result = await restorePgliteBackup({ archive, into: restored });
   expect(result.quarantined_jobs).toBe(5);
+  expect(result.reconnect_required.join('\n')).not.toContain(webhookSecret);
+  expect(readFileSync(join(restored, 'restore-receipt.json'), 'utf8')).not.toContain(webhookSecret);
   expect(readFileSync(join(restored, 'memory', 'note.md'), 'utf8')).toContain('must survive');
   for (const path of excludedManaged) expect(existsSync(join(restored, path))).toBe(false);
   expect(readFileSync(join(restored, 'memory', 'credentials.md'), 'utf8')).toContain('Remembered credential rotation');

@@ -10,9 +10,9 @@
  * isError blocks). Abort is therefore the job AbortSignal after the first
  * successful observation — not a throw from execute.
  *
- * Run (keep-keys required — unit preload strips OPENROUTER_API_KEY):
- *   GBRAIN_TEST_KEEP_PROVIDER_KEYS=1 OPENROUTER_API_KEY=... \
- *     bun test test/e2e/openrouter-anthropic-subagent-replay.live.test.ts
+ * No CI job provides OPENROUTER_API_KEY, so scripts/run-e2e.sh leaves this
+ * file out of its default glob. Run it by name (the runner keeps provider keys):
+ *   OPENROUTER_API_KEY=... bash scripts/run-e2e.sh test/e2e/openrouter-anthropic-subagent-replay.live.test.ts
  */
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';

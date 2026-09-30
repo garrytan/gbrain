@@ -143,7 +143,7 @@ Expected:
 
 ### Phase 5: Post-migration
 
-Anything that used `--type article` keeps working post-unify if your CLI calls go through the `expandTypeFilter` helper (it expands `article` to `media+subtype=article` automatically). Direct SQL against `pages.type` needs updating to the canonical types.
+Search and query `--type article` keep returning those pages post-unify: `media` declares `article` as an alias, so the type filter expands through the active pack's alias closure (the results also include other `media` pages). Direct SQL against `pages.type` needs updating to the canonical types.
 
 Search queries get a small ranking signal: pages reached via `slug_aliases` (canonicals of one or more aliases) get a 1.05x boost. Visible via `gbrain search --explain`.
 
@@ -219,7 +219,7 @@ Outputs:
 Side effects:
 - Source pages soft-deleted with 72h restore TTL (`gbrain restore <slug>`).
 - One-time cache invalidation on KNOBS_HASH_VERSION bump (5→6); self-healing in `cache.ttl_seconds`.
-- Query-time `--type X` alias-expands via `expandTypeFilter` (back-compat).
+- Search/query `--type X` expands through the active pack's alias closure (back-compat).
 
 Failure modes:
 - Concurrent submission rejected by the `gbrain-unify` db-lock; second call exits gracefully.

@@ -137,10 +137,3 @@ export const v0_12_2: Migration = {
   },
   orchestrator,
 };
-
-/** Exported for unit tests. */
-export const __testing = {
-  phaseASchema,
-  phaseBRepair,
-  phaseCVerify,
-};

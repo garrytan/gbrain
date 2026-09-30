@@ -73,7 +73,8 @@ import {
   type ExtractedFact,
 } from '../core/facts/extract.ts';
 import { configureGatewayIfUninitialized, isAvailable, withBudgetTracker } from '../core/ai/gateway.ts';
-import { assertUnmanagedCanonicalWriter } from '../core/persistence/maintenance.ts';
+import { managedDerivedFactsPreflight, writeDerivedFacts } from '../core/persistence/derived-facts.ts';
+import { managedPersistenceEnabled } from '../core/persistence/ownership.ts';
 import { BudgetTracker, BudgetExhausted, loadPricingOverrides } from '../core/budget/budget-tracker.ts';
 import { listSources } from '../core/sources-ops.ts';
 import {
@@ -698,7 +699,7 @@ async function deleteOrphanFactsForPage(
 ): Promise<number> {
   // A cleanup failure is authoritative: callers must not write a terminal or
   // non-extractable marker while facts from an older snapshot may remain.
-  const rows = await engine.executeRaw<{ count: string }>(
+  const rows = await writeDerivedFacts(engine, sourceId, slug, db => db.executeRaw<{ count: string }>(
     `WITH del AS (
        DELETE FROM facts
        WHERE source_id = $1
@@ -708,7 +709,7 @@ async function deleteOrphanFactsForPage(
      )
      SELECT COUNT(*)::text AS count FROM del`,
     [sourceId, slug],
-  );
+  ));
   const n = parseInt(rows[0]?.count ?? '0', 10);
   return Number.isFinite(n) ? n : 0;
 }
@@ -1162,7 +1163,7 @@ async function processPage(
         context:
           fact.context ?? `from ${page.slug} segment ${seg.startIso}..${seg.endIso}`,
       }));
-      const ins = await state.engine.insertFacts(rows, { source_id: state.sourceId }); // gbrain-allow-direct-insert: canonical bulk extraction path for conversation pages — fences-as-system-of-record doesn't apply because conversations don't carry `## Facts` fences (the chat-log shape is the source-of-truth)
+      const ins = await writeDerivedFacts(state.engine, state.sourceId, page.slug, db => db.insertFacts(rows, { source_id: state.sourceId })); // gbrain-allow-direct-insert: canonical bulk extraction path for conversation pages — fences-as-system-of-record doesn't apply because conversations don't carry `## Facts` fences (the chat-log shape is the source-of-truth)
       pageInsertedTotal += ins.inserted;
       state.result.facts_inserted += ins.inserted;
     }
@@ -1242,7 +1243,7 @@ async function writeTerminalAuditRow(
     row_num: rowNum,
     source_markdown_slug: slug,
   };
-  await engine.insertFacts([fact], { source_id: sourceId }); // gbrain-allow-direct-insert: page-level TERMINAL audit row (Codex C7 / E16) marks extraction completion in the durable facts table — there's no fence equivalent because this is internal audit state, not user-facing knowledge
+  await writeDerivedFacts(engine, sourceId, slug, db => db.insertFacts([fact], { source_id: sourceId })); // gbrain-allow-direct-insert: page-level TERMINAL audit row (Codex C7 / E16) marks extraction completion in the durable facts table — there's no fence equivalent because this is internal audit state, not user-facing knowledge
 }
 
 /**
@@ -1279,7 +1280,7 @@ async function writeNonExtractableAuditRow(
     row_num: rowNum,
     source_markdown_slug: slug,
   };
-  await engine.insertFacts([fact], { source_id: sourceId }); // gbrain-allow-direct-insert: durable non-extractable audit outcome prevents repeated scans while remaining distinct from successful extraction
+  await writeDerivedFacts(engine, sourceId, slug, db => db.insertFacts([fact], { source_id: sourceId })); // gbrain-allow-direct-insert: durable non-extractable audit outcome prevents repeated scans while remaining distinct from successful extraction
 }
 
 export async function runExtractConversationFactsCore(
@@ -1291,7 +1292,7 @@ export async function runExtractConversationFactsCore(
   if (!sourceId) {
     throw new Error('runExtractConversationFactsCore: opts.sourceId is required');
   }
-  await assertUnmanagedCanonicalWriter(engine, 'bulk conversation fact extraction');
+  await managedDerivedFactsPreflight(engine, sourceId);
 
   const result: ExtractConversationFactsResult = {
     pages_considered: 0,
@@ -1676,8 +1677,8 @@ async function writeRunReceiptAndRollup(
   // receipt slug. shortRunId() truncates to 8 chars.
   const runId = `ecf-${Date.now().toString(36)}-${sourceId.slice(0, 4)}`;
 
-  // Receipt write: only when the run actually inserted facts.
-  if (result.facts_inserted > 0) {
+  // Receipt write: only when the run actually inserted facts (receipt pages are unmanaged-only, like extract_atoms).
+  if (result.facts_inserted > 0 && !await managedPersistenceEnabled(engine)) {
     try {
       await writeReceipt(engine, {
         kind: 'facts.conversation',
@@ -1915,7 +1916,6 @@ export async function runExtractConversationFacts(
     console.log(HELP);
     return;
   }
-  await assertUnmanagedCanonicalWriter(engine, 'bulk conversation fact extraction');
 
   // --background path.
   const backgrounded = await maybeBackground({

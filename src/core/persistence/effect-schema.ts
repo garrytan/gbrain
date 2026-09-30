@@ -31,3 +31,6 @@ CREATE INDEX IF NOT EXISTS persistence_effects_pending ON persistence_effects(ne
 CREATE INDEX IF NOT EXISTS persistence_effects_recovery ON persistence_effects(worktree_id)
   WHERE recovery IS NOT NULL;
 `;
+/** Effects holding parked Git/withdrawal targets, for the bounded doctor listing. */
+export const PERSISTENCE_EFFECT_PARKED_INDEX_SQL = `CREATE INDEX IF NOT EXISTS persistence_effects_parked
+  ON persistence_effects(id) WHERE data ? 'parked'`;

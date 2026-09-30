@@ -9,9 +9,9 @@ import type { WriteRequest } from '../persistence/model.ts';
 import { publishMaintenancePage, type MaintenanceAuthority } from '../persistence/prepared-maintenance.ts';
 import { writeResponse } from '../persistence/service.ts';
 import type { DiscoveredTranscript } from './transcript-discovery.ts';
-import { emptyQuoteVerifyStats, normalizeForGrounding, repairDreamPageMarkdown, type GroundedTranscript } from './synthesize-verify.ts';
+import { emptyQuoteVerifyStats, groundSource, isDreamOwnedPage, resolveVerifyPrior, verifyDreamPage, type GroundedSource } from './synthesize-verify.ts';
 
-interface OutputRef { slug: string; source_id: string; raw_source?: string; }
+interface OutputRef { slug: string; source_id: string; raw_source?: string; first_write_at?: Date; }
 interface RetainedOutput { job_id: number | bigint; job_key: string; request: WriteRequest; }
 
 export async function postprocessManagedSynthesis(
@@ -21,7 +21,7 @@ export async function postprocessManagedSynthesis(
   childIds: number[],
   jobRawSource: Map<number, string>,
   transcripts: DiscoveredTranscript[],
-  opts: { cycleDate: string; quoteVerify: boolean; signal?: AbortSignal },
+  opts: { cycleDate: string; quoteVerify: boolean; sinceByTranscript: Map<string, Date>; signal?: AbortSignal },
 ) {
   const stats = emptyQuoteVerifyStats();
   const writtenRefs: OutputRef[] = [];
@@ -37,8 +37,7 @@ export async function postprocessManagedSynthesis(
       WHERE t.job_id=ANY($1::int[]) AND t.tool_name='brain_put_page' AND t.status='complete'
       ORDER BY p.sequence DESC`, [childIds, authority.writer.sourceId, authority.writer.sourceIncarnation]);
   const byPath = new Map(transcripts.map(t => [t.filePath, t]));
-  let groundedPath: string | undefined;
-  let grounded: GroundedTranscript | undefined;
+  let grounded: GroundedSource | undefined;
   for (const ref of [...refs].sort((a, b) => (a.raw_source ?? '').localeCompare(b.raw_source ?? ''))) {
     throwIfAborted(opts.signal, '[dream] synthesis postprocessing');
     if (ref.source_id !== authority.writer.sourceId) throw new OperationError('source_changed', 'The synthesis output source changed.');
@@ -72,21 +71,21 @@ export async function postprocessManagedSynthesis(
         throw new OperationError('revision_conflict', 'The synthesis output changed after the child committed.');
       }
       const firstDate = snapshot.page.frontmatter.dream_created_cycle_date || snapshot.page.frontmatter.dream_cycle_date || opts.cycleDate;
-      const page = { ...snapshot.page, frontmatter: { ...snapshot.page.frontmatter, dream_generated: true,
-        dream_cycle_date: firstDate, dream_created_cycle_date: firstDate, raw_source: path } };
-      content = serializePageToMarkdown(page, snapshot.tags);
+      const since = ref.first_write_at ?? opts.sinceByTranscript.get(transcript.filePath);
+      let page = isDreamOwnedPage(snapshot.page, since) ? { ...snapshot.page, frontmatter: { ...snapshot.page.frontmatter, dream_generated: true,
+        dream_cycle_date: firstDate, dream_created_cycle_date: firstDate, raw_source: path } } : snapshot.page;
       if (opts.quoteVerify) {
-        if (!ref.slug.includes(`-${transcript.contentHash.slice(0, 6)}`)) stats.skipped_preexisting++;
+        const prior = since ? await resolveVerifyPrior(engine, snapshot.page, ref.source_id, since) : null;
+        if (prior === 'unchanged') stats.skipped_unchanged++;
         else {
-          if (groundedPath !== path) {
-            groundedPath = path;
-            grounded = { content: transcript.content, ...normalizeForGrounding(transcript.content) };
-          }
-          const repaired = repairDreamPageMarkdown(content, grounded!, stats);
-          if (repaired !== content) stats.pages_repaired++;
-          content = repaired;
+          if (prior) stats.preexisting_diffed++;
+          const source = grounded?.path === transcript.filePath ? grounded : (grounded = groundSource(transcript.filePath, transcript.content));
+          const verified = verifyDreamPage(page, [source], { prior, checkedAt: opts.cycleDate }, stats);
+          if (verified.changed) stats.pages_repaired++;
+          page = { ...page, compiled_truth: verified.compiled_truth, timeline: verified.timeline, frontmatter: verified.frontmatter as typeof page.frontmatter };
         }
       }
+      content = serializePageToMarkdown(page, snapshot.tags);
     }
     throwIfAborted(opts.signal, '[dream] synthesis postprocessing');
     await publishMaintenancePage(engine, authority, ref.slug, content, { requestId, expectedRevision: revision });

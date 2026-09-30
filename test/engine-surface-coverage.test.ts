@@ -56,7 +56,7 @@ const INTERFACE_METHODS: readonly string[] = [
   // Search
   'searchKeyword', 'searchTitles', 'searchVector', 'getEmbeddingsByChunkIds',
   // Chunks
-  'upsertChunks', 'getChunks', 'countStaleChunks', 'sumStaleChunkChars', 'setPageEmbeddingSignature',
+  'upsertChunks', 'getChunks', 'getChunkWindows', 'countStaleChunks', 'sumStaleChunkChars', 'setPageEmbeddingSignature',
   'invalidateStaleSignatureEmbeddings', 'invalidateContentDriftEmbeddings', 'listStaleChunks',
   'countChunklessPagesWithContent', 'listChunklessPagesWithContent', 'deleteChunks',
   // Extraction watermark
@@ -127,15 +127,10 @@ const ENGINE_INTERNAL_HELPERS: readonly string[] = [
   'applyForwardReferenceBootstrap',
   'getBulkRetryOpts',
   'batchRetry',
-  'buildStaleChunkWhere',
   'activeEmbeddingColId',
-  'buildChunklessPagesWhere',
-  'buildStalePagesWhere',
-  'pushChronicleSource',
-  'factsDeps',
-  'takesDeps',
   'codeEdgesDeps',
-  'salienceDeps',
+  // refactor wave 1 C9: per-call engine-sql executor getter (EO1).
+  'engineSql',
 ];
 
 /**
@@ -152,11 +147,12 @@ const ENGINE_INTERNAL_HELPERS: readonly string[] = [
  *   - getTakeEmbeddings left the list at the master merge: wave-k's #3776
  *     semantic takes retrieval gave it real callers + coverage (the ratchet
  *     shrank, as designed — its smoke below stays as a shape pin).
+ *   - listPrefixSampledPages, listCorpusSample and getPageTimestamps left the
+ *     list in refactor wave 1 W0: the Postgres SQL-text goldens
+ *     (test/helpers/postgres-engine-sql-cases.ts) call them. Their PGLite
+ *     smokes stay below, unchanged, as ex-UNCALLED shape pins.
  */
 const UNCALLED: readonly string[] = [
-  'listPrefixSampledPages', // called by src/core/brainstorm/domain-bank.ts; brainstorm tests stub above the engine
-  'listCorpusSample',       // called by src/core/brainstorm/domain-bank.ts (fallback arm)
-  'getPageTimestamps',      // DELETION CANDIDATE: deprecated, zero src callers
   'rewriteLinks',           // documented no-op stub; callers exist (migrate.ts, cycle/phantom-redirect.ts)
 ];
 
@@ -242,7 +238,9 @@ function unitEmbedding(): Float32Array {
   return e;
 }
 
-const SMOKES: Record<string, () => Promise<void>> = {
+// Ex-UNCALLED shape pins: methods that gained references elsewhere (the
+// ratchet shrank, as designed); each keeps its original seeded-PGLite smoke.
+const EX_UNCALLED_SHAPE_PINS: Record<string, () => Promise<void>> = {
   listPrefixSampledPages: async () => {
     // One row per two-segment prefix, ordered by prefix; inbound-link count
     // is the tiebreaker inside a prefix; representative_chunk_id resolves to
@@ -293,8 +291,9 @@ const SMOKES: Record<string, () => Promise<void>> = {
     // Empty input short-circuits to an empty map.
     expect((await engine.getPageTimestamps([])).size).toBe(0);
   },
+};
 
-
+const SMOKES: Record<string, () => Promise<void>> = {
   rewriteLinks: async () => {
     // Documented no-op stub on PGLite: links key on integer page_id FKs, so
     // they are already correct after updateSlug. Pin the no-op contract —
@@ -366,6 +365,10 @@ describe('uncovered-method smokes (seeded PGLite)', () => {
 
   for (const name of Object.keys(SMOKES)) {
     test(`smoke: ${name}`, () => SMOKES[name]());
+  }
+
+  for (const name of Object.keys(EX_UNCALLED_SHAPE_PINS)) {
+    test(`shape pin (ex-UNCALLED): ${name}`, () => EX_UNCALLED_SHAPE_PINS[name]());
   }
 
   // getTakeEmbeddings left UNCALLED at the master merge (#3776 gave it real

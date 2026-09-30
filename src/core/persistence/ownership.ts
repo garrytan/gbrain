@@ -9,9 +9,11 @@ import { localHostId, persistenceHome } from './identity.ts';
 import type { SqlEngine, WriteRequest } from './model.ts';
 import { acquireNativeLock, tryAcquireNativeLock, type NativeLockHandle } from './native-lock.ts';
 import { managedFilesystemDatastorePath, refreshManagedFilesystemRoots } from './filesystem-guard.ts';
-import { assertPhysicalRoot, claimPhysicalRoot, isPhysicalRootMetadata, preparePhysicalRootTransfer, readPhysicalRootReservation } from './physical-root.ts';
+import { assertPhysicalRoot, claimPhysicalRoot, isPhysicalRootMetadata, preparePhysicalRootTransfer, readPhysicalRootReservation, restampPhysicalRoot } from './physical-root.ts';
+import { readPhysicalRootStamp } from './physical-root-record.ts';
 import { canonicalFilesystemPath, nativeFilesystemPath } from './root-registry.ts';
 import { assertWriterAdminState } from './admin-intent.ts';
+import { assertWriterAdminUnlocked } from './admin-lock.ts';
 import { inspectPhysicalRootRecovery, repairPhysicalRoot, type PhysicalRootRecovery } from './physical-root-recovery.ts';
 
 export interface WorktreeBinding {
@@ -43,11 +45,13 @@ export async function getWorktreeBinding(engine: SqlEngine, sourceId: string, ho
     WHERE s.source_id=$1`, [sourceId, hostId]);
   return row ?? null;
 }
-export async function claimWorktree(engine: BrainEngine, sourceId: string, path: string, hostId = localHostId(), expectedAdminState?: string): Promise<WorktreeBinding> {
+/** `automatic` is only the ordinary first-write claim; the writer admin lock never blocks it. */
+export async function claimWorktree(engine: BrainEngine, sourceId: string, path: string, hostId = localHostId(), expectedAdminState?: string,
+  options: { automatic?: boolean } = {}): Promise<WorktreeBinding> {
   if(await managedPersistenceEnabled(engine)) {
     if(hostId!==localHostId()) throw new OperationError('permission_denied','A source can be claimed only by the local registered host.');
     const { runManagedSourceLifecycle }=await import('./source-lifecycle.ts');
-    await runManagedSourceLifecycle(engine,{operation:'claim',sourceId,path,expectedAdminState});
+    await runManagedSourceLifecycle(engine,{operation:'claim',sourceId,path,expectedAdminState,automaticClaim:options.automatic});
     return (await getWorktreeBinding(engine,sourceId,hostId))!;
   }
   let sourceRoot: string;
@@ -72,6 +76,7 @@ export async function claimWorktree(engine: BrainEngine, sourceId: string, path:
     await tx.executeRaw("SELECT set_config('synchronous_commit','on',true)");
     await tx.executeRaw('SELECT singleton FROM persistence_brain WHERE singleton=1 FOR UPDATE');
     await assertWriterAdminState(tx, expectedAdminState);
+    if (!options.automatic) await assertWriterAdminUnlocked(tx);
     const [source] = await tx.executeRaw<{ incarnation: string; archived: boolean }>('SELECT incarnation,archived FROM sources WHERE id=$1 FOR UPDATE', [sourceId]);
     if (!source || source.archived) throw new OperationError('source_changed', 'Only an active registered source can claim a worktree.');
     const current = await getWorktreeBinding(tx, sourceId, hostId);
@@ -105,13 +110,32 @@ export async function claimWorktree(engine: BrainEngine, sourceId: string, path:
   });
   return (await getWorktreeBinding(engine, sourceId, hostId))!;
 }
-export async function acquireWorktree(binding: WorktreeBinding, waitMs = 0, signal?: AbortSignal): Promise<NativeLockHandle | null> {
+/**
+ * With an engine, a device-only physical-root change (#5604) is re-stamped under
+ * this native lock after database ownership is verified; otherwise it refuses
+ * with the filled self-transfer commands.
+ */
+export async function acquireWorktree(binding: WorktreeBinding, waitMs = 0, signal?: AbortSignal, engine?: BrainEngine): Promise<NativeLockHandle | null> {
   if (!binding.local_path || !binding.coordination_path) return null;
   const lock = await (waitMs > 0 ? acquireNativeLock(binding.coordination_path, { timeoutMs: waitMs, signal })
     : tryAcquireNativeLock(binding.coordination_path));
   if (!lock) return null;
-  try { assertPhysicalRoot(binding.local_path, { worktreeId: binding.worktree_id, coordinationPath: binding.coordination_path }); return lock; }
-  catch (error) { await lock.release(); throw error; }
+  const identity = { worktreeId: binding.worktree_id, coordinationPath: binding.coordination_path };
+  try { assertPhysicalRoot(binding.local_path, identity); return lock; }
+  catch (error) {
+    try {
+      if (!(error instanceof OperationError) || error.detail !== 'physical_root_device_changed') throw error;
+      if (engine && await restampPhysicalRoot(engine, binding, localHostId())) { assertPhysicalRoot(binding.local_path, identity); return lock; }
+      const why = !engine ? 'this caller cannot verify database ownership'
+        : readPhysicalRootStamp(binding.local_path)?.birth === '0' ? 'this filesystem reports no birth time'
+          : 'database ownership of this checkout did not verify';
+      error.suggestion = `The automatic device re-stamp did not apply because ${why}. On the brain host, run gbrain sources writer status ${binding.source_id} and note admin_state, `
+        + `then gbrain sources writer transfer prepare ${binding.source_id} --self-transfer --admin-intent writer_transfer_prepare --expected-state <admin_state>, `
+        + `then gbrain sources writer transfer accept ${binding.source_id} --path ${binding.local_path} --expected-epoch ${binding.owner_epoch} --manifest <manifest digest printed by prepare> `
+        + `--self-transfer --admin-intent writer_transfer_accept --expected-state <admin_state from a fresh status>. Retry the original write with the same request_id afterwards.`;
+      throw error;
+    } catch (failure) { await lock.release(); throw failure; }
+  }
 }
 export async function guardOwnership(tx: SqlEngine, row: WriteRequest, hostId: string): Promise<WorktreeBinding | null> {
   if (!row.worktree_id) return null;
@@ -156,6 +180,7 @@ export async function prepareWriterTransfer(engine: BrainEngine, sourceId: strin
     return await engine.transaction(async tx => {
       await tx.executeRaw("SELECT set_config('synchronous_commit','on',true)");
       await assertWriterAdminState(tx, expectedAdminState);
+      await assertWriterAdminUnlocked(tx);
       const [owner] = await tx.executeRaw<{ owner_host_id: string; owner_epoch: string; state: string }>('SELECT owner_host_id,owner_epoch,state FROM persistence_worktrees WHERE id=$1::uuid FOR UPDATE', [binding.worktree_id]);
       const current = await getWorktreeBinding(tx, sourceId, hostId);
       if (!owner || owner.owner_host_id !== hostId || JSON.stringify(current) !== JSON.stringify(binding)) throw new OperationError('owner_unavailable', 'Ownership changed during transfer.');
@@ -191,6 +216,7 @@ export async function acceptWriterTransfer(engine: BrainEngine, sourceId: string
     await engine.transaction(async tx => {
       await tx.executeRaw("SELECT set_config('synchronous_commit','on',true)");
       await assertWriterAdminState(tx, expectedAdminState);
+      await assertWriterAdminUnlocked(tx);
       const [owner] = await tx.executeRaw<{ owner_epoch: string; state: string; manifest: { digest: string; self_transfer?: PhysicalRootRecovery } }>('SELECT owner_epoch,state,manifest FROM persistence_worktrees WHERE id=$1::uuid FOR UPDATE', [binding.worktree_id]);
       if (!owner || owner.state !== 'draining' || String(owner.owner_epoch) !== expectedEpoch || owner.manifest?.digest !== expectedManifest) throw new OperationError('writer_transfer_conflict', 'Transfer preparation or epoch changed.');
       if (!!owner.manifest.self_transfer !== !!opts.selfTransfer || JSON.stringify(await getWorktreeBinding(tx, sourceId, hostId)) !== JSON.stringify(binding)) throw new OperationError('writer_transfer_conflict', 'The prepared transfer mode or binding changed.');

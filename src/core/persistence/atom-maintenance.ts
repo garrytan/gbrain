@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import type { BrainEngine, LinkBatchInput } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import type { OperationContext } from '../ops/contract.ts';
+import { acceptedPendingReceipt } from './accepted-pending.ts';
 import { OperationError } from '../ops/contract.ts';
 import { currentSubmissionAuthority } from '../minions/submission-authority.ts';
 import { authorizeStoredRequest, authorizeWrite, submissionAuthority } from './authority.ts';
@@ -15,6 +16,7 @@ import type { PreparedMutation } from './coordinator.ts';
 import type { WriteAuthority, WriteRequest } from './model.ts';
 import type { WriteReceipt } from './types.ts';
 import { writeAtomPageState } from '../cycle/extract-atoms-page-state.ts';
+import { effectiveVisibility } from '../search/private-visibility.ts';
 
 export interface AtomOrigin {
   kind: 'page' | 'transcript';
@@ -71,7 +73,7 @@ export async function managedAtomSession(engine: BrainEngine, sourceId: string, 
     throw new OperationError('owner_unavailable', 'The canonical atom owner is unavailable; no extraction was started.');
   }
   if (writeThrough && binding) {
-    const lock = await acquireWorktree(binding);
+    const lock = await acquireWorktree(binding, 0, undefined, engine);
     if (!lock) throw new OperationError('writer_lock_unavailable', 'The canonical atom writer is busy; no extraction was started.');
     await lock.release();
   }
@@ -109,14 +111,15 @@ export async function readAtomOrigin(engine: BrainEngine, session: ManagedAtomSe
   item: { kind: 'page'; slug: string; content: string; contentHash: string } | { kind: 'transcript'; filePath: string; content: string; contentHash: string }): Promise<AtomOrigin> {
   if (item.kind === 'transcript') {
     if (sha256(readFileSync(item.filePath)) !== sha256(item.content)) throw new OperationError('source_changed', 'The atom transcript changed before extraction.');
-    return { kind: item.kind, locator: item.filePath, contentHash: item.contentHash, textHash: sha256(item.content), pageId: null, revision: null, visibility: 'private' };
+    return { kind: item.kind, locator: item.filePath, contentHash: item.contentHash, textHash: sha256(item.content), pageId: null, revision: null,
+      visibility: effectiveVisibility({ kind: 'transcript' }) };
   }
   const snapshot = await engine.readPageSnapshot(item.slug, { sourceId: session.sourceId });
   if (!snapshot || snapshot.sourceIncarnation !== session.incarnation || snapshot.page.content_hash !== item.contentHash || snapshot.page.compiled_truth !== item.content) {
     throw new OperationError('revision_conflict', 'The atom input changed before extraction.');
   }
   return { kind: item.kind, locator: item.slug, contentHash: item.contentHash, textHash: sha256(item.content), pageId: snapshot.page.id,
-    revision: snapshot.revision, visibility: snapshot.page.frontmatter.visibility === 'world' ? 'world' : 'private' };
+    revision: snapshot.revision, visibility: effectiveVisibility({ kind: 'page', page: snapshot.page }) };
 }
 
 function runKey(session: ManagedAtomSession, origin: AtomOrigin): string {
@@ -224,7 +227,14 @@ export async function publishManagedAtoms(engine: BrainEngine, session: ManagedA
   const receipts: WriteReceipt[] = [];
   for (const row of rows) {
     const finished = await waitForWrite(engine, row, session.config);
-    writeResponse(finished);
+    try { writeResponse(finished); }
+    catch (error) {
+      // #5601: an accepted batch still publishing is progress; its deterministic request ids resume it next run.
+      const pending = acceptedPendingReceipt(error);
+      if (!pending) throw error;
+      receipts.push(pending);
+      continue;
+    }
     receipts.push(receiptFor(finished));
   }
   return receipts;

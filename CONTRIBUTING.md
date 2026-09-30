@@ -43,54 +43,75 @@ directly. Keep that prefix when you add a new shell-script check.
 
 ```
 src/
-  cli.ts                  CLI entry point
-  commands/               CLI-only commands (init, upgrade, import, export, etc.)
-    doctor.ts             gbrain doctor façade (buildChecks/runDoctor/output)
-    doctor/               Peeled doctor modules: checks/* bundles + tail clusters
-    sync.ts               gbrain sync CLI + performSync/performFullSync
+  cli.ts                  CLI entry point: op dispatch + the ordered CLI-only pipeline (handleCliOnly)
+  cli/
+    command-table.ts      One record per CLI-only command (phase, thin-client mode, lazy loader)
+    commands/             Per-command dispatch modules each record loads (glue only)
+  commands/               CLI-only command implementations (init, upgrade, import, export, etc.)
+    doctor.ts             gbrain doctor façade (flag parse, registry run, output)
+    doctor/               registry.ts (ordered check registry) + checks/<topic>.ts entries
+    sync.ts               gbrain sync façade (re-exports performSync, performFullSync, ...)
+    sync/                 Sync implementation: SyncRun state + phases (preflight, deletes, renames, imports, finalize)
+    jobs.ts, jobs/        gbrain jobs façade (subcommand table, registerBuiltinHandlers) + one module per subcommand
+    serve-http.ts         HTTP server: buildServeHttpApp (shared context, mount order) + listen/shutdown
+    serve-http-<area>.ts  mount<Area>(app, ctx) route modules (oauth, metrics, admin-api, spa, mcp, webhooks)
+    autopilot*.ts         Autopilot mode table, daemon tick steps, dispatch, probes
+    migrations/           Versioned upgrade orchestrators (vX.Y.Z, gbrain apply-migrations)
   core/
     operations.ts         Operation contract assembly (façade over ops/)
     ops/                  Contract types + security fences + the op domain modules
     engine.ts             BrainEngine interface
+    engine-factory.ts     Engine factory (dynamic import of the configured engine)
+    postgres-engine.ts    Postgres + pgvector implementation (façade; migrated domains delegate to engine-sql/)
+    postgres-engine/      Postgres-only modules (cancellation, init-schema lock)
+    pglite-engine.ts      PGLite (embedded Postgres via WASM) implementation (façade)
+    pglite-engine/        PGLite-only modules (checkpoint guard, dialect-specific reads)
+    engine-sql/           One SQL implementation per migrated storage domain: executor, dialect adapters,
+                          sqlFragment, RLS read brands, row normalizer, forward-reference bootstrap
+    migrate.ts            Schema-migration runner (re-exports MIGRATIONS from the generated registry)
+    schema-migrations/    One file per schema migration (v<NNN>-<name>.ts) + registry.generated.ts
+    pglite-schema.ts      Façade over the generated PGLite schema template (pglite-schema.generated.ts)
+    doctor-categories.ts  The single doctor check category authority
     page-state/           Canonical snapshots, revisions, versions and guarded projections
     persistence/          Durable requests, owner coordination, recovery and writer enforcement
-    engine-factory.ts     Engine factory (dynamic import of the configured engine)
-    postgres-engine.ts    Postgres + pgvector implementation (façade)
-    postgres-engine/      Narrow-deps engine modules (facts, takes, code-edges, salience)
-    pglite-engine.ts      PGLite (embedded Postgres via WASM) implementation (façade)
-    pglite-engine/        Narrow-deps engine modules (facts, takes, code-edges, salience)
     db.ts                 Connection management + schema loader
     import-file.ts        Import pipeline (chunk + embed + tags)
-    sync-*.ts             Peeled sync clusters (cost-gate, git, anchor, lock, reconcile, status-report, ...)
+    sync-*.ts             Reusable sync clusters (cost-gate, git, anchor, lock, reconcile, status-report, ...)
+    minions/              Job queue + worker; handlers/ holds one module per built-in job handler
     types.ts              TypeScript types
     markdown.ts           Frontmatter parsing
     config.ts             Config file management
-    storage.ts            Pluggable storage interface
-    storage/              Storage backends (S3, Supabase, local)
+    storage.ts            Pluggable blob storage interface
+    storage/              Blob storage backends (S3, Supabase, local)
     supabase-admin.ts     Supabase admin API
     file-resolver.ts      MIME detection + content hashing
-    migrate.ts            Migration helpers
+    sql-query.ts          Scalar-only tagged SQL for OAuth/admin/auth tables (sqlQueryForEngine)
     bootstrap/            Agent-bootstrap flow (interview, hooks, repo, verify)
     yaml-lite.ts          Lightweight YAML parser
     chunkers/             3-tier chunking (recursive, semantic, llm)
-    search/               Hybrid search (vector, keyword, hybrid, expansion, dedup)
+    search/               Hybrid search: hybrid.ts runs the named stages in hybrid/ (request, arms, rank, cache)
     embedding.ts          Embedding service (provider-routed; Voyage default)
   mcp/
     server.ts             MCP stdio server (generated from operations)
     http-transport.ts     HTTP MCP transport (OAuth, body caps)
     dispatch.ts           Op dispatch + scope enforcement + param redaction
     rate-limit.ts         Rate limiting
-  schema.sql              Postgres DDL
+  schema.sql              Postgres DDL, hand-edited (fragment regions + both engine blobs generated by bun run build:schema)
 skills/                   Fat markdown skills for AI agents
 test/                     Unit tests (bun test, no DB required)
 test/e2e/                 E2E tests (requires DATABASE_URL, real Postgres+pgvector)
   fixtures/               Miniature realistic brain corpus (16 files)
-  helpers.ts              DB lifecycle, fixture import, timing
+  helpers.ts              DB lifecycle, fixture import, diagnostics
   mechanical.test.ts      All operations against real DB
-  mcp.test.ts             MCP tool generation verification
   skills.test.ts          Tier 2 skill tests (requires OpenClaw + API keys)
 docs/                     Architecture docs
 ```
+
+Façades (`operations.ts`, `doctor.ts`, `sync.ts`, `jobs.ts`, `serve-http.ts`, `hybrid.ts`,
+`migrate.ts`, `pglite-schema.ts`, both engines) keep exporting everything they always exported;
+new code goes in the module directories, never back into the façade. If you are porting a branch
+written before refactor wave 1, the [porting guide](docs/architecture/wave-1-porting.md) maps every
+moved symbol to its new home.
 
 Per-file invariants live in `docs/architecture/KEY_FILES.md` — read a file's entry
 before editing it.
@@ -214,11 +235,21 @@ Vacuous-assertion shapes to avoid (they recur):
 - asserting a substring that would also appear in the broken output —
   assert parsed structure instead.
 
-Relatedly: a test whose only assertion is a regex over `readFileSync`'d
-source text pins spelling, not behavior. New tests that read `src/` text
-need a `test-reads-source-ok: <why>` comment (or a behavioral assertion
-alongside); `test/test-reads-source-smell.test.ts` enforces this for new
-files and ratchets the pre-existing list down.
+Before adding a test, answer the four questions in the
+[authoring gate](docs/TESTING.md#authoring-gate); before deleting one, follow
+[Retiring a test](docs/TESTING.md#retiring-a-test) and record its evidence
+table in the PR body.
+
+Relatedly: a test whose only assertion is a regex over source text pins
+spelling, not behavior. A test that reads `src/` text (`readFileSync`,
+`readFile` or `Bun.file` on a `src/` path, directly or through a path
+constant) needs a tagged marker on or just above the read:
+`// test-reads-source-ok[<category>]: <why>`, with the category one of
+`prompt-byte`, `trust-boundary`, `generated-artifact`, `structural` or
+`raw-bytes`. `test/test-reads-source-smell.test.ts` enforces this and ratchets
+pre-existing files by their exact count of unjustified read sites. It counts
+read sites only, so new assertions over an existing source binding still need
+the authoring gate. See [Source reads in tests](docs/TESTING.md#source-reads-in-tests).
 
 ### Local CI gate (recommended before pushing)
 
@@ -226,6 +257,8 @@ files and ratchets the pre-existing list down.
 bun run ci:local         # full gate: gitleaks + guards/typecheck + 4-shard parallel unit + E2E
 bun run ci:local:diff    # gate with diff-aware E2E selector
 bun run ci:select-e2e    # print which E2E files the selector would run
+bun run ci:ubicloud      # the same gate fanned out across ephemeral Ubicloud VMs (~5 min)
+bun run ci:ubicloud:diff # Ubicloud gate with the diff-aware E2E selector
 ```
 
 `ci:local` spins up four pgvector services plus a transaction-mode PgBouncer via
@@ -234,6 +267,11 @@ sharded 4 ways in parallel, then tears down. Named volumes keep the install warm
 across runs. Requires Docker (Docker Desktop, OrbStack, or Colima) and `gitleaks`
 on host (`brew install gitleaks`). Override the postgres host port with
 `GBRAIN_CI_PG_PORT=5435 bun run ci:local` if 5434 collides.
+
+`ci:ubicloud` needs no Docker or gitleaks locally, only `UBICLOUD_API_KEY` (or
+`UBICLOUD_API_TOKEN`) for a Ubicloud project. It tests the working tree,
+uncommitted edits included; see "Ubicloud fan-out" in
+[`docs/TESTING.md`](docs/TESTING.md).
 
 Fail-closed selector: an unmapped `src/` change runs ALL E2E files. Hand-tune
 narrower mappings via `scripts/e2e-test-map.ts`.
@@ -270,8 +308,11 @@ and it automatically appears in the CLI, MCP server, and tools-json:
 3. That's it. The CLI, MCP server, and tools-json are generated from operations.
 
 For CLI-only commands (init, upgrade, import, export, files, embed, doctor, sync):
-1. Create `src/commands/mycommand.ts`
-2. Add the case to `src/cli.ts`
+1. Put the implementation in `src/commands/mycommand.ts`.
+2. Add a record to `src/cli/command-table.ts` (`name`, `phase`, `thinClient`, and
+   `load: () => import('./commands/mycommand.ts')`) and its dispatch module
+   `src/cli/commands/mycommand.ts`, exporting `run(args, ctx)` for a pre-connect
+   (engine-free) command or `run(engine, args, ctx)` for a post-connect one.
 3. Regenerate the flag registry: `bun run build:flag-registry`. The CLI rejects
    unknown flags before dispatch; each CLI-only command's legal flag set is
    derived from its source into `src/core/cli-flag-registry.generated.ts`.
@@ -282,16 +323,194 @@ For CLI-only commands (init, upgrade, import, export, files, embed, doctor, sync
    never bricks a command. Rerun the regen whenever you add or remove a flag
    on an existing command, too.
 
+The full recipe for this and the other change kinds is in
+[Where does my change go?](#where-does-my-change-go) below.
+
 Parity tests (`test/parity.test.ts`) verify CLI/MCP/tools-json stay in sync.
+
+## Where does my change go?
+
+An op added to a domain module under `src/core/ops/` keeps its automatic path:
+it appears in the CLI, the MCP server and `--tools-json` with no other edit
+(see [Adding a new operation](#adding-a-new-operation)). Everything else lands
+in one of these six places. Every row ends with the same pre-merge gate:
+`bun run verify`, then `bun run ci:ubicloud` (or `bun run ci:local`) for the
+full unit + E2E run on PGLite, direct Postgres and PgBouncer.
+
+The façades these rows edit (`src/cli.ts`, `src/core/engine.ts`, both engine
+files, `src/commands/sync.ts`) sit at their `check:module-size` ceilings, so a
+change that adds lines to one of them also raises that file's ceiling in
+`scripts/module-size-limits.tsv` by the lines you added, in the same commit.
+That is expected, not a smell: engine methods and interface fields cannot move
+to a sibling module. Every row also adds a behavior test of its own; the
+"Smallest test" column lists the guards and goldens to run next to it.
+
+| Change kind | Create or edit | Registry to touch | Regenerate | Smallest test |
+|---|---|---|---|---|
+| Storage method (a `BrainEngine` method) | The signature in `src/core/engine.ts`; the SQL once in `src/core/engine-sql/<domain>.ts`; a one-line delegation in `src/core/pglite-engine.ts` and `src/core/postgres-engine.ts` (copy a sibling read's shape, e.g. `getAllSlugs`) | `scripts/module-size-limits.tsv`: raise the `engine.ts`, `pglite-engine.ts` and `postgres-engine.ts` ceilings by the lines you added. A new SQL-bearing engine member fails `check:engine-sql-ratchet`; `scripts/engine-sql-baseline.tsv` rows only shrink | Nothing | `test/engine-sql-<domain>-<topic>.test.ts` on PGLite (seed with `engine.putPage(slug, { type, title, compiled_truth })`; the default source id is `'default'`); for a write, a case in `test/helpers/engine-sql-rollback-cases.ts`, run by `bun test test/engine-sql-transaction.test.ts` |
+| Schema migration | `bun run new:migration <snake_name>` writes `src/core/schema-migrations/v<NNN>-<name>.ts`; fresh-install DDL in `src/schema.sql` (or the TS fragment its region banner names); a forward-reference probe in `src/core/engine-sql/bootstrap.ts` only when the schema blob references a column older brains lack | `src/core/schema-migrations/registry.generated.ts` (generated) | `new:migration` already regenerates the registry; rerun `bun run build:schema-migrations` only after editing or renaming a migration file. `bun run build:schema` whenever `schema.sql` or a fragment changed. Every object a fresh install should have goes in `schema.sql` (or its fragment) as well as the migration; grep `src/schema.sql` first so you do not add a second index on the same columns | `bun test test/scripts/build-schema-migrations.test.ts test/migrate.test.ts`, then `GBRAIN_TEST_UPDATE_GOLDENS=1 bun test test/migrations-golden.test.ts test/schema-catalog-golden.test.ts` and review the golden diff |
+| Doctor check | A `{ name, emits, run }` entry in the topic module under `src/commands/doctor/checks/` (a new topic gets a new file): `name` and `emits` are string literals, and `run` names a top-level `async function run<X>(ctx): Promise<Check[]>` in the same file that builds `const checks: Check[] = []` and calls `checks.push({ name: '<literal>', ... })` directly (the `emits` test walks that AST; helpers and returned array literals are invisible to it) | `DOCTOR_CHECK_REGISTRY` in `src/commands/doctor/registry.ts` (position = output order; `test/doctor-registry-golden.test.ts` pins `dangling_aliases` as the last check, so insert before `searchModeEntry`) and every emitted name in `src/core/doctor-categories.ts` | The doctor goldens, deliberately: `GBRAIN_TEST_UPDATE_GOLDENS=1 bun test test/doctor-registry-golden.test.ts test/doctor-json-golden.test.ts` | `test/doctor-<name>.test.ts` on in-memory PGLite (copy `test/doctor-slug-collisions.test.ts`), plus `bun test test/doctor-registry.test.ts` |
+| CLI-only command | The implementation in `src/commands/<name>.ts`; the dispatch module `src/cli/commands/<name>.ts`; a help line in `printHelp` (`src/cli.ts`, so raise its `module-size-limits.tsv` ceiling by one) | A record in `CLI_COMMANDS` (`src/cli/command-table.ts`): `phase: 'pre-connect'` when the command never touches the database, `'post-connect'` when its `run(engine, args, ctx)` needs an engine; `thinClient: 'none'` unless remote brains must refuse it (`'refuse'`, or `'route-then-refuse'` for subcommand routing); `selfHelp: true` when the command has flags or subcommands (its `run` then prints its own `--help`); optional `skipStartupHooks`; `load: () => import('<literal>')` | `bun run build:flag-registry`; the CLI goldens, deliberately: `GBRAIN_TEST_UPDATE_GOLDENS=1 bun test test/cli-goldens.test.ts test/cli-dispatch-phase.test.ts test/cli-dispatch-thin-client.test.ts` | `test/<name>.test.ts` spawning `bun src/cli.ts <name>` and asserting output and exit code, plus `bun test test/cli-command-table.test.ts test/cli-flag-validation.test.ts` |
+| HTTP route (`gbrain serve --http`) | The route inside `mount<Area>(app, ctx)` in `src/commands/serve-http-<area>.ts` (`/admin/api/*` goes in `serve-http-admin-api.ts`, `/mcp` in `serve-http-mcp.ts`, OAuth in `serve-http-oauth.ts`); a new area is a new module plus one mount call in `buildServeHttpApp` (`src/commands/serve-http.ts`). An `/admin` route takes `ctx.requireAdmin` before its handler | None for a route in an existing area; a new area adds its mount call in `buildServeHttpApp` (order matters) | The route goldens, deliberately: `GBRAIN_TEST_UPDATE_GOLDENS=1 bun test test/serve-http-route-golden.test.ts test/serve-http-route-runtime-golden.test.ts` | A behavior test (`test/serve-http-<area>-<route>.test.ts`: mount the area on a bare `express()` app with a stub ctx; `mountAdminApi` reads `requireAdmin`, `sseClients` and `mcpResourceUrl` at mount time) plus `bun test test/serve-http-admin-route-guard.test.ts`, which finds the new route by itself |
+| Sync phase | A module under `src/commands/sync/` taking `(run, Pick<SyncPlan, ...>, ...)` and returning `SyncResult \| undefined`; state it shares across awaits becomes a field on `SyncRun` (`src/commands/sync/sync-run.ts`). A value for the final summary flows `SyncRun` field -> `finalizeIncrementalSync` (`sync/finalize.ts`) -> `SyncResult` (`src/commands/sync.ts`, raise its ceiling) -> `printSyncResult` (`sync/report.ts`) when it should print | The phase call order in `performSyncInner` (`src/commands/sync/incremental.ts`) | Nothing | A case in `test/sync-run-ordering.serial.test.ts` (it has the git-repo + PGLite harness: `commitPages`, `performSync`), plus `bun test test/sync.test.ts test/sync-run-ordering.serial.test.ts` |
+
+A golden regenerated on purpose is a reviewer-visible diff: say in the PR body
+why the output changed. Regenerate generated files instead of merging them
+(`registry.generated.ts`, `schema-embedded.generated.ts`,
+`pglite-schema.generated.ts`, `cli-flag-registry.generated.ts`).
+
+### Which directory?
+
+| If your code is... | It goes in | Not in |
+|---|---|---|
+| SQL behind a `BrainEngine` method, shared by both engines | `src/core/engine-sql/<domain>.ts` | an engine file (only dialect-specific code stays in `pglite-engine/` or `postgres-engine/`, marked `// engine-sql-ok: <reason>`) |
+| A blob storage backend (files, attachments; S3, Supabase Storage, local disk) | `src/core/storage/` behind `src/core/storage.ts` | `engine-sql/` (that is the database) |
+| Durable write-path protocol above the engine (requests, owner coordination, recovery, writer enforcement) | `src/core/persistence/` | `engine-sql/` (it holds statements, not protocols) |
+| A numbered DDL change applied on `initSchema` (`schema_version`) | `src/core/schema-migrations/` | `src/commands/migrations/` |
+| A versioned upgrade orchestrator run once per release (`gbrain apply-migrations`, host work) | `src/commands/migrations/` (agent notes in `skills/migrations/`) | `schema-migrations/` |
+| One step of an incremental sync run that shares `SyncRun` state | `src/commands/sync/<phase>.ts` | `src/core/sync-*.ts` |
+| Sync logic other code reuses (cost gate, git helpers, locks, reconcile, status report) | `src/core/sync-*.ts` (no `SyncRun`) | `src/commands/sync/` |
+| SQL on OAuth, admin or auth tables outside `BrainEngine` (scalar binds only) | `sqlQueryForEngine` from `src/core/sql-query.ts` (`executeRawJsonb` for JSONB) | the engine-sql executor, which only engines hand out |
+| SQL inside an engine method | the `SqlExecutor` the engine passes to `src/core/engine-sql/<domain>.ts` | `sql-query.ts` |
+| An HTTP route | `src/commands/serve-http-<area>.ts` (flat files, one per area) | a new directory or back in `serve-http.ts` |
+| CLI-only command wiring | `src/cli/commands/<name>.ts` (dispatch glue) + a `src/cli/command-table.ts` record | new branches in `src/cli.ts` |
+| A CLI-only command's behavior | `src/commands/<name>.ts` | `src/cli/commands/` |
+| A built-in Minion job handler | `src/core/minions/handlers/<name>.ts`, registered in `registerBuiltinHandlers` (`src/commands/jobs.ts`) | the body of `jobs.ts` |
+| A hybrid search step | the stage module in `src/core/search/hybrid/` that owns it | the body of `hybridSearch` |
+
+### Worked example: an engine-sql read and write
+
+Say the salience domain needs a count of salient pages (a read) and a way to
+clear emotional weight (a write). The domain is migrated (`migrated salience`
+in `scripts/engine-sql-baseline.tsv`); a domain that is not migrated yet
+works the same way, and its older methods move over later.
+
+1. **Declare the methods** on `BrainEngine` in `src/core/engine.ts`:
+
+   ```ts
+   countSalientPages(opts: { minWeight: number; sourceId?: string; sourceIds?: string[] }): Promise<number>;
+   clearEmotionalWeight(slugs: string[], sourceId: string): Promise<number>;
+   ```
+
+   The source scope arrives already resolved: the op layer turns the caller's
+   context into `sourceId` / `sourceIds` with `sourceScopeOpts(ctx)`. Store
+   functions filter on it and never resolve it themselves.
+
+2. **Write the SQL once** in `src/core/engine-sql/salience.ts`:
+
+   ```ts
+   import type { SqlExecutor } from './executor.ts';
+   import type { ScopedRead } from './brands.ts';
+   import { sqlFragment } from './fragment.ts';
+   import { compileRowNormalizer } from './normalize.ts';
+
+   // Declared once at module scope: int8 arrives as a string from postgres.js
+   // and as a number from PGLite; the declared kind makes both a number.
+   // Declare only columns that need conversion (jsonb, bigint, date, vector,
+   // text[]); plain text and numeric columns pass through untouched.
+   const normalizeCount = compileRowNormalizer<{ n: number }>({ n: 'bigint' });
+
+   export async function countSalientPages(
+     exec: ScopedRead,
+     opts: { minWeight: number; sourceId?: string; sourceIds?: string[] },
+   ): Promise<number> {
+     const scope = opts.sourceIds && opts.sourceIds.length > 0
+       ? sqlFragment`AND p.source_id = ANY(${opts.sourceIds}::text[])`
+       : opts.sourceId
+         ? sqlFragment`AND p.source_id = ${opts.sourceId}`
+         : sqlFragment``;
+     const { rows } = await exec.run(sqlFragment`
+       SELECT count(*)::bigint AS n
+         FROM pages p
+        WHERE p.emotional_weight >= ${opts.minWeight}
+          AND p.deleted_at IS NULL
+          ${scope}
+     `);
+     return normalizeCount(rows[0] ?? { n: 0 }).n;
+   }
+
+   export async function clearEmotionalWeight(exec: SqlExecutor, slugs: string[], sourceId: string): Promise<number> {
+     if (slugs.length === 0) return 0;
+     const { affectedRows } = await exec.run(sqlFragment`
+       UPDATE pages SET emotional_weight = 0
+        WHERE slug = ANY(${slugs}::text[]) AND source_id = ${sourceId}
+          AND emotional_weight <> 0
+     `);
+     return affectedRows;
+   }
+   ```
+
+   Parameter encoding: every value is a `${}` inside `sqlFragment`, which
+   numbers the placeholders when the statement renders; never write `$1` in a
+   composed string. Lists bind as one array, `= ANY(${ids}::text[])`, never as
+   an expanded `IN (...)`. JSONB goes through `jsonbParam(obj)` (see
+   `writeContradictionsRun` in `engine-sql/takes.ts`), never
+   `JSON.stringify` into a `::jsonb` cast. A vector binds as its text literal
+   with a `::vector` cast, a `bigint` with an explicit `::bigint`, and a
+   `Date` as-is. Only constant text may be spliced with `trustedSql(...)`.
+   Read results go through a declared normalizer, and write counts through
+   `affectedRows`; never read the driver's `.count`.
+
+3. **Delegate from both engines**, choosing the read's RLS scope. The brand
+   on the read's parameter decides how the engine must obtain the executor:
+   `ScopedRead` for a source-scoped read that should bind `app.scopes` when
+   `GBRAIN_RLS_SCOPE_BINDING` is on (follow the domain's sibling reads), and
+   `LegacyUnscopedRead` via `unscopedExecutor(this.engineSql, '<specific reason>')`
+   for a read that runs on the pool with no scope transaction. Writes take the
+   plain `this.engineSql`.
+
+   ```ts
+   // src/core/postgres-engine.ts
+   async countSalientPages(opts: { minWeight: number; sourceId?: string; sourceIds?: string[] }): Promise<number> {
+     return this.withScopedReadTransaction(opts.sourceIds, opts.sourceId, async (tx) =>
+       salienceImpl.countSalientPages(scopedRead(this.engineSqlOn(tx)), opts));
+   }
+   async clearEmotionalWeight(slugs: string[], sourceId: string): Promise<number> {
+     return salienceImpl.clearEmotionalWeight(this.engineSql, slugs, sourceId);
+   }
+
+   // src/core/pglite-engine.ts (no RLS layer: the engine brands its own executor)
+   async countSalientPages(opts: { minWeight: number; sourceId?: string; sourceIds?: string[] }): Promise<number> {
+     return salienceImpl.countSalientPages(scopedRead(this.engineSql), opts);
+   }
+   async clearEmotionalWeight(slugs: string[], sourceId: string): Promise<number> {
+     return salienceImpl.clearEmotionalWeight(this.engineSql, slugs, sourceId);
+   }
+   ```
+
+   `this.engineSql` is a getter that builds a fresh adapter over the engine's
+   current connection on every access. Never store it: inside
+   `engine.transaction()` the engine is a clone whose connection is the
+   transaction, and a cached executor would write outside it.
+
+4. **Test it.** A PGLite unit test for both methods, with the canonical
+   PGLite block from [docs/TESTING.md](docs/TESTING.md#test-isolation-lint-and-helpers).
+   A rollback case for the write in `test/helpers/engine-sql-rollback-cases.ts`
+   (`bun test test/engine-sql-transaction.test.ts` runs it on PGLite; the E2E
+   twin runs it on Postgres). A Postgres arm in the domain's parity E2E
+   (`test/e2e/engine-parity-salience.test.ts`), which the backend matrix runs
+   on direct Postgres and PgBouncer. `bun run verify` then runs the
+   engine-sql guards: the ratchet (no SQL left in the engines), the
+   dynamic-SQL scanner (only constant text spliced), the brand guard (no
+   forged `ScopedRead`) and the layering guard (engine-sql never imports an
+   engine). See [docs/TESTING.md, "Engine-sql"](docs/TESTING.md#engine-sql).
 
 ## Adding a new engine
 
-See `docs/ENGINES.md` for the full guide. In short:
+See [`docs/ENGINES.md`](docs/ENGINES.md#adding-a-new-engine) for the full guide. In short:
 
-1. Create `src/core/myengine-engine.ts` implementing `BrainEngine`
-2. Add to the engine factory in `src/core/engine-factory.ts`
-3. Run the test suite against your engine
-4. Document in `docs/`
+1. Create `src/core/myengine-engine.ts` implementing `BrainEngine`, and add it to
+   the engine factory in `src/core/engine-factory.ts`.
+2. If it speaks the Postgres dialect, write a dialect adapter implementing
+   `SqlExecutor` (`src/core/engine-sql/executor.ts`) next to `dialect-pglite.ts`
+   and `dialect-postgres.ts`, and delegate every migrated domain to
+   `src/core/engine-sql/<domain>.ts` exactly as the two engines do; the domain
+   SQL, the RLS read brands and the forward-reference bootstrap come for free.
+   Methods of domains that are not migrated yet are written in the engine.
+3. A non-SQL engine implements every method itself.
+4. Run the engine-agnostic suites against it (the engine-sql contract tests in
+   [docs/TESTING.md](docs/TESTING.md#engine-sql) plus `test/e2e/engine-parity.test.ts`)
+   and document it in `docs/`.
 
 The original SQLite engine plan was superseded by PGLite (embedded Postgres 17 via WASM), which uses the same SQL dialect as Postgres and eliminates the need for a separate FTS5/sqlite-vss translation layer. See [`docs/ENGINES.md`](docs/ENGINES.md) for the engine architecture and the rationale.
 
@@ -359,13 +578,13 @@ regressions so you can eyeball whether the change is hurting real queries.
 
 Trigger paths (rerun if your diff touches any of these):
 
-- `src/core/search/hybrid.ts`
+- `src/core/search/hybrid.ts` and its stages in `src/core/search/hybrid/`
 - `src/core/search/source-boost.ts`, `sql-ranking.ts`
 - `src/core/search/query-intent.ts`, `expansion.ts`, `dedup.ts`
 - `src/core/embedding.ts`
 - `src/core/ops/search.ts` (query / search op handlers)
 - `src/core/postgres-engine.ts` / `pglite-engine.ts` (searchKeyword /
-  searchVector SQL)
+  searchVector SQL) and any search SQL under `src/core/engine-sql/`
 
 See [`docs/eval-bench.md`](./docs/eval-bench.md) for the full guide
 including CI integration, hand-crafted NDJSON corpora (so a fresh checkout

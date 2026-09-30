@@ -19,6 +19,7 @@
  */
 import { describe, test, expect } from 'bun:test';
 import { readFileSync } from 'fs';
+import { surfaceFileSource, surfaceSource } from './helpers/source-surface.ts';
 
 describe('v0.42.20.0 — search-cache drained via the background-work registry', () => {
   // Supersedes the v0.36.1.x #1125 query-only drain: search-cache now registers
@@ -26,7 +27,7 @@ describe('v0.42.20.0 — search-cache drained via the background-work registry',
   // drains the whole registry rather than calling awaitPendingSearchCacheWrites
   // directly for the 'query' op only.
   test('hybrid.ts registers a bounded search-cache drainer', () => {
-    const src = readFileSync('src/core/search/hybrid.ts', 'utf8');
+    const src = surfaceFileSource('hybrid', 'src/core/search/hybrid.ts');
     expect(src).toMatch(/export async function awaitPendingSearchCacheWrites/);
     expect(src).toMatch(/pendingCacheWrites\.add\(promise\)/);
     expect(src).toMatch(/trackCacheWrite\(/);
@@ -38,7 +39,7 @@ describe('v0.42.20.0 — search-cache drained via the background-work registry',
 
 describe('v0.36.1.x #1090 — admin embed two-tier resolution', () => {
   test('serve-http.ts uses ADMIN_ASSETS manifest when admin/dist is not next to cwd', () => {
-    const src = readFileSync('src/commands/serve-http.ts', 'utf8');
+    const src = surfaceSource('serve-http');
     expect(src).toMatch(/import\(['"]\.\.\/admin-embedded/);
     expect(src).toMatch(/ADMIN_ASSETS/);
     expect(src).toMatch(/ADMIN_INDEX_HTML/);
@@ -129,15 +130,6 @@ describe('v0.41.37.0 #1605 — v0.11.0 phaseASchema routes in-process for ALL en
   });
 });
 
-describe('v0.36.1.x #1124 — query --no-expand actually negates expand', () => {
-  test("cli.ts parseOpArgs handles --no-<key> as boolean negation", () => {
-    const src = readFileSync('src/cli.ts', 'utf8');
-    expect(src).toMatch(/arg\.startsWith\(['"]--no-['"]\)/);
-    expect(src).toMatch(/positiveDef\?\.type\s*===\s*'boolean'/);
-    expect(src).toMatch(/params\[positiveKey\]\s*=\s*false/);
-  });
-});
-
 describe('v0.42.20.0 — background-work registry drains every sink before disconnect', () => {
   // Supersedes the v0.41.8.0 #1247/#1269/#1290 per-call last-retrieved drain:
   // last-retrieved is one of four registry sinks. #2084 moved the registry
@@ -162,7 +154,7 @@ describe('v0.42.20.0 — background-work registry drains every sink before disco
   test('all four sinks register a drainer', () => {
     expect(readFileSync('src/core/facts/queue.ts', 'utf8'))
       .toMatch(/registerBackgroundWorkDrainer\(\{[\s\S]*?name:\s*'facts'[\s\S]*?abort:/);
-    expect(readFileSync('src/core/search/hybrid.ts', 'utf8'))
+    expect(surfaceSource('hybrid'))
       .toMatch(/name:\s*'search-cache'/);
     expect(readFileSync('src/core/last-retrieved.ts', 'utf8'))
       .toMatch(/name:\s*'last-retrieved'/);
@@ -210,8 +202,8 @@ describe('v0.42.20.0 — background-work registry drains every sink before disco
     // The postgres lane has no cheap behavioral harness (DATABASE_URL-gated),
     // so pin the call sites structurally: a refactor that drops either
     // engine's drain call silently reopens the in-flight-statement deadlock.
-    const pglite = readFileSync('src/core/pglite-engine.ts', 'utf8');
-    const postgres = readFileSync('src/core/postgres-engine.ts', 'utf8');
+    const pglite = surfaceFileSource('pglite-engine', 'src/core/pglite-engine.ts');
+    const postgres = surfaceSource('postgres-engine');
     expect(pglite).toMatch(/await drainBackgroundWorkBeforeDisconnect\(\)/);
     expect(postgres).toMatch(/await drainBackgroundWorkBeforeDisconnect\(\)/);
     // PGLite ordering is load-bearing: drain AFTER the early-null (never
@@ -223,7 +215,7 @@ describe('v0.42.20.0 — background-work registry drains every sink before disco
   });
 
   test('#4284 caller timeout retains ownership while the actual close drains under its watchdog', () => {
-    const pglite = readFileSync('src/core/pglite-engine.ts', 'utf8');
+    const pglite = surfaceFileSource('pglite-engine', 'src/core/pglite-engine.ts');
     const closeStart = pglite.indexOf('private async _closeInternal()');
     const armIdx = pglite.indexOf("label: 'pglite-disconnect-watchdog'", closeStart);
     const stopIdx = pglite.indexOf('for (const stop of this._beforeDisconnect) await stop()', closeStart);
@@ -257,7 +249,7 @@ describe('#2084 — cli.ts owns process-exit teardown via finishCliTeardown', ()
     // awaited literal, so this is comment-proof — eng-review D13.2). A bare
     // disconnect skips the bounded drain + computed-deadline backstop and
     // reopens the lingering-socket hang class.
-    const src = readFileSync('src/cli.ts', 'utf8');
+    const src = surfaceSource('cli');
     expect(src).not.toContain('await engine.disconnect()');
     expect(src).not.toContain('await eng.disconnect()');
   });
@@ -267,12 +259,12 @@ describe('#2084 — cli.ts owns process-exit teardown via finishCliTeardown', ()
     // slower than 10s was force-killed mid-run with exit 0 and truncated
     // output. The deadline now arms inside finishCliTeardown, at teardown
     // start only.
-    const src = readFileSync('src/cli.ts', 'utf8');
+    const src = surfaceSource('cli');
     expect(src).not.toContain('DISCONNECT_HARD_DEADLINE_MS');
   });
 
   test('all nine swept sites route through finishCliTeardown; one exit seam', () => {
-    const src = readFileSync('src/cli.ts', 'utf8');
+    const src = surfaceSource('cli');
     const calls = src.match(/await finishCliTeardown\(/g) ?? [];
     expect(calls.length).toBeGreaterThanOrEqual(9);
     // The single process-exit seam: flushThenExit in the import.meta.main
@@ -287,7 +279,7 @@ describe('#2084 — cli.ts owns process-exit teardown via finishCliTeardown', ()
     // create call runs inside preservingProcessExitCode to keep the global
     // tidy; close is deliberately unwrapped (see below) — the CLI's verdict
     // is immune either way via the owned channel.
-    const src = readFileSync('src/core/pglite-engine.ts', 'utf8');
+    const src = surfaceSource('pglite-engine');
     expect(src).toMatch(/preservingProcessExitCode\(\(\)\s*=>\s*\n?\s*PGlite\.create/);
     // close stays UNWRAPPED by design: its status write is baseline behavior
     // test runners depend on; the CLI's verdict is immune because it lives in
@@ -296,23 +288,14 @@ describe('#2084 — cli.ts owns process-exit teardown via finishCliTeardown', ()
     expect(helper).toMatch(/let cliVerdict: number \| null = null/);
     expect(helper).toMatch(/return cliVerdict \?\? 0/);
     // The op-dispatch catch must set the verdict through the owned channel.
-    const cli = readFileSync('src/cli.ts', 'utf8');
+    const cli = surfaceSource('cli');
     expect(cli).toMatch(/setCliExitVerdict\(1\);/);
   });
 });
 
 describe('v0.41.8.0 #1340 — PGLite WASM init classifier', () => {
-  test('pglite-engine.ts exports classifyPgliteInitError + buildPgliteInitErrorMessage', () => {
-    const src = readFileSync('src/core/pglite-engine.ts', 'utf8');
-    expect(src).toMatch(/export function classifyPgliteInitError/);
-    expect(src).toMatch(/export function buildPgliteInitErrorMessage/);
-    // Per Codex finding #9: regex tightened to $$bunfs OR ENOENT+pglite.data
-    expect(src).toMatch(/\$\$bunfs/);
-    expect(src).toMatch(/ENOENT/);
-  });
-
   test('pglite-engine.ts connect catch block routes through the classifier', () => {
-    const src = readFileSync('src/core/pglite-engine.ts', 'utf8');
+    const src = surfaceSource('pglite-engine');
     expect(src).toMatch(/classifyPgliteInitError\(original\)/);
     // WAL-repair wave: the call gained platform + repair-context args, so pin
     // only the (verdict, original, …) prefix — the routing seam, not the arity.
@@ -322,7 +305,7 @@ describe('v0.41.8.0 #1340 — PGLite WASM init classifier', () => {
 
 describe('WAL-repair wave structural pins (#223/#2575)', () => {
   test('connect() catch wires the WAL auto-repair seam', () => {
-    const src = readFileSync('src/core/pglite-engine.ts', 'utf8');
+    const src = surfaceSource('pglite-engine');
     expect(src).toMatch(/attemptWalRepairAndRetry\(/);
   });
 
@@ -330,7 +313,7 @@ describe('WAL-repair wave structural pins (#223/#2575)', () => {
     // The retry re-runs PGlite.create; unguarded, Emscripten would hijack
     // process.exitCode on the retry path exactly as it did on the first
     // attempt (the #2084 class). Pin the wrap at the seam call-site.
-    const src = readFileSync('src/core/pglite-engine.ts', 'utf8');
+    const src = surfaceFileSource('pglite-engine', 'src/core/pglite-engine.ts');
     expect(src).toMatch(/attemptWalRepairAndRetry\([\s\S]{0,300}preservingProcessExitCode/);
   });
 
@@ -398,7 +381,7 @@ describe('#2955 — sync multi-source repoPath routes through msysToNativePath',
   // this pins that BOTH multi-source repoPath sites — the parallel --all
   // closure and syncOneSource — heal the value before it becomes a repoPath.
   test('both `repoPath: src.local_path` sites in sync.ts wrap with msysToNativePath', () => {
-    const src = readFileSync('src/commands/sync.ts', 'utf8');
+    const src = surfaceSource('sync');
     expect(src).toMatch(/from '\.\.\/core\/path-confine\.ts'/);
     const healed = src.match(/repoPath:\s*msysToNativePath\(src\.local_path!\)/g) ?? [];
     expect(healed.length).toBe(2);

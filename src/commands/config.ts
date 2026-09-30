@@ -10,6 +10,7 @@ import {
 } from '../core/search/embedding-column.ts';
 
 import { redactPgUrl } from '../core/url-redact.ts';
+import { WRITER_ADMIN_LOCK_KEY } from '../core/persistence/admin-contract.ts';
 
 // v0.36.x #892: sensitive config-key allowlist. The `show` path used a
 // loose `.includes('key')` check that also redacts (works); the `set` path
@@ -220,6 +221,17 @@ export async function tryRunConfigEngineFree(args: string[]): Promise<boolean> {
 
 export async function runConfig(engine: BrainEngine, args: string[]) {
   const action = args[0];
+
+  // The writer admin lock is reserved for `gbrain sources writer lock|unlock`; --force is no escape.
+  if (action === 'set' || action === 'unset') {
+    const patternAt = action === 'unset' ? args.indexOf('--pattern') : -1;
+    const target = patternAt >= 0 ? args[patternAt + 1] : args.filter(a => a !== '--raw')[1];
+    if (target && (patternAt >= 0 ? WRITER_ADMIN_LOCK_KEY.startsWith(target) : target === WRITER_ADMIN_LOCK_KEY)) {
+      console.error(`[config] ${WRITER_ADMIN_LOCK_KEY} is reserved: only \`gbrain sources writer lock\` and \`gbrain sources writer unlock\` on the brain host change it.`);
+      console.error(`[config] ${patternAt >= 0 ? `The pattern "${target}" covers that key. Nothing was deleted.` : 'Nothing was written.'}`);
+      process.exit(1);
+    }
+  }
 
   if (action === 'show') {
     const config = loadConfig();
@@ -835,14 +847,29 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
     const coverageOverride =
       args.includes('--coverage-override') || args.includes('--yes');
 
+    // #5470: every admission parses the journal caps; a malformed value
+    // would refuse all managed writes, so reject it here.
+    const { JOURNAL_CONFIG_KEYS, parseJournalConfigValue } = await import('../core/persistence/limits.ts');
+    if (JOURNAL_CONFIG_KEYS.includes(key)) {
+      try { parseJournalConfigValue(key, value); }
+      catch (error) { console.error(`[config] ${(error as Error).message}`); process.exit(1); }
+    }
+
+    // #5254: an unknown value would silently keep refusing unbound writes.
+    const { UNBOUND_WRITE_KEY, parseUnboundWriteValue } = await import('../core/persistence/unbound-source.ts');
+    if (key === UNBOUND_WRITE_KEY) {
+      try { parseUnboundWriteValue(value); }
+      catch (error) { console.error(`[config] ${(error as Error).message}`); process.exit(1); }
+    }
+
     // #4348: validate cycle.timezone at set time — resolveCycleDate falls
     // back loudly at run time, but the typo should be rejected here, at the
     // moment the operator can fix it.
-    if (key === 'cycle.timezone') {
+    if (key === 'cycle.timezone' || key === 'brain.timezone') {
       const { isValidTimeZone } = await import('../core/cycle/cycle-date.ts');
       if (!isValidTimeZone(value)) {
         console.error(
-          `[config] cycle.timezone must be a valid IANA timezone ` +
+          `[config] ${key} must be a valid IANA timezone ` +
           `(for example Asia/Kolkata or America/Los_Angeles; got '${value}').`,
         );
         process.exit(1);

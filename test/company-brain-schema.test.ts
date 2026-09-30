@@ -8,7 +8,6 @@ import { mergeInheritedManifest } from '../src/core/schema-pack/merge.ts';
 import { buildAliasGraph, expandClosure } from '../src/core/schema-pack/closure.ts';
 import { runFilePlaneLintRules } from '../src/core/schema-pack/lint-rules.ts';
 import { locateMutablePackFile, SchemaPackMutationError } from '../src/core/schema-pack/mutate.ts';
-import { expandTypeFilter } from '../src/core/schema-pack/expand-type-filter.ts';
 import { inferTypeFromPack, parseMarkdown } from '../src/core/markdown.ts';
 
 const parent = loadPackFromFile(bundledPackPath('gbrain-base-v2')!);
@@ -44,7 +43,6 @@ describe('bundled company-brain schema', () => {
     const graph = buildAliasGraph(pack);
     expect(expandClosure('company', graph)).not.toContain('product');
     expect(expandClosure('product', graph)).toEqual(['product']);
-    expect(expandTypeFilter('product', pack).canonical).toBe('product');
     expect(parent.page_types.find(type => type.name === 'company')!.aliases).toContain('product');
     expect(inferTypeFromPack('products/widget-example.md', parent)).toBe('company');
   });

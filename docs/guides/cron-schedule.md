@@ -95,7 +95,7 @@ infer your current location and timezone. All times shown in YOUR local timezone
 // Hold the notification, fold into morning briefing
 
 get_user_timezone():
-  calendar = gbrain search "flight" --type calendar --recent 7d
+  calendar = gbrain query "flight" --types calendar --since 7d
   if recent_flight:
     return infer_timezone(flight.destination)
   return config.default_timezone  // fallback: US/Pacific
@@ -150,9 +150,13 @@ per-transcript synthesis subagents. The dials:
   gate, so a reconcile sweep never cancels rescued jobs. Telemetry:
   `details.triage.rescue_checked` / `rescue_fired`.
 - `dream.synthesize.quote_verify` (default on) — the mechanical post-write
-  quote verify/repair pass on newly-created dream pages (paraphrased "quotes"
-  are repaired to verbatim transcript slices or unquoted; never invented).
-  The off switch is the incident escape hatch; telemetry lands in
+  claim check on every page a synthesis child wrote. Paraphrased quotes are
+  repaired to verbatim transcript slices; a sentence whose quote grounds
+  nowhere, spans two speakers, is attributed to the wrong speaker, or states a
+  number or date the transcript lacks is moved out of the page body into
+  frontmatter `unverified_claims`, so search, recall and think never see it.
+  Pages that already existed are checked only on the sentences this run
+  added. The off switch is the incident escape hatch; telemetry lands in
   `details.synthesis.quote_verify`.
 - `dream.synthesize.max_turns` (default 16) — synthesis turn budget for
   agentic children and oneshot fallbacks (the default oneshot path — see
@@ -224,8 +228,21 @@ of indistinguishable from a stuck one), and `dead_jobs`/`degraded`. A run
 with any non-completed child does NOT stamp the cooldown, so the next
 nightly retries exactly the failed transcripts; a run whose EVERY child
 died fails the phase loudly. Synthesis children also fail (dead-letter)
-when every attempted page write failed — `completed` never means
-"zero pages written".
+when every attempted page write failed, or when they attempted no page
+write and stopped dirty, finished with prose instead of calling the write
+tool, or had only failed tool calls. A `completed` child with zero pages written is a
+deliberate answer: the model explicitly skipped the transcript
+(`{"pages":[],"skipped":true}`), or a patterns child ran its tools and found
+nothing new. It completes so the cooldown stamps instead of re-billing the
+same input.
+
+A dream key whose submissions died `dream.breaker.max_dead_submissions`
+times (default 3; `0` disables) within 24 hours is refused before the next
+submission, and `gbrain doctor` reports it as `dream_paid_loop`. Fix the
+cause first (a missing provider key, a quota, a failing transcript), then
+`gbrain dream reset-key --list` shows the refused keys and
+`gbrain dream reset-key '<key>'` re-enables one. Details in
+[spend controls](../operations/spend-controls.md#dream-paid-loop-breaker-dreambreakermax_dead_submissions).
 
 Three more fields answer "what did that cost and did it land":
 
@@ -238,9 +255,14 @@ Three more fields answer "what did that cost and did it land":
 - `children_zero_pages` — children that completed but wrote no page. A number
   that climbs here means the model is producing valid-but-empty output, which
   a green phase status alone would hide.
-- `quote_verify` — what the post-write quote pass touched: spans checked,
-  repaired, and stripped, pages skipped as pre-existing, unbalanced paragraphs,
-  and the warn-only ungrounded numeric/date claim count.
+- `quote_verify` — what the post-write claim check touched: quotes checked
+  and repaired, sentences quarantined (with counts per reason:
+  `quote_not_in_source`, `quote_crosses_speakers`, `speaker_mismatch`,
+  `number_not_in_source`, `decision_misattributed`), pre-existing pages
+  checked by diff, and unbalanced paragraphs. `decision_misattributed` is a
+  sentence saying a speaker decided, agreed or will do something whose
+  numbers or dates only another speaker stated and the named speaker never
+  explicitly accepted.
 
 Per-call spend also lands in the `chat_usage_log` ledger with a phase tag:
 the orchestrator's own calls under `phase:synthesize`, each drained child

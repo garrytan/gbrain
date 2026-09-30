@@ -265,6 +265,43 @@ describe('applyReranker — fail-open on every RerankError reason', () => {
   });
 });
 
+describe('applyReranker — a hard failure reports onFailure (read-path audit #5)', () => {
+  const failWith = async (err: unknown) => {
+    const seen: string[] = [];
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gbrain-rerank-onfailure-'));
+    try {
+      await withEnv({ GBRAIN_AUDIT_DIR: tmpDir }, async () => {
+        const results = [makeResult('a', 1.0, 'a'), makeResult('b', 0.5, 'b')];
+        const out = await applyReranker('q', results, {
+          enabled: true, topNIn: 2, topNOut: null,
+          rerankerFn: async () => { throw err; },
+          onFailure: (reason) => { seen.push(reason); },
+          onSkip: () => { seen.push('skip'); },
+        });
+        expect(out).toEqual(results);
+      });
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+    return seen;
+  };
+
+  test('HTTP / network / unknown errors report provider_error', async () => {
+    expect(await failWith(new RerankError('HTTP 503 upstream', 'network', 503))).toEqual(['provider_error']);
+    expect(await failWith(new RerankError('forced', 'auth', 401))).toEqual(['provider_error']);
+    expect(await failWith(new Error('arbitrary'))).toEqual(['provider_error']);
+  });
+
+  test('timeout and budget keep their reason', async () => {
+    expect(await failWith(new RerankError('slow', 'timeout'))).toEqual(['timeout']);
+    expect(await failWith(new BudgetExhausted('cap', { reason: 'no_pricing', spent: 0, cap: 1, modelId: 'acmecorp:r' }))).toEqual(['budget']);
+  });
+
+  test('a missing key is a skip, not a failure', async () => {
+    expect(await failWith(new RerankError('no key', 'no_key'))).toEqual(['skip']);
+  });
+});
+
 describe('applyReranker — #4648 success-shaped pass-throughs leave a trace', () => {
   test('empty result set for a non-empty batch: audit row (empty_result_set) + onPassThrough + unchanged results', async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gbrain-rerank-empty-'));
@@ -414,5 +451,43 @@ describe('applyReranker — pass-through cases', () => {
     const out = await applyReranker('q', [], opts);
     expect(out).toEqual([]);
     expect(called).toBe(false);
+  });
+});
+
+describe('applyReranker — equal rerank scores (#5428)', () => {
+  test('a run of exactly equal scores keeps the fused order, not the provider order', async () => {
+    const results = [
+      makeResult('people/alice-example', 1.0, 'canonical page'),
+      makeResult('chats/log', 0.9, 'chat log'),
+      makeResult('notes/other', 0.8, 'other'),
+      makeResult('notes/tail', 0.7, 'tail'),
+    ];
+    const out = await applyReranker('q', results, {
+      enabled: true,
+      topNIn: 4,
+      topNOut: null,
+      rerankerFn: async () => [
+        { index: 2, relevanceScore: 0.95 },
+        { index: 1, relevanceScore: 0.90234375 },
+        { index: 3, relevanceScore: 0.90234375 },
+        { index: 0, relevanceScore: 0.90234375 },
+      ],
+    });
+    expect(out.map(r => r.slug)).toEqual(['notes/other', 'people/alice-example', 'chats/log', 'notes/tail']);
+    expect(out.map(r => r.reranker_delta)).toEqual([2, -1, -1, 0]);
+  });
+
+  test('rows never cross a different score, and unscored rows keep their place', async () => {
+    const results = [makeResult('a', 1, 'a'), makeResult('b', 0.9, 'b'), makeResult('c', 0.8, 'c')];
+    const out = await applyReranker('q', results, {
+      enabled: true,
+      topNIn: 3,
+      topNOut: null,
+      rerankerFn: async () => [
+        { index: 2, relevanceScore: 0.9 },
+        { index: 0, relevanceScore: 0.5 },
+      ],
+    });
+    expect(out.map(r => r.slug)).toEqual(['c', 'a', 'b']);
   });
 });

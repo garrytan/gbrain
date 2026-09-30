@@ -17,6 +17,7 @@
 import { test, expect } from 'bun:test';
 import { readFileSync, readdirSync } from 'fs';
 import { resolve, join } from 'path';
+import { surfaceSource } from '../helpers/source-surface.ts';
 
 // Resolve relative to this test file so it works on any machine + in CI.
 const REPO_ROOT = resolve(import.meta.dir, '../..');
@@ -24,7 +25,6 @@ const REPO_ROOT = resolve(import.meta.dir, '../..');
 // assembly façade) — scan the whole ops surface so the negative pin is
 // strictly stronger and a future move can't escape it.
 const OPS_DIR = resolve(REPO_ROOT, 'src/core/ops');
-const HYBRID = resolve(REPO_ROOT, 'src/core/search/hybrid.ts');
 const IMPORT_FILE = resolve(REPO_ROOT, 'src/core/import-file.ts');
 
 function opsSurface(): string {
@@ -47,7 +47,7 @@ test('ops surface put_page does not gate embedding on OPENAI_API_KEY alone', () 
 });
 
 test('hybrid.ts search does not gate vector path on OPENAI_API_KEY alone', () => {
-  const src = readFileSync(HYBRID, 'utf-8');
+  const src = surfaceSource('hybrid');
   expect(src).not.toMatch(/!\s*process\.env\.OPENAI_API_KEY/);
   expect(src).toMatch(/isAvailable\s*\(\s*['"]embedding['"]/);
 });

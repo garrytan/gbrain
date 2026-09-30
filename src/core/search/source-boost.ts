@@ -9,7 +9,9 @@
  * inside sql-ranking.ts). Defaults grounded in the composition of the
  * canonical brain at ~/git/brain/.
  *
- * Override via env: GBRAIN_SOURCE_BOOST="originals/:1.8,openclaw/chat/:0.3"
+ * Per brain: `gbrain config set search.source_boosts "wiki/:1.3,daily/:1.0"`
+ * (`none` drops the defaults). Per process (wins over the brain):
+ * GBRAIN_SOURCE_BOOST="originals/:1.8,openclaw/chat/:0.3"
  * Hard-exclude via env: GBRAIN_SEARCH_EXCLUDE="test/,scratch/"
  */
 
@@ -103,14 +105,22 @@ export function parseHardExcludesEnv(env: string | undefined): string[] {
 }
 
 /**
- * Resolve the effective boost map by merging defaults with env override.
- * Env entries override defaults (shallow merge); env-only entries are added.
+ * Resolve the effective boost map: defaults, then the brain's
+ * `search.source_boosts` config (same `prefix:factor` format; a bare `none`
+ * entry drops the defaults so a brain with a different layout starts from a
+ * neutral map), then the GBRAIN_SOURCE_BOOST env override. Shallow merges;
+ * later layers win per prefix.
  */
 export function resolveBoostMap(
   envValue: string | undefined = process.env.GBRAIN_SOURCE_BOOST,
+  configValue?: string | null,
 ): Record<string, number> {
-  const override = parseSourceBoostEnv(envValue);
-  return { ...DEFAULT_SOURCE_BOOSTS, ...override };
+  const dropDefaults = (configValue ?? '').split(',').some((entry) => entry.trim() === 'none');
+  return {
+    ...(dropDefaults ? {} : DEFAULT_SOURCE_BOOSTS),
+    ...parseSourceBoostEnv(configValue ?? undefined),
+    ...parseSourceBoostEnv(envValue),
+  };
 }
 
 /**

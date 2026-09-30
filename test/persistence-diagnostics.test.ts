@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { runMigrations } from '../src/core/migrate.ts';
+import { LATEST_VERSION, runMigrations } from '../src/core/migrate.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
 import { submissionAuthority } from '../src/core/persistence/authority.ts';
@@ -78,6 +78,7 @@ test('fresh and upgraded engines agree on the database-only pending index', asyn
     expect(fresh.indexdef).toContain('source_incarnation, sequence');
     expect(fresh.indexdef).toContain('worktree_id IS NULL');
     await engine.executeRaw('DROP INDEX persistence_requests_database_pending');
+    await engine.executeRaw('DROP INDEX persistence_effects_parked');
     if (engine.kind === 'postgres') {
       const held = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
       const holding = engine.transaction(async tx => {
@@ -96,11 +97,14 @@ test('fresh and upgraded engines agree on the database-only pending index', asyn
       } finally { abort.abort(); release.resolve(); await holding; await interrupted; }
     }
     await engine.setConfig('version', '164');
-    expect(await runMigrations(engine)).toEqual({ applied: 1, current: 165 });
+    expect(LATEST_VERSION).toBe(178);
+    expect(await runMigrations(engine)).toEqual({ applied: 14, current: 178 });
     const [upgraded] = await engine.executeRaw<{ indexdef: string }>(
       "SELECT indexdef FROM pg_indexes WHERE indexname='persistence_requests_database_pending'");
     expect(upgraded.indexdef).toBe(fresh.indexdef);
-    expect(await engine.getConfig('version')).toBe('165');
+    const [parked] = await engine.executeRaw<{ indexdef: string }>("SELECT indexdef FROM pg_indexes WHERE indexname='persistence_effects_parked'");
+    expect(parked.indexdef).toContain('parked');
+    expect(await engine.getConfig('version')).toBe('178');
   }
 }, 15000);
 

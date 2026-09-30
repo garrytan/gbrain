@@ -1,0 +1,1 @@
+- `src/core/example.ts` — schema parity in schema.sql + pglite-schema.ts.

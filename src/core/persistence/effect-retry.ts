@@ -8,8 +8,9 @@ import { authorizeStoredRequest, authorizeWrite, submissionAuthority } from './a
 import { existingLocalHostId } from './identity.ts';
 import { guardEffectSource } from './effect-recovery.ts';
 import { assertEmbeddingEffectEnabled, readEmbeddingEffectProjection, selectedEffectPage } from './effects.ts';
-import type { PersistenceEffect } from './effect-model.ts';
+import { PARK_AFTER_FAILURES, type PersistenceEffect } from './effect-model.ts';
 import type { WriteRequest } from './model.ts';
+import { targetedWithdrawalEffect, upgradeWithdrawalEffect } from './effect-targets.ts';
 
 async function mountedEmbeddingSignature(engine: BrainEngine): Promise<string> {
   const rows = await engine.executeRaw<{ key: string; value: string }>(`SELECT key,value FROM config
@@ -42,6 +43,74 @@ async function mountedEmbeddingSignature(engine: BrainEngine): Promise<string> {
   return `${model}:${dimensions}`;
 }
 
+/**
+ * #5612: parked Git and withdrawal effects of one committed request. Returns
+ * null when the request has none, so the caller falls through to embedding
+ * retry. Each invocation authorizes exactly one more attempt per parked target.
+ */
+export async function retryParkedEffects(engine: BrainEngine, sourceId: string, requestId: string, dryRun: boolean): Promise<Record<string, unknown> | null> {
+  const [request, ambiguous] = await engine.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE source_id=$1 AND request_id=$2::uuid LIMIT 2', [sourceId, requestId]);
+  if (!request || ambiguous) return null;
+  const tracked = await engine.executeRaw<PersistenceEffect>(`SELECT * FROM persistence_effects WHERE request_id=$1::uuid
+    AND kind IN ('git','withdrawal-mirror') AND (data ? 'parked' OR data ? 'retried') ORDER BY kind`, [request.id]);
+  if (!tracked.length) return null;
+  const hostId = existingLocalHostId();
+  if (!hostId) throw new OperationError('permission_denied', 'Retry requires the registered local CLI host.');
+  return engine.transaction(async tx => {
+    await authorizeStoredRequest(tx, request, true);
+    const authority = await submissionAuthority({ engine: tx, remote: false, sourceId } as OperationContext,
+      request.operation, sourceId, request.source_incarnation, request.slug);
+    await authorizeWrite(tx, authority, request.operation, request.slug, true);
+    const effects = [];
+    for (const selected of tracked) {
+      await guardEffectSource(tx, selected, hostId);
+      const [effect] = await tx.executeRaw<PersistenceEffect>('SELECT * FROM persistence_effects WHERE id=$1 FOR UPDATE', [selected.id]);
+      const parked = effect.data.parked ?? [];
+      const summary = { kind: effect.kind, parked_targets: parked.length, targets: parked.slice(0, 20), retried: effect.data.retried ?? 0 };
+      if (effect.state !== 'failed' || effect.error_code !== 'targets_parked') {
+        effects.push({ ...summary, state: effect.state, terminal: effect.state === 'committed', action: 'unchanged' });
+        continue;
+      }
+      if (effect.execution_token !== null || effect.recovery) throw new OperationError('write_claim_lost', 'A parked effect still has a claim or recovery record; inspect it before retrying.');
+      if (dryRun) { effects.push({ ...summary, state: 'parked', terminal: true, action: 'would_retry' }); continue; }
+      const { parked: _parked, retry_slugs: retrying = [], failing_target: _target, ...data } = effect.data;
+      const scanning = targetedWithdrawalEffect(effect) || effect.data.source_scan === true;
+      const slugs = scanning ? [...new Set([...retrying, ...parked.flatMap(entry => entry.slug ? [entry.slug] : [])])] : [];
+      const [updated] = await tx.executeRaw<{ state: string }>(`UPDATE persistence_effects SET state='queued',data=$2::text::jsonb,error_code=NULL,
+        next_attempt_at=now(),claim_expires_at=NULL,updated_at=now() WHERE id=$1 AND state='failed' AND error_code='targets_parked'
+        AND execution_token IS NULL AND recovery IS NULL RETURNING state`,
+      [effect.id, JSON.stringify({ ...data, ...(slugs.length ? { retry_slugs: slugs } : {}), target_failures: PARK_AFTER_FAILURES - 1,
+        ...(!scanning && (effect.data.slug ?? effect.data.relative_path) ? { failing_target: effect.data.slug ?? effect.data.relative_path } : {}),
+        retried: (effect.data.retried ?? 0) + 1 })]);
+      if (!updated) throw new OperationError('write_claim_lost', 'The parked effect changed during retry approval.');
+      effects.push({ ...summary, state: 'queued', terminal: false, action: 'retry_queued' });
+    }
+    const queued = effects.some(effect => effect.action === 'retry_queued');
+    return { request_id: request.request_id, source_id: sourceId, dry_run: dryRun, effects,
+      next_action: dryRun ? 'Fix the recorded cause, then run the same command without --dry-run to authorize one more attempt per parked target.'
+        : queued ? 'The resident owner makes one more attempt per parked target. Rerun this command with --dry-run to read the terminal state; a target that fails again parks again.'
+          : 'No parked target remains for this request.' };
+  });
+}
+
+/**
+ * `retry-effects` dispatch: parked Git/withdrawal work that still needs action
+ * wins; otherwise the embedding obligation is handled, with any settled parked
+ * history reported alongside (or alone when the request has no retryable embedding).
+ */
+export async function retryRequestEffects(engine: BrainEngine, sourceId: string, requestId: string, dryRun: boolean, baseConfig?: GBrainConfig,
+  policy: 'owner' | 'mounted_database' = 'owner'): Promise<Record<string, unknown>> {
+  const parked = await retryParkedEffects(engine, sourceId, requestId, dryRun);
+  if (parked && (parked.effects as Array<{ state: string }>).some(effect => effect.state !== 'committed')) return parked;
+  try {
+    const embedding = await retryEmbeddingEffect(engine, sourceId, requestId, dryRun, baseConfig, policy);
+    return parked ? { ...embedding, parked_effects: parked.effects } : embedding;
+  } catch (error) {
+    if (parked && error instanceof OperationError && ['invalid_params', 'effect_not_failed'].includes(error.code)) return parked;
+    throw error;
+  }
+}
+
 export async function retryEmbeddingEffect(engine: BrainEngine, sourceId: string, requestId: string, dryRun: boolean, baseConfig?: GBrainConfig,
   policy: 'owner' | 'mounted_database' = 'owner'): Promise<Record<string, unknown>> {
   const requests = await engine.executeRaw<WriteRequest>(`SELECT r.* FROM persistence_requests r WHERE source_id=$1 AND request_id=$2::uuid
@@ -56,20 +125,26 @@ export async function retryEmbeddingEffect(engine: BrainEngine, sourceId: string
   return engine.transaction(async tx => {
     const [selected] = await tx.executeRaw<PersistenceEffect>("SELECT * FROM persistence_effects WHERE request_id=$1::uuid AND kind='embedding'", [request.id]);
     if (!selected) throw new OperationError('invalid_params', 'The embedding obligation is unavailable.');
+    if (selected.data.source_scan && selected.data.version === undefined) {
+      if (selected.worktree_id) await tx.executeRaw('SELECT id FROM persistence_worktrees WHERE id=$1::uuid FOR SHARE', [selected.worktree_id]);
+      await tx.executeRaw('SELECT id FROM sources WHERE id=$1 FOR UPDATE', [sourceId]);
+    }
     await guardEffectSource(tx, selected, hostId);
     await authorizeStoredRequest(tx, request, true);
     const authority = await submissionAuthority({ engine: tx, remote: false, sourceId } as OperationContext,
       request.operation, sourceId, request.source_incarnation, request.slug);
     await authorizeWrite(tx, authority, request.operation, request.slug, true);
     if (request.state !== 'committed') throw new OperationError('write_pending', 'Only committed canonical requests have retryable embedding obligations.');
-    const [effect] = await tx.executeRaw<PersistenceEffect>('SELECT * FROM persistence_effects WHERE id=$1 FOR UPDATE', [selected.id]);
-    if (!effect || effect.source_id !== sourceId || effect.source_incarnation !== request.source_incarnation || effect.recovery) {
+    const [stored] = await tx.executeRaw<PersistenceEffect>('SELECT * FROM persistence_effects WHERE id=$1 FOR UPDATE', [selected.id]);
+    if (!stored || stored.source_id !== sourceId || stored.source_incarnation !== request.source_incarnation || stored.recovery) {
       throw new OperationError('source_changed', 'The effect source or recovery state changed.');
     }
+    const effect = await upgradeWithdrawalEffect(tx, stored, hostId, false);
     const snapshot = await selectedEffectPage(tx, effect);
-    const scanComplete = effect.data.source_scan === true && !snapshot;
-    if (!scanComplete && (!snapshot || snapshot.page.deleted_at || !effect.data.source_scan &&
-      (snapshot.revision !== effect.revision || snapshot.page.id !== effect.data.page_id))) {
+    const scanning = targetedWithdrawalEffect(effect) || effect.data.source_scan === true;
+    const scanComplete = scanning && !snapshot;
+    if (!scanComplete && (!snapshot || !scanning &&
+      (snapshot.page.deleted_at || snapshot.revision !== effect.revision || snapshot.page.id !== effect.data.page_id))) {
       throw new OperationError('revision_conflict', 'The original embedding obligation is superseded; inspect the current page instead.');
     }
     if (snapshot) {
@@ -87,8 +162,8 @@ export async function retryEmbeddingEffect(engine: BrainEngine, sourceId: string
     if (effect.execution_token !== null) throw new OperationError('write_claim_lost', 'A failed effect still has an execution claim; inspect it before retrying.');
     const signature = policy === 'mounted_database' && !scanComplete ? await mountedEmbeddingSignature(tx) : configuredSignature;
     if (!signature && !scanComplete) return { ...receipt, state: 'failed', action: 'blocked', reason: 'embedding_unconfigured', next_action: 'Configure embeddings, then inspect this request again.' };
-    const pending = scanComplete ? [] : (await readEmbeddingEffectProjection(tx, effect, snapshot!, hostId, signature!)).pending;
-    const complete = scanComplete || pending.length === 0 && !effect.data.source_scan;
+    const pending = scanComplete || snapshot?.page.deleted_at ? [] : (await readEmbeddingEffectProjection(tx, effect, snapshot!, hostId, signature!)).pending;
+    const complete = scanComplete || pending.length === 0 && !scanning;
     if (!complete) {
       await tx.executeRaw("SELECT key FROM config WHERE key='embedding_disabled' FOR SHARE");
       try { await assertEmbeddingEffectEnabled(tx, config); }
@@ -103,11 +178,11 @@ export async function retryEmbeddingEffect(engine: BrainEngine, sourceId: string
     if (dryRun) return { ...receipt, state: 'failed', action: complete ? 'would_reconcile' : 'would_retry',
       pending_chunks: pending.length, next_action: 'Run the same command without --dry-run to approve this bounded action.' };
     const [updated] = await tx.executeRaw<{ state: string }>(`UPDATE persistence_effects SET state=$4,
-      data=CASE WHEN $4='queued' THEN data||jsonb_build_object('embedding_attempt_base',attempts,'embedding_retry_base',attempts) ELSE data END,
+      data=CASE WHEN $4='queued' THEN $5::text::jsonb||jsonb_build_object('embedding_attempt_base',attempts,'embedding_retry_base',attempts) ELSE $5::text::jsonb END,
       error_code=NULL,claim_expires_at=NULL,next_attempt_at=now(),updated_at=now(),
       outcome=CASE WHEN $4='committed' THEN '{"embedding":"reconciled"}'::jsonb ELSE NULL END
       WHERE id=$1 AND state='failed' AND execution_token IS NULL AND recovery IS NULL AND attempts=$2 AND source_incarnation=$3::uuid RETURNING state`,
-    [effect.id, effect.attempts, effect.source_incarnation, complete ? 'committed' : 'queued']);
+    [effect.id, effect.attempts, effect.source_incarnation, complete ? 'committed' : 'queued', JSON.stringify(effect.data)]);
     if (!updated) throw new OperationError('write_claim_lost', 'The embedding obligation changed during retry approval.');
     return { ...receipt, state: updated.state, action: complete ? 'reconciled' : 'retry_queued', pending_chunks: pending.length,
       next_action: complete ? 'The existing vectors satisfy this obligation; no provider work was scheduled.' : 'The resident owner may spend up to five attempts only when its selected file configuration and the database policy permit embedding, under existing provider and job budgets. Repeating this command does not renew that allowance.' };

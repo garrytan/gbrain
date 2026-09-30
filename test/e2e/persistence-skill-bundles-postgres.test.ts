@@ -2,13 +2,14 @@ import { expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assertSafeE2eDatabaseUrl } from '../helpers/db-guard.ts';
+import { requirePostgresTestDatabase } from '../helpers/test-backends.ts';
 
-(process.env.DATABASE_URL ? test : test.skip)('shared skill persistence parity and independent crash recovery on Postgres', async () => {
-  assertSafeE2eDatabaseUrl(process.env.DATABASE_URL!);
+requirePostgresTestDatabase();
+
+test('shared skill persistence parity and independent crash recovery on Postgres', async () => {
   const home = mkdtempSync(join(tmpdir(), 'gbrain-bundle-parity-e2e-'));
   const child = Bun.spawn([process.execPath, 'test', 'test/persistence-skill-bundles.serial.test.ts', 'test/persistence-skill-crash.slow.test.ts'], {
-    cwd: join(import.meta.dir, '../..'), env: { ...process.env, GBRAIN_HOME: home, GBRAIN_TEST_ALLOW_DATABASE_URL: '1' },
+    cwd: join(import.meta.dir, '../..'), env: { ...process.env, GBRAIN_HOME: home, GBRAIN_TEST_ALLOW_DATABASE_URL: '1', GBRAIN_TEST_BACKEND: 'postgres' },
     stdout: 'pipe', stderr: 'pipe',
   });
   const timer = setTimeout(() => child.kill('SIGKILL'), 360_000);

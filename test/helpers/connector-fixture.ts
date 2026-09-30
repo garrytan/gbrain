@@ -9,6 +9,9 @@ import { claimWorktree } from '../../src/core/persistence/ownership.ts';
 import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
 import { isolatedPersistencePostgres } from './persistence-postgres.ts';
 import { syncLockId } from '../../src/core/db-lock.ts';
+import { testBackends } from './test-backends.ts';
+import { connectorWaitBudget } from '../../src/core/persistence/connector-sync.ts';
+import { readManagedConnectorState } from '../../src/core/persistence/connector-state.ts';
 
 export const options = { noEmbed: true, noExtract: true, noSchemaPack: true };
 export const json = (body: unknown, status = 200, headers = {}) => new Response(JSON.stringify(body), {
@@ -40,17 +43,22 @@ export async function sourceCheckpoint(engine: BrainEngine, id: string) {
 }
 
 export function createConnectorFixture() {
+  const backends = testBackends();
   const home = mkdtempSync(join(tmpdir(), 'gbrain-connector-parity-'));
   const engines: BrainEngine[] = [];
   let closePostgres: (() => Promise<void>) | undefined;
   const env = { GBRAIN_HOME: home, CONNECTOR_TEST_TOKEN: 'synthetic-local-fixture' };
   const setup = async () => {
-    const lite = new PGLiteEngine();
-    await lite.connect({ database_path: join(home, 'database') });
-    await lite.initSchema();
-    engines.push(lite);
-    if (process.env.DATABASE_URL) {
-      const pg = await isolatedPersistencePostgres(process.env.DATABASE_URL);
+    // Paused-owner fixtures stop on a 10 s wait budget instead of the production 30 s.
+    connectorWaitBudget.ms = 10_000;
+    if (backends.includes('pglite')) {
+      const lite = new PGLiteEngine();
+      await lite.connect({ database_path: join(home, 'database') });
+      await lite.initSchema();
+      engines.push(lite);
+    }
+    if (backends.includes('postgres')) {
+      const pg = await isolatedPersistencePostgres(process.env.DATABASE_URL!);
       engines.push(pg.engine);
       closePostgres = pg.close;
     }
@@ -110,5 +118,26 @@ export function createConnectorFixture() {
     }
   }
 
-  return { home, engines, env, setup, teardown, source, boundSource, standaloneConnector };
+  return { home, engines, env, backends, setup, teardown, source, boundSource, standaloneConnector };
+}
+
+/**
+ * #5686: a managed Google run resolves the credential's account (People `me`,
+ * Calendar primary, Gmail profile) before any service runs. Fixture fetchers
+ * that only model sweep routes get those identity routes answered here.
+ */
+export function withGoogleAccount(fetcher: ((url: string, init?: RequestInit) => Promise<Response>) | undefined, account = googleConfig.g_account) {
+  return async (url: string, init?: RequestInit) => {
+    const path = new URL(url).pathname;
+    if (path.endsWith('/people/me')) return json({ resourceName: 'people/me', emailAddresses: [{ value: account, metadata: { primary: true } }] });
+    if (path.endsWith('/calendars/primary')) return json({ id: account });
+    if (!fetcher) throw new Error('Unexpected external fixture route');
+    return fetcher(url, init);
+  };
+}
+
+/** #5600: the pending set a managed connector run ended with (connector state row). */
+export async function connectorPendingSet(engine: BrainEngine, sourceId: string) {
+  const [source] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text FROM sources WHERE id=$1', [sourceId]);
+  return (await readManagedConnectorState(engine, sourceId, source.incarnation)).pending;
 }

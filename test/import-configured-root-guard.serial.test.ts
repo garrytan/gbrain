@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
+import { afterAll, beforeAll, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -10,6 +10,7 @@ import {
 } from '../src/commands/import.ts';
 import { CLI_FLAG_REGISTRY } from '../src/core/cli-flag-registry.generated.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { resetPgliteState } from './helpers/reset-pglite.ts';
 
 let engine: PGLiteEngine;
 let root: string;
@@ -22,10 +23,14 @@ function tempDir(prefix: string): string {
   return dir;
 }
 
-beforeEach(async () => {
+beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
+});
+
+beforeEach(async () => {
+  await resetPgliteState(engine);
   root = tempDir('gbrain-configured-root-');
   outside = tempDir('gbrain-configured-outside-');
   writeFileSync(join(root, 'canonical.md'), '# canonical\n');
@@ -37,12 +42,9 @@ beforeEach(async () => {
   );
 });
 
-afterEach(async () => {
-  await engine.disconnect();
-});
-
-afterAll(() => {
-  for (const dir of scratch) rmSync(dir, { recursive: true, force: true });
+afterAll(async () => {
+  try { await engine?.disconnect(); }
+  finally { for (const dir of scratch) rmSync(dir, { recursive: true, force: true }); }
 });
 
 describe('configuredRootImportError', () => {

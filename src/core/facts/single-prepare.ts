@@ -1,6 +1,6 @@
 import type { BrainEngine, FactRow } from '../engine.ts';
 import { verbError } from '../ops/contract.ts';
-import { isAvailable, embedOne } from '../ai/gateway.ts';
+import { isAvailable, embedOne, getEmbeddingModel } from '../ai/gateway.ts';
 import { cosineSimilarity } from './classify.ts';
 import { isFactWithdrawn } from './withdrawal.ts';
 
@@ -10,28 +10,31 @@ export interface SingleFactIntent {
   fact: string; kind: FactRow['kind']; visibility: FactRow['visibility']; entity_slug: string | null;
 }
 /** Provider work belongs to preparation, never to a page/source transaction. */
-export async function prepareFactEmbedding(fact: string, signal?: AbortSignal): Promise<{ embedding: Float32Array | null; degraded: boolean }> {
+export async function prepareFactEmbedding(fact: string, signal?: AbortSignal): Promise<{ embedding: Float32Array | null; embedding_model: string | null; degraded: boolean }> {
   signal?.throwIfAborted();
   if (isAvailable('embedding')) {
-    try { return { embedding: await embedOne(fact, { abortSignal: signal }), degraded: false }; } catch { signal?.throwIfAborted(); }
+    try {
+      const model = getEmbeddingModel();
+      return { embedding: await embedOne(fact, { abortSignal: signal, embeddingModel: model, inputType: 'document' }), embedding_model: model, degraded: false };
+    } catch { signal?.throwIfAborted(); }
   }
-  return { embedding: null, degraded: true };
+  return { embedding: null, embedding_model: null, degraded: true };
 }
 export async function assertFactNotWithdrawn(engine: BrainEngine, sourceId: string, input: SingleFactIntent): Promise<void> {
-  if (await isFactWithdrawn(engine, sourceId, input.visibility, input.fact)) {
+  if (await isFactWithdrawn(engine, sourceId, input.visibility, input.fact, input.entity_slug)) {
     throw verbError('invalid_params', 'fact_withdrawn: this exact claim was explicitly forgotten in this source and visibility.',
       'Remember a corrected claim. Repeating the old claim does not restore withdrawn memory.');
   }
 }
 /** SQL-only, so publication can verify the semantic decision under its guard. */
-export async function decideSingleFact(engine: BrainEngine, sourceId: string, input: SingleFactIntent, embedding: Float32Array | null): Promise<FactDecision> {
+export async function decideSingleFact(engine: BrainEngine, sourceId: string, input: SingleFactIntent, embedding: Float32Array | null, embeddingModel?: string | null): Promise<FactDecision> {
   const [exact] = await engine.executeRaw<FactCandidate>(`SELECT * FROM facts WHERE source_id=$1
     AND entity_slug IS NOT DISTINCT FROM $2 AND visibility=$3 AND expired_at IS NULL
     AND (valid_until IS NULL OR valid_until>now()) AND gbrain_fact_fingerprint(fact)=gbrain_fact_fingerprint($4)
     ORDER BY id LIMIT 1`, [sourceId, input.entity_slug, input.visibility, input.fact]);
   if (exact) return { status: 'duplicate', candidate: { ...exact, id: Number(exact.id) } };
   if (embedding && input.entity_slug) {
-    const candidates = await engine.findCandidateDuplicates(sourceId, input.entity_slug, input.fact, { embedding, k: 5 });
+    const candidates = await engine.findCandidateDuplicates(sourceId, input.entity_slug, input.fact, { embedding, embeddingModel, k: 5 });
     const metadata = await engine.executeRaw<{ id: number; source_markdown_slug: string | null; row_num: number | null }>(
       'SELECT id,source_markdown_slug,row_num FROM facts WHERE source_id=$1 AND id=ANY($2::int[])',
       [sourceId, candidates.map(c => c.id)]);

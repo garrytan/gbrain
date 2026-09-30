@@ -1,0 +1,57 @@
+### A calibration-join: null profile returns non-null
+ src/core/eval-contradictions/calibration-join.ts | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+error: expect(received).toBeNull()
+(fail) tagFindingWithCalibration — R2 regression > null profile returns null tag (contradictions output unchanged) [4.39ms]
+error: expect(received).toBeNull()
+(fail) R2: contradictions probe UNCHANGED when no calibration profile > null profile → null tag (output byte-identical to v0.32.6) [0.10ms]
+ 18 pass
+ 2 fail
+### B1 v0_12_0 phaseASchema throws
+ src/commands/migrations/v0_12_0.ts | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+async function phaseASchema(opts: OrchestratorOpts): Promise<OrchestratorPhaseResult> { throw new Error("PROBE");
+error: PROBE
+(fail) v0.12.0 — Knowledge Graph auto-wire migration > dry-run skips all side-effect phases [0.61ms]
+ 4 pass
+ 1 fail
+### B2 v0_12_0 remove __testing export (behavior-preserving)
+ src/commands/migrations/v0_12_0.ts | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+(fail) v0.12.0 — Knowledge Graph auto-wire migration > phase functions exported for unit testing [0.17ms]
+ 4 pass
+ 1 fail
+### C remove voyage_api_key from GBrainConfig
+-  voyage_api_key?: string;
+ 1 pass
+ 0 fail
+tsc errors: 9
+src/core/advisor/collect-setup-smells.ts
+src/core/ai/provider-env.ts
+src/core/config-db-merge.ts
+test/brain-score-recommendations.test.ts
+test/config-db-merge.test.ts
+test/provider-env.test.ts
+### D rename AGGREGATOR_KINDS member
+ src/core/schema-pack/manifest-v1.ts | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+error: expect(received).toEqual(expected)
+(fail) v0.41 T3: AggregatorKind closed registry > exposes exactly 4 v1 aggregator kinds [0.82ms]
+(fail) v0.41 T3: SchemaPackManifestSchema calibration_domains field > accepts all 4 aggregator kinds [0.46ms]
+ 18 pass
+ 2 fail
+### E transcribe throws
+ src/core/transcription.ts | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+error: expect(received).toContain(expected)
+(fail) transcription > rejects unsupported audio format [0.71ms]
+error: expect(received).toContain(expected)
+(fail) transcription > rejects missing API key with helpful error [0.75ms]
+ 4 pass
+ 2 fail
+### F runFeatures throws
+ src/commands/features.ts | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+ 19 pass
+ 0 fail
+clean-check done

@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
+import { withGoogleAccount } from './helpers/connector-fixture.ts';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { performSync } from '../src/commands/sync.ts';
@@ -69,7 +70,7 @@ for (const connector of ['github', 'google'] as const) {
       const run = () => connector === 'github'
         ? runGitHubSync(engine, f.id, parseGitHubSourceConfig(config, f.dir), { ...options, skipLock: true,
           githubItem: { repo: 'acme-example/app', number: 1, kind: 'issue' } }, fetcher)
-        : runGoogleSync(engine, f.id, parseGoogleSourceConfig(config, f.dir), { ...options, skipLock: true }, fetcher);
+        : runGoogleSync(engine, f.id, parseGoogleSourceConfig(config, f.dir), { ...options, skipLock: true }, withGoogleAccount(fetcher));
       const first = run();
       first.catch(() => {});
       await entered.promise;
@@ -93,7 +94,7 @@ for (const connector of ['github', 'google'] as const) {
       globalThis.fetch = (async (url: string | URL | Request) => {
         again.resolve();
         await delayed.promise;
-        return fetcher(String(url));
+        return withGoogleAccount(fetcher)(String(url));
       }) as typeof fetch;
       const command = performSync(engine, { ...options, sourceId: f.id, full: true, skipLock: true, lockId: 'caller-cannot-bypass-source-lease' });
       command.catch(() => {});
@@ -127,7 +128,7 @@ for (const connector of ['github', 'google'] as const) {
         return connector === 'github'
           ? runGitHubSync(engine, f.id, parseGitHubSourceConfig(config, f.dir), { ...options,
             githubItem: { repo: 'acme-example/app', number: 1, kind: 'issue' } }, fetcher)
-          : runGoogleSync(engine, f.id, parseGoogleSourceConfig(config, f.dir), options, fetcher);
+          : runGoogleSync(engine, f.id, parseGoogleSourceConfig(config, f.dir), options, withGoogleAccount(fetcher));
       };
       const old = run(true);
       old.catch(() => {});

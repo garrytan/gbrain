@@ -2,7 +2,7 @@ import type { BrainEngine, NewFact } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import { OperationError } from '../ops/contract.ts';
 import { assertPageRevision } from '../page-state/types.ts';
-import { parseFactsFence, renderFactsTable, replaceOrInsertFactsFence, upsertFactRow } from '../facts-fence.ts';
+import { parseFactsFence, renderFactsTable, replaceOrInsertFactsFence, upsertFactRow, formatFenceDate } from '../facts-fence.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
 import { assertFactNotWithdrawn, decideSingleFact, prepareFactEmbedding, type SingleFactIntent } from '../facts/single-prepare.ts';
 import { engineMutationPrecondition, parseMutationPrecondition } from './preconditions.ts';
@@ -37,12 +37,15 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
   const observedRevision = snapshot?.revision ?? null;
   await assertFactNotWithdrawn(engine, row.source_id, input);
   signal?.throwIfAborted();
-  const { embedding, degraded } = await prepareFactEmbedding(input.fact, signal);
+  const embeddingConfigSql = "SELECT key,value FROM config WHERE key IN ('embedding_model','embedding_dimensions') ORDER BY key";
+  const observedEmbeddingConfig = JSON.stringify(await engine.executeRaw(embeddingConfigSql));
+  const { embedding, embedding_model, degraded } = await prepareFactEmbedding(input.fact, signal);
   signal?.throwIfAborted();
-  const decision = await decideSingleFact(engine, row.source_id, input, embedding);
+  const decision = await decideSingleFact(engine, row.source_id, input, embedding, embedding_model);
   const validate = async (tx: BrainEngine) => {
     await assertFactNotWithdrawn(tx, row.source_id, input);
-    const current = await decideSingleFact(tx, row.source_id, input, embedding);
+    if (embedding && JSON.stringify(await tx.executeRaw(`${embeddingConfigSql} FOR SHARE`)) !== observedEmbeddingConfig) conflict();
+    const current = await decideSingleFact(tx, row.source_id, input, embedding, embedding_model);
     if (candidateState(current) !== candidateState(decision)) conflict();
   };
   if (decision.status === 'duplicate') {
@@ -52,15 +55,15 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
   const validUntil = p.valid_until ? new Date(String(p.valid_until)) : null;
   const validFrom = new Date(String(p.valid_from));
   const fact: NewFact = { ...input, source: String(p.provenance).trim(), valid_from: validFrom, valid_until: validUntil,
-    confidence: 1, embedding };
+    confidence: 1, embedding, embedding_model };
   let page: PreparedMutation | undefined;
   let rowNum: number | undefined;
   if (p.fence === true && snapshot) {
     const parsed = parseFactsFence(snapshot.page.compiled_truth);
     if (parsed.warnings.length) throw new OperationError('storage_error', 'The entity facts fence is malformed; repair it before appending memory.');
     const appended = upsertFactRow(snapshot.page.compiled_truth, { claim: input.fact, kind: input.kind, visibility: input.visibility,
-      confidence: 1, notability: 'medium', validFrom: validFrom.toISOString().slice(0, 10),
-      validUntil: validUntil?.toISOString().slice(0, 10), source: fact.source });
+      confidence: 1, notability: 'medium', validFrom: formatFenceDate(validFrom),
+      validUntil: validUntil ? formatFenceDate(validUntil) : undefined, source: fact.source });
     rowNum = appended.rowNum;
     let body = appended.body;
     const old = decision.candidate;

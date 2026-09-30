@@ -170,8 +170,8 @@ function arm(records: QueryRecord[], armId: 'off' | 'on' = 'off'): ArmRun {
   return {
     arm: armId,
     records,
-    report: { schema_version: 1, k: 3, total: records.length, families: [], questions: [] },
-    gate: { pass: true, breaches: [], warnings: [] },
+    report: { schema_version: 1, k: 3, total: records.length, errored: 0, families: [], questions: [] },
+    gate: { pass: true, breaches: [], warnings: [], errored: 0 },
   };
 }
 

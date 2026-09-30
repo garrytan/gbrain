@@ -165,7 +165,9 @@ export function deepResearchContract(getEngine: () => BrainEngine): void {
     test('source-bound aliases retain identity and canonical citations after rename', async () => {
       const id = encodeDeepResearchId('beta', slug);
       await getEngine().updateSlug(slug, 'notes/renamed-example', { sourceId: 'beta' });
-      await getEngine().executeRaw(`INSERT INTO slug_aliases (source_id, alias_slug, canonical_slug) VALUES ('beta', $1, 'notes/renamed-example')`, [slug]);
+      // The rename records its own alias; no hand-written row is needed.
+      expect(await getEngine().executeRaw(`SELECT canonical_slug FROM slug_aliases WHERE source_id = 'beta' AND alias_slug = $1`, [slug]))
+        .toEqual([{ canonical_slug: 'notes/renamed-example' }]);
       const page = await fetch(id);
       expect(page.id).toBe(id);
       expect(page.metadata.source_id).toBe('beta');

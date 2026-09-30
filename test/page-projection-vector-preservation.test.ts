@@ -7,8 +7,10 @@ import { MIGRATIONS } from '../src/core/migrate.ts';
 import { installPageEmbeddings, installPageProjection, PageProjectionConflictError, preparePageProjection,
   readProjectionSnapshot, rebuildPendingPageProjections } from '../src/core/page-state/projections.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
+import { testBackends } from './helpers/test-backends.ts';
 
 const databaseUrl = process.env.DATABASE_URL;
+const backends = testBackends();
 const sourceId = 'projection-vector-test';
 const neighborId = 'projection-vector-neighbor';
 const slug = 'same-page';
@@ -28,7 +30,7 @@ interface StoredChunk {
   embedding_projection_test?: string | null;
 }
 
-for (const kind of ['pglite', ...(databaseUrl ? ['postgres'] : [])]) {
+for (const kind of backends) {
   describe(`projection vector preservation ${kind}`, () => {
     let engine: BrainEngine;
     let closePostgres: (() => Promise<void>) | undefined;

@@ -970,6 +970,39 @@ describe('write accounting (#4217)', () => {
     expect(result.pages_failed).toBe(0);
   });
 
+  test('allow_clean_zero_writes: a clean finish after a completed read completes; without it the job dead-letters (#5540)', async () => {
+    const searchTurn = {
+      content: [{ type: 'tool_use', id: 'tu_s', name: 'brain_search', input: { value: 'themes' } }] as any,
+      stop_reason: 'tool_use' as const,
+    };
+    const strict = makeSubagentHandler({
+      engine, client: new FakeMessagesClient([searchTurn, endTurn]),
+      toolRegistry: [makeEchoTool('brain_search'), makePutPageTool('ok')],
+    });
+    const strictCtx = await makeCtx({ prompt: 'find patterns', require_writes: true });
+    await expect(strict(strictCtx)).rejects.toThrow('zero required put_page writes');
+
+    const handler = makeSubagentHandler({
+      engine, client: new FakeMessagesClient([searchTurn, endTurn]),
+      toolRegistry: [makeEchoTool('brain_search'), makePutPageTool('ok')],
+    });
+    const ctx = await makeCtx({ prompt: 'find patterns', require_writes: true, allow_clean_zero_writes: true });
+    const result = await handler(ctx);
+    expect(result.stop_reason).toBe('end_turn');
+    expect(result.pages_attempted).toBe(0);
+    expect(result.pages_written).toBe(0);
+  });
+
+  test('allow_clean_zero_writes does not excuse a run whose only tool failed (#5540)', async () => {
+    const client = new FakeMessagesClient([
+      { content: [{ type: 'tool_use', id: 'tu_b2', name: 'broken', input: {} }] as any, stop_reason: 'tool_use' },
+      endTurn,
+    ]);
+    const handler = makeSubagentHandler({ engine, client, toolRegistry: [makeThrowingTool('broken')] });
+    const ctx = await makeCtx({ prompt: 'find patterns', require_writes: true, allow_clean_zero_writes: true });
+    await expect(handler(ctx)).rejects.toThrow('zero required put_page writes');
+  });
+
   test('non-put_page tool failures do not count toward write accounting', async () => {
     const client = new FakeMessagesClient([
       { content: [{ type: 'tool_use', id: 'tu_b', name: 'broken', input: {} }] as any, stop_reason: 'tool_use' },
@@ -1042,6 +1075,73 @@ describe('oneshot mode dispatch (#4216)', () => {
     expect(result.pages_failed).toBe(0);
     expect(client.calls.length).toBe(0);
     expect(await engine.getPage(SLUG_A)).not.toBeNull();
+  });
+
+  test('explicit oneshot skip under require_writes completes instead of dead-lettering (#5590)', async () => {
+    const client = new FakeMessagesClient([]);
+    const skip = JSON.stringify({ pages: [], skipped: true, skip_reason: 'verbatim paste of an existing page' });
+    const handler = makeSubagentHandler({ engine, client, _chat: chatStub(skip) });
+    const ctx = await makeCtx({
+      prompt: 'synthesize', mode: 'oneshot', require_writes: true,
+      allowed_slug_prefixes: PREFIXES, oneshot_slug_suffix: SUFFIX,
+    });
+    const result = await handler(ctx);
+    expect(result.synth_mode_used).toBe('oneshot');
+    expect(result.oneshot_skipped).toBe(true);
+    expect(result.pages_attempted).toBe(0);
+    expect(result.pages_written).toBe(0);
+    expect(client.calls.length).toBe(0);
+  });
+
+  test('a oneshot skip replayed after its transcript persisted still completes without another model call (#5590)', async () => {
+    const client = new FakeMessagesClient([]);
+    const skip = JSON.stringify({ pages: [], skipped: true, skip_reason: 'already captured' });
+    const handler = makeSubagentHandler({ engine, client, _chat: chatStub(skip) });
+    const ctx = await makeCtx({
+      prompt: 'synthesize', mode: 'oneshot', require_writes: true,
+      allowed_slug_prefixes: PREFIXES, oneshot_slug_suffix: SUFFIX,
+    });
+    expect((await handler(ctx)).oneshot_skipped).toBe(true);
+
+    let chatCalls = 0;
+    const spy = (async (...args: any[]) => { chatCalls++; return chatStub(skip)(...args); }) as any;
+    const replay = await makeSubagentHandler({ engine, client, _chat: spy })({ ...ctx, attempts_made: 1 });
+    expect(replay.synth_mode_used).toBe('oneshot');
+    expect(replay.oneshot_skipped).toBe(true);
+    expect(replay.pages_attempted).toBe(0);
+    expect(chatCalls).toBe(0);
+    expect(client.calls.length).toBe(0);
+  });
+
+  test('an agentic-fallback transcript that merely looks like a skip still dead-letters on replay (#5590)', async () => {
+    const client = new FakeMessagesClient([]);
+    let chatCalls = 0;
+    const spy = (async (...args: any[]) => { chatCalls++; return chatStub('{}')(...args); }) as any;
+    const handler = makeSubagentHandler({ engine, client, _chat: spy });
+    const ctx = await makeCtx({
+      prompt: 'synthesize', mode: 'oneshot', require_writes: true,
+      allowed_slug_prefixes: PREFIXES, oneshot_slug_suffix: SUFFIX,
+    });
+    await engine.executeRaw(
+      `INSERT INTO subagent_messages (job_id, message_idx, role, content_blocks)
+       VALUES ($1, 0, 'user', '[{"type":"text","text":"synthesize"}]'::jsonb),
+              ($1, 1, 'assistant', $2::text::jsonb)`,
+      [ctx.id, JSON.stringify([{ type: 'text', text: JSON.stringify({ pages: [], skipped: true }) }])],
+    );
+    await expect(handler({ ...ctx, attempts_made: 1 })).rejects.toThrow('zero required put_page writes');
+    expect(chatCalls).toBe(0);
+  });
+
+  test('oneshot pages:[] without the skip flag still dead-letters when the fallback writes nothing (#5590)', async () => {
+    const client = new FakeMessagesClient([
+      { content: [{ type: 'text', text: 'nothing met the bar' }] as any, stop_reason: 'end_turn' },
+    ]);
+    const handler = makeSubagentHandler({ engine, client, _chat: chatStub(JSON.stringify({ pages: [], skipped: false })) });
+    const ctx = await makeCtx({
+      prompt: 'synthesize', mode: 'oneshot', require_writes: true,
+      allowed_slug_prefixes: PREFIXES, oneshot_slug_suffix: SUFFIX,
+    });
+    await expect(handler(ctx)).rejects.toThrow('zero required put_page writes');
   });
 
   test('invalid oneshot output falls back to the agentic loop IN THE SAME JOB', async () => {

@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
+import { withGoogleAccount } from './helpers/connector-fixture.ts';
 import { chmodSync, chownSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -11,9 +12,9 @@ import { beginConnectorSync } from '../src/core/persistence/connector-sync.ts';
 import { compactWriteReceipts } from '../src/core/persistence/journal.ts';
 import { purgeStaleCheckpoints } from '../src/core/op-checkpoint.ts';
 import { withEnv } from './helpers/with-env.ts';
-import { createConnectorFixture, options, json, googleConfig, githubConfig, contact, issueFixture, githubFetch, sourceCheckpoint } from './helpers/connector-fixture.ts';
+import { createConnectorFixture, options, json, googleConfig, githubConfig, contact, issueFixture, githubFetch, sourceCheckpoint, connectorPendingSet } from './helpers/connector-fixture.ts';
 
-const { engines, env, source, boundSource, standaloneConnector, setup, teardown } = createConnectorFixture();
+const { engines, env, backends, source, boundSource, standaloneConnector, setup, teardown } = createConnectorFixture();
 beforeAll(setup, 120_000);
 afterAll(teardown);
 
@@ -30,6 +31,7 @@ test('explicit connector retry replaces a real storage failure without changing 
         'test', import.meta.path, '--test-name-pattern', '^explicit connector retry replaces a real storage failure without changing ordinary replay or the cursor$'], {
         env: { PATH: process.env.PATH, HOME: childHome, GBRAIN_HOME: childHome, TMPDIR: childHome,
           DATABASE_URL: process.env.DATABASE_URL, GBRAIN_TEST_ALLOW_DATABASE_URL: '1', GBRAIN_CI_DISABLE_TEST_ENV_FILE: '1',
+          GBRAIN_TEST_BACKEND: backends.includes('pglite') ? undefined : 'postgres',
           GBRAIN_PGLITE_SNAPSHOT: process.env.GBRAIN_PGLITE_SNAPSHOT, GBRAIN_TEST_CONNECTOR_UNPRIVILEGED: '1' },
         stdout: 'pipe', stderr: 'pipe',
       });
@@ -125,7 +127,7 @@ async function retryFixture(engine: BrainEngine, connector: 'google' | 'github',
   };
   const cfg = connector === 'google' ? parseGoogleSourceConfig(config, f.dir) : parseGitHubSourceConfig(config, f.dir);
   const run = (retryFailed = false) => connector === 'google'
-    ? runGoogleSync(engine, f.id, cfg as ReturnType<typeof parseGoogleSourceConfig>, { ...options, retryFailed }, fetcher)
+    ? runGoogleSync(engine, f.id, cfg as ReturnType<typeof parseGoogleSourceConfig>, { ...options, retryFailed }, withGoogleAccount(fetcher))
     : runGitHubSync(engine, f.id, cfg as ReturnType<typeof parseGitHubSourceConfig>, { ...options, retryFailed }, fetcher);
   await run();
   await disposePersistenceConsumer(engine);
@@ -172,7 +174,7 @@ test('checkpoint storage failures require explicit retry after pages have alread
     await expect(f.run()).rejects.toMatchObject({ code: 'storage_error' });
     await disposePersistenceConsumer(engine);
     const [failed] = await engine.executeRaw<WriteRequest>("SELECT * FROM persistence_requests WHERE source_id=$1 AND state='failed'", [f.id]);
-    expect(failed.intent?.kind).toBe('managed_connector_checkpoint');
+    expect(failed.intent?.kind).toBe('connector_v2_checkpoint');
     expect(await sourceCheckpoint(engine, f.id)).toEqual(f.checkpoint);
     await engine.executeRaw("UPDATE persistence_requests SET completed_at=now()-interval '31 days' WHERE id=$1::uuid", [failed.id]);
     await compactWriteReceipts(engine);
@@ -201,11 +203,11 @@ test('checkpoint replay keeps its originally admitted page dependencies when ano
     await engine.executeRaw("UPDATE persistence_worktrees SET state='draining' WHERE id=$1::uuid", [f.binding.worktree_id]);
     const state = { cursor: 'same-logical-checkpoint' };
     await expect(first.saveState(state, true)).rejects.toMatchObject({ code: 'write_pending' });
-    const [accepted] = await engine.executeRaw<WriteRequest>("SELECT * FROM persistence_requests WHERE source_id=$1 AND intent->>'kind'='managed_connector_checkpoint'", [f.id]);
+    const [accepted] = await engine.executeRaw<WriteRequest>("SELECT * FROM persistence_requests WHERE source_id=$1 AND intent->>'kind'='connector_v2_checkpoint'", [f.id]);
     const [dependency] = await engine.executeRaw<WriteRequest>("SELECT * FROM persistence_requests WHERE source_id=$1 AND slug='notes/first'", [f.id]);
     expect(accepted.intent?.receipts).toEqual([dependency.id]);
     await expect(second.saveState(state, true)).rejects.toMatchObject({ code: 'write_pending', writeRequest: { request_id: accepted.request_id } });
-    expect(await engine.executeRaw("SELECT id FROM persistence_requests WHERE source_id=$1 AND intent->>'kind'='managed_connector_checkpoint'", [f.id])).toHaveLength(1);
+    expect(await engine.executeRaw("SELECT id FROM persistence_requests WHERE source_id=$1 AND intent->>'kind'='connector_v2_checkpoint'", [f.id])).toHaveLength(1);
     expect((await engine.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE id=$1::uuid', [accepted.id]))[0].intent?.receipts).toEqual([dependency.id]);
     await disposePersistenceConsumer(engine);
     await engine.executeRaw("UPDATE persistence_worktrees SET state='active' WHERE id=$1::uuid", [f.binding.worktree_id]);
@@ -258,9 +260,10 @@ test('concurrent connector approvals and a restarted paused owner retain one pen
     const results = await Promise.allSettled(sessions.map(session => session!.importMarkdown(original.intent!.sourcePath as string, original.intent!.content as string)));
     const [retry] = await engine.executeRaw<WriteRequest>("SELECT * FROM persistence_requests WHERE source_id=$1 AND intent->>'retryOf'=$2", [f.id, original.request_id]);
     expect(retry).toMatchObject({ state: 'queued' });
+    // #5600: a session that admitted or replayed the replacement reports accepted-pending progress; a racing approval refuses write_pending on the same receipt.
     for (const result of results) {
-      expect(result.status).toBe('rejected');
-      expect((result as PromiseRejectedResult).reason).toMatchObject({ code: 'write_pending', writeRequest: { request_id: retry.request_id } });
+      if (result.status === 'fulfilled') expect(result.value).toMatchObject({ status: 'imported' });
+      else expect(result.reason).toMatchObject({ code: 'write_pending', writeRequest: { request_id: retry.request_id } });
     }
     await disposePersistenceConsumer(engine);
     expect(await sourceCheckpoint(engine, f.id)).toEqual(f.checkpoint);
@@ -269,7 +272,8 @@ test('concurrent connector approvals and a restarted paused owner retain one pen
     expect(restarted.stdout).not.toContain('CONNECTOR_FIXTURE_FETCH');
     expect(JSON.parse(restarted.stdout.split('CONNECTOR_ERROR ')[1].trim())).toMatchObject({ code: 'write_pending', receipt: { request_id: retry.request_id } });
     const count = await engine.executeRaw('SELECT id FROM persistence_requests WHERE source_id=$1 ORDER BY sequence', [f.id]);
-    await expect(f.run()).rejects.toMatchObject({ code: 'write_pending', writeRequest: { request_id: retry.request_id } });
+    expect(await f.run()).toMatchObject({ status: 'partial', reason: 'writer_pending' });
+    expect((await connectorPendingSet(engine, f.id)).map(entry => entry.requestId)).toEqual([retry.request_id]);
     expect(await engine.executeRaw('SELECT id FROM persistence_requests WHERE source_id=$1 ORDER BY sequence', [f.id])).toEqual(count);
     await disposePersistenceConsumer(engine);
     await engine.executeRaw("UPDATE persistence_worktrees SET state='active' WHERE id=$1::uuid", [original.worktree_id]);

@@ -10,6 +10,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { importFromContent } from '../src/core/import-file.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { PageInput, ChunkInput } from '../src/core/types.ts';
+import { surfaceFileSource } from './helpers/source-surface.ts';
 
 let engine: PGLiteEngine;
 
@@ -1505,8 +1506,7 @@ describe('PGLiteEngine: getHealth graph metrics', () => {
 // ─────────────────────────────────────────────────────────────────
 describe('PGLiteEngine: v0.13.1 error-wrap on connect() (#223)', () => {
   test('pglite-engine.ts source contains the wrap with #223 hint and nested original error', async () => {
-    const { readFileSync } = await import('fs');
-    const src = readFileSync('src/core/pglite-engine.ts', 'utf-8');
+    const src = surfaceFileSource('pglite-engine', 'src/core/pglite-engine.ts');
     // Structural: the try/catch block must wrap PGlite.create() (the actual
     // abort site, NOT engine-factory.ts). The error message must name the
     // issue and suggest gbrain doctor. Must NOT suggest "missing migrations"

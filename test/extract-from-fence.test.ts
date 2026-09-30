@@ -284,6 +284,19 @@ describe('resolveSupersededByRow — reference resolution (#3014)', () => {
   });
 });
 
+describe('resolveSupersededByRow — supersession chains (B-13)', () => {
+  test('a struck target that is itself superseded resolves', () => {
+    const r = resolveSupersededByRow(1, 2, { id: 7, struck: true }, 'deals/acme', new Map([[2, 3]]));
+    expect(r).toEqual({ superseded_by: 7, warning: null });
+  });
+
+  test('a chain that cycles back to the row is rejected', () => {
+    const r = resolveSupersededByRow(1, 2, { id: 7, struck: true }, 'deals/acme', new Map([[1, 2], [2, 1]]));
+    expect(r.superseded_by).toBeNull();
+    expect(r.warning).toContain('cycle');
+  });
+});
+
 describe('isInt4RowRef — supersession-target overflow guard (#3014)', () => {
   test('accepts a normal positive row reference', () => {
     expect(isInt4RowRef(1)).toBe(true);

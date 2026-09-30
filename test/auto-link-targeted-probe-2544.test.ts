@@ -129,7 +129,7 @@ describe('#2544 — auto-link behavior through put_page (targeted probe)', () =>
     // array parameter without server-side type context, so a bare ANY($1)
     // relies on inference the house style never does (cf. dropPrivateSlugs in
     // the same file). Pin the cast on EVERY slug-array probe in pages.ts.
-    // test-reads-source-ok: postgres.js-only bind-cast bug is invisible on the PGLite runtime path; the ::text[] cast pin is the unit-testable seam
+    // test-reads-source-ok[structural]: postgres.js-only bind-cast bug is invisible on the PGLite runtime path; the ::text[] cast pin is the unit-testable seam
     const src = readFileSync(join(import.meta.dir, '../src/core/persistence/links-preparation.ts'), 'utf8');
     const probes = src.match(/slug\s*=\s*ANY\(\$\d+[^)]*\)/g) ?? [];
     expect(probes.length).toBe(1); // one source-scoped publication probe

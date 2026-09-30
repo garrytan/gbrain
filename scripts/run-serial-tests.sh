@@ -64,6 +64,14 @@ if [ -n "$SERIAL_SHARD" ]; then
 fi
 cd "$(dirname "$0")/.."
 
+# --dry-run-list prints the selection; --dry-run-list-exclusive prints only
+# the machine-exclusive entries. Positional FILE arguments replace discovery
+# (scripts/ci-ubicloud.ts dispatches explicit batches through this wrapper).
+DRY_RUN_MODE=""
+case "${1:-}" in
+  --dry-run-list|--dry-run-list-exclusive) DRY_RUN_MODE="$1"; shift ;;
+esac
+
 . scripts/lib/test-env.sh
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -105,9 +113,13 @@ is_exclusive() {
 
 # Use while-read for portability to macOS bash 3.2 (no mapfile).
 files=()
-while IFS= read -r f; do
-  files+=("$f")
-done < <(find test -name '*.serial.test.ts' -not -path 'test/e2e/*' | sort)
+if [ "$#" -gt 0 ]; then
+  files=("$@")
+else
+  while IFS= read -r f; do
+    files+=("$f")
+  done < <(find test -name '*.serial.test.ts' -not -path 'test/e2e/*' | sort)
+fi
 
 # Partition into pooled vs exclusive (exclusive entries missing from the
 # discovered set are simply ignored — the list names repo files, and a
@@ -135,8 +147,12 @@ fi
 ordered_files=()
 if [ "${#pool_files[@]}" -gt 0 ]; then ordered_files+=("${pool_files[@]}"); fi
 if [ "${#exclusive_present[@]}" -gt 0 ]; then ordered_files+=("${exclusive_present[@]}"); fi
-if [ "${1:-}" = "--dry-run-list" ]; then
+if [ "$DRY_RUN_MODE" = "--dry-run-list" ]; then
   if [ "${#ordered_files[@]}" -gt 0 ]; then printf '%s\n' "${ordered_files[@]}" | sort; fi
+  exit 0
+fi
+if [ "$DRY_RUN_MODE" = "--dry-run-list-exclusive" ]; then
+  if [ "${#exclusive_present[@]}" -gt 0 ]; then printf '%s\n' "${exclusive_present[@]}"; fi
   exit 0
 fi
 

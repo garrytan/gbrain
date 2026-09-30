@@ -8,16 +8,18 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { performSync } from '../src/commands/sync.ts';
-import { runPersistenceAdministration } from '../src/core/persistence/administration.ts';
+import { CLAIM_BEFORE_ACTIVATION_NOTICE, runPersistenceAdministration } from '../src/core/persistence/administration.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { persistenceHome } from '../src/core/persistence/identity.ts';
 import { PHYSICAL_ROOT_MARKER } from '../src/core/persistence/physical-root-record.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
+import { testBackends } from './helpers/test-backends.ts';
 import { reviewedWriterIntent } from './helpers/writer-admin-intent.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { makeGitFixture } from './helpers/git-fixture.ts';
+import { loadActivationPendingSourceIds } from '../src/core/sync-policy.ts';
 
-for (const kind of ['pglite', 'postgres'] as const) describe.skipIf(kind === 'postgres' && !process.env.DATABASE_URL)(`deliberate onboarding (${kind})`, () => {
+for (const kind of testBackends()) describe(`deliberate onboarding (${kind})`, () => {
   let engine: BrainEngine, close: (() => Promise<void>) | undefined;
   const home = mkdtempSync(join(tmpdir(), 'gbrain-onboarding-')), root = join(home, 'canonical');
   beforeAll(async () => {
@@ -33,6 +35,8 @@ for (const kind of ['pglite', 'postgres'] as const) describe.skipIf(kind === 'po
     expect(status.onboarding.sources).toContainEqual(expect.objectContaining({ source_id: 'default', state: 'claim_required' }));
     expect(existsSync(join(persistenceHome(), 'host.json'))).toBe(false);
     expect(existsSync(join(root, PHYSICAL_ROOT_MARKER))).toBe(false);
+    // #5198: autopilot's skip set tracks exactly the window in which sync refuses.
+    expect(await loadActivationPendingSourceIds(engine)).toEqual(new Set());
     const write = () => dispatchToolCall(engine, 'put_page', { slug: 'onboarding-note', content: '---\ntitle: Onboarding example\ntype: note\n---\nA durable example.\n', request_id: randomUUID() }, { remote: false, sourceId: 'default', config: { engine: kind, embedding_disabled: true } });
     if (kind === 'postgres') {
       const refused = await write(); expect(refused.isError).toBe(true);
@@ -40,10 +44,15 @@ for (const kind of ['pglite', 'postgres'] as const) describe.skipIf(kind === 'po
       expect(await engine.getPage('onboarding-note', { sourceId: 'default' })).toBeNull();
       expect(existsSync(join(root, PHYSICAL_ROOT_MARKER))).toBe(false);
     }
-    await runPersistenceAdministration(engine, 'writer_claim', { source_id: 'default', path: root, ...await reviewedWriterIntent(engine, 'writer_claim') });
+    // #5198: the claim states what it fences, in the dry run and in the result.
+    const claimPreview = await runPersistenceAdministration(engine, 'writer_claim', { source_id: 'default', path: root, dry_run: true }) as any;
+    expect(claimPreview.activation_required).toBe(CLAIM_BEFORE_ACTIVATION_NOTICE);
+    const claim = await runPersistenceAdministration(engine, 'writer_claim', { source_id: 'default', path: root, ...await reviewedWriterIntent(engine, 'writer_claim') }) as any;
+    expect(claim).toMatchObject({ claimed: true, activation_required: CLAIM_BEFORE_ACTIVATION_NOTICE });
     const claimed = await runPersistenceAdministration(engine, 'writer_status', {}) as any;
     expect(claimed.onboarding.sources).toContainEqual(expect.objectContaining({ source_id: 'default', state: 'activation_required' }));
     await expect(performSync(engine, { sourceId: 'default', noEmbed: true, noPull: true })).rejects.toThrow();
+    expect(await loadActivationPendingSourceIds(engine)).toEqual(new Set(['default']));
     const activate = async (params: Record<string, unknown> = {}) => runPersistenceAdministration(engine, 'writer_activate', {
       confirm_quiesced: true, ...params, ...await reviewedWriterIntent(engine, 'writer_activate'),
     });
@@ -68,6 +77,8 @@ for (const kind of ['pglite', 'postgres'] as const) describe.skipIf(kind === 'po
     await engine.executeRaw('UPDATE gbrain_cycle_locks SET acquisition_token=$1::uuid', [randomUUID()]);
     await expect(runPersistenceAdministration(engine, 'writer_activate', { confirm_quiesced: true, cleanup_dead_local_locks: true, ...stale })).rejects.toMatchObject({ code: 'writer_admin_state_changed' });
     expect(await activate({ cleanup_dead_local_locks: true })).toMatchObject({ activated: true });
+    expect(await runPersistenceAdministration(engine, 'writer_claim', { source_id: 'default', path: root, dry_run: true })).not.toHaveProperty('activation_required');
+    expect(await loadActivationPendingSourceIds(engine)).toEqual(new Set());
     expect(await engine.executeRaw('SELECT id FROM gbrain_cycle_locks')).toEqual([]);
     const ready = await runPersistenceAdministration(engine, 'writer_status', {}) as any;
     expect(ready.onboarding.sources).toContainEqual(expect.objectContaining({ source_id: 'default', state: 'ready' }));

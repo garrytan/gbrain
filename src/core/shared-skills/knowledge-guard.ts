@@ -1,7 +1,7 @@
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { OperationError } from '../ops/contract.ts';
-import { resolveSourceLocalFilePath } from '../markdown.ts';
+import { isRelativeFileUri, resolveSourceLocalFilePath } from '../markdown.ts';
 import { localHostId } from '../persistence/identity.ts';
 import type { SqlEngine, WriteRequest } from '../persistence/model.ts';
 import { canonicalFilesystemPath } from '../persistence/root-registry.ts';
@@ -62,8 +62,16 @@ export async function assertKnowledgePublicationAllowed(
         const recorded = resolveSourceLocalFilePath(root, alias.source_path, row.slug);
         if (recorded) paths.push(recorded);
       }
-      if (alias.source_uri?.startsWith('file:')) {
-        try { paths.push(fileURLToPath(alias.source_uri)); } catch { reject(); }
+      if (alias.source_uri?.startsWith('file:') && !isRelativeFileUri(alias.source_uri)) {
+        try { paths.push(fileURLToPath(alias.source_uri)); } catch {
+          // An unresolved alias must still fail closed, but it does not prove
+          // that this ordinary page is part of a shared skillpack.
+          const error = new OperationError('invalid_source_uri',
+            'The page has a stored file source_uri that cannot be resolved to a local filesystem path. Have the source owner inspect and repair the stored source_uri before retrying.',
+            `On the brain host, inspect the stored source_uri of page ${row.slug} in source ${row.source_id} and replace it with an absolute file URI or clear it, then retry the knowledge write with a new request_id. Shared skillpack protection remains enabled.`);
+          error.detail = 'invalid_source_uri';
+          throw error;
+        }
       }
     }
   }

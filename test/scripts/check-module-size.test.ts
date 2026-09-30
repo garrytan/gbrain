@@ -1,6 +1,6 @@
 /**
  * Failing-side proof for every check-module-size.sh rule. The guard-self-test
- * fixtures cover rule 1 (growth) in both policies; these tests drive rules
+ * fixtures cover rule 1 (growth); these tests drive rules
  * 2-4 and the unknown-policy arm through GBRAIN_GUARD_ROOT temp trees so no
  * rule can rot into a permanently-green no-op — the exact failure class the
  * module-size ratchet exists to kill.
@@ -32,7 +32,7 @@ function makeTree(tsvRows: string[], files: Record<string, number>): string {
   return root;
 }
 
-/** Like makeTree but with verbatim file content (region-exempt fixtures). */
+/** Like makeTree but with verbatim file content (retired region-exempt fixtures). */
 function makeTreeWithContent(tsvRows: string[], files: Record<string, string>): string {
   const root = mkdtempSync(join(tmpdir(), 'gbrain-module-size-'));
   tempDirs.push(root);
@@ -95,6 +95,8 @@ describe('check-module-size.sh rule-by-rule failing sides', () => {
     expect(r.out).toContain("unknown policy 'freeform'");
   });
 
+  // W3 retired the region-exempt policy (schema migrations moved to one file
+  // each), so a region-exempt row can no longer exempt any lines: it is refused.
   test('region-exempt: a spoof-named const (MIGRATIONS_ANYTHING) does not open the region', () => {
     // 23 total lines; 21 sit inside a region opened by a SPOOF-named const.
     // A loose prefix match would exempt them (measured 2 → pass); the
@@ -110,7 +112,7 @@ describe('check-module-size.sh rule-by-rule failing sides', () => {
     const root = makeTreeWithContent(['src/spoof.ts\t5\tregion-exempt\tfixture'], { 'src/spoof.ts': content });
     const r = runGuard(root);
     expect(r.code).toBe(1);
-    expect(r.out).toContain('over its 5 ceiling');
+    expect(r.out).toContain("unknown policy 'region-exempt'");
   });
 
   test('region-exempt: an unclosed MIGRATIONS region fails loudly instead of exempting the file tail', () => {
@@ -124,7 +126,7 @@ describe('check-module-size.sh rule-by-rule failing sides', () => {
     });
     const r = runGuard(root);
     expect(r.code).toBe(1);
-    expect(r.out).toContain('unclosed MIGRATIONS region');
+    expect(r.out).toContain("unknown policy 'region-exempt'");
   });
 
   test('all violations are accumulated, not first-fail', () => {

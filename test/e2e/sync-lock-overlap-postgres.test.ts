@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { hostname, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import postgres from 'postgres';
+import postgres from '#postgres'
 import { assertSafeE2eDatabaseUrl } from '../helpers/db-guard.ts';
 import { makeGitFixture } from '../helpers/git-fixture.ts';
 
@@ -118,8 +118,13 @@ describe.skipIf(!databaseUrl)('sync lock overlap on Postgres', () => {
         barrier.release();
       }
       await sql`DELETE FROM gbrain_cycle_locks WHERE holder_host = ${hostname()} AND holder_pid = ANY(${children.map(c => c.pid)}::int[])`;
-      await sql`DELETE FROM facts WHERE source_id = ${source}`;
-      await sql`DELETE FROM sources WHERE id = ${source}`;
+      // On a fresh database the CLI's init activates managed persistence, so
+      // raw fixture cleanup must declare itself to the writer guard.
+      await sql.begin(async tx => {
+        await tx`SELECT set_config('gbrain.topology_change', 'on', true), set_config('gbrain.write_sources', ${JSON.stringify([source])}, true)`;
+        await tx`DELETE FROM facts WHERE source_id = ${source}`;
+        await tx`DELETE FROM sources WHERE id = ${source}`;
+      });
       await sql.end();
       rmSync(home, { recursive: true, force: true });
     }

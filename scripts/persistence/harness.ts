@@ -149,6 +149,13 @@ export function distribution(values: number[]) {
   const at = (p: number) => sorted[Math.min(sorted.length - 1, Math.floor(p * sorted.length))] ?? 0;
   return { count: values.length, p50_ms: at(.5), p95_ms: at(.95), p99_ms: at(.99), max_ms: at(1) };
 }
+export function samplePeakRss(peak: number | null, readRss = () => process.memoryUsage().rss): number | null {
+  try { return Math.max(peak ?? 0, readRss()); }
+  catch (error) {
+    if (!(error instanceof Error) || error.message !== 'Failed to get memory usage') throw error;
+    return peak;
+  }
+}
 export async function timedAdmission(engine: BrainEngine, input: WriteAdmission, timings: number[]): Promise<WriteRequest> {
   const started = performance.now(); const row = await admitWrite(engine, input); timings.push(performance.now() - started); return row;
 }

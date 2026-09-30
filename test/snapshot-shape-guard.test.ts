@@ -8,7 +8,7 @@
  */
 
 import { test, expect, beforeEach, afterEach } from 'bun:test';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import * as crypto from 'node:crypto';
@@ -20,6 +20,7 @@ import {
   __resetSnapshotMemoForTests,
 } from '../src/core/pglite-engine.ts';
 import { getEmbeddingDimensions, getEmbeddingModel } from '../src/core/ai/gateway.ts';
+import { snapshotSchemaInputs } from '../src/core/snapshot-schema-inputs.ts';
 
 let dir: string;
 
@@ -103,16 +104,11 @@ test('memo: stale hash is terminal — tar never read, repeat calls short-circui
   expect(__snapshotMemoStatsForTests().tarReads).toBe(0);
 });
 
-const schemaInputs = [
-  'migrate.ts', 'pglite-schema.ts', 'fts-language.ts', 'vector-index.ts', 'ai/defaults.ts',
-  'search/projection-statistics.ts',
-  'company-brain/receipt-schema.ts',
-  'shared-skills/schema-all.ts', 'shared-skills/schema.ts', 'shared-skills/membership-schema.ts', 'shared-skills/persistence-schema.ts',
-  'shared-skills/access-schema.ts',
-  'timeline-dedup-repair.ts', 'pages-upsert-arbiter.ts', 'link-extraction.ts',
-  'grants/schema.ts', 'grants/migration.ts', 'grants/model.ts', 'grants/service.ts', 'grants/profiles.ts',
-  'page-state/schema.ts', 'lease-schema.ts', 'page-state/projection-schema.ts', 'persistence/schema.ts', 'persistence/effect-schema.ts', 'persistence/writer-guard-schema.ts', 'persistence/topology-schema.ts', 'scope.ts', 'sql-query.ts', 'minions/tools/brain-allowlist.ts', 'facts/withdrawal-schema.ts',
-];
+// EO7: the inputs are the computed static import closure of the schema roots
+// (src/core/snapshot-schema-inputs.ts), independently checked against a TS-AST
+// closure and the CI cache keys by test/snapshot-inputs-closure.test.ts.
+// test-reads-source-ok[raw-bytes]: the closure walk reads module text to follow imports.
+const schemaInputs = snapshotSchemaInputs((f) => existsSync(`src/core/${f}`), (f) => readFileSync(`src/core/${f}`, 'utf8'));
 
 test('D5.13: the coverage-immune hash includes schema entry modules and imported migration dependencies', () => {
   // The D5.13 property (editing a migration HANDLER stales the snapshot) is
@@ -124,10 +120,10 @@ test('D5.13: the coverage-immune hash includes schema entry modules and imported
   // Pin the recipe against an independent computation so a drift in either
   // side (recipe or file resolution) fails HERE, not as a silent slow path.
   const expected = crypto.createHash('sha256');
-  expected.update('files:v3\n');
+  expected.update('files:v4\n');
   for (const file of schemaInputs) {
     expected.update(`${file}\n`);
-    // test-reads-source-ok: independent raw-byte hash contract, including imported SQL/handlers.
+    // test-reads-source-ok[raw-bytes]: independent raw-byte hash contract, including imported SQL/handlers.
     expected.update(readFileSync(`src/core/${file}`));
     expected.update('\n--\n');
   }
@@ -141,7 +137,7 @@ test.each(schemaInputs)('editing imported snapshot input %s invalidates the cach
   const changedFs = {
     ...fsModule,
     readFileSync: (path: Parameters<typeof fsModule.readFileSync>[0]) => {
-      // test-reads-source-ok: emulate a changed source without mutating shared checkout files.
+      // test-reads-source-ok[raw-bytes]: emulate a changed source without mutating shared checkout files.
       const bytes = fsModule.readFileSync(path);
       return String(path).endsWith(`/src/core/${file}`)
         ? Buffer.concat([bytes, Buffer.from('\n// schema dependency changed\n')]) : bytes;
@@ -155,7 +151,7 @@ test('an unreadable imported schema dependency disables snapshot reuse', () => {
     ...fsModule,
     readFileSync: (path: Parameters<typeof fsModule.readFileSync>[0]) => {
       if (String(path).endsWith('/grants/schema.ts')) throw new Error('ENOENT');
-      // test-reads-source-ok: raw-byte hash failure-path regression.
+      // test-reads-source-ok[raw-bytes]: raw-byte hash failure-path regression.
       return fsModule.readFileSync(path);
     },
   } as typeof fsModule;

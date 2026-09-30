@@ -1,0 +1,172 @@
+/**
+ * Wave checks: the doctor checks that report residual state from the managed
+ * persistence waves, each with a stable id and a declared resolution. One
+ * table feeds four consumers so they can never disagree:
+ *
+ *   - the local doctor (checks registered here rather than inline in doctor.ts),
+ *   - the remote doctor's sanitized host-action lines (report-remote.ts),
+ *   - `gbrain doctor --remediate` finding classification,
+ *   - the `gbrain post-upgrade` banner.
+ *
+ * `resolution` says how a non-ok finding clears: `repair` (a registered
+ * `gbrain repair` kind names this check in its `checks`), `operator` (a named
+ * manual action on the brain host), or `unsupported` (no command can clear it
+ * yet; it is reported, never hidden). Add a check by appending one entry.
+ */
+import type { BrainEngine } from '../../core/engine.ts';
+import type { Check } from '../doctor.ts';
+import { repairForCheck } from '../../core/repair/registry.ts';
+
+export type WaveResolution = 'repair' | 'operator' | 'unsupported';
+
+export interface WaveScope {
+  /** Remote source scope; undefined means brain-wide (local trusted callers). */
+  sourceIds?: string[];
+}
+
+export interface WaveCheckSpec {
+  id: string;
+  resolution: WaveResolution;
+  /** Count-free, path-free impact line safe for remote callers. */
+  impact: string;
+  /** The named instruction for an operator-required or unsupported finding. */
+  instruction?: string;
+  /** Where the local doctor runs it: inline in doctor.ts, or from this table. */
+  registration: 'doctor.ts' | 'wave';
+  /** Reason the check is not offered to remote callers, if any. */
+  hostOnly?: string;
+  /** Items behind a finding, read from the check's details (host-side banners only). */
+  count(details: Record<string, any>): number;
+  run(engine: BrainEngine, scope: WaveScope): Promise<Check>;
+}
+
+/** Checks that take one optional source id: run once brain-wide, or once per scoped source and merged. */
+async function perSource(scope: WaveScope, run: (sourceId?: string) => Promise<Check>): Promise<Check> {
+  if (!scope.sourceIds) return run();
+  const checks = await Promise.all(scope.sourceIds.map(id => run(id)));
+  const worst = checks.find(c => c.status === 'fail') ?? checks.find(c => c.status === 'warn') ?? checks[0];
+  return worst ?? { name: '', status: 'ok', message: '' };
+}
+
+export const WAVE_CHECKS: readonly WaveCheckSpec[] = [
+  {
+    id: 'timeline_history', resolution: 'repair', registration: 'doctor.ts',
+    count: d => Number(d.materializable_rows ?? 0),
+    impact: 'Some timeline rows exist only in the database and are missing from their pages',
+    run: async (engine, scope) => { const { timelineHistoryCheck } = await import('./checks/timeline-history.ts'); return perSource(scope, id => timelineHistoryCheck(engine, id)); },
+  },
+  {
+    id: 'derived_visibility', resolution: 'repair', registration: 'doctor.ts',
+    count: d => Number(d.unstamped_atoms ?? 0) + Number(d.unstamped_concepts ?? 0) + Number(d.looser_atoms ?? 0) + Number(d.looser_concepts ?? 0),
+    impact: 'Some derived pages have no explicit visibility or are stored looser than their origin',
+    run: async (engine, scope) => { const { derivedVisibilityCheck } = await import('./checks/derived-visibility.ts'); return perSource(scope, id => derivedVisibilityCheck(engine, id)); },
+  },
+  {
+    id: 'safe_index_pending', resolution: 'repair', registration: 'wave',
+    count: d => Number(d.pages_pending ?? 0),
+    impact: 'Some pages are below the safe-chunk index version and are withheld from remote search',
+    run: async (engine, scope) => (await import('./checks/safe-index.ts')).safeIndexPendingCheck(engine, scope.sourceIds),
+  },
+  {
+    id: 'connector_checkpoints', resolution: 'repair', registration: 'wave',
+    count: d => Number(d.count ?? 0),
+    impact: 'Some connector checkpoint rows can no longer be loaded by any connector source',
+    run: async engine => (await import('./checks/connector-checkpoints.ts')).checkConnectorCheckpoints(engine),
+  },
+  {
+    id: 'unbound_source', resolution: 'operator', registration: 'wave',
+    count: d => (d.sources ?? []).filter((source: { bound?: boolean }) => source.bound).reduce((sum: number, source: { pages?: number }) => sum + Number(source.pages ?? 0), 0),
+    impact: 'Some pages written database-only while their source was unbound now sit outside canonical files',
+    instruction: 'Keep them database-only, or for a page whose slug already has a canonical file preview both sides with `gbrain sources reconcile <source> <slug> --brain <brain> --preview` and apply the agreed resolution (docs/guides/write-refusals.md#unbound-sources-on-postgres).',
+    run: async engine => (await import('./checks/unbound-source.ts')).checkUnboundSource(engine),
+  },
+  {
+    id: 'persistence_capacity', resolution: 'operator', registration: 'doctor.ts',
+    count: d => (d.resources ?? []).length,
+    impact: 'A cumulative managed-write limit is at or above 80%',
+    instruction: 'Raise the named journal limit with the `gbrain config set` command doctor prints, on the brain host.',
+    run: async engine => (await import('./checks/persistence-capacity.ts')).checkPersistenceCapacity(engine),
+  },
+  {
+    id: 'parked_effects', resolution: 'operator', registration: 'doctor.ts',
+    count: d => Number(d.parked_effects ?? 0),
+    impact: 'Some Git or withdrawal effects are parked after repeated failures',
+    instruction: 'Fix the cause, then run the `gbrain sources writer retry-effects <source> --request-id <id>` command doctor prints (preview with --dry-run first).',
+    run: async (engine, scope) => (await import('./checks/parked-effects.ts')).checkParkedEffects(engine, scope.sourceIds),
+  },
+  {
+    id: 'dream_paid_loop', resolution: 'operator', registration: 'doctor.ts',
+    count: d => (d.keys ?? []).length,
+    impact: 'A dream synthesis key keeps dying and was paid for on each attempt',
+    instruction: 'Fix the cause, then reset the breaker with the command doctor prints.',
+    run: async engine => (await import('./checks/dream-breaker.ts')).dreamPaidLoopCheck(engine),
+  },
+  {
+    id: 'writer_version', resolution: 'operator', registration: 'wave',
+    impact: 'A writer older than this release admitted or published a recent write',
+    instruction: 'Run `gbrain upgrade` on each host doctor names (by host UUID), then restart its gbrain processes; an older writer may still delete database-only timeline rows.',
+    count: d => Number(d.count ?? 0),
+    run: async engine => (await import('./checks/writer-version.ts')).writerVersionCheck(engine),
+  },
+  {
+    id: 'self_capture', resolution: 'operator', registration: 'wave',
+    count: d => Number(d.classified ?? 0),
+    impact: 'The session corpus still holds files captured from gbrain\'s own model sessions',
+    instruction: 'Quarantine the listed corpus files by hand with the commands in docs/guides/repair.md#quarantine-self-captured-corpus-files; nothing is deleted automatically.',
+    run: async engine => (await import('./checks/self-capture.ts')).selfCaptureCheck(engine),
+  },
+  {
+    id: 'stale_embedding_effects', resolution: 'unsupported', registration: 'wave',
+    count: d => Number(d.stale_effects ?? 0),
+    impact: 'A committed write still has a queued embedding effect that no command can clear yet',
+    instruction: 'Inspect it with `gbrain sources writer status <source> --json`; inspection cannot clear it (see docs/guides/repair.md#stale-queued-embedding-effects).',
+    run: async (engine, scope) => (await import('./checks/stale-embedding-effects.ts')).staleEmbeddingEffectsCheck(engine, scope.sourceIds),
+  },
+];
+
+/** A check that could not run reports unknown, never ok. */
+export function checkHealthUnknown(check: Check): boolean {
+  return check.details?.health === 'unknown' || check.details?.count === 'unknown';
+}
+
+export interface WaveFinding { spec: WaveCheckSpec; check: Check; state: 'ok' | 'finding' | 'unknown' }
+
+/** Run wave checks; a throwing check becomes an unknown finding instead of aborting the rest. */
+export async function runWaveChecks(engine: BrainEngine, opts: WaveScope & { only?: WaveCheckSpec['registration']; remote?: boolean } = {}): Promise<WaveFinding[]> {
+  const specs = WAVE_CHECKS.filter(spec => (!opts.only || spec.registration === opts.only) && (!opts.remote || !spec.hostOnly));
+  const findings: WaveFinding[] = [];
+  for (const spec of specs) {
+    let check: Check;
+    try { check = await spec.run(engine, { sourceIds: opts.sourceIds }); }
+    catch (error) {
+      check = { name: spec.id, status: 'warn', message: `${spec.id} could not run: ${error instanceof Error ? error.message : String(error)}. Health is unknown.`,
+        details: { health: 'unknown' } };
+    }
+    check = { ...check, name: spec.id };
+    findings.push({ spec, check, state: checkHealthUnknown(check) ? 'unknown' : check.status === 'ok' ? 'ok' : 'finding' });
+  }
+  return findings;
+}
+
+/** The repair kind that clears a wave finding, when its resolution is `repair`. */
+export function waveRepairKind(spec: WaveCheckSpec) {
+  return spec.resolution === 'repair' ? repairForCheck(spec.id)?.kind : undefined;
+}
+
+export const REMOTE_HOST_ACTION = 'host operator action required: on the brain host run `gbrain doctor --remediation-plan`';
+
+/**
+ * Remote doctor lines: one per remotely offered wave check, with a stable id,
+ * the count-free impact summary and the on-host preview command. No host
+ * paths, row contents, SQL, account emails or installation ids.
+ */
+export async function remoteWaveHandoff(engine: BrainEngine, sourceIds?: string[]): Promise<Check[]> {
+  const findings = await runWaveChecks(engine, { sourceIds, remote: true });
+  return findings.map(({ spec, state }) => {
+    const host_action = { check_id: spec.id, state: state === 'finding' ? 'action_required' : state, preview_command: 'gbrain doctor --remediation-plan' };
+    if (state === 'ok') return { name: spec.id, status: 'ok' as const, message: 'No host action needed.', details: { host_action } };
+    if (state === 'unknown') return { name: spec.id, status: 'warn' as const, details: { host_action },
+      message: `Unknown: this check could not run for the remote caller; ${REMOTE_HOST_ACTION}.` };
+    return { name: spec.id, status: 'warn' as const, details: { host_action }, message: `${spec.impact}; ${REMOTE_HOST_ACTION}.` };
+  });
+}

@@ -6,7 +6,7 @@
  * the engine read is observed through an instance-level wrapper.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, realpathSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -27,7 +27,7 @@ afterAll(async () => {
 });
 
 beforeEach(() => {
-  tmp = mkdtempSync(join(tmpdir(), 'gbrain-export-raw-'));
+  tmp = realpathSync(mkdtempSync(join(tmpdir(), 'gbrain-export-raw-')));
   originalLog = console.log;
   console.log = () => {};
 });
@@ -48,11 +48,11 @@ describe('export — raw_data sidecar read', () => {
 
     const seen: unknown[] = [];
     const real = engine.getRawData;
-    (engine as unknown as { getRawData: unknown }).getRawData = async (
+    (engine as unknown as { getRawData: unknown }).getRawData = async function (this: PGLiteEngine,
       slug: string, source: string | undefined, opts: unknown,
-    ) => {
+    ) {
       seen.push({ slug, source, opts });
-      return real.call(engine, slug, source, opts as never);
+      return real.call(this, slug, source, opts as never);
     };
     try {
       await runExport(engine, ['--dir', join(tmp, 'out')]);

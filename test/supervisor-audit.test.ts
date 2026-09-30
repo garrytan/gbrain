@@ -92,6 +92,16 @@ describe('isCrashExit — branch matrix', () => {
 });
 
 describe('summarizeCrashes — aggregation', () => {
+  test('configuration-blocked exits remain visible without inflating crash totals', () => {
+    const blocked = evt('worker_exited', { likely_cause: 'configuration_blocked', code: 16 });
+    expect(isCrashExit(blocked)).toBe(false);
+    const summary = summarizeCrashes([blocked, evt('worker_exited', { likely_cause: 'runtime_error', code: 1 })]);
+    expect(summary.total).toBe(1);
+    expect(summary.by_cause.runtime_error).toBe(1);
+    expect(summary.by_cause.legacy).toBe(0);
+    expect(summary.clean_exits).toBe(1);
+  });
+
   // Feed a representative mixed stream and assert every bucket. The mix
   // exercises every classifier branch so the message-format consumers
   // (doctor.ts and jobs.ts) get a stable shape.

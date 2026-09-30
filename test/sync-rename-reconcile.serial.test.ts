@@ -152,12 +152,12 @@ describe('#3056: rename fallback reconciles the stale old row', () => {
     expect(staleRows[0].deleted_at).not.toBeNull();
   });
 
-  test('dedup-skip against the old row must NOT reconcile: the only copy survives', async () => {
+  test('identity match against the old row never loses the only copy', async () => {
     const { performSync } = await import('../src/commands/sync.ts');
-    // frontmatter.id gives identity dedup a handle: the import at the new
-    // path can skip as "identical to <old row>" — in which case NOTHING
-    // landed at the destination and deleting the old row would destroy the
-    // only copy of the content.
+    // frontmatter.id gives identity dedup a handle on the old row. The old
+    // file is gone, so the import at the new path is a move, never a
+    // "duplicate" skip: the renamed content lands at the destination and the
+    // old row may then be reconciled. Exactly one live copy must remain.
     const md = ['---', 'type: person', 'title: Carol', 'id: ext-3056', '---', '', 'Carol is a person.'].join('\n');
     const repo = mkRepo({ 'people/carol.md': md });
     await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
@@ -173,14 +173,13 @@ describe('#3056: rename fallback reconciles the stale old row', () => {
 
     await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
 
-    // The import skipped against the OLD row (identity dedup), so the
-    // destination never materialized with the renamed content — the
-    // reconcile must not have deleted the old row, which still holds the
-    // only copy.
-    const carol = await engine.getPage('people/carol');
-    expect(carol).not.toBeNull();
-    expect(carol!.compiled_truth).toContain('Carol is a person.');
-    expect((await engine.getPage('people/dana'))!.compiled_truth).toBe('occupies the destination slug');
+    const copies = await engine.executeRaw<{ slug: string; compiled_truth: string }>(
+      `SELECT slug, compiled_truth FROM pages
+        WHERE source_id = 'default' AND deleted_at IS NULL AND frontmatter->>'id' = 'ext-3056'`,
+    );
+    expect(copies).toHaveLength(1);
+    expect(copies[0].slug).toBe('people/dana');
+    expect(copies[0].compiled_truth).toContain('Carol is a person.');
   });
 
   test('reconcile never deletes by slug guess: unrelated manual row survives', async () => {
@@ -318,9 +317,12 @@ describe('#3056: rename fallback reconciles the stale old row', () => {
 
     // The stale old row reconciled away even though the skip wrote nothing...
     expect(await engine.getPage('people/carol')).toBeNull();
-    // ...and the destination row is genuinely untouched (the skip was real).
-    const after = await engine.readPageSnapshot('people/dana', { sourceId: 'default' });
-    expect(after).toEqual(before);
+    // ...and the destination row is genuinely untouched (the skip was real):
+    // the only change is the file origin every file import records (#5675),
+    // bookkeeping that leaves the revision alone.
+    const after = (await engine.readPageSnapshot('people/dana', { sourceId: 'default' }))!;
+    expect(after.page.source_uri).toMatch(/^file:\/\/.*\/people\/dana\.md$/);
+    expect(after).toEqual({ ...before, page: { ...before.page, source_uri: after.page.source_uri } });
     expect(await countPages()).toBe(1);
   });
 });

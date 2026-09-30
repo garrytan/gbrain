@@ -23,9 +23,13 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
-import { BudgetMeter } from './budget-meter.ts';
+import { BudgetMeter, loadAllowUnpriced, parseBudgetUsd } from './budget-meter.ts';
+import { resolveSynthMaxOutputTokens } from './synthesize-concepts.ts';
+import { resolveCycleDate, shiftCalendarDate } from './cycle-date.ts';
 import { resolveModel } from '../model-config.ts';
 import type { DreamPhaseResult } from './auto-think.ts';
+import { maintenancePreflight, publishMaintenancePage } from '../persistence/prepared-maintenance.ts';
+import { serializeMarkdown } from '../markdown.ts';
 
 export interface DriftPhaseOpts {
   brainDir?: string;
@@ -36,12 +40,15 @@ export interface DriftPhaseOpts {
   forceEnabled?: boolean;
   /** Inject the judge model call (tests). Defaults to gateway chat. */
   judge?: DriftJudgeFn;
+  /** C-15: the cycle's calendar date (runCycle resolves one per cycle). */
+  cycleDate?: string;
 }
 
 export interface DriftConfig {
   enabled: boolean;
   lookbackDays: number;
   budgetUsd: number;
+  allowUnpriced: boolean;
   autoUpdate: boolean;
   maxPerCycle: number;
 }
@@ -55,7 +62,8 @@ async function loadDriftConfig(engine: BrainEngine): Promise<DriftConfig> {
   return {
     enabled: enabledStr === 'true',
     lookbackDays: lookbackStr ? Math.max(1, parseInt(lookbackStr, 10) || 30) : 30,
-    budgetUsd: budgetStr ? Math.max(0, parseFloat(budgetStr) || 1.0) : 1.0,
+    budgetUsd: parseBudgetUsd(budgetStr, 1.0),
+    allowUnpriced: await loadAllowUnpriced(engine),
     autoUpdate: autoStr === 'true',
     maxPerCycle: maxPerStr ? Math.max(1, parseInt(maxPerStr, 10) || 20) : 20,
   };
@@ -86,6 +94,7 @@ export type DriftJudgeFn = (input: {
   candidate: DriftCandidate;
   evidence: string;
   modelHint?: string;
+  maxOutputTokens?: number;
 }) => Promise<DriftVerdict>;
 
 export const DRIFT_JUDGE_PROMPT = `You are auditing a knowledge-base "take" (a weighted claim) for drift:
@@ -111,6 +120,15 @@ TAKE:
 RECENT EVIDENCE (timeline entries on the same page):
 {EVIDENCE_BLOCK}
 `;
+
+/** The judge prompt for one candidate; also the basis of its budget estimate. */
+export function buildDriftPrompt(candidate: Pick<DriftCandidate, 'claim' | 'weight' | 'pageSlug'>, evidence: string): string {
+  return DRIFT_JUDGE_PROMPT
+    .replace('{CLAIM}', candidate.claim)
+    .replace('{WEIGHT}', String(candidate.weight))
+    .replace('{PAGE}', candidate.pageSlug)
+    .replace('{EVIDENCE_BLOCK}', evidence);
+}
 
 /**
  * Parse the judge model's JSON output. Tolerant of fence wrapping and
@@ -149,17 +167,13 @@ export async function defaultDriftJudge(input: {
   candidate: DriftCandidate;
   evidence: string;
   modelHint?: string;
+  maxOutputTokens?: number;
 }): Promise<DriftVerdict> {
   const { chat } = await import('../ai/gateway.ts');
-  const prompt = DRIFT_JUDGE_PROMPT
-    .replace('{CLAIM}', input.candidate.claim)
-    .replace('{WEIGHT}', String(input.candidate.weight))
-    .replace('{PAGE}', input.candidate.pageSlug)
-    .replace('{EVIDENCE_BLOCK}', input.evidence);
   const result = await chat({
-    messages: [{ role: 'user', content: prompt }],
+    messages: [{ role: 'user', content: buildDriftPrompt(input.candidate, input.evidence) }],
     ...(input.modelHint ? { model: input.modelHint } : {}),
-    maxTokens: 400,
+    maxTokens: input.maxOutputTokens ?? resolveSynthMaxOutputTokens(input.modelHint ?? ''),
   });
   const parsed = parseDriftOutput(result.text);
   if (!parsed) {
@@ -178,8 +192,9 @@ export async function defaultDriftJudge(input: {
 async function findDriftCandidates(
   engine: BrainEngine,
   lookbackDays: number,
+  cycleDate?: string,
 ): Promise<DriftCandidate[]> {
-  const cutoffIso = lookbackCutoffIso(lookbackDays);
+  const cutoffIso = shiftCalendarDate(cycleDate ?? await resolveCycleDate(engine), -lookbackDays);
   // Only consider takes with weight in the "soft" middle band (0.3..0.85)
   // — facts (1.0) don't drift, very-low hunches (<0.3) aren't actionable yet.
   const rows = await engine.executeRaw<{
@@ -211,10 +226,6 @@ async function findDriftCandidates(
       weight: Number(r.weight),
       recentEvidenceCount: Number(r.recent_evidence),
     }));
-}
-
-function lookbackCutoffIso(lookbackDays: number): string {
-  return new Date(Date.now() - lookbackDays * 86_400_000).toISOString().slice(0, 10);
 }
 
 /** Format the candidate page's recent timeline entries as judge evidence. */
@@ -279,7 +290,8 @@ export async function runPhaseDrift(
     return skipped('not_configured', 'dream.drift.enabled is false');
   }
 
-  const candidates = await findDriftCandidates(engine, config.lookbackDays);
+  const cycleDate = opts.cycleDate ?? await resolveCycleDate(engine);
+  const candidates = await findDriftCandidates(engine, config.lookbackDays, cycleDate);
   if (candidates.length === 0) {
     return {
       name: 'drift',
@@ -300,6 +312,10 @@ export async function runPhaseDrift(
     };
   }
 
+  // #5280: a managed brain publishes the report through the maintenance
+  // coordinator; the preflight refuses a missing canonical owner before any
+  // judge spend. Null on an unmanaged brain.
+  const maintenance = await maintenancePreflight(engine, 'default');
   const modelId = await resolveModel(engine, {
     configKey: 'models.drift',
     deprecatedConfigKey: 'dream.drift.model',
@@ -308,29 +324,32 @@ export async function runPhaseDrift(
   });
   const meter = new BudgetMeter({
     budgetUsd: config.budgetUsd,
+    allowUnpriced: config.allowUnpriced,
     phase: 'drift',
     auditPath: opts.auditPath,
   });
+  const maxOutputTokens = resolveSynthMaxOutputTokens(modelId);
   const judge = opts.judge ?? defaultDriftJudge;
-  const cutoffIso = lookbackCutoffIso(config.lookbackDays);
+  const cutoffIso = shiftCalendarDate(cycleDate, -config.lookbackDays);
 
   const judged: JudgedCandidate[] = [];
   let budgetExhausted = false;
   let failed = 0;
   for (const candidate of candidates.slice(0, config.maxPerCycle)) {
+    const evidence = await loadEvidence(engine, candidate.pageId, cutoffIso);
     const check = meter.check({
       modelId,
-      estimatedInputTokens: 1500,
-      maxOutputTokens: 400,
+      // ~4 chars per token over the prompt the judge actually sends.
+      estimatedInputTokens: Math.ceil(buildDriftPrompt(candidate, evidence).length / 4),
+      maxOutputTokens,
       label: `drift:${candidate.pageSlug}#${candidate.rowNum}`,
     });
     if (!check.allowed) {
       budgetExhausted = true;
       break;
     }
-    const evidence = await loadEvidence(engine, candidate.pageId, cutoffIso);
     try {
-      const verdict = await judge({ candidate, evidence, modelHint: modelId });
+      const verdict = await judge({ candidate, evidence, modelHint: modelId, maxOutputTokens });
       judged.push({ candidate, verdict });
     } catch (e) {
       failed += 1;
@@ -341,16 +360,21 @@ export async function runPhaseDrift(
   const driftedCount = judged.filter(j => j.verdict.drifted).length;
   let reportSlug: string | undefined;
   if (judged.length > 0) {
-    const date = new Date().toISOString().slice(0, 10);
-    reportSlug = `reports/drift-${date}`;
+    reportSlug = `reports/drift-${cycleDate}`;
     // Report-only v1: the report page is the ONLY write this phase makes.
     // Lands in the default source (brain-global artifact, same-day re-runs
     // upsert the same slug).
-    await engine.putPage(reportSlug, {
-      type: 'report',
-      title: `Drift report ${date}`,
-      compiled_truth: buildReportBody(judged, config, modelId),
-    });
+    if (maintenance) {
+      const snapshot = await engine.readPageSnapshot(reportSlug, { sourceId: 'default' });
+      await publishMaintenancePage(engine, maintenance, reportSlug, serializeMarkdown({}, buildReportBody(judged, config, modelId), '',
+        { type: 'report', title: `Drift report ${cycleDate}`, tags: [] }), { expectedRevision: snapshot?.revision ?? null, file: false });
+    } else {
+      await engine.putPage(reportSlug, {
+        type: 'report',
+        title: `Drift report ${cycleDate}`,
+        compiled_truth: buildReportBody(judged, config, modelId),
+      });
+    }
   }
 
   const detail =
