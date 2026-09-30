@@ -54,7 +54,7 @@ describe('doctor schema_version wires the column diff (#4421)', () => {
   // branch must consult detectMissingColumns BEFORE pushing its ok check, and
   // the warn message must carry the migrate-only hint.
   test('ledger-ok branch calls detectMissingColumns and hints init --migrate-only', () => {
-    const src = doctorFileSource('doctor.ts');
+    const src = doctorFileSource('doctor/checks/schema-health.ts');
     const diffIdx = src.indexOf('detectMissingColumns');
     expect(diffIdx).toBeGreaterThan(-1);
     expect(src).toContain('gbrain init --migrate-only');

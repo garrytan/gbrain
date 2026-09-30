@@ -13,8 +13,10 @@ docs below, so each concept has exactly one home.
 | Search pipeline (hybrid RRF, graph, reranker, autocut, dedup, budgets) | [`RETRIEVAL.md`](./RETRIEVAL.md) |
 | Search modes + cost knobs | `docs/guides/search-modes.md` + the CLAUDE.md Search Mode table |
 | Per-file index of `src/` (what each file does + its invariants) | [`KEY_FILES.md`](./KEY_FILES.md) |
-| Schema DDL | the `MIGRATIONS` array in `src/core/migrate.ts` (source of truth) + `src/schema.sql`; per-table classification in [`system-of-record.md`](./system-of-record.md) |
+| Schema DDL | `src/schema.sql` + its TS fragment modules (the one hand-edited copy; `bun run build:schema` generates both engine blobs, see [`ENGINES.md`, "Canonical schema sources"](../ENGINES.md#canonical-schema-sources)); schema changes on existing brains are one file each in `src/core/schema-migrations/` (`bun run new:migration <name>`; `src/core/migrate.ts` is the runner); per-table classification in [`system-of-record.md`](./system-of-record.md) |
 | Engines (PGLite vs Postgres, parity rules) | `docs/ENGINES.md` + the engine entries in [`KEY_FILES.md`](./KEY_FILES.md) |
+| Storage SQL (one implementation per migrated domain) | `src/core/engine-sql/` (domain modules over one `SqlExecutor`, two dialect adapters); the migrated domains are the `migrated` rows of `scripts/engine-sql-baseline.tsv`; see [`ENGINES.md`, "Storage domains and engine-sql"](../ENGINES.md#storage-domains-and-engine-sql) |
+| Where a new storage method, migration, doctor check, CLI command, HTTP route or sync phase goes | [`CONTRIBUTING.md`, "Where does my change go?"](../../CONTRIBUTING.md#where-does-my-change-go) |
 | Operations contract (CLI + MCP generated from one source) | `src/core/operations.ts` (100+ operations; run `gbrain --tools-json` for the live list) |
 | Brains vs sources (which database vs which repo inside it) | [`brains-and-sources.md`](./brains-and-sources.md) |
 

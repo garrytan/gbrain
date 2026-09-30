@@ -58,32 +58,36 @@ Why these columns:
 - Partial index on `WHERE codes != '[]'::jsonb`: doctor's aggregate query
   only walks rows with issues, which is a small fraction of pages.
 
-This follows the canonical `applyForwardReferenceBootstrap` pattern in
-`src/core/pglite-engine.ts` (and `postgres-engine.ts`) — the new column /
+This follows the canonical forward-reference bootstrap pattern in
+`src/core/engine-sql/bootstrap.ts` (run by both engines) — the new column /
 table additions go into the bootstrap probe set per CLAUDE.md so old brains
 walking forward through the schema chain don't wedge on the table not
 existing.
 
 ## Migration shape
 
+Scaffold it with `bun run new:migration frontmatter_scan_state`, which takes the
+next free version, writes `src/core/schema-migrations/v<NNN>-frontmatter-scan-state.ts`
+and regenerates the registry; then fill in the DDL:
+
 ```ts
-// src/core/migrate.ts — append after the CURRENT last entry in the
-// MIGRATIONS array (take the next unused version number at implementation
-// time; the numbers below are placeholders, not a reserved slot)
-const migrations = [
-  // ...existing entries...
-  {
-    version: NEXT_VERSION, // next unused number in the MIGRATIONS array
-    name: 'frontmatter_scan_state',
-    sql: `
-      CREATE TABLE IF NOT EXISTS frontmatter_scan_state (...);
-      CREATE INDEX IF NOT EXISTS frontmatter_scan_state_has_issues_idx ...;
-    `,
-  },
-];
+// src/core/schema-migrations/v<NNN>-frontmatter-scan-state.ts (<NNN> = the
+// version the scaffold picked; not a reserved slot)
+import type { Migration } from './types.ts';
+
+export const v<NNN>: Migration = {
+  version: <NNN>,
+  name: 'frontmatter_scan_state',
+  idempotent: true,
+  sql: `
+    CREATE TABLE IF NOT EXISTS frontmatter_scan_state (...);
+    CREATE INDEX IF NOT EXISTS frontmatter_scan_state_has_issues_idx ...;
+  `,
+};
 ```
 
-Plus the forward-reference probe entries in both engine bootstraps. Plus
+Fresh installs get the table from its `CREATE TABLE` in `src/schema.sql`
+(then `bun run build:schema`). Plus any forward-reference probe entries in `src/core/engine-sql/bootstrap.ts`. Plus
 the `REQUIRED_BOOTSTRAP_COVERAGE` extension in
 `test/schema-bootstrap-coverage.test.ts`.
 
@@ -113,7 +117,7 @@ The incremental walker handles two cases sync misses:
 ## Doctor reader
 
 ```ts
-// src/commands/doctor.ts:frontmatter_integrity (Phase 2 shape)
+// src/commands/doctor/checks/content-quality.ts:frontmatter_integrity (Phase 2 shape)
 const rows = await engine.executeRaw<{ source_id: string; issues: number }>(
   `SELECT source_id, count(*) FILTER (WHERE jsonb_array_length(codes) > 0)::int AS issues
    FROM frontmatter_scan_state

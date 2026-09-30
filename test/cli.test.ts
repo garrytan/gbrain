@@ -1,10 +1,11 @@
 import { describe, test, expect } from 'bun:test';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import { surfaceFileSource } from './helpers/source-surface.ts';
 
 // test-reads-source-ok[structural]: two kept pins need the dispatcher's text: the handleCliOnly case-label census (switch labels cannot be enumerated at runtime) and the local-op normalize call site (bigints only reach it from Postgres, never PGLite).
-const cliSource = readFileSync(new URL('../src/cli.ts', import.meta.url), 'utf-8');
+const cliSource = surfaceFileSource('cli', 'src/cli.ts');
 const repoRoot = new URL('..', import.meta.url).pathname;
 
 function isolatedEnv(home: string): Record<string, string> {
@@ -45,25 +46,21 @@ describe('CLI structure', () => {
     }
   });
 
-  // #2035-class dispatch-gap guard: every `case '...'` label inside
-  // handleCliOnly's top-level dispatch must be a member of CLI_ONLY, else the
-  // command is registered but unreachable — 'calibration' shipped exactly this
-  // way. Structural, self-updating: a new case without a CLI_ONLY entry fails
-  // here at PR time.
-  test('every handleCliOnly top-level case label is reachable via CLI_ONLY', () => {
-    const onlyMatch = cliSource.match(/const CLI_ONLY = new Set(?:<string>)?\(\[([\s\S]*?)\]\)/);
-    expect(onlyMatch).not.toBeNull();
-    // Strip line comments before member extraction — the set literal carries
-    // commentary whose quoted words must not count as members.
-    const onlyBody = onlyMatch![1].replace(/\/\/[^\n]*/g, '');
-    const members = new Set([...onlyBody.matchAll(/'([^']+)'/g)].map(m => m[1]));
+  // #2035-class dispatch-gap guard: every handleCliOnly handler must be a
+  // member of CLI_ONLY, else the command is registered but unreachable —
+  // 'calibration' shipped exactly this way. Refactor wave 1 (W4 cli) moved each
+  // top-level `case '...'` body into its own module under src/cli/commands/
+  // and derives CLI_ONLY from the command table, so the census is the module
+  // files (a handler module with no record is the same dead-handler class).
+  // Structural, self-updating: a new handler module without a CLI_ONLY entry
+  // fails here at PR time.
+  test('every handleCliOnly top-level case label is reachable via CLI_ONLY', async () => {
+    const { CLI_ONLY } = await import('../src/cli.ts');
+    const members = new Set<string>(CLI_ONLY);
 
-    const fnStart = cliSource.indexOf('async function handleCliOnly');
-    expect(fnStart).toBeGreaterThan(0);
-    const fnSrc = cliSource.slice(fnStart);
-    // Top-level dispatch labels sit at a fixed indent (6 spaces); nested
-    // sub-switches are indented deeper and stay out of this scan.
-    const caseLabels = [...fnSrc.matchAll(/^      case '([a-z0-9-]+)':/gm)].map(m => m[1]);
+    const caseLabels = readdirSync(join(repoRoot, 'src', 'cli', 'commands'))
+      .filter(f => f.endsWith('.ts'))
+      .map(f => f.slice(0, -'.ts'.length));
     expect(caseLabels.length).toBeGreaterThan(20);
     // Reachable outside CLI_ONLY, each with a documented route:
     //  - 'search': pre-dispatch subcommand gate (modes|stats|tune) in main();

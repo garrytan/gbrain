@@ -8,7 +8,7 @@ src/commands/extract-conversation-facts.ts	4	coordinator	On a managed brain the 
 src/commands/extract.ts	7	engine_guard	Canonical table SQL trigger requires coordinator capability; legacy calls fail before canonical DB publication. On a managed brain extract --stale inserts only the canonical timeline tuples inside withCoordinatedWrite for that page, after the revision-bound derived-link replacement locked and verified the page revision in the same transaction.
 src/commands/frontmatter.ts	0	filesystem_guard	Batch frontmatter repair preflights every target before the first backup/write.
 src/commands/import.ts	1	engine_guard	Canonical table SQL trigger requires coordinator capability; legacy calls fail before canonical DB publication.
-src/commands/jobs.ts	0	coordinator	The purge job runs purgeDeletedPagesCoordinated; remaining canonical writes live in delegated coordinated modules.
+src/commands/jobs.ts	0	coordinator	The purge job (registered here, body in src/core/minions/handlers/purge.ts) runs purgeDeletedPagesCoordinated; remaining canonical writes live in delegated coordinated modules.
 src/commands/migrate-engine.ts	11	early_refusal	Managed mode refuses this legacy entry point before its canonical filesystem/provider effects.
 src/commands/migrations/v0_13_1.ts	2	engine_guard	Unmanaged metadata batches retain page guards and row locks; managed active Markdown pages route through the canonical grandfather publisher instead of direct SQL.
 src/commands/migrations/v0_32_2.ts	1	engine_guard	Canonical table SQL trigger requires coordinator capability; legacy calls fail before canonical DB publication.
@@ -17,7 +17,9 @@ src/commands/reconcile-links.ts	2	engine_guard	Canonical table SQL trigger requi
 src/commands/reindex-aliases.ts	1	engine_guard	Canonical table SQL trigger requires coordinator capability; legacy calls fail before canonical DB publication.
 src/commands/sources-set-path.ts	1	coordinator	Managed rebind uses native exclusion, exact manifest verification and a retained source-incarnation receipt; unmanaged pointer repair remains explicit.
 src/commands/sources.ts	10	coordinator	Managed add/archive/restore/remove/purge/reclone route through source lifecycle; remaining legacy canonical SQL stays fenced.
-src/commands/sync.ts	11	coordinator	Managed Markdown sync routes to immutable page requests and an exhausted-cursor checkpoint; unsupported Git pull, code/image and connector paths refuse early.
+src/commands/sync/deletes.ts	1	coordinator	Managed Markdown sync routes to immutable page requests and an exhausted-cursor checkpoint; unsupported Git pull, code/image and connector paths refuse early. (Refactor wave 1: moved from src/commands/sync.ts.)
+src/commands/sync/preflight.ts	1	coordinator	Managed Markdown sync routes to immutable page requests and an exhausted-cursor checkpoint; unsupported Git pull, code/image and connector paths refuse early. (Refactor wave 1: moved from src/commands/sync.ts.)
+src/commands/sync/renames.ts	2	coordinator	Managed Markdown sync routes to immutable page requests and an exhausted-cursor checkpoint; unsupported Git pull, code/image and connector paths refuse early. (Refactor wave 1: moved from src/commands/sync.ts.)
 src/core/agent-install/setup.ts	1	engine_guard	Canonical table SQL trigger requires coordinator capability; legacy calls fail before canonical DB publication.
 src/core/atomic-write.ts	0	filesystem_guard	Atomic page replacement checks the managed root before temporary bytes are written.
 src/core/backfill-effective-date.ts	1	projection	Derived indexing, retrieval telemetry, or source settings; canonical fields remain guarded by SQL triggers.
@@ -48,6 +50,14 @@ src/core/embedding-dim-check.ts	1	projection	Derived indexing, retrieval telemet
 src/core/embedding-invalidation.ts	2	projection	Derived vector invalidation; signature restamping requires matching chunk context and a current text projection. Canonical fields remain guarded by SQL triggers.
 src/core/embedding-migration.ts	1	projection	Derived indexing, retrieval telemetry, or source settings; canonical fields remain guarded by SQL triggers.
 src/core/engine-constants.ts	1	contract	Engine contract or explanatory SQL references; execution is in guarded engine implementations.
+src/core/engine-sql/bootstrap.ts	1	schema	Schema installation and forward-reference DDL; coordinated activation quiesces canonical writers.
+src/core/engine-sql/chunks.ts	1	projection	Derived indexing: setPageEmbeddingSignature stamps pages.embedding_signature; chunk rows are derived index state and canonical fields remain guarded by SQL triggers.
+src/core/engine-sql/facts.ts	11	engine_guard	Canonical table SQL trigger requires coordinator capability; legacy calls fail before canonical DB publication.
+src/core/engine-sql/pages.ts	15	engine_guard	Canonical table SQL trigger requires coordinator capability; legacy calls fail before canonical DB publication.
+src/core/engine-sql/salience.ts	1	projection	Derived indexing, retrieval telemetry, or source settings; canonical fields remain guarded by SQL triggers.
+src/core/engine-sql/sources.ts	1	projection	Source settings (the sources.config merge in updateSourceConfig); canonical fields remain guarded by SQL triggers.
+src/core/engine-sql/takes.ts	6	engine_guard	Canonical table SQL trigger requires coordinator capability; legacy calls fail before canonical DB publication.
+src/core/engine-sql/timeline.ts	3	engine_guard	Canonical table SQL trigger requires coordinator capability; legacy calls fail before canonical DB publication.
 src/core/engine.ts	2	contract	Engine contract or explanatory SQL references; execution is in guarded engine implementations.
 src/core/enrichment-service.ts	4	engine_guard	Canonical table SQL trigger requires coordinator capability; legacy calls fail before canonical DB publication. Direct importFromContent calls without prepare refuse on managed brains before any write (assertUnmanagedCanonicalWriter).
 src/core/extract/receipt-writer.ts	1	engine_guard	Canonical table SQL trigger requires coordinator capability; legacy calls fail before canonical DB publication.
@@ -64,7 +74,6 @@ src/core/google/google-source.ts	3	coordinator	Managed connector imports, deleti
 src/core/google/loops-extract.ts	1	coordinator	Managed loop extraction checks the managed fact authority and owner before model calls and publishes its commitment fact through writeSingleFact's coordinator path; the provenance-tagged loop edge is not a guarded canonical table.
 src/core/import-file.ts	19	coordinator	Prepared import applies under journal publication and revision CAS; direct managed imports refuse early, legacy source-path repair follows revision validation inside a savepoint, and a moved file's page is renamed only on the direct (unmanaged) path. Frontmatter tag reconciliation deletes only import-owned tag rows inside the same guarded import transaction. Direct importFromContent calls without prepare refuse on managed brains before any write (assertUnmanagedCanonicalWriter).
 src/core/last-retrieved.ts	1	projection	Derived indexing, retrieval telemetry, or source settings; canonical fields remain guarded by SQL triggers.
-src/core/migrate.ts	13	schema	Schema installation and forward-reference DDL; coordinated activation quiesces canonical writers.
 src/core/minions/handlers/ingest-capture.ts	3	engine_guard	Canonical table SQL trigger requires coordinator capability; legacy calls fail before canonical DB publication. Direct importFromContent calls without prepare refuse on managed brains before any write (assertUnmanagedCanonicalWriter).
 src/core/onboard/checks.ts	2	projection	Derived indexing, retrieval telemetry, or source settings; canonical fields remain guarded by SQL triggers.
 src/core/ops/extraction.ts	2	engine_guard	Canonical table SQL trigger requires coordinator capability; legacy calls fail before canonical DB publication.
@@ -81,16 +90,9 @@ src/core/persistence/memory-mutations.ts	1	coordinator	Publication is transactio
 src/core/persistence/memory-prepare.ts	3	coordinator	Publication is transaction-scoped under admitted authority, source/page guards and revision checks.
 src/core/persistence/page-prepare.ts	10	coordinator	Publication, including versioned tombstone restoration, is transaction-scoped under admitted authority, source/page guards and revision checks; the sixth SQL site reconciles trusted first-write provenance with prepared canonical frontmatter and the seventh records canonical source_path in that same guarded transaction. Identical canonical no-ops do not heal physical metadata. The added local-CLI purge deletePage call runs in the prepared publication callback after recorded-artifact removal, under the same source/page identity, revision and durable authority guards as receipt completion; permanent journal IDs and outcomes survive the hard delete. The ninth site pins an inferred slug_root_mode on sources in the same publication transaction as the first bound origin. Its importFromContent calls carry prepare and run inside the coordinator publication.
 src/core/persistence/semantic-pages.ts	1	coordinator	Publication is transaction-scoped under admitted authority, source/page guards and revision checks.
-src/core/pglite-engine/facts.ts	14	engine_guard	Canonical table SQL trigger requires coordinator capability; legacy calls fail before canonical DB publication.
-src/core/pglite-engine/salience.ts	1	projection	Derived indexing, retrieval telemetry, or source settings; canonical fields remain guarded by SQL triggers.
-src/core/pglite-engine/takes.ts	6	engine_guard	Canonical table SQL trigger requires coordinator capability; legacy calls fail before canonical DB publication.
-src/core/pglite-engine.ts	34	engine_guard	Canonical table SQL trigger requires coordinator capability; legacy calls fail before canonical DB publication.
+src/core/pglite-engine.ts	31	engine_guard	Canonical table SQL trigger requires coordinator capability; legacy calls fail before canonical DB publication.
 src/core/pglite-schema.ts	1	schema	Schema installation and forward-reference DDL; coordinated activation quiesces canonical writers.
-src/core/postgres-engine/facts.ts	11	engine_guard	Canonical table SQL trigger requires coordinator capability; legacy calls fail before canonical DB publication.
-src/core/postgres-engine/forward-reference-bootstrap.ts	1	schema	Schema installation and forward-reference DDL; coordinated activation quiesces canonical writers.
-src/core/postgres-engine/salience.ts	1	projection	Derived indexing, retrieval telemetry, or source settings; canonical fields remain guarded by SQL triggers.
-src/core/postgres-engine/takes.ts	6	engine_guard	Canonical table SQL trigger requires coordinator capability; legacy calls fail before canonical DB publication.
-src/core/postgres-engine.ts	33	engine_guard	Canonical table SQL trigger requires coordinator capability; legacy calls fail before canonical DB publication.
+src/core/postgres-engine.ts	31	engine_guard	Canonical table SQL trigger requires coordinator capability; legacy calls fail before canonical DB publication.
 src/core/schema-pack/mutate.ts	0	filesystem_guard	The shared manifest write primitive checks its root before atomic replacement.
 src/core/schema-pack/page-to-alias.ts	2	engine_guard	Canonical table SQL trigger requires coordinator capability; legacy calls fail before canonical DB publication.
 src/core/schema-pack/page-to-link.ts	1	engine_guard	Canonical table SQL trigger requires coordinator capability; legacy calls fail before canonical DB publication.
@@ -174,3 +176,13 @@ src/commands/reindex.ts	1	early_refusal	Legacy direct content import. Direct imp
 src/eval/brainbench/metrics/write-back.ts	1	isolated_eval	Explicit isolated evaluation database only; never opened against the active managed brain.
 src/eval/longmemeval/diagnostics.ts	1	isolated_eval	Explicit isolated evaluation database only; never opened against the active managed brain.
 src/core/persistence/effects.ts	1	coordinator	The embedding effect clears only the page embedding signature, inside its claimed, source-guarded installation transaction, when #4616 refused a chunk, so embed --stale finds the page; no canonical content column changes.
+src/core/schema-migrations/v002-slugify-existing-pages.ts	2	schema	Schema installation and forward-reference DDL; coordinated activation quiesces canonical writers.
+src/core/schema-migrations/v009-timeline-dedup-index.ts	1	schema	Schema installation and forward-reference DDL; coordinated activation quiesces canonical writers.
+src/core/schema-migrations/v020-sources-table-additive.ts	1	schema	Schema installation and forward-reference DDL; coordinated activation quiesces canonical writers.
+src/core/schema-migrations/v028-cathedral-ii-chunk-fts-backfill.ts	1	schema	Schema installation and forward-reference DDL; coordinated activation quiesces canonical writers.
+src/core/schema-migrations/v034-destructive-guard-columns.ts	2	schema	Schema installation and forward-reference DDL; coordinated activation quiesces canonical writers.
+src/core/schema-migrations/v043-takes-resolved-quality-and-drift-decisions.ts	2	schema	Schema installation and forward-reference DDL; coordinated activation quiesces canonical writers.
+src/core/schema-migrations/v048-takes-weight-round-to-grid.ts	1	schema	Schema installation and forward-reference DDL; coordinated activation quiesces canonical writers.
+src/core/schema-migrations/v123-configurable-fts-language.ts	1	schema	Schema installation and forward-reference DDL; coordinated activation quiesces canonical writers.
+src/core/schema-migrations/v142-takes-embedding-dimension-matches-config.ts	1	schema	Schema installation and forward-reference DDL; coordinated activation quiesces canonical writers.
+src/core/schema-migrations/v144-open-loops.ts	1	schema	Schema installation and forward-reference DDL; coordinated activation quiesces canonical writers.

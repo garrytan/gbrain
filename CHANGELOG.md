@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [0.60.11.1] - 2026-09-30
+## [0.60.12.1] - 2026-09-30
 
 **Dream synthesize on an OpenRouter model no longer dies to a rate limit it never saw.** OpenRouter sometimes reports "you're being rate-limited, try again shortly" as a normal-looking HTTP 200 response with an error message buried inside the body, instead of a real HTTP 429. Every retry mechanism in gbrain (and in the underlying AI library) decides whether to retry by looking at the HTTP status code, so a 200-with-hidden-error looked like success failing to parse, not like a rate limit, and nothing retried. If you pointed a dream phase at a busy OpenRouter model, a burst of calls could trip the shared limit and the whole phase would fail outright instead of backing off and trying again.
 
@@ -18,7 +18,7 @@ Now gbrain reads that hidden error and turns the response into a real 429 (or 5x
 
 **Say to your agent:** *"Re-run dream synthesize and check it survives an OpenRouter rate limit"* — your agent runs `gbrain dream --phase synthesize --once`.
 
-## To take advantage of v0.60.11.1
+## To take advantage of v0.60.12.1
 
 Upgrade, then re-run the phase that was failing:
 
@@ -31,6 +31,64 @@ gbrain dream --phase synthesize --once
 
 - `src/core/ai/recipes/openrouter.ts`: the OpenRouter compat-fetch shim now detects an HTTP-200 response body shaped like `{error:{code,metadata?}}` and rewrites the response's status to match (429, or the reported 5xx), so the AI SDK's own retry logic and gbrain's rate-limit classification both see the real condition. An existing `Retry-After` header is preserved; a `retry_after` value inside the error body is promoted to one when the response didn't already carry it. Every other response shape (a real success, a 4xx, an unparseable body) passes through unchanged.
 - Closes #5473.
+
+## [0.60.12.0] - 2026-09-30
+
+**Nothing you use changes. Under the hood, GBrain's storage code is now written once instead of twice, and its biggest files are split into pieces a person can read, so fixes stop landing on one database and missing the other.**
+
+GBrain can keep your brain in PGLite on your laptop or in Postgres on a server. Until now almost every storage feature had two hand-written copies, one per database, and most fixes had to be made twice. When one copy got the fix and the other did not, you got a bug that only showed up on one kind of brain. This release puts that code in one place that both databases share.
+
+It also breaks up the handful of giant functions where most sync hangs, doctor fixes and server bugs used to land, and keeps one copy of the database schema instead of three hand-synced ones.
+
+Your brain, your commands, your MCP tools, your search results and your schema are the same as before. Every command's output, every route, every migration and every search ranking was pinned before the change and checked byte for byte after it.
+
+| What changed inside | Before | After |
+| --- | --- | --- |
+| Storage domains with two SQL copies (one per database) | 12 | 0 |
+| Migrations file | 7,354 lines, one list | 599-line runner, one file per migration |
+| Copies of the schema you edit by hand | 3 | 1 (the rest are generated) |
+| Largest function in sync / doctor / HTTP server | 2,706 / 3,447 / 2,251 lines | 48 / ~60 / under 300 lines |
+| Functions over 300 lines in the code base | 76, and nothing stopped new ones | 61, frozen; CI fails on a new one |
+
+Things to watch: two small PGLite-only differences are gone because PGLite now runs the same statements as Postgres. A slug that matches several aliases logs Postgres's warning wording, and a corrupt stored vector is skipped with one warning instead of failing the whole embedding read, the way Postgres already behaved.
+
+### To take advantage of v0.60.12.0
+
+`gbrain upgrade` is all you need. There is no migration and nothing to run. If you want to confirm the upgrade, run:
+
+```bash
+gbrain doctor
+gbrain stats
+```
+
+If anything looks different from before the upgrade, please file an issue at https://github.com/garrytan/gbrain/issues with the output of `gbrain doctor` and the command that changed.
+
+### Itemized changes
+
+#### Storage written once
+- Every storage domain (pages, tags, links, timeline, sources, files, chunks, facts, takes, salience, code edges, CJK search) now has its SQL in `src/core/engine-sql/<domain>.ts`, shared by `PGLiteEngine` and `PostgresEngine` through a small executor (`engine-sql/executor.ts`) with one adapter per database. Engine methods are delegations; only genuinely database-specific code stays in the engine files.
+- Direct Postgres keeps prepared statements for converted queries and PgBouncer stays unprepared; row-level-security scoping is unchanged per method; writes inside `engine.transaction()` still roll back together.
+- The two copies of the forward-reference bootstrap (the code that lets old brains open with a newer schema) are now one, `engine-sql/bootstrap.ts`.
+- `pglite-engine.ts` 6,186 to 3,371 lines; `postgres-engine.ts` 5,590 to 3,388 lines.
+
+#### Schema and migrations
+- Each migration is its own file under `src/core/schema-migrations/`, with a generated registry. `bun run new:migration <name>` scaffolds the next one. `migrate.ts` is the 599-line runner and still exports `MIGRATIONS`, `LATEST_VERSION` and `Migration`.
+- `src/schema.sql` and the TypeScript schema fragments are the only hand-edited schema text; `bun run build:schema` generates the embedded Postgres schema and the PGLite schema template from them.
+
+#### Smaller pieces
+- `sync` runs named phases (preflight, deletes, renames, imports, finalize) over one state object under `src/commands/sync/`.
+- `doctor` runs a registry of 48 check entries under `src/commands/doctor/checks/`.
+- `serve --http` mounts `serve-http-<area>.ts` modules that share one context; `/mcp` handling is split into small functions.
+- The CLI dispatches through a command table (`src/cli/command-table.ts`) that also generates the command lists that used to be kept in sync by hand.
+- `jobs` handlers live one per file in `src/core/minions/handlers/`; `hybridSearch` runs as named stages in `src/core/search/hybrid/`; `autopilot` dispatches through a mode table.
+
+### For contributors
+- `CONTRIBUTING.md` has a "Where does my change go?" table for the six common change kinds (storage method, schema migration, doctor check, CLI command, HTTP route, sync phase) and a worked engine-sql example.
+- New guards, all with FAIL/Why/Fix/See output: function size (`check:function-size`, frozen baseline of 61), engine-sql ratchet, dynamic-SQL scanner, executor brand guard, layering, migration registry freshness and ordering, schema freshness, sync state ownership, and retired workflow phrases in docs.
+- Golden snapshots under `test/fixtures/goldens/` pin CLI output, routes, doctor output, migrations, schema catalogs, search rankings, SQL text and the public export surface. Regenerate on purpose with `GBRAIN_TEST_UPDATE_GOLDENS=1` and explain the diff in your PR.
+- Engine parity tests now run on direct Postgres and again through PgBouncer, with equal test counts required.
+- Open PRs that touch moved code: `docs/architecture/wave-1-porting.md` maps each old symbol to its new home and has a recipe per conflict kind.
+- Fixed guards that silently matched nothing: `check-source-id-projection.sh` (awk word boundaries), `check-source-config-leak.sh` (`LINENO` shadowing), and two source-text tests that could not fail.
 
 ## [0.60.11.0] - 2026-09-30
 

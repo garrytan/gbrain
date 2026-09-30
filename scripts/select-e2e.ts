@@ -79,6 +79,9 @@ const ESCAPE_HATCH_FILES = new Set([
 
 const ESCAPE_HATCH_PREFIXES = [
   "src/commands/migrations/",
+  // Schema migrations split out of src/core/migrate.ts (refactor wave 1)
+  // keep migrate.ts's escape-hatch blast radius: every E2E file boots them.
+  "src/core/schema-migrations/",
   // Operation domain modules peeled out of operations.ts (an escape-hatch
   // file) carry the same blast radius as the contract itself.
   "src/core/ops/",

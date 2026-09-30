@@ -28,6 +28,7 @@ import { join } from 'path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { configureGateway, resetGateway, __setEmbedTransportForTests } from '../src/core/ai/gateway.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { surfaceSource } from './helpers/source-surface.ts';
 
 // ─────────────────────────────────────────────────────────────────────
 // Lane A.7 — Chunk-row INSERT model default tracks the gateway-resolved
@@ -313,13 +314,13 @@ describe('Lane D.3 — sync surfaces dim-mismatch recipe at incremental AND firs
     // Structural source-text assertion: pre-fix the incremental catch
     // (line 990) silently swallowed embed errors. Now both catches use
     // an instance check + the same recipe-printing branch.
-    const src = readFileSync(join(__dirname, '..', 'src', 'commands', 'sync.ts'), 'utf-8');
+    const src = surfaceSource('sync');
     const matches = src.match(/e instanceof EmbeddingDimMismatchError/g) ?? [];
     expect(matches.length).toBeGreaterThanOrEqual(2);
   });
 
   test('source-text grep: tip mentions --no-embed at the hint site', () => {
-    const src = readFileSync(join(__dirname, '..', 'src', 'commands', 'sync.ts'), 'utf-8');
+    const src = surfaceSource('sync');
     expect(src).toContain('--no-embed');
     expect(src).toContain('Tip:');
   });

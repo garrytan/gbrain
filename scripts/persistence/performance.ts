@@ -21,6 +21,8 @@ export async function runReadPerformance(options: ReadWorkloadOptions & { manife
     return Object.fromEntries(['scripts/persistence/performance.ts', 'scripts/persistence/read-workload.ts', 'scripts/persistence/read-metrics.ts', 'scripts/persistence/read-admission.ts',
       'scripts/persistence/read-diagnostics.ts', 'tests/heavy/_read_latency_workload.ts', 'src/core/persistence/coordinator.ts', 'src/core/persistence/journal.ts',
       'src/core/persistence/consumer.ts', 'src/core/persistence/activation.ts', 'src/core/persistence/page-mutations.ts', 'src/core/search/hybrid.ts',
+      'src/core/search/hybrid/request.ts', 'src/core/search/hybrid/arms.ts', 'src/core/search/hybrid/keyword-only.ts',
+      'src/core/search/hybrid/rank.ts', 'src/core/search/hybrid/degraded.ts', 'src/core/search/hybrid/effective-modes.ts',
       'src/core/pglite-engine.ts', 'src/core/postgres-engine.ts'].map(file =>
       [file, createHash('sha256').update(readFileSync(resolve(import.meta.dir, '../..', file))).digest('hex')]));
   }

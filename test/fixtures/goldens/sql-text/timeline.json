@@ -1,0 +1,243 @@
+{
+  "golden": {
+    "domain": "timeline",
+    "methods": {
+      "addTimelineEntriesBatch": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "object"
+            ],
+            "sql": "INSERT INTO timeline_entries (page_id, date, source, summary, detail) SELECT p.id, v.date::date, v.source, v.summary, v.detail FROM jsonb_to_recordset(($1::jsonb)->'rows') AS v(slug text, date text, source text, summary text, detail text, source_id text) JOIN pages p ON p.slug = v.slug AND p.source_id = v.source_id AND p.deleted_at IS NULL ON CONFLICT (page_id, date, md5(summary), source) DO NOTHING RETURNING 1",
+            "textSha256": "92426c186138e36392752cd6048f9f7aabce12980de33ed4ec77c6f10c38a259"
+          }
+        ]
+      },
+      "addTimelineEntry": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string"
+            ],
+            "sql": "WITH page_state AS ( SELECT id FROM pages WHERE slug = $1 AND source_id = $2 FOR KEY SHARE ), inserted AS ( INSERT INTO timeline_entries (page_id, date, source, summary, detail) SELECT id, $3::date, $4, $5, $6 FROM page_state ON CONFLICT (page_id, date, md5(summary), source) DO NOTHING RETURNING 1 ) SELECT EXISTS(SELECT 1 FROM page_state) AS page_exists, EXISTS(SELECT 1 FROM inserted) AS inserted",
+            "textSha256": "a98b104c08f207cb480189e9ff85daec3e2363e4e4295637333ba0ac02b94e4f"
+          }
+        ]
+      },
+      "getLastSeen": {
+        "asof+sourceId": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string"
+            ],
+            "sql": "SELECT te.date::text AS last_date, ep.slug AS last_event_slug FROM timeline_entries te JOIN pages p ON p.id = te.page_id AND p.deleted_at IS NULL LEFT JOIN pages ep ON ep.id = te.event_page_id AND ep.source_id = $1 WHERE (te.event_page_id IS NULL OR ep.deleted_at IS NULL) AND te.date <= $2::date AND ( p.slug = $3 OR (ep.id IS NOT NULL AND EXISTS ( SELECT 1 FROM jsonb_array_elements_text( CASE WHEN jsonb_typeof(ep.frontmatter->'event'->'who') = 'array' THEN ep.frontmatter->'event'->'who' ELSE '[]'::jsonb END ) AS w(name) WHERE w.name = $4 OR w.name LIKE $5 )) ) AND p.source_id = $6 ORDER BY COALESCE(ep.effective_date, te.date::timestamptz) DESC, te.id DESC LIMIT 1",
+            "textSha256": "46f3058edbde4893bb6d55ca7a6e345be6eb5d5532ba5dbd272fbfe050c7178d"
+          }
+        ],
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "string"
+            ],
+            "sql": "SELECT te.date::text AS last_date, ep.slug AS last_event_slug FROM timeline_entries te JOIN pages p ON p.id = te.page_id AND p.deleted_at IS NULL LEFT JOIN pages ep ON ep.id = te.event_page_id WHERE (te.event_page_id IS NULL OR ep.deleted_at IS NULL) AND te.date <= current_date AND ( p.slug = $1 OR (ep.id IS NOT NULL AND EXISTS ( SELECT 1 FROM jsonb_array_elements_text( CASE WHEN jsonb_typeof(ep.frontmatter->'event'->'who') = 'array' THEN ep.frontmatter->'event'->'who' ELSE '[]'::jsonb END ) AS w(name) WHERE w.name = $2 OR w.name LIKE $3 )) ) ORDER BY COALESCE(ep.effective_date, te.date::timestamptz) DESC, te.id DESC LIMIT 1",
+            "textSha256": "1961a0d028029570230919d1a512f0f5438510500066b1d72a8335f91a5e313e"
+          }
+        ]
+      },
+      "getOnThisDay": {
+        "date+sourceIds": [
+          {
+            "lane": "pool",
+            "params": [
+              "array<string>",
+              "string",
+              "string",
+              "string",
+              "array<string>",
+              "number"
+            ],
+            "sql": "SELECT te.date::text AS date, te.summary, te.detail, te.source, te.page_id, p.slug AS page_slug, te.event_page_id, ep.slug AS event_slug, ep.effective_date::text AS effective_date, ep.frontmatter->'event'->>'kind' AS kind FROM timeline_entries te JOIN pages p ON p.id = te.page_id AND p.deleted_at IS NULL LEFT JOIN pages ep ON ep.id = te.event_page_id AND ep.source_id = ANY($1::text[]) WHERE EXTRACT(MONTH FROM te.date) = EXTRACT(MONTH FROM $2::date) AND EXTRACT(DAY FROM te.date) = EXTRACT(DAY FROM $3::date) AND te.date < $4::date AND (te.event_page_id IS NULL OR ep.deleted_at IS NULL) AND p.source_id = ANY($5::text[]) ORDER BY te.date DESC, te.id ASC LIMIT $6",
+            "textSha256": "c6d0ae0f296193d005d69c8d16081af4991f196507bc032d42918d113807eb62"
+          }
+        ],
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "number"
+            ],
+            "sql": "SELECT te.date::text AS date, te.summary, te.detail, te.source, te.page_id, p.slug AS page_slug, te.event_page_id, ep.slug AS event_slug, ep.effective_date::text AS effective_date, ep.frontmatter->'event'->>'kind' AS kind FROM timeline_entries te JOIN pages p ON p.id = te.page_id AND p.deleted_at IS NULL LEFT JOIN pages ep ON ep.id = te.event_page_id WHERE EXTRACT(MONTH FROM te.date) = EXTRACT(MONTH FROM current_date) AND EXTRACT(DAY FROM te.date) = EXTRACT(DAY FROM current_date) AND te.date < current_date AND (te.event_page_id IS NULL OR ep.deleted_at IS NULL) ORDER BY te.date DESC, te.id ASC LIMIT $1",
+            "textSha256": "5b73e125a466c6dec23cd698d06574dfff74055ae02a6b81d2c4dc74ebfed133"
+          }
+        ]
+      },
+      "getSince": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "number"
+            ],
+            "sql": "SELECT te.date::text AS date, te.summary, te.detail, te.source, te.page_id, p.slug AS page_slug, te.event_page_id, ep.slug AS event_slug, ep.effective_date::text AS effective_date, ep.frontmatter->'event'->>'kind' AS kind FROM timeline_entries te JOIN pages p ON p.id = te.page_id AND p.deleted_at IS NULL LEFT JOIN pages ep ON ep.id = te.event_page_id WHERE te.date >= $1::date AND (te.event_page_id IS NULL OR ep.deleted_at IS NULL) ORDER BY COALESCE(ep.effective_date, te.date::timestamptz) ASC, te.id ASC LIMIT $2",
+            "textSha256": "ce1d310d8acc72e15c99d7fa2f9e9f9fdf6a156570c7bc6f938a1eb184cba331"
+          }
+        ],
+        "kind+sourceId": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "string",
+              "string",
+              "number"
+            ],
+            "sql": "SELECT te.date::text AS date, te.summary, te.detail, te.source, te.page_id, p.slug AS page_slug, te.event_page_id, ep.slug AS event_slug, ep.effective_date::text AS effective_date, ep.frontmatter->'event'->>'kind' AS kind FROM timeline_entries te JOIN pages p ON p.id = te.page_id AND p.deleted_at IS NULL LEFT JOIN pages ep ON ep.id = te.event_page_id AND ep.source_id = $1 WHERE te.date >= $2::date AND (te.event_page_id IS NULL OR ep.deleted_at IS NULL) AND ep.frontmatter->'event'->>'kind' = $3 AND p.source_id = $4 ORDER BY COALESCE(ep.effective_date, te.date::timestamptz) ASC, te.id ASC LIMIT $5",
+            "textSha256": "4ec64c2260b398ff58ce01b5bac42a041eb17816e48c5990393f2130df91249a"
+          }
+        ]
+      },
+      "getTimeline": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "number"
+            ],
+            "sql": "SELECT te.* FROM timeline_entries te JOIN pages p ON p.id = te.page_id WHERE p.slug = $1 ORDER BY te.date DESC LIMIT $2",
+            "textSha256": "a738a334117161082daa119dad9d18dabc82073c39aeab114758ea3d93fedd4e"
+          }
+        ],
+        "excludePrivate": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "number"
+            ],
+            "sql": "SELECT te.* FROM timeline_entries te JOIN pages p ON p.id = te.page_id WHERE p.slug = $1 AND (COALESCE(p.frontmatter->>'visibility', CASE WHEN (p.type = 'atom' OR (p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private' AND NOT (CASE WHEN p.type = 'atom' THEN EXISTS (SELECT 1 FROM pages derived_origin WHERE derived_origin.source_id = p.source_id AND derived_origin.slug = p.frontmatter->>'source_slug' AND derived_origin.frontmatter->>'visibility' = 'private') WHEN (p.type = 'atom' OR (p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL)) THEN EXISTS (SELECT 1 FROM links derived_input_link JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id WHERE derived_input_link.from_page_id = p.id AND derived_input_link.link_source = 'concept-provenance' AND derived_input_link.link_type = 'synthesized_from' AND (COALESCE(derived_input.frontmatter->>'visibility', CASE WHEN derived_input.type = 'atom' THEN 'private' ELSE 'world' END) = 'private' OR EXISTS (SELECT 1 FROM pages derived_input_origin WHERE derived_input_origin.source_id = derived_input.source_id AND derived_input_origin.slug = derived_input.frontmatter->>'source_slug' AND derived_input_origin.frontmatter->>'visibility' = 'private'))) ELSE false END)) AND (te.event_page_id IS NULL OR EXISTS ( SELECT 1 FROM pages event_private WHERE event_private.id = te.event_page_id AND (COALESCE(event_private.frontmatter->>'visibility', CASE WHEN (event_private.type = 'atom' OR (event_private.type = 'concept' AND event_private.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private' AND NOT (CASE WHEN event_private.type = 'atom' THEN EXISTS (SELECT 1 FROM pages derived_origin WHERE derived_origin.source_id = event_private.source_id AND derived_origin.slug = event_private.frontmatter->>'source_slug' AND derived_origin.frontmatter->>'visibility' = 'private') WHEN (event_private.type = 'atom' OR (event_private.type = 'concept' AND event_private.frontmatter->>'synthesized_by' IS NOT NULL)) THEN EXISTS (SELECT 1 FROM links derived_input_link JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id WHERE derived_input_link.from_page_id = event_private.id AND derived_input_link.link_source = 'concept-provenance' AND derived_input_link.link_type = 'synthesized_from' AND (COALESCE(derived_input.frontmatter->>'visibility', CASE WHEN derived_input.type = 'atom' THEN 'private' ELSE 'world' END) = 'private' OR EXISTS (SELECT 1 FROM pages derived_input_origin WHERE derived_input_origin.source_id = derived_input.source_id AND derived_input_origin.slug = derived_input.frontmatter->>'source_slug' AND derived_input_origin.frontmatter->>'visibility' = 'private'))) ELSE false END)) )) ORDER BY te.date DESC LIMIT $2",
+            "textSha256": "e03390ea74009b398076ed95ee843151887002628e95704e24ac2e4437a1e57d"
+          }
+        ],
+        "sourceId": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "number"
+            ],
+            "sql": "SELECT te.* FROM timeline_entries te JOIN pages p ON p.id = te.page_id WHERE p.slug = $1 AND p.source_id = $2 ORDER BY te.date DESC LIMIT $3",
+            "textSha256": "c6d1809b6aa8e39725eef3ec59962303343a63364098df0844dc21b8c4c5e0a2"
+          }
+        ],
+        "sourceIds+after+before": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "array<string>",
+              "string",
+              "string",
+              "number"
+            ],
+            "sql": "SELECT te.* FROM timeline_entries te JOIN pages p ON p.id = te.page_id WHERE p.slug = $1 AND p.source_id = ANY($2::text[]) AND te.date >= $3::date AND te.date <= $4::date ORDER BY te.date DESC LIMIT $5",
+            "textSha256": "4335d6af2abc29b280812956b3704eb7b5e4596852d39b769c47cea9cffc938a"
+          }
+        ]
+      },
+      "getTimelineForDate": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "number"
+            ],
+            "sql": "SELECT te.date::text AS date, te.summary, te.detail, te.source, te.page_id, p.slug AS page_slug, te.event_page_id, ep.slug AS event_slug, ep.effective_date::text AS effective_date, ep.frontmatter->'event'->>'kind' AS kind FROM timeline_entries te JOIN pages p ON p.id = te.page_id AND p.deleted_at IS NULL LEFT JOIN pages ep ON ep.id = te.event_page_id WHERE te.date >= $1::date AND te.date <= $2::date AND (te.event_page_id IS NULL OR ep.deleted_at IS NULL) ORDER BY COALESCE(ep.effective_date, te.date::timestamptz) ASC, te.id ASC LIMIT $3",
+            "textSha256": "9de829e1a0eeaa8157f0eae8aed1788d4fdad2db373bea8b6007bf372a4f4764"
+          }
+        ],
+        "excludePrivate": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "number"
+            ],
+            "sql": "SELECT te.date::text AS date, te.summary, te.detail, te.source, te.page_id, p.slug AS page_slug, te.event_page_id, ep.slug AS event_slug, ep.effective_date::text AS effective_date, ep.frontmatter->'event'->>'kind' AS kind FROM timeline_entries te JOIN pages p ON p.id = te.page_id AND p.deleted_at IS NULL LEFT JOIN pages ep ON ep.id = te.event_page_id WHERE te.date >= $1::date AND te.date <= $2::date AND (te.event_page_id IS NULL OR ep.deleted_at IS NULL) AND (COALESCE(p.frontmatter->>'visibility', CASE WHEN (p.type = 'atom' OR (p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private' AND NOT (CASE WHEN p.type = 'atom' THEN EXISTS (SELECT 1 FROM pages derived_origin WHERE derived_origin.source_id = p.source_id AND derived_origin.slug = p.frontmatter->>'source_slug' AND derived_origin.frontmatter->>'visibility' = 'private') WHEN (p.type = 'atom' OR (p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL)) THEN EXISTS (SELECT 1 FROM links derived_input_link JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id WHERE derived_input_link.from_page_id = p.id AND derived_input_link.link_source = 'concept-provenance' AND derived_input_link.link_type = 'synthesized_from' AND (COALESCE(derived_input.frontmatter->>'visibility', CASE WHEN derived_input.type = 'atom' THEN 'private' ELSE 'world' END) = 'private' OR EXISTS (SELECT 1 FROM pages derived_input_origin WHERE derived_input_origin.source_id = derived_input.source_id AND derived_input_origin.slug = derived_input.frontmatter->>'source_slug' AND derived_input_origin.frontmatter->>'visibility' = 'private'))) ELSE false END)) AND (te.event_page_id IS NULL OR EXISTS ( SELECT 1 FROM pages event_private WHERE event_private.id = te.event_page_id AND (COALESCE(event_private.frontmatter->>'visibility', CASE WHEN (event_private.type = 'atom' OR (event_private.type = 'concept' AND event_private.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private' AND NOT (CASE WHEN event_private.type = 'atom' THEN EXISTS (SELECT 1 FROM pages derived_origin WHERE derived_origin.source_id = event_private.source_id AND derived_origin.slug = event_private.frontmatter->>'source_slug' AND derived_origin.frontmatter->>'visibility' = 'private') WHEN (event_private.type = 'atom' OR (event_private.type = 'concept' AND event_private.frontmatter->>'synthesized_by' IS NOT NULL)) THEN EXISTS (SELECT 1 FROM links derived_input_link JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id WHERE derived_input_link.from_page_id = event_private.id AND derived_input_link.link_source = 'concept-provenance' AND derived_input_link.link_type = 'synthesized_from' AND (COALESCE(derived_input.frontmatter->>'visibility', CASE WHEN derived_input.type = 'atom' THEN 'private' ELSE 'world' END) = 'private' OR EXISTS (SELECT 1 FROM pages derived_input_origin WHERE derived_input_origin.source_id = derived_input.source_id AND derived_input_origin.slug = derived_input.frontmatter->>'source_slug' AND derived_input_origin.frontmatter->>'visibility' = 'private'))) ELSE false END)) )) ORDER BY COALESCE(ep.effective_date, te.date::timestamptz) ASC, te.id ASC LIMIT $3",
+            "textSha256": "3fffffec91ec15c762bde07996cd2779d3a9e365a670306dbee03c098c7dcbce"
+          }
+        ],
+        "sourceIds+excludePrivate": [
+          {
+            "lane": "pool",
+            "params": [
+              "array<string>",
+              "string",
+              "string",
+              "array<string>",
+              "number"
+            ],
+            "sql": "SELECT te.date::text AS date, te.summary, te.detail, te.source, te.page_id, p.slug AS page_slug, te.event_page_id, ep.slug AS event_slug, ep.effective_date::text AS effective_date, ep.frontmatter->'event'->>'kind' AS kind FROM timeline_entries te JOIN pages p ON p.id = te.page_id AND p.deleted_at IS NULL LEFT JOIN pages ep ON ep.id = te.event_page_id AND ep.source_id = ANY($1::text[]) WHERE te.date >= $2::date AND te.date <= $3::date AND (te.event_page_id IS NULL OR ep.deleted_at IS NULL) AND p.source_id = ANY($4::text[]) AND (COALESCE(p.frontmatter->>'visibility', CASE WHEN (p.type = 'atom' OR (p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private' AND NOT (CASE WHEN p.type = 'atom' THEN EXISTS (SELECT 1 FROM pages derived_origin WHERE derived_origin.source_id = p.source_id AND derived_origin.slug = p.frontmatter->>'source_slug' AND derived_origin.frontmatter->>'visibility' = 'private') WHEN (p.type = 'atom' OR (p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL)) THEN EXISTS (SELECT 1 FROM links derived_input_link JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id WHERE derived_input_link.from_page_id = p.id AND derived_input_link.link_source = 'concept-provenance' AND derived_input_link.link_type = 'synthesized_from' AND (COALESCE(derived_input.frontmatter->>'visibility', CASE WHEN derived_input.type = 'atom' THEN 'private' ELSE 'world' END) = 'private' OR EXISTS (SELECT 1 FROM pages derived_input_origin WHERE derived_input_origin.source_id = derived_input.source_id AND derived_input_origin.slug = derived_input.frontmatter->>'source_slug' AND derived_input_origin.frontmatter->>'visibility' = 'private'))) ELSE false END)) AND (te.event_page_id IS NULL OR EXISTS ( SELECT 1 FROM pages event_private WHERE event_private.id = te.event_page_id AND (COALESCE(event_private.frontmatter->>'visibility', CASE WHEN (event_private.type = 'atom' OR (event_private.type = 'concept' AND event_private.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private' AND NOT (CASE WHEN event_private.type = 'atom' THEN EXISTS (SELECT 1 FROM pages derived_origin WHERE derived_origin.source_id = event_private.source_id AND derived_origin.slug = event_private.frontmatter->>'source_slug' AND derived_origin.frontmatter->>'visibility' = 'private') WHEN (event_private.type = 'atom' OR (event_private.type = 'concept' AND event_private.frontmatter->>'synthesized_by' IS NOT NULL)) THEN EXISTS (SELECT 1 FROM links derived_input_link JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id WHERE derived_input_link.from_page_id = event_private.id AND derived_input_link.link_source = 'concept-provenance' AND derived_input_link.link_type = 'synthesized_from' AND (COALESCE(derived_input.frontmatter->>'visibility', CASE WHEN derived_input.type = 'atom' THEN 'private' ELSE 'world' END) = 'private' OR EXISTS (SELECT 1 FROM pages derived_input_origin WHERE derived_input_origin.source_id = derived_input.source_id AND derived_input_origin.slug = derived_input.frontmatter->>'source_slug' AND derived_input_origin.frontmatter->>'visibility' = 'private'))) ELSE false END)) )) ORDER BY COALESCE(ep.effective_date, te.date::timestamptz) ASC, te.id ASC LIMIT $5",
+            "textSha256": "c23871f1ea7fabae98d15d3dfe592837322b1f9e09d458fd5deb6e2abc83c886"
+          }
+        ],
+        "week+sourceId": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "string",
+              "string",
+              "number"
+            ],
+            "sql": "SELECT te.date::text AS date, te.summary, te.detail, te.source, te.page_id, p.slug AS page_slug, te.event_page_id, ep.slug AS event_slug, ep.effective_date::text AS effective_date, ep.frontmatter->'event'->>'kind' AS kind FROM timeline_entries te JOIN pages p ON p.id = te.page_id AND p.deleted_at IS NULL LEFT JOIN pages ep ON ep.id = te.event_page_id AND ep.source_id = $1 WHERE te.date >= date_trunc('week', $2::date)::date AND te.date <= (date_trunc('week', $3::date) + interval '6 days')::date AND (te.event_page_id IS NULL OR ep.deleted_at IS NULL) AND p.source_id = $4 ORDER BY COALESCE(ep.effective_date, te.date::timestamptz) ASC, te.id ASC LIMIT $5",
+            "textSha256": "fbf1ef5fc1dcf82e77de4e80a168b9a539db58bd75ce4b2cdc573d18f77bc83b"
+          }
+        ]
+      },
+      "upsertEventProjection": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string"
+            ],
+            "sql": "INSERT INTO timeline_entries (page_id, date, source, summary, detail, event_page_id) SELECT dp.id, $1::date, $2, $3, $4, ep.id FROM pages dp, pages ep WHERE dp.slug = $5 AND dp.source_id = $6 AND ep.slug = $7 AND ep.source_id = $8 ON CONFLICT (event_page_id, date) WHERE event_page_id IS NOT NULL DO UPDATE SET summary = EXCLUDED.summary, detail = EXCLUDED.detail, page_id = EXCLUDED.page_id, source = EXCLUDED.source RETURNING id",
+            "textSha256": "f169a96fdc2a8f3a145af8736a4b48d3efd00c7df600b72f0f53f3f4c663497e"
+          }
+        ]
+      }
+    }
+  },
+  "normalizer": "sql-text-v1"
+}
