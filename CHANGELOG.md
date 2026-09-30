@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [0.60.15.1] - 2026-09-30
+## [0.60.16.1] - 2026-09-30
 
 **Removing a source no longer leaves a stale writer claim behind for whatever gets the same id next.**
 
@@ -18,7 +18,7 @@ identifiers and attribution are available in the pre-removal Git revision
 
 **Say to your agent:** *"Remove and recreate a source with the same id, then confirm sync still works"* — your agent runs `gbrain sources remove <id> --confirm-destructive` followed by `gbrain sources add <id> ...` and `gbrain sync --source <id>`.
 
-## To take advantage of v0.60.15.1
+## To take advantage of v0.60.16.1
 
 Upgrade; no migration is needed. A brain that already has a leftover binding from before this fix can clear it by hand: `DELETE FROM persistence_source_bindings WHERE source_id = '<id>'` for any id with no matching row in `sources`.
 
@@ -30,6 +30,30 @@ Upgrade; no migration is needed. A brain that already has a leftover binding fro
 ### For contributors
 
 - New tests in `test/sources.test.ts` (production-schema PGLite, `resetPgliteState` pattern): a claimed source's binding is deleted on remove, a same-id source recreated after remove is not classified as claimed by `resolveSyncPersistenceMode`'s own predicate, and removing an unclaimed source is a no-op on bindings.
+
+## [0.60.16.0] - 2026-09-30
+
+**Long-running brains stop getting stuck waiting on a `git` check that already finished.**
+
+Before GBrain publishes a page to your brain's git repo, it runs two quick `git` commands to confirm the repo is safe to write to. On the Bun versions GBrain runs on today, Bun can miss the signal that one of those commands has finished. GBrain then waited forever. The write queue stalled, and shutting down the owner process hung behind it. In our test suite this hit roughly one run in sixty under load and showed up as whole test files timing out after "killed 1 dangling process".
+
+Now every one of those `git` calls has its own deadline. If the command hasn't reported back in time, GBrain stops it and moves on, with the same "git unavailable" result a slow `git` already produced. The worst case is a 10 to 20 second delay instead of a hang.
+
+| Under load (16 parallel test workers) | Before | After |
+| --- | --- | --- |
+| Runs that hung | 4 of 250 | 0 of 320 |
+| Worst-case wait on a lost `git` exit | forever | 10 s (durability check), 20 s (page publish) |
+
+Nothing to configure and nothing to run after upgrading.
+
+### To take advantage of v0.60.16.0
+
+`gbrain upgrade` is all you need. There is no migration. To confirm, run `gbrain doctor`.
+
+### Itemized changes
+
+- `execFileBounded` in `src/core/brain-repo-durability.ts` settles from its own timer at the deadline or on abort and SIGKILLs the child, so a lost exit or pipe event (Bun 1.3.x, oven-sh/bun#30301) can no longer strand the caller. The durability probe (10 s) and the persistence effect `git` runner (20 s) use it; the staged topology clone's exit wait also returns once its deadline kill fires.
+- New `test/bounded-child-exec.test.ts` reproduces the lost exit event deterministically and pins deadline, abort, exit code and stdout behavior.
 
 ## [0.60.15.0] - 2026-09-30
 
