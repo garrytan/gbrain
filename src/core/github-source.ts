@@ -1204,8 +1204,8 @@ async function runGitHubSyncInner(engine: BrainEngine, sourceId: string, cfg: Gi
     );
   }
   const client = cfg.app
-    ? new GitHubClient(new AppTokenProvider(cfg.app, fetchImpl ?? fetch), fetchImpl)
-    : new GitHubClient(process.env[cfg.tokenEnv] ?? '', fetchImpl);
+    ? new GitHubClient(new AppTokenProvider(cfg.app, fetchImpl ?? fetch), fetchImpl, console.error)
+    : new GitHubClient(process.env[cfg.tokenEnv] ?? '', fetchImpl, console.error);
   const deps: GitHubSyncDeps = { engine, sourceId, cfg, opts, client, managed };
   const summary: GitHubSyncSummary = {
     status: 'synced',
