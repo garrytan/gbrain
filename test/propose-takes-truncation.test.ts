@@ -32,6 +32,9 @@ import {
   PROPOSE_TAKES_MAX_TOKENS,
   PROPOSE_TAKES_RETRY_MAX_TOKENS,
   EXTRACTOR_FAILURE_HALT_STREAK,
+  EXTRACTOR_CALL_TIMEOUT_MS,
+  EXTRACTOR_CALL_TIMEOUT_MAX_MS,
+  extractorCallTimeoutMs,
   type ProposeTakesExtractor,
 } from '../src/core/cycle/propose-takes.ts';
 import type { OperationContext } from '../src/core/operations.ts';
@@ -70,6 +73,29 @@ function chatResult(text: string, stopReason: ChatResult['stopReason']): ChatRes
 }
 
 const GOOD_JSON = '[{"claim_text":"Acme doubles ARR by Q4","kind":"bet","holder":"brain","weight":0.7}]';
+
+// ─── per-call timeout scales with the output cap ─────────────────────
+
+describe('extractorCallTimeoutMs', () => {
+  // A flat 90s starved a 12000-token truncation retry: the same dense page
+  // timed out on retry every cycle and was re-billed forever.
+  test('base cap keeps the 90s bound', () => {
+    expect(extractorCallTimeoutMs(PROPOSE_TAKES_MAX_TOKENS)).toBe(EXTRACTOR_CALL_TIMEOUT_MS);
+  });
+
+  test('default retry cap gets proportionally more time', () => {
+    expect(extractorCallTimeoutMs(PROPOSE_TAKES_RETRY_MAX_TOKENS)).toBe(2 * EXTRACTOR_CALL_TIMEOUT_MS);
+  });
+
+  test('a large configured retry cap is bounded by the gateway ceiling, not the base 90s', () => {
+    expect(extractorCallTimeoutMs(12000)).toBe(EXTRACTOR_CALL_TIMEOUT_MAX_MS);
+    expect(extractorCallTimeoutMs(12000)).toBeGreaterThan(EXTRACTOR_CALL_TIMEOUT_MS);
+  });
+
+  test('small caps never drop below the base bound', () => {
+    expect(extractorCallTimeoutMs(256)).toBe(EXTRACTOR_CALL_TIMEOUT_MS);
+  });
+});
 
 // ─── defaultExtractor truncation retry ──────────────────────────────
 
