@@ -18,6 +18,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { installFixtureChunks } from '../helpers/page-projection.ts';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import {
   awaitPendingSearchCacheWrites,
@@ -83,7 +84,7 @@ beforeAll(async () => {
   ];
   for (const [slug, page, chunkText] of pages) {
     await engine.putPage(slug, page);
-    await engine.upsertChunks(slug, [
+    await installFixtureChunks(engine, slug, [
       { chunk_index: 0, chunk_text: chunkText, chunk_source: 'compiled_truth' },
     ]);
   }
@@ -115,7 +116,7 @@ beforeAll(async () => {
       subject: 'Vector-first exact subject',
     },
   });
-  await engine.upsertChunks('mail/vector-first', [{
+  await installFixtureChunks(engine, 'mail/vector-first', [{
     chunk_index: 0,
     chunk_text: 'vector first duplicate metadata evidence',
     chunk_source: 'compiled_truth',
@@ -410,6 +411,32 @@ describe('hybridSearch — fail-open contract end-to-end', () => {
       // Raw RRF order, no scores — and, post-#4648, a visible stamp.
       expect(out.every(r => r.rerank_score === undefined)).toBe(true);
       expect(degraded).toContainEqual({ stage: 'rerank_passthrough', reason: 'empty_result_set' });
+    } finally {
+      if (prevAudit === undefined) delete process.env.GBRAIN_AUDIT_DIR;
+      else process.env.GBRAIN_AUDIT_DIR = prevAudit;
+      rmSync(auditDir, { recursive: true, force: true });
+    }
+  });
+
+  test('read-path audit #5: a hard reranker failure stamps degraded[] with rerank_failed', async () => {
+    const auditDir = mkdtempSync(join(tmpdir(), 'gbrain-rerank-failed-'));
+    const prevAudit = process.env.GBRAIN_AUDIT_DIR;
+    process.env.GBRAIN_AUDIT_DIR = auditDir;
+    try {
+      let degraded: Array<{ stage: string; reason?: string }> = [];
+      const out = await hybridSearch(engine, 'alpha keyword', {
+        limit: 10,
+        reranker: {
+          enabled: true,
+          topNIn: 30,
+          topNOut: null,
+          rerankerFn: async () => { throw new Error('HTTP 503 upstream'); },
+        },
+        onMeta: (meta) => { degraded = meta.degraded ?? []; },
+      });
+      expect(out.length).toBeGreaterThan(0);
+      expect(out.every(r => r.rerank_score === undefined)).toBe(true);
+      expect(degraded).toContainEqual({ stage: 'rerank_failed', reason: 'provider_error' });
     } finally {
       if (prevAudit === undefined) delete process.env.GBRAIN_AUDIT_DIR;
       else process.env.GBRAIN_AUDIT_DIR = prevAudit;

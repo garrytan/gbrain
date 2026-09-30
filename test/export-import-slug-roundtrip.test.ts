@@ -16,7 +16,7 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'fs';
+import { mkdtempSync, realpathSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -42,7 +42,7 @@ beforeAll(async () => {
   target = new PGLiteEngine();
   await target.connect({});
   await target.initSchema();
-  outDir = mkdtempSync(join(tmpdir(), 'gbrain-roundtrip-'));
+  outDir = realpathSync(mkdtempSync(join(tmpdir(), 'gbrain-roundtrip-')));
 
   expect(slugifyPath(LEGACY_SLUG + '.md')).not.toBe(LEGACY_SLUG);
   expect(slugifyPath(CLEAN_SLUG + '.md')).toBe(CLEAN_SLUG);

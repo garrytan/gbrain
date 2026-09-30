@@ -17,6 +17,17 @@ import {
   isCleanDiff,
   snapshotSchema,
 } from './schema-diff.ts';
+import { createHash } from 'node:crypto';
+import {
+  type CatalogSnapshot,
+  type RawCatalogRows,
+  CATALOG_CURRENT_ROLE,
+  CATALOG_QUERIES,
+  buildCatalogSnapshot,
+  diffCatalogSnapshots,
+  formatCatalogDiffForFailure,
+  snapshotCatalog,
+} from './schema-diff.ts';
 
 function col(partial: Partial<ColumnInfo> = {}): ColumnInfo {
   return {
@@ -165,7 +176,8 @@ describe('formatDiffForFailure', () => {
     const diff = diffSnapshots(pg, pglite, NO_ALLOWLIST);
     const out = formatDiffForFailure(diff);
     expect(out).toContain('oauth_clients.token_ttl');
-    expect(out).toContain('src/core/pglite-schema.ts');
+    expect(out).toContain('src/schema.sql');
+    expect(out).toContain('bun run build:schema');
   });
 
   test('udt mismatch shows both sides', () => {
@@ -227,5 +239,172 @@ describe('snapshotSchema', () => {
     });
     expect(snap.get('pages')!.get('title')!.isNullable).toBe(true);
     expect(snap.get('tags')!.get('tag')!.columnDefault).toBeNull();
+  });
+});
+
+// ─── Refactor wave 1 E4 / T-G13: catalog-level snapshot ───────────────
+
+function rawCatalog(partial: Partial<RawCatalogRows> = {}): RawCatalogRows {
+  return {
+    currentRole: [{ role: 'ci_superuser' }],
+    relations: [],
+    columns: [],
+    indexes: [],
+    constraints: [],
+    triggers: [],
+    functions: [],
+    views: [],
+    policies: [],
+    grants: [],
+    sequences: [],
+    extensions: [],
+    ...partial,
+  };
+}
+
+function column(table: string, name: string, ordinal: number, extra: Record<string, unknown> = {}) {
+  return { table_name: table, column_name: name, ordinal_position: ordinal, data_type: 'text', udt_name: 'text', is_nullable: 'YES', column_default: null, ...extra };
+}
+
+describe('buildCatalogSnapshot', () => {
+  test('orders tables by name and columns by ordinal, regardless of row order', () => {
+    const snap = buildCatalogSnapshot(rawCatalog({
+      relations: [
+        { name: 'tags', relkind: 'r', row_security: false, force_row_security: false },
+        { name: 'pages', relkind: 'r', row_security: 't', force_row_security: 'f' },
+      ],
+      columns: [column('pages', 'title', 2), column('tags', 'tag', 1), column('pages', 'id', 1, { is_nullable: 'NO', udt_name: 'int4' })],
+    }));
+    expect(snap.tables.map((t) => t.name)).toEqual(['pages', 'tags']);
+    expect(snap.tables[0]).toEqual({
+      name: 'pages',
+      relkind: 'r',
+      rowSecurity: true,
+      forceRowSecurity: false,
+      columns: [
+        { name: 'id', ordinal: 1, dataType: 'text', udtName: 'int4', isNullable: false, columnDefault: null },
+        { name: 'title', ordinal: 2, dataType: 'text', udtName: 'text', isNullable: true, columnDefault: null },
+      ],
+    });
+  });
+
+  test('view columns are reported under viewColumns, not tables', () => {
+    const snap = buildCatalogSnapshot(rawCatalog({
+      relations: [{ name: 'page_links', relkind: 'v', row_security: false, force_row_security: false }],
+      columns: [column('page_links', 'slug', 1)],
+      views: [{ name: 'page_links', kind: 'v', definition: ' SELECT 1;' }],
+    }));
+    expect(snap.tables).toEqual([]);
+    expect(snap.viewColumns).toEqual([{ view: 'page_links', columns: [{ name: 'slug', ordinal: 1, dataType: 'text', udtName: 'text', isNullable: true, columnDefault: null }] }]);
+    expect(snap.views).toEqual([{ name: 'page_links', kind: 'v', definitionSha256: createHash('sha256').update(' SELECT 1;').digest('hex') }]);
+  });
+
+  test('function bodies are pinned by sha256; config lines split; booleans coerced', () => {
+    const body = 'BEGIN RETURN NEW; END;';
+    const snap = buildCatalogSnapshot(rawCatalog({
+      functions: [{
+        name: 'touch', identity_arguments: '', result: 'trigger', kind: 'f', language: 'plpgsql',
+        volatility: 'v', security_definer: 't', config: 'search_path=pg_catalog, public\nwork_mem=64kB', body,
+      }],
+    }));
+    expect(snap.functions).toEqual([{
+      name: 'touch', identityArguments: '', result: 'trigger', kind: 'f', language: 'plpgsql', volatility: 'v',
+      securityDefiner: true, config: ['search_path=pg_catalog, public', 'work_mem=64kB'],
+      bodySha256: createHash('sha256').update(body).digest('hex'),
+    }]);
+  });
+
+  test('the connecting role is placeholdered in grants and policies; other roles are kept', () => {
+    const snap = buildCatalogSnapshot(rawCatalog({
+      grants: [
+        { table_name: 'pages', grantor: 'ci_superuser', grantee: 'ci_superuser', privilege: 'SELECT', is_grantable: 'YES' },
+        { table_name: 'pages', grantor: 'ci_superuser', grantee: 'ci_superuser', privilege: 'INSERT', is_grantable: 'YES' },
+        { table_name: 'pages', grantor: 'ci_superuser', grantee: 'PUBLIC', privilege: 'SELECT', is_grantable: 'NO' },
+      ],
+      policies: [{ table_name: 'pages', name: 'p_read', permissive: 'PERMISSIVE', roles: 'ci_superuser\nreader_example', command: 'SELECT', using_expr: 'true', with_check: null }],
+    }));
+    expect(snap.grants).toEqual([
+      { table: 'pages', grantor: CATALOG_CURRENT_ROLE, grantee: CATALOG_CURRENT_ROLE, grantable: true, privileges: ['INSERT', 'SELECT'] },
+      { table: 'pages', grantor: CATALOG_CURRENT_ROLE, grantee: 'PUBLIC', grantable: false, privileges: ['SELECT'] },
+    ]);
+    expect(snap.policies[0].roles).toEqual([CATALOG_CURRENT_ROLE, 'reader_example']);
+    expect(snap.policies[0].withCheck).toBeNull();
+  });
+
+  test('extensions and sequences are sorted; constraints keep CHECK text verbatim', () => {
+    const snap = buildCatalogSnapshot(rawCatalog({
+      extensions: [{ name: 'vector' }, { name: 'pg_trgm' }],
+      sequences: [
+        { name: 'z_seq', data_type: 'bigint', start_value: '1', min_value: '1', max_value: '9', increment_by: '1', cycle: false, cache_size: '1', owned_by: null },
+        { name: 'a_seq', data_type: 'integer', start_value: '1', min_value: '1', max_value: '9', increment_by: '1', cycle: 't', cache_size: '1', owned_by: 'pages.id' },
+      ],
+      constraints: [{ name: 'pages_kind_check', table_name: 'pages', type: 'c', definition: "CHECK ((kind = ANY (ARRAY['a'::text, 'b'::text])))" }],
+    }));
+    expect(snap.extensions).toEqual(['pg_trgm', 'vector']);
+    expect(snap.sequences.map((s) => [s.name, s.cycle, s.ownedBy])).toEqual([['a_seq', true, 'pages.id'], ['z_seq', false, null]]);
+    expect(snap.constraints[0].definition).toBe("CHECK ((kind = ANY (ARRAY['a'::text, 'b'::text])))");
+  });
+});
+
+describe('snapshotCatalog', () => {
+  test('runs every catalog section query exactly once through the callback', async () => {
+    const seen: string[] = [];
+    const snap = await snapshotCatalog(async (sql) => {
+      seen.push(sql);
+      if (sql === CATALOG_QUERIES.currentRole) return [{ role: 'postgres' }];
+      if (sql === CATALOG_QUERIES.extensions) return [{ name: 'plpgsql' }];
+      return [];
+    });
+    expect(seen).toEqual(Object.values(CATALOG_QUERIES));
+    expect(snap.extensions).toEqual(['plpgsql']);
+  });
+
+  test('queries exclude extension-owned objects and internal triggers', () => {
+    expect(CATALOG_QUERIES.functions).toContain("d.deptype = 'e'");
+    expect(CATALOG_QUERIES.relations).toContain("d.deptype = 'e'");
+    expect(CATALOG_QUERIES.triggers).toContain('NOT tg.tgisinternal');
+  });
+});
+
+describe('diffCatalogSnapshots (T-G13: ordinals only for same-engine comparisons)', () => {
+  function snapWithColumns(order: Array<[string, number]>): CatalogSnapshot {
+    return buildCatalogSnapshot(rawCatalog({
+      relations: [{ name: 'pages', relkind: 'r', row_security: false, force_row_security: false }],
+      columns: order.map(([name, ordinal]) => column('pages', name, ordinal)),
+    }));
+  }
+
+  test('identical snapshots diff clean', () => {
+    const a = snapWithColumns([['id', 1], ['title', 2]]);
+    expect(diffCatalogSnapshots(a, snapWithColumns([['id', 1], ['title', 2]]), { compareOrdinals: true })).toEqual([]);
+    expect(formatCatalogDiffForFailure([])).toBe('no diff');
+  });
+
+  test('a column reorder is invisible name-based and reported with compareOrdinals', () => {
+    const master = snapWithColumns([['id', 1], ['title', 2]]);
+    const branch = snapWithColumns([['title', 1], ['id', 2]]);
+    expect(diffCatalogSnapshots(master, branch)).toEqual([]);
+    const strict = diffCatalogSnapshots(master, branch, { compareOrdinals: true });
+    expect(strict.map((d) => [d.section, d.key, d.kind])).toEqual([
+      ['tables', 'pages.id', 'changed'],
+      ['tables', 'pages.title', 'changed'],
+    ]);
+    expect(formatCatalogDiffForFailure(strict)).toContain('pages.id changed');
+  });
+
+  test('missing and unexpected objects are reported per section', () => {
+    const a = buildCatalogSnapshot(rawCatalog({ indexes: [{ name: 'idx_a', table_name: 'pages', definition: 'CREATE INDEX idx_a ON public.pages (a)' }] }));
+    const b = buildCatalogSnapshot(rawCatalog({ indexes: [{ name: 'idx_b', table_name: 'pages', definition: 'CREATE INDEX idx_b ON public.pages (b)' }] }));
+    const diff = diffCatalogSnapshots(a, b);
+    expect(diff.map((d) => [d.section, d.key, d.kind])).toEqual([
+      ['indexes', 'idx_a', 'missing_in_actual'],
+      ['indexes', 'idx_b', 'unexpected_in_actual'],
+    ]);
+  });
+
+  test('existing cross-engine diffSnapshots stays name-based (column order ignored)', () => {
+    const pg = makeSnap({ pages: { id: col({ udtName: 'int4' }), title: col() } });
+    const pglite = makeSnap({ pages: { title: col(), id: col({ udtName: 'int4' }) } });
+    expect(isCleanDiff(diffSnapshots(pg, pglite, NO_ALLOWLIST))).toBe(true);
   });
 });

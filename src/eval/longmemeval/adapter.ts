@@ -11,7 +11,15 @@
  * out of scope for v0.28.1. The chat/ slug prefix is verified by
  * test/eval-longmemeval.test.ts to NOT prefix-match any DEFAULT_SOURCE_BOOSTS
  * entry, so retrieval factor stays at 1.0.
+ *
+ * Session identity is OPAQUE everywhere the system or the reader can see it.
+ * The dataset's gold session ids all start with `answer_` (and no distractor
+ * does), so a raw id in a slug, title, frontmatter or reader prompt is a gold
+ * label. `sessionSlug` hashes the id per question; scoring recovers the raw id
+ * through `buildSlugToRawMap` (metrics.ts), which is never shown to the system.
  */
+
+import { createHash } from 'node:crypto';
 
 export interface LongMemEvalTurn {
   role: 'user' | 'assistant';
@@ -58,10 +66,10 @@ export interface PageInputForImport {
  * naturally on either role's text. Frontmatter pins type, date (if available),
  * and session_id so the JSONL emit step can recover session_id from a chunk.
  */
-function renderSession(session: LongMemEvalSession, date?: string): string {
+function renderSession(opaqueId: string, session: LongMemEvalSession, date?: string): string {
   const fm: string[] = ['---', 'type: note'];
   if (date) fm.push(`date: ${date}`);
-  fm.push(`session_id: ${session.session_id}`);
+  fm.push(`session_id: ${opaqueId}`);
   fm.push('---', '');
 
   const body: string[] = [];
@@ -123,6 +131,23 @@ export function sanitizeSessionIdForSlug(sessionId: string): string {
   return sessionId.toLowerCase().replace(/[_.]/g, '-').replace(/[^a-z0-9-]/g, '-');
 }
 
+/**
+ * Opaque per-question session id: `s-` + the first 10 hex chars of
+ * sha256(`question_id:normalized session id`). Hashing the NORMALIZED id keeps
+ * the collision contract of the pre-opaque slugs (`a_b` and `a-b` still share
+ * one page, which `collisionsTouchingGold` reports) while carrying no trace of
+ * the raw id, so the `answer_` gold prefix never reaches retrieval or the reader.
+ */
+export function opaqueSessionId(questionId: string, sessionId: string): string {
+  const digest = createHash('sha256').update(`${questionId}:${sanitizeSessionIdForSlug(sessionId)}`).digest('hex');
+  return `s-${digest.slice(0, 10)}`;
+}
+
+/** The page slug a haystack session imports as. The ONE slug constructor. */
+export function sessionSlug(questionId: string, sessionId: string): string {
+  return `chat/${opaqueSessionId(questionId, sessionId)}`;
+}
+
 export function haystackToPages(question: LongMemEvalQuestion): PageInputForImport[] {
   const pages: PageInputForImport[] = [];
   const dates = question.haystack_dates ?? [];
@@ -131,8 +156,8 @@ export function haystackToPages(question: LongMemEvalQuestion): PageInputForImpo
     const session = sessions[i];
     const date = dates[i];
     pages.push({
-      slug: `chat/${sanitizeSessionIdForSlug(session.session_id)}`,
-      content: renderSession(session, date),
+      slug: sessionSlug(question.question_id, session.session_id),
+      content: renderSession(opaqueSessionId(question.question_id, session.session_id), session, date),
     });
   }
   return pages;

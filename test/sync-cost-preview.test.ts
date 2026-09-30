@@ -62,22 +62,22 @@ describe('Layer 8 D1 — embedding cost model', () => {
   test('cost preview uses the CONFIGURED model rate, not a hardcoded OpenAI rate', () => {
     // Regression: the cost gate previously hardcoded $0.00013/1k (OpenAI
     // text-embedding-3-large) regardless of the configured embedding model,
-    // so a brain on a cheaper model (e.g. zeroentropyai:zembed-1 @ $0.05/Mtok)
-    // saw a preview that named the wrong provider and over-stated spend ~2.6x.
+    // so a brain on a cheaper model (e.g. voyage:voyage-4 @ $0.06/Mtok)
+    // saw a preview that named the wrong provider and over-stated spend ~2.2x.
     // The pricing table is the single source of truth per provider:model.
     const TOKENS = 2_590_710_262; // a real large-brain sync preview
     const openai = lookupEmbeddingPrice('openai:text-embedding-3-large');
-    const zeroentropy = lookupEmbeddingPrice('zeroentropyai:zembed-1');
+    const voyage = lookupEmbeddingPrice('voyage:voyage-4');
     expect(openai.kind).toBe('known');
-    expect(zeroentropy.kind).toBe('known');
-    if (openai.kind === 'known' && zeroentropy.kind === 'known') {
+    expect(voyage.kind).toBe('known');
+    if (openai.kind === 'known' && voyage.kind === 'known') {
       const openaiCost = (TOKENS / 1_000_000) * openai.pricePerMTok;
-      const zeCost = (TOKENS / 1_000_000) * zeroentropy.pricePerMTok;
+      const voyageCost = (TOKENS / 1_000_000) * voyage.pricePerMTok;
       // The two models must produce materially different previews; a fix that
       // collapses both to the OpenAI number would regress this assertion.
       expect(openaiCost).toBeCloseTo(336.79, 1);
-      expect(zeCost).toBeCloseTo(129.54, 1);
-      expect(zeCost).toBeLessThan(openaiCost);
+      expect(voyageCost).toBeCloseTo(155.44, 1);
+      expect(voyageCost).toBeLessThan(openaiCost);
     }
   });
 

@@ -110,8 +110,8 @@ describe('formatModesText — reranker lines', () => {
 
   test('a base-URL override on the gateway plane surfaces as self_hosted=true', async () => {
     await withEnv({ GBRAIN_HOME: emptyHome(), VOYAGE_API_KEY: undefined }, async () => {
-      gw({ ZEROENTROPY_API_KEY: 'zk' }, { base_urls: { zeroentropyai: 'http://127.0.0.1:8080/v1' } });
-      const report = await buildModesReport(engineWith({ 'search.reranker.model': 'zeroentropyai:zerank-2' }));
+      gw({ VOYAGE_API_KEY: 'zk' }, { base_urls: { voyage: 'http://127.0.0.1:8080/v1' } });
+      const report = await buildModesReport(engineWith({ 'search.reranker.model': 'voyage:rerank-2.5' }));
       expect(report.reranker_readiness!.self_hosted).toBe(true);
     });
   });

@@ -1,0 +1,4350 @@
+{
+  "generatedBy": "scripts/generate-wave-1-moves.ts",
+  "base": "f8d1e3936d90",
+  "head": "43a9e6b10075",
+  "landing": {
+    "integrationOwner": "the wave-1 PR author (ports upstream fixes into moved code until merge)",
+    "freezeStart": "when the wave-1 PR is marked ready for review",
+    "freezeEnd": "72 hours after the wave-1 PR merges (revert-clean window)",
+    "freezeLiftedBy": "the repository owner (@garrytan)"
+  },
+  "moves": [
+    {
+      "old": "src/cli.ts:CLI_ONLY",
+      "kind": "moved",
+      "facade": "src/cli.ts:CLI_ONLY",
+      "wasExported": true,
+      "new": [
+        "src/cli/command-table.ts:CLI_ONLY"
+      ]
+    },
+    {
+      "old": "src/cli.ts:CLI_ONLY_SELF_HELP",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": false,
+      "new": [
+        "src/cli/command-table.ts:CLI_ONLY_SELF_HELP"
+      ]
+    },
+    {
+      "old": "src/cli.ts:STARTUP_HOOK_SKIP_COMMANDS",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": false,
+      "new": [
+        "src/cli/command-table.ts:STARTUP_HOOK_SKIP_COMMANDS"
+      ]
+    },
+    {
+      "old": "src/cli.ts:THIN_CLIENT_REFUSED_COMMANDS",
+      "kind": "moved",
+      "facade": "src/cli.ts:THIN_CLIENT_REFUSED_COMMANDS",
+      "wasExported": true,
+      "new": [
+        "src/cli/command-table.ts:THIN_CLIENT_REFUSED_COMMANDS"
+      ]
+    },
+    {
+      "old": "src/cli.ts:handleCliOnly",
+      "kind": "split",
+      "facade": "src/cli.ts:handleCliOnly",
+      "wasExported": false,
+      "new": [
+        "src/cli.ts:connectCliOnlyEngine",
+        "src/cli.ts:prepareConnectedDispatch",
+        "src/cli.ts:routeCliOnlyBeforeTable",
+        "src/cli.ts:routeEngineFreeSubcommands",
+        "src/cli.ts:runReadOnlyTimeoutDispatch",
+        "src/cli/commands/advisor.ts:run",
+        "src/cli/commands/agent.ts:run",
+        "src/cli/commands/anomalies.ts:run",
+        "src/cli/commands/apply-migrations.ts:run",
+        "src/cli/commands/autopilot.ts:run",
+        "src/cli/commands/backfill.ts:run",
+        "src/cli/commands/backup.ts:run",
+        "src/cli/commands/bench.ts:run",
+        "src/cli/commands/book-mirror.ts:run",
+        "src/cli/commands/bootstrap.ts:run",
+        "src/cli/commands/brainstorm.ts:run",
+        "src/cli/commands/cache.ts:run",
+        "src/cli/commands/calibration.ts:run",
+        "src/cli/commands/check-backlinks.ts:run",
+        "src/cli/commands/check-resolvable.ts:run",
+        "src/cli/commands/check-update.ts:run",
+        "src/cli/commands/claw-test.ts:run",
+        "src/cli/commands/code-callees.ts:run",
+        "src/cli/commands/code-callers.ts:run",
+        "src/cli/commands/code-def.ts:run",
+        "src/cli/commands/code-refs.ts:run",
+        "src/cli/commands/compile-context.ts:run",
+        "src/cli/commands/config.ts:run",
+        "src/cli/commands/connect.ts:run",
+        "src/cli/commands/connectors.ts:run",
+        "src/cli/commands/creds.ts:run",
+        "src/cli/commands/db-repair.ts:run",
+        "src/cli/commands/doctor.ts:run",
+        "src/cli/commands/dream.ts:run",
+        "src/cli/commands/edges-backfill.ts:run",
+        "src/cli/commands/embed.ts:run",
+        "src/cli/commands/engine.ts:run",
+        "src/cli/commands/eval.ts:run",
+        "src/cli/commands/export.ts:run",
+        "src/cli/commands/extract-conversation-facts.ts:run",
+        "src/cli/commands/features.ts:run",
+        "src/cli/commands/files.ts:run",
+        "src/cli/commands/founder.ts:run",
+        "src/cli/commands/friction.ts:run",
+        "src/cli/commands/frontmatter.ts:run",
+        "src/cli/commands/google.ts:run",
+        "src/cli/commands/graph-query.ts:run",
+        "src/cli/commands/hook.ts:run",
+        "src/cli/commands/import.ts:run",
+        "src/cli/commands/init.ts:run",
+        "src/cli/commands/integrations.ts:run",
+        "src/cli/commands/lint.ts:run",
+        "src/cli/commands/loops.ts:run",
+        "src/cli/commands/lsd.ts:run",
+        "src/cli/commands/maintain.ts:run",
+        "src/cli/commands/mcp.ts:run",
+        "src/cli/commands/migrate.ts:run",
+        "src/cli/commands/models.ts:run",
+        "src/cli/commands/mounts.ts:run",
+        "src/cli/commands/notability-eval.ts:run",
+        "src/cli/commands/onboard.ts:run",
+        "src/cli/commands/orphans.ts:run",
+        "src/cli/commands/pages.ts:run",
+        "src/cli/commands/pglite-repair.ts:run",
+        "src/cli/commands/post-upgrade.ts:run",
+        "src/cli/commands/protocol.ts:run",
+        "src/cli/commands/providers.ts:run",
+        "src/cli/commands/publish.ts:run",
+        "src/cli/commands/quarantine.ts:run",
+        "src/cli/commands/recall.ts:run",
+        "src/cli/commands/reconcile-links.ts:run",
+        "src/cli/commands/reindex-code.ts:run",
+        "src/cli/commands/reindex-frontmatter.ts:run",
+        "src/cli/commands/reindex-search-vector.ts:run",
+        "src/cli/commands/reindex.ts:run",
+        "src/cli/commands/reinit-pglite.ts:run",
+        "src/cli/commands/remote.ts:run",
+        "src/cli/commands/repair-jsonb.ts:run",
+        "src/cli/commands/repair.ts:run",
+        "src/cli/commands/report.ts:run",
+        "src/cli/commands/resolvers.ts:run",
+        "src/cli/commands/routing-eval.ts:run",
+        "src/cli/commands/salience.ts:run",
+        "src/cli/commands/schema.ts:run",
+        "src/cli/commands/self-upgrade.ts:run",
+        "src/cli/commands/skillify.ts:run",
+        "src/cli/commands/skillopt.ts:run",
+        "src/cli/commands/skillpack-check.ts:run",
+        "src/cli/commands/skillpack.ts:run",
+        "src/cli/commands/smoke-test.ts:run",
+        "src/cli/commands/transcripts.ts:run",
+        "src/cli/commands/upgrade.ts:run",
+        "src/cli/commands/waiting.ts:run",
+        "src/cli/commands/watch.ts:run",
+        "src/cli/commands/whoknows.ts:run"
+      ]
+    },
+    {
+      "old": "src/cli.ts:main",
+      "kind": "extracted",
+      "facade": "src/cli.ts:main",
+      "wasExported": false,
+      "new": [
+        "src/cli.ts:runSharedOperation"
+      ]
+    },
+    {
+      "old": "src/commands/autopilot.ts:parseArg",
+      "kind": "extracted",
+      "facade": "src/commands/autopilot.ts:parseArg",
+      "wasExported": false,
+      "new": [
+        "src/commands/jobs/shared.ts:parseFlag"
+      ]
+    },
+    {
+      "old": "src/commands/autopilot.ts:runAutopilot",
+      "kind": "split",
+      "facade": "src/commands/autopilot.ts:runAutopilot",
+      "wasExported": true,
+      "new": [
+        "src/commands/autopilot-daemon.ts:acquireAutopilotLock",
+        "src/commands/autopilot-daemon.ts:adaptiveInterval",
+        "src/commands/autopilot-daemon.ts:probeDatabaseOrReconnect",
+        "src/commands/autopilot-daemon.ts:probeNoWorkerPeer",
+        "src/commands/autopilot-daemon.ts:runAutopilotDaemon",
+        "src/commands/autopilot-daemon.ts:runInlineCycle",
+        "src/commands/autopilot-daemon.ts:startAutopilotWorker",
+        "src/commands/autopilot-daemon.ts:warnNoChatProviderOnce",
+        "src/commands/autopilot-dispatch.ts:computeAutopilotPlan",
+        "src/commands/autopilot-dispatch.ts:dispatchAutoDrain",
+        "src/commands/autopilot-dispatch.ts:dispatchAutopilotTick",
+        "src/commands/autopilot-dispatch.ts:dispatchFreshnessSyncs",
+        "src/commands/autopilot-probes.ts:runNightlyQualityProbeStep",
+        "src/commands/autopilot-probes.ts:runParserProbeStep"
+      ]
+    },
+    {
+      "old": "src/commands/doctor.ts:buildChecks",
+      "kind": "split",
+      "facade": "src/commands/doctor.ts:buildChecks",
+      "wasExported": true,
+      "new": [
+        "src/commands/doctor/checks/content-quality.ts:runContentSanity",
+        "src/commands/doctor/checks/content-quality.ts:runFrontmatter",
+        "src/commands/doctor/checks/content-quality.ts:runQuarantine",
+        "src/commands/doctor/checks/data-integrity.ts:runCrossModal",
+        "src/commands/doctor/checks/data-integrity.ts:runIntegrity",
+        "src/commands/doctor/checks/data-integrity.ts:runJsonbIntegrity",
+        "src/commands/doctor/checks/data-integrity.ts:runMarkdownBody",
+        "src/commands/doctor/checks/data-integrity.ts:runWhoknows",
+        "src/commands/doctor/checks/db-connection.ts:runConnection",
+        "src/commands/doctor/checks/db-connection.ts:runOfflineConnection",
+        "src/commands/doctor/checks/db-connection.ts:runPgliteDataDir",
+        "src/commands/doctor/checks/embedding-health.ts:runAlternativeProviders",
+        "src/commands/doctor/checks/embedding-health.ts:runEmbeddingColumnRegistry",
+        "src/commands/doctor/checks/embedding-health.ts:runEmbeddingEnvOverride",
+        "src/commands/doctor/checks/embedding-health.ts:runEmbeddingProvider",
+        "src/commands/doctor/checks/graph-health.ts:runGraphCoverage",
+        "src/commands/doctor/checks/graph-health.ts:runOrphanRatio",
+        "src/commands/doctor/checks/graph-health.ts:runStaleMentions",
+        "src/commands/doctor/checks/graph-health.ts:runTimelineHistory",
+        "src/commands/doctor/checks/knowledge-health.ts:runContradictions",
+        "src/commands/doctor/checks/knowledge-health.ts:runEffectiveDate",
+        "src/commands/doctor/checks/knowledge-health.ts:runEvalCapture",
+        "src/commands/doctor/checks/knowledge-health.ts:runFactsExtraction",
+        "src/commands/doctor/checks/knowledge-health.ts:runSalience",
+        "src/commands/doctor/checks/local-audits.ts:runDefaultSourcePath",
+        "src/commands/doctor/checks/local-audits.ts:runExtractionBacklogs",
+        "src/commands/doctor/checks/local-audits.ts:runHomeDirInWorktree",
+        "src/commands/doctor/checks/local-audits.ts:runStubGuard",
+        "src/commands/doctor/checks/local-runtime.ts:runBootstrapChecks",
+        "src/commands/doctor/checks/local-runtime.ts:runConnectors",
+        "src/commands/doctor/checks/local-runtime.ts:runMemorableRelay",
+        "src/commands/doctor/checks/local-runtime.ts:runMinionsMigration",
+        "src/commands/doctor/checks/queue-assets.ts:runImageAssets",
+        "src/commands/doctor/checks/queue-assets.ts:runIndexAudit",
+        "src/commands/doctor/checks/queue-assets.ts:runQueueHealth",
+        "src/commands/doctor/checks/schema-health.ts:runEmbeddings",
+        "src/commands/doctor/checks/schema-health.ts:runPgvector",
+        "src/commands/doctor/checks/schema-health.ts:runRls",
+        "src/commands/doctor/checks/schema-health.ts:runRlsEventTrigger",
+        "src/commands/doctor/checks/schema-health.ts:runSchemaVersion",
+        "src/commands/doctor/checks/skill-group.ts:runResolverHealth",
+        "src/commands/doctor/checks/skill-group.ts:runRetrievalReflex",
+        "src/commands/doctor/checks/skill-group.ts:runSkillConformance",
+        "src/commands/doctor/checks/supervisor-health.ts:runSupervisor",
+        "src/commands/doctor/checks/sync-search.ts:runSearchMode",
+        "src/commands/doctor/checks/sync-search.ts:runSyncFreshness"
+      ]
+    },
+    {
+      "old": "src/commands/doctor.ts:checkSelfUpgradeHealth",
+      "kind": "moved",
+      "facade": "src/commands/doctor.ts:checkSelfUpgradeHealth",
+      "wasExported": true,
+      "new": [
+        "src/commands/doctor/checks/upgrade-health.ts:checkSelfUpgradeHealth"
+      ]
+    },
+    {
+      "old": "src/commands/doctor.ts:checkUpgradeErrors",
+      "kind": "moved",
+      "facade": "src/commands/doctor.ts:checkUpgradeErrors",
+      "wasExported": true,
+      "new": [
+        "src/commands/doctor/checks/upgrade-health.ts:checkUpgradeErrors"
+      ]
+    },
+    {
+      "old": "src/commands/doctor.ts:classifiedConnectionCheck",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": false,
+      "new": [
+        "src/commands/doctor/checks/db-connection.ts:classifiedConnectionCheck"
+      ]
+    },
+    {
+      "old": "src/commands/doctor.ts:pgbouncerPrepareCheck",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": false,
+      "new": [
+        "src/commands/doctor/checks/db-connection.ts:pgbouncerPrepareCheck"
+      ]
+    },
+    {
+      "old": "src/commands/doctor.ts:printAutoFixReport",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": false,
+      "new": [
+        "src/commands/doctor/checks/skill-group.ts:printAutoFixReport"
+      ]
+    },
+    {
+      "old": "src/commands/doctor.ts:upgradeErrorResolved",
+      "kind": "moved",
+      "facade": "src/commands/doctor.ts:upgradeErrorResolved",
+      "wasExported": true,
+      "new": [
+        "src/commands/doctor/checks/upgrade-health.ts:upgradeErrorResolved"
+      ]
+    },
+    {
+      "old": "src/commands/jobs.ts:JOB_DATE_FIELDS",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": false,
+      "new": [
+        "src/commands/jobs/shared.ts:JOB_DATE_FIELDS"
+      ]
+    },
+    {
+      "old": "src/commands/jobs.ts:JobIsolationMode",
+      "kind": "moved",
+      "facade": "src/commands/jobs.ts:JobIsolationMode",
+      "wasExported": true,
+      "new": [
+        "src/commands/jobs/shared.ts:JobIsolationMode"
+      ]
+    },
+    {
+      "old": "src/commands/jobs.ts:factsAbsorbShouldRetry",
+      "kind": "moved",
+      "facade": "src/commands/jobs.ts:factsAbsorbShouldRetry",
+      "wasExported": true,
+      "new": [
+        "src/core/minions/handlers/facts-absorb.ts:factsAbsorbShouldRetry"
+      ]
+    },
+    {
+      "old": "src/commands/jobs.ts:factsAbsorbUnavailable",
+      "kind": "moved",
+      "facade": "src/commands/jobs.ts:factsAbsorbUnavailable",
+      "wasExported": true,
+      "new": [
+        "src/core/minions/handlers/facts-absorb.ts:factsAbsorbUnavailable"
+      ]
+    },
+    {
+      "old": "src/commands/jobs.ts:formatJob",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": false,
+      "new": [
+        "src/commands/jobs/shared.ts:formatJob"
+      ]
+    },
+    {
+      "old": "src/commands/jobs.ts:formatJobDetail",
+      "kind": "moved",
+      "facade": "src/commands/jobs.ts:formatJobDetail",
+      "wasExported": true,
+      "new": [
+        "src/commands/jobs/shared.ts:formatJobDetail"
+      ]
+    },
+    {
+      "old": "src/commands/jobs.ts:formatTimeoutLines",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": false,
+      "new": [
+        "src/commands/jobs/shared.ts:formatTimeoutLines"
+      ]
+    },
+    {
+      "old": "src/commands/jobs.ts:formatWhen",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": false,
+      "new": [
+        "src/commands/jobs/shared.ts:formatWhen"
+      ]
+    },
+    {
+      "old": "src/commands/jobs.ts:hasFlag",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": false,
+      "new": [
+        "src/commands/jobs/shared.ts:hasFlag"
+      ]
+    },
+    {
+      "old": "src/commands/jobs.ts:maybeRunWorkerStartupRecovery",
+      "kind": "moved",
+      "facade": "src/commands/jobs.ts:maybeRunWorkerStartupRecovery",
+      "wasExported": true,
+      "new": [
+        "src/commands/jobs/work.ts:maybeRunWorkerStartupRecovery"
+      ]
+    },
+    {
+      "old": "src/commands/jobs.ts:parseFlag",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": false,
+      "new": [
+        "src/commands/jobs/shared.ts:parseFlag"
+      ]
+    },
+    {
+      "old": "src/commands/jobs.ts:parseJobIsolationFlag",
+      "kind": "moved",
+      "facade": "src/commands/jobs.ts:parseJobIsolationFlag",
+      "wasExported": true,
+      "new": [
+        "src/commands/jobs/shared.ts:parseJobIsolationFlag"
+      ]
+    },
+    {
+      "old": "src/commands/jobs.ts:parseMaxRssFlag",
+      "kind": "moved",
+      "facade": "src/commands/jobs.ts:parseMaxRssFlag",
+      "wasExported": true,
+      "new": [
+        "src/commands/jobs/shared.ts:parseMaxRssFlag"
+      ]
+    },
+    {
+      "old": "src/commands/jobs.ts:parseMaxWaitingFlag",
+      "kind": "moved",
+      "facade": "src/commands/jobs.ts:parseMaxWaitingFlag",
+      "wasExported": true,
+      "new": [
+        "src/commands/jobs/shared.ts:parseMaxWaitingFlag"
+      ]
+    },
+    {
+      "old": "src/commands/jobs.ts:parseNiceFlag",
+      "kind": "moved",
+      "facade": "src/commands/jobs.ts:parseNiceFlag",
+      "wasExported": true,
+      "new": [
+        "src/commands/jobs/shared.ts:parseNiceFlag"
+      ]
+    },
+    {
+      "old": "src/commands/jobs.ts:registerBuiltinHandlers",
+      "kind": "split",
+      "facade": "src/commands/jobs.ts:registerBuiltinHandlers",
+      "wasExported": true,
+      "new": [
+        "src/core/minions/handlers/autopilot-cycle.ts:makeAutopilotCycleHandler",
+        "src/core/minions/handlers/autopilot-global-maintenance.ts:makeAutopilotGlobalMaintenanceHandler",
+        "src/core/minions/handlers/backlinks.ts:makeBacklinksHandler",
+        "src/core/minions/handlers/chronicle-extract.ts:makeChronicleExtractHandler",
+        "src/core/minions/handlers/cycle-phase.ts:makeCyclePhaseHandler",
+        "src/core/minions/handlers/embed-catch-up.ts:makeEmbedCatchUpHandler",
+        "src/core/minions/handlers/embed.ts:makeEmbedHandler",
+        "src/core/minions/handlers/enrich.ts:makeEnrichHandler",
+        "src/core/minions/handlers/extract-atoms-drain.ts:makeExtractAtomsDrainHandler",
+        "src/core/minions/handlers/extract-conversation-facts.ts:makeExtractConversationFactsHandler",
+        "src/core/minions/handlers/extract-ner.ts:makeExtractNerHandler",
+        "src/core/minions/handlers/extract-takes-from-pages.ts:makeExtractTakesFromPagesHandler",
+        "src/core/minions/handlers/extract-timeline-from-meetings.ts:makeExtractTimelineFromMeetingsHandler",
+        "src/core/minions/handlers/extract.ts:makeExtractHandler",
+        "src/core/minions/handlers/facts-absorb.ts:makeFactsAbsorbHandler",
+        "src/core/minions/handlers/import.ts:makeImportHandler",
+        "src/core/minions/handlers/integrity-auto.ts:integrityAutoHandler",
+        "src/core/minions/handlers/integrity.ts:integrityHandler",
+        "src/core/minions/handlers/lint-fix.ts:makeLintFixHandler",
+        "src/core/minions/handlers/lint.ts:makeLintHandler",
+        "src/core/minions/handlers/loops-extract.ts:makeLoopsExtractHandler",
+        "src/core/minions/handlers/orphans.ts:makeOrphansHandler",
+        "src/core/minions/handlers/purge.ts:makePurgeHandler",
+        "src/core/minions/handlers/reindex.ts:makeReindexHandler",
+        "src/core/minions/handlers/repair-jsonb.ts:repairJsonbHandler",
+        "src/core/minions/handlers/sync-retry-failed.ts:makeSyncRetryFailedHandler",
+        "src/core/minions/handlers/sync.ts:makeSyncHandler",
+        "src/core/minions/handlers/unify-types.ts:makeUnifyTypesHandler"
+      ]
+    },
+    {
+      "old": "src/commands/jobs.ts:rehydrateJobDates",
+      "kind": "moved",
+      "facade": "src/commands/jobs.ts:rehydrateJobDates",
+      "wasExported": true,
+      "new": [
+        "src/commands/jobs/shared.ts:rehydrateJobDates"
+      ]
+    },
+    {
+      "old": "src/commands/jobs.ts:resolveJobPull",
+      "kind": "moved",
+      "facade": "src/commands/jobs.ts:resolveJobPull",
+      "wasExported": true,
+      "new": [
+        "src/core/minions/handlers/job-pull.ts:resolveJobPull"
+      ]
+    },
+    {
+      "old": "src/commands/jobs.ts:resolveWorkerConcurrency",
+      "kind": "moved",
+      "facade": "src/commands/jobs.ts:resolveWorkerConcurrency",
+      "wasExported": true,
+      "new": [
+        "src/commands/jobs/shared.ts:resolveWorkerConcurrency"
+      ]
+    },
+    {
+      "old": "src/commands/jobs.ts:runJobs",
+      "kind": "split",
+      "facade": "src/commands/jobs.ts:runJobs",
+      "wasExported": true,
+      "new": [
+        "src/commands/jobs/authorize-legacy.ts:runJobsAuthorizeLegacy",
+        "src/commands/jobs/cancel.ts:runJobsCancel",
+        "src/commands/jobs/child-readiness.ts:runJobsChildReadiness",
+        "src/commands/jobs/delete.ts:runJobsDelete",
+        "src/commands/jobs/get.ts:runJobsGet",
+        "src/commands/jobs/list.ts:runJobsList",
+        "src/commands/jobs/prune.ts:runJobsPrune",
+        "src/commands/jobs/retry.ts:runJobsRetry",
+        "src/commands/jobs/run-child.ts:runJobsRunChild",
+        "src/commands/jobs/smoke.ts:runJobsSmoke",
+        "src/commands/jobs/stats.ts:runJobsStats",
+        "src/commands/jobs/submit.ts:runJobsSubmit",
+        "src/commands/jobs/supervisor.ts:runJobsSupervisor",
+        "src/commands/jobs/supervisor.ts:showSupervisorStatus",
+        "src/commands/jobs/supervisor.ts:stopSupervisor",
+        "src/commands/jobs/watch.ts:runJobsWatch",
+        "src/commands/jobs/work.ts:exitOnUnhealthy",
+        "src/commands/jobs/work.ts:runJobsWork"
+      ]
+    },
+    {
+      "old": "src/commands/serve-http.ts:AdminSseResponse",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": false,
+      "new": [
+        "src/commands/serve-http-admin-api.ts:AdminSseResponse"
+      ]
+    },
+    {
+      "old": "src/commands/serve-http.ts:AgentClientSpend",
+      "kind": "moved",
+      "facade": "src/commands/serve-http.ts:AgentClientSpend",
+      "wasExported": true,
+      "new": [
+        "src/commands/serve-http-admin-api.ts:AgentClientSpend"
+      ]
+    },
+    {
+      "old": "src/commands/serve-http.ts:HEALTH_TIMEOUT_MS",
+      "kind": "moved",
+      "facade": "src/commands/serve-http.ts:HEALTH_TIMEOUT_MS",
+      "wasExported": true,
+      "new": [
+        "src/commands/serve-http-metrics.ts:HEALTH_TIMEOUT_MS"
+      ]
+    },
+    {
+      "old": "src/commands/serve-http.ts:ProbeHealthResult",
+      "kind": "moved",
+      "facade": "src/commands/serve-http.ts:ProbeHealthResult",
+      "wasExported": true,
+      "new": [
+        "src/commands/serve-http-metrics.ts:ProbeHealthResult"
+      ]
+    },
+    {
+      "old": "src/commands/serve-http.ts:extractGitHubItemRef",
+      "kind": "moved",
+      "facade": "src/commands/serve-http.ts:extractGitHubItemRef",
+      "wasExported": true,
+      "new": [
+        "src/commands/serve-http-webhooks.ts:extractGitHubItemRef"
+      ]
+    },
+    {
+      "old": "src/commands/serve-http.ts:githubKindCoversRepo",
+      "kind": "moved",
+      "facade": "src/commands/serve-http.ts:githubKindCoversRepo",
+      "wasExported": true,
+      "new": [
+        "src/commands/serve-http-webhooks.ts:githubKindCoversRepo"
+      ]
+    },
+    {
+      "old": "src/commands/serve-http.ts:mountOAuthCorsGate",
+      "kind": "moved",
+      "facade": "src/commands/serve-http.ts:mountOAuthCorsGate",
+      "wasExported": true,
+      "new": [
+        "src/commands/serve-http-oauth.ts:mountOAuthCorsGate"
+      ]
+    },
+    {
+      "old": "src/commands/serve-http.ts:openAdminSseStream",
+      "kind": "moved",
+      "facade": "src/commands/serve-http.ts:openAdminSseStream",
+      "wasExported": true,
+      "new": [
+        "src/commands/serve-http-admin-api.ts:openAdminSseStream"
+      ]
+    },
+    {
+      "old": "src/commands/serve-http.ts:parseCorsAllowlistOAuth",
+      "kind": "moved",
+      "facade": "src/commands/serve-http.ts:parseCorsAllowlistOAuth",
+      "wasExported": true,
+      "new": [
+        "src/commands/serve-http-oauth.ts:parseCorsAllowlistOAuth"
+      ]
+    },
+    {
+      "old": "src/commands/serve-http.ts:probeHealth",
+      "kind": "moved",
+      "facade": "src/commands/serve-http.ts:probeHealth",
+      "wasExported": true,
+      "new": [
+        "src/commands/serve-http-metrics.ts:probeHealth"
+      ]
+    },
+    {
+      "old": "src/commands/serve-http.ts:probeLiveness",
+      "kind": "moved",
+      "facade": "src/commands/serve-http.ts:probeLiveness",
+      "wasExported": true,
+      "new": [
+        "src/commands/serve-http-metrics.ts:probeLiveness"
+      ]
+    },
+    {
+      "old": "src/commands/serve-http.ts:queryAgentClientSpend",
+      "kind": "moved",
+      "facade": "src/commands/serve-http.ts:queryAgentClientSpend",
+      "wasExported": true,
+      "new": [
+        "src/commands/serve-http-admin-api.ts:queryAgentClientSpend"
+      ]
+    },
+    {
+      "old": "src/commands/serve-http.ts:resolveCorsOrigin",
+      "kind": "moved",
+      "facade": "src/commands/serve-http.ts:resolveCorsOrigin",
+      "wasExported": true,
+      "new": [
+        "src/commands/serve-http-oauth.ts:resolveCorsOrigin"
+      ]
+    },
+    {
+      "old": "src/commands/serve-http.ts:runServeHttp",
+      "kind": "split",
+      "facade": "src/commands/serve-http.ts:runServeHttp",
+      "wasExported": true,
+      "new": [
+        "src/commands/serve-http-admin-api.ts:createRequireAdmin",
+        "src/commands/serve-http-admin-api.ts:mountAdminApi",
+        "src/commands/serve-http-admin-api.ts:mountAdminCalibrationApi",
+        "src/commands/serve-http-admin-api.ts:mountAdminClientApi",
+        "src/commands/serve-http-admin-api.ts:mountAdminKeyApi",
+        "src/commands/serve-http-admin-api.ts:mountAdminLogin",
+        "src/commands/serve-http-admin-api.ts:mountAdminOverviewApi",
+        "src/commands/serve-http-mcp.ts:callMcpTool",
+        "src/commands/serve-http-mcp.ts:createMcpRequestServer",
+        "src/commands/serve-http-mcp.ts:listMcpTools",
+        "src/commands/serve-http-mcp.ts:mountMcp",
+        "src/commands/serve-http-mcp.ts:recordMcpToolResult",
+        "src/commands/serve-http-mcp.ts:rejectInsufficientMcpScope",
+        "src/commands/serve-http-mcp.ts:rejectUnknownMcpOperation",
+        "src/commands/serve-http-mcp.ts:serveMcpRequest",
+        "src/commands/serve-http-metrics.ts:mountHealth",
+        "src/commands/serve-http-metrics.ts:mountMetrics",
+        "src/commands/serve-http-oauth.ts:mountOAuth",
+        "src/commands/serve-http-oauth.ts:mountOwnerLoginLinks",
+        "src/commands/serve-http-spa.ts:mountSpa",
+        "src/commands/serve-http-webhooks.ts:createWebhookLimiters",
+        "src/commands/serve-http-webhooks.ts:handleGitHubItemEvent",
+        "src/commands/serve-http-webhooks.ts:handleIngest",
+        "src/commands/serve-http-webhooks.ts:mountGitHubWebhook",
+        "src/commands/serve-http-webhooks.ts:mountIngest",
+        "src/commands/serve-http-webhooks.ts:verifyWebhookSig",
+        "src/commands/serve-http.ts:buildServeHttpApp",
+        "src/commands/serve-http.ts:logServeHttpStartup",
+        "src/commands/serve-http.ts:resolveDcrTtlWindow"
+      ]
+    },
+    {
+      "old": "src/commands/serve-http.ts:selectGitHubItemSources",
+      "kind": "moved",
+      "facade": "src/commands/serve-http.ts:selectGitHubItemSources",
+      "wasExported": true,
+      "new": [
+        "src/commands/serve-http-webhooks.ts:selectGitHubItemSources"
+      ]
+    },
+    {
+      "old": "src/commands/sync.ts:MissingPathMode",
+      "kind": "moved",
+      "facade": "src/commands/sync.ts:MissingPathMode",
+      "wasExported": true,
+      "new": [
+        "src/commands/sync/missing-path.ts:MissingPathMode"
+      ]
+    },
+    {
+      "old": "src/commands/sync.ts:SYNC_CHECKPOINT_EVERY_DEFAULT",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": false,
+      "new": [
+        "src/commands/sync/checkpoint.ts:SYNC_CHECKPOINT_EVERY_DEFAULT"
+      ]
+    },
+    {
+      "old": "src/commands/sync.ts:SYNC_CHECKPOINT_SECONDS_DEFAULT",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": false,
+      "new": [
+        "src/commands/sync/checkpoint.ts:SYNC_CHECKPOINT_SECONDS_DEFAULT"
+      ]
+    },
+    {
+      "old": "src/commands/sync.ts:SYNC_CKPT_OP",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": false,
+      "new": [
+        "src/commands/sync/checkpoint.ts:SYNC_CKPT_OP"
+      ]
+    },
+    {
+      "old": "src/commands/sync.ts:SYNC_MAX_CHECKPOINT_FAILURES_DEFAULT",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": false,
+      "new": [
+        "src/commands/sync/checkpoint.ts:SYNC_MAX_CHECKPOINT_FAILURES_DEFAULT"
+      ]
+    },
+    {
+      "old": "src/commands/sync.ts:SYNC_TARGET_OP",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": false,
+      "new": [
+        "src/commands/sync/checkpoint.ts:SYNC_TARGET_OP"
+      ]
+    },
+    {
+      "old": "src/commands/sync.ts:SYNC_YIELD_EVERY_DEFAULT",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": false,
+      "new": [
+        "src/commands/sync/checkpoint.ts:SYNC_YIELD_EVERY_DEFAULT"
+      ]
+    },
+    {
+      "old": "src/commands/sync.ts:TrackedSlugIndex",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": false,
+      "new": [
+        "src/commands/sync/rename-reconcile.ts:TrackedSlugIndex"
+      ]
+    },
+    {
+      "old": "src/commands/sync.ts:__resetPGLiteTierWarn",
+      "kind": "moved",
+      "facade": "src/commands/sync.ts:__resetPGLiteTierWarn",
+      "wasExported": true,
+      "new": [
+        "src/commands/sync/gitignore.ts:__resetPGLiteTierWarn"
+      ]
+    },
+    {
+      "old": "src/commands/sync.ts:_pgliteTierWarned",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": false,
+      "new": [
+        "src/commands/sync/gitignore.ts:_pgliteTierWarned"
+      ]
+    },
+    {
+      "old": "src/commands/sync.ts:activeSlugsBySourcePath",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": false,
+      "new": [
+        "src/commands/sync/rename-reconcile.ts:activeSlugsBySourcePath"
+      ]
+    },
+    {
+      "old": "src/commands/sync.ts:anchorBlobSlugs",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": false,
+      "new": [
+        "src/commands/sync/rename-reconcile.ts:anchorBlobSlugs"
+      ]
+    },
+    {
+      "old": "src/commands/sync.ts:anyFilterAtAttributeEpochs",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": false,
+      "new": [
+        "src/commands/sync/rename-reconcile.ts:anyFilterAtAttributeEpochs"
+      ]
+    },
+    {
+      "old": "src/commands/sync.ts:attributeEpochCommits",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": false,
+      "new": [
+        "src/commands/sync/rename-reconcile.ts:attributeEpochCommits"
+      ]
+    },
+    {
+      "old": "src/commands/sync.ts:fallbackSlugsForFile",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": false,
+      "new": [
+        "src/commands/sync/rename-reconcile.ts:fallbackSlugsForFile"
+      ]
+    },
+    {
+      "old": "src/commands/sync.ts:frontmatterSlugShapes",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": false,
+      "new": [
+        "src/commands/sync/rename-reconcile.ts:frontmatterSlugShapes"
+      ]
+    },
+    {
+      "old": "src/commands/sync.ts:manageGitignore",
+      "kind": "moved",
+      "facade": "src/commands/sync.ts:manageGitignore",
+      "wasExported": true,
+      "new": [
+        "src/commands/sync/gitignore.ts:manageGitignore"
+      ]
+    },
+    {
+      "old": "src/commands/sync.ts:manageGitignoreAtGitRoot",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": false,
+      "new": [
+        "src/commands/sync/gitignore.ts:manageGitignoreAtGitRoot"
+      ]
+    },
+    {
+      "old": "src/commands/sync.ts:maybeBackupCoverageRefresh",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": false,
+      "new": [
+        "src/commands/sync/report.ts:maybeBackupCoverageRefresh"
+      ]
+    },
+    {
+      "old": "src/commands/sync.ts:maybeExtractionNudge",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": false,
+      "new": [
+        "src/commands/sync/report.ts:maybeExtractionNudge"
+      ]
+    },
+    {
+      "old": "src/commands/sync.ts:orphanedRenameSentinels",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": false,
+      "new": [
+        "src/commands/sync/rename-reconcile.ts:orphanedRenameSentinels"
+      ]
+    },
+    {
+      "old": "src/commands/sync.ts:parseMissingPathMode",
+      "kind": "moved",
+      "facade": "src/commands/sync.ts:parseMissingPathMode",
+      "wasExported": true,
+      "new": [
+        "src/commands/sync/missing-path.ts:parseMissingPathMode"
+      ]
+    },
+    {
+      "old": "src/commands/sync.ts:partitionMissingPathSources",
+      "kind": "moved",
+      "facade": "src/commands/sync.ts:partitionMissingPathSources",
+      "wasExported": true,
+      "new": [
+        "src/commands/sync/missing-path.ts:partitionMissingPathSources"
+      ]
+    },
+    {
+      "old": "src/commands/sync.ts:pathHasContentFilter",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": false,
+      "new": [
+        "src/commands/sync/rename-reconcile.ts:pathHasContentFilter"
+      ]
+    },
+    {
+      "old": "src/commands/sync.ts:performFullSync",
+      "kind": "split",
+      "facade": null,
+      "wasExported": false,
+      "new": [
+        "src/commands/sync/full.ts:fullSyncDryRun",
+        "src/commands/sync/full.ts:performFullSync",
+        "src/commands/sync/full.ts:reconcileFullSyncDeletes",
+        "src/commands/sync/full.ts:reportBlockedFullSync"
+      ]
+    },
+    {
+      "old": "src/commands/sync.ts:performSync",
+      "kind": "moved",
+      "facade": "src/commands/sync.ts:performSync",
+      "wasExported": true,
+      "new": [
+        "src/commands/sync/perform.ts:performSync"
+      ]
+    },
+    {
+      "old": "src/commands/sync.ts:performSyncInner",
+      "kind": "split",
+      "facade": null,
+      "wasExported": false,
+      "new": [
+        "src/commands/sync/deletes.ts:runDeletesPhase",
+        "src/commands/sync/deletes.ts:sweepUnsyncableModified",
+        "src/commands/sync/finalize.ts:applyBookmarkGate",
+        "src/commands/sync/finalize.ts:backstopAffectedPageFacts",
+        "src/commands/sync/finalize.ts:embedAffectedPages",
+        "src/commands/sync/finalize.ts:extractAffectedPages",
+        "src/commands/sync/finalize.ts:finalizeIncrementalSync",
+        "src/commands/sync/finalize.ts:finishWithoutChanges",
+        "src/commands/sync/finalize.ts:verifyPinnedHead",
+        "src/commands/sync/imports.ts:createImportPacer",
+        "src/commands/sync/imports.ts:drainImports",
+        "src/commands/sync/imports.ts:importOnePath",
+        "src/commands/sync/imports.ts:resolveImportConcurrency",
+        "src/commands/sync/imports.ts:runImportsPhase",
+        "src/commands/sync/imports.ts:startStallWatchdog",
+        "src/commands/sync/incremental.ts:performSyncInner",
+        "src/commands/sync/incremental.ts:readTypeWarningsEnabled",
+        "src/commands/sync/perform.ts:performSync",
+        "src/commands/sync/preflight.ts:applyPersistedScopeConfig",
+        "src/commands/sync/preflight.ts:computeFilteredDelta",
+        "src/commands/sync/preflight.ts:discoverSyncGitRoot",
+        "src/commands/sync/preflight.ts:dryRunResult",
+        "src/commands/sync/preflight.ts:preflightIncrementalSync",
+        "src/commands/sync/preflight.ts:pullAndResolveHead",
+        "src/commands/sync/preflight.ts:resolveCheckpointPin",
+        "src/commands/sync/preflight.ts:resolveSyncRepo",
+        "src/commands/sync/preflight.ts:resolveWorkingTreeScope",
+        "src/commands/sync/preflight.ts:validateSourceRepoState",
+        "src/commands/sync/renames.ts:applyRename",
+        "src/commands/sync/renames.ts:reconcileRenameFallback",
+        "src/commands/sync/renames.ts:runRenamesPhase",
+        "src/commands/sync/sync-run.ts:maybeYield",
+        "src/commands/sync/sync-run.ts:noteTypeWarning",
+        "src/commands/sync/sync-run.ts:partial"
+      ]
+    },
+    {
+      "old": "src/commands/sync.ts:printSyncResult",
+      "kind": "moved",
+      "facade": "src/commands/sync.ts:printSyncResult",
+      "wasExported": true,
+      "new": [
+        "src/commands/sync/report.ts:printSyncResult"
+      ]
+    },
+    {
+      "old": "src/commands/sync.ts:resolveSyncCheckpointEvery",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": false,
+      "new": [
+        "src/commands/sync/checkpoint.ts:resolveSyncCheckpointEvery"
+      ]
+    },
+    {
+      "old": "src/commands/sync.ts:resolveSyncCheckpointSeconds",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": false,
+      "new": [
+        "src/commands/sync/checkpoint.ts:resolveSyncCheckpointSeconds"
+      ]
+    },
+    {
+      "old": "src/commands/sync.ts:resolveSyncMaxCheckpointFailures",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": false,
+      "new": [
+        "src/commands/sync/checkpoint.ts:resolveSyncMaxCheckpointFailures"
+      ]
+    },
+    {
+      "old": "src/commands/sync.ts:resolveSyncYieldEvery",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": false,
+      "new": [
+        "src/commands/sync/checkpoint.ts:resolveSyncYieldEvery"
+      ]
+    },
+    {
+      "old": "src/commands/sync.ts:runConnectorSync",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": false,
+      "new": [
+        "src/commands/sync/connector.ts:runConnectorSync"
+      ]
+    },
+    {
+      "old": "src/commands/sync.ts:runSyncInner",
+      "kind": "split",
+      "facade": null,
+      "wasExported": false,
+      "new": [
+        "src/commands/sync/args.ts:parseSyncFanoutFlags",
+        "src/commands/sync/args.ts:parseSyncFlags",
+        "src/commands/sync/run.ts:PerSourceResult",
+        "src/commands/sync/run.ts:SyncAllSourceRow",
+        "src/commands/sync/run.ts:dispatchSyncAll",
+        "src/commands/sync/run.ts:emitSyncAllEnvelope",
+        "src/commands/sync/run.ts:resolveCliSyncSource",
+        "src/commands/sync/run.ts:runSingleSourceSync",
+        "src/commands/sync/run.ts:runSyncAll",
+        "src/commands/sync/run.ts:runSyncBreakLock",
+        "src/commands/sync/run.ts:runSyncInner"
+      ]
+    },
+    {
+      "old": "src/commands/sync.ts:runSyncTrigger",
+      "kind": "moved",
+      "facade": "src/commands/sync.ts:runSyncTrigger",
+      "wasExported": true,
+      "new": [
+        "src/commands/sync/trigger.ts:runSyncTrigger"
+      ]
+    },
+    {
+      "old": "src/commands/sync.ts:shouldNudgeAfterSync",
+      "kind": "moved",
+      "facade": "src/commands/sync.ts:shouldNudgeAfterSync",
+      "wasExported": true,
+      "new": [
+        "src/commands/sync/report.ts:shouldNudgeAfterSync"
+      ]
+    },
+    {
+      "old": "src/commands/sync.ts:sweepOrphanedRenameSentinels",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": false,
+      "new": [
+        "src/commands/sync/rename-reconcile.ts:sweepOrphanedRenameSentinels"
+      ]
+    },
+    {
+      "old": "src/commands/sync.ts:syncCheckpointKeys",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": false,
+      "new": [
+        "src/commands/sync/checkpoint.ts:syncCheckpointKeys"
+      ]
+    },
+    {
+      "old": "src/commands/sync.ts:trackedSlugIndex",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": false,
+      "new": [
+        "src/commands/sync/rename-reconcile.ts:trackedSlugIndex"
+      ]
+    },
+    {
+      "old": "src/commands/sync.ts:verifyOrRestoreClearedSentinels",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": false,
+      "new": [
+        "src/commands/sync/rename-reconcile.ts:verifyOrRestoreClearedSentinels"
+      ]
+    },
+    {
+      "old": "src/core/migrate.ts:MIGRATIONS",
+      "kind": "split",
+      "facade": "src/core/migrate.ts:MIGRATIONS",
+      "wasExported": true,
+      "new": [
+        "src/core/schema-migrations/v002-slugify-existing-pages.ts:v002",
+        "src/core/schema-migrations/v003-unique-chunk-index.ts:v003",
+        "src/core/schema-migrations/v004-access-tokens-and-mcp-log.ts:v004",
+        "src/core/schema-migrations/v005-minion-jobs-table.ts:v005",
+        "src/core/schema-migrations/v006-agent-orchestration-primitives.ts:v006",
+        "src/core/schema-migrations/v007-agent-parity-layer.ts:v007",
+        "src/core/schema-migrations/v008-multi-type-links-constraint.ts:v008",
+        "src/core/schema-migrations/v009-timeline-dedup-index.ts:v009",
+        "src/core/schema-migrations/v010-drop-timeline-search-trigger.ts:v010",
+        "src/core/schema-migrations/v011-links-provenance-columns.ts:v011",
+        "src/core/schema-migrations/v012-budget-ledger.ts:v012",
+        "src/core/schema-migrations/v013-minion-quiet-hours-stagger.ts:v013",
+        "src/core/schema-migrations/v014-pages-updated-at-index.ts:v014",
+        "src/core/schema-migrations/v015-minion-jobs-max-stalled-default-5.ts:v015",
+        "src/core/schema-migrations/v016-cycle-locks-table.ts:v016",
+        "src/core/schema-migrations/v020-sources-table-additive.ts:v020",
+        "src/core/schema-migrations/v021-pages-source-id-composite-unique.ts:v021",
+        "src/core/schema-migrations/v022-links-resolution-type.ts:v022",
+        "src/core/schema-migrations/v023-files-source-id-page-id-ledger.ts:v023",
+        "src/core/schema-migrations/v024-rls-backfill-missing-tables.ts:v024",
+        "src/core/schema-migrations/v025-pages-page-kind.ts:v025",
+        "src/core/schema-migrations/v026-content-chunks-code-metadata.ts:v026",
+        "src/core/schema-migrations/v027-cathedral-ii-foundation.ts:v027",
+        "src/core/schema-migrations/v028-cathedral-ii-chunk-fts-backfill.ts:v028",
+        "src/core/schema-migrations/v029-cathedral-ii-code-edges-rls.ts:v029",
+        "src/core/schema-migrations/v030-dream-verdicts-table.ts:v030",
+        "src/core/schema-migrations/v031-eval-capture-tables.ts:v031",
+        "src/core/schema-migrations/v032-oauth-infrastructure.ts:v032",
+        "src/core/schema-migrations/v033-admin-dashboard-columns-v0-26-3.ts:v033",
+        "src/core/schema-migrations/v034-destructive-guard-columns.ts:v034",
+        "src/core/schema-migrations/v035-auto-rls-event-trigger.ts:v035",
+        "src/core/schema-migrations/v036-subagent-provider-neutral-persistence-v0-27.ts:v036",
+        "src/core/schema-migrations/v037-takes-and-synthesis-evidence.ts:v037",
+        "src/core/schema-migrations/v038-access-tokens-permissions.ts:v038",
+        "src/core/schema-migrations/v039-multimodal-dual-column-v0-27-1.ts:v039",
+        "src/core/schema-migrations/v040-pages-emotional-weight.ts:v040",
+        "src/core/schema-migrations/v041-pages-recency-columns.ts:v041",
+        "src/core/schema-migrations/v042-eval-candidates-recency-capture.ts:v042",
+        "src/core/schema-migrations/v043-takes-resolved-quality-and-drift-decisions.ts:v043",
+        "src/core/schema-migrations/v044-pages-emotional-weight-recomputed-at.ts:v044",
+        "src/core/schema-migrations/v045-facts-hot-memory-v0-31.ts:v045",
+        "src/core/schema-migrations/v046-mcp-request-log-params-jsonb-normalize.ts:v046",
+        "src/core/schema-migrations/v047-facts-notability-alter.ts:v047",
+        "src/core/schema-migrations/v048-takes-weight-round-to-grid.ts:v048",
+        "src/core/schema-migrations/v049-eval-takes-quality-runs.ts:v049",
+        "src/core/schema-migrations/v050-ingest-log-source-id.ts:v050",
+        "src/core/schema-migrations/v051-facts-fence-columns.ts:v051",
+        "src/core/schema-migrations/v052-eval-contradictions-cache.ts:v052",
+        "src/core/schema-migrations/v053-eval-contradictions-runs.ts:v053",
+        "src/core/schema-migrations/v054-cjk-wave-pages-chunker-version-and-source-path.ts:v054",
+        "src/core/schema-migrations/v055-query-cache-search-lite.ts:v055",
+        "src/core/schema-migrations/v056-query-cache-knobs-hash.ts:v056",
+        "src/core/schema-migrations/v057-search-telemetry-rollup.ts:v057",
+        "src/core/schema-migrations/v058-edges-backfilled-at-v0-33-2.ts:v058",
+        "src/core/schema-migrations/v059-code-traversal-cache-v0-34.ts:v059",
+        "src/core/schema-migrations/v060-oauth-clients-source-id-fk.ts:v060",
+        "src/core/schema-migrations/v061-oauth-clients-federated-read-column.ts:v061",
+        "src/core/schema-migrations/v062-oauth-clients-federated-read-backfill.ts:v062",
+        "src/core/schema-migrations/v063-oauth-clients-federated-read-validate.ts:v063",
+        "src/core/schema-migrations/v064-oauth-clients-source-id-fk-restrict.ts:v064",
+        "src/core/schema-migrations/v065-oauth-clients-federated-read-gin-index.ts:v065",
+        "src/core/schema-migrations/v066-embed-stale-partial-index.ts:v066",
+        "src/core/schema-migrations/v067-facts-typed-claim-columns.ts:v067",
+        "src/core/schema-migrations/v068-calibration-profiles-v0-36.ts:v068",
+        "src/core/schema-migrations/v069-take-proposals-v0-36.ts:v069",
+        "src/core/schema-migrations/v070-take-grade-cache-v0-36.ts:v070",
+        "src/core/schema-migrations/v071-take-nudge-log-v0-36.ts:v071",
+        "src/core/schema-migrations/v072-takes-resolved-at-trend-idx-v0-36.ts:v072",
+        "src/core/schema-migrations/v073-think-ab-results-v0-36.ts:v073",
+        "src/core/schema-migrations/v074-eval-candidates-embedding-column.ts:v074",
+        "src/core/schema-migrations/v075-op-checkpoints-table.ts:v075",
+        "src/core/schema-migrations/v076-minion-jobs-doctor-run-id-index.ts:v076",
+        "src/core/schema-migrations/v077-mcp-spend-log.ts:v077",
+        "src/core/schema-migrations/v078-embedding-multimodal-column.ts:v078",
+        "src/core/schema-migrations/v079-pages-last-retrieved-at.ts:v079",
+        "src/core/schema-migrations/v080-takes-unresolvable-quality-v0-37-2-0.ts:v080",
+        "src/core/schema-migrations/v081-pages-provenance-columns.ts:v081",
+        "src/core/schema-migrations/v082-subagent-tool-executions-stable-id.ts:v082",
+        "src/core/schema-migrations/v083-mcp-spend-reservations.ts:v083",
+        "src/core/schema-migrations/v084-oauth-clients-budget-usd-per-day.ts:v084",
+        "src/core/schema-migrations/v085-oauth-clients-agent-binding.ts:v085",
+        "src/core/schema-migrations/v086-page-links-view-alias.ts:v086",
+        "src/core/schema-migrations/v087-takes-kind-drop-check.ts:v087",
+        "src/core/schema-migrations/v088-eval-candidates-schema-pack-per-source.ts:v088",
+        "src/core/schema-migrations/v089-facts-event-type-column.ts:v089",
+        "src/core/schema-migrations/v090-contextual-retrieval-columns.ts:v090",
+        "src/core/schema-migrations/v091-pages-generation-trigger-and-bookmark.ts:v091",
+        "src/core/schema-migrations/v092-sources-github-repo-index.ts:v092",
+        "src/core/schema-migrations/v093-minions-v0-41-audit-and-budget.ts:v093",
+        "src/core/schema-migrations/v094-take-domain-assignments.ts:v094",
+        "src/core/schema-migrations/v095-links-link-source-check-includes-mentions.ts:v095",
+        "src/core/schema-migrations/v096-facts-extract-conversation-session-index.ts:v096",
+        "src/core/schema-migrations/v097-pages-dedup-partial-index.ts:v097",
+        "src/core/schema-migrations/v098-gbrain-cycle-locks-last-refreshed-at.ts:v098",
+        "src/core/schema-migrations/v099-conversation-parser-llm-cache-table.ts:v099",
+        "src/core/schema-migrations/v101-links-link-kind-column.ts:v101",
+        "src/core/schema-migrations/v102-timeline-entries-source-in-dedup.ts:v102",
+        "src/core/schema-migrations/v103-migration-impact-log-and-priority-recent-idx.ts:v103",
+        "src/core/schema-migrations/v104-pages-atom-source-hash-idx.ts:v104",
+        "src/core/schema-migrations/v105-slug-aliases.ts:v105",
+        "src/core/schema-migrations/v106-extract-rollup-7d-table.ts:v106",
+        "src/core/schema-migrations/v107-page-generation-clock-and-statement-trigger.ts:v107",
+        "src/core/schema-migrations/v108-pages-embedding-signature.ts:v108",
+        "src/core/schema-migrations/v109-sources-newest-content-at.ts:v109",
+        "src/core/schema-migrations/v110-page-aliases.ts:v110",
+        "src/core/schema-migrations/v111-search-telemetry-rank1-columns.ts:v111",
+        "src/core/schema-migrations/v112-pages-links-extracted-at.ts:v112",
+        "src/core/schema-migrations/v113-links-link-source-widen-for-wikilink-basename.ts:v113",
+        "src/core/schema-migrations/v114-links-link-source-check-kebab-regex.ts:v114",
+        "src/core/schema-migrations/v115-op-checkpoint-paths-append-table.ts:v115",
+        "src/core/schema-migrations/v116-code-edges-source-backfill-and-callee-index.ts:v116",
+        "src/core/schema-migrations/v117-context-volunteer-events-table.ts:v117",
+        "src/core/schema-migrations/v118-page-generation-clock-sequence-swap.ts:v118",
+        "src/core/schema-migrations/v119-op-checkpoints-completed-keys-array-check.ts:v119",
+        "src/core/schema-migrations/v120-schema-lint-hardening-search-path-security-invoker.ts:v120",
+        "src/core/schema-migrations/v121-timeline-entries-event-page-id.ts:v121",
+        "src/core/schema-migrations/v122-facts-ontology-dimension.ts:v122",
+        "src/core/schema-migrations/v123-configurable-fts-language.ts:v123",
+        "src/core/schema-migrations/v124-page-search-vector-drop-compiled-truth.ts:v124",
+        "src/core/schema-migrations/v125-take-proposals-per-claim-idempotency.ts:v125",
+        "src/core/schema-migrations/v126-session-context-state.ts:v126",
+        "src/core/schema-migrations/v127-oauth-client-surface-and-minion-queue-index.ts:v127",
+        "src/core/schema-migrations/v128-minion-jobs-timeout-backfill-and-duplicate-cycle-cleanup.ts:v128",
+        "src/core/schema-migrations/v129-dream-verdicts-triage-v1-columns.ts:v129",
+        "src/core/schema-migrations/v130-minion-jobs-lock-duration-ms.ts:v130",
+        "src/core/schema-migrations/v131-drop-job-wide-subagent-tool-use-id-unique.ts:v131",
+        "src/core/schema-migrations/v132-session-context-state-checkpoint-manifest.ts:v132",
+        "src/core/schema-migrations/v133-content-chunks-embedded-text-hash.ts:v133",
+        "src/core/schema-migrations/v134-restore-chunks-embedding-null-partial-indexes.ts:v134",
+        "src/core/schema-migrations/v135-facts-event-time-index.ts:v135",
+        "src/core/schema-migrations/v136-minion-private-queue-owner-metadata.ts:v136",
+        "src/core/schema-migrations/v137-entity-identities.ts:v137",
+        "src/core/schema-migrations/v138-timeline-dedup-md5-summary.ts:v138",
+        "src/core/schema-migrations/v139-timeline-legacy-source-split-repair.ts:v139",
+        "src/core/schema-migrations/v140-chat-usage-log.ts:v140",
+        "src/core/schema-migrations/v141-extract-rollup-expected-limit.ts:v141",
+        "src/core/schema-migrations/v142-takes-embedding-dimension-matches-config.ts:v142",
+        "src/core/schema-migrations/v143-dream-verdicts-ttl.ts:v143",
+        "src/core/schema-migrations/v144-open-loops.ts:v144",
+        "src/core/schema-migrations/v145-facts-kind-idea-alter.ts:v145",
+        "src/core/schema-migrations/v146-extract-atoms-transcript-state-table.ts:v146",
+        "src/core/schema-migrations/v147-oauth-client-capability-grants.ts:v147",
+        "src/core/schema-migrations/v148-durable-fact-withdrawals.ts:v148",
+        "src/core/schema-migrations/v149-minion-submission-authority.ts:v149",
+        "src/core/schema-migrations/v150-canonical-page-revisions-and-guards.ts:v150",
+        "src/core/schema-migrations/v151-durable-concurrent-persistence.ts:v151",
+        "src/core/schema-migrations/v152-unique-lock-acquisition-tokens.ts:v152",
+        "src/core/schema-migrations/v153-verified-text-projection-activation.ts:v153",
+        "src/core/schema-migrations/v154-preserve-sanitized-page-search-vectors.ts:v154",
+        "src/core/schema-migrations/v155-recoverable-postcommit-persistence-effects.ts:v155",
+        "src/core/schema-migrations/v156-managed-alias-and-source-checkpoint-guards.ts:v156",
+        "src/core/schema-migrations/v157-recoverable-source-topology.ts:v157",
+        "src/core/schema-migrations/v158-canonical-version-deletion-state.ts:v158",
+        "src/core/schema-migrations/v159-index-retained-publication-recovery.ts:v159",
+        "src/core/schema-migrations/v160-current-text-projection-planner-statistics.ts:v160",
+        "src/core/schema-migrations/v161-index-pending-text-projections.ts:v161",
+        "src/core/schema-migrations/v162-source-ingestion-receipts-with-policy.ts:v162",
+        "src/core/schema-migrations/v163-derived-atom-page-scan-state.ts:v163",
+        "src/core/schema-migrations/v164-shared-brain-skills-and-membership.ts:v164",
+        "src/core/schema-migrations/v165-index-database-only-pending-writes.ts:v165",
+        "src/core/schema-migrations/v166-fact-embedding-identity.ts:v166",
+        "src/core/schema-migrations/v167-facts-superseded-by-set-null.ts:v167",
+        "src/core/schema-migrations/v168-dream-synthesis-completions.ts:v168",
+        "src/core/schema-migrations/v169-fact-withdrawal-subject.ts:v169",
+        "src/core/schema-migrations/v170-index-parked-persistence-effects.ts:v170",
+        "src/core/schema-migrations/v171-content-chunks-embedding-input-hash.ts:v171",
+        "src/core/schema-migrations/v172-pages-safe-chunk-pending-index.ts:v172",
+        "src/core/schema-migrations/v173-minion-jobs-dead-subagent-finished-index.ts:v173",
+        "src/core/schema-migrations/v174-fact-withdrawal-normalized-fingerprint.ts:v174",
+        "src/core/schema-migrations/v175-tags-tag-source.ts:v175",
+        "src/core/schema-migrations/v176-connector-checkpoint-stable-identity.ts:v176",
+        "src/core/schema-migrations/v177-pages-database-only-reason.ts:v177",
+        "src/core/schema-migrations/v178-persistence-writer-version-stamps.ts:v178"
+      ]
+    },
+    {
+      "old": "src/core/migrate.ts:Migration",
+      "kind": "moved",
+      "facade": "src/core/migrate.ts:Migration",
+      "wasExported": false,
+      "new": [
+        "src/core/schema-migrations/types.ts:Migration"
+      ]
+    },
+    {
+      "old": "src/core/migrate.ts:dropInvalidConcurrentIndex",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": false,
+      "new": [
+        "src/core/schema-migrations/helpers.ts:dropInvalidConcurrentIndex"
+      ]
+    },
+    {
+      "old": "src/core/migrate.ts:migrationNotice",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": false,
+      "new": [
+        "src/core/schema-migrations/helpers.ts:migrationNotice"
+      ]
+    },
+    {
+      "old": "src/core/migrate.ts:quietMigrationNotices",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": false,
+      "new": [
+        "src/core/schema-migrations/helpers.ts:quietMigrationNotices"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine._putPage",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/pages.ts:putPage"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine._upsertChunksOnce",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine._upsertChunksOnce",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/chunks.ts:upsertChunksOnce"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.addCodeEdges",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.addCodeEdges",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/code-edges.ts:addCodeEdges"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.addLink",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.addLink",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/links.ts:addLink"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.addLinksBatch",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.addLinksBatch",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/links.ts:addLinksBatch"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.addSynthesisEvidence",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.addSynthesisEvidence",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:addSynthesisEvidence"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.addTakesBatch",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.addTakesBatch",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:addTakesBatch"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.addTimelineEntriesBatch",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.addTimelineEntriesBatch",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/timeline.ts:addTimelineEntriesBatch"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.addTimelineEntry",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.addTimelineEntry",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/timeline.ts:addTimelineEntry"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.applyForwardReferenceBootstrap",
+      "kind": "split",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.applyForwardReferenceBootstrap",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/bootstrap.ts:applyForwardReferenceBootstrap",
+        "src/core/engine-sql/bootstrap.ts:forwardReferenceGaps"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.batchLoadEmotionalInputs",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.batchLoadEmotionalInputs",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/salience.ts:batchLoadEmotionalInputs"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.buildStaleChunkWhere",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/chunks.ts:StaleChunkOpts"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.consolidateFact",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.consolidateFact",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/facts.ts:consolidateFact"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.countChunklessPagesWithContent",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.countChunklessPagesWithContent",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/chunks.ts:countChunklessPagesWithContent"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.countStaleChunks",
+      "kind": "split",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.countStaleChunks",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/chunks.ts:StaleChunkOpts",
+        "src/core/engine-sql/chunks.ts:countStaleChunks"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.countStalePagesForExtraction",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.countStalePagesForExtraction",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/pages.ts:countStalePagesForExtraction"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.countStaleTakes",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.countStaleTakes",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:countStaleTakes"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.countUnconsolidatedFacts",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.countUnconsolidatedFacts",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/facts.ts:countUnconsolidatedFacts"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.deleteChunks",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.deleteChunks",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/chunks.ts:deleteChunks"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.deleteCodeEdgesForChunks",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.deleteCodeEdgesForChunks",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/code-edges.ts:deleteCodeEdgesForChunks"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.deleteFactsForPage",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.deleteFactsForPage",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/facts.ts:deleteFactsForPage"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.deletePage",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.deletePage",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/pages.ts:deletePage"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.deletePages",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.deletePages",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/pages.ts:deletePages"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.expireFact",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.expireFact",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/facts.ts:expireFact"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.findAnomalies",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.findAnomalies",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/salience.ts:findAnomalies"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.findByTitleFuzzy",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.findByTitleFuzzy",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/pages.ts:findByTitleFuzzy"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.findCandidateDuplicates",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.findCandidateDuplicates",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/facts.ts:findCandidateDuplicates"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.findDuplicatePage",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.findDuplicatePage",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/pages.ts:findDuplicatePage"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.findOrphanPages",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.findOrphanPages",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/links.ts:findOrphanPages"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.findTrajectory",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.findTrajectory",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/facts.ts:findTrajectory"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.getAllSlugs",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.getAllSlugs",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/pages.ts:getAllSlugs"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.getBacklinks",
+      "kind": "split",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.getBacklinks",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/links.ts:getBacklinks",
+        "src/core/engine-sql/links.ts:getLinks"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.getCalibrationCurve",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.getCalibrationCurve",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:getCalibrationCurve"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.getCalleesOf",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.getCalleesOf",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/code-edges.ts:getCalleesOf"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.getCallersOf",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.getCallersOf",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/code-edges.ts:getCallersOf"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.getChunks",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.getChunks",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/chunks.ts:getChunks"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.getChunksWithEmbeddings",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.getChunksWithEmbeddings",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/chunks.ts:getChunksWithEmbeddings"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.getContradictionCacheEntry",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.getContradictionCacheEntry",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:getContradictionCacheEntry"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.getEdgesByChunk",
+      "kind": "split",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.getEdgesByChunk",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/code-edges.ts:getEdgesByChunk",
+        "src/core/pglite-engine/code-edges.ts:getEdgesByChunk"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.getEmbeddingsByChunkIds",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.getEmbeddingsByChunkIds",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/chunks.ts:getEmbeddingsByChunkIds"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.getFactsHealth",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.getFactsHealth",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/facts.ts:getFactsHealth"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.getFile",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.getFile",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/files.ts:getFile"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.getLastSeen",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.getLastSeen",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/timeline.ts:getLastSeen"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.getLinks",
+      "kind": "split",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.getLinks",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/links.ts:getBacklinks",
+        "src/core/engine-sql/links.ts:getLinks"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.getOnThisDay",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.getOnThisDay",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/timeline.ts:getOnThisDay"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.getPageTimestamps",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.getPageTimestamps",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/pages.ts:getPageTimestamps"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.getRecentSalience",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.getRecentSalience",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/salience.ts:getRecentSalience"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.getScorecard",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.getScorecard",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:getScorecard"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.getSince",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.getSince",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/timeline.ts:getSince"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.getTags",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.getTags",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/tags.ts:getTags"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.getTakeEmbeddings",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.getTakeEmbeddings",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:getTakeEmbeddings"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.getTimeline",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.getTimeline",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/timeline.ts:getTimeline"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.getTimelineForDate",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.getTimelineForDate",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/timeline.ts:getTimelineForDate"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.getVersions",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.getVersions",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/pages.ts:getVersions"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.insertFact",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.insertFact",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/facts.ts:insertFact"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.insertFacts",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.insertFacts",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/facts.ts:insertFacts"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.invalidateContentDriftEmbeddings",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.invalidateContentDriftEmbeddings",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/chunks.ts:invalidateContentDriftEmbeddings"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.invalidateStaleSignatureEmbeddings",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.invalidateStaleSignatureEmbeddings",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/chunks.ts:invalidateStaleSignatureEmbeddings"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.listActiveTakesForPages",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.listActiveTakesForPages",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:listActiveTakesForPages"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.listAllPageRefs",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.listAllPageRefs",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/pages.ts:listAllPageRefs"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.listAllSources",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.listAllSources",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/sources.ts:listAllSources"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.listChunklessPagesWithContent",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.listChunklessPagesWithContent",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/chunks.ts:listChunklessPagesWithContent"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.listCorpusSample",
+      "kind": "split",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.listCorpusSample",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/pages.ts:listCorpusSample",
+        "src/core/engine-sql/pages.ts:toDomainBankRow"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.listEnrichCandidates",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.listEnrichCandidates",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/salience.ts:listEnrichCandidates"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.listFactsByEntity",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.listFactsByEntity",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/facts.ts:listFactsByEntity"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.listFactsBySession",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.listFactsBySession",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/facts.ts:listFactsBySession"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.listFactsSince",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.listFactsSince",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/facts.ts:listFactsSince"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.listFilesForPage",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.listFilesForPage",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/files.ts:listFilesForPage"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.listLinkSources",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.listLinkSources",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/links.ts:listLinkSources"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.listPages",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.listPages",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/pages.ts:listPages"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.listPrefixSampledPages",
+      "kind": "split",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.listPrefixSampledPages",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/pages.ts:listPrefixSampledPages",
+        "src/core/engine-sql/pages.ts:toDomainBankRow"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.listStaleChunks",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.listStaleChunks",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/chunks.ts:listStaleChunks"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.listStalePagesForExtraction",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.listStalePagesForExtraction",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/pages.ts:listStalePagesForExtraction"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.listStaleTakes",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.listStaleTakes",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:listStaleTakes"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.listSupersessions",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.listSupersessions",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/facts.ts:listSupersessions"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.listTakes",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.listTakes",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:listTakes"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.loadContradictionsTrend",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.loadContradictionsTrend",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:loadContradictionsTrend"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.markPagesExtractedBatch",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.markPagesExtractedBatch",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/pages.ts:markPagesExtractedBatch"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.purgeDeletedPages",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.purgeDeletedPages",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/pages.ts:purgeDeletedPages"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.putContradictionCacheEntry",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.putContradictionCacheEntry",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:putContradictionCacheEntry"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.putPage",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.putPage",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/pages.ts:putPage"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.refreshPageBody",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.refreshPageBody",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/pages.ts:refreshPageBody"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.removeLink",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.removeLink",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/links.ts:removeLink"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.removeLinksByPagesAndSource",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.removeLinksByPagesAndSource",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/links.ts:removeLinksByPagesAndSource"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.resolveSlugWithAliasDetailed",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.resolveSlugWithAliasDetailed",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/pages.ts:resolveSlugWithAliasDetailed"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.resolveSlugs",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.resolveSlugs",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/pages.ts:resolveSlugs"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.resolveSlugsByPaths",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.resolveSlugsByPaths",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/pages.ts:resolveSlugsByPaths"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.resolveTake",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.resolveTake",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:resolveTake"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.restorePage",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.restorePage",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/pages.ts:restorePage"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.revertToVersion",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.revertToVersion",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/pages.ts:revertToVersion"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.searchTakes",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.searchTakes",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:searchTakes"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.searchTakesVector",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.searchTakesVector",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:searchTakesVector"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.setEmotionalWeightBatch",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.setEmotionalWeightBatch",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/salience.ts:setEmotionalWeightBatch"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.setPageAliases",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.setPageAliases",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/pages.ts:setPageAliases"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.setPageEmbeddingSignature",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.setPageEmbeddingSignature",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/chunks.ts:setPageEmbeddingSignature"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.softDeletePage",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.softDeletePage",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/pages.ts:softDeletePage"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.softDeletePages",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.softDeletePages",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/pages.ts:softDeletePages"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.sumStaleChunkChars",
+      "kind": "split",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.sumStaleChunkChars",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/chunks.ts:StaleChunkOpts",
+        "src/core/engine-sql/chunks.ts:sumStaleChunkChars"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.supersedeTake",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.supersedeTake",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:supersedeTake"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.sweepContradictionCache",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.sweepContradictionCache",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:sweepContradictionCache"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.traverseGraph",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.traverseGraph",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/links.ts:traverseGraph"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.traversePathsDetailed",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.traversePathsDetailed",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/links.ts:traversePathsDetailed"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.updatePageContextualRetrievalState",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.updatePageContextualRetrievalState",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/pages.ts:updatePageContextualRetrievalState"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.updateSlug",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.updateSlug",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/pages.ts:updateSlug"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.updateSourceConfig",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.updateSourceConfig",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/sources.ts:updateSourceConfig"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.updateTake",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.updateTake",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:updateTake"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.updateTakeEmbeddings",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.updateTakeEmbeddings",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:updateTakeEmbeddings"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.upsertEventProjection",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.upsertEventProjection",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/timeline.ts:upsertEventProjection"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.upsertFile",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.upsertFile",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/files.ts:upsertFile"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine.ts:PGLiteEngine.writeContradictionsRun",
+      "kind": "moved",
+      "facade": "src/core/pglite-engine.ts:PGLiteEngine.writeContradictionsRun",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:writeContradictionsRun"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine/cjk-search.ts:searchKeywordCJK",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/cjk-search.ts:searchKeywordCJK"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine/code-edges.ts:addCodeEdges",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/code-edges.ts:addCodeEdges"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine/code-edges.ts:deleteCodeEdgesForChunks",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/code-edges.ts:deleteCodeEdgesForChunks"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine/code-edges.ts:getCalleesOf",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/code-edges.ts:getCalleesOf"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine/code-edges.ts:getCallersOf",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/code-edges.ts:getCallersOf"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine/facts.ts:consolidateFact",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/facts.ts:consolidateFact"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine/facts.ts:countUnconsolidatedFacts",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/facts.ts:countUnconsolidatedFacts"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine/facts.ts:deleteFactsForPage",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/facts.ts:deleteFactsForPage"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine/facts.ts:expireFact",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/facts.ts:expireFact"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine/facts.ts:findCandidateDuplicates",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/facts.ts:findCandidateDuplicates"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine/facts.ts:findTrajectory",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/facts.ts:findTrajectory"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine/facts.ts:getFactsHealth",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/facts.ts:getFactsHealth"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine/facts.ts:insertFact",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/facts.ts:insertFact"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine/facts.ts:insertFacts",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/facts.ts:insertFacts"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine/facts.ts:listFactsByEntity",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/facts.ts:listFactsByEntity"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine/facts.ts:listFactsBySession",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/facts.ts:listFactsBySession"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine/facts.ts:listFactsSince",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/facts.ts:listFactsSince"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine/facts.ts:listSupersessions",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/facts.ts:listSupersessions"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine/facts.ts:rowToFact",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": false,
+      "new": [
+        "src/core/engine-sql/facts.ts:rowToFact"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine/facts.ts:toPgVectorLiteral",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": false,
+      "new": [
+        "src/core/engine-sql/facts.ts:toPgVectorLiteral"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine/salience.ts:batchLoadEmotionalInputs",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/salience.ts:batchLoadEmotionalInputs"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine/salience.ts:findAnomalies",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/salience.ts:findAnomalies"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine/salience.ts:getRecentSalience",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/salience.ts:getRecentSalience"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine/salience.ts:listEnrichCandidates",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/salience.ts:listEnrichCandidates"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine/salience.ts:setEmotionalWeightBatch",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/salience.ts:setEmotionalWeightBatch"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine/takes.ts:_addTakesBatchOnce",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": false,
+      "new": [
+        "src/core/engine-sql/takes.ts:_addTakesBatchOnce"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine/takes.ts:_updateTakeEmbeddingsOnce",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": false,
+      "new": [
+        "src/core/engine-sql/takes.ts:_updateTakeEmbeddingsOnce"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine/takes.ts:addSynthesisEvidence",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:addSynthesisEvidence"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine/takes.ts:addTakesBatch",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:addTakesBatch"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine/takes.ts:countStaleTakes",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:countStaleTakes"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine/takes.ts:getCalibrationCurve",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:getCalibrationCurve"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine/takes.ts:getContradictionCacheEntry",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:getContradictionCacheEntry"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine/takes.ts:getScorecard",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:getScorecard"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine/takes.ts:getTakeEmbeddings",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:getTakeEmbeddings"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine/takes.ts:listActiveTakesForPages",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:listActiveTakesForPages"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine/takes.ts:listStaleTakes",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:listStaleTakes"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine/takes.ts:listTakes",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:listTakes"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine/takes.ts:loadContradictionsTrend",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:loadContradictionsTrend"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine/takes.ts:putContradictionCacheEntry",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:putContradictionCacheEntry"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine/takes.ts:resolveTake",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:resolveTake"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine/takes.ts:searchTakes",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:searchTakes"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine/takes.ts:searchTakesVector",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:searchTakesVector"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine/takes.ts:supersedeTake",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:supersedeTake"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine/takes.ts:sweepContradictionCache",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:sweepContradictionCache"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine/takes.ts:updateTake",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:updateTake"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine/takes.ts:updateTakeEmbeddings",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:updateTakeEmbeddings"
+      ]
+    },
+    {
+      "old": "src/core/pglite-engine/takes.ts:writeContradictionsRun",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:writeContradictionsRun"
+      ]
+    },
+    {
+      "old": "src/core/pglite-schema.ts:PGLITE_SCHEMA_SQL",
+      "kind": "moved",
+      "facade": "src/core/pglite-schema.ts:PGLITE_SCHEMA_SQL",
+      "wasExported": true,
+      "new": [
+        "src/core/pglite-schema.generated.ts:PGLITE_SCHEMA_SQL"
+      ]
+    },
+    {
+      "old": "src/core/pglite-schema.ts:PGLITE_SCHEMA_SQL_TEMPLATE",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": false,
+      "new": [
+        "src/core/pglite-schema.generated.ts:PGLITE_SCHEMA_SQL_TEMPLATE"
+      ]
+    },
+    {
+      "old": "src/core/pglite-schema.ts:getPGLiteSchema",
+      "kind": "moved",
+      "facade": "src/core/pglite-schema.ts:getPGLiteSchema",
+      "wasExported": true,
+      "new": [
+        "src/core/pglite-schema.generated.ts:getPGLiteSchema"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine._putPage",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/pages.ts:putPage"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine._upsertChunksOnce",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine._upsertChunksOnce",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/chunks.ts:upsertChunksOnce"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.addCodeEdges",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.addCodeEdges",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/code-edges.ts:addCodeEdges"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.addLink",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.addLink",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/links.ts:addLink"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.addLinksBatch",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.addLinksBatch",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/links.ts:addLinksBatch"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.addSynthesisEvidence",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.addSynthesisEvidence",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:addSynthesisEvidence"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.addTakesBatch",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.addTakesBatch",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:addTakesBatch"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.addTimelineEntriesBatch",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.addTimelineEntriesBatch",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/timeline.ts:addTimelineEntriesBatch"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.addTimelineEntry",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.addTimelineEntry",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/timeline.ts:addTimelineEntry"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.batchLoadEmotionalInputs",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.batchLoadEmotionalInputs",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/salience.ts:batchLoadEmotionalInputs"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.buildStaleChunkWhere",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/chunks.ts:StaleChunkOpts"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.chronicleSourceCond",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/timeline.ts:chronicleSourceCond"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.consolidateFact",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.consolidateFact",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/facts.ts:consolidateFact"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.countChunklessPagesWithContent",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.countChunklessPagesWithContent",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/chunks.ts:countChunklessPagesWithContent"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.countStaleChunks",
+      "kind": "split",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.countStaleChunks",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/chunks.ts:StaleChunkOpts",
+        "src/core/engine-sql/chunks.ts:countStaleChunks"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.countStalePagesForExtraction",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.countStalePagesForExtraction",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/pages.ts:countStalePagesForExtraction"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.countStaleTakes",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.countStaleTakes",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:countStaleTakes"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.countUnconsolidatedFacts",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.countUnconsolidatedFacts",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/facts.ts:countUnconsolidatedFacts"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.deleteChunks",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.deleteChunks",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/chunks.ts:deleteChunks"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.deleteCodeEdgesForChunks",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.deleteCodeEdgesForChunks",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/code-edges.ts:deleteCodeEdgesForChunks"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.deleteFactsForPage",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.deleteFactsForPage",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/facts.ts:deleteFactsForPage"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.deletePage",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.deletePage",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/pages.ts:deletePage"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.deletePages",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.deletePages",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/pages.ts:deletePages"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.expireFact",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.expireFact",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/facts.ts:expireFact"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.findAnomalies",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.findAnomalies",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/salience.ts:findAnomalies"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.findByTitleFuzzy",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.findByTitleFuzzy",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/pages.ts:findByTitleFuzzy"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.findCandidateDuplicates",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.findCandidateDuplicates",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/facts.ts:findCandidateDuplicates"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.findDuplicatePage",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.findDuplicatePage",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/pages.ts:findDuplicatePage"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.findOrphanPages",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.findOrphanPages",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/links.ts:findOrphanPages"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.findTrajectory",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.findTrajectory",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/facts.ts:findTrajectory"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.getAllSlugs",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.getAllSlugs",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/pages.ts:getAllSlugs"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.getBacklinks",
+      "kind": "split",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.getBacklinks",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/links.ts:getBacklinks",
+        "src/core/engine-sql/links.ts:getLinks"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.getCalibrationCurve",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.getCalibrationCurve",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:getCalibrationCurve"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.getCalleesOf",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.getCalleesOf",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/code-edges.ts:getCalleesOf"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.getCallersOf",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.getCallersOf",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/code-edges.ts:getCallersOf"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.getChunks",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.getChunks",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/chunks.ts:getChunks"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.getChunksWithEmbeddings",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.getChunksWithEmbeddings",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/chunks.ts:getChunksWithEmbeddings"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.getContradictionCacheEntry",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.getContradictionCacheEntry",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:getContradictionCacheEntry"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.getEdgesByChunk",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.getEdgesByChunk",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/code-edges.ts:getEdgesByChunk"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.getEmbeddingsByChunkIds",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.getEmbeddingsByChunkIds",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/chunks.ts:getEmbeddingsByChunkIds"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.getFactsHealth",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.getFactsHealth",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/facts.ts:getFactsHealth"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.getFile",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.getFile",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/files.ts:getFile"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.getLastSeen",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.getLastSeen",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/timeline.ts:getLastSeen"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.getLinks",
+      "kind": "split",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.getLinks",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/links.ts:getBacklinks",
+        "src/core/engine-sql/links.ts:getLinks"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.getOnThisDay",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.getOnThisDay",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/timeline.ts:getOnThisDay"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.getPageTimestamps",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.getPageTimestamps",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/pages.ts:getPageTimestamps"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.getRecentSalience",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.getRecentSalience",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/salience.ts:getRecentSalience"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.getScorecard",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.getScorecard",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:getScorecard"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.getSince",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.getSince",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/timeline.ts:getSince"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.getTags",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.getTags",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/tags.ts:getTags"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.getTakeEmbeddings",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.getTakeEmbeddings",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:getTakeEmbeddings"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.getTimeline",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.getTimeline",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/timeline.ts:getTimeline"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.getTimelineForDate",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.getTimelineForDate",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/timeline.ts:getTimelineForDate"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.getVersions",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.getVersions",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/pages.ts:getVersions"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.insertFact",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.insertFact",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/facts.ts:insertFact"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.insertFacts",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.insertFacts",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/facts.ts:insertFacts"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.invalidateContentDriftEmbeddings",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.invalidateContentDriftEmbeddings",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/chunks.ts:invalidateContentDriftEmbeddings"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.invalidateStaleSignatureEmbeddings",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.invalidateStaleSignatureEmbeddings",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/chunks.ts:invalidateStaleSignatureEmbeddings"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.listActiveTakesForPages",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.listActiveTakesForPages",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:listActiveTakesForPages"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.listAllPageRefs",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.listAllPageRefs",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/pages.ts:listAllPageRefs"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.listAllSources",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.listAllSources",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/sources.ts:listAllSources"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.listChunklessPagesWithContent",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.listChunklessPagesWithContent",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/chunks.ts:listChunklessPagesWithContent"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.listCorpusSample",
+      "kind": "split",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.listCorpusSample",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/pages.ts:listCorpusSample",
+        "src/core/engine-sql/pages.ts:toDomainBankRow"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.listEnrichCandidates",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.listEnrichCandidates",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/salience.ts:listEnrichCandidates"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.listFactsByEntity",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.listFactsByEntity",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/facts.ts:listFactsByEntity"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.listFactsBySession",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.listFactsBySession",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/facts.ts:listFactsBySession"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.listFactsSince",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.listFactsSince",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/facts.ts:listFactsSince"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.listFilesForPage",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.listFilesForPage",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/files.ts:listFilesForPage"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.listLinkSources",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.listLinkSources",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/links.ts:listLinkSources"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.listPages",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.listPages",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/pages.ts:listPages"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.listPrefixSampledPages",
+      "kind": "split",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.listPrefixSampledPages",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/pages.ts:listPrefixSampledPages",
+        "src/core/engine-sql/pages.ts:toDomainBankRow"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.listStaleChunks",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.listStaleChunks",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/chunks.ts:listStaleChunks"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.listStalePagesForExtraction",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.listStalePagesForExtraction",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/pages.ts:listStalePagesForExtraction"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.listStaleTakes",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.listStaleTakes",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:listStaleTakes"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.listSupersessions",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.listSupersessions",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/facts.ts:listSupersessions"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.listTakes",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.listTakes",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:listTakes"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.loadContradictionsTrend",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.loadContradictionsTrend",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:loadContradictionsTrend"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.markPagesExtractedBatch",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.markPagesExtractedBatch",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/pages.ts:markPagesExtractedBatch"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.purgeDeletedPages",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.purgeDeletedPages",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/pages.ts:purgeDeletedPages"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.putContradictionCacheEntry",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.putContradictionCacheEntry",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:putContradictionCacheEntry"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.putPage",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.putPage",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/pages.ts:putPage"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.refreshPageBody",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.refreshPageBody",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/pages.ts:refreshPageBody"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.removeLink",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.removeLink",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/links.ts:removeLink"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.removeLinksByPagesAndSource",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.removeLinksByPagesAndSource",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/links.ts:removeLinksByPagesAndSource"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.resolveSlugWithAliasDetailed",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.resolveSlugWithAliasDetailed",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/pages.ts:resolveSlugWithAliasDetailed"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.resolveSlugs",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.resolveSlugs",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/pages.ts:resolveSlugs"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.resolveSlugsByPaths",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.resolveSlugsByPaths",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/pages.ts:resolveSlugsByPaths"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.resolveTake",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.resolveTake",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:resolveTake"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.restorePage",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.restorePage",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/pages.ts:restorePage"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.revertToVersion",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.revertToVersion",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/pages.ts:revertToVersion"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.searchTakes",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.searchTakes",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:searchTakes"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.searchTakesVector",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.searchTakesVector",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:searchTakesVector"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.setEmotionalWeightBatch",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.setEmotionalWeightBatch",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/salience.ts:setEmotionalWeightBatch"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.setPageAliases",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.setPageAliases",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/pages.ts:setPageAliases"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.setPageEmbeddingSignature",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.setPageEmbeddingSignature",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/chunks.ts:setPageEmbeddingSignature"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.softDeletePage",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.softDeletePage",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/pages.ts:softDeletePage"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.softDeletePages",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.softDeletePages",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/pages.ts:softDeletePages"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.sumStaleChunkChars",
+      "kind": "split",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.sumStaleChunkChars",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/chunks.ts:StaleChunkOpts",
+        "src/core/engine-sql/chunks.ts:sumStaleChunkChars"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.supersedeTake",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.supersedeTake",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:supersedeTake"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.sweepContradictionCache",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.sweepContradictionCache",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:sweepContradictionCache"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.traverseGraph",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.traverseGraph",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/links.ts:traverseGraph"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.traversePathsDetailed",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.traversePathsDetailed",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/links.ts:traversePathsDetailed"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.updatePageContextualRetrievalState",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.updatePageContextualRetrievalState",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/pages.ts:updatePageContextualRetrievalState"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.updateSlug",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.updateSlug",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/pages.ts:updateSlug"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.updateSourceConfig",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.updateSourceConfig",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/sources.ts:updateSourceConfig"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.updateTake",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.updateTake",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:updateTake"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.updateTakeEmbeddings",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.updateTakeEmbeddings",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:updateTakeEmbeddings"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.upsertEventProjection",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.upsertEventProjection",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/timeline.ts:upsertEventProjection"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.upsertFile",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.upsertFile",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/files.ts:upsertFile"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine.ts:PostgresEngine.writeContradictionsRun",
+      "kind": "moved",
+      "facade": "src/core/postgres-engine.ts:PostgresEngine.writeContradictionsRun",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:writeContradictionsRun"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine/cjk-search.ts:searchKeywordCJK",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/cjk-search.ts:searchKeywordCJK"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine/code-edges.ts:addCodeEdges",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/code-edges.ts:addCodeEdges"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine/code-edges.ts:deleteCodeEdgesForChunks",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/code-edges.ts:deleteCodeEdgesForChunks"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine/code-edges.ts:getCalleesOf",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/code-edges.ts:getCalleesOf"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine/code-edges.ts:getCallersOf",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/code-edges.ts:getCallersOf"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine/code-edges.ts:getEdgesByChunk",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/code-edges.ts:getEdgesByChunk"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine/code-edges.ts:pgRowToCodeEdge",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": false,
+      "new": [
+        "src/core/engine-sql/code-edges.ts:rowToCodeEdge"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine/facts.ts:FactRowSqlShape",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": false,
+      "new": [
+        "src/core/engine-sql/facts.ts:FactRowSqlShape"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine/facts.ts:consolidateFact",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/facts.ts:consolidateFact"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine/facts.ts:countUnconsolidatedFacts",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/facts.ts:countUnconsolidatedFacts"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine/facts.ts:deleteFactsForPage",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/facts.ts:deleteFactsForPage"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine/facts.ts:expireFact",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/facts.ts:expireFact"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine/facts.ts:findCandidateDuplicates",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/facts.ts:findCandidateDuplicates"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine/facts.ts:findTrajectory",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/facts.ts:findTrajectory"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine/facts.ts:getFactsHealth",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/facts.ts:getFactsHealth"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine/facts.ts:grepPattern",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": false,
+      "new": [
+        "src/core/engine-sql/facts.ts:grepPattern"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine/facts.ts:insertFact",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/facts.ts:insertFact"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine/facts.ts:insertFacts",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/facts.ts:insertFacts"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine/facts.ts:listFactsByEntity",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/facts.ts:listFactsByEntity"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine/facts.ts:listFactsBySession",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/facts.ts:listFactsBySession"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine/facts.ts:listFactsSince",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/facts.ts:listFactsSince"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine/facts.ts:listSupersessions",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/facts.ts:listSupersessions"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine/facts.ts:rowToFactPg",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": false,
+      "new": [
+        "src/core/engine-sql/facts.ts:rowToFact"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine/facts.ts:toPgVectorLiteral",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": false,
+      "new": [
+        "src/core/engine-sql/facts.ts:toPgVectorLiteral"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine/forward-reference-bootstrap.ts:applyPostgresForwardReferenceBootstrap",
+      "kind": "split",
+      "facade": "src/core/postgres-engine/forward-reference-bootstrap.ts:applyPostgresForwardReferenceBootstrap",
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/bootstrap.ts:applyForwardReferenceBootstrap",
+        "src/core/engine-sql/bootstrap.ts:forwardReferenceGaps"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine/salience.ts:batchLoadEmotionalInputs",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/salience.ts:batchLoadEmotionalInputs"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine/salience.ts:findAnomalies",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/salience.ts:findAnomalies"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine/salience.ts:getRecentSalience",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/salience.ts:getRecentSalience"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine/salience.ts:listEnrichCandidates",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/salience.ts:listEnrichCandidates"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine/salience.ts:setEmotionalWeightBatch",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/salience.ts:setEmotionalWeightBatch"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine/takes.ts:_addTakesBatchOnce",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": false,
+      "new": [
+        "src/core/engine-sql/takes.ts:_addTakesBatchOnce"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine/takes.ts:_updateTakeEmbeddingsOnce",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": false,
+      "new": [
+        "src/core/engine-sql/takes.ts:_updateTakeEmbeddingsOnce"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine/takes.ts:addSynthesisEvidence",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:addSynthesisEvidence"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine/takes.ts:addTakesBatch",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:addTakesBatch"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine/takes.ts:countStaleTakes",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:countStaleTakes"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine/takes.ts:getCalibrationCurve",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:getCalibrationCurve"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine/takes.ts:getContradictionCacheEntry",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:getContradictionCacheEntry"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine/takes.ts:getScorecard",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:getScorecard"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine/takes.ts:getTakeEmbeddings",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:getTakeEmbeddings"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine/takes.ts:listActiveTakesForPages",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:listActiveTakesForPages"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine/takes.ts:listStaleTakes",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:listStaleTakes"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine/takes.ts:listTakes",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:listTakes"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine/takes.ts:loadContradictionsTrend",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:loadContradictionsTrend"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine/takes.ts:putContradictionCacheEntry",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:putContradictionCacheEntry"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine/takes.ts:resolveTake",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:resolveTake"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine/takes.ts:searchTakes",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:searchTakes"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine/takes.ts:searchTakesVector",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:searchTakesVector"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine/takes.ts:supersedeTake",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:supersedeTake"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine/takes.ts:sweepContradictionCache",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:sweepContradictionCache"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine/takes.ts:updateTake",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:updateTake"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine/takes.ts:updateTakeEmbeddings",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:updateTakeEmbeddings"
+      ]
+    },
+    {
+      "old": "src/core/postgres-engine/takes.ts:writeContradictionsRun",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": true,
+      "new": [
+        "src/core/engine-sql/takes.ts:writeContradictionsRun"
+      ]
+    },
+    {
+      "old": "src/core/search/hybrid.ts:hybridSearch",
+      "kind": "split",
+      "facade": "src/core/search/hybrid.ts:hybridSearch",
+      "wasExported": true,
+      "new": [
+        "src/core/search/hybrid/arms.ts:buildPostFusionOpts",
+        "src/core/search/hybrid/arms.ts:buildRelationalList",
+        "src/core/search/hybrid/arms.ts:resolveModalityAndQueries",
+        "src/core/search/hybrid/arms.ts:runLexicalArms",
+        "src/core/search/hybrid/arms.ts:runVectorArms",
+        "src/core/search/hybrid/keyword-only.ts:searchVectorFallback",
+        "src/core/search/hybrid/keyword-only.ts:searchWithoutEmbeddings",
+        "src/core/search/hybrid/rank.ts:expandStructuralNeighbors",
+        "src/core/search/hybrid/rank.ts:finalizeHybridResults",
+        "src/core/search/hybrid/rank.ts:fuseArms",
+        "src/core/search/hybrid/rank.ts:rerankAndPin",
+        "src/core/search/hybrid/rank.ts:sizeReturnPool",
+        "src/core/search/hybrid/request.ts:applyIdentityBoosts",
+        "src/core/search/hybrid/request.ts:emitHybridMeta",
+        "src/core/search/hybrid/request.ts:resolveHybridRequest"
+      ]
+    },
+    {
+      "old": "src/core/search/hybrid.ts:hybridSearchCached",
+      "kind": "split",
+      "facade": "src/core/search/hybrid.ts:hybridSearchCached",
+      "wasExported": true,
+      "new": [
+        "src/core/search/hybrid/cache-stages.ts:prepareSemanticCache",
+        "src/core/search/hybrid/cache-stages.ts:resolveCacheSearchMode",
+        "src/core/search/hybrid/cache-stages.ts:semanticCacheSkipped",
+        "src/core/search/hybrid/cache-stages.ts:serveSemanticCacheHit"
+      ]
+    },
+    {
+      "old": "src/core/search/hybrid.ts:isTimeoutError",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": false,
+      "new": [
+        "src/core/search/hybrid/degraded.ts:isTimeoutError"
+      ]
+    },
+    {
+      "old": "src/core/search/hybrid.ts:pushDegraded",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": false,
+      "new": [
+        "src/core/search/hybrid/degraded.ts:pushDegraded"
+      ]
+    },
+    {
+      "old": "src/core/search/hybrid.ts:resolveEffectiveRecency",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": false,
+      "new": [
+        "src/core/search/hybrid/effective-modes.ts:resolveEffectiveRecency"
+      ]
+    },
+    {
+      "old": "src/core/search/hybrid.ts:resolveEffectiveSalience",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": false,
+      "new": [
+        "src/core/search/hybrid/effective-modes.ts:resolveEffectiveSalience"
+      ]
+    },
+    {
+      "old": "src/core/search/hybrid.ts:stampBudgetStage",
+      "kind": "moved",
+      "facade": null,
+      "wasExported": false,
+      "new": [
+        "src/core/search/hybrid/degraded.ts:stampBudgetStage"
+      ]
+    }
+  ],
+  "unmapped": [
+    "src/core/pglite-engine.ts:PGLiteEngine._addLinksBatchOnce",
+    "src/core/pglite-engine.ts:PGLiteEngine._addTimelineEntriesBatchOnce",
+    "src/core/pglite-engine.ts:PGLiteEngine.buildChunklessPagesWhere",
+    "src/core/pglite-engine.ts:PGLiteEngine.buildStalePagesWhere",
+    "src/core/pglite-engine.ts:PGLiteEngine.chronicleSelect",
+    "src/core/pglite-engine.ts:PGLiteEngine.factsDeps",
+    "src/core/pglite-engine.ts:PGLiteEngine.pushChronicleSource",
+    "src/core/pglite-engine.ts:PGLiteEngine.salienceDeps",
+    "src/core/pglite-engine.ts:PGLiteEngine.takesDeps",
+    "src/core/pglite-engine/cjk-search.ts:PgliteCjkSearchDeps",
+    "src/core/pglite-engine/code-edges.ts:PGLITE_EDGE_BATCH_MAX_BIND_PARAMS",
+    "src/core/pglite-engine/facts.ts:FactRowSqlShape",
+    "src/core/pglite-engine/facts.ts:PgliteFactsDeps",
+    "src/core/pglite-engine/facts.ts:_listFacts",
+    "src/core/pglite-engine/facts.ts:toDate",
+    "src/core/pglite-engine/salience.ts:PgliteSalienceDeps",
+    "src/core/pglite-engine/takes.ts:PgliteTakesDeps",
+    "src/core/postgres-engine.ts:PostgresEngine._addLinksBatchOnce",
+    "src/core/postgres-engine.ts:PostgresEngine._addTimelineEntriesBatchOnce",
+    "src/core/postgres-engine.ts:PostgresEngine.buildChunklessPagesWhere",
+    "src/core/postgres-engine.ts:PostgresEngine.buildStalePagesWhere",
+    "src/core/postgres-engine.ts:PostgresEngine.codeEdgesDeps",
+    "src/core/postgres-engine.ts:PostgresEngine.factsDeps",
+    "src/core/postgres-engine.ts:PostgresEngine.salienceDeps",
+    "src/core/postgres-engine.ts:PostgresEngine.takesDeps",
+    "src/core/postgres-engine/cjk-search.ts:CjkKeywordRunner",
+    "src/core/postgres-engine/code-edges.ts:PgCodeEdgesDeps",
+    "src/core/postgres-engine/code-edges.ts:PgSql",
+    "src/core/postgres-engine/facts.ts:PgFactsDeps",
+    "src/core/postgres-engine/facts.ts:PgSql",
+    "src/core/postgres-engine/salience.ts:PgSalienceDeps",
+    "src/core/postgres-engine/salience.ts:PgSql",
+    "src/core/postgres-engine/takes.ts:PgSql",
+    "src/core/postgres-engine/takes.ts:PgTakesDeps"
+  ],
+  "removedModules": [
+    "src/core/pglite-engine/cjk-search.ts",
+    "src/core/pglite-engine/facts.ts",
+    "src/core/pglite-engine/salience.ts",
+    "src/core/pglite-engine/takes.ts",
+    "src/core/postgres-engine/cjk-search.ts",
+    "src/core/postgres-engine/code-edges.ts",
+    "src/core/postgres-engine/facts.ts",
+    "src/core/postgres-engine/salience.ts",
+    "src/core/postgres-engine/takes.ts"
+  ]
+}

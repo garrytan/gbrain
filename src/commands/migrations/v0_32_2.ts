@@ -30,8 +30,7 @@
  * forever; they live in the legacy keyspace permanently.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { existsSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 
 import type {
@@ -40,7 +39,8 @@ import type {
 import type { BrainEngine } from '../../core/engine.ts';
 import { loadConfig, toEngineConfig } from '../../core/config.ts';
 import { createEngine } from '../../core/engine-factory.ts';
-import { upsertFactRow, parseFactsFence } from '../../core/facts-fence.ts';
+import { parseFactsFence, renderFactsTable, replaceOrInsertFactsFence } from '../../core/facts-fence.ts';
+import { resolvePageWriteTarget } from '../../core/write-through.ts';
 
 let testEngineOverride: BrainEngine | null = null;
 export function __setTestEngineOverride(engine: BrainEngine | null): void {
@@ -114,6 +114,7 @@ interface LegacyFactRow {
   valid_until: Date | null;
   source: string;
   confidence: number;
+  page_exists: boolean;
 }
 
 interface SourceLookup {
@@ -126,6 +127,7 @@ interface PhaseBOutcome {
   fenced: number;
   skipped_no_entity: number;
   skipped_no_local_path: number;
+  skipped_no_page: number;
   pages_touched: number;
   failed_pages: string[];
 }
@@ -137,7 +139,7 @@ interface PhaseBOutcome {
  */
 function isLocalPathDirty(localPath: string): boolean {
   try {
-    const out = execFileSync('git', ['-C', localPath, 'status', '--porcelain'], {
+    const out = execFileSync('git', ['-C', localPath, 'status', '--porcelain', '--', '.'], {
       encoding: 'utf-8',
       timeout: 10_000,
     });
@@ -154,28 +156,6 @@ async function phaseBFenceFacts(
   engine: BrainEngine | null,
   opts: OrchestratorOpts,
 ): Promise<OrchestratorPhaseResult> {
-  if (opts.dryRun) {
-    // Dry-run: report what WOULD happen without touching FS or DB.
-    if (!engine) return { name: 'fence_facts', status: 'skipped', detail: 'no_brain_configured' };
-    try {
-      const counts = await engine.executeRaw<{ n: string }>(
-        `SELECT COUNT(*) AS n FROM facts WHERE row_num IS NULL`,
-      );
-      const total = parseInt(counts[0]?.n ?? '0', 10);
-      const noEntity = await engine.executeRaw<{ n: string }>(
-        `SELECT COUNT(*) AS n FROM facts WHERE row_num IS NULL AND entity_slug IS NULL`,
-      );
-      const noEntityCount = parseInt(noEntity[0]?.n ?? '0', 10);
-      return {
-        name: 'fence_facts',
-        status: 'skipped',
-        detail: `dry-run: would fence ${total - noEntityCount} rows; ${noEntityCount} unfenceable (NULL entity_slug)`,
-      };
-    } catch (e) {
-      return { name: 'fence_facts', status: 'failed', detail: e instanceof Error ? e.message : String(e) };
-    }
-  }
-
   if (!engine) {
     return { name: 'fence_facts', status: 'skipped', detail: 'no_brain_configured' };
   }
@@ -192,9 +172,11 @@ async function phaseBFenceFacts(
     // atomic writes.
     const legacy = await engine.executeRaw<LegacyFactRow>(
       `SELECT id, source_id, entity_slug, fact, kind, visibility, notability,
-              context, valid_from, valid_until, source, confidence
-         FROM facts
-        WHERE row_num IS NULL
+              context, valid_from, valid_until, source, confidence,
+              EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id
+                AND p.slug = f.entity_slug AND p.deleted_at IS NULL) AS page_exists
+         FROM facts f
+        WHERE row_num IS NULL AND expired_at IS NULL
         ORDER BY source_id, entity_slug, id`,
     );
 
@@ -203,6 +185,7 @@ async function phaseBFenceFacts(
       fenced: 0,
       skipped_no_entity: 0,
       skipped_no_local_path: 0,
+      skipped_no_page: 0,
       pages_touched: 0,
       failed_pages: [],
     };
@@ -220,10 +203,35 @@ async function phaseBFenceFacts(
         outcome.skipped_no_local_path += 1;
         continue;
       }
+      if (!row.page_exists) {
+        outcome.skipped_no_page += 1;
+        continue;
+      }
       const key = `${row.source_id}\0${row.entity_slug}`;
       const list = groups.get(key) ?? [];
       list.push(row);
       groups.set(key, list);
+    }
+
+    const filePaths = new Map<string, string>();
+    for (const [key, group] of groups) {
+      const [sourceId, entitySlug] = key.split('\0');
+      const target = await resolvePageWriteTarget(engine, entitySlug, sourceId);
+      if (!target.ok || !existsSync(target.filePath)) {
+        outcome.skipped_no_page += group.length;
+        groups.delete(key);
+        continue;
+      }
+      filePaths.set(key, target.filePath);
+    }
+
+    if (opts.dryRun) {
+      const fenceable = [...groups.values()].reduce((n, group) => n + group.length, 0);
+      return {
+        name: 'fence_facts', status: 'skipped',
+        detail: `dry-run: would fence ${fenceable} rows; ${outcome.skipped_no_entity} unfenceable (NULL entity_slug); ` +
+          `skipped_no_page=${outcome.skipped_no_page} skipped_no_local_path=${outcome.skipped_no_local_path}`,
+      };
     }
 
     // Dirty-tree refusal: check ONLY the sources we are about to write
@@ -243,27 +251,11 @@ async function phaseBFenceFacts(
 
     for (const [key, group] of groups) {
       const [sourceId, entitySlug] = key.split('\0');
-      const localPath = localPathById.get(sourceId)!;
-      const filePath = join(localPath, `${entitySlug}.md`);
+      const filePath = filePaths.get(key)!;
       const tmpPath = `${filePath}.tmp`;
 
       try {
-        // Read existing body or stub-create with minimum frontmatter.
-        let body: string;
-        if (existsSync(filePath)) {
-          body = readFileSync(filePath, 'utf-8');
-        } else {
-          mkdirSync(dirname(filePath), { recursive: true });
-          const prefix = entitySlug.split('/')[0];
-          const type =
-            prefix === 'people'    ? 'person' :
-            prefix === 'companies' ? 'company' :
-            prefix === 'deals'     ? 'deal' :
-            /* fallback */           'concept';
-          const tail = entitySlug.split('/').slice(1).join('/');
-          const title = tail.replace(/[-_/]+/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) || entitySlug;
-          body = `---\ntype: ${type}\ntitle: ${title}\nslug: ${entitySlug}\n---\n\n# ${title}\n`;
-        }
+        let body = readFileSync(filePath, 'utf-8');
 
         // Append each legacy row, collecting the assigned row_nums.
         // Already-fenced rows (row_num already set) are skipped at the
@@ -273,21 +265,32 @@ async function phaseBFenceFacts(
         // existing row and append a duplicate. We dedup on (claim,
         // source) before append to handle this.
         const existingFence = parseFactsFence(body);
-        const existingKeySet = new Set(existingFence.facts.map(f => `${f.claim}\0${f.source ?? ''}`));
+        if (existingFence.warnings.length > 0) {
+          outcome.failed_pages.push(`${entitySlug} (${existingFence.warnings.join('; ')})`);
+          continue;
+        }
+        const occupiedRows = await engine.executeRaw<{ row_num: number; fact: string; source: string | null }>(
+          `SELECT row_num, fact, source FROM facts
+            WHERE source_id = $1 AND source_markdown_slug = $2 AND row_num IS NOT NULL`,
+          [sourceId, entitySlug],
+        );
+        const occupied = new Map(occupiedRows.map(row => [Number(row.row_num), row]));
+        let nextRowNum = Math.max(0, ...occupied.keys(), ...existingFence.facts.map(f => f.rowNum)) + 1;
+        const claimed = new Set<number>();
 
         const assignments: Array<{ id: string; row_num: number }> = [];
         for (const row of group) {
-          const key = `${row.fact}\0${row.source ?? ''}`;
-          if (existingKeySet.has(key)) {
-            // Already fenced (idempotent re-run). Find the existing
-            // row_num and assign it to this DB row.
-            const existing = existingFence.facts.find(f =>
-              f.claim === row.fact && (f.source ?? '') === (row.source ?? ''),
-            );
-            if (existing) {
-              assignments.push({ id: row.id, row_num: existing.rowNum });
-              continue;
-            }
+          const existing = existingFence.facts.find(f => {
+            const owner = occupied.get(f.rowNum);
+            return f.active && !claimed.has(f.rowNum) && f.claim === row.fact &&
+              (f.source ?? '') === (row.source ?? '') &&
+              (!owner || owner.fact !== f.claim || (owner.source ?? '') !== (f.source ?? ''));
+          });
+          if (existing) {
+            if (occupied.has(existing.rowNum)) existing.rowNum = nextRowNum++;
+            assignments.push({ id: row.id, row_num: existing.rowNum });
+            claimed.add(existing.rowNum);
+            continue;
           }
           // Append a new row.
           const validFromStr = (row.valid_from instanceof Date ? row.valid_from : new Date(row.valid_from))
@@ -296,7 +299,10 @@ async function phaseBFenceFacts(
             ? (row.valid_until instanceof Date ? row.valid_until : new Date(row.valid_until))
                 .toISOString().slice(0, 10)
             : undefined;
-          const { body: updated, rowNum } = upsertFactRow(body, {
+          const rowNum = nextRowNum++;
+          existingFence.facts.push({
+            rowNum,
+            active: true,
             claim:      row.fact,
             kind:       row.kind,
             confidence: row.confidence,
@@ -307,10 +313,10 @@ async function phaseBFenceFacts(
             source:     row.source,
             context:    row.context ?? undefined,
           });
-          body = updated;
-          existingKeySet.add(key);
           assignments.push({ id: row.id, row_num: rowNum });
+          claimed.add(rowNum);
         }
+        body = replaceOrInsertFactsFence(body, renderFactsTable(existingFence.facts));
 
         // Atomic write: .tmp + parse + rename.
         writeFileSync(tmpPath, body, 'utf-8');
@@ -340,7 +346,7 @@ async function phaseBFenceFacts(
 
     const detail = `scanned=${outcome.scanned} fenced=${outcome.fenced} ` +
       `pages=${outcome.pages_touched} skipped_no_entity=${outcome.skipped_no_entity} ` +
-      `skipped_no_local_path=${outcome.skipped_no_local_path}` +
+      `skipped_no_local_path=${outcome.skipped_no_local_path} skipped_no_page=${outcome.skipped_no_page}` +
       (outcome.failed_pages.length > 0 ? ` failed=${outcome.failed_pages.length}` : '');
 
     if (outcome.failed_pages.length > 0) {
@@ -392,12 +398,12 @@ async function phaseCVerify(
     for (const g of groups) {
       const localPath = localPathById.get(g.source_id);
       if (!localPath) continue;
-      const filePath = join(localPath, `${g.source_markdown_slug}.md`);
-      if (!existsSync(filePath)) {
+      const target = await resolvePageWriteTarget(engine, g.source_markdown_slug, g.source_id);
+      if (!target.ok || !existsSync(target.filePath)) {
         mismatches.push(`${g.source_markdown_slug} (file missing)`);
         continue;
       }
-      const body = readFileSync(filePath, 'utf-8');
+      const body = readFileSync(target.filePath, 'utf-8');
       const parsed = parseFactsFence(body);
       const fenceCount = parsed.facts.length;
       const dbCount = parseInt(g.n, 10);

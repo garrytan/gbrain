@@ -18,7 +18,7 @@
  * dispatcher bug where viaSubagent=true but subagentId is missing.
  *
  * In v0.15 every allow-list op is treated as idempotent for the two-phase
- * replay path. put_page with a deterministic slug is idempotent at the row
+ * replay path. put_page with its persisted request UUID is idempotent at the journal
  * level; repeats re-derive the same embedding over identical content.
  */
 
@@ -30,6 +30,7 @@ import { paramDefToSchema } from '../../../mcp/tool-defs.ts';
 import { normalizeOptionalParams, validateParams } from '../../../mcp/validate-params.ts';
 import { validateSourceId } from '../../utils.ts';
 import type { ToolCtx, ToolDef } from '../types.ts';
+import { putPageRejection } from './put-page-result.ts';
 
 /**
  * v0.15 brain-tool allow-list. Review carefully when extending. Op names
@@ -212,7 +213,7 @@ export interface BuildBrainToolsOpts {
    */
   sourceId?: string;
   /** Current remote owner grant; never populated from caller tool arguments. */
-  delegatedAuth?: Pick<AuthInfo, 'clientId' | 'scopes' | 'sourceId' | 'allowedSources'>;
+  delegatedAuth?: Pick<AuthInfo, 'clientId' | 'scopes' | 'sourceId' | 'allowedSources' | 'allowedOperations'>;
 }
 
 interface OpContextDeps {
@@ -243,7 +244,8 @@ function buildOpContext(deps: OpContextDeps): OperationContext {
     sourceId: deps.sourceId ?? 'default',
     // Preserve explicit per-call source checks without importing direct-write
     // fences or requiring direct read/write scopes for agent-only grants.
-    ...(deps.delegatedAuth ? { auth: { token: '', ...deps.delegatedAuth } } : {}),
+    ...(deps.delegatedAuth ? { auth: { token: '', ...deps.delegatedAuth,
+      principal: { kind: 'oauth_client' as const, id: deps.delegatedAuth.clientId } } } : {}),
     jobId: deps.jobId,
     subagentId: deps.subagentId,
     viaSubagent: true,           // FAIL-CLOSED: put_page etc. enforce namespace
@@ -289,8 +291,8 @@ export function buildBrainTools(opts: BuildBrainToolsOpts): ToolDef[] {
       name: toolName,
       description: op.description,
       input_schema: schema,
-      // v0.15 ships only idempotent brain tools (every allow-listed op is
-      // deterministic over its input; put_page re-writes the same slug).
+      // The persisted tool dispatcher binds mutations to a stable request UUID;
+      // a replay returns the original durable receipt without another write.
       idempotent: true,
       // v0.41 Approach C: surface usage_hint to the system-prompt renderer.
       // Keyed by the unprefixed op name. Undefined when no hint is registered.
@@ -319,7 +321,10 @@ export function buildBrainTools(opts: BuildBrainToolsOpts): ToolDef[] {
         const params = normalizeOptionalParams(op, raw);
         const validationError = validateParams(op, params);
         if (validationError) throw new Error(`${toolName}: ${validationError}`);
-        return op.handler(opCtx, params);
+        const output = await op.handler(opCtx, params);
+        const rejection = op.name === 'put_page' ? putPageRejection(output) : null;
+        if (rejection) throw new Error(rejection);
+        return output;
       },
     };
   });

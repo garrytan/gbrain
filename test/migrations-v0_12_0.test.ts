@@ -7,7 +7,6 @@
  *   - Empty brain → succeeds (the Phase E branch that says "auto-link will
  *     wire entities as you write pages").
  *   - auto_link disabled → backfill phases skipped, recorded as complete.
- *   - Phase functions exported via __testing for unit-level coverage.
  */
 
 import { describe, test, expect } from 'bun:test';
@@ -32,16 +31,6 @@ describe('v0.12.0 — Knowledge Graph auto-wire migration', () => {
     expect(desc).toContain('Precision@5 39% → 45%');
     expect(desc).toContain('86.6%');
     expect(desc).toContain('57.8%');
-  });
-
-  test('phase functions exported for unit testing', async () => {
-    const { __testing } = await import('../src/commands/migrations/v0_12_0.ts');
-    expect(typeof __testing.phaseASchema).toBe('function');
-    expect(typeof __testing.phaseBConfigCheck).toBe('function');
-    expect(typeof __testing.phaseCBackfillLinks).toBe('function');
-    expect(typeof __testing.phaseDBackfillTimeline).toBe('function');
-    expect(typeof __testing.phaseEVerify).toBe('function');
-    expect(typeof __testing.readStats).toBe('function');
   });
 
   test('dry-run skips all side-effect phases', async () => {

@@ -39,18 +39,6 @@ const TITLE_HARD_CAP_CHARS = 300;
  */
 const SUMMARY_HARD_CAP_CHARS = 300;
 
-/**
- * Build the `<context>...</context>\n` prefix for a chunk.
- *
- *   title set, synopsis empty  → `<context>{title}\n</context>\n`
- *   title empty, synopsis set  → `<context>\n{synopsis}\n</context>\n`
- *   both set                   → `<context>{title}\n{synopsis}\n</context>\n`
- *   both null/empty            → null (caller should embed raw chunk)
- *
- * Always returns null when both inputs are meaningless. The wrapper text
- * stays asymmetric (document side only) — queries embed clean per Voyage
- * / ZeroEntropy's `inputType: query` distinction.
- */
 export function buildContextualPrefix(
   title: string | null | undefined,
   synopsis: string | null | undefined,

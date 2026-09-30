@@ -157,7 +157,7 @@ describe('deleteLockRowIfStale (v0.41.13.0 T4 + D-V4-mech-4/5)', () => {
     const snap = await inspectLock(engine, 'test:fresh');
 
     // max-age 1800s (30 min); lock is fresh → refuse.
-    const result = await deleteLockRowIfStale(engine, 'test:fresh', snap!.holder_pid, 1800);
+    const result = await deleteLockRowIfStale(engine, 'test:fresh', snap!.holder_pid, 1800, (await inspectLock(engine, 'test:fresh'))?.acquisition_token ?? '00000000-0000-4000-8000-000000000001');
     expect(result.deleted).toBe(false);
     expect(result.lastRefreshedAt).toBeNull();
 
@@ -176,7 +176,7 @@ describe('deleteLockRowIfStale (v0.41.13.0 T4 + D-V4-mech-4/5)', () => {
       [oldTs],
     );
     // max-age 1800s (30 min); lock has not refreshed in 1h → break.
-    const result = await deleteLockRowIfStale(engine, 'test:stale', 54321, 1800);
+    const result = await deleteLockRowIfStale(engine, 'test:stale', 54321, 1800, (await inspectLock(engine, 'test:stale'))?.acquisition_token ?? '00000000-0000-4000-8000-000000000001');
     expect(result.deleted).toBe(true);
     expect(result.lastRefreshedAt).toBeInstanceOf(Date);
     expect(Math.abs(result.lastRefreshedAt!.getTime() - new Date(oldTs).getTime()))
@@ -193,7 +193,7 @@ describe('deleteLockRowIfStale (v0.41.13.0 T4 + D-V4-mech-4/5)', () => {
       [oldTs],
     );
     // Even though the lock IS stale, mismatched pid → refuse.
-    const result = await deleteLockRowIfStale(engine, 'test:wrong-pid', 22222, 1800);
+    const result = await deleteLockRowIfStale(engine, 'test:wrong-pid', 22222, 1800, (await inspectLock(engine, 'test:wrong-pid'))?.acquisition_token ?? '00000000-0000-4000-8000-000000000001');
     expect(result.deleted).toBe(false);
     // Row still present.
     expect(await readLockRow('test:wrong-pid')).not.toBeNull();
@@ -207,13 +207,13 @@ describe('deleteLockRowIfStale (v0.41.13.0 T4 + D-V4-mech-4/5)', () => {
        VALUES ('test:null-ref-stale', 33333, 'h', NOW() - INTERVAL '2 hours', NOW() + INTERVAL '30 minutes', NULL)`,
       [],
     );
-    const result = await deleteLockRowIfStale(engine, 'test:null-ref-stale', 33333, 1800);
+    const result = await deleteLockRowIfStale(engine, 'test:null-ref-stale', 33333, 1800, (await inspectLock(engine, 'test:null-ref-stale'))?.acquisition_token ?? '00000000-0000-4000-8000-000000000001');
     expect(result.deleted).toBe(false);
     expect(await readLockRow('test:null-ref-stale')).not.toBeNull();
   });
 
   test('refuses on absent row', async () => {
-    const result = await deleteLockRowIfStale(engine, 'test:nonexistent', 12345, 1800);
+    const result = await deleteLockRowIfStale(engine, 'test:nonexistent', 12345, 1800, (await inspectLock(engine, 'test:nonexistent'))?.acquisition_token ?? '00000000-0000-4000-8000-000000000001');
     expect(result.deleted).toBe(false);
     expect(result.lastRefreshedAt).toBeNull();
   });
@@ -225,7 +225,7 @@ describe('R1 regression: existing deleteLockRow byte-stable', () => {
     expect(handle).not.toBeNull();
     const snap = await inspectLock(engine, 'test:r1');
     // Pre-v98 deleteLockRow shape (no maxAge, just id + pid).
-    const result = await deleteLockRow(engine, 'test:r1', snap!.holder_pid);
+    const result = await deleteLockRow(engine, 'test:r1', snap!.holder_pid, snap!.acquisition_token);
     expect(result.deleted).toBe(true);
     expect(await readLockRow('test:r1')).toBeNull();
   });

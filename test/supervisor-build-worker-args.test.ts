@@ -51,3 +51,26 @@ describe('buildWorkerArgs', () => {
       .not.toContain('--job-isolation');
   });
 });
+
+describe('buildWorkerArgs — --allow-shell-jobs pass-through', () => {
+  // The shell-handler opt-in travels as a FLAG, not only as env: the worker's
+  // cwd-.env quarantine drops GBRAIN_ALLOW_SHELL_JOBS whenever a .env in the
+  // worker's cwd assigns it, so an env-only handoff could silently disable
+  // shell jobs on a supervised worker.
+  test('appends --allow-shell-jobs when allowShellJobs is true', () => {
+    expect(buildWorkerArgs({ concurrency: 2, queue: 'default', maxRssMb: 0, allowShellJobs: true }))
+      .toEqual(['jobs', 'work', '--concurrency', '2', '--queue', 'default', '--allow-shell-jobs']);
+  });
+
+  test('omits --allow-shell-jobs when false or undefined (argv byte-identical)', () => {
+    expect(buildWorkerArgs({ concurrency: 1, queue: 'q', maxRssMb: 0, allowShellJobs: false }))
+      .toEqual(['jobs', 'work', '--concurrency', '1', '--queue', 'q']);
+    expect(buildWorkerArgs({ concurrency: 1, queue: 'q', maxRssMb: 0 }))
+      .not.toContain('--allow-shell-jobs');
+  });
+
+  test('composes after --nice / --job-isolation in a stable order', () => {
+    expect(buildWorkerArgs({ concurrency: 2, queue: 'default', maxRssMb: 0, nice_requested: 5, jobIsolation: 'process', allowShellJobs: true }))
+      .toEqual(['jobs', 'work', '--concurrency', '2', '--queue', 'default', '--nice', '5', '--job-isolation', 'process', '--allow-shell-jobs']);
+  });
+});

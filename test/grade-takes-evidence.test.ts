@@ -15,6 +15,7 @@
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { installFixtureChunks } from './helpers/page-projection.ts';
 import {
   formatEvidenceBlock,
   defaultEvidenceRetriever,
@@ -139,14 +140,14 @@ describe('defaultEvidenceRetriever over PGLite (#2811)', () => {
     });
     // putPage does not chunk; sync/import does. Seed chunks the way a synced
     // brain carries them so the retriever has real chunk_text to format.
-    await engine.upsertChunks('companies/acme-corp', [{
+    await installFixtureChunks(engine, 'companies/acme-corp', [{
       chunk_index: 0,
       chunk_text: 'Acme Corp will double ARR by Q4 2024 — the take page itself.',
       chunk_source: 'compiled_truth',
       embedding: new Float32Array(1536).fill(0.1),
       token_count: 16,
     }]);
-    await engine.upsertChunks('notes/acme-outcome', [{
+    await installFixtureChunks(engine, 'notes/acme-outcome', [{
       chunk_index: 0,
       chunk_text: 'Acme Corp doubled ARR in November 2024, closing the year strong.',
       chunk_source: 'compiled_truth',

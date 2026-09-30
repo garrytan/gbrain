@@ -78,14 +78,14 @@ describe('eval_candidates.embedding_column persistence (D16)', () => {
     const id = await engine.logEvalCandidate({
       ...baseRow,
       query: 'list-readback test',
-      embedding_column: 'embedding_ze',
+      embedding_column: 'embedding_fixture',
     });
     const list = await engine.listEvalCandidates({ limit: 100 });
     const found = list.find(r => r.id === id);
     expect(found).toBeDefined();
     // Cast-through-unknown rowToEvalCandidate doesn't exist; SELECT *
     // carries `embedding_column` as a column with the same key name.
-    expect((found as any).embedding_column).toBe('embedding_ze');
+    expect((found as any).embedding_column).toBe('embedding_fixture');
   });
 
   test('back-compat: missing embedding_column coalesces to NULL at insert', async () => {

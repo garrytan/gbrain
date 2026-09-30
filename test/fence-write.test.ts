@@ -288,6 +288,49 @@ describe('writeFactsToFence — happy path', () => {
   }, 60_000);
 });
 
+describe('writeFactsToFence — withdrawn claims (write-path audit B-10)', () => {
+  test('never appends a withdrawn claim, or a punctuation variant of it, as an active Markdown row', async () => {
+    await engine.executeRaw(`INSERT INTO fact_withdrawals(source_id,visibility,subject,fact_hash)
+      VALUES ('default','world','people/alice',gbrain_fact_fingerprint('Founded Acme in 2017'))`);
+    const result = await writeFactsToFence(
+      engine,
+      { sourceId: 'default', localPath: brainDir, slug: 'people/alice', resolutionSource: 'exact_page' },
+      [baseInput(), baseInput({ fact: 'founded Acme, in 2017.' }), baseInput({ fact: 'Moved to Lisbon in 2020' })],
+    );
+    expect(result.withdrawnSkipped).toBe(2);
+    expect(result.inserted).toBe(1);
+    const body = readFileSync(join(brainDir, 'people/alice.md'), 'utf-8');
+    expect(body).not.toContain('Acme');
+    expect(body).toContain('Moved to Lisbon in 2020');
+    expect(await engine.executeRaw(`SELECT fact FROM facts WHERE entity_slug='people/alice' ORDER BY id`))
+      .toEqual([{ fact: 'Moved to Lisbon in 2020' }]);
+  });
+
+  test('a claim withdrawn for another entity is still written for this one', async () => {
+    await engine.executeRaw(`INSERT INTO fact_withdrawals(source_id,visibility,subject,fact_hash)
+      VALUES ('default','world','people/bob',gbrain_fact_fingerprint('Founded Acme in 2017'))`);
+    const result = await writeFactsToFence(
+      engine,
+      { sourceId: 'default', localPath: brainDir, slug: 'people/alice', resolutionSource: 'exact_page' },
+      [baseInput()],
+    );
+    expect(result).toMatchObject({ inserted: 1 });
+    expect(result.withdrawnSkipped).toBeUndefined();
+  });
+
+  test('an entirely withdrawn batch leaves the filesystem untouched', async () => {
+    await engine.executeRaw(`INSERT INTO fact_withdrawals(source_id,visibility,subject,fact_hash)
+      VALUES ('default','world','*',gbrain_fact_fingerprint('Founded Acme in 2017'))`);
+    const result = await writeFactsToFence(
+      engine,
+      { sourceId: 'default', localPath: brainDir, slug: 'people/carol', resolutionSource: 'exact_page' },
+      [baseInput()],
+    );
+    expect(result).toEqual({ inserted: 0, ids: [], withdrawnSkipped: 1 });
+    expect(existsSync(join(brainDir, 'people/carol.md'))).toBe(false);
+  });
+});
+
 describe('writeFactsToFence — legacy fallback', () => {
   test('null localPath returns legacyFallback:true with no inserts', async () => {
     const result = await writeFactsToFence(

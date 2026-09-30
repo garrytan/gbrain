@@ -18,7 +18,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runExtract } from '../src/commands/extract.ts';
 import { setCliOptions } from '../src/core/cli-options.ts';
 import { loadOpCheckpoint, mentionsFingerprint } from '../src/core/op-checkpoint.ts';
-import { createHash } from 'crypto';
+import { buildGazetteer, hashGazetteer } from '../src/core/by-mention.ts';
 
 let engine: PGLiteEngine;
 
@@ -80,13 +80,9 @@ async function runByMention(args: string[]): Promise<void> {
   }
 }
 
-/** Compute the canonical gazetteer hash the way the production code does. */
+/** The production gazetteer hash (cross_source is off here, so no ':xs' suffix). */
 async function expectedGazetteerHash(): Promise<string> {
-  // The gazetteer is built from entity pages by buildGazetteer; for tests
-  // we just build it the same way the prod code does and hash sorted keys.
-  const { buildGazetteer } = await import('../src/core/by-mention.ts');
-  const gz = await buildGazetteer(engine);
-  return createHash('sha256').update([...gz.keys()].sort().join('|')).digest('hex').slice(0, 8);
+  return hashGazetteer(await buildGazetteer(engine));
 }
 
 describe('by-mention checkpoint/resume (T5)', () => {
@@ -150,20 +146,45 @@ describe('by-mention checkpoint/resume (T5)', () => {
     await seedEntities();
     await seedContentPage('writing/post-1', 'Acme Corp.');
     await runByMention([]);
+    const oldHash = await expectedGazetteerHash();
 
     // Now add a new entity. The gazetteer hash changes → different
     // fingerprint → fresh checkpoint state (codex fix #3 regression guard).
     await engine.putPage('people/charlie', { type: 'person', title: 'Charlie Example', compiled_truth: 'body', timeline: '', frontmatter: {} });
 
-    const oldHash = createHash('sha256').update(
-      ['acme corp', 'alice example'].sort().join('|'),
-    ).digest('hex').slice(0, 8);
     const newHash = await expectedGazetteerHash();
     expect(newHash).not.toBe(oldHash);
 
     const oldFp = mentionsFingerprint({ source: undefined, type: undefined, since: undefined, gazetteerHash: oldHash });
     const newFp = mentionsFingerprint({ source: undefined, type: undefined, since: undefined, gazetteerHash: newHash });
     expect(oldFp).not.toBe(newFp);
+  });
+
+  test('same-bucket gazetteer change ("Acme Labs" beside "Acme Corp") invalidates the checkpoint — page re-scanned', async () => {
+    await seedEntities();
+    await seedContentPage('writing/post-1', 'Acme Corp and Acme Labs.');
+    // A checkpoint from a run that finished before Acme Labs existed.
+    const oldHash = await expectedGazetteerHash();
+    const oldFp = mentionsFingerprint({ source: undefined, type: undefined, since: undefined, gazetteerHash: oldHash });
+    await engine.executeRaw(
+      `INSERT INTO op_checkpoints (op, fingerprint, completed_keys, updated_at)
+       VALUES ('extract-by-mention', $1, $2::text::jsonb, NOW())`,
+      [oldFp, JSON.stringify(['default::writing/post-1'])],
+    );
+    // The new entity shares the 'acme' first-token bucket, so the bucket KEY
+    // set is unchanged — the fingerprint must still move.
+    await engine.putPage('companies/acme-labs', { type: 'company', title: 'Acme Labs', compiled_truth: 'labs body', timeline: '', frontmatter: {} });
+    expect(await expectedGazetteerHash()).not.toBe(oldHash);
+
+    await runByMention([]);
+    const labsLinks = await engine.executeRaw<{ c: string }>(
+      `SELECT COUNT(*)::text AS c FROM links l
+        JOIN pages fp ON fp.id = l.from_page_id
+        JOIN pages tp ON tp.id = l.to_page_id
+        WHERE fp.slug = 'writing/post-1' AND tp.slug = 'companies/acme-labs' AND l.link_source = 'mentions'`,
+      [],
+    );
+    expect(Number(labsLinks[0]!.c)).toBe(1);
   });
 
   test('filtered pages (--type miss) DO get checkpointed (codex fix #4)', async () => {

@@ -43,6 +43,15 @@ export const CJK_RANGES_REGEX = new RegExp(`[${CJK_SLUG_CHARS}]`);
 export const SLUG_WORD_CHARS = '\\p{Ll}\\p{Lm}\\p{Lo}\\p{M}\\p{N}';
 
 /**
+ * Unicode variation selectors (emoji VS1–VS16 U+FE00–FE0F, ideographic IVS
+ * U+E0100–E01EF): Mn-category invisibles that survive the \p{M} keep above.
+ * Both slug grammars — `sync.ts:slugifySegment` and its #4855 twin
+ * `link-extraction.ts:normalizeBasename` — strip them so an emoji folder name
+ * written with VS16 lands on the clean slug and its `[[wikilink]]` resolves.
+ */
+export const SLUG_VARIATION_SELECTORS_RE = /[\uFE00-\uFE0F\u{E0100}-\u{E01EF}]/gu;
+
+/**
  * Page-slug segment grammar (no anchors): word-char lead, then word-char or
  * hyphen continuation. Single source for validatePageSlug (operations.ts),
  * SlugRegistry's SLUG_RE, and the dream-cycle SUMMARY_SLUG_RE so every slug

@@ -366,7 +366,10 @@ describe('github-source materialize', () => {
     try {
       await insertSource(engine, dir);
       await withEnv({ GH_TOKEN: 'test-token' }, async () => {
-        await runGitHubSync(engine, 'ghsrc', makeCfg(dir), { sourceId: 'ghsrc', full: true }, fetchImpl);
+        const initial = await runGitHubSync(engine, 'ghsrc', makeCfg(dir), { sourceId: 'ghsrc', full: true }, fetchImpl);
+        expect(initial.status).toBe('first_sync');
+        expect(initial.failedFiles ?? 0).toBe(0);
+        expect(JSON.parse(readFileSync(join(dir, '.github-source.json'), 'utf-8')).last_sweep_at).toBe('2026-08-02T00:00:00Z');
         const oldPage = readFileSync(join(dir, 'gh', REPO, '3.md'), 'utf-8');
         fx.items.get(3)!.body = 'x'.repeat(5_000_001);
         fx.items.get(3)!.updated_at = '2026-08-07T00:00:00Z';

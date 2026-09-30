@@ -23,9 +23,10 @@
  *    cancel belongs in the AbortController path, not in a parallel
  *    signal handler.
  *
- *  - Idempotent: a second signal during the cleanup pass is a NO-OP.
- *    First pass runs to its 3s deadline; users who want a forced exit
- *    can SIGKILL.
+ *  - Idempotent: callbacks run once. A second signal during the cleanup
+ *    pass waits for that pass (bounded by its 3s deadline) before
+ *    exiting, so it cannot exit ahead of the lock DELETE; users who want
+ *    a forced exit can SIGKILL.
  *
  *  - Single ownership: `tryAcquireDbLock` auto-registers; the returned
  *    handle's `release()` deregisters. `withRefreshingLock` just
@@ -51,7 +52,7 @@ interface CleanupEntry {
 
 const registry = new Map<symbol, CleanupEntry>();
 let installed = false;
-let cleanupInFlight = false;
+let cleanupPass: Promise<void> | null = null;
 /** Refs to every listener attached by installSignalHandlers, keyed by
  *  target+event, so _resetForTests can DETACH them — without this, a test
  *  that installs and "resets" leaves a live SIGTERM→exit(143) listener on
@@ -101,10 +102,12 @@ export async function triggerCleanupAndExit(code: number): Promise<void> {
   process.exit(code);
 }
 
-async function runCleanupPass(): Promise<void> {
-  if (cleanupInFlight) return; // Idempotent: second signal during cleanup is NO-OP.
-  cleanupInFlight = true;
+function runCleanupPass(): Promise<void> {
+  cleanupPass ??= runCleanupCallbacks();
+  return cleanupPass;
+}
 
+async function runCleanupCallbacks(): Promise<void> {
   const entries = Array.from(registry.values());
   if (entries.length === 0) return;
 
@@ -166,9 +169,8 @@ export function installSignalHandlers(): void {
 
   attach(process, 'SIGTERM', () => handleSignal('SIGTERM'));
   attach(process, 'SIGHUP', () => handleSignal('SIGHUP'));
-  // SIGPIPE in Node is rarely raised directly (Node ignores it by default
-  // and surfaces an EPIPE write error on the stream instead). Listen anyway
-  // for environments where it does fire.
+  // Bun delivers SIGPIPE on a broken pipe (Node ignores it by default and
+  // surfaces only an EPIPE write error on the stream, handled below).
   attach(process, 'SIGPIPE', () => handleSignal('SIGPIPE'));
 
   attach(process, 'uncaughtException', (err: unknown) => {
@@ -216,5 +218,5 @@ export function _resetForTests(): void {
   }
   installedListeners.length = 0;
   installed = false;
-  cleanupInFlight = false;
+  cleanupPass = null;
 }

@@ -31,6 +31,8 @@ import {
 import { writeFactsToFence } from '../src/core/facts/fence-write.ts';
 import type { FenceInputFact } from '../src/core/facts/fence-write.ts';
 import { extractTimelineFromContent } from '../src/commands/extract.ts';
+import { registerMutationPreparer } from '../src/core/persistence/service.ts';
+import { prepareSemanticPageMutation } from '../src/core/persistence/semantic-pages.ts';
 
 const addTimelineEntryOp = operations.find((o) => o.name === 'add_timeline_entry') as Operation;
 if (!addTimelineEntryOp) throw new Error('add_timeline_entry op missing');
@@ -111,7 +113,7 @@ describe('add_timeline_entry on an FS-canonical brain (#1856)', () => {
 
     expect(res.status).toBe('ok');
     expect(res.write_through?.written).toBe(true);
-    expect(res.write_through?.path).toBe(filePath);
+    expect(res.write_through?.path).toBeUndefined(); // receipts never expose private paths
 
     // THE #1856 assertion: the canonical markdown on disk carries the entry.
     const disk = fs.readFileSync(filePath, 'utf8');
@@ -292,7 +294,7 @@ describe('add_timeline_entry on an FS-canonical brain (#1856)', () => {
     expect(fs.readFileSync(filePath, 'utf8')).toBe(beforeDisk);
     const timeline = await engine.getTimeline(slug, { sourceId: 'default' });
     expect(timeline.length).toBe(1);
-    expect(timeline[0].source).toBe(''); // legacy tuple, unchanged
+    expect(timeline[0].source).toBe('manual'); // same canonical tuple in database-only configurations
   });
 });
 
@@ -416,36 +418,31 @@ describe('wave-C review: splice-under-lock, never whole-file regeneration', () =
     expect(disk).toContain('- **2026-07-15** | manual — Concurrent milestone');
   });
 
-  test('error after the disk splice → fallback inserts the CANONICAL tuple (no dupe on re-extract)', async () => {
+  test('failure after publication recovers and replays one canonical timeline mutation', async () => {
     await engine.setConfig('sync.repo_path', brainDir);
     const slug = 'notes/error-canonical';
     const filePath = await seedPage(slug);
 
-    // First addTimelineEntry call (the helper's canonical insert) fails;
-    // the second (the op's DB-only fallback) succeeds.
     let calls = 0;
-    const flaky = new Proxy(engine, {
-      get(target, prop, receiver) {
-        if (prop === 'addTimelineEntry') {
-          calls++;
-          if (calls === 1) {
-            return async () => { throw new Error('transient insert failure'); };
-          }
-        }
-        const v = Reflect.get(target, prop, receiver);
-        return typeof v === 'function' ? v.bind(target) : v;
-      },
-    }) as unknown as PGLiteEngine;
-
-    const res = await addTimelineEntryOp.handler(makeCtx({ engine: flaky }), {
+    registerMutationPreparer('add_timeline_entry', async (e, row, config) => {
+      const prepared = await prepareSemanticPageMutation(e, row, config);
+      return { ...prepared, apply: async tx => {
+        if (++calls === 1) throw Object.assign(new Error('transient serialization failure'), { code: '40001' });
+        return prepared.apply(tx);
+      } };
+    });
+    let res: { status: string; write_through?: { written?: boolean; error?: string } };
+    try { res = await addTimelineEntryOp.handler(makeCtx(), {
       slug,
       date: '2026-07-15',
       summary: '  Multi-line\nsummary   with   noise  ',
       // no source → the canonical bullet carries 'manual'
-    }) as { status: string; write_through?: { written?: boolean; error?: string } };
+    }) as typeof res; }
+    finally { registerMutationPreparer('add_timeline_entry', prepareSemanticPageMutation); }
     expect(res.status).toBe('ok');
-    expect(res.write_through?.written).toBe(false);
-    expect(res.write_through?.error).toContain('transient insert failure');
+    expect(calls).toBe(2);
+    expect(res.write_through?.written).toBe(true);
+    expect(res.write_through?.error).toBeUndefined();
 
     // The bullet already reached the disk file, so the fallback row MUST be
     // the canonical tuple (source 'manual', collapsed one-line summary) —
@@ -465,7 +462,7 @@ describe('wave-C review: splice-under-lock, never whole-file regeneration', () =
     expect(await timelineRowCount(slug)).toBe(1);
   });
 
-  test('missing on-disk file → DB-only fallback, never fabricates a file from the DB row', async () => {
+  test('missing canonical file refuses a managed edit until the local deletion is resolved', async () => {
     await engine.setConfig('sync.repo_path', brainDir);
     const slug = 'notes/helper-file-missing';
     const filePath = await seedPage(slug);
@@ -479,23 +476,19 @@ describe('wave-C review: splice-under-lock, never whole-file regeneration', () =
     expect(out.skipped).toBe('file_missing');
     expect(fs.existsSync(filePath)).toBe(false); // no fabrication from the DB row
 
-    // The op still records the entry via the legacy DB-only insert.
-    const res = await addTimelineEntryOp.handler(makeCtx(), {
+    await expect(addTimelineEntryOp.handler(makeCtx(), {
       slug,
       date: '2026-07-16',
       summary: 'DB-only entry',
-    }) as { write_through?: { written?: boolean; skipped?: string } };
-    expect(res.write_through?.written).toBe(false);
-    expect(res.write_through?.skipped).toBe('file_missing');
+    })).rejects.toMatchObject({ code: 'source_changed' });
     expect(fs.existsSync(filePath)).toBe(false);
     const timeline = await engine.getTimeline(slug, { sourceId: 'default' });
-    expect(timeline.length).toBe(1);
-    expect(timeline[0].summary).toBe('DB-only entry');
+    expect(timeline.length).toBe(0);
   });
 });
 
-describe('add_timeline_entry on a DB-only brain (unchanged pre-#1856 path)', () => {
-  test('no sync.repo_path → legacy tuple, no file writes', async () => {
+describe('add_timeline_entry on a DB-only brain', () => {
+  test('no sync.repo_path → canonical tuple without file writes', async () => {
     const slug = 'notes/db-only-example';
     await importFromContent(engine, slug, `---\ntitle: T\ntype: note\n---\n\n# Body\n`, {
       noEmbed: true,
@@ -513,7 +506,7 @@ describe('add_timeline_entry on a DB-only brain (unchanged pre-#1856 path)', () 
     expect(res.write_through?.skipped).toBe('no_repo_configured');
     const timeline = await engine.getTimeline(slug, { sourceId: 'default' });
     expect(timeline.length).toBe(1);
-    expect(timeline[0].source).toBe(''); // raw legacy tuple preserved
+    expect(timeline[0].source).toBe('manual');
     expect(fs.readdirSync(brainDir)).toEqual([]); // nothing written to disk
   });
 
@@ -535,7 +528,7 @@ describe('add_timeline_entry on a DB-only brain (unchanged pre-#1856 path)', () 
 
     expect(res.write_through?.written).toBe(false);
     expect(res.write_through?.skipped).toBe('disabled_by_config');
-    expect((await engine.getTimeline(slug, { sourceId: 'default' }))[0].source).toBe('');
+    expect((await engine.getTimeline(slug, { sourceId: 'default' }))[0].source).toBe('manual');
     expect(fs.readdirSync(brainDir)).toEqual([]);
   });
 
@@ -611,13 +604,14 @@ describe('renderTimelineEntry / spliceTimelineBlock units', () => {
     expect(renderTimelineEntry({ date: '2026-01-01', summary: '   ' }, 'notes/x')).toBeNull();
   });
 
-  test('detail carrying its own citation is kept out of the block (would double-extract)', () => {
+  test('detail carrying its own citation stays canonical without double extraction', () => {
     const r = renderTimelineEntry(
       { date: '2026-01-01', summary: 'S', source: 's', detail: 'See [Source: email, 2026-02-02] thread' },
       'notes/x',
     );
     expect(r).not.toBeNull();
-    expect(r!.block).toBe('- **2026-01-01** | s — S');
+    expect(r!.block).toBe('- **2026-01-01** | s — S\n  See [Source: email, 2026-02-02] thread');
+    expect(extractTimelineFromContent(r!.block, 'notes/x')).toHaveLength(1);
   });
 
   test('splice into empty timeline creates the heading', () => {

@@ -24,13 +24,6 @@ describe('v0.13.0 — Frontmatter relationship indexing migration', () => {
     expect(typeof m!.orchestrator).toBe('function');
   });
 
-  test('phase functions exported for unit testing', async () => {
-    const { __testing } = await import('../src/commands/migrations/v0_13_0.ts');
-    expect(typeof __testing.phaseASchema).toBe('function');
-    expect(typeof __testing.phaseBBackfill).toBe('function');
-    expect(typeof __testing.phaseCVerify).toBe('function');
-  });
-
   test('dry-run skips all side-effect phases', async () => {
     const { v0_13_0 } = await import('../src/commands/migrations/v0_13_0.ts');
     const result = await v0_13_0.orchestrator({ yes: true, dryRun: true, noAutopilotInstall: true });

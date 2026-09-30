@@ -7,7 +7,7 @@
  *   3. Search via the PGLite CJK keyword fallback (ILIKE + bigram count).
  *   4. Assert the page is findable by a CJK substring.
  *
- * Vector path requires OPENAI_API_KEY; skipped gracefully when absent.
+ * The vector path is not exercised here (keyword-only, keyless).
  */
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
@@ -105,15 +105,5 @@ title: Mixed
 The system uses 测试 framework for validation.`, { noEmbed: true });
     const hits = await engine.searchKeyword('测试');
     expect(hits.some(h => h.slug === 'originals/mixed-roundtrip')).toBe(true);
-  });
-
-  test('vector path skip-gracefully without OPENAI_API_KEY', () => {
-    if (!process.env.OPENAI_API_KEY) {
-      // Documented behavior — surface to the CI log so reviewers know the
-      // vector path didn't run. Test still passes.
-      // eslint-disable-next-line no-console
-      console.log('[skip] vector path — set OPENAI_API_KEY to exercise');
-    }
-    expect(true).toBe(true);
   });
 });

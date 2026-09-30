@@ -22,9 +22,8 @@ import {
   assertFactsEmbeddingDimMatchesConfig,
 } from '../src/core/embedding-dim-check.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
-import { readFileSync } from 'fs';
-import { resolve } from 'path';
 import { doctorSource, doctorFileSource } from './helpers/doctor-source.ts';
+import { surfaceFileSource } from './helpers/source-surface.ts';
 
 /**
  * Synthetic engine satisfying the slice of BrainEngine these helpers
@@ -209,7 +208,7 @@ describe('doctor checkFactsEmbeddingWidthConsistency wiring (T6)', () => {
   // Containment greps read the whole doctor surface; the ordering assertion
   // stays pinned to the single file that holds both call sites.
   const DOC_ALL = doctorSource();
-  const DOC_TS = doctorFileSource('doctor.ts');
+  const DOC_TS = doctorFileSource('doctor/checks/sync-search.ts');
 
   test('doctor.ts exports the new check function', () => {
     expect(DOC_ALL).toMatch(
@@ -238,8 +237,7 @@ describe('doctor checkFactsEmbeddingWidthConsistency wiring (T6)', () => {
 });
 
 describe('postgres-engine fact insert cast (T6, codex #20)', () => {
-  const PG_PATH = resolve(import.meta.dir, '..', 'src/core/postgres-engine.ts');
-  const PG_SRC = readFileSync(PG_PATH, 'utf-8');
+  const PG_SRC = surfaceFileSource('postgres-engine', 'src/core/postgres-engine.ts');
 
   test('insertFacts batch path uses cached castSuffix, NOT a hardcoded ::vector', () => {
     expect(PG_SRC).toMatch(/resolveFactsEmbeddingCast/);
@@ -251,7 +249,4 @@ describe('postgres-engine fact insert cast (T6, codex #20)', () => {
     expect(literalHits ?? []).toEqual([]);
   });
 
-  test('cached cast suffix has a test-only reset hook for unit cases', () => {
-    expect(PG_SRC).toMatch(/__resetFactsEmbeddingCastCacheForTest/);
-  });
 });

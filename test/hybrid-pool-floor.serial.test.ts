@@ -20,6 +20,7 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
+import { installFixtureChunks } from './helpers/page-projection.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { hybridSearch, PRE_FUSION_POOL_FLOOR } from '../src/core/search/hybrid.ts';
 import type { SearchOpts, SearchResult } from '../src/core/types.ts';
@@ -54,7 +55,7 @@ beforeAll(async () => {
     });
     // putPage never chunks — searchKeyword joins content_chunks, so pages
     // need explicit chunks to be visible to the keyword arm.
-    await engine.upsertChunks(slug, [
+    await installFixtureChunks(engine, slug, [
       { chunk_index: 0, chunk_text: text, chunk_source: 'compiled_truth' },
     ]);
   }
@@ -67,7 +68,7 @@ beforeAll(async () => {
     title: 'Deep Target',
     compiled_truth: deepText,
   });
-  await engine.upsertChunks('deep-target', [
+  await installFixtureChunks(engine, 'deep-target', [
     { chunk_index: 0, chunk_text: deepText, chunk_source: 'compiled_truth' },
   ]);
 

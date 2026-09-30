@@ -11,6 +11,7 @@
 import type { BrainEngine } from '../../engine.ts';
 import type { ContentBlock, SubagentResult } from '../types.ts';
 import { UnrecoverableError } from '../types.ts';
+import { putPageRejection } from '../tools/put-page-result.ts';
 
 export interface PersistedMessage {
   message_idx: number;
@@ -230,11 +231,14 @@ export async function persistToolExecComplete(
  * dispatches that never settled) count toward NEITHER side.
  *
  * When the submitter set `require_writes` (dream synthesize / patterns
- * fan-out — jobs whose entire purpose is writing pages), attempted > 0 with
- * zero successes throws UnrecoverableError: retrying is provably futile (the
+ * fan-out — jobs whose entire purpose is writing pages), zero successes
+ * throws UnrecoverableError: retrying is provably futile (the
  * replay path short-circuits to the persisted terminal turn and can never
  * re-run the failed tools), so the job routes straight to dead and the
- * idempotency key releases for the next cycle.
+ * idempotency key releases for the next cycle. The one exception is a
+ * legitimate zero-write answer (`isLegitimateZeroWrite`): dead-lettering it
+ * released the key and withheld the cooldown, so every cycle re-paid for the
+ * same input (#5590, #5540).
  *
  * `scopeToolUseIdPrefix` narrows the ledger scan (the oneshot runner scopes to
  * its own invocation's rows so a prior invocation's outcome can't distort the
@@ -244,15 +248,15 @@ export async function finalizeWriteAccounting(
   engine: BrainEngine,
   jobId: number,
   result: SubagentResult,
-  opts: { requireWrites: boolean; scopeToolUseIdPrefix?: string },
+  opts: { requireWrites: boolean; allowCleanZeroWrites?: boolean; scopeToolUseIdPrefix?: string },
 ): Promise<SubagentResult> {
-  let rows: Array<{ status: string; error: string | null }>;
+  let rows: Array<{ status: string; error: string | null; output: unknown }>;
   try {
-    rows = await engine.executeRaw<{ status: string; error: string | null }>(
+    rows = await engine.executeRaw<{ status: string; error: string | null; output: unknown }>(
       opts.scopeToolUseIdPrefix
-        ? `SELECT status, error FROM subagent_tool_executions
+        ? `SELECT status, error, output FROM subagent_tool_executions
             WHERE job_id = $1 AND tool_name = 'brain_put_page' AND tool_use_id LIKE $2`
-        : `SELECT status, error FROM subagent_tool_executions
+        : `SELECT status, error, output FROM subagent_tool_executions
             WHERE job_id = $1 AND tool_name = 'brain_put_page'`,
       opts.scopeToolUseIdPrefix ? [jobId, `${opts.scopeToolUseIdPrefix}%`] : [jobId],
     );
@@ -271,8 +275,12 @@ export async function finalizeWriteAccounting(
     process.stderr.write(`[subagent] write accounting read failed for job ${jobId}: ${e instanceof Error ? e.message : String(e)}\n`);
     return result;
   }
-  const written = rows.filter(r => r.status === 'complete').length;
-  const failed = rows.filter(r => r.status === 'failed').length;
+  const settled = rows.filter(r => r.status === 'complete' || r.status === 'failed').map(row => {
+    const rejection = row.status === 'complete' ? putPageRejection(row.output) : null;
+    return rejection ? { ...row, status: 'failed', error: rejection } : row;
+  });
+  const written = settled.filter(r => r.status === 'complete').length;
+  const failed = settled.filter(r => r.status === 'failed').length;
   const attempted = written + failed;
   const accounted: SubagentResult = {
     ...result,
@@ -281,22 +289,48 @@ export async function finalizeWriteAccounting(
     pages_failed: failed,
   };
   if (opts.requireWrites && attempted > 0 && written === 0) {
-    const firstError = rows.find(r => r.status === 'failed' && r.error)?.error ?? 'unknown write error';
+    const firstError = settled.find(r => r.status === 'failed' && r.error)?.error ?? 'unknown write error';
     throw new UnrecoverableError(
       `all ${failed} put_page write(s) failed — job produced zero pages (first error: ${firstError})`,
     );
   }
-  // Zero attempts is legitimate ONLY as a clean-finish skip (Task D ends
-  // 'end_turn' with prose). A truncated / refused / turn-capped / errored
-  // run that never reached put_page is a failure wearing a completion — it
-  // would consume the idempotency key and stamp the cooldown, silently
-  // dropping the transcript. Dead-letter it (key releases; nightly retries).
-  if (opts.requireWrites && attempted === 0 && result.stop_reason !== 'end_turn') {
+  if (opts.requireWrites && attempted === 0 && !(await isLegitimateZeroWrite(engine, jobId, result, opts))) {
     throw new UnrecoverableError(
-      `job produced zero put_page writes and did not finish cleanly (stop_reason: ${result.stop_reason}) — not a legitimate skip`,
+      result.stop_reason === 'end_turn'
+        ? 'job produced zero required put_page writes — a clean model finish does not satisfy require_writes'
+        : `job produced zero put_page writes and did not finish cleanly (stop_reason: ${result.stop_reason}) — not a legitimate skip`,
     );
   }
   return accounted;
+}
+
+/**
+ * A zero-attempt, clean (`end_turn`) finish is a legitimate answer in exactly
+ * two shapes: the oneshot model's explicit skip contract
+ * (`{"pages":[],"skipped":true}`), or — when the submitter opted in with
+ * `allow_clean_zero_writes` — a run whose ledger holds at least one completed
+ * tool execution, proving the child examined evidence before naming nothing.
+ * A prose-only finish, a dirty stop, or a run whose only tools failed stays a
+ * real failure. The ledger read throws on error, failing the job closed.
+ */
+async function isLegitimateZeroWrite(
+  engine: BrainEngine,
+  jobId: number,
+  result: SubagentResult,
+  opts: { allowCleanZeroWrites?: boolean; scopeToolUseIdPrefix?: string },
+): Promise<boolean> {
+  if (result.stop_reason !== 'end_turn') return false;
+  if (result.synth_mode_used === 'oneshot' && result.oneshot_skipped === true) return true;
+  if (!opts.allowCleanZeroWrites) return false;
+  const completed = await engine.executeRaw<{ id: number }>(
+    opts.scopeToolUseIdPrefix
+      ? `SELECT id FROM subagent_tool_executions
+          WHERE job_id = $1 AND status = 'complete' AND tool_use_id LIKE $2 LIMIT 1`
+      : `SELECT id FROM subagent_tool_executions
+          WHERE job_id = $1 AND status = 'complete' LIMIT 1`,
+    opts.scopeToolUseIdPrefix ? [jobId, `${opts.scopeToolUseIdPrefix}%`] : [jobId],
+  );
+  return completed.length > 0;
 }
 
 export async function persistToolExecFailed(

@@ -31,7 +31,6 @@ import { withEnv } from '../helpers/with-env.ts';
 import { parseFlags } from '../../src/commands/skillopt.ts';
 import { estimateCost, formatPreflightReport, preflight } from '../../src/core/skillopt/preflight.ts';
 import { BudgetTracker, BudgetExhausted, _resetBudgetTrackerWarningsForTest } from '../../src/core/budget/budget-tracker.ts';
-import { BudgetExhausted as MinionsBudgetExhausted } from '../../src/core/minions/budget-tracker.ts';
 import { classifyAbortError } from '../../src/core/skillopt/orchestrator.ts';
 import {
   _resetAuditWriterForTests,
@@ -232,19 +231,6 @@ describe('classifyAbortError — real BudgetExhausted instances (not string-fake
     const r = classifyAbortError(err, { maxRuntimeMin: 30 });
     expect(r.outcome).toBe('aborted');
     expect(r.abortReason).toBe('runtime_exceeded');
-  });
-
-  test('a BudgetExhausted from the UNRELATED minions/budget-tracker.ts class is not misclassified as budget_exhausted', () => {
-    // Two distinct BudgetExhausted classes exist in this repo (core/budget,
-    // used here, and core/minions, a differently-shaped job-cost tracker
-    // with an unrelated (owner_id, balance_cents) constructor) — instanceof
-    // is nominal, not structural, so an instance of the wrong one must NOT
-    // satisfy this check. Guards against a future refactor importing the
-    // wrong one and silently reintroducing this exact bug class.
-    const wrongClassErr = new MinionsBudgetExhausted(42, 0);
-    const r = classifyAbortError(wrongClassErr, { maxRuntimeMin: 30 });
-    expect(r.abortReason).not.toBe('budget_exhausted');
-    expect(r.outcome).toBe('errored');
   });
 
   test('skillopt_runtime_exceeded (plain Error, the orchestrator wall-clock deadline) still classifies correctly', () => {

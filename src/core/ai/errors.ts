@@ -157,6 +157,33 @@ function numericStatusOf(e: unknown): number | undefined {
   return undefined;
 }
 
+/**
+ * Did the provider refuse the request BECAUSE of its `response_format:
+ * json_schema` (an Ollama build predating structured outputs, a strict proxy
+ * rejecting the schema shape) — as opposed to failing for any other reason?
+ * `chat()` retries such a call once without the schema and remembers the
+ * recipe; every other error (a 500, a context-length 400, a policy error)
+ * propagates untouched. Request-shaped only: a 5xx / 429 is never a
+ * capability rejection, even when its body echoes the request. Walks the
+ * SDK's wrapping chain (`cause`, RetryError's `lastError`) so the status and
+ * the phrase can sit on different layers.
+ */
+const STRUCTURED_OUTPUT_REJECTION_RE = /response_format|json_schema|structured[ _-]?outputs?/i;
+
+export function isStructuredOutputRejection(err: unknown): boolean {
+  let status: number | undefined;
+  let named = false;
+  let cur: unknown = err;
+  for (let depth = 0; cur && typeof cur === 'object' && depth < 5; depth++) {
+    const e = cur as { message?: unknown; responseBody?: unknown; cause?: unknown; lastError?: unknown };
+    status ??= numericStatusOf(e);
+    named ||= [e.message, e.responseBody].some(t => typeof t === 'string' && STRUCTURED_OUTPUT_REJECTION_RE.test(t));
+    cur = e.cause ?? e.lastError;
+  }
+  if (status !== undefined && (status < 400 || status >= 500 || status === 429)) return false;
+  return named;
+}
+
 function statusToClass(status: number): GlobalLlmErrorClass | null {
   if (status === 401 || status === 403) return 'auth';
   if (status === 402) return 'billing';

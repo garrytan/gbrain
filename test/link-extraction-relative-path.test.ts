@@ -92,16 +92,6 @@ describe('relative markdown-link resolution (nested / subtree-scoped content)', 
     expect(candidates.map(c => c.targetSlug)).toContain('ops/services/pointer-agent');
   });
 
-  test('flat layout unchanged: verb inference still fires on the resolved slug', async () => {
-    const { candidates } = await extractPageLinks(
-      'people/carol', 'Carol founded [Widget Co](../startups/widget-co.md) in 2024.',
-      {}, 'person', nullResolver, { skipFrontmatter: true },
-    );
-    const c = candidates.find(x => x.targetSlug === 'startups/widget-co');
-    expect(c).toBeDefined();
-    expect(c!.linkType).toBe('founded');
-  });
-
   test('LINK_EXTRACTOR_VERSION_TS was bumped so stamped pages re-extract', () => {
     // Behavior changed, so previously-stamped pages must re-sweep to pick up
     // the newly-resolvable cross-dir edges.

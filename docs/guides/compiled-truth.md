@@ -127,7 +127,20 @@ support that claim.
    above); everything above it is compiled truth, everything below is
    timeline.
 
-5. **Don't skip the Assessment section.** The assessment is the value. "Strong
+5. **The sentinel does not scope timeline extraction — dated citations above
+   it mint rows too.** Every trusted write (`put_page`/`capture`, `auto_timeline`
+   on by default) and `extract timeline` scan the WHOLE page for dated markers:
+   `- **YYYY-MM-DD** | ...` bullets and inline `[Source: ..., YYYY-MM-DD]`
+   citations. The citation shape the quality convention mandates on every fact
+   therefore files one permanent timeline row per citation when it sits in
+   compiled truth (dated by the citation, summary = the bullet/paragraph it sits
+   in, code spans stripped). The example page above keeps its citations below
+   the sentinel, so it does not show the hazard. The one placement that mints
+   nothing is a citation alone in its own paragraph — blank line above and
+   below. `gbrain config set auto_timeline off` disables the write-path
+   extraction; there is no timeline-remove command, only exact-duplicate dedup.
+
+6. **Don't skip the Assessment section.** The assessment is the value. "Strong
    technical leader" is something no API can provide. It's YOUR read on this
    person. That's what makes the brain page better than LinkedIn.
 

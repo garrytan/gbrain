@@ -183,6 +183,32 @@ describe('segmentDispatchBlocks — every if/case shape is a marker for its comm
     expect(CLI_FLAG_REGISTRY.reindex).toContain('--multimodal');
   });
 
+  test('committed registry: brainstorm/lsd do not carry the phantom --retry-judge (#4766)', () => {
+    // The flag had no parser branch; it registered only because the judge-failed
+    // advice strings in the brainstorm orchestrator mentioned it. The advice now
+    // points at --resume, so the token is gone from the source and the rows.
+    expect(CLI_FLAG_REGISTRY.brainstorm).not.toContain('--retry-judge');
+    expect(CLI_FLAG_REGISTRY.lsd).not.toContain('--retry-judge');
+    expect(CLI_FLAG_REGISTRY.brainstorm).toContain('--resume');
+    expect(CLI_FLAG_REGISTRY.lsd).toContain('--resume');
+    const fresh = buildFlagRegistry();
+    expect(fresh.brainstorm).not.toContain('--retry-judge');
+    expect(fresh.lsd).not.toContain('--retry-judge');
+  });
+
+  test('committed registry: reindex-search-vector does not carry the phantom --fresh (wave review)', () => {
+    // The command parses only --dry-run/--yes/--json. `--fresh` reached the row
+    // through backfill-base.ts's doc comment ("Used by --fresh + after manual
+    // reset") once #4795 imported checkpointKey from it. Comments at module and
+    // dep depth are prose, not consumption — the same rule the dispatch-block
+    // scan already applies (stripComments).
+    expect(CLI_FLAG_REGISTRY['reindex-search-vector']).not.toContain('--fresh');
+    expect(CLI_FLAG_REGISTRY['reindex-search-vector']).toContain('--yes');
+    const fresh = buildFlagRegistry();
+    expect(fresh['reindex-search-vector']).not.toContain('--fresh');
+    expect(fresh['reindex-search-vector']).toContain('--yes');
+  });
+
   test('the real handleCliOnly yields one block per eval bypass sub-owner', () => {
     // Pin against src/cli.ts: every sub-owned no-DB bypass must land on eval.
     const fresh = buildFlagRegistry();

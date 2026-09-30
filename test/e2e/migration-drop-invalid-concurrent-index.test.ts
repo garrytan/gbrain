@@ -66,7 +66,7 @@ async function plantInvalidIndex(indexName: string, createSQL: string): Promise<
 
 describeE2E('migration invalid-remnant recovery (#1178)', () => {
   beforeAll(async () => {
-    await setupDB();
+    await setupDB({ replayMigrations: true });
     await runMigrationsUpTo(getEngine(), LATEST_VERSION);
   }, 30_000);
 

@@ -73,6 +73,7 @@ async function seedGraph(): Promise<void> {
        FROM content_chunks cc JOIN pages p ON p.id = cc.page_id WHERE p.slug = 'code/baz'`,
     [],
   );
+  await engine.executeRaw('UPDATE pages SET text_projection_revision=knowledge_revision');
 }
 
 describe('W3: sinks classifier', () => {

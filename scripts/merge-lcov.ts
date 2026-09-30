@@ -6,7 +6,7 @@
  *
  * Usage:
  *   bun scripts/merge-lcov.ts --out-lcov <path> --out-json <path> \
- *     [--manifest-expect <lane,lane,...>] <dir-or-file>...
+ *     [--manifest-expect <lane,lane,...>] [--sha <commit>] <dir-or-file>...
  *
  * Behavior:
  *   - Recursively finds every lcov.info under the input dirs (a file input
@@ -30,6 +30,8 @@
  *   - Lane manifests: each lane dir may contain lane-manifest.json
  *     {lane, sha, lcovCount, complete}. With --manifest-expect, a
  *     missing/incomplete manifest for an expected lane marks degraded.
+ *     Duplicate lane identities, a SHA other than --sha (default HEAD),
+ *     or an lcovCount unlike the files under that manifest also degrade.
  *     A manifest whose lane name contains 'shard' with lcovCount != 1
  *     marks degraded: the shard lane runs ONE bun process via xargs -x;
  *     a second bun process reusing the coverage dir would have OVERWRITTEN
@@ -63,7 +65,8 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
+import { spawnSync } from "node:child_process";
 
 // ---------------------------------------------------------------------------
 // Parsing
@@ -322,7 +325,7 @@ function warn(msg: string): void {
 function usage(msg: string): never {
   process.stderr.write(`merge-lcov: ${msg}\n`);
   process.stderr.write(
-    "usage: bun scripts/merge-lcov.ts --out-lcov <path> --out-json <path> [--manifest-expect <lane,lane,...>] <dir-or-file>...\n",
+    "usage: bun scripts/merge-lcov.ts --out-lcov <path> --out-json <path> [--manifest-expect <lane,lane,...>] [--sha <expected-commit>] <dir-or-file>...\n",
   );
   process.exit(2);
 }
@@ -362,11 +365,16 @@ function main(): void {
   let outLcov = "";
   let outJson = "";
   let manifestExpect: string[] = [];
+  let expectedSha = "";
   const inputs: string[] = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!;
     if (a === "--out-lcov") outLcov = argv[++i] ?? "";
     else if (a === "--out-json") outJson = argv[++i] ?? "";
+    else if (a === "--sha") {
+      expectedSha = argv[++i] ?? "";
+      if (!expectedSha || expectedSha.startsWith("--")) usage("--sha requires a commit");
+    }
     else if (a === "--manifest-expect") {
       manifestExpect = (argv[++i] ?? "")
         .split(",")
@@ -400,7 +408,15 @@ function main(): void {
   }
 
   // --- lane manifests ---
-  const manifests: LaneManifest[] = [];
+  if (!expectedSha && manifestFiles.length > 0) {
+    const git = spawnSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" });
+    if (git.status === 0) expectedSha = git.stdout.trim();
+    if (!expectedSha) {
+      warn("cannot resolve expected commit — pass --sha; marking degraded");
+      degraded = true;
+    }
+  }
+  const manifests: Array<LaneManifest & { root: string; valid: boolean }> = [];
   for (const mf of manifestFiles) {
     try {
       const parsed = JSON.parse(readFileSync(mf, "utf8")) as Partial<LaneManifest>;
@@ -414,6 +430,8 @@ function main(): void {
         sha: typeof parsed.sha === "string" ? parsed.sha : undefined,
         lcovCount: typeof parsed.lcovCount === "number" ? parsed.lcovCount : undefined,
         complete: parsed.complete === true,
+        root: resolve(dirname(mf)),
+        valid: true,
       });
     } catch {
       warn(`manifest ${mf} is not valid JSON — marking degraded`);
@@ -421,11 +439,27 @@ function main(): void {
     }
   }
   for (const m of manifests) {
+    const invalidate = (reason: string) => {
+      warn(`lane '${m.lane}' ${reason} — marking degraded`);
+      m.valid = false;
+      degraded = true;
+    };
+    if (!expectedSha || m.sha !== expectedSha) {
+      invalidate(`has sha=${m.sha ?? "missing"}, expected ${expectedSha || "unavailable"}`);
+    }
+    if (manifests.filter(other => other.lane === m.lane).length !== 1) {
+      invalidate("has duplicate manifests");
+    }
+    const actualCount = new Set(lcovFiles.filter(file => resolve(file).startsWith(m.root + sep)).map(file => resolve(file))).size;
+    if (!Number.isInteger(m.lcovCount) || m.lcovCount! < 0 || m.lcovCount !== actualCount) {
+      invalidate(`has lcovCount=${m.lcovCount ?? "missing"}, actual=${actualCount}`);
+    }
     // xargs-batching tripwire: a shard lane must have written EXACTLY ONE
     // lcov.info (one bun process). Anything else means data was overwritten
     // or never written.
     if (m.lane.includes("shard") && m.lcovCount !== 1) {
       warn(`shard lane '${m.lane}' has lcovCount=${m.lcovCount ?? "missing"} (expected 1) — marking degraded`);
+      m.valid = false;
       degraded = true;
     }
   }
@@ -507,7 +541,7 @@ function main(): void {
     lanes: {
       expected: manifestExpect,
       complete: manifests
-        .filter((m) => m.complete === true)
+        .filter((m) => m.complete === true && m.valid)
         .map((m) => m.lane)
         .sort(),
     },

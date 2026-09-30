@@ -372,45 +372,106 @@ describeE2E('sources-remote-mcp E2E (gstack /setup-gbrain Path 4)', () => {
   });
 
   // -------------------------------------------------------------------------
-  // sources_remove: cascade + clone cleanup
+  // sources_remove: WRITE authority, cascade + clone cleanup
   // -------------------------------------------------------------------------
 
-  test('sources_remove deletes row + cleans up the clone (managed path)', async () => {
-    // Recreate the clone first (the previous test rmd it for the missing
-    // assertion). We do this via sources_add since that path is exercised.
-    // (Could call sources_add again but the row is still there from earlier;
-    // simpler: insert a fresh fixture.)
-    await callMcp(token!, 'sources_add', {
-      id: 'e2e-removable',
-      url: TEST_URL,
+  /**
+   * sources_remove is confined to the caller's WRITE authority (O4-1, review
+   * cycle 4): a sources_admin token may hard-delete only its own write source.
+   * The federated read grant (`--federated-read`) is READ authority by
+   * contract and confers no removal right — widening it makes a source
+   * visible to sources_status / sources_list, yet sources_remove still
+   * answers not_found (indistinguishable from a nonexistent source). Over
+   * HTTP every client carries a write source (registration default
+   * 'default'), and a client's own row FK-RESTRICTs the removal of that very
+   * source, so hard-removing a source is an operator action on the host CLI
+   * (`gbrain sources remove`) — mirrored here.
+   */
+  async function widenGrantTo(...sourceIds: string[]): Promise<void> {
+    const { execFileSync } = await import('child_process');
+    execFileSync('bun', ['run', 'src/cli.ts', 'auth', 'rescope-client', clientId!,
+      '--federated-read', sourceIds.join(',')], {
+      cwd: process.cwd(), encoding: 'utf8', env: { ...process.env, GBRAIN_HOME },
     });
+  }
+
+  async function rescopeWriteSource(sourceId: string): Promise<void> {
+    const { execFileSync } = await import('child_process');
+    execFileSync('bun', ['run', 'src/cli.ts', 'auth', 'rescope-client', clientId!,
+      '--source', sourceId], {
+      cwd: process.cwd(), encoding: 'utf8', env: { ...process.env, GBRAIN_HOME },
+    });
+  }
+
+  /** The trusted local path: `gbrain sources remove <id> --confirm-destructive` on the host. */
+  async function operatorRemovesSource(id: string): Promise<string> {
+    const { execFileSync } = await import('child_process');
+    return execFileSync('bun', ['run', 'src/cli.ts', 'sources', 'remove', id, '--confirm-destructive'], {
+      cwd: process.cwd(), encoding: 'utf8', env: { ...process.env, GBRAIN_HOME },
+    });
+  }
+
+  test('sources_remove: a federated READ grant naming the source is not removal authority; the operator removes it on the host CLI', async () => {
+    await callMcp(token!, 'sources_add', { id: 'e2e-removable', url: TEST_URL });
     const clonePath = join(GBRAIN_HOME, '.gbrain', 'clones', 'e2e-removable');
     expect(existsSync(clonePath)).toBe(true);
-    const result = await callMcp(token!, 'sources_remove', {
+    // Outside the token's grant entirely → not_found, and nothing is removed.
+    const fenced = await callMcp(token!, 'sources_remove', {
       id: 'e2e-removable',
       confirm_destructive: true,
     });
-    expect(result.clone_removed).toBe(true);
-    expect(existsSync(clonePath)).toBe(false);
+    expect(fenced.__isError).toBe(true);
+    expect(JSON.stringify(fenced.parsed)).toMatch(/not_found/);
+    expect(existsSync(clonePath)).toBe(true);
+    // Operator widens the READ grant; the live token now reads the source...
+    await widenGrantTo('default', 'e2e-yc-artifacts', 'e2e-removable');
+    const status = await callMcp(token!, 'sources_status', { id: 'e2e-removable' });
+    expect(status.clone_state).toBe('healthy');
+    // ...but removal is WRITE authority: still not_found, still on disk.
+    const stillFenced = await callMcp(token!, 'sources_remove', {
+      id: 'e2e-removable',
+      confirm_destructive: true,
+    });
+    expect(stillFenced.__isError).toBe(true);
+    expect(JSON.stringify(stillFenced.parsed)).toMatch(/not_found/);
+    expect(existsSync(clonePath)).toBe(true);
+    // The operator removes it on the host CLI (trusted local path).
+    const out = await operatorRemovesSource('e2e-removable');
+    expect(out).toMatch(/Removed source "e2e-removable"/);
+    const after = await callMcp(token!, 'sources_list', {});
+    expect(after.sources.find((s: any) => s.id === 'e2e-removable')).toBeUndefined();
+    // Drop the dead id from the read grant (hygiene for the tests below).
+    await widenGrantTo('default', 'e2e-yc-artifacts');
   });
 
-  test('sources_remove without confirm_destructive refuses on populated source', async () => {
-    // Add a fresh source with no pages — should still need confirm_destructive
-    // semantically because remove is hard-delete (vs archive).
+  test('sources_remove: rescoping the WRITE source moves the authority — a federated-readable non-write source stays not_found while sources_status still answers', async () => {
     await callMcp(token!, 'sources_add', { id: 'e2e-confirm-test', url: TEST_URL });
-    const result = await callMcp(token!, 'sources_remove', {
-      id: 'e2e-confirm-test',
-      // omit confirm_destructive
-    });
-    // A source with 0 pages may pass — the gate is page-count-aware. Our
-    // newly-added source has 0 pages so this should succeed. Tweak:
-    // exercise the throw path by inserting a page first via raw SQL,
-    // but that's heavy. For now assert the result shape exists.
-    if (result.__isError) {
-      expect(JSON.stringify(result.parsed)).toMatch(/confirm/i);
-    } else {
-      // 0-page source: allowed without confirm. Still verify clone cleaned.
-      expect(typeof result.clone_removed).toBe('boolean');
+    await widenGrantTo('default', 'e2e-yc-artifacts', 'e2e-confirm-test');
+    await rescopeWriteSource('e2e-confirm-test');
+    try {
+      const identity = await callMcp(token!, 'whoami', {});
+      expect(identity.source_id).toBe('e2e-confirm-test');
+      // e2e-yc-artifacts is readable (federated) but is not the write source.
+      const fenced = await callMcp(token!, 'sources_remove', {
+        id: 'e2e-yc-artifacts',
+        confirm_destructive: true,
+      });
+      expect(fenced.__isError).toBe(true);
+      expect(JSON.stringify(fenced.parsed)).toMatch(/not_found/);
+      const status = await callMcp(token!, 'sources_status', { id: 'e2e-yc-artifacts' });
+      expect(status.id).toBe('e2e-yc-artifacts');
+      // 'default' is neither readable-only nor the write source now: same
+      // not_found (the fence answers before the op's protected-id guard).
+      const def = await callMcp(token!, 'sources_remove', { id: 'default', confirm_destructive: true });
+      expect(def.__isError).toBe(true);
+      expect(JSON.stringify(def.parsed)).toMatch(/not_found/);
+    } finally {
+      // Restore the write source BEFORE the operator removes the fixture — a
+      // client row referencing it would FK-RESTRICT the removal.
+      await rescopeWriteSource('default');
     }
+    const out = await operatorRemovesSource('e2e-confirm-test');
+    expect(out).toMatch(/Removed source "e2e-confirm-test"/);
+    await widenGrantTo('default', 'e2e-yc-artifacts');
   });
 });

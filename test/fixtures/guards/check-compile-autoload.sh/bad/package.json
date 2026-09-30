@@ -1,0 +1,6 @@
+{
+  "name": "fixture-bad",
+  "scripts": {
+    "build": "bun build --compile --outfile bin/tool src/cli.ts"
+  }
+}

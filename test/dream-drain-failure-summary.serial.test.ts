@@ -7,23 +7,25 @@
  *
  * The drain loop itself (capping, sanitizing, reconciling failure_count) is
  * pinned in test/extract-atoms-drain*.test.ts. This file pins dream.ts's
- * rendering of the drain RESULT, so the shared drain helper is replaced by a
+ * rendering of the drain RESULT and its argv/exit-code wiring (#1678), so the shared drain helper is replaced by a
  * stub that returns a hand-built result. Serial: a top-level mock.module.
  */
 
 import { afterAll, beforeAll, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
 import type { ExtractAtomsDrainResult } from '../src/core/cycle/extract-atoms-drain.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { LockUnavailableError } from '../src/core/db-lock.ts';
 
-let nextResult: ExtractAtomsDrainResult;
-let drainCalls: Array<{ sourceId: string | undefined }> = [];
+let nextResult: ExtractAtomsDrainResult | Error;
+let drainCalls: Array<{ sourceId: string | undefined; windowSeconds: number }> = [];
 
 mock.module('../src/core/cycle/extract-atoms-drain.ts', () => ({
   MAX_DRAIN_FAILURE_RECORDS: 25,
   MAX_DRAIN_FAILURE_SOURCE_CHARS: 256,
   MAX_DRAIN_FAILURE_REASON_CHARS: 200,
-  runExtractAtomsDrainForSource: async (_engine: unknown, opts: { sourceId: string | undefined }) => {
-    drainCalls.push({ sourceId: opts.sourceId });
+  runExtractAtomsDrainForSource: async (_engine: unknown, opts: { sourceId: string | undefined; windowSeconds: number }) => {
+    drainCalls.push({ sourceId: opts.sourceId, windowSeconds: opts.windowSeconds });
+    if (nextResult instanceof Error) throw nextResult;
     return nextResult;
   },
 }));
@@ -156,5 +158,40 @@ describe('dream --drain failure summary (#4730)', () => {
     // Stderr discipline: the summary (with the cap clause) never lands in the JSON stream.
     expect(r.stderr).toContain('(25 detailed, 2 beyond the record cap)');
     expect(r.stdout.join('\n')).not.toContain('beyond the record cap');
+  });
+});
+
+describe('dream --drain wiring and exit codes (#1678)', () => {
+  test('exits 3 while backlog remains or the final count is unknown', async () => {
+    for (const remaining of [4, null]) {
+      nextResult = baseResult({ remaining });
+      expect((await runDrainCaptured([])).exitCode, String(remaining)).toBe(3);
+    }
+  });
+
+  test('a held cycle lock reports cycle_already_running and exits 3', async () => {
+    nextResult = new LockUnavailableError('gbrain-cycle');
+    const r = await runDrainCaptured(['--json']);
+    expect(JSON.parse(r.stdout.join('\n'))).toEqual({ phase: 'extract_atoms', status: 'skipped', reason: 'cycle_already_running' });
+    expect(r.exitCode).toBe(3);
+  });
+
+  test('--window sets the drain budget (default 300 s) and --source reaches the shared helper', async () => {
+    await engine.executeRaw("INSERT INTO sources(id,name) VALUES ('drain-fixture','drain-fixture') ON CONFLICT DO NOTHING");
+    nextResult = baseResult({});
+    await runDrainCaptured([]);
+    await runDrainCaptured(['--window', '42', '--source', 'drain-fixture']);
+    expect(drainCalls.map(c => c.windowSeconds)).toEqual([300, 42]);
+    expect(drainCalls[1].sourceId).toBe('drain-fixture');
+  });
+
+  test('rejects a bad --window and a non-drainable --phase with exit 2 before draining', async () => {
+    const window = await runDrainCaptured(['--window', '0']);
+    expect(window.exitCode).toBe(2);
+    expect(window.stderr).toContain('--window must be a positive integer (seconds); got "0"');
+    const phase = await runDrainCaptured(['--phase', 'lint']);
+    expect(phase.exitCode).toBe(2);
+    expect(phase.stderr).toContain('--drain currently supports only --phase extract_atoms (got "lint")');
+    expect(drainCalls).toEqual([]);
   });
 });

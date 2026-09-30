@@ -13,21 +13,21 @@
 // Undefined/missing `remote` defaults to REMOTE (fail-closed per v0.26.9
 // F7b — anything not strictly false is treated as untrusted).
 
-import type { OperationContext } from '../operations.ts';
-import { loadActivePack, type LoadActivePackInput } from './load-active.ts';
-import { sourceScopeOpts } from '../operations.ts';
+import { OperationError, type OperationContext } from '../ops/contract.ts';
+import { resolveActivePackNameOnly } from './load-active.ts';
+import { engineSchemaInput, loadActivePackForEngine } from './engine-resolution.ts';
+import { sourceScopeOpts } from '../ops/context.ts';
 import type { ResolvedPack } from './registry.ts';
-import { loadConfig } from '../config.ts';
 
 /**
  * Thrown when a remote caller (ctx.remote !== false) passes the
  * per-call schema_pack param. Surfaced as `permission_denied` by the
  * operations.ts dispatch path with the standard error envelope.
  */
-export class SchemaPackTrustGateError extends Error {
+export class SchemaPackTrustGateError extends OperationError {
   readonly code: 'permission_denied' = 'permission_denied';
   constructor(message: string) {
-    super(message);
+    super('permission_denied', message);
     this.name = 'SchemaPackTrustGateError';
   }
 }
@@ -96,16 +96,13 @@ export async function loadActivePackForOp(
       // source. If they all agree, use the first; if they diverge, fail
       // closed with a permission_denied to surface the drift instead of
       // arbitrary pack selection.
-      const { resolveActivePackName } = await import('./registry.ts');
-      const cfg = loadConfig();
       const packNames = new Set<string>();
       for (const sid of scope.sourceIds) {
-        const res = resolveActivePackName({
+        const res = resolveActivePackNameOnly(await engineSchemaInput(ctx.engine, {
           remote: ctx.remote ?? true,
-          envVar: process.env.GBRAIN_SCHEMA_PACK?.trim() || undefined,
+          perCall,
           sourceId: sid,
-          homeConfig: cfg?.schema_pack?.trim() || undefined,
-        });
+        }));
         packNames.add(res.pack_name);
       }
       if (packNames.size > 1) {
@@ -120,11 +117,9 @@ export async function loadActivePackForOp(
   } else {
     sourceId = scope.sourceId;
   }
-  const input: LoadActivePackInput = {
-    cfg: loadConfig(),
+  return loadActivePackForEngine(ctx.engine, {
     remote: ctx.remote ?? true, // fail-closed default
     perCall,
     sourceId,
-  };
-  return await loadActivePack(input);
+  });
 }

@@ -13,13 +13,13 @@
  *
  * Topology: docker-compose.ci.yml runs `pgbouncer` (transaction mode) in
  * front of postgres-1. The test uses a DEDICATED database
- * (`gbrain_pgbouncer`) created via the direct URL, so it never races the
+ * (`gbrain_pgbouncer_test`) created via the direct URL, so it never races the
  * TRUNCATE-based fixtures any shard runs against `gbrain_test`.
  *
  * Gated by GBRAIN_PGBOUNCER_URL + GBRAIN_PGBOUNCER_DIRECT_URL — skips
  * gracefully outside the docker CI gate. Run manually:
  *
- *   GBRAIN_PGBOUNCER_URL=postgresql://postgres:postgres@localhost:6543/gbrain_pgbouncer \
+ *   GBRAIN_PGBOUNCER_URL=postgresql://postgres:postgres@localhost:6543/gbrain_pgbouncer_test \
  *   GBRAIN_PGBOUNCER_DIRECT_URL=postgresql://postgres:postgres@localhost:5434/gbrain_test \
  *   bun test test/e2e/pgbouncer-teardown.test.ts
  */
@@ -28,7 +28,7 @@ import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
 import { join, resolve } from 'path';
 import { tmpdir } from 'os';
-import postgres from 'postgres';
+import postgres from '#postgres'
 import { PostgresEngine } from '../../src/core/postgres-engine.ts';
 import { keylessBrainEnv } from '../helpers/provider-env.ts';
 import { fixtureDiagnostic } from '../helpers/fixture-diagnostics.ts';
@@ -43,7 +43,7 @@ if (process.env.GBRAIN_CI_REQUIRE_PGBOUNCER === '1' && SKIP) {
 const describePooled = SKIP ? describe.skip : describe;
 
 const REPO = resolve(import.meta.dir, '..', '..');
-const TEST_DB = 'gbrain_pgbouncer';
+const TEST_DB = 'gbrain_pgbouncer_test';
 const SLUG = 'test/pgbouncer-teardown-fixture';
 const MARKER = 'pgbouncer-teardown-marker-content-7c4f';
 

@@ -56,7 +56,7 @@ describe('delegation admission and submitted permission ceiling', () => {
     }
   });
   it('refuses unknown and revoked clients', async () => {
-    await expect(submit()).rejects.toThrow('No OAuth client found');
+    await expect(submit()).rejects.toThrow('agent_bindings_invalid: client_deleted');
     await seed();
     await engine.executeRaw("UPDATE oauth_clients SET deleted_at=now() WHERE client_id='client'");
     await expect(submit()).rejects.toThrow('client_revoked');

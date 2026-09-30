@@ -152,7 +152,8 @@ describe('#2822 — chunk_skip_reason on 0-chunk puts', () => {
   test('unchanged rewrite (skipped) → write_skipped', async () => {
     const content = '---\ntitle: Stable\n---\n\nSame content twice.';
     await putPage.handler(makeCtx(), { slug: 'inbox/stable', content });
-    const second = (await putPage.handler(makeCtx(), { slug: 'inbox/stable', content })) as {
+    const second = (await putPage.handler(makeCtx(), { slug: 'inbox/stable', content,
+      expected_revision: (await engine.readPageSnapshot('inbox/stable', { sourceId: 'default' }))!.revision })) as {
       status: string; chunks: number; chunk_skip_reason?: string;
     };
     expect(second.status).toBe('skipped');

@@ -54,7 +54,7 @@ that tuple lights up the `pack_upgrade_available` onboard check.
 │  gbrain onboard --check shows finding                          │
 │  gbrain onboard --check --explain shows per-cluster narrative  │
 │  User reviews; if OK, runs:                                    │
-│    gbrain jobs submit unify-types --allow-protected \          │
+│    gbrain jobs submit unify-types \                            │
 │      --params '{"target_pack":"gbrain-base-v2","apply":true}'  │
 │  (omit "apply":true for a dry-run; that is the default)        │
 │  (Autopilot never auto-fires this; manual_only)                │
@@ -241,6 +241,6 @@ a `GBRAIN_AUDIT_FULL=1` escape hatch has been proposed but is not yet wired.
 - Onboard check: `src/core/onboard/checks.ts:checkPackUpgradeAvailable`
 - Render allowlist: `src/core/onboard/render.ts:MANUAL_ONLY_PROTECTED_JOBS`
 - Handler: `src/core/schema-pack/unify-types-handler.ts`
-- Migration: the `slug_aliases` entry in `src/core/migrate.ts`'s `MIGRATIONS` array
+- Migration: `src/core/schema-migrations/v105-slug-aliases.ts` (`slug_aliases`)
 - Type taxonomy doc: `docs/architecture/type-taxonomy.md`
 - Skill: `skills/schema-unify/SKILL.md`

@@ -1,0 +1,232 @@
+{
+  "golden": [
+    {
+      "argv": "takes list",
+      "exitCode": 1,
+      "stderr": [
+        "OAuth discovery failed: OAuth discovery network error: Unable to connect. Is the computer able to access the url?"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "takes extract",
+      "exitCode": 1,
+      "stderr": [
+        "`gbrain takes` is not routable. takes list/search/scorecard/calibration + add/update/resolve/supersede route to the brain host automatically (takes_* MCP ops). This subcommand (extract/revisit) is host-bound: run it on the host machine.",
+        "(thin-client of http://127.0.0.1:1/mcp)"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "takes add alice-example",
+      "exitCode": 1,
+      "stderr": [
+        "Error [invalid_params]: Missing --claim."
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "cache stats",
+      "exitCode": 1,
+      "stderr": [
+        "OAuth discovery failed: OAuth discovery network error: Unable to connect. Is the computer able to access the url?"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "cache clear",
+      "exitCode": 1,
+      "stderr": [
+        "`gbrain cache` is not routable. `cache stats` routes to the brain host automatically (cache_stats MCP op). clear/prune mutate the host cache — run those on the host.",
+        "(thin-client of http://127.0.0.1:1/mcp)"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "quarantine list",
+      "exitCode": 1,
+      "stderr": [
+        "OAuth discovery failed: OAuth discovery network error: Unable to connect. Is the computer able to access the url?"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "quarantine scan",
+      "exitCode": 1,
+      "stderr": [
+        "`gbrain quarantine` is not routable. `quarantine list` routes to the brain host automatically (quarantine_list MCP op). scan/clear are host-bound (bulk re-import; the clear trust decision) — run those on the host.",
+        "(thin-client of http://127.0.0.1:1/mcp)"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "jobs list",
+      "exitCode": 1,
+      "stderr": [
+        "OAuth discovery failed: OAuth discovery network error: Unable to connect. Is the computer able to access the url?"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "jobs get 1",
+      "exitCode": 1,
+      "stderr": [
+        "OAuth discovery failed: OAuth discovery network error: Unable to connect. Is the computer able to access the url?"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "jobs stats",
+      "exitCode": 1,
+      "stderr": [
+        "OAuth discovery failed: OAuth discovery network error: Unable to connect. Is the computer able to access the url?"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "jobs work",
+      "exitCode": 1,
+      "stderr": [
+        "`gbrain jobs` is not routable. `jobs list`, `jobs get <id>`, and `jobs stats` are thin-client routable; this subcommand runs against the host queue. Use the submit_job / list_jobs / get_job / get_job_stats MCP tools from your agent, or run on the host with GBRAIN_HOME set.",
+        "(thin-client of http://127.0.0.1:1/mcp)"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "search modes",
+      "exitCode": 1,
+      "stderr": [
+        "OAuth discovery failed: OAuth discovery network error: Unable to connect. Is the computer able to access the url?"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "search diagnose q",
+      "exitCode": 1,
+      "stderr": [
+        "`gbrain search` is not routable. `search modes|stats|tune` route to the brain host automatically (search_modes / search_stats / search_tune MCP ops). The modes reset form, modes with the source flag (the reset dry-run), and tune apply mutate or preview host config, and `diagnose` runs live retrieval — run those on the host.",
+        "(thin-client of http://127.0.0.1:1/mcp)"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "sources list",
+      "exitCode": 1,
+      "stderr": [
+        "`gbrain sources` is not routable. sources commands manage local DB + config rows. Per-subcommand thin-client routing lands in v0.31.x. For now: use `sources_list` / `sources_status` MCP tools, or run on the host.",
+        "(thin-client of http://127.0.0.1:1/mcp)"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "sources add alice-example",
+      "exitCode": 1,
+      "stderr": [
+        "`gbrain sources` is not routable. sources commands manage local DB + config rows. Per-subcommand thin-client routing lands in v0.31.x. For now: use `sources_list` / `sources_status` MCP tools, or run on the host.",
+        "(thin-client of http://127.0.0.1:1/mcp)"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "capture hello",
+      "exitCode": 1,
+      "stderr": [
+        "Error [unavailable]: OAuth discovery failed: OAuth discovery network error: Unable to connect. Is the computer able to access the url?",
+        "Fix: Retry the same operation and arguments with request_id <uuid>; do not generate a replacement ID.",
+        "Request: <uuid>"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "forget fact-1",
+      "exitCode": 1,
+      "stderr": [
+        "Usage: gbrain forget <fact-id> [--reason <text>] [--source <id>] [--request-id <uuid>] [--json]"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "call get_page",
+      "exitCode": 1,
+      "stderr": [
+        "`gbrain call` is not routable. `call` dispatches against a local engine. Use the named CLI command or an authorized MCP tool through your agent, or run `gbrain call` on the host.",
+        "(thin-client of http://127.0.0.1:1/mcp)"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "agent register alice-example",
+      "exitCode": 1,
+      "stderr": [
+        "Error: `gbrain agent register` mints credentials into the HOST brain — run it on the brain host (the machine that runs `gbrain serve --http`), then wire this machine with the printed `gbrain init --mcp-only …` block."
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "eval whoknows",
+      "exitCode": 1,
+      "stderr": [
+        "`gbrain eval` is not routable. `eval` export/prune/replay touch the local engine and have no MCP equivalents. Run `gbrain eval` on the host.",
+        "(thin-client of http://127.0.0.1:1/mcp)"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "doctor",
+      "exitCode": 1,
+      "stderr": [],
+      "stdout": [
+        "",
+        "GBrain Health Check (thin-client)",
+        "=================================",
+        "Mode:        thin-client",
+        "Issuer URL:  http://127.0.0.1:1",
+        "MCP URL:     http://127.0.0.1:1/mcp",
+        "Client ID:   cid",
+        "",
+        "  [✓] config_integrity: mcp_url=http://127.0.0.1:1/mcp, issuer_url=http://127.0.0.1:1",
+        "  [✓] oauth_credentials: client_id=cid, secret_source=config",
+        "  [✗] oauth_discovery: OAuth discovery network error: Unable to connect. Is the computer able to access the url?",
+        "",
+        "Connectivity check FAILED — see error above.",
+        "Common fixes:",
+        "  - Confirm the host is reachable + `gbrain serve --http` is running.",
+        "  - Confirm OAuth credentials are valid (have the host operator re-mint via `gbrain auth register-client`).",
+        "  - Confirm `mcp_url` matches the path the host serves /mcp on (default: <issuer_url>/mcp)."
+      ]
+    },
+    {
+      "argv": "think q",
+      "exitCode": 1,
+      "stderr": [
+        "OAuth discovery failed: OAuth discovery network error: Unable to connect. Is the computer able to access the url?"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "recall q",
+      "exitCode": 1,
+      "stderr": [
+        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "query q",
+      "exitCode": 1,
+      "stderr": [
+        "Cannot reach http://127.0.0.1:1/mcp. Run `gbrain remote doctor` for details."
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "get alice-example",
+      "exitCode": 1,
+      "stderr": [
+        "Cannot reach http://127.0.0.1:1/mcp. Run `gbrain remote doctor` for details."
+      ],
+      "stdout": []
+    }
+  ],
+  "normalizer": "cli-thin-client-v1"
+}

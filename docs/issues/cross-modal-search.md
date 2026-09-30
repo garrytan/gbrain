@@ -9,7 +9,7 @@ gbrain has a working multimodal embedding pipeline (Voyage multimodal-3, `embedd
 **What the user sees:** You can't search "photos from the hackathon" and get actual images. You can't upload a photo and ask "what do we know about this person?" Text search returns text. Image embeddings sit unused except via explicit `embeddingColumn: 'embedding_image'` override, which no user-facing path triggers.
 
 **What the system does:**
-- Text queries embed through the configured text model (OpenAI/ZE) and search the text column
+- Text queries embed through the configured text model (for example OpenAI or Voyage) and search the text column
 - The `embedding_image` column exists (Voyage multimodal-3, 1024d) with 11,204 embedded chunks and a valid 83 MB HNSW index
 - `postgres-engine.ts:searchVector()` supports `embeddingColumn: 'embedding_image'` but the query vector must come from a compatible model (Voyage multimodal, 1024d)
 - Currently, `embedQuery()` always uses the text embedding model, producing a 1536d or 2560d vector that can't query the 1024d image column

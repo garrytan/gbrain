@@ -50,9 +50,9 @@ function usageExit(...lines: string[]): never {
  * Route a thin-client invocation to its MCP op. Returns true when handled
  * (output printed); false ONLY when the subcommand is genuinely host-bound
  * and the caller should refuse with the hint. Routable subcommands with
- * missing/invalid required args exit 1 with the host CLI's usage string
- * instead of returning false. Remote op errors propagate (the mcp-client
- * error surface already names the op + reason).
+ * invalid required args report a nonzero CLI verdict instead of returning
+ * false. Take writes share the durable mutation parser, timeout and typed
+ * receipt renderer; other remote op errors propagate to the dispatcher.
  */
 export async function routeThinClientCommand(
   cfg: GBrainConfig,
@@ -89,86 +89,12 @@ export async function routeThinClientCommand(
         printJson(await call(cfg, 'takes_calibration', { ...(flagValue(rest, '--holder') ? { holder: flagValue(rest, '--holder') } : {}) }));
         return true;
       }
-      case 'add': {
-        const slug = rest[0];
-        const claim = flagValue(rest, '--claim');
-        const kind = flagValue(rest, '--kind');
-        const holder = flagValue(rest, '--who');
-        if (!slug || !claim || !kind || !holder) {
-          usageExit('Usage: gbrain takes add <slug> --claim "..." --kind <k> --who <h> [--weight 0.5] [--source "..."] [--since YYYY-MM]');
-        }
-        const res = await call(cfg, 'takes_add', {
-          slug,
-          claim,
-          kind,
-          holder,
-          ...(num(flagValue(rest, '--weight')) !== undefined ? { weight: num(flagValue(rest, '--weight')) } : {}),
-          ...(flagValue(rest, '--source') ? { source: flagValue(rest, '--source') } : {}),
-          ...(flagValue(rest, '--since') ? { since: flagValue(rest, '--since') } : {}),
-        }) as { row_num: number };
-        console.log(`Added take #${res.row_num} to ${slug}. (routed to the brain host)`);
-        return true;
-      }
-      case 'update': {
-        const slug = rest[0];
-        const row = num(flagValue(rest, '--row'));
-        if (!slug || row === undefined) {
-          usageExit('Usage: gbrain takes update <slug> --row N [--weight 0.7] [--source "..."] [--since YYYY-MM]');
-        }
-        await call(cfg, 'takes_update', {
-          slug, row_num: row,
-          ...(num(flagValue(rest, '--weight')) !== undefined ? { weight: num(flagValue(rest, '--weight')) } : {}),
-          ...(flagValue(rest, '--source') ? { source: flagValue(rest, '--source') } : {}),
-          ...(flagValue(rest, '--since') ? { since: flagValue(rest, '--since') } : {}),
-        });
-        console.log(`Updated take #${row} on ${slug}. (routed to the brain host)`);
-        return true;
-      }
-      case 'resolve': {
-        const slug = rest[0];
-        const row = num(flagValue(rest, '--row'));
-        const RESOLVE_USAGE = [
-          'Usage: gbrain takes resolve <slug> --row N --quality correct|incorrect|partial|unresolvable [--evidence "..."] [--value N --unit usd|pct|count] [--by <slug>]',
-          '       (back-compat) gbrain takes resolve <slug> --row N --outcome true|false [...]',
-        ];
-        // Back-compat outcome lane (mirrors cmdResolve in src/commands/takes.ts):
-        // --quality wins when present; otherwise --outcome true|false maps onto
-        // correct|incorrect. Any other outcome value is a usage error.
-        let quality = flagValue(rest, '--quality');
-        const outcomeStr = flagValue(rest, '--outcome');
-        if (!quality && outcomeStr !== undefined) {
-          if (outcomeStr !== 'true' && outcomeStr !== 'false') {
-            usageExit(...RESOLVE_USAGE);
-          }
-          quality = outcomeStr === 'true' ? 'correct' : 'incorrect';
-          console.error('[deprecated] --outcome is the v0.28 alias for --quality. Prefer --quality correct|incorrect|partial in new scripts.');
-        }
-        if (!slug || row === undefined || !quality) {
-          usageExit(...RESOLVE_USAGE);
-        }
-        const res = await call(cfg, 'takes_resolve', {
-          slug, row_num: row, quality,
-          ...(flagValue(rest, '--evidence') ? { evidence: flagValue(rest, '--evidence') } : {}),
-          ...(num(flagValue(rest, '--value')) !== undefined ? { value: num(flagValue(rest, '--value')) } : {}),
-          ...(flagValue(rest, '--unit') ? { unit: flagValue(rest, '--unit') } : {}),
-        }) as { resolved_by: string };
-        console.log(`Resolved take #${row} on ${slug}: quality=${quality} (as ${res.resolved_by}).`);
-        return true;
-      }
+      case 'add':
+      case 'update':
+      case 'resolve':
       case 'supersede': {
-        const slug = rest[0];
-        const row = num(flagValue(rest, '--row'));
-        const claim = flagValue(rest, '--claim');
-        if (!slug || row === undefined || !claim) {
-          usageExit('Usage: gbrain takes supersede <slug> --row N --claim "..." [--kind k] [--who h] [--weight 0.5] [--source "..."]');
-        }
-        const res = await call(cfg, 'takes_supersede', {
-          slug, row_num: row, claim,
-          ...(flagValue(rest, '--kind') ? { kind: flagValue(rest, '--kind') } : {}),
-          ...(flagValue(rest, '--who') ? { holder: flagValue(rest, '--who') } : {}),
-          ...(num(flagValue(rest, '--weight')) !== undefined ? { weight: num(flagValue(rest, '--weight')) } : {}),
-        }) as { old_row: number; new_row: number };
-        console.log(`Superseded #${res.old_row} → new #${res.new_row} on ${slug}. (routed to the brain host)`);
+        const { runTakesMutation } = await import('./takes-mutation.ts');
+        await runTakesMutation(async () => { throw new Error('Remote takes cannot open a local engine.'); }, args, cfg);
         return true;
       }
       default:

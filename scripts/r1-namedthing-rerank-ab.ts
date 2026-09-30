@@ -325,7 +325,7 @@ export function r1Verdict(rows: readonly VerdictRow[]): R1Verdict {
 
 // ── Integrity (fail loudly, never fail open) ─────────────────────────────────
 
-const RERANK_STAGES = new Set<string>(['reranker_skipped', 'rerank_passthrough']);
+const RERANK_STAGES = new Set<string>(['reranker_skipped', 'rerank_passthrough', 'rerank_failed']);
 const EMBED_STAGES = new Set<string>(['embed_unavailable', 'embed_timeout', 'vector_arm_failed']);
 
 /**

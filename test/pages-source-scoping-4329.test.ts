@@ -30,19 +30,29 @@ import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { operations, type OperationContext } from '../src/core/operations.ts';
 import { resolveSourceId, resolveSourceWithTier } from '../src/core/source-resolver.ts';
 import { withEnv } from './helpers/with-env.ts';
-import { mkdtempSync } from 'fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'fs';
+import { serializePageToMarkdown } from '../src/core/markdown.ts';
+import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
 let engine: PGLiteEngine;
 const get_page = operations.find(o => o.name === 'get_page')!;
-const delete_page = operations.find(o => o.name === 'delete_page')!;
-const restore_page = operations.find(o => o.name === 'restore_page')!;
+const home = mkdtempSync(join(tmpdir(), 'gbrain-page-sources-'));
+let betaRoot: string;
+let legacyTokenId: string;
+function localMutation(name: string) {
+  const op = operations.find(o => o.name === name)!;
+  return { ...op, handler: (ctx: OperationContext, p: Record<string, unknown>) => withEnv({ GBRAIN_HOME: home }, () => op.handler(ctx, p)) };
+}
+const delete_page = localMutation('delete_page');
+const restore_page = localMutation('restore_page');
+async function revision(sourceId = 'default') { return (await engine.readPageSnapshot('shared/doc', { sourceId, includeDeleted: true }))!.revision; }
 
 function ctxOf(overrides: Partial<OperationContext> = {}): OperationContext {
   return {
     engine: engine as any,
-    config: {} as any,
+    config: { engine: 'pglite', embedding_disabled: true },
     logger: { info() {}, warn() {}, error() {} },
     dryRun: false,
     remote: true,
@@ -52,7 +62,9 @@ function ctxOf(overrides: Partial<OperationContext> = {}): OperationContext {
 }
 
 function authOf(overrides: Record<string, unknown> = {}) {
-  return { token: 't', clientId: 'client-1', scopes: ['read', 'write'], ...overrides };
+  const sourceId = typeof overrides.sourceId === 'string' ? overrides.sourceId : 'default';
+  const clientId = `source-client-${sourceId}`;
+  return { token: 't', clientId, principal: { kind: 'oauth_client' as const, id: clientId }, scopes: ['read', 'write'], sourceId, ...overrides };
 }
 
 async function deletedAtBySource(slug: string): Promise<Record<string, string | null>> {
@@ -72,12 +84,21 @@ beforeAll(async () => {
 }, 60_000);
 
 afterAll(async () => {
-  if (engine) await engine.disconnect();
+  if (engine) { await disposePersistenceConsumer(engine); await engine.disconnect(); }
+  rmSync(home, { recursive: true, force: true });
 }, 60_000);
 
 beforeEach(async () => {
+  await disposePersistenceConsumer(engine);
   await resetPgliteState(engine);
-  await engine.executeRaw(`INSERT INTO sources (id, name, local_path) VALUES ('beta', 'beta', '/tmp/beta-4329') ON CONFLICT (id) DO NOTHING`);
+  // Reset creates a new brain identity; give it a fresh physical checkout.
+  // Ownership reservations intentionally survive source deletion and cannot
+  // be recycled across different brains.
+  betaRoot = mkdtempSync(join(home, 'beta-'));
+  await engine.executeRaw(`INSERT INTO sources (id, name, local_path) VALUES ('beta', 'beta', $1)`, [betaRoot]);
+  for (const sourceId of ['default', 'beta']) await engine.executeRaw(`INSERT INTO oauth_clients(client_id,client_name,scope,source_id,federated_read) VALUES($1,'Source fixture','read write',$2,$3)`, [`source-client-${sourceId}`, sourceId, ['default', 'beta']]);
+  const [legacy] = await engine.executeRaw<{ id: string }>(`INSERT INTO access_tokens(name,token_hash,permissions) VALUES('Legacy source fixture','source-fixture-token','{"source_id":"beta"}'::jsonb) RETURNING id`);
+  legacyTokenId = String(legacy.id);
   // Same slug in BOTH sources — the ambiguity #4329 is about.
   await engine.putPage('shared/doc', {
     type: 'note', title: 'default copy', compiled_truth: 'default content', timeline: '', frontmatter: {},
@@ -85,6 +106,9 @@ beforeEach(async () => {
   await engine.putPage('shared/doc', {
     type: 'note', title: 'beta copy', compiled_truth: 'beta content', timeline: '', frontmatter: {},
   }, { sourceId: 'beta' });
+  const snapshot = (await engine.readPageSnapshot('shared/doc', { sourceId: 'beta' }))!;
+  mkdirSync(join(betaRoot, 'shared'), { recursive: true });
+  writeFileSync(join(betaRoot, 'shared/doc.md'), serializePageToMarkdown(snapshot.page, snapshot.tags));
 });
 
 describe('#4329 — op contracts carry source_id (honored, never silently dropped)', () => {
@@ -99,7 +123,7 @@ describe('#4329 — delete_page source_id', () => {
   test('REGRESSION: source_id targets that source\'s row, not ctx.sourceId\'s (trusted local)', async () => {
     // Trusted local caller (ctx.remote === false) owns the brain: an explicit
     // source_id is honored and threaded to the engine, never silently dropped.
-    const res = await delete_page.handler(ctxOf({ remote: false }), { slug: 'shared/doc', source_id: 'beta' }) as Record<string, unknown>;
+    const res = await delete_page.handler(ctxOf({ remote: false }), { slug: 'shared/doc', source_id: 'beta', expected_revision: await revision('beta') }) as Record<string, unknown>;
     expect(res.status).toBe('soft_deleted');
     expect(res.source_id).toBe('beta');
     const rows = await deletedAtBySource('shared/doc');
@@ -119,7 +143,7 @@ describe('#4329 — delete_page source_id', () => {
   });
 
   test('no-auth remote: explicit source_id equal to ctx.sourceId is honored (redundant-but-matching)', async () => {
-    const res = await delete_page.handler(ctxOf({ sourceId: 'beta' }), { slug: 'shared/doc', source_id: 'beta' }) as Record<string, unknown>;
+    const res = await delete_page.handler(ctxOf({ sourceId: 'beta' }), { slug: 'shared/doc', source_id: 'beta', expected_revision: await revision('beta') }) as Record<string, unknown>;
     expect(res.status).toBe('soft_deleted');
     expect(res.source_id).toBe('beta');
     const rows = await deletedAtBySource('shared/doc');
@@ -128,7 +152,7 @@ describe('#4329 — delete_page source_id', () => {
   });
 
   test('without source_id, keeps the ctx.sourceId status quo (and echoes it)', async () => {
-    const res = await delete_page.handler(ctxOf(), { slug: 'shared/doc' }) as Record<string, unknown>;
+    const res = await delete_page.handler(ctxOf(), { slug: 'shared/doc', expected_revision: await revision() }) as Record<string, unknown>;
     expect(res.status).toBe('soft_deleted');
     expect(res.source_id).toBe('default');
     const rows = await deletedAtBySource('shared/doc');
@@ -175,7 +199,7 @@ describe('#4329 — delete_page source_id', () => {
   test('authenticated remote caller: source_id equal to the write authority (auth.sourceId) is honored', async () => {
     // HTTP transport dual-writes auth.sourceId into ctx.sourceId; mirror that.
     const ctx = ctxOf({ sourceId: 'beta', auth: authOf({ sourceId: 'beta', allowedSources: ['default', 'beta'] }) as any });
-    const res = await delete_page.handler(ctx, { slug: 'shared/doc', source_id: 'beta' }) as Record<string, unknown>;
+    const res = await delete_page.handler(ctx, { slug: 'shared/doc', source_id: 'beta', expected_revision: await revision('beta') }) as Record<string, unknown>;
     expect(res.status).toBe('soft_deleted');
     const rows = await deletedAtBySource('shared/doc');
     expect(rows.beta).not.toBeNull();
@@ -183,12 +207,13 @@ describe('#4329 — delete_page source_id', () => {
   });
 
   test('legacy authenticated token (no auth.sourceId): falls back to ctx.sourceId as the write authority', async () => {
-    const ctx = ctxOf({ sourceId: 'beta', auth: authOf({}) as any });
-    const res = await delete_page.handler(ctx, { slug: 'shared/doc', source_id: 'beta' }) as Record<string, unknown>;
+    const legacyAuth = { token: 't', clientId: 'legacy', principal: { kind: 'legacy_token' as const, id: legacyTokenId }, scopes: ['read', 'write'] };
+    const ctx = ctxOf({ sourceId: 'beta', auth: legacyAuth });
+    const res = await delete_page.handler(ctx, { slug: 'shared/doc', source_id: 'beta', expected_revision: await revision('beta') }) as Record<string, unknown>;
     expect(res.status).toBe('soft_deleted');
     expect((await deletedAtBySource('shared/doc')).beta).not.toBeNull();
     // ...and the same legacy token cannot target outside ctx.sourceId.
-    await expect(delete_page.handler(ctxOf({ sourceId: 'beta', auth: authOf({}) as any }), { slug: 'shared/doc', source_id: 'default' }))
+    await expect(delete_page.handler(ctxOf({ sourceId: 'beta', auth: legacyAuth }), { slug: 'shared/doc', source_id: 'default' }))
       .rejects.toMatchObject({ code: 'permission_denied' });
     expect((await deletedAtBySource('shared/doc')).default).toBeNull();
   });
@@ -199,6 +224,119 @@ describe('#4329 — delete_page source_id', () => {
   });
 });
 
+describe('delete_page purge — immediate removal for the trusted local CLI only', () => {
+  test('contract: purge is a boolean param (so the generated CLI accepts `gbrain delete <slug> --purge`)', () => {
+    expect(delete_page.params.purge?.type).toBe('boolean');
+  });
+
+  test('trusted local purge: coordinated hard-delete of the targeted row only; status purged', async () => {
+    const res = await delete_page.handler(ctxOf({ remote: false }), { slug: 'shared/doc', source_id: 'beta', purge: true, expected_revision: await revision('beta') }) as Record<string, unknown>;
+    expect(res.status).toBe('purged');
+    expect(res.source_id).toBe('beta');
+    expect(res).not.toHaveProperty('recoverable_until');
+    // Shape pin: the live-row purge carries the artifact-removal outcome, same
+    // as a plain soft-delete (committed publication or an explicit database-only reason).
+    expect(res.write_through).toEqual({ written: true });
+    const rows = await deletedAtBySource('shared/doc');
+    expect(rows.beta).toBeUndefined();          // row is GONE, not tombstoned
+    expect(rows.default).toBeNull();            // the other source's copy is untouched
+    expect(await engine.getPage('shared/doc', { sourceId: 'beta', includeDeleted: true })).toBeNull();
+    expect((await engine.getRawData('shared/doc', undefined, { sourceId: 'beta', includeDeleted: true })).length).toBe(0);
+  });
+
+  test('purge completes the removal of a row that was already soft-deleted (the remediation path)', async () => {
+    await engine.softDeletePage('shared/doc', { sourceId: 'default' });
+    const res = await delete_page.handler(ctxOf({ remote: false }), { slug: 'shared/doc', purge: true, expected_revision: await revision() }) as Record<string, unknown>;
+    expect(res.status).toBe('purged');
+    // Shape pin: ONE response shape for status purged — the remediation path
+    // RETRIES the artifact removal against the tombstone's recorded path and
+    // reports the real outcome (here: no repo is configured, so nothing to
+    // unlink) instead of a fabricated 'already_soft_deleted' skip. The
+    // retry itself is pinned by test/pages-purge-artifact.test.ts.
+    expect(res.write_through).toEqual({ written: false, skipped: 'no_repo_configured' });
+    expect((await deletedAtBySource('shared/doc')).default).toBeUndefined();
+    // Unknown slug is still a clean not-found, even with purge.
+    await expect(delete_page.handler(ctxOf({ remote: false }), { slug: 'shared/doc', purge: true }))
+      .rejects.toMatchObject({ code: 'page_not_found' });
+  });
+
+  test('remote callers (anything not strictly remote === false) get permission_denied and nothing is deleted', async () => {
+    // Local-only lane convention (connectors_status, get_recent_transcripts):
+    // a well-formed request the caller is not allowed to make is
+    // permission_denied, not invalid_params (that code is for shape errors).
+    await expect(delete_page.handler(ctxOf(), { slug: 'shared/doc', purge: true }))
+      .rejects.toMatchObject({ code: 'permission_denied', suggestion: expect.stringContaining('gbrain delete <slug> --purge') });
+    await expect(delete_page.handler(ctxOf({ remote: undefined as unknown as boolean }), { slug: 'shared/doc', purge: true }))
+      .rejects.toMatchObject({ code: 'permission_denied' });
+    const authed = ctxOf({ auth: authOf({ sourceId: 'default', allowedSources: ['default'], scopes: ['read', 'write', 'admin'] }) as any });
+    await expect(delete_page.handler(authed, { slug: 'shared/doc', purge: true }))
+      .rejects.toMatchObject({ code: 'permission_denied' });
+    const rows = await deletedAtBySource('shared/doc');
+    expect(rows.default).toBeNull();            // not even soft-deleted
+    expect(rows.beta).toBeNull();
+    // ...and the same remote caller can still soft-delete without purge.
+    const res = await delete_page.handler(ctxOf(), { slug: 'shared/doc', expected_revision: await revision() }) as Record<string, unknown>;
+    expect(res.status).toBe('soft_deleted');
+  });
+
+  test('a non-boolean purge value is rejected, never coerced (shape error stays invalid_params)', async () => {
+    await expect(delete_page.handler(ctxOf({ remote: false }), { slug: 'shared/doc', purge: 'yes' }))
+      .rejects.toMatchObject({ code: 'invalid_params' });
+    // A remote caller with a malformed purge is a shape error first.
+    await expect(delete_page.handler(ctxOf(), { slug: 'shared/doc', purge: 'yes' }))
+      .rejects.toMatchObject({ code: 'invalid_params' });
+    expect((await deletedAtBySource('shared/doc')).default).toBeNull();
+  });
+
+  test('purge: false behaves as a plain soft delete, and the hint names the purge path', async () => {
+    const res = await delete_page.handler(ctxOf({ remote: false }), { slug: 'shared/doc', purge: false, expected_revision: await revision() }) as Record<string, unknown>;
+    expect(res.status).toBe('soft_deleted');
+    expect(String(res.recoverable_until)).toContain('gbrain delete <slug> --purge');
+    expect((await deletedAtBySource('shared/doc')).default).not.toBeNull();
+  });
+
+  test('dry-run purge previews the hard removal without touching the row', async () => {
+    const res = await delete_page.handler(ctxOf({ remote: false, dryRun: true }), { slug: 'shared/doc', purge: true }) as Record<string, unknown>;
+    expect(res.dry_run).toBe(true);
+    expect(res.action).toBe('purge_page');
+    expect((await deletedAtBySource('shared/doc')).default).toBeNull();
+  });
+});
+
+// get_raw_data follows the page's soft-delete (op-level pin of the engine
+// rule): a tombstoned page's raw rows read as [] — exactly like a missing
+// page — and restore_page brings them back. Remote callers get no
+// include_deleted knob on this op; get_page include_deleted verifies the
+// tombstone instead.
+describe('get_raw_data follows the page soft-delete', () => {
+  const get_raw_data = operations.find(o => o.name === 'get_raw_data')!;
+
+  test('contract: no remote-facing include_deleted param; description states the soft-delete rule', () => {
+    expect(get_raw_data.params.include_deleted).toBeUndefined();
+    expect(get_raw_data.description).toMatch(/soft-delete/);
+    expect(get_raw_data.description).toMatch(/restore_page/);
+  });
+
+  test('[] after softDeletePage, rows again after restorePage (trusted local and remote alike)', async () => {
+    await engine.putRawData('shared/doc', 'crustdata', { k: 'v' }, { sourceId: 'default' });
+    const read = (ctx: OperationContext) => get_raw_data.handler(ctx, { slug: 'shared/doc' }) as Promise<unknown[]>;
+    expect((await read(ctxOf({ remote: false }))).length).toBe(1);
+    expect((await read(ctxOf())).length).toBe(1);
+
+    expect(await engine.softDeletePage('shared/doc', { sourceId: 'default' })).not.toBeNull();
+    expect(await read(ctxOf({ remote: false }))).toEqual([]);
+    expect(await read(ctxOf())).toEqual([]);
+    // The tombstone is verifiable through get_page include_deleted.
+    const tomb = await get_page.handler(ctxOf({ remote: false }), { slug: 'shared/doc', include_deleted: true }) as Record<string, unknown>;
+    expect(tomb.deleted_at).not.toBeNull();
+
+    const res = await restore_page.handler(ctxOf({ remote: false }), { slug: 'shared/doc', expected_revision: await revision() }) as Record<string, unknown>;
+    expect(res.status).toBe('restored');
+    expect((await read(ctxOf({ remote: false }))).length).toBe(1);
+    expect((await read(ctxOf())).length).toBe(1);
+  });
+});
+
 describe('#4329 — restore_page source_id', () => {
   beforeEach(async () => {
     await engine.softDeletePage('shared/doc', { sourceId: 'default' });
@@ -206,7 +344,7 @@ describe('#4329 — restore_page source_id', () => {
   });
 
   test('restores only the targeted source\'s row (and echoes it)', async () => {
-    const res = await restore_page.handler(ctxOf({ remote: false }), { slug: 'shared/doc', source_id: 'beta' }) as Record<string, unknown>;
+    const res = await restore_page.handler(ctxOf({ remote: false }), { slug: 'shared/doc', source_id: 'beta', expected_revision: await revision('beta') }) as Record<string, unknown>;
     expect(res.status).toBe('restored');
     expect(res.source_id).toBe('beta');
     const rows = await deletedAtBySource('shared/doc');
@@ -340,5 +478,43 @@ describe('#3070 — sole_non_default emptiness guard (real engine, both ways)', 
       expect(resolved.source_id).toBe('beta');
       expect(resolved.tier).toBe('sole_non_default');
     });
+  });
+});
+
+// purge's reason to exist is "a page must not linger (e.g. it captured a
+// credential)" — so the dependents that carry the page's bytes (raw_data,
+// chunks, tags) must go with the row, and only for the targeted source.
+describe('delete_page purge — cascades through the row\'s dependents, leaves the other source alone', () => {
+  test('raw_data / tags / chunks of the purged row are gone; the same slug in another source keeps its rows', async () => {
+    for (const sourceId of ['default', 'beta']) {
+      await engine.putRawData('shared/doc', 'transcript:claude-code', { note: `${sourceId} meta` }, { sourceId });
+      await engine.addTag('shared/doc', `tag-${sourceId}`, { sourceId });
+      await engine.upsertChunks('shared/doc', [
+        { chunk_index: 0, chunk_text: `${sourceId} chunk`, chunk_source: 'compiled_truth' },
+      ], { sourceId });
+    }
+    const ids = await engine.executeRaw<{ id: number; source_id: string }>(
+      `SELECT id, source_id FROM pages WHERE slug = 'shared/doc'`,
+    );
+    const idOf = Object.fromEntries(ids.map(r => [r.source_id, r.id])) as Record<string, number>;
+    const dependents = async (pageId: number) => {
+      const count = async (table: string) => {
+        const [row] = await engine.executeRaw<{ n: number }>(
+          `SELECT count(*)::int AS n FROM ${table} WHERE page_id = $1`, [pageId],
+        );
+        return row.n;
+      };
+      return { raw: await count('raw_data'), tags: await count('tags'), chunks: await count('content_chunks') };
+    };
+    expect(await dependents(idOf.default)).toEqual({ raw: 1, tags: 1, chunks: 1 });
+    expect(await dependents(idOf.beta)).toEqual({ raw: 1, tags: 1, chunks: 1 });
+
+    const res = await delete_page.handler(ctxOf({ remote: false }), { slug: 'shared/doc', purge: true, expected_revision: await revision() }) as Record<string, unknown>;
+    expect(res.status).toBe('purged');
+    expect(res.source_id).toBe('default');
+    expect(await dependents(idOf.default)).toEqual({ raw: 0, tags: 0, chunks: 0 });
+    expect(await dependents(idOf.beta)).toEqual({ raw: 1, tags: 1, chunks: 1 });
+    expect((await engine.getRawData('shared/doc', undefined, { sourceId: 'beta' })).length).toBe(1);
+    expect((await deletedAtBySource('shared/doc')).beta).toBeNull(); // beta copy alive, not even tombstoned
   });
 });

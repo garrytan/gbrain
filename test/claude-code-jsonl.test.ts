@@ -107,6 +107,50 @@ describe('parseTranscript on the fixture [G3, A6]', () => {
     expect(r.skippedLines).toBeGreaterThanOrEqual(1);
   });
 
+  test('tracks genuine user turns without dropping archival tool placeholders', () => {
+    const dir = tdir();
+    const p = join(dir, 'origins.jsonl');
+    const line = (o: unknown) => JSON.stringify(o);
+    writeFileSync(p, [
+      line({ type: 'user', message: { role: 'user', content: 'I prefer weekly summaries on Friday afternoons.' } }),
+      line({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 't-1', name: 'Read', input: { file_path: '/tmp/a' } }] } }),
+      line({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't-1', content: 'large private payload' }] } }),
+      line({ type: 'user', message: { role: 'user', content: [
+        { type: 'tool_result', tool_use_id: 't-2', content: 'another private payload' },
+        { type: 'text', text: 'Actually, send those summaries on Thursday afternoons.' },
+      ] } }),
+    ].join('\n') + '\n');
+
+    const r = parseTranscript(p);
+    expect(r.turns.map((turn) => turn.text)).toEqual([
+      'I prefer weekly summaries on Friday afternoons.',
+      '[tool: Read]',
+      '[tool result]',
+      '[tool result]\nActually, send those summaries on Thursday afternoons.',
+    ]);
+    expect(r.genuineUserTurnIndexes).toEqual([0, 3]);
+  });
+
+  test('slash-command bookkeeping records are not genuine user turns (writeback lane)', () => {
+    // Claude Code writes `/clear`-style commands and their stdout as `user`
+    // records whose content is ONLY harness tags. Nobody said that; feeding
+    // it to the writeback lane as the "user prompt" banks junk.
+    const dir = tdir();
+    const p = join(dir, 'commands.jsonl');
+    const line = (o: unknown) => JSON.stringify(o);
+    writeFileSync(p, [
+      line({ type: 'user', message: { role: 'user', content: 'Please remember I take my coffee black.' } }),
+      line({ type: 'user', message: { role: 'user', content: '<command-name>/clear</command-name>\n<command-message>clear</command-message>\n<command-args></command-args>' } }),
+      line({ type: 'user', message: { role: 'user', content: '<local-command-stdout>Cleared 3 files</local-command-stdout>' } }),
+      line({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: '<local-command-stdout>ok</local-command-stdout>' }] } }),
+      line({ type: 'user', message: { role: 'user', content: '<command-name>/foo</command-name> and also: switch me to dark mode everywhere.' } }),
+    ].join('\n') + '\n');
+
+    const r = parseTranscript(p);
+    expect(r.turns).toHaveLength(5); // archival: the records stay in the window
+    expect(r.genuineUserTurnIndexes).toEqual([0, 4]);
+  });
+
   test('defaults exist and are sane', () => {
     expect(TRANSCRIPT_MAX_BYTES_DEFAULT).toBeGreaterThan(1024 * 1024);
     expect(TRANSCRIPT_HARD_CAP_BYTES).toBeGreaterThan(TRANSCRIPT_MAX_BYTES_DEFAULT);

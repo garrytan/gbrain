@@ -80,4 +80,19 @@ describe('recipe: ollama thinking-by-default', () => {
   ])('%s is thinking-by-default', (model) => {
     expect(getProviderCapabilities(model).supportsThinking).toBe(true);
   });
+
+  // gbrain#4727: GLM-4.5+/5.x reason by default on every host (the zhipu
+  // recipe already declares it); a reporter hit the 4000 cap on GLM-5.3-flash
+  // via Ollama cloud. Older glm-4 tags keep the conservative cap.
+  test.each([
+    'ollama:glm-5.3-flash',
+    'ollama:glm-5.3-flash:cloud',
+    'ollama:glm-4.6',
+  ])('%s (GLM-4.5+/5.x) is thinking-by-default', (model) => {
+    expect(getProviderCapabilities(model).supportsThinking).toBe(true);
+  });
+
+  test('glm-4:9b (pre-4.5) is not thinking-by-default', () => {
+    expect(getProviderCapabilities('ollama:glm-4:9b').supportsThinking).toBe(false);
+  });
 });

@@ -6,6 +6,7 @@
 import type { BrainEngine } from './engine.ts';
 import { loadConfig } from './config.ts';
 import { unacknowledgedSyncFailures } from './sync.ts';
+import { isSyncDisabledConfig } from './sync-policy.ts';
 // lagFromContentMs is the remote/column comparator (buildSyncStatusReport
 // backs the get_status_snapshot MCP op — must NOT shell out to git).
 import { lagFromContentMs } from './source-health.ts';
@@ -79,7 +80,10 @@ export interface SyncStatusReport {
 
 export async function buildSyncStatusReport(
   engine: BrainEngine,
-  sources: Array<{ id: string; name: string; local_path: string | null; config: Record<string, unknown> }>,
+  // `config` is the RAW sources.config value (callers pass `SELECT config`
+  // rows straight through; PGLite returns jsonb as a JSON string) — read it
+  // only through the #4399 predicate, never a raw cast.
+  sources: Array<{ id: string; name: string; local_path: string | null; config: unknown }>,
 ): Promise<SyncStatusReport> {
   // Resolve the active embedding column via the registry. Brains pointed
   // at Voyage / multimodal / any non-default column get accurate counts
@@ -206,7 +210,6 @@ export async function buildSyncStatusReport(
 
   const now = Date.now();
   const out: SyncStatusReportSource[] = sources.map((src) => {
-    const cfgEntry = (src.config || {}) as { syncEnabled?: boolean };
     const row = sourceMap.get(src.id) || { id: src.id, last_commit: null, last_sync_at: null, newest_content_at: null };
     const counts = countMap.get(src.id) || { pages: 0, chunks_total: 0, chunks_unembedded: 0 };
     const lastSyncMs = row.last_sync_at
@@ -244,7 +247,7 @@ export async function buildSyncStatusReport(
       source_id: src.id,
       name: src.name,
       local_path: src.local_path,
-      sync_enabled: cfgEntry.syncEnabled !== false,
+      sync_enabled: !isSyncDisabledConfig(src.config),
       last_sync_at: lastSyncIso,
       hours_since_last_sync: hoursSinceLastSync,
       staleness_hours: stalenessHours === null ? null : Math.round(stalenessHours * 10) / 10,

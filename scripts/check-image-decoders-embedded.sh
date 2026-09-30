@@ -20,7 +20,7 @@ cd "$REPO_ROOT"
 OUT_BIN="$(mktemp /tmp/gbrain-img-decoders-check.XXXXXX)"
 trap 'rm -f "$OUT_BIN"' EXIT
 
-bun build --compile --outfile "$OUT_BIN" scripts/image-decoders-smoketest.ts >/dev/null 2>&1
+bun build --compile --no-compile-autoload-bunfig --outfile "$OUT_BIN" scripts/image-decoders-smoketest.ts >/dev/null 2>&1
 
 OUTPUT="$("$OUT_BIN" 2>&1 || true)"
 

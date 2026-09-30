@@ -18,6 +18,7 @@ import {
   openrouterSupportsPromptCache,
 } from '../../src/core/ai/recipes/openrouter.ts';
 import { defaultResolveAuth } from '../../src/core/ai/gateway.ts';
+import { getProviderCapabilities } from '../../src/core/ai/capabilities.ts';
 import { assertTouchpoint, embeddingDimsForModel } from '../../src/core/ai/model-resolver.ts';
 import { AIConfigError } from '../../src/core/ai/errors.ts';
 
@@ -398,5 +399,26 @@ describe('recipe: openrouter', () => {
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+});
+
+// gbrain#4727: Z.ai's GLM-4.5+/5.x think by default and OpenRouter bills
+// reasoning as completion tokens (same basis as the deepseek/ route, #4758),
+// so the OR recipe grants the same headroom the zhipu recipe does.
+describe('recipe: openrouter thinking-by-default — z-ai GLM (#4727)', () => {
+  test.each([
+    'openrouter:z-ai/glm-5',
+    'openrouter:z-ai/glm-4.6',
+    'openrouter:z-ai/glm-4.5-air',
+  ])('%s is thinking-by-default', (model) => {
+    expect(getProviderCapabilities(model).supportsThinking).toBe(true);
+  });
+
+  test.each([
+    'openrouter:z-ai/glm-4',
+    'openrouter:z-ai/glm-4-32b',
+    'openrouter:openai/gpt-5.2-chat',
+  ])('%s is not thinking-by-default', (model) => {
+    expect(getProviderCapabilities(model).supportsThinking).toBe(false);
   });
 });

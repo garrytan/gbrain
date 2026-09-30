@@ -65,7 +65,10 @@ detect_available_mem_mb() {
 # ──────────────────────────────────────────────────────────────────────────
 ensure_pglite_snapshot() {
   local label="${1:-test-env}"
-  [ "${GBRAIN_NO_SNAPSHOT:-0}" = "1" ] && return 0
+  if [ "${GBRAIN_NO_SNAPSHOT:-0}" = "1" ]; then
+    unset GBRAIN_PGLITE_SNAPSHOT GBRAIN_TEST_DEFAULT_SNAPSHOT
+    return 0
+  fi
   if [ -n "${GBRAIN_PGLITE_SNAPSHOT:-}" ]; then
     echo "[$label] PGLite snapshot active (inherited): $GBRAIN_PGLITE_SNAPSHOT" >&2
     return 0
@@ -76,4 +79,28 @@ ensure_pglite_snapshot() {
   else
     echo "[$label] snapshot build failed (non-fatal) — tests run with cold init" >&2
   fi
+}
+
+# Bare BrainBench CLI children use the shipped embedding shape. Keep this
+# auxiliary path separate from their parent bun test process's legacy shape.
+ensure_default_pglite_snapshot() {
+  local label="${1:-test-env}"
+  if [ "${GBRAIN_NO_SNAPSHOT:-0}" = "1" ]; then
+    unset GBRAIN_PGLITE_SNAPSHOT GBRAIN_TEST_DEFAULT_SNAPSHOT
+    return 0
+  fi
+  if [ -z "${GBRAIN_TEST_DEFAULT_SNAPSHOT:-}" ]; then
+    if bun run build:pglite-snapshot --profile default >/dev/null 2>&1; then
+      export GBRAIN_TEST_DEFAULT_SNAPSHOT="$PWD/test/fixtures/pglite-snapshot-default.tar"
+    else
+      unset GBRAIN_TEST_DEFAULT_SNAPSHOT
+      echo "[$label] default snapshot build failed (non-fatal) — CLI children run with cold init" >&2
+      return 0
+    fi
+  fi
+  case "$GBRAIN_TEST_DEFAULT_SNAPSHOT" in
+    /*) ;;
+    *) export GBRAIN_TEST_DEFAULT_SNAPSHOT="$PWD/$GBRAIN_TEST_DEFAULT_SNAPSHOT" ;;
+  esac
+  echo "[$label] default PGLite snapshot active: $GBRAIN_TEST_DEFAULT_SNAPSHOT" >&2
 }

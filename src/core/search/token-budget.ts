@@ -5,11 +5,12 @@
  * (agents, MCP, the query op) can guarantee their search payload fits a
  * downstream context window. The enforcer is the LAST stage of the search
  * pipeline — all scoring, ranking, dedup, boosts, two-pass walk are done
- * before this fires. It does NOT re-rank; it greedily walks top-down and
- * stops when the next result would push the running total past the
- * budget.
+ * before this fires. It does NOT re-rank; it walks top-down and skips any
+ * result that would push the running total past the budget (the frozen
+ * `packToBudget` used by the memory verbs stops at the first one instead).
  *
- * Token counting uses a deliberately cheap char/4 heuristic instead of
+ * Token counting uses a deliberately cheap script-aware heuristic
+ * (char/4, CJK 1/char) instead of
  * dropping in a real tokenizer (js-tiktoken is 1.5MB+ and would balloon
  * the bun build --compile bundle). The heuristic is accurate within
  * ~10-15% for English text and ~5-25% for mixed code/Unicode — over-
@@ -26,19 +27,43 @@
  */
 
 import type { SearchResult } from '../types.ts';
+import { CJK_SLUG_CHARS } from '../cjk.ts';
+
+const CJK_CHAR = new RegExp(`[${CJK_SLUG_CHARS}]`);
+const CJK_CHARS_G = new RegExp(`[${CJK_SLUG_CHARS}]`, 'g');
 
 /**
- * Cheap char/4 token estimate. Returns 0 for empty strings.
+ * Cheap script-aware token estimate. Returns 0 for empty strings.
  *
- * Why char/4: OpenAI's tokenization averages ~4 chars/token for English
- * prose; closer to 3 for code with lots of punctuation; up to 8 for
- * CJK. Overshoot is fine for a safety budget. Undershoot would let us
- * blow past the cap, so we round UP when in doubt.
+ * OpenAI-style tokenizers average ~4 chars/token for English prose (closer
+ * to 3 for punctuation-heavy code) but ~1 token per CJK character, so CJK
+ * characters cost 1 each and everything else char/4. Overshoot is fine for
+ * a safety budget; undershoot would let a payload blow past the cap, so
+ * the total rounds UP.
  */
 export function estimateTokens(text: string | null | undefined): number {
   if (!text) return 0;
-  // Math.ceil so a 1-char string still costs at least 1 token.
-  return Math.ceil(text.length / 4);
+  const cjk = text.match(CJK_CHARS_G)?.length ?? 0;
+  return Math.ceil((text.length - cjk) / 4) + cjk;
+}
+
+/**
+ * Longest prefix of `text` whose `estimateTokens` cost is <= `maxTokens`,
+ * cut on a code-point boundary (never a lone surrogate).
+ */
+function sliceToTokens(text: string, maxTokens: number): string {
+  let cjk = 0;
+  let other = 0;
+  let end = 0;
+  for (const ch of text) {
+    const nextCjk = CJK_CHAR.test(ch) ? cjk + 1 : cjk;
+    const nextOther = nextCjk === cjk ? other + ch.length : other;
+    if (Math.ceil(nextOther / 4) + nextCjk > maxTokens) break;
+    cjk = nextCjk;
+    other = nextOther;
+    end += ch.length;
+  }
+  return text.slice(0, end);
 }
 
 /**
@@ -155,16 +180,34 @@ export function enforceTokenBudget(
   results: SearchResult[],
   budget: number | undefined,
 ): { results: SearchResult[]; meta: TokenBudgetMeta } {
-  const { items, meta } = packToBudget(results, resultTokens, budget);
-  if (items.length === 0 && results.length > 0 && meta.budget > 0 && searchSalvageEnabled()) {
+  const safeBudget = typeof budget === 'number' && budget > 0 ? budget : 0;
+  if (safeBudget === 0 || results.length === 0) {
+    const passthrough = packToBudget(results, resultTokens, budget);
+    return { results: passthrough.items, meta: passthrough.meta };
+  }
+  // Once the head fits, a result that does not fit is skipped and packing
+  // continues: one oversized chunk must not drop every lower-ranked result
+  // after it. An oversized HEAD still takes the minKeep path below.
+  const items: SearchResult[] = [];
+  let used = 0;
+  for (const r of results) {
+    const c = resultTokens(r);
+    if (used + c <= safeBudget) {
+      items.push(r);
+      used += c;
+    } else if (items.length === 0) {
+      break;
+    }
+  }
+  const meta: TokenBudgetMeta = { budget: safeBudget, used, dropped: results.length - items.length, kept: items.length };
+  if (items.length === 0 && searchSalvageEnabled()) {
     const first = results[0];
-    // Chars that keep resultTokens(copy) <= budget under the char/4 model:
-    // ceil(4*(budget - titleCost)/4) = budget - titleCost. A sub-title-cost
-    // budget slices the title itself (budget*4 chars costs exactly budget
-    // tokens under ceil(len/4)), so used <= budget holds unconditionally.
-    const title = (first.title ?? '').slice(0, meta.budget * 4);
-    const chunkChars = Math.max(0, (meta.budget - estimateTokens(title)) * 4);
-    const copy: SearchResult = { ...first, title, chunk_text: first.chunk_text.slice(0, chunkChars) };
+    // Title first (a sub-title-cost budget slices the title itself), then
+    // the chunk gets what is left, both cut by estimated cost on code-point
+    // boundaries, so used <= budget holds unconditionally.
+    const title = sliceToTokens(first.title ?? '', meta.budget);
+    const chunk = sliceToTokens(first.chunk_text, meta.budget - estimateTokens(title));
+    const copy: SearchResult = { ...first, title, chunk_text: chunk };
     return {
       results: [copy],
       meta: {

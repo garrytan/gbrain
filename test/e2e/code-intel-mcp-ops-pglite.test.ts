@@ -111,6 +111,29 @@ describe('v0.34 W3 — code_callers / code_callees route to the engine', () => {
     const toNames = result.callees.map((c) => c.to_symbol_qualified);
     expect(toNames).toContain('parseMarkdown');
   });
+
+  // #4670: the op promises "bare or qualified name". Nested chunks (C# namespace
+  // + class, TS class methods, ...) carry a QUALIFIED from_symbol_qualified, so
+  // the bare method name used to return count 0 while the qualified form and
+  // code_callers on the bare callee both worked.
+  test('code_callees honors the documented bare-name contract for a qualified chunk (#4670)', async () => {
+    await seedQualifiedMethodGraph(engine);
+    const ctx = makeCtx(engine, 'source-a');
+    const op = operationsByName.code_callees!;
+    const bare = (await op.handler(ctx, { symbol: 'SubmitAsync' })) as {
+      count: number;
+      callees: Array<{ from_symbol_qualified: string; to_symbol_qualified: string }>;
+    };
+    expect(bare.count).toBe(1);
+    expect(bare.callees[0]!.from_symbol_qualified).toBe('MyApp.Services.OrderService.SubmitAsync');
+    expect(bare.callees[0]!.to_symbol_qualified).toBe('ValidateRequest');
+    // Qualified input is unchanged.
+    const qualified = (await op.handler(ctx, { symbol: 'MyApp.Services.OrderService.SubmitAsync' })) as { count: number };
+    expect(qualified.count).toBe(1);
+    // No substring leakage.
+    const partial = (await op.handler(ctx, { symbol: 'Async' })) as { count: number };
+    expect(partial.count).toBe(0);
+  });
 });
 
 describe('v0.34 W3 — code_callers source scoping', () => {
@@ -261,6 +284,21 @@ async function seedTwoFileGraph(engine: PGLiteEngine): Promise<void> {
   await insertUnresolvedEdge(engine, callerChunk, 'callerInA', 'parseMarkdown', 'source-a');
 }
 
+// #4670: one C#-shaped chunk whose identity is namespace-qualified while its
+// only call edge is emitted bare (edge-extractor keeps the trailing identifier).
+async function seedQualifiedMethodGraph(engine: PGLiteEngine): Promise<void> {
+  await registerSource(engine, 'source-a');
+  const page = await insertCodePage(engine, 'source-a', 'src/Services/OrderService.cs');
+  const rows = await engine.executeRaw<{ id: number }>(
+    `INSERT INTO content_chunks (page_id, chunk_index, chunk_text, chunk_source, language, symbol_name, symbol_name_qualified, symbol_type)
+     VALUES ($1, 0, 'public async Task SubmitAsync() { ValidateRequest(); }', 'compiled_truth', 'c_sharp', 'SubmitAsync', 'MyApp.Services.OrderService.SubmitAsync', 'method')
+     RETURNING id`,
+    [page],
+  );
+  await insertUnresolvedEdge(engine, rows[0]!.id, 'MyApp.Services.OrderService.SubmitAsync', 'ValidateRequest', 'source-a');
+  await engine.executeRaw('UPDATE pages SET text_projection_revision=knowledge_revision WHERE id=$1', [page]);
+}
+
 async function seedCrossSourceGraph(engine: PGLiteEngine): Promise<void> {
   await registerSource(engine, 'source-a');
   await registerSource(engine, 'source-b');
@@ -288,6 +326,7 @@ async function seedDefSite(engine: PGLiteEngine): Promise<void> {
      VALUES ($1, 0, 'export function parseMarkdown(s: string) { return s; }', 'compiled_truth', 'typescript', 'parseMarkdown', 'parseMarkdown', 'function', 1, 3)`,
     [pageA],
   );
+  await engine.executeRaw('UPDATE pages SET text_projection_revision=knowledge_revision WHERE id=$1', [pageA]);
 }
 
 async function registerSource(engine: PGLiteEngine, id: string): Promise<void> {
@@ -322,6 +361,7 @@ async function insertChunk(
      RETURNING id`,
     [pageId, chunkIndex, `// ${symbolName} body`, symbolName, symbolType],
   );
+  await engine.executeRaw('UPDATE pages SET text_projection_revision=knowledge_revision WHERE id=$1', [pageId]);
   return rows[0]!.id;
 }
 

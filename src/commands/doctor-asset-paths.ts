@@ -76,3 +76,21 @@ export function resolveImageAssetPath(
 ): AssetPathResolution {
   return resolveAssetPath(storagePath, sourceLocalPath ?? fallbackRepoRoot);
 }
+
+/**
+ * Which lane a files row's bytes live in, from its `metadata.storage` stamp
+ * (#4910). `'backend'` = an explicit non-git lane (supabase / s3 / the local
+ * backend root): storage_path is a bucket key, never a source-relative file,
+ * so only `gbrain files verify` can check it. `'local'` = explicit `git` OR
+ * no stamp at all — unmarked rows (sync-ingested, pre-fix writers) keep the
+ * on-disk stat so genuinely vanished repo assets are still caught. Accepts
+ * the #2339-era string-scalar shape like files verify does.
+ */
+export function imageAssetStorageLane(metadata: unknown): 'backend' | 'local' {
+  let meta = metadata;
+  if (typeof meta === 'string') {
+    try { meta = JSON.parse(meta); } catch { return 'local'; }
+  }
+  const lane = meta && typeof meta === 'object' ? (meta as Record<string, unknown>).storage : undefined;
+  return lane !== undefined && lane !== null && lane !== 'git' ? 'backend' : 'local';
+}

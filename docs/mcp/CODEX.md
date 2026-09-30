@@ -1,6 +1,6 @@
 # Connect GBrain to Codex
 
-Adding memory to an existing Codex agent preserves its identity and needs no private repository. Use the [memory-only walkthrough](../tutorials/connect-coding-agent.md). Connecting an existing hosted brain? Use [private handoff and profiles](../guides/hosted-harness-access.md), including configuration that survives a new shell.
+Adding memory to an existing Codex agent preserves its identity and needs no private repository. Use the [memory-only walkthrough](../tutorials/connect-coding-agent.md). Connecting an existing hosted brain? Choose [native OAuth or a private machine handoff](../guides/hosted-harness-access.md). Opening the owner dashboard or managing clients uses [MCP administration](ADMIN.md) with its separate owner credential.
 
 > New to this? The [Give your coding agent a memory](../tutorials/connect-coding-agent.md)
 > tutorial walks both paths (local-from-nothing and connect-to-an-existing-brain)
@@ -98,17 +98,31 @@ block, removable with `gbrain bootstrap harness --remove`.
 
 ## Fastest path: `gbrain connect`
 
-Run anywhere `gbrain` is installed (mint a token on the brain host first):
+Use the brain's configured HTTPS endpoint if it already has one. Otherwise,
+publish on the brain host with `gbrain mcp expose` (tailnet-only is enough for
+your own laptops; [remote MCP guide](../guides/remote-mcp.md)), which prints
+`https://your-machine.your-tailnet.ts.net/mcp`. Mint a token on the brain host,
+then run `gbrain connect` inside the intended client environment. Substitute
+the configured endpoint below for an existing ngrok or cloud-host deployment:
+
+**Say to your agent:** *"use my brain over mcp"* — *"put my brain on tailscale"*.
 
 ```bash
 gbrain auth create "codex"
-gbrain connect https://YOUR-DOMAIN.ngrok.app/mcp --token gbrain_xxx --agent codex
+gbrain connect https://your-machine.your-tailnet.ts.net/mcp --token gbrain_xxx --agent codex
 ```
+
+> **PGLite brains:** `gbrain auth create` opens the database, which fails with
+> `live_serve` while the expose-managed service holds it. Mint the token
+> **before** the service runs (ahead of `gbrain mcp expose`, or while the service
+> is stopped briefly), or provision through the running server instead —
+> `gbrain mcp grant … --admin-token-file ~/.gbrain/serve/admin-token` or the
+> `/admin` dashboard. Postgres brains mint fine while the server runs.
 
 This prints a copy-paste block. Or wire it up directly and smoke-test the token:
 
 ```bash
-gbrain connect https://YOUR-DOMAIN.ngrok.app/mcp --token gbrain_xxx --agent codex --install
+gbrain connect https://your-machine.your-tailnet.ts.net/mcp --token gbrain_xxx --agent codex --install
 ```
 
 `--install` runs `codex mcp add` for you, then makes one real call to the brain so
@@ -119,7 +133,7 @@ var at runtime, keep `GBRAIN_REMOTE_TOKEN` exported in your shell profile.
 
 ```bash
 export GBRAIN_REMOTE_TOKEN=gbrain_xxx
-codex mcp add gbrain --url https://YOUR-DOMAIN.ngrok.app/mcp \
+codex mcp add gbrain --url https://your-machine.your-tailnet.ts.net/mcp \
   --bearer-token-env-var GBRAIN_REMOTE_TOKEN
 ```
 
@@ -144,7 +158,7 @@ everything it can do.
 > prefer `capture` for quick notes (auto-slug + dedupe), `put_page` for
 > full-control writes; if a narrowed token's list lacks capture, use `put_page`.
 > Why brains differ on the default:
-> [tutorial A1](../tutorials/connect-coding-agent.md#a1-on-the-host-serve-over-http).
+> [tutorial A1](../tutorials/connect-coding-agent.md#a1-on-the-host-grant-memory-access).
 
 ## Remove
 

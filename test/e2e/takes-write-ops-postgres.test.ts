@@ -1,379 +1,352 @@
 /**
- * D6 e2e: takes WRITE ops through the OP layer against real Postgres.
- *
- * Scope: the src/core/ops/takes.ts handlers (takes_add / takes_update /
- * takes_resolve / takes_supersede) — the fence-first write journey, the
- * withPageLock serialization contract, and the mirror-availability envelope.
- * The engine-level Postgres bind shapes (addTakesBatch unnest, supersedeTake
- * transaction, resolveTake immutability at the ENGINE layer) are pinned by
- * test/e2e/takes-postgres.test.ts; nothing here duplicates them.
- *
- * Contracts pinned (read from the code, not assumed):
- *  - opBrainDir (ops/takes.ts): sync.repo_path unset OR pointing at a missing
- *    directory → OperationError code 'unavailable' with detail
- *    'takes_mirror_unavailable' (same envelope over MCP dispatch).
- *  - takes_add success: markdown fence is written FIRST (md-canonical), then
- *    the DB row is mirrored via addTakesBatch; result shape
- *    { slug, row_num, holder, mirror_written: true } with NO mirror_warning.
- *  - Two concurrent takes_add on one slug serialize under withPageLock
- *    (OP_LOCK_TIMEOUT_MS = 2000ms; the loser polls at 200ms while the
- *    winner's critical section is a few DB roundtrips), so BOTH succeed with
- *    distinct fence-derived row_nums. The retryable envelope only appears
- *    when a holder outlives the 2s budget — pinned separately by holding the
- *    page lock externally: TakesWriteError 'page_locked' maps to
- *    OperationError 'unavailable' with detail 'retryable'.
- *  - Resolved rows are immutable through the ops: takes_update and
- *    takes_supersede both map TakesWriteError 'already_resolved' →
- *    OperationError 'invalid_params' (suggestion 'Supersede instead.' from
- *    update; 'Add a new take instead.' from supersede).
- *  - takes_supersede closes + links: old row active=false with
- *    superseded_by=<new_row>; new row appended active at the next fence row
- *    number; the fence shows the old claim ~~struck through~~.
+ * Real PostgreSQL take mutations through the operation and MCP boundaries.
+ * Durable local principals, a claimed canonical root, and the native owner lock
+ * exercise journal serialization, pending receipts, and same-ID replay. Files,
+ * coherent snapshots, and structured take rows must agree after publication.
  */
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { setupDB, teardownDB, hasDatabase, getEngine } from './helpers.ts';
+import { dirname, join } from 'node:path';
+import { hasDatabase } from './helpers.ts';
+import { isolatedPersistencePostgres } from '../helpers/persistence-postgres.ts';
+import { withEnv } from '../helpers/with-env.ts';
+import type { PostgresEngine } from '../../src/core/postgres-engine.ts';
 import { operations, OperationError, type OperationContext } from '../../src/core/operations.ts';
 import { dispatchToolCall } from '../../src/mcp/dispatch.ts';
-import { TAKES_FENCE_BEGIN, TAKES_FENCE_END } from '../../src/core/takes-fence.ts';
-import { acquirePageLock } from '../../src/core/page-lock.ts';
+import { parseMarkdown, serializePageToMarkdown } from '../../src/core/markdown.ts';
+import { parseTakesFence, TAKES_FENCE_BEGIN, TAKES_FENCE_END } from '../../src/core/takes-fence.ts';
+import { registerLocalWriter, withVerifiedLocalRegistration, type LocalRegistration } from '../../src/core/persistence/identity.ts';
+import { claimWorktree, getWorktreeBinding } from '../../src/core/persistence/ownership.ts';
+import { acquireNativeLock } from '../../src/core/persistence/native-lock.ts';
+import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
+import type { WriteReceipt } from '../../src/core/persistence/types.ts';
 
 const RUN = hasDatabase();
 const d = RUN ? describe : describe.skip;
-
-// Page locks live under the REAL ~/.gbrain/page-locks (keyed by slug hash)
-// and survive test runs — a crashed prior run's lock file younger than the
-// 5-min TTL would block this run. Unique-per-run slugs sidestep that.
-const TAG = Date.now().toString(36);
-const ALICE_SLUG = `people/takes-ops-alice-${TAG}`;
-const LOCK_SLUG = `people/takes-ops-lock-${TAG}`;
-const LOCK_HELD_SLUG = `people/takes-ops-lockheld-${TAG}`;
-const RESOLVED_SLUG = `companies/takes-ops-resolved-${TAG}`;
-const SUPERSEDE_SLUG = `companies/takes-ops-supersede-${TAG}`;
-
+const FILE_SOURCE = 'takes-owner-example';
+const DB_SOURCE = 'takes-db-only-example';
+const UNCLAIMED_SOURCE = 'takes-unclaimed-example';
+const OWNER = 'people/owner-example';
+const SLUG = {
+  add: 'people/takes-add-example', concurrent: 'people/takes-concurrent-example',
+  held: 'people/takes-lock-example', resolved: 'companies/takes-resolved-example',
+  update: 'companies/takes-update-example', immutable: 'companies/takes-immutable-example',
+  supersede: 'companies/takes-supersede-example', database: 'people/takes-database-example',
+  unclaimed: 'people/takes-unclaimed-example',
+};
+const config = { engine: 'postgres' as const, embedding_disabled: true };
+let engine: PostgresEngine;
+let close: () => Promise<void>;
+let home: string;
 let repoDir: string;
-let alicePageId: number;
-let resolvedPageId: number;
-let supersedePageId: number;
+let cli: LocalRegistration;
+let stdio: LocalRegistration;
+type MutationResult = WriteReceipt & Record<string, unknown> & { write_request: WriteReceipt };
 
-function opByName(name: string) {
-  const op = operations.find(o => o.name === name);
-  if (!op) throw new Error(`operation not found in canonical array: ${name}`);
-  return op;
-}
-
-/** Ctx factory (copied from test/operations-source-isolation-matrix.test.ts;
- * sourceId is REQUIRED on the type). remote:false = trusted local caller —
- * takesWriteAllowList(ctx) returns null, so the holder fence is off and the
- * tests exercise the write journey itself. */
 function ctxOf(overrides: Partial<OperationContext> = {}): OperationContext {
   return {
-    engine: getEngine() as any,
-    config: {} as any,
-    logger: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} } as any,
-    dryRun: false,
-    remote: false,
-    sourceId: 'default',
-    ...overrides,
-  } as OperationContext;
+    engine, config, logger: { info() {}, warn() {}, error() {} },
+    dryRun: false, remote: false, sourceId: FILE_SOURCE, ...overrides,
+  };
 }
 
-async function expectOpError(p: Promise<unknown>): Promise<OperationError> {
-  try {
-    await p;
-  } catch (e) {
-    expect(e).toBeInstanceOf(OperationError);
-    return e as OperationError;
+async function inBrain<T>(run: () => Promise<T>): Promise<T> {
+  return withEnv({ GBRAIN_HOME: home }, async () => {
+    try { return await run(); }
+    finally { await disposePersistenceConsumer(engine); }
+  });
+}
+
+function call(operation: string, params: Record<string, unknown>, ctx = ctxOf()) {
+  const op = operations.find(o => o.name === operation)!;
+  return withVerifiedLocalRegistration(engine, ctx.remote ? stdio : cli,
+    () => op.handler(ctx, params));
+}
+
+/** A lost/pending acknowledgment retries only the original, caller-owned ID. */
+async function committed(operation: string, params: Record<string, unknown> & { request_id: string }, ctx = ctxOf()): Promise<MutationResult> {
+  expect(params.request_id).toBeString();
+  const deadline = Date.now() + 25_000;
+  while (true) {
+    try {
+      const result = await call(operation, params, ctx) as MutationResult;
+      expect(result.state).toBe('committed');
+      expect(result.write_request.request_id).toBe(params.request_id);
+      return result;
+    } catch (error) {
+      if (!(error instanceof OperationError) || error.code !== 'write_pending' || Date.now() >= deadline) throw error;
+      expect(error.writeRequest?.request_id).toBe(params.request_id);
+    }
   }
-  throw new Error('expected the op to throw an OperationError, but it succeeded');
 }
 
-function pageFile(slug: string): string {
-  // Default source, no sources.local_path, DB-born page (no recorded
-  // source_path) → resolveTakesFilePath falls back to <brainDir>/<slug>.md.
-  return join(repoDir, `${slug}.md`);
+async function expectOpError(pending: Promise<unknown>): Promise<OperationError> {
+  try { await pending; }
+  catch (error) { expect(error).toBeInstanceOf(OperationError); return error as OperationError; }
+  throw new Error('Expected an OperationError.');
+}
+
+function pageFile(slug: string) { return join(repoDir, `${slug}.md`); }
+async function snapshot(slug: string, sourceId = FILE_SOURCE) {
+  const value = await engine.readPageSnapshot(slug, { sourceId });
+  expect(value).not.toBeNull();
+  return value!;
+}
+async function canonical(slug: string) {
+  const state = await snapshot(slug);
+  const bytes = readFileSync(pageFile(slug), 'utf8');
+  // Compare all canonical fields without depending on PostgreSQL JSONB key order.
+  expect(parseMarkdown(bytes, slug)).toEqual(parseMarkdown(serializePageToMarkdown(state.page, state.tags), slug));
+  expect(parseTakesFence(bytes)).toEqual(parseTakesFence(state.page.compiled_truth));
+  return { state, bytes };
+}
+async function rows(slug: string, sourceId = FILE_SOURCE) {
+  const page_id = (await snapshot(slug, sourceId)).page.id;
+  const [active, inactive] = await Promise.all([
+    engine.listTakes({ page_id, sourceId, active: true }),
+    engine.listTakes({ page_id, sourceId, active: false }),
+  ]);
+  return [...active, ...inactive].sort((a, b) => a.row_num - b.row_num);
+}
+async function journalRows(requestId: string, registration: LocalRegistration) {
+  return engine.executeRaw(`SELECT request_id,state FROM persistence_requests
+    WHERE principal_kind=$1 AND principal_id=$2 AND request_id=$3::uuid`,
+  [registration.lane === 'cli' ? 'local_cli' : 'local_stdio', registration.id, requestId]);
+}
+async function mcp(operation: string, params: Record<string, unknown>, sourceId = FILE_SOURCE) {
+  return withVerifiedLocalRegistration(engine, stdio, () => dispatchToolCall(engine, operation, params,
+    { remote: true, transport: 'stdio', sourceId, config, takesHoldersAllowList: ['world'] }));
 }
 
 beforeAll(async () => {
   if (!RUN) return;
-  const engine = await setupDB();
-  repoDir = mkdtempSync(join(tmpdir(), 'gbrain-takes-ops-'));
-  await engine.setConfig('sync.repo_path', repoDir);
-  const alice = await engine.putPage(ALICE_SLUG, {
-    title: 'Alice', type: 'person', compiled_truth: '## Takes\n',
+  home = mkdtempSync(join(tmpdir(), 'gbrain-takes-postgres-'));
+  repoDir = join(home, 'canonical');
+  mkdirSync(repoDir);
+  await withEnv({ GBRAIN_HOME: home }, async () => {
+    ({ engine, close } = await isolatedPersistencePostgres(process.env.DATABASE_URL!));
+    for (const [source, root] of [[FILE_SOURCE, repoDir], [DB_SOURCE, null],
+      [UNCLAIMED_SOURCE, join(home, 'missing')]] as const) {
+      await engine.executeRaw('INSERT INTO sources(id,name,local_path) VALUES($1,$1,$2)', [source, root]);
+    }
+    cli = await registerLocalWriter(engine, 'cli');
+    stdio = await registerLocalWriter(engine, 'stdio', {
+      sourceIds: [FILE_SOURCE, DB_SOURCE, UNCLAIMED_SOURCE],
+      operations: ['takes_add', 'takes_update', 'takes_resolve', 'takes_supersede'],
+      scopes: ['read', 'write'], slugPrefixes: null,
+    });
+    // Seed coherent canonical fixtures before claiming ownership. A database-only
+    // fixture in an owned filesystem source would correctly refuse publication.
+    for (const slug of Object.values(SLUG)) {
+      const sourceId = slug === SLUG.database ? DB_SOURCE : slug === SLUG.unclaimed ? UNCLAIMED_SOURCE : FILE_SOURCE;
+      const type = slug.startsWith('companies/') ? 'company' : 'person';
+      const parsed = parseMarkdown(`---\ntitle: ${slug}\ntype: ${type}\n---\n\n## Takes\n`, slug);
+      await engine.putPage(slug, parsed, { sourceId });
+      if (sourceId === FILE_SOURCE) {
+        const state = await snapshot(slug);
+        mkdirSync(dirname(pageFile(slug)), { recursive: true });
+        writeFileSync(pageFile(slug), serializePageToMarkdown(state.page, state.tags));
+      }
+    }
+    await claimWorktree(engine, FILE_SOURCE, repoDir);
   });
-  alicePageId = alice.id;
-  await engine.putPage(LOCK_SLUG, {
-    title: 'Lock journey', type: 'person', compiled_truth: '## Takes\n',
-  });
-  await engine.putPage(LOCK_HELD_SLUG, {
-    title: 'Lock held', type: 'person', compiled_truth: '## Takes\n',
-  });
-  const resolved = await engine.putPage(RESOLVED_SLUG, {
-    title: 'Resolved fixture', type: 'company', compiled_truth: '## Takes\n',
-  });
-  resolvedPageId = resolved.id;
-  const sup = await engine.putPage(SUPERSEDE_SLUG, {
-    title: 'Supersede fixture', type: 'company', compiled_truth: '## Takes\n',
-  });
-  supersedePageId = sup.id;
-});
+}, 60_000);
 
 afterAll(async () => {
   if (!RUN) return;
-  await teardownDB();
-  if (repoDir) rmSync(repoDir, { recursive: true, force: true });
+  try {
+    await withEnv({ GBRAIN_HOME: home }, async () => {
+      if (engine) await disposePersistenceConsumer(engine);
+      if (close) await close();
+    });
+  } finally { if (home) rmSync(home, { recursive: true, force: true }); }
 });
 
-d('takes_add mirror availability — both arms of opBrainDir', () => {
-  test('sync.repo_path unset → unavailable + takes_mirror_unavailable (handler throw AND MCP envelope)', async () => {
-    const engine = getEngine();
-    await engine.unsetConfig('sync.repo_path');
-    try {
-      // Direct handler: typed OperationError.
-      const err = await expectOpError(
-        opByName('takes_add').handler(ctxOf(), {
-          slug: ALICE_SLUG, claim: 'Never lands', kind: 'take', holder: 'garry',
-        }),
-      );
-      expect(err.code).toBe('unavailable');
-      expect(err.detail).toBe('takes_mirror_unavailable');
-      expect(err.suggestion).toContain('sync.repo_path');
+d('take persistence routing', () => {
+  test('an intentional database-only source commits canonical content, rows, and a replayable receipt', () => inBrain(async () => {
+    const params = { request_id: randomUUID(), slug: SLUG.database, claim: 'Durable without a repository', kind: 'take', holder: OWNER };
+    const ctx = ctxOf({ sourceId: DB_SOURCE });
+    const result = await committed('takes_add', params, ctx);
+    const state = await snapshot(SLUG.database, DB_SOURCE);
+    expect(result.persistence?.mode).toBe('database');
+    expect(result.mirror_written).toBe(false);
+    expect(result.revision).toBe(state.revision);
+    expect(parseTakesFence(state.page.compiled_truth).takes[0].claim).toBe(params.claim);
+    expect((await rows(SLUG.database, DB_SOURCE))[0]).toMatchObject({ row_num: 1, claim: params.claim, holder: OWNER, active: true });
+    expect(existsSync(pageFile(SLUG.database))).toBe(false);
+    const replay = await committed('takes_add', params, ctx);
+    expect(replay.revision).toBe(state.revision);
+    expect(replay.created_at).toBe(result.created_at);
+    expect(await rows(SLUG.database, DB_SOURCE)).toHaveLength(1);
+    expect(await journalRows(params.request_id, cli)).toHaveLength(1);
+  }));
 
-      // Same contract over MCP dispatch: the error envelope.
-      const result = await dispatchToolCall(engine, 'takes_add', {
-        slug: ALICE_SLUG, claim: 'Never lands', kind: 'take', holder: 'world',
-      }, { remote: true, transport: 'stdio', sourceId: 'default' });
-      expect(result.isError).toBe(true);
-      const envelope = JSON.parse(result.content[0].text);
-      expect(envelope.error).toBe('unavailable');
-      expect(envelope.detail).toBe('takes_mirror_unavailable');
-
-      // Nothing was written: no markdown twin, no DB row.
-      expect(existsSync(pageFile(ALICE_SLUG))).toBe(false);
-      expect(await engine.listTakes({ page_id: alicePageId })).toHaveLength(0);
-    } finally {
-      await engine.setConfig('sync.repo_path', repoDir);
-    }
-  });
-
-  test('sync.repo_path set but the directory is missing on disk → same envelope', async () => {
-    const engine = getEngine();
-    await engine.setConfig('sync.repo_path', join(repoDir, 'does-not-exist'));
-    try {
-      const err = await expectOpError(
-        opByName('takes_add').handler(ctxOf(), {
-          slug: ALICE_SLUG, claim: 'Never lands either', kind: 'take', holder: 'garry',
-        }),
-      );
-      expect(err.code).toBe('unavailable');
-      expect(err.detail).toBe('takes_mirror_unavailable');
-    } finally {
-      await engine.setConfig('sync.repo_path', repoDir);
-    }
-  });
+  test('an unclaimed configured root refuses before admission in the handler and MCP envelope', () => inBrain(async () => {
+    const before = await snapshot(SLUG.unclaimed, UNCLAIMED_SOURCE);
+    const params = { request_id: randomUUID(), slug: SLUG.unclaimed, claim: 'Must not land', kind: 'take', holder: 'world' };
+    const error = await expectOpError(call('takes_add', params, ctxOf({ sourceId: UNCLAIMED_SOURCE })));
+    expect(error.code).toBe('owner_unavailable');
+    expect(error.writeRequest).toBeUndefined();
+    const response = await mcp('takes_add', params, UNCLAIMED_SOURCE);
+    expect(response.isError).toBe(true);
+    const envelope = JSON.parse(response.content[0].text);
+    expect(envelope.error).toBe('owner_unavailable');
+    expect(envelope.write_request).toBeUndefined();
+    expect(await snapshot(SLUG.unclaimed, UNCLAIMED_SOURCE)).toEqual(before);
+    expect(await rows(SLUG.unclaimed, UNCLAIMED_SOURCE)).toHaveLength(0);
+    expect(await journalRows(params.request_id, cli)).toHaveLength(0);
+    expect(await journalRows(params.request_id, stdio)).toHaveLength(0);
+    expect(existsSync(join(home, 'missing'))).toBe(false);
+  }));
 });
 
-d('takes_add fence-first journey — op handler on real Postgres', () => {
-  test('markdown fence row lands + DB mirror row lands; success shape pinned', async () => {
-    const engine = getEngine();
-    const result = await opByName('takes_add').handler(ctxOf(), {
-      slug: ALICE_SLUG,
-      claim: 'Ships weekly at demo day',
-      kind: 'take',
-      holder: 'garry',
-      weight: 0.8,
-      source: 'oh-notes',
-      since: '2026-08',
-    }) as { slug: string; row_num: number; holder: unknown; mirror_written: boolean; mirror_warning?: string };
-
-    expect(result.slug).toBe(ALICE_SLUG);
-    expect(result.row_num).toBe(1);
-    expect(result.holder).toBe('garry');
-    expect(result.mirror_written).toBe(true);
-    // A healthy PG mirror produces NO warning (mirror_warning is the
-    // md-written-but-DB-deferred signal; its presence here would mean the
-    // real addTakesBatch bind path failed).
+d('canonical take publication and native owner serialization', () => {
+  test('add publishes the full fence and structured row together; replay preserves exact bytes and revision', () => inBrain(async () => {
+    const params = { request_id: randomUUID(), slug: SLUG.add, claim: 'Ships weekly at demo day', kind: 'take',
+      holder: OWNER, weight: 0.8, source: 'office-hours-notes', since: '2026-08' };
+    const result = await committed('takes_add', params);
+    expect(result).toMatchObject({ slug: SLUG.add, row_num: 1, holder: OWNER, mirror_written: true });
+    expect(result.persistence).toMatchObject({ mode: 'filesystem', file_written: true });
     expect(result.mirror_warning).toBeUndefined();
-
-    // Markdown (canonical) — file created, fence present, exact rendered row.
-    const md = readFileSync(pageFile(ALICE_SLUG), 'utf-8');
-    expect(md).toContain(TAKES_FENCE_BEGIN);
-    expect(md).toContain(TAKES_FENCE_END);
-    expect(md).toContain('| 1 | Ships weekly at demo day | take | garry | 0.8 | 2026-08 | oh-notes |');
-
-    // DB mirror — read back through the engine.
-    const takes = await engine.listTakes({ page_id: alicePageId });
+    const before = await canonical(SLUG.add);
+    expect(result.revision).toBe(before.state.revision);
+    expect(before.bytes).toContain(TAKES_FENCE_BEGIN);
+    expect(before.bytes).toContain(TAKES_FENCE_END);
+    expect(before.bytes).toContain(`| 1 | Ships weekly at demo day | take | ${OWNER} | 0.8 | 2026-08 | office-hours-notes |`);
+    const takes = await rows(SLUG.add);
     expect(takes).toHaveLength(1);
-    expect(takes[0].row_num).toBe(1);
-    expect(takes[0].claim).toBe('Ships weekly at demo day');
-    expect(takes[0].kind).toBe('take');
-    expect(takes[0].holder).toBe('garry');
+    expect(takes[0]).toMatchObject({ row_num: 1, claim: params.claim, kind: 'take', holder: OWNER, source: params.source, active: true });
     expect(takes[0].weight).toBeCloseTo(0.8, 5);
-    expect(takes[0].source).toBe('oh-notes');
-    expect(takes[0].active).toBe(true);
-  });
-});
+    const replay = await committed('takes_add', params);
+    expect(replay.revision).toBe(result.revision);
+    expect(await canonical(SLUG.add)).toEqual(before);
+    expect(await rows(SLUG.add)).toEqual(takes);
+  }));
 
-d('withPageLock serialization — the lock journey', () => {
-  test('two concurrent takes_add for the same slug BOTH succeed, serialized to distinct row_nums', async () => {
-    const engine = getEngine();
-    const add = opByName('takes_add');
-    // Fire both without awaiting: the loser's acquirePageLock polls (200ms)
-    // inside the 2000ms op budget while the winner finishes its critical
-    // section, so the real contract is both-succeed, never a retryable error.
-    const [r1, r2] = await Promise.all([
-      add.handler(ctxOf(), { slug: LOCK_SLUG, claim: 'concurrent claim alpha', kind: 'take', holder: 'garry' }),
-      add.handler(ctxOf(), { slug: LOCK_SLUG, claim: 'concurrent claim beta', kind: 'take', holder: 'garry' }),
-    ]) as Array<{ row_num: number; mirror_written: boolean; mirror_warning?: string }>;
-
-    expect(r1.mirror_written).toBe(true);
-    expect(r2.mirror_written).toBe(true);
-    expect(r1.mirror_warning).toBeUndefined();
-    expect(r2.mirror_warning).toBeUndefined();
-    // Fence-derived row numbers: the second writer re-reads the fence AFTER
-    // the first released the lock, so the rows are dense and distinct.
-    expect([r1.row_num, r2.row_num].sort()).toEqual([1, 2]);
-
-    // Both claims durable in the DB mirror...
-    const page = await engine.getPage(LOCK_SLUG, { sourceId: 'default' });
-    const takes = await engine.listTakes({ page_id: page!.id });
+  test('two concurrent requests serialize to distinct dense row numbers and replay without duplication', () => inBrain(async () => {
+    const params = ['alpha', 'beta'].map(label => ({ request_id: randomUUID(), slug: SLUG.concurrent,
+      claim: `Concurrent claim ${label}`, kind: 'take', holder: OWNER }));
+    const results = await Promise.all(params.map(p => committed('takes_add', p)));
+    expect(results.map(r => r.row_num).sort()).toEqual([1, 2]);
+    for (const result of results) expect(result.mirror_written).toBe(true);
+    const before = await canonical(SLUG.concurrent);
+    const takes = await rows(SLUG.concurrent);
     expect(takes).toHaveLength(2);
-    expect(new Set(takes.map(t => t.claim)))
-      .toEqual(new Set(['concurrent claim alpha', 'concurrent claim beta']));
+    expect(new Set(takes.map(t => t.claim))).toEqual(new Set(params.map(p => p.claim)));
+    expect(before.bytes.split(TAKES_FENCE_BEGIN).length - 1).toBe(1);
+    await Promise.all(params.map(p => committed('takes_add', p)));
+    expect(await canonical(SLUG.concurrent)).toEqual(before);
+    expect(await rows(SLUG.concurrent)).toEqual(takes);
+  }), 30_000);
 
-    // ...and in the markdown, with exactly ONE fence (no torn/duplicated
-    // fence from an unserialized read-modify-write).
-    const md = readFileSync(pageFile(LOCK_SLUG), 'utf-8');
-    expect(md).toContain('concurrent claim alpha');
-    expect(md).toContain('concurrent claim beta');
-    expect(md.split(TAKES_FENCE_BEGIN).length - 1).toBe(1);
-  }, 30_000);
-
-  test('a lock held past the 2s op budget → unavailable + detail retryable (page_locked)', async () => {
-    // Hold the REAL lock (same default lock root the op resolves) so the
-    // op's 2000ms acquire budget deterministically expires.
-    const held = await acquirePageLock(LOCK_HELD_SLUG, { timeoutMs: 0 });
+  test('holding the actual owner lock returns the same pending receipt over both transports, then commits once', () => inBrain(async () => {
+    const binding = (await getWorktreeBinding(engine, FILE_SOURCE))!;
+    const held = await acquireNativeLock(binding.coordination_path!, { timeoutMs: 0 });
     expect(held).not.toBeNull();
+    const before = await canonical(SLUG.held);
+    const params = { request_id: randomUUID(), slug: SLUG.held, claim: 'Waits for the owner lock', kind: 'take', holder: 'world' };
+    const ctx = ctxOf({ remote: true, transport: 'stdio', takesHoldersAllowList: ['world'] });
+    let acceptedAt: string | undefined;
     try {
-      const err = await expectOpError(
-        opByName('takes_add').handler(ctxOf(), {
-          slug: LOCK_HELD_SLUG, claim: 'blocked by holder', kind: 'take', holder: 'garry',
-        }),
-      );
-      expect(err.code).toBe('unavailable');
-      expect(err.detail).toBe('retryable');
-      expect(err.message).toContain('page lock');
-      expect(err.suggestion).toBe('Retry shortly.');
-    } finally {
-      await held!.release();
-    }
-    // No row leaked through while the lock was held.
-    const engine = getEngine();
-    const page = await engine.getPage(LOCK_HELD_SLUG, { sourceId: 'default' });
-    expect(await engine.listTakes({ page_id: page!.id })).toHaveLength(0);
-  }, 30_000);
+      const error = await expectOpError(call('takes_add', params, ctx));
+      expect(error.code).toBe('write_pending');
+      expect(error.writeRequest?.request_id).toBe(params.request_id);
+      expect(['queued', 'running']).toContain(error.writeRequest!.state);
+      acceptedAt = error.writeRequest?.created_at;
+      expect(acceptedAt).toBeString();
+      const response = await mcp('takes_add', params);
+      expect(response.isError).toBe(true);
+      const envelope = JSON.parse(response.content[0].text);
+      expect(envelope.error).toBe('write_pending');
+      expect(envelope.write_request.request_id).toBe(params.request_id);
+      expect(envelope.write_request.created_at).toBe(acceptedAt);
+      expect(await journalRows(params.request_id, stdio)).toHaveLength(1);
+      expect(await canonical(SLUG.held)).toEqual(before);
+      expect(await rows(SLUG.held)).toHaveLength(0);
+    } finally { await held!.release(); }
+    const result = await committed('takes_add', params, ctx);
+    expect(result.created_at).toEqual(acceptedAt);
+    expect(result.revision).not.toBe(before.state.revision);
+    const after = await canonical(SLUG.held);
+    expect(result.revision).toBe(after.state.revision);
+    expect(await rows(SLUG.held)).toHaveLength(1);
+    await committed('takes_add', params, ctx);
+    expect(await canonical(SLUG.held)).toEqual(after);
+    expect(await rows(SLUG.held)).toHaveLength(1);
+  }), 30_000);
 });
 
-d('resolved takes are immutable through the ops', () => {
-  test('takes_resolve lands the resolution in fence + DB (resolved_by honored for local callers)', async () => {
-    const engine = getEngine();
-    const added = await opByName('takes_add').handler(ctxOf(), {
-      slug: RESOLVED_SLUG, claim: 'Will close the round by Q4', kind: 'bet', holder: 'garry', weight: 0.6,
-    }) as { row_num: number };
-    expect(added.row_num).toBe(1);
+async function resolvedFixture(slug: string) {
+  await committed('takes_add', { request_id: randomUUID(), slug, claim: 'Will close the round by Q4', kind: 'bet', holder: OWNER, weight: 0.6 });
+  const params = { request_id: randomUUID(), slug, row_num: 1, quality: 'correct',
+    evidence: 'Round closed', value: 25, unit: 'usd', resolved_by: OWNER };
+  return { params, result: await committed('takes_resolve', params) };
+}
 
-    const result = await opByName('takes_resolve').handler(ctxOf(), {
-      slug: RESOLVED_SLUG, row_num: 1, quality: 'correct',
-      evidence: 'round closed', value: 25, unit: 'usd', resolved_by: 'garry',
-    }) as { slug: string; row_num: number; quality: string; resolved_by: string; mirror_warning?: string };
-    expect(result.row_num).toBe(1);
-    expect(result.quality).toBe('correct');
-    expect(result.resolved_by).toBe('garry');
+d('resolved takes remain immutable', () => {
+  test('resolve preserves the full resolution tuple and local resolver on canonical replay', () => inBrain(async () => {
+    const { params, result } = await resolvedFixture(SLUG.resolved);
+    expect(result).toMatchObject({ row_num: 1, quality: 'correct', resolved_by: OWNER });
     expect(result.mirror_warning).toBeUndefined();
-
-    // Fence widened to the 13-column resolved shape.
-    const md = readFileSync(pageFile(RESOLVED_SLUG), 'utf-8');
-    expect(md).toContain('| correct |');
-    expect(md).toContain('round closed');
-
-    // DB mirror carries the full resolution tuple.
-    const [row] = await engine.listTakes({ page_id: resolvedPageId, resolved: true });
-    expect(row.row_num).toBe(1);
-    expect(row.resolved_quality).toBe('correct');
-    expect(row.resolved_outcome).toBe(true);
-    expect(row.resolved_by).toBe('garry');
-    expect(row.resolved_value).toBe(25);
-    expect(row.resolved_at).not.toBeNull();
-  });
-
-  test('takes_update on a resolved row → invalid_params, suggestion "Supersede instead."', async () => {
-    const err = await expectOpError(
-      opByName('takes_update').handler(ctxOf(), {
-        slug: RESOLVED_SLUG, row_num: 1, weight: 0.9,
-      }),
-    );
-    expect(err.code).toBe('invalid_params');
-    expect(err.message).toContain('resolved');
-    expect(err.suggestion).toBe('Supersede instead.');
-  });
-
-  test('takes_supersede on a resolved row → invalid_params, suggestion "Add a new take instead."', async () => {
-    const err = await expectOpError(
-      opByName('takes_supersede').handler(ctxOf(), {
-        slug: RESOLVED_SLUG, row_num: 1, claim: 'revised claim that must be refused',
-      }),
-    );
-    expect(err.code).toBe('invalid_params');
-    expect(err.message).toContain('resolved');
-    expect(err.suggestion).toBe('Add a new take instead.');
-
-    // The refusals left the page untouched: still exactly one take row.
-    const engine = getEngine();
-    const takes = await engine.listTakes({ page_id: resolvedPageId, active: true });
+    const before = await canonical(SLUG.resolved);
+    expect(before.bytes).toContain('| correct |');
+    expect(before.bytes).toContain('Round closed');
+    const takes = await rows(SLUG.resolved);
     expect(takes).toHaveLength(1);
-    expect(takes[0].weight).toBeCloseTo(0.6, 5);
-  });
+    expect(takes[0]).toMatchObject({ row_num: 1, resolved_quality: 'correct', resolved_outcome: true,
+      resolved_by: OWNER, resolved_value: 25, resolved_unit: 'usd', resolved_source: 'Round closed' });
+    expect(takes[0].resolved_at).not.toBeNull();
+    await committed('takes_resolve', params);
+    expect(await canonical(SLUG.resolved)).toEqual(before);
+    expect(await rows(SLUG.resolved)).toEqual(takes);
+  }));
+
+  for (const [operation, slug, change] of [
+    ['takes_update', SLUG.update, { weight: 0.9 }],
+    ['takes_supersede', SLUG.immutable, { claim: 'Refused replacement' }],
+  ] as const) {
+    test(`${operation} returns a terminal invalid_params receipt and preserves the resolved row on replay`, () => inBrain(async () => {
+      await resolvedFixture(slug);
+      const before = await canonical(slug);
+      const takes = await rows(slug);
+      const params = { request_id: randomUUID(), slug, row_num: 1, ...change };
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const error = await expectOpError(call(operation, params));
+        expect(error.code).toBe('invalid_params');
+        expect(error.message.toLowerCase()).toContain('resolved');
+        expect(error.writeRequest).toMatchObject({ request_id: params.request_id, state: 'failed' });
+      }
+      expect(await canonical(slug)).toEqual(before);
+      expect(await rows(slug)).toEqual(takes);
+      expect(takes).toHaveLength(1);
+      expect(takes[0].weight).toBeCloseTo(0.6, 5);
+      expect(await journalRows(params.request_id, cli)).toHaveLength(1);
+    }));
+  }
 });
 
-d('takes_supersede closes the old row and links the new one', () => {
-  test('old row → active=false + superseded_by pointer; new row appended active; fence struck through', async () => {
-    const engine = getEngine();
-    const added = await opByName('takes_add').handler(ctxOf(), {
-      slug: SUPERSEDE_SLUG, claim: 'Will hit 10M ARR by Q4', kind: 'bet', holder: 'garry', weight: 0.6,
-    }) as { row_num: number };
-    expect(added.row_num).toBe(1);
-
-    // No kind/holder/weight overrides: kind+holder inherit, weight decays 0.1.
-    const result = await opByName('takes_supersede').handler(ctxOf(), {
-      slug: SUPERSEDE_SLUG, row_num: 1, claim: 'Will hit 8M ARR by Q4 (revised)',
-    }) as { slug: string; old_row: number; new_row: number; mirror_warning?: string };
-    expect(result.old_row).toBe(1);
-    expect(result.new_row).toBe(2);
+d('supersede publication', () => {
+  test('closes and links the old row, inherits metadata, and appends the replacement exactly once', () => inBrain(async () => {
+    await committed('takes_add', { request_id: randomUUID(), slug: SLUG.supersede,
+      claim: 'Will hit 10M ARR by Q4', kind: 'bet', holder: OWNER, weight: 0.6 });
+    const params = { request_id: randomUUID(), slug: SLUG.supersede, row_num: 1, claim: 'Will hit 8M ARR by Q4 (revised)' };
+    const result = await committed('takes_supersede', params);
+    expect(result).toMatchObject({ old_row: 1, new_row: 2 });
     expect(result.mirror_warning).toBeUndefined();
-
-    // DB: the real columns. Old row closed + linked, new row active.
-    const inactive = await engine.listTakes({ page_id: supersedePageId, active: false });
-    expect(inactive).toHaveLength(1);
-    expect(inactive[0].row_num).toBe(1);
-    expect(inactive[0].active).toBe(false);
-    expect(inactive[0].superseded_by).toBe(2);
-    expect(inactive[0].claim).toBe('Will hit 10M ARR by Q4');
-
-    const active = await engine.listTakes({ page_id: supersedePageId, active: true });
-    expect(active).toHaveLength(1);
-    expect(active[0].row_num).toBe(2);
-    expect(active[0].claim).toBe('Will hit 8M ARR by Q4 (revised)');
-    expect(active[0].kind).toBe('bet');       // inherited
-    expect(active[0].holder).toBe('garry');   // inherited
-    expect(active[0].weight).toBeCloseTo(0.5, 2); // 0.6 decayed by 0.1
-    expect(active[0].superseded_by).toBeNull();
-
-    // Markdown archaeology: old claim struck through, replacement active.
-    const md = readFileSync(pageFile(SUPERSEDE_SLUG), 'utf-8');
-    expect(md).toContain('~~Will hit 10M ARR by Q4~~');
-    expect(md).toContain('| 2 | Will hit 8M ARR by Q4 (revised) |');
-  });
+    const takes = await rows(SLUG.supersede);
+    expect(takes).toHaveLength(2);
+    const old = takes.find(t => t.row_num === 1)!;
+    const replacement = takes.find(t => t.row_num === 2)!;
+    expect(old).toMatchObject({ active: false, superseded_by: 2, claim: 'Will hit 10M ARR by Q4' });
+    expect(replacement).toMatchObject({ active: true, superseded_by: null, claim: params.claim, kind: 'bet', holder: OWNER });
+    expect(replacement.weight).toBeCloseTo(0.5, 2);
+    const before = await canonical(SLUG.supersede);
+    expect(before.bytes).toContain('~~Will hit 10M ARR by Q4~~');
+    expect(before.bytes).toContain('| 2 | Will hit 8M ARR by Q4 (revised) |');
+    await committed('takes_supersede', params);
+    expect(await canonical(SLUG.supersede)).toEqual(before);
+    expect(await rows(SLUG.supersede)).toEqual(takes);
+  }));
 });

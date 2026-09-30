@@ -3,7 +3,6 @@ import {
   extractMarkdownLinks,
   extractLinksFromFile,
   extractTimelineFromContent,
-  walkMarkdownFiles,
 } from '../src/commands/extract.ts';
 
 describe('extractMarkdownLinks', () => {
@@ -348,12 +347,6 @@ Real claim. [Source: memo, 2025-01-02]`;
   });
 });
 
-describe('walkMarkdownFiles', () => {
-  it('is a function', () => {
-    expect(typeof walkMarkdownFiles).toBe('function');
-  });
-});
-
 describe('extractLinksFromFile — slug normalization (T-OBS-1 regression)', () => {
   // Regression coverage for the bug where CAPS-named files (ETHOS.md, AGENTS.md)
   // generated CAPS slugs from `relPath.replace('.md', '')` while the DB stores
@@ -400,5 +393,25 @@ describe('extractLinksFromFile — slug normalization (T-OBS-1 regression)', () 
     );
     expect(links.length).toBeGreaterThanOrEqual(1);
     expect(links[0].from_slug).toBe('decisions/0001-living-repo-pattern');
+  });
+});
+
+// #4995: the FS walker's mdPattern required `.md)` to be adjacent, so an
+// anchored link (`[B](b.md#section)`) produced no edge — while its own doc
+// comment promised anchors are stripped.
+describe('#4995 — anchored markdown links on the FS path', () => {
+  it('extractMarkdownLinks strips the #anchor', () => {
+    const links = extractMarkdownLinks('[see](b.md#section) and [D](../registry/tally.md#a b)');
+    expect(links).toHaveLength(2);
+    expect(links[0].relTarget).toBe('b.md');
+    expect(links[1].relTarget).toBe('../registry/tally.md');
+  });
+
+  it('extractLinksFromFile links an anchored sibling', async () => {
+    const allSlugs = new Set(['a', 'b']);
+    const links = await extractLinksFromFile('See [B](b.md#section).', 'a.md', allSlugs);
+    expect(links).toHaveLength(1);
+    expect(links[0].from_slug).toBe('a');
+    expect(links[0].to_slug).toBe('b');
   });
 });

@@ -862,6 +862,37 @@ describe('handler-entry capability gate on the config-resolved model', () => {
 // ── #4217 structural write accounting ───────────────────────
 
 describe('write accounting (#4217)', () => {
+  test('gateway text-only completion fails required writes and replay spends no more tokens (#5098)', async () => {
+    const { configureGateway, resetGateway, __setChatTransportForTests } = await import('../src/core/ai/gateway.ts');
+    configureGateway({ env: {} });
+    let calls = 0;
+    __setChatTransportForTests(async () => {
+      calls++;
+      return {
+        model: 'openai:gpt-5.2', providerId: 'openai', text: 'brain_put_page({"slug":"notes/example"})',
+        blocks: [{ type: 'text', text: 'brain_put_page({"slug":"notes/example"})' }], stopReason: 'end',
+        usage: { input_tokens: 10, output_tokens: 5, cache_read_tokens: 0, cache_creation_tokens: 0 },
+      };
+    });
+    await engine.setConfig('agent.use_gateway_loop', 'true');
+    try {
+      const handler = makeSubagentHandler({ engine, client: new FakeMessagesClient([]), toolRegistry: [makePutPageTool('ok')] });
+      const ctx = await makeCtx({ prompt: 'write a page', model: 'openai:gpt-5.2', require_writes: true });
+      await expect(handler(ctx)).rejects.toThrow('zero required put_page writes');
+      await expect(handler(ctx)).rejects.toThrow('zero required put_page writes');
+      expect(calls).toBe(1);
+      expect(await engine.executeRaw('SELECT id FROM subagent_tool_executions WHERE job_id = $1', [ctx.id])).toEqual([]);
+      const readOnly = await handler({ ...ctx, data: { ...ctx.data, require_writes: false } });
+      expect(readOnly.stop_reason).toBe('end_turn');
+      expect(readOnly.pages_written).toBe(0);
+      expect(calls).toBe(1);
+    } finally {
+      __setChatTransportForTests(null);
+      resetGateway();
+      await engine.unsetConfig('agent.use_gateway_loop');
+    }
+  });
+
   function makePutPageTool(behavior: 'ok' | 'fail' | ((input: unknown) => 'ok' | 'fail')): ToolDef {
     return {
       name: 'brain_put_page',
@@ -922,17 +953,54 @@ describe('write accounting (#4217)', () => {
     expect(result.pages_failed).toBe(1);
   });
 
-  test('zero attempts (Task-D skip) stays completed even with require_writes', async () => {
+  test('zero attempts cannot satisfy require_writes even when the model claims a skip', async () => {
     const client = new FakeMessagesClient([
       { content: [{ type: 'text', text: 'nothing met the bar' }] as any, stop_reason: 'end_turn' },
     ]);
     const handler = makeSubagentHandler({ engine, client, toolRegistry: [makePutPageTool('ok')] });
     const ctx = await makeCtx({ prompt: 'write pages', require_writes: true });
-    const result = await handler(ctx);
+    await expect(handler(ctx)).rejects.toThrow('zero required put_page writes');
+    await expect(handler(ctx)).rejects.toThrow('zero required put_page writes');
+    expect(client.calls).toHaveLength(1);
+
+    const result = await handler({ ...ctx, data: { ...ctx.data, require_writes: false } });
     expect(result.result).toBe('nothing met the bar');
     expect(result.pages_attempted).toBe(0);
     expect(result.pages_written).toBe(0);
     expect(result.pages_failed).toBe(0);
+  });
+
+  test('allow_clean_zero_writes: a clean finish after a completed read completes; without it the job dead-letters (#5540)', async () => {
+    const searchTurn = {
+      content: [{ type: 'tool_use', id: 'tu_s', name: 'brain_search', input: { value: 'themes' } }] as any,
+      stop_reason: 'tool_use' as const,
+    };
+    const strict = makeSubagentHandler({
+      engine, client: new FakeMessagesClient([searchTurn, endTurn]),
+      toolRegistry: [makeEchoTool('brain_search'), makePutPageTool('ok')],
+    });
+    const strictCtx = await makeCtx({ prompt: 'find patterns', require_writes: true });
+    await expect(strict(strictCtx)).rejects.toThrow('zero required put_page writes');
+
+    const handler = makeSubagentHandler({
+      engine, client: new FakeMessagesClient([searchTurn, endTurn]),
+      toolRegistry: [makeEchoTool('brain_search'), makePutPageTool('ok')],
+    });
+    const ctx = await makeCtx({ prompt: 'find patterns', require_writes: true, allow_clean_zero_writes: true });
+    const result = await handler(ctx);
+    expect(result.stop_reason).toBe('end_turn');
+    expect(result.pages_attempted).toBe(0);
+    expect(result.pages_written).toBe(0);
+  });
+
+  test('allow_clean_zero_writes does not excuse a run whose only tool failed (#5540)', async () => {
+    const client = new FakeMessagesClient([
+      { content: [{ type: 'tool_use', id: 'tu_b2', name: 'broken', input: {} }] as any, stop_reason: 'tool_use' },
+      endTurn,
+    ]);
+    const handler = makeSubagentHandler({ engine, client, toolRegistry: [makeThrowingTool('broken')] });
+    const ctx = await makeCtx({ prompt: 'find patterns', require_writes: true, allow_clean_zero_writes: true });
+    await expect(handler(ctx)).rejects.toThrow('zero required put_page writes');
   });
 
   test('non-put_page tool failures do not count toward write accounting', async () => {
@@ -942,7 +1010,8 @@ describe('write accounting (#4217)', () => {
     ]);
     const handler = makeSubagentHandler({ engine, client, toolRegistry: [makeThrowingTool('broken')] });
     const ctx = await makeCtx({ prompt: 'do stuff', require_writes: true });
-    const result = await handler(ctx);
+    await expect(handler(ctx)).rejects.toThrow('zero required put_page writes');
+    const result = await handler({ ...ctx, data: { ...ctx.data, require_writes: false } });
     expect(result.pages_attempted).toBe(0);
   });
 });
@@ -1006,6 +1075,73 @@ describe('oneshot mode dispatch (#4216)', () => {
     expect(result.pages_failed).toBe(0);
     expect(client.calls.length).toBe(0);
     expect(await engine.getPage(SLUG_A)).not.toBeNull();
+  });
+
+  test('explicit oneshot skip under require_writes completes instead of dead-lettering (#5590)', async () => {
+    const client = new FakeMessagesClient([]);
+    const skip = JSON.stringify({ pages: [], skipped: true, skip_reason: 'verbatim paste of an existing page' });
+    const handler = makeSubagentHandler({ engine, client, _chat: chatStub(skip) });
+    const ctx = await makeCtx({
+      prompt: 'synthesize', mode: 'oneshot', require_writes: true,
+      allowed_slug_prefixes: PREFIXES, oneshot_slug_suffix: SUFFIX,
+    });
+    const result = await handler(ctx);
+    expect(result.synth_mode_used).toBe('oneshot');
+    expect(result.oneshot_skipped).toBe(true);
+    expect(result.pages_attempted).toBe(0);
+    expect(result.pages_written).toBe(0);
+    expect(client.calls.length).toBe(0);
+  });
+
+  test('a oneshot skip replayed after its transcript persisted still completes without another model call (#5590)', async () => {
+    const client = new FakeMessagesClient([]);
+    const skip = JSON.stringify({ pages: [], skipped: true, skip_reason: 'already captured' });
+    const handler = makeSubagentHandler({ engine, client, _chat: chatStub(skip) });
+    const ctx = await makeCtx({
+      prompt: 'synthesize', mode: 'oneshot', require_writes: true,
+      allowed_slug_prefixes: PREFIXES, oneshot_slug_suffix: SUFFIX,
+    });
+    expect((await handler(ctx)).oneshot_skipped).toBe(true);
+
+    let chatCalls = 0;
+    const spy = (async (...args: any[]) => { chatCalls++; return chatStub(skip)(...args); }) as any;
+    const replay = await makeSubagentHandler({ engine, client, _chat: spy })({ ...ctx, attempts_made: 1 });
+    expect(replay.synth_mode_used).toBe('oneshot');
+    expect(replay.oneshot_skipped).toBe(true);
+    expect(replay.pages_attempted).toBe(0);
+    expect(chatCalls).toBe(0);
+    expect(client.calls.length).toBe(0);
+  });
+
+  test('an agentic-fallback transcript that merely looks like a skip still dead-letters on replay (#5590)', async () => {
+    const client = new FakeMessagesClient([]);
+    let chatCalls = 0;
+    const spy = (async (...args: any[]) => { chatCalls++; return chatStub('{}')(...args); }) as any;
+    const handler = makeSubagentHandler({ engine, client, _chat: spy });
+    const ctx = await makeCtx({
+      prompt: 'synthesize', mode: 'oneshot', require_writes: true,
+      allowed_slug_prefixes: PREFIXES, oneshot_slug_suffix: SUFFIX,
+    });
+    await engine.executeRaw(
+      `INSERT INTO subagent_messages (job_id, message_idx, role, content_blocks)
+       VALUES ($1, 0, 'user', '[{"type":"text","text":"synthesize"}]'::jsonb),
+              ($1, 1, 'assistant', $2::text::jsonb)`,
+      [ctx.id, JSON.stringify([{ type: 'text', text: JSON.stringify({ pages: [], skipped: true }) }])],
+    );
+    await expect(handler({ ...ctx, attempts_made: 1 })).rejects.toThrow('zero required put_page writes');
+    expect(chatCalls).toBe(0);
+  });
+
+  test('oneshot pages:[] without the skip flag still dead-letters when the fallback writes nothing (#5590)', async () => {
+    const client = new FakeMessagesClient([
+      { content: [{ type: 'text', text: 'nothing met the bar' }] as any, stop_reason: 'end_turn' },
+    ]);
+    const handler = makeSubagentHandler({ engine, client, _chat: chatStub(JSON.stringify({ pages: [], skipped: false })) });
+    const ctx = await makeCtx({
+      prompt: 'synthesize', mode: 'oneshot', require_writes: true,
+      allowed_slug_prefixes: PREFIXES, oneshot_slug_suffix: SUFFIX,
+    });
+    await expect(handler(ctx)).rejects.toThrow('zero required put_page writes');
   });
 
   test('invalid oneshot output falls back to the agentic loop IN THE SAME JOB', async () => {
@@ -1148,17 +1284,23 @@ describe('oneshot mode dispatch (#4216)', () => {
     // transcript). A second invocation of the SAME job (outcome write lost,
     // stall requeue) replays from the transcript — no fallback happened, so
     // stamping 'agentic_fallback' would poison the phase fallback histogram.
+    const replaySuffix = `${SUFFIX}-replay`;
+    const replayOutput = VALID.replaceAll(SUFFIX, replaySuffix);
     const client = new FakeMessagesClient([]);
-    const handler = makeSubagentHandler({ engine, client, _chat: chatStub(VALID) });
+    const handler = makeSubagentHandler({ engine, client, _chat: chatStub(replayOutput) });
     const ctx = await makeCtx({
       prompt: 'synthesize', mode: 'oneshot', require_writes: true,
-      allowed_slug_prefixes: PREFIXES, oneshot_slug_suffix: SUFFIX,
+      allowed_slug_prefixes: PREFIXES, oneshot_slug_suffix: replaySuffix,
     });
     const first = await handler(ctx);
     expect(first.synth_mode_used).toBe('oneshot');
+    const initialWrites = await engine.executeRaw<{ request_id: string; status: string }>(
+      "SELECT input->>'request_id' AS request_id,status FROM subagent_tool_executions WHERE job_id=$1 ORDER BY tool_use_id", [ctx.id]);
+    expect(initialWrites).toHaveLength(2);
+    expect(initialWrites.every(row => typeof row.request_id === 'string' && row.status === 'complete')).toBe(true);
 
     let chatCalls = 0;
-    const spy = (async (...args: any[]) => { chatCalls++; return chatStub(VALID)(...args); }) as any;
+    const spy = (async (...args: any[]) => { chatCalls++; return chatStub(replayOutput)(...args); }) as any;
     const handler2 = makeSubagentHandler({ engine, client, _chat: spy });
     const replayCtx: typeof ctx = { ...ctx, attempts_made: 1 };
     const replay = await handler2(replayCtx);
@@ -1168,6 +1310,9 @@ describe('oneshot mode dispatch (#4216)', () => {
     // transcript replay may return unset — either is honest; a fabricated
     // fallback is not. Either way the model is not re-called by the loop.
     expect(chatCalls).toBe(0);
+    expect(await engine.executeRaw(
+      "SELECT input->>'request_id' AS request_id,status FROM subagent_tool_executions WHERE job_id=$1 ORDER BY tool_use_id", [ctx.id]))
+      .toEqual(initialWrites);
   });
 });
 
@@ -1199,8 +1344,9 @@ describe('finalizeWriteAccounting read-error posture (CX-A3)', () => {
     const truncated = { ...result, stop_reason: 'max_tokens' };
     await expect(finalizeWriteAccounting(okEngine, 999, truncated, { requireWrites: true }))
       .rejects.toThrow(/did not finish cleanly.*max_tokens/);
-    // Clean-finish zero-attempt (Task-D skip) still completes.
-    const out = await finalizeWriteAccounting(okEngine, 999, result, { requireWrites: true });
+    await expect(finalizeWriteAccounting(okEngine, 999, result, { requireWrites: true }))
+      .rejects.toThrow('zero required put_page writes');
+    const out = await finalizeWriteAccounting(okEngine, 999, result, { requireWrites: false });
     expect(out.pages_attempted).toBe(0);
   });
 });

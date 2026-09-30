@@ -86,7 +86,7 @@ const OTHER_SOURCE = 'other';
 // Every provider key that detectCapabilities / the sweep could observe. Stripped
 // so keyless is deterministic (and no accidental live embedding cost/flake).
 const PROVIDER_KEYS = [
-  'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'ZEROENTROPY_API_KEY', 'OPENROUTER_API_KEY',
+  'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'OPENROUTER_API_KEY',
   'VOYAGE_API_KEY', 'DASHSCOPE_API_KEY', 'GOOGLE_GENERATIVE_AI_API_KEY', 'GEMINI_API_KEY',
 ];
 const ENV_KEYS = [
@@ -178,10 +178,12 @@ beforeAll(async () => {
     budgetMs: 60_000,
     capabilities: KEYLESS_CAPS,
   });
-  // Session-1 sanity: the fence really reconciled in THIS connection.
-  if (report.factsReconciled < 1) {
+  // The canonical write now projects facts atomically; maintenance should
+  // preserve that row without inventing a second reconciliation event.
+  const persisted = await factsMatching(engineA, WORKSPACE_SOURCE);
+  if (persisted.length !== 1) {
     throw new Error(
-      `session 1 fence reconciliation failed (factsReconciled=${report.factsReconciled}, ` +
+      `session 1 fact projection failed (facts=${persisted.length}, factsReconciled=${report.factsReconciled}, ` +
         `skipped=${JSON.stringify(report.skipped)}) — cannot test cross-session recall`,
     );
   }

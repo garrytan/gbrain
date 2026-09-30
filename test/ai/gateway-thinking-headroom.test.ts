@@ -24,6 +24,13 @@ describe('defaultMaxOutputTokens: recipe-declared thinking headroom (#4172)', ()
     expect(defaultMaxOutputTokens('deepseek:deepseek-v4-pro')).toBe(THINKING_MODEL_MAX_OUTPUT_TOKENS);
   });
 
+  it('grants headroom to GLM-4.5+/5.x on every recipe that hosts it (#4727)', () => {
+    expect(defaultMaxOutputTokens('zhipu:glm-5.3-flash')).toBe(THINKING_MODEL_MAX_OUTPUT_TOKENS);
+    expect(defaultMaxOutputTokens('ollama:glm-5.3-flash:cloud')).toBe(THINKING_MODEL_MAX_OUTPUT_TOKENS);
+    expect(defaultMaxOutputTokens('openrouter:z-ai/glm-4.6')).toBe(THINKING_MODEL_MAX_OUTPUT_TOKENS);
+    expect(defaultMaxOutputTokens('ollama:glm-4:9b')).toBe(DEFAULT_MAX_OUTPUT_TOKENS);
+  });
+
   it('still grants headroom to name-matched Claude 5 models (regex path intact)', () => {
     expect(isThinkingByDefaultModel('anthropic:claude-sonnet-5')).toBe(true);
     expect(isThinkingModel('anthropic:claude-sonnet-5')).toBe(true);

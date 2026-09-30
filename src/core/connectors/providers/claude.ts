@@ -7,17 +7,20 @@
  * `{uuid, name, created_at, chat_messages:[{uuid, sender, created_at, text}]}`).
  *
  * Endpoints (provisional — see CLAUDE_WEB_API_SPEC_TARGET):
- *   GET /api/organizations                                         → [{uuid, ...}]
- *   GET /api/organizations/{org}/chat_conversations                → [{uuid, name, created_at, updated_at}]
+ *   GET /api/organizations                                         → [{uuid, capabilities, ...}]
+ *   GET /api/organizations/{org}/chat_conversations?limit&offset   → [{uuid, name, created_at, updated_at}]
  *   GET /api/organizations/{org}/chat_conversations/{id}?tree=True&rendering_mode=messages
  *
  * No bearer re-mint: the sessionKey cookie IS the auth, so a 401 is terminal
- * (→ auth_required, no refreshAccessToken). The org id is discovered lazily and
- * memoized per client instance (each sync builds a fresh client → account-safe).
+ * (→ auth_required, no refreshAccessToken). Chat-capable orgs are discovered
+ * lazily and memoized per client instance (each sync builds a fresh client →
+ * account-safe); every one is listed, and each conversation is fetched from
+ * the org that listed it. The list is paged with limit/offset (C-17).
  */
 
 import type { HostSpecTarget } from '../../bootstrap/host-specs.ts';
 import type { ConnectorClient } from '../client.ts';
+import { toIso } from './chatgpt.ts';
 import type {
   ChatHistoryProvider,
   ConnectorCredential,
@@ -37,18 +40,26 @@ export const CLAUDE_WEB_API_SPEC_TARGET: HostSpecTarget = {
     'test/fixtures/connectors/claude-*.json',
   ],
   note:
-    'Cookie-auth (sessionKey). Org discovered via GET /api/organizations (first uuid). ' +
-    'chat_conversations lists {uuid,name,created_at,updated_at}; the detail ' +
+    'Cookie-auth (sessionKey). Orgs discovered via GET /api/organizations; every org ' +
+    'whose capabilities include chat (or that declares none) is listed. ' +
+    'chat_conversations?limit&offset pages {uuid,name,created_at,updated_at} as a flat ' +
+    'array (an unpaged request is capped); the detail ' +
     '(?tree=True&rendering_mode=messages) returns chat_messages[] whose text is ' +
     'assembled from content blocks when a flat text is absent; sender human/assistant. ' +
     'PROVISIONAL: shapes from public documentation + the export adapter fixtures, ' +
     'not probed live in this repo; drift alarm (no array / no chat_messages) is the backstop.',
 };
 
-const memoOrg = new WeakMap<ConnectorClient, string>();
+const memoOrgs = new WeakMap<ConnectorClient, string[]>();
+/** Conversation id → the org that listed it, per client. */
+const memoConversationOrg = new WeakMap<ConnectorClient, Map<string, string>>();
+
+const LIST_PAGE_LIMIT = 100;
+const MAX_LIST_PAGES = 500; // per org; never treat a truncated list as complete
 
 interface OrgRow {
   uuid?: string;
+  capabilities?: unknown;
 }
 interface ConvRow {
   uuid?: string;
@@ -64,16 +75,19 @@ interface MsgRow {
   content?: Array<{ type?: string; text?: string }>;
 }
 
-async function resolveOrg(client: ConnectorClient, signal?: AbortSignal): Promise<string> {
-  const cached = memoOrg.get(client);
+/** Every chat-capable org (an org that declares no capabilities counts). */
+async function resolveOrgs(client: ConnectorClient, signal?: AbortSignal): Promise<string[]> {
+  const cached = memoOrgs.get(client);
   if (cached) return cached;
   const orgs = await client.fetchJSON<OrgRow[]>('/api/organizations', { signal });
-  if (!Array.isArray(orgs) || !orgs.length || typeof orgs[0].uuid !== 'string') {
-    throw new Error('claude: /api/organizations returned no org (shape drift)');
-  }
-  const org = orgs[0].uuid;
-  memoOrg.set(client, org);
-  return org;
+  const ids = Array.isArray(orgs)
+    ? orgs
+        .filter((o) => typeof o?.uuid === 'string' && (!Array.isArray(o.capabilities) || o.capabilities.includes('chat')))
+        .map((o) => o.uuid as string)
+    : [];
+  if (!ids.length) throw new Error('claude: /api/organizations returned no chat-capable org (shape drift)');
+  memoOrgs.set(client, ids);
+  return ids;
 }
 
 /** Assemble message text: prefer flat `text`, else join text-type content blocks. */
@@ -108,7 +122,7 @@ export const claudeProvider: ChatHistoryProvider = {
 
   async probe(client: ConnectorClient, signal?: AbortSignal): Promise<ProbeResult> {
     try {
-      const org = await resolveOrg(client, signal);
+      const [org] = await resolveOrgs(client, signal);
       const list = await client.fetchJSON<ConvRow[]>(
         `/api/organizations/${encodeURIComponent(org)}/chat_conversations?limit=1`,
         { signal },
@@ -130,24 +144,47 @@ export const claudeProvider: ChatHistoryProvider = {
     client: ConnectorClient,
     opts: { signal?: AbortSignal; stopBefore?: string } = {},
   ): AsyncGenerator<ConversationStub> {
-    const org = await resolveOrg(client, opts.signal);
-    const rows = await client.fetchJSON<ConvRow[]>(
-      `/api/organizations/${encodeURIComponent(org)}/chat_conversations`,
-      { signal: opts.signal },
-    );
-    if (!Array.isArray(rows)) {
-      throw new Error('claude: chat_conversations returned a non-array (shape drift)');
+    const orgs = await resolveOrgs(client, opts.signal);
+    const conversationOrg = new Map<string, string>();
+    memoConversationOrg.set(client, conversationOrg);
+    const stubs: ConversationStub[] = [];
+    for (const org of orgs) {
+      // Page until an empty page or a page with nothing new (an endpoint that
+      // ignores offset returns the same rows again). A whole page at/before
+      // the since-bound ends the walk early: the list is newest-first.
+      let offset = 0;
+      for (let page = 0; ; page++) {
+        if (page >= MAX_LIST_PAGES) {
+          throw new Error(`claude: list hit the ${MAX_LIST_PAGES}-page cap; refusing to treat a truncated list as complete`);
+        }
+        const rows = await client.fetchJSON<ConvRow[]>(
+          `/api/organizations/${encodeURIComponent(org)}/chat_conversations?limit=${LIST_PAGE_LIMIT}&offset=${offset}`,
+          { signal: opts.signal },
+        );
+        if (!Array.isArray(rows)) {
+          throw new Error('claude: chat_conversations returned a non-array (shape drift)');
+        }
+        let fresh = 0;
+        let allOlder = rows.length > 0;
+        for (const r of rows) {
+          if (typeof r.uuid !== 'string' || conversationOrg.has(r.uuid)) continue;
+          fresh++;
+          conversationOrg.set(r.uuid, org);
+          const updatedAt = toIso(r.updated_at) || toIso(r.created_at);
+          if (!opts.stopBefore || !updatedAt || updatedAt > opts.stopBefore) allOlder = false;
+          stubs.push({
+            id: r.uuid,
+            title: typeof r.name === 'string' ? r.name : undefined,
+            updatedAt,
+            createdAt: toIso(r.created_at) || undefined,
+          });
+        }
+        if (fresh === 0 || allOlder) break;
+        offset += rows.length;
+      }
     }
     // Sort newest-first by updated_at (the API order is not guaranteed).
-    const stubs: ConversationStub[] = rows
-      .filter((r): r is ConvRow & { uuid: string } => typeof r.uuid === 'string')
-      .map((r) => ({
-        id: r.uuid,
-        title: typeof r.name === 'string' ? r.name : undefined,
-        updatedAt: (r.updated_at && String(r.updated_at)) || (r.created_at && String(r.created_at)) || '',
-        createdAt: r.created_at ? String(r.created_at) : undefined,
-      }))
-      .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0));
+    stubs.sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0));
     for (const s of stubs) {
       if (opts.stopBefore && s.updatedAt && s.updatedAt <= opts.stopBefore) return; // rest are older
       yield s;
@@ -159,7 +196,7 @@ export const claudeProvider: ChatHistoryProvider = {
     id: string,
     opts: { signal?: AbortSignal } = {},
   ): Promise<Record<string, unknown>> {
-    const org = await resolveOrg(client, opts.signal);
+    const org = memoConversationOrg.get(client)?.get(id) ?? (await resolveOrgs(client, opts.signal))[0];
     const conv = await client.fetchJSON<Record<string, unknown>>(
       `/api/organizations/${encodeURIComponent(org)}/chat_conversations/${encodeURIComponent(id)}?tree=True&rendering_mode=messages`,
       { signal: opts.signal },

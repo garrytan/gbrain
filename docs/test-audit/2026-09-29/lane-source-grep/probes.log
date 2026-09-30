@@ -1,0 +1,65 @@
+### baseline voyage
+  test/voyage-response-cap.test.ts => 6 pass 0 fail 
+  test/ai/gateway.test.ts => 40 pass 0 fail 
+### P1a rename const MAX_VOYAGE_RESPONSE_BYTES->VOYAGE_RESPONSE_CAP_BYTES (behavior-preserving)
+  test/voyage-response-cap.test.ts => 4 pass 2 fail 
+  test/ai/gateway.test.ts => 40 pass 0 fail 
+### P1b break rethrow (instanceof && false) [ 1 file changed, 1 insertion(+), 1 deletion(-)]
+  test/voyage-response-cap.test.ts => 5 pass 1 fail 
+  test/ai/gateway.test.ts => 39 pass 1 fail 
+### P1c cap doubled to 512MB [ 1 file changed, 1 insertion(+), 1 deletion(-)]
+  test/voyage-response-cap.test.ts => 6 pass 0 fail 
+  test/ai/gateway.test.ts => 38 pass 2 fail 
+### baseline remote
+  test/remote-ping-status-field.test.ts => 4 pass 0 fail 
+  test/remote-cli.test.ts => 9 pass 0 fail 
+### P2a poll loop reads job.state (the original bug) [ 1 file changed, 6 insertions(+), 6 deletions(-)]
+  test/remote-ping-status-field.test.ts => 3 pass 1 fail 
+  test/remote-cli.test.ts => 6 pass 3 fail 
+### P2b behavior-preserving String(job.status) wrap in terminal check [ 1 file changed, 1 insertion(+), 1 deletion(-)]
+  test/remote-ping-status-field.test.ts => 3 pass 1 fail 
+  test/remote-cli.test.ts => 9 pass 0 fail 
+### baseline dream
+  test/dream-cli-flags.test.ts => 28 pass 0 fail 
+  test/dream.test.ts => 45 pass 0 fail 
+### P3a rename local phaseWasExplicit->explicitPhaseGiven (behavior-preserving) [ 1 file changed, 3 insertions(+), 3 deletions(-)]
+  test/dream-cli-flags.test.ts => 26 pass 2 fail 
+  test/dream.test.ts => 45 pass 0 fail 
+### P3b bare --once no longer rejected (guard made unreachable) [ 1 file changed, 1 insertion(+), 1 deletion(-)]
+  test/dream-cli-flags.test.ts => 27 pass 1 fail 
+  test/dream.test.ts => 40 pass 5 fail 
+### baseline fix-wave/cli-args/classifier
+  test/fix-wave-structural.test.ts => 31 pass 0 fail 
+  test/cli-args.test.ts => 12 pass 0 fail 
+  test/pglite-init-classifier.test.ts => 33 pass 0 fail 
+### P4a rename positiveDef->boolDef in parseOpArgs (behavior-preserving) [ 1 file changed, 2 insertions(+), 2 deletions(-)]
+  test/fix-wave-structural.test.ts => 30 pass 1 fail 
+  test/cli-args.test.ts => 12 pass 0 fail 
+### P4b --no-<bool> sets true (behavior break) [ 1 file changed, 1 insertion(+), 1 deletion(-)]
+  test/fix-wave-structural.test.ts => 30 pass 1 fail 
+  test/cli-args.test.ts => 11 pass 1 fail 
+### baseline embed
+  test/embed-helper-migration.test.ts => 8 pass 0 fail 
+  test/embed.serial.test.ts => 52 pass 0 fail 
+### P5a rename lambda param page->p in failureLabel (behavior-preserving) [ 1 file changed, 1 insertion(+), 1 deletion(-)]
+  test/embed-helper-migration.test.ts => 7 pass 1 fail 
+  test/embed.serial.test.ts => 52 pass 0 fail 
+### P5b embedAll pool forced serial (workers: 1) [ 1 file changed, 1 insertion(+), 1 deletion(-)]
+  test/embed-helper-migration.test.ts => 7 pass 1 fail 
+  test/embed.serial.test.ts => 51 pass 1 fail 
+### P5c default concurrency 20->4 in embedAll [ 1 file changed, 1 insertion(+), 1 deletion(-)]
+  test/embed-helper-migration.test.ts => 8 pass 0 fail 
+  test/embed.serial.test.ts => 52 pass 0 fail 
+### baseline connection-resilience
+  test/connection-resilience.test.ts => 25 pass 0 fail 
+  test/exit-classification.test.ts => 17 pass 0 fail 
+### P6a production classifyWorkerExit always clean_exit [ 1 file changed, 1 insertion(+), 1 deletion(-)]
+  test/connection-resilience.test.ts => 25 pass 0 fail 
+  test/exit-classification.test.ts => 11 pass 6 fail 
+### P6b supervisor degraded/reconnect branch made unreachable (keeps '>= 3' literal) [ 1 file changed, 1 insertion(+), 1 deletion(-)]
+  test/connection-resilience.test.ts => 25 pass 0 fail 
+  test/supervisor.test.ts => 23 pass 0 fail 
+  test/supervisor-configuration-blocked.test.ts => 22 pass 0 fail 
+### P7a EXPERIMENTAL_VERBS emptied (behavior change: no verb tagged experimental) [ 1 file changed, 1 insertion(+), 1 deletion(-)]
+  test/schema-cli-contract.test.ts => 7 pass 0 fail 
+  test/schema-cli.test.ts => 15 pass 0 fail 

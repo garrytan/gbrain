@@ -7,6 +7,7 @@ import { execSync } from 'child_process';
 import { tmpdir } from 'os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
+import { surfaceFileSource } from './helpers/source-surface.ts';
 
 describe('buildSyncManifest', () => {
   test('parses A/M/D entries from single commit', () => {
@@ -822,7 +823,7 @@ describe('performSync dry-run never writes', () => {
 
 describe('sync regression — #132 nested transaction deadlock', () => {
   test('src/commands/sync.ts does not wrap the add/modify loop in engine.transaction()', async () => {
-    const source = await Bun.file(new URL('../src/commands/sync.ts', import.meta.url)).text();
+    const source = surfaceFileSource('sync', 'src/commands/sync/imports.ts');
     // Accept either of the historical loop shapes: the original inline
     // `for (const path of [...filtered.added, ...filtered.modified])` or
     // the v0.15.2 progress-wrapped variant where the list is hoisted into
@@ -838,6 +839,34 @@ describe('sync regression — #132 nested transaction deadlock', () => {
       const line = prelude.slice(lineStart, prelude.indexOf('\n', lastTxIdx));
       expect(line.trim().startsWith('//')).toBe(true);
     }
+  });
+
+  // Refactor wave 1 (A10 cross-file): the loop now lives in imports.ts, so the
+  // prelude scan above cannot see a transaction opened by the orchestrator
+  // around the phase CALL. This pins the call site, and the mutation fixture
+  // proves the check fails when the call is wrapped.
+  const importsPhaseCallWrapped = (orchestrator: string): boolean => {
+    const call = orchestrator.indexOf('runImportsPhase(run,');
+    expect(call).toBeGreaterThan(-1);
+    const lineStart = orchestrator.lastIndexOf('\n', call) + 1;
+    const body = orchestrator.slice(orchestrator.indexOf('export async function performSyncInner'), call);
+    return body.split('\n').some((l) => l.includes('.transaction(') && !l.trim().startsWith('//'))
+      || orchestrator.slice(lineStart, call).includes('.transaction(');
+  };
+
+  test('performSyncInner does not run the imports phase inside engine.transaction()', () => {
+    const orchestrator = surfaceFileSource('sync', 'src/commands/sync/incremental.ts');
+    expect(importsPhaseCallWrapped(orchestrator)).toBe(false);
+  });
+
+  test('mutation fixture: wrapping the imports phase call in engine.transaction() fails the guard', () => {
+    const orchestrator = surfaceFileSource('sync', 'src/commands/sync/incremental.ts');
+    const call = '(await runImportsPhase(run, plan, progress, noEmbed))';
+    expect(orchestrator).toContain(call);
+    const mutated = orchestrator.replace(call, '(await engine.transaction(async () => runImportsPhase(run, plan, progress, noEmbed)))');
+    expect(importsPhaseCallWrapped(mutated)).toBe(true);
+    const hoisted = orchestrator.replace('  const pre = await preflightIncrementalSync', '  return engine.transaction(async () => {\n  const pre = await preflightIncrementalSync');
+    expect(importsPhaseCallWrapped(hoisted)).toBe(true);
   });
 });
 

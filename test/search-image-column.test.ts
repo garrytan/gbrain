@@ -6,6 +6,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
+import { installFixtureChunks } from './helpers/page-projection.ts';
 import { readContentChunksEmbeddingDim } from '../src/core/embedding-dim-check.ts';
 
 let engine: PGLiteEngine;
@@ -13,9 +14,9 @@ let engine: PGLiteEngine;
  * Actual `content_chunks.embedding` column width at runtime. Probed
  * after initSchema, NOT hardcoded — the brain inherits from
  * `~/.gbrain/config.json` (locally) or `DEFAULT_EMBEDDING_DIMENSIONS`
- * (CI fresh-install). Hardcoding 1536 or 1280 makes the test green
+ * (CI fresh-install). Hardcoding 1536 or 1024 makes the test green
  * on one and red on the other; the default model has flipped twice
- * already (OpenAI 3-large=1536 → ZE zembed-1=1280 in v0.36+).
+ * already (OpenAI 3-large=1536 → Voyage voyage-4=1024 in v0.36+).
  */
 let TEXT_DIM = 0;
 
@@ -41,7 +42,7 @@ beforeEach(async () => {
 /**
  * Build a fake text-column vector at the column's runtime dim. Reads
  * `TEXT_DIM` populated in `beforeAll` from the actual column. Works
- * on any default — 1280 (CI fresh-install) and 1536 (local dev with
+ * on any default — 1024 (CI fresh-install) and 1536 (local dev with
  * gbrain config from older default) both pass.
  */
 function fakeTextDefault(seed: number): Float32Array {
@@ -64,7 +65,7 @@ async function seedTextPage(slug: string, vec: Float32Array) {
     compiled_truth: `body for ${slug}`,
     timeline: '',
   });
-  await engine.upsertChunks(slug, [
+  await installFixtureChunks(engine, slug, [
     {
       chunk_index: 0,
       chunk_text: `body for ${slug}`,
@@ -83,7 +84,7 @@ async function seedImagePage(slug: string, vec: Float32Array) {
     compiled_truth: '',
     timeline: '',
   });
-  await engine.upsertChunks(slug, [
+  await installFixtureChunks(engine, slug, [
     {
       chunk_index: 0,
       chunk_text: slug,
@@ -140,7 +141,7 @@ describe('searchVector column routing (v0.27.1)', () => {
     await seedImagePage('photos/keyword', fakeImage1024(3));
     // Force image chunk_text to overlap with the text chunk's words so the
     // FTS would otherwise match both rows.
-    await engine.upsertChunks('photos/keyword', [
+    await installFixtureChunks(engine, 'photos/keyword', [
       {
         chunk_index: 0,
         chunk_text: 'body for notes/keyword',

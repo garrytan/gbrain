@@ -114,6 +114,16 @@ export {
 } from './op-trust-gate.ts';
 
 export {
+  loadActivePackForEngine,
+  engineSchemaInput,
+  approvedSchemaIdentity,
+  checkApprovedSchemaForEngine,
+  SchemaApprovalError,
+  type ApprovedSchemaIdentity,
+  type ApprovedSchemaCheck,
+} from './engine-resolution.ts';
+
+export {
   inferLinkTypeFromPack,
   frontmatterLinkTypeFromPack,
 } from './link-inference.ts';

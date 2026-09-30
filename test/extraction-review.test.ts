@@ -21,6 +21,7 @@
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { installFixtureChunks } from './helpers/page-projection.ts';
 import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 import {
   quarantineMarkers,
@@ -627,8 +628,8 @@ describe('e2e: hostile transcript', () => {
     // 3. Chunk both with equal lexical relevance (distinct texts — identical
     //    ones would be Jaccard-deduped). Replace the imported stub's chunk
     //    and seed the control's chunk with comparable lexical evidence.
-    await engine.upsertChunks(stub!.slug, [{ chunk_index: 0, chunk_text: 'zorbulon pivot details from the injected meeting', chunk_source: 'compiled_truth', token_count: 7 }]);
-    await engine.upsertChunks(real!.slug, [{ chunk_index: 0, chunk_text: 'zorbulon launch update in my own written notes', chunk_source: 'compiled_truth', token_count: 7 }]);
+    await installFixtureChunks(engine, stub!.slug, [{ chunk_index: 0, chunk_text: 'zorbulon pivot details from the injected meeting', chunk_source: 'compiled_truth', token_count: 7 }]);
+    await installFixtureChunks(engine, real!.slug, [{ chunk_index: 0, chunk_text: 'zorbulon launch update in my own written notes', chunk_source: 'compiled_truth', token_count: 7 }]);
 
     // 4. Select the low-detail authority lane explicitly. The default detail
     // gives all chunks equal footing; only low enables compiled-truth boost.

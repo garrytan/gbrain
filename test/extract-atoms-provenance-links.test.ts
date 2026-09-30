@@ -24,7 +24,7 @@
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { createHash } from 'crypto';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { runPhaseExtractAtoms } from '../src/core/cycle/extract-atoms.ts';
+import { runPhaseWithStoredPageFixtures as runPhaseExtractAtoms } from './helpers/extract-atoms-page-fixtures.ts';
 import type { ChatResult, ChatOpts } from '../src/core/ai/gateway.ts';
 
 let engine: PGLiteEngine;

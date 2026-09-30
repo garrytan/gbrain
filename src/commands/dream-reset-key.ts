@@ -1,0 +1,63 @@
+/**
+ * `gbrain dream reset-key <base-key>` / `gbrain dream reset-key --list [--json]`
+ * — the operator controls for the dream paid-loop breaker (dream-breaker.ts).
+ */
+import type { BrainEngine } from '../core/engine.ts';
+import {
+  countDeadDreamSubmissions, dreamBreakerBaseKey, dreamBreakerResetCommand, loadDreamBreakerThreshold,
+  resetDreamBreakerKey, DREAM_BREAKER_CONFIG_KEY, DREAM_BREAKER_KEY_PREFIXES,
+} from '../core/cycle/dream-breaker.ts';
+import { setCliExitVerdict } from '../core/cli-force-exit.ts';
+
+const HELP = `Usage: gbrain dream reset-key <base-key>
+       gbrain dream reset-key --list [--json]
+
+The paid-loop breaker refuses to resubmit a dream synthesize or patterns key
+whose submissions died ${'`'}${DREAM_BREAKER_CONFIG_KEY}${'`'} times (default 3) within 24 hours.
+
+  <base-key>   Re-enable one key (without any :c<i>of<n> chunk suffix). The reset
+               is stored in the brain and survives restarts; deaths after it
+               count again.
+  --list       Show tripped keys with their dead-submission counts.
+  --json       Machine-readable --list output.
+`;
+
+export async function runDreamResetKey(engine: BrainEngine | null, args: string[]): Promise<void> {
+  if (args.includes('--help') || args.includes('-h')) { console.log(HELP); return; }
+  const list = args.includes('--list');
+  const json = args.includes('--json');
+  const positional = args.filter(arg => !arg.startsWith('--'));
+  if (list === (positional.length === 1) || positional.length > 1) {
+    console.error(HELP);
+    setCliExitVerdict(2);
+    return;
+  }
+  if (!engine) {
+    console.error('gbrain dream reset-key needs the brain database; the connection failed.');
+    setCliExitVerdict(1);
+    return;
+  }
+  if (list) {
+    const threshold = await loadDreamBreakerThreshold(engine);
+    const rows = await countDeadDreamSubmissions(engine);
+    const tripped = threshold === 0 ? [] : rows.filter(row => row.dead_submissions >= threshold);
+    if (json) {
+      console.log(JSON.stringify({ threshold, enabled: threshold > 0, tripped: tripped.map(row => ({ ...row, reset_command: dreamBreakerResetCommand(row.base_key) })) }, null, 2));
+      return;
+    }
+    if (threshold === 0) { console.log(`The paid-loop breaker is disabled (${DREAM_BREAKER_CONFIG_KEY}=0).`); return; }
+    if (tripped.length === 0) { console.log(`No tripped dream keys (limit ${threshold} dead submissions in 24h).`); return; }
+    console.log(`Tripped dream keys (limit ${threshold} dead submissions in 24h):`);
+    for (const row of tripped) console.log(`  ${row.dead_submissions}x  ${row.base_key}\n        last death ${row.last_dead_at}; reset: ${dreamBreakerResetCommand(row.base_key)}`);
+    return;
+  }
+  const baseKey = dreamBreakerBaseKey(positional[0]!);
+  if (!DREAM_BREAKER_KEY_PREFIXES.some(prefix => baseKey.startsWith(prefix))) {
+    console.error(`Not a dream breaker key: ${baseKey}. Keys start with ${DREAM_BREAKER_KEY_PREFIXES.join(' or ')}; run gbrain dream reset-key --list.`);
+    setCliExitVerdict(2);
+    return;
+  }
+  const before = (await countDeadDreamSubmissions(engine)).find(row => row.base_key === baseKey)?.dead_submissions ?? 0;
+  await resetDreamBreakerKey(engine, baseKey);
+  console.log(`Reset ${baseKey} (${before} dead submission(s) in the last 24h no longer count). The next dream cycle may submit it again.`);
+}

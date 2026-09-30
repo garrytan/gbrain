@@ -8,6 +8,11 @@
  * is the runtime source of truth; the markdown file at
  * `skills/migrations/vX.Y.Z.md` remains as the host-agent instruction
  * manual (read on demand when pending-host-work.jsonl is non-empty).
+ *
+ * These are version-upgrade orchestrators (`gbrain apply-migrations`), not
+ * database schema migrations. Schema DDL migrations live one per file in
+ * src/core/schema-migrations/ with the generated registry
+ * src/core/schema-migrations/registry.generated.ts (run by src/core/migrate.ts).
  */
 
 import type { Migration } from './types.ts';
@@ -28,6 +33,7 @@ import { v0_31_0 } from './v0_31_0.ts';
 import { v0_32_2 } from './v0_32_2.ts';
 import { v0_43_0 } from './v0_43_0.ts';
 import { v0_46_3 } from './v0_46_3.ts';
+import { sharedContentMigration } from './shared-content.ts';
 
 export const migrations: Migration[] = [
   v0_11_0,
@@ -47,6 +53,7 @@ export const migrations: Migration[] = [
   v0_32_2,
   v0_43_0,
   v0_46_3,
+  sharedContentMigration,
 ];
 
 /** Look up a migration by exact version string. */

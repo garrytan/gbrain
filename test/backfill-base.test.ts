@@ -1,6 +1,8 @@
-import { describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { runBackfill, ensureBackfillIndex, clearBackfillCheckpoint } from '../src/core/backfill-base.ts';
 import type { BackfillSpec } from '../src/core/backfill-base.ts';
+import { getBackfill, listBackfills } from '../src/core/backfill-registry.ts';
+import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 
 interface FakeRow {
   id: number;
@@ -175,4 +177,39 @@ describe('ensureBackfillIndex — P2/X4', () => {
     expect(result.existed).toBe(true);
     expect(result.created).toBe(false);
   });
+});
+
+describe('backfill registry', () => {
+  test('listBackfills returns the canonical registry entries', () => {
+    const names = listBackfills().map(e => e.spec.name).sort();
+    expect(names).toEqual(['effective_date', 'embedding_voyage', 'emotional_weight', 'modality']);
+  });
+
+  test('embedding_voyage is declared-only', () => {
+    expect(getBackfill('embedding_voyage')?.v030_1_status).toBe('declared-only');
+  });
+});
+
+describe('implemented backfills against a freshly initialized PGLite brain', () => {
+  let engine: PGLiteEngine;
+
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+  });
+
+  afterAll(async () => {
+    await engine.disconnect();
+  });
+
+  for (const name of ['effective_date', 'emotional_weight', 'modality']) {
+    test(`${name} finds every column it reads and has no work on an empty brain`, async () => {
+      const reg = getBackfill(name);
+      expect(reg?.v030_1_status).toBe('implemented');
+      const result = await runBackfill(engine, reg!.spec, { batchSize: 100 });
+      expect(result.examined).toBe(0);
+      expect(result.errors).toBe(0);
+    });
+  }
 });

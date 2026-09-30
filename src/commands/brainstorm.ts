@@ -264,12 +264,21 @@ async function runBrainstormCli(
   // catch. Without this CLI formatter, the typed error reaches main()'s
   // generic catch which prints `e.message` only — losing the structured
   // `.hint` field that's the whole point of the orchestrator-level wrap.
+  // Save policy: brainstorm defaults to save-on; lsd defaults to save-off.
+  // CLI --save / --no-save overrides the default. The slug is minted BEFORE
+  // the run so the orchestrator can bank it in the checkpoint: a `--resume`
+  // after a judge failure then hands back the slug the failed run saved
+  // under, and the re-scored page overwrites it instead of forking a second
+  // page under a fresh nonce.
+  const shouldSave = parsed.save ?? profile.default_save;
+  const freshSlug = buildIdeaSlug(parsed.question, profile.label);
   let result;
   try {
     result = await runBrainstorm(engine, config, {
       question: parsed.question,
       profile: effectiveProfile,
       skipCostPreview: skipPreview,
+      ideaSlug: shouldSave ? freshSlug : undefined,
       // v0.39.0.0 T10 cost-cap surface — wired in master, preserved here.
       maxCostUsd: parsed.maxCost,
       maxFarSet: parsed.maxFarSet,
@@ -305,16 +314,13 @@ async function runBrainstormCli(
   const md = formatBrainstormMarkdown(result, { onlyPassed: true, includeMeta: true });
   console.log(md);
 
-  // Save policy: brainstorm defaults to save-on; lsd defaults to save-off.
-  // CLI --save / --no-save overrides the default.
-  const shouldSave = parsed.save ?? profile.default_save;
   if (shouldSave) {
-    const slug = buildIdeaSlug(parsed.question, profile.label);
+    const slug = result.idea_slug ?? freshSlug;
     const title = `${profile.label === 'lsd' ? 'LSD' : 'Brainstorm'}: ${parsed.question.slice(0, 100)}`;
     // Build ONE frontmatter object and render via the canonical serializer so
     // the saved file round-trips through `gbrain sync` byte-for-byte. Include
-    // filtered ideas (onlyPassed:false) so a future --retry-judge has the full
-    // set to re-score.
+    // filtered ideas (onlyPassed:false) so a judge-failed run still shows every
+    // idea; `--resume <run_id>` re-scores and overwrites this same page.
     const fmObj = buildBrainstormFrontmatterObject(result);
     const body = formatBrainstormMarkdown(result, { onlyPassed: false, includeMeta: true });
     const content = serializeMarkdown(fmObj, body, '', { type: 'note', title, tags: [] });

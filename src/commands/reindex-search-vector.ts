@@ -25,12 +25,27 @@
  * through the shared reporter (stderr; stdout stays clean for --json).
  *
  * Cost: trigger recreate is sub-millisecond. Backfill is one tsvector
- * rebuild per page + per chunk. On a 20K-page brain with 80K chunks,
- * expect ~5-15s depending on Postgres CPU and content size.
+ * rebuild per page + per chunk, ~1-5s per 5000-row batch depending on
+ * engine CPU and content size (PGLite is the slow end) — budget minutes,
+ * not seconds, for a brain with 100K+ chunks.
+ *
+ * Interrupted runs (#4795): the two CREATE OR REPLACE statements autocommit,
+ * so a kill/crash mid-backfill would otherwise leave new writes tokenized in
+ * the new language and un-backfilled rows in the old one, silently splitting
+ * keyword search. The command therefore stamps `fts.reindex_in_progress`
+ * (= target language) in the config table BEFORE the DDL and clears it only
+ * after both backfills return; `gbrain doctor` fails (`fts_reindex_incomplete`)
+ * while it is set. Each batch persists its keyset cursor under the shared
+ * `backfill.<name>.last_id` convention, so re-running with the same language
+ * resumes where the killed run stopped (a different language starts over).
+ * Deliberately NOT one engine.transaction(): on Postgres that would hold every
+ * page/chunk row lock for the whole run (the batching exists to avoid that),
+ * and a hang inside it would bank zero progress.
  */
 
 import type { BrainEngine } from '../core/engine.ts';
-import { getFtsLanguage } from '../core/fts-language.ts';
+import { getFtsLanguage, FTS_REINDEX_MARKER_KEY } from '../core/fts-language.ts';
+import { checkpointKey } from '../core/backfill-base.ts';
 import { createInterface } from 'readline';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
@@ -58,11 +73,15 @@ interface CountRow {
 /** Rows per backfill UPDATE. Keyset-batched so one statement never locks the whole table. */
 export const BACKFILL_BATCH_SIZE = 5000;
 
+/** Checkpoint names (→ `backfill.<name>.last_id`), one per backfilled table. */
+const CHECKPOINT_NAME = { pages: 'fts_pages', content_chunks: 'fts_content_chunks' } as const;
+
 /**
  * Keyset-batched UPDATE: applies `setClause` to `table` rows where
  * search_vector IS NOT NULL, BACKFILL_BATCH_SIZE ids at a time, ticking
  * the shared progress reporter after each batch. Terminates when a batch
- * returns fewer rows than the batch size (or none).
+ * returns fewer rows than the batch size (or none). The cursor is persisted
+ * after every batch so a killed run loses at most one batch on resume.
  */
 async function batchedBackfill(
   engine: BrainEngine,
@@ -70,7 +89,9 @@ async function batchedBackfill(
   setClause: string,
   tick: (n: number) => void
 ): Promise<void> {
-  let cursor = 0;
+  const key = checkpointKey(CHECKPOINT_NAME[table]);
+  const saved = Number(await engine.getConfig(key));
+  let cursor = Number.isFinite(saved) && saved > 0 ? saved : 0;
   for (;;) {
     const rows = await engine.executeRaw<{ id: number }>(`
       UPDATE ${table} SET ${setClause}
@@ -85,6 +106,7 @@ async function batchedBackfill(
     if (rows.length === 0) break;
     tick(rows.length);
     cursor = rows.reduce((m, r) => Math.max(m, Number(r.id)), cursor);
+    await engine.setConfig(key, String(cursor));
     if (rows.length < BACKFILL_BATCH_SIZE) break;
   }
 }
@@ -221,7 +243,32 @@ export async function runReindexSearchVector(
     $fn$ LANGUAGE plpgsql;
   `;
 
-  await engine.executeRaw(recreatePagesFn);
+  // #4795: marker first (see the docblock). A prior run interrupted on the
+  // SAME language resumes from its checkpoints; any other state starts over.
+  const inProgress = await engine.getConfig(FTS_REINDEX_MARKER_KEY);
+  if (inProgress === lang) {
+    console.error(`Resuming interrupted reindex to language='${lang}' from the saved checkpoint.`);
+  } else {
+    await engine.unsetConfig(checkpointKey(CHECKPOINT_NAME.pages));
+    await engine.unsetConfig(checkpointKey(CHECKPOINT_NAME.content_chunks));
+  }
+  await engine.setConfig(FTS_REINDEX_MARKER_KEY, lang);
+
+  try {
+    await engine.executeRaw(recreatePagesFn);
+  } catch (err) {
+    // Nothing landed (e.g. no CREATE FUNCTION privilege): put the marker back
+    // the way THIS run found it. Absent before → clear it, so doctor doesn't
+    // report a permanent fts_reindex_incomplete whose suggested fix re-fails.
+    // Set before (a prior run was interrupted) → the index is still split, so
+    // restore the prior value; clearing it would hide a real incomplete
+    // reindex. Once the pages trigger has flipped, the marker MUST stay.
+    await (inProgress === null
+      ? engine.unsetConfig(FTS_REINDEX_MARKER_KEY)
+      : engine.setConfig(FTS_REINDEX_MARKER_KEY, inProgress)
+    ).catch(() => {});
+    throw err;
+  }
   await engine.executeRaw(recreateChunksFn);
 
   const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
@@ -244,6 +291,11 @@ export async function runReindexSearchVector(
     n => progress.tick(n)
   );
   progress.finish();
+
+  // Both backfills returned: the index is whole again under `lang`.
+  await engine.unsetConfig(checkpointKey(CHECKPOINT_NAME.pages));
+  await engine.unsetConfig(checkpointKey(CHECKPOINT_NAME.content_chunks));
+  await engine.unsetConfig(FTS_REINDEX_MARKER_KEY);
 
   const result: ReindexSearchVectorResult = {
     status: 'ok',

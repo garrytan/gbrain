@@ -23,8 +23,10 @@ import {
 } from '../../../core/storage-config.ts';
 import { slugifyPath, slugifyCodePath, isCodeFilePath } from '../../../core/sync.ts';
 import { resolveSourceLocalFilePath } from '../../../core/markdown.ts';
+import { scannerSlugRootMode } from '../../../core/write-through.ts';
 import { unverifiedExtractionFragment } from '../../../core/extraction-review.ts';
 import type { Check } from '../../doctor.ts';
+import { ownedContentFreshness } from '../../../core/shared-skills/content-freshness.ts';
 
 /** Local aliases; the shared warn-once memo lives in core so it can't fork per module. */
 const _resolveEnvNumber = resolveEnvNumber;
@@ -317,9 +319,9 @@ export async function checkCodeChunkMetadata(engine: BrainEngine): Promise<Check
       message:
         `${chunks} chunk(s) on ${pages} code page(s) have no symbol metadata ` +
         `(symbol_name and language both NULL) — code-def/code-refs and ` +
-        `--lang/--symbol-kind filters miss them. A plain sync/reindex skips ` +
-        `unchanged pages via the content_hash short-circuit. ` +
-        `Fix: gbrain reindex-code --force`,
+        `--lang/--symbol-kind filters miss them. A plain sync/reindex may skip ` +
+        `already-current text projections. ` +
+        `Fix: gbrain reindex-code --force --no-embed`,
       details: { chunks_missing_metadata: chunks, pages_affected: pages },
     };
   } catch (e) {
@@ -409,10 +411,11 @@ export async function checkUndeclaredDbOnlyPages(engine: BrainEngine): Promise<C
       );
       if (rows.length === 0) continue;
       let backedWithoutSourcePath: Set<string> | null = null;
+      const mode = await scannerSlugRootMode(engine, src.id, src.local_path!);
       for (const { slug, source_path: sourcePath } of rows) {
         if (dbOnlyDirs.some(dir => slug.startsWith(dir))) continue;
         if (sourcePath) {
-          const filePath = resolveSourceLocalFilePath(src.local_path!, sourcePath, slug);
+          const filePath = resolveSourceLocalFilePath(src.local_path!, sourcePath, slug, mode);
           if (filePath && existsSync(filePath)) continue;
         } else {
           backedWithoutSourcePath ??= collectMarkdownSlugs(src.local_path!);
@@ -1214,9 +1217,13 @@ export async function checkSyncFreshness(
     const currentChunkerVersion = String(CHUNKER_VERSION);
 
     const issues: string[] = [];
-    // v0.41.27.0: D6 three-bucket count math. Every source falls into
+    let ownedContent = new Set<string>();
+    try { ownedContent = new Set((await ownedContentFreshness(engine)).map(source => source.sourceId)); }
+    catch (error) { if (!/does not exist|no such table/i.test(String(error))) throw error; }
+    let writer_owned_count = 0;
+    // v0.41.27.0: D6 count math. Every source falls into
     // EXACTLY ONE bucket per iteration. Invariant pinned by unit test:
-    //   unchanged_count + synced_recently_count + stale_count === sources.length
+    //   unchanged_count + synced_recently_count + stale_count + writer_owned_count === sources.length
     // Stale subsumes warn + fail + never-synced + future-timestamp; we keep
     // hasWarnings/hasFailures for the existing return-status logic.
     let unchanged_count = 0;
@@ -1264,6 +1271,7 @@ export async function checkSyncFreshness(
     // machinery runs once, not once per source).
     const stalenessCeilingSeconds = resolveStalenessCeilingSeconds();
     for (const source of sources) {
+      if (ownedContent.has(source.id)) { writer_owned_count++; continue; }
       // Embed source.id in user-visible messages so `gbrain sync --source <id>`
       // matches what the user copy-pastes. Show display name in parens when set.
       const display = source.name && source.name !== source.id
@@ -1411,10 +1419,11 @@ export async function checkSyncFreshness(
     }
 
     // D6 invariant: every source incremented exactly one bucket.
-    const details = { unchanged_count, synced_recently_count, stale_count };
+    const details = { unchanged_count, synced_recently_count, stale_count, ...(writer_owned_count ? { writer_owned_count } : {}) };
     // BUG 4: append in-progress context when any source is actively syncing.
     // Empty otherwise, so steady-state messages are byte-for-byte unchanged.
-    const inProgressNote = inProgress.length ? `. ${inProgress.join('; ')}` : '';
+    const inProgressNote = (inProgress.length ? `. ${inProgress.join('; ')}` : '')
+      + (writer_owned_count ? `. ${writer_owned_count} writer-owned canonical content source(s): upstream sync is not applicable; see canonical_content_writes for publication status` : '');
 
     if (hasFailures) {
       return {
@@ -1432,14 +1441,19 @@ export async function checkSyncFreshness(
         details,
       };
     }
+    if (writer_owned_count === sources.length) return {
+      name: 'sync_freshness', status: 'ok',
+      message: `${writer_owned_count} writer-owned canonical content source(s): upstream sync is not applicable; see canonical_content_writes for publication status.`, details,
+    };
+    const upstreamCount = sources.length - writer_owned_count;
     // v0.41.27.0: D2 ok-message reshape. Three branches surface what the
     // git short-circuit actually did so operators understand "unchanged
     // since last sync" vs "synced recently".
-    if (unchanged_count === sources.length) {
+    if (unchanged_count === upstreamCount) {
       return {
         name: 'sync_freshness',
         status: 'ok',
-        message: `All ${sources.length} federated source(s) up to date (no new commits since last sync)${inProgressNote}`,
+        message: `All ${upstreamCount} federated source(s) up to date (no new commits since last sync)${inProgressNote}`,
         details,
       };
     }
@@ -1447,14 +1461,14 @@ export async function checkSyncFreshness(
       return {
         name: 'sync_freshness',
         status: 'ok',
-        message: `${sources.length} federated source(s): ${synced_recently_count} synced recently, ${unchanged_count} unchanged since last sync${inProgressNote}`,
+        message: `${upstreamCount} federated source(s): ${synced_recently_count} synced recently, ${unchanged_count} unchanged since last sync${inProgressNote}`,
         details,
       };
     }
     return {
       name: 'sync_freshness',
       status: 'ok',
-      message: `All ${sources.length} federated source(s) synced recently${inProgressNote}`,
+      message: `All ${upstreamCount} federated source(s) synced recently${inProgressNote}`,
       details,
     };
   } catch (e) {

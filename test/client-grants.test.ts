@@ -31,6 +31,28 @@ async function memoryClient(name: string) {
 }
 
 describe('client capability grants', () => {
+  test('receipt operations require explicit regrant for an existing operation snapshot', async () => {
+    const receiptOps = ['get_write_request', 'list_write_requests', 'cancel_write_request'];
+    const created = await memoryClient('receipt-regrant-example');
+    await rescopeClientGrant(engine, created.clientId, { allowedOperations: ['get_page', 'put_page'] }, { actor: 'test' });
+    const before = await readClientGrant(engine, created.clientId);
+    await repairLegacyClientGrants(engine);
+    expect((await readClientGrant(engine, created.clientId)).allowedOperations).toEqual(before.allowedOperations);
+    const writer = resolveGrantProfile({ profile: 'coding-agent', sourceId: 'default', boundSlugPrefixes: ['work-example/'] });
+    const reader = resolveGrantProfile({ profile: 'memory-reader', sourceId: 'default' });
+    for (const name of receiptOps) {
+      expect(writer.allowedOperations).toContain(name);
+      expect(reader.allowedOperations).not.toContain(name);
+      const op = operations.find(operation => operation.name === name)!;
+      expect(opAllowedForBoundClient({ allowedOperations: before.allowedOperations }, op)).toBe(false);
+      expect(opAllowedForBoundClient({ allowedOperations: [...before.allowedOperations!, ...receiptOps], boundSlugPrefixes: ['work-example/'] }, op)).toBe(true);
+      expect(opAllowedForBoundClient({ allowedOperations: [...before.allowedOperations!, ...receiptOps], fenceProjectionDegraded: true }, op)).toBe(false);
+    }
+    const result = await rescopeClientGrant(engine, created.clientId,
+      { allowedOperations: [...before.allowedOperations!, ...receiptOps] }, { actor: 'test', expectedRevision: before.revision });
+    expect(result.after.allowedOperations).toEqual([...before.allowedOperations!, ...receiptOps]);
+  });
+
   test('profile defaults are explicit unlimited, concurrency one, renewable hour or static 30 days', () => {
     const grant = resolveGrantProfile({ profile: 'memory-writer', sourceId: 'default' });
     expect(grant.budgetUsdPerDay).toBeNull();

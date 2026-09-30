@@ -22,7 +22,10 @@ import type { TranscriptFormat } from '../core/transcripts/types.ts';
 import { runTranscriptsIngest, type TranscriptsIngestResult } from '../core/transcripts/ingest.ts';
 import { isOpenclawCheckpointFile } from '../core/transcripts/openclaw.ts';
 import { isGrokSessionSidecarStrict } from '../core/transcripts/grok.ts';
-import { isClaudeCodeSubagentFile } from '../core/transcripts/claude-code.ts';
+import {
+  isClaudeCodeSubagentFile,
+  isClaudeCodeWorkflowArtifactFile,
+} from '../core/transcripts/claude-code.ts';
 
 interface RecentOpts {
   days?: number;
@@ -291,7 +294,11 @@ export async function expandPaths(specs: string[]): Promise<string[]> {
     }
   }
   return [...new Set(out)].filter(
-    (p) => !isOpenclawCheckpointFile(p) && !isGrokSessionSidecarStrict(p) && !isClaudeCodeSubagentFile(p),
+    (p) =>
+      !isOpenclawCheckpointFile(p) &&
+      !isGrokSessionSidecarStrict(p) &&
+      !isClaudeCodeSubagentFile(p) &&
+      !isClaudeCodeWorkflowArtifactFile(p),
   );
 }
 
@@ -299,14 +306,16 @@ export function fmtSummary(r: TranscriptsIngestResult): string {
   const byHarness = new Map<string, number>();
   for (const f of r.files) {
     for (const s of f.sessions) {
-      if (!s.error) byHarness.set(s.harness, (byHarness.get(s.harness) ?? 0) + 1);
+      if (!s.error && !s.skipped) byHarness.set(s.harness, (byHarness.get(s.harness) ?? 0) + 1);
     }
   }
   const lines: string[] = [];
   const counts = [...byHarness.entries()].map(([h, n]) => `${h}: ${n}`).join(', ');
   lines.push(
     `sessions: ${r.sessionsImported} imported (${counts || 'none'}), ` +
-      `${r.sessionsFiltered} filtered, ${r.sessionsErrored} errored, ${r.sessionsSeen} seen`,
+      `${r.sessionsFiltered} filtered, ${r.sessionsErrored} errored, ` +
+      (r.sessionsSkippedNoTimestamp ? `${r.sessionsSkippedNoTimestamp} skipped (no timestamps), ` : '') +
+      `${r.sessionsSeen} seen`,
   );
   lines.push(
     `pages: ${r.pages.imported} imported, ${r.pages.skipped} unchanged` +
