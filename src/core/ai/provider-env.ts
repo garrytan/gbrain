@@ -45,6 +45,7 @@ export function mergedProviderEnv(
   // way voyage's #2662 did).
   if (cfg?.litellm_api_key) fromConfig.LITELLM_API_KEY = cfg.litellm_api_key;
   if (cfg?.together_api_key) fromConfig.TOGETHER_API_KEY = cfg.together_api_key;
+  if (cfg?.nous_api_key) fromConfig.NOUS_API_KEY = cfg.nous_api_key;
   if (cfg?.google_api_key) fromConfig.GOOGLE_GENERATIVE_AI_API_KEY = cfg.google_api_key;
   // #4031: the Azure key was the only member of the group below left unfolded,
   // so a config.json-only setup failed every embed from keyless shells

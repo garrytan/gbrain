@@ -12,6 +12,7 @@ import { anthropic } from './anthropic.ts';
 import { claudeCli } from './claude-cli.ts';
 import { ollama } from './ollama.ts';
 import { openrouter } from './openrouter.ts';
+import { nous } from './nous.ts';
 import { voyage } from './voyage.ts';
 import { litellmProxy } from './litellm-proxy.ts';
 import { deepseek } from './deepseek.ts';
@@ -38,6 +39,7 @@ const ALL: Recipe[] = [
   claudeCli,
   ollama,
   openrouter,
+  nous,
   voyage,
   litellmProxy,
   deepseek,

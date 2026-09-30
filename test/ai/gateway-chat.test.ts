@@ -63,7 +63,9 @@ describe('chat touchpoint — recipe registry', () => {
     // 2.5+), OpenAI by the gpt-4o/o-series generation; a plain boolean where
     // it is a property of the whole provider. Anything else must declare no
     // caching.
-    const PREDICATE = new Set(['openai', 'openrouter', 'google']);
+    // nous (Nous Research Portal) is OpenRouter-shaped — vendor-prefixed ids
+    // routed to many families — and gates caching per family the same way.
+    const PREDICATE = new Set(['openai', 'openrouter', 'google', 'nous']);
     // claude-cli caches for the whole provider, so it is a boolean, not a
     // predicate: Claude Code caches automatically on every model it routes,
     // `--print` runs included. See the recipe for the measurement and
