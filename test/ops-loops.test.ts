@@ -252,7 +252,7 @@ describe('open_loops grouped', () => {
 });
 
 describe('open_loops deep links + context (trusted local)', () => {
-  const EMAIL_SLUG = 'emails/2026/08/2026-08-20-plan-review-abcd1234.md';
+  const EMAIL_SLUG = 'emails/2026/08/2026-08-20-plan-review-abcd1234';
 
   test('deep_link regenerates from the page account + hex message-id evidence', async () => {
     // The thread page carries the account in frontmatter; the loop points at

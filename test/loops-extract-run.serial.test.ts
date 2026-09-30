@@ -57,8 +57,8 @@ const { normalizeAlias } = await import('../src/core/search/alias-normalize.ts')
 const { MinionQueue } = await import('../src/core/minions/queue.ts');
 
 const SRC = 'g1';
-const EMAIL_SLUG = 'emails/2026/08/2026-08-20-test-thread-abcd1234.md';
-const SUPPRESSED_SLUG = 'emails/2026/08/2026-08-20-suppressed-thread-efab5678.md';
+const EMAIL_SLUG = 'emails/2026/08/2026-08-20-test-thread-abcd1234';
+const SUPPRESSED_SLUG = 'emails/2026/08/2026-08-20-suppressed-thread-efab5678';
 const THREAD_ID = 'thread-abcd1234';
 const SUPPRESSED_THREAD_ID = 'thread-efab5678';
 const PERSON_SLUG = 'people/alice-example';
@@ -225,7 +225,7 @@ describe('runLoopsExtract', () => {
     // the extraction sail through to the model. The rendered thread page
     // carries every SENDER (`senders`, the message authors); all of them
     // gate the lane.
-    const slug = 'emails/2026/08/2026-08-24-earlier-muted-77665544.md';
+    const slug = 'emails/2026/08/2026-08-24-earlier-muted-77665544';
     await engine.putPage(
       slug,
       {
@@ -277,7 +277,7 @@ describe('runLoopsExtract', () => {
     // thread she was CC'd on, and an outside sender could dodge extraction by
     // CC'ing a known-muted address. Only addresses that AUTHORED a message
     // count.
-    const slug = 'emails/2026/08/2026-08-25-muted-cc-only-88776655.md';
+    const slug = 'emails/2026/08/2026-08-25-muted-cc-only-88776655';
     await engine.putPage(
       slug,
       {
@@ -479,7 +479,7 @@ describe('runLoopsExtract', () => {
   });
 
   test('prompt hardening: newest 12k is retained and sanitized; stale head is dropped', async () => {
-    const slug = 'emails/2026/08/2026-08-22-injection-thread-99887766.md';
+    const slug = 'emails/2026/08/2026-08-22-injection-thread-99887766';
     // 'ignore previous instructions' matches sanitize.ts's 'ignore-prior'
     // pattern (replacement '[redacted]'). The old head marker is pushed out
     // while the newest evidence remains inside the 12k payload.
@@ -519,7 +519,7 @@ describe('runLoopsExtract', () => {
   });
 
   test('counterparty without a person page: loop still lands, no edge is written', async () => {
-    const slug = 'emails/2026/08/2026-08-21-bob-thread-ef567890.md';
+    const slug = 'emails/2026/08/2026-08-21-bob-thread-ef567890';
     await engine.putPage(
       slug,
       {
@@ -578,7 +578,7 @@ describe('runLoopsExtract', () => {
   });
 
   test('verbatim evidence: a fabricated quote is BLANKED (loop lands, edge label falls back to text); a genuine quote survives whitespace-normalized', async () => {
-    const slug = 'emails/2026/08/2026-08-23-verbatim-thread-11223344.md';
+    const slug = 'emails/2026/08/2026-08-23-verbatim-thread-11223344';
     await engine.putPage(
       slug,
       {
