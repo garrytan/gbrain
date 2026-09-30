@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { isPhysicalRootMetadata } from '../src/core/persistence/physical-root.ts';
 import { tmpdir } from 'node:os';
@@ -313,6 +313,28 @@ test('remote URL changes during clone preparation refuse publication',()=>fixtur
   expect(readFileSync(join(root,'example.md'),'utf8')).toContain('Canonical');
   const counters=await engine.executeRaw<{key:string;outstanding_count:string;intent_bytes:string;recovery_bytes:string}>('SELECT key,outstanding_count::text,intent_bytes::text,recovery_bytes::text FROM persistence_counters');
   for(const counter of counters){expect(counter.outstanding_count).toBe('0');expect(counter.intent_bytes).toBe('0');expect(counter.recovery_bytes).toBe('0');}
+}),60_000);
+
+test('#5200: remove succeeds with a committed symlink in the worktree',()=>fixture(async(_home,source,root)=>{
+  symlinkSync(join(root,'example.md'),join(root,'linked.md'));
+  const result=await runManagedSourceLifecycle(engine,{operation:'remove',sourceId:source,confirmDestructive:true});
+  expect(result).toMatchObject({state:'committed'});
+  expect((await engine.executeRaw('SELECT id FROM sources WHERE id=$1',[source]))).toHaveLength(0);
+}),60_000);
+
+test('#5200: archive then expired purge succeed with a symlink in the worktree',()=>fixture(async(_home,source,root)=>{
+  symlinkSync(join(root,'example.md'),join(root,'linked.md'));
+  await runManagedSourceLifecycle(engine,{operation:'archive',sourceId:source});
+  expect((await engine.executeRaw<{archived:boolean}>('SELECT archived FROM sources WHERE id=$1',[source]))[0].archived).toBe(true);
+  await engine.executeRaw(`UPDATE sources SET archive_expires_at=now()-interval '1 hour' WHERE id=$1`,[source]);
+  await runManagedSourceLifecycle(engine,{operation:'purge',sourceId:source,expiredOnly:true,confirmDestructive:true});
+  expect((await engine.executeRaw('SELECT id FROM sources WHERE id=$1',[source]))).toHaveLength(0);
+}),60_000);
+
+test('#5200: rebind still refuses a symlink-containing worktree (transfer guard intact)',()=>fixture(async(_home,source,root)=>{
+  symlinkSync(join(root,'example.md'),join(root,'linked.md'));
+  await expect(runManagedSourceLifecycle(engine,{operation:'rebind',sourceId:source,path:root})).rejects.toMatchObject({code:'writer_manifest_unsafe'});
+  expect((await engine.executeRaw('SELECT id FROM sources WHERE id=$1',[source]))).toHaveLength(1);
 }),60_000);
 
 });
