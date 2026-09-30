@@ -113,6 +113,7 @@ import {
   renderCanonicalMigrationCommands,
 } from './defaults.ts';
 import { logRerankFailure, type RerankFailureReason } from '../rerank-audit.ts';
+import { stampModelProvenance, enrichModelNotFoundError } from './model-provenance.ts';
 const DEFAULT_EXPANSION_MODEL = 'anthropic:claude-haiku-4-5-20251001';
 const DEFAULT_CHAT_MODEL = 'anthropic:claude-sonnet-4-6';
 // v0.35.0.0+: reranker runtime fallback. Used only when search.reranker.enabled
@@ -567,6 +568,8 @@ export async function reconfigureGatewayWithEngine(engine: BrainEngine): Promise
   const expansionEffective = needsFileCfg(expansionDetailed.source) ? resolveEffectiveExpansionModel(fileCfg, env) : null;
   const newChat = chatEffective?.model ?? chatDetailed.model;
   const newExpansion = expansionEffective?.model ?? expansionDetailed.model;
+  stampModelProvenance('chat', chatEffective, chatDetailed, { configKey: 'models.chat', tier: 'reasoning' });
+  stampModelProvenance('expansion', expansionEffective, expansionDetailed, { configKey: 'models.expansion', tier: 'utility' });
 
   // Resolved values are bare model ids (e.g. `claude-sonnet-4-6`) — prepend
   // the existing provider prefix from cfg so the gateway keeps routing to
@@ -2526,9 +2529,9 @@ export async function expand(query: string): Promise<string[]> {
   } catch (err) {
     if (isAIInvocationPolicyError(err)) throw err;
     // Expansion is best-effort: on failure, fall back to the original query alone.
-    const normalized = normalizeAIError(err, 'expand');
+    const normalized = enrichModelNotFoundError(normalizeAIError(err, 'expand'), 'expansion');
     if (normalized instanceof AIConfigError) {
-      console.warn(`[ai.gateway] expansion disabled: ${normalized.message}`);
+      console.warn(`[ai.gateway] expansion disabled: ${normalized.message}${normalized.fix ? ` ${normalized.fix}` : ''}`);
     }
     return [query];
   }
@@ -3685,7 +3688,7 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
     // Pessimistic fallback (A3 amended): when err.usage isn't there, charge
     // the worst-case ceiling — better to overcount on failure than under.
     _recordBudget(failedCallUsage(err, { inputTokens: estimatedInputTokens, outputTokens: maxOutputTokens }));
-    throw normalizeAIError(err, `chat(${recipe.id}:${modelId})`);
+    throw enrichModelNotFoundError(normalizeAIError(err, `chat(${recipe.id}:${modelId})`), opts.model ? null : 'chat');
   }
 }
 
