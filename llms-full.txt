@@ -1726,9 +1726,11 @@ writing or reviewing an operation, consult `src/core/operations.ts` for the cont
   `gbrain db-repair --yes` to apply safe fixes. All three are engine-free — they
   work while the database is down. Full loop:
   [`docs/ENGINES.md`](./docs/ENGINES.md#engine-detection-and-access-repair).
-  Doctor residue (`timeline_history`, `derived_visibility`, unsealed pages):
-  preview `gbrain repair`, then `gbrain repair <kind> --apply` on the brain host
-  after the user agrees ([repair guide](./docs/guides/repair.md)). A refused
+  Doctor residue (`timeline_history`, `derived_visibility`, `safe_index_pending`):
+  preview `gbrain doctor --remediation-plan` (or `gbrain repair`), then, after the
+  user agrees, `gbrain doctor --remediate --yes --include-repairs --max-usd <n>`
+  or `gbrain repair <kind> --apply` on the brain host. After an upgrade, follow
+  [recover after upgrading](./docs/guides/repair.md#recover-after-upgrading-to-this-release). A refused
   write names its reason and recovery command
   ([write refusal reasons](./docs/guides/write-refusals.md)).
 - **Migrate / upgrade:** `gbrain upgrade` (binary self-update + schema migrations + post-upgrade prompts),
@@ -1742,14 +1744,22 @@ writing or reviewing an operation, consult `src/core/operations.ts` for the cont
   <dataset.jsonl>` runs against an isolated in-memory PGLite
   per question — your `~/.gbrain` is never opened. Full guide:
   [`docs/eval-bench.md`](./docs/eval-bench.md).
-- **Drive the brain to a target health score:** the one-command
-  loop. `gbrain doctor --remediation-plan --json` previews what would be
-  fixed; `gbrain doctor --remediate --yes --target-score 90 --max-usd 5`
-  walks a dependency-ordered plan, re-checking score between every step and
-  refusing to spend past the cost cap. Stale extraction uses source-scoped
-  database pages, including DB-only pages; it does not require a repository
-  sync first. Empty brains (no entity pages) or unconfigured embedding
-  keys hit a `max_reachable_score` ceiling and bail with what's missing.
+- **Drive the brain to a target health score:** preview, then agree.
+  `gbrain doctor --remediation-plan --json` previews job steps and the
+  PROTECTED repair steps (each marked "requires user agreement", with its
+  exact command); after the user agrees,
+  `gbrain doctor --remediate --yes --include-repairs --target-score 90 --max-usd 5`
+  runs the repairs (even when the score target is unreachable) and walks the
+  dependency-ordered job plan, re-checking score between steps. The cap is
+  cumulative across `--resume`; a paid step that would exceed it is not
+  started while free steps still run. Without `--include-repairs`, repair
+  steps are listed as skipped. `--json` classifies each finding `cleared`,
+  `pending`, `consent_required`, `operator_required` or `unsupported`.
+  Stale extraction uses source-scoped database pages, including DB-only
+  pages; it does not require a repository sync first. Empty brains (no
+  entity pages) or unconfigured embedding keys hit a `max_reachable_score`
+  ceiling: job steps stop with what's missing, while included repair steps
+  still run.
   Three phase handlers (synthesize / patterns / consolidate) are
   PROTECTED — only trusted local callers can submit them; MCP cannot.
   Reference: [`docs/architecture/topologies.md`](./docs/architecture/topologies.md).
@@ -2872,7 +2882,9 @@ upgrade every process that writes to the brain, then follow the
 [v0.60.5.0 steps](skills/migrations/v0.60.5.0.md): one full `gbrain doctor`,
 then preview `gbrain repair` and apply only after the user agrees
 ([repair guide](docs/guides/repair.md)). For v0.60.6.0, also follow the
-[one-time timeline prune and slug-collision steps](skills/migrations/v0.60.6.0.md).
+[one-time timeline prune and slug-collision steps](skills/migrations/v0.60.6.0.md). For v0.60.11.0, preview
+`gbrain repair contextual-mode` and rebuild PGLite vector indexes after a crash
+repair ([steps](skills/migrations/v0.60.11.0.md)).
 
 For v0.53.0.0, follow the
 [mechanical shared-skills migration](skills/migrations/v0.53.0.0.md) on the host,
@@ -3924,9 +3936,12 @@ version bump changes it.
    backs up `pg_wal/` + `pg_control` into a sibling
    `<dataDir>.wal-repair-backup-<ts>/` dir, resets the WAL in place
    (pg_resetwal semantics — data files preserved; transactions not
-   checkpointed before the corruption may be lost), and retries once. On
-   success it prints a loud stderr notice naming the backup and recommending
-   `gbrain doctor`. Safety bounds: repair only runs under a cleanly-acquired
+   checkpointed before the corruption may be lost), and retries once. The
+   reset does not rebuild indexes, so a page written just before the crash
+   can be missing from vector search while keyword search still finds it.
+   On success it prints a loud stderr notice naming the backup and the next
+   commands: `gbrain reindex --vectors` (rebuilds every HNSW index from the
+   stored vectors, no re-embedding) and then `gbrain doctor`. Safety bounds: repair only runs under a cleanly-acquired
    data-dir lock (never after reaping another process's lock), skips for a
    cooldown window after a failed attempt
    (`GBRAIN_PGLITE_WAL_REPAIR_COOLDOWN_SECONDS`, default 3600), reuses one
@@ -8360,8 +8375,13 @@ Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/rep
 
 `gbrain doctor` finds some damage that it cannot fix on its own: timeline
 history that exists only in the database, derived pages without an explicit
-visibility, and pages indexed before the safe-chunk fence. `gbrain repair`
-fixes those three kinds. Every run is a preview unless you pass `--apply`.
+visibility, pages indexed before the safe-chunk fence, pages imported
+without a contextual retrieval mode, and connector checkpoint rows no source
+can load. `gbrain repair` fixes those five kinds. Every run is a preview
+unless you pass `--apply`.
+`gbrain doctor --remediation-plan` lists the same kinds as repair steps, and
+`gbrain doctor --remediate --yes --include-repairs` runs them under a budget
+(see [Run repairs through doctor](#run-repairs-through-doctor)).
 
 **Say to your agent:** *"Doctor says some timeline history is only in the
 database. Show me what `gbrain repair` would change, then apply it."* The
@@ -8396,7 +8416,7 @@ timeline: 12 item(s) to repair
   it leaves alone (see [What each kind fixes](#what-each-kind-fixes)).
 - **Cost** is what an apply of the pending items would consume: one permanent
   request ID and 16 KiB of reserved receipt space per page for `timeline` and
-  `visibility`, and nothing for `safe-chunks`. When an embedding model is
+  `visibility`, and nothing for `safe-chunks` or `contextual-mode`. When an embedding model is
   configured and priced, the line adds an estimated embedding cost in dollars.
 - **Capacity** shows the write-journal counters the run draws on and the 90%
   line where it stops (see [Capacity stop](#capacity-stop)).
@@ -8411,12 +8431,16 @@ gbrain repair timeline --apply
 gbrain repair visibility --apply
 gbrain repair safe-chunks --apply
 gbrain repair safe-chunks --apply --no-embed   # re-seal text now, embed later
+gbrain repair contextual-mode --apply
 gbrain repair --all --apply                    # every kind in order
 ```
 
 `--apply` writes without a prompt, so review the preview first. With
-`--apply` you must name a kind or pass `--all`; `--yes` is refused. `--all`
-runs `timeline`, then `visibility`, then `safe-chunks`, and stops at the
+`--apply` you must name a kind or pass `--all`; `--yes` is refused, and so is
+any other option the table below does not list, including `--max-usd`: a
+refused run changes nothing. To cap paid embedding work, run the repairs
+through `gbrain doctor --remediate --yes --include-repairs --max-usd <n>`. `--all`
+runs `timeline`, then `visibility`, then `safe-chunks`, then `contextual-mode`, then `connector-checkpoints`, and stops at the
 first kind that stops.
 
 Each item is re-checked against the page's current state just before it is
@@ -8429,10 +8453,10 @@ left for the next run. Nothing is deleted.
 | --- | --- |
 | `--apply` | Write the repair. Without it, only preview. |
 | `--source <id>` | Limit the run to one active source. The default is every active (non-archived) source. An unknown or archived id is refused. |
-| `--limit <n>` | Repair at most `n` items per kind in this run (a positive integer; with `--all`, up to `n` for each of the three kinds). Rerun the same command to continue. |
-| `--no-embed` | `safe-chunks` only: re-seal chunk text and skip embedding. Run `gbrain embed --stale` later. |
+| `--limit <n>` | Repair at most `n` items per kind in this run (a positive integer; with `--all`, up to `n` for each kind). Rerun the same command to continue. |
+| `--no-embed` | `safe-chunks` and `contextual-mode`: skip the embedding provider. Run `gbrain embed --stale` later. `timeline` and `visibility` pages are re-embedded by their publication either way. |
 | `--all` | Run every kind in order. |
-| `--json` | Print `{ scope, mode, results[] }`, one result per kind with `affected`, `sample`, `residuals`, `cost`, `capacity`, `resumed_from`, `applied`, `skipped`, `complete`, `stopped` and `apply_command`. |
+| `--json` | Print `{ scope, mode, results[], paid_kinds }`, one result per kind with `paid`, `affected`, `sample`, `residuals`, `cost`, `capacity`, `resumed_from`, `applied`, `skipped`, `complete`, `stopped` and `apply_command`. |
 
 The command exits 1 when a run stops early (capacity, a pending write, or a
 held writer). A `--limit` batch that leaves work behind exits 0, so scripts
@@ -8444,7 +8468,9 @@ should also check `results[].complete`.
 | --- | --- | --- | --- |
 | `timeline` | `timeline_history` | Re-saves each page with its current body through a revision-bound `put_page`. The save writes each database-only timeline entry back into the page as a bullet preceded by `<!-- gbrain:materialized v1 <hash> -->`. | `kept_unrenderable_rows`: entries that would change if written as a bullet (for example an empty source). They stay in the database. |
 | `visibility` | `derived_visibility` | Stamps an explicit `visibility` on extracted atoms and synthesized concepts. An atom takes its origin page's visibility; transcript atoms and atoms whose origin is gone become `private`; a concept takes the strictest visibility of its input atoms. A concept input found only through an atom's `concepts:` list counts as private. Atoms are repaired before concepts. It never loosens an explicit value: `private` stays `private`, and `world` can only become `private`. A missing value is stamped with the origin's value, which is `world` when the origin page is public. | `concepts_without_lineage`: concepts whose inputs cannot be found. They stay as they are, and remote readers already treat a missing visibility as private. `atoms_origin_gone_to_private` counts atoms made private because their origin page no longer exists. |
-| `safe-chunks` | `contextual_retrieval_coverage` (`details.unsealed_pages`) | Rebuilds the chunks of markdown and code pages indexed before the safe-chunk fence, which remote and MCP search withhold. It rebuilds projections only: no page write, no new page version and no request ID. Vectors whose embedding input did not change are kept; the rest are embedded unless you pass `--no-embed` or no embedding model is configured. | `code_without_source_path`: code pages with no recorded file to re-chunk. `unsupported_page_kind`: other page kinds, such as images. Their importer re-seals them. |
+| `connector-checkpoints` | `connector_checkpoints` | Deletes managed connector checkpoint rows and retry pointers that no registered connector source can load and that are older than 7 days. They accumulate after a content setting such as `g_history_days` changes, or when a connector host older than v0.60.11.0 runs during an upgrade. Cleanup only: it never copies or re-keys a checkpoint, takes no journal admission and runs brain-wide (`--source` does not narrow it). | Rows a queued or running connector write, or a connector's recorded pending set, still references. |
+| `safe-chunks` | `safe_index_pending` (also `contextual_retrieval_coverage`, `details.unsealed_pages`) | Rebuilds the chunks of markdown and code pages indexed before the safe-chunk fence, which remote and MCP search withhold. It rebuilds projections only: no page write, no new page version and no request ID. Vectors whose embedding input did not change are kept; the rest are embedded unless you pass `--no-embed` or no embedding model is configured. | `code_without_source_path`: code pages with no recorded file to re-chunk. `unsupported_page_kind`: other page kinds, such as images. Their importer re-seals them. |
+| `contextual-mode` | `contextual_retrieval_coverage` (pages with no recorded mode) | Stamps the contextual retrieval mode on markdown pages imported without one (for example by a large `--no-embed` sync or a connector source before this release), exactly as a fresh import of the page would: the page, source and brain settings decide, and the per-chunk synopsis tier lands at the free title tier. It rebuilds projections only: no page write, no new page version and no request ID. A page whose stored vectors already match the stamped convention keeps them and queues no re-embedding; a page whose embedding input changes has only those vectors cleared and is re-embedded once, unless you pass `--no-embed`. | `unsealed_projection`: pages whose chunks lag their text; `gbrain embed --stale` or `safe-chunks` seals them first, and the next run stamps them. `embed_skip`: pages marked to skip embedding keep their stored vectors and are not stamped. |
 
 Timeline rows that an earlier version of a page produced and its current text
 no longer has are removals, not history, so `timeline` neither counts nor
@@ -8455,6 +8481,58 @@ without `--dry-run`.
 A timeline repair can make pages gain marked bullets. That is the fix: the
 history is now visible in the page and survives later edits. Deleting a marked
 bullet in a save that passes the current `expected_revision` deletes its entry.
+
+<a id="connector-checkpoints"></a>
+### Connector checkpoints and the upgrade to v0.60.11.0
+
+Managed Google and GitHub connector checkpoints are keyed on the parsed
+connector settings minus credential-delivery fields, so the per-cycle
+`last_source_cycle_at` stamp no longer makes every run start over. The
+v0.60.11.0 migration copies each connector source's newest committed
+checkpoint to the new key. A source whose newest checkpoint receipt was
+compacted re-walks its window once; unchanged pages are not admitted again.
+
+**Say to your agent:** *"Did my Gmail connector stop re-importing everything
+every hour?"* The agent runs `gbrain sources status --json` and reads the
+connector block below.
+
+`gbrain sources status --json` adds a `connector` object to each Google or
+GitHub source:
+
+```json
+"connector": {
+  "upgrade_recovery": "resumed",
+  "resumed_from": "2026-09-28 17:04:11.52+00",
+  "account_pinned": true,
+  "continuity_unverified": true,
+  "pending": 0,
+  "last_run": { "page_admissions": 0, "skipped_unchanged": 412, "pending": 0, "checkpoint_admissions": 1,
+                "stopped_on_wait_budget": false, "dropped_upstream": 0, "finished_at": "2026-09-29T21:00:03.114Z" }
+}
+```
+
+- `upgrade_recovery`: `resumed` (the migration copied a pre-upgrade checkpoint
+  from `resumed_from`), `rewalking_once` (until the first post-upgrade run
+  finishes) or `none`. Content selection since `resumed_from` is unverified;
+  if you changed a content setting since then, re-walk once with
+  `gbrain sync --source <id> --reset-checkpoint`.
+- `account_pinned` / `continuity_unverified`: the account the credential
+  resolved to is pinned on the first run. A migrated source is pinned on its
+  first post-upgrade run, so continuity before the upgrade is unverified. The
+  account itself is never printed here.
+- `last_run`: page admissions, unchanged pages skipped without an admission,
+  writes still pending, checkpoint admissions, whether the 30-second wait
+  budget stopped the run, and items dropped because they were deleted
+  upstream. A quiet source shows `page_admissions: 0`; a provider whose
+  cursor changes every run (Calendar sync token, Gmail history id) shows one
+  checkpoint admission per run.
+
+`gbrain sync --source <id> --reset-checkpoint` discards that connector
+source's checkpoint, including Google backfill state, after resolving its
+pending writes, and re-walks the configured window once. Existing pages stay,
+unchanged ones take no admission, and the account pin is kept. It refuses on a
+Git-backed source and while the account differs
+([`connector_account_changed`](write-refusals.md#connector-account-changed)).
 
 ## Resume
 
@@ -8483,7 +8561,7 @@ STOPPED: Stopped before crossing 90% of brain lifetime_ids (...). Run: gbrain co
 
 Raise the limit on the brain host only if you agree, then rerun. Raised limits
 are brain-wide; request IDs stay permanent replay protection. `safe-chunks`
-takes no journal admission and never hits this stop. The limits and their
+and `contextual-mode` take no journal admission and never hits this stop. The limits and their
 defaults are in [bounded admission and retention](concurrent-writes.md#bounded-admission-and-retention).
 
 ## Where it runs
@@ -8507,7 +8585,8 @@ every private page.
 
 ```bash
 gbrain repair --json     # every kind reports "affected": 0
-gbrain doctor --json     # timeline_history, derived_visibility, unsealed_pages
+gbrain doctor --json     # timeline_history, derived_visibility, safe_index_pending
+gbrain doctor --remediation-plan   # no repair steps left
 ```
 
 Items the repair leaves alone can keep a doctor warning: concepts without
@@ -8515,11 +8594,156 @@ lineage still count under `derived_visibility`, and code pages without a
 source path or unsupported page kinds still count as unsealed pages. Check
 the residual counters before treating a remaining warning as a failed repair.
 
+## Run repairs through doctor
+
+**Say to your agent:** *"Preview what doctor would fix after the upgrade, then
+run the repairs I agree to with a $2 cap."*
+
+`gbrain doctor --remediation-plan` previews two kinds of step. Job steps come
+from the brain score and `--target-score`. Repair steps come from every
+`gbrain repair` kind that has pending items, whatever the score target, and
+each is marked `requires user agreement`. Every step prints the exact command
+that applies it, and the plan ends with one combined command:
+
+```text
+Repair steps: 2 (requires user agreement; PROTECTED, run on this host only; independent of the score target)
+  R1. timeline — 12 item(s) (free) [requires user agreement]
+     apply: gbrain repair timeline --apply
+  R2. safe-chunks — 40 item(s) (~$0.0031 embeddings) [requires user agreement]
+     apply: gbrain repair safe-chunks --apply
+
+Apply everything after the user agrees: gbrain doctor --remediate --yes --include-repairs --max-usd 0.01
+Ask the user before applying any repair step.
+```
+
+`gbrain doctor --remediate --yes` runs job steps only. Repair steps run only
+when you also pass `--include-repairs`, which records the user's agreement;
+without it they are listed as `N repair steps skipped (user agreement required):
+re-run with --include-repairs`. Repair steps are PROTECTED: they run in this
+process on the brain host, and a remote caller cannot include them. They run
+even when the score target is unreachable (a keyless brain often cannot reach
+90); `--target-score` governs job steps only, and an included repair step runs
+to completion.
+
+`--max-usd <n>` is a cumulative cap across the run and every `--resume`. A paid
+step (one that may queue embeddings) whose estimate exceeds what is left is not
+started; the free steps still run, and the run then stops as budget-exhausted
+with a resume command that repeats the cap and `--include-repairs`:
+
+```text
+Resume with:
+  gbrain doctor --remediate --yes --include-repairs --max-usd 0 --resume 3f9c2a1b7d4e5f60
+```
+
+The checkpoint lives in `~/.gbrain/remediation/<plan hash>.json` on this host
+and records the brain, the cap, the `--include-repairs` agreement, the spend so
+far and the original steps. `--resume` without `--max-usd` reuses the recorded
+cap and prints it; a higher `--max-usd` raises it. A resume only continues the
+original steps: repair kinds or job steps found later need a fresh run and a
+fresh agreement. A checkpoint recorded for another brain is refused.
+
+When an embedding model is configured, every kind can spend. `timeline` and
+`visibility` publish page writes whose embeddings the persistence consumer
+computes afterwards, outside this run, so their estimate is charged against the
+cap before they start; `--no-embed` does not change that. The consumer does
+not see the cap, so for those kinds the cap bounds the estimate, not each
+provider call, and the estimate counts the page as it is before the repair.
+`safe-chunks` embeds in the run itself under the remaining cap and
+`--no-embed` makes it free. When the budget runs out after pages are re-sealed,
+the checkpoint keeps their sources and `--resume` finishes their embeddings
+under the same cap; a run that leaves embeddings behind exits 1 and says to run
+`gbrain embed --stale`.
+
+With `--json`, the result adds `repairs[]` (one entry per repair step, with
+`status` `completed`, `stopped`, `failed`, `budget_refused` or
+`budget_exhausted`), `repairs_skipped[]`, `budget`, `repairs_completed`,
+`healthy` and `findings[]`. Each finding has a `check_id`, a `message` and a
+`class`:
+
+| Class | Meaning |
+| --- | --- |
+| `cleared` | The finding was present before the run and is gone after it. |
+| `pending` | A repairable finding remains: its step stopped, was refused by the budget, left items behind, or the check could not run. |
+| `consent_required` | A repairable finding whose step was skipped for lack of `--include-repairs`; `command` applies it. |
+| `operator_required` | Needs a named manual action on the brain host (`instruction`), for example raising a journal limit, retrying a parked effect, or quarantining self-captures. |
+| `unsupported` | No command can clear it yet; it is reported so it is never hidden (a stale queued embedding effect). |
+
+Exit status: `0` when no automatically repairable finding remains and no step
+failed, even if operator-required or unsupported findings remain (they are
+listed); `1` when a repairable finding remains, a step failed, or the budget
+ran out; `2` when the score target is unreachable and there was no repair step
+to run, or a resume was refused. `healthy` is true only when every wave check
+is clean; `repairs_completed` counts the repair steps that finished.
+
+## Recover after upgrading to this release
+
+**Say to your agent:** *"We just upgraded gbrain. Check what needs repair and
+walk me through it before changing anything."*
+
+1. `gbrain post-upgrade` runs the recovery checks once and, when something
+   needs attention, prints an `[AGENT] Relay this to your operator` banner with
+   each finding's count. It never applies anything.
+2. Preview: `gbrain doctor --remediation-plan`. Show the user the repair steps
+   and their estimated cost, and ask before applying.
+3. After the user agrees, apply with a budget:
+   `gbrain doctor --remediate --yes --include-repairs --max-usd <n>`
+   (the plan prints `<n>` filled in).
+4. If it stops as budget-exhausted, ask the user again, then run the printed
+   resume command (raise `--max-usd` only with their agreement).
+5. Follow each `operator_required` instruction the run prints, and note the
+   `unsupported` ones.
+6. Verify: `gbrain doctor --remediation-plan` lists no repair steps.
+
+Hosted and thin-client callers see the same checks in `gbrain remote doctor`
+as one line each, for example
+`timeline_history: ... host operator action required: on the brain host run gbrain doctor --remediation-plan`.
+A line that says `Unknown:` means the check could not run; it is not a clean
+result. Ask the brain host's operator to run the steps above.
+
+## Quarantine self-captured corpus files
+
+`gbrain doctor` reports `self_capture` when the dream session corpus
+(`dream.synthesize.session_corpus_dir`) still holds files captured from
+gbrain's own `claude-cli` sessions (#5413). Dream and the sweep already skip
+the ones they can identify, but nothing removes them. The check never moves
+or deletes files. It lists what it classified (a harness transcript under a
+gbrain scratch project matches the file) and counts what it cannot decide (no
+harness transcript is left for that session).
+
+To quarantine the classified files on the brain host:
+
+```bash
+gbrain doctor --json > /tmp/gbrain-doctor.json
+# Review the list first:
+jq -r '.checks[] | select(.name=="self_capture") | .details.classified_sample[]' /tmp/gbrain-doctor.json
+# Then run the exact commands doctor printed (one mkdir, one move per file, sidecars included):
+jq -r '.checks[] | select(.name=="self_capture") | .details.quarantine_commands[]' /tmp/gbrain-doctor.json | sh
+gbrain doctor --json | jq '.checks[] | select(.name=="self_capture") | .details'
+```
+
+The quarantine directory is a sibling of the corpus directory
+(`<corpus>.quarantine`), so dream never reads it. Doctor prints at most 20 move
+commands per run; rerun the sequence until `classified` reaches 0. Review the
+`unclassifiable` files by hand; delete the quarantine directory only when you
+are sure you do not need it.
+
+## Stale queued embedding effects
+
+`gbrain doctor` reports `stale_embedding_effects` when a committed write still
+has a queued embedding effect an hour later that no consumer has claimed
+(#5629). It blocks shared-skill activation with `writer_not_quiesced`, and the
+refusal names the effect. Inspect it with
+`gbrain sources writer status <source> --json`. Inspection cannot clear it:
+`gbrain sources writer retry-effects` only handles failed effects, and the
+path that reconciles or re-queues a stale queued effect (never silently
+dropping it) is not built yet. Doctor remediation reports it as `unsupported`.
+
 ## Related
 
 - [Write refusal reasons](write-refusals.md) — what a refused write means and the recovery command
 - [Concurrent writes and durable receipts](concurrent-writes.md) — receipts, retries and capacity limits
 - [v0.60.5.0 upgrade steps](../../skills/migrations/v0.60.5.0.md) — the backup-first upgrade that introduced these repairs
+- [Topologies: claim and activate runbook](../architecture/topologies.md#claim-and-activate-runbook) — quiescence checklist, the writer admin lock
 
 ---
 
@@ -8567,17 +8791,72 @@ of making a duplicate.
 | `file_database_drift` | `source_changed` | The page's canonical file and its database copy disagree, usually because the file was edited outside a coordinated write. Neither copy was overwritten. A file with no `type:` line keeps the stored type, and titles compare trimmed, so those alone no longer cause this. | `gbrain sources reconcile <source> <slug> --brain <brain> --preview`, review the preview, resolve it, then `--apply <resolved-preview-file> --request-id <new uuid>`. Retry the original write with a **new** request ID. See [repair a file/database disagreement](concurrent-writes.md#repair-a-filedatabase-disagreement). |
 | `ambiguous_source_path` | `page_identity_changed` | A source registered at a Git subfolder `<sub>` has a page whose stored path `<sub>/<file>` could mean either `<file>` in the source directory (the older Git-root spelling) or `<sub>/<file>` inside a folder of the source that repeats its name, and both files exist. Sync refuses instead of guessing. See [sources in a Git subfolder](multi-source-brains.md#sources-in-a-git-subfolder). | Rename or move one of the two files, commit, then `gbrain sync --source <source> --no-pull --retry-failed`. |
 | `physical_root_device_changed` | `recovery_required` | The checkout's filesystem device number changed while everything else matches, which macOS can do after a reboot. When the owner token, brain, worktree, root, inode and a non-zero birth time all match and the caller can verify database ownership, the write path re-stamps ownership by itself and the write proceeds. This refusal means the automatic re-stamp could not be verified; the suggestion says why. | Do a deliberate self-transfer: `gbrain sources writer status <source>` (note `admin_state`), then `gbrain sources writer transfer prepare <source> --self-transfer --admin-intent writer_transfer_prepare --expected-state <admin_state>`, then `gbrain sources writer transfer accept <source> --path <root> --expected-epoch <epoch> --manifest <digest from prepare> --self-transfer --admin-intent writer_transfer_accept --expected-state <fresh admin_state>`. Retry the original write with the **same** request ID. Never delete ownership marker files. |
+| <a id="embedding_budget_below_worst_case"></a>`embedding_budget_below_worst_case` | `embedding_budget_below_worst_case` | `gbrain migrate embeddings` (or the local `migrate_embeddings` operation) was given a `--max-cost-usd` cap below the migration's worst-case authorization: every planned provider request at its maximum input size, plus any debits a resumed run already holds. The run stopped before any provider request, re-chunk or vector invalidation, so nothing changed. The message and JSON carry `cap_usd`, `worst_case_usd`, `debited_usd` and `required_cap_usd`. | Re-run with the value the `suggestion` names, for example `gbrain migrate embeddings --to <provider:model> --dim <N> --max-cost-usd <required_cap_usd> --yes` (operation: `max_cost_usd`). Preview first with `--dry-run`, which prints the worst-case authorization beside the estimate. Requests settle to reported usage, so actual spend is usually far below the cap. See [embedding migration](embedding-migration.md). |
 | `cursor_processing_options_conflict` | `invalid_params` | An unfinished sync's processing options (`--no-embed`, `--no-extract`, `--no-schema-pack`) conflict with this run, or the cursor predates saved options and has none. When options are saved, a run that omits those flags, including autopilot and `sync` jobs, adopts them. | When the message prints a resume command (`gbrain sync --source <source> --no-pull` plus the saved flags), run it or drop the conflicting flag. When it reports no saved options, resolve pending requests first, then rediscover with `gbrain sync --source <source> --no-pull --retry-failed` and the processing flags you want. |
 | `take_row_collision` | `take_row_collision` | A save adds a takes-table row whose row number already belongs to a different take that exists only in the database. The save stops instead of overwriting that take. | Renumber the new takes row, or add the existing take to the page's takes table, then save with the current `expected_revision` and a **new** request ID (the content changed). |
 | `invalid_source_uri` | `invalid_source_uri` | The brain has shared skillpacks, and the page's stored `source_uri` is a `file:` URI that cannot be turned into a local path, so gbrain cannot prove the write stays outside a skillpack. Shared-skill protection stays on. | The source owner inspects the page's stored `source_uri` on the brain host and replaces it with an absolute file URI or clears it; there is no dedicated command yet. Retry with a **new** request ID. |
 | `queue_capacity` | `queue_capacity` | Admission would exceed a write-journal limit. Existing requests keep their place; nothing is evicted. For the cumulative limits (lifetime request IDs and receipt bytes), `detail` names the limit, for example `principal_lifetime_ids`. | For a cumulative limit, run the printed `gbrain config set persistence.limits.<limit> <value>` (sized for about one more year at the current rate), then retry with the **same** request ID. For outstanding-request, queued-byte or recovery-byte limits, let outstanding requests finish and check `gbrain sources writer status`. See [bounded admission and retention](concurrent-writes.md#bounded-admission-and-retention). |
+| <a id="connector-account-changed"></a>`account_changed`, `account_unresolved` | `connector_account_changed` | A managed Google or GitHub connector's credential resolves to a different account than the one pinned for the source (Google email, GitHub App installation or login), or to no account at all. Google checks every enabled service before any service runs. Nothing was imported. No reset flag authorizes an account change. | The suggestion gives two branches with real values. (A) Restore the credential for the pinned account (the configured `g_token_env`, `g_token_command`, vault credential, `gh_token_env` or GitHub App key), then `gbrain sync --source <source>`. (B) For a deliberate change, add a new source for the new account (`gbrain google setup --account <email>`, or `gbrain sources add <new-id> --kind github … --app-install <id>`), then `gbrain sources archive <source>`; existing pages stay under the old source. |
+| <a id="connector-intent-outdated"></a>`pre_upgrade` | `connector_intent_outdated` | A connector write was admitted in the intent format retired in v0.60.11.0. With detail `pre_upgrade` it was admitted before this brain's upgrade; otherwise a connector host older than v0.60.11.0 admitted it. The consumer recovers any file publication in progress first, then fails the request. | `pre_upgrade`: nothing to do; the item is fetched again on the next `gbrain sync --source <source>` under a new request ID. Otherwise: `gbrain upgrade` on the host that runs connector jobs, then `gbrain sync --source <source>`. |
+| <a id="unsupported-mutation-protocol"></a>`consumer_upgrade_required` | `unsupported_mutation_protocol` | A v0.60.11.0 connector sent a `connector_v2_*` write to a persistence consumer older than v0.60.11.0, which does not know the format. Other `permission_denied` refusals on connector receipts are never relabeled as upgrades. | `gbrain upgrade` on every consumer and worktree-owner host, then `gbrain sync --source <source>`. Upgrade those hosts before connector hosts. |
+| `unbound_source` | `owner_unavailable` | On Postgres, a page write went to a source that has a checkout path but no canonical owner. It is refused by default because another host may own the files. The same reason appears when the source was bound, or the page gained a canonical file, after a database-only write was accepted, and (as a `source_changed` sync failure) when a canonical file appears at the path of a page written while the source was unbound. | Bind the source (`gbrain sources writer status <source> --json`, then `gbrain sources writer claim <source> --path <checkout> --admin-intent writer_claim --expected-state <admin_state>`), or opt in with `gbrain config set persistence.unbound_write database_only`. See [unbound sources on Postgres](#unbound-sources-on-postgres). |
+| <a id="embedding_zero_norm"></a>`zero_norm`, `non_finite` or `empty_input` | `embedding_zero_norm` | The embedding provider returned a vector with no direction (all zeros, NaN or infinity) for a chunk, or the chunk text was empty. A vector index silently skips such a row, so gbrain refuses to store it. Only that chunk is refused: the page text and every other chunk's vector are saved, and the page is left for `gbrain embed --stale`. It is never retried as a rate limit or network error. | Inspect the named page's chunk text (empty, whitespace- or symbol-only chunks are the usual cause) or the embedding provider, fix it, then run `gbrain embed <slug>` (add `--source <source>` for a non-default source). If normal text also returns zero vectors, the provider or model is broken; check it with `gbrain doctor`. |
 | `targets_parked` (doctor: `parked_effects`) | effect `error_code` | A Git backup or withdrawal target failed five times in a row and was set aside so the other pages keep committing. The page write itself committed; its Git backup or withdrawal is incomplete. Contention, dependency waits, shutdown and transient database errors never count toward the five. | `gbrain sources writer status <source>`, fix the cause it names, preview with `gbrain sources writer retry-effects <source> --request-id <id> --dry-run`, then run it without `--dry-run`. Each run grants one more attempt per parked target; a target that fails again parks again. |
+| <a id="writer_admin_locked"></a>`writer_admin_locked` | `writer_admin_locked` | The operator set the brain's writer admin lock (`gbrain sources writer lock`), so writer claim, activate, transfer prepare and transfer accept refuse for every caller. Ordinary writes are not affected. | Agents: stop and ask the operator; do not unlock it yourself. The operator runs, on the brain host, `gbrain sources writer unlock`, re-reads `gbrain sources writer status <source> --json`, administers, then `gbrain sources writer lock` again. See the [writer admin lock](../architecture/topologies.md#writer-admin-lock). |
+| <a id="writer_not_quiesced"></a>`writer_not_quiesced` | `writer_not_quiesced` | Activation found an older writer, a legacy lock, or queued, running or recovering work. When work blocks it, the message names the blocking effect id, kind, source, page and request id. | Stop the writers named in the [claim and activate runbook](../architecture/topologies.md#claim-and-activate-runbook), inspect the named work with `gbrain sources writer status <source> --json`, let it finish, then retry. A committed write whose queued embedding effect is never claimed cannot be cleared by a command yet; see [stale queued embedding effects](repair.md#stale-queued-embedding-effects). |
+| unknown option (repair) | `invalid_params` | `gbrain repair` refuses any option it does not list, so a mistyped flag or `--max-usd` never runs a repair silently without it. | Fix the option (`gbrain repair --help`). To cap paid repair work, run `gbrain doctor --remediate --yes --include-repairs --max-usd <n>`. |
 
 `gbrain doctor` reports parked targets as the `parked_effects` check with the
 exact `retry-effects` command per request. It reports `persistence_capacity`
 when lifetime request IDs or receipt bytes reach 80% of a limit, with the
 `gbrain config set` value to use; outstanding-request, queued-byte and
 recovery-byte limits can refuse writes without that warning.
+
+## Unbound sources on Postgres
+
+A source with a checkout path (`local_path`, or `sync.repo_path` for the
+`default` source) normally publishes every page write to a markdown file in
+that checkout, through the source's canonical owner. PGLite claims that owner
+automatically on the first write. Postgres does not, because several hosts can
+share one Postgres brain and only one of them may own the files. Until someone
+binds the source, `put_page`, `capture` and `delete_page` to it refuse with
+`owner_unavailable` and `detail: unbound_source`. The suggestion names both
+ways out with the real source filled in:
+
+1. **Bind the source** on the host that holds the checkout. Run
+   `gbrain sources writer status <source> --json` and note `admin_state`, then
+   `gbrain sources writer claim <source> --path <checkout> --admin-intent writer_claim --expected-state <admin_state>`.
+   If an operator has locked writer administration, ask them to unlock it
+   first. Read [topologies](../architecture/topologies.md) before claiming a
+   source that other hosts write to.
+2. **Allow database-only writes** with
+   `gbrain config set persistence.unbound_write database_only` (the default is
+   `refuse`; no other value is accepted, and the key can only be set on the
+   brain host). A `put_page` to a new page, or to a page that is already
+   database-only, then writes to the database only. Its result says
+   `write_through: { written: false, skipped: "unbound_source" }` with a
+   warning. Pages written this way stay database-only: binding the source
+   later does not materialize them into canonical files, later writes keep
+   them database-only, and sync never deletes or overwrites them.
+
+The opt-in never applies to a page that came from a canonical file (it has a
+stored source path). An edit there could be lost on the owner's next sync, so
+it keeps refusing with only the bind option. `capture` and `delete_page` also
+keep refusing.
+
+If the source is bound after a database-only write was accepted but before it
+was published, the write fails with the same reason and nothing is written;
+read the page again and resubmit with a new request ID. If a canonical file
+appears at the path of a database-only page after binding, sync stops for that
+file with `source_changed` and reason `unbound_source`; neither copy is
+overwritten and the database page stays served. Rename or remove the file,
+commit, and sync again.
+
+`gbrain doctor` reports the `unbound_source` check: the number of such pages
+per source. While the source is unbound it is `ok` and prints the bind command;
+after binding it warns, because those pages sit outside the canonical files.
+There is no command yet that turns them into files; to move one, save its
+content under a new slug and delete the database-only page.
 
 ## Related
 

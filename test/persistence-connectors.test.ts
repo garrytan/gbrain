@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
+import { withGoogleAccount } from './helpers/connector-fixture.ts';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -14,7 +15,7 @@ import { importFromContent } from '../src/core/import-file.ts';
 import { parseMarkdown } from '../src/core/markdown.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { purgeStaleCheckpoints } from '../src/core/op-checkpoint.ts';
-import { createConnectorFixture, options, json, googleConfig, githubConfig, contact, issueFixture, githubFetch, sourceCheckpoint } from './helpers/connector-fixture.ts';
+import { createConnectorFixture, options, json, googleConfig, githubConfig, contact, issueFixture, githubFetch, sourceCheckpoint, connectorPendingSet } from './helpers/connector-fixture.ts';
 
 const { home, engines, env, source, boundSource, setup, teardown } = createConnectorFixture();
 beforeAll(setup, 120_000);
@@ -32,16 +33,16 @@ test('public Google sync journals DB-only imports and repeat/restart checkpoints
       throw new Error('Unexpected external fixture route');
     };
     const cfg = parseGoogleSourceConfig(config, f.dir);
-    expect((await runGoogleSync(engine, f.id, cfg, options, fetcher)).added).toBe(1);
+    expect((await runGoogleSync(engine, f.id, cfg, options, withGoogleAccount(fetcher))).added).toBe(1);
     const pages = await engine.executeRaw<{ slug: string; source_path: string }>('SELECT slug,source_path FROM pages WHERE source_id=$1', [f.id]);
     expect(pages).toHaveLength(1);
     expect(existsSync(join(f.dir, pages[0].source_path))).toBe(false);
-    const [receipt] = await engine.executeRaw<WriteRequest>("SELECT * FROM persistence_requests WHERE source_id=$1 AND intent->>'kind'='managed_connector_import' ORDER BY sequence LIMIT 1", [f.id]);
+    const [receipt] = await engine.executeRaw<WriteRequest>("SELECT * FROM persistence_requests WHERE source_id=$1 AND intent->>'kind'='connector_v2_import' ORDER BY sequence LIMIT 1", [f.id]);
     expect(receipt.authority.databaseOnlyReason).toBe('connector_database');
     expect(receipt.outcome?.write_through).toEqual({ written: false, skipped: 'connector_database' });
     expect(await engine.executeRaw('SELECT id FROM persistence_requests WHERE source_id=$1 AND state<>\'committed\'', [f.id])).toHaveLength(0);
     await disposePersistenceConsumer(engine);
-    expect((await runGoogleSync(engine, f.id, cfg, options, fetcher)).added).toBe(0);
+    expect((await runGoogleSync(engine, f.id, cfg, options, withGoogleAccount(fetcher))).added).toBe(0);
     expect(calls.some(url => url.includes('syncToken=contacts-1'))).toBe(true);
   }
 }), 120_000);
@@ -82,13 +83,13 @@ test('Google pagination failure never advances a checkpoint; tombstones delete o
       return json({ connections: [contact('second', 'Second Example')], nextSyncToken: 'contacts-complete' });
     };
     const cfg = parseGoogleSourceConfig(googleConfig, f.dir);
-    expect((await runGoogleSync(engine, f.id, cfg, options, fetcher)).status).toBe('partial');
+    expect((await runGoogleSync(engine, f.id, cfg, options, withGoogleAccount(fetcher))).status).toBe('partial');
     expect(await sourceCheckpoint(engine, f.id)).toHaveLength(0);
     expect(await engine.executeRaw('SELECT slug FROM pages WHERE source_id=$1', [f.id])).toHaveLength(0);
     fail = false;
-    expect((await runGoogleSync(engine, f.id, cfg, options, fetcher)).added).toBe(2);
+    expect((await runGoogleSync(engine, f.id, cfg, options, withGoogleAccount(fetcher))).added).toBe(2);
     const other = await source(engine, googleConfig);
-    expect((await runGoogleSync(engine, other.id, parseGoogleSourceConfig(googleConfig, other.dir), options, fetcher)).added).toBe(2);
+    expect((await runGoogleSync(engine, other.id, parseGoogleSourceConfig(googleConfig, other.dir), options, withGoogleAccount(fetcher))).added).toBe(2);
     deleted = true;
     const checkpoint = await sourceCheckpoint(engine, f.id);
     const executeRaw = engine.executeRaw;
@@ -97,10 +98,10 @@ test('Google pagination failure never advances a checkpoint; tombstones delete o
       return executeRaw.call(engine, sql, params);
     } as BrainEngine['executeRaw'];
     try {
-      expect((await runGoogleSync(engine, f.id, cfg, options, fetcher)).status).toBe('partial');
+      expect((await runGoogleSync(engine, f.id, cfg, options, withGoogleAccount(fetcher))).status).toBe('partial');
       expect(await sourceCheckpoint(engine, f.id)).toEqual(checkpoint);
     } finally { engine.executeRaw = executeRaw; }
-    expect((await runGoogleSync(engine, f.id, cfg, options, fetcher)).deleted).toBe(1);
+    expect((await runGoogleSync(engine, f.id, cfg, options, withGoogleAccount(fetcher))).deleted).toBe(1);
     expect(await engine.getPage('people/first-example', { sourceId: f.id })).toBeNull();
     expect(await engine.getPage('people/first-example', { sourceId: other.id })).not.toBeNull();
   }
@@ -161,7 +162,7 @@ test('managed connectors refuse unsupported dry runs and Git filters before cred
     for (const mode of [{ dryRun: true }, { skipFailed: true }, { srcSubpath: 'scoped' },
       { exclude: ['private/**'] }, { includeHidden: ['.notes/**'] }, { includeGitignored: true }, { workingTree: true }, { strategy: 'code' as const }]) {
       const run = connector === 'google'
-        ? runGoogleSync(engine, f.id, parseGoogleSourceConfig(config, f.dir), { ...options, ...mode }, fetcher)
+        ? runGoogleSync(engine, f.id, parseGoogleSourceConfig(config, f.dir), { ...options, ...mode }, withGoogleAccount(fetcher))
         : runGitHubSync(engine, f.id, parseGitHubSourceConfig(config, f.dir), { ...options, ...mode }, fetcher);
       await expect(run).rejects.toMatchObject({ code: 'invalid_params' });
     }
@@ -188,7 +189,7 @@ test('source replacement after connector preflight cannot receive the old sweep 
       return json({ connections: [contact('first', 'First Example')], nextSyncToken: 'stale-source-token' });
     };
     const run = connector === 'google'
-      ? runGoogleSync(engine, f.id, parseGoogleSourceConfig(config, f.dir), options, fetcher)
+      ? runGoogleSync(engine, f.id, parseGoogleSourceConfig(config, f.dir), options, withGoogleAccount(fetcher))
       : runGitHubSync(engine, f.id, parseGitHubSourceConfig(config, f.dir), options, fetcher);
     await expect(run).rejects.toMatchObject({ code: 'source_changed' });
     expect(await engine.executeRaw('SELECT slug FROM pages WHERE source_id=$1', [f.id])).toHaveLength(0);
@@ -223,19 +224,19 @@ test('Google Gmail and Calendar ingest, fail without advancing, restart, and del
       }
       throw new Error('Unexpected external fixture route');
     };
-    const first = await runGoogleSync(engine, f.id, cfg, options, fetcher);
+    const first = await runGoogleSync(engine, f.id, cfg, options, withGoogleAccount(fetcher));
     expect(first.status).not.toBe('partial');
     expect(first.added).toBe(2);
     const checkpoint = await sourceCheckpoint(engine, f.id);
     delta = true;
     fail = true;
-    expect((await runGoogleSync(engine, f.id, cfg, options, fetcher)).status).toBe('partial');
+    expect((await runGoogleSync(engine, f.id, cfg, options, withGoogleAccount(fetcher))).status).toBe('partial');
     expect(await sourceCheckpoint(engine, f.id)).toEqual(checkpoint);
     fail = false;
     await disposePersistenceConsumer(engine);
-    expect((await runGoogleSync(engine, f.id, cfg, options, fetcher)).status).not.toBe('partial');
+    expect((await runGoogleSync(engine, f.id, cfg, options, withGoogleAccount(fetcher))).status).not.toBe('partial');
     removed = true;
-    expect((await runGoogleSync(engine, f.id, cfg, { ...options, full: true }, fetcher)).deleted).toBe(2);
+    expect((await runGoogleSync(engine, f.id, cfg, { ...options, full: true }, withGoogleAccount(fetcher))).deleted).toBe(2);
     expect(await engine.executeRaw('SELECT slug FROM pages WHERE source_id=$1 AND deleted_at IS NULL', [f.id])).toHaveLength(0);
   }
 }), 120_000);
@@ -249,13 +250,11 @@ test('paused connector owner returns one stable receipt and resident restart con
     await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
     const cfg = parseGitHubSourceConfig(githubConfig, f.dir);
     const run = () => runGitHubSync(engine, f.id, cfg, options, githubFetch());
-    let requestId = '';
-    try { await run(); throw new Error('Expected pending receipt'); }
-    catch (error) {
-      expect(error).toMatchObject({ code: 'write_pending' });
-      requestId = (error as { writeRequest: { request_id: string } }).writeRequest.request_id;
-    }
-    await expect(run()).rejects.toMatchObject({ code: 'write_pending', writeRequest: { request_id: requestId } });
+    // #5600: an accepted pending write is progress; the run ends partial with the receipt in its pending set.
+    expect(await run()).toMatchObject({ status: 'partial', reason: 'writer_pending' });
+    const [pending] = await connectorPendingSet(engine, f.id);
+    expect(await run()).toMatchObject({ status: 'partial', reason: 'writer_pending' });
+    expect((await connectorPendingSet(engine, f.id)).map(entry => entry.requestId)).toEqual([pending.requestId]);
     const rows = await engine.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE source_id=$1', [f.id]);
     expect(rows).toHaveLength(1);
     expect(await sourceCheckpoint(engine, f.id)).toHaveLength(0);
@@ -284,13 +283,13 @@ test('bound connector directories publish import, update, unchanged replay, and 
         : [{ ...contact('first', 'First Example'), organizations: [{ name: body }] }], nextSyncToken: 'contacts-bound' });
     };
     const run = () => connector === 'google'
-      ? runGoogleSync(engine, f.id, parseGoogleSourceConfig(config, f.dir), options, fetcher)
+      ? runGoogleSync(engine, f.id, parseGoogleSourceConfig(config, f.dir), options, withGoogleAccount(fetcher))
       : runGitHubSync(engine, f.id, parseGitHubSourceConfig(config, f.dir), { ...options, githubItem: { repo: 'acme-example/app', number: 1, kind: 'issue', deleted } }, fetcher);
     const slug = connector === 'google' ? 'people/first-example' : 'gh/acme-example/app/1';
     const path = join(f.dir, `${slug}.md`);
     expect((await run()).added).toBe(1);
     expect(readFileSync(path, 'utf8')).toContain(body);
-    const [receipt] = await engine.executeRaw<WriteRequest>("SELECT * FROM persistence_requests WHERE source_id=$1 AND intent->>'kind'='managed_connector_import' ORDER BY sequence LIMIT 1", [f.id]);
+    const [receipt] = await engine.executeRaw<WriteRequest>("SELECT * FROM persistence_requests WHERE source_id=$1 AND intent->>'kind'='connector_v2_import' ORDER BY sequence LIMIT 1", [f.id]);
     expect(receipt.outcome?.persistence).toEqual({ mode: 'filesystem', file_written: true, git_state: 'queued' });
     expect(receipt.authority.databaseOnlyReason).toBeUndefined();
     const first = readFileSync(path, 'utf8');
@@ -351,7 +350,7 @@ test('previously materialized connector pages stay canonical-file backed with ma
       return json({ connections: [{ ...contact('first', 'First Example'), organizations: [{ name: body }] }], nextSyncToken: 'contacts-legacy' });
     };
     const run = () => connector === 'google'
-      ? runGoogleSync(engine, f.id, parseGoogleSourceConfig(config, f.dir), options, fetcher)
+      ? runGoogleSync(engine, f.id, parseGoogleSourceConfig(config, f.dir), options, withGoogleAccount(fetcher))
       : runGitHubSync(engine, f.id, parseGitHubSourceConfig(config, f.dir), { ...options, githubItem: { repo: 'acme-example/app', number: 1, kind: 'issue' } }, fetcher);
     await run();
     const slug = connector === 'google' ? 'people/first-example' : 'gh/acme-example/app/1';
@@ -380,7 +379,7 @@ test('a file edit after bound connector admission survives resident replay and p
     const checkpoint = await sourceCheckpoint(engine, f.id);
     await engine.executeRaw("UPDATE persistence_worktrees SET state='draining' WHERE id=$1::uuid", [f.binding.worktree_id]);
     body = 'New API body';
-    await expect(run()).rejects.toMatchObject({ code: 'write_pending' });
+    expect(await run()).toMatchObject({ status: 'partial', reason: 'writer_pending' });
     const [accepted] = await engine.executeRaw<WriteRequest>("SELECT * FROM persistence_requests WHERE source_id=$1 AND state='queued' ORDER BY sequence LIMIT 1", [f.id]);
     await disposePersistenceConsumer(engine);
     const path = join(f.dir, 'gh/acme-example/app/1.md');
@@ -404,13 +403,13 @@ test('competing Google sweeps CAS their checkpoints instead of skipping each oth
     let entered!: () => void;
     const firstFetch = new Promise<void>(resolve => { entered = resolve; });
     const both = new Promise<void>(resolve => { release = resolve; });
-    const run = (token: string) => runGoogleSync(engine, f.id, cfg, options, async url => {
+    const run = (token: string) => runGoogleSync(engine, f.id, cfg, options, withGoogleAccount(async url => {
       if (url.includes('/settings/sendAs')) return json({ sendAs: [] });
       arrived++;
       entered();
       await both;
       return json({ connections: [contact(token, `${token} Example`)], nextSyncToken: token });
-    });
+    }));
     const first = run('first');
     await firstFetch;
     const second = run('second');
@@ -433,7 +432,7 @@ test('resident publication revalidates accepted connector revisions, incarnation
     const binding = await claimWorktree(engine, f.id, f.dir);
     await engine.executeRaw("UPDATE persistence_worktrees SET state='draining' WHERE id=$1::uuid", [binding.worktree_id]);
     await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
-    await expect(runGitHubSync(engine, f.id, parseGitHubSourceConfig(githubConfig, f.dir), options, githubFetch())).rejects.toMatchObject({ code: 'write_pending' });
+    expect(await runGitHubSync(engine, f.id, parseGitHubSourceConfig(githubConfig, f.dir), options, githubFetch())).toMatchObject({ status: 'partial', reason: 'writer_pending' });
     const [accepted] = await engine.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE source_id=$1', [f.id]);
     await disposePersistenceConsumer(engine);
     const [writer] = await engine.executeRaw<{ grant_ceiling: unknown }>('SELECT grant_ceiling FROM persistence_local_writers WHERE id=$1::uuid', [accepted.principal_id]);
@@ -480,7 +479,7 @@ test('aged live connector cursors survive actual checkpoint purge and normal inc
       return json({ connections: [contact('first', 'First Example')], nextSyncToken: 'retained-contacts-cursor' });
     };
     const run = () => connector === 'google'
-      ? runGoogleSync(engine, f.id, parseGoogleSourceConfig(config, f.dir), options, fetcher)
+      ? runGoogleSync(engine, f.id, parseGoogleSourceConfig(config, f.dir), options, withGoogleAccount(fetcher))
       : runGitHubSync(engine, f.id, parseGitHubSourceConfig(config, f.dir), options, fetcher);
     await run();
     await disposePersistenceConsumer(engine);

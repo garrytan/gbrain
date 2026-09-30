@@ -2968,6 +2968,7 @@ async function handleCliOnly(command: string, args: string[]) {
     args = resolveAutopilotPositionals(args);
     if (args.includes('--uninstall')) { uninstallDaemon(); return; }
     if (args.includes('--status')) { runAutopilotStatus(args); return; }
+    if (args.includes('--pause') || args.includes('--resume')) { (await import('./commands/autopilot-pause.ts')).runAutopilotPauseCommand(args); return; }
   }
 
   // Thin-client `think` dispatch: runThinkCli already routes through
@@ -3288,6 +3289,10 @@ async function handleCliOnly(command: string, args: string[]) {
           } else {
             console.log(`reindex --multimodal: ${result.reembedded} re-embedded, ${result.failed} failed, ${result.pending_after} pending. est. cost: $${result.cost_usd_estimate.toFixed(2)}`);
           }
+          break;
+        }
+        if (args.includes('--vectors')) {
+          await (await import('./commands/reindex-vectors.ts')).runReindexVectors(engine, args); // #4616
           break;
         }
         if (args.includes('--aliases')) {

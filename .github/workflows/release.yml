@@ -74,7 +74,7 @@ jobs:
     strategy:
       matrix:
         include:
-          - os: macos-latest
+          - os: macos-26
             target: bun-darwin-arm64
             artifact: gbrain-darwin-arm64
           - os: ubuntu-latest

@@ -69,24 +69,35 @@ ineligible for local writer administration.
 
 ### Autonomous path (v0.36.4.0) — when you want to reach a target score
 
-If the user asks "get my brain to 90/100" or "fix what's broken", prefer the
-one-command loop over walking each dimension by hand:
+If the user asks "get my brain to 90/100" or "fix what's broken", preview first
+and ask before applying anything:
 
 ```bash
-gbrain doctor --remediation-plan --json              # preview what would run
-gbrain doctor --remediate --yes --target-score 90 --max-usd 5
+gbrain doctor --remediation-plan --json              # preview: job steps + repair steps
+# Show the user the repair steps (each "requires user agreement") and the cost.
+# Only after the user agrees:
+gbrain doctor --remediate --yes --include-repairs --target-score 90 --max-usd 5
 ```
 
-`--remediation-plan` prints a dependency-ordered list (sync before extract,
-embed after consolidate, etc.) with per-step `est_seconds` and `est_usd_cost`.
-`--remediate` walks the plan, submitting each step as a Minion job, re-checking
-score between every step. `--max-usd N` is a hard cost cap — submission refuses
-when the plan would exceed the cap (prevents synthesize loops from burning
-Anthropic credits unattended).
+`--remediation-plan` prints a dependency-ordered list of job steps (sync before
+extract, embed after consolidate, etc.) with per-step `est_seconds` and
+`est_usd_cost`, and, independent of the score target, the PROTECTED repair steps
+for every `gbrain repair` kind with pending items. Each step carries the exact
+command that applies it, and the plan ends with one combined command.
+`--remediate` runs the repair steps only with `--include-repairs` (the user's
+agreement; without it they are listed as skipped), then walks the job plan,
+submitting each step as a Minion job and re-checking score between steps.
+`--max-usd N` is a cumulative cost cap across the run and every `--resume`: a
+paid step that would exceed it is not started, free steps still run, and the run
+stops with a resume command that keeps the cap and the agreement.
 
 When the target score is unreachable for the brain (empty brain with no entity
 pages → `graph_coverage` caps at 70; unconfigured embedding key → caps at 60),
-the command bails with a list of what's missing rather than looping.
+job steps stop with a list of what's missing rather than looping; included repair
+steps still run. `--json` classifies each finding `cleared`, `pending`,
+`consent_required`, `operator_required` (follow its instruction) or
+`unsupported` (report it; nothing clears it yet). After an upgrade, follow the
+recipe in `docs/guides/repair.md#recover-after-upgrading-to-this-release`.
 
 Use the per-dimension walk below (Phase 2 onward) when:
 - The user explicitly asks for a dimension-by-dimension audit

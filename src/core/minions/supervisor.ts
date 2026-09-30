@@ -48,7 +48,7 @@ import { hostname } from 'os';
 import type { BrainEngine } from '../engine.ts';
 import { tryAcquireDbLock, waitForDbLockTakeover, inspectLock, isLockHolderLive, type DbLockHandle } from '../db-lock.ts';
 import { currentBrainId, readWorkers } from './worker-registry.ts';
-import { autopilotPausedMarkerPath } from '../autopilot-paths.ts';
+import { autopilotOperatorPauseMarkerPath, autopilotPaused } from '../autopilot-paths.ts';
 import { resolveEnvNumber } from '../env-number.ts';
 
 export type SupervisorEvent =
@@ -426,13 +426,15 @@ async function probeQueueStateInner(
   }
 
   const workerAlive = supervisorLive || registeredWorker || sig.activeHealthy > 0;
-  const paused = existsSync(autopilotPausedMarkerPath());
+  const paused = autopilotPaused();
 
   // Same operator knob the doctor's queue_health depth check reads.
   const threshold = resolveEnvNumber('GBRAIN_QUEUE_WAITING_THRESHOLD', 10);
   const warnings: string[] = [];
   if (paused) {
-    warnings.push('system paused for migration — job will not start until the pause clears');
+    warnings.push(existsSync(autopilotOperatorPauseMarkerPath())
+      ? 'system paused by the operator (gbrain autopilot resume clears it) — job will not start until the pause clears'
+      : 'system paused for migration — job will not start until the pause clears');
   }
   if (!workerAlive) {
     warnings.push(

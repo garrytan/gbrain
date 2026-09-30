@@ -5,7 +5,7 @@
  * Every applied item is one coordinated page write (a `put_page` bound to the
  * page's current revision), so a repair never bypasses the persistence
  * coordinator and each item commits or fails on its own. A kind that only
- * rebuilds derived projections (`safe-chunks`) takes no admission instead: its
+ * rebuilds derived projections (`safe-chunks`, `contextual-mode`) takes no admission instead: its
  * items cost no lifetime IDs or receipt bytes and never hit the capacity stop.
  * Items are processed in
  * a stable order and the cursor after the last committed item is stored in
@@ -22,7 +22,7 @@ import { getWriteRequest } from '../persistence/journal.ts';
 import { initializeLocalPersistence, requestPrincipalForContext } from '../persistence/page-mutations.ts';
 import { lookupEmbeddingPrice, estimateCostFromChars } from '../embedding-pricing.ts';
 
-export const REPAIR_KINDS = ['timeline', 'visibility', 'safe-chunks'] as const;
+export const REPAIR_KINDS = ['timeline', 'visibility', 'safe-chunks', 'contextual-mode', 'connector-checkpoints'] as const;
 export type RepairKind = typeof REPAIR_KINDS[number];
 
 export interface RepairScope { brain_id: string; source_ids: string[] }
@@ -46,6 +46,8 @@ export interface RepairHandler {
   kind: RepairKind;
   /** `projection`: items rebuild derived rows only and take no journal admission. Default `coordinated`. */
   publication?: 'coordinated' | 'projection';
+  /** False for kinds whose items are bookkeeping rows, not pages: no embedding cost. */
+  embeds?: boolean;
   /** Pending items after `after`, in cursor order. */
   plan(engine: BrainEngine, scope: RepairScope, after: RepairCursor | null): Promise<RepairPlan>;
   /** Apply one item; `false` when it no longer needs repair. `embed` is false under --no-embed. */
@@ -156,7 +158,7 @@ export async function runRepair(ctx: OperationContext, handler: RepairHandler, s
   const result: RepairResult = {
     kind: handler.kind, mode: opts.apply ? 'apply' : 'dry_run', scope, affected: plan.items.length,
     sample: plan.items.slice(0, SAMPLE).map(item => `${item.source_id}:${item.slug}`), residuals: plan.residuals,
-    cost: { lifetime_ids: admits, receipt_bytes: admits * RECEIPT_BYTES, embedding_pages: pending.length,
+    cost: { lifetime_ids: admits, receipt_bytes: admits * RECEIPT_BYTES, embedding_pages: handler.embeds === false ? 0 : pending.length,
       embedding_usd: embeddingUsd(pending.reduce((sum, item) => sum + item.chars, 0), opts.embeddingModel) },
     capacity: counters.map(({ scope: key, resource, used, limit, stop_at }) => ({ scope: key, resource, used, limit, stop_at })),
     resumed_from: resumed, applied: 0, skipped: 0, complete: false,

@@ -62,6 +62,40 @@ export async function claimPersistenceEffect(engine: BrainEngine, hostId: string
   });
 }
 
+/** #5530: an effect that commits exactly one recorded file (not a withdrawal walk or a source scan). */
+export function singleFileGitEffect(effect: PersistenceEffect): boolean {
+  return effect.kind === 'git' && typeof effect.data.relative_path === 'string' && effect.data.version === undefined
+    && !effect.data.source_scan && effect.data.targets === undefined;
+}
+
+/**
+ * #5530: claim up to `limit` more ready single-file Git effects for one
+ * worktree, under the same readiness, recovery and withdrawal-mirror ordering
+ * rules as claimPersistenceEffect, so the runner commits them together.
+ */
+export async function claimCoalescedGitEffects(engine: BrainEngine, hostId: string, worktreeId: string, limit: number): Promise<PersistenceEffect[]> {
+  if (limit <= 0) return [];
+  const rows = await engine.transactionDirect(async tx => {
+    await declarePersistenceProtocol(tx);
+    return tx.executeRaw<PersistenceEffect>(`WITH ready AS (SELECT e.id FROM persistence_effects e
+      JOIN persistence_worktrees w ON w.id=e.worktree_id AND w.owner_host_id=$1::uuid
+      WHERE e.worktree_id=$2::uuid AND e.kind='git' AND e.data ? 'relative_path'
+      AND NOT (e.data ? 'targets') AND NOT (e.data ? 'source_scan') AND NOT (e.data ? 'version')
+      AND (e.state='queued' OR e.state='running' AND e.claim_expires_at<now()) AND e.next_attempt_at<=now()
+      AND e.recovery IS NULL AND NOT EXISTS (SELECT 1 FROM persistence_effects blocked
+        WHERE blocked.worktree_id=e.worktree_id AND blocked.recovery IS NOT NULL)
+      AND NOT EXISTS (SELECT 1 FROM persistence_requests blocked
+        WHERE blocked.worktree_id=e.worktree_id AND blocked.recovery IS NOT NULL)
+      AND NOT EXISTS (SELECT 1 FROM persistence_effects mirror
+        WHERE mirror.request_id=e.request_id AND mirror.kind='withdrawal-mirror' AND mirror.state<>'committed')
+      ORDER BY e.next_attempt_at,e.id LIMIT $3 FOR UPDATE OF e SKIP LOCKED)
+      UPDATE persistence_effects p SET state='running',execution_token=gen_random_uuid(),
+      claim_expires_at=now()+interval '2 minutes',attempts=attempts+1,updated_at=now()
+      FROM ready WHERE p.id=ready.id RETURNING p.*`, [hostId, worktreeId, limit]);
+  });
+  return rows.sort((a, b) => Number(a.id) - Number(b.id));
+}
+
 export async function renewPersistenceEffectClaim(engine: SqlEngine, effect: PersistenceEffect): Promise<boolean> {
   const rows = await engine.executeRaw(`UPDATE persistence_effects SET claim_expires_at=now()+interval '2 minutes',updated_at=now()
     WHERE id=$1 AND execution_token=$2::uuid AND state='running' AND recovery IS NULL AND ${PERSISTENCE_PROTOCOL_PREDICATE} RETURNING id`, [effect.id, effect.execution_token]);

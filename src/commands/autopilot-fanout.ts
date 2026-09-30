@@ -38,6 +38,7 @@ import type { MinionQueue } from '../core/minions/queue.ts';
 import { SOURCE_FRESHNESS_PHASES, MAINTENANCE_PHASES, LAST_GLOBAL_AT_KEY } from '../core/cycle.ts';
 import { sourceConfigHasRemoteUrl, sourceLocalPathSkipWarning } from '../core/sources-load.ts';
 import { isSyncDisabledConfig } from '../core/sync-policy.ts';
+import { loadActivationPendingSourceIds, skipActivationPendingSync } from '../core/sync-policy.ts';
 import { AUTOPILOT_FULL_CYCLE_FLOOR_MINUTES } from './autopilot-remediation-policy.ts';
 
 // #2194 fix #2: failure cooldown. A source whose autopilot-cycle keeps
@@ -502,6 +503,9 @@ export async function dispatchPerSource(
     }
   }
 
+  // #5198: claimed-but-not-activated sources refuse sync until activation.
+  const activationPending = await loadActivationPendingSourceIds(engine);
+
   const dispatched: string[] = [];
   const coalesced: string[] = [];
   for (const src of dispatch) {
@@ -510,7 +514,12 @@ export async function dispatchPerSource(
       // sync. It still gets its lint/backlinks/extract cycle and freshness
       // stamp; only the sync phase (and the pull that feeds it) is dropped —
       // normalizeQueuedSourcePhases passes a freshness subset through as-is.
-      const syncDisabled = isSyncDisabledConfig(src.config);
+      // #5198: a claimed source awaiting activation is treated the same way,
+      // so its cycle does not fail on a sync that is refused by contract.
+      const pendingActivation = skipActivationPendingSync(
+        activationPending, src.id, 'fanout_sync_skipped', opts.jsonMode === true, opts.jsonMode ? emit : log,
+      );
+      const syncDisabled = isSyncDisabledConfig(src.config) || pendingActivation;
       const shouldPull = sourceConfigHasRemoteUrl(src.config) && !syncDisabled;
       const job = await queue.add(
         'autopilot-cycle',

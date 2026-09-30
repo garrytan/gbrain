@@ -53,7 +53,7 @@ import { contentHash } from '../utils.ts';
 import { extractFactsFromFenceText } from './extract-from-fence.ts';
 import { logStubGuardEvent } from './stub-guard-audit.ts';
 import { isFactWithdrawn } from './withdrawal.ts';
-import { assertUnmanagedCanonicalWriter } from '../persistence/maintenance.ts';
+import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 
 /** Resolved source binding for the entity page. */
 export interface FenceTarget {
@@ -285,7 +285,19 @@ export async function writeFactsToFence(
   target: FenceTarget,
   facts: FenceInputFact[],
 ): Promise<FenceWriteResult> {
-  await assertUnmanagedCanonicalWriter(engine, 'direct facts fence write');
+  if (await managedPersistenceEnabled(engine)) {
+    // The coordinator owns the canonical file on a managed brain: publish the
+    // fence rows through its fact intent instead of editing the file here.
+    const kept: FenceInputFact[] = [];
+    for (const f of facts) {
+      if (!await isFactWithdrawn(engine, target.sourceId, f.visibility, f.fact, target.slug)) kept.push(f);
+    }
+    const withdrawnSkipped = facts.length - kept.length ? { withdrawnSkipped: facts.length - kept.length } : {};
+    if (!kept.length) return { inserted: 0, ids: [], ...withdrawnSkipped };
+    const { publishManagedEntityFacts } = await import('./managed-fact-write.ts');
+    const { inserted, ids } = await publishManagedEntityFacts(engine, target.sourceId, target.slug, kept);
+    return { inserted, ids, ...withdrawnSkipped };
+  }
   if (target.localPath === null) {
     return { inserted: 0, ids: [], legacyFallback: true };
   }

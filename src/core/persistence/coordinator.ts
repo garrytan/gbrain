@@ -18,6 +18,7 @@ import { tryAcquirePublicationCapacity } from './pool-capacity.ts';
 import { queuePublicationEffects } from './effect-journal.ts';
 import { authorizePageVisibility } from './page-visibility.ts';
 import { withNoRepoWriteThroughWarning } from '../write-through.ts';
+import { assertUnboundPublication, classifyUnboundPage, unboundWriteWarning } from './unbound-source.ts';
 import { assertRecoveryStagingAbsent, cleanupRecoveryStaging, recoveryStagingFile, upgradeRecoveryStaging } from './staging.ts';
 import { assertMutationProtocol, assertSharedSkillPersistence, declarePersistenceProtocol, PERSISTENCE_PROTOCOL_PREDICATE } from './protocol.ts';
 import { assertBundleRecoveryBinding, bundleFileHash, prepareBundleRecovery, publishStagedBundleFile, stageBundleFile, type MutationFile } from './bundle-files.ts';
@@ -28,9 +29,11 @@ interface PreparedMutationBase {
   observedRevision: string | null;
   additionalPageKeys?: readonly {sourceId:string;slug:string}[];
   noop?: boolean;
+  /** #5470 screening only: the content is unchanged, but publication still runs (and queues effects). */
+  contentUnchanged?: boolean;
   deferEmbedding?: boolean;
   /** Why a page write bound to a worktree publishes no file (receipt `write_through.skipped`). */
-  databaseOnlyReason?: 'db_only';
+  databaseOnlyReason?: 'db_only' | 'unbound_source';
   /** Must perform only transaction-composable database work. */
   apply(tx: BrainEngine): Promise<Record<string, unknown>>;
   validate?(tx: BrainEngine): Promise<void>;
@@ -202,6 +205,7 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
         const snapshot = await tx.readPageSnapshot(row.slug, { sourceId: row.source_id, includeDeleted: true });
         await authorizePageVisibility(tx, row.authority, row.slug);
         if ((snapshot?.page.id ?? null) !== row.page_id) throw new OperationError('page_identity_changed', 'The accepted page was deleted or recreated.');
+        await assertUnboundPublication(tx, row, snapshot?.page.source_path);
         if ((snapshot?.revision ?? null) !== prepared.observedRevision) throw new OperationError('revision_conflict', 'The page changed during preparation.', 'Read its current revision and submit the updated intent with a new request_id.');
       }
       await prepared.validate?.(tx);
@@ -230,11 +234,15 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
         await hooks.boundary?.('after_publication', row);
       }
       const outcome = await withCoordinatedWrite(tx, [row.source_id], () => prepared.apply(tx));
+      if (!skill) await classifyUnboundPage(tx, row);
       const final = skill ? null : await tx.readPageSnapshot(row.slug, { sourceId: row.source_id, includeDeleted: true });
       if (final) outcome.revision = final.revision;
       outcome.persistence = { mode: files.length ? 'filesystem' : 'database', ...(files.length ? { file_written: !prepared.noop } : {}), ...(skill ? { git_state: 'not_requested' } : {}) };
       outcome.write_through = files.length ? { written: !prepared.noop } : { written: false, skipped: prepared.databaseOnlyReason ?? row.authority.databaseOnlyReason ?? 'no_repo_configured' };
       if (row.operation === 'put_page' && row.authority.remote && row.authority.databaseOnlyReason === 'no_repo_configured') outcome.write_through = withNoRepoWriteThroughWarning(outcome.write_through as { written: boolean; skipped?: string }, row.source_id);
+      if (row.operation === 'put_page' && (outcome.write_through as { skipped?: string }).skipped === 'unbound_source') {
+        outcome.write_through = { ...outcome.write_through as object, warning: unboundWriteWarning(row.source_id, row.authority.databaseOnlyReason === 'unbound_source') };
+      }
       await queuePublicationEffects(tx, row, final, outcome, prepared);
       await hooks.boundary?.('before_commit', row);
       const committed = await completeWrite(tx, current, 'committed', outcome);

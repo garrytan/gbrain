@@ -100,7 +100,7 @@ describe('pull-request CI scope', () => {
     const push = { github: { event_name: 'push' } };
     const security = load('test.yml').jobs['security-regressions'];
     expect(cells(security, push)).toHaveLength(6);
-    expect(cells(security, pr)).toEqual(['ubuntu-latest/1.3.13', 'macos-latest/1.3.13', 'windows-latest/1.3.13']);
+    expect(cells(security, pr)).toEqual(['ubuntu-latest/1.3.13', 'macos-26/1.3.13', 'windows-latest/1.3.13']);
     const persistence = load('persistence-validation.yml').jobs;
     for (const name of ['read-performance', 'deployment-matrix', 'invariants', 'reconciliation']) {
       const full = cells(persistence[name], push);

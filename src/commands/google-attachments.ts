@@ -11,7 +11,7 @@ import { isValidSourceId } from '../core/source-id.ts';
 import { parseGoogleSourceConfig, runGoogleAttachmentBackfill } from '../core/google/google-source.ts';
 import type { FetchImpl } from '../core/google/google-clients.ts';
 import { managedSyncAuthority } from '../core/persistence/sync-authority.ts';
-import { connectorCheckpointKey } from '../core/persistence/connector-sync.ts';
+import { connectorCheckpointKey, connectorIdentity } from '../core/persistence/connector-identity.ts';
 import type { GoogleSourceState } from '../core/google/types.ts';
 import { isCredentialError } from '../core/creds/errors.ts';
 
@@ -81,7 +81,7 @@ export async function runGoogleAttachments(args: string[], connected?: BrainEngi
         const [count] = await engine.executeRaw<{ count: string }>(`SELECT count(*)::text AS count FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND frontmatter->>'thread_id' IS NOT NULL`, [parsed.sourceId]);
         const [checkpoint] = await engine.executeRaw<{ completed_keys: Array<{ state: GoogleSourceState }> }>(
           "SELECT completed_keys FROM op_checkpoints WHERE op='managed-connector' AND fingerprint=$1",
-          [connectorCheckpointKey(parsed.sourceId, source.incarnation, 'google', source.config)]);
+          [connectorCheckpointKey(parsed.sourceId, source.incarnation, connectorIdentity('google', source.config, source.local_path))]);
         return { status: 'preview' as const, complete: false, imported_thread_pages: Number(count.count), account: cfg.account, writes: 'none',
           historical_inspection: checkpoint?.completed_keys[0]?.state?.gmail_attachment_backfill ?? { status: 'not_inspected' } };
       }

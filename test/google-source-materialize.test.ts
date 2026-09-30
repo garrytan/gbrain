@@ -487,6 +487,12 @@ describe('google-source materialize', () => {
         expect(res.deleted).toBe(0);
         expect(res.chunksCreated).toBeGreaterThan(0);
         expect(fx.tokenPosts).toBe(0); // fresh vault token — no refresh HTTP
+        // #5621: noEmbed connector imports stamp the wrapping convention.
+        const unstamped = await engine.executeRaw<{ n: number }>(
+          `SELECT count(*)::int AS n FROM pages
+            WHERE source_id = 'gsrc' AND page_kind = 'markdown' AND contextual_retrieval_mode IS NULL`,
+        );
+        expect(unstamped[0].n).toBe(0);
 
         // Contacts → person pages with aliases projected into page_aliases.
         expect(await slugsWhere(`slug LIKE 'people/%'`)).toEqual(['people/alice-example', 'people/dana-example']);

@@ -16,8 +16,12 @@
 import type { BrainEngine } from '../engine.ts';
 
 export const DREAM_BREAKER_KEY_PREFIXES = ['dream:synth-v2:', 'dream:patterns:'] as const;
+/** Base-key prefix of a contained cycle-phase failure after paid model calls. */
+export const DREAM_PHASE_KEY_PREFIX = 'dream:phase:';
 export const DREAM_BREAKER_CONFIG_KEY = 'dream.breaker.max_dead_submissions';
 export const DREAM_BREAKER_RESETS_KEY = 'dream.breaker.resets';
+/** Contained paid phase failures: `{ [base key]: ISO finish times }`, pruned to the 24 h window. */
+export const DREAM_BREAKER_CONTAINED_KEY = 'dream.breaker.contained_failures';
 export const DEFAULT_MAX_DEAD_SUBMISSIONS = 3;
 
 export interface DeadDreamSubmissions { base_key: string; dead_submissions: number; last_dead_at: string }
@@ -56,7 +60,7 @@ async function loadResets(engine: BrainEngine): Promise<Record<string, string>> 
  */
 export async function countDeadDreamSubmissions(engine: BrainEngine): Promise<DeadDreamSubmissions[]> {
   const resets = await loadResets(engine);
-  return engine.executeRaw<DeadDreamSubmissions>(
+  const dead = await engine.executeRaw<DeadDreamSubmissions>(
     `WITH dead AS (
        SELECT regexp_replace(COALESCE(idempotency_key, data->>'__released_idempotency_key'), ':c[0-9]+of[0-9]+$', '') AS base_key,
               queue, finished_at
@@ -71,6 +75,50 @@ export async function countDeadDreamSubmissions(engine: BrainEngine): Promise<De
       ORDER BY dead_submissions DESC, base_key`,
     [DREAM_BREAKER_KEY_PREFIXES[0], DREAM_BREAKER_KEY_PREFIXES[1], JSON.stringify(resets)],
   );
+  const cutoff = Date.now() - 24 * 3_600_000;
+  for (const [baseKey, times] of Object.entries(await loadContained(engine))) {
+    const after = Math.max(cutoff, Date.parse(resets[baseKey] ?? '') || -Infinity);
+    const counted = times.filter(at => Date.parse(at) > after).sort();
+    if (counted.length) dead.push({ base_key: baseKey, dead_submissions: counted.length, last_dead_at: counted.at(-1)! });
+  }
+  return dead.sort((a, b) => b.dead_submissions - a.dead_submissions || a.base_key.localeCompare(b.base_key));
+}
+
+async function loadContained(engine: BrainEngine): Promise<Record<string, string[]>> {
+  const raw = await engine.getConfig(DREAM_BREAKER_CONTAINED_KEY);
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    return Object.fromEntries(Object.entries(parsed).flatMap(([key, times]) => Array.isArray(times)
+      ? [[key, times.filter((at): at is string => typeof at === 'string' && Number.isFinite(Date.parse(at)))]] : []));
+  } catch { return {}; }
+}
+
+/**
+ * Record a cycle phase whose failure was contained after it made paid model
+ * calls (#5484 containment), so doctor's dream_paid_loop sees a phase that
+ * keeps paying and failing even though its job no longer dies. The update is
+ * serialized on the config row and drops entries older than the window.
+ */
+export async function recordContainedPaidFailure(engine: BrainEngine, phase: string, sourceId: string): Promise<void> {
+  const baseKey = `${DREAM_PHASE_KEY_PREFIX}${phase}:${sourceId}`;
+  await engine.transaction(async tx => {
+    await tx.executeRaw("INSERT INTO config (key, value) VALUES ($1, '{}') ON CONFLICT (key) DO NOTHING", [DREAM_BREAKER_CONTAINED_KEY]);
+    const [row] = await tx.executeRaw<{ value: string; now: string }>(
+      `SELECT value, to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS now FROM config WHERE key=$1 FOR UPDATE`,
+      [DREAM_BREAKER_CONTAINED_KEY]);
+    let current: Record<string, unknown> = {};
+    try { const parsed = JSON.parse(row?.value ?? '{}'); if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) current = parsed; } catch { /* rewrite a corrupt value */ }
+    const cutoff = Date.parse(row!.now) - 24 * 3_600_000;
+    const next: Record<string, string[]> = {};
+    for (const [key, times] of Object.entries(current)) {
+      const kept = Array.isArray(times) ? times.filter((at): at is string => typeof at === 'string' && Date.parse(at) > cutoff) : [];
+      if (kept.length) next[key] = kept;
+    }
+    next[baseKey] = [...next[baseKey] ?? [], row!.now].slice(-50);
+    await tx.executeRaw('UPDATE config SET value=$2 WHERE key=$1', [DREAM_BREAKER_CONTAINED_KEY, JSON.stringify(next)]);
+  });
 }
 
 export interface DreamBreaker { threshold: number; tripped: Map<string, number> }

@@ -223,6 +223,15 @@ describe('thin-client scratch-DB guard — jobs partial dispatch + config refusa
     expect(r.stderr).toContain('thin-client of https://brain-host.example/mcp');
   });
 
+  // #5254: the unbound-write policy decides whether Postgres pages may skip
+  // their canonical files; only the brain host may change it (no MCP op writes config).
+  test('`gbrain config set persistence.unbound_write` is refused on a thin client', async () => {
+    seedThinClientConfig(tmp);
+    const r = await run(['config', 'set', 'persistence.unbound_write', 'database_only']);
+    expect(r.exitCode).toBe(1);
+    expect(r.stderr).toContain('not routable');
+  });
+
   test('`gbrain jobs work` is refused with pinpoint hint (host-queue-bound)', async () => {
     seedThinClientConfig(tmp);
     const r = await run(['jobs', 'work']);

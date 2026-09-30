@@ -14,7 +14,8 @@ export const WRITE_ERROR_CODES = [
   'writer_registration_required', 'writer_identity_invalid', 'writer_not_initialized',
   'writer_coordinator_required', 'fact_already_expired', 'source_writeback_required',
   'unsupported_mutation_protocol', 'writer_upgrade_required', 'writer_not_quiesced',
-  'skill_bundle_required', 'take_row_collision', 'invalid_source_uri',
+  'skill_bundle_required', 'take_row_collision', 'invalid_source_uri', 'writer_admin_locked',
+  'connector_account_changed', 'connector_intent_outdated',
 ] as const;
 
 export type WriteErrorCode = typeof WRITE_ERROR_CODES[number];

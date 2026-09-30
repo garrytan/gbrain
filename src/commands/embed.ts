@@ -20,7 +20,7 @@ import {
 import { createProgress, type ProgressReporter } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 import { assertEmbeddingEnabled } from '../core/embedding-dim-check.ts';
-import { invalidateStaleSignatureEmbeddingsGuarded } from '../core/embedding-invalidation.ts';
+import { countRestampOnlyChunks, invalidateStaleSignatureEmbeddingsGuarded } from '../core/embedding-invalidation.ts';
 import { loadConfig, type GBrainConfig } from '../core/config.ts';
 import { slog, serr } from '../core/console-prefix.ts';
 import { filterOutEmbedSkipped } from '../core/embed-skip.ts';
@@ -36,10 +36,12 @@ import {
 import { tryAcquireDbLock, type DbLockHandle } from '../core/db-lock.ts';
 import { embedBackfillLockId } from '../core/embed-backfill-lock.ts';
 import { AITransientError } from '../core/ai/errors.ts';
+import { isEmbeddingZeroNormError } from '../core/ai/embedding-guard.ts';
 import { wrapChunkTextsForStoredMode } from '../core/embedding-context.ts';
 import {
   restampIfDemotedToTitleTier,
   embedBatchWithBackoff,
+  embedBatchKeepingUsable,
   isEmbedRetriableError,
   isTransientNetworkEmbedError,
   type EmbedBatchWithBackoffOpts,
@@ -84,7 +86,8 @@ const EMBED_UNAVAILABLE_MESSAGE = 'Page or source is unavailable or changed; no 
 function recordFailure(result: EmbedResult, chunkCount: number, slug: string, e: unknown): void {
   result.failures += chunkCount;
   if (result.failure_samples.length < FAILURE_SAMPLE_CAP) {
-    result.failure_samples.push(`${slug}: ${e instanceof Error ? e.message : String(e)}`);
+    const fix = isEmbeddingZeroNormError(e) ? ` ${e.suggestionFor(slug)}` : '';
+    result.failure_samples.push(`${slug}: ${e instanceof Error ? e.message : String(e)}${fix}`);
   }
 }
 
@@ -257,6 +260,8 @@ export interface EmbedResult {
   skipped: number;
   /** Chunks that would be embedded if not for dryRun (0 in non-dryRun). */
   would_embed: number;
+  /** #5289 dryRun: signature-stale chunks whose current-space vectors are only restamped. */
+  would_restamp?: number;
   /** Total chunks considered across all processed pages. */
   total_chunks: number;
   /** Number of pages processed (whether or not they had stale chunks). */
@@ -1766,7 +1771,10 @@ async function embedAllStale(
   }
 
   if (dryRun) {
-    result.would_embed += staleCount;
+    // #5289: current-space vectors on a drifted page are restamped, not re-embedded.
+    const restamp = signature ? await countRestampOnlyChunks(engine, { signature, sourceId, includeNullSignature: includeNullSig }) : 0;
+    result.would_embed += staleCount - restamp;
+    result.would_restamp = restamp;
     result.total_chunks += staleCount;
     // No progress event: a dry run reads a count and processes zero pages, so
     // there is no page total to report. The previous synthetic onProgress(1,1,0)
@@ -1781,7 +1789,7 @@ async function embedAllStale(
       const chunklessNote = result.chunkless_pages_healed > 0
         ? `, including ${result.chunkless_pages_healed} chunkless page(s)`
         : '';
-      slog(`[dry-run] Would embed ${result.would_embed} stale chunks${chunklessNote}`);
+      slog(`[dry-run] Would embed ${result.would_embed} stale chunks${chunklessNote}${restamp ? `; ${restamp} chunk(s) keep their vectors and are only restamped` : ''}`);
     }
     return;
   }
@@ -2140,9 +2148,12 @@ async function embedPageTexts(
   opts: EmbedBatchWithBackoffOpts = {},
 ): Promise<{ embeddings: (Float32Array | null)[]; failed: number; firstError?: unknown }> {
   try {
-    return { embeddings: await embedBatchWithBackoff(texts, opts), failed: 0 };
+    // #4616: the gateway already isolated degenerate items; keep the rest.
+    const { vectors, refused } = await embedBatchKeepingUsable(texts, opts);
+    return { embeddings: vectors, failed: refused?.failures.length ?? 0, firstError: refused };
   } catch (e: unknown) {
     if (opts.abortSignal?.aborted) throw e; // shutdown, not a chunk problem
+    if (isEmbeddingZeroNormError(e)) throw e; // nothing usable: fanning out would re-send the same inputs
     if (texts.length <= 1) throw e; // nothing to isolate
     // #3374 — network-transient exhaustion isn't chunk-specific either:
     // fanning out during an outage multiplies failing calls per page.

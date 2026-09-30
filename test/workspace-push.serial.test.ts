@@ -17,7 +17,7 @@ import { tmpdir } from 'os';
 import { execFileSync, spawnSync } from 'child_process';
 import {
   workspacePush, acquirePushLock, pushLockDir, pushStatusPath, pushStatusPathForRoot,
-  readPushStatuses, summarizePushStatuses, verifyRemotePrivacy,
+  readPushStatuses, readPushStatusForRoot, summarizePushStatuses, verifyRemotePrivacy,
   parseGithubOwnerRepo, resolveWorkspaceRoot, PUSH_LOCK_STALE_MS, PUSH_DENY_GLOBS,
 } from '../src/core/workspace-push.ts';
 import { SCAN_ALLOW_FILENAME } from '../src/core/secret-scan.ts';
@@ -543,6 +543,32 @@ describe('error paths', () => {
     const status = readPushStatuses()[0]!;
     expect(status.ok).toBe(false);
     expect(existsSync(pushLockDir(work))).toBe(false);
+  }, T);
+});
+
+describe('managed-worktree refusal is recorded (#5198)', () => {
+  test('a guard refusal overwrites the last success with ok:false and still throws', async () => {
+    writeFileSync(join(work, 'note.md'), 'first\n');
+    expect((await push()).status).toBe('pushed');
+    expect(readPushStatuses()[0]!.ok).toBe(true);
+    const commits = commitCount(work);
+    writeFileSync(join(work, '.gbrain-owner.json'), '{}\n');
+    writeFileSync(join(work, 'note.md'), 'second\n');
+    await expect(push()).rejects.toMatchObject({ code: 'writer_coordinator_required' });
+    const status = readPushStatuses()[0]!;
+    expect(status.ok).toBe(false);
+    expect(status.reason).toStartWith('writer_coordinator_required: ');
+    expect(commitCount(work)).toBe(commits); // refused before staging: nothing committed
+    expect(existsSync(pushLockDir(work))).toBe(false);
+  }, T);
+
+  test('a refusal on a subdirectory target is recorded against the workspace root', async () => {
+    const sub = join(work, 'notes');
+    mkdirSync(sub);
+    writeFileSync(join(work, '.gbrain-owner.json'), '{}\n');
+    await expect(workspacePush({ dir: sub, branch: 'main', allowUnverifiedRemote: true }))
+      .rejects.toMatchObject({ code: 'writer_coordinator_required' });
+    expect(readPushStatusForRoot(resolveWorkspaceRoot(sub)!)?.ok).toBe(false);
   }, T);
 });
 

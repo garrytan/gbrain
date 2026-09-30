@@ -158,6 +158,23 @@ describe('autopilot.ts ↔ dispatchPerSource wiring', () => {
     expect(skipIdx).toBeGreaterThan(localPathGuardIdx);
   });
 
+  test('#5198: freshness sync dispatch skips a claimed source awaiting activation BEFORE queuing a job', () => {
+    // Same static-shape pin as #4399 above: the skip must sit inside the loop
+    // and before the queue.add call, and it must `continue` rather than only
+    // report. loadActivationPendingSourceIds is exercised against a real
+    // claim/activate sequence in test/persistence-onboarding.test.ts.
+    const loopIdx = AUTOPILOT_SRC.indexOf('for (const src of sources) {');
+    const queueAddIdx = AUTOPILOT_SRC.indexOf('idempotency_key: `autopilot-sync:');
+    expect(loopIdx).toBeGreaterThan(-1);
+    expect(queueAddIdx).toBeGreaterThan(loopIdx);
+    const loopBody = AUTOPILOT_SRC.slice(loopIdx, queueAddIdx);
+    expect(loopBody).toContain("if (skipActivationPendingSync(activationPending, src.id, 'freshness_sync_skipped', jsonMode,");
+    expect(loopBody).toMatch(/if \(skipActivationPendingSync\([^\n]*\)\) continue;/);
+    const setupIdx = AUTOPILOT_SRC.lastIndexOf('const activationPending = await loadActivationPendingSourceIds(engine);', loopIdx);
+    expect(setupIdx).toBeGreaterThan(-1);
+    expect(loopIdx - setupIdx).toBeLessThan(300);
+  });
+
   test('#4046: targeted dispatch scopes stable recommendation keys to the interval', () => {
     expect(AUTOPILOT_SRC).toContain(
       'idempotency_key: autopilotRemediationIdempotencyKey(step.idempotency_key, slot)',

@@ -22,7 +22,7 @@ const migrate_embeddings: Operation = {
     dim: { type: 'number', description: "Target dimensions. Defaults to the provider recipe's declared width; required when the recipe declares none." },
     dry_run: { type: 'boolean', description: 'Plan + cost estimate only; change nothing.' },
     yes: { type: 'boolean', description: 'Confirm the re-embed spend + destructive schema change. Required for a live run.' },
-    max_cost_usd: { type: 'number', description: 'Finite total paid authorization. Required for new work; resume preserves all conservative pre-dispatch debits. Increase explicitly to renew.' },
+    max_cost_usd: { type: 'number', description: 'Finite total paid authorization. Required for new work and must cover plan.worst_case_authorization (else refused with embedding_budget_below_worst_case before any change); requests settle to reported usage, resume preserves debits. Increase explicitly to renew.' },
     retarget: { type: 'boolean', description: 'Abandon a DIFFERENT in-flight migration target and start this one (the abandoned target is recorded in the marker history).' },
     reranker: { type: 'string', description: 'Reranker companion action: auto (default), off, keep, or an explicit provider:model (e.g. voyage:rerank-2.5). Reranker config lives on the DB plane.' },
   },
@@ -85,6 +85,9 @@ const migrate_embeddings: Operation = {
     }
     if (result.status === 'refused_env') {
       return { status: 'refused', reason: 'env_override', warning: result.warning, plan, recovery };
+    }
+    if (result.status === 'refused_budget') {
+      return { status: 'refused', reason: result.refusal.error, ...result.refusal, plan, recovery };
     }
     if (result.status === 'refused_retarget') {
       return {

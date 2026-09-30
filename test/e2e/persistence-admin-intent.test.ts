@@ -60,7 +60,7 @@ run('real PostgreSQL hint, routine diagnosis, deliberate noninteractive administ
     await expect(submitPageMutation({ engine, config: { engine: 'postgres', embedding_disabled: true }, remote: false, dryRun: false,
       sourceId: 'default', logger: { info() {}, warn() {}, error() {} } }, {
       operation: 'put_page', params: { slug: 'notes/example', content: '# Generic example' }, waitMs: 0,
-    })).rejects.toMatchObject({ code: 'owner_unavailable', suggestion: expect.stringContaining('Inspect gbrain sources writer status --json') });
+    })).rejects.toMatchObject({ code: 'owner_unavailable', detail: 'unbound_source', suggestion: expect.stringContaining('gbrain sources writer status default --json') });
     const identity = readFileSync(join(persistenceHome(), 'host.json'), 'utf8');
     for (const args of [['doctor', '--fast', '--json'], ['doctor', '--fast', '--fix', '--skills-dir', join(home, 'skills'), '--json']]) {
       const result = await cli(args);

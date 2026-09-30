@@ -126,7 +126,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, macos-26, windows-latest]
         bun: ['1.3.11', '1.3.13']
         # Pull requests run the primary Bun version on every OS; pushes,
         # schedules and manual runs add the oldest supported version.
