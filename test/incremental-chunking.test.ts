@@ -198,7 +198,6 @@ export function gamma(p: number[], q: number[], r: number[]): number {
     // real provider; embedBatch would throw and leave embedding NULL.
     await withEnv({
       OPENAI_API_KEY: undefined,
-      ZEROENTROPY_API_KEY: undefined,
       OPENROUTER_API_KEY: undefined,
     }, async () => {
       const r = await importCodeFile(engine, filePath, shifted, {});

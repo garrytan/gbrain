@@ -9,6 +9,7 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
+import { installFixtureChunks } from '../helpers/page-projection.ts';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import type { ChunkInput } from '../../src/core/types.ts';
 
@@ -35,7 +36,7 @@ beforeAll(async () => {
       'production case studies.',
     timeline: '2026-04-10: Drafted Part 3 outline.',
   });
-  await engine.upsertChunks('originals/talks/article-outline-fat-code', [
+  await installFixtureChunks(engine, 'originals/talks/article-outline-fat-code', [
     {
       chunk_index: 0,
       chunk_text:
@@ -57,7 +58,7 @@ beforeAll(async () => {
       'The fat code thin harness pattern is something we keep returning to. ' +
       'fat code thin harness fat code thin harness fat code thin harness.',
   });
-  await engine.upsertChunks('openclaw/chat/2026-04-15', [
+  await installFixtureChunks(engine, 'openclaw/chat/2026-04-15', [
     {
       chunk_index: 0,
       chunk_text:
@@ -79,7 +80,7 @@ beforeAll(async () => {
       'fat code thin harness once more. fat code thin harness fat code thin harness. ' +
       'still talking about fat code thin harness. fat code thin harness.',
   });
-  await engine.upsertChunks('openclaw/chat/2026-04-16', [
+  await installFixtureChunks(engine, 'openclaw/chat/2026-04-16', [
     {
       chunk_index: 0,
       chunk_text:

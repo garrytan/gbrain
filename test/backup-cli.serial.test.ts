@@ -32,6 +32,7 @@ import {
   saveBackupStatus,
   type BackupStatus,
 } from '../src/core/backup/status-file.ts';
+import { surfaceSource } from './helpers/source-surface.ts';
 
 /** The exact literal thrown by src/core/pglite-engine.ts on lock contention.
  * isLockError in src/commands/backup.ts matches on the leading substring —
@@ -308,13 +309,13 @@ describe('runBackupCli — PGLite lock fallback', () => {
     const r = await run(['status'], connect);
 
     expect(calls()).toBe(1);
-    expect(r.exitCode).toBe(0);
+    expect(r.exitCode).toBe(1);
     expect(r.log).toContain('no cached verdict; DB locked by serve');
     expect(existsSync(statusPath)).toBe(false);
   });
 
   test('source-text contract pin: pglite-engine still throws the literal isLockError matches', () => {
-    const engineSrc = readFileSync(join(import.meta.dir, '..', 'src', 'core', 'pglite-engine.ts'), 'utf-8');
+    const engineSrc = surfaceSource('pglite-engine');
     expect(engineSrc).toContain(LOCK_SUBSTRING);
     // And backup.ts matches on exactly that substring — drift on either side
     // silently breaks the serve-cohort fallback, so pin both.
@@ -393,7 +394,8 @@ describe('runBackupCli --json', () => {
     expect(payload.overall).toBe('ok');
     expect(payload.recovery.recoverable_repos).toBe(0);
     expect(payload.recovery.pages_at_risk).toBe(0);
-    expect(payload.recovery.statement).toContain('What survives a disk loss today');
+    expect(payload.recovery.statement).toContain('recently verified remote commits');
+    expect(payload.recovery.statement).toContain('not a full database backup');
   });
 
   test('degraded compute passes degraded:true through and is never persisted', async () => {
@@ -407,7 +409,7 @@ describe('runBackupCli --json', () => {
     const payload = JSON.parse(r.stdout) as { degraded?: boolean };
     expect(payload.degraded).toBe(true);
     expect(existsSync(statusPath)).toBe(false); // degraded verdicts never persist
-    expect(r.exitCode).toBe(0); // degraded suppresses the db_content warn
+    expect(r.exitCode).toBe(1);
   });
 });
 

@@ -310,16 +310,16 @@ describe('findCandidateDuplicates', () => {
     // result set can't flip the test.
     const slug = `embed-test-${Math.random().toString(36).slice(2, 10)}`;
     await engine.insertFact(
-      { fact: 'A', kind: 'fact', entity_slug: slug, source: 'test', embedding: vec(1, 0, 0) },
+      { fact: 'A', kind: 'fact', entity_slug: slug, source: 'test', embedding: vec(1, 0, 0), embedding_model: 'synthetic:model' },
       { source_id: 'default' },
     );
     await engine.insertFact(
-      { fact: 'B', kind: 'fact', entity_slug: slug, source: 'test', embedding: vec(0, 1, 0) },
+      { fact: 'B', kind: 'fact', entity_slug: slug, source: 'test', embedding: vec(0, 1, 0), embedding_model: 'synthetic:model' },
       { source_id: 'default' },
     );
     const result = await engine.findCandidateDuplicates(
       'default', slug, 'q',
-      { embedding: vec(1, 0, 0) },
+      { embedding: vec(1, 0, 0), embeddingModel: 'synthetic:model' },
     );
     const aIdx = result.findIndex(r => r.fact === 'A');
     const bIdx = result.findIndex(r => r.fact === 'B');

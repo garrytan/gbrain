@@ -43,9 +43,13 @@ import {
   classifyFactsAbsorbError,
   _resetFactsAbsorbDisconnectedFlagForTests,
 } from '../src/core/facts/absorb-log.ts';
-import { factsAbsorbShouldRetry } from '../src/commands/jobs.ts';
+import { factsAbsorbShouldRetry, registerBuiltinHandlers } from '../src/commands/jobs.ts';
 import { markShortLivedCliProcess, __resetShortLivedCliForTests } from '../src/core/facts/cli-process-mode.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import type { MinionHandler } from '../src/core/minions/types.ts';
+import { runPersistenceEffects } from '../src/core/persistence/effects.ts';
+import { localHostId } from '../src/core/persistence/identity.ts';
+import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 
 let engine: PGLiteEngine;
 const PINNED = ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GBRAIN_MODEL', 'GBRAIN_HOME'] as const;
@@ -109,7 +113,7 @@ const restoreEnv = () => {
     else process.env[k] = saved[k];
   }
 };
-afterEach(restoreEnv);
+afterEach(async () => { await disposePersistenceConsumer(engine); restoreEnv(); });
 
 afterAll(async () => {
   __setChatTransportForTests(null);
@@ -275,7 +279,9 @@ describe('extract_facts reason-specific envelopes', () => {
 
 describe('put_page never fails on extraction errors (E1 invariant)', () => {
   test('page write succeeds while the extraction transport throws', async () => {
+    process.env.ANTHROPIC_API_KEY = 'sk-ant-test';
     configureGateway({ chat_model: 'anthropic:claude-sonnet-4-6', env: { ANTHROPIC_API_KEY: 'sk-ant-test' } });
+    await engine.setConfig('facts.extraction_model', 'anthropic:claude-sonnet-4-6');
     __setChatTransportForTests(async () => { throw new Error('simulated provider outage'); });
     const res = await dispatchToolCall(engine, 'put_page', {
       slug: 'e1-invariant-page',
@@ -285,10 +291,20 @@ describe('put_page never fails on extraction errors (E1 invariant)', () => {
     const page = await engine.getPage('e1-invariant-page', { sourceId: 'default' });
     expect(page).toBeTruthy();
     expect(page?.slug).toBe('e1-invariant-page');
-    // Drain the in-process facts queue so the async failure lands, then
-    // confirm it was absorbed as a LOG ROW, not a thrown write failure.
-    const { getFactsQueue } = await import('../src/core/facts/queue.ts');
-    await getFactsQueue().drainPending({ timeout: 10_000 });
+    // Publication accepts durable extraction debt. Run its actual outbox
+    // handoff and registered job handler; the later failure remains visible
+    // while the original canonical receipt and page stay committed.
+    expect(unwrap(res).facts_backstop).toEqual({ queued: true });
+    await runPersistenceEffects(engine, { engine: 'pglite', embedding_disabled: true }, { hostId: localHostId(), limit: 8 });
+    const jobs = await engine.executeRaw<{ id: number; data: Record<string, unknown> }>("SELECT id,data FROM minion_jobs WHERE name='facts-absorb'");
+    expect(jobs).toHaveLength(1);
+    const handlers = new Map<string, MinionHandler>();
+    await registerBuiltinHandlers({ register: (name: string, handler: MinionHandler) => handlers.set(name, handler) } as never, engine, { quiet: true });
+    await expect(handlers.get('facts-absorb')!({
+      ...jobs[0], name: 'facts-absorb', attempts_made: 0, signal: new AbortController().signal,
+      deadlineAtMs: null, shutdownSignal: new AbortController().signal, updateProgress: async () => {},
+      updateTokens: async () => {}, log: async () => {}, isActive: async () => true, readInbox: async () => [],
+    })).rejects.toBeInstanceOf(FactsExtractionError);
     const rows = await absorbRows();
     expect(rows.some((r) => r.summary.startsWith('gateway_error'))).toBe(true);
   });

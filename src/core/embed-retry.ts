@@ -13,6 +13,7 @@
  */
 
 import { embedBatch } from './embedding.ts';
+import { isEmbeddingZeroNormError, type EmbeddingZeroNormError } from './ai/embedding-guard.ts';
 import { serr } from './console-prefix.ts';
 import { noteEmbedApiResponse } from './embed-stall.ts';
 import { titleTierCorpusGeneration } from './contextual-retrieval-service.ts';
@@ -28,12 +29,17 @@ import type { Page } from './types.ts';
  */
 export async function restampIfDemotedToTitleTier(
   engine: BrainEngine,
-  page: Pick<Page, 'contextual_retrieval_mode'> | null | undefined,
+  page: Pick<Page, 'contextual_retrieval_mode' | 'knowledge_revision'> | null | undefined,
   slug: string,
   sourceId: string,
 ): Promise<void> {
-  if (page?.contextual_retrieval_mode !== 'per_chunk_synopsis') return;
-  await engine.updatePageContextualRetrievalState(slug, sourceId, 'title', titleTierCorpusGeneration());
+  if (page?.contextual_retrieval_mode !== 'per_chunk_synopsis' || !page.knowledge_revision) return;
+  await engine.transaction(async tx => {
+    await tx.lockPageKeys([{ sourceId, slug }]);
+    const current = await tx.readPageSnapshot(slug, { sourceId });
+    if (current?.revision !== page.knowledge_revision) return;
+    await tx.updatePageContextualRetrievalState(slug, sourceId, 'title', titleTierCorpusGeneration());
+  });
 }
 
 /**
@@ -247,6 +253,21 @@ export async function embedBatchWithBackoff(
 }
 
 /**
+ * #4616: embedBatchWithBackoff that keeps a partially refused batch. Usable
+ * vectors come back aligned with `texts` (null where the gateway refused an
+ * item) together with the refusal; a batch with nothing usable still throws.
+ */
+export async function embedBatchKeepingUsable(texts: string[], opts: EmbedBatchWithBackoffOpts = {}):
+  Promise<{ vectors: (Float32Array | null)[]; refused?: EmbeddingZeroNormError }> {
+  try {
+    return { vectors: await embedBatchWithBackoff(texts, opts) };
+  } catch (e) {
+    if (!isEmbeddingZeroNormError(e) || e.failures.length === texts.length) throw e;
+    return { vectors: e.vectors, refused: e };
+  }
+}
+
+/**
  * Retriable embed errors: 429 rate limits plus transient gateway overload
  * (502/503/504). Shared by embedBatchWithBackoff (retry decision) and
  * embedPageTexts (fan-out decision). D4: structured detection first
@@ -254,6 +275,7 @@ export async function embedBatchWithBackoff(
  * providers whose wrappers strip `cause.status`.
  */
 export function isEmbedRetriableError(e: unknown): boolean {
+  if (isEmbeddingZeroNormError(e)) return false; // #4616: terminal per item, never retried
   const msg = e instanceof Error ? e.message : String(e);
   return (
     detect429FromCause(e) ||
@@ -293,6 +315,7 @@ export function transientBackoffMs(attempt: number, rng: () => number = Math.ran
  * @internal exported for unit tests.
  */
 export function isTransientNetworkEmbedError(e: unknown): boolean {
+  if (isEmbeddingZeroNormError(e)) return false;
   const TRANSIENT_CODES = /^(DNS_ETIMEOUT|ETIMEOUT|ETIMEDOUT|ESOCKETTIMEDOUT|ECONNRESET|EPIPE|ECONNABORTED|EAI_AGAIN|UND_ERR_CONNECT_TIMEOUT|UND_ERR_HEADERS_TIMEOUT|UND_ERR_BODY_TIMEOUT|UND_ERR_SOCKET)$/;
   let cur: unknown = e;
   for (let depth = 0; depth < 5 && cur !== undefined && cur !== null; depth++) {

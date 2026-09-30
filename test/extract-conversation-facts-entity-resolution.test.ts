@@ -342,14 +342,14 @@ describe('conversation backfill entity resolution', () => {
   });
 
   test('failed data insert writes no terminal or telemetry and retries cleanly', async () => {
-    const originalInsertFacts = engine.insertFacts.bind(engine);
+    const originalInsertFacts = engine.insertFacts;
     const writeSpy = spyOn(process.stderr, 'write').mockImplementation(() => true);
     try {
-      engine.insertFacts = async (facts, opts) => {
+      engine.insertFacts = async function(this: PGLiteEngine, facts, opts) {
         if (facts.some((row) => row.source === PER_SEGMENT_SOURCE_PREFIX)) {
           throw new Error('constraint sentinel');
         }
-        return originalInsertFacts(facts, opts);
+        return originalInsertFacts.call(this, facts, opts);
       };
       await expect(runExtractConversationFactsCore(engine, {
         sourceId: 'default',

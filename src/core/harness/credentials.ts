@@ -1,5 +1,6 @@
 import { openSync, closeSync, fstatSync, readFileSync, constants, mkdirSync, lstatSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
+import { Buffer } from 'node:buffer';
 import { atomicWriteTextFile as atomicWrite } from '../bootstrap/atomic-write.ts';
 import { normalizeMcpUrl, validateToken } from '../mcp-registration.ts';
 import { assertNoSymlinks } from '../agent-install/state.ts';
@@ -11,11 +12,13 @@ export interface HarnessCredentials {
   issuer_url: string;
   client_id: string;
   client_secret?: string;
+  token_endpoint_auth_method?: 'client_secret_post' | 'client_secret_basic';
   access_token?: string;
   expires_at?: number;
   profile?: string;
   harness?: string;
   source_id?: string;
+  shared_skills?: { follow: boolean; source_ids?: string[] };
 }
 
 export function validateCredentials(value: unknown): HarnessCredentials {
@@ -32,17 +35,25 @@ export function validateCredentials(value: unknown): HarnessCredentials {
   if (new URL(issuer).search) throw new Error('Credential issuer must not contain a query');
   if (new URL(issuer).origin !== new URL(url.url).origin) throw new Error('Credential issuer and MCP endpoint must have the same origin');
   if (typeof v.client_secret !== 'string' && typeof v.access_token !== 'string') throw new Error('Credential handoff has no access credential');
+  if (v.token_endpoint_auth_method !== undefined && v.token_endpoint_auth_method !== 'client_secret_post' && v.token_endpoint_auth_method !== 'client_secret_basic') {
+    throw new Error('Machine credential authentication must be client_secret_post or client_secret_basic');
+  }
   for (const key of ['client_secret', 'access_token'] as const) {
     if (v[key] !== undefined && (typeof v[key] !== 'string' || !validateToken(v[key] as string).ok)) throw new Error('Invalid private credential');
   }
   if (v.expires_at !== undefined && (typeof v.expires_at !== 'number' || !Number.isFinite(v.expires_at))) throw new Error('Invalid credential expiration');
+  const shared = v.shared_skills as HarnessCredentials['shared_skills'];
+  if (shared !== undefined && (!shared || typeof shared.follow !== 'boolean' ||
+    (shared.source_ids !== undefined && (!Array.isArray(shared.source_ids) || shared.source_ids.length > 64 || shared.source_ids.some(s => typeof s !== 'string' || !s || s.length > 128))))) throw new Error('Invalid shared-skills follow policy');
   return { version: 1, mcp_url: url.url, issuer_url: issuer, client_id: v.client_id,
     ...(typeof v.client_secret === 'string' ? { client_secret: v.client_secret } : {}),
+    ...(v.token_endpoint_auth_method !== undefined ? { token_endpoint_auth_method: v.token_endpoint_auth_method } : {}),
     ...(typeof v.access_token === 'string' ? { access_token: v.access_token } : {}),
     ...(typeof v.expires_at === 'number' ? { expires_at: v.expires_at } : {}),
     ...(typeof v.profile === 'string' ? { profile: v.profile } : {}),
     ...(typeof v.harness === 'string' ? { harness: v.harness } : {}),
     ...(typeof v.source_id === 'string' ? { source_id: v.source_id } : {}),
+    ...(shared ? { shared_skills: { follow: shared.follow, ...(shared.source_ids ? { source_ids: [...shared.source_ids] } : {}) } } : {}),
   };
 }
 
@@ -98,13 +109,17 @@ export function credentialReceipt(c: HarnessCredentials) {
     renewable: Boolean(c.client_secret), credentials: 'private-file' };
 }
 
-export async function credentialAccessToken(c: HarnessCredentials, signal?: AbortSignal): Promise<string> {
+export async function credentialAccessToken(c: HarnessCredentials, signal?: AbortSignal, fetchImpl: typeof fetch = fetch): Promise<string> {
   if (c.access_token && (!c.expires_at || c.expires_at > Date.now() / 1000 + 30)) return c.access_token;
   if (!c.client_secret) throw new Error('authentication_failed: credential expired; issue a new access token without rotating the client secret');
-  const response = await fetch(`${c.issuer_url}/token`, {
+  const basic = c.token_endpoint_auth_method === 'client_secret_basic';
+  // OAuth Basic encodes each credential as form data BEFORE base64 (RFC 6749 §2.3.1).
+  const formEncode = (value: string) => new URLSearchParams({ credential: value }).toString().slice('credential='.length);
+  const authorization = basic ? `Basic ${Buffer.from(`${formEncode(c.client_id)}:${formEncode(c.client_secret)}`).toString('base64')}` : undefined;
+  const response = await fetchImpl(`${c.issuer_url}/token`, {
     method: 'POST', redirect: 'error', signal: signal ?? AbortSignal.timeout(15_000),
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ grant_type: 'client_credentials', client_id: c.client_id, client_secret: c.client_secret }),
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', ...(authorization ? { Authorization: authorization } : {}) },
+    body: new URLSearchParams({ grant_type: 'client_credentials', ...(basic ? {} : { client_id: c.client_id, client_secret: c.client_secret }) }),
   });
   if (!response.ok) throw new Error(`authentication_failed: token exchange returned HTTP ${response.status}`);
   const body = await response.json() as { access_token?: unknown };

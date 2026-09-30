@@ -7,6 +7,7 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
+import { installFixtureChunks } from './helpers/page-projection.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 
 describe('Layer 5 (A1) — code-edges engine methods', () => {
@@ -26,7 +27,7 @@ describe('Layer 5 (A1) — code-edges engine methods', () => {
       compiled_truth: 'export function run() { return helper(); }',
       timeline: '',
     });
-    await engine.upsertChunks('src-a-ts', [{
+    await installFixtureChunks(engine, 'src-a-ts', [{
       chunk_index: 0,
       chunk_text: 'export function run() { return helper(); }',
       chunk_source: 'compiled_truth',
@@ -42,7 +43,7 @@ describe('Layer 5 (A1) — code-edges engine methods', () => {
       compiled_truth: 'export function helper() { return 1; }',
       timeline: '',
     });
-    await engine.upsertChunks('src-b-ts', [{
+    await installFixtureChunks(engine, 'src-b-ts', [{
       chunk_index: 0,
       chunk_text: 'export function helper() { return 1; }',
       chunk_source: 'compiled_truth',
@@ -56,7 +57,7 @@ describe('Layer 5 (A1) — code-edges engine methods', () => {
     const bChunks = await engine.getChunks('src-b-ts');
     chunkA = aChunks[0]!.id;
     chunkB = bChunks[0]!.id;
-  });
+  }, 60_000);
 
   afterAll(async () => {
     await engine.disconnect();
@@ -199,7 +200,7 @@ describe('#4670 — getCalleesOf bare-name fallback (opt-in)', () => {
       compiled_truth: 'public async Task SubmitAsync() { ValidateRequest(); }',
       timeline: '',
     });
-    await engine.upsertChunks('src-order-service-cs', [{
+    await installFixtureChunks(engine, 'src-order-service-cs', [{
       chunk_index: 0,
       chunk_text: 'public async Task SubmitAsync() { ValidateRequest(); }',
       chunk_source: 'compiled_truth',

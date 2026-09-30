@@ -11,6 +11,7 @@ conversation. Those are separate release checks.
 | Backup and restore | Database-only facts, private archive permissions, checksums/path rejection, changing-file rejection, private staging after interrupted publication, relocated writes, original-brain preservation, and unfinished-job quarantine | Explicitly choose and verify a protected off-VM copy |
 | Memory behavior | Remember, recall, correction, withdrawal, restart, and withdrawal surviving stale-source reimport | Observe GBrain calls across actual harness conversations |
 | Hosted onboarding | Real CLI → HTTP administration → private credential handoff → MCP memory round trip, on PostgreSQL and PGLite | Reload the native client and observe its calls |
+| Tailscale publish (`gbrain mcp expose`) | Pure helpers (status/serve-status parsing including `funnelCapable` and foreground sessions, install and login argv — `set --operator` then flagless `up` — error classification), service rendering (wrapper, launchd plist, systemd unit — no token literal in any generated file, `%` escaping, 0600 token and receipt, symlinked paths refused), and the command against a fake Tailscale runner in a temporary home: dry-run plan without mutations, consent exit 2 and interactive decline, missing-binary plan and install path, the HTTPS / Funnel pre-checks stopping at exit 2 before any `serve` argv, `linux-systemd` happy path producing receipt + wrapper + unit (`enable` + `restart`), classified `https_not_enabled`, foreign-handler refusal and foreign-listener refusal before any publish, `verify.local` timeout, `--no-service` re-run preserving the service block, `--status` with and without a receipt, `--remove` leaving Tailscale and the token file in place | A real tailnet: certificate issuance, `tailscale serve` and `funnel` reachability, the macOS app-bundle CLI accepting `up`/`serve`, and a cloud agent reaching the Funnel URL |
 | Grants and tokens | Profiles, separate write fences, operation ceilings, source restrictions, revision conflicts, stable credentials, scope removal, refresh ceilings, and confidential/public PKCE flows | A real Grok Bot native OAuth connector test before promoting that adapter |
 | Delegation | Atomic admission, queued/running policy changes, replay restrictions, per-client accounting, and a real HTTP → queue → CLI worker journey | Confirm the deployed worker and configured provider complete the actual task |
 | Admin UI | Headless Chrome against the real HTTP/PostgreSQL service: preview, creation, unlimited/concurrency-1 defaults, stale-edit rejection, reload, lost-response reconciliation, and credential recovery without duplicate grants or secret rotation | Normal operator deployment checks |
@@ -31,6 +32,59 @@ executes a real bound brain tool, returns a randomized result, and settles
 attributed reservations. It does not contact a paid model provider or run inside
 a vendor harness. Tests with a fake MCP peer cover failure and reconciliation
 behavior; the PostgreSQL/PGLite journeys provide the separate real-server proof.
+
+## Shared-skills evidence boundaries
+
+The dated results above predate shared-brain enrollment. They do not prove
+shared-skill distribution or native activation. Use the
+[shared-skills guide](shared-brain-skills.md) and the checklist below for this
+feature; record executed checks in the change's validation record rather than
+treating the existence of a test file as a passing result.
+
+The [generated adapter reference](harness-adapters.md) is the inventory of all
+13 registered harness IDs; `gbrain mcp adapters` exposes current metadata.
+Connection support is not a blanket native-skills claim. Managed Claude Code,
+Codex, and opencode connections can install a router but report
+`restart_required` and native-unverified. Manual adapters remain pending.
+Router prose is advisory: only calls using the adapter's enforced `admit` seam
+have its current-authority check and revision pin. Do not claim vendor-wide
+offline freshness or invocation enforcement.
+
+For every installation tested, record these three evidence levels separately:
+
+1. **Protocol:** independent parent and child principals see only approved
+   sources. V2 tools and `gbrain://skills` resources return the same authorized
+   immutable revision; legacy shapes remain source-scoped after activation.
+   A committed edit reaches a second client and the parent. Denied sources,
+   revoked grants, and unavailable catalogs cannot become successful empty views.
+2. **Files and lifecycle:** inspect hashes, ownership receipts, absolute launcher
+   or named connection, and pending/retained files. Exercise an edited-copy
+   conflict, reconnect, and leave without overwriting user changes. A delivery
+   acknowledgment is a client report, not a native observation. Back up both
+   content and operational DB state before migration/recovery tests.
+   Check offline/revoked leave disables local following while honestly retaining
+   `remote_membership_pending`. Local `connect --status` must not claim a fresh
+   authority probe. Restore a synthetic PGLite archive into an absent root and
+   verify a new unpublished identity, revoked archived authority, detached
+   owners, preserved knowledge/history/floor, and no restarted automation;
+   unresolved file recovery must block restoration.
+3. **Actual native conversation:** record harness/adapter version, session,
+   qualified skill identity, and revision. In a fresh conversation, ask for a
+   matching task without naming the skill and observe selection/use. Publish
+   an approved edit through another principal, refresh/restart, and observe
+   the new revision in the parent too. Verify a safely disabled shadow copy
+   cannot still win routing. Missing platform access remains unverified.
+
+Use synthetic fixtures and obtain any required execution/spending consent.
+Neither a catalog fetch nor a router file proves native activation, and no
+draft Skills-over-MCP extension conformance is asserted. A committed publication
+receipt is not proof that every member has received the revision.
+
+For isolated Grok Bot/Muse setup, inspect the installation's own shared-skills
+receipt and manual native-registration step; it is not a `connect` receipt.
+For legacy full/stub bridges, verify pending migration plans preserve edited
+copies and do not fall back to bundled bodies when the shared brain is unavailable.
+These are acceptance requirements, not additional dated passing results.
 
 ## Reproduce the focused lifecycle checks
 
@@ -72,6 +126,11 @@ the result of every cleanup. A fluent answer alone is insufficient.
    the original remains unchanged.
 5. If delegation is granted, explicitly run the paid worker challenge. Require
    the randomized terminal result and successful cleanup, not just a job ID.
+
+When the brain is published with `gbrain mcp expose`, also record
+`gbrain mcp expose --status` on the host (service running, publish config
+present, local and tailnet health `ok`) alongside the client-side
+`gbrain mcp verify` result; the two prove different halves.
 
 Missing native activation, untested persistence, unknown mutation outcomes,
 unavailable workers, and failed cleanup stay incomplete. Muse native MCP support

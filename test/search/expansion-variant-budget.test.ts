@@ -26,6 +26,7 @@
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
+import { installFixtureChunks } from '../helpers/page-projection.ts';
 import { configureGateway } from '../../src/core/ai/gateway.ts';
 import { hybridSearch } from '../../src/core/search/hybrid.ts';
 import { basisEmbedding } from '../../src/eval/deterministic-embed.ts';
@@ -55,7 +56,7 @@ function leaningEmbedding(mainDim: number, privateDim: number): Float32Array {
 
 async function putNote(slug: string, title: string, text: string, embedding: Float32Array): Promise<void> {
   await engine.putPage(slug, { type: 'note', title, compiled_truth: text });
-  await engine.upsertChunks(slug, [{
+  await installFixtureChunks(engine, slug, [{
     chunk_index: 0,
     chunk_text: text,
     chunk_source: 'compiled_truth',
@@ -87,7 +88,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await engine.disconnect();
-});
+}, 60_000);
 
 type Run = { results: Awaited<ReturnType<typeof hybridSearch>>; meta: HybridSearchMeta | undefined; embedded: string[] };
 

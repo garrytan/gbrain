@@ -201,6 +201,7 @@ async function insertChunk(
      RETURNING id`,
     [pageId, chunkIndex, `// ${symbolName} body`, symbolName, symbolType],
   );
+  await engine.executeRaw('UPDATE pages SET text_projection_revision=knowledge_revision WHERE id=$1', [pageId]);
   return rows[0]!.id;
 }
 

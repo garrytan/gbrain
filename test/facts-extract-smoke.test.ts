@@ -152,9 +152,9 @@ describe('extractFactsFromTurn — B1 end-to-end smoke', () => {
   test('high-only admission embeds only high-tier candidates', async () => {
     const embeddedTexts: string[] = [];
     configureGateway({
-      embedding_model: 'zeroentropyai:zembed-1',
-      embedding_dimensions: 1280,
-      env: { ZEROENTROPY_API_KEY: 'test' },
+      embedding_model: 'voyage:voyage-4',
+      embedding_dimensions: 1024,
+      env: { VOYAGE_API_KEY: 'test' },
     });
     __setChatTransportForTests(async (): Promise<ChatResult> => ({
       text: JSON.stringify({
@@ -174,7 +174,7 @@ describe('extractFactsFromTurn — B1 end-to-end smoke', () => {
     }));
     __setEmbedTransportForTests((async ({ values }: { values: string[] }) => {
       embeddedTexts.push(...values);
-      return { embeddings: values.map(() => Array.from({ length: 1280 }, () => 0.1)) };
+      return { embeddings: values.map(() => Array.from({ length: 1024 }, () => 0.1)) };
     }) as never);
 
     const outcome = await extractFactsFromTurnWithOutcome({
@@ -190,9 +190,9 @@ describe('extractFactsFromTurn — B1 end-to-end smoke', () => {
   test('without admission, high, medium, low, and absent tiers embed', async () => {
     const embeddedTexts: string[] = [];
     configureGateway({
-      embedding_model: 'zeroentropyai:zembed-1',
-      embedding_dimensions: 1280,
-      env: { ZEROENTROPY_API_KEY: 'test' },
+      embedding_model: 'voyage:voyage-4',
+      embedding_dimensions: 1024,
+      env: { VOYAGE_API_KEY: 'test' },
     });
     __setChatTransportForTests(async (): Promise<ChatResult> => ({
       text: JSON.stringify({
@@ -211,7 +211,7 @@ describe('extractFactsFromTurn — B1 end-to-end smoke', () => {
     }));
     __setEmbedTransportForTests((async ({ values }: { values: string[] }) => {
       embeddedTexts.push(...values);
-      return { embeddings: values.map(() => Array.from({ length: 1280 }, () => 0.1)) };
+      return { embeddings: values.map(() => Array.from({ length: 1024 }, () => 0.1)) };
     }) as never);
 
     const outcome = await extractFactsFromTurnWithOutcome({

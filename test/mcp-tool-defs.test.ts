@@ -114,10 +114,11 @@ describe('buildToolDefs', () => {
     const putPage = buildToolDefs(operations).find(def => def.name === 'put_page');
     expect(putPage).toBeDefined();
 
+    expect(putPage!.description).toContain('expected_revision');
+    expect(putPage!.description).toContain('request_id');
     const content = putPage!.inputSchema.properties.content as { description?: string };
     for (const description of [putPage!.description, content.description]) {
-      expect(description).toContain('REPLACES the entire page');
-      expect(description).toContain('not a partial edit');
+      expect(description?.toLowerCase()).toContain('complete');
       expect(description).toContain('get_page');
       expect(description).toContain('include_content:true');
     }

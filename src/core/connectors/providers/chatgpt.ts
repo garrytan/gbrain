@@ -96,15 +96,23 @@ export function toIso(v: unknown): string {
  * newest-first; breaks early once a stub is at/before `stopBefore` (the
  * watermark minus the trailing window) since `order=updated` guarantees the
  * rest are older.
+ *
+ * C-18: the ordering is live. A conversation archived or deleted mid-walk
+ * shifts every later item to a lower offset, so the next page would start one
+ * item late; when `total` shrinks the walk steps back by the shrinkage and
+ * re-reads. `seen` (shared across passes) yields each id once, so an item
+ * that shifted the other way, or moved to the archived pass, is not repeated.
  */
 async function* listPass(
   client: ConnectorClient,
   archived: boolean,
   stopBefore: string | undefined,
+  seen: Set<string>,
   signal?: AbortSignal,
 ): AsyncGenerator<ConversationStub> {
   let offset = 0;
   let pages = 0;
+  let lastTotal: number | undefined;
   for (;;) {
     const q = new URLSearchParams({
       offset: String(offset),
@@ -120,11 +128,23 @@ async function* listPass(
         `chatgpt: conversations list${archived ? ' (archived)' : ''} returned no items array (shape drift)`,
       );
     }
+    const total = typeof res.total === 'number' ? res.total : offset + res.items.length;
+    if (lastTotal !== undefined && total < lastTotal && offset > 0) {
+      offset = Math.max(0, offset - (lastTotal - total));
+      lastTotal = total;
+      if (++pages >= MAX_LIST_PAGES) {
+        throw new Error(`chatgpt: list pass hit the ${MAX_LIST_PAGES}-page cap; refusing to treat a truncated list as complete`);
+      }
+      continue;
+    }
+    lastTotal = total;
     for (const it of res.items) {
       const id = typeof it.id === 'string' ? it.id : '';
       if (!id) continue;
       const updatedAt = toIso(it.update_time) || toIso(it.create_time);
       if (stopBefore && updatedAt && updatedAt <= stopBefore) return; // rest are older
+      if (seen.has(id)) continue;
+      seen.add(id);
       yield {
         id,
         title: typeof it.title === 'string' ? it.title : undefined,
@@ -132,7 +152,6 @@ async function* listPass(
         createdAt: toIso(it.create_time) || undefined,
       };
     }
-    const total = typeof res.total === 'number' ? res.total : offset + res.items.length;
     offset += res.items.length;
     if (res.items.length === 0 || offset >= total) break;
     pages++;
@@ -205,8 +224,9 @@ export const chatgptProvider: ChatHistoryProvider = {
     // Pass 1: active threads. Pass 2: archived (D3.1). Each pass breaks at its
     // own since-bound; the run watermark is the max updatedAt seen across BOTH
     // passes (the orchestrator tracks it).
-    yield* listPass(client, false, opts.stopBefore, opts.signal);
-    yield* listPass(client, true, opts.stopBefore, opts.signal);
+    const seen = new Set<string>();
+    yield* listPass(client, false, opts.stopBefore, seen, opts.signal);
+    yield* listPass(client, true, opts.stopBefore, seen, opts.signal);
   },
 
   async fetchConversation(

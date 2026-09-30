@@ -1,9 +1,13 @@
 /**
  * A10 (test-gap wave) — structural scan: every `/admin`-prefixed route
- * registered on the express app in src/commands/serve-http.ts must carry
+ * registered on the express app in src/commands/serve-http.ts or any
+ * src/commands/serve-http-*.ts module (globbed, so a new module is scanned
+ * without editing this file; refactor wave 1 E9) must carry
  * `requireAdmin` as middleware BEFORE its handler, except a documented
  * allowlist (the credential/token auth endpoints and the static SPA
- * surface). The scan covers app.get/post/put/delete/patch/all/use — an
+ * surface). `/metrics` (outside the /admin prefix) and `/admin/events` are
+ * in the must-carry-requireAdmin scan set explicitly, never allowlisted.
+ * Violations report the module file:line. The scan covers app.get/post/put/delete/patch/all/use — an
  * `app.use('/admin', express.static(...))` mount is visible to it — and
  * is robust to the file's multi-line registration style (path literal on
  * the line after `app.post(`).
@@ -13,16 +17,15 @@
  *   (b) a stale allowlist entry (no longer present, or present a
  *       different number of times than declared),
  *   (c) an allowlisted auth endpoint that dropped its
- *       adminAuthRateLimiter middleware,
+ *       adminLimits.total, adminLimits.failures middleware,
  *   (d) extractor breakage (anti-vacuity floor: the scan must keep
  *       finding at least the known admin surface, and a self-test proves
  *       the extractor + guard CAN flag a known-bad route).
  */
 import { describe, test, expect } from 'bun:test';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-const SRC_PATH = join(import.meta.dir, '..', 'src', 'commands', 'serve-http.ts');
 
 // ---------------------------------------------------------------------------
 // Extractor
@@ -40,6 +43,8 @@ interface RouteReg {
    * handler body can never masquerade as a guard.
    */
   head: string;
+  /** Repo-relative module path, e.g. src/commands/serve-http-admin-api.ts. */
+  file: string;
   line: number;
   guarded: boolean;
 }
@@ -47,7 +52,7 @@ interface RouteReg {
 const CALL_RE = /\bapp\.(get|post|put|delete|patch|all|use)\s*\(/g;
 const MAX_HEAD_CHARS = 4000;
 
-function extractRegistrations(source: string): RouteReg[] {
+function extractRegistrations(source: string, file = '<fixture>'): RouteReg[] {
   const regs: RouteReg[] = [];
   CALL_RE.lastIndex = 0;
   let m: RegExpExecArray | null;
@@ -85,6 +90,7 @@ function extractRegistrations(source: string): RouteReg[] {
       method: m[1],
       path,
       head,
+      file,
       line: source.slice(0, callStart).split('\n').length,
       guarded: /\brequireAdmin\b/.test(head),
     });
@@ -97,8 +103,21 @@ function adminRoutes(regs: RouteReg[]): RouteReg[] {
   return regs.filter((r): r is RouteReg & { path: string } => r.path !== null && r.path.startsWith('/admin'));
 }
 
+// Routes outside the /admin prefix that must carry requireAdmin anyway, plus
+// /admin/events named explicitly. Members of the scan set, never allowlisted.
+const MUST_CARRY_REQUIRE_ADMIN: ReadonlyArray<readonly [string, string]> = [
+  ['get', '/metrics'],
+  ['get', '/admin/events'],
+];
+
+/** The must-carry-requireAdmin scan set: every /admin-prefixed route plus MUST_CARRY_REQUIRE_ADMIN. */
+function scanSetRoutes(regs: RouteReg[]): RouteReg[] {
+  return regs.filter(r => (r.path !== null && r.path.startsWith('/admin'))
+    || MUST_CARRY_REQUIRE_ADMIN.some(([method, path]) => r.method === method && r.path === path));
+}
+
 function describeRoute(r: RouteReg): string {
-  return `app.${r.method}('${r.path}') at line ${r.line}`;
+  return `app.${r.method}('${r.path}') at ${r.file}:${r.line}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -117,12 +136,12 @@ interface AllowlistEntry {
 }
 
 const ALLOWLIST: AllowlistEntry[] = [
-  // Authenticates BY credential (the admin password IS the gate); rate-limited via adminAuthRateLimiter.
-  { method: 'post', path: '/admin/login', count: 1, mustCarry: 'adminAuthRateLimiter', rationale: 'credential login endpoint' },
-  // Authenticates BY credential to mint a one-time magic link; rate-limited via adminAuthRateLimiter.
-  { method: 'post', path: '/admin/api/issue-magic-link', count: 1, mustCarry: 'adminAuthRateLimiter', rationale: 'credential-gated magic-link issuance' },
-  // Magic-link consumption: authenticates BY the single-use token in the URL; rate-limited via adminAuthRateLimiter.
-  { method: 'get', path: '/admin/auth/:token', count: 1, mustCarry: 'adminAuthRateLimiter', rationale: 'token-gated magic-link consumption' },
+  // Authenticates BY credential (the admin password IS the gate); rate-limited via adminLimits.total, adminLimits.failures.
+  { method: 'post', path: '/admin/login', count: 1, mustCarry: 'adminLimits.total, adminLimits.failures', rationale: 'credential login endpoint' },
+  // Authenticates BY credential to mint a one-time magic link; rate-limited via adminLimits.total, adminLimits.failures.
+  { method: 'post', path: '/admin/api/issue-magic-link', count: 1, mustCarry: 'adminLimits.total, adminLimits.failures', rationale: 'credential-gated magic-link issuance' },
+  // Magic-link consumption: authenticates BY the single-use token in the URL; rate-limited via adminLimits.total, adminLimits.failures.
+  { method: 'get', path: '/admin/auth/:token', count: 1, mustCarry: 'adminLimits.total, adminLimits.failures', rationale: 'token-gated magic-link consumption' },
   // Static SPA asset mount (dev admin/dist arm): serves the public JS/CSS/HTML bundle; data access is via the guarded /admin/api/* routes.
   { method: 'use', path: '/admin', count: 1, mustCarry: 'express.static', rationale: 'static SPA asset mount' },
   // Bare /admin -> /admin/ redirect (embedded-binary arm): serves no data, only a redirect.
@@ -136,11 +155,36 @@ const ALLOWLIST: AllowlistEntry[] = [
 // The scan, run once against the real file
 // ---------------------------------------------------------------------------
 
-const source = readFileSync(SRC_PATH, 'utf-8') + '\n' + readFileSync(join(import.meta.dir, '..', 'src', 'commands', 'serve-http-oauth.ts'), 'utf-8');
-const all = extractRegistrations(source);
-const admin = adminRoutes(all);
-const guarded = admin.filter(r => r.guarded);
-const unguarded = admin.filter(r => !r.guarded);
+const COMMANDS_DIR = join(import.meta.dir, '..', 'src', 'commands');
+
+/** serve-http.ts plus every serve-http-*.ts module, sorted: a glob, not a hand list. */
+function serveHttpModuleSources(): Array<{ file: string; text: string }> {
+  return readdirSync(COMMANDS_DIR)
+    .filter(f => f === 'serve-http.ts' || /^serve-http-.*\.ts$/.test(f))
+    .sort()
+    // test-reads-source-ok[trust-boundary]: every serve-http module is scanned for admin routes registered without requireAdmin; a glob keeps a new module from escaping the scan.
+    .map(f => ({ file: `src/commands/${f}`, text: readFileSync(join(COMMANDS_DIR, f), 'utf-8') }));
+}
+
+function scanModules(sources: Array<{ file: string; text: string }>) {
+  const all = sources.flatMap(({ file, text }) => extractRegistrations(text, file));
+  const admin = adminRoutes(all);
+  const scanSet = scanSetRoutes(all);
+  return {
+    all,
+    admin,
+    guarded: admin.filter(r => r.guarded),
+    scanSet,
+    unguarded: scanSet.filter(r => !r.guarded),
+  };
+}
+
+function violationsOf(unguardedRoutes: RouteReg[]): RouteReg[] {
+  return unguardedRoutes.filter(r => !ALLOWLIST.some(e => e.method === r.method && e.path === r.path));
+}
+
+const moduleSources = serveHttpModuleSources();
+const { admin, guarded, scanSet, unguarded } = scanModules(moduleSources);
 
 describe('serve-http admin route guard (structural)', () => {
   test('anti-vacuity floor: the extractor still sees the known admin surface', () => {
@@ -148,6 +192,14 @@ describe('serve-http admin route guard (structural)', () => {
     // floors fail LOUDLY instead of letting the guard test pass vacuously.
     expect(admin.length).toBeGreaterThanOrEqual(20);
     expect(guarded.length).toBeGreaterThanOrEqual(15);
+    // Floors at origin/master (f8d1e3936) with this same glob scan, computed
+    // once: 37 /admin registrations, 30 guarded; scan set (plus /metrics) 38,
+    // 31 guarded. The split into serve-http-<area>.ts modules may not lose any.
+    expect(admin.length).toBeGreaterThanOrEqual(37);
+    expect(guarded.length).toBeGreaterThanOrEqual(30);
+    expect(scanSet.length).toBeGreaterThanOrEqual(38);
+    expect(scanSet.filter(r => r.guarded).length).toBeGreaterThanOrEqual(31);
+    expect(moduleSources.map(s => s.file)).toContain('src/commands/serve-http.ts');
     // Known sentinel routes must be found AND classified as guarded.
     for (const [method, path] of [
       ['get', '/admin/api/stats'],
@@ -155,6 +207,13 @@ describe('serve-http admin route guard (structural)', () => {
       ['post', '/admin/api/revoke-client'],
       ['get', '/admin/api/oauth-requests/:id'],
       ['post', '/admin/api/oauth-requests/:id'],
+      ['get', '/admin/api/clients'],
+      ['get', '/admin/api/clients/:clientId'],
+      ['get', '/admin/api/clients/:clientId/setup'],
+      ['post', '/admin/api/clients/:clientId/lifecycle'],
+      ['post', '/admin/api/recover-client'],
+      ['post', '/admin/api/register-client'],
+      ['post', '/admin/api/rescope-client'],
     ] as const) {
       const hit = admin.find(r => r.method === method && r.path === path);
       expect(hit, `expected app.${method}('${path}') to be found by the scan`).toBeDefined();
@@ -166,10 +225,17 @@ describe('serve-http admin route guard (structural)', () => {
     expect(staticMount!.head).toContain('express.static');
   });
 
+  test('must-carry set: /metrics and /admin/events are found and carry requireAdmin', () => {
+    for (const [method, path] of MUST_CARRY_REQUIRE_ADMIN) {
+      const hits = scanSet.filter(r => r.method === method && r.path === path);
+      expect(hits.length, `expected app.${method}('${path}') to be found by the scan`).toBeGreaterThanOrEqual(1);
+      for (const hit of hits) expect(hit.guarded, `${describeRoute(hit)} must carry requireAdmin`).toBe(true);
+      expect(ALLOWLIST.some(e => e.method === method && e.path === path), `${path} must never be allowlisted`).toBe(false);
+    }
+  });
+
   test('every /admin route carries requireAdmin before its handler, or is explicitly allowlisted', () => {
-    const violations = unguarded.filter(
-      r => !ALLOWLIST.some(e => e.method === r.method && e.path === r.path),
-    );
+    const violations = violationsOf(unguarded);
     expect(
       violations.map(describeRoute),
       `UNGUARDED /admin route(s) without requireAdmin and not on the allowlist:\n` +
@@ -201,13 +267,33 @@ describe('serve-http admin route guard (structural)', () => {
     }
   });
 
+  // Refactor wave 1 split the routes into serve-http-<area>.ts modules that
+  // take requireAdmin from the shared context (`const { requireAdmin } = ctx`).
+  // Dropping it from one route in an in-memory copy of a moved module must
+  // surface as a violation that names that module file:line.
+  for (const { file, route, method, path } of [
+    { file: 'src/commands/serve-http-metrics.ts', route: "app.get('/metrics', requireAdmin, ", method: 'get', path: '/metrics' },
+    { file: 'src/commands/serve-http-admin-api.ts', route: "app.get('/admin/api/stats', requireAdmin, ", method: 'get', path: '/admin/api/stats' },
+  ]) {
+    test(`mutation: dropping requireAdmin from ${path} in ${file} is a violation at that file:line`, () => {
+      const original = moduleSources.find(s => s.file === file);
+      expect(original, `${file} must be scanned`).toBeDefined();
+      expect(original!.text.split(route).length - 1, `${file} registers ${route}exactly once`).toBe(1);
+      const mutatedText = original!.text.replace(route, route.replace('requireAdmin, ', ''));
+      const mutated = moduleSources.map(s => (s.file === file ? { file, text: mutatedText } : s));
+      const line = mutatedText.slice(0, mutatedText.indexOf(route.replace('requireAdmin, ', ''))).split('\n').length;
+      expect(violationsOf(scanModules(moduleSources).unguarded)).toEqual([]);
+      expect(violationsOf(scanModules(mutated).unguarded).map(describeRoute)).toEqual([`app.${method}('${path}') at ${file}:${line}`]);
+    });
+  }
+
   test('self-test: extractor + guard logic CAN fail on a known-bad route (anti-vacuity)', () => {
     // Embedded fixture exercising every shape the real file uses: an
     // allowlisted credential route, a guarded route, a commented-out route
     // (must be ignored), a MULTI-LINE unguarded route, a single-line
     // unguarded route, the static mount, and a non-admin route (filtered).
     const FIXTURE = [
-      `  app.post('/admin/login', adminAuthRateLimiter, express.json(), (req, res) => {`,
+      `  app.post('/admin/login', adminLimits.total, adminLimits.failures, express.json(), (req, res) => {`,
       `    res.json({ ok: true });`,
       `  });`,
       `  app.get('/admin/api/good', requireAdmin, async (_req: Request, res: Response) => {`,

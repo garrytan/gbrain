@@ -19,12 +19,12 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   // initSchema() bakes the facts.embedding dim from the gateway's configured
-  // embedding model; the default is now 1280-d (ZE). This file's fixtures are
+  // embedding model; the default is now 1024-d (Voyage). This file's fixtures are
   // 1536-d, so pin the legacy 1536-d OpenAI config (matching
   // test/helpers/legacy-embedding-preload.ts) right before initSchema. The
   // global preload sets this, but a co-sharded test that calls resetGateway()
-  // in its teardown nulls it, leaving initSchema to fall back to the 1280-d
-  // default and build a halfvec(1280) column the 1536-d inserts can't fill.
+  // in its teardown nulls it, leaving initSchema to fall back to the 1024-d
+  // default and build a halfvec(1024) column the 1536-d inserts can't fill.
   // Re-pinning here makes the schema deterministic regardless of shard
   // neighbors (surfaced when #1972's new test files reshuffled the shards).
   configureGateway({
@@ -70,8 +70,8 @@ describe('runPhaseConsolidate', () => {
     await seedPage('cons-skip-count');
     for (let i = 0; i < 2; i++) {
       await engine.executeRaw(
-        `INSERT INTO facts (source_id, entity_slug, fact, kind, source, valid_from, embedding, embedded_at)
-         VALUES ('default', 'cons-skip-count', $1, 'fact', 'test', $2::timestamptz, $3::vector, $2::timestamptz)`,
+        `INSERT INTO facts (source_id, entity_slug, fact, kind, source, valid_from, embedding, embedded_at, embedding_model, embedded_text_hash)
+         VALUES ('default', 'cons-skip-count', $1, 'fact', 'test', $2::timestamptz, $3::vector, $2::timestamptz, 'openai:text-embedding-3-large', md5($1))`,
         [`fact ${i}`, oldDate(), unitVec()],
       );
     }
@@ -84,8 +84,8 @@ describe('runPhaseConsolidate', () => {
     await seedPage('cons-skip-age');
     for (let i = 0; i < 4; i++) {
       await engine.executeRaw(
-        `INSERT INTO facts (source_id, entity_slug, fact, kind, source, valid_from, embedding, embedded_at)
-         VALUES ('default', 'cons-skip-age', $1, 'fact', 'test', $2::timestamptz, $3::vector, $2::timestamptz)`,
+        `INSERT INTO facts (source_id, entity_slug, fact, kind, source, valid_from, embedding, embedded_at, embedding_model, embedded_text_hash)
+         VALUES ('default', 'cons-skip-age', $1, 'fact', 'test', $2::timestamptz, $3::vector, $2::timestamptz, 'openai:text-embedding-3-large', md5($1))`,
         [`fact ${i}`, recentDate(), unitVec()],
       );
     }
@@ -99,8 +99,8 @@ describe('runPhaseConsolidate', () => {
     expect(pageId).toBeGreaterThan(0);
     for (let i = 0; i < 4; i++) {
       await engine.executeRaw(
-        `INSERT INTO facts (source_id, entity_slug, fact, kind, source, valid_from, confidence, embedding, embedded_at)
-         VALUES ('default', 'people/alice-example', $1, 'fact', 'test', $2::timestamptz, 0.9, $3::vector, $2::timestamptz)`,
+        `INSERT INTO facts (source_id, entity_slug, fact, kind, source, valid_from, confidence, embedding, embedded_at, embedding_model, embedded_text_hash)
+         VALUES ('default', 'people/alice-example', $1, 'fact', 'test', $2::timestamptz, 0.9, $3::vector, $2::timestamptz, 'openai:text-embedding-3-large', md5($1))`,
         [`alice fact ${i}`, oldDate(), unitVec()],
       );
     }
@@ -133,8 +133,8 @@ describe('runPhaseConsolidate', () => {
     await seedPage('cons-dryrun');
     for (let i = 0; i < 3; i++) {
       await engine.executeRaw(
-        `INSERT INTO facts (source_id, entity_slug, fact, kind, source, valid_from, embedding, embedded_at)
-         VALUES ('default', 'cons-dryrun', $1, 'fact', 'test', $2::timestamptz, $3::vector, $2::timestamptz)`,
+        `INSERT INTO facts (source_id, entity_slug, fact, kind, source, valid_from, embedding, embedded_at, embedding_model, embedded_text_hash)
+         VALUES ('default', 'cons-dryrun', $1, 'fact', 'test', $2::timestamptz, $3::vector, $2::timestamptz, 'openai:text-embedding-3-large', md5($1))`,
         [`dryrun fact ${i}`, oldDate(), unitVec()],
       );
     }
@@ -156,8 +156,8 @@ describe('runPhaseConsolidate', () => {
     // Don't seed a page — entity_slug 'no-page' won't resolve.
     for (let i = 0; i < 4; i++) {
       await engine.executeRaw(
-        `INSERT INTO facts (source_id, entity_slug, fact, kind, source, valid_from, embedding, embedded_at)
-         VALUES ('default', 'no-page', $1, 'fact', 'test', $2::timestamptz, $3::vector, $2::timestamptz)`,
+        `INSERT INTO facts (source_id, entity_slug, fact, kind, source, valid_from, embedding, embedded_at, embedding_model, embedded_text_hash)
+         VALUES ('default', 'no-page', $1, 'fact', 'test', $2::timestamptz, $3::vector, $2::timestamptz, 'openai:text-embedding-3-large', md5($1))`,
         [`orphan fact ${i}`, oldDate(), unitVec()],
       );
     }

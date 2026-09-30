@@ -23,6 +23,7 @@
  * skill after a manual scrub).
  */
 
+import { assertLegacySkillFilesystemWrite } from './writer-guard.ts';
 import {
   existsSync,
   mkdirSync,
@@ -97,6 +98,7 @@ const DEFAULT_PRIVATE_PATTERNS_PATH = join(
 
 export function runHarvest(opts: HarvestOptions): HarvestResult {
   const dryRun = opts.dryRun ?? false;
+  if (!dryRun) assertLegacySkillFilesystemWrite(opts.gbrainRoot);
   const hostSkillDir = join(opts.hostRepoRoot, 'skills', opts.slug);
   const hostSkillMd = join(hostSkillDir, 'SKILL.md');
 
@@ -231,6 +233,7 @@ function readHostSkillSources(hostRoot: string, slug: string): string[] {
 
 /** Delete everything we just wrote. */
 function rollbackHarvest(gbrainSkillDir: string, pairedTargets: string[]): void {
+  for (const target of [gbrainSkillDir, ...pairedTargets]) assertLegacySkillFilesystemWrite(target);
   try {
     if (existsSync(gbrainSkillDir)) {
       rmSync(gbrainSkillDir, { recursive: true, force: true });
@@ -264,6 +267,7 @@ export function addToBundleManifest(gbrainRoot: string, slug: string): boolean {
   if (manifest.skills.includes(skillRel)) return false;
   manifest.skills.push(skillRel);
   manifest.skills.sort();
+  assertLegacySkillFilesystemWrite(manifestPath);
   writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
   return true;
 }

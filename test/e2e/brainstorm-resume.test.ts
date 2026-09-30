@@ -21,6 +21,7 @@ import { describe, test, expect, beforeAll, beforeEach, afterAll, afterEach } fr
 import { mkdtempSync, rmSync, existsSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { installFixtureChunks } from '../helpers/page-projection.ts';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import type { ChunkInput } from '../../src/core/types.ts';
 import {
@@ -64,7 +65,7 @@ async function seedSmallBrain(): Promise<void> {
       compiled_truth: `resume merge crash question test fixture body for close anchor ${slug}`,
       timeline: '',
     });
-    await engine.upsertChunks(slug, [
+    await installFixtureChunks(engine, slug, [
       {
         chunk_index: 0,
         chunk_text: `resume merge crash question test ${slug}`,
@@ -83,7 +84,7 @@ async function seedSmallBrain(): Promise<void> {
       compiled_truth: `Far content for ${slug}: distant cross-domain body.`,
       timeline: '',
     });
-    await engine.upsertChunks(slug, [
+    await installFixtureChunks(engine, slug, [
       {
         chunk_index: 0,
         chunk_text: `cross-domain text ${slug}`,
@@ -101,7 +102,7 @@ beforeAll(async () => {
   await engine.initSchema();
   // page_links view is provided by the embedded schema bundle (v0.38).
   await seedSmallBrain();
-});
+}, 60_000);
 
 afterAll(async () => {
   await engine.disconnect();

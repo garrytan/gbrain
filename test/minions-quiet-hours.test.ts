@@ -1,5 +1,5 @@
 /**
- * Quiet-hours + stagger tests — pure primitives + migration verification.
+ * Quiet-hours tests — pure primitives + migration verification.
  *
  * Worker-loop integration (claim → release on quiet verdict) is covered by
  * the existing Minions resilience E2E when combined with this unit coverage:
@@ -20,7 +20,6 @@ import {
   localHour,
   type QuietHoursConfig,
 } from '../src/core/minions/quiet-hours.ts';
-import { staggerMinuteOffset, staggerSecondOffset } from '../src/core/minions/stagger.ts';
 
 // ---------------------------------------------------------------------------
 // Pure: evaluateQuietHours
@@ -127,45 +126,6 @@ describe('localHour', () => {
     // Noon UTC in January = 04:00 LA
     const when = new Date(Date.UTC(2026, 0, 1, 12, 0, 0));
     expect(localHour(when, 'America/Los_Angeles')).toBe(4);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Pure: staggerMinuteOffset
-// ---------------------------------------------------------------------------
-
-describe('staggerMinuteOffset', () => {
-  test('empty or non-string → 0', () => {
-    expect(staggerMinuteOffset('')).toBe(0);
-    // @ts-expect-error: runtime guard
-    expect(staggerMinuteOffset(null)).toBe(0);
-  });
-
-  test('returns 0–59', () => {
-    for (const k of ['social-radar', 'x-ingest', 'perplexity', 'sync-all']) {
-      const v = staggerMinuteOffset(k);
-      expect(v).toBeGreaterThanOrEqual(0);
-      expect(v).toBeLessThan(60);
-    }
-  });
-
-  test('deterministic: same key always same offset', () => {
-    const a = staggerMinuteOffset('social-radar');
-    const b = staggerMinuteOffset('social-radar');
-    expect(a).toBe(b);
-  });
-
-  test('different keys produce different offsets (most of the time)', () => {
-    const keys = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j'];
-    const offsets = new Set(keys.map(staggerMinuteOffset));
-    // With 10 distinct keys and 60 buckets, expect at least 5 unique
-    // (collision rate stays well under 50% at this small sample size)
-    expect(offsets.size).toBeGreaterThanOrEqual(5);
-  });
-
-  test('second offset is 60x minute offset', () => {
-    const key = 'social-radar';
-    expect(staggerSecondOffset(key)).toBe(staggerMinuteOffset(key) * 60);
   });
 });
 

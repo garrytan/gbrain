@@ -42,3 +42,15 @@ export function normalizeDimension(name: string): string {
 export function isNovelDimension(normalized: string): boolean {
   return !KNOWN_DIMENSIONS.has(normalized);
 }
+
+/**
+ * A same-value observation dated BEFORE the current open value's start is an
+ * earlier stint (possibly separated from the current one by another value),
+ * not a corroboration of the current one: mergeOntologyFact stores it as a
+ * live row so as-of reads see it, exactly like a backdated observation of a
+ * different value. Undated observations are never backdated.
+ */
+export function isBackdatedObservation(validFrom: string | null, currentValidFrom: string | Date | null | undefined): boolean {
+  return validFrom != null && currentValidFrom != null
+    && new Date(validFrom).getTime() < new Date(currentValidFrom).getTime();
+}

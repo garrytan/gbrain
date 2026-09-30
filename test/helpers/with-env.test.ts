@@ -85,4 +85,11 @@ describe('withEnv', () => {
     expect(process.env[KEY2]).toBeUndefined();
     delete process.env[KEY];
   });
+
+  test('TZ overrides restore the zone in effect before them, not a stale earlier override', async () => {
+    const zone = () => Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const before = zone();
+    for (const tz of ['Asia/Tokyo', 'America/Los_Angeles', 'UTC']) await withEnv({ TZ: tz }, () => expect(zone()).toBe(tz));
+    expect(zone()).toBe(before);
+  });
 });

@@ -36,7 +36,11 @@ file, the workflow pins, and the affected assertions together.
   `/usr/local/lib/hermes-agent`; the door's runners are non-root); npm-dep
   failures abort the install, absorbed by the door's 3-attempt retry;
   managed Node is v26.
-  (download https://hermes-agent.nousresearch.com/install.sh to a file first; verify; then run)
+  CI downloads these reviewed bytes from the immutable upstream URL
+  `https://raw.githubusercontent.com/NousResearch/hermes-agent/95d42656021a22f20201c618a67da07a618d16f3/scripts/install.sh`,
+  then verifies the digest before execution. The public install.sh endpoint is
+  mutable and must not be used with this historical digest. Installer and
+  payload pins remain separate; changing either requires review.
 - Installer flags used: `--skip-setup --non-interactive`; binary lands at `~/.local/bin/hermes`
 - Python 3.11.15 via uv
 

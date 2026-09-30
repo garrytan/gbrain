@@ -113,7 +113,7 @@ describe('resolveIncludeFrontmatter', () => {
  */
 describe('no extraction path hardcodes includeFrontmatter', () => {
   test('call sites do not literalise false; the shared helpers resolve the default', () => {
-    // test-reads-source-ok: the bug is a literal at the call sites; only a source-text pin can see it come back.
+    // test-reads-source-ok[structural]: the bug is a literal at the call sites; only a source-text pin can see it come back.
     const read = (rel: string) => readFileSync(new URL(`../${rel}`, import.meta.url), 'utf-8');
     for (const rel of ['src/commands/jobs.ts', 'src/commands/maintain.ts', 'src/core/cycle.ts']) {
       expect(read(rel)).not.toMatch(/includeFrontmatter:\s*false/);

@@ -43,20 +43,24 @@ beforeEach(async () => {
 }, 30_000);
 
 describe('put_page passes the skip/error reason through (#3984)', () => {
-  test('>5MB content → status skipped WITH the error text', async () => {
+  test('>5MB content returns a failed receipt with a bounded size diagnostic', async () => {
     const big = '---\ntype: note\n---\n' + 'x'.repeat(5_000_001);
-    const res = (await put_page.handler(ctxOf(), { slug: 'notes/too-big', content: big })) as Record<string, unknown>;
-    expect(res.status).toBe('skipped');
-    expect(String(res.error)).toContain('Content too large');
-    expect(String(res.error)).toContain('max 5000000');
+    let failure: any;
+    try { await put_page.handler(ctxOf(), { slug: 'notes/too-big', content: big }); } catch (error) { failure = error; }
+    expect(failure.code).toBe('request_too_large');
+    expect(failure.message).toContain('max 5000000');
+    expect(failure.writeRequest.state).toBe('failed');
+    expect(await engine.getPage('notes/too-big')).toBeNull();
   });
 
-  test('invalid YAML frontmatter → status error WITH the error text', async () => {
-    const bad = '---\ntype: [unclosed\n---\nbody\n';
-    const res = (await put_page.handler(ctxOf(), { slug: 'notes/bad-yaml', content: bad })) as Record<string, unknown>;
-    expect(res.status).toBe('error');
-    expect(typeof res.error).toBe('string');
-    expect(String(res.error).length).toBeGreaterThan(0);
+  test('invalid YAML returns a failed receipt without copying submitted content', async () => {
+    const bad = '---\ntype: [PRIVATE_YAML_CANARY\n---\nbody\n';
+    let failure: any;
+    try { await put_page.handler(ctxOf(), { slug: 'notes/bad-yaml', content: bad }); } catch (error) { failure = error; }
+    expect(failure.code).toBe('invalid_params');
+    expect(failure.message).toContain('YAML');
+    expect(failure.writeRequest.state).toBe('failed');
+    expect(JSON.stringify(failure.toJSON())).not.toContain('PRIVATE_YAML_CANARY');
   });
 
   test('successful write carries NO error field (additive only)', async () => {

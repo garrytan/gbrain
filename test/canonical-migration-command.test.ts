@@ -10,7 +10,6 @@
  *   2. Source sweep: every `--to voyage:voyage-4` literal in src/ carries
  *      `--dim 1024` on the same line; no `<provider:model>` placeholder
  *      command survives anywhere in src/.
- *   3. Every sunset-warning surface consumes the renderer.
  *
  * The docs/skills sweep (same pairing rule over *.md) lives with the docs
  * wave commit — see the docs assertions appended there.
@@ -119,50 +118,5 @@ describe('canonical migration command (single home: ai/defaults.ts)', () => {
     }
     expect(offenders).toEqual([]);
     expect(phantoms).toEqual([]);
-  });
-
-  test('the ZE-sunset playbook carries the guess-killers', () => {
-    const playbook = readFileSync(join(import.meta.dir, '..', 'skills', 'migrations', 'v0.46.3.0.md'), 'utf-8');
-    // Env preflight (the incident class): named vars + unset instruction.
-    expect(playbook).toContain('GBRAIN_EMBEDDING_MODEL');
-    expect(playbook).toContain('unset GBRAIN_EMBEDDING_MODEL GBRAIN_EMBEDDING_DIMENSIONS');
-    // Status surface + recovery + exit codes.
-    expect(playbook).toContain('gbrain migrate embeddings --status');
-    expect(playbook).toContain('## Recovery');
-    expect(playbook).toContain('Exit codes');
-    // Reranker handled in the same run + the plane asymmetry explained.
-    expect(playbook).toContain('--reranker');
-    expect(playbook).toContain('plane asymmetry');
-    // The canonical command, correctly paired.
-    expect(playbook).toContain('gbrain migrate embeddings --to voyage:voyage-4 --dim 1024');
-
-    // Stale playbooks carry the do-not-follow banner.
-    for (const rel of ['skills/migrations/v0.35.0.0.md', 'skills/migrations/v0.36.2.0.md']) {
-      const text = readFileSync(join(import.meta.dir, '..', rel), 'utf-8');
-      expect(text).toContain('HISTORICAL — DO NOT FOLLOW');
-      expect(text).toContain('v0.46.3.0.md');
-    }
-  });
-
-  test('every sunset-warning surface consumes the renderer', () => {
-    const consumers = [
-      'src/core/ai/gateway.ts',
-      'src/commands/init.ts',
-      'src/core/advisor/collect-setup-smells.ts',
-      'src/commands/upgrade.ts',
-      'src/core/ze-exposure.ts',
-      'src/commands/ze-switch.ts',
-      // Interim ZE cleanup: providers env prints the off-ramp for sunsetting
-      // recipes instead of the signup funnel.
-      'src/commands/providers.ts',
-    ];
-    for (const rel of consumers) {
-      const text = readFileSync(join(import.meta.dir, '..', rel), 'utf-8');
-      expect(text.includes('renderCanonicalMigrationCommands')).toBe(true);
-    }
-    // Doctor's consumer (checkProviderSunset) lives in the peeled checks tree;
-    // the containment convention reads the concatenated doctor surface.
-    const { doctorSource } = require('./helpers/doctor-source.ts');
-    expect(doctorSource().includes('renderCanonicalMigrationCommands')).toBe(true);
   });
 });

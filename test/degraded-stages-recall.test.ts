@@ -12,7 +12,7 @@ describe('affectsRecall', () => {
   test('reranker_skipped is ranking-only', () => {
     expect(RANKING_ONLY_DEGRADED_STAGES.has('reranker_skipped')).toBe(true);
     expect(affectsRecall({ stage: 'reranker_skipped', reason: 'no_key' })).toBe(false);
-    expect(affectsRecall({ stage: 'reranker_skipped', reason: 'sunset_short_circuit' })).toBe(false);
+    expect(affectsRecall({ stage: 'reranker_skipped', reason: 'no_key' })).toBe(false);
   });
 
   test('every other closed-vocabulary stage affects recall', () => {

@@ -151,8 +151,9 @@ to add a new directory the synthesis subagent may write to:
    EXACTLY from the source transcript — if you cannot reproduce a span
    exactly, paraphrase it WITHOUT quotation marks. Do not paraphrase
    memorable phrasings you can quote exactly. A mechanical, zero-LLM verify
-   pass re-checks every quoted span after the write and repairs or unquotes
-   whatever it cannot ground (`dream.synthesize.quote_verify`, default on).
+   pass re-checks every quote, speaker attribution and number after the write,
+   repairs what it can, and moves any sentence it cannot ground out of the
+   page into `unverified_claims` (`dream.synthesize.quote_verify`, default on).
 2. Cross-reference compulsively: every new page MUST link to existing brain content.
 3. Slug discipline: lowercase alphanumeric and hyphens only, slash-separated. NO underscores, NO file extensions.
 4. Edited transcripts produce NEW slugs (content-hash suffix changes) — never silently overwrite a prior reflection.

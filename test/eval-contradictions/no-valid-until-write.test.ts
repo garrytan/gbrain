@@ -38,6 +38,14 @@ import { join } from 'node:path';
 //   - facts/withdrawal-schema.ts — its insert/update trigger reapplies an
 //     already-recorded user withdrawal when derived facts are rebuilt; it
 //     cannot invent a withdrawal or infer one from a contradiction.
+//   - persistence/canonical-projections.ts — restores explicit valid_until
+//     from the accepted canonical Markdown fence, including version reverts,
+//     in the guarded page publication transaction. This copies user-authored
+//     state; it never applies contradiction-probe inference.
+//   - cycle/extract-facts.ts — the unmanaged fence reconcile updates a
+//     matched row in place with the fence's explicit valid_until cell (the
+//     same user-authored copy canonical-projections.ts makes); it never
+//     applies contradiction-probe inference.
 //   - postgres-engine.ts + pglite-engine.ts (v0.42.56.0, #2390 — Life
 //     Chronicle ontology: `mergeOntologyFact` forward-supersession closes
 //     the prior OPEN row's valid_until when a NEW value arrives for the
@@ -47,10 +55,13 @@ import { join } from 'node:path';
 //     auto-supersession.ts:4 invariant is preserved. Deliberate design
 //     change per the #2390 eng review (G1: ontology extends facts).
 const VALID_UNTIL_WRITE_ALLOWLIST: ReadonlySet<string> = new Set([
+  'src/core/cycle/extract-facts.ts',
   'src/core/cycle/phases/consolidate.ts',
   'src/core/facts/forget.ts',
   'src/core/facts/withdrawal.ts',
   'src/core/facts/withdrawal-schema.ts',
+  'src/core/persistence/canonical-projections.ts',
+  'src/core/persistence/prepared-maintenance.ts',
   'src/core/postgres-engine.ts',
   'src/core/pglite-engine.ts',
 ]);

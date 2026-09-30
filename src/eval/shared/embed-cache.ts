@@ -1,42 +1,3 @@
-/**
- * embed-cache.ts — content-addressed embedding cache for fixed-corpus evals.
- *
- * INVARIANT: a cached vector is served ONLY for the exact (model@dims, text,
- * side) it was computed for, and every row is integrity-checked on read
- * (declared dims == stored byte length / 4 == vector length). A mismatch is a
- * HARD error naming the file and the key — never a silent re-embed, because a
- * silently corrupted cache would make every arm's vectors non-comparable.
- *
- * Why it exists: every LongMemEval arm re-embeds the same ~500-question
- * haystack (~$2, ~2 h cold). One shared cache makes every arm see
- * byte-identical vectors, so paired deltas measure the ranking change and
- * nothing else. The canonical hash (`canonicalSha256`) goes into each
- * receipt's `run_config.cache` so two runs can prove they saw the same
- * vectors (plan D18).
- *
- * Key = `${model}@${dims}` + (`#query` for query-side asymmetric embeds) +
- * ':' + sha256(text). The side marker lives in the model segment so the
- * default (document / symmetric) key is exactly `model@dims:sha256(text)` and
- * asymmetric providers (zembed-1, Voyage v3+) can never be served a
- * document-side vector for a query-side embed (sibling audit longmemeval-06).
- *
- * Storage: bun:sqlite, WAL journal + synchronous=NORMAL (eng D7), one
- * transaction per question's embeds via `withTransaction`. Local filesystem
- * only (WAL sidecars), never NFS.
- *
- * TRANSPORT SEAM (eng D3): this wave installs the cache through the gateway's
- * existing test seam `__setEmbedTransportForTests` — deliberately. gateway.ts
- * sits at its module-size ceiling and the sibling gbrain-evals runner set the
- * precedent (eval/runner/longmemeval-cache.ts). Promoting this to a named
- * `setEmbedTransport()` / `GBRAIN_EMBED_CACHE_DIR` hook is a filed P3
- * follow-up. Because the seam exposes no getter for the current transport,
- * `installEmbedCache` restores `opts.realTransport ?? null` (the real SDK
- * `embedMany`) on uninstall — pass the previous transport explicitly when a
- * caller had already swapped it.
- *
- * Port of gbrain-evals `eval/runner/longmemeval-cache.ts` onto gbrain's seam.
- */
-
 import { Database } from 'bun:sqlite';
 import { createHash } from 'node:crypto';
 import { closeSync, mkdirSync, openSync, readSync } from 'node:fs';
@@ -123,7 +84,8 @@ function fromBlob(blob: Uint8Array, dims: number): number[] {
 export class EmbeddingCache {
   readonly path: string;
   private db: Database | null = null;
-  private txDepth = 0;
+  /** Buffered writes, one frame per open transaction (innermost last). */
+  private frames: Array<Map<string, { model: string; dims: number; blob: Uint8Array }>> = [];
   private hits = 0;
   private misses = 0;
   private bypassed = 0;
@@ -168,6 +130,13 @@ export class EmbeddingCache {
   get(model: string, dims: number, text: string, side: EmbedSide = 'document'): number[] | null {
     const db = this.requireDb();
     const key = this.key(model, dims, text, side);
+    for (let i = this.frames.length - 1; i >= 0; i--) {
+      const pending = this.frames[i].get(key);
+      if (pending) {
+        this.hits++;
+        return fromBlob(pending.blob, dims);
+      }
+    }
     const row = withBusyRetry(() =>
       db
         .query<{ dims: number; byte_len: number; vector: Uint8Array }, [string]>(
@@ -200,6 +169,11 @@ export class EmbeddingCache {
       throw new EmbedCacheIntegrityError(this.path, key, `vector has ${vector.length} dims, expected ${dims}`);
     }
     const blob = toBlob(vector);
+    const frame = this.frames[this.frames.length - 1];
+    if (frame) {
+      frame.set(key, { model, dims, blob });
+      return;
+    }
     withBusyRetry(() =>
       db
         .query('INSERT OR REPLACE INTO embed_cache (key, model, dims, byte_len, vector) VALUES (?, ?, ?, ?, ?)')
@@ -207,66 +181,90 @@ export class EmbeddingCache {
     );
   }
 
-  private txBegin(db: Database, depth: number): void {
-    withBusyRetry(() => db.exec(depth === 0 ? 'BEGIN' : `SAVEPOINT embed_cache_sp_${depth}`));
-    this.txDepth++;
+  /**
+   * Write one frame's rows in a single short `BEGIN IMMEDIATE` transaction.
+   * IMMEDIATE takes the write lock up front, so a concurrent run sharing the
+   * file waits on `busy_timeout` instead of failing with SQLITE_BUSY_SNAPSHOT
+   * (a deferred transaction whose read snapshot went stale can never upgrade).
+   */
+  private flush(frame: Map<string, { model: string; dims: number; blob: Uint8Array }>): void {
+    if (frame.size === 0) return;
+    const db = this.requireDb();
+    withBusyRetry(() => {
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        const stmt = db.query('INSERT OR REPLACE INTO embed_cache (key, model, dims, byte_len, vector) VALUES (?, ?, ?, ?, ?)');
+        for (const [key, r] of frame) stmt.run(key, r.model, r.dims, r.blob.byteLength, r.blob);
+        db.exec('COMMIT');
+      } catch (err) {
+        try { db.exec('ROLLBACK'); } catch { /* the original error is the one worth surfacing */ }
+        throw err;
+      }
+    });
   }
 
-  private txEnd(db: Database, depth: number, ok: boolean): void {
-    try {
-      if (ok) db.exec(depth === 0 ? 'COMMIT' : `RELEASE embed_cache_sp_${depth}`);
-      else db.exec(depth === 0 ? 'ROLLBACK' : `ROLLBACK TO embed_cache_sp_${depth}; RELEASE embed_cache_sp_${depth}`);
-    } catch (err) {
-      if (ok) throw err;
-      /* rolling back: the original error is the one worth surfacing */
-    } finally {
-      this.txDepth--;
+  /** Close the innermost frame: merge into its parent, or flush when outermost. */
+  private closeFrame(): void {
+    const frame = this.frames.pop()!;
+    const parent = this.frames[this.frames.length - 1];
+    if (parent) {
+      for (const [key, r] of frame) parent.set(key, r);
+      return;
     }
+    this.flush(frame);
   }
 
   /**
-   * Run `fn` inside one transaction (BEGIN/COMMIT at depth 0, SAVEPOINT when
-   * nested). Accepts sync or async `fn`; rolls back on throw. Per-question
-   * batching: wrap one question's embeds so its writes hit the WAL once.
+   * Run `fn` as one unit of writes: puts inside it are buffered in memory and
+   * written in one short transaction when the outermost unit completes;
+   * nested units merge into their parent; a throwing body discards its own
+   * writes. Reads see buffered writes. No SQLite transaction or lock is held
+   * across the async body, so concurrent runs sharing one cache file never
+   * block each other on a question's network round-trips. A failed flush of
+   * the outermost unit is a cache infrastructure fault (counted, warned),
+   * never a failure of `fn`.
    *
-   * NOT safe for CONCURRENT async callers: SQLite savepoints are a stack, so
-   * two interleaved async bodies release each other's savepoints (`no such
-   * savepoint`). The harness calls this once per question, sequentially; the
-   * caching transport's write-back (which IS concurrent under expansion's
-   * parallel query/variant embeds) uses `transactionSync` instead.
+   * NOT safe for CONCURRENT async callers (frames are a stack). The harness
+   * calls this once per question, sequentially; the caching transport's
+   * write-back (concurrent under expansion's parallel embeds) uses
+   * `transactionSync`, which never yields.
    */
   async withTransaction<T>(fn: () => T | Promise<T>): Promise<T> {
-    const db = this.requireDb();
-    const depth = this.txDepth;
-    this.txBegin(db, depth);
+    this.requireDb();
+    this.frames.push(new Map());
     let out: T;
     try {
       out = await fn();
     } catch (err) {
-      this.txEnd(db, depth, false);
+      this.frames.pop();
       throw err;
     }
-    this.txEnd(db, depth, true);
+    try {
+      this.closeFrame();
+    } catch (err) {
+      this.infraFaults++;
+      process.stderr.write(`[embed-cache] write-back failed, continuing uncached (infra_faults > 0): ${(err as Error).message}\n`);
+    }
     return out;
   }
 
   /**
    * Synchronous sibling of `withTransaction`: `fn` runs to completion without
-   * yielding, so the savepoint it opens is always the innermost one when it is
-   * released — safe when many async callers write back concurrently inside
-   * one outer `withTransaction` (or with none).
+   * yielding, so its frame is always the innermost one when it closes — safe
+   * when many async callers write back concurrently inside one outer
+   * `withTransaction` (or with none, when it flushes immediately). Throws on a
+   * failed flush so the caller can account the fault.
    */
   transactionSync(fn: () => void): void {
-    const db = this.requireDb();
-    const depth = this.txDepth;
-    this.txBegin(db, depth);
+    this.requireDb();
+    this.frames.push(new Map());
     try {
       fn();
     } catch (err) {
-      this.txEnd(db, depth, false);
+      this.frames.pop();
       throw err;
     }
-    this.txEnd(db, depth, true);
+    this.closeFrame();
   }
 
   /** Bypass accounting for the caching transport (see installEmbedCache). */
@@ -311,7 +309,7 @@ export class EmbeddingCache {
    */
   canonicalSha256(): string {
     const db = this.requireDb();
-    if (this.txDepth === 0) {
+    if (this.frames.length === 0) {
       try {
         db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
       } catch {
@@ -335,7 +333,7 @@ export class EmbeddingCache {
    *  `canonicalSha256` for `run_config.cache`. */
   fileSha256(): string {
     const db = this.requireDb();
-    if (this.txDepth === 0) {
+    if (this.frames.length === 0) {
       try {
         db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
       } catch {

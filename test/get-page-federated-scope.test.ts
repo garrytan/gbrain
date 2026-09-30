@@ -22,11 +22,13 @@
  *   - engine getTags/getLinks/getBacklinks/getTimeline sourceIds[] precedence
  */
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
+import { installFixtureChunks } from './helpers/page-projection.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { operations, OperationError, type OperationContext } from '../src/core/operations.ts';
 import { importFromContent } from '../src/core/import-file.ts';
 import { serializeMarkdown } from '../src/core/markdown.ts';
+import { surfaceFileSource } from './helpers/source-surface.ts';
 
 let engine: PGLiteEngine;
 const get_page = operations.find(o => o.name === 'get_page')!;
@@ -132,6 +134,9 @@ beforeEach(async () => {
     type: 'note', title: 'Dup beta', compiled_truth: 'b', frontmatter: {},
   }, { sourceId: 'beta' });
   await engine.addTag('shared/dup', 'beta-only', { sourceId: 'beta' });
+  for (const [sourceId, text] of [['beta', 'beta-only content'], ['default', 'default content']]) {
+    await installFixtureChunks(engine, 'secret/beta-doc', [{ chunk_index: 0, chunk_text: text, chunk_source: 'compiled_truth' }], { sourceId });
+  }
 });
 
 function remoteCtx(allowedSources: string[]): OperationContext {
@@ -575,18 +580,26 @@ describe('#2555 get_chunks federated scope', () => {
     // `includeEmbedding`. The invariant is unchanged in spirit and stricter
     // in letter: no unconditional vector fetch, and the opt-in path must
     // exist — a half-revert that strands the flag fails too.
-    const { readFileSync } = await import('fs');
-    for (const enginePath of ['src/core/postgres-engine.ts', 'src/core/pglite-engine.ts']) {
-      const src = readFileSync(new URL(`../${enginePath}`, import.meta.url), 'utf-8');
-      const start = src.indexOf('async getChunks(slug');
+    //
+    // A10 re-point (refactor wave 1, W1-extended chunks): the getChunks SQL
+    // exists once, in src/core/engine-sql/chunks.ts; each engine's getChunks
+    // resolves the registry-active column and delegates to it. The SQL-shape
+    // pins read that one function; the delegation and active-column pins read
+    // each engine method.
+    // The function's own close (`\n  }` at 2-space indent) — an inline
+    // callback must not truncate the body, and the NEXT function (e.g. the
+    // stale predicate's `IS NULL` WHERE clause) must not leak in. Strip line
+    // comments: the pin targets the SQL, not prose that may cite the anti-pattern.
+    const bodyOf = (src: string, signature: string): string => {
+      const start = src.indexOf(signature);
       expect(start).toBeGreaterThan(0);
-      // The method's own close (`\n  }` at 2-space indent) — an inline
-      // `async (tx) =>` callback must not truncate the body, and the NEXT
-      // method (e.g. buildStaleChunkWhere's `cc.embedding IS NULL` WHERE
-      // predicate) must not leak in. Strip line comments: the pin targets
-      // the SQL, not prose that may cite the anti-pattern.
       const end = src.indexOf('\n  }\n', start + 10);
-      const body = src.slice(start, end).replace(/\/\/[^\n]*/g, '');
+      return src.slice(start, end).replace(/\/\/[^\n]*/g, '');
+    };
+    const body = bodyOf(surfaceFileSource('postgres-engine', 'src/core/engine-sql/chunks.ts'), 'export async function getChunks(');
+    for (const [surface, enginePath] of [['postgres-engine', 'src/core/postgres-engine.ts'], ['pglite-engine', 'src/core/pglite-engine.ts']] as const) {
+      const engineBody = bodyOf(surfaceFileSource(surface, enginePath), 'async getChunks(slug');
+      expect(engineBody, `${enginePath} getChunks must delegate to engine-sql/chunks.ts`).toContain('chunksImpl.getChunks(');
       expect(body, `${enginePath} getChunks must not SELECT cc.*`).not.toContain('cc.*');
       // Every non-vector field rowToChunk reads MUST be selected — omitting
       // one silently degrades round-trips (embed.ts getChunks→upsertChunks
@@ -601,8 +614,9 @@ describe('#2555 get_chunks federated scope', () => {
       //   1. `(cc.<active column> IS NULL) AS embedding_is_null` — a cheap
       //      boolean, no vector egress (a schema rebuild NULLs vectors without
       //      touching embedded_at, and the per-slug embed filter needs that
-      //      truth). S2: the column is the registry-ACTIVE one (resolved via
-      //      activeEmbeddingColId), not the literal legacy `embedding` — a
+      //      truth). S2: the column is the registry-ACTIVE one (resolved by the
+      //      engine with resolveActiveEmbeddingColumnFromEngine and quoted in
+      //      engine-sql/chunks.ts), not the literal legacy `embedding` — a
       //      registry-routed brain's truth lives in the active column.
       //   2. the `includeEmbedding` opt-in — importCodeFile's reuse cache
       //      CONSUMES the vectors (see embed-reuse.ts), and #2544 silently made
@@ -616,7 +630,8 @@ describe('#2555 get_chunks federated scope', () => {
       const withoutNullBoolean = body.replace(nullBooleanShape, '');
       expect(withoutNullBoolean).not.toMatch(/cc\.embedding\b/);
       expect(body).toMatch(/\(cc\..*? IS NULL\) AS embedding_is_null/);
-      expect(body, `${enginePath} getChunks embedding_is_null must key on the registry-active column`).toContain('activeEmbeddingColId');
+      expect(engineBody, `${enginePath} getChunks embedding_is_null must key on the registry-active column`).toContain('resolveActiveEmbeddingColumnFromEngine(this, { fallbackToLegacy: true })');
+      expect(body, 'engine-sql getChunks must quote the engine-resolved column').toContain('quoteIdentifier(column)');
       const vectorLines = withoutNullBoolean.split('\n').filter((l) => / AS embedding\b/.test(l));
       expect(vectorLines.length, `${enginePath} getChunks must keep the includeEmbedding opt-in`).toBeGreaterThan(0);
       for (const line of vectorLines) {

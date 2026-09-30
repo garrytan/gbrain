@@ -29,6 +29,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, mock, test } from 'bun:test';
 import * as realMode from '../src/core/search/mode.ts';
 import type { ResolveSearchModeInput } from '../src/core/search/mode.ts';
+import { installFixtureChunks } from './helpers/page-projection.ts';
 
 // Capture the REAL function reference before mock.module runs. `realMode` is
 // a live ES module namespace object — once mock.module replaces the module
@@ -85,7 +86,7 @@ beforeAll(async () => {
     const slug = `widgets/${i}`;
     const truth = `${KEYWORD} entry number ${i}, a widget.`;
     await engine.putPage(slug, { type: 'note', title: `Widget ${i}`, compiled_truth: truth });
-    await engine.upsertChunks(slug, [
+    await installFixtureChunks(engine, slug, [
       { chunk_index: 0, chunk_text: truth, chunk_source: 'compiled_truth' },
     ]);
   }

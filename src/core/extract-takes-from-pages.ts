@@ -13,7 +13,7 @@
 // 100+-case eval suite. v0.42 ships the classifier + CLI; autopilot stays
 // blocked until eval coverage catches up.
 
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import type { BrainEngine } from './engine.ts';
 import type { TakeKind } from './engine.ts';
 import { chat, getChatModel, isAvailable } from './ai/gateway.ts';
@@ -24,6 +24,8 @@ import {
   resolveTakesWritePath,
   TakesWriteError,
 } from './takes-write.ts';
+import { BudgetMeter } from './cycle/budget-meter.ts';
+import { parseTakesFence } from './takes-fence.ts';
 
 export const ALLOWED_PAGE_TYPES = [
   'concept', 'atom', 'lore', 'briefing', 'writing', 'originals',
@@ -65,6 +67,12 @@ export interface ExtractTakesFromPagesOpts {
   holder?: string;
   /** Model override; defaults to facts.extraction_model. */
   model?: string;
+  /**
+   * USD cap for the run's classifier calls. Default: config
+   * `takes.bootstrap_budget_usd`, else 5.0 (the propose_takes default).
+   * 0 disables the cap.
+   */
+  budgetUsd?: number;
   /** Progress hook called per page. */
   onProgress?: (done: number, total: number, claims: number) => void;
 }
@@ -85,6 +93,22 @@ export interface ExtractTakesFromPagesResult {
   skipped: Array<{ slug: string; reason: string }>;
   /** Count of pages whose md write landed but whose DB mirror warned (reconcile heals). */
   mirror_warnings: number;
+  /** True when the run stopped because the next classifier call would exceed the USD budget. */
+  budget_exhausted: boolean;
+  /** Extracted claims dropped because the page's takes fence already holds them. */
+  duplicates_skipped: number;
+}
+
+/** Duplicate key for a take claim: case, whitespace and trailing punctuation aside. */
+function claimKey(claim: string, holder: string): string {
+  return `${holder}\u0000${claim.toLowerCase().replace(/\s+/g, ' ').trim().replace(/[.!?;:,]+$/, '')}`;
+}
+
+async function resolveBudgetUsd(engine: BrainEngine, explicit: number | undefined): Promise<number> {
+  if (typeof explicit === 'number' && Number.isFinite(explicit) && explicit >= 0) return explicit;
+  const raw = await engine.getConfig('takes.bootstrap_budget_usd').catch(() => null);
+  const parsed = raw == null ? NaN : Number.parseFloat(raw);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 5.0;
 }
 
 interface PageRow {
@@ -128,7 +152,7 @@ export async function extractTakesFromPages(
   engine: BrainEngine,
   opts: ExtractTakesFromPagesOpts,
 ): Promise<ExtractTakesFromPagesResult> {
-  const emptyTail = { pages_skipped: 0, skipped: [], mirror_warnings: 0 };
+  const emptyTail = { pages_skipped: 0, skipped: [], mirror_warnings: 0, budget_exhausted: false, duplicates_skipped: 0 };
   // A12 consent gate: refuse without bootstrap_enabled even on manual call.
   if (!opts.bootstrapEnabled) {
     return {
@@ -184,7 +208,11 @@ export async function extractTakesFromPages(
   let claimsExtracted = 0;
   let pagesSkipped = 0;
   let mirrorWarnings = 0;
+  let budgetExhausted = false;
+  let duplicatesSkipped = 0;
   const skipped: Array<{ slug: string; reason: string }> = [];
+  const model = opts.model || getChatModel();
+  const meter = new BudgetMeter({ budgetUsd: await resolveBudgetUsd(engine, opts.budgetUsd), phase: 'takes_bootstrap' });
   // #4473: takes are markdown-canonical (takes-write.ts contract), so the
   // bootstrap routes every write through the fence writer instead of minting
   // DB-only rows the next reconcile/extract would clobber.
@@ -204,15 +232,15 @@ export async function extractTakesFromPages(
     // #4473: locate the page's markdown home BEFORE the LLM call — a page the
     // fence writer would refuse must not burn classifier budget (skipped pages
     // hold no takes, so every future run would re-classify them).
+    let mdPath: string | null = null;
     if (!dryRun) {
-      let locatable = false;
       try {
         const { path } = await resolveTakesWritePath(engine, repoDir, page.slug, page.source_id);
-        locatable = existsSync(path);
+        if (existsSync(path)) mdPath = path;
       } catch {
-        locatable = false; // mirror_unavailable (no repo dir + no source local_path)
+        // mirror_unavailable (no repo dir + no source local_path)
       }
-      if (!locatable) {
+      if (!mdPath) {
         skipPage(page.slug, 'mirror_unavailable');
         continue;
       }
@@ -221,6 +249,17 @@ export async function extractTakesFromPages(
     // Truncate to keep per-page cost bounded (~20K chars → ~5K input tokens).
     const text = page.compiled_truth.slice(0, 20_000);
 
+    const budget = meter.check({
+      modelId: model,
+      estimatedInputTokens: Math.ceil((CLASSIFIER_SYSTEM.length + text.length) / 4) + 50,
+      maxOutputTokens: 2000,
+      label: 'takes_bootstrap',
+    });
+    if (!budget.allowed) {
+      budgetExhausted = true;
+      break;
+    }
+
     let response: { text: string };
     try {
       response = await chat({
@@ -228,7 +267,7 @@ export async function extractTakesFromPages(
         // config, same idiom as enrich.ts) instead of hardcoded cloud Haiku.
         // On OAuth/local-only installs the hardcoded model made every takes
         // extraction die with llm_unavailable despite a working chat_model.
-        model: opts.model || getChatModel(),
+        model,
         system: CLASSIFIER_SYSTEM,
         messages: [
           {
@@ -238,9 +277,14 @@ export async function extractTakesFromPages(
         ],
         maxTokens: 2000,
       });
-    } catch {
-      // Skip pages whose chat call fails (rate limit, content filter,
-      // transient error). Per-page progress continues.
+    } catch (err) {
+      // Skip pages whose chat call fails (rate limit, content filter, auth,
+      // transient error) with the reason, so an outage is distinguishable
+      // from "nothing to extract". Per-page progress continues.
+      const code = (err as { code?: unknown; status?: unknown } | null)?.code
+        ?? (err as { status?: unknown } | null)?.status
+        ?? (err instanceof Error ? err.name : 'unknown');
+      skipPage(page.slug, `llm_error:${String(code)}`);
       continue;
     }
 
@@ -257,7 +301,21 @@ export async function extractTakesFromPages(
     // collision posture is gone). LLM output is pre-filtered against the
     // fence-cell guards so one garbled claim drops alone instead of sinking
     // the page's other claims.
-    const safeClaims = claims.filter((c) => isSafeFenceCellText(c.claim));
+    // Never append a claim the page's takes fence already holds (a rerun with
+    // includeCovered, or a hand-added take): duplicate gradeable takes skew
+    // calibration. The fence is canonical, so dedupe against its active rows.
+    const held = new Set(parseTakesFence(readFileSync(mdPath!, 'utf-8')).takes
+      .filter((t) => t.active).map((t) => claimKey(t.claim, t.holder)));
+    const safeClaims = claims.filter((c) => {
+      if (!isSafeFenceCellText(c.claim)) return false;
+      const key = claimKey(c.claim, holder);
+      if (held.has(key)) {
+        duplicatesSkipped++;
+        return false;
+      }
+      held.add(key);
+      return true;
+    });
     if (safeClaims.length === 0) continue;
     try {
       const { rowNums, mirror } = await appendTakesToPageMdFirst(
@@ -291,5 +349,7 @@ export async function extractTakesFromPages(
     pages_skipped: pagesSkipped,
     skipped,
     mirror_warnings: mirrorWarnings,
+    budget_exhausted: budgetExhausted,
+    duplicates_skipped: duplicatesSkipped,
   };
 }

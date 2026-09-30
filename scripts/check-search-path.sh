@@ -19,9 +19,20 @@
 set -euo pipefail
 
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+# Self-test seam: GBRAIN_GUARD_ROOT points at a fixture tree.
+ROOT="${GBRAIN_GUARD_ROOT:-$ROOT}"
 cd "$ROOT"
 
-FILES="src/schema.sql src/core/pglite-schema.ts src/core/schema-embedded.generated.ts"
+# Refactor wave 1 generates the PGLite bootstrap template into
+# pglite-schema.generated.ts; it is a schema base file from its first commit.
+FILES=""
+for f in src/schema.sql src/core/pglite-schema.ts src/core/pglite-schema.generated.ts src/core/schema-embedded.generated.ts; do
+  [ -f "$f" ] && FILES="$FILES $f"
+done
+if [ -z "$FILES" ]; then
+  echo "ERROR: no schema base files found under $ROOT"
+  exit 1
+fi
 
 # A hardened header reads `... RETURNS trigger SET search_path = ... AS $tag$`.
 # An UNHARDENED one reads `... RETURNS trigger AS $tag$` — match that form and

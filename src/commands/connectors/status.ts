@@ -14,8 +14,8 @@ import {
   authErrorAtKey,
   autoSyncKey,
   isTruthy,
-  lastSyncAtKey,
-  watermarkKey,
+  readConnectorState,
+  sourceIdKey,
 } from '../../core/connectors/config-keys.ts';
 
 export async function runConnectorStatus(engine: BrainEngine, args: string[]): Promise<void> {
@@ -31,6 +31,7 @@ export async function runConnectorStatus(engine: BrainEngine, args: string[]): P
   }
 
   const rows = [];
+  const sourceId = (await engine.getConfig(sourceIdKey())) || 'default';
   for (const prov of providers) {
     if (!prov) continue;
     const resolved = resolveCredential(prov.name);
@@ -43,9 +44,10 @@ export async function runConnectorStatus(engine: BrainEngine, args: string[]): P
       credential_file_mode: credentialMode(prov.name),
       token_expires_at: resolved?.cred.expiresAt ?? null,
       auto_sync: isTruthy(await engine.getConfig(autoSyncKey(prov.name))),
-      last_sync_at: (await engine.getConfig(lastSyncAtKey(prov.name))) || null,
+      source_id: sourceId,
+      last_sync_at: await readConnectorState(engine, prov.name, sourceId, 'last_sync_at'),
       auth_error_at: (await engine.getConfig(authErrorAtKey(prov.name))) || null,
-      watermark_iso: (await engine.getConfig(watermarkKey(prov.name))) || null,
+      watermark_iso: await readConnectorState(engine, prov.name, sourceId, 'watermark_iso'),
     });
   }
 

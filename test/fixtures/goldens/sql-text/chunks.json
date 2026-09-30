@@ -1,0 +1,1095 @@
+{
+  "golden": {
+    "domain": "chunks",
+    "methods": {
+      "countChunklessPagesWithContent": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [],
+            "sql": "SELECT count(*)::int AS count FROM pages p WHERE p.deleted_at IS NULL AND (p.compiled_truth <> '' OR p.timeline <> '') AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip') AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') AND NOT EXISTS (SELECT 1 FROM content_chunks cc WHERE cc.page_id = p.id)",
+            "textSha256": "694dfd23cceb5cb7dcc1db8120a5921cb371b6d28403f473d15d2bac857abae6"
+          }
+        ],
+        "sourceId": [
+          {
+            "lane": "pool",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT count(*)::int AS count FROM pages p WHERE p.deleted_at IS NULL AND (p.compiled_truth <> '' OR p.timeline <> '') AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip') AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') AND NOT EXISTS (SELECT 1 FROM content_chunks cc WHERE cc.page_id = p.id) AND p.source_id = $1",
+            "textSha256": "57905ac779cfdac6d37abd91220a1fe2d49ed9f7c173d78e941680360e6508a1"
+          }
+        ]
+      },
+      "countStaleChunks": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [],
+            "sql": "SELECT key, value FROM config WHERE key IN ('search_embedding_column', 'embedding_columns')",
+            "textSha256": "0c97097b286eb3415cffbfa812bc301187d88bc7a5266678332b0f4c8c571371"
+          },
+          {
+            "lane": "pool",
+            "params": [],
+            "sql": "SELECT count(*)::int AS count FROM content_chunks cc JOIN pages p ON p.id = cc.page_id WHERE p.deleted_at IS NULL AND cc.\"embedding\" IS NULL AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')",
+            "textSha256": "f7c19af79f144c19284a85521a93bf64cc5034c5784271637faefd9faacf99a6"
+          }
+        ],
+        "signature+includeNullSignature": [
+          {
+            "lane": "pool",
+            "params": [],
+            "sql": "SELECT key, value FROM config WHERE key IN ('search_embedding_column', 'embedding_columns')",
+            "textSha256": "0c97097b286eb3415cffbfa812bc301187d88bc7a5266678332b0f4c8c571371"
+          },
+          {
+            "lane": "pool",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT count(*)::int AS count FROM content_chunks cc JOIN pages p ON p.id = cc.page_id WHERE p.deleted_at IS NULL AND (cc.\"embedding\" IS NULL OR p.embedding_signature IS NULL OR p.embedding_signature <> $1) AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')",
+            "textSha256": "eaf3dbafdaa135ddd90d480f2fed763481c3e0ed23b37c52f57888b7f758c866"
+          }
+        ],
+        "signature+sourceId": [
+          {
+            "lane": "pool",
+            "params": [],
+            "sql": "SELECT key, value FROM config WHERE key IN ('search_embedding_column', 'embedding_columns')",
+            "textSha256": "0c97097b286eb3415cffbfa812bc301187d88bc7a5266678332b0f4c8c571371"
+          },
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT count(*)::int AS count FROM content_chunks cc JOIN pages p ON p.id = cc.page_id WHERE p.deleted_at IS NULL AND (cc.\"embedding\" IS NULL OR (p.embedding_signature IS NOT NULL AND p.embedding_signature <> $1)) AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip') AND p.source_id = $2",
+            "textSha256": "617a3e9d3faff29727611581e3391e39cdb18f073a32a9db523d7d5604cbfdc0"
+          }
+        ]
+      },
+      "deleteChunks": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "DELETE FROM content_chunks WHERE page_id = (SELECT id FROM pages WHERE slug = $1 AND source_id = $2)",
+            "textSha256": "68789189f60510eba7195b82bea7d612a9e2f10c6799178a8d605ea0901482d4"
+          }
+        ]
+      },
+      "getChunkWindows": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "array<number>",
+              "array<number>",
+              "array<number>",
+              "array<number>",
+              "number",
+              "array<number>",
+              "array<string>",
+              "number"
+            ],
+            "sql": "WITH req AS ( SELECT * FROM unnest($1::int[], $2::int[], $3::int[], $4::int[]) AS r(page_id, lo, hi, prio) ), auth AS ( SELECT p.id, p.slug, p.source_id, p.type, p.knowledge_revision::text AS revision, p.compiled_truth, p.timeline, (COALESCE(p.chunker_version, 0) >= $5) AS sealed, (SELECT MIN(req.prio) FROM req WHERE req.page_id = p.id) AS prio FROM pages p JOIN sources s ON s.id = p.source_id WHERE p.id = ANY($6::int[]) AND p.deleted_at IS NULL AND (p.text_projection_revision = p.knowledge_revision) IS TRUE AND NOT s.archived AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') ), chunk_rows AS ( SELECT cc.page_id, cc.id AS chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source, a.prio FROM auth a JOIN content_chunks cc ON cc.page_id = a.id WHERE a.sealed AND cc.chunk_source = ANY($7::text[]) AND COALESCE(cc.modality, 'text') = 'text' AND EXISTS (SELECT 1 FROM req r WHERE r.page_id = cc.page_id AND cc.chunk_index BETWEEN r.lo AND r.hi) ORDER BY a.prio, cc.page_id, cc.chunk_index LIMIT $8 ) SELECT 'page' AS kind, a.id AS page_id, a.slug, a.source_id, a.type, a.revision, a.sealed, a.prio, (SELECT MAX(c2.chunk_index) FROM content_chunks c2 WHERE c2.page_id = a.id) AS max_chunk_index, a.compiled_truth, a.timeline, NULL::int AS chunk_id, NULL::int AS chunk_index, NULL::text AS chunk_text, NULL::text AS chunk_source FROM auth a UNION ALL SELECT 'chunk' AS kind, c.page_id, NULL, NULL, NULL, NULL, NULL, c.prio, NULL, NULL, NULL, c.chunk_id, c.chunk_index, c.chunk_text, c.chunk_source FROM chunk_rows c",
+            "textSha256": "36f167b6708826aa64eda532d22495b8c0dc0d133555ff743603a9a14083d8a9"
+          }
+        ],
+        "scopedPrivateSafe": [
+          {
+            "lane": "pool",
+            "params": [
+              "array<number>",
+              "array<number>",
+              "array<number>",
+              "array<number>",
+              "number",
+              "array<number>",
+              "array<string>",
+              "array<string>",
+              "number"
+            ],
+            "sql": "WITH req AS ( SELECT * FROM unnest($1::int[], $2::int[], $3::int[], $4::int[]) AS r(page_id, lo, hi, prio) ), auth AS ( SELECT p.id, p.slug, p.source_id, p.type, p.knowledge_revision::text AS revision, p.compiled_truth, p.timeline, (COALESCE(p.chunker_version, 0) >= $5) AS sealed, (SELECT MIN(req.prio) FROM req WHERE req.page_id = p.id) AS prio FROM pages p JOIN sources s ON s.id = p.source_id WHERE p.id = ANY($6::int[]) AND p.source_id = ANY($7::text[]) AND p.deleted_at IS NULL AND (p.text_projection_revision = p.knowledge_revision) IS TRUE AND NOT s.archived AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') AND (COALESCE(p.frontmatter->>'visibility', CASE WHEN (p.type = 'atom' OR (p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private' AND NOT (CASE WHEN p.type = 'atom' THEN EXISTS (SELECT 1 FROM pages derived_origin WHERE derived_origin.source_id = p.source_id AND derived_origin.slug = p.frontmatter->>'source_slug' AND derived_origin.frontmatter->>'visibility' = 'private') WHEN (p.type = 'atom' OR (p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL)) THEN EXISTS (SELECT 1 FROM links derived_input_link JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id WHERE derived_input_link.from_page_id = p.id AND derived_input_link.link_source = 'concept-provenance' AND derived_input_link.link_type = 'synthesized_from' AND (COALESCE(derived_input.frontmatter->>'visibility', CASE WHEN derived_input.type = 'atom' THEN 'private' ELSE 'world' END) = 'private' OR EXISTS (SELECT 1 FROM pages derived_input_origin WHERE derived_input_origin.source_id = derived_input.source_id AND derived_input_origin.slug = derived_input.frontmatter->>'source_slug' AND derived_input_origin.frontmatter->>'visibility' = 'private'))) ELSE false END)) AND COALESCE(p.chunker_version, 0) >= 4 ), chunk_rows AS ( SELECT cc.page_id, cc.id AS chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source, a.prio FROM auth a JOIN content_chunks cc ON cc.page_id = a.id WHERE a.sealed AND cc.chunk_source = ANY($8::text[]) AND COALESCE(cc.modality, 'text') = 'text' AND EXISTS (SELECT 1 FROM req r WHERE r.page_id = cc.page_id AND cc.chunk_index BETWEEN r.lo AND r.hi) ORDER BY a.prio, cc.page_id, cc.chunk_index LIMIT $9 ) SELECT 'page' AS kind, a.id AS page_id, a.slug, a.source_id, a.type, a.revision, a.sealed, a.prio, (SELECT MAX(c2.chunk_index) FROM content_chunks c2 WHERE c2.page_id = a.id) AS max_chunk_index, a.compiled_truth, a.timeline, NULL::int AS chunk_id, NULL::int AS chunk_index, NULL::text AS chunk_text, NULL::text AS chunk_source FROM auth a UNION ALL SELECT 'chunk' AS kind, c.page_id, NULL, NULL, NULL, NULL, NULL, c.prio, NULL, NULL, NULL, c.chunk_id, c.chunk_index, c.chunk_text, c.chunk_source FROM chunk_rows c",
+            "textSha256": "deffa97e09a1ffb4ab99f3ad6289b7972f5598deb0ef0c0a1b606513410ccd33"
+          }
+        ]
+      },
+      "getChunks": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [],
+            "sql": "SELECT key, value FROM config WHERE key IN ('search_embedding_column', 'embedding_columns')",
+            "textSha256": "0c97097b286eb3415cffbfa812bc301187d88bc7a5266678332b0f4c8c571371"
+          },
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT cc.id, cc.page_id, cc.chunk_index, cc.chunk_text, cc.chunk_source, cc.model, cc.token_count, cc.embedded_at, cc.language, cc.symbol_name, cc.symbol_type, cc.start_line, cc.end_line, cc.parent_symbol_path, cc.doc_comment, cc.symbol_name_qualified, cc.modality, (cc.\"embedding\" IS NULL) AS embedding_is_null FROM content_chunks cc JOIN pages p ON p.id = cc.page_id WHERE p.slug = $1 AND p.source_id = $2 AND (p.text_projection_revision = p.knowledge_revision) IS TRUE ORDER BY cc.chunk_index",
+            "textSha256": "02b487e8df64fa7271eb25c8371b58ae41d78c1f679d54cef3a2a88e8ba74322"
+          }
+        ],
+        "excludePrivate": [
+          {
+            "lane": "pool",
+            "params": [],
+            "sql": "SELECT key, value FROM config WHERE key IN ('search_embedding_column', 'embedding_columns')",
+            "textSha256": "0c97097b286eb3415cffbfa812bc301187d88bc7a5266678332b0f4c8c571371"
+          },
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT cc.id, cc.page_id, cc.chunk_index, cc.chunk_text, cc.chunk_source, cc.model, cc.token_count, cc.embedded_at, cc.language, cc.symbol_name, cc.symbol_type, cc.start_line, cc.end_line, cc.parent_symbol_path, cc.doc_comment, cc.symbol_name_qualified, cc.modality, (cc.\"embedding\" IS NULL) AS embedding_is_null FROM content_chunks cc JOIN pages p ON p.id = cc.page_id WHERE p.slug = $1 AND p.source_id = $2 AND (COALESCE(p.frontmatter->>'visibility', CASE WHEN (p.type = 'atom' OR (p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private' AND NOT (CASE WHEN p.type = 'atom' THEN EXISTS (SELECT 1 FROM pages derived_origin WHERE derived_origin.source_id = p.source_id AND derived_origin.slug = p.frontmatter->>'source_slug' AND derived_origin.frontmatter->>'visibility' = 'private') WHEN (p.type = 'atom' OR (p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL)) THEN EXISTS (SELECT 1 FROM links derived_input_link JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id WHERE derived_input_link.from_page_id = p.id AND derived_input_link.link_source = 'concept-provenance' AND derived_input_link.link_type = 'synthesized_from' AND (COALESCE(derived_input.frontmatter->>'visibility', CASE WHEN derived_input.type = 'atom' THEN 'private' ELSE 'world' END) = 'private' OR EXISTS (SELECT 1 FROM pages derived_input_origin WHERE derived_input_origin.source_id = derived_input.source_id AND derived_input_origin.slug = derived_input.frontmatter->>'source_slug' AND derived_input_origin.frontmatter->>'visibility' = 'private'))) ELSE false END)) AND (p.text_projection_revision = p.knowledge_revision) IS TRUE AND COALESCE(p.chunker_version, 0) >= 4 ORDER BY cc.chunk_index",
+            "textSha256": "3cb8400a2685f5af370b095c9fd29226d1c5038901f08dab3410ea8a7003ee5b"
+          }
+        ],
+        "includeEmbedding": [
+          {
+            "lane": "pool",
+            "params": [],
+            "sql": "SELECT key, value FROM config WHERE key IN ('search_embedding_column', 'embedding_columns')",
+            "textSha256": "0c97097b286eb3415cffbfa812bc301187d88bc7a5266678332b0f4c8c571371"
+          },
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT cc.id, cc.page_id, cc.chunk_index, cc.chunk_text, cc.chunk_source, cc.model, cc.token_count, cc.embedded_at, cc.language, cc.symbol_name, cc.symbol_type, cc.start_line, cc.end_line, cc.parent_symbol_path, cc.doc_comment, cc.symbol_name_qualified, cc.modality, (cc.\"embedding\" IS NULL) AS embedding_is_null , cc.\"embedding\" AS embedding FROM content_chunks cc JOIN pages p ON p.id = cc.page_id WHERE p.slug = $1 AND p.source_id = $2 AND (p.text_projection_revision = p.knowledge_revision) IS TRUE ORDER BY cc.chunk_index",
+            "textSha256": "d05c5f0f47493688117ed6d6c98ffc0b1f41b72a5e298f8360d263cec67e8f11"
+          }
+        ],
+        "includeUnsealed": [
+          {
+            "lane": "pool",
+            "params": [],
+            "sql": "SELECT key, value FROM config WHERE key IN ('search_embedding_column', 'embedding_columns')",
+            "textSha256": "0c97097b286eb3415cffbfa812bc301187d88bc7a5266678332b0f4c8c571371"
+          },
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT cc.id, cc.page_id, cc.chunk_index, cc.chunk_text, cc.chunk_source, cc.model, cc.token_count, cc.embedded_at, cc.language, cc.symbol_name, cc.symbol_type, cc.start_line, cc.end_line, cc.parent_symbol_path, cc.doc_comment, cc.symbol_name_qualified, cc.modality, (cc.\"embedding\" IS NULL) AS embedding_is_null FROM content_chunks cc JOIN pages p ON p.id = cc.page_id WHERE p.slug = $1 AND p.source_id = $2 ORDER BY cc.chunk_index",
+            "textSha256": "8b8ab767f1d1e7b9cdb04111263aa1e456bf6413e7511af19828fe03659ade28"
+          }
+        ],
+        "requireSafeChunks": [
+          {
+            "lane": "pool",
+            "params": [],
+            "sql": "SELECT key, value FROM config WHERE key IN ('search_embedding_column', 'embedding_columns')",
+            "textSha256": "0c97097b286eb3415cffbfa812bc301187d88bc7a5266678332b0f4c8c571371"
+          },
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT cc.id, cc.page_id, cc.chunk_index, cc.chunk_text, cc.chunk_source, cc.model, cc.token_count, cc.embedded_at, cc.language, cc.symbol_name, cc.symbol_type, cc.start_line, cc.end_line, cc.parent_symbol_path, cc.doc_comment, cc.symbol_name_qualified, cc.modality, (cc.\"embedding\" IS NULL) AS embedding_is_null FROM content_chunks cc JOIN pages p ON p.id = cc.page_id WHERE p.slug = $1 AND p.source_id = $2 AND (p.text_projection_revision = p.knowledge_revision) IS TRUE AND COALESCE(p.chunker_version, 0) >= 4 ORDER BY cc.chunk_index",
+            "textSha256": "801424734bf4f4f4f33ee47c0e550d27a5eafd784b83d167385baad41a69d3b3"
+          }
+        ],
+        "sourceIds": [
+          {
+            "lane": "pool",
+            "params": [],
+            "sql": "SELECT key, value FROM config WHERE key IN ('search_embedding_column', 'embedding_columns')",
+            "textSha256": "0c97097b286eb3415cffbfa812bc301187d88bc7a5266678332b0f4c8c571371"
+          },
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "array<string>"
+            ],
+            "sql": "SELECT cc.id, cc.page_id, cc.chunk_index, cc.chunk_text, cc.chunk_source, cc.model, cc.token_count, cc.embedded_at, cc.language, cc.symbol_name, cc.symbol_type, cc.start_line, cc.end_line, cc.parent_symbol_path, cc.doc_comment, cc.symbol_name_qualified, cc.modality, (cc.\"embedding\" IS NULL) AS embedding_is_null FROM content_chunks cc JOIN pages p ON p.id = cc.page_id WHERE p.slug = $1 AND p.source_id = ANY($2::text[]) AND (p.text_projection_revision = p.knowledge_revision) IS TRUE ORDER BY cc.chunk_index",
+            "textSha256": "ef9ace371c5e87953e2030cc6b0751687032596f3222806e258fe902971a9860"
+          }
+        ]
+      },
+      "getChunksWithEmbeddings": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT cc.* FROM content_chunks cc JOIN pages p ON p.id = cc.page_id WHERE (p.text_projection_revision = p.knowledge_revision) IS TRUE AND p.slug = $1 ORDER BY cc.chunk_index",
+            "textSha256": "e62b85ee2d471e487cc48b9f66b6f93b5044ce4b9e88b6eefbd0a616c757ae86"
+          }
+        ],
+        "sourceId+includeUnsealed": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT cc.* FROM content_chunks cc JOIN pages p ON p.id = cc.page_id WHERE TRUE AND p.slug = $1 AND p.source_id = $2 ORDER BY cc.chunk_index",
+            "textSha256": "a7c39709a1b403f91f01517541031dd8b4a5ed0cc4dce05617a732fe764c5dc9"
+          }
+        ]
+      },
+      "getEmbeddingsByChunkIds": {
+        "column": [
+          {
+            "lane": "pool",
+            "params": [
+              "array<number>"
+            ],
+            "sql": "SELECT cc.id, cc.\"embedding_voyage\" AS embedding FROM content_chunks cc JOIN pages p ON p.id=cc.page_id WHERE cc.id = ANY($1::int[]) AND cc.\"embedding_voyage\" IS NOT NULL AND (p.text_projection_revision = p.knowledge_revision) IS TRUE",
+            "textSha256": "a5cf189a26e371c02486d3651db29d677640add93650f520cef29c25d6798413"
+          }
+        ],
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "array<number>"
+            ],
+            "sql": "SELECT cc.id, cc.\"embedding\" AS embedding FROM content_chunks cc JOIN pages p ON p.id=cc.page_id WHERE cc.id = ANY($1::int[]) AND cc.\"embedding\" IS NOT NULL AND (p.text_projection_revision = p.knowledge_revision) IS TRUE",
+            "textSha256": "98cb146df06da5bb5f4ec99c19453bc1414aa9deeba2fcb0116674dd5bb4ce57"
+          }
+        ]
+      },
+      "invalidateContentDriftEmbeddings": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [],
+            "sql": "SELECT key, value FROM config WHERE key IN ('search_embedding_column', 'embedding_columns')",
+            "textSha256": "0c97097b286eb3415cffbfa812bc301187d88bc7a5266678332b0f4c8c571371"
+          },
+          {
+            "event": "begin",
+            "lane": "tx"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "null",
+              "null"
+            ],
+            "sql": "SELECT id FROM sources WHERE ($1::text IS NULL OR id=$2) AND NOT archived ORDER BY id FOR SHARE",
+            "textSha256": "f7812c9a9155a373176dc0c75f4018ec17d6d52dd7de884f201ccece68d951ce"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "array<>"
+            ],
+            "sql": "UPDATE content_chunks cc SET \"embedding\" = NULL, embedded_at = NULL, embedded_text_hash = NULL FROM pages p WHERE cc.page_id = p.id AND p.source_id=ANY($1::text[]) AND EXISTS (SELECT 1 FROM sources s WHERE s.id=p.source_id AND NOT s.archived) AND p.deleted_at IS NULL AND cc.\"embedding\" IS NOT NULL AND cc.embedded_text_hash IS NOT NULL AND cc.embedded_text_hash <> md5(cc.chunk_text) AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip') RETURNING cc.page_id",
+            "textSha256": "7a816ccd870a8bcc2c64cfd2737318fecc8461ab5b81863f03fd5e72bc8eeb29"
+          },
+          {
+            "event": "commit",
+            "lane": "tx"
+          }
+        ],
+        "sourceId": [
+          {
+            "lane": "pool",
+            "params": [],
+            "sql": "SELECT key, value FROM config WHERE key IN ('search_embedding_column', 'embedding_columns')",
+            "textSha256": "0c97097b286eb3415cffbfa812bc301187d88bc7a5266678332b0f4c8c571371"
+          },
+          {
+            "event": "begin",
+            "lane": "tx"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT id FROM sources WHERE ($1::text IS NULL OR id=$2) AND NOT archived ORDER BY id FOR SHARE",
+            "textSha256": "f7812c9a9155a373176dc0c75f4018ec17d6d52dd7de884f201ccece68d951ce"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "array<>",
+              "string"
+            ],
+            "sql": "UPDATE content_chunks cc SET \"embedding\" = NULL, embedded_at = NULL, embedded_text_hash = NULL FROM pages p WHERE cc.page_id = p.id AND p.source_id=ANY($1::text[]) AND EXISTS (SELECT 1 FROM sources s WHERE s.id=p.source_id AND NOT s.archived) AND p.deleted_at IS NULL AND cc.\"embedding\" IS NOT NULL AND cc.embedded_text_hash IS NOT NULL AND cc.embedded_text_hash <> md5(cc.chunk_text) AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip') AND p.source_id = $2 RETURNING cc.page_id",
+            "textSha256": "69aa7144c3192b4347ab9454a97bc714a964e33793d6a1937b6ce9302cb23c4d"
+          },
+          {
+            "event": "commit",
+            "lane": "tx"
+          }
+        ]
+      },
+      "invalidateStaleSignatureEmbeddings": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [],
+            "sql": "SELECT key, value FROM config WHERE key IN ('search_embedding_column', 'embedding_columns')",
+            "textSha256": "0c97097b286eb3415cffbfa812bc301187d88bc7a5266678332b0f4c8c571371"
+          },
+          {
+            "event": "begin",
+            "lane": "tx"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "null",
+              "null"
+            ],
+            "sql": "SELECT id FROM sources WHERE ($1::text IS NULL OR id=$2) AND NOT archived ORDER BY id FOR SHARE",
+            "textSha256": "f7812c9a9155a373176dc0c75f4018ec17d6d52dd7de884f201ccece68d951ce"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "array<>",
+              "string",
+              "number",
+              "string"
+            ],
+            "sql": "UPDATE content_chunks cc SET \"embedding\" = NULL, embedded_at = NULL FROM pages p WHERE cc.page_id = p.id AND p.source_id=ANY($1::text[]) AND EXISTS (SELECT 1 FROM sources s WHERE s.id=p.source_id AND NOT s.archived) AND cc.\"embedding\" IS NOT NULL AND NOT COALESCE(cc.\"embedding\" IS NOT NULL AND cc.model = $2 AND cc.embedded_text_hash = md5(cc.chunk_text) AND vector_dims(cc.\"embedding\") = $3::int, false) AND p.embedding_signature IS NOT NULL AND p.embedding_signature <> $4 RETURNING cc.page_id",
+            "textSha256": "2bd3f6a068cb4a3c724b5f69f4931157befef13a6be8692441dbdf8c024bab1f"
+          },
+          {
+            "event": "commit",
+            "lane": "tx"
+          }
+        ],
+        "sourceId+includeNullSignature": [
+          {
+            "lane": "pool",
+            "params": [],
+            "sql": "SELECT key, value FROM config WHERE key IN ('search_embedding_column', 'embedding_columns')",
+            "textSha256": "0c97097b286eb3415cffbfa812bc301187d88bc7a5266678332b0f4c8c571371"
+          },
+          {
+            "event": "begin",
+            "lane": "tx"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT id FROM sources WHERE ($1::text IS NULL OR id=$2) AND NOT archived ORDER BY id FOR SHARE",
+            "textSha256": "f7812c9a9155a373176dc0c75f4018ec17d6d52dd7de884f201ccece68d951ce"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "array<>",
+              "string",
+              "number",
+              "string",
+              "string"
+            ],
+            "sql": "UPDATE content_chunks cc SET \"embedding\" = NULL, embedded_at = NULL FROM pages p WHERE cc.page_id = p.id AND p.source_id=ANY($1::text[]) AND EXISTS (SELECT 1 FROM sources s WHERE s.id=p.source_id AND NOT s.archived) AND cc.\"embedding\" IS NOT NULL AND NOT COALESCE(cc.\"embedding\" IS NOT NULL AND cc.model = $2 AND cc.embedded_text_hash = md5(cc.chunk_text) AND vector_dims(cc.\"embedding\") = $3::int, false) AND (p.embedding_signature IS NULL OR p.embedding_signature <> $4) AND p.source_id = $5 RETURNING cc.page_id",
+            "textSha256": "99f8496f2395f592fb2c2526bd01d4cce71296c700a8e4d5a8e40624b886db40"
+          },
+          {
+            "event": "commit",
+            "lane": "tx"
+          }
+        ]
+      },
+      "listChunklessPagesWithContent": {
+        "afterPageId+sourceId": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "number",
+              "number"
+            ],
+            "sql": "SELECT p.id, p.slug, p.source_id, p.compiled_truth, p.timeline FROM pages p WHERE p.deleted_at IS NULL AND (p.compiled_truth <> '' OR p.timeline <> '') AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip') AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') AND NOT EXISTS (SELECT 1 FROM content_chunks cc WHERE cc.page_id = p.id) AND p.source_id = $1 AND p.id > $2 ORDER BY p.id LIMIT $3",
+            "textSha256": "5ab7aba0751ee5bc5f4836de31e89ea5f11344e7b850a67c801e6ce3f1c29dee"
+          }
+        ],
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "number"
+            ],
+            "sql": "SELECT p.id, p.slug, p.source_id, p.compiled_truth, p.timeline FROM pages p WHERE p.deleted_at IS NULL AND (p.compiled_truth <> '' OR p.timeline <> '') AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip') AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') AND NOT EXISTS (SELECT 1 FROM content_chunks cc WHERE cc.page_id = p.id) ORDER BY p.id LIMIT $1",
+            "textSha256": "075b222a373875f730b5663cacfc3740675e622b2ae5ea455e0f9bf13e0ca701"
+          }
+        ]
+      },
+      "listStaleChunks": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [],
+            "sql": "SELECT key, value FROM config WHERE key IN ('search_embedding_column', 'embedding_columns')",
+            "textSha256": "0c97097b286eb3415cffbfa812bc301187d88bc7a5266678332b0f4c8c571371"
+          },
+          {
+            "lane": "pool",
+            "params": [
+              "number",
+              "number",
+              "number"
+            ],
+            "sql": "SELECT p.slug, cc.chunk_index, cc.chunk_text, cc.chunk_source, cc.model, cc.token_count, p.source_id, cc.page_id FROM content_chunks cc JOIN pages p ON p.id = cc.page_id WHERE cc.\"embedding\" IS NULL AND p.deleted_at IS NULL AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip') AND (cc.page_id, cc.chunk_index) > ($1, $2) ORDER BY cc.page_id, cc.chunk_index LIMIT $3",
+            "textSha256": "7485ae74ce21c864245aa7feecc993e754f5a92be9a173ffbc820cb9c9982610"
+          }
+        ],
+        "sourceId": [
+          {
+            "lane": "pool",
+            "params": [],
+            "sql": "SELECT key, value FROM config WHERE key IN ('search_embedding_column', 'embedding_columns')",
+            "textSha256": "0c97097b286eb3415cffbfa812bc301187d88bc7a5266678332b0f4c8c571371"
+          },
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "number",
+              "number",
+              "number"
+            ],
+            "sql": "SELECT p.slug, cc.chunk_index, cc.chunk_text, cc.chunk_source, cc.model, cc.token_count, p.source_id, cc.page_id FROM content_chunks cc JOIN pages p ON p.id = cc.page_id WHERE cc.\"embedding\" IS NULL AND p.deleted_at IS NULL AND p.source_id = $1 AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip') AND (cc.page_id, cc.chunk_index) > ($2, $3) ORDER BY cc.page_id, cc.chunk_index LIMIT $4",
+            "textSha256": "552e046582d33013abd64e01d8aa7c165f4ce31105f23f14a9268e385a8b7a8c"
+          }
+        ],
+        "updated_desc": [
+          {
+            "lane": "pool",
+            "params": [],
+            "sql": "SELECT key, value FROM config WHERE key IN ('search_embedding_column', 'embedding_columns')",
+            "textSha256": "0c97097b286eb3415cffbfa812bc301187d88bc7a5266678332b0f4c8c571371"
+          },
+          {
+            "lane": "pool",
+            "params": [
+              "number"
+            ],
+            "sql": "SELECT p.slug, cc.chunk_index, cc.chunk_text, cc.chunk_source, cc.model, cc.token_count, p.source_id, cc.page_id, p.updated_at FROM content_chunks cc JOIN pages p ON p.id = cc.page_id WHERE cc.\"embedding\" IS NULL AND p.deleted_at IS NULL AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip') ORDER BY p.updated_at DESC NULLS LAST, p.id ASC, cc.chunk_index ASC LIMIT $1",
+            "textSha256": "b50b804738defb5e6746ba788e604689399938c0ff67579bd035b03fa43dcd51"
+          }
+        ],
+        "updated_desc+cursor": [
+          {
+            "lane": "pool",
+            "params": [],
+            "sql": "SELECT key, value FROM config WHERE key IN ('search_embedding_column', 'embedding_columns')",
+            "textSha256": "0c97097b286eb3415cffbfa812bc301187d88bc7a5266678332b0f4c8c571371"
+          },
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "number",
+              "string",
+              "number",
+              "number",
+              "number"
+            ],
+            "sql": "SELECT p.slug, cc.chunk_index, cc.chunk_text, cc.chunk_source, cc.model, cc.token_count, p.source_id, cc.page_id, p.updated_at FROM content_chunks cc JOIN pages p ON p.id = cc.page_id WHERE cc.\"embedding\" IS NULL AND p.deleted_at IS NULL AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip') AND ( p.updated_at < $1::timestamptz OR (p.updated_at = $2::timestamptz AND p.id > $3) OR (p.updated_at = $4::timestamptz AND p.id = $5 AND cc.chunk_index > $6) ) ORDER BY p.updated_at DESC NULLS LAST, p.id ASC, cc.chunk_index ASC LIMIT $7",
+            "textSha256": "5ac6b67b9ace4e0a6f2f67b416795073440d15cbc9628b08fbab911ec6ca891f"
+          }
+        ],
+        "updated_desc+sourceId": [
+          {
+            "lane": "pool",
+            "params": [],
+            "sql": "SELECT key, value FROM config WHERE key IN ('search_embedding_column', 'embedding_columns')",
+            "textSha256": "0c97097b286eb3415cffbfa812bc301187d88bc7a5266678332b0f4c8c571371"
+          },
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "number"
+            ],
+            "sql": "SELECT p.slug, cc.chunk_index, cc.chunk_text, cc.chunk_source, cc.model, cc.token_count, p.source_id, cc.page_id, p.updated_at FROM content_chunks cc JOIN pages p ON p.id = cc.page_id WHERE cc.\"embedding\" IS NULL AND p.deleted_at IS NULL AND p.source_id = $1 AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip') ORDER BY p.updated_at DESC NULLS LAST, p.id ASC, cc.chunk_index ASC LIMIT $2",
+            "textSha256": "2b767ab1b7ba583d593e075e19b79072f3e21b3891e85d0a6c3fc58ddbf0b424"
+          }
+        ],
+        "updated_desc+sourceId+cursor": [
+          {
+            "lane": "pool",
+            "params": [],
+            "sql": "SELECT key, value FROM config WHERE key IN ('search_embedding_column', 'embedding_columns')",
+            "textSha256": "0c97097b286eb3415cffbfa812bc301187d88bc7a5266678332b0f4c8c571371"
+          },
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "string",
+              "number",
+              "string",
+              "number",
+              "number",
+              "number"
+            ],
+            "sql": "SELECT p.slug, cc.chunk_index, cc.chunk_text, cc.chunk_source, cc.model, cc.token_count, p.source_id, cc.page_id, p.updated_at FROM content_chunks cc JOIN pages p ON p.id = cc.page_id WHERE cc.\"embedding\" IS NULL AND p.deleted_at IS NULL AND p.source_id = $1 AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip') AND ( p.updated_at < $2::timestamptz OR (p.updated_at = $3::timestamptz AND p.id > $4) OR (p.updated_at = $5::timestamptz AND p.id = $6 AND cc.chunk_index > $7) ) ORDER BY p.updated_at DESC NULLS LAST, p.id ASC, cc.chunk_index ASC LIMIT $8",
+            "textSha256": "ba7b2efcb89df8907fad094882719d8cba4b24b23bb8d3bdec1229133001c655"
+          }
+        ]
+      },
+      "setPageEmbeddingSignature": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "string"
+            ],
+            "sql": "UPDATE pages SET embedding_signature = $1 WHERE slug = $2 AND source_id = $3",
+            "textSha256": "ca4353bcd1ee533c17855346ef1adb3182625c6c101e6536bdf829cf76b1aa25"
+          }
+        ]
+      },
+      "sumStaleChunkChars": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [],
+            "sql": "SELECT key, value FROM config WHERE key IN ('search_embedding_column', 'embedding_columns')",
+            "textSha256": "0c97097b286eb3415cffbfa812bc301187d88bc7a5266678332b0f4c8c571371"
+          },
+          {
+            "lane": "pool",
+            "params": [],
+            "sql": "SELECT COALESCE(SUM(LENGTH(cc.chunk_text)), 0)::bigint AS chars FROM content_chunks cc JOIN pages p ON p.id = cc.page_id WHERE p.deleted_at IS NULL AND cc.\"embedding\" IS NULL AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')",
+            "textSha256": "293069e934731c25886cdeb52825015630186dbe93a0fabe01b67e10cb81c4e4"
+          }
+        ],
+        "signature": [
+          {
+            "lane": "pool",
+            "params": [],
+            "sql": "SELECT key, value FROM config WHERE key IN ('search_embedding_column', 'embedding_columns')",
+            "textSha256": "0c97097b286eb3415cffbfa812bc301187d88bc7a5266678332b0f4c8c571371"
+          },
+          {
+            "lane": "pool",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT COALESCE(SUM(LENGTH(cc.chunk_text)), 0)::bigint AS chars FROM content_chunks cc JOIN pages p ON p.id = cc.page_id WHERE p.deleted_at IS NULL AND (cc.\"embedding\" IS NULL OR (p.embedding_signature IS NOT NULL AND p.embedding_signature <> $1)) AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')",
+            "textSha256": "0af30c01b21c5d96c909aba54e4e4843cbdbf919b281441dc75d2698e3f1ce64"
+          }
+        ]
+      },
+      "upsertChunks": {
+        "default": [
+          {
+            "event": "begin",
+            "lane": "tx"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT incarnation FROM sources WHERE id=$1 FOR SHARE",
+            "textSha256": "414efa2a18b3a4ac2f6f6675b6f7273b71c262a6bab8a44f82963606fed221d7"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "INSERT INTO page_write_guards(source_incarnation,slug) VALUES ($1::uuid,$2) ON CONFLICT DO NOTHING",
+            "textSha256": "fa56fa770a66caa8ae77b19c2c3ae9caac336d8e8281bc16f09d36a7fcdd74fd"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT slug FROM page_write_guards WHERE source_incarnation=$1::uuid AND slug=$2 FOR UPDATE",
+            "textSha256": "3d08e10394edab70fb78946e378dd11528213526b214a8516d8cf3825e87ac19"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT id FROM pages WHERE source_id=$1 AND slug=$2 FOR UPDATE",
+            "textSha256": "6c2eb61492fe7470a32169e89b9f04d471f3311d55ff790ad08f4736af483a2c"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT id FROM pages WHERE slug = $1 AND source_id = $2 FOR UPDATE",
+            "textSha256": "f03c4f99ebe52e53fa3609e24ef5279cdb7dfe65e9b381138c7c70c0afe307b0"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "number",
+              "number",
+              "string"
+            ],
+            "sql": "UPDATE pages SET chunker_version = -1 WHERE id = $1 AND ( NOT (COALESCE(pages.chunker_version, 0) >= 4) OR EXISTS ( SELECT 1 FROM (SELECT * FROM content_chunks WHERE page_id = $2) cc FULL JOIN jsonb_to_recordset($3::text::jsonb) AS incoming( chunk_index int, chunk_text text, chunk_source text, modality text, language text, symbol_name text, symbol_type text, start_line int, end_line int, parent_symbol_path text[], doc_comment text, symbol_name_qualified text) ON incoming.chunk_index = cc.chunk_index WHERE cc.id IS NULL OR incoming.chunk_index IS NULL OR cc.chunk_text IS DISTINCT FROM incoming.chunk_text OR cc.chunk_source IS DISTINCT FROM incoming.chunk_source OR cc.modality IS DISTINCT FROM COALESCE(incoming.modality, 'text') OR cc.language IS DISTINCT FROM COALESCE(incoming.language, cc.language) OR cc.symbol_name IS DISTINCT FROM COALESCE(incoming.symbol_name, cc.symbol_name) OR cc.symbol_type IS DISTINCT FROM COALESCE(incoming.symbol_type, cc.symbol_type) OR cc.start_line IS DISTINCT FROM COALESCE(incoming.start_line, cc.start_line) OR cc.end_line IS DISTINCT FROM COALESCE(incoming.end_line, cc.end_line) OR cc.parent_symbol_path IS DISTINCT FROM COALESCE(incoming.parent_symbol_path, cc.parent_symbol_path) OR cc.doc_comment IS DISTINCT FROM COALESCE(incoming.doc_comment, cc.doc_comment) OR cc.symbol_name_qualified IS DISTINCT FROM COALESCE(incoming.symbol_name_qualified, cc.symbol_name_qualified) ))",
+            "textSha256": "6db2c904feb7479e571d913076af75cc9c32170451bfa4afa47e7e60724db006"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "number",
+              "array<number>"
+            ],
+            "sql": "DELETE FROM content_chunks WHERE page_id = $1 AND chunk_index != ALL($2)",
+            "textSha256": "dc4fdfddf00f65b0aad2aa0ec3f1e3a981e7c61f2253f485925d90c371ba372c"
+          },
+          {
+            "lane": "tx",
+            "params": [],
+            "sql": "SELECT key, value FROM config WHERE key IN ('search_embedding_column', 'embedding_columns')",
+            "textSha256": "0c97097b286eb3415cffbfa812bc301187d88bc7a5266678332b0f4c8c571371"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "number",
+              "number",
+              "string",
+              "string",
+              "string",
+              "null",
+              "null",
+              "null",
+              "null",
+              "null",
+              "null",
+              "null",
+              "null",
+              "null",
+              "string"
+            ],
+            "sql": "INSERT INTO content_chunks (page_id, chunk_index, chunk_text, chunk_source, \"embedding\", model, token_count, embedded_at, embedded_text_hash, embedding_input_hash, language, symbol_name, symbol_type, start_line, end_line, parent_symbol_path, doc_comment, symbol_name_qualified, modality, embedding_image) VALUES ($1, $2, $3, $4, NULL, $5, $6, NULL, NULL, NULL, $7, $8, $9, $10, $11, $12::text[], $13, $14, $15, NULL) ON CONFLICT (page_id, chunk_index) DO UPDATE SET chunk_text = EXCLUDED.chunk_text, chunk_source = EXCLUDED.chunk_source, \"embedding\" = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.\"embedding\" WHEN content_chunks.\"embedding\" IS NULL THEN EXCLUDED.\"embedding\" WHEN EXCLUDED.embedded_at IS NOT NULL AND (content_chunks.embedded_at IS NULL OR EXCLUDED.embedded_at > content_chunks.embedded_at) THEN EXCLUDED.\"embedding\" ELSE content_chunks.\"embedding\" END, model = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.model WHEN content_chunks.\"embedding\" IS NULL THEN EXCLUDED.model WHEN EXCLUDED.embedded_at IS NOT NULL AND (content_chunks.embedded_at IS NULL OR EXCLUDED.embedded_at > content_chunks.embedded_at) THEN EXCLUDED.model ELSE content_chunks.model END, token_count = EXCLUDED.token_count, embedded_at = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text AND EXCLUDED.\"embedding\" IS NULL THEN NULL WHEN content_chunks.\"embedding\" IS NULL AND EXCLUDED.\"embedding\" IS NOT NULL THEN EXCLUDED.embedded_at WHEN EXCLUDED.embedded_at IS NOT NULL AND (content_chunks.embedded_at IS NULL OR EXCLUDED.embedded_at > content_chunks.embedded_at) THEN EXCLUDED.embedded_at ELSE content_chunks.embedded_at END, embedded_text_hash = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.embedded_text_hash WHEN content_chunks.\"embedding\" IS NULL THEN EXCLUDED.embedded_text_hash WHEN EXCLUDED.embedded_at IS NOT NULL AND (content_chunks.embedded_at IS NULL OR EXCLUDED.embedded_at > content_chunks.embedded_at) THEN EXCLUDED.embedded_text_hash ELSE content_chunks.embedded_text_hash END, embedding_input_hash = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.embedding_input_hash WHEN content_chunks.\"embedding\" IS NULL THEN EXCLUDED.embedding_input_hash WHEN EXCLUDED.embedded_at IS NOT NULL AND (content_chunks.embedded_at IS NULL OR EXCLUDED.embedded_at > content_chunks.embedded_at) THEN EXCLUDED.embedding_input_hash ELSE content_chunks.embedding_input_hash END, language = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.language ELSE COALESCE(EXCLUDED.language, content_chunks.language) END, symbol_name = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.symbol_name ELSE COALESCE(EXCLUDED.symbol_name, content_chunks.symbol_name) END, symbol_type = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.symbol_type ELSE COALESCE(EXCLUDED.symbol_type, content_chunks.symbol_type) END, start_line = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.start_line ELSE COALESCE(EXCLUDED.start_line, content_chunks.start_line) END, end_line = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.end_line ELSE COALESCE(EXCLUDED.end_line, content_chunks.end_line) END, parent_symbol_path = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.parent_symbol_path ELSE COALESCE(EXCLUDED.parent_symbol_path, content_chunks.parent_symbol_path) END, doc_comment = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.doc_comment ELSE COALESCE(EXCLUDED.doc_comment, content_chunks.doc_comment) END, symbol_name_qualified = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.symbol_name_qualified ELSE COALESCE(EXCLUDED.symbol_name_qualified, content_chunks.symbol_name_qualified) END, modality = EXCLUDED.modality, embedding_image = COALESCE(EXCLUDED.embedding_image, content_chunks.embedding_image)",
+            "textSha256": "cb77c3aafb2ebc371823d4f981927eb7e47e32b8118bc22a3febae149ada2443"
+          },
+          {
+            "event": "commit",
+            "lane": "tx"
+          }
+        ],
+        "embedding": [
+          {
+            "event": "begin",
+            "lane": "tx"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT incarnation FROM sources WHERE id=$1 FOR SHARE",
+            "textSha256": "414efa2a18b3a4ac2f6f6675b6f7273b71c262a6bab8a44f82963606fed221d7"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "INSERT INTO page_write_guards(source_incarnation,slug) VALUES ($1::uuid,$2) ON CONFLICT DO NOTHING",
+            "textSha256": "fa56fa770a66caa8ae77b19c2c3ae9caac336d8e8281bc16f09d36a7fcdd74fd"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT slug FROM page_write_guards WHERE source_incarnation=$1::uuid AND slug=$2 FOR UPDATE",
+            "textSha256": "3d08e10394edab70fb78946e378dd11528213526b214a8516d8cf3825e87ac19"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT id FROM pages WHERE source_id=$1 AND slug=$2 FOR UPDATE",
+            "textSha256": "6c2eb61492fe7470a32169e89b9f04d471f3311d55ff790ad08f4736af483a2c"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT id FROM pages WHERE slug = $1 AND source_id = $2 FOR UPDATE",
+            "textSha256": "f03c4f99ebe52e53fa3609e24ef5279cdb7dfe65e9b381138c7c70c0afe307b0"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "number",
+              "number",
+              "string"
+            ],
+            "sql": "UPDATE pages SET chunker_version = -1 WHERE id = $1 AND ( NOT (COALESCE(pages.chunker_version, 0) >= 4) OR EXISTS ( SELECT 1 FROM (SELECT * FROM content_chunks WHERE page_id = $2) cc FULL JOIN jsonb_to_recordset($3::text::jsonb) AS incoming( chunk_index int, chunk_text text, chunk_source text, modality text, language text, symbol_name text, symbol_type text, start_line int, end_line int, parent_symbol_path text[], doc_comment text, symbol_name_qualified text) ON incoming.chunk_index = cc.chunk_index WHERE cc.id IS NULL OR incoming.chunk_index IS NULL OR cc.chunk_text IS DISTINCT FROM incoming.chunk_text OR cc.chunk_source IS DISTINCT FROM incoming.chunk_source OR cc.modality IS DISTINCT FROM COALESCE(incoming.modality, 'text') OR cc.language IS DISTINCT FROM COALESCE(incoming.language, cc.language) OR cc.symbol_name IS DISTINCT FROM COALESCE(incoming.symbol_name, cc.symbol_name) OR cc.symbol_type IS DISTINCT FROM COALESCE(incoming.symbol_type, cc.symbol_type) OR cc.start_line IS DISTINCT FROM COALESCE(incoming.start_line, cc.start_line) OR cc.end_line IS DISTINCT FROM COALESCE(incoming.end_line, cc.end_line) OR cc.parent_symbol_path IS DISTINCT FROM COALESCE(incoming.parent_symbol_path, cc.parent_symbol_path) OR cc.doc_comment IS DISTINCT FROM COALESCE(incoming.doc_comment, cc.doc_comment) OR cc.symbol_name_qualified IS DISTINCT FROM COALESCE(incoming.symbol_name_qualified, cc.symbol_name_qualified) ))",
+            "textSha256": "6db2c904feb7479e571d913076af75cc9c32170451bfa4afa47e7e60724db006"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "number",
+              "array<number>"
+            ],
+            "sql": "DELETE FROM content_chunks WHERE page_id = $1 AND chunk_index != ALL($2)",
+            "textSha256": "dc4fdfddf00f65b0aad2aa0ec3f1e3a981e7c61f2253f485925d90c371ba372c"
+          },
+          {
+            "lane": "tx",
+            "params": [],
+            "sql": "SELECT key, value FROM config WHERE key IN ('search_embedding_column', 'embedding_columns')",
+            "textSha256": "0c97097b286eb3415cffbfa812bc301187d88bc7a5266678332b0f4c8c571371"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "number",
+              "number",
+              "string",
+              "string",
+              "string",
+              "string",
+              "null",
+              "string",
+              "string",
+              "null",
+              "null",
+              "null",
+              "null",
+              "null",
+              "null",
+              "null",
+              "null",
+              "string"
+            ],
+            "sql": "INSERT INTO content_chunks (page_id, chunk_index, chunk_text, chunk_source, \"embedding\", model, token_count, embedded_at, embedded_text_hash, embedding_input_hash, language, symbol_name, symbol_type, start_line, end_line, parent_symbol_path, doc_comment, symbol_name_qualified, modality, embedding_image) VALUES ($1, $2, $3, $4, $5::vector, $6, $7, now(), md5($8), $9, $10, $11, $12, $13, $14, $15::text[], $16, $17, $18, NULL) ON CONFLICT (page_id, chunk_index) DO UPDATE SET chunk_text = EXCLUDED.chunk_text, chunk_source = EXCLUDED.chunk_source, \"embedding\" = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.\"embedding\" WHEN content_chunks.\"embedding\" IS NULL THEN EXCLUDED.\"embedding\" WHEN EXCLUDED.embedded_at IS NOT NULL AND (content_chunks.embedded_at IS NULL OR EXCLUDED.embedded_at > content_chunks.embedded_at) THEN EXCLUDED.\"embedding\" ELSE content_chunks.\"embedding\" END, model = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.model WHEN content_chunks.\"embedding\" IS NULL THEN EXCLUDED.model WHEN EXCLUDED.embedded_at IS NOT NULL AND (content_chunks.embedded_at IS NULL OR EXCLUDED.embedded_at > content_chunks.embedded_at) THEN EXCLUDED.model ELSE content_chunks.model END, token_count = EXCLUDED.token_count, embedded_at = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text AND EXCLUDED.\"embedding\" IS NULL THEN NULL WHEN content_chunks.\"embedding\" IS NULL AND EXCLUDED.\"embedding\" IS NOT NULL THEN EXCLUDED.embedded_at WHEN EXCLUDED.embedded_at IS NOT NULL AND (content_chunks.embedded_at IS NULL OR EXCLUDED.embedded_at > content_chunks.embedded_at) THEN EXCLUDED.embedded_at ELSE content_chunks.embedded_at END, embedded_text_hash = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.embedded_text_hash WHEN content_chunks.\"embedding\" IS NULL THEN EXCLUDED.embedded_text_hash WHEN EXCLUDED.embedded_at IS NOT NULL AND (content_chunks.embedded_at IS NULL OR EXCLUDED.embedded_at > content_chunks.embedded_at) THEN EXCLUDED.embedded_text_hash ELSE content_chunks.embedded_text_hash END, embedding_input_hash = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.embedding_input_hash WHEN content_chunks.\"embedding\" IS NULL THEN EXCLUDED.embedding_input_hash WHEN EXCLUDED.embedded_at IS NOT NULL AND (content_chunks.embedded_at IS NULL OR EXCLUDED.embedded_at > content_chunks.embedded_at) THEN EXCLUDED.embedding_input_hash ELSE content_chunks.embedding_input_hash END, language = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.language ELSE COALESCE(EXCLUDED.language, content_chunks.language) END, symbol_name = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.symbol_name ELSE COALESCE(EXCLUDED.symbol_name, content_chunks.symbol_name) END, symbol_type = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.symbol_type ELSE COALESCE(EXCLUDED.symbol_type, content_chunks.symbol_type) END, start_line = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.start_line ELSE COALESCE(EXCLUDED.start_line, content_chunks.start_line) END, end_line = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.end_line ELSE COALESCE(EXCLUDED.end_line, content_chunks.end_line) END, parent_symbol_path = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.parent_symbol_path ELSE COALESCE(EXCLUDED.parent_symbol_path, content_chunks.parent_symbol_path) END, doc_comment = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.doc_comment ELSE COALESCE(EXCLUDED.doc_comment, content_chunks.doc_comment) END, symbol_name_qualified = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.symbol_name_qualified ELSE COALESCE(EXCLUDED.symbol_name_qualified, content_chunks.symbol_name_qualified) END, modality = EXCLUDED.modality, embedding_image = COALESCE(EXCLUDED.embedding_image, content_chunks.embedding_image)",
+            "textSha256": "c4d287834de506dd5e55a80647449750e49b1e2a36ad02ef023bfd8b6b7f384d"
+          },
+          {
+            "event": "commit",
+            "lane": "tx"
+          }
+        ],
+        "embeddingColumn": [
+          {
+            "event": "begin",
+            "lane": "tx"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT incarnation FROM sources WHERE id=$1 FOR SHARE",
+            "textSha256": "414efa2a18b3a4ac2f6f6675b6f7273b71c262a6bab8a44f82963606fed221d7"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "INSERT INTO page_write_guards(source_incarnation,slug) VALUES ($1::uuid,$2) ON CONFLICT DO NOTHING",
+            "textSha256": "fa56fa770a66caa8ae77b19c2c3ae9caac336d8e8281bc16f09d36a7fcdd74fd"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT slug FROM page_write_guards WHERE source_incarnation=$1::uuid AND slug=$2 FOR UPDATE",
+            "textSha256": "3d08e10394edab70fb78946e378dd11528213526b214a8516d8cf3825e87ac19"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT id FROM pages WHERE source_id=$1 AND slug=$2 FOR UPDATE",
+            "textSha256": "6c2eb61492fe7470a32169e89b9f04d471f3311d55ff790ad08f4736af483a2c"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT id FROM pages WHERE slug = $1 AND source_id = $2 FOR UPDATE",
+            "textSha256": "f03c4f99ebe52e53fa3609e24ef5279cdb7dfe65e9b381138c7c70c0afe307b0"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "number",
+              "number",
+              "string"
+            ],
+            "sql": "UPDATE pages SET chunker_version = -1 WHERE id = $1 AND ( NOT (COALESCE(pages.chunker_version, 0) >= 4) OR EXISTS ( SELECT 1 FROM (SELECT * FROM content_chunks WHERE page_id = $2) cc FULL JOIN jsonb_to_recordset($3::text::jsonb) AS incoming( chunk_index int, chunk_text text, chunk_source text, modality text, language text, symbol_name text, symbol_type text, start_line int, end_line int, parent_symbol_path text[], doc_comment text, symbol_name_qualified text) ON incoming.chunk_index = cc.chunk_index WHERE cc.id IS NULL OR incoming.chunk_index IS NULL OR cc.chunk_text IS DISTINCT FROM incoming.chunk_text OR cc.chunk_source IS DISTINCT FROM incoming.chunk_source OR cc.modality IS DISTINCT FROM COALESCE(incoming.modality, 'text') OR cc.language IS DISTINCT FROM COALESCE(incoming.language, cc.language) OR cc.symbol_name IS DISTINCT FROM COALESCE(incoming.symbol_name, cc.symbol_name) OR cc.symbol_type IS DISTINCT FROM COALESCE(incoming.symbol_type, cc.symbol_type) OR cc.start_line IS DISTINCT FROM COALESCE(incoming.start_line, cc.start_line) OR cc.end_line IS DISTINCT FROM COALESCE(incoming.end_line, cc.end_line) OR cc.parent_symbol_path IS DISTINCT FROM COALESCE(incoming.parent_symbol_path, cc.parent_symbol_path) OR cc.doc_comment IS DISTINCT FROM COALESCE(incoming.doc_comment, cc.doc_comment) OR cc.symbol_name_qualified IS DISTINCT FROM COALESCE(incoming.symbol_name_qualified, cc.symbol_name_qualified) ))",
+            "textSha256": "6db2c904feb7479e571d913076af75cc9c32170451bfa4afa47e7e60724db006"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "number",
+              "array<number>"
+            ],
+            "sql": "DELETE FROM content_chunks WHERE page_id = $1 AND chunk_index != ALL($2)",
+            "textSha256": "dc4fdfddf00f65b0aad2aa0ec3f1e3a981e7c61f2253f485925d90c371ba372c"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "number",
+              "number",
+              "string",
+              "string",
+              "string",
+              "string",
+              "null",
+              "string",
+              "null",
+              "null",
+              "null",
+              "null",
+              "null",
+              "null",
+              "null",
+              "null",
+              "string"
+            ],
+            "sql": "INSERT INTO content_chunks (page_id, chunk_index, chunk_text, chunk_source, \"embedding_voyage\", model, token_count, embedded_at, embedded_text_hash, embedding_input_hash, language, symbol_name, symbol_type, start_line, end_line, parent_symbol_path, doc_comment, symbol_name_qualified, modality, embedding_image) VALUES ($1, $2, $3, $4, $5::vector, $6, $7, now(), md5($8), NULL, $9, $10, $11, $12, $13, $14::text[], $15, $16, $17, NULL) ON CONFLICT (page_id, chunk_index) DO UPDATE SET chunk_text = EXCLUDED.chunk_text, chunk_source = EXCLUDED.chunk_source, \"embedding_voyage\" = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.\"embedding_voyage\" WHEN content_chunks.\"embedding_voyage\" IS NULL THEN EXCLUDED.\"embedding_voyage\" WHEN EXCLUDED.embedded_at IS NOT NULL AND (content_chunks.embedded_at IS NULL OR EXCLUDED.embedded_at > content_chunks.embedded_at) THEN EXCLUDED.\"embedding_voyage\" ELSE content_chunks.\"embedding_voyage\" END, model = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.model WHEN content_chunks.\"embedding_voyage\" IS NULL THEN EXCLUDED.model WHEN EXCLUDED.embedded_at IS NOT NULL AND (content_chunks.embedded_at IS NULL OR EXCLUDED.embedded_at > content_chunks.embedded_at) THEN EXCLUDED.model ELSE content_chunks.model END, token_count = EXCLUDED.token_count, embedded_at = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text AND EXCLUDED.\"embedding_voyage\" IS NULL THEN NULL WHEN content_chunks.\"embedding_voyage\" IS NULL AND EXCLUDED.\"embedding_voyage\" IS NOT NULL THEN EXCLUDED.embedded_at WHEN EXCLUDED.embedded_at IS NOT NULL AND (content_chunks.embedded_at IS NULL OR EXCLUDED.embedded_at > content_chunks.embedded_at) THEN EXCLUDED.embedded_at ELSE content_chunks.embedded_at END, embedded_text_hash = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.embedded_text_hash WHEN content_chunks.\"embedding_voyage\" IS NULL THEN EXCLUDED.embedded_text_hash WHEN EXCLUDED.embedded_at IS NOT NULL AND (content_chunks.embedded_at IS NULL OR EXCLUDED.embedded_at > content_chunks.embedded_at) THEN EXCLUDED.embedded_text_hash ELSE content_chunks.embedded_text_hash END, embedding_input_hash = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.embedding_input_hash WHEN content_chunks.\"embedding_voyage\" IS NULL THEN EXCLUDED.embedding_input_hash WHEN EXCLUDED.embedded_at IS NOT NULL AND (content_chunks.embedded_at IS NULL OR EXCLUDED.embedded_at > content_chunks.embedded_at) THEN EXCLUDED.embedding_input_hash ELSE content_chunks.embedding_input_hash END, language = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.language ELSE COALESCE(EXCLUDED.language, content_chunks.language) END, symbol_name = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.symbol_name ELSE COALESCE(EXCLUDED.symbol_name, content_chunks.symbol_name) END, symbol_type = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.symbol_type ELSE COALESCE(EXCLUDED.symbol_type, content_chunks.symbol_type) END, start_line = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.start_line ELSE COALESCE(EXCLUDED.start_line, content_chunks.start_line) END, end_line = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.end_line ELSE COALESCE(EXCLUDED.end_line, content_chunks.end_line) END, parent_symbol_path = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.parent_symbol_path ELSE COALESCE(EXCLUDED.parent_symbol_path, content_chunks.parent_symbol_path) END, doc_comment = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.doc_comment ELSE COALESCE(EXCLUDED.doc_comment, content_chunks.doc_comment) END, symbol_name_qualified = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.symbol_name_qualified ELSE COALESCE(EXCLUDED.symbol_name_qualified, content_chunks.symbol_name_qualified) END, modality = EXCLUDED.modality, embedding_image = COALESCE(EXCLUDED.embedding_image, content_chunks.embedding_image)",
+            "textSha256": "28390a3323a9d15c4ec1cdac8e9ba4f4295a85ed3aac10260f9026ee983b7196"
+          },
+          {
+            "event": "commit",
+            "lane": "tx"
+          }
+        ],
+        "empty": [
+          {
+            "event": "begin",
+            "lane": "tx"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT incarnation FROM sources WHERE id=$1 FOR SHARE",
+            "textSha256": "414efa2a18b3a4ac2f6f6675b6f7273b71c262a6bab8a44f82963606fed221d7"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "INSERT INTO page_write_guards(source_incarnation,slug) VALUES ($1::uuid,$2) ON CONFLICT DO NOTHING",
+            "textSha256": "fa56fa770a66caa8ae77b19c2c3ae9caac336d8e8281bc16f09d36a7fcdd74fd"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT slug FROM page_write_guards WHERE source_incarnation=$1::uuid AND slug=$2 FOR UPDATE",
+            "textSha256": "3d08e10394edab70fb78946e378dd11528213526b214a8516d8cf3825e87ac19"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT id FROM pages WHERE source_id=$1 AND slug=$2 FOR UPDATE",
+            "textSha256": "6c2eb61492fe7470a32169e89b9f04d471f3311d55ff790ad08f4736af483a2c"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT id FROM pages WHERE slug = $1 AND source_id = $2 FOR UPDATE",
+            "textSha256": "f03c4f99ebe52e53fa3609e24ef5279cdb7dfe65e9b381138c7c70c0afe307b0"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "number",
+              "number",
+              "string"
+            ],
+            "sql": "UPDATE pages SET chunker_version = -1 WHERE id = $1 AND ( NOT (COALESCE(pages.chunker_version, 0) >= 4) OR EXISTS ( SELECT 1 FROM (SELECT * FROM content_chunks WHERE page_id = $2) cc FULL JOIN jsonb_to_recordset($3::text::jsonb) AS incoming( chunk_index int, chunk_text text, chunk_source text, modality text, language text, symbol_name text, symbol_type text, start_line int, end_line int, parent_symbol_path text[], doc_comment text, symbol_name_qualified text) ON incoming.chunk_index = cc.chunk_index WHERE cc.id IS NULL OR incoming.chunk_index IS NULL OR cc.chunk_text IS DISTINCT FROM incoming.chunk_text OR cc.chunk_source IS DISTINCT FROM incoming.chunk_source OR cc.modality IS DISTINCT FROM COALESCE(incoming.modality, 'text') OR cc.language IS DISTINCT FROM COALESCE(incoming.language, cc.language) OR cc.symbol_name IS DISTINCT FROM COALESCE(incoming.symbol_name, cc.symbol_name) OR cc.symbol_type IS DISTINCT FROM COALESCE(incoming.symbol_type, cc.symbol_type) OR cc.start_line IS DISTINCT FROM COALESCE(incoming.start_line, cc.start_line) OR cc.end_line IS DISTINCT FROM COALESCE(incoming.end_line, cc.end_line) OR cc.parent_symbol_path IS DISTINCT FROM COALESCE(incoming.parent_symbol_path, cc.parent_symbol_path) OR cc.doc_comment IS DISTINCT FROM COALESCE(incoming.doc_comment, cc.doc_comment) OR cc.symbol_name_qualified IS DISTINCT FROM COALESCE(incoming.symbol_name_qualified, cc.symbol_name_qualified) ))",
+            "textSha256": "6db2c904feb7479e571d913076af75cc9c32170451bfa4afa47e7e60724db006"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "number"
+            ],
+            "sql": "DELETE FROM content_chunks WHERE page_id = $1",
+            "textSha256": "c1aa06e79b30c5c75dcef60a4e4560f6eb57e61586dc7c6a21036577d8dccb9d"
+          },
+          {
+            "event": "commit",
+            "lane": "tx"
+          }
+        ],
+        "expectedRevision": [
+          {
+            "event": "begin",
+            "lane": "tx"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT incarnation FROM sources WHERE id=$1 FOR SHARE",
+            "textSha256": "414efa2a18b3a4ac2f6f6675b6f7273b71c262a6bab8a44f82963606fed221d7"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "INSERT INTO page_write_guards(source_incarnation,slug) VALUES ($1::uuid,$2) ON CONFLICT DO NOTHING",
+            "textSha256": "fa56fa770a66caa8ae77b19c2c3ae9caac336d8e8281bc16f09d36a7fcdd74fd"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT slug FROM page_write_guards WHERE source_incarnation=$1::uuid AND slug=$2 FOR UPDATE",
+            "textSha256": "3d08e10394edab70fb78946e378dd11528213526b214a8516d8cf3825e87ac19"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT id FROM pages WHERE source_id=$1 AND slug=$2 FOR UPDATE",
+            "textSha256": "6c2eb61492fe7470a32169e89b9f04d471f3311d55ff790ad08f4736af483a2c"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string",
+              "string",
+              "string"
+            ],
+            "sql": "WITH chosen AS ( SELECT p.* FROM pages p WHERE p.slug=$1 AND p.source_id=$2 AND p.deleted_at IS NULL ORDER BY (p.slug=$3) DESC, (p.source_id=$4) DESC, p.source_id ASC LIMIT 1 ) SELECT p.*, (SELECT s.incarnation FROM sources s WHERE s.id=p.source_id) AS source_incarnation, COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag) FROM tags t WHERE t.page_id=p.id), '[]'::jsonb) AS snapshot_tags, COALESCE((SELECT jsonb_agg(jsonb_build_object('visibility',w.visibility,'fact_hash',w.fact_hash,'withdrawn_at',w.withdrawn_at) ORDER BY w.visibility,w.fact_hash) FROM (SELECT visibility,fact_hash,min(withdrawn_at) AS withdrawn_at FROM fact_withdrawals WHERE source_id=p.source_id AND (subject='*' OR subject=p.slug) GROUP BY visibility,fact_hash) w), '[]'::jsonb) AS snapshot_withdrawals, (SELECT string_agg(regexp_replace(lower(line), '[[:space:]]+', ' ', 'g'), chr(10) ORDER BY ord) FROM unnest(string_to_array(p.compiled_truth,chr(10))) WITH ORDINALITY AS lines(line,ord)) AS fingerprint_body, (SELECT string_agg(regexp_replace(lower(line), '[[:space:]]+', ' ', 'g'), chr(10) ORDER BY ord) FROM unnest(string_to_array(p.timeline,chr(10))) WITH ORDINALITY AS lines(line,ord)) AS fingerprint_timeline FROM chosen p",
+            "textSha256": "22ce659b8fb6104bf08b6ee101bd0e0bafb2769bb7c399380a38e9a4a26c693e"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT id FROM pages WHERE slug = $1 AND source_id = $2 FOR UPDATE",
+            "textSha256": "f03c4f99ebe52e53fa3609e24ef5279cdb7dfe65e9b381138c7c70c0afe307b0"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "number",
+              "number",
+              "string"
+            ],
+            "sql": "UPDATE pages SET chunker_version = -1 WHERE id = $1 AND ( NOT (COALESCE(pages.chunker_version, 0) >= 4) OR EXISTS ( SELECT 1 FROM (SELECT * FROM content_chunks WHERE page_id = $2) cc FULL JOIN jsonb_to_recordset($3::text::jsonb) AS incoming( chunk_index int, chunk_text text, chunk_source text, modality text, language text, symbol_name text, symbol_type text, start_line int, end_line int, parent_symbol_path text[], doc_comment text, symbol_name_qualified text) ON incoming.chunk_index = cc.chunk_index WHERE cc.id IS NULL OR incoming.chunk_index IS NULL OR cc.chunk_text IS DISTINCT FROM incoming.chunk_text OR cc.chunk_source IS DISTINCT FROM incoming.chunk_source OR cc.modality IS DISTINCT FROM COALESCE(incoming.modality, 'text') OR cc.language IS DISTINCT FROM COALESCE(incoming.language, cc.language) OR cc.symbol_name IS DISTINCT FROM COALESCE(incoming.symbol_name, cc.symbol_name) OR cc.symbol_type IS DISTINCT FROM COALESCE(incoming.symbol_type, cc.symbol_type) OR cc.start_line IS DISTINCT FROM COALESCE(incoming.start_line, cc.start_line) OR cc.end_line IS DISTINCT FROM COALESCE(incoming.end_line, cc.end_line) OR cc.parent_symbol_path IS DISTINCT FROM COALESCE(incoming.parent_symbol_path, cc.parent_symbol_path) OR cc.doc_comment IS DISTINCT FROM COALESCE(incoming.doc_comment, cc.doc_comment) OR cc.symbol_name_qualified IS DISTINCT FROM COALESCE(incoming.symbol_name_qualified, cc.symbol_name_qualified) ))",
+            "textSha256": "6db2c904feb7479e571d913076af75cc9c32170451bfa4afa47e7e60724db006"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "number",
+              "array<number>"
+            ],
+            "sql": "DELETE FROM content_chunks WHERE page_id = $1 AND chunk_index != ALL($2)",
+            "textSha256": "dc4fdfddf00f65b0aad2aa0ec3f1e3a981e7c61f2253f485925d90c371ba372c"
+          },
+          {
+            "lane": "tx",
+            "params": [],
+            "sql": "SELECT key, value FROM config WHERE key IN ('search_embedding_column', 'embedding_columns')",
+            "textSha256": "0c97097b286eb3415cffbfa812bc301187d88bc7a5266678332b0f4c8c571371"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "number",
+              "number",
+              "string",
+              "string",
+              "string",
+              "null",
+              "null",
+              "null",
+              "null",
+              "null",
+              "null",
+              "null",
+              "null",
+              "null",
+              "string"
+            ],
+            "sql": "INSERT INTO content_chunks (page_id, chunk_index, chunk_text, chunk_source, \"embedding\", model, token_count, embedded_at, embedded_text_hash, embedding_input_hash, language, symbol_name, symbol_type, start_line, end_line, parent_symbol_path, doc_comment, symbol_name_qualified, modality, embedding_image) VALUES ($1, $2, $3, $4, NULL, $5, $6, NULL, NULL, NULL, $7, $8, $9, $10, $11, $12::text[], $13, $14, $15, NULL) ON CONFLICT (page_id, chunk_index) DO UPDATE SET chunk_text = EXCLUDED.chunk_text, chunk_source = EXCLUDED.chunk_source, \"embedding\" = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.\"embedding\" WHEN content_chunks.\"embedding\" IS NULL THEN EXCLUDED.\"embedding\" WHEN EXCLUDED.embedded_at IS NOT NULL AND (content_chunks.embedded_at IS NULL OR EXCLUDED.embedded_at > content_chunks.embedded_at) THEN EXCLUDED.\"embedding\" ELSE content_chunks.\"embedding\" END, model = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.model WHEN content_chunks.\"embedding\" IS NULL THEN EXCLUDED.model WHEN EXCLUDED.embedded_at IS NOT NULL AND (content_chunks.embedded_at IS NULL OR EXCLUDED.embedded_at > content_chunks.embedded_at) THEN EXCLUDED.model ELSE content_chunks.model END, token_count = EXCLUDED.token_count, embedded_at = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text AND EXCLUDED.\"embedding\" IS NULL THEN NULL WHEN content_chunks.\"embedding\" IS NULL AND EXCLUDED.\"embedding\" IS NOT NULL THEN EXCLUDED.embedded_at WHEN EXCLUDED.embedded_at IS NOT NULL AND (content_chunks.embedded_at IS NULL OR EXCLUDED.embedded_at > content_chunks.embedded_at) THEN EXCLUDED.embedded_at ELSE content_chunks.embedded_at END, embedded_text_hash = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.embedded_text_hash WHEN content_chunks.\"embedding\" IS NULL THEN EXCLUDED.embedded_text_hash WHEN EXCLUDED.embedded_at IS NOT NULL AND (content_chunks.embedded_at IS NULL OR EXCLUDED.embedded_at > content_chunks.embedded_at) THEN EXCLUDED.embedded_text_hash ELSE content_chunks.embedded_text_hash END, embedding_input_hash = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.embedding_input_hash WHEN content_chunks.\"embedding\" IS NULL THEN EXCLUDED.embedding_input_hash WHEN EXCLUDED.embedded_at IS NOT NULL AND (content_chunks.embedded_at IS NULL OR EXCLUDED.embedded_at > content_chunks.embedded_at) THEN EXCLUDED.embedding_input_hash ELSE content_chunks.embedding_input_hash END, language = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.language ELSE COALESCE(EXCLUDED.language, content_chunks.language) END, symbol_name = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.symbol_name ELSE COALESCE(EXCLUDED.symbol_name, content_chunks.symbol_name) END, symbol_type = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.symbol_type ELSE COALESCE(EXCLUDED.symbol_type, content_chunks.symbol_type) END, start_line = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.start_line ELSE COALESCE(EXCLUDED.start_line, content_chunks.start_line) END, end_line = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.end_line ELSE COALESCE(EXCLUDED.end_line, content_chunks.end_line) END, parent_symbol_path = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.parent_symbol_path ELSE COALESCE(EXCLUDED.parent_symbol_path, content_chunks.parent_symbol_path) END, doc_comment = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.doc_comment ELSE COALESCE(EXCLUDED.doc_comment, content_chunks.doc_comment) END, symbol_name_qualified = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.symbol_name_qualified ELSE COALESCE(EXCLUDED.symbol_name_qualified, content_chunks.symbol_name_qualified) END, modality = EXCLUDED.modality, embedding_image = COALESCE(EXCLUDED.embedding_image, content_chunks.embedding_image)",
+            "textSha256": "cb77c3aafb2ebc371823d4f981927eb7e47e32b8118bc22a3febae149ada2443"
+          },
+          {
+            "event": "commit",
+            "lane": "tx"
+          }
+        ]
+      }
+    }
+  },
+  "normalizer": "sql-text-v1"
+}

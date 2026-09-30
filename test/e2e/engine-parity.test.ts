@@ -14,6 +14,9 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
+import { createHash } from 'node:crypto';
+import { installFixtureChunks } from '../helpers/page-projection.ts';
+import { isolatedPersistencePostgres } from '../helpers/persistence-postgres.ts';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import type { ChunkInput, SearchResult } from '../../src/core/types.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
@@ -100,7 +103,7 @@ async function seedEngine(eng: BrainEngine) {
         token_count: p.body.split(/\s+/).length,
       },
     ];
-    await eng.upsertChunks(p.slug, chunks);
+    await installFixtureChunks(eng, p.slug, chunks);
   }
 }
 
@@ -145,6 +148,57 @@ describeBoth('Engine parity — Postgres vs PGLite', () => {
       expect(new Set(pgSlugs)).toEqual(new Set(pgliteSlugs));
     });
   }
+
+  test('searchKeyword honors exclude_slugs and type identically on BOTH engines (read-path audit #8)', async () => {
+    const q = 'fat code thin harness';
+    const pgAll = (await pgEngine.searchKeyword(q, { limit: 10 })).map((r: SearchResult) => r.slug);
+    expect(pgAll).toContain('concepts/fat-code-thin-harness');
+    const opts = { limit: 10, exclude_slugs: ['concepts/fat-code-thin-harness'] };
+    const pgEx = (await pgEngine.searchKeyword(q, opts)).map((r: SearchResult) => r.slug);
+    const pgliteEx = (await pgliteEngine.searchKeyword(q, opts)).map((r: SearchResult) => r.slug);
+    expect(pgEx).not.toContain('concepts/fat-code-thin-harness');
+    expect(new Set(pgliteEx)).toEqual(new Set(pgEx));
+    const typed = { limit: 10, type: 'concept' as const };
+    const pgTyped = (await pgEngine.searchKeyword(q, typed)).map((r: SearchResult) => r.type);
+    const pgliteTyped = (await pgliteEngine.searchKeyword(q, typed)).map((r: SearchResult) => r.type);
+    expect(pgTyped.length).toBeGreaterThan(0);
+    expect(pgTyped.every(t => t === 'concept')).toBe(true);
+    expect(pgliteTyped).toEqual(pgTyped);
+  });
+
+  test('findTrajectory keeps the NEWEST points under a limit on BOTH engines (read-path audit #4)', async () => {
+    for (const eng of [pgEngine, pgliteEngine] as BrainEngine[]) {
+      await eng.executeRaw(`DELETE FROM facts WHERE entity_slug = 'people/traj-parity'`);
+      for (let i = 0; i < 6; i++) {
+        await eng.executeRaw(
+          `INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, valid_from, source, claim_metric, claim_value)
+           VALUES ('default', 'people/traj-parity', $1, 'fact', 'world', $2::timestamptz, 'test', 'mrr', $3)`,
+          [`mrr is ${i}`, new Date(Date.UTC(2024, 0, 1 + i)).toISOString(), i],
+        );
+      }
+    }
+    const opts = { entitySlug: 'people/traj-parity', remote: false, limit: 3 };
+    const pg = (await pgEngine.findTrajectory(opts)).map(p => p.value);
+    const pglite = (await pgliteEngine.findTrajectory(opts)).map(p => p.value);
+    expect(pg).toEqual([3, 4, 5]);
+    expect(pglite).toEqual(pg);
+  });
+
+  test('getTags excludePrivate / liveOnly behave identically on BOTH engines (read-path audit #19)', async () => {
+    for (const eng of [pgEngine, pgliteEngine] as BrainEngine[]) {
+      await eng.putPage('notes/tag-private', { type: 'note', title: 'P', compiled_truth: 'x', frontmatter: { visibility: 'private' } } as any);
+      await eng.putPage('notes/tag-gone', { type: 'note', title: 'G', compiled_truth: 'x' } as any);
+      await eng.addTag('notes/tag-private', 'p-tag');
+      await eng.addTag('notes/tag-gone', 'g-tag');
+      await eng.executeRaw(`UPDATE pages SET deleted_at = now() WHERE slug = 'notes/tag-gone'`);
+    }
+    for (const eng of [pgEngine, pgliteEngine] as BrainEngine[]) {
+      expect(await eng.getTags('notes/tag-private')).toEqual(['p-tag']);
+      expect(await eng.getTags('notes/tag-private', { excludePrivate: true })).toEqual([]);
+      expect(await eng.getTags('notes/tag-gone')).toEqual(['g-tag']);
+      expect(await eng.getTags('notes/tag-gone', { liveOnly: true })).toEqual([]);
+    }
+  });
 
   test('searchKeyword orFallback: relaxed rows tagged keyword_relaxed on BOTH engines (2026-09 #3617 follow-up)', async () => {
     // A query whose terms never co-occur in one chunk: zero strict recall,
@@ -302,7 +356,7 @@ describeBoth('Engine parity — Postgres vs PGLite', () => {
     };
     for (const eng of [pgEngine, pgliteEngine]) {
       await eng.putPage('notes/parity-dense', { type: 'note', title: 'Parity Dense', compiled_truth: 'd.' });
-      await eng.upsertChunks(
+      await installFixtureChunks(eng,
         'notes/parity-dense',
         Array.from({ length: 120 }, (_, i) => ({
           chunk_index: i,
@@ -315,7 +369,7 @@ describeBoth('Engine parity — Postgres vs PGLite', () => {
       for (let p = 0; p < 8; p++) {
         const slug = `notes/parity-sparse-${p}`;
         await eng.putPage(slug, { type: 'note', title: `Parity Sparse ${p}`, compiled_truth: 's.' });
-        await eng.upsertChunks(slug, [
+        await installFixtureChunks(eng, slug, [
           { chunk_index: 0, chunk_text: `ps ${p}`, chunk_source: 'compiled_truth', embedding: mk(0.6 - p * 0.001, 1200 + p), token_count: 2 },
         ]);
       }
@@ -402,9 +456,9 @@ describeBoth('Engine parity — Postgres vs PGLite', () => {
     }];
 
     await pgEngine.putPage(slug, page);
-    await pgEngine.upsertChunks(slug, chunks);
+    await installFixtureChunks(pgEngine, slug, chunks);
     await pgliteEngine.putPage(slug, page);
-    await pgliteEngine.upsertChunks(slug, chunks);
+    await installFixtureChunks(pgliteEngine, slug, chunks);
 
     const results = [
       (await pgEngine.searchKeyword('unique citation projection evidence'))[0],
@@ -438,9 +492,9 @@ describeBoth('Engine parity — Postgres vs PGLite', () => {
       chunk_source: 'compiled_truth' as const,
     }];
     await pgEngine.putPage(nonEmailSlug, nonEmailPage);
-    await pgEngine.upsertChunks(nonEmailSlug, nonEmailChunks);
+    await installFixtureChunks(pgEngine, nonEmailSlug, nonEmailChunks);
     await pgliteEngine.putPage(nonEmailSlug, nonEmailPage);
-    await pgliteEngine.upsertChunks(nonEmailSlug, nonEmailChunks);
+    await installFixtureChunks(pgliteEngine, nonEmailSlug, nonEmailChunks);
 
     for (const result of [
       (await pgEngine.searchKeyword('unique non-email subject gate evidence'))[0],
@@ -470,9 +524,9 @@ describeBoth('Engine parity — Postgres vs PGLite', () => {
       embedding: basisEmbedding(78),
     }];
     await pgEngine.putPage(whitespaceSlug, whitespacePage);
-    await pgEngine.upsertChunks(whitespaceSlug, whitespaceChunks);
+    await installFixtureChunks(pgEngine, whitespaceSlug, whitespaceChunks);
     await pgliteEngine.putPage(whitespaceSlug, whitespacePage);
-    await pgliteEngine.upsertChunks(whitespaceSlug, whitespaceChunks);
+    await installFixtureChunks(pgliteEngine, whitespaceSlug, whitespaceChunks);
 
     for (const result of [
       (await pgEngine.searchKeyword('unique whitespace message id evidence'))[0],
@@ -497,7 +551,7 @@ describeBoth('Engine parity — Postgres vs PGLite', () => {
       compiled_truth: 'parity test fixture content',
       timeline: '',
     });
-    await pgEngine.upsertChunks('test/parity-fixture', [{
+    await installFixtureChunks(pgEngine, 'test/parity-fixture', [{
       chunk_index: 0,
       chunk_text: 'parity test fixture content',
       chunk_source: 'compiled_truth',
@@ -511,7 +565,7 @@ describeBoth('Engine parity — Postgres vs PGLite', () => {
       compiled_truth: 'parity test fixture content',
       timeline: '',
     });
-    await pgliteEngine.upsertChunks('test/parity-fixture', [{
+    await installFixtureChunks(pgliteEngine, 'test/parity-fixture', [{
       chunk_index: 0,
       chunk_text: 'parity test fixture content',
       chunk_source: 'compiled_truth',
@@ -579,7 +633,7 @@ describeBoth('Engine parity — Postgres vs PGLite', () => {
         compiled_truth: 'A document body that never mentions those words.',
         timeline: '',
       });
-      await eng.upsertChunks('wiki/title-arm-parity', [{
+      await installFixtureChunks(eng, 'wiki/title-arm-parity', [{
         chunk_index: 0,
         chunk_text: 'A document body that never mentions those words.',
         chunk_source: 'compiled_truth',
@@ -882,7 +936,9 @@ describeBoth('Engine parity — Postgres vs PGLite', () => {
       ]);
       await eng.addLink(slug, peer, 'ctx v2', 'wikilink');
 
-      const chunks = await eng.getChunks(slug);
+      // Inspect the raw import replacement before its final projection seal.
+      expect(await eng.getChunks(slug)).toEqual([]);
+      const chunks = await eng.getChunks(slug, { includeUnsealed: true });
       expect(chunks).toHaveLength(1);
       expect(chunks[0].chunk_text).toBe('v2 chunk only');
       const links = await eng.getLinks(slug);
@@ -896,13 +952,13 @@ describeBoth('Engine parity — Postgres vs PGLite', () => {
       await eng.putPage('wiki/gcp-doc', {
         type: 'note', title: 'beta doc', compiled_truth: 'beta body', timeline: '',
       }, { sourceId: 'gcp-beta' });
-      await eng.upsertChunks('wiki/gcp-doc', [
+      await installFixtureChunks(eng, 'wiki/gcp-doc', [
         { chunk_index: 0, chunk_text: 'gcp beta chunk', chunk_source: 'compiled_truth' },
       ], { sourceId: 'gcp-beta' });
       await eng.putPage('wiki/gcp-doc', {
         type: 'note', title: 'default decoy', compiled_truth: 'decoy body', timeline: '',
       }, { sourceId: 'default' });
-      await eng.upsertChunks('wiki/gcp-doc', [
+      await installFixtureChunks(eng, 'wiki/gcp-doc', [
         { chunk_index: 0, chunk_text: 'gcp default decoy', chunk_source: 'compiled_truth' },
       ], { sourceId: 'default' });
     }
@@ -1289,7 +1345,7 @@ async function seedRelational(eng: BrainEngine) {
   for (const [slug, type] of pages) {
     await eng.putPage(slug, { type, title: slug, compiled_truth: `${slug} body`, timeline: '' });
   }
-  await eng.upsertChunks('people/ep-inv-b', [{
+  await installFixtureChunks(eng, 'people/ep-inv-b', [{
     chunk_index: 0, chunk_text: 'b', chunk_source: 'compiled_truth',
     embedding: basisEmbedding(2), token_count: 1,
   }] satisfies ChunkInput[]);
@@ -1827,7 +1883,7 @@ describeBoth('Engine parity — CJK keyword fallback (#3986)', () => {
   async function seedCJK(eng: BrainEngine) {
     for (const [i, p] of CJK_PAGES.entries()) {
       await eng.putPage(p.slug, { type: 'note', title: p.title, compiled_truth: p.body, timeline: '' });
-      await eng.upsertChunks(p.slug, [{
+      await installFixtureChunks(eng, p.slug, [{
         chunk_index: 0,
         chunk_text: p.body,
         chunk_source: 'compiled_truth' as const,
@@ -2254,17 +2310,24 @@ describeBoth('Engine parity — restorePage arc (D7)', () => {
 describeBoth('Engine parity — open_loops loops-store round-trip', () => {
   let pgEngine: BrainEngine;
   let pgliteEngine: PGLiteEngine;
+  let pgFixture: Awaited<ReturnType<typeof isolatedPersistencePostgres>>;
 
   beforeAll(async () => {
-    pgEngine = await setupDB();
+    // Bootstrap fixtures can remove source FKs from the shared schema, leaving
+    // prior loops behind. Creation/dedup parity requires a fresh brain on both sides.
+    pgFixture = await isolatedPersistencePostgres(process.env.DATABASE_URL!);
+    pgEngine = pgFixture.engine;
     pgliteEngine = new PGLiteEngine();
     await pgliteEngine.connect({});
     await pgliteEngine.initSchema();
   }, 90_000);
 
   afterAll(async () => {
-    await pgliteEngine.disconnect();
-    await teardownDB();
+    try {
+      await pgliteEngine?.disconnect();
+    } finally {
+      await pgFixture?.close();
+    }
   }, 30_000);
 
   // loops-store shares one SQL text across engines (parity by construction);
@@ -2396,14 +2459,21 @@ describeBoth('Engine parity — facts TTL read-time validity (WP5)', () => {
     );
     // Embedding-branch pair (separate entity keeps the recency-branch counts clean).
     const emb = basisEmbedding(101);
+    const embeddingModel = 'test:ttl-validity';
     await eng.insertFact(
-      { fact: 'ttl embed lapsed', kind: 'fact', entity_slug: EMB_ENTITY, source: 'test', valid_until: past, embedding: emb },
+      { fact: 'ttl embed lapsed', kind: 'fact', entity_slug: EMB_ENTITY, source: 'test', valid_until: past, embedding: emb, embedding_model: embeddingModel },
       { source_id: SRC },
     );
     await eng.insertFact(
-      { fact: 'ttl embed live', kind: 'fact', entity_slug: EMB_ENTITY, source: 'test', embedding: emb },
+      { fact: 'ttl embed live', kind: 'fact', entity_slug: EMB_ENTITY, source: 'test', embedding: emb, embedding_model: embeddingModel },
       { source_id: SRC },
     );
+    const stored = await eng.listFactsByEntity(SRC, EMB_ENTITY, { activeOnly: false });
+    expect(stored).toHaveLength(2);
+    for (const row of stored) {
+      expect(row.embedding_model).toBe(embeddingModel);
+      expect(row.embedded_text_hash).toBe(createHash('md5').update(row.fact).digest('hex'));
+    }
     // Ontology-writer-style supersession: valid_until close + superseded_by,
     // expired_at stays NULL (--asof time-travel intact).
     const oldRow = await eng.insertFact(
@@ -2426,7 +2496,7 @@ describeBoth('Engine parity — facts TTL read-time validity (WP5)', () => {
       bySince: texts(await eng.listFactsSince(SRC, since, { entitySlug: ENTITY })),
       bySession: texts(await eng.listFactsBySession(SRC, SESSION)),
       dupRecency: texts(await eng.findCandidateDuplicates(SRC, ENTITY, 'ttl lapsed fact')),
-      dupEmbedding: texts(await eng.findCandidateDuplicates(SRC, EMB_ENTITY, 'ttl embed lapsed', { embedding: emb })),
+      dupEmbedding: texts(await eng.findCandidateDuplicates(SRC, EMB_ENTITY, 'ttl embed lapsed', { embedding: emb, embeddingModel })),
       history: texts(await eng.listFactsByEntity(SRC, ENTITY, { activeOnly: false })),
       supersessions: texts(await eng.listSupersessions(SRC)),
       health: {
@@ -2486,7 +2556,7 @@ describeBoth('Engine parity — getCalleesOf bare-name fallback (#4670)', () => 
         type: 'code', page_kind: 'code', title: 'src/OrderService.cs (c_sharp)',
         compiled_truth: 'public async Task SubmitAsync() { ValidateRequest(); }', timeline: '',
       });
-      await eng.upsertChunks(slug, [{
+      await installFixtureChunks(eng, slug, [{
         chunk_index: 0,
         chunk_text: 'public async Task SubmitAsync() { ValidateRequest(); }',
         chunk_source: 'compiled_truth',

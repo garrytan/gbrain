@@ -12,6 +12,8 @@
  * rejected additions would break the versioning policy it certifies.
  */
 
+import { randomUUID } from 'node:crypto';
+import { isPersistenceIpcMutation } from '../persistence/ipc.ts';
 import { RESPONSE_SCHEMAS, ERROR_SCHEMA, MEMORY_VERBS_VERSION, type VerbName } from '../verbs.ts';
 import { CONFORMANCE_CASES, type ConformanceCase } from './conformance-fixtures.ts';
 
@@ -148,7 +150,7 @@ export async function runConformance(
   client: ConformanceClient,
   opts: { marker?: string; synthesize?: boolean } = {},
 ): Promise<ConformanceReport> {
-  const marker = opts.marker ?? `run-${Date.now().toString(36)}`;
+  const marker = opts.marker ?? `run-${randomUUID()}`;
   const ids = new Map<string, string>();
   const results: CaseResult[] = [];
 
@@ -158,10 +160,12 @@ export async function runConformance(
   let seededEntity = false;
   try {
     const seed = await client.callTool('put_page', {
+      request_id: randomUUID(),
       slug: `people/conformance-${marker}`,
       content: `---\ntitle: Conformance ${marker}\ntype: person\n---\n\n# Conformance ${marker}\n\nSynthetic entity for a MEMORY_VERBS conformance run.\n`,
     });
-    seededEntity = !seed.isError;
+    const result = JSON.parse(seed.text) as { state?: string };
+    seededEntity = !seed.isError && (result.state === undefined || result.state === 'committed');
   } catch {
     seededEntity = false;
   }
@@ -216,13 +220,13 @@ export async function runConformance(
       continue;
     }
     if (c.requiresSeededEntity && !seededEntity) {
-      results.push({ name: c.name, verb: c.verb, status: 'skip', detail: 'target has no put_page to seed the entity page (verbs-only surface)' });
+      results.push({ name: c.name, verb: c.verb, status: 'skip', detail: 'entity seed is unavailable or has not committed' });
       continue;
     }
     const params = substitute(c.params, marker, ids) as Record<string, unknown>;
     let res: { isError?: boolean; text: string };
     try {
-      res = await client.callTool(c.verb, params);
+      res = await client.callTool(c.verb, { ...params, ...(isPersistenceIpcMutation(c.verb) && params.request_id === undefined ? { request_id: randomUUID() } : {}) });
     } catch (e) {
       results.push({ name: c.name, verb: c.verb, status: 'fail', detail: `transport: ${e instanceof Error ? e.message : String(e)}` });
       continue;

@@ -791,6 +791,7 @@ describe('budget packing + drop footer', () => {
     const putPage = operations.find((o) => o.name === 'put_page')!;
     const local = ctxFor({ remote: false });
     await call(putPage, local, { slug: 'people/bob-example', content: '# Bob Example\n\nbody' });
+    const entityBeforeRemember = (await engine.readPageSnapshot('people/bob-example', { sourceId: 'default' }))!;
     await new Promise((r) => setTimeout(r, 5));
     const since = new Date().toISOString();
     await new Promise((r) => setTimeout(r, 5));
@@ -810,6 +811,14 @@ describe('budget packing + drop footer', () => {
       provenance: 'test',
       visibility: 'world',
     });
+    const entityAfterRemember = (await engine.readPageSnapshot('people/bob-example', { sourceId: 'default' }))!;
+    expect(entityAfterRemember.revision).not.toBe(entityBeforeRemember.revision);
+    // Entity-bound remember publishes a canonical facts fence and advances the
+    // page revision. Pin this fixture's page clock before the cutoff so the
+    // keyset assertions below isolate pages from newer fact/thread records.
+    expect(entityBeforeRemember.page.updated_at.getTime()).toBeLessThan(Date.parse(since));
+    await engine.executeRaw('UPDATE pages SET updated_at = $1::timestamptz WHERE source_id = $2 AND slug = $3',
+      [entityBeforeRemember.page.updated_at.toISOString(), 'default', 'people/bob-example']);
     __resetHotMemoryCacheForTests();
     const full = await call(del, local, { since, entities: 'people/bob-example' });
     const pages = full.pages as Parameters<typeof renderPageLine>[0][];

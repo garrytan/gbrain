@@ -29,13 +29,12 @@ export interface EngineReadiness {
 export async function rerankerReadinessForEngine(
   engine: DbPlaneEngineReader,
   model: string,
-  opts: { now?: Date } = {},
 ): Promise<EngineReadiness> {
   try {
     const gw = requireConfig();
     return {
       plane: 'gateway',
-      readiness: rerankerReadiness(model, gw.env ?? {}, { now: opts.now, baseUrlOverrides: gw.base_urls ?? null }),
+      readiness: rerankerReadiness(model, gw.env ?? {}, { baseUrlOverrides: gw.base_urls ?? null }),
     };
   } catch {
     // Gateway not configured — build the plane the CLI would.
@@ -47,7 +46,6 @@ export async function rerankerReadinessForEngine(
   return {
     plane: 'config',
     readiness: rerankerReadiness(model, mergedProviderEnv(mergedCfg, process.env), {
-      now: opts.now,
       baseUrlOverrides: mergedCfg?.provider_base_urls ?? null,
     }),
   };

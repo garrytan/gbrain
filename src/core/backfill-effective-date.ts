@@ -26,7 +26,7 @@
  */
 
 import type { BrainEngine } from './engine.ts';
-import { computeEffectiveDate } from './effective-date.ts';
+import { computeEffectiveDate, fallbackCreatedAt } from './effective-date.ts';
 import type { EffectiveDateSource } from './types.ts';
 
 const BATCH_SIZE = 1000;
@@ -146,6 +146,8 @@ export async function backfillEffectiveDate(
   // batch otherwise; PGLite ignores SET LOCAL outside transactions but
   // doesn't have the timeout problem in the first place (single writer).
   const isPostgres = engine.kind === 'postgres';
+  // Same zone the importer reads offset-less datetimes in (brain.timezone).
+  const timeZone = (await engine.getConfig('brain.timezone').catch(() => null))?.trim() || undefined;
 
   while (true) {
     if (opts.maxRows && examined >= opts.maxRows) break;
@@ -197,8 +199,9 @@ export async function backfillEffectiveDate(
             slug: r.slug,
             frontmatter: fm,
             filename,
+            timeZone,
             updatedAt: new Date(r.updated_at),
-            createdAt: new Date(r.created_at),
+            createdAt: fallbackCreatedAt({ existing: r, now: new Date(r.created_at) }),
           });
 
           // No-op-on-equal: skip the UPDATE if existing matches (saves write
@@ -228,8 +231,9 @@ export async function backfillEffectiveDate(
           slug: r.slug,
           frontmatter: fm,
           filename,
+          timeZone,
           updatedAt: new Date(r.updated_at),
-          createdAt: new Date(r.created_at),
+          createdAt: fallbackCreatedAt({ existing: r, now: new Date(r.created_at) }),
         });
         const existingMs = r.effective_date ? new Date(r.effective_date).getTime() : null;
         const computedMs = computed.date ? computed.date.getTime() : null;

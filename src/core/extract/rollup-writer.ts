@@ -178,11 +178,3 @@ function rollupErrorLogOnce(kind: string, day: string, msg: string): void {
     `[extract-rollup] write failed (best-effort; audit JSONL remains source of truth): ${msg}`,
   );
 }
-
-/**
- * Test seam: clear the logged-errors set so repeated test invocations
- * surface stderr each time.
- */
-export function _resetRollupErrorLogForTests(): void {
-  _loggedRollupErrors.clear();
-}

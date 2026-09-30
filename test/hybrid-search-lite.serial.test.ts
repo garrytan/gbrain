@@ -15,6 +15,7 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
+import { installFixtureChunks } from './helpers/page-projection.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { hybridSearchCached } from '../src/core/search/hybrid.ts';
 import type { PageInput, HybridSearchMeta } from '../src/core/types.ts';
@@ -65,7 +66,7 @@ beforeAll(async () => {
     // page without explicit chunks is invisible to the keyword arm and
     // every result-dependent assertion below runs against an empty set.
     // (Pattern: test/chunk-grain-fts.test.ts.)
-    await engine.upsertChunks(p.slug, [
+    await installFixtureChunks(engine, p.slug, [
       { chunk_index: 0, chunk_text: p.page.compiled_truth!, chunk_source: 'compiled_truth' },
     ]);
   }

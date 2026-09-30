@@ -70,13 +70,13 @@ async function driftTo(slug: string, stalePath: string, sourceId = 'default'): P
  * duration of the call only, so the drift/readback helpers above never count.
  */
 async function importCountingRefreshes(slug: string, body: string, opts: ImportOpts) {
-  const orig = engine.executeRaw.bind(engine);
+  const orig = engine.executeRaw;
   const updates: string[] = [];
   Object.defineProperty(engine, 'executeRaw', {
     configurable: true,
-    value: (sql: string, params?: unknown[]) => {
+    value: function(this: PGLiteEngine, sql: string, params?: unknown[]) {
       if (/UPDATE pages SET source_path/.test(sql)) updates.push(sql);
-      return orig(sql, params);
+      return orig.call(this, sql, params);
     },
   });
   try {

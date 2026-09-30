@@ -23,6 +23,7 @@
  * field when present — the judge has signal we don't.
  */
 
+import { parseDateLoose } from '../effective-date.ts';
 import type {
   ContradictionFinding,
   ContradictionPair,
@@ -166,12 +167,16 @@ export function renderResolutionCommand(
       // supersede command on the older-dated side. If both sides have takes
       // we prefer the take that's NOT on the newer page. Falls back to a
       // hint with both slugs when the dates can't be ordered.
+      // Dates order by instant (a timezone-bearing date compares correctly
+      // against a date-only one); equal or unparseable dates have no winner.
       const aDate = pair.a.effective_date;
       const bDate = pair.b.effective_date;
-      if (aDate && bDate) {
-        const olderSide = aDate < bDate ? pair.a : pair.b;
-        const newerSide = aDate < bDate ? pair.b : pair.a;
-        const newerDate = aDate < bDate ? bDate : aDate;
+      const aMs = parseDateLoose(aDate)?.getTime();
+      const bMs = parseDateLoose(bDate)?.getTime();
+      if (aDate && bDate && aMs !== undefined && bMs !== undefined && aMs !== bMs) {
+        const olderSide = aMs < bMs ? pair.a : pair.b;
+        const newerSide = aMs < bMs ? pair.b : pair.a;
+        const newerDate = aMs < bMs ? bDate : aDate;
         if (olderSide.take_id !== null && olderSide.take_row_num !== null) {
           // gbrain#4169: temporal supersession has a REAL winner (the
           // newer-dated side). When that side is itself a take, its claim is
@@ -183,7 +188,7 @@ export function renderResolutionCommand(
             : `'<replacement claim — see contradiction report>'`;
           return `gbrain takes supersede ${shellQuote(olderSide.slug)} --row ${olderSide.take_row_num} --claim ${claim} --since ${newerDate}`;
         }
-        return `# temporal_supersession: ${olderSide.slug} (${aDate < bDate ? aDate : bDate}) superseded by ${newerDate}`;
+        return `# temporal_supersession: ${olderSide.slug} (${aMs < bMs ? aDate : bDate}) superseded by ${newerDate}`;
       }
       return `# temporal_supersession: ${pair.a.slug} vs ${pair.b.slug} (date order unclear)`;
     }

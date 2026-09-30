@@ -396,9 +396,15 @@ describe('runExtractFacts — happy path', () => {
       expect(r.factsInserted).toBe(1);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const rows = await (engine as any).db.query(
-        `SELECT fact FROM facts WHERE source_markdown_slug = 'people/alice-fresh' ORDER BY row_num`,
+        `SELECT fact FROM facts WHERE source_markdown_slug = 'people/alice-fresh' AND expired_at IS NULL ORDER BY row_num`,
       );
       expect(rows.rows.map((row: { fact: string }) => row.fact)).toEqual(['Existing']);
+      // B-5: the stale row is expired and detached from the fence, never deleted.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const stale = await (engine as any).db.query(
+        `SELECT row_num, expired_at IS NOT NULL AS expired FROM facts WHERE source_markdown_slug = 'people/alice-fresh' AND fact = 'Stale indexed row'`,
+      );
+      expect(stale.rows).toEqual([{ row_num: null, expired: true }]);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -432,9 +438,15 @@ describe('runExtractFacts — happy path', () => {
       expect(r.factsDeleted).toBeGreaterThan(0);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const rows = await (engine as any).db.query(
-        `SELECT fact FROM facts WHERE source_markdown_slug = 'people/alice-wt-off' ORDER BY row_num`,
+        `SELECT fact FROM facts WHERE source_markdown_slug = 'people/alice-wt-off' AND expired_at IS NULL ORDER BY row_num`,
       );
       expect(rows.rows.map((row: { fact: string }) => row.fact)).toEqual(['Existing']);
+      // B-5: the stale row is expired and detached from the fence, never deleted.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const stale = await (engine as any).db.query(
+        `SELECT row_num, expired_at IS NOT NULL AS expired FROM facts WHERE source_markdown_slug = 'people/alice-wt-off' AND fact = 'Stale indexed row'`,
+      );
+      expect(stale.rows).toEqual([{ row_num: null, expired: true }]);
     } finally {
       await engine.unsetConfig('sync.write_through');
       _resetWriteThroughCacheForTest();
@@ -510,27 +522,38 @@ describe('runExtractFacts — happy path', () => {
       .toEqual(['Fence fact', 'conversation fact']);
   });
 
-  test('removed-from-fence row is deleted from DB (wipe-and-reinsert pattern)', async () => {
+  test('removed-from-fence row is expired and detached, the kept row keeps its id (B-5)', async () => {
     // Seed: 2 facts.
     await putPage('people/alice', FACT_FENCE(
       `| 1 | A | fact | 1.0 | world | medium | 2026-01-01 |  | s |  |
 | 2 | B | fact | 1.0 | world | medium | 2026-01-01 |  | s |  |`,
     ));
     await runExtractFacts(engine, { slugs: ['people/alice'] });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const before = await (engine as any).db.query(
+      `SELECT id, fact FROM facts WHERE source_markdown_slug = 'people/alice' ORDER BY row_num`,
+    );
 
     // Edit the page to remove row 2.
     await putPage('people/alice', FACT_FENCE(
       `| 1 | A | fact | 1.0 | world | medium | 2026-01-01 |  | s |  |`,
     ));
 
-    await runExtractFacts(engine, { slugs: ['people/alice'] });
+    const r = await runExtractFacts(engine, { slugs: ['people/alice'] });
+    expect(r.factsDeleted).toBe(1);
+    expect(r.factsInserted).toBe(0);
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const rows = await (engine as any).db.query(
-      `SELECT fact FROM facts WHERE source_markdown_slug = 'people/alice'`,
+      `SELECT id, fact, row_num, expired_at IS NOT NULL AS expired FROM facts
+        WHERE source_markdown_slug = 'people/alice' ORDER BY id`,
     );
-    expect(rows.rows).toHaveLength(1);
-    expect(rows.rows[0].fact).toBe('A');
+    expect(rows.rows).toEqual([
+      { id: before.rows[0].id, fact: 'A', row_num: 1, expired: false },
+      { id: before.rows[1].id, fact: 'B', row_num: null, expired: true },
+    ]);
+    const active = await engine.listFactsByEntity('default', 'people/alice', { activeOnly: true });
+    expect(active.map(f => f.fact)).toEqual(['A']);
   });
 
   // #4870 — visibility / notability are fence cells (parsed + validated as
@@ -550,19 +573,24 @@ describe('runExtractFacts — happy path', () => {
     );
     expect(rows.rows).toEqual([{ visibility: 'world', notability: 'medium' }]);
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const [{ id }] = (await (engine as any).db.query(`SELECT id FROM facts WHERE source_markdown_slug = 'people/alice'`)).rows;
     await putPage('people/alice', FACT_FENCE(
       `| 1 | Alice likes tea | preference | 0.9 | private | medium |  |  | fence |  |`,
     ));
     const second = await runExtractFacts(engine, { slugs: ['people/alice'] });
-    expect(second.factsInserted).toBe(1);
+    // B-5: updated in place, the fact id survives.
+    expect(second.factsUpdated).toBe(1);
+    expect(second.factsInserted).toBe(0);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     rows = await (engine as any).db.query(
-      `SELECT visibility, notability FROM facts WHERE source_markdown_slug = 'people/alice'`,
+      `SELECT id, visibility, notability FROM facts WHERE source_markdown_slug = 'people/alice'`,
     );
-    expect(rows.rows).toEqual([{ visibility: 'private', notability: 'medium' }]);
+    expect(rows.rows).toEqual([{ id, visibility: 'private', notability: 'medium' }]);
 
     const third = await runExtractFacts(engine, { slugs: ['people/alice'] });
     expect(third.factsInserted).toBe(0);
+    expect(third.factsUpdated).toBe(0);
     expect(third.factsDeleted).toBe(0);
   });
 
@@ -572,16 +600,20 @@ describe('runExtractFacts — happy path', () => {
     ));
     await runExtractFacts(engine, { slugs: ['people/alice'] });
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const [{ id }] = (await (engine as any).db.query(`SELECT id FROM facts WHERE source_markdown_slug = 'people/alice'`)).rows;
     await putPage('people/alice', FACT_FENCE(
       `| 1 | Alice likes tea | preference | 0.9 | world | high |  |  | fence |  |`,
     ));
     const second = await runExtractFacts(engine, { slugs: ['people/alice'] });
-    expect(second.factsInserted).toBe(1);
+    // B-5: updated in place, the fact id survives.
+    expect(second.factsUpdated).toBe(1);
+    expect(second.factsInserted).toBe(0);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const rows = await (engine as any).db.query(
-      `SELECT visibility, notability FROM facts WHERE source_markdown_slug = 'people/alice'`,
+      `SELECT id, visibility, notability FROM facts WHERE source_markdown_slug = 'people/alice'`,
     );
-    expect(rows.rows).toEqual([{ visibility: 'world', notability: 'high' }]);
+    expect(rows.rows).toEqual([{ id, visibility: 'world', notability: 'high' }]);
 
     const third = await runExtractFacts(engine, { slugs: ['people/alice'] });
     expect(third.factsInserted).toBe(0);
@@ -659,7 +691,7 @@ describe('runExtractFacts — happy path', () => {
     expect(rows.rows.map((row: { fact: string }) => row.fact)).toEqual(['Seeded']);
   });
 
-  test('page with no facts fence → DB facts for that page wiped (empty fence reconciles to empty index)', async () => {
+  test('page with no facts fence → its fence rows are expired and detached (empty fence reconciles to an empty active index)', async () => {
     await putPage('people/alice', FACT_FENCE(
       `| 1 | seeded | fact | 1.0 | world | medium | 2026-01-01 |  | s |  |`,
     ));
@@ -675,7 +707,8 @@ describe('runExtractFacts — happy path', () => {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const rows = await (engine as any).db.query(
-      `SELECT COUNT(*) AS n FROM facts WHERE source_markdown_slug = 'people/alice'`,
+      `SELECT COUNT(*) AS n FROM facts WHERE source_markdown_slug = 'people/alice'
+         AND (expired_at IS NULL OR row_num IS NOT NULL)`,
     );
     expect(Number(rows.rows[0].n)).toBe(0);
   });
@@ -740,7 +773,8 @@ describe('runExtractFacts — happy path', () => {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const rows = await (engine as any).db.query(
-      `SELECT COUNT(*) AS n FROM facts WHERE source_markdown_slug = 'people/alice'`,
+      `SELECT COUNT(*) AS n FROM facts WHERE source_markdown_slug = 'people/alice'
+         AND (expired_at IS NULL OR row_num IS NOT NULL)`,
     );
     expect(Number(rows.rows[0].n)).toBe(0);
   });
@@ -1118,12 +1152,16 @@ describe('runExtractFacts — empty-fence guard (Codex R2-#7)', () => {
     expect(r.factsDeleted).toBe(1); // only the stale fence-owned row
     expect(r.factsInserted).toBe(1);
 
+    // B-5: the stale fence row is expired and detached; the hybrid row is untouched.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const rows = await (engine as any).db.query(
-      `SELECT fact FROM facts WHERE source_markdown_slug = 'people/alice' ORDER BY id`,
+      `SELECT fact, row_num, expired_at IS NOT NULL AS expired FROM facts WHERE source_markdown_slug = 'people/alice' ORDER BY id`,
     );
-    expect(rows.rows.map((row: { fact: string }) => row.fact))
-      .toEqual(['forgotten hybrid claim', 'replacement fact']);
+    expect(rows.rows).toEqual([
+      { fact: 'forgotten hybrid claim', row_num: null, expired: true },
+      { fact: 'old fact', row_num: null, expired: true },
+      { fact: 'replacement fact', row_num: 1, expired: false },
+    ]);
   });
 
   test('fence claim matching an expired legacy row is inserted active — fence is canonical (#2646)', async () => {
@@ -1550,9 +1588,11 @@ describe('runExtractFacts — v0.46 (#3014) supersession transport + heal', () =
     expect(drifted.superseded_by).toBeNull();
     expect(drifted.expired_at).toBeNull();
 
+    const idsBefore = await readIds();
     const healRun = await runExtractFacts(engine, { slugs: ['people/deal'] });
-    // Drift detected → wipe+reinsert re-transports the columns.
-    expect(healRun.factsInserted).toBeGreaterThan(0);
+    // Drift detected → the row is healed in place (B-5: ids kept).
+    expect(healRun.factsUpdated).toBeGreaterThan(0);
+    expect(await readIds()).toEqual(idsBefore);
 
     const healed = (await readSupersessionCols()).find(x => x.row_num === 1)!;
     expect(healed.superseded_by).not.toBeNull();
@@ -1606,15 +1646,17 @@ describe('runExtractFacts — v0.46 (#3014) supersession transport + heal', () =
     expect(await readIds()).toEqual(idsAfterFirst);
   });
 
-  test('idempotent: a chain (struck → struck) does not churn — second reconcile is a no-op', async () => {
+  test('a chain (struck → struck) links every hop and does not churn — second reconcile is a no-op (B-13)', async () => {
     await putPage('people/deal', FACT_FENCE(
       `| 1 | ~~Link a~~ | commitment | 0.6 | world | medium | 2026-01-01 |  | call | superseded by #2 |
 | 2 | ~~Link b~~ | commitment | 0.6 | world | medium | 2026-02-01 |  | call | superseded by #3 |
 | 3 | Live tail | fact | 1.0 | world | high | 2026-03-01 |  | call |  |`,
     ));
     const first = await runExtractFacts(engine, { slugs: ['people/deal'] });
-    expect(first.warnings.some(w => w.includes('struck'))).toBe(true);
+    expect(first.warnings.filter(w => w.includes('superseded'))).toEqual([]);
     const idsAfterFirst = await readIds();
+    const links = (await readSupersessionCols()).map(x => (x.superseded_by == null ? null : Number(x.superseded_by)));
+    expect(links).toEqual([idsAfterFirst[1], idsAfterFirst[2], null]);
 
     const second = await runExtractFacts(engine, { slugs: ['people/deal'] });
     expect(second.factsInserted).toBe(0);
@@ -1641,7 +1683,7 @@ describe('runExtractFacts — v0.46 (#3014) supersession transport + heal', () =
 | 2 | New claim | fact | 1.0 | world | high | 2026-07-01 |  | call |  |`,
     ));
     const r = await runExtractFacts(engine, { slugs: ['people/deal'] });
-    expect(r.factsInserted).toBeGreaterThan(0);
+    expect(r.factsUpdated).toBeGreaterThan(0);
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const ids = await (engine as any).db.query(
@@ -1661,7 +1703,7 @@ describe('runExtractFacts — v0.46 (#3014) supersession transport + heal', () =
   // BEFORE the separate insertFacts transaction; an insert throw left the
   // page permanently emptied. The caller now defers the wipe into
   // insertFacts' own transaction, so a failing insert can never empty it.
-  test('a failing insert during the wipe+reinsert path leaves the page intact', async () => {
+  test('a failing write during reconcile rolls back and leaves the page intact', async () => {
     await putPage('people/deal', SUPERSEDE_FENCE);
     await runExtractFacts(engine, { slugs: ['people/deal'] });
     const before = await readIds();
@@ -1673,21 +1715,28 @@ describe('runExtractFacts — v0.46 (#3014) supersession transport + heal', () =
       `UPDATE facts SET superseded_by = NULL, expired_at = NULL WHERE source_markdown_slug = 'people/deal' AND row_num = 1`,
     );
 
-    // Make the insert throw. Pre-fix, the separate-commit delete had already
-    // emptied the page by the time this threw; now no delete runs outside
-    // insertFacts, so the rows survive.
-    const original = engine.insertFacts.bind(engine);
+    // Make the reconcile's final write throw. Every write of one page's
+    // reconcile runs in a single transaction, so the heal above it rolls back.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (engine as any).insertFacts = async () => { throw new Error('simulated insert failure'); };
+    await (engine as any).db.query(`CREATE OR REPLACE FUNCTION test_reject_link() RETURNS trigger LANGUAGE plpgsql AS $fn$
+      BEGIN RAISE EXCEPTION 'simulated write failure'; END $fn$`);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (engine as any).db.query('CREATE TRIGGER test_reject_link BEFORE UPDATE OF superseded_by ON facts FOR EACH ROW EXECUTE FUNCTION test_reject_link()');
     try {
-      await expect(runExtractFacts(engine, { slugs: ['people/deal'] })).rejects.toThrow('simulated insert failure');
+      // The failure is isolated to this page and reported, not thrown out of
+      // the phase (a thrown error aborted every later page).
+      const result = await runExtractFacts(engine, { slugs: ['people/deal'] });
+      expect(result.pagesFailed).toBe(1);
+      expect(result.warnings.some(w => w.startsWith('people/deal: FACTS_RECONCILE_FAILED') && w.includes('simulated write failure'))).toBe(true);
     } finally {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (engine as any).insertFacts = original;
+      await (engine as any).db.query('DROP TRIGGER IF EXISTS test_reject_link ON facts');
     }
 
-    // The page keeps its rows — not silently emptied.
+    // The page keeps its rows, and the in-place heal rolled back with the failure.
     expect(await readIds()).toEqual(before);
+    const row1 = (await readSupersessionCols()).find(x => x.row_num === 1)!;
+    expect(row1.expired_at).toBeNull();
   });
 
   // An int4-overflowing #N in the fence must be treated as a dangling

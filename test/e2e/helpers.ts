@@ -1,8 +1,8 @@
 /**
- * E2E test helpers: DB lifecycle, fixture import, timing, and diagnostics.
+ * E2E test helpers: DB lifecycle, fixture import, and diagnostics.
  *
  * Usage in test files:
- *   import { setupDB, teardownDB, importFixtures, time } from './helpers.ts';
+ *   import { setupDB, teardownDB, importFixtures } from './helpers.ts';
  *   beforeAll(async () => { await setupDB(); await importFixtures(); });
  *   afterAll(async () => { await teardownDB(); });
  */
@@ -58,7 +58,6 @@ const ALL_TABLES = [
   // join), but stale rows poison stats/count assertions across runs.
   'context_volunteer_events',
   'pages',       // last because of foreign keys
-  'config',
   'minion_attachments',
   'minion_inbox',
   'minion_jobs',
@@ -79,10 +78,11 @@ export function hasDatabase(): boolean {
 export { assertSafeE2eDatabaseUrl };
 
 /**
- * Connect to DB, run schema init, truncate all tables.
+ * Connect to DB and clear fixture data while retaining the migration ledger.
+ * Explicit migration fixtures can opt into replaying the cold migration chain.
  * Call in beforeAll() of each test file.
  */
-export async function setupDB(): Promise<PostgresEngine> {
+export async function setupDB(options: { replayMigrations?: boolean } = {}): Promise<PostgresEngine> {
   if (!DATABASE_URL) {
     throw new Error('DATABASE_URL not set. Copy .env.testing.example to .env.testing and configure it.');
   }
@@ -99,6 +99,9 @@ export async function setupDB(): Promise<PostgresEngine> {
   // Some tables (e.g. v0.28 takes/synthesis_evidence) only exist after
   // migrations run via engine.connect() below, so skip non-existent tables.
   const conn = db.getConnection();
+  const embeddingIdentity = await conn.unsafe<Array<{ key: string; value: string }>>(
+    `SELECT key, value FROM config WHERE key IN ('embedding_model', 'embedding_dimensions')`,
+  );
   for (const table of ALL_TABLES) {
     try {
       await conn.unsafe(`TRUNCATE ${table} CASCADE`);
@@ -108,11 +111,16 @@ export async function setupDB(): Promise<PostgresEngine> {
     }
   }
 
+  await conn.unsafe(options.replayMigrations ? 'TRUNCATE config' : "DELETE FROM config WHERE key <> 'version'");
+
   // Re-seed config (initSchema inserts default config rows)
   await conn.unsafe(`
     INSERT INTO config (key, value) VALUES ('schema_version', '1')
     ON CONFLICT (key) DO NOTHING
   `);
+  for (const row of embeddingIdentity) {
+    await conn.unsafe('INSERT INTO config (key, value) VALUES ($1, $2)', [row.key, row.value]);
+  }
 
   // Reset leaked brain identity: `sources` is not in ALL_TABLES (the default
   // row must survive), but rows/columns written by earlier files or runs
@@ -121,6 +129,11 @@ export async function setupDB(): Promise<PostgresEngine> {
   // legacy-path performSync classify as first_sync forever. 42P01-tolerant
   // like the TRUNCATE loop above.
   try {
+    // A file that activated managed persistence and exited without
+    // deactivating leaves the writer guard armed, and its sources trigger
+    // rejects the reset below (writer_coordinator_required). Restore the
+    // schema default (disabled) first.
+    await conn.unsafe(`UPDATE persistence_brain SET enabled = false, activated_at = NULL WHERE singleton = 1`);
     await conn.unsafe(`DELETE FROM sources WHERE id <> 'default'`);
     // Only the sync-identity columns: local_path feeds writeSyncAnchor's
     // ownership guard (#3735) and last_commit/last_sync_at feed first_sync
@@ -175,6 +188,10 @@ export async function setupLegacyEmbeddingDB(): Promise<PostgresEngine> {
     // trigram-based). This empty test table also receives fixed-width seeds.
     await target.executeRaw(`ALTER TABLE takes ALTER COLUMN embedding TYPE ${takes.type_name}(${dims}) USING NULL`);
   }
+  await target.transaction(async tx => {
+    await tx.setConfig('embedding_model', LEGACY_EMBEDDING_CONFIG.embedding_model);
+    await tx.setConfig('embedding_dimensions', String(dims));
+  });
   return target;
 }
 
@@ -206,10 +223,10 @@ export function getConn() {
 
 /**
  * Import all fixture files from test/e2e/fixtures/ into the brain.
+ * An explicit engine lets a fixture own its database without shared resets.
  * Returns the list of import results.
  */
-export async function importFixtures() {
-  const e = getEngine();
+export async function importFixtures(e: PostgresEngine = getEngine()) {
   const results: Array<{ slug: string; status: string; chunks: number }> = [];
 
   const files = findMarkdownFiles(FIXTURES_DIR);
@@ -250,16 +267,6 @@ function findMarkdownFiles(dir: string): string[] {
     }
   }
   return results.sort();
-}
-
-/**
- * Time a function and return [result, durationMs].
- */
-export async function time<T>(fn: () => Promise<T>): Promise<[T, number]> {
-  const start = performance.now();
-  const result = await fn();
-  const dur = performance.now() - start;
-  return [result, dur];
 }
 
 /**

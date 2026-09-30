@@ -18,7 +18,7 @@
  * dispatcher bug where viaSubagent=true but subagentId is missing.
  *
  * In v0.15 every allow-list op is treated as idempotent for the two-phase
- * replay path. put_page with a deterministic slug is idempotent at the row
+ * replay path. put_page with its persisted request UUID is idempotent at the journal
  * level; repeats re-derive the same embedding over identical content.
  */
 
@@ -29,9 +29,6 @@ import type { AuthInfo, Operation, OperationContext } from '../../operations.ts'
 import { paramDefToSchema } from '../../../mcp/tool-defs.ts';
 import { normalizeOptionalParams, validateParams } from '../../../mcp/validate-params.ts';
 import { validateSourceId } from '../../utils.ts';
-import { parseMarkdown, serializeMarkdown } from '../../markdown.ts';
-import { loadActivePackForWriteVocabulary } from '../../schema-pack/write-vocabulary.ts';
-import { classifyStoredType, sanitizeTypeForDisplay } from '../../schema-pack/type-usage.ts';
 import type { ToolCtx, ToolDef } from '../types.ts';
 import { putPageRejection } from './put-page-result.ts';
 
@@ -216,7 +213,7 @@ export interface BuildBrainToolsOpts {
    */
   sourceId?: string;
   /** Current remote owner grant; never populated from caller tool arguments. */
-  delegatedAuth?: Pick<AuthInfo, 'clientId' | 'scopes' | 'sourceId' | 'allowedSources'>;
+  delegatedAuth?: Pick<AuthInfo, 'clientId' | 'scopes' | 'sourceId' | 'allowedSources' | 'allowedOperations'>;
 }
 
 interface OpContextDeps {
@@ -247,7 +244,8 @@ function buildOpContext(deps: OpContextDeps): OperationContext {
     sourceId: deps.sourceId ?? 'default',
     // Preserve explicit per-call source checks without importing direct-write
     // fences or requiring direct read/write scopes for agent-only grants.
-    ...(deps.delegatedAuth ? { auth: { token: '', ...deps.delegatedAuth } } : {}),
+    ...(deps.delegatedAuth ? { auth: { token: '', ...deps.delegatedAuth,
+      principal: { kind: 'oauth_client' as const, id: deps.delegatedAuth.clientId } } } : {}),
     jobId: deps.jobId,
     subagentId: deps.subagentId,
     viaSubagent: true,           // FAIL-CLOSED: put_page etc. enforce namespace
@@ -293,8 +291,8 @@ export function buildBrainTools(opts: BuildBrainToolsOpts): ToolDef[] {
       name: toolName,
       description: op.description,
       input_schema: schema,
-      // v0.15 ships only idempotent brain tools (every allow-listed op is
-      // deterministic over its input; put_page re-writes the same slug).
+      // The persisted tool dispatcher binds mutations to a stable request UUID;
+      // a replay returns the original durable receipt without another write.
       idempotent: true,
       // v0.41 Approach C: surface usage_hint to the system-prompt renderer.
       // Keyed by the unprefixed op name. Undefined when no hint is registered.
@@ -323,9 +321,6 @@ export function buildBrainTools(opts: BuildBrainToolsOpts): ToolDef[] {
         const params = normalizeOptionalParams(op, raw);
         const validationError = validateParams(op, params);
         if (validationError) throw new Error(`${toolName}: ${validationError}`);
-        if (op.name === 'put_page' && opts.allowedSlugPrefixes?.length) {
-          await pinUndeclaredType(params, opCtx);
-        }
         const output = await op.handler(opCtx, params);
         const rejection = op.name === 'put_page' ? putPageRejection(output) : null;
         if (rejection) throw new Error(rejection);
@@ -333,43 +328,6 @@ export function buildBrainTools(opts: BuildBrainToolsOpts): ToolDef[] {
       },
     };
   });
-}
-
-/**
- * #4852: trusted-workspace subagents (dream synth agentic lane, patterns,
- * delegated jobs — the `allowedSlugPrefixes` writers) author page content
- * model-side, and the model mints types no bundled pack declares
- * (`reflection` / `original` / `pattern`). The orchestrator reverse-writes
- * that type to disk as explicit frontmatter, so every `gbrain sync` re-warns.
- * The oneshot lane already pins its output to 'note' (F5 in
- * subagent-oneshot.ts); this extends the same rule to the tool-calling lanes:
- * an EXPLICIT frontmatter type the active pack classifies as `undeclared`
- * rewrites to 'note' with the model's type kept in `frontmatter.legacy_type`
- * (the base-v2 D12 shape). Declared types and aliases pass through untouched
- * (alias_of stays a sync warning); no resolvable pack → no-op (the #4655
- * fail-open posture). Never rejects — patterns children run require_writes
- * and a rejection would dead-letter the whole phase. Runs BEFORE import so
- * content_hash is computed once over the final type (no re-chunk churn).
- */
-async function pinUndeclaredType(
-  params: Record<string, unknown>,
-  opCtx: OperationContext,
-): Promise<void> {
-  if (typeof params.content !== 'string' || typeof params.slug !== 'string') return;
-  const parsed = parseMarkdown(params.content, `${params.slug}.md`);
-  if (parsed.typeExplicit !== true) return;
-  const pack = await loadActivePackForWriteVocabulary(opCtx);
-  if (!pack || classifyStoredType(parsed.type, pack.manifest).kind !== 'undeclared') return;
-  params.content = serializeMarkdown(
-    { ...parsed.frontmatter, legacy_type: parsed.type },
-    parsed.compiled_truth,
-    parsed.timeline,
-    { type: 'note', title: parsed.title, tags: parsed.tags },
-  );
-  opCtx.logger.warn(
-    `undeclared type '${sanitizeTypeForDisplay(parsed.type)}' normalized to 'note' ` +
-    `(legacy_type kept; pack ${pack.manifest.name})`,
-  );
 }
 
 /**

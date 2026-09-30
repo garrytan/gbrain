@@ -184,6 +184,24 @@ describe('extractWikilinkTargets', () => {
 });
 
 describe('runSubagentOneshot', () => {
+  test('pending write receipts retain the whole ledger and retry without another provider call', async () => {
+    const ctx = await makeCtx(DATA); const args = makeArgs(ctx, DATA, VALID_RESPONSE);
+    const realTool = args.putPageTool!; const realChat = args._chat!;
+    let chatCalls = 0; let pending = true; const ids: unknown[] = [];
+    args._chat = (async (options: Parameters<typeof realChat>[0]) => { chatCalls++; return realChat(options); }) as typeof realChat;
+    args.putPageTool = { ...realTool, execute: async (input, context) => {
+      const id = (input as Record<string, unknown>).request_id; ids.push(id);
+      if (pending) return { request_id: id, state: 'queued', retry_after_ms: 100 };
+      return realTool.execute(input, context);
+    } };
+    await expect(runSubagentOneshot(args)).rejects.toMatchObject({ code: 'write_pending', writeRequest: { state: 'queued' } });
+    const rows = await engine.executeRaw<{ status: string }>('SELECT status FROM subagent_tool_executions WHERE job_id=$1', [ctx.id]);
+    expect(rows).toHaveLength(2); expect(rows.every(row => row.status === 'pending')).toBe(true);
+    pending = false;
+    expect((await runSubagentOneshot(args)).kind).toBe('done');
+    expect(chatCalls).toBe(1); expect(ids[1]).toBe(ids[0]);
+  });
+
   test('happy path: validates, writes both pages via put_page, ledger rows land, transcript persisted', async () => {
     const ctx = await makeCtx(DATA);
     const outcome = await runSubagentOneshot(makeArgs(ctx, DATA, VALID_RESPONSE));
@@ -497,10 +515,15 @@ describe('runSubagentOneshot', () => {
     await engine.executeRaw(
       `INSERT INTO subagent_tool_executions (job_id, message_idx, tool_use_id, tool_name, input, status)
        VALUES ($1, 1, 'oneshot-deadbeef-p0', 'brain_put_page', $2::text::jsonb, 'pending')`,
-      [ctx.id, JSON.stringify({ slug: GOOD_SLUG_A, content: `Recovered body. [[${GOOD_SLUG_B}]]` })],
+      [ctx.id, JSON.stringify({ request_id: '02df181d-4594-4f1b-88de-61dc80338687', slug: GOOD_SLUG_A, content: `Recovered body. [[${GOOD_SLUG_B}]]` })],
     );
     let chatCalls = 0;
     const args = makeArgs(ctx, DATA, VALID_RESPONSE);
+    const realTool = args.putPageTool!;
+    args.putPageTool = { ...realTool, execute: async (input, context) => {
+      expect((input as Record<string, unknown>).request_id).toBe('02df181d-4594-4f1b-88de-61dc80338687');
+      return realTool.execute(input, context);
+    } };
     const inner = args._chat!;
     args._chat = (async (opts: Parameters<NonNullable<OneshotArgs['_chat']>>[0]) => {
       chatCalls++;
@@ -552,6 +575,10 @@ describe('runSubagentOneshot', () => {
             `SELECT count(*)::int AS n FROM subagent_tool_executions
               WHERE job_id = $1 AND tool_use_id LIKE 'oneshot-%'`, [ctx.id]);
           pendingAtFirstWrite = rows[0]!.n;
+          const identities = await engine.executeRaw<{ request_id: string }>(
+            `SELECT input->>'request_id' AS request_id FROM subagent_tool_executions WHERE job_id=$1`, [ctx.id]);
+          expect(new Set(identities.map(row => row.request_id)).size).toBe(2);
+          for (const row of identities) expect(row.request_id).toMatch(/^[0-9a-f-]{36}$/);
         }
         return realTool.execute(input, execCtx);
       },

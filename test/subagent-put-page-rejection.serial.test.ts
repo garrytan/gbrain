@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import type Anthropic from '@anthropic-ai/sdk';
+import { randomUUID } from 'node:crypto';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { MinionQueue } from '../src/core/minions/queue.ts';
 import { operations } from '../src/core/operations.ts';
@@ -69,9 +70,11 @@ describe('put_page result normalization', () => {
   test('invalid YAML and oversized content reject without creating a page', async () => {
     const tool = buildBrainTools({ subagentId: 1, engine, config, deferEmbeds: true })
       .find(tool => tool.name === 'brain_put_page')!;
-    for (const content of ['---\ntitle: [\n---\nbody', 'x'.repeat(MAX_FILE_SIZE + 1)]) {
-      await expect(tool.execute({ slug: 'wiki/agents/1/rejected', content }, { engine, jobId: 1, remote: true }))
-        .rejects.toThrow('page content was rejected before persistence');
+    for (const [content, code] of [['---\ntitle: [\n---\nbody', 'invalid_params'], ['x'.repeat(MAX_FILE_SIZE + 1), 'request_too_large']]) {
+      const failure = await tool.execute({ slug: 'wiki/agents/1/rejected', content, request_id: randomUUID() }, { engine, jobId: 1, remote: true })
+        .then(() => null, error => error);
+      expect(failure).toMatchObject({ code, writeRequest: { state: 'failed' } });
+      expect(failure.message).not.toContain(content);
       expect(await engine.getPage('wiki/agents/1/rejected', { sourceId: 'default' })).toBeNull();
     }
   });
@@ -79,11 +82,12 @@ describe('put_page result normalization', () => {
   test('saving the same persisted page again remains a successful unchanged skip', async () => {
     const tool = buildBrainTools({ subagentId: 1, engine, config, deferEmbeds: true })
       .find(tool => tool.name === 'brain_put_page')!;
-    const page = { ...input, slug: 'wiki/agents/1/saved' };
-    expect(await tool.execute(page, { engine, jobId: 1, remote: true }))
-      .toMatchObject({ status: 'created_or_updated' });
-    expect(await tool.execute(page, { engine, jobId: 1, remote: true }))
-      .toMatchObject({ status: 'skipped' });
+    const page = { ...input, slug: 'wiki/agents/1/saved', request_id: randomUUID() };
+    const first = await tool.execute(page, { engine, jobId: 1, remote: true }) as Record<string, unknown>;
+    expect(first).toMatchObject({ status: 'created_or_updated', state: 'committed' });
+    expect(await tool.execute(page, { engine, jobId: 1, remote: true })).toMatchObject({ request_id: page.request_id, revision: first.revision });
+    expect(await tool.execute({ ...page, request_id: randomUUID(), expected_revision: first.revision }, { engine, jobId: 1, remote: true }))
+      .toMatchObject({ status: 'skipped', revision: first.revision });
     expect(await engine.getPage(page.slug, { sourceId: 'default' })).not.toBeNull();
   });
 

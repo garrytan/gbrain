@@ -47,12 +47,17 @@ echo "OK: no JSON.stringify(x)::jsonb interpolation pattern in $SCAN_ROOT"
 # the "10/10 rescued" claim false for out-of-the-box users. Default is 5 now.
 MAX_STALLED_PATTERN='max_stalled\s+INTEGER\s+NOT\s+NULL\s+DEFAULT\s+1\b'
 
-# Schema files are fixed paths; under a fixture root (self-test) they don't
-# exist — skip rather than fail on the missing-file grep.
+# Schema sources, resolved under the fixture root in self-test mode. Refactor
+# wave 1 moves DDL into src/core/schema-migrations/ (one file per migration)
+# and a generated PGLite template; both are scanned from their first commit.
+SCHEMA_BASE="${GBRAIN_GUARD_ROOT:-.}"
 SCHEMA_FILES=()
-for f in src/schema.sql src/core/migrate.ts src/core/pglite-schema.ts src/core/schema-embedded.generated.ts; do
-  [ -f "$f" ] && SCHEMA_FILES+=("$f")
+for f in src/schema.sql src/core/migrate.ts src/core/pglite-schema.ts src/core/pglite-schema.generated.ts src/core/schema-embedded.generated.ts; do
+  [ -f "$SCHEMA_BASE/$f" ] && SCHEMA_FILES+=("$SCHEMA_BASE/$f")
 done
+if [ -d "$SCHEMA_BASE/src/core/schema-migrations" ]; then
+  while IFS= read -r f; do SCHEMA_FILES+=("$f"); done < <(find "$SCHEMA_BASE/src/core/schema-migrations" -name '*.ts' | sort)
+fi
 if [ "${#SCHEMA_FILES[@]}" -gt 0 ] && grep -rEn "$MAX_STALLED_PATTERN" "${SCHEMA_FILES[@]}" 2>/dev/null; then
   echo
   echo "ERROR: max_stalled DEFAULT 1 reintroduced in schema."

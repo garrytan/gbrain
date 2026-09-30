@@ -6,9 +6,9 @@ start here.
 
 > **Default: add memory to the existing agent.** Preserve its identity and unrelated instructions. Start keyless; automatic capture and paid enrichment are opt-in. No bootstrap interview or private repository is required.
 >
-> **Inside Grok Bot or Muse:** follow [Grok Bot](docs/guides/grok-bot.md) or [Muse](docs/guides/muse.md), using the isolated [in-agent setup](docs/guides/in-agent-setup.md) entry point. Use the absolute recorded launcher on every call. Sources organize local memory; they do not isolate agents that share files or credentials. Do not mark generated skills or routines as activated without native-harness evidence.
+> **Inside Grok Bot or Muse:** follow [Grok Bot](docs/guides/grok-bot.md) or [Muse](docs/guides/muse.md). The recommended path connects an isolated thin CLI to a brain on the user's own computer, published with `gbrain mcp expose --funnel` when needed; use the isolated [in-agent setup](docs/guides/in-agent-setup.md) when no machine stays online. Use the absolute recorded launcher on every call. Sources organize local memory; they do not isolate agents that share files or credentials. Do not mark generated skills or routines as activated without native-harness evidence.
 >
-> **Existing hosted brain:** follow [hosted harness access](docs/guides/hosted-harness-access.md). Provision on the host; install the private handoff inside the intended harness. A URL or ordinary OAuth token is not administration authority.
+> **Existing hosted brain:** follow [hosted harness access](docs/guides/hosted-harness-access.md). Choose native OAuth/PKCE or a private machine handoff for the intended harness. For login links, clients, permissions, or token lifecycle, follow [MCP administration](docs/mcp/ADMIN.md) or `skills/mcp-access/SKILL.md`. A URL or ordinary OAuth token is not owner administration authority.
 >
 > **Creating a new personal agent, explicitly requested by the user:** follow [BOOTSTRAP_FOR_AGENTS.md](BOOTSTRAP_FOR_AGENTS.md), then return here for the operating protocol.
 
@@ -23,9 +23,9 @@ start here.
    ```
    If `bun install -g` aborts or `gbrain doctor` reports `schema_version: 0`,
    the CLI prints a recovery hint pointing at [#218](https://github.com/garrytan/gbrain/issues/218).
-   Run `gbrain apply-migrations --yes` to recover, or fall back to the
+   Run `gbrain apply-migrations --yes --no-autopilot-install` to recover without installing services, or fall back to the
    deterministic install: `git clone https://github.com/garrytan/gbrain.git ~/gbrain && cd ~/gbrain && bun install && bun link`.
-2. Init the brain: `gbrain init` (defaults to PGLite, zero-config). For 1000+ files or
+2. Init keyless memory: `gbrain init --pglite --no-embedding` (zero-config). For 1000+ files or
    multi-machine sync, init suggests Postgres + pgvector via Supabase.
 3. **STOP — ask the user about search mode.** `gbrain init` auto-applied a
    default but printed a 9-cell cost matrix (mode × downstream model)
@@ -41,6 +41,15 @@ start here.
 ## Memory operating protocol
 
 Recall relevant saved context before answering. Save explicit requests to remember with provenance; confirm corrections against the stored record. Automatic capture requires opt-in. Withdrawal (`forget`) removes a fact from active memory; history, source material, and private backups may remain. Never promise physical erasure. Verify changes with actual GBrain calls and distinguish a local test from a new-conversation test in the harness.
+
+Durable preferences and facts belong in shared memory when the user wants them
+recalled later. Transient task state, credentials, local configuration, and harness
+activation state do not. Remote `put_page` saves references as text without inline
+graph extraction; stdio has best-effort startup/idle sweeps, while HTTP requires
+explicit host maintenance or authorized `add_link` calls. Configured model
+providers can receive text; Markdown export is not a full database backup.
+Read [memory boundaries](docs/guides/memory-boundaries.md) before promising
+portability, graph freshness, privacy, or recovery.
 
 ## Read this order
 
@@ -71,7 +80,8 @@ writing or reviewing an operation, consult `src/core/operations.ts` for the cont
 
 - **Configure:** [`docs/ENGINES.md`](./docs/ENGINES.md),
   [`docs/guides/live-sync.md`](./docs/guides/live-sync.md),
-  [`docs/mcp/DEPLOY.md`](./docs/mcp/DEPLOY.md).
+  [`docs/mcp/DEPLOY.md`](./docs/mcp/DEPLOY.md),
+  [`docs/guides/remote-mcp.md`](./docs/guides/remote-mcp.md) (`gbrain mcp expose`).
 - **Bring in your chat history:** `gbrain transcripts ingest` imports a
   downloaded ChatGPT / Claude export (or agent session logs); `gbrain connectors`
   connects the account and syncs new conversations live, incrementally and on an
@@ -85,9 +95,16 @@ writing or reviewing an operation, consult `src/core/operations.ts` for the cont
   `gbrain db-repair --yes` to apply safe fixes. All three are engine-free — they
   work while the database is down. Full loop:
   [`docs/ENGINES.md`](./docs/ENGINES.md#engine-detection-and-access-repair).
+  Doctor residue (`timeline_history`, `derived_visibility`, `safe_index_pending`):
+  preview `gbrain doctor --remediation-plan` (or `gbrain repair`), then, after the
+  user agrees, `gbrain doctor --remediate --yes --include-repairs --max-usd <n>`
+  or `gbrain repair <kind> --apply` on the brain host. After an upgrade, follow
+  [recover after upgrading](./docs/guides/repair.md#recover-after-upgrading-to-this-release). A refused
+  write names its reason and recovery command
+  ([write refusal reasons](./docs/guides/write-refusals.md)).
 - **Migrate / upgrade:** `gbrain upgrade` (binary self-update + schema migrations + post-upgrade prompts),
   [`docs/UPGRADING_DOWNSTREAM_AGENTS.md`](./docs/UPGRADING_DOWNSTREAM_AGENTS.md),
-  [`skills/migrations/`](./skills/migrations/), `gbrain apply-migrations --yes` (manual schema-only).
+  [`skills/migrations/`](./skills/migrations/), `gbrain apply-migrations --yes --no-autopilot-install` (manual migration orchestration without service installation).
 - **Eval retrieval changes:** capture is off by default. To benchmark a
   retrieval change against real captured queries, set
   `GBRAIN_CONTRIBUTOR_MODE=1`, then `gbrain eval export --since 7d > base.ndjson`
@@ -96,14 +113,22 @@ writing or reviewing an operation, consult `src/core/operations.ts` for the cont
   <dataset.jsonl>` runs against an isolated in-memory PGLite
   per question — your `~/.gbrain` is never opened. Full guide:
   [`docs/eval-bench.md`](./docs/eval-bench.md).
-- **Drive the brain to a target health score:** the one-command
-  loop. `gbrain doctor --remediation-plan --json` previews what would be
-  fixed; `gbrain doctor --remediate --yes --target-score 90 --max-usd 5`
-  walks a dependency-ordered plan, re-checking score between every step and
-  refusing to spend past the cost cap. Stale extraction uses source-scoped
-  database pages, including DB-only pages; it does not require a repository
-  sync first. Empty brains (no entity pages) or unconfigured embedding
-  keys hit a `max_reachable_score` ceiling and bail with what's missing.
+- **Drive the brain to a target health score:** preview, then agree.
+  `gbrain doctor --remediation-plan --json` previews job steps and the
+  PROTECTED repair steps (each marked "requires user agreement", with its
+  exact command); after the user agrees,
+  `gbrain doctor --remediate --yes --include-repairs --target-score 90 --max-usd 5`
+  runs the repairs (even when the score target is unreachable) and walks the
+  dependency-ordered job plan, re-checking score between steps. The cap is
+  cumulative across `--resume`; a paid step that would exceed it is not
+  started while free steps still run. Without `--include-repairs`, repair
+  steps are listed as skipped. `--json` classifies each finding `cleared`,
+  `pending`, `consent_required`, `operator_required` or `unsupported`.
+  Stale extraction uses source-scoped database pages, including DB-only
+  pages; it does not require a repository sync first. Empty brains (no
+  entity pages) or unconfigured embedding keys hit a `max_reachable_score`
+  ceiling: job steps stop with what's missing, while included repair steps
+  still run.
   Three phase handlers (synthesize / patterns / consolidate) are
   PROTECTED — only trusted local callers can submit them; MCP cannot.
   Reference: [`docs/architecture/topologies.md`](./docs/architecture/topologies.md).
@@ -131,6 +156,11 @@ writing or reviewing an operation, consult `src/core/operations.ts` for the cont
   [`docs/guides/open-loops.md`](./docs/guides/open-loops.md) (how detection
   works); the harness protocol lives in
   [`skills/google-loops/SKILL.md`](./skills/google-loops/SKILL.md).
+- **Contribute code:** [`CONTRIBUTING.md`, "Where does my change go?"](./CONTRIBUTING.md#where-does-my-change-go)
+  names the files, registry, regenerate command and smallest test for a storage method,
+  schema migration, doctor check, CLI-only command, HTTP route or sync phase. A branch written
+  before refactor wave 1: follow the moved-symbol map in
+  [`docs/architecture/wave-1-porting.md`](./docs/architecture/wave-1-porting.md).
 - **Everything else:** [`./llms.txt`](./llms.txt) is the full documentation map.
   [`./llms-full.txt`](./llms-full.txt) is the same map with core docs inlined for
   single-fetch ingestion.
@@ -144,12 +174,23 @@ unset) and tears down. Use `bun run ci:local:diff` for the
 diff-aware subset during fast iteration on a focused branch. Requires Docker
 (Docker Desktop / OrbStack / Colima) and `gitleaks` (`brew install gitleaks`).
 
+Fastest path, with a Ubicloud token (`UBICLOUD_API_KEY` or
+`UBICLOUD_API_TOKEN`): `bun run ci:ubicloud` runs the same gate across ten
+ephemeral VMs in about five minutes, uncommitted edits included
+(`ci:ubicloud:diff` for the diff-aware subset). See "Ubicloud fan-out" in
+[`docs/TESTING.md`](./docs/TESTING.md).
+
 Manual path: `bun test` plus the E2E lifecycle described in `./CLAUDE.md` (spin
 up the test Postgres container, run `bun run test:e2e`, tear it down).
 
 Ship via the `/ship` skill, not by hand. The full release + contributor process
 (CHANGELOG voice, version-locations sync, PR conventions, community-PR-wave) lives in
 [`./docs/RELEASING.md`](./docs/RELEASING.md); read it before shipping.
+
+**Always use PATCH without asking**, including the initial release choice;
+override `/ship`'s MINOR/MAJOR prompts. Auto-allocate past collisions, sync all
+version stamps and the PR title, then report the number. This changes numbering
+only: scope, merge, deployment, paid-work and validation approvals still apply.
 
 ## Privacy
 

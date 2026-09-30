@@ -24,6 +24,7 @@
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
+import { installFixtureChunks } from './helpers/page-projection.ts';
 
 let engine: PGLiteEngine;
 
@@ -370,10 +371,10 @@ describe('search visibility (soft-deleted pages hidden from searchKeyword)', () 
       frontmatter: {},
     });
     // Force chunk creation so search has something to index.
-    await engine.upsertChunks('people/nora', [
+    await installFixtureChunks(engine, 'people/nora', [
       { chunk_index: 0, chunk_text: 'gbrainquantum signature term occurs here', chunk_source: 'compiled_truth' as any },
     ]);
-    await engine.upsertChunks('people/oscar', [
+    await installFixtureChunks(engine, 'people/oscar', [
       { chunk_index: 0, chunk_text: 'gbrainquantum signature term occurs here too', chunk_source: 'compiled_truth' as any },
     ]);
 
@@ -394,14 +395,9 @@ describe('search visibility (soft-deleted pages hidden from searchKeyword)', () 
     await engine.executeRaw(
       `INSERT INTO pages (source_id, slug, type, title) VALUES ('archived-src', 'archived-src/secret', 'note', 'Secret')`,
     );
-    const pageRows = await engine.executeRaw<{ id: number }>(
-      `SELECT id FROM pages WHERE slug = 'archived-src/secret'`,
-    );
-    await engine.executeRaw(
-      `INSERT INTO content_chunks (page_id, chunk_index, chunk_text, chunk_source) VALUES ($1, 0, 'gbrainsemaphore unique term', 'compiled_truth')`,
-      [pageRows[0].id],
-    );
-    // Trigger should populate search_vector via the schema trigger.
+    await installFixtureChunks(engine, 'archived-src/secret', [
+      { chunk_index: 0, chunk_text: 'gbrainsemaphore unique term', chunk_source: 'compiled_truth' },
+    ], { sourceId: 'archived-src' });
     const before = await engine.searchKeyword('gbrainsemaphore');
     expect(before.length).toBe(1);
 

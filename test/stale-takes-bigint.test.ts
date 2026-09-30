@@ -1,8 +1,9 @@
 import { describe, expect, test } from 'bun:test';
-import { listStaleTakes as listPostgresStaleTakes } from '../src/core/postgres-engine/takes.ts';
-import { listStaleTakes as listPgliteStaleTakes } from '../src/core/pglite-engine/takes.ts';
-import type { PgTakesDeps } from '../src/core/postgres-engine/takes.ts';
-import type { PgliteTakesDeps } from '../src/core/pglite-engine/takes.ts';
+import { listStaleTakes } from '../src/core/engine-sql/takes.ts';
+import { unscopedExecutor } from '../src/core/engine-sql/brands.ts';
+import { postgresExecutor } from '../src/core/engine-sql/dialect-postgres.ts';
+import { pgliteExecutor } from '../src/core/engine-sql/dialect-pglite.ts';
+import { CheckoutGauge } from '../src/core/pool-gauge.ts';
 
 const rawRow = {
   take_id: 42n,
@@ -13,8 +14,8 @@ const rawRow = {
 
 describe('listStaleTakes bigint normalization', () => {
   test('Postgres rows match the numeric StaleTakeRow contract', async () => {
-    const sql = (async () => [rawRow]) as unknown as PgTakesDeps['sql'];
-    const rows = await listPostgresStaleTakes({ sql } as PgTakesDeps);
+    const exec = postgresExecutor({} as never, { runUnsafe: (async () => [rawRow]) as never, gauge: new CheckoutGauge() });
+    const rows = await listStaleTakes(unscopedExecutor(exec, 'test: fake driver'));
 
     expect(rows).toEqual([{
       take_id: 42,
@@ -27,7 +28,7 @@ describe('listStaleTakes bigint normalization', () => {
 
   test('PGLite rows use the same normalized boundary', async () => {
     const db = { query: async () => ({ rows: [rawRow] }) };
-    const rows = await listPgliteStaleTakes({ db } as unknown as PgliteTakesDeps);
+    const rows = await listStaleTakes(unscopedExecutor(pgliteExecutor(db as never), 'test: fake driver'));
 
     expect(rows[0]?.take_id).toBe(42);
     expect(rows[0]?.row_num).toBe(3);

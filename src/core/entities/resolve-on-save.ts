@@ -23,6 +23,7 @@ import {
 export const SAVE_TIME_RESOLUTION_SOURCES = [
   'exact_page',
   'alias_exact',
+  'prefix_expansion',
   'fuzzy_match',
   'fallback_slugify',
 ] as const satisfies readonly ResolutionSource[];

@@ -47,7 +47,7 @@ export function OAuthConsentPage() {
         <dt>Client ID</dt><dd><code>{request.clientId}</code></dd>
         <dt>Redirect destination</dt><dd><code>{request.redirectUri}</code></dd>
         <dt>Permissions</dt><dd>{request.scopes.length ? request.scopes.map(scope => <span key={scope} className={`badge ${scope.includes('admin') ? 'badge-error' : ''}`} style={{ marginRight: 8 }}>{scope}</span>) : 'No permissions'}</dd>
-        <dt>Administrative access</dt><dd>{request.scopes.some(scope => scope === 'admin') ? 'Administration within the allowed operations shown below.' : request.scopes.some(scope => scope.endsWith('_admin')) ? 'Administrative capabilities are included in the permissions above.' : 'None'}</dd>
+        <dt>Administrative brain operations</dt><dd>{request.scopes.some(scope => scope === 'admin') ? 'Eligible operations within the grant below. This does not grant owner dashboard access.' : request.scopes.some(scope => scope.endsWith('_admin')) ? 'The named administrative brain operations. This does not grant owner dashboard access.' : 'None'}</dd>
         <dt>Allowed operations</dt><dd>{request.allowedOperations === null ? 'All operations permitted by these scopes and the server policy' : request.allowedOperations.join(', ') || 'None'}</dd>
         <dt>Write paths</dt><dd>{request.boundSlugPrefixes === null ? 'Within the granted source' : request.boundSlugPrefixes.join(', ') || 'None'}</dd>
         {request.scopes.includes('agent') && <>

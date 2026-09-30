@@ -94,9 +94,8 @@ export async function runSuggest(
         raw = heuristicSuggestions(detected);
       } else {
         // Real gateway call deferred to a future wave; v0.39.0.0 ships the
-        // hermetic heuristic-by-default path and the test seam. The full
-        // LLM prompt-tuning loop is in test/eval-schema-authoring (T16)
-        // which uses the same `suggestFn` seam.
+        // hermetic heuristic-by-default path and the test seam. The planned
+        // T16 schema-authoring eval would drive the same `suggestFn` seam.
         notes.push('LLM refinement deferred to v0.39.1+; using heuristic fallback.');
         raw = heuristicSuggestions(detected);
       }

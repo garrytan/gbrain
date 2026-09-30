@@ -1134,10 +1134,15 @@ Usage:
                                                           only — stdio use is not logged). Automation-shaped
                                                           clients (>90% context_pack/delta) are flagged.
   gbrain auth revoke-client <client_id>                   Hard-delete an OAuth 2.1 client (cascades to tokens + codes)
+  gbrain auth local-writer list|register|revoke            Manage durable local CLI/stdio writers (see --help)
   gbrain auth test <url> --token <token>                  Smoke-test a remote MCP server
 `;
 
 export async function runAuth(args: string[]): Promise<void> {
+  if (args[0] === 'local-writer') {
+    const { runPersistenceAdminCli } = await import('./persistence-admin.ts');
+    return runPersistenceAdminCli('local-writer', args.slice(1));
+  }
   // #4083 follow-up: print usage whenever --help/-h appears ANYWHERE in
   // args, before dispatching to a subcommand. Without this early return,
   // `gbrain auth create foo --help` (or revoke/register-client/... +

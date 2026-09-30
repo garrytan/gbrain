@@ -29,6 +29,8 @@ const getLintLogFile = () => gbrainPath('validator-lint.jsonl');
 const LINT_CONFIG_KEY = 'writer.lint_on_put_page';
 
 export interface PostWriteLintOpts {
+  /** Already-prepared canonical content; validation must precede publication. */
+  page?: Pick<import('../types.ts').Page, 'type' | 'compiled_truth' | 'timeline' | 'frontmatter'>;
   /** Override config lookup; used by tests. If true, always run. */
   force?: boolean;
   /** Skip file writes; used by tests. */
@@ -84,7 +86,7 @@ export async function runPostWriteLint(
     : opts.sourceId
       ? { sourceId: opts.sourceId }
       : undefined;
-  const page = await engine.getPage(slug, sourceOpts);
+  const page = opts.page ?? await engine.getPage(slug, sourceOpts);
   if (!page) {
     return { ran: false, slug, findings: [], skippedReason: 'page_not_found' };
   }

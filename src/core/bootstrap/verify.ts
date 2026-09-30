@@ -27,8 +27,11 @@
  * keeping the last 5 snapshots. `bootstrap status` + doctor read them.
  */
 
+import { managedPersistenceEnabled } from '../persistence/ownership.ts';
+import { submitPageMutation } from '../persistence/page-mutations.ts';
+import { withCoordinatedWrite } from '../persistence/context.ts';
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 
@@ -176,12 +179,32 @@ deterministic edge to extract.
  * local caller and the probe is not user content), reconciled probe facts,
  * and write-through files under brain/. Best-effort, never throws. */
 async function sweepProbeLeftovers(engine: BrainEngine, ws: string, sourceId: string): Promise<void> {
+  await removeProbes(engine, ws, sourceId);
+}
+
+/**
+ * Hard-delete both probe pages, their files and their fence facts; returns one
+ * warning per page that could not be removed. An unmanaged brain uses the
+ * engine primitives. A managed brain (#5280) purges each probe through the
+ * coordinator (`delete_page --purge`, bound to its revision, which also removes
+ * its canonical file) and removes the probe facts in a coordinated transaction.
+ */
+async function removeProbes(engine: BrainEngine, ws: string, sourceId: string): Promise<string[]> {
+  const warnings: string[] = [];
+  const managed = await managedPersistenceEnabled(engine);
   for (const slug of [VERIFY_PROBE_SLUG, VERIFY_PROBE_ENTITY_SLUG]) {
     try {
-      await engine.deletePage(slug, { sourceId });
-    } catch {
-      /* absent / engine without hard delete — soft path below still applies */
+      if (managed) {
+        const snapshot = await engine.readPageSnapshot(slug, { sourceId, includeDeleted: true });
+        if (snapshot) await submitPageMutation(localCtx(engine, sourceId), { operation: 'delete_page', params: {
+          slug, source_id: sourceId, purge: true, expected_revision: snapshot.revision, request_id: randomUUID() } });
+      } else {
+        await engine.deletePage(slug, { sourceId });
+      }
+    } catch (e) {
+      warnings.push(`${slug}: ${(e as Error).message}`);
     }
+    if (managed) continue;
     try {
       rmSync(join(ws, 'brain', `${slug}.md`), { force: true });
     } catch {
@@ -193,13 +216,14 @@ async function sweepProbeLeftovers(engine: BrainEngine, ws: string, sourceId: st
     // v51 fence column source_markdown_slug), NEVER a `fact LIKE %token%`
     // substring match — a user fact that merely mentions the token string
     // must survive verify's cleanup [G13].
-    await engine.executeRaw(
-      `DELETE FROM facts WHERE source_id = $1 AND source_markdown_slug IN ($2, $3)`,
-      [sourceId, VERIFY_PROBE_SLUG, VERIFY_PROBE_ENTITY_SLUG],
-    );
+    const sql = `DELETE FROM facts WHERE source_id = $1 AND source_markdown_slug IN ($2, $3)`;
+    const params = [sourceId, VERIFY_PROBE_SLUG, VERIFY_PROBE_ENTITY_SLUG];
+    if (managed) await engine.transaction(tx => withCoordinatedWrite(tx, [sourceId], () => tx.executeRaw(sql, params)));
+    else await engine.executeRaw(sql, params);
   } catch {
     /* facts table may not exist on a pre-migration brain — doctor_green names that */
   }
+  return warnings;
 }
 
 // ---------------------------------------------------------------------------
@@ -845,29 +869,7 @@ async function runRoundtrip(
   // pages until the 72h purge) — using it here left two probe tombstones in
   // the user's brain after every verify run, visible to include_deleted
   // readers and pinned as residue by the Postgres e2e cleanup assertion.
-  const deleteWarnings: string[] = [];
-  for (const slug of [VERIFY_PROBE_SLUG, VERIFY_PROBE_ENTITY_SLUG]) {
-    try {
-      await engine.deletePage(slug, { sourceId });
-    } catch (e) {
-      deleteWarnings.push(`${slug}: ${(e as Error).message}`);
-    }
-    try {
-      rmSync(join(ws, 'brain', `${slug}.md`), { force: true });
-    } catch {
-      /* best effort */
-    }
-  }
-  try {
-    // Exact-identity delete (see sweepProbeLeftovers): only facts whose fence
-    // lives on a probe page, never a token substring match over user facts.
-    await engine.executeRaw(
-      `DELETE FROM facts WHERE source_id = $1 AND source_markdown_slug IN ($2, $3)`,
-      [sourceId, VERIFY_PROBE_SLUG, VERIFY_PROBE_ENTITY_SLUG],
-    );
-  } catch {
-    /* best effort */
-  }
+  const deleteWarnings = await removeProbes(engine, ws, sourceId);
   if (deleteWarnings.length > 0) {
     checks.push({ id: 'probe_cleanup', ok: false, warn: true, detail: `probe deletion incomplete: ${deleteWarnings.join('; ')}` });
   }

@@ -1,3 +1,4 @@
+import { withCompanyBrainSource } from './company-brain/profile.ts';
 /**
  * Sync anchor + chunker-version state helpers (source-scoped vs legacy
  * global-config storage). Peeled out of src/commands/sync.ts (containment
@@ -230,6 +231,7 @@ export async function writeSyncAnchor(
   // it on a legacy-path last_commit write keep pre-#2114 behavior.
   repoDir?: string,
 ): Promise<void> {
+  return withCompanyBrainSource(engine, sourceId, async engine => {
   if (sourceId) {
     const col = which === 'repo_path' ? 'local_path' : 'last_commit';
     // last_sync_at bookmarked on every last_commit advance.
@@ -310,6 +312,7 @@ export async function writeSyncAnchor(
     }
   }
   await engine.setConfig(`sync.${which}`, value);
+  });
 }
 
 /**
@@ -342,11 +345,13 @@ export async function writeChunkerVersion(
   sourceId: string | undefined,
   version: string,
 ): Promise<void> {
+  return withCompanyBrainSource(engine, sourceId, async engine => {
   if (!sourceId) return;
   await engine.executeRaw(
     `UPDATE sources SET chunker_version = $1 WHERE id = $2`,
     [version, sourceId],
   );
+  });
 }
 
 // ─── #4342 — sticky per-source slug-root mode ─────────────────────────────

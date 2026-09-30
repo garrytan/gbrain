@@ -315,18 +315,20 @@ export function getEmbeddingColumnRegistry(
   // unit tests that exercise the registry without booting the gateway).
   let gwModel: string | undefined;
   let gwDims: number | undefined;
+  let unresolvedIdentity = !cfg.embedding_model?.trim() && !!(cfg.database_path || cfg.database_url);
   try {
     // Dynamic import avoids a static cycle (gateway can transitively
     // depend on this module via search/hybrid.ts → search/embedding-column.ts).
     // require() is synchronous here because we're already on a hot path.
     const gw = require('../ai/gateway.ts') as typeof import('../ai/gateway.ts');
+    unresolvedIdentity ||= gw.requireConfig().embedding_identity_unverified === true;
     gwModel = gw.getEmbeddingModel();
     gwDims = gw.getEmbeddingDimensions();
   } catch {
     // Gateway unconfigured or import cycle — fall through to the
     // canonical default in `ai/defaults.ts`.
   }
-  const embedModel = cfg.embedding_model ?? gwModel ?? DEFAULT_EMBEDDING_MODEL;
+  const embedModel = cfg.embedding_model ?? (unresolvedIdentity ? '' : gwModel ?? DEFAULT_EMBEDDING_MODEL);
   const embedDims =
     typeof cfg.embedding_dimensions === 'number' && cfg.embedding_dimensions > 0
       ? cfg.embedding_dimensions
@@ -487,11 +489,14 @@ export function isDefaultColumn(resolved: ResolvedColumn): boolean {
  */
 export function isCacheSafe(resolved: ResolvedColumn, cfg: GBrainConfig): boolean {
   if (resolved.name !== DEFAULT_COLUMN_NAME) return false;
+  if (!resolved.embeddingModel) return false;
+  if (!cfg.embedding_model?.trim() && (cfg.database_path || cfg.database_url)) return false;
   // v0.37 fix wave: same resolution chain as the registry — cfg > gateway > default.
   let gwModel: string | undefined;
   let gwDims: number | undefined;
   try {
     const gw = require('../ai/gateway.ts') as typeof import('../ai/gateway.ts');
+    if (gw.requireConfig().embedding_identity_unverified && !cfg.embedding_model?.trim()) return false;
     gwModel = gw.getEmbeddingModel();
     gwDims = gw.getEmbeddingDimensions();
   } catch { /* gateway unconfigured — fall through to constants */ }

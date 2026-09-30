@@ -1,0 +1,193 @@
+{
+  "golden": {
+    "domain": "code-edges",
+    "methods": {
+      "addCodeEdges": {
+        "resolved+unresolved": [
+          {
+            "lane": "pool",
+            "params": [
+              "number",
+              "number",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string"
+            ],
+            "sql": "INSERT INTO code_edges_chunk (from_chunk_id, to_chunk_id, from_symbol_qualified, to_symbol_qualified, edge_type, edge_metadata, source_id) VALUES ($1::int, $2::int, $3, $4, $5, $6::text::jsonb, $7) ON CONFLICT (from_chunk_id, to_chunk_id, edge_type) DO NOTHING",
+            "textSha256": "8d16083672d34ec284debce1daef1d23a16b19b20381f7c6c62b3f2de7214500"
+          },
+          {
+            "lane": "pool",
+            "params": [
+              "number",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string"
+            ],
+            "sql": "INSERT INTO code_edges_symbol (from_chunk_id, from_symbol_qualified, to_symbol_qualified, edge_type, edge_metadata, source_id) VALUES ($1::int, $2, $3, $4, $5::text::jsonb, $6) ON CONFLICT (from_chunk_id, to_symbol_qualified, edge_type) DO NOTHING",
+            "textSha256": "9e3b02d4cf589a020b7620ea1f13e9aeedfd57d4d9136988e7e411aa827a5006"
+          }
+        ]
+      },
+      "deleteCodeEdgesForChunks": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "array<number>",
+              "array<number>"
+            ],
+            "sql": "DELETE FROM code_edges_chunk WHERE from_chunk_id = ANY($1::int[]) OR to_chunk_id = ANY($2::int[])",
+            "textSha256": "d48ac6cd4efbd465c3cdd18d769f0021e59efc78ed7071bc9cd99ee76c32441c"
+          },
+          {
+            "lane": "pool",
+            "params": [
+              "array<number>"
+            ],
+            "sql": "DELETE FROM code_edges_symbol WHERE from_chunk_id = ANY($1::int[])",
+            "textSha256": "97b87cc042a1889ded395660854e4f7c59741204ca17ca2d12a72e3d09d7a84d"
+          }
+        ]
+      },
+      "getCalleesOf": {
+        "bareFallback": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "number"
+            ],
+            "sql": "SELECT id, from_chunk_id, to_chunk_id, from_symbol_qualified, to_symbol_qualified, edge_type, edge_metadata, source_id, true as resolved FROM code_edges_chunk WHERE from_symbol_qualified = $1 AND EXISTS ( SELECT 1 FROM content_chunks cc JOIN pages p ON p.id=cc.page_id WHERE cc.id=code_edges_chunk.from_chunk_id AND p.deleted_at IS NULL AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') AND EXISTS (SELECT 1 FROM sources read_source WHERE read_source.id = p.source_id AND NOT read_source.archived) AND TRUE AND (p.text_projection_revision = p.knowledge_revision) IS TRUE ) AND EXISTS ( SELECT 1 FROM content_chunks cc JOIN pages p ON p.id=cc.page_id WHERE cc.id=code_edges_chunk.to_chunk_id AND p.deleted_at IS NULL AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') AND EXISTS (SELECT 1 FROM sources read_source WHERE read_source.id = p.source_id AND NOT read_source.archived) AND TRUE AND (p.text_projection_revision = p.knowledge_revision) IS TRUE ) UNION ALL SELECT id, from_chunk_id, NULL::int as to_chunk_id, from_symbol_qualified, to_symbol_qualified, edge_type, edge_metadata, source_id, false as resolved FROM code_edges_symbol WHERE from_symbol_qualified = $2 AND EXISTS ( SELECT 1 FROM content_chunks cc JOIN pages p ON p.id=cc.page_id WHERE cc.id=code_edges_symbol.from_chunk_id AND p.deleted_at IS NULL AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') AND EXISTS (SELECT 1 FROM sources read_source WHERE read_source.id = p.source_id AND NOT read_source.archived) AND TRUE AND (p.text_projection_revision = p.knowledge_revision) IS TRUE ) LIMIT $3",
+            "textSha256": "ca9ab8f50f42835faf2b57c56dbdb28da474e95e561cbb768e1fbd5faa12f573"
+          },
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "number"
+            ],
+            "sql": "SELECT id, from_chunk_id, to_chunk_id, from_symbol_qualified, to_symbol_qualified, edge_type, edge_metadata, source_id, true as resolved FROM code_edges_chunk WHERE from_chunk_id IN (SELECT id FROM content_chunks WHERE symbol_name = $1) AND EXISTS ( SELECT 1 FROM content_chunks cc JOIN pages p ON p.id=cc.page_id WHERE cc.id=code_edges_chunk.from_chunk_id AND p.deleted_at IS NULL AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') AND EXISTS (SELECT 1 FROM sources read_source WHERE read_source.id = p.source_id AND NOT read_source.archived) AND TRUE AND (p.text_projection_revision = p.knowledge_revision) IS TRUE ) AND EXISTS ( SELECT 1 FROM content_chunks cc JOIN pages p ON p.id=cc.page_id WHERE cc.id=code_edges_chunk.to_chunk_id AND p.deleted_at IS NULL AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') AND EXISTS (SELECT 1 FROM sources read_source WHERE read_source.id = p.source_id AND NOT read_source.archived) AND TRUE AND (p.text_projection_revision = p.knowledge_revision) IS TRUE ) UNION ALL SELECT id, from_chunk_id, NULL::int as to_chunk_id, from_symbol_qualified, to_symbol_qualified, edge_type, edge_metadata, source_id, false as resolved FROM code_edges_symbol WHERE from_chunk_id IN (SELECT id FROM content_chunks WHERE symbol_name = $2) AND EXISTS ( SELECT 1 FROM content_chunks cc JOIN pages p ON p.id=cc.page_id WHERE cc.id=code_edges_symbol.from_chunk_id AND p.deleted_at IS NULL AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') AND EXISTS (SELECT 1 FROM sources read_source WHERE read_source.id = p.source_id AND NOT read_source.archived) AND TRUE AND (p.text_projection_revision = p.knowledge_revision) IS TRUE ) LIMIT $3",
+            "textSha256": "8e168723e3839daeec0e83980381f4418b39245a7dac73c11fbe04375bd79d95"
+          }
+        ],
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "number"
+            ],
+            "sql": "SELECT id, from_chunk_id, to_chunk_id, from_symbol_qualified, to_symbol_qualified, edge_type, edge_metadata, source_id, true as resolved FROM code_edges_chunk WHERE from_symbol_qualified = $1 AND EXISTS ( SELECT 1 FROM content_chunks cc JOIN pages p ON p.id=cc.page_id WHERE cc.id=code_edges_chunk.from_chunk_id AND p.deleted_at IS NULL AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') AND EXISTS (SELECT 1 FROM sources read_source WHERE read_source.id = p.source_id AND NOT read_source.archived) AND TRUE AND (p.text_projection_revision = p.knowledge_revision) IS TRUE ) AND EXISTS ( SELECT 1 FROM content_chunks cc JOIN pages p ON p.id=cc.page_id WHERE cc.id=code_edges_chunk.to_chunk_id AND p.deleted_at IS NULL AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') AND EXISTS (SELECT 1 FROM sources read_source WHERE read_source.id = p.source_id AND NOT read_source.archived) AND TRUE AND (p.text_projection_revision = p.knowledge_revision) IS TRUE ) UNION ALL SELECT id, from_chunk_id, NULL::int as to_chunk_id, from_symbol_qualified, to_symbol_qualified, edge_type, edge_metadata, source_id, false as resolved FROM code_edges_symbol WHERE from_symbol_qualified = $2 AND EXISTS ( SELECT 1 FROM content_chunks cc JOIN pages p ON p.id=cc.page_id WHERE cc.id=code_edges_symbol.from_chunk_id AND p.deleted_at IS NULL AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') AND EXISTS (SELECT 1 FROM sources read_source WHERE read_source.id = p.source_id AND NOT read_source.archived) AND TRUE AND (p.text_projection_revision = p.knowledge_revision) IS TRUE ) LIMIT $3",
+            "textSha256": "ca9ab8f50f42835faf2b57c56dbdb28da474e95e561cbb768e1fbd5faa12f573"
+          }
+        ],
+        "sourceId": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "string",
+              "string",
+              "number"
+            ],
+            "sql": "SELECT id, from_chunk_id, to_chunk_id, from_symbol_qualified, to_symbol_qualified, edge_type, edge_metadata, source_id, true as resolved FROM code_edges_chunk WHERE from_symbol_qualified = $1 AND EXISTS ( SELECT 1 FROM content_chunks cc JOIN pages p ON p.id=cc.page_id WHERE cc.id=code_edges_chunk.from_chunk_id AND p.deleted_at IS NULL AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') AND EXISTS (SELECT 1 FROM sources read_source WHERE read_source.id = p.source_id AND NOT read_source.archived) AND TRUE AND (p.text_projection_revision = p.knowledge_revision) IS TRUE ) AND EXISTS ( SELECT 1 FROM content_chunks cc JOIN pages p ON p.id=cc.page_id WHERE cc.id=code_edges_chunk.to_chunk_id AND p.deleted_at IS NULL AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') AND EXISTS (SELECT 1 FROM sources read_source WHERE read_source.id = p.source_id AND NOT read_source.archived) AND TRUE AND (p.text_projection_revision = p.knowledge_revision) IS TRUE ) AND source_id = $2 UNION ALL SELECT id, from_chunk_id, NULL::int as to_chunk_id, from_symbol_qualified, to_symbol_qualified, edge_type, edge_metadata, source_id, false as resolved FROM code_edges_symbol WHERE from_symbol_qualified = $3 AND EXISTS ( SELECT 1 FROM content_chunks cc JOIN pages p ON p.id=cc.page_id WHERE cc.id=code_edges_symbol.from_chunk_id AND p.deleted_at IS NULL AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') AND EXISTS (SELECT 1 FROM sources read_source WHERE read_source.id = p.source_id AND NOT read_source.archived) AND TRUE AND (p.text_projection_revision = p.knowledge_revision) IS TRUE ) AND source_id = $4 LIMIT $5",
+            "textSha256": "0cc6d3fe0897c0b4a85af4f6802dc424f6f9562df52769471a3bc8e1e87c82b6"
+          }
+        ]
+      },
+      "getCallersOf": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "number"
+            ],
+            "sql": "SELECT id, from_chunk_id, to_chunk_id, from_symbol_qualified, to_symbol_qualified, edge_type, edge_metadata, source_id, true as resolved FROM code_edges_chunk WHERE to_symbol_qualified = $1 AND EXISTS ( SELECT 1 FROM content_chunks cc JOIN pages p ON p.id=cc.page_id WHERE cc.id=code_edges_chunk.from_chunk_id AND p.deleted_at IS NULL AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') AND EXISTS (SELECT 1 FROM sources read_source WHERE read_source.id = p.source_id AND NOT read_source.archived) AND TRUE AND (p.text_projection_revision = p.knowledge_revision) IS TRUE ) AND EXISTS ( SELECT 1 FROM content_chunks cc JOIN pages p ON p.id=cc.page_id WHERE cc.id=code_edges_chunk.to_chunk_id AND p.deleted_at IS NULL AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') AND EXISTS (SELECT 1 FROM sources read_source WHERE read_source.id = p.source_id AND NOT read_source.archived) AND TRUE AND (p.text_projection_revision = p.knowledge_revision) IS TRUE ) UNION ALL SELECT id, from_chunk_id, NULL::int as to_chunk_id, from_symbol_qualified, to_symbol_qualified, edge_type, edge_metadata, source_id, false as resolved FROM code_edges_symbol WHERE to_symbol_qualified = $2 AND EXISTS ( SELECT 1 FROM content_chunks cc JOIN pages p ON p.id=cc.page_id WHERE cc.id=code_edges_symbol.from_chunk_id AND p.deleted_at IS NULL AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') AND EXISTS (SELECT 1 FROM sources read_source WHERE read_source.id = p.source_id AND NOT read_source.archived) AND TRUE AND (p.text_projection_revision = p.knowledge_revision) IS TRUE ) LIMIT $3",
+            "textSha256": "035d362219e8718da7312c66a55c8ba87c30816e9ca2690ae9e451d227003f47"
+          }
+        ],
+        "sourceId": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "string",
+              "string",
+              "number"
+            ],
+            "sql": "SELECT id, from_chunk_id, to_chunk_id, from_symbol_qualified, to_symbol_qualified, edge_type, edge_metadata, source_id, true as resolved FROM code_edges_chunk WHERE to_symbol_qualified = $1 AND EXISTS ( SELECT 1 FROM content_chunks cc JOIN pages p ON p.id=cc.page_id WHERE cc.id=code_edges_chunk.from_chunk_id AND p.deleted_at IS NULL AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') AND EXISTS (SELECT 1 FROM sources read_source WHERE read_source.id = p.source_id AND NOT read_source.archived) AND TRUE AND (p.text_projection_revision = p.knowledge_revision) IS TRUE ) AND EXISTS ( SELECT 1 FROM content_chunks cc JOIN pages p ON p.id=cc.page_id WHERE cc.id=code_edges_chunk.to_chunk_id AND p.deleted_at IS NULL AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') AND EXISTS (SELECT 1 FROM sources read_source WHERE read_source.id = p.source_id AND NOT read_source.archived) AND TRUE AND (p.text_projection_revision = p.knowledge_revision) IS TRUE ) AND source_id = $2 UNION ALL SELECT id, from_chunk_id, NULL::int as to_chunk_id, from_symbol_qualified, to_symbol_qualified, edge_type, edge_metadata, source_id, false as resolved FROM code_edges_symbol WHERE to_symbol_qualified = $3 AND EXISTS ( SELECT 1 FROM content_chunks cc JOIN pages p ON p.id=cc.page_id WHERE cc.id=code_edges_symbol.from_chunk_id AND p.deleted_at IS NULL AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') AND EXISTS (SELECT 1 FROM sources read_source WHERE read_source.id = p.source_id AND NOT read_source.archived) AND TRUE AND (p.text_projection_revision = p.knowledge_revision) IS TRUE ) AND source_id = $4 LIMIT $5",
+            "textSha256": "66d18e0cbad1c5b661a33bada899c5af1b47883c7dd6aea9c1d4a65e1603ea85"
+          }
+        ]
+      },
+      "getEdgesByChunk": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "number",
+              "number",
+              "number"
+            ],
+            "sql": "SELECT id, from_chunk_id, to_chunk_id, from_symbol_qualified, to_symbol_qualified, edge_type, edge_metadata, source_id, true as resolved FROM code_edges_chunk WHERE (from_chunk_id = $1 OR to_chunk_id = $2) LIMIT $3",
+            "textSha256": "7592df3f41d1d0fa063a6fde914c2e9c4e3990a89e5619ddc23e4fd8275643dc"
+          },
+          {
+            "lane": "pool",
+            "params": [
+              "number",
+              "number"
+            ],
+            "sql": "SELECT id, from_chunk_id, NULL::int as to_chunk_id, from_symbol_qualified, to_symbol_qualified, edge_type, edge_metadata, source_id, false as resolved FROM code_edges_symbol WHERE from_chunk_id = $1 LIMIT $2",
+            "textSha256": "0cd19da4533bd2ab8d9b057d57f0df7369037e933ee4dbe66245e048276b9ca6"
+          }
+        ],
+        "in+edgeType": [
+          {
+            "lane": "pool",
+            "params": [
+              "number",
+              "string",
+              "number"
+            ],
+            "sql": "SELECT id, from_chunk_id, to_chunk_id, from_symbol_qualified, to_symbol_qualified, edge_type, edge_metadata, source_id, true as resolved FROM code_edges_chunk WHERE to_chunk_id = $1 AND edge_type = $2 LIMIT $3",
+            "textSha256": "460e41e756b47efa81efad14bd2f7529038b43eb826e72e407f23b8046563a71"
+          }
+        ],
+        "out": [
+          {
+            "lane": "pool",
+            "params": [
+              "number",
+              "number"
+            ],
+            "sql": "SELECT id, from_chunk_id, to_chunk_id, from_symbol_qualified, to_symbol_qualified, edge_type, edge_metadata, source_id, true as resolved FROM code_edges_chunk WHERE from_chunk_id = $1 LIMIT $2",
+            "textSha256": "9e2bd1ff3e944197979b91831b1a2ee38b0386196432ac06d794a07a09b626f1"
+          },
+          {
+            "lane": "pool",
+            "params": [
+              "number",
+              "number"
+            ],
+            "sql": "SELECT id, from_chunk_id, NULL::int as to_chunk_id, from_symbol_qualified, to_symbol_qualified, edge_type, edge_metadata, source_id, false as resolved FROM code_edges_symbol WHERE from_chunk_id = $1 LIMIT $2",
+            "textSha256": "0cd19da4533bd2ab8d9b057d57f0df7369037e933ee4dbe66245e048276b9ca6"
+          }
+        ]
+      }
+    }
+  },
+  "normalizer": "sql-text-v1"
+}

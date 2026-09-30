@@ -16,7 +16,7 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
-import postgres, { type Sql } from 'postgres';
+import postgres, { type Sql } from '#postgres'
 import { hasDatabase, setupDB, teardownDB, getEngine } from './helpers.ts';
 
 const describePg = hasDatabase() ? describe : describe.skip;

@@ -84,10 +84,10 @@ function stripComments(s) {
   return s.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
 }
 
-// JSONB columns declared in src/core/migrate.ts that are written through the
+// JSONB columns declared in src/core/schema-migrations/ (and schema.sql) that are written through the
 // positional raw path. An uncast `$N` bound to one of these resolves to a
 // jsonb-typed param server-side and double-encodes a JSON.stringify'd string
-// exactly like `$N::jsonb` does. Keep in sync with migrate.ts when a new
+// exactly like `$N::jsonb` does. Keep in sync with the schema migrations when a new
 // JSONB column gains a positional write site. Deliberately excludes
 // short/ambiguous names (`config`, `data`, `meta`, `value_json`, ...) that
 // also exist as non-JSONB columns or JS identifiers — those stay covered by

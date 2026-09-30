@@ -9,10 +9,9 @@
 #
 # TSV columns (tab-separated): path  max_lines  policy  note
 #   policy=ratchet        line count (wc -l) must stay <= max_lines
-#   policy=region-exempt  lines OUTSIDE the `export const MIGRATIONS = [` ...
-#                         `];` region must stay <= max_lines (the append-only
-#                         migrations array grows freely; the runner logic
-#                         around it must not)
+#                         (the only policy; schema migrations live one per
+#                         file in src/core/schema-migrations/, so no file
+#                         needs a growth-exempt region)
 #
 # Rules (all violations reported, then one exit):
 #   1. measured > max_lines            -> FAIL (growth; raise the ceiling
@@ -43,21 +42,6 @@ fi
 
 fail=0
 
-measure_region_exempt() {
-  # Lines outside the MIGRATIONS array region. The opener must be EXACTLY
-  # `export const MIGRATIONS` followed by ':', ' ', or '=' — a bare prefix
-  # match would let a spoof-named `export const MIGRATIONS_ANYTHING` open a
-  # free-growth region. An unclosed region (EOF while still inside) prints
-  # -1 so the caller fails loudly instead of silently exempting the rest of
-  # the file.
-  awk '
-    /^export const MIGRATIONS[:= ]/ { in_region = 1; next }
-    in_region && /^\];/             { in_region = 0; next }
-    !in_region                      { n++ }
-    END                             { print (in_region ? -1 : n + 0) }
-  ' "$1"
-}
-
 listed_paths=""
 
 while IFS=$'\t' read -r path max policy note; do
@@ -75,19 +59,8 @@ while IFS=$'\t' read -r path max policy note; do
       measured=$(wc -l < "$path" | tr -d ' ')
       label="lines"
       ;;
-    region-exempt)
-      measured=$(measure_region_exempt "$path")
-      if [ "$measured" -eq -1 ]; then
-        echo "FAIL: $path — region-exempt file has an unclosed MIGRATIONS region (opened but never closed with '];')." >&2
-        echo "      An unclosed region would exempt the rest of the file from the size" >&2
-        echo "      ratchet; close the array or fix the file structure." >&2
-        fail=1
-        continue
-      fi
-      label="lines outside the MIGRATIONS array"
-      ;;
     *)
-      echo "FAIL: $TSV row for $path has unknown policy '$policy' (ratchet|region-exempt)." >&2
+      echo "FAIL: $TSV row for $path has unknown policy '$policy' (ratchet)." >&2
       fail=1
       continue
       ;;
@@ -95,9 +68,11 @@ while IFS=$'\t' read -r path max policy note; do
 
   if [ "$measured" -gt "$max" ]; then
     echo "FAIL: $path is $measured $label, over its $max ceiling." >&2
-    echo "      Growing a size-ratcheted module is a conscious decision: either move" >&2
-    echo "      the new code into a sibling module (preferred), or raise the ceiling" >&2
-    echo "      in $TSV in this same commit so the reviewer sees it." >&2
+    echo "Why:  growing a size-ratcheted module is a conscious, reviewer-visible decision." >&2
+    echo "Fix:  move new logic into a sibling module (preferred), or raise the ceiling to" >&2
+    echo "      $measured in $TSV in this same commit. Engine methods, BrainEngine" >&2
+    echo "      signatures, CLI help lines and interface fields cannot move: raise it." >&2
+    echo "See:  CONTRIBUTING.md#where-does-my-change-go" >&2
     fail=1
   elif [ $((max - measured)) -gt "$SLACK" ]; then
     echo "FAIL: $path shrank to $measured $label but its ceiling is still $max." >&2

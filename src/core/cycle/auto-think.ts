@@ -18,7 +18,7 @@ import type { BrainEngine } from '../engine.ts';
 import { runThink, persistSynthesis, type ThinkLLMClient } from '../think/index.ts';
 import { resolveModel } from '../model-config.ts';
 import { embedQuery } from '../embedding.ts';
-import { BudgetMeter } from './budget-meter.ts';
+import { BudgetMeter, loadAllowUnpriced, parseBudgetUsd } from './budget-meter.ts';
 
 /**
  * Local phase-result type for auto-think/drift. These phases are not yet
@@ -49,6 +49,7 @@ export interface AutoThinkConfig {
   questions: string[];
   maxPerCycle: number;
   budgetUsd: number;
+  allowUnpriced: boolean;
   cooldownDays: number;
   autoCommit: boolean;
 }
@@ -71,7 +72,7 @@ async function loadConfig(engine: BrainEngine): Promise<AutoThinkConfig> {
   // `|| N` coerces an explicit 0 back to the default (budget 0 = "spend nothing",
   // cooldown 0 = "no cooldown"). max_per_cycle stays inline: its Math.max(1, ...)
   // floor already makes 0 invalid there, so no configured value is lost.
-  const budgetUsd = Math.max(0, await getNumberConfig(engine, 'dream.auto_think.budget', 2.0));
+  const budgetUsd = parseBudgetUsd(await engine.getConfig('dream.auto_think.budget'), 2.0);
   const cooldownDays = Math.max(0, await getNumberConfig(engine, 'dream.auto_think.cooldown_days', 30));
 
   return {
@@ -79,6 +80,7 @@ async function loadConfig(engine: BrainEngine): Promise<AutoThinkConfig> {
     questions,
     maxPerCycle: maxPerStr ? Math.max(1, parseInt(maxPerStr, 10) || 5) : 5,
     budgetUsd,
+    allowUnpriced: await loadAllowUnpriced(engine),
     cooldownDays,
     autoCommit: autoCommitStr === 'true',
   };
@@ -123,6 +125,7 @@ export async function runPhaseAutoThink(
 
   const meter = new BudgetMeter({
     budgetUsd: config.budgetUsd,
+    allowUnpriced: config.allowUnpriced,
     phase: 'auto_think',
     auditPath: opts.auditPath,
   });

@@ -216,6 +216,35 @@ describe('assembleTurnContext', () => {
     expect(r.text.startsWith(TURN_CONTEXT_ENVELOPE)).toBe(true);
   });
 
+  test('hot facts already injected this session are not re-injected', async () => {
+    // Every prompt used to repeat the whole digest; the repeats stay in the
+    // transcript and are re-read on every later turn.
+    await seedFact('WORLD-FACT standup moved to 9am', 'world');
+    await seedFact('WORLD-FACT deploy freeze on friday', 'world');
+    const first = await assembleTurnContext(engine, { sourceId: 'default', window: [] });
+    expect(first.factsCount).toBe(2);
+
+    __resetHotMemoryCacheForTests();
+    await seedFact('WORLD-FACT new office opens in june', 'world');
+    const next = await assembleTurnContext(engine, {
+      sourceId: 'default',
+      window: [{ role: 'user', text: 'no entities here, just vibes' }],
+      priorContextText: first.text,
+    });
+    expect(next.factsCount).toBe(1);
+    expect(next.text).toContain('WORLD-FACT new office opens in june');
+    expect(next.text).not.toContain('standup moved to 9am');
+    expect(next.text).not.toContain('deploy freeze on friday');
+  });
+
+  test('a changed confidence score does not make an injected fact new again', async () => {
+    await seedFact('WORLD-FACT standup moved to 9am', 'world');
+    const prior = `${TURN_CONTEXT_ENVELOPE}\n\n## Hot memory (recent facts)\n- WORLD-FACT standup moved to 9am [people/alice-example] (0.42)`;
+    const r = await assembleTurnContext(engine, { sourceId: 'default', window: [], priorContextText: prior });
+    expect(r.factsCount).toBe(0);
+    expect(r.text).toBe('');
+  });
+
   test('nothing to inject → empty text, zero counts, no degradation', async () => {
     const r = await assembleTurnContext(engine, {
       sourceId: 'default',

@@ -1,0 +1,85 @@
+name: macOS 26 validation
+
+# Native macOS 26 evidence for the Mac-specific persistence fixes. Not part of
+# default PR CI (macOS minutes are scarce). Three triggers:
+#   - Nightly schedule.
+#   - Pull requests carrying the `macos-validation` label (scheduled and
+#     dispatched runs only use the default branch's workflow file, and the
+#     evidence is needed before a change merges).
+#   - Manual workflow_dispatch.
+#
+# Uses no secrets. Checks:
+#   #5604  device-identity re-stamp on real APFS (non-zero birth time, real
+#          inode); the device-number change itself stays simulated because a
+#          runner never reboots.
+#   #5449  PGLite checkpoint harness on a >= 2 GiB store, asserting the WAL bound.
+#   #5286  the published signed darwin-arm64 release binary: codesign --verify
+#          --strict and --version against the release tag.
+
+on:
+  schedule:
+    - cron: '41 9 * * *'  # 09:41 UTC daily, staggered from the other nightlies
+  pull_request:
+    types: [labeled, synchronize, reopened]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos-26:
+    name: macOS 26 validation
+    if: |
+      github.event_name != 'pull_request' ||
+      contains(github.event.pull_request.labels.*.name, 'macos-validation')
+    runs-on: macos-26
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
+        with:
+          bun-version: 1.3.13
+      - run: bun install --frozen-lockfile --ignore-scripts
+      - name: Runner identity
+        run: |
+          sw_vers
+          uname -m
+          echo "ImageOS=${ImageOS:-unknown} ImageVersion=${ImageVersion:-unknown}"
+      - name: "#5604 device-identity re-stamp on real APFS"
+        run: |
+          probe="$(mktemp -d)"
+          device="$(df "$probe" | tail -1 | awk '{print $1}')"
+          personality="$(diskutil info "$device" | awk -F: '/File System Personality/ {gsub(/^ +/, "", $2); print $2}')"
+          echo "temporary directory $probe is on $device ($personality)"
+          case "$personality" in *APFS*) ;; *) echo "::error::expected APFS, found '$personality'"; exit 1 ;; esac
+          PROBE="$probe" bun -e '
+            const s = require("node:fs").statSync(process.env.PROBE, { bigint: true });
+            console.log(JSON.stringify({ dev: String(s.dev), ino: String(s.ino), birthtime_ns: String(s.birthtimeNs) }));
+            if (s.birthtimeNs === 0n || s.ino === 0n) { console.error("expected a real birth time and inode"); process.exit(1); }'
+          bun test --timeout=60000 test/persistence-physical-root-device.test.ts test/connector-physical-root-device.test.ts
+      - name: "#5449 PGLite checkpoint harness on a >= 2 GiB store"
+        run: |
+          bun scripts/pglite-checkpoint-harness/supervisor.ts --dir "$RUNNER_TEMP/pglite-5449" --fresh \
+            --pages 2600 --page-kb 200 --min-store-gb 2 --stall-sec 600 --timeout-sec 3600
+      - name: "#5449 harness result"
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: pglite-5449-result
+          path: ${{ runner.temp }}/pglite-5449/result.json
+          if-no-files-found: warn
+      - name: "#5286 published signed release binary"
+        run: |
+          tag="$(curl -fsSI https://github.com/garrytan/gbrain/releases/latest | awk 'tolower($1)=="location:" {print $2}' | tr -d '\r' | sed 's#.*/tag/##')"
+          echo "latest release: $tag"
+          curl -fsSL -o gbrain-darwin-arm64 "https://github.com/garrytan/gbrain/releases/download/$tag/gbrain-darwin-arm64"
+          shasum -a 256 gbrain-darwin-arm64
+          codesign --verify --strict --verbose=2 gbrain-darwin-arm64
+          chmod +x gbrain-darwin-arm64
+          out="$(./gbrain-darwin-arm64 --version)"
+          echo "binary reports: $out"
+          case "$out" in *"${tag#v}"*) ;; *) echo "::error::binary version '$out' does not match release $tag"; exit 1 ;; esac

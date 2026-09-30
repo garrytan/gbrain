@@ -9,6 +9,7 @@
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { installFixtureChunks } from './helpers/page-projection.ts';
 
 describe('Layer 10 C1/C2 — language + symbol-kind filters', () => {
   let engine: PGLiteEngine;
@@ -27,7 +28,7 @@ describe('Layer 10 C1/C2 — language + symbol-kind filters', () => {
       compiled_truth: 'export function parseInput() { return {}; }',
       timeline: '',
     });
-    await engine.upsertChunks('src-foo-ts', [
+    await installFixtureChunks(engine, 'src-foo-ts', [
       {
         chunk_index: 0,
         chunk_text: '// parse the input\nexport function parseInput() { return {}; }',
@@ -45,7 +46,7 @@ describe('Layer 10 C1/C2 — language + symbol-kind filters', () => {
       compiled_truth: 'def parse_input():\n    return {}',
       timeline: '',
     });
-    await engine.upsertChunks('src-bar-py', [
+    await installFixtureChunks(engine, 'src-bar-py', [
       {
         chunk_index: 0,
         chunk_text: 'def parse_input():\n    return {}',
@@ -64,7 +65,7 @@ describe('Layer 10 C1/C2 — language + symbol-kind filters', () => {
       compiled_truth: 'export class ParseHelper { parse() { return {}; } }',
       timeline: '',
     });
-    await engine.upsertChunks('src-baz-ts', [
+    await installFixtureChunks(engine, 'src-baz-ts', [
       {
         chunk_index: 0,
         chunk_text: '// parse helper class\nexport class ParseHelper { run() { return {}; } }',

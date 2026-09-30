@@ -1,95 +1,110 @@
 /**
- * Structural test for `gbrain extract --workers N` wiring (v0.41.15.0, T7).
+ * `gbrain extract --workers N` (v0.41.15.0, T7): the flag is validated at the
+ * CLI, threads into runExtractCore, and fans the per-page work out over N
+ * concurrent workers on engines that allow parallel writes.
  *
- * Per codex #16/#17 the high-value assertion for a CPU-bound migration
- * is that the helper is wired in, not byte-equality. extract is CPU-
- * bound (markdown parse + regex), so the speedup is moderate; the
- * primary contract is "API surface exists + threads correctly +
- * existing serial behavior preserved when --workers is omitted."
+ * Concurrency is observed at the engine boundary: a proxy reports the engine
+ * as Postgres (so the PGLite single-writer clamp does not apply) and counts
+ * the peak number of in-flight per-page `readPageSnapshot` calls. Meeting
+ * pages take the snapshot path on both the incremental (slugs) and the
+ * directory-walk link loops.
  */
 
-import { describe, test, expect } from 'bun:test';
-import { readFileSync } from 'fs';
-import { resolve } from 'path';
+import { describe, test, expect, beforeAll, afterAll, spyOn } from 'bun:test';
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
+import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { runExtract, runExtractCore } from '../src/commands/extract.ts';
+import type { BrainEngine } from '../src/core/engine.ts';
 
-const REPO_ROOT = resolve(import.meta.dir, '..');
-const EXTRACT_SRC = readFileSync(
-  resolve(REPO_ROOT, 'src/commands/extract.ts'),
-  'utf-8',
-);
+const PAGES = 8;
+let engine: PGLiteEngine;
+let brainDir: string;
+const slugs: string[] = [];
 
-describe('extract.ts → workers wiring (T7)', () => {
-  test('imports runSlidingPool from worker-pool helper', () => {
-    expect(EXTRACT_SRC).toMatch(
-      /import\s*\{\s*runSlidingPool\s*\}\s*from\s*['"]\.\.\/core\/worker-pool\.ts['"]/,
-    );
+beforeAll(async () => {
+  engine = new PGLiteEngine();
+  await engine.connect({});
+  await engine.initSchema();
+  brainDir = mkdtempSync(join(tmpdir(), 'gbrain-extract-workers-'));
+  mkdirSync(join(brainDir, 'meetings'), { recursive: true });
+  for (let i = 0; i < PAGES; i++) {
+    const slug = `meetings/m${i}`;
+    slugs.push(slug);
+    await engine.putPage(slug, { type: 'meeting', title: `M${i}`, compiled_truth: '', timeline: '' });
+    writeFileSync(join(brainDir, `${slug}.md`), `---\ntitle: M${i}\ntype: meeting\n---\n\nFollow-up: [M](../meetings/m${(i + 1) % PAGES}.md)\n`);
+  }
+}, 60_000);
+
+afterAll(async () => {
+  await engine.disconnect();
+  rmSync(brainDir, { recursive: true, force: true });
+});
+
+function parallelEngine(): { engine: BrainEngine; peak: () => number } {
+  let inflight = 0;
+  let peak = 0;
+  const proxy = new Proxy(engine, {
+    get(target, prop) {
+      if (prop === 'kind') return 'postgres';
+      const value = Reflect.get(target, prop, target);
+      if (typeof value !== 'function') return value;
+      if (prop !== 'readPageSnapshot') return value.bind(target);
+      return async (...args: unknown[]) => {
+        inflight++;
+        peak = Math.max(peak, inflight);
+        try {
+          await new Promise(r => setTimeout(r, 5));
+          return await value.apply(target, args);
+        } finally {
+          inflight--;
+        }
+      };
+    },
+  });
+  return { engine: proxy as unknown as BrainEngine, peak: () => peak };
+}
+
+describe('extract --workers', () => {
+  for (const [label, extra] of [['incremental slugs', { slugs }], ['directory walk', {}]] as const) {
+    test(`${label}: workers=4 runs pages concurrently, workers=1 runs them one at a time`, async () => {
+      for (const [workers, expectPeak] of [[1, 1], [4, 4]] as const) {
+        const probe = parallelEngine();
+        const result = await runExtractCore(probe.engine, { mode: 'links', dir: brainDir, workers, quiet: true, ...extra });
+        expect(result.pages_processed).toBe(PAGES);
+        expect(probe.peak(), `workers=${workers}`).toBe(expectPeak);
+      }
+    }, 30_000);
+  }
+
+  test('the CLI rejects a non-positive --workers value and exits 1', async () => {
+    const errors: string[] = [];
+    const err = spyOn(console, 'error').mockImplementation((...a: unknown[]) => { errors.push(a.map(String).join(' ')); });
+    const exit = spyOn(process, 'exit').mockImplementation(((code?: number) => { throw new Error(`__exit_${code}__`); }) as never);
+    try {
+      for (const flag of ['--workers', '--concurrency']) {
+        await expect(runExtract(engine, ['links', '--dir', brainDir, flag, '0'])).rejects.toThrow('__exit_1__');
+      }
+    } finally {
+      err.mockRestore();
+      exit.mockRestore();
+    }
+    expect(errors.filter(e => e.includes('--workers must be a positive integer'))).toHaveLength(2);
   });
 
-  test('imports parseWorkers + resolveWorkersWithClamp', () => {
-    expect(EXTRACT_SRC).toMatch(
-      /parseWorkers,\s*resolveWorkersWithClamp/,
-    );
-  });
-
-  test('ExtractOpts type carries optional workers field', () => {
-    expect(EXTRACT_SRC).toMatch(/workers\?:\s*number/);
-  });
-
-  test('runExtractCore resolves workers via the PGLite-clamp wrapper', () => {
-    expect(EXTRACT_SRC).toMatch(/resolveWorkersWithClamp\(\s*engine,\s*opts\.workers/);
-  });
-
-  test('CLI runExtract parses --workers via parseWorkers (loud-fail on invalid)', () => {
-    // The parsed value must come from parseWorkers (validates >=1
-    // integer) AND must thread into runExtractCore opts.
-    expect(EXTRACT_SRC).toMatch(/parseWorkers\(args\[/);
-    expect(EXTRACT_SRC).toMatch(/workers,?\s*\}\);/);
-  });
-
-  test('all three inner loops accept the workers parameter', () => {
-    // extractForSlugs, extractLinksFromDir, extractTimelineFromDir all
-    // receive workers (default 1 for back-compat).
-    expect(EXTRACT_SRC).toMatch(/extractForSlugs[\s\S]*?workers:\s*number/);
-    expect(EXTRACT_SRC).toMatch(/extractLinksFromDir[\s\S]*?workers:\s*number/);
-    expect(EXTRACT_SRC).toMatch(/extractTimelineFromDir[\s\S]*?workers:\s*number/);
-  });
-
-  test('all three inner loops call runSlidingPool', () => {
-    // 3 inner loops × 1 runSlidingPool call each = 3 occurrences total
-    // (extract.ts has no other runSlidingPool callers).
-    const calls = EXTRACT_SRC.match(/runSlidingPool\(/g) ?? [];
-    expect(calls.length).toBe(3);
-  });
-
-  test('legacy `for (let i = 0; i < files.length; i++)` per-file loops are gone', () => {
-    // The pre-T7 serial loops would fight the worker-pool semantics.
-    // After migration only one such loop may remain (acceptable: the
-    // dir-walker itself which isn't per-file work). We assert <= 1.
-    const serialLoops = EXTRACT_SRC.match(/for\s*\(\s*let\s+i\s*=\s*0;\s*i\s*<\s*files\.length/g) ?? [];
-    expect(serialLoops.length).toBeLessThanOrEqual(1);
-  });
-
-  test('extractForSlugs (the CLI/cycle path) is migrated to the pool', () => {
-    // Two legacy `for (const slug of slugs)` loops survive in
-    // extractLinksForSlugs + extractTimelineForSlugs — the sync-integration
-    // hooks. Those are out of T7 scope (called from sync.ts post-sync, not
-    // from the user-facing `gbrain extract` CLI). T7 covers extractForSlugs
-    // + extractLinksFromDir + extractTimelineFromDir which carry --workers
-    // from the CLI surface.
-    const legacyCount = (EXTRACT_SRC.match(/for\s*\(\s*const\s+slug\s+of\s+slugs\)/g) ?? []).length;
-    expect(legacyCount).toBeLessThanOrEqual(2);
-    // The migrated extractForSlugs uses runSlidingPool over `slugs`, not
-    // a for-of loop. Confirm by checking that one of the 3 runSlidingPool
-    // call sites operates on `slugs`.
-    expect(EXTRACT_SRC).toMatch(/runSlidingPool\(\s*\{\s*items:\s*slugs/);
-  });
-
-  test('CLI threads workers into runExtractCore call', () => {
-    // The opts-object passed to runExtractCore must include the workers
-    // field; without this the parsed CLI flag would silently drop on
-    // the FS-source happy path.
-    expect(EXTRACT_SRC).toMatch(
-      /runExtractCore\(engine,\s*\{[\s\S]*?workers,[\s\S]*?\}\)/,
-    );
+  test('the CLI threads --workers and --concurrency into the core (PGLite clamps them to 1 and says so)', async () => {
+    const errors: string[] = [];
+    const err = spyOn(console, 'error').mockImplementation((...a: unknown[]) => { errors.push(a.map(String).join(' ')); });
+    const log = spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      await runExtract(engine, ['links', '--dir', brainDir, '--workers', '7']);
+      await runExtract(engine, ['links', '--dir', brainDir, '--concurrency', '9']);
+    } finally {
+      err.mockRestore();
+      log.mockRestore();
+    }
+    expect(errors.some(e => e.includes('workers=7 requested, clamped to 1 on PGLite'))).toBe(true);
+    expect(errors.some(e => e.includes('workers=9 requested, clamped to 1 on PGLite'))).toBe(true);
   });
 });

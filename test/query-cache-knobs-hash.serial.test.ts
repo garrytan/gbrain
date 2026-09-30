@@ -52,7 +52,7 @@ const balancedHash = knobsHash(resolveSearchMode({ mode: 'balanced' }));
 const tokenmaxHash = knobsHash(resolveSearchMode({ mode: 'tokenmax' }));
 
 beforeAll(async () => {
-  // v0.36.2.0: DEFAULT_EMBEDDING_DIMENSIONS flipped to 1280 (ZE Matryoshka).
+  // v0.36.2.0: DEFAULT_EMBEDDING_DIMENSIONS flipped to 1024 (Voyage Matryoshka).
   // The makeEmbedding fixture below emits 1536-dim unit vectors. If we let
   // initSchema() inherit the default, query_cache.embedding gets sized at
   // halfvec(1280) and the inserts throw "expected 1280 dimensions, not 1536".

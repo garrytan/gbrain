@@ -84,7 +84,7 @@ async function readIndexExists(): Promise<boolean> {
 
 describeE2E('migration v50: ingest_log.source_id ALTER', () => {
   beforeAll(async () => {
-    await setupDB();
+    await setupDB({ replayMigrations: true });
     await runMigrationsUpTo(getEngine(), LATEST_VERSION);
   }, 30_000);
 

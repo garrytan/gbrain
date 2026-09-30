@@ -12,11 +12,11 @@
  */
 
 import { describe, test, expect } from 'bun:test';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { surfaceFileSource, surfaceSource } from './helpers/source-surface.ts';
 
-const AUTOPILOT_SRC = resolve('src/commands/autopilot.ts');
-const SOURCE = readFileSync(AUTOPILOT_SRC, 'utf-8');
+// W4 autopilot: containment reads the autopilot surface; positional spans name the module that holds the probe steps.
+const SOURCE = surfaceSource('autopilot');
+const PROBES_SOURCE = surfaceFileSource('autopilot', 'src/commands/autopilot-probes.ts');
 
 describe('autopilot wiring: conversation-parser probe', () => {
   test('invokes the phase module and the audit trail', () => {
@@ -62,7 +62,7 @@ describe('autopilot wiring: conversation-parser probe', () => {
   });
 
   test('probe call wrapped in try/catch that does NOT bump consecutiveErrors', () => {
-    expect(SOURCE).toMatch(/catch[\s\S]*?autopilot\.parser_probe[\s\S]*?do NOT bump consecutiveErrors/);
+    expect(PROBES_SOURCE).toMatch(/catch[\s\S]*?autopilot\.parser_probe[\s\S]*?do NOT bump consecutiveErrors/);
   });
 
   test('DI shape: the exact 7 fields of the parser probe NightlyProbeDeps', () => {

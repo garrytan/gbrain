@@ -21,11 +21,11 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
-import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { withEnv, emptyHome } from './helpers/with-env.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runJobs } from '../src/commands/jobs.ts';
+import { surfaceFileSource } from './helpers/source-surface.ts';
 
 let engine: PGLiteEngine;
 
@@ -143,7 +143,7 @@ describe('help advertises --json on list/get/stats (#3685)', () => {
   });
 
   test('cli.ts JOBS summary lines carry [--json] (source audit)', () => {
-    const src = readFileSync(join(import.meta.dir, '..', 'src', 'cli.ts'), 'utf8');
+    const src = surfaceFileSource('cli', 'src/cli.ts');
     const jobsListLine = src.split('\n').find((l) => /^\s*jobs list /.test(l));
     const jobsGetLine = src.split('\n').find((l) => /^\s*jobs get /.test(l));
     const jobsStatsLine = src.split('\n').find((l) => /^\s*jobs stats/.test(l));

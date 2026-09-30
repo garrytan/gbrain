@@ -50,20 +50,11 @@ to LOWER an active threshold without an explicit `--allow-loosen-confidence`
 flag — because relaxing after data accumulates silently shifts which
 historical resolutions count as auto-applied.
 
-## Cross-brain semantics (D18)
+## Cross-brain reads
 
-For any read of a calibration profile across mounted brains:
-
-1. **Local first.** Query local. If local has it, return; do not query mounts.
-2. **Mount fallback.** Only if local is empty AND `canReadMountsForCtx(ctx)`
-   returns true. Mount-side rows must have `published=true`.
-3. **Cross-brain attribution.** Returned profile carries
-   `source_brain_id` + `from_mount`. UI consumers MUST surface
-   "from mounted brain: X" so the user knows.
-4. **Subagent prohibition.** `ctx.viaSubagent && !allowedSlugPrefixes`
-   cannot read mounts — subagent loops see only the local brain. Trusted-
-   workspace cycle phases (synthesize/patterns) pass
-   `allowedSlugPrefixes` set and ARE allowed.
+Calibration profiles are read from the local brain only. Reading a
+profile from a mounted brain is not implemented: the v0.36.1.0 D18
+cross-brain helper never had a runtime caller and was removed.
 
 ## Test seams
 
@@ -84,8 +75,6 @@ the calibration wave has structural defense against:
 
 - BaseCyclePhase enforces `sourceScopeOpts(ctx)` threading at the type level.
 - Every new schema table has `source_id NOT NULL REFERENCES sources(id)`.
-- Cross-brain reads route through `canReadMountsForCtx()` classifier.
-- Tests pin all 4 D18 rules in `test/cross-brain-calibration.test.ts`.
 
 If you find yourself writing a `ctx.engine.executeRaw(...)` inside a
 calibration module that doesn't pass `sourceScopeOpts`, you've found

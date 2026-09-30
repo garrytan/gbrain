@@ -26,14 +26,18 @@ import { tmpdir } from 'node:os';
 
 import * as realHybrid from '../src/core/search/hybrid.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { encodeDeepResearchId } from '../src/core/deep-research-id.ts';
 
-let nextResults: unknown[] = [{ page_id: 1, slug: 'a', chunk_text: 'x' }];
+let nextResults: unknown[] = [{ id: encodeDeepResearchId('default', 'a'), page_id: 1, source_id: 'default', slug: 'a', chunk_text: 'x' }];
 
 // Mock BEFORE importing dispatch (operations.ts binds hybridSearchCached at
 // import time; the spread keeps every other export live).
 mock.module('../src/core/search/hybrid.ts', () => ({
   ...realHybrid,
   hybridSearchCached: async () => nextResults,
+}));
+mock.module('../src/core/search/projection-readiness.ts', () => ({
+  probeProjectionReadiness: async () => ({ status: 'ready', ready: true }),
 }));
 
 const { dispatchToolCall, __resetBackupNoticeForTests } = await import('../src/mcp/dispatch.ts');
@@ -53,6 +57,9 @@ const { __resetBackupRefreshForTests } = await import('../src/core/backup/covera
 // ── engine stub (records executeRaw SQL; never a real PGLite) ───────────────
 
 let rawCalls: string[] = [];
+// A source listing. Search's own live read policy (the safe-chunk probe runs on
+// every remote result) references `FROM sources read_source`; that is not one.
+const BACKUP_SOURCES_QUERY = /\bfrom\s+sources\b(?!\s+read_source)/i;
 const engineStub = {
   kind: 'pglite',
   getConfig: async () => null,
@@ -144,7 +151,7 @@ beforeEach(() => {
   __resetBackupNoticeForTests();
   __resetBackupRefreshForTests();
   rawCalls = [];
-  nextResults = [{ page_id: 1, slug: 'a', chunk_text: 'x' }];
+  nextResults = [Object.freeze({ id: encodeDeepResearchId('default', 'a'), page_id: 1, source_id: 'default', slug: 'a', chunk_text: 'x' })];
 });
 
 afterEach(() => {
@@ -282,7 +289,7 @@ describe('stdio-gated refresher (TRUST PIN)', () => {
     // to land before asserting it never did.
     await new Promise((r) => setTimeout(r, 300));
     expect(existsSync(backupStatusPath())).toBe(false);
-    expect(rawCalls.filter((sql) => /\bfrom\s+sources\b/i.test(sql))).toEqual([]);
+    expect(rawCalls.filter((sql) => BACKUP_SOURCES_QUERY.test(sql))).toEqual([]);
   });
 
   test('transport UNSET is fail-closed: no compute, no sources query', async () => {
@@ -290,7 +297,7 @@ describe('stdio-gated refresher (TRUST PIN)', () => {
     await callSearch({ remote: true, transport: undefined });
     await new Promise((r) => setTimeout(r, 300));
     expect(existsSync(backupStatusPath())).toBe(false);
-    expect(rawCalls.filter((sql) => /\bfrom\s+sources\b/i.test(sql))).toEqual([]);
+    expect(rawCalls.filter((sql) => BACKUP_SOURCES_QUERY.test(sql))).toEqual([]);
   });
 
   test("transport 'stdio' kicks the in-process refresher: absent cache gets computed + persisted", async () => {
@@ -306,7 +313,7 @@ describe('stdio-gated refresher (TRUST PIN)', () => {
     expect(s!.overall).toBe('ok'); // zero sources, zero pages → nothing at risk
     expect(s!.totals.assets).toBe(0);
     // The refresher DID walk the sources table on the stdio path.
-    expect(rawCalls.some((sql) => /\bfrom\s+sources\b/i.test(sql))).toBe(true);
+    expect(rawCalls.some((sql) => BACKUP_SOURCES_QUERY.test(sql))).toBe(true);
   });
 
   test('attempt floor arms on the fresh-cache no-op path: a deleted cache is NOT recomputed within the hour', async () => {
@@ -315,7 +322,7 @@ describe('stdio-gated refresher (TRUST PIN)', () => {
     saveBackupStatus(okStatus());
     await callSearch({ remote: true, transport: 'stdio' });
     await new Promise((r) => setTimeout(r, 100));
-    expect(rawCalls.filter((sql) => /\bfrom\s+sources\b/i.test(sql))).toEqual([]);
+    expect(rawCalls.filter((sql) => BACKUP_SOURCES_QUERY.test(sql))).toEqual([]);
 
     // Delete the cache. A second stdio call within the hour is still a no-op
     // — the floor, not the cache, gates the attempt.
@@ -323,13 +330,13 @@ describe('stdio-gated refresher (TRUST PIN)', () => {
     await callSearch({ remote: true, transport: 'stdio' });
     await new Promise((r) => setTimeout(r, 300));
     expect(existsSync(backupStatusPath())).toBe(false);
-    expect(rawCalls.filter((sql) => /\bfrom\s+sources\b/i.test(sql))).toEqual([]);
+    expect(rawCalls.filter((sql) => BACKUP_SOURCES_QUERY.test(sql))).toEqual([]);
 
     // __resetBackupRefreshForTests clears the floor → the compute runs.
     __resetBackupRefreshForTests();
     await callSearch({ remote: true, transport: 'stdio' });
     const appeared = await waitFor(() => existsSync(backupStatusPath()), 2000);
     expect(appeared).toBe(true);
-    expect(rawCalls.some((sql) => /\bfrom\s+sources\b/i.test(sql))).toBe(true);
+    expect(rawCalls.some((sql) => BACKUP_SOURCES_QUERY.test(sql))).toBe(true);
   });
 });

@@ -59,6 +59,7 @@ import {
 } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { configDir } from '../config.ts';
+import { claimLocalIpcBinding, isWindowsIpcPipe, localIpcSocketPath, prepareLocalIpcPath, unixSocketProbeState } from './ipc-path.ts';
 import type { EntityCandidate } from './entity-salience.ts';
 import type { WindowTurn } from './entity-salience.ts';
 import type { PointerBlock } from './retrieval-reflex.ts';
@@ -311,7 +312,7 @@ export interface IpcServerOpts {
 
 /** Canonical socket path for a PGLite data dir. */
 export function resolveSocketPath(dataDir: string): string {
-  return join(dataDir, SOCK_NAME);
+  return localIpcSocketPath(join(dataDir, SOCK_NAME));
 }
 
 // -- Engine-uniform paths (#4245, TODOS "engine-uniform IPC listener") --
@@ -339,8 +340,8 @@ export interface IpcPathConfig {
 
 /**
  * Canonical socket path for a brain CONFIG (engine-uniform, #4245).
- * PGLite keeps the data-dir socket (wire location unchanged — old serves
- * and hooks keep pairing); Postgres gets
+ * PGLite keeps the data-dir socket when it fits the Unix byte budget;
+ * longer paths use the shared private fallback. Postgres gets
  * `~/.gbrain/run/resolve-<hash12(database_url)>.sock` so two brains on one
  * machine never share a socket. Returns null when the config carries no
  * keying material (no config at all, thin-client remote, or a postgres
@@ -355,11 +356,11 @@ export interface IpcPathConfig {
  * socket, finds a live owner, and defers (null binding) instead of unlinking
  * it (#4896). Bound-source rejection [CX2-10] still applies per request.
  */
-export function resolveSocketPathForConfig(cfg: IpcPathConfig | null | undefined): string | null {
+export function resolveSocketPathForConfig(cfg: IpcPathConfig | null | undefined, kind: 'resolve' | 'persistence' = 'resolve'): string | null {
   if (!cfg) return null;
-  if (cfg.engine === 'pglite' && cfg.database_path) return resolveSocketPath(cfg.database_path);
+  if (cfg.engine === 'pglite' && cfg.database_path) return localIpcSocketPath(join(cfg.database_path, `.gbrain-${kind}.sock`));
   if (cfg.engine === 'postgres' && cfg.database_url) {
-    return join(ipcRunDir(), `resolve-${hash12(cfg.database_url)}.sock`);
+    return localIpcSocketPath(join(ipcRunDir(), `${kind}-${hash12(cfg.database_url)}.sock`));
   }
   return null;
 }
@@ -674,6 +675,8 @@ function roundTrip(
   requestLine: string,
   timeoutMs: number,
 ): Promise<unknown | typeof IPC_UNAVAILABLE> {
+  try { socketPath = prepareLocalIpcPath(socketPath); }
+  catch { return Promise.resolve(IPC_UNAVAILABLE); }
   // POSIX fast-path only: a Unix domain socket is a real filesystem entry, so
   // existsSync() lets the common "no server running" case skip a syscall.
   // On win32, Bun binds a plain path as a real AF_UNIX socket (afunix.sys
@@ -760,29 +763,23 @@ export async function startResolveIpcServer(
       ? { onDelivered: onDeliveredOrOpts }
       : onDeliveredOrOpts ?? {};
 
-  // [S3#6] Parent dir 0700 (create if missing, tighten if present) so an
-  // unrelated local user can't even see the socket / secret names.
-  try {
-    const dir = dirname(socketPath);
-    mkdirSync(dir, { recursive: true, mode: 0o700 });
-    chmodSync(dir, 0o700);
-  } catch { /* best effort */ }
+  const binding = await claimLocalIpcBinding(socketPath).catch(() => null);
+  if (!binding) return null;
+  socketPath = binding.socketPath;
 
   // Only a provably dead owner is displaced (#4896 — a transient serve used
   // to unlink the long-lived one's socket and take the pathname with it on
   // exit). 'live' AND 'unknown' (probe timed out: a serve whose event loop
   // is busy) both defer — this serve runs without IPC rather than risk it.
-  // ponytail: two serves probing within the same few microseconds both see
-  // no owner and the second unlink still displaces the first; a dev/ino
-  // identity re-check around the unlink is the upgrade path if it ever bites.
-  if ((await probeSocketOwner(socketPath)) !== 'dead') return null;
-  // Remove the dead owner's socket file so bind() can succeed. NOT gated on
-  // existsSync/statSync (#4333): on win32 Bun binds a plain path as a real
-  // AF_UNIX socket, which leaves a reparse-point file that Bun's existsSync()/
-  // statSync() cannot see while bind() still fails WSAEADDRINUSE against it —
-  // unlink is the only fs call that observes the entry. ENOENT and EISDIR/
-  // EPERM (a directory we must not touch) are swallowed.
-  try { unlinkSync(socketPath); } catch { /* nothing stale, or not ours to remove */ }
+  // The native claim serializes this probe and stale cleanup with binding.
+  if ((await probeSocketOwner(socketPath)) !== 'dead') { await binding.release(); return null; }
+  // Bun 1.3.11 cannot stat a stale Windows AF_UNIX reparse point. The native
+  // binding verifies its exact tag and deletes through that same handle.
+  // A denied or unexpected leaf never authorizes stale cleanup.
+  if (binding.removeStaleWindowsSocket) {
+    try { binding.removeStaleWindowsSocket(); }
+    catch { await binding.release(); return null; }
+  } else if (!isWindowsIpcPipe(socketPath)) try { unlinkSync(socketPath); } catch { /* nothing stale, or not ours to remove */ }
 
   return new Promise((resolve) => {
     const server = net.createServer((conn) => {
@@ -877,17 +874,23 @@ export async function startResolveIpcServer(
       });
       conn.on('error', () => { try { conn.destroy(); } catch { /* noop */ } });
     });
+    let listened = false;
+    server.once('close', () => { void binding.release(); });
     server.on('error', (e: NodeJS.ErrnoException) => {
       if (process.env.GBRAIN_DEBUG === '1') {
         process.stderr.write(`[resolve-ipc] listen failed (${e.code ?? 'unknown'}) at ${socketPath}\n`);
       }
+      if (server.listening) server.close();
+      else if (!listened) void binding.release();
       resolve(null);
     });
-    server.listen(socketPath, () => {
+    try { server.listen(socketPath, () => {
+      listened = true;
       // Mode set BEFORE readiness is announced (the resolve() below) [S3#6].
-      try { chmodSync(socketPath, 0o600); } catch { /* best effort */ }
+      try { if (process.platform !== 'win32') chmodSync(socketPath, 0o600); }
+      catch { server.close(); resolve(null); return; }
       resolve(server);
-    });
+    }); } catch { if (!listened) void binding.release(); resolve(null); }
   });
 }
 
@@ -1007,6 +1010,8 @@ async function handleSyncKind<Req extends { protocol: number; secret: string }, 
  * reading, identical to the bind path's "never displace on a timeout".
  */
 export async function socketHasLiveListener(socketPath: string): Promise<boolean> {
+  try { socketPath = prepareLocalIpcPath(socketPath, false, true); }
+  catch { return true; } // Unsafe or inaccessible paths never authorize takeover.
   return (await probeSocketOwner(socketPath)) !== 'dead';
 }
 
@@ -1023,6 +1028,8 @@ export async function socketHasLiveListener(socketPath: string): Promise<boolean
  */
 type SocketOwner = 'live' | 'dead' | 'unknown';
 function probeSocketOwner(socketPath: string): Promise<SocketOwner> {
+  const unix = process.platform !== 'win32';
+  if (unix && unixSocketProbeState(socketPath) === 'unknown') return Promise.resolve('unknown');
   return new Promise((resolve) => {
     let settled = false;
     const probe = new net.Socket();
@@ -1036,9 +1043,17 @@ function probeSocketOwner(socketPath: string): Promise<SocketOwner> {
     // for an absent path synchronously inside connect(), which would be an
     // unhandled 'error' if attached afterwards.
     probe.once('connect', () => finish('live'));
-    probe.once('error', () => finish('dead'));
+    const failed = (error: unknown) => {
+      const code = (error as NodeJS.ErrnoException).code ?? '';
+      const entry = unix ? unixSocketProbeState(socketPath) : undefined;
+      // Bun can report ENOENT for an existing socket denied by permissions.
+      // Recheck after connect as permissions may have changed during the probe.
+      if (entry === 'unknown') { finish('unknown'); return; }
+      finish(['ENOENT', 'ECONNREFUSED', 'ENOTSOCK'].includes(code) ? 'dead' : 'unknown');
+    };
+    probe.once('error', failed);
     probe.once('timeout', () => finish('unknown'));
     probe.setTimeout(CLIENT_TIMEOUT_MS);
-    try { probe.connect(socketPath); } catch { finish('dead'); }
+    try { probe.connect(socketPath); } catch (error) { failed(error); }
   });
 }

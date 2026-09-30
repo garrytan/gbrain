@@ -1,3 +1,6 @@
+import { maintenancePreflight, verifyMaintenanceOutputs } from '../persistence/prepared-maintenance.ts';
+import { digest } from '../persistence/digest.ts';
+import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 /**
  * Patterns phase (v0.23) — cross-session theme detection.
  *
@@ -42,10 +45,14 @@ import { loadAllowedSlugPrefixes, loadOutputRoot, runSubagentsInline } from './s
 import { probeChatModel } from '../ai/gateway.ts';
 import { normalizeModelId } from '../model-id.ts';
 import { throwIfAborted } from '../abort-check.ts';
+import { resolveCycleDate } from './cycle-date.ts';
+import { dreamBreakerRefusal, loadDreamBreaker } from './dream-breaker.ts';
 
 export interface PatternsPhaseOpts {
   brainDir: string;
   dryRun: boolean;
+  /** C-15: the cycle's calendar date (runCycle resolves one per cycle). */
+  cycleDate?: string;
   /** #4077: cooperative cancellation from the enclosing cycle/minion job. A
    *  cancelled cycle must stop the inline child and every derived-state
    *  write instead of running out the force-evict grace. Mirrors
@@ -147,8 +154,12 @@ export async function runPhasePatterns(
       );
     }
 
+    const [source] = await managedPersistenceEnabled(engine)
+      ? await engine.executeRaw<{ incarnation: string }>('SELECT incarnation FROM sources WHERE id=$1', [opts.sourceId ?? 'default']) : [];
+    const evidenceKey = source ? `${LAST_EVIDENCE_KEY}.${opts.sourceId ?? 'default'}.${source.incarnation}` : LAST_EVIDENCE_KEY;
+
     // Gather reflections within lookback window.
-    const reflections = await gatherReflections(engine, config.lookbackDays, config.sourceSlugPrefix);
+    const reflections = await gatherReflections(engine, config.lookbackDays, config.sourceSlugPrefix, opts.sourceId ?? 'default');
     if (reflections.length < config.minEvidence) {
       return skipped(
         'insufficient_evidence',
@@ -165,7 +176,7 @@ export async function runPhasePatterns(
     // synthesize's checkCooldown; `--once` forces past it.
     const newestEvidenceMs = reflections[0].updatedAt.getTime();
     if (!opts.once) {
-      const stampMs = Date.parse((await engine.getConfig(LAST_EVIDENCE_KEY)) ?? '');
+      const stampMs = Date.parse((await engine.getConfig(evidenceKey)) ?? '');
       if (Number.isFinite(stampMs) && newestEvidenceMs <= stampMs) {
         return skipped(
           'no_new_evidence',
@@ -194,6 +205,7 @@ export async function runPhasePatterns(
     // unknown provider/model or Anthropic-without-key skips cheaply; other
     // providers' auth is checked lazily at dispatch and surfaces in the job
     // outcome. (Takeover of PR #2279's intent by @brettdavies.)
+    const maintenance = await maintenancePreflight(engine, opts.sourceId ?? 'default', opts.brainDir);
     const probe = probeChatModel(normalizeModelId(config.model));
     if (!probe.ok) {
       return skipped('no_provider', `pattern detection skipped: ${probe.detail}`);
@@ -244,19 +256,26 @@ export async function runPhasePatterns(
       childQueueName, privateQueueOwnerToken, opts.yieldDuringPhase,
     );
     const data: SubagentHandlerData = {
-      prompt: buildPatternsPrompt(reflections, config.minEvidence, config.sourceSlugPrefix, config.outputSlugPrefix),
+      prompt: buildPatternsPrompt(reflections, config.minEvidence, config.sourceSlugPrefix, config.outputSlugPrefix,
+        opts.cycleDate ?? await resolveCycleDate(engine)),
       model: config.model,
       max_turns: 30,
       // #4217/CDX-12: a patterns child whose every put_page failed must
       // dead-letter (its whole purpose is writing pattern pages), not report
-      // completed with zero pages.
+      // completed with zero pages. #5540: a clean finish that examined the
+      // evidence and named nothing completes, so the #4879 watermark stamps
+      // instead of re-billing the same reflections every run. Older workers
+      // ignore the opt-in and keep the strict behavior.
       require_writes: true,
+      allow_clean_zero_writes: true,
       allowed_slug_prefixes: allowedSlugPrefixes,
       // #1586: scope every child tool call to the cycle's resolved source so
       // put_page writes land there instead of the hardcoded 'default'.
       ...(opts.sourceId ? { source_id: opts.sourceId } : {}),
     };
     const submitOpts: Partial<MinionJobInput> = {
+      ...(maintenance ? { idempotency_key: `dream:patterns:${digest({ source: maintenance.writer.sourceIncarnation,
+        authority: maintenance.writer, reflections, model: config.model, output: config.outputSlugPrefix })}` } : {}),
       max_stalled: 3,
       timeout_ms: budgets.timeoutMs,
       queue: childQueueName,
@@ -264,6 +283,13 @@ export async function runPhasePatterns(
       private_queue_owner_token: privateQueueOwnerToken,
       private_queue_lease_ms: DEFAULT_PRIVATE_QUEUE_LEASE_MS,
     };
+    // Paid-loop breaker: only maintenance runs carry a key, so only they are covered.
+    const breaker = submitOpts.idempotency_key ? await loadDreamBreaker(engine) : null;
+    const refusal = breaker && dreamBreakerRefusal(breaker, submitOpts.idempotency_key!);
+    if (refusal) {
+      process.stderr.write(`[dream] patterns: ${refusal}\n`);
+      return skipped('dream_breaker_tripped', refusal);
+    }
     let job: Awaited<ReturnType<typeof queue.add>>;
     try {
       job = await queue.add('subagent', data as unknown as Record<string, unknown>, submitOpts, {
@@ -335,7 +361,8 @@ export async function runPhasePatterns(
     const writtenRefs = await collectChildPutPageSlugs(engine, [job.id], cycleSourceId);
 
     // Reverse-write to fs.
-    const reverseWriteCount = await reverseWriteRefs(engine, opts.brainDir, writtenRefs, cycleSourceId, opts.signal);
+    const reverseWriteCount = maintenance ? await verifyMaintenanceOutputs(engine, maintenance, writtenRefs)
+      : await reverseWriteRefs(engine, opts.brainDir, writtenRefs, cycleSourceId, opts.signal);
 
     const details = {
       reflections_considered: reflections.length,
@@ -382,7 +409,7 @@ export async function runPhasePatterns(
     // edited between gather and here has updated_at > stamp, so the next run
     // still fires. Zero writes stamps too: the model saw this evidence and
     // named nothing; re-running it is exactly the spend bug.
-    await engine.setConfig(LAST_EVIDENCE_KEY, new Date(newestEvidenceMs).toISOString());
+    await engine.setConfig(evidenceKey, new Date(newestEvidenceMs).toISOString());
 
     return ok(`${writtenRefs.length} pattern page(s) written/updated (${outcome})`, details);
   } catch (e) {
@@ -459,6 +486,11 @@ async function getSlugPrefixConfig(engine: BrainEngine, key: string, fallback: s
   return trimmed || fallback;
 }
 
+/** Where pattern pages land; also a dream output directory synthesize discovery excludes (#5471). */
+export async function loadPatternsOutputSlugPrefix(engine: BrainEngine, outputRoot: string): Promise<string> {
+  return getSlugPrefixConfig(engine, 'dream.patterns.output_slug_prefix', `${outputRoot}/personal/patterns`);
+}
+
 async function loadPatternsConfig(engine: BrainEngine): Promise<PatternsConfig> {
   const enabledStr = await engine.getConfig('dream.patterns.enabled');
   const enabled = enabledStr === null ? true : enabledStr === 'true';
@@ -482,9 +514,7 @@ async function loadPatternsConfig(engine: BrainEngine): Promise<PatternsConfig> 
     sourceSlugPrefix: await getSlugPrefixConfig(
       engine, 'dream.patterns.source_slug_prefix', `${outputRoot}/personal/reflections`,
     ),
-    outputSlugPrefix: await getSlugPrefixConfig(
-      engine, 'dream.patterns.output_slug_prefix', `${outputRoot}/personal/patterns`,
-    ),
+    outputSlugPrefix: await loadPatternsOutputSlugPrefix(engine, outputRoot),
     subagentTimeoutMs: await getNumberConfig(
       engine, 'dream.patterns.subagent_timeout_ms', DEFAULT_PATTERNS_SUBAGENT_TIMEOUT_MS,
     ),
@@ -512,6 +542,7 @@ async function gatherReflections(
   engine: BrainEngine,
   lookbackDays: number,
   sourceSlugPrefix = 'wiki/personal/reflections',
+  sourceId = 'default',
 ): Promise<ReflectionRef[]> {
   const since = new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1000).toISOString();
   // Reflections live under the configured source slug prefix (bound as a
@@ -522,10 +553,11 @@ async function gatherReflections(
     `SELECT slug, title, compiled_truth, updated_at
        FROM pages
       WHERE slug LIKE $2
+        AND source_id = $3 AND deleted_at IS NULL AND COALESCE(frontmatter->>'visibility','') <> 'private'
         AND updated_at >= $1::timestamptz
       ORDER BY updated_at DESC
       LIMIT 100`,
-    [since, `${sourceSlugPrefix}/%`],
+    [since, `${sourceSlugPrefix}/%`, sourceId],
   );
   return rows.map(r => ({
     slug: r.slug,
@@ -548,8 +580,8 @@ function buildPatternsPrompt(
   minEvidence: number,
   sourceSlugPrefix = 'wiki/personal/reflections',
   outputSlugPrefix = 'wiki/personal/patterns',
+  today: string,
 ): string {
-  const today = new Date().toISOString().slice(0, 10);
   const corpus = reflections
     .map((r, i) => `### ${i + 1}. [[${r.slug}]] — ${r.title}\n${r.excerpt}`)
     .join('\n\n---\n\n');

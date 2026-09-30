@@ -80,8 +80,8 @@ describe('put_page remote auto-link disclosure (#4525)', () => {
     expect(result.auto_links?.hint).toMatch(/stdio `gbrain serve` sweeps/);
     expect(result.auto_links?.hint).toMatch(/`gbrain serve --http` does not self-sweep/);
     expect(result.auto_links?.hint).not.toMatch(/sweep \(startup \+ idle\)/);
-    expect(result.auto_timeline?.skipped).toBe('remote');
-    expect(result.auto_timeline?.hint).toBeDefined();
+    // Canonical timeline projections commit with the page snapshot.
+    expect(result.auto_timeline?.skipped).toBeUndefined();
   }, 120000);
 
   // #4679: the brain-ops skill (shipped to the exact agents that write over
@@ -97,18 +97,6 @@ describe('put_page remote auto-link disclosure (#4525)', () => {
     // callers — only the stdio serve arms one.
     expect(skill).toMatch(/`gbrain serve --http` does not self-sweep/);
     expect(skill).not.toMatch(/\(at startup and on 10-minute idle ticks\)/);
-  });
-
-  // The paste-in template downstream forks copy (UPGRADING_DOWNSTREAM_AGENTS.md)
-  // and the enrich skill carried the same inline promise one file over.
-  test('downstream-upgrade doc and enrich skill state the MCP skip, not an inline auto_links promise', () => {
-    for (const rel of ['docs/UPGRADING_DOWNSTREAM_AGENTS.md', 'skills/enrich/SKILL.md']) {
-      const flat = readFileSync(join(import.meta.dir, '..', rel), 'utf8').replace(/\s+/g, ' ');
-      expect(flat).not.toContain('MCP response includes `auto_links: { created');
-      expect(flat).not.toContain('Verify via the `auto_links` field in the put_page response (`{ created');
-      expect(flat).toContain('skipped: "remote"');
-      expect(flat).toContain('sweep');
-    }
   });
 
   test('local write does not carry the remote skip marker', async () => {

@@ -25,14 +25,26 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { withEnv } from './helpers/with-env.ts';
+import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PageMissingError } from '../src/core/engine-errors.ts';
-import { dispatchToolCall } from '../src/mcp/dispatch.ts';
+import { dispatchToolCall as dispatchToolCallImpl } from '../src/mcp/dispatch.ts';
 import { runSources } from '../src/commands/sources.ts';
 import type { AuthInfo } from '../src/core/operations.ts';
 
 let engine: PGLiteEngine;
+const home = mkdtempSync(join(tmpdir(), 'gbrain-source-boundary-'));
+async function dispatchToolCall(...args: Parameters<typeof dispatchToolCallImpl>) {
+  return withEnv({ GBRAIN_HOME: home }, async () => {
+    try { return await dispatchToolCallImpl(...args); }
+    finally { await disposePersistenceConsumer(args[0]); }
+  });
+}
 
 // Source ids chosen so the foreign one ('privsrc') shares no substring with
 // the 'internal_error' envelope code — the no-disclosure assertions below
@@ -49,7 +61,7 @@ const SD_FROM = 'topics/sbme-sd-from';
 const SD_TO = 'topics/sbme-sd-to';
 
 function auth(allowedSources: string[]): AuthInfo {
-  return { token: 'test-token', clientId: 'test-client', scopes: [], allowedSources };
+  return { token: 'test-token', clientId: 'gbrain_cl_source_boundary', principal: { kind: 'oauth_client', id: 'gbrain_cl_source_boundary' }, sourceId: WRITE_SRC, scopes: ['read', 'write'], allowedSources };
 }
 
 // Grant spans both sources (can READ the foreign page) vs write source only.
@@ -84,8 +96,11 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
+  mkdirSync(join(home, '.gbrain'));
+  writeFileSync(join(home, '.gbrain', 'config.json'), JSON.stringify({ engine: 'pglite', embedding_disabled: true }));
   await runSources(engine, ['add', WRITE_SRC, '--no-federated']);
   await runSources(engine, ['add', FOREIGN_SRC, '--no-federated']);
+  await engine.executeRaw(`INSERT INTO oauth_clients(client_id,client_name,scope,source_id,federated_read) VALUES('gbrain_cl_source_boundary','Source boundary fixture','read write',$1,$2)`, [WRITE_SRC, [WRITE_SRC, FOREIGN_SRC]]);
   await seed(FROM_SLUG, WRITE_SRC);
   await seed(TO_SHARED, WRITE_SRC);
   await seed(TO_FOREIGN, FOREIGN_SRC);
@@ -99,7 +114,9 @@ beforeAll(async () => {
 }, 120_000); // full PGLite schema init can exceed the default hook timeout under suite load
 
 afterAll(async () => {
+  await disposePersistenceConsumer(engine);
   await engine.disconnect();
+  rmSync(home, { recursive: true, force: true });
 }, 30_000);
 
 describe('add_link source-boundary diagnostics (#4109)', () => {
@@ -318,19 +335,33 @@ describe('mutation-time deletion race reclassification (#4109)', () => {
     });
   });
 
-  test('add_timeline_entry reclassifies a page hard-deleted after preflight', async () => {
-    const eng = fakeEngine([{ slug: 'topics/race-tl', source_id: WRITE_SRC }], 'topics/race-tl');
-    const result = await dispatchToolCall(eng, 'add_timeline_entry', {
-      slug: 'topics/race-tl',
-      date: '2026-08-14',
-      summary: 'raced away',
-    }, UNGRANTED);
-
-    expect(result.isError).toBe(true);
-    expect(payload(result)).toMatchObject({
-      error: 'page_not_found',
-      message: `add_timeline_entry page "topics/race-tl" was not found in writable source "${WRITE_SRC}".`,
-    });
+  test('add_timeline_entry refuses a page replaced after the accepted snapshot', async () => {
+    const slug = 'topics/race-tl';
+    await seed(slug, WRITE_SRC);
+    const original = engine.readPageSnapshot;
+    let replaced = false;
+    let targetReads = 0;
+    engine.readPageSnapshot = async function (target, opts) {
+      const snapshot = await original.call(this, target, opts);
+      // The first read is the source-boundary preflight; the second is the
+      // snapshot whose page identity admission retains in the durable row.
+      if (target === slug && ++targetReads === 2) {
+        replaced = true;
+        await engine.deletePage(slug, { sourceId: WRITE_SRC });
+        await seed(slug, WRITE_SRC);
+      }
+      return snapshot;
+    };
+    try {
+      const result = await dispatchToolCall(engine, 'add_timeline_entry', {
+        slug, date: '2026-08-14', summary: 'must not reach the replacement page',
+      }, UNGRANTED);
+      expect(replaced).toBe(true);
+      expect(result.isError).toBe(true);
+      expect(payload(result)).toMatchObject({ write_error: 'page_identity_changed', write_request: { state: 'conflict' } });
+      expect(await engine.getTimeline(slug, { sourceId: WRITE_SRC })).toEqual([]);
+      expect((await engine.getPage(slug, { sourceId: WRITE_SRC }))?.compiled_truth).toBe('source-boundary fixture');
+    } finally { engine.readPageSnapshot = original; }
   });
 
   test('a page restored between reclassification reads still misses deterministically', async () => {
@@ -343,6 +374,7 @@ describe('mutation-time deletion race reclassification (#4109)', () => {
       async addLink() {
         throw new PageMissingError('addLink', 'to', 'topics/race-restored', WRITE_SRC);
       },
+      async executeRaw() { return []; }, // explicitly unmanaged fixture
     } as unknown as BrainEngine;
     const result = await dispatchToolCall(eng, 'add_link', {
       from: 'topics/race-from',

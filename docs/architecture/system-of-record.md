@@ -11,11 +11,12 @@ enforces it programmatically.
 
 ## Why this matters
 
-The DB is a derived index over the markdown content. It exists to make
+Much of the DB is a derived index over the markdown content. It exists to make
 search fast, to dedup embedding-similar claims, to materialize the
 cross-page graph. `gbrain sync && gbrain extract all` rebuilds the indexes
 represented by intact Markdown; it does not recover DB-only knowledge,
-credentials, or page revision history.
+credentials, page revision history, durable receipts, or the authoritative
+withdrawal ledger. Preserve those records in a database backup.
 
 This means:
 
@@ -34,9 +35,11 @@ This means:
   gitignored (via `gbrain.yml` `db_only` paths or per-page) and they
   stay on disk but not in git. The fence respects whatever git
   tracking choice you make at the page level.
-- **Cross-agent collaboration is possible.** Multiple agents can write
-  to the same brain because the fence is the merge point, not the DB.
-  Git handles concurrent edits the way git handles concurrent edits.
+- **Cross-agent collaboration is coordinated.** Multiple authenticated servers
+  can accept writes against shared Postgres. Each canonical worktree has one
+  designated publishing host; revision checks prevent stale replacements and
+  durable receipts let callers inspect or replay accepted requests. Git still
+  carries files between independent brains.
 
 ## The three categories
 
@@ -56,7 +59,7 @@ The CI gate constrains direct DB writes to the documented paths.
 | **Takes** (incl. hunches, bets) | `## Takes` fenced table between `<!--- gbrain:takes:begin -->` / `:end -->` markers | `takes` | `extract takes` |
 | **Facts** | `## Facts` fenced table between `<!--- gbrain:facts:begin -->` / `:end -->` markers | `facts` | `extract_facts` cycle phase |
 | **Links** | Inline `[text](slug)` / `[[slug]]` in markdown body + frontmatter `direction: incoming` | `links` | `extract links` |
-| **Timeline** | Dated markers anywhere in the page body — compiled truth AND the `## Timeline` section: `- **YYYY-MM-DD** \| Source — Summary` bullets, `### YYYY-MM-DD — Title` headers (FS extract), and inline `[Source: <text>, YYYY-MM-DD]` citations (one row per citation, dated by the citation, summary = the bullet/paragraph it sits in). The `<!-- timeline -->` sentinel only splits compiled_truth from timeline for storage; it does not scope extraction | `timeline_entries` | `extract timeline` + `put_page`'s `auto_timeline` |
+| **Timeline** | Dated markers anywhere in the page body — compiled truth AND the `## Timeline` section: `- **YYYY-MM-DD** \| Source — Summary` bullets, `### YYYY-MM-DD — Title` headers (FS extract), and inline `[Source: <text>, YYYY-MM-DD]` citations (one row per citation, dated by the citation, summary = the bullet/paragraph it sits in). The `<!-- timeline -->` sentinel only splits compiled_truth from timeline for storage; it does not scope extraction | `timeline_entries` | `extract timeline` + canonical page publication (independent of `auto_timeline`) |
 | **Tags** | Frontmatter `tags:` YAML array | `tags` | `importFromFile` (reconciles per-page on import) |
 | **emotional_weight** | Recomputed from takes + tags | `pages.emotional_weight` (signal column) | `recompute_emotional_weight` cycle phase |
 | **synthesis_evidence** | FK into `takes` rows (`slug#N`) inside synthesis pages | `synthesis_evidence` | `extract takes` (transitively) |
@@ -91,6 +94,8 @@ also contain knowledge absent from canonical files and must be backed up.
 | `gbrain_cycle_locks` / migration ledger | Infrastructure. |
 | `op_checkpoint_paths` | Sync-resume checkpoint. Append-only progress banking; a completed sync makes it irrelevant. |
 | `config` (some keys) | Site-local routing config (e.g. `sync.repo_path`). |
+| Withdrawal ledger and page overlays | Authoritative withdrawal decisions must survive stale imports and owner downtime. Markdown mirrors can lag. |
+| Mutation journal, receipts, outbox, ownership and local registrations | Durable replay identity, publication recovery and authorization cannot be rebuilt from Markdown. |
 
 A new derived table that holds user-knowledge MUST land FS-first.
 If you're tempted to add one as "DB-only for now," the structural
@@ -100,21 +105,34 @@ reconciler.
 
 ## Page-write persistence boundary
 
-For a file-backed `put_page`, the root worktree lock is acquired before importing
-the revision. If that acquisition times out, `storage_busy` means the write was
-not applied and was not queued. Canonical Markdown is staged with fsync and
-renamed inside the import's database transaction, after required source-path
-bookkeeping. Ordinary filesystem rejection rolls back the imported page, tags,
-chunks, and version snapshot.
+Page mutations first admit a durable request scoped to the authenticated
+principal. Existing-page replacements require the caller's observed revision
+or explicit `force`; omitting both permits creation only when absent. Repeating
+the same UUID and intent returns the stored outcome without executing terminal
+work again. Preconditions are checked before no-op detection.
 
-This is not a distributed transaction between the filesystem and database. A
-crash or database COMMIT failure after rename can leave the Markdown ahead of
-the index. It is also not a durable write queue or a caller-supplied revision
-precondition. The page operation releases its own worktree lock before optional
-embedding, so a slow provider does not block other writes to the same worktree.
-Embedding is page-scoped, rejects superseded page/chunk generations, and reports
-failure separately without undoing a saved page or exposing provider exception
-text. A lock owned by a surrounding caller remains that caller's responsibility.
+The designated owner prepares outside publication locks, reserves recovery
+space, then takes the native worktree lock and rechecks authority, identity,
+revision and file bytes. It records recovery data before flushing and atomically
+replacing the file. Canonical projections, tags, aliases, complete version
+history, the terminal receipt and postpublication effects commit together in
+the database. An ordinary rejected file write rolls that transaction back.
+
+A committed receipt identifies durable canonical state. Lock contention or
+owner downtime leaves accepted work queued; after the five-second synchronous
+wait, `write_pending` includes the UUID and one-second retry guidance. An
+uncertain publication stays `recovering` and blocks its worktree until resolved.
+Recovery restores prior bytes only when the file still matches the recorded
+attempt. Unexpected bytes require explicit repair. Direct filesystem readers
+can observe the file/database publication interval.
+
+Page reads return content, tags, withdrawal overlays and revision from one
+database snapshot. A read begun after commitment observes that revision or a
+later one. Embeddings and Git completion have separate, retryable effect states;
+embedding installation checks the captured page/chunk/text/indexing context and
+cannot invalidate a committed page. Search excludes unsealed text projections
+until a worker rebuilds them. See [concurrent writes](../guides/concurrent-writes.md)
+for receipts, capacity, activation and transfer commands.
 
 The rebuild contract above applies only to knowledge actually preserved in
 canonical files. DB-only pages, unresolved facts not written to a fence, audit
@@ -150,11 +168,16 @@ internal notes), mark the entity page's directory as `db_only` in
 
 ## The forget contract
 
-`gbrain forget <id>` and the MCP `forget_fact` op rewrite the fence
-row with strikethrough + `valid_until = today` + `context: "forgotten:
-<reason>"`. The DB's `expired_at = valid_until + now()` derivation
-reconstructs the forget state on every rebuild because the fence is
-canonical.
+`gbrain forget <id>` and the MCP `forget_fact` operation commit withdrawal to
+the authoritative database ledger first. The transaction expires matching facts,
+adds claim-fingerprint overlays, advances affected page revisions and invalidates
+their retrieval projections. No filesystem owner is required. Stale imports and
+delayed embedding work cannot undo the withdrawal.
+
+The owner later mirrors the current logical snapshot into Markdown, retaining
+strikethrough, withdrawal dates and context for historical rows. Mirroring does
+not advance the logical revision again. A failed or uncertain mirror never
+reverses withdrawal; direct page snapshots apply the ledger while it is pending.
 
 Strikethrough has two semantics distinguished by context:
 
@@ -163,9 +186,9 @@ Strikethrough has two semantics distinguished by context:
 - `~~claim~~` + `context: "forgotten: <reason>"` → row was retracted
   via the forget op
 
-Both encodings keep the row in the markdown for audit history. To
-permanently delete a fact, edit the fence directly in markdown and
-remove the row. The next `extract_facts` cycle wipes the DB row.
+Both encodings retain history in Markdown. Withdrawal removes a fact from active
+memory; history, source material and private backups may remain. Editing a fence
+does not erase the withdrawal ledger or promise physical erasure.
 
 ## Disaster recovery
 
@@ -173,7 +196,10 @@ This example is only for a database whose affected facts, takes, links and
 timeline entries have been verified to exist in canonical files. Before running
 the destructive commands, stop writers and verify a restorable database backup
 plus source-file backups. Do not use this recipe on unresolved DB-only facts or
-assume a repository backup covers gitignored files.
+assume a repository backup covers gitignored files. Preserve the authoritative
+withdrawal ledger and all accepted request identities. On an activated managed
+brain, use the documented drained recovery procedure; direct SQL or an older
+writer cannot safely replace the coordinator.
 
 ```bash
 # File-backed state only: verify restorable DB + source backups before proceeding.

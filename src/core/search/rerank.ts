@@ -1,28 +1,3 @@
-/**
- * v0.35.0.0+ — reranker call-site abstraction.
- *
- * Slots into hybridSearch after `dedupResults()` and before
- * `enforceTokenBudget()`. Takes the top `topNIn` candidates by current RRF
- * order, sends them to `gateway.rerank()`, and re-orders by the
- * cross-encoder's relevance score. The un-reranked long tail keeps its
- * original RRF order — preserves recall vs. truncating to topNIn.
- *
- * Fail-open posture: every error class (auth, network, timeout, rate-limit,
- * payload-too-large, unknown) logs to the rerank-audit JSONL and returns
- * the original RRF order unchanged. Search reliability beats reranker
- * quality; a flaky upstream must never break search. Two classes are SKIPS
- * rather than failures — `no_key` (provider key absent) and
- * `sunset_short_circuit` (provider dead past its announced date): the
- * gateway already wrote the one per-process audit row, so this layer returns
- * at once without a per-query row and reports the skip through
- * `opts.onSkip` so hybrid.ts can stamp a `reranker_skipped` degraded entry
- * (visible in `--explain`, telemetry and the eval rows; never stderr).
- *
- * Caller (hybridSearch) decides whether the reranker fires via
- * `opts.reranker?.enabled`. Mode-bundle resolution defaults this to `true`
- * for tokenmax and `false` for conservative/balanced.
- */
-
 import { createHash } from 'crypto';
 import type { SearchResult } from '../types.ts';
 import { rerank as gatewayRerank, RerankError, type RerankInput, type RerankResult } from '../ai/gateway.ts';
@@ -59,17 +34,21 @@ export interface RerankerOpts {
    * Production must NEVER set this.
    */
   rerankerFn?: (input: RerankInput) => Promise<RerankResult[]>;
-  /**
-   * v0.48.2 — fired when the reranker is SKIPPED without reordering
-   * (`no_key` / `sunset_short_circuit`). hybrid.ts stamps the degraded
-   * entry; nothing is written to stderr. Never fired for genuine failures
-   * (those keep the per-query audit row instead).
-   */
+
   onSkip?: (reason: RerankSkipReason) => void;
+  /**
+   * Fired when the reranker call failed hard (HTTP error, timeout, budget,
+   * network, …) and the results passed through in RRF order. hybridSearch
+   * stamps it as the `rerank_failed` degraded stage. Best-effort.
+   */
+  onFailure?: (reason: RerankFailedReason) => void;
 }
 
 /** The two skip classes (no HTTP call, no per-query audit row). */
-export type RerankSkipReason = 'no_key' | 'sunset_short_circuit';
+export type RerankSkipReason = 'no_key';
+
+/** A reranker call that threw (anything but a missing key), as stamped on the wire. */
+export type RerankFailedReason = 'timeout' | 'budget' | 'provider_error';
 
 /** SHA-256 prefix (8 chars) of the query text for privacy-preserving audit. */
 function hashQuery(query: string): string {
@@ -163,12 +142,7 @@ export async function applyReranker(
     });
   } catch (err) {
     const reason = classifyRerankFailure(err);
-    // #3657 post-sunset short-circuit + v0.48.2 no_key: the gateway already
-    // wrote the ONE per-process-per-model audit row (and, for the sunset case
-    // only, the once-per-process stderr line) when it skipped the HTTP call —
-    // a per-query row here would flood the audit file on every search until
-    // the user migrates / adds the key. Fail open at once, tell the caller.
-    if (reason === 'sunset_short_circuit' || reason === 'no_key') {
+    if (reason === 'no_key') {
       try { opts.onSkip?.(reason); } catch { /* caller hook must never break search */ }
       return results;
     }
@@ -184,6 +158,8 @@ export async function applyReranker(
     } catch {
       // Audit logging must never break search.
     }
+    const failed: RerankFailedReason = reason === 'timeout' || reason === 'budget' ? reason : 'provider_error';
+    try { opts.onFailure?.(failed); } catch { /* caller hook must never break search */ }
     return results;
   }
 
@@ -230,9 +206,26 @@ export async function applyReranker(
   // (so a top_n response with fewer items than head.length naturally
   // drops the missing ones — but since we don't pass top_n by default,
   // every input gets a score).
+  // #5428: exact score ties carry no cross-encoder preference, and providers
+  // emit tied rows in arbitrary (call-to-call unstable) order. Within each run
+  // of adjacent, exactly equal finite scores, keep the fused (input) order.
+  // Rows never cross a different score.
+  const ordered = [...reranked];
+  for (let start = 0; start < ordered.length; ) {
+    let end = start + 1;
+    const score = ordered[start].relevanceScore;
+    if (Number.isFinite(score)) {
+      while (end < ordered.length && ordered[end].relevanceScore === score) end++;
+      if (end - start > 1) {
+        const run = ordered.slice(start, end).sort((a, b) => a.index - b.index);
+        ordered.splice(start, run.length, ...run);
+      }
+    }
+    start = end;
+  }
   const seen = new Set<number>();
   const reorderedHead: SearchResult[] = [];
-  for (const r of reranked) {
+  for (const r of ordered) {
     if (r.index >= 0 && r.index < head.length && !seen.has(r.index)) {
       seen.add(r.index);
       const item = head[r.index]!;

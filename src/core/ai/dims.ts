@@ -63,24 +63,6 @@ export function isValidVoyageOutputDim(dims: number): boolean {
   return (VOYAGE_VALID_OUTPUT_DIMS as readonly number[]).includes(dims);
 }
 
-// v0.35.0.0+ ZeroEntropy zembed-1 flexible-dim allowlist. zembed-1 distills
-// from zerank-2 (Matryoshka-style); smaller dims trade quality for storage.
-// ZE rejects any other value with HTTP 400; catching it locally produces a
-// clearer error with the valid-values hint. Same failure mode as the Voyage
-// case: `embedding_model: zeroentropyai:zembed-1` configured without
-// `embedding_dimensions` falls back to DEFAULT_EMBEDDING_DIMENSIONS=1536
-// (an OpenAI default), which ZE doesn't accept.
-const ZEROENTROPY_DIM_MODELS = new Set(['zembed-1']);
-export const ZEROENTROPY_VALID_DIMS = [2560, 1280, 640, 320, 160, 80, 40] as const;
-
-export function supportsZeroEntropyDimension(modelId: string): boolean {
-  return ZEROENTROPY_DIM_MODELS.has(modelMatchKey(modelId));
-}
-
-export function isValidZeroEntropyDim(dims: number): boolean {
-  return (ZEROENTROPY_VALID_DIMS as readonly number[]).includes(dims);
-}
-
 // v0.36.0.0 (D13): OpenAI text-embedding-3-* accepts arbitrary truncation via
 // Matryoshka — any positive integer up to the model's native size. When a
 // brain is configured with `embedding_dimensions` OUTSIDE that range, OpenAI
@@ -176,25 +158,6 @@ const QWEN3_EMBEDDING_NATIVE_DIMS: Record<string, number> = {
   'qwen3-embedding-8b': 4096,
 };
 
-/**
- * Build the providerOptions blob for embedMany() that pins output dimensions.
- *
- * Matryoshka providers (OpenAI text-embedding-3, Gemini embedding-001) can be
- * asked to return reduced-dim vectors. Anthropic does not take a dimension
- * parameter. Most openai-compatible providers do not either. Voyage's
- * endpoint accepts `output_dimension`, but the AI SDK openai-compatible
- * adapter only forwards `dimensions`; gateway.ts translates that field to
- * Voyage's wire name in voyageCompatFetch.
- *
- * v0.35.0.0+ 4th param `inputType`: 'query' | 'document' for asymmetric
- * providers (ZE zembed-1, Voyage v3+, MiniMax embo-01). When omitted, the
- * existing document-encoding behavior is preserved (no `input_type` field
- * emitted for symmetric providers; legacy hardcoded `type:'db'` for
- * embo-01). gateway.embedQuery() threads `'query'`; gateway.embed() threads
- * `'document'`. Per-model filtering happens INSIDE the switch — the field
- * is NEVER emitted for providers that don't accept it (OpenAI text-3,
- * DashScope, Zhipu) so the request body stays clean for those endpoints.
- */
 export function dimsProviderOptions(
   implementation: Implementation,
   modelId: string,
@@ -234,26 +197,6 @@ export function dimsProviderOptions(
       // Anthropic has no embedding model.
       return undefined;
     case 'openai-compatible':
-      // ZE zembed-1 — flexible Matryoshka dims + asymmetric input_type.
-      // Lives BEFORE the generic openai-compatible fall-through to avoid
-      // sending input_type to providers (Azure/DashScope/Zhipu) that
-      // would reject it.
-      if (supportsZeroEntropyDimension(modelId)) {
-        if (!isValidZeroEntropyDim(dims)) {
-          throw new AIConfigError(
-            `ZeroEntropy model "${modelId}" supports dimensions only in ` +
-            `{${ZEROENTROPY_VALID_DIMS.join(', ')}}, got ${dims}.`,
-            `Set \`embedding_dimensions\` to one of ` +
-            `${ZEROENTROPY_VALID_DIMS.join('/')} in your gbrain config.`,
-          );
-        }
-        return {
-          openaiCompatible: {
-            dimensions: dims,
-            input_type: inputType ?? 'document',
-          },
-        };
-      }
       // Voyage hosted flexible-dim models — accept `output_dimension`
       // (translated by voyageCompatFetch) AND `input_type: query|document`
       // for asymmetric retrieval. inputType is opt-in: when undefined,
@@ -283,11 +226,6 @@ export function dimsProviderOptions(
           },
         };
       }
-      // Perplexity pplx-embed-v1-* — flexible dims via the native
-      // `dimensions` field. Fail-loud when the configured dim is outside
-      // the model's range (same rationale as the Voyage/ZE guards: the
-      // upstream HTTP 400 misroutes as a transient network error).
-      // Symmetric retrieval — inputType is never emitted.
       if (isPerplexityEmbeddingModel(modelId)) {
         if (!isValidPerplexityDim(modelId, dims)) {
           const max = maxPerplexityEmbeddingDim(modelId)!;

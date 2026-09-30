@@ -1,3 +1,4 @@
+import { assertManagedFilesystemWrite } from '../core/persistence/filesystem-guard.ts';
 // `gbrain schema` CLI surface.
 //
 // The active schema pack drives type inference, link verbs, expert
@@ -19,6 +20,7 @@
 
 import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { parseArgs } from 'node:util';
 import {
   addAliasToType,
   addLinkTypeToPack,
@@ -573,6 +575,7 @@ async function runInitCmd(args: string[]): Promise<void> {
     console.error(`Pack \`${name}\` already exists at ${baseDir}`);
     process.exit(1);
   }
+  assertManagedFilesystemWrite(baseDir);
   mkdirSync(baseDir, { recursive: true });
   // Cast through Partial — the validate verb is the authoritative shape check.
   // The YAML written below has the minimum fields; lint/validate catch gaps.
@@ -635,6 +638,7 @@ async function runForkCmd(args: string[]): Promise<void> {
     console.error(`Pack \`${to}\` already exists at ${toDir}`);
     process.exit(1);
   }
+  assertManagedFilesystemWrite(toDir);
   mkdirSync(toDir, { recursive: true });
   const sourceManifest = loadPackFromFile(fromPath);
   const forked = { ...sourceManifest, name: to, version: '0.0.1' };
@@ -727,8 +731,18 @@ async function runGraphCmd(args: string[]): Promise<void> {
 
 async function runLintCmd(args: string[]): Promise<void> {
   const { json, positional } = parseFlags(args);
-  const withDb = args.includes('--with-db');
-  const name = positional[0];
+  const { values: { 'with-db': withDb }, positionals } = parseArgs({
+    args: positional,
+    allowPositionals: true,
+    options: {
+      'with-db': { type: 'boolean' },
+    },
+  });
+  if (positionals.length > 1) {
+    console.error('Usage: gbrain schema lint [<pack>] [--with-db] [--json]');
+    process.exit(2);
+  }
+  const name = positionals[0];
   const cfg = loadConfig();
   // v0.40.6.0 Phase 5: swap basic 2-rule check for the rich 11-rule lint
   // suite from Phase 1.5. File-plane rules run by default; --with-db

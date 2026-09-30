@@ -23,6 +23,8 @@
 /** Worker drained itself because RSS crossed the watchdog cap. */
 export const WORKER_EXIT_RSS_WATCHDOG = 12;
 
+export const WORKER_EXIT_CONFIGURATION = 16;
+
 // --- `gbrain jobs run-child` exit codes (issue #5 process isolation) -------
 //
 // The parent (child-job-runner.ts) classifies a child by RESULT-FILE PRESENCE

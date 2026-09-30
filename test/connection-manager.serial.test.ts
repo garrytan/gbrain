@@ -1,4 +1,5 @@
 import { describe, expect, test, beforeEach, afterEach } from 'bun:test';
+import { withEnv } from './helpers/with-env.ts';
 import {
   isSupabasePoolerUrl,
   deriveDirectUrl,
@@ -205,6 +206,41 @@ describe('ConnectionManager — describeMode + dual-pool routing', () => {
     expect(cm.isSupabase()).toBe(false);
     expect(cm.isDualPoolActive()).toBe(false);
     expect(cm.describeMode().mode).toBe('single (non-supabase)');
+  });
+
+  test('explicit direct route on a custom pooler port creates the separate control pool', async () => {
+    const directUrl = 'postgresql://fixture:fixture@localhost:55432/gbrain_test';
+    const cm = new ConnectionManager({ url: 'postgresql://fixture:fixture@localhost:55433/gbrain_test', directUrl });
+    type Pool = ReturnType<typeof cm.read>;
+    const ordinary = {} as Pool; const control = {} as Pool; cm.setReadPool(ordinary);
+    let initialized = 0;
+    (cm as unknown as { initDirectPool(): Promise<Pool> }).initDirectPool = async () => { initialized++; return control; };
+    expect(cm.isSupabase()).toBe(false); expect(cm.isDualPoolActive()).toBe(true);
+    expect(cm.describeMode().mode).toBe('split'); expect(await cm.ddl()).toBe(control);
+    expect(await cm.ddl()).toBe(control); expect(initialized).toBe(1);
+  });
+
+  test('generic Postgres honors the env override and children inherit that route', async () => {
+    await withEnv({ GBRAIN_DIRECT_DATABASE_URL: 'postgresql://fixture:fixture@localhost:55432/gbrain_test' }, async () => {
+      const parent = new ConnectionManager({ url: 'postgresql://fixture:fixture@localhost:55433/gbrain_test' });
+      const child = new ConnectionManager({ url: 'postgresql://fixture:fixture@localhost:55433/gbrain_test', parent });
+      expect(parent.isDualPoolActive()).toBe(true); expect(child.isDualPoolActive()).toBe(true);
+      expect(child.resolveDirectUrl()).toBe(parent.resolveDirectUrl());
+    });
+  });
+
+  test('malformed or non-Postgres overrides do not activate an inferred generic route', () => {
+    for (const directUrl of ['not a URL', 'https://example.invalid/database']) {
+      const cm = new ConnectionManager({ url: 'postgresql://fixture:fixture@localhost:55432/gbrain_test', directUrl });
+      expect(cm.isDualPoolActive()).toBe(false); expect(cm.describeMode().mode).toBe('single (non-supabase)');
+    }
+  });
+
+  test('the direct-pool kill switch still wins over a valid generic override', async () => {
+    await withEnv({ GBRAIN_DISABLE_DIRECT_POOL: '1', GBRAIN_DIRECT_DATABASE_URL: 'postgresql://fixture:fixture@localhost:55432/gbrain_test' }, async () => {
+      const cm = new ConnectionManager({ url: 'postgresql://fixture:fixture@localhost:55433/gbrain_test' });
+      expect(cm.isDualPoolActive()).toBe(false); expect(cm.describeMode().mode).toBe('single (kill-switch)');
+    });
   });
 
   test('Supabase pooler URL → dual mode (without kill-switch)', () => {

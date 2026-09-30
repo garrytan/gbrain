@@ -49,6 +49,11 @@ export function currentSpaceChunkPredicate(colId: string, modelParam: number, di
               AND vector_dims(cc.${colId}) = $${dimsParam}::int, false)`;
 }
 
+export async function lockEmbeddingSources(tx: Pick<BrainEngine, 'executeRaw'>, sourceId?: string): Promise<string[]> {
+  const rows = await tx.executeRaw<{ id: string }>('SELECT id FROM sources WHERE ($1::text IS NULL OR id=$1) AND NOT archived ORDER BY id FOR SHARE', [sourceId ?? null]);
+  return rows.map(row => row.id);
+}
+
 /**
  * `<provider:model>:<dims>` — the one-line shape of
  * embedding-migration.ts:migrationSignature, duplicated here so this module
@@ -80,16 +85,16 @@ async function activeColId(engine: Pick<BrainEngine, 'executeRaw'>): Promise<str
  * match the selectors (#4306). $1 = target signature, $2 = target model.
  * `colId` = registry-active embedding column identifier (S2).
  */
-function falseStampPageWhere(colId: string): string {
+export function falseStampPageWhere(colId: string, signatureParam = 1, modelParam = 2): string {
   return `
-        p.embedding_signature = $1
+        p.embedding_signature = $${signatureParam}
         AND p.deleted_at IS NULL
         AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')
         AND EXISTS (
           SELECT 1 FROM content_chunks c
            WHERE c.page_id = p.id AND c.${colId} IS NOT NULL
-             AND c.model IS NOT NULL AND c.model <> $2
-             AND c.model <> substr($2, strpos($2, ':') + 1)
+             AND c.model IS NOT NULL AND c.model <> $${modelParam}
+             AND c.model <> substr($${modelParam}, strpos($${modelParam}, ':') + 1)
         )`;
 }
 
@@ -130,62 +135,97 @@ export async function countFalseStampedChunks(
  * Returns the number of pages cleared.
  */
 export async function clearFalseStampedSignatures(
-  engine: Pick<BrainEngine, 'executeRaw'>,
+  engine: BrainEngine,
   toModel: string,
   toDims: number,
 ): Promise<number> {
-  const colId = await activeColId(engine);
-  const rows = await engine.executeRaw<{ id: number }>(
-    `UPDATE pages p SET embedding_signature = NULL
-      WHERE ${falseStampPageWhere(colId)}
-      RETURNING p.id`,
-    [targetSignature(toModel, toDims), toModel],
-  );
-  return (rows as unknown[]).length;
+  return engine.transaction(async tx => {
+    const sources = await lockEmbeddingSources(tx);
+    const colId = await activeColId(tx);
+    const rows = await tx.executeRaw<{ id: number }>(
+      `UPDATE pages p SET embedding_signature = NULL
+        WHERE ${falseStampPageWhere(colId)}
+          AND p.source_id=ANY($3::text[])
+          AND EXISTS (SELECT 1 FROM sources s WHERE s.id=p.source_id AND NOT s.archived)
+        RETURNING p.id`,
+      [targetSignature(toModel, toDims), toModel, sources],
+    );
+    return (rows as unknown[]).length;
+  });
 }
 
-export async function invalidateStaleSignatureEmbeddingsGuarded(
+/**
+ * #5289: chunks the widened stale predicate counts that the live run only
+ * restamps. Their vectors are already in the target space (model, text hash
+ * and width match), so invalidation keeps them and never re-embeds them; an
+ * honest dry run subtracts them from its "would embed" figure.
+ */
+export async function countRestampOnlyChunks(
   engine: Pick<BrainEngine, 'executeRaw'>,
   opts: { signature: string; sourceId?: string; includeNullSignature?: boolean },
 ): Promise<number> {
-  const colId = await activeColId(engine);
+  const colId = quoteIdentifier((await resolveActiveEmbeddingColumnFromEngine(engine, { fallbackToLegacy: true })).name);
   const { model, dims } = splitEmbeddingSignature(opts.signature);
-  const params: unknown[] = [opts.signature, model, dims];
-  const currentChunk = currentSpaceChunkPredicate(colId, 2, 3);
-  let srcClause = '';
-  if (opts.sourceId !== undefined) {
-    params.push(opts.sourceId);
-    srcClause = ` AND p.source_id = $${params.length}`;
-  }
-  // Mirrors the engine method's clauses (NULL-signature grandfather lifted by
-  // includeNullSignature, #3391); the embed_skip predicate matches
-  // buildStaleChunkWhere exactly.
   const sigClause = opts.includeNullSignature
-    ? `(p.embedding_signature IS NULL OR p.embedding_signature <> $1)`
-    : `p.embedding_signature IS NOT NULL AND p.embedding_signature <> $1`;
-  const rows = await engine.executeRaw<{ page_id: number }>(
-    `UPDATE content_chunks cc
-        SET ${colId} = NULL, embedded_at = NULL
-       FROM pages p
-      WHERE cc.page_id = p.id
-        AND cc.${colId} IS NOT NULL
-        AND NOT ${currentChunk}
+    ? '(p.embedding_signature IS NULL OR p.embedding_signature <> $1)'
+    : 'p.embedding_signature IS NOT NULL AND p.embedding_signature <> $1';
+  const rows = await engine.executeRaw<{ count: number | string }>(
+    `SELECT count(*)::int AS count FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
+      WHERE p.deleted_at IS NULL AND ${sigClause}
         AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')
-        AND ${sigClause}${srcClause}
-      RETURNING cc.page_id`,
-    params,
+        AND ($4::text IS NULL OR p.source_id = $4)
+        AND ${currentSpaceChunkPredicate(colId, 2, 3)}`,
+    [opts.signature, model, dims, opts.sourceId ?? null],
   );
-  await engine.executeRaw(
-    `UPDATE pages p SET embedding_signature = $1
-      WHERE ${sigClause}${srcClause}
-        AND p.deleted_at IS NULL
-        AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')
-        AND EXISTS (SELECT 1 FROM content_chunks cc WHERE cc.page_id = p.id)
-        AND NOT EXISTS (
-          SELECT 1 FROM content_chunks cc
-           WHERE cc.page_id = p.id AND NOT ${currentChunk}
-        )`,
-    params,
-  );
-  return (rows as unknown[]).length;
+  return Number(rows[0]?.count ?? 0);
+}
+
+export async function invalidateStaleSignatureEmbeddingsGuarded(
+  engine: BrainEngine,
+  opts: { signature: string; sourceId?: string; includeNullSignature?: boolean },
+): Promise<number> {
+  return engine.transaction(async tx => {
+    const sources = await lockEmbeddingSources(tx, opts.sourceId);
+    const colId = await activeColId(tx);
+    const { model, dims } = splitEmbeddingSignature(opts.signature);
+    const params: unknown[] = [opts.signature, model, dims, sources];
+    const currentChunk = currentSpaceChunkPredicate(colId, 2, 3);
+    const srcClause = ' AND p.source_id=ANY($4::text[])';
+    // Mirrors the engine method's clauses (NULL-signature grandfather lifted by
+    // includeNullSignature, #3391); the embed_skip predicate matches
+    // buildStaleChunkWhere exactly.
+    const sigClause = opts.includeNullSignature
+      ? `(p.embedding_signature IS NULL OR p.embedding_signature <> $1)`
+      : `p.embedding_signature IS NOT NULL AND p.embedding_signature <> $1`;
+    const rows = await tx.executeRaw<{ page_id: number }>(
+      `UPDATE content_chunks cc
+          SET ${colId} = NULL, embedded_at = NULL
+         FROM pages p
+        WHERE cc.page_id = p.id
+          AND EXISTS (SELECT 1 FROM sources s WHERE s.id=p.source_id AND NOT s.archived)
+          AND cc.${colId} IS NOT NULL
+          AND NOT ${currentChunk}
+          AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')
+          AND p.deleted_at IS NULL
+          AND p.text_projection_revision = p.knowledge_revision
+          AND ${sigClause}${srcClause}
+        RETURNING cc.page_id`,
+      params,
+    );
+    await tx.executeRaw(
+      `UPDATE pages p SET embedding_signature = $1
+        WHERE ${sigClause}${srcClause}
+          AND EXISTS (SELECT 1 FROM sources s WHERE s.id=p.source_id AND NOT s.archived)
+          AND p.deleted_at IS NULL
+          AND p.text_projection_revision = p.knowledge_revision
+          AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')
+          AND EXISTS (SELECT 1 FROM content_chunks cc WHERE cc.page_id = p.id)
+          AND NOT EXISTS (
+            SELECT 1 FROM content_chunks cc
+             WHERE cc.page_id = p.id AND NOT ${currentChunk}
+          )`,
+      params,
+    );
+    return (rows as unknown[]).length;
+  });
 }

@@ -110,14 +110,28 @@ describe('contextual_retrieval_coverage doctor check', () => {
     expect(result.status).toBe('ok');
   });
 
-  test('non-markdown pages (code) are not counted', async () => {
+  test('sealed code pages are not counted for chunker drift or CR mode', async () => {
+    await engine.executeRaw(
+      `INSERT INTO pages (source_id, slug, type, title, compiled_truth, chunker_version, contextual_retrieval_mode, page_kind)
+       VALUES ('default', $1, 'code', 'Code page', 'body', 4, NULL, 'code')`,
+      ['test/code-page'],
+    );
+    const result = await checkContextualRetrievalCoverage(engine);
+    expect(result.status).toBe('ok');
+  });
+
+  test('#5247: a code page below the safe-chunk fence is counted and names the re-seal repair', async () => {
     await engine.executeRaw(
       `INSERT INTO pages (source_id, slug, type, title, compiled_truth, chunker_version, contextual_retrieval_mode, page_kind)
        VALUES ('default', $1, 'code', 'Code page', 'body', 2, NULL, 'code')`,
       ['test/code-page'],
     );
     const result = await checkContextualRetrievalCoverage(engine);
-    expect(result.status).toBe('ok');
+    expect(result.status).toBe('warn');
+    expect(result.message).toContain('1 page(s) below the safe-chunk index version (1 code)');
+    expect(result.message).toContain('gbrain repair safe-chunks');
+    expect(result.message).not.toContain('older chunker_version');
+    expect(result.details).toMatchObject({ unsealed_pages: 1, unsealed_code_pages: 1, repair: 'safe-chunks' });
   });
 
   test('audit summary line surfaces recent synopsis failures', async () => {

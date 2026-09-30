@@ -1,4 +1,4 @@
-import { describe, test, expect, afterEach } from 'bun:test';
+import { describe, test, expect, afterEach, spyOn } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -52,6 +52,30 @@ describe('stdio MCP source preflight', () => {
   test('__all__ sentinel and malformed values are left to the resolver', async () => {
     await expect(assertStdioSourceBindable(makeEngine(['default']), '__all__')).resolves.toBeUndefined();
     await expect(assertStdioSourceBindable(makeEngine(['default']), 'Not A Valid Id!')).resolves.toBeUndefined();
+  });
+
+  test('__all__ warns without querying the database, including during degraded startup', async () => {
+    let queries = 0;
+    const engine = {
+      kind: 'postgres',
+      [DEGRADED_STATE]: () => true,
+      executeRaw: async () => { queries++; throw new Error('must not inspect source contents'); },
+    } as unknown as BrainEngine;
+    let stderr = '';
+    const write = spyOn(process.stderr, 'write').mockImplementation(chunk => {
+      stderr += String(chunk);
+      return true;
+    });
+    try {
+      await assertStdioSourceBindable(engine, '__all__');
+      expect(queries).toBe(0);
+      expect(stderr).toContain('GBRAIN_SOURCE=__all__ does not grant all-source access to stdio MCP');
+      expect(stderr).toContain('fail-closed');
+      expect(stderr).toContain('then restart the server');
+      expect(stderr).toContain('docs/mcp/DEPLOY.md#stdio-source-binding');
+    } finally {
+      write.mockRestore();
+    }
   });
 
   test('engine failure does not block startup (guards config, not connectivity)', async () => {

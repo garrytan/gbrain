@@ -35,9 +35,8 @@ const HELP_WITHOUT_BRAIN = [
   'sources',
   // cathedral-6: agent answers --help (incl. `register --help`) engine-free.
   'agent',
-  // ZE interim cleanup: the retired ze-switch shim answers --help engine-free
-  // (truthful sunset copy + the canonical migration command).
-  'ze-switch',
+  // wave-2 repair core: runRepairCommand prints REPAIR_HELP before the engine.
+  'repair',
 ];
 
 /**

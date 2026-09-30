@@ -162,6 +162,15 @@ describe('#4003 — `gbrain auth --help` reaches the detailed usage block', () =
     expect(stdout).not.toContain('run gbrain --help for the full command list');
   });
 
+  test('auth help points at the owner login flow without inventing a CLI command', async () => {
+    const { stdout, exitCode } = await help(['auth', '--help']);
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain('Admin dashboard login (running HTTP server):');
+    expect(stdout).toContain('POST /admin/api/issue-magic-link');
+    expect(stdout).toContain('do not GET the generated link');
+    expect(stdout).toContain('See docs/mcp/DEPLOY.md.');
+  });
+
   test('-h short flag also works', async () => {
     const { stdout, exitCode } = await help(['auth', '-h']);
     expect(exitCode).toBe(0);

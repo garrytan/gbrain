@@ -9,6 +9,7 @@ description: |
 triggers:
   - any brain read/write/lookup/citation
 tools:
+  - recall
   - search
   - query
   - get_page
@@ -49,6 +50,32 @@ suppresses writes for that turn, including when standing capture is enabled.
 > `put_page` / `add_link` / `add_timeline_entry` stay the page/graph write path.
 > Fall back to the classic ops when the verbs aren't on the surface. Contract:
 > `docs/protocol/MEMORY_VERBS_v1.md`.
+>
+> **Tight-budget page questions:** explicitly use
+> `recall({query: "zebra telescope", budget_tokens: 75, budget_policy: "query_first"})`
+> so ranked page evidence packs before recent facts. CLI:
+> `gbrain recall --query 'zebra telescope' --budget-tokens 75 --budget-policy query_first --json`.
+> Keep entity-first, event/session-filtered and fact-focused questions on their
+> existing facts-first route; do not change `context_pack`. Costs are character-based
+> estimates, and an oversized first item is dropped without skipping or truncation.
+> Read `budget_packing` before interpreting an empty result as missing memory.
+> See `skills/query/SKILL.md` for the MCP request and caller example. Guidance is
+> not native-harness activation: adoption remains unverified until a fresh
+> conversation is observed making the opted-in call.
+>
+> **Choose a readback path that can see the intended visibility.** Trusted local
+> CLI callers can recall and withdraw private facts. Every MCP caller, including
+> stdio, and a thin CLI connected to MCP currently have world-only fact recall
+> and withdrawal. A
+> request to remember does not authorize making real private information
+> world-visible. Use a trusted local write/readback path for private memory
+> when available. If only remote access is available, a successful private
+> write receipt confirms storage, but private recall remains unverified; explain
+> that limit and the trusted local path needed for private readback or withdrawal.
+> Do not widen visibility
+> or request broader OAuth scopes merely to make verification pass. For an MCP
+> connection test, use only a harmless synthetic `visibility: "world"` fixture
+> with the user's test authorization, retain its ID, and withdraw it afterward.
 >
 > **Keyless brains:** when `extract_facts` returns `skipped:
 > extraction_unavailable`, YOU are the extractor — pull the facts from the turn

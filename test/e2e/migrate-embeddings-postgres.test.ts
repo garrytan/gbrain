@@ -14,6 +14,7 @@
  *
  *   Run: DATABASE_URL=postgres://...gbrain_test bun test test/e2e/migrate-embeddings-postgres.test.ts
  */
+import { installFixtureChunks } from '../helpers/page-projection.ts';
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import type { PostgresEngine } from '../../src/core/postgres-engine.ts';
 import { hasDatabase, setupDB, teardownDB } from './helpers.ts';
@@ -30,7 +31,7 @@ import {
   migrationSignature,
   MIGRATION_STATE_KEY,
 } from '../../src/core/embedding-migration.ts';
-import { runSchemaTransition } from '../../src/core/retrieval-upgrade-planner.ts';
+import { runSchemaTransition } from '../../src/core/embedding-migration.ts';
 import type { ChunkInput } from '../../src/core/types.ts';
 
 const RUN = hasDatabase();
@@ -65,7 +66,7 @@ async function seedEmbedded(slug: string, text: string, signature: string | null
   const chunks: ChunkInput[] = [
     { chunk_index: 0, chunk_text: text, chunk_source: 'compiled_truth', token_count: 4 },
   ];
-  await engine.upsertChunks(slug, chunks);
+  await installFixtureChunks(engine, slug, chunks);
   await engine.executeRaw(
     `UPDATE content_chunks
         SET embedding = ('[' || array_to_string(array_fill(0.0::real, ARRAY[$1::int]), ',') || ']')::vector
@@ -83,7 +84,7 @@ d('embedding migration (live Postgres + pgvector)', () => {
       savedEnv[k] = process.env[k];
       delete process.env[k];
     }
-    engine = await setupDB();
+    engine = await setupDB({ replayMigrations: true });
     originalDims = await columnDims();
 
     resetGateway();
@@ -146,17 +147,17 @@ d('embedding migration (live Postgres + pgvector)', () => {
 
     // Brain state: one current-signature page, one pre-v108 NULL-signature
     // page, one never-embedded page.
-    await seedEmbedded('mig/current', 'aaaaa', migrationSignature('zeroentropyai:zembed-1', originalDims));
+    await seedEmbedded('mig/current', 'aaaaa', migrationSignature('fixture-provider:embedding-v1', originalDims));
     await seedEmbedded('mig/legacy', 'bbbbb', null);
     await engine.putPage('mig/pending', { type: 'note', title: 'pending', compiled_truth: '# pending' });
-    await engine.upsertChunks('mig/pending', [
+    await installFixtureChunks(engine, 'mig/pending', [
       { chunk_index: 0, chunk_text: 'ccccc', chunk_source: 'compiled_truth', token_count: 2 },
     ]);
 
     const plan = await planEmbeddingMigration(engine, {
       to: toModel,
       dim: targetDims,
-      fromModel: 'zeroentropyai:zembed-1',
+      fromModel: 'fixture-provider:embedding-v1',
       fromDims: originalDims,
     });
     expect(plan.dim_change).toBe(true);

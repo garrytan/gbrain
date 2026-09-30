@@ -368,7 +368,8 @@ strip_ansi() {
 }
 
 # bun_summary_count: parses Bun's summary lines (one per `bun test` invocation
-# inside a shard — there's only one when we pass an explicit file list).
+# inside a shard). Grouped unit shards emit an authoritative aggregate so child
+# Bun invocations inside tests cannot inflate the reported totals.
 # Looks for ` N pass` / ` N fail` / ` N skip` patterns and sums them across
 # all summary blocks the shard emitted. `bun test` prints these near the end
 # of its output. Format: leading whitespace + integer + space + label.
@@ -376,8 +377,14 @@ bun_summary_count() {
   local label="$1"; local file="$2"
   if [ ! -f "$file" ]; then echo 0; return; fi
   strip_ansi "$file" | awk -v label="$label" '
+    /^__gbrain_unit_shard__ / {
+      for (i = 2; i <= NF; i++) {
+        split($i, pair, "=")
+        if (pair[1] == label) { aggregate = pair[2]; have_aggregate = 1 }
+      }
+    }
     $1 ~ /^[0-9]+$/ && $2 == label { total += $1 }
-    END { print total + 0 }
+    END { print have_aggregate ? aggregate + 0 : total + 0 }
   '
 }
 
@@ -695,7 +702,11 @@ for i in $(seq 1 "$N"); do
     # Warn-pass gate: rescue-eligible kills (OOM signature / external kill)
     # are excluded so they reach the serial rescue queue below instead of
     # being absolved without a re-run.
-    if [ "$fail_count" = "0" ] && [ "$inline_fails" = "0" ] && [ "$idle_secs" -ge 300 ] \
+    grouped_incomplete=0
+    if grep -q '^__gbrain_unit_group_start__ ' "$SHARD_LOG" && ! grep -q '^__gbrain_unit_shard__ .* rc=0$' "$SHARD_LOG"; then
+      grouped_incomplete=1
+    fi
+    if [ "$grouped_incomplete" = "0" ] && [ "$fail_count" = "0" ] && [ "$inline_fails" = "0" ] && [ "$idle_secs" -ge 300 ] \
        && [ "$shard_oom" = "0" ] && [ "$shard_external_kill" = "0" ]; then
       # Completion evidence (fail-closed): warn-pass additionally requires
       # every assigned file to have STARTED (its file-header appears in the
