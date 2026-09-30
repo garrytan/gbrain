@@ -53,6 +53,7 @@ import { tryAcquireDbLock, reapDeadHolderLocks, LockStolenError, type DbLockHand
 import { assertValidSourceId } from './source-id.ts';
 import { managedBrainPhaseSkip } from './persistence/maintenance.ts';
 import { PHASE_SCOPE, SOURCE_FRESHNESS_PHASES, type PhaseScope } from './cycle/phase-scope.ts';
+import { makeErrorFromException } from './cycle/phase-error.ts';
 import { assertEmbedNotStalled } from './embed-stall.ts';
 
 export { PHASE_SCOPE, SOURCE_FRESHNESS_PHASES, type PhaseScope } from './cycle/phase-scope.ts';
@@ -991,22 +992,6 @@ export function isLockStolenAbort(
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────
-
-function makeErrorFromException(e: unknown, fallbackClass = 'InternalError'): PhaseError {
-  const err = e instanceof Error ? e : new Error(String(e));
-  // Node errors often have .code (e.g., 'ECONNREFUSED').
-  const code = (err as NodeJS.ErrnoException).code || 'UNKNOWN';
-  let className = fallbackClass;
-  if (code === 'ECONNREFUSED' || code === 'ENOTFOUND') className = 'DatabaseConnection';
-  if (code === 'ETIMEDOUT') className = 'Timeout';
-  if (/OpenAI|embed/i.test(err.message)) className = 'LLMError';
-  if (/ENOENT|EACCES|EISDIR|ENOTDIR/.test(code)) className = 'FilesystemError';
-  return {
-    class: className,
-    code,
-    message: err.message.slice(0, 200),
-  };
-}
 
 async function timePhase<T>(fn: () => Promise<T>): Promise<{ result: T; duration_ms: number }> {
   const start = performance.now();
