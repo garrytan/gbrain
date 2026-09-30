@@ -74,7 +74,9 @@ export const QUERY_DESCRIPTION =
   "default count when `limit` is omitted depends on the configured search " +
   "mode (10 conservative / 25 balanced / 50 tokenmax — see the `limit` param " +
   "description); pass `limit` explicitly for a stable count regardless of " +
-  "mode. For exhaustive enumeration use list_pages; for exact known tokens " +
+  "mode. When the answer needs the surrounding conversation or section, pass " +
+  "`return_unit` ('page' / 'section' / 'window') to get that evidence in one call " +
+  "instead of get_page per hit. For exhaustive enumeration use list_pages; for exact known tokens " +
   "`search` is cheaper (no expansion LLM call). " +
   "For personal/emotional questions ('what's going on with me', 'anything notable', " +
   "'how am I feeling'), prefer get_recent_salience, find_anomalies, or " +
@@ -88,6 +90,7 @@ export const SEARCH_DESCRIPTION =
   "result set is NOT proof of coverage — for concept / synonym / landscape " +
   "questions use `query` (adds multi-query expansion); for exhaustive " +
   "enumeration use list_pages pagination. " +
+  "Pass `return_unit` ('window' / 'section' / 'page') for whole evidence instead of chunks. " +
   "For personal/emotional questions, " +
   "prefer get_recent_salience or find_anomalies — they surface activity bursts " +
   "without needing a search term. " +
@@ -193,9 +196,11 @@ export const LIST_SKILLS_DESCRIPTION =
   "CAN vs CANNOT call given this server + your access). To actually use a skill, " +
   "call get_skill with its name, read the returned prose, and follow it — calling " +
   "the correspondingly-named tools on THIS server. The response also carries an " +
-  "`instructions` envelope explaining this protocol. Reflects the serving repo's " +
-  "skills even when the call targets a mounted brain. Read-scope; published only " +
-  "when the brain owner enabled mcp.publish_skills.";
+  "`instructions` envelope explaining this protocol. On a shared brain, use " +
+  "schema_version:2 for source-qualified identities, immutable revisions, " +
+  "pagination and complete declared requirements. Only authorized sources and " +
+  "owner-approved file classes are visible; pre-migration servers retain their " +
+  "legacy prose catalog. Read-scope; published only when the brain owner enabled mcp.publish_skills.";
 
 export const GET_SKILL_DESCRIPTION =
   "Fetch one skill's full instructions by name. Returns `{name, frontmatter " +
@@ -206,7 +211,10 @@ export const GET_SKILL_DESCRIPTION =
   "instructions plus your tool calls back to this server. Tools listed in " +
   "`unavailable_tools` won't work for you (not exposed here, or beyond your " +
   "access) — adapt accordingly. Size-capped; read-scope; requires the owner to " +
-  "have enabled mcp.publish_skills.";
+  "have enabled mcp.publish_skills. On a shared brain, pass schema_version:2 " +
+  "with qualified_id and revision from discovery to fetch exact instructions " +
+  "and their approved dependency manifest. get_skill_asset retrieves declared " +
+  "files from that revision as data; downloading never grants execution or tool permissions.";
 
 /**
  * The load-bearing `instructions` envelope for list_skills. Pinned so the

@@ -9,6 +9,7 @@ description: |
 triggers:
   - any brain read/write/lookup/citation
 tools:
+  - recall
   - search
   - query
   - get_page
@@ -49,6 +50,32 @@ suppresses writes for that turn, including when standing capture is enabled.
 > `put_page` / `add_link` / `add_timeline_entry` stay the page/graph write path.
 > Fall back to the classic ops when the verbs aren't on the surface. Contract:
 > `docs/protocol/MEMORY_VERBS_v1.md`.
+>
+> **Tight-budget page questions:** explicitly use
+> `recall({query: "zebra telescope", budget_tokens: 75, budget_policy: "query_first"})`
+> so ranked page evidence packs before recent facts. CLI:
+> `gbrain recall --query 'zebra telescope' --budget-tokens 75 --budget-policy query_first --json`.
+> Keep entity-first, event/session-filtered and fact-focused questions on their
+> existing facts-first route; do not change `context_pack`. Costs are character-based
+> estimates, and an oversized first item is dropped without skipping or truncation.
+> Read `budget_packing` before interpreting an empty result as missing memory.
+> See `skills/query/SKILL.md` for the MCP request and caller example. Guidance is
+> not native-harness activation: adoption remains unverified until a fresh
+> conversation is observed making the opted-in call.
+>
+> **Choose a readback path that can see the intended visibility.** Trusted local
+> CLI callers can recall and withdraw private facts. Every MCP caller, including
+> stdio, and a thin CLI connected to MCP currently have world-only fact recall
+> and withdrawal. A
+> request to remember does not authorize making real private information
+> world-visible. Use a trusted local write/readback path for private memory
+> when available. If only remote access is available, a successful private
+> write receipt confirms storage, but private recall remains unverified; explain
+> that limit and the trusted local path needed for private readback or withdrawal.
+> Do not widen visibility
+> or request broader OAuth scopes merely to make verification pass. For an MCP
+> connection test, use only a harmless synthetic `visibility: "world"` fixture
+> with the user's test authorization, retain its ID, and withdraw it afterward.
 >
 > **Keyless brains:** when `extract_facts` returns `skipped:
 > extraction_unavailable`, YOU are the extractor — pull the facts from the turn
@@ -131,18 +158,27 @@ Attribute the user's direct statements with `[Source: User, YYYY-MM-DD]`.
 Without capture authorization, use the information in the current conversation
 without persisting it. Explicit remembering does not enable ongoing capture.
 
-### Phase 2.5: Structured Graph Updates (automatic)
+### Phase 2.5: Structured Graph Updates (auto-link)
 
-Every `put_page` call automatically extracts entity references and writes them
-to the graph (`links` table) with inferred relationship types. Stale links
-(refs no longer in the page text) are removed in the same call. This is
-"auto-link" reconciliation.
+"Auto-link" reconciliation extracts entity references from a page and writes
+them to the graph (`links` table) with inferred relationship types; stale
+links (refs no longer in the page text) are removed. WHO runs it depends on
+the write path:
 
-- No manual `add_link` calls needed for ordinary page writes.
+- **Trusted local writes** (`gbrain put`, `gbrain capture`,
+  `gbrain call put_page`) auto-link inline and return
+  `auto_links: { created, removed, errors }`.
+- **MCP callers (stdio AND HTTP)** return `auto_links: { skipped: "remote", hint }`
+  and `auto_timeline: { skipped: "remote" }`. Body wikilinks are saved as text.
+  A stdio `gbrain serve` reconciles the edges asynchronously with its
+  maintenance sweep (startup + 10-minute idle ticks).
+  `gbrain serve --http` does not self-sweep — reconcile on demand with
+  `gbrain sweep --once` (delegates to the live serve over IPC) or
+  `gbrain extract links --source db`.
+  Use `add_link` for relationships you need immediately. Untrusted body text can plant
+  ranking-boosting edges, which is why the inline path is local-only.
 - Inferred link types: `attended` (meeting -> person), `works_at`, `invested_in`,
   `founded`, `advises`, `source` (frontmatter), `mentions` (default).
-- The `put_page` MCP response includes `auto_links: { created, removed, errors }`
-  so the agent can verify outcomes.
 - To disable: `gbrain config set auto_link false`. Default is on.
 - Timeline entries with specific dates still need explicit `gbrain timeline-add`
   (or batch via `gbrain extract timeline --source db`).

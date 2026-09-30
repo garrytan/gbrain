@@ -1,195 +1,225 @@
 # Switching embedding models or dimensions on an existing brain
 
-> **Use the command, not the recipes:** `gbrain migrate embeddings --to
-> <provider:model> --dim <N>` is the supported path — it handles the schema
-> transition (all three dim-pinned columns), NULL-signature pages, the
-> reranker companion switch, the query cache, locks, and resume-after-kill,
-> and verifies the database before declaring anything done. Preview with
-> `--dry-run`; inspect state with `--status`. Leaving ZeroEntropy: follow
-> `skills/migrations/v0.46.3.0.md`. The manual recipes below remain as the
-> appendix for unusual situations (they are what the dimension-mismatch
-> error messages link to).
+Use `gbrain migrate embeddings` for both same-width model changes and dimension
+changes, on **PGLite and PostgreSQL**. It coordinates the text-vector schema,
+configuration, invalidation, guarded projection recovery, chunk/fact repair and
+resumable authorization. Changing a config value alone does not convert vectors.
+Do not wipe/reinitialize a brain, re-import Markdown, or run hand-written vector
+column SQL as an embedding migration: those paths bypass this coordination and
+can lose database-only memory or durable intent.
 
+Select the intended brain with the global `--brain` option and retain that
+selection on every command below. Migration is **brain-wide**; `--source` does
+not narrow it. See the [migration reference](guides/embedding-migration.md) and
+[explicit-consent playbook](../skills/migrations/v0.46.3.0.md).
 
-GBrain stores embeddings in a fixed-dimension `vector(N)` column on
-`content_chunks`. If you switch to a model with a different dimension
-(e.g. `openai:text-embedding-3-large` 1536 → `voyage:voyage-4` 1024, or
-`voyage:voyage-4-large` 2048), the on-disk column type doesn't change
-automatically.
+## Preview, authorize, then verify
 
-`gbrain init`, `gbrain doctor`, and `gbrain embed --stale` all detect
-this mismatch and refuse to silently proceed. This doc is the recipe
-they point at.
-
-## Same-dimension model swaps (automatic)
-
-If you switch to a different model at the **same** dimension count
-(e.g. one 1536-dim provider to another, or a re-tuned model that keeps
-its width), the column type doesn't change, so no `ALTER`/wipe recipe
-is needed. gbrain stamps an embedding-provenance
-signature (`<provider:model>:<dims>`) onto each page when its chunks are
-embedded. After you point the config at the new model, the stored
-signatures differ from the current one, and `gbrain embed --stale`
-re-embeds exactly those pages:
+Inspect state and preview a deliberately selected target without provider work:
 
 ```bash
-# After switching to the new same-dim model in your config:
-gbrain embed --stale          # re-embeds signature-drifted pages
-gbrain embed --stale --dry-run # preview the count without re-embedding
+gbrain migrate embeddings --status --json
+gbrain migrate embeddings --to voyage:voyage-4 --dim 1024 --dry-run --json
 ```
 
-Under federated_v2, the same drift is picked up by the per-source
-`embed-backfill` jobs that `gbrain sync --all` enqueues (capped
-`$X/source/24h`). **Grandfather:** pages whose chunks were embedded
-without a provenance stamp carry a NULL signature and are NEVER flagged
-stale by the routine sweep, so a stamp-less corpus is not re-embedded
-wholesale by surprise. `gbrain embed --stale --include-null-signature`
-re-embeds them deliberately, and `gbrain migrate embeddings` always
-includes them.
+Review actual column widths, model provenance, pending chunks and facts,
+projection blockers, estimated cost (or unavailable pricing), and the reranker
+action. The example target is not a recommendation to change a keyless brain.
+An upgrade or health warning never authorizes paid work.
 
-A **dimension** change still requires the wipe-and-reinit (PGLite) or
-column-alter (Postgres) recipe below — the on-disk `vector(N)` width
-genuinely has to change.
-
-## Why we don't do this automatically
-
-Switching dimensions requires:
-
-1. Dropping the HNSW vector index (pgvector won't survive an `ALTER COLUMN TYPE`).
-2. Wiping every existing embedding (the old vectors are unusable in the new space — and pgvector refuses to cast them across dimensions, so this must happen before the alter).
-3. Altering the column type (Postgres only — PGLite cannot do this).
-4. Re-embedding the entire corpus (can take hours on a 50K-page brain and costs $1-100 in API calls depending on model).
-5. Conditionally recreating the index (HNSW supports up to 2000 dimensions per pgvector; above that you must use exact scans).
-
-That's not an upgrade-time auto-run. It's a deliberate, expensive
-operation. Run it when you've decided you actually want the new model.
-
-## PGLite (default install)
-
-**PGLite cannot `ALTER COLUMN TYPE vector(N)`.** pgvector ships as
-embedded WASM, not a native extension, and the WASM build rejects the
-column-type alter with `could not access file "$libdir/vector"`. The
-SQL recipe below works against Postgres only.
-
-The path that works on PGLite is **wipe-and-reinit**. There is a
-single-command wrapper:
+Before applying, verify a [full backup on an isolated restore](#backup-and-isolated-restore),
+coordinate quiescing writers with the owner, and obtain approval for the selected
+brain, target, dimensions, reranker action and a finite nonnegative **total USD
+cap**. Replace `<approved-total-usd>` with the operator's choice, not an amount
+invented by the agent:
 
 ```bash
-gbrain reinit-pglite \
-  --embedding-model voyage:voyage-4 \
-  --embedding-dimensions 1024
+gbrain migrate embeddings --to voyage:voyage-4 --dim 1024 \
+  --max-cost-usd <approved-total-usd> --yes --json
+gbrain migrate embeddings --status --json
 ```
 
-This backs up the existing brain to `<path>.bak`, runs `gbrain init`
-with the new flags (preserving every other field in
-`~/.gbrain/config.json`), and re-syncs the brain repo. Add `--no-sync`
-to skip the resync, `--yes` to skip the TTY confirmation, `--json` for
-structured output.
+`--yes` is operation consent, not a substitute for the cap. Batch size is not a
+spending bound. Admission uses conservative per-attempt ceilings, so the preview
+estimate is not a guarantee that the selected cap will finish the work. Unknown
+pricing or a missing provider input ceiling can refuse before dispatch.
 
-Equivalent by hand:
+At the same width, the schema need not resize, but a new model is still a new
+vector space: incompatible fact/take vectors and semantic cache entries cannot
+be retained as though they belonged to the target. A width change uses the
+guarded transition for all three dim-pinned text columns, not a PGLite wipe.
+Image/multimodal embeddings remain separate.
+
+Completion requires inspecting the actual remaining work, not just the configured
+model. An incomplete or failed run may have committed projection repairs,
+configuration/schema changes, vectors or authorization debits. Inspect `--status`
+before resuming the same approved target; correct chunks/facts are retained.
+Increasing `--max-cost-usd` authorizes a larger **total**, not a reset of prior
+debits. Do not reset the marker or clear another writer's lock. `--no-embed` is
+deferred work, not completion; resume through the migration command so its
+authorization and verification remain in force.
+
+After completion, separately authorize any provider calls needed to check a
+known-positive retrieval and a genuine miss in the same brain. A green width
+check alone does not prove retrieval. See the
+[verification commands and expected hit/miss distinction](guides/embedding-migration.md#verify-a-known-result-and-a-genuine-miss)
+and [failure/recovery table](guides/embedding-migration.md#recovery).
+
+## Repair missing fact vectors deliberately
+
+Fact vectors are separate from page/chunk embeddings. The brain-wide migration
+repairs eligible active facts as part of its guarded run, including same-width
+model swaps and facts-only brains. Standalone fact repair is a separate,
+explicitly **source-scoped** operation:
 
 ```bash
-# 1. Back up the existing brain (in case you want to roll back).
-mv ~/.gbrain/brain.pglite ~/.gbrain/brain.pglite.bak
-
-# 2. Re-init with the new model + dimensions. `gbrain init` writes
-#    the schema sized to the new dim, and preserves
-#    every other field in ~/.gbrain/config.json (chat model,
-#    expansion model, API keys).
-gbrain init --pglite \
-  --embedding-model voyage:voyage-4 \
-  --embedding-dimensions 1024
-
-# 3. Re-import your brain repo. `gbrain sync` reads the brain repo
-#    from disk and re-creates the page rows.
-gbrain sync
-
-# 4. Re-embed. The embed pipeline now uses the new model and the
-#    column accepts the new dim.
-gbrain embed --stale
+gbrain embed --stale --facts --source source-example --dry-run --json
 ```
 
-If your brain repo is large enough that re-syncing from disk is
-expensive (>50K pages), see the Postgres section below — migrating to
-Postgres temporarily lets you run the SQL recipe, then migrate back to
-PGLite.
+Eligible work includes a missing vector, a different or unknown stored model,
+a missing/mismatched text hash, or the wrong vector width. It is **not NULL-only**.
+Expired, superseded, withdrawn and audit facts, facts from archived sources, and
+facts linked to deleted pages are excluded. Already-current vectors are retained;
+unknown legacy provenance is not inferred from today's configuration.
 
-`GBRAIN_HOME` users: substitute the active database path (or use
-`gbrain config get database_path` to find it).
-
-## Postgres (Supabase / self-hosted)
-
-Postgres supports the in-place column alter. Replace `<NEW_DIMS>` with
-your target dimension count.
-
-```sql
-BEGIN;
-
--- 1. Drop the HNSW index. It can't survive the column type change.
-DROP INDEX IF EXISTS idx_chunks_embedding;
-
--- 2. Clear stale embeddings FIRST. This must happen BEFORE the column
---    alter: pgvector refuses to cast existing vectors across dimensions
---    ("expected <NEW_DIMS> dimensions, not <OLD_DIMS>"), so altering a
---    column that still holds old-width vectors aborts the transaction.
---    NULLs cast fine. (The old vectors are unusable in the new space
---    anyway — this is the wipe step from the rationale above.)
-UPDATE content_chunks SET embedding = NULL, embedded_at = NULL;
-
--- 3. Alter the column type (all rows are NULL now, so the cast succeeds).
-ALTER TABLE content_chunks ALTER COLUMN embedding TYPE vector(<NEW_DIMS>);
-
--- 4. Recreate the HNSW index ONLY IF dims <= 2000. Above that, leave it
---    indexless and rely on exact scans (gbrain searchVector handles this
---    automatically — search just gets slower, not broken).
--- For dims <= 2000 (e.g. 1024, 1280, 1536, 768):
-CREATE INDEX IF NOT EXISTS idx_chunks_embedding
-  ON content_chunks USING hnsw (embedding vector_cosine_ops);
--- For dims > 2000 (e.g. 2048 Voyage 4 Large): skip step 4.
-
-COMMIT;
-```
-
-Then re-init config with the new model:
+The preview reports the scope and count, not a repair-price estimate. Its zero
+cost means no provider spend occurred during the preview. After reviewing the
+count and obtaining an operator-selected cap, authorize the bounded repair:
 
 ```bash
-gbrain init --supabase \
-  --embedding-model <provider:model> \
-  --embedding-dimensions <NEW_DIMS>
+gbrain embed --stale --facts --source source-example \
+  --yes --max-cost-usd <approved-usd> --json
 ```
 
-And re-embed:
+The cap must be finite and nonnegative. `--max-facts` limits attempted facts
+(default 100, range 1–10,000); `--batch-size` bounds each batch (default 100,
+range 1–100); `--budget-ms` limits run time (default 60,000, range 1–3,600,000).
+All three accept integers. These limits do not authorize spend. Standalone
+repair is bounded per invocation; use brain-wide migration when durable total
+authorization across interruptions is required.
+
+Each provider attempt rechecks source identity, authority, selected-brain and
+database off switches, model identity and spend allowance. Installation rechecks
+row version and eligibility. Managed sources repair physical fact projections,
+not canonical text; an owner-held PGLite brain uses private resident delegation.
+Provider failures leave the affected original facts intact and report bounded
+diagnostics. Inspect `remaining`, `failures` and `stopped`; do not equate a bounded
+batch with a completed backfill. Repair does not run automatically on upgrade.
+
+## Backup and isolated restore
+
+A backup is a **point-in-time snapshot**, not a rollback of later events.
+An old snapshot does not contain later edits, withdrawals, grants/revocations or
+queued requests. Restoring it can make a subsequently withdrawn claim active
+again in the isolated copy. Preserve the current brain and reconcile those later
+changes before considering any restored copy for service. Reverting a binary is
+not data restoration, and Markdown export is not a full database backup.
+
+The examples below are operator templates, not commands run against your brain.
+They are grounded in a tiny synthetic drill using the current runtime: closed
+PGLite copies and supported archives, and PostgreSQL 16 `pg_dump`/`pg_restore`
+with pgvector. The drill verified canonical edits, fact withdrawals, retained
+queued intent, unchanged originals and PGLite occupied-target refusal. It did
+**not** establish old-binary/mixed-version compatibility or safe service activation.
+
+For either engine:
+
+1. Obtain approval to pause all writers: MCP/service owners, persistence
+   consumers, scheduled jobs, CLI writers, sync and file editors. Stop old-version
+   workers too. Let active transactions finish and engines close/checkpoint;
+   preserve queued work rather than draining or discarding it merely to back up.
+2. Record the selected database, configuration, binary/schema versions, extensions,
+   external files/object stores and the snapshot time. Keep comparison evidence
+   for canonical pages, facts, `fact_withdrawals`, `persistence_requests` and
+   `page_projection_jobs`. A momentary lack of sessions is not a fence against a
+   scheduler reconnecting.
+3. Keep archives, configuration and comparison evidence private. Full database
+   snapshots may contain credentials and withdrawn/history content; they are not
+   sanitized exports or evidence of physical erasure. Never publish them in a PR.
+4. Restore only into a new isolated target with compatible software. Do not point
+   an application, worker or harness at it, publish it, or reuse its old authority.
+
+### PGLite: supported archive into an absent root
+
+This format requires a file-configured local host installation with the database
+at `<root>/.gbrain/brain.pglite`. `GBRAIN_HOME` selects `<root>`, **not** its
+`.gbrain` child. Use an absolute recorded CLI launcher if your harness has one.
+Replace the example source root after verifying its configuration; keep the
+backup directory outside it. With all owners stopped:
 
 ```bash
-gbrain embed --stale
+umask 077
+source_root=/absolute/path/to/brain-root
+backup_dir=$(mktemp -d "$HOME/gbrain-backup.XXXXXX")
+GBRAIN_HOME="$source_root" gbrain backup create --brain host \
+  --output "$backup_dir/brain.gbrain-backup" --json
 ```
 
-## A note on `gbrain config set`
+The archive contains the full database plus sanitized file configuration and
+installer-managed files, not every external asset. Review its omitted-assets
+inventory and separately protect excluded source files, credentials and object
+storage. A custom database path is not supported by this archive format; use a
+verified closed whole-directory backup plus configuration instead, and rebase
+only the copied configuration before inspecting a copy with the matching binary.
+Never copy individual live database files or rename the original out of service
+as a migration step.
 
-`gbrain config set embedding_model X` cannot switch models: `config set`
-writes the DB plane, and the embed gateway reads the file plane
-(`~/.gbrain/config.json`), so such a write would be a no-op for the embed
-pipeline. For that reason `gbrain config set embedding_model` and
-`gbrain config set embedding_dimensions` REFUSE and print the
-wipe-and-reinit recipe.
+Restore the archive into an absent child of a fresh private directory. Do **not**
+create `restored_root` first; occupied roots are refused:
 
-To change schema-sizing fields, use `gbrain init` (PGLite) or the SQL
-recipe (Postgres). Both update the file plane AND the schema together.
-
-## Verify
-
-After the recipe lands, `gbrain doctor --fast` should report green and
-`gbrain doctor` should pass the `embedding_width_consistency` check:
-
-```
-✓ embedding_width_consistency   dim parity: config 1280 / column vector(1280)
+```bash
+restore_parent=$(mktemp -d "$HOME/gbrain-restore-review.XXXXXX")
+restored_root="$restore_parent/brain"
+GBRAIN_HOME="$source_root" gbrain backup restore "$backup_dir/brain.gbrain-backup" \
+  --brain host --into "$restored_root" --mode new-brain --json
 ```
 
-If it doesn't, file an issue with the doctor output and the steps you
-ran.
+Read `restore-receipt.json` and `.gbrain/restore-detached.json` under the restored
+root. New-brain restore revokes archived authority, disables publication and
+quarantines unfinished work without starting automation. In the synthetic drill,
+the queued request's intent and digest survived, but its state became `cancelled`
+with `restore_new_brain`; do not expect automatic replay. Compare canonical
+pages, facts and the withdrawal ledger with snapshot evidence, and account for
+this deliberate queue-state transformation. Do not use `--mode recovery` merely
+to avoid these safeguards or to claim an old service has been excluded.
 
-## Followups
+### PostgreSQL: dump into a separate, newly created database
 
-- Auto-fallback to alternative embedding providers when the primary
-  fails quota/auth. Tracked; requires explicit `--try-fallback`
-  consent because mixing provider vectors silently corrupts retrieval.
+Use compatible PostgreSQL client tools, the required pgvector/extensions and a
+separate inspection server without application access. Configure private libpq
+service entries beforehand: `gbrain-source-example` selects the exact source
+database; `gbrain-restore-admin-example` selects the isolated inspection server's
+maintenance database with permission to create a database. These are placeholders,
+not services GBrain creates. Keep credentials in protected service/password
+files, not command text. Do not reuse a production service for the restore.
+
+After quiescing the source and protecting its file configuration/external assets:
+
+```bash
+umask 077
+backup_dir=$(mktemp -d "$HOME/gbrain-pg-backup.XXXXXX")
+pg_dump --dbname='service=gbrain-source-example' --format=custom \
+  --no-owner --no-acl --file="$backup_dir/brain.dump"
+
+createdb --maintenance-db='service=gbrain-restore-admin-example' \
+  --template=template0 gbrain_restore_example &&
+pg_restore --dbname='service=gbrain-restore-admin-example dbname=gbrain_restore_example' \
+  --no-owner --no-acl --exit-on-error "$backup_dir/brain.dump"
+```
+
+The `&&` is intentional: if the database already exists, `createdb` fails and
+restore must not run. On any restore error, leave that partial inspection target
+offline and use a different new name for the next attempt. Do not add `--clean`,
+drop the current brain, or restore over an occupied database. PostgreSQL tools
+alone do not provide GBrain's PGLite occupied-root protection or authority
+quarantine. A raw dump retains queued work and application authority; it must
+remain inspection-only. `--no-owner --no-acl` does not sanitize stored credentials.
+
+Compare the restored canonical state, facts, withdrawal ledger and durable intent
+with snapshot evidence before any reconciliation. The synthetic PostgreSQL drill
+preserved full queued rows exactly and never launched a consumer on the copy.
+Account separately for roles/permissions, configuration and external storage,
+which this single-database dump does not restore. Have the owner reconcile every
+post-snapshot withdrawal, write and authority change from preserved current
+records before any separately approved cutover. If those records are unavailable,
+do not assume the stale copy is safe to activate.

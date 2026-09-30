@@ -24,7 +24,7 @@ import {
   createBenchmarkBrain,
   resetTables,
 } from '../src/eval/longmemeval/harness.ts';
-import { haystackToPages, type LongMemEvalQuestion } from '../src/eval/longmemeval/adapter.ts';
+import { haystackToPages, opaqueSessionId, sessionSlug, type LongMemEvalQuestion } from '../src/eval/longmemeval/adapter.ts';
 import { loadResumeSet } from '../src/commands/eval-longmemeval.ts';
 import { importFromContent } from '../src/core/import-file.ts';
 import { DEFAULT_SOURCE_BOOSTS } from '../src/core/search/source-boost.ts';
@@ -180,12 +180,13 @@ describe('adapter haystackToPages', () => {
     };
     const pages = haystackToPages(q);
     expect(pages.length).toBe(3);
-    expect(pages[0].slug).toBe('chat/sess-1');
-    expect(pages[1].slug).toBe('chat/sess-2');
-    expect(pages[2].slug).toBe('chat/sess-3');
+    expect(pages[0].slug).toBe(sessionSlug('q-shape-1', 'sess-1'));
+    expect(pages[1].slug).toBe(sessionSlug('q-shape-1', 'sess-2'));
+    expect(pages[2].slug).toBe(sessionSlug('q-shape-1', 'sess-3'));
+    expect(new Set(pages.map(p => p.slug)).size).toBe(3);
     expect(pages[0].content).toContain('type: note');
     expect(pages[0].content).toContain('date: 2025-01-15');
-    expect(pages[0].content).toContain('session_id: sess-1');
+    expect(pages[0].content).toContain(`session_id: ${opaqueSessionId('q-shape-1', 'sess-1')}`);
     expect(pages[0].content).toContain('**user:** hi');
     expect(pages[0].content).toContain('**assistant:** hello');
   });
@@ -202,7 +203,7 @@ describe('adapter haystackToPages', () => {
       ],
     };
     const pages = haystackToPages(q);
-    expect(pages[0].content).toContain('session_id: sess-x');
+    expect(pages[0].content).toContain(`session_id: ${opaqueSessionId('q-shape-2', 'sess-x')}`);
     expect(pages[0].content).not.toContain('date:');
   });
 
@@ -228,12 +229,12 @@ describe('adapter haystackToPages', () => {
     };
     const pages = haystackToPages(q);
     expect(pages.length).toBe(2);
-    // Slugs got lowercased + underscores became hyphens (validator-safe).
-    expect(pages[0].slug).toBe('chat/sharegpt-abc-0');
-    expect(pages[1].slug).toBe('chat/sess-def-1');
-    // Frontmatter keeps the ORIGINAL session_id (no sanitization). The
-    // _s ids preserve through the round-trip; only the slug got rewritten.
-    expect(pages[0].content).toContain('session_id: sharegpt_AbC_0');
+    // Slugs are opaque per-question ids (validator-safe, no gold label).
+    expect(pages[0].slug).toBe(sessionSlug('q-s-1', 'sharegpt_AbC_0'));
+    expect(pages[1].slug).toBe(sessionSlug('q-s-1', 'sess_DEF_1'));
+    // Frontmatter carries the same opaque id; the raw id never reaches the page.
+    expect(pages[0].content).toContain(`session_id: ${opaqueSessionId('q-s-1', 'sharegpt_AbC_0')}`);
+    expect(pages[0].content).not.toContain('sharegpt_AbC_0');
     expect(pages[0].content).toContain('date: 2025-01-01');
     expect(pages[0].content).toContain('**user:** hi');
     expect(pages[1].content).toContain('**user:** bye');
@@ -254,7 +255,7 @@ describe('adapter haystackToPages', () => {
     };
     const pages = haystackToPages(q);
     expect(pages.length).toBe(1);
-    expect(pages[0].slug).toBe('chat/lme-q-s-2-0');
+    expect(pages[0].slug).toBe(sessionSlug('q-s-2', 'lme_q-s-2_0'));
   });
 });
 

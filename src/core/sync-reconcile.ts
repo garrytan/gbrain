@@ -61,7 +61,7 @@ export function planReconcileDeletes(
   const current = new Set<string>();
   for (const f of currentFiles) current.add(normalizeReconcilePath(f));
   const reconcilable = rows.filter(
-    r => r.source_path != null && isSyncablePath(r.source_path),
+    r => r.source_path != null && isSyncablePath(normalizeReconcilePath(r.source_path)),
   );
   const staleSlugs = reconcilable
     .filter(r => !current.has(normalizeReconcilePath(r.source_path as string)))

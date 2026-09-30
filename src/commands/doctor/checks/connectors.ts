@@ -22,7 +22,8 @@ import {
   doctorStaleHoursKey,
   DEFAULT_DOCTOR_STALE_HOURS,
   isTruthy,
-  lastSyncAtKey,
+  readConnectorState,
+  sourceIdKey,
 } from '../../../core/connectors/config-keys.ts';
 
 export async function connectorsHealthCheck(engine: BrainEngine): Promise<Check> {
@@ -50,7 +51,7 @@ export async function connectorsHealthCheck(engine: BrainEngine): Promise<Check>
     }
 
     if (isTruthy(await engine.getConfig(autoSyncKey(provider)))) {
-      const lastSyncAt = await engine.getConfig(lastSyncAtKey(provider));
+      const lastSyncAt = await readConnectorState(engine, provider, (await engine.getConfig(sourceIdKey())) || 'default', 'last_sync_at');
       const lastMs = lastSyncAt ? Date.parse(lastSyncAt) : NaN;
       if (!Number.isFinite(lastMs) || now - lastMs >= staleHours * 3_600_000) {
         problems.push(

@@ -157,8 +157,7 @@ describe('#1305 — getHealth excludes soft-deleted pages', () => {
     await engine.softDeletePage('wiki/gone');
 
     const h = await engine.getHealth();
-    // Soft-deleted pages' chunks still occupy storage until purge; the
-    // missing_embeddings count keeps seeing them, same as getStats.
-    expect(h.missing_embeddings).toBe(2);
+    expect((await engine.getStats()).chunk_count).toBe(2);
+    expect(h.missing_embeddings).toBe(1);
   });
 });

@@ -13,9 +13,11 @@
  * Run: DATABASE_URL=postgresql://... bun test test/e2e/multimodal-postgres.test.ts
  */
 
+import { installFixtureChunks } from '../helpers/page-projection.ts';
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { PostgresEngine } from '../../src/core/postgres-engine.ts';
 import { assertSafeE2eDatabaseUrl } from '../helpers/db-guard.ts';
+import { readContentChunksEmbeddingDim } from '../../src/core/embedding-dim-check.ts';
 
 const DATABASE_URL = process.env.DATABASE_URL;
 const skip = !DATABASE_URL;
@@ -26,12 +28,16 @@ if (skip) {
 
 describe.skipIf(skip)('multimodal v0.27.1 against real Postgres', () => {
   let pg: PostgresEngine;
+  let textDimensions: number;
 
   beforeAll(async () => {
     pg = new PostgresEngine();
     assertSafeE2eDatabaseUrl(DATABASE_URL!);
     await pg.connect({ database_url: DATABASE_URL! });
     await pg.initSchema();
+    const { dims } = await readContentChunksEmbeddingDim(pg);
+    if (!dims) throw new Error('Fixture requires a dimensioned text embedding column');
+    textDimensions = dims;
   }, 60_000);
 
   afterAll(async () => {
@@ -174,14 +180,14 @@ describe.skipIf(skip)('multimodal v0.27.1 against real Postgres', () => {
   }, 30_000);
 
   test('searchVector with embeddingColumn=embedding_image returns image rows on Postgres', async () => {
-    // Seed: one text page (1536-dim primary embedding) and two image pages
-    // (1024-dim embedding_image).
-    const textVec = new Float32Array(1536);
-    for (let i = 0; i < 1536; i++) textVec[i] = i / 1536;
+    // Text uses the shared database's primary width; images always use
+    // their separate 1024-dim embedding_image column.
+    const textVec = new Float32Array(textDimensions);
+    for (let i = 0; i < textDimensions; i++) textVec[i] = i / textDimensions;
     await pg.putPage('notes/text-only', {
       type: 'note', title: 'text only', compiled_truth: 'body', timeline: '',
     });
-    await pg.upsertChunks('notes/text-only', [{
+    await installFixtureChunks(pg, 'notes/text-only', [{
       chunk_index: 0, chunk_text: 'body',
       chunk_source: 'compiled_truth',
       embedding: textVec, modality: 'text',
@@ -193,7 +199,7 @@ describe.skipIf(skip)('multimodal v0.27.1 against real Postgres', () => {
       type: 'image', page_kind: 'image',
       title: 'a', compiled_truth: '', timeline: '',
     });
-    await pg.upsertChunks('photos/a', [{
+    await installFixtureChunks(pg, 'photos/a', [{
       chunk_index: 0, chunk_text: 'a',
       chunk_source: 'image_asset',
       embedding_image: imgA, modality: 'image',
@@ -202,7 +208,7 @@ describe.skipIf(skip)('multimodal v0.27.1 against real Postgres', () => {
       type: 'image', page_kind: 'image',
       title: 'b', compiled_truth: '', timeline: '',
     });
-    await pg.upsertChunks('photos/b', [{
+    await installFixtureChunks(pg, 'photos/b', [{
       chunk_index: 0, chunk_text: 'b',
       chunk_source: 'image_asset',
       embedding_image: imgB, modality: 'image',
@@ -215,7 +221,7 @@ describe.skipIf(skip)('multimodal v0.27.1 against real Postgres', () => {
     });
     const slugs = hits.map(h => h.slug);
     expect(slugs).toContain('photos/b');
-    // Modality filter excludes the text page even though dim mismatches.
+    // Column routing excludes the text page, regardless of its vector width.
     expect(slugs).not.toContain('notes/text-only');
     // Nearest-first ordering.
     expect(hits[0].slug).toBe('photos/b');
@@ -223,12 +229,12 @@ describe.skipIf(skip)('multimodal v0.27.1 against real Postgres', () => {
 
   test('searchKeyword hides image rows by default (modality filter on Postgres)', async () => {
     // Seed text + image pages with chunk_text the FTS would normally match.
-    const textVec = new Float32Array(1536);
-    for (let i = 0; i < 1536; i++) textVec[i] = (i + 1) / 1536;
+    const textVec = new Float32Array(textDimensions);
+    for (let i = 0; i < textDimensions; i++) textVec[i] = (i + 1) / textDimensions;
     await pg.putPage('notes/keyword', {
       type: 'note', title: 'keyword', compiled_truth: 'sunset photo at the beach', timeline: '',
     });
-    await pg.upsertChunks('notes/keyword', [{
+    await installFixtureChunks(pg, 'notes/keyword', [{
       chunk_index: 0,
       chunk_text: 'sunset photo at the beach',
       chunk_source: 'compiled_truth',
@@ -238,7 +244,7 @@ describe.skipIf(skip)('multimodal v0.27.1 against real Postgres', () => {
       type: 'image', page_kind: 'image',
       title: 'keyword image', compiled_truth: '', timeline: '',
     });
-    await pg.upsertChunks('photos/keyword', [{
+    await installFixtureChunks(pg, 'photos/keyword', [{
       chunk_index: 0,
       chunk_text: 'sunset photo at the beach',
       chunk_source: 'image_asset',

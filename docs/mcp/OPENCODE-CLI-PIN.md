@@ -212,14 +212,17 @@ bin-dir prepend).
 - Anonymous free tier needs nothing on disk; `auth.json` is only created by
   `opencode auth login` at `<XDG_DATA_HOME>/opencode/auth.json`
   (`opencode providers`, alias `auth`, prints the path).
-- The optional paid door leg gates on `ANTHROPIC_API_KEY` (env-only) and
-  self-validates the model id against the authed `opencode models` output
-  before spending. Missing-secret posture is SPLIT by trigger: on
-  `pull_request` the paid leg is a VISIBLE SKIP (warning + job summary — the
-  keyless tier's coverage, SMOKE included, is already banked, and neither a
-  fork nor a branch PR author can fix repo secrets); the nightly schedule and
-  `workflow_dispatch` stay loud-fail so the owner sees red until
-  `gh secret set ANTHROPIC_API_KEY` runs.
+- The default door lane is keyless, including the nonce SMOKE. Its child
+  environment strips provider credentials even if the caller has them.
+  The summary explicitly reports that no paid turn ran.
+- The separate credentialed lane is opt-in: set `run_opencode_paid` on a
+  manual dispatch, or the repository variable `GBRAIN_OPENCODE_PAID_E2E=1`
+  for recurring coverage. This authorizes paid provider usage. It requires
+  `ANTHROPIC_API_KEY` (env-only), and fails before a turn if the secret is
+  absent or blank. It self-validates the model id against the authed
+  `opencode models` output before spending and requires one passing paid test.
+  Local runs require both `GBRAIN_REAL_OPENCODE_PAID_E2E=1` and the key;
+  the key alone never opts a test run into spending.
 
 ## When the door goes red (triage)
 | Failure class | Signature | Remediation |
@@ -230,7 +233,8 @@ bin-dir prepend).
 | `✗ gbrain failed` in `mcp list` | `Executable not found in $PATH` / spawn error | Staged bin dir missing from PATH, or abs path wrong — registration bug, not opencode drift |
 | free-tier drift | keyless SMOKE stops answering / new auth wall | Re-observe keyless posture; if the free tier is gated, flip the SMOKE to the ANTHROPIC leg and re-pin this section |
 | paid leg: model id unknown | models-gate assert fails before any spend | Update the pinned anthropic model id from the authed `opencode models` output |
-| paid leg skipped on a PR | `::warning` + "paid anthropic leg skipped" job summary; keyless tier green | Expected when the `ANTHROPIC_API_KEY` repo secret is empty — owner-only fix (`gh secret set ANTHROPIC_API_KEY`); the nightly stays loud-fail meanwhile |
+| credentialed lane not requested | Keyless-only job summary; no paid coverage claimed | Expected default, including nightly runs; opt in separately when paid coverage is authorized |
+| requested credentialed lane lacks a secret | Explicit prerequisite failure; no paid turn ran | Configure `ANTHROPIC_API_KEY` for an authorized run, or disable the paid opt-in; keyless coverage remains independent |
 | tripwire fired | manifest mismatch on `opencode.json(c)`/`auth.json` only | True isolation breach — stop and inspect; volatile-path drift alone must NOT fire |
 | real door regression | handshake or nonce assert fails, pins intact | Bisect against the pinned version; file upstream if opencode-side |
 

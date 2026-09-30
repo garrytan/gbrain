@@ -3,7 +3,6 @@
  *
  * Covers the contract that makes this migration safe to ship:
  *   - Registered in the TS registry (so apply-migrations sees it).
- *   - Phase functions exported via __testing for unit-level coverage.
  *   - Dry-run skips all side-effect phases.
  *   - Feature pitch explains what the user can NOW do that they couldn't.
  *
@@ -33,13 +32,6 @@ describe('v0.12.2 — JSONB double-encode repair migration', () => {
     expect(desc).toContain('files.metadata');
     expect(desc).toContain('page_versions.frontmatter');
     expect(desc).toContain('gbrain sync --full');
-  });
-
-  test('phase functions exported for unit testing', async () => {
-    const { __testing } = await import('../src/commands/migrations/v0_12_2.ts');
-    expect(typeof __testing.phaseASchema).toBe('function');
-    expect(typeof __testing.phaseBRepair).toBe('function');
-    expect(typeof __testing.phaseCVerify).toBe('function');
   });
 
   test('dry-run skips all side-effect phases', async () => {

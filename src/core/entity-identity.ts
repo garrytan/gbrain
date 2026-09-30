@@ -79,8 +79,12 @@ async function resolvePageId(
 /**
  * Link a page into an identity group (upsert on the page: re-linking MOVES
  * the page to the new identity — explicit manual intent). `canonical: true`
- * demotes the group's previous canonical member first; the partial unique
- * index is the backstop against a race leaving two canonicals.
+ * demotes the group's previous canonical member first, in the same
+ * transaction as the link, so a failed link never leaves the group without
+ * its canonical. Omitting `canonical` keeps a re-linked member's canonical
+ * flag within the same group (a confidence update must not demote it);
+ * `canonical: false` demotes explicitly. The partial unique index is the
+ * backstop against a race leaving two canonicals.
  */
 export async function linkEntityIdentity(
   engine: BrainEngine,
@@ -99,26 +103,30 @@ export async function linkEntityIdentity(
     throw new Error(`confidence must be in [0,1], got ${opts.confidence}`);
   }
   const establishedBy = (opts.establishedBy ?? 'manual').trim() || 'manual';
-  const canonical = opts.canonical === true;
+  const canonical = typeof opts.canonical === 'boolean' ? opts.canonical : null;
   const pageId = await resolvePageId(engine, opts.slug, opts.sourceId);
 
-  if (canonical) {
-    await engine.executeRaw(
-      `UPDATE entity_identities SET canonical = false WHERE entity_id = $1 AND canonical`,
-      [entityId],
+  await engine.transaction(async (tx) => {
+    if (canonical === true) {
+      await tx.executeRaw(
+        `UPDATE entity_identities SET canonical = false WHERE entity_id = $1 AND canonical`,
+        [entityId],
+      );
+    }
+    await tx.executeRaw(
+      `INSERT INTO entity_identities (entity_id, source_id, page_id, confidence, established_by, canonical)
+       VALUES ($1, $2, $3, $4, $5, COALESCE($6::boolean, false))
+       ON CONFLICT (source_id, page_id) DO UPDATE SET
+         entity_id = EXCLUDED.entity_id,
+         confidence = EXCLUDED.confidence,
+         established_by = EXCLUDED.established_by,
+         canonical = CASE WHEN $6::boolean IS NULL
+           THEN entity_identities.canonical AND entity_identities.entity_id = EXCLUDED.entity_id
+           ELSE EXCLUDED.canonical END,
+         established_at = now()`,
+      [entityId, opts.sourceId, pageId, confidence, establishedBy, canonical],
     );
-  }
-  await engine.executeRaw(
-    `INSERT INTO entity_identities (entity_id, source_id, page_id, confidence, established_by, canonical)
-     VALUES ($1, $2, $3, $4, $5, $6)
-     ON CONFLICT (source_id, page_id) DO UPDATE SET
-       entity_id = EXCLUDED.entity_id,
-       confidence = EXCLUDED.confidence,
-       established_by = EXCLUDED.established_by,
-       canonical = EXCLUDED.canonical,
-       established_at = now()`,
-    [entityId, opts.sourceId, pageId, confidence, establishedBy, canonical],
-  );
+  });
 
   const members = await listEntityIdentities(engine, { entityId });
   const me = members.find(m => m.slug === opts.slug && m.source_id === opts.sourceId);
@@ -238,6 +246,31 @@ export async function listEntityIdentities(
   } catch (e) {
     // Pre-v137 brain (table missing): identity is simply "not set up yet".
     if (isUndefinedTableError(e)) return [];
+    throw e;
+  }
+}
+
+/**
+ * The identity group of each given (source_id, slug) page that belongs to one,
+ * keyed `${source_id}:${slug}`. Pages outside any group are absent.
+ */
+export async function identityIdsForPages(
+  engine: BrainEngine,
+  pages: Array<{ sourceId: string; slug: string }>,
+): Promise<Map<string, string>> {
+  if (pages.length === 0) return new Map();
+  const wanted = new Set(pages.map(p => `${p.sourceId}:${p.slug}`));
+  try {
+    const rows = await engine.executeRaw<{ entity_id: string; source_id: string; slug: string }>(
+      `SELECT ei.entity_id, ei.source_id, p.slug
+         FROM entity_identities ei
+         JOIN pages p ON p.id = ei.page_id AND p.source_id = ei.source_id AND p.deleted_at IS NULL
+        WHERE ei.source_id = ANY($1::text[]) AND p.slug = ANY($2::text[])`,
+      [[...new Set(pages.map(p => p.sourceId))], [...new Set(pages.map(p => p.slug))]],
+    );
+    return new Map(rows.map((r): [string, string] => [`${r.source_id}:${r.slug}`, r.entity_id]).filter(([k]) => wanted.has(k)));
+  } catch (e) {
+    if (isUndefinedTableError(e)) return new Map();
     throw e;
   }
 }

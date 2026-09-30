@@ -187,7 +187,7 @@ function ensureGbrainBinary(explicit: string | undefined, rebuild: boolean): str
   }
   fs.mkdirSync(binDir, { recursive: true });
   log('compiling gbrain (bun build --compile)…');
-  const res = spawnSync('bun', ['build', '--compile', '--outfile', binPath, 'src/cli.ts'], {
+  const res = spawnSync('bun', ['build', '--compile', '--no-compile-autoload-bunfig', '--outfile', binPath, 'src/cli.ts'], {
     cwd: REPO_ROOT,
     encoding: 'utf8',
     timeout: 300_000,

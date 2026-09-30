@@ -1,3 +1,4 @@
+import { assertManagedFilesystemWrite } from './persistence/filesystem-guard.ts';
 /**
  * gbrain remote-source git helpers (v0.28).
  *
@@ -215,6 +216,7 @@ export const GIT_ENV_AUTH = {
  * - Throws GitOperationError on failure; caller is responsible for cleanup.
  */
 export function cloneRepo(url: string, destDir: string, opts: CloneOpts = {}): void {
+  assertManagedFilesystemWrite(destDir);
   if (existsSync(destDir)) {
     let entries: string[];
     try {
@@ -266,6 +268,7 @@ export function cloneRepo(url: string, destDir: string, opts: CloneOpts = {}): v
  * stays `never`; the origin was already validated at clone time.
  */
 export function pullRepo(repoPath: string, opts: { timeoutMs?: number } = {}): void {
+  assertManagedFilesystemWrite(repoPath);
   const args: string[] = ['-C', repoPath, ...durableSsrfFlags(), 'pull', ...GIT_SSRF_SUBCOMMAND_FLAGS, '--ff-only'];
   try {
     execFileSync('git', args, {
@@ -561,6 +564,7 @@ export function divergenceSafePull(
   branch: string,
   opts: { timeoutMs?: number } = {},
 ): PullOutcome {
+  assertManagedFilesystemWrite(repoPath);
   const timeoutMs = opts.timeoutMs ?? 300_000;
 
   if (isWorkingTreeDirty(repoPath)) return { status: 'skipped_dirty' };

@@ -38,6 +38,8 @@
  * (`gbrain sources status`, webhook response body, sync completion banner).
  */
 import type { BrainEngine } from './engine.ts';
+import { getCompanyBrainProfile } from './company-brain/profile.ts';
+import { OperationError } from './ops/contract.ts';
 import { embedBackfillWorkerSurface } from './minions/embed-backfill-admission.ts';
 import { MinionQueue } from './minions/queue.ts';
 import { parseUsdLimit, resolveSpendPosture, type SpendPosture } from './spend-posture.ts';
@@ -135,6 +137,7 @@ export async function submitEmbedBackfill(
   // a row so the undrainable job cannot also cooldown-block a later attempt.
   const surface = embedBackfillWorkerSurface(engine);
   if (surface.status === 'no_worker_surface') return surface;
+  if (await getCompanyBrainProfile(engine, sourceId)) throw new OperationError('source_profile_no_backfill', 'This source profile disables automatic embedding backfill. Enable enrichment only through a separate explicit action.');
 
   const now = opts.nowMs ?? Date.now();
   const cooldownMin =

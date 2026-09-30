@@ -3,6 +3,7 @@
 **Status:** DRAFT for CEO review.
 **Date:** 2026-04-18.
 **Supersedes:** The earlier "Feynman Ideas Assessment + Phase A/B" plan.
+**Implementation note (later):** `src/core/enrichment/budget.ts` (`BudgetLedger`), `src/core/enrichment/completeness.ts` (`CompletenessScorer`), `src/core/fail-improve.ts`, `src/core/data-research.ts` and `src/core/minions/stagger.ts` were built but never gained a runtime caller, and were removed in the test-reduction fix wave. References to them below are historical.
 
 ---
 

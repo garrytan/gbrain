@@ -15,6 +15,7 @@
  *     and refuses to overwrite unless `--force-unlock`.
  */
 
+import { assertLegacySkillFilesystemWrite, confinedSkillChildWrite } from './writer-guard.ts';
 import {
   closeSync,
   existsSync,
@@ -200,6 +201,7 @@ function readLock(workspace: string): LockInfo | null {
 }
 
 function acquireLock(workspace: string, opts: InstallOptions): void {
+  assertLegacySkillFilesystemWrite(workspace);
   const p = lockPath(workspace);
   const existing = readLock(workspace);
   const staleMs = opts.lockStaleMs ?? DEFAULT_LOCK_STALE_MS;
@@ -339,9 +341,12 @@ export function updateManagedBlock(
 }
 
 function writeAtomic(file: string, content: string): void {
+  assertLegacySkillFilesystemWrite(file);
   const tmp = file + '.tmp.' + process.pid + '.' + Date.now();
+  assertLegacySkillFilesystemWrite(tmp);
   mkdirSync(dirname(file), { recursive: true });
   writeFileSync(tmp, content);
+  assertLegacySkillFilesystemWrite(file);
   renameSync(tmp, file);
 }
 
@@ -365,6 +370,11 @@ export function applyInstall(
   plan: InstallPlan,
   opts: InstallOptions,
 ): InstallResult {
+  if (!opts.dryRun) {
+    assertLegacySkillFilesystemWrite(plan.targetWorkspace);
+    assertLegacySkillFilesystemWrite(plan.targetSkillsDir);
+    for (const { entry } of plan.entryOutcomes) confinedSkillChildWrite(plan.targetSkillsDir, entry.relTarget);
+  }
   const files: FileResult[] = [];
 
   // Lock acquisition. Dry-run does NOT touch the lockfile — it's read-only.
@@ -380,6 +390,7 @@ export function applyInstall(
         outcome = 'wrote_new';
         if (!opts.dryRun) {
           const content = readFileSync(entry.source);
+          assertLegacySkillFilesystemWrite(target);
           mkdirSync(dirname(target), { recursive: true });
           writeFileSync(target, content);
         }
@@ -389,6 +400,7 @@ export function applyInstall(
         outcome = 'wrote_overwrite';
         if (!opts.dryRun) {
           const content = readFileSync(entry.source);
+          assertLegacySkillFilesystemWrite(target);
           writeFileSync(target, content);
         }
       } else {
@@ -682,6 +694,10 @@ export interface UninstallOptions {
  *   7. Release lock.
  */
 export function applyUninstall(opts: UninstallOptions): UninstallResult {
+  if (!opts.dryRun) {
+    assertLegacySkillFilesystemWrite(opts.targetWorkspace);
+    assertLegacySkillFilesystemWrite(opts.targetSkillsDir);
+  }
   const shouldLock = !opts.dryRun;
   if (shouldLock) {
     acquireLock(opts.targetWorkspace, opts as InstallOptions);
@@ -791,6 +807,7 @@ export function applyUninstall(opts: UninstallOptions): UninstallResult {
         outcome = 'removed';
         if (!opts.dryRun) {
           try {
+            assertLegacySkillFilesystemWrite(target);
             unlinkSync(target);
           } catch {
             // File vanished between check and unlink — treat as already-gone.

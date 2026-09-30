@@ -17,7 +17,7 @@ import { tmpdir } from 'os';
 import { execFileSync, spawnSync } from 'child_process';
 import {
   workspacePush, acquirePushLock, pushLockDir, pushStatusPath, pushStatusPathForRoot,
-  readPushStatuses, summarizePushStatuses, verifyRemotePrivacy,
+  readPushStatuses, readPushStatusForRoot, summarizePushStatuses, verifyRemotePrivacy,
   parseGithubOwnerRepo, resolveWorkspaceRoot, PUSH_LOCK_STALE_MS, PUSH_DENY_GLOBS,
 } from '../src/core/workspace-push.ts';
 import { SCAN_ALLOW_FILENAME } from '../src/core/secret-scan.ts';
@@ -246,6 +246,24 @@ describe('secret-scan gate', () => {
     // block restored the index — nothing left staged, disk untouched
     expect(git(work, 'diff', '--cached', '--name-only')).toBe('');
     expect(readFileSync(join(work, 'payload.md'), 'utf-8')).toContain('SECRET_PLACEHOLDER');
+  }, T);
+
+  test('a connection string with an inline password blocks the push (db_url_credentials)', async () => {
+    // Runtime-joined synthetic URL — no committed line carries the shape.
+    const url = ['postgres://', 'dbuser', ':', 'p4ssw0rd', '@db.internal:5432/app'].join('');
+    writeFileSync(join(work, 'infra.md'), `DATABASE_URL=${url}\n`);
+    const before = commitCount(work);
+    const r = await push();
+    expect(r.status).toBe('blocked_secrets');
+    expect(r.ok).toBe(false);
+    expect(r.findings?.length).toBe(1);
+    expect(r.findings?.[0]?.file).toBe('infra.md');
+    expect(r.findings?.[0]?.pattern).toBe('db_url_credentials');
+    expect(JSON.stringify(r).includes('p4ssw0rd')).toBe(false); // value never surfaces
+    expect(commitCount(work)).toBe(before); // NOTHING committed
+    // The documented escape hatch still works for a declared-safe value.
+    writeFileSync(join(work, SCAN_ALLOW_FILENAME), `${r.findings![0]!.fingerprint}\n`);
+    expect((await push()).status).toBe('pushed');
   }, T);
 });
 
@@ -525,6 +543,32 @@ describe('error paths', () => {
     const status = readPushStatuses()[0]!;
     expect(status.ok).toBe(false);
     expect(existsSync(pushLockDir(work))).toBe(false);
+  }, T);
+});
+
+describe('managed-worktree refusal is recorded (#5198)', () => {
+  test('a guard refusal overwrites the last success with ok:false and still throws', async () => {
+    writeFileSync(join(work, 'note.md'), 'first\n');
+    expect((await push()).status).toBe('pushed');
+    expect(readPushStatuses()[0]!.ok).toBe(true);
+    const commits = commitCount(work);
+    writeFileSync(join(work, '.gbrain-owner.json'), '{}\n');
+    writeFileSync(join(work, 'note.md'), 'second\n');
+    await expect(push()).rejects.toMatchObject({ code: 'writer_coordinator_required' });
+    const status = readPushStatuses()[0]!;
+    expect(status.ok).toBe(false);
+    expect(status.reason).toStartWith('writer_coordinator_required: ');
+    expect(commitCount(work)).toBe(commits); // refused before staging: nothing committed
+    expect(existsSync(pushLockDir(work))).toBe(false);
+  }, T);
+
+  test('a refusal on a subdirectory target is recorded against the workspace root', async () => {
+    const sub = join(work, 'notes');
+    mkdirSync(sub);
+    writeFileSync(join(work, '.gbrain-owner.json'), '{}\n');
+    await expect(workspacePush({ dir: sub, branch: 'main', allowUnverifiedRemote: true }))
+      .rejects.toMatchObject({ code: 'writer_coordinator_required' });
+    expect(readPushStatusForRoot(resolveWorkspaceRoot(sub)!)?.ok).toBe(false);
   }, T);
 });
 

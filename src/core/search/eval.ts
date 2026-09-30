@@ -10,7 +10,9 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
-import { embed } from '../embedding.ts';
+import { embedQuery } from '../embedding.ts';
+import { loadConfig, loadConfigWithEngine } from '../config.ts';
+import { resolveEmbeddingColumn } from './embedding-column.ts';
 import { hybridSearch } from './hybrid.ts';
 import type { HybridSearchOpts } from './hybrid.ts';
 import { dedupeRankedKeys } from '../eval/ranked-docs.ts';
@@ -238,8 +240,16 @@ async function runQuery(
   }
 
   if (strategy === 'vector') {
-    const embedding = await embed(query);
-    const results = await engine.searchVector(embedding, { limit });
+    // Same query path production hybrid runs: the query-side embedding
+    // (`input_type: query` on asymmetric providers) in the resolved column's
+    // model, searched on that column. `embed()` is the DOCUMENT side and
+    // handicapped the vector baseline on Voyage-class providers.
+    const cfg = (await loadConfigWithEngine(engine).catch(() => null)) ?? loadConfig();
+    const column = resolveEmbeddingColumn(undefined, cfg ?? { engine: 'pglite' });
+    const embedding = await embedQuery(query, column.embeddingModel
+      ? { embeddingModel: column.embeddingModel, dimensions: column.dimensions }
+      : undefined);
+    const results = await engine.searchVector(embedding, { limit, embeddingColumn: column });
     return results.map(r => r.slug);
   }
 

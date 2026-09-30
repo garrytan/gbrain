@@ -19,6 +19,7 @@ import { checkVolunteerChannels } from '../src/commands/doctor.ts';
 import { doctorSource } from './helpers/doctor-source.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { surfaceSource } from './helpers/source-surface.ts';
 
 function stubEngine(
   rows: Array<{ channel: string; n: number | string; last_fired: string | Date | null }> | Error,
@@ -185,7 +186,7 @@ describe('checkVolunteerChannels', () => {
     expect(bindingSrc).toContain('logTurnContextDeliveryFireAndForget(engine, result, req)');
     const serverSrc = readFileSync(join(import.meta.dir, '..', 'src', 'mcp', 'server.ts'), 'utf8');
     expect(serverSrc).toContain('bindResolveIpcForServe');
-    const serveHttpSrc = readFileSync(join(import.meta.dir, '..', 'src', 'commands', 'serve-http.ts'), 'utf8');
+    const serveHttpSrc = surfaceSource('serve-http');
     expect(serveHttpSrc).toContain('bindResolveIpcForServe');
   });
 });

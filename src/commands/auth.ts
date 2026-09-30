@@ -1073,6 +1073,13 @@ export function parseAuthCreateArgs(rest: string[]): { name: string; takesHolder
 
 const AUTH_USAGE = `GBrain Token Management
 
+Admin dashboard login (running HTTP server):
+  For "Give me the GBrain admin login link", use POST /admin/api/issue-magic-link
+  with the server bootstrap credential through the host's protected credential flow.
+  It returns a five-minute, single-use owner login link. Deliver it privately;
+  do not GET the generated link to check it. A static /admin/ URL only opens the login page.
+  This does not create an MCP bearer token. See docs/mcp/DEPLOY.md.
+
 Usage:
   gbrain auth create <name> [--takes-holders world,garry,brain] [--scopes read,write]
                                                           Create a legacy bearer token. v0.28: --takes-holders
@@ -1127,10 +1134,15 @@ Usage:
                                                           only — stdio use is not logged). Automation-shaped
                                                           clients (>90% context_pack/delta) are flagged.
   gbrain auth revoke-client <client_id>                   Hard-delete an OAuth 2.1 client (cascades to tokens + codes)
+  gbrain auth local-writer list|register|revoke            Manage durable local CLI/stdio writers (see --help)
   gbrain auth test <url> --token <token>                  Smoke-test a remote MCP server
 `;
 
 export async function runAuth(args: string[]): Promise<void> {
+  if (args[0] === 'local-writer') {
+    const { runPersistenceAdminCli } = await import('./persistence-admin.ts');
+    return runPersistenceAdminCli('local-writer', args.slice(1));
+  }
   // #4083 follow-up: print usage whenever --help/-h appears ANYWHERE in
   // args, before dispatching to a subcommand. Without this early return,
   // `gbrain auth create foo --help` (or revoke/register-client/... +

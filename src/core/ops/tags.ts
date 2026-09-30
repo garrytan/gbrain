@@ -6,7 +6,9 @@
  */
 
 import type { Operation } from './contract.ts';
-import { enforceClientSlugFence, sourceScopeOpts } from './context.ts';
+import { enforceClientSlugFence, readPolicyOpts } from './context.ts';
+import { submitPageMutation } from '../persistence/page-mutations.ts';
+import { WRITE_REQUEST_PARAM } from '../persistence/params.ts';
 
 // --- Tags ---
 
@@ -14,6 +16,7 @@ const add_tag: Operation = {
   name: 'add_tag',
   description: 'Add tag to page',
   params: {
+    request_id: WRITE_REQUEST_PARAM,
     slug: { type: 'string', required: true, description: "Slug of the page to tag, e.g. 'people/alice-example'." },
     tag: { type: 'string', required: true, description: "Tag to add — a plain string like 'founder' or 'follow-up', not a slug." },
   },
@@ -23,9 +26,7 @@ const add_tag: Operation = {
     enforceClientSlugFence(ctx, p.slug as string, 'add_tag');
     if (ctx.dryRun) return { dry_run: true, action: 'add_tag', slug: p.slug, tag: p.tag };
     // v0.31.8 (D7): thread ctx.sourceId.
-    const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
-    await ctx.engine.addTag(p.slug as string, p.tag as string, sourceOpts);
-    return { status: 'ok' };
+    return submitPageMutation(ctx, { operation: 'add_tag', params: p });
   },
   cliHints: { name: 'tag', positional: ['slug', 'tag'] },
 };
@@ -34,6 +35,7 @@ const remove_tag: Operation = {
   name: 'remove_tag',
   description: 'Remove tag from page',
   params: {
+    request_id: WRITE_REQUEST_PARAM,
     slug: { type: 'string', required: true, description: 'Slug of the page to untag.' },
     tag: { type: 'string', required: true, description: 'Tag to remove (exact match against the tags get_tags returns).' },
   },
@@ -42,9 +44,7 @@ const remove_tag: Operation = {
   handler: async (ctx, p) => {
     enforceClientSlugFence(ctx, p.slug as string, 'remove_tag');
     if (ctx.dryRun) return { dry_run: true, action: 'remove_tag', slug: p.slug, tag: p.tag };
-    const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
-    await ctx.engine.removeTag(p.slug as string, p.tag as string, sourceOpts);
-    return { status: 'ok' };
+    return submitPageMutation(ctx, { operation: 'remove_tag', params: p });
   },
   cliHints: { name: 'untag', positional: ['slug', 'tag'] },
 };
@@ -56,12 +56,19 @@ const get_tags: Operation = {
     slug: { type: 'string', required: true, description: 'Slug of the page whose tags to list.' },
   },
   handler: async (ctx, p) => {
-    // #2200: route through sourceScopeOpts so a federated read grant
+    // #2200: route through the source scope (via readPolicyOpts) so a federated read grant
     // (ctx.auth.allowedSources) reaches the engine, not just scalar ctx.sourceId.
     // Was `ctx.sourceId ? {sourceId} : {}` — a federated client got '{}' →
     // engine fell back to 'default' (functionality gap + cross-source leak).
-    const sourceOpts = sourceScopeOpts(ctx);
-    return ctx.engine.getTags(p.slug as string, sourceOpts);
+    // Untrusted callers never learn a private or soft-deleted page's tags
+    // (readPolicyOpts resolves the operator's private-pages posture).
+    const policy = await readPolicyOpts(ctx);
+    return ctx.engine.getTags(p.slug as string, {
+      sourceId: policy.sourceId,
+      sourceIds: policy.sourceIds,
+      excludePrivate: policy.excludePrivate,
+      liveOnly: ctx.remote !== false,
+    });
   },
   scope: 'read',
   cliHints: { name: 'tags', positional: ['slug'] },

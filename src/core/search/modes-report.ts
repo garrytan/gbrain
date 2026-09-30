@@ -26,7 +26,7 @@ export const KNOB_DESCRIPTIONS: Record<keyof ModeBundle, string> = {
   intentWeighting: 'Zero-LLM intent classifier weight adjustments',
   keywordOrFallback: 'Keyword-arm AND→OR zero-recall fallback',
   tokenBudget: 'Per-call token-budget cap (undefined = no cap)',
-  expansion: 'LLM multi-query expansion (Haiku call per search)',
+  expansion: 'Core-library default only; query defaults on and search stays off regardless of this row',
   expansion_variant_budget: 'Total RRF weight shared by expansion variant lists (null = legacy weight 1 each; (0, 4])',
   searchLimit: 'Default `limit` for the operation layer',
   reranker_enabled: 'Cross-encoder reranker on/off',
@@ -91,12 +91,20 @@ export function formatKnobValue(knob: string, value: unknown): string {
  * the BRAIN-LEVEL planes (config override > mode bundle); per-call
  * SearchOpts overrides on individual searches are not represented here —
  * a live search that passes its own knobs can legitimately differ from
- * this report for that one call.
+ * this report for that one call. #4601: the `query` op ALWAYS supplies
+ * `expand` (default on), so the `expansion` row never governs it — say so
+ * here, on the surface operators actually read, or the dashboard gives a
+ * confident wrong answer for the primary agent verb.
  */
 export const MODES_REPORT_PER_CALL_NOTE =
   'Resolved from config overrides + the active mode bundle. Per-call SearchOpts ' +
   'overrides on individual searches are not shown — a call that passes its own ' +
-  'knobs (e.g. expand, autocut, relational) wins for that call only.';
+  'knobs (e.g. expand, autocut, relational) wins for that call only. The `query` ' +
+  'op always passes `expand` (default on in every mode; `--no-expand` or ' +
+  '`expand: false` opts out), while `search` never expands. Neither inherits ' +
+  '`search.expansion`. Expansion needs configured embedding and expansion ' +
+  'providers; requested expansion is not proof a provider ran. A configured ' +
+  'cloud expander receives the query and may charge for the call.';
 
 export interface SearchModesReport {
   schema_version: 2;
@@ -126,8 +134,7 @@ export interface RerankerReadinessReport {
   required_key?: string | null;
   /** ABSENT on the remote surface (host key inventory is not for untrusted callers). */
   key_present?: boolean;
-  sunset_passed: boolean;
-  /** A provider_base_urls override routes the provider to a self-hosted endpoint (sunset does not apply). Always false on the remote surface. */
+
   self_hosted: boolean;
   /** Paste-ready fix when not ready; null when ready; ABSENT on the remote surface (it names the key). */
   fix?: string | null;
@@ -144,8 +151,8 @@ export function redactReadinessForRemote(report: SearchModesReport): SearchModes
   if (!rr) return report;
   // self_hosted is deployment topology (a private base-URL override exists) —
   // not needed for the verdict, so it stays local too.
-  const { model, enabled, ready, sunset_passed } = rr;
-  return { ...report, reranker_readiness: { model, enabled, ready, sunset_passed, self_hosted: false } };
+  const { model, enabled, ready } = rr;
+  return { ...report, reranker_readiness: { model, enabled, ready, self_hosted: false } };
 }
 
 export async function buildModesReport(engine: BrainEngine): Promise<SearchModesReport> {
@@ -192,7 +199,6 @@ export async function buildModesReport(engine: BrainEngine): Promise<SearchModes
       ready: r.ready,
       required_key: r.requiredKey,
       key_present: r.keyPresent,
-      sunset_passed: r.sunsetPassed,
       self_hosted: r.selfHosted,
       fix: describeRerankerFix(r),
     };
@@ -205,7 +211,6 @@ export async function buildModesReport(engine: BrainEngine): Promise<SearchModes
       ready: false,
       required_key: null,
       key_present: false,
-      sunset_passed: false,
       self_hosted: false,
       fix: `readiness check failed: ${e instanceof Error ? e.message : String(e)} — run gbrain doctor`,
     };

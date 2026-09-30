@@ -87,9 +87,11 @@ interface DreamArgs {
   /**
    * issue #2860 — `--once`. One-shot bypass of the named `--phase`'s own
    * `dream.<phase>.enabled` / `cycle.<phase>.enabled` config gate, for this
-   * invocation only. Never reads or writes config — unlike the old
-   * "toggle enabled true, run, toggle back to false" workaround, a crash
-   * mid-run can't leave any global state stuck. Requires an explicit
+   * invocation only. Never reads or writes the `.enabled` key — unlike the
+   * old "toggle enabled true, run, toggle back to false" workaround, a crash
+   * mid-run can't leave any global state stuck. (Phases may still write
+   * their own completion stamps, e.g. patterns' `last_evidence_ts` per
+   * #4879, so a forced run isn't re-paid by the next tick.) Requires an explicit
    * `--phase <name>`; bare `--once` is a usage error (there'd be no single
    * phase to target). Applies only to phases with a config `.enabled` gate
    * (patterns, synthesize, conversation_facts_backfill, enrich_thin,
@@ -373,6 +375,7 @@ async function resolveBrainDir(
 function printHelp() {
   console.log(`Usage: gbrain dream [options]
        gbrain dream retriage [flags]   (see: gbrain dream retriage --help)
+       gbrain dream reset-key <key> | --list   (see: gbrain dream reset-key --help)
 
 Run one brain maintenance cycle. Eight phases:
   lint -> backlinks -> sync -> synthesize -> extract -> patterns -> embed -> orphans
@@ -391,7 +394,8 @@ re-scores the corpus and reconciles the queued synthesis backlog.
 Options:
   --dry-run           Preview all fixes without writing. Note: synthesize
                       runs the cheap scored triage pass (caches verdicts),
-                      but skips the synthesis subagents.
+                      but skips the synthesis subagents; propose_takes,
+                      grade_takes and calibration_profile are skipped.
                       "--dry-run" does NOT mean "zero LLM calls."
   --json              Emit the CycleReport as JSON (agent-readable)
   --phase <name>      Run only the named phase(s). Repeatable — every named
@@ -665,6 +669,11 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
     await runDreamRetriage(engine, args.slice(1));
     return;
   }
+  if (args[0] === 'reset-key') {
+    const { runDreamResetKey } = await import('./dream-reset-key.ts');
+    await runDreamResetKey(engine, args.slice(1));
+    return;
+  }
   // Fail-loud guard (structured-review r3 P1): the CLI flag registry unions
   // retriage's flags into `dream`, so the pre-dispatch validator accepts
   // `gbrain dream --reconcile-queue` — but without the `retriage` positional,
@@ -688,7 +697,7 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
   // ─── IRON RULE: --help short-circuits BEFORE any engine-bearing work ─
   // Tests pin this ordering so `gbrain dream --help --source whatever`
   // ALWAYS prints help and exits 0, never reaching the engine-null gate
-  // below. If you reorder this, dream-cli-flags.test.ts will fail.
+  // below. If you reorder this, test/dream.test.ts ("--help --source whatever") fails.
   if (opts.help) {
     printHelp();
     return;
@@ -855,8 +864,9 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
   }
 
   // Exit non-zero when the cycle failed overall (helps cron spot real problems).
-  // 'partial' is not a failure — it means some phase warned but the cycle ran.
-  if (report.status === 'failed') {
+  // 'partial' is not a failure — it means some phase warned but the cycle ran —
+  // except when a phase threw and was contained so later phases could run.
+  if (report.status === 'failed' || report.phases.some(p => p.details?.contained === true)) {
     process.exit(1);
   }
 

@@ -211,6 +211,9 @@ if (RUN_CLI_REFS) {
     try {
       const cliSrc = readFileSync('src/cli.ts', 'utf8');
       for (const m of cliSrc.matchAll(/(?:command === |case )'([a-z][a-z0-9-]*)'/g)) known.add(m[1]);
+      // Refactor wave 1: CLI-only commands are records in the command table.
+      const tableSrc = readFileSync('src/cli/command-table.ts', 'utf8');
+      for (const m of tableSrc.matchAll(/\{ name: '([a-z][a-z0-9-]*)'/g)) known.add(m[1]);
     } catch {}
     // ops cliHints that --tools-json does not serialize: read them from source.
     // operations.ts is a façade post-peel — the op declarations (and their

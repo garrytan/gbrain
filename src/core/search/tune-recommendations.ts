@@ -9,6 +9,7 @@
 import type { BrainEngine } from '../engine.ts';
 import { loadSearchModeConfig, resolveSearchMode, type SearchMode } from './mode.ts';
 import { readSearchStats, telemetryCoverage, type TelemetryCoverage } from './telemetry.ts';
+import { semanticResultCacheAvailable } from './query-cache.ts';
 
 export interface TuneRecommendation {
   knob: string;
@@ -66,7 +67,7 @@ export async function buildTuneRecommendations(engine: BrainEngine): Promise<Tun
   }
 
   // Recommendation 3: high cache hit rate → bump similarity threshold.
-  if (stats.cache_hit_rate > 0.85 && stats.cache_hits + stats.cache_misses > 50) {
+  if (semanticResultCacheAvailable() && stats.cache_hit_rate > 0.85 && stats.cache_hits + stats.cache_misses > 50) {
     recs.push({
       knob: 'search.cache.similarity_threshold',
       current: resolved.cache_similarity_threshold,
@@ -83,13 +84,13 @@ export async function buildTuneRecommendations(engine: BrainEngine): Promise<Tun
       knob: 'search.mode',
       current: 'tokenmax',
       suggested: 'balanced',
-      reason: `Subagent tier is Haiku but mode is tokenmax. LLM expansion adds ~50ms + ~1¢ per query. Balanced cuts that cost without losing intent weighting or cache.`,
+      reason: 'Subagent tier is Haiku but mode is tokenmax. Balanced caps the result payload at 12K tokens by default, reducing downstream input volume. It does not disable query expansion; use query --no-expand to skip that provider call. Semantic result caching is temporarily disabled.',
       apply_command: 'gbrain config set search.mode balanced',
     });
   }
 
   // Recommendation 5: cache disabled but available — fix the free win.
-  if (!resolved.cache_enabled && stats.total_calls > 5) {
+  if (semanticResultCacheAvailable() && !resolved.cache_enabled && stats.total_calls > 5) {
     recs.push({
       knob: 'search.cache.enabled',
       current: false,

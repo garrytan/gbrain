@@ -1,0 +1,3 @@
+# Exact spans the gstack credential pre-push guard must not flag.
+# vendor/postgres/README.md is byte-exact upstream documentation (placeholder, not a credential).
+postgres://username:password@host:port

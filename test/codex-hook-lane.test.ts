@@ -44,7 +44,7 @@ describe('parseCodexHookTranscript', () => {
     const p = join(dir, 'rollout-1.jsonl');
     writeFileSync(p, [meta, injected, user('fix the failing order tests'), customCall, callOutput, assistant('done — pushed the fix'), '{torn'].join('\n') + '\n');
     const parsed = parseCodexHookTranscript(p, { collectToolCalls: true });
-    expect(parsed.sessionId).toBe('cdx-sess-1');
+    expect(parsed.sessionId).toBe('r-1'); // payload.id, the id codex embeds in the rollout filename (#4981)
     expect(parsed.cwd).toBe('/repo');
     expect(parsed.turns.map((t) => t.text)).toEqual(['fix the failing order tests', 'done — pushed the fix']);
     // custom_tool_call args key is `input` (fixture-verified), a JSON string → parsed.
@@ -93,13 +93,31 @@ describe('parseCodexHookTranscript', () => {
     expect(parsed.turns).toHaveLength(3);
   });
 
+  // #4981: a forked/subagent rollout carries its own payload.id plus the ROOT
+  // session_id and an inherited parent session_meta later in the file. The
+  // hook fallback id must be the child's own (first header, payload.id) so it
+  // matches the rollout filename discoverNewestCodexRollout substring-matches.
+  test('forked rollout keeps its own payload.id; an inherited parent header does not overwrite it (#4981)', () => {
+    const p = join(dir, 'rollout-child.jsonl');
+    const inheritedParent = JSON.stringify({
+      timestamp: 't0',
+      type: 'session_meta',
+      payload: { id: 'r-parent', session_id: 'cdx-sess-1', timestamp: 't0', cwd: '/repo-parent', cli_version: '0.147.0' },
+    });
+    writeFileSync(p, [meta, inheritedParent, user('child turn'), assistant('child reply')].join('\n') + '\n');
+    const parsed = parseCodexHookTranscript(p);
+    expect(parsed.sessionId).toBe('r-1');
+    expect(parsed.cwd).toBe('/repo');
+    expect(parsed.turns.map((t) => t.text)).toEqual(['child turn', 'child reply']);
+  });
+
   test('over-budget read keeps session_meta identity (head) and the newest turns (tail)', () => {
     const p = join(dir, 'rollout-big.jsonl');
     const lines = [meta];
     for (let i = 0; i < 2000; i++) lines.push(user(`turn-${i} ${'x'.repeat(400)}`));
     writeFileSync(p, lines.join('\n') + '\n');
     const parsed = parseCodexHookTranscript(p, { maxBytes: 128 * 1024 });
-    expect(parsed.sessionId).toBe('cdx-sess-1'); // head window preserved identity
+    expect(parsed.sessionId).toBe('r-1'); // head window preserved identity
     expect(parsed.turns[parsed.turns.length - 1]!.text).toContain('turn-1999'); // newest tail kept
     expect(parsed.bytesRead).toBeLessThanOrEqual(128 * 1024);
   });

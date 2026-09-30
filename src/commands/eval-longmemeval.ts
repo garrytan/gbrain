@@ -11,40 +11,21 @@
  * ThinkLLMClient / expandFn / readiness / embed transport seams so the full
  * pipeline runs without any API key.
  *
- * INVARIANTS (ranker wave, Phase 0):
- *   - Recall joins on RAW dataset session ids through a per-question
- *     slug→raw map (metrics.ts); a collision touching a gold id aborts the
- *     question with an error row instead of scoring it.
- *   - `recall_all@k` / `recall_any@k` are scored over the DISTINCT sessions
- *     among the top-k CHUNK rows returned at `limit: k`. `_abs` questions are
- *     emitted but stay out of the recall denominators unless
- *     `--include-abstention`.
- *   - Every retrieval pin (mode, reranker, autocut, expansion, variant
- *     budget, embedder, top-k, trajectory, and the raw `--search-pin` map
- *     when non-empty) PLUS the resolved `knobs_hash` is hashed into
- *     `retrieval_config_hash` on every row; resume refuses a mixed file (a
- *     snapshot differing in any non-pin knob is a different run). Explicit
- *     flags beat a `--search-pin` of the same key everywhere (config write
- *     order, resolvePins, the hash and the gates).
+ * INVARIANTS:
+ *   - Retrieval scores join raw session IDs and exclude abstentions by default.
+ *     Retrieval and reader configuration are independently pinned; resume
+ *     refuses changed reader pins even when retrieval mixing is allowed.
  *   - The reranker preflight (exit 2) and the un-reranked-rows gate (exit 1)
  *     key on the RESOLVED reranker pin — flag, --search-pin, snapshot or
  *     bundle — so a configured-but-silently-skipped reranker never exits 0.
  *     A run in which every question errored and no row was scored exits 1.
- *   - Silent degradation is a gate, not a footnote: on a non-keyword-only
- *     run a row whose vector arm fell back to keyword-only
- *     (`vector_enabled:false`, `embed_unavailable`, `embed_timeout`) or whose
- *     `--expansion` did not run as configured (`expansion_failed` /
- *     `expansion_partial`) is counted (`vector_degraded_rows`,
- *     `expansion_failed_rows`) and the run exits 1 — mirroring the reranker
- *     gate. The run-end gates + `--record` run through ONE `finishRun` from
- *     both the main path and the no-op resume path.
+ *   - Reranker, vector and expansion degradation fail at run end, including
+ *     no-op resumes; `--record` uses the same finish path.
  *   - The embed-cache transaction wraps only the embed-producing section of a
  *     question (import + search); a reader/LLM failure afterwards never rolls
  *     back committed vectors and never holds the cache write lock across a
  *     network round-trip.
- *   - Flags live in ONE table (`LME_FLAGS`) that drives parseArgs AND
- *     printHelp, so the flag-registry scan sees every literal and help can
- *     never drift from the parser.
+ *   - `LME_FLAGS` drives parsing and help from the same table.
  *   - `--judge` (Phase D) judges the reader's answer with the official
  *     LongMemEval prompts (src/eval/longmemeval/judge.ts) through the shared
  *     judge runner; a judge malfunction is a `judge_error`, never an
@@ -59,14 +40,16 @@
 import { homedir } from 'os';
 import { join } from 'path';
 import { execFileSync } from 'child_process';
-import { withBenchmarkBrain, resetTables } from '../eval/longmemeval/harness.ts';
+import { brainRecycler, createBenchmarkBrain, LME_BRAIN_RECYCLE_EVERY, resetTables } from '../eval/longmemeval/harness.ts';
+export { LME_BRAIN_RECYCLE_EVERY };
 import { haystackToPages, normalizeSessions } from '../eval/longmemeval/adapter.ts';
 import {
-  READER_MAX_TOKENS,
-  READER_PROMPT_SHA,
   generateAnswer,
   rawSessionId,
+  readerConfigHash,
   renderRetrievedAsHypothesis,
+  resolveReaderConfig,
+  type ReaderConfig,
 } from '../eval/longmemeval/reader.ts';
 import {
   DEFAULT_JUDGE_MODEL,
@@ -117,6 +100,7 @@ import {
 } from '../eval/longmemeval/run-config.ts';
 import {
   checkResumeConfigHash,
+  checkResumeReaderConfig,
   classifyDegradation,
   countDegradation,
   isScoredQuestionRow,
@@ -186,6 +170,8 @@ interface ParsedArgs {
   datasetPath?: string;
   limit?: number;
   model?: string;
+  readerMode?: string;
+  readerMaxTokens?: number;
   retrievalOnly: boolean;
   keywordOnly: boolean;
   expansion: boolean;
@@ -250,6 +236,10 @@ const LME_FLAGS: LmeFlag[] = [
     apply: (o, v) => { o.limit = Number(v); if (!Number.isInteger(o.limit) || o.limit < 1) throw new Error(`--limit must be a positive integer (got: ${v})`); } },
   { name: '--model', arg: 'M', help: ['Override answer-generation model (default: resolveModel).'],
     apply: (o, v) => { o.model = v; } },
+  { name: '--reader-mode', arg: 'direct|notes', help: ['Reader instruction: notes (default, 1024 tokens) extracts evidence before a concise answer; direct preserves the prior prompt (512 tokens).'],
+    apply: (o, v) => { o.readerMode = v; resolveReaderConfig({ mode: v }); } },
+  { name: '--reader-max-tokens', arg: 'N', help: ['Override the reader output budget (positive integer; use 512 to reproduce the original notes treatment).'],
+    apply: (o, v) => { o.readerMaxTokens = Number(v); resolveReaderConfig({ maxTokens: o.readerMaxTokens }); } },
   { name: '--retrieval-only', help: ['Skip LLM answer generation; emit retrieved sessions instead.'],
     apply: (o) => { o.retrievalOnly = true; } },
   { name: '--keyword-only', help: ['Skip vector embedding; pure keyword retrieval (no reranker, no cache).'],
@@ -476,7 +466,7 @@ function printHelp(): void {
   lines.push(`Row fields: recall_all_hit (every gold session in the top-k distinct sessions),`);
   lines.push(`recall_any_hit (at least one), recall_hit (DEPRECATED alias of recall_any_hit),`);
   lines.push(`abstention, distinct_sessions_in_top_k, retrieved[] (every returned chunk row),`);
-  lines.push(`retrieved_session_ids, search_meta, retrieval_config_hash, reader_model, reader_prompt_sha;`);
+  lines.push(`retrieved_session_ids, search_meta, retrieval_config_hash, reader_model, reader_mode, reader_prompt_sha, reader_finish_reason;`);
   lines.push(`with --judge: judge_correct | judge_error | judge_skipped, judge_model, judge_raw, judge_cost_usd,`);
   lines.push(`judge_config_hash (summary: qa_accuracy).`);
   lines.push(``);
@@ -486,6 +476,7 @@ function printHelp(): void {
 }
 
 export interface RunOpts {
+  exitOnError?: boolean;
   /** Inject a chat client for tests; defaults to the gateway-routed client (#4636). */
   client?: ThinkLLMClient;
   /** Separate stub for the Haiku claim extractor (defaults to the same gateway client). */
@@ -498,6 +489,9 @@ export interface RunOpts {
    * the result of createBenchmarkBrain(); the caller owns lifecycle.
    */
   engine?: PGLiteEngine;
+  /** #5092 test seams: brain recycle interval and factory (harness-owned brain only). */
+  brainRecycleEvery?: number;
+  createBrain?: () => Promise<PGLiteEngine>;
   /**
    * Live nightly-probe search-mode/reranker settings copied into the isolated
    * benchmark brain (#3676). Explicit pin flags (--mode/--reranker/--autocut/
@@ -533,6 +527,8 @@ class QuestionAbort extends Error {
 interface RunContext {
   opts: ParsedArgs;
   model: string;
+  readerConfig: ReaderConfig;
+  readerHash: string;
   client: ThinkLLMClient;
   trajectoryEnabled: boolean;
   extractorClient: ThinkLLMClient;
@@ -608,19 +604,25 @@ function gitShort(argv: readonly string[], fallback: string): string {
 }
 
 export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}): Promise<void> {
+  const fail = (code: number): never => {
+    if (runOpts.exitOnError !== false) process.exit(code);
+    throw new Error(`longmemeval failed (exit ${code}); see evaluation diagnostics`);
+  };
   let opts: ParsedArgs;
+  let readerConfig: ReaderConfig;
   try {
     opts = parseArgs(args);
+    readerConfig = resolveReaderConfig({ mode: opts.readerMode, maxTokens: opts.readerMaxTokens });
   } catch (err: any) {
     process.stderr.write(`Error: ${err.message ?? err}\n`);
-    process.exit(1);
+    fail(1);
     return;
   }
   if (opts.help) { printHelp(); return; }
   if (!opts.datasetPath) {
     process.stderr.write(`Error: <dataset.jsonl> is required.\n\n`);
     printHelp();
-    process.exit(1);
+    fail(1);
     return;
   }
 
@@ -630,7 +632,7 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
     ({ questions, sha256: datasetSha256 } = loadDataset(opts.datasetPath, HUGGINGFACE_URL));
   } catch (err: any) {
     process.stderr.write(`Error: ${err.message ?? err}\n`);
-    process.exit(1);
+    fail(1);
     return;
   }
   const datasetQuestionCount = questions.length;
@@ -666,7 +668,7 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
       questions = questions.filter(q => want.has(q.question_id));
     } catch (err: any) {
       process.stderr.write(`Error: ${err.message ?? err}\n`);
-      process.exit(1);
+      fail(1);
       return;
     }
   }
@@ -675,7 +677,7 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
   }
   if (questions.length === 0) {
     process.stderr.write(`Error: dataset contains no questions.\n`);
-    process.exit(1);
+    fail(1);
     return;
   }
 
@@ -695,7 +697,8 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
     envVar: 'GBRAIN_MODEL',
     fallback: 'sonnet',
   });
-  const judgeHashFor = makeJudgeConfigHasher(opts.judgeModel, { model, prompt_sha: READER_PROMPT_SHA, max_tokens: READER_MAX_TOKENS, k: opts.topK });
+  const readerHash = readerConfigHash(readerConfig, normalizeModelId(model));
+  const judgeHashFor = makeJudgeConfigHasher(opts.judgeModel, { model, prompt_sha: readerConfig.promptSha, max_tokens: readerConfig.maxTokens, k: opts.topK });
   /** This run's judge_config_hash (live rows; prior rows hash from their own recorded reader pins). */
   const runJudgeHash = judgeHashFor({});
 
@@ -741,6 +744,7 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
     excluded_abstention: st.excludedAbstention,
     question_ids_file: opts.questionIdsPath ?? null,
     errors: st.errorCount,
+    reader: { mode: readerConfig.mode, prompt_version: readerConfig.promptVersion, prompt_sha: readerConfig.promptSha, max_tokens: readerConfig.maxTokens, model: normalizeModelId(model), config_hash: readerHash },
   });
 
   /**
@@ -766,6 +770,11 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
     if (st.cacheReceipt) {
       const c = st.cacheReceipt;
       process.stderr.write(`[longmemeval] embed cache: ${c.hits} hits, ${c.misses} misses, ${c.bypassed} bypassed, ${c.infra_faults} infra fault(s) (canonical ${c.canonical_sha256.slice(0, 12)})\n`);
+    }
+    const incomplete = st.qaRows.filter(row => typeof row.error === 'string' && String(row.error).startsWith('reader_')).length;
+    if (incomplete > 0) {
+      process.stderr.write(`[longmemeval] ${incomplete} incomplete reader completion(s); partial, empty or unknown answers are errors and cannot count as completed.\n`);
+      exitCode = 1;
     }
 
     const runConfig = summaryRunConfig(st);
@@ -824,7 +833,7 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
     // Gate on the RESOLVED reranker pin (flag, --search-pin, snapshot or bundle),
     // not the flag alone: a configured-but-silently-skipped reranker never exits 0.
     if (pins.reranker.enabled && st.rerankerSkippedRows > 0) {
-      process.stderr.write(`[longmemeval] FAIL reranker on (resolved pin): ${st.rerankerSkippedRows} row(s) fell through un-reranked (reranker_skipped / rerank_passthrough) — pass --reranker off or set the reranker provider key (e.g. VOYAGE_API_KEY)\n`);
+      process.stderr.write(`[longmemeval] FAIL reranker on (resolved pin): ${st.rerankerSkippedRows} row(s) fell through un-reranked (reranker_skipped / rerank_passthrough / rerank_failed) — pass --reranker off or set the reranker provider key (e.g. VOYAGE_API_KEY)\n`);
       exitCode = 1;
     }
     // Every question of this run errored AND the output holds no scored row
@@ -883,7 +892,7 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
       persistRunRecord(repoRoot, record, runOpts.recordDir);
       process.stderr.write(`[longmemeval] recorded ${record.run_id} (${record.status})\n`);
     }
-    if (exitCode !== 0) process.exit(exitCode);
+    if (exitCode !== 0) fail(exitCode);
   };
 
   // --resume-from: filter out already-answered question_ids before any
@@ -896,13 +905,19 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
   let backfill: RowLike[] = [];
   if (opts.resumeFromPath) {
     priorRows = readJsonlRows(opts.resumeFromPath);
+    const readerCheck = checkResumeReaderConfig(priorRows, readerConfig, normalizeModelId(model), opts.retrievalOnly, opts.judge);
+    if (readerCheck.mismatched > 0 || readerCheck.unknown > 0) {
+      process.stderr.write(`[longmemeval] resume: reader configuration mismatch (${readerCheck.mismatched} different, ${readerCheck.unknown} unknown). Refusing to mix reader modes, prompts, models or budgets even with --allow-mixed-run-config.\n`);
+      fail(1);
+      return;
+    }
     const check = checkResumeConfigHash(priorRows, retrievalHash);
     if (check.mismatched > 0) {
       const msg = `[longmemeval] resume: ${check.mismatched} row(s) in ${opts.resumeFromPath} carry a different retrieval_config_hash ` +
         `(${check.foreign.map(h => h.slice(0, 12)).join(', ')} vs this run's ${retrievalHash.slice(0, 12)}).`;
       if (!opts.allowMixedRunConfig) {
         process.stderr.write(`${msg} Refusing to mix runs; pass --allow-mixed-run-config to override.\n`);
-        process.exit(1);
+        fail(1);
         return;
       }
       process.stderr.write(`${msg} Continuing (--allow-mixed-run-config).\n`);
@@ -925,14 +940,14 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
           `(${sel.foreign.map(h => h.slice(0, 12)).join(', ')} vs this run's ${runJudgeHash.slice(0, 12)}).`;
         if (!opts.allowMixedRunConfig) {
           process.stderr.write(`${msg} Refusing to mix judge configs; pass --allow-mixed-run-config to override.\n`);
-          process.exit(1);
+          fail(1);
           return;
         }
         process.stderr.write(`${msg} Continuing (--allow-mixed-run-config).\n`);
       }
       if (sel.retrievalOnly > 0) {
         process.stderr.write(`Error: --judge: ${sel.retrievalOnly} row(s) in ${opts.resumeFromPath} were produced with --retrieval-only and carry no reader hypothesis to judge.\n`);
-        process.exit(1);
+        fail(1);
         return;
       }
       if (sel.missingFromDataset > 0) process.stderr.write(`[longmemeval] WARN judge backfill: ${sel.missingFromDataset} row(s) not in this dataset — left unjudged\n`);
@@ -989,7 +1004,7 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
       replay = loadExpansionReplay(opts.expansionReplayPath);
     } catch (err: any) {
       process.stderr.write(`Error: ${err.message ?? err}\n`);
-      process.exit(1);
+      fail(1);
       return;
     }
     process.stderr.write(`[longmemeval] expansion replay: ${replay.size} recorded variant set(s) from ${opts.expansionReplayPath}\n`);
@@ -1008,6 +1023,15 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
       })
     : '';
 
+  if (runOpts.exitOnError === false) {
+    if (!opts.retrievalOnly && !runOpts.client && !isAvailable('chat', model)) {
+      throw new Error(`longmemeval reader chat provider not configured for ${model}; configure this model's provider or models.eval.longmemeval`);
+    }
+    if (trajectoryEnabled && !runOpts.extractorClient && !isAvailable('chat', extractorModel)) {
+      throw new Error(`longmemeval extractor chat provider not configured for ${extractorModel}; configure this model's provider or its utility tier`);
+    }
+  }
+
   // --judge preflight (Phase D): availability → pricing → estimate → cap.
   // Runs before the brain connects so a refused run costs nothing.
   let judgeCtx: JudgeLaneContext | null = null;
@@ -1020,12 +1044,12 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
       yes: opts.yes,
       available: runOpts.judgeClient ? true : isAvailable('chat', opts.judgeModel),
       live: questions,
-      readerMaxTokens: READER_MAX_TOKENS,
+      readerMaxTokens: readerConfig.maxTokens,
       backfill,
     });
     if (!pre.ok) {
       process.stderr.write(`Error: ${pre.message}\n`);
-      process.exit(pre.exitCode);
+      fail(pre.exitCode);
       return;
     }
     for (const line of pre.lines) process.stderr.write(`${line}\n`);
@@ -1100,14 +1124,14 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
   };
 
   const ctx: RunContext = {
-    opts, model, client, trajectoryEnabled, extractorClient, extractorModel,
+    opts, model, readerConfig, readerHash, client, trajectoryEnabled, extractorClient, extractorModel,
     expandFn: runOpts.expandFn ?? expandQuery,
     replay,
     retrievalConfigHash: retrievalHash,
     embedTxn: (fn) => fn(),
   };
 
-  const work = async (engine: PGLiteEngine): Promise<void> => {
+  const configureBrain = async (engine: PGLiteEngine): Promise<void> => {
     // #3676: nightly probe callers may copy audited live search config into
     // this isolated engine. Data tables stay hermetic.
     for (const [key, value] of Object.entries(runOpts.searchConfigSnapshot ?? {})) {
@@ -1126,6 +1150,10 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
     if (opts.expansionVariantBudget !== undefined) {
       await engine.setConfig('search.expansion_variant_budget', opts.expansionVariantBudget === null ? 'legacy' : String(opts.expansionVariantBudget));
     }
+  };
+
+  const work = async (engine: PGLiteEngine): Promise<void> => {
+    await configureBrain(engine);
 
     // Resolved reranker pin on (flag, --search-pin, snapshot or bundle):
     // preflight. A reranker that cannot run would silently turn every row
@@ -1135,7 +1163,7 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
       const r = await probe(engine, pins.reranker.model);
       if (!r.readiness.ready) {
         process.stderr.write(`[longmemeval] reranker not ready (${r.plane} plane): ${describeRerankerFix(r.readiness) ?? 'not ready'}\n`);
-        process.exit(2);
+        fail(2);
         return;
       }
     }
@@ -1171,6 +1199,9 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
     // below; a fresh output path (no resume, or a resume into a different
     // file) is truncated and the prior rows are carried forward explicitly.
     const emitter = makeEmitter(opts.outputPath, appendOutput);
+    // #5092: a harness-owned brain is replaced on a fixed cadence (see brainRecycler).
+    const brains = brainRecycler(engine, runOpts.engine ? 0 : (runOpts.brainRecycleEvery ?? LME_BRAIN_RECYCLE_EVERY),
+      runOpts.createBrain ?? createBenchmarkBrain, configureBrain);
     progress.start('eval.longmemeval', backfill.length + questions.length);
     try {
       // Judge-only backfill first (prior rows, no reader call), then re-emit
@@ -1196,10 +1227,11 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
         if (opts.judge && !appendOutput) emitter.emit(row);
       }
       for (const q of questions) {
+        const brain = await brains.next();
         const qStart = Date.now();
         try {
-          const outcome = await runOneQuestion(engine, q, ctx);
-          if (judgeCtx) {
+          const outcome = await runOneQuestion(brain, q, ctx);
+          if (judgeCtx && typeof outcome.row.error !== 'string') {
             // Judge inline from the row's hypothesis (the same path the backfill
             // takes). A judge THROW (judgeRow never throws for a transport
             // failure, but a malformed provider result / hasher bug can) is a
@@ -1224,6 +1256,10 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
           }
           emitter.emit(outcome.row);
           qaRows.push(outcome.row);
+          if (typeof outcome.row.error === 'string') {
+            errorCount++;
+            if (errorMessages.length < 3) errorMessages.push(`${q.question_id}: ${outcome.row.error}`);
+          }
           if (outcome.rerankerSkipped) rerankerSkippedRows++;
           if (outcome.vectorDegraded) vectorDegradedRows++;
           if (outcome.expansionFailed) expansionFailedRows++;
@@ -1257,6 +1293,7 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
         }
       }
     } finally {
+      await brains.close();
       progress.finish();
       emitter.close();
       if (appendOutput && opts.outputPath) {
@@ -1282,7 +1319,12 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
     // Caller owns engine lifecycle (typically a test beforeAll/afterAll).
     await work(runOpts.engine);
   } else {
-    await withBenchmarkBrain(work);
+    const first = await (runOpts.createBrain ?? createBenchmarkBrain)();
+    try {
+      await work(first);
+    } finally {
+      await first.disconnect();
+    }
   }
 
   if (trajectoryEnabled) {
@@ -1416,13 +1458,22 @@ async function runOneQuestion(
     // again, idempotently), so the snapshot comparison inside generateAnswer
     // sees the same string the provider echoes — a bare alias never shows up
     // as a fake `reader_model_snapshot`.
-    const answer = await generateAnswer(ctx.client, q, results, pageMeta, slugToRaw, normalizeModelId(ctx.model), route.block);
-    hypothesis = answer.text;
+    const answer = await generateAnswer(ctx.client, q, results, pageMeta, slugToRaw, normalizeModelId(ctx.model), route.block, ctx.readerConfig);
+    const readerError = answer.finish_reason === 'max_tokens' ? 'reader_max_tokens'
+      : answer.finish_reason !== 'end_turn' ? 'reader_unknown_finish_reason'
+      : answer.text === '' ? 'reader_empty_response' : null;
+    hypothesis = readerError ? '' : answer.text;
     readerFields = {
       reader_model: ctx.model,
       reader_model_snapshot: answer.response_model,
-      reader_prompt_sha: READER_PROMPT_SHA,
-      reader_max_tokens: READER_MAX_TOKENS,
+      reader_mode: ctx.readerConfig.mode,
+      reader_prompt_version: ctx.readerConfig.promptVersion,
+      reader_prompt_sha: ctx.readerConfig.promptSha,
+      reader_max_tokens: ctx.readerConfig.maxTokens,
+      reader_config_hash: ctx.readerHash,
+      reader_finish_reason: answer.finish_reason,
+      ...(readerError ? { error: readerError } : {}),
+      ...(readerError && answer.text ? { reader_partial_output: answer.text } : {}),
       reader_context_chars: answer.context_chars,
       reader_context_sessions: answer.context_sessions,
       reader_sessions_truncated: answer.sessions_truncated,

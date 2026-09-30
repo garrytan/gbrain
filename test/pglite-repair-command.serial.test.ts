@@ -18,7 +18,7 @@
  */
 import { describe, test, expect } from 'bun:test';
 import {
-  existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync,
+  existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync, writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
@@ -238,7 +238,9 @@ describe('gbrain pglite-repair — refusals (validate before lock, never mkdir a
     const dir = join(tmp('gbrain-repair-reaped-'), 'brain.pglite');
     makeFakeLayout(dir);
     writeLockFile(dir, {
-      pid: deadPid(), // provably dead — acquireLock reaps it, then refuses
+      pid: deadPid(), // dead in this exact boot/PID namespace — eligible for migration
+      pid_ns: process.platform === 'linux' ? readlinkSync('/proc/self/ns/pid') : null,
+      boot_id: process.platform === 'linux' ? readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim() : null,
       acquired_at: Date.now() - 60_000,
       refreshed_at: Date.now() - 60_000,
       command: 'gbrain embed',
@@ -480,7 +482,7 @@ describe('gbrain pglite-repair — interactive confirm wiring (#4318 residual)',
     // change that reintroduces a local `promptYesNo`/`createInterface` here
     // (rather than importing the shared, race-free helper) fails this test,
     // even though `test/confirm-prompt.test.ts` cannot see this file at all.
-    // test-reads-source-ok: pins that the local reimplementation stays gone
+    // test-reads-source-ok[structural]: pins that the local reimplementation stays gone
     // and the shared helper is wired with the exact stderr-preserving args —
     // there's no exported/injectable seam to assert this behaviorally.
     const src = readFileSync(join(import.meta.dir, '../src/commands/pglite-repair.ts'), 'utf8');

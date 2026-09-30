@@ -64,7 +64,11 @@ describe('chat touchpoint — recipe registry', () => {
     // it is a property of the whole provider. Anything else must declare no
     // caching.
     const PREDICATE = new Set(['openai', 'openrouter', 'google']);
-    const ALWAYS_CACHES = new Set(['anthropic', 'deepseek', 'llama-server']);
+    // claude-cli caches for the whole provider, so it is a boolean, not a
+    // predicate: Claude Code caches automatically on every model it routes,
+    // `--print` runs included. See the recipe for the measurement and
+    // test/ai/recipe-claude-cli-prompt-cache.test.ts for the behavior.
+    const ALWAYS_CACHES = new Set(['anthropic', 'deepseek', 'llama-server', 'claude-cli']);
     for (const r of listRecipes()) {
       if (!r.touchpoints.chat) continue;
       const flag = r.touchpoints.chat.supports_prompt_cache;
@@ -283,32 +287,6 @@ describe('chat touchpoint — config alias resolution', () => {
       env: { ANTHROPIC_API_KEY: 'fake' },
     });
     expect(isAvailable('chat')).toBe(true);
-  });
-});
-
-describe('chat touchpoint — chat() smoke + stop-reason mapping (Codex D8)', () => {
-  // We exercise chat() against a mocked AI-SDK 'generateText' to assert the
-  // gateway's structural-signal mapping (mapStopReason) covers refusal,
-  // content_filter, tool_calls, end, length without the regex layer (commit 3).
-  // A full integration test against real provider HTTP lives in
-  // test/e2e/agent-multi-provider.test.ts (commit 2).
-  //
-  // We can't easily monkey-patch ESM imports inside Bun's runtime; instead we
-  // write an end-to-end assertion against the resolver logic + verify the
-  // chat() function exists with the documented signature.
-
-  test('chat() function is exported with the expected signature', async () => {
-    const mod = await import('../../src/core/ai/gateway.ts');
-    expect(typeof mod.chat).toBe('function');
-    // Signature check: must accept ChatOpts. We don't call it without a real
-    // provider key — that's the e2e job.
-  });
-
-  test('ChatBlock + ChatMessage + ChatResult types are exported', async () => {
-    // Type-only assertion: if these imports compile, we're good. The test
-    // body is just a runtime touch.
-    const mod = await import('../../src/core/ai/gateway.ts');
-    expect(mod).toBeDefined();
   });
 });
 

@@ -56,6 +56,11 @@ gbrain schema validate   # validate a manifest's shape
 gbrain schema use <pack> # activate a pack (writes ~/.gbrain/config.json)
 ```
 
+`gbrain config set schema_pack <pack>` sets the brain-wide database override,
+which takes precedence over the file setting written by `gbrain schema use`.
+Use `gbrain config unset schema_pack` to remove that database override, then
+`gbrain schema active` to confirm the resolved pack and its selection tier.
+
 Authoring + discovery verbs:
 
 ```bash

@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { classifyWorkerExit } from '../src/core/minions/exit-classification.ts';
 import { doctorSource } from './helpers/doctor-source.ts';
+import { surfaceSource } from './helpers/source-surface.ts';
 
 // doctor.ts is being peeled into src/commands/doctor/ modules — containment
 // greps against the doctor site must read the whole doctor surface so a peel
@@ -10,7 +11,9 @@ import { doctorSource } from './helpers/doctor-source.ts';
 const readSiteSource = (path: string): string =>
   path === 'src/commands/doctor.ts'
     ? doctorSource()
-    : readFileSync(join(import.meta.dir, '..', path), 'utf8');
+    : path === 'src/commands/jobs.ts'
+      ? surfaceSource('jobs')
+      : readFileSync(join(import.meta.dir, '..', path), 'utf8');
 
 describe('classifyWorkerExit', () => {
   it('code=0 → clean_exit', () => {
@@ -76,7 +79,7 @@ describe('consumer wire-up — helper used by all 3 sites (no inline filters lef
   });
 
   it('jobs.ts no longer has the inline filter', () => {
-    const source = readFileSync(join(import.meta.dir, '..', 'src/commands/jobs.ts'), 'utf8');
+    const source = surfaceSource('jobs');
     expect(source).not.toMatch(/code !== 0\s*&&\s*\(?\s*\w+\s+as\s+any\s*\)?\.\s*code !== undefined/);
   });
 

@@ -19,10 +19,9 @@
  *    postgres engine" `process.exit(1)`. helpers.ts captures DATABASE_URL at
  *    module load, so this file deletes it from process.env for the duration
  *    (restored in afterAll) and passes the target URL explicitly via --url.
- *  - The live Postgres schema sizes content_chunks.embedding at vector(1536)
- *    while an unconfigured gateway defaults PGLite to 1280d. The gateway is
- *    configured at 1536 (and the fixture config.json pins it) so the seeded
- *    vectors land on the target without a dims mismatch.
+ *  - Both fixture engines explicitly use the legacy test embedding shape.
+ *    The target is a fresh database so permanent receipts from other suites
+ *    remain intact; gateway sizing is pinned before either schema is created.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
@@ -32,14 +31,16 @@ import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { runMigrateEngine } from '../../src/commands/migrate-engine.ts';
 import { configureGateway, resetGateway } from '../../src/core/ai/gateway.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
-import { hasDatabase, setupDB, teardownDB, getEngine } from './helpers.ts';
+import { hasDatabase } from './helpers.ts';
+import { isolatedPersistencePostgres } from '../helpers/persistence-postgres.ts';
+import { LEGACY_EMBEDDING_CONFIG } from '../helpers/legacy-embedding-config.ts';
 
 const describePg = hasDatabase() ? describe : describe.skip;
 
 // Captured at module load, before beforeAll deletes it from process.env.
 const DB_URL = process.env.DATABASE_URL ?? '';
 const REPO_ROOT = resolve(import.meta.dir, '../..');
-const EMBED_DIMS = 1536;
+const EMBED_DIMS = LEGACY_EMBEDDING_CONFIG.embedding_dimensions;
 
 /** Deterministic 1536-d vector; v[0] = seed/8 is float4-exact for the
  * round-trip spot check on the Postgres side. */
@@ -94,6 +95,9 @@ describePg('migrate-engine whole-brain PGLite to Postgres (D2)', () => {
   };
 
   let source: PGLiteEngine | null = null;
+  let targetFixture: Awaited<ReturnType<typeof isolatedPersistencePostgres>>;
+  let targetUrl: string;
+  const getEngine = () => targetFixture.engine;
   let seeded: FixtureCounts;
   let factId1 = 0; // superseded by factId2
   let factId2 = 0;
@@ -102,20 +106,20 @@ describePg('migrate-engine whole-brain PGLite to Postgres (D2)', () => {
   beforeAll(async () => {
     if (!DB_URL) throw new Error('DATABASE_URL must be set for this e2e file');
 
-    // Postgres clean slate FIRST (helpers captured DATABASE_URL at import).
-    await setupDB();
-
-    // Pin embedding sizing to the live Postgres schema (vector(1536)) so the
-    // fresh PGLite brain sizes its columns identically.
-    configureGateway({ embedding_model: 'openai:text-embedding-3-small', embedding_dimensions: EMBED_DIMS, env: {} });
+    // Permanent receipt IDs from other files cannot be truncated for a copy.
+    // Give this legacy-migration journey a fresh target brain and pin both
+    // engines to the legacy vector shape before either schema is initialized.
+    configureGateway({ ...LEGACY_EMBEDDING_CONFIG, env: {} });
+    targetFixture = await isolatedPersistencePostgres(DB_URL);
+    const [{ name }] = await targetFixture.engine.executeRaw<{ name: string }>('SELECT current_database() AS name');
+    const url = new URL(DB_URL); url.pathname = `/${name}`; targetUrl = url.toString();
 
     // Isolated gbrain home with a real pglite file config — the SOURCE brain.
     mkdirSync(gbrainDir, { recursive: true });
     writeFileSync(configFile, JSON.stringify({
       engine: 'pglite',
       database_path: pgliteDir,
-      embedding_model: 'openai:text-embedding-3-small',
-      embedding_dimensions: EMBED_DIMS,
+      ...LEGACY_EMBEDDING_CONFIG,
     }, null, 2));
     process.env.GBRAIN_HOME = tmpBase;
     // See header: an exported DATABASE_URL makes loadConfig() infer postgres,
@@ -227,7 +231,7 @@ describePg('migrate-engine whole-brain PGLite to Postgres (D2)', () => {
 
   afterAll(async () => {
     if (source) await source.disconnect().catch(() => {});
-    await teardownDB();
+    await targetFixture?.close();
     resetGateway();
     for (const [k, v] of Object.entries(origEnv)) {
       if (v === undefined) delete process.env[k];
@@ -277,7 +281,7 @@ describePg('migrate-engine whole-brain PGLite to Postgres (D2)', () => {
     expect(await tableCounts(source)).toEqual(seeded);
 
     // Real argv contract: `gbrain migrate --to supabase --url <url>`.
-    await runMigrateEngine(source, ['--to', 'supabase', '--url', DB_URL]);
+    await runMigrateEngine(source, ['--to', 'supabase', '--url', targetUrl]);
     await source.disconnect();
     source = null;
 
@@ -288,7 +292,7 @@ describePg('migrate-engine whole-brain PGLite to Postgres (D2)', () => {
     // Local config flipped to the postgres engine, preserving non-engine keys.
     const cfg = JSON.parse(readFileSync(configFile, 'utf-8'));
     expect(cfg.engine).toBe('postgres');
-    expect(cfg.database_url).toBe(DB_URL);
+    expect(cfg.database_url).toBe(targetUrl);
     expect(cfg.database_path).toBeUndefined();
     expect(cfg.embedding_dimensions).toBe(EMBED_DIMS); // pre-existing file keys preserved
 

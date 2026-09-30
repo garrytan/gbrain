@@ -63,6 +63,9 @@ export interface QuestionResult {
   /** v0.43 — fraction of relevant slugs found in top-10. The relational
    *  headline metric (a relationship query often has several valid answers). */
   recall_at_10: number;
+  /** The search call threw. Scored as a miss in every family (never as a
+   *  clean hard-negative) and counted in the report + gate. */
+  errored?: true;
 }
 
 export interface FamilyReport {
@@ -74,12 +77,16 @@ export interface FamilyReport {
   /** v0.43 — mean recall@K / recall@10 across the family's questions. */
   recall_at_k: number;
   recall_at_10: number;
+  /** Questions in this family whose search call threw. */
+  errored: number;
 }
 
 export interface RetrievalQualityReport {
   schema_version: 1;
   k: number;
   total: number;
+  /** Questions whose search call threw (all families). Any error fails the gate. */
+  errored: number;
   families: FamilyReport[];
   questions: QuestionResult[];
 }
@@ -114,8 +121,18 @@ export async function runRetrievalQuality(
 ): Promise<RetrievalQualityReport> {
   const results: QuestionResult[] = [];
   for (const q of questions) {
-    let ranked: string[] = [];
-    try { ranked = await searchFn(q.query); } catch { ranked = []; }
+    let ranked: string[];
+    try {
+      ranked = await searchFn(q.query);
+    } catch {
+      // An empty list would score a hard-negative as clean (hit@1, RR=1).
+      results.push({
+        family: q.family, query: q.query, hit_at_1: false, hit_at_3: false, reciprocal_rank: 0,
+        ...(q.family === 'hard-negative' ? { negative_clean: false } : {}),
+        recall_at_k: 0, recall_at_10: 0, errored: true,
+      });
+      continue;
+    }
     results.push(scoreQuestion(q, ranked));
   }
   const byFamily = new Map<Family, QuestionResult[]>();
@@ -135,10 +152,15 @@ export async function runRetrievalQuality(
       mrr: n ? list.reduce((s, r) => s + r.reciprocal_rank, 0) / n : 0,
       recall_at_k: n ? list.reduce((s, r) => s + r.recall_at_k, 0) / n : 0,
       recall_at_10: n ? list.reduce((s, r) => s + r.recall_at_10, 0) / n : 0,
+      errored: list.filter(r => r.errored).length,
     });
   }
   families.sort((a, b) => a.family.localeCompare(b.family));
-  return { schema_version: 1, k: K, total: results.length, families, questions: results };
+  return {
+    schema_version: 1, k: K, total: results.length,
+    errored: results.filter(r => r.errored).length,
+    families, questions: results,
+  };
 }
 
 // ── Gate ────────────────────────────────────────────────────────────────
@@ -175,7 +197,7 @@ function floorEnv(name: string, dflt: number): number {
 }
 
 export interface GateBreach { family: Family; metric: 'hit_at_1' | 'hit_at_3'; got: number; floor: number; }
-export interface GateResult { pass: boolean; breaches: GateBreach[]; warnings: GateBreach[]; }
+export interface GateResult { pass: boolean; breaches: GateBreach[]; warnings: GateBreach[]; errored: number; }
 
 export function evaluateGate(report: RetrievalQualityReport, opts: GateOpts = DEFAULT_GATE): GateResult {
   const byFamily = new Map(report.families.map(f => [f.family, f]));
@@ -198,7 +220,8 @@ export function evaluateGate(report: RetrievalQualityReport, opts: GateOpts = DE
       warnings.push({ family, metric: 'hit_at_3', got: fr.hit_at_3, floor: 0.8 });
     }
   }
-  return { pass: breaches.length === 0, breaches, warnings };
+  // A search error is not a measurement: any errored question fails the gate.
+  return { pass: breaches.length === 0 && report.errored === 0, breaches, warnings, errored: report.errored };
 }
 
 export function parseQuestionsJsonl(text: string): NamedThingQuestion[] {

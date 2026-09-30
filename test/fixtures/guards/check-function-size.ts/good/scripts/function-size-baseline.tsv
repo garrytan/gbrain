@@ -1,0 +1,3 @@
+# fixture baseline
+path	name	lines	justification
+src/baselined.ts	Runner.run	305	fixture: seeded row

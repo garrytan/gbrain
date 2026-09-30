@@ -9,6 +9,7 @@ import { fileURLToPath } from 'url';
 import { existsSync, readFileSync, statSync } from 'fs';
 import type { BrainEngine } from '../../../core/engine.ts';
 import { REPAIR_SOURCE_CONFIG_SQL } from '../../../core/source-config-sql.ts';
+import { checkLinkSourceCheck } from '../../../core/link-source-check-repair.ts';
 import { loadConfig } from '../../../core/config.ts';
 import type { ProgressReporter } from '../../../core/progress.ts';
 import type { Check } from '../../doctor.ts';
@@ -43,10 +44,11 @@ export function resolveWhoknowsFixturePath(
   env: NodeJS.ProcessEnv = process.env,
   moduleUrl: string = import.meta.url,
 ): string | null {
-  if (env.GBRAIN_WHOKNOWS_FIXTURE_PATH) {
-    return isAbsolute(env.GBRAIN_WHOKNOWS_FIXTURE_PATH)
-      ? env.GBRAIN_WHOKNOWS_FIXTURE_PATH
-      : resolvePath(process.cwd(), env.GBRAIN_WHOKNOWS_FIXTURE_PATH);
+  // cwd-dotenv-ok: doctor test-fixture path override; the check only READS that jsonl, never loads or executes it.
+  const override = env.GBRAIN_WHOKNOWS_FIXTURE_PATH;
+  if (override) {
+    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- override is the operator-set GBRAIN_WHOKNOWS_FIXTURE_PATH doctor test-fixture path (the check only READS that jsonl, never loads or executes it); absolutizing the operator's own relative path against the process cwd is the intent, unchanged from the pre-hoist form
+    return isAbsolute(override) ? override : resolvePath(process.cwd(), override);
   }
 
   try {
@@ -186,6 +188,49 @@ export async function pagesUpsertArbiterCheck(engine: BrainEngine): Promise<Chec
     };
   } catch {
     return { name: 'pages_upsert_arbiter', status: 'warn', message: 'Could not check the pages upsert arbiter' };
+  }
+}
+
+/**
+ * Doctor check: links_link_source_check constraint shape (#4613).
+ *
+ * The version ledger can read current (>= v114) while the live CHECK still
+ * carries the pre-v114 closed allowlist — then every kebab provenance write
+ * (atom-provenance, concept-provenance) is rejected and the version counter
+ * can't see it. Keyed off pg_constraint via checkLinkSourceCheck. Severity
+ * follows what writes do: only a wrong definition rejects them (fail); an
+ * absent gate or a NOT VALID one still accepts them (warn).
+ */
+export async function linkSourceCheckConstraintCheck(engine: BrainEngine): Promise<Check> {
+  const name = 'links_link_source_check';
+  try {
+    const s = await checkLinkSourceCheck(engine);
+    if (!s.tablePresent || !s.needsRepair) {
+      return {
+        name,
+        status: 'ok',
+        message: s.tablePresent ? 'links_link_source_check has the v114 kebab-case gate' : 'no links table yet',
+      };
+    }
+    const heal = 'Run `gbrain apply-migrations --yes` to heal it (#4613).';
+    if (s.drift === 'wrong_def') {
+      return {
+        name,
+        status: 'fail',
+        message:
+          `links_link_source_check is not the v114 kebab-case gate (${s.def}) — kebab provenance ` +
+          `link writes (atom-provenance, concept-provenance) are being rejected. ${heal}`,
+      };
+    }
+    return {
+      name,
+      status: 'warn',
+      message: s.drift === 'absent'
+        ? `links_link_source_check is absent — link_source has no format gate (writes succeed unchecked). ${heal}`
+        : `links_link_source_check is NOT VALID — existing rows were never validated. ${heal}`,
+    };
+  } catch {
+    return { name, status: 'warn', message: 'Could not check the links_link_source_check constraint' };
   }
 }
 
@@ -562,9 +607,11 @@ export async function rawProvenanceCheck(engine: BrainEngine): Promise<Check> {
  * that grows a layer on every read→write cycle. Any row where
  * `jsonb_typeof(config) <> 'object'` is corrupted — federation and ACL settings
  * on that source are read off a string instead of the settings object. Surface
- * the affected sources with the repair path. The `gbrain sources` config writers
- * now normalize before write, so any config-writing command self-heals the row
- * (the app unwraps up to 10 nested layers); the SQL below repairs one layer
+ * the affected sources with the repair path. The `gbrain sources` writers that
+ * rewrite the `config` COLUMN (federate/unfederate, webhook set/rotate/clear,
+ * tracked-branch) normalize before write and so self-heal the row (the app
+ * unwraps up to 10 nested layers); writers of other columns (set-cr-mode,
+ * rename, set-path) do not touch it (#5002). The SQL below repairs one layer
  * directly for the common case.
  */
 export async function checkSourceConfigShape(engine: BrainEngine): Promise<Check> {
@@ -587,8 +634,12 @@ export async function checkSourceConfigShape(engine: BrainEngine): Promise<Check
         `${rows.length} source(s) have a non-object config — a JSON string/scalar ` +
         `instead of an object (the #2829 re-wrapping bug): ${affected}. ` +
         `Federation and ACL settings on these sources won't be read correctly. ` +
-        `Repair by running any 'gbrain sources' config write (self-heals nested ` +
-        `strings and recoverable arrays), or in SQL: ${REPAIR_SOURCE_CONFIG_SQL}`,
+        `Repair with this SQL: ${REPAIR_SOURCE_CONFIG_SQL} — or re-assert the source's ` +
+        `current federation state with 'gbrain sources federate <id>' / 'unfederate <id>' ` +
+        `(see 'gbrain sources list'; federate on an isolated source also flips it into ` +
+        `default search), which rewrites the config column and self-heals nested strings / ` +
+        `recoverable arrays. Commands that write other columns ('set-cr-mode', 'rename', ` +
+        `'set-path') do not repair it.`,
     };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

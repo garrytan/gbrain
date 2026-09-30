@@ -3,7 +3,7 @@
 // Pre-v0.38:
 //   src/core/enrichment-service.ts:25 hardcoded:
 //     entityType: 'person' | 'company';
-//   src/core/enrichment/completeness.ts:221 hardcoded:
+//   the completeness scorer hardcoded:
 //     const RUBRICS_BY_TYPE = new Map([
 //       ['person', personRubric], ['company', companyRubric],
 //       ['deal', dealRubric], ...
@@ -21,8 +21,8 @@
 //   if (!enrichable.has(parsed.type)) { skip; }
 //   const rubricName = rubricNameForType(activePack, parsed.type) ?? 'default';
 //
-// Until the wiring lands, legacy enrichment-service + completeness
-// callers continue to hardcode person/company/deal — which gbrain-base
+// Until the wiring lands, legacy enrichment-service callers continue
+// to hardcode person/company/deal — which gbrain-base
 // also declares, so behavior is preserved.
 
 import type { SchemaPackManifest } from './manifest-v1.ts';
@@ -36,11 +36,8 @@ export function enrichableTypesFromPack(
 
 /**
  * Return the rubric slot name for a type, or null if the type isn't
- * declared as enrichable. Rubric names map to in-source Rubric objects
- * via `src/core/enrichment/completeness.ts` registries — the pack
- * specifies the NAME; the in-code module owns the implementation. This
- * keeps rubric authoring deterministic without serializing the rubric
- * structure into YAML.
+ * declared as enrichable. The pack specifies the rubric NAME only; no
+ * in-code rubric registry consumes it yet.
  */
 export function rubricNameForType(
   pack: Pick<SchemaPackManifest, 'enrichable_types'>,

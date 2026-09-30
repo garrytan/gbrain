@@ -18,6 +18,7 @@
  * gzip -n for no original filename + mtime=0 in the header).
  */
 
+import { assertLegacySkillFilesystemWrite } from './writer-guard.ts';
 import { spawnSync } from 'child_process';
 import { createHash } from 'crypto';
 import {
@@ -149,6 +150,7 @@ function resolveTarBinary(preferGnu: boolean): string {
  * Pack a directory deterministically. Same inputs -> same SHA every time.
  */
 export function packTarball(opts: TarballPackOptions): TarballPackResult {
+  assertLegacySkillFilesystemWrite(opts.outPath);
   if (!existsSync(opts.sourceDir)) {
     throw new TarballError(
       `pack source directory does not exist: ${opts.sourceDir}`,
@@ -172,6 +174,7 @@ export function packTarball(opts: TarballPackOptions): TarballPackResult {
 
   // Stage to a tempfile so a failed pack doesn't leave a partial tarball at outPath.
   const stage = join(tmpdir(), `gbrain-skillpack-pack-${process.pid}-${Date.now()}.tgz`);
+  assertLegacySkillFilesystemWrite(stage);
 
   const result = spawnSync(
     tar,
@@ -205,6 +208,7 @@ export function packTarball(opts: TarballPackOptions): TarballPackResult {
   }
 
   // Move staged tarball into place atomically.
+  assertLegacySkillFilesystemWrite(opts.outPath);
   mkdirSync(resolve(opts.outPath, '..'), { recursive: true });
   // Use rename via fs operations rather than mv (cross-FS safe via readFile/write fallback).
   try {
@@ -246,6 +250,7 @@ export function packTarball(opts: TarballPackOptions): TarballPackResult {
  * publish-gate (extracting a freshly-packed tarball to verify it round-trips).
  */
 export function extractTarball(opts: TarballExtractOptions): TarballExtractResult {
+  assertLegacySkillFilesystemWrite(opts.destDir);
   const caps = { ...DEFAULT_EXTRACT_CAPS, ...(opts.caps ?? {}) };
 
   if (!existsSync(opts.tgzPath)) {
@@ -383,6 +388,7 @@ export function extractTarball(opts: TarballExtractOptions): TarballExtractResul
 
   // All checks passed; do the actual extract.
   // GNU tar's --no-same-owner is implicit when not root; pass numeric-owner only.
+  assertLegacySkillFilesystemWrite(opts.destDir);
   const extractResult = spawnSync(
     tar,
     ['--extract', '--gzip', '--file', opts.tgzPath, '-C', opts.destDir, '--numeric-owner'],

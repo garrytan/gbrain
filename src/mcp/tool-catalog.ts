@@ -75,7 +75,8 @@ export function renderToolCatalogMarkdown(): string {
       const desc = escapeCell(firstSentence(def?.description ?? op.description));
       const starter = STARTER_OPS.has(op.name) ? 'yes' : '';
       const gate = op.publishGateKey ? `\`${op.publishGateKey}\`` : '';
-      lines.push(`| \`${op.name}\` | ${desc} | ${op.scope ?? 'read'} | ${starter} | ${gate} |`);
+      const scopes = [op.scope ?? 'read', ...(op.requiredScopes ?? [])].join(' + ');
+      lines.push(`| \`${op.name}\` | ${desc} | ${scopes} | ${starter} | ${gate} |`);
     }
     lines.push('');
   }

@@ -1,3 +1,4 @@
+import { installFixtureChunks } from './helpers/page-projection.ts';
 /**
  * v0.40.1.0 Track D / T5 — Hermetic retrieval qrels gate.
  *
@@ -114,7 +115,7 @@ async function seedCorpus(fix: QrelFixture): Promise<void> {
         embedding: basisEmbedding(q.embedding_dim),
         token_count: 10,
       };
-      await engine.upsertChunks(slug, [chunk]);
+      await installFixtureChunks(engine, slug, [chunk]);
     }
   }
 }

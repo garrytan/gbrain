@@ -29,6 +29,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { keylessBrainEnv } from '../helpers/provider-env.ts';
 import { cliDiagnostic, fixtureDiagnostic } from '../helpers/fixture-diagnostics.ts';
+import { isolatedPersistencePostgres } from '../helpers/persistence-postgres.ts';
 
 function test(name: string, fn: () => void | Promise<unknown>): void {
   testRaw(name, fn, 120000);
@@ -36,12 +37,13 @@ function test(name: string, fn: () => void | Promise<unknown>): void {
 
 const CLI = join(__dirname, '..', '..', 'src', 'cli.ts');
 const DATABASE_URL = process.env.DATABASE_URL;
+let hostDatabaseUrl = DATABASE_URL;
 
 interface RunResult { exitCode: number; stdout: string; stderr: string; }
 
 async function spawn(args: string[], home: string, extraEnv: Record<string, string | undefined> = {}): Promise<RunResult> {
   const env = keylessBrainEnv(process.env, home, {
-    GBRAIN_REMOTE_CLIENT_SECRET: undefined, GBRAIN_DATABASE_URL: undefined, ...extraEnv,
+    GBRAIN_REMOTE_CLIENT_SECRET: undefined, GBRAIN_DATABASE_URL: undefined, DATABASE_URL: hostDatabaseUrl, ...extraEnv,
   });
   const proc = Bun.spawn({
     cmd: ['bun', '--no-env-file', 'run', CLI, ...args],
@@ -69,16 +71,24 @@ describeWhen('thin-client end-to-end (requires DATABASE_URL)', () => {
   let serverPort: number;
   let clientId: string;
   let clientSecret: string;
+  let database: Awaited<ReturnType<typeof isolatedPersistencePostgres>> | undefined;
 
   beforeAll(async () => {
     hostHome = mkdtempSync(join(tmpdir(), 'gbrain-thin-host-'));
     clientHome = mkdtempSync(join(tmpdir(), 'gbrain-thin-client-'));
 
+    // Host health and permanent receipt IDs must not inherit another file's
+    // pages, grants or config. Never truncate the shared shard database.
+    database = await isolatedPersistencePostgres(DATABASE_URL!);
+    const [{ name }] = await database.engine.executeRaw<{ name: string }>('SELECT current_database() AS name');
+    const url = new URL(DATABASE_URL!); url.pathname = `/${name}`;
+    hostDatabaseUrl = url.toString();
+
     // 1. Init host with a real Postgres. `--no-embedding` defers embedding
     //    setup (v0.37.10.0+ requires an explicit embedding provider OR the
     //    deferral flag); thin-client tests exercise the routing surface, not
     //    embedding, so no provider is needed.
-    const init = await spawn(['init', '--non-interactive', '--no-embedding', '--url', DATABASE_URL!], hostHome);
+    const init = await spawn(['init', '--non-interactive', '--no-embedding', '--url', hostDatabaseUrl], hostHome);
     if (init.exitCode !== 0) throw new Error(cliDiagnostic(`host init failed`, init));
 
     // 2. Pick a random free port for serve --http.
@@ -86,7 +96,7 @@ describeWhen('thin-client end-to-end (requires DATABASE_URL)', () => {
 
     // 3. Spawn serve --http (background, async).
     const env = keylessBrainEnv(process.env, hostHome, {
-      GBRAIN_REMOTE_CLIENT_SECRET: undefined, GBRAIN_DATABASE_URL: undefined,
+      GBRAIN_REMOTE_CLIENT_SECRET: undefined, GBRAIN_DATABASE_URL: undefined, DATABASE_URL: hostDatabaseUrl,
     });
     serverProc = Bun.spawn({
       cmd: ['bun', '--no-env-file', 'run', CLI, 'serve', '--http', '--port', String(serverPort)],
@@ -142,6 +152,8 @@ describeWhen('thin-client end-to-end (requires DATABASE_URL)', () => {
     }
     try { rmSync(hostHome, { recursive: true, force: true }); } catch { /* best-effort */ }
     try { rmSync(clientHome, { recursive: true, force: true }); } catch { /* best-effort */ }
+    await database?.close();
+    hostDatabaseUrl = DATABASE_URL;
   });
 
   test('init --mcp-only succeeds against the live host', async () => {
@@ -163,8 +175,9 @@ describeWhen('thin-client end-to-end (requires DATABASE_URL)', () => {
 
   test('doctor reports mode: thin-client with all checks green', async () => {
     const r = await spawn(['doctor', '--json'], clientHome);
-    expect(r.exitCode, cliDiagnostic("thin-client CLI", r)).toBe(0);
     const report = JSON.parse(r.stdout.trim());
+    const failedChecks = report.checks.filter((check: { status: string }) => check.status !== 'ok');
+    expect(r.exitCode, fixtureDiagnostic('thin-client doctor checks', JSON.stringify(failedChecks), [clientId, clientSecret])).toBe(0);
     expect(report.mode).toBe('thin-client');
     expect(report.status).toBe('ok');
     const checkNames = report.checks.map((c: { name: string }) => c.name);
@@ -306,8 +319,8 @@ describeWhen('thin-client end-to-end (requires DATABASE_URL)', () => {
    * the search/query keyword arm — the host was inited --no-embedding, so the
    * vector arm degrades and keyword carries the match) and one
    * world-visibility fact (the recall arm; remote callers see world-only).
-   * Idempotent: `put` overwrites the slug, `remember` dedups to
-   * status=duplicate on re-runs against a shared e2e database.
+   * The owned database starts empty; seed once so a failed write or read
+   * remains visible instead of being hidden by a retry.
    */
   async function seedHostMarker(): Promise<void> {
     const content = [
@@ -319,11 +332,6 @@ describeWhen('thin-client end-to-end (requires DATABASE_URL)', () => {
       `The secret phrase is ${G3_MARKER} and it lives only in the host brain.`,
       '',
     ].join('\n');
-    // Shared-DB hygiene: a prior suite in the full-glob run can leave
-    // `sync.repo_path` in the shared config table pointing at a deleted temp
-    // repo, which makes put_page's reverse-write refuse (repo_not_found).
-    // Clear it — suites that need it set it themselves.
-    await spawn(['config', 'unset', 'sync.repo_path'], hostHome);
     const put = await spawn(['put', G3_SLUG, '--content', content], hostHome);
     if (put.exitCode !== 0) throw new Error(cliDiagnostic(`seed put failed`, put));
     const rem = await spawn(
@@ -343,32 +351,19 @@ describeWhen('thin-client end-to-end (requires DATABASE_URL)', () => {
   }
 
   test('daily-driver verbs (search/query/recall) return host-brain rows with local-parity --json envelopes', async () => {
-    // The e2e database is shared with other suites that truncate pages/facts
-    // in their own setup. Bounded seed+read retry keeps this test honest
-    // under a concurrent wipe without loosening any assertion: every attempt
-    // seeds first, then requires ALL six runs to be complete before pinning.
-    let runs: VerbRuns | null = null;
-    for (let attempt = 0; attempt < 3 && !runs; attempt++) {
-      await seedHostMarker();
-      // Local-engine runs (host HOME) and routed runs (thin-client HOME) of
-      // the same three verbs. All reads — safe to run in parallel.
-      const [hostSearch, clientSearch, hostQuery, clientQuery, hostRecall, clientRecall] = await Promise.all([
-        spawn(['search', G3_MARKER, '--json'], hostHome),
-        spawn(['search', G3_MARKER, '--json'], clientHome),
-        spawn(['query', G3_MARKER, '--json'], hostHome),
-        spawn(['query', G3_MARKER, '--json'], clientHome),
-        spawn(['recall', '--grep', G3_MARKER, '--json'], hostHome),
-        spawn(['recall', '--grep', G3_MARKER, '--json'], clientHome),
-      ]);
-      const candidate: VerbRuns = { hostSearch, clientSearch, hostQuery, clientQuery, hostRecall, clientRecall };
-      const complete =
-        Object.values(candidate).every(r => r.exitCode === 0) &&
-        [hostSearch, clientSearch, hostQuery, clientQuery].every(r => r.stdout.includes(G3_SLUG)) &&
-        [hostRecall, clientRecall].every(r => r.stdout.includes(G3_MARKER));
-      if (complete) runs = candidate;
-    }
-    if (!runs) {
-      throw new Error('marker rows never materialized across 3 seed+read attempts (concurrent shared-DB truncation?)');
+    await seedHostMarker();
+    // Local and routed reads of the same owned host brain run concurrently.
+    const [hostSearch, clientSearch, hostQuery, clientQuery, hostRecall, clientRecall] = await Promise.all([
+      spawn(['search', G3_MARKER, '--json'], hostHome),
+      spawn(['search', G3_MARKER, '--json'], clientHome),
+      spawn(['query', G3_MARKER, '--json'], hostHome),
+      spawn(['query', G3_MARKER, '--json'], clientHome),
+      spawn(['recall', '--grep', G3_MARKER, '--json'], hostHome),
+      spawn(['recall', '--grep', G3_MARKER, '--json'], clientHome),
+    ]);
+    const runs: VerbRuns = { hostSearch, clientSearch, hostQuery, clientQuery, hostRecall, clientRecall };
+    for (const [verb, result] of Object.entries(runs)) {
+      expect(result.exitCode, cliDiagnostic(verb, result, [clientId, clientSecret])).toBe(0);
     }
 
     // search + query --json: top-level shape is an ARRAY of result rows

@@ -165,7 +165,7 @@ In the org's qm deployment repo (the directory `qm init` produced):
 
 1. **Tool:** copy [`qm-harness-snippets/tool.json`](qm-harness-snippets/tool.json)
    to `sandbox/tools/gbrain/tool.json` and drop the compiled `gbrain` binary
-   beside it (`bun build --compile --outfile gbrain src/cli.ts`, built for
+   beside it (`bun build --compile --no-compile-autoload-bunfig --outfile gbrain src/cli.ts`, built for
    the sandbox image's OS/arch). `auth.credentialPaths` marks
    `~/.gbrain/config.json` as the scope's resident credential file;
    `auth.check` wires `gbrain whoami` into qm's connector status (read-scope;

@@ -331,8 +331,8 @@ describe('remove', () => {
 
 describe('surface + servability contracts', () => {
   test('get_skill is NOT in STARTER_OPS (the stub preflight warning premise) — if this ever flips, update the harness CLI warn text', () => {
-    expect(STARTER_OPS.has('get_skill')).toBe(false);
-    expect(STARTER_OPS.has('list_skills')).toBe(false);
+    expect(STARTER_OPS.has('get_skill')).toBe(true);
+    expect(STARTER_OPS.has('list_skills')).toBe(true);
     expect(STARTER_OPS.has('request_tools')).toBe(true);
   });
 

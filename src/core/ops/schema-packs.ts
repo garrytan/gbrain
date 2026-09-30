@@ -141,7 +141,10 @@ const schema_lint: Operation = {
       // count as declared — parity with the active-pack branch below.
       manifest = (await resolveLoadedPack(loader(path))).manifest;
     } else {
-      const resolved = await loadActivePack({ cfg, remote: ctx.remote ?? true, sourceId: ctx.sourceId });
+      // #4653: tier-4 DB-plane schema_pack, same read get_active_schema_pack does.
+      const { readDbSchemaPack } = await import('../schema-pack/best-effort.ts');
+      const dbConfig = await readDbSchemaPack(ctx.engine);
+      const resolved = await loadActivePack({ cfg, remote: ctx.remote ?? true, sourceId: ctx.sourceId, dbConfig });
       manifest = resolved.manifest;
     }
     // File-plane only over MCP; the engine-aware --with-db opt-in is
@@ -158,8 +161,11 @@ const schema_graph: Operation = {
   handler: async (ctx) => {
     const { loadActivePack } = await import('../schema-pack/load-active.ts');
     const { loadConfig } = await import('../config.ts');
+    const { readDbSchemaPack } = await import('../schema-pack/best-effort.ts');
     const cfg = loadConfig();
-    const pack = await loadActivePack({ cfg, remote: ctx.remote ?? true, sourceId: ctx.sourceId });
+    // #4653: tier-4 DB-plane schema_pack, same read get_active_schema_pack does.
+    const dbConfig = await readDbSchemaPack(ctx.engine);
+    const pack = await loadActivePack({ cfg, remote: ctx.remote ?? true, sourceId: ctx.sourceId, dbConfig });
     const nodes = pack.manifest.page_types.map((t) => ({ name: t.name, primitive: t.primitive }));
     const edges: Array<{ from: string; verb: string; to: string }> = [];
     for (const lt of pack.manifest.link_types) {
@@ -188,8 +194,11 @@ const schema_explain_type: Operation = {
   handler: async (ctx, p) => {
     const { loadActivePack } = await import('../schema-pack/load-active.ts');
     const { loadConfig } = await import('../config.ts');
+    const { readDbSchemaPack } = await import('../schema-pack/best-effort.ts');
     const cfg = loadConfig();
-    const pack = await loadActivePack({ cfg, remote: ctx.remote ?? true, sourceId: ctx.sourceId });
+    // #4653: tier-4 DB-plane schema_pack, same read get_active_schema_pack does.
+    const dbConfig = await readDbSchemaPack(ctx.engine);
+    const pack = await loadActivePack({ cfg, remote: ctx.remote ?? true, sourceId: ctx.sourceId, dbConfig });
     const found = pack.manifest.page_types.find((t) => t.name === p.type);
     if (!found) return { error: 'type_not_found', type: p.type as string, pack: pack.manifest.name };
     return { schema_version: 1, pack: pack.manifest.name, type: found };

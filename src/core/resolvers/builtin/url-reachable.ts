@@ -18,7 +18,7 @@
  *   Abort token threads through both.
  */
 
-import { fetchWithSSRFGuard, HttpProxyError, SSRFError, validateAndResolveUrl } from '../../ssrf-validate.ts';
+import { fetchWithSSRFGuard, HttpProxyError, SSRFError } from '../../ssrf-validate.ts';
 import type {
   Resolver,
   ResolverContext,
@@ -117,22 +117,3 @@ export const urlReachableResolver: Resolver<UrlReachableInput, UrlReachableOutpu
     }
   },
 };
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function errMessage(err: unknown): string {
-  if (err instanceof Error) return err.message;
-  return String(err);
-}
-
-/** Compatibility helper; the shared validator is the only address policy. */
-export async function checkDnsRebinding(urlStr: string): Promise<string | null> {
-  try {
-    await validateAndResolveUrl(urlStr);
-    return null;
-  } catch (err) {
-    return errMessage(err);
-  }
-}

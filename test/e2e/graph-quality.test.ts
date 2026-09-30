@@ -171,6 +171,7 @@ I met [Alice](people/alice) today.
     // Second write: removes Alice ref, adds Bob ref.
     const result = await putOp.handler(makeContext(), {
       slug: 'notes/test',
+      expected_revision: (await engine.readPageSnapshot('notes/test'))!.revision,
       content: `---
 type: concept
 title: Test Note
@@ -206,8 +207,7 @@ Dana is a founder.
 `,
     });
 
-    expect((result as any).auto_timeline).toBeDefined();
-    expect((result as any).auto_timeline.created).toBe(2);
+    expect((result as any).write_request.state).toBe('committed');
 
     const entries = await engine.getTimeline('people/dana');
     expect(entries.length).toBe(2);
@@ -230,13 +230,17 @@ title: Eve
 - **2026-03-15** | Shipped
 `;
     await putOp.handler(makeContext(), { slug: 'people/eve', content });
-    await putOp.handler(makeContext(), { slug: 'people/eve', content });
+    const snapshot = (await engine.readPageSnapshot('people/eve'))!;
+    const replay = await putOp.handler(makeContext(), { slug: 'people/eve', content,
+      expected_revision: snapshot.revision });
+    expect((replay as any).write_request.state).toBe('committed');
+    expect((await engine.readPageSnapshot('people/eve'))!.revision).toBe(snapshot.revision);
 
     const entries = await engine.getTimeline('people/eve');
     expect(entries.length).toBe(1);
   });
 
-  test('auto-timeline respects auto_timeline=false config', async () => {
+  test('canonical timeline is coherent with auto_timeline=false config', async () => {
     await engine.setConfig('auto_timeline', 'false');
     try {
       const putOp = operationsByName['put_page'];
@@ -253,8 +257,9 @@ title: Frank
 `,
       });
       expect((result as any).auto_timeline).toBeUndefined();
+      expect((result as any).write_request.state).toBe('committed');
       const entries = await engine.getTimeline('people/frank');
-      expect(entries.length).toBe(0);
+      expect(entries.length).toBe(1);
     } finally {
       await engine.setConfig('auto_timeline', 'true');
     }

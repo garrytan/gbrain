@@ -35,8 +35,7 @@
  * who add columns follow the same shape (or fail this test and learn).
  */
 
-import { readFileSync } from 'fs';
-import { resolve } from 'path';
+import { surfaceSource } from './source-surface.ts';
 
 export interface AddedColumnRef {
   table: string;
@@ -63,7 +62,8 @@ function extractAlterAddColumnsFromSql(sql: string): Array<{ table: string; colu
 }
 
 /**
- * Read `src/core/migrate.ts` and emit every (table, column) pair that ANY
+ * Read the migrate surface (`src/core/migrate.ts` plus split migration
+ * modules) and emit every (table, column) pair that ANY
  * `ALTER TABLE ... ADD COLUMN` reference in the file targets. Deduped:
  * later occurrences of the same (table, column) are dropped.
  *
@@ -79,8 +79,9 @@ function extractAlterAddColumnsFromSql(sql: string): Array<{ table: string; colu
  * names the table.column; the contributor can grep for it in migrate.ts).
  */
 export function extractAddedColumnsFromMigrations(): AddedColumnRef[] {
-  const migratePath = resolve(process.cwd(), 'src/core/migrate.ts');
-  const source = readFileSync(migratePath, 'utf-8');
+  // The migrate surface (test/helpers/source-surface.ts): migrate.ts today,
+  // plus src/core/schema-migrations/*.ts once the MIGRATIONS array is split.
+  const source = surfaceSource('migrate');
 
   const seen = new Set<string>();
   const result: AddedColumnRef[] = [];

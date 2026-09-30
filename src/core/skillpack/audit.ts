@@ -12,6 +12,7 @@
  * surface "installed N packs in the last week" as info.
  */
 
+import { assertLegacySkillFilesystemWrite } from './writer-guard.ts';
 import { appendFileSync, mkdirSync, readFileSync, existsSync, readdirSync, statSync } from 'fs';
 import { dirname, join } from 'path';
 
@@ -77,8 +78,10 @@ export function logSkillpackEvent(event: Omit<SkillpackAuditEvent, 'ts'>): void 
   try {
     const line: SkillpackAuditEvent = { ts: new Date().toISOString(), ...event };
     const auditDir = resolveAuditDir();
+    assertLegacySkillFilesystemWrite(auditDir);
     mkdirSync(auditDir, { recursive: true });
     const file = join(auditDir, computeIsoWeekFilename());
+    assertLegacySkillFilesystemWrite(file);
     appendFileSync(file, JSON.stringify(line) + '\n', { encoding: 'utf-8' });
   } catch (err) {
     process.stderr.write(

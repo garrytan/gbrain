@@ -46,7 +46,7 @@ export function makeGatewayThinkClient(): ThinkLLMClient {
         model: result.responseModel ?? result.model,
         content: [{ type: 'text', text: result.text }],
         usage: { input_tokens: result.usage.input_tokens, output_tokens: result.usage.output_tokens },
-        stop_reason: result.stopReason === 'length' ? 'max_tokens' : 'end_turn',
+        stop_reason: result.stopReason === 'length' ? 'max_tokens' : result.stopReason === 'end' ? 'end_turn' : result.stopReason ?? null,
       } as unknown as Anthropic.Message;
     },
   };

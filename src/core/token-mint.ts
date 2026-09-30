@@ -34,6 +34,7 @@ export interface MintLegacyTokenOpts {
    * floor). Omit for the historical default-source floor.
    */
   sourceGrant?: string[];
+  allowedOperations?: string[];
 }
 
 export interface MintedLegacyToken {
@@ -61,6 +62,13 @@ export async function mintLegacyToken(
     throw new Error(`token scopes must be a non-empty subset of: ${ALLOWED_SCOPES_LIST.join(', ')}`);
   }
   assertAllowedScopes(opts.scopes);
+  if (opts.allowedOperations !== undefined) {
+    const { operations } = await import('./operations.ts');
+    const names = new Set(operations.filter(op => !op.localOnly).map(op => op.name));
+    if (!Array.isArray(opts.allowedOperations) || opts.allowedOperations.some(name => !names.has(name))) {
+      throw new Error('allowedOperations must contain only registered remote operation names');
+    }
+  }
   const takesHolders = opts.takesHolders.length > 0 ? opts.takesHolders : ['world'];
 
   const token = generateToken('gbrain_');
@@ -69,6 +77,7 @@ export async function mintLegacyToken(
   if (opts.sourceGrant && opts.sourceGrant.length > 0) {
     permissions.source_id = opts.sourceGrant;
   }
+  if (opts.allowedOperations !== undefined) permissions.allowed_operations = [...new Set(opts.allowedOperations)];
 
   // Scopes bind as a Postgres array literal through a TEXT param + ::text[]
   // cast — values are allowlisted ([a-z_]+), so the literal needs no quoting,

@@ -330,7 +330,7 @@ class TelemetryWriter {
     // alive past beforeExit — short-lived CLI invocations (`gbrain query "the"`
     // exiting after 100ms of work) ended up waiting on the DB write to settle.
     // On a slow or busy PGLite, the write never settled and the CLI hung
-    // forever. That deadlock surfaced as the `test/e2e/claw-test.test.ts`
+    // forever. That deadlock surfaced as the `test/claw-test.slow.test.ts`
     // hang (the harness spawns short-lived gbrain queries that should exit
     // in <1s but never did).
     //

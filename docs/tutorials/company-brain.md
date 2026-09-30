@@ -1,5 +1,13 @@
 # Tutorial: Extend your personal brain into a company brain
 
+Already have a company Markdown repository and only want to index it? Start with
+[connecting an existing company brain](../guides/company-brain-ingestion.md).
+That local workflow offers an offline demo, read-only inspection, and a verified
+import into a separate initialized company brain without requiring the hosted
+team deployment described below. Its source policy keeps sync keyless and
+writeback-free; the personal-brain reuse and automatic enrichment steps in this
+tutorial are a different workflow, not follow-up steps for that import.
+
 This tutorial picks up where the [personal brain tutorial](personal-brain.md) leaves off. You already have a working agent (OpenClaw on Render, talking to you on Telegram, with GBrain as memory and Supabase storing embeddings). Now you want your whole team to use it as shared institutional memory, with each person seeing only what they're allowed to see.
 
 **Time:** about 90 more minutes on top of the personal-brain install.
@@ -165,6 +173,8 @@ For development, tunnel the local server out via ngrok:
 ```bash
 ngrok http 3131 --domain your-brain.ngrok.app
 ```
+
+If the brain runs on your own computer rather than a server, `gbrain mcp expose` publishes it over HTTPS on your Tailscale tailnet (`--funnel` for agents that run in a vendor's cloud), keeps it running as a user service, and needs no `--bind 0.0.0.0`; see [use your brain from anywhere over MCP](../guides/remote-mcp.md).
 
 For production, put your server behind a real hostname with a real TLS certificate. Let's call your final URL `https://brain.acme-co.com` for the rest of this tutorial.
 
@@ -536,9 +546,15 @@ OAuth source scoping only guards the HTTP MCP path. If the brain's Postgres and 
 
 ## Part 13: Cost and speed expectations
 
-Real numbers from the published benchmark snapshot (2026-05-23, v0.40.6.0, measured on the ZeroEntropy embedding stack, which is deprecated with its hosted API ending 2026-09-04; the default Voyage `voyage-4` + `rerank-2.5` stack is in the same price and latency class):
+Historical numbers from the published benchmark snapshot (2026-05-23,
+v0.40.6.0) were measured on a retired hosted embedding stack, not the current
+Voyage default. Provider identifiers are redacted; original attribution is
+preserved at Git revision `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29`
+(retained on 2026-09-23). The measurements below are unchanged and do not
+establish a supported replacement's latency or throughput. The later
+LongMemEval result is separately dated and labeled.
 
-- **Embedding cost:** the default (`voyage:voyage-4`) is $0.06 per million tokens; the snapshot's ZeroEntropy stack is $0.05. For comparison, GBrain configured with OpenAI is $0.13.
+- **Embedding cost:** the default (`voyage:voyage-4`) is $0.06 per million tokens; the snapshot's retired hosted stack is $0.05. For comparison, GBrain configured with OpenAI is $0.13.
 - **Ingest speed:** about 22 seconds for a small test corpus of 164 pages on the host machine. For a 10K-page corpus, expect about 20 minutes the first time, then most syncs are incremental and finish in seconds.
 - **Query latency:** about 122 ms median for a `gbrain search`. For comparison, the same query through GBrain with OpenAI takes about 282 ms.
 - **Synthesized-answer latency:** a few seconds, dominated by the Anthropic API.

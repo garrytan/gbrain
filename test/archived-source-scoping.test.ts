@@ -98,7 +98,7 @@ describe('#3880 tier-4 cwd resolution vs archived sources', () => {
 
 describe('#3880 structural pins — all-source local_path selections filter archived', () => {
   const sites: Array<{ file: string; patched: number }> = [
-    { file: 'src/commands/sync.ts', patched: 1 },
+    { file: 'src/commands/sync/run.ts', patched: 1 },
     { file: 'src/core/brain-writer.ts', patched: 1 },
     { file: 'src/commands/doctor/checks/extraction-sync.ts', patched: 3 },
     { file: 'src/commands/frontmatter-install-hook.ts', patched: 1 },

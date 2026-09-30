@@ -63,7 +63,7 @@ describe('buildVisibilityClause (#4352)', () => {
 
   test('excludePrivate: adds the COALESCE predicate', () => {
     const clause = buildVisibilityClause('p', 's', { excludePrivate: true });
-    expect(clause).toContain(`COALESCE(p.frontmatter->>'visibility', 'world') <> 'private'`);
+    expect(clause).toContain(`COALESCE(p.frontmatter->>'visibility', CASE WHEN (p.type = 'atom' OR (p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private'`);
   });
 });
 
@@ -374,7 +374,7 @@ describe('sibling read ops (#4352 remediation — no bypass around get_page)', (
 
 describe('shared private predicate lives once (#4352 remediation)', () => {
   test('entity-card composes privatePagesFilterFragment instead of hand-rolling the predicate', () => {
-    // test-reads-source-ok: structural "lives ONCE" guard — a duplicated predicate behaves identically until visibility semantics drift, so only the text can catch it (#4352)
+    // test-reads-source-ok[trust-boundary]: structural "lives ONCE" guard — a duplicated predicate behaves identically until visibility semantics drift, so only the text can catch it (#4352)
     const src = readFileSync(join(import.meta.dir, '../src/core/verbs/entity-card.ts'), 'utf8');
     expect(src).toContain('privatePagesFilterFragment');
     // The predicate TEXT must not be duplicated — silent drift risk if

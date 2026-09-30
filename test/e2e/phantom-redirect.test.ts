@@ -17,7 +17,7 @@ import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:tes
 import { mkdtempSync, writeFileSync, rmSync, mkdirSync, existsSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { hasDatabase, setupDB, teardownDB, getEngine } from './helpers.ts';
+import { hasDatabase, setupLegacyEmbeddingDB, teardownDB, getEngine } from './helpers.ts';
 import { withEnv } from '../helpers/with-env.ts';
 import { runExtractFacts } from '../../src/core/cycle/extract-facts.ts';
 // v0.40: per-source lock id replaces the legacy bare SYNC_LOCK_ID constant.
@@ -28,7 +28,7 @@ const describeMaybe = SKIP ? describe.skip : describe;
 
 beforeAll(async () => {
   if (SKIP) return;
-  await setupDB();
+  await setupLegacyEmbeddingDB();
 });
 
 afterAll(async () => {
@@ -207,15 +207,22 @@ describeMaybe('phantom-redirect E2E (Postgres)', () => {
       // through postgres-js's text representation per round 12).
       // Build a 1536-d vector (canonical OpenAI embedding shape) of small
       // values so we can verify the parse doesn't mangle.
+      // The row mirrors the fence row above cell-for-cell, visibility and
+      // notability included: since #4870 the reconcile compares those two
+      // cells too, so a seed left on the column defaults (private/medium)
+      // would read as a fence edit and take the wipe+reinsert path — which
+      // drops the embedding on a keyless run and defeats the pin below.
       const vec = Array(1536).fill(0).map((_, i) => i / 1536).map((v) => v.toFixed(6)).join(',');
       await engine.executeRaw(
         `INSERT INTO facts (
            source_id, entity_slug, fact, kind, valid_from,
            source, source_markdown_slug, row_num,
+           visibility, notability,
            embedding
          ) VALUES (
            'default', 'alice', 'Founded Acme', 'fact', '2017-01-01'::date,
            'linkedin', 'alice', 1,
+           'world', 'high',
            ('[' || $1 || ']')::vector
          )`,
         [vec],

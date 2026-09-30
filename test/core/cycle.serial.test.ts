@@ -20,6 +20,8 @@ let backlinksCalls: Array<{ action: string; dir: string; dryRun: boolean | undef
 let syncCalls: Array<{ dryRun: boolean | undefined; noPull: boolean | undefined; noExtract: boolean | undefined; sourceId: string | undefined }> = [];
 let extractCalls: Array<{ mode: string; dir: string; slugs: string[] | undefined }> = [];
 let embedCalls: Array<{ stale: boolean | undefined; dryRun: boolean | undefined }> = [];
+// #4599: per-test overrides spread onto the mock's EmbedResult (e.g. reason: 'stall_timeout').
+let embedResultOverride: Record<string, unknown> = {};
 let orphansCalls: number = 0;
 let orphansOpts: Array<{ sourceId?: string } | undefined> = [];
 let schemaSuggestOpts: Array<{ sourceId?: string; dryRun?: boolean } | undefined> = [];
@@ -93,6 +95,7 @@ mock.module('../../src/commands/embed.ts', () => ({
       total_chunks: 10,
       pages_processed: 3,
       dryRun: !!opts.dryRun,
+      ...embedResultOverride,
     };
   },
   runEmbed: async () => {},
@@ -158,6 +161,7 @@ beforeEach(() => {
   syncCalls = [];
   extractCalls = [];
   embedCalls = [];
+  embedResultOverride = {};
   orphansCalls = 0;
   orphansOpts = [];
   schemaSuggestOpts = [];
@@ -200,6 +204,15 @@ describe('runCycle — dryRun propagates to every phase', () => {
     const extractPhase = report.phases.find(p => p.phase === 'extract');
     expect(extractPhase?.status).toBe('skipped');
     expect(extractPhase?.details.reason).toBe('no_dry_run_support');
+  });
+
+  test('dryRun skips the calibration trio — no LLM calls, no take_proposals/grade/profile writes (#4823)', async () => {
+    const report = await runCycle(sharedEngine,{ brainDir: '/tmp/brain', dryRun: true });
+    for (const name of ['propose_takes', 'grade_takes', 'calibration_profile'] as const) {
+      const phase = report.phases.find(p => p.phase === name);
+      expect(phase?.status).toBe('skipped');
+      expect(phase?.details.reason).toBe('no_dry_run_support');
+    }
   });
 });
 
@@ -302,6 +315,23 @@ describe('runCycle — cycle_already_running skip', () => {
     expect(report.status).not.toBe('skipped');
     expect(syncCalls.length).toBe(1); // cycle ran
   });
+
+  test('a held cycle lock expires 5 minutes out (crash recovery window)', async () => {
+    let ttlSeconds: number | null = null;
+    await runCycle(sharedEngine, {
+      brainDir: '/tmp/brain',
+      phases: ['lint'],
+      yieldBetweenPhases: async () => {
+        const { rows } = await (sharedEngine as any).db.query(
+          `SELECT EXTRACT(EPOCH FROM (ttl_expires_at - NOW()))::float AS s FROM gbrain_cycle_locks WHERE id = 'gbrain-cycle'`,
+        );
+        ttlSeconds = rows[0]?.s ?? null;
+      },
+    });
+    expect(ttlSeconds).not.toBeNull();
+    expect(ttlSeconds!).toBeGreaterThan(4 * 60);
+    expect(ttlSeconds!).toBeLessThanOrEqual(5 * 60);
+  });
 });
 
 // ─── Engine null path ─────────────────────────────────────────────
@@ -353,6 +383,19 @@ describe('runCycle — engine = null (filesystem-only mode)', () => {
     // None of the filesystem phases ran because the lock blocked entry.
     expect(lintCalls.length).toBe(0);
     expect(backlinksCalls.length).toBe(0);
+  });
+
+  test('a live holder whose lock file is older than 5 minutes is treated as stale', async () => {
+    const { writeFileSync, mkdirSync, utimesSync } = require('fs');
+    const path = require('path');
+    mkdirSync(path.dirname(lockFile), { recursive: true });
+    writeFileSync(lockFile, `1\n${new Date().toISOString()}\n`);
+    const sixMinutesAgo = new Date(Date.now() - 6 * 60 * 1000);
+    utimesSync(lockFile, sixMinutesAgo, sixMinutesAgo);
+
+    const report = await runCycle(null, { brainDir: '/tmp/brain' });
+    expect(report.reason).not.toBe('cycle_already_running');
+    expect(lintCalls.length).toBe(1);
   });
 });
 
@@ -686,5 +729,30 @@ describe('runCycle — onceForPhase bypasses only the named phase (issue #2860)'
       onceForPhase: 'patterns',
     });
     expect(await sharedEngine.getConfig('dream.patterns.enabled')).toBe('false');
+  });
+});
+
+// ─── #4599: embed phase honours the stall watchdog's X6 contract ────
+// runEmbedCore never throws on a stall; it returns reason:'stall_timeout'
+// (embed-stall.ts). Every non-CLI consumer must convert that to a failure,
+// otherwise a nightly drain the watchdog aborted is reported as a healthy
+// embed phase and the dream/autopilot verdict never notices.
+
+describe('runCycle — embed phase fails on stall_timeout (#4599)', () => {
+  beforeEach(async () => {
+    await truncateCycleLocks(sharedEngine);
+  });
+
+  test("reason:'stall_timeout' from runEmbedCore yields a failed embed phase", async () => {
+    embedResultOverride = { reason: 'stall_timeout', failures: 1 };
+    const report = await runCycle(sharedEngine, { brainDir: '/tmp/brain' });
+    const embedPhase = report.phases.find(p => p.phase === 'embed');
+    expect(embedPhase?.status).toBe('fail');
+    expect(String(embedPhase?.error?.message)).toMatch(/stall_timeout/);
+  });
+
+  test('a normal result is still an ok embed phase', async () => {
+    const report = await runCycle(sharedEngine, { brainDir: '/tmp/brain' });
+    expect(report.phases.find(p => p.phase === 'embed')?.status).toBe('ok');
   });
 });

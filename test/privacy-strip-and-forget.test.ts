@@ -254,7 +254,10 @@ describe('#4548 row-level visibility-aware fence merge (remote write-back)', () 
       ...opts,
     };
   }
-  const putPageOp = () => operations.find((o) => o.name === 'put_page')!;
+  const putPageOp = () => ({ handler: async (ctx: OperationContext, params: Record<string, unknown>) => {
+    const snapshot = await ctx.engine.readPageSnapshot(String(params.slug), {sourceId:ctx.sourceId,includeDeleted:true});
+    return operations.find(o=>o.name==='put_page')!.handler(ctx, {...params,...(snapshot?{expected_revision:snapshot.revision}:{})});
+  } });
   const getPageOp = () => operations.find((o) => o.name === 'get_page')!;
 
   async function remoteRoundTrip(slug: string, edit: (content: string) => string): Promise<void> {
@@ -382,7 +385,7 @@ describe('#4548 row-level visibility-aware fence merge (remote write-back)', () 
     ]);
   });
 
-  test('residual gap warn: a malformed incoming fence blocks the merge and the #2044 gap warning still fires', async () => {
+  test('malformed incoming fence is rejected without losing hidden rows', async () => {
     const warnSpy = spyOn(console, 'warn').mockImplementation(() => {});
     try {
       const slug = 'people/malformed-residual';
@@ -395,15 +398,15 @@ describe('#4548 row-level visibility-aware fence merge (remote write-back)', () 
       // The caller mangles the visible row's kind — the incoming fence now
       // parses with warnings, so the merge refuses to rewrite it (it can't
       // re-render rows it couldn't parse without losing caller content).
-      // The hidden row is lost; the gap warning surfaces exactly that.
-      await remoteRoundTrip(slug, (c) => c.replace('| fact |', '| banana |'));
+      // The managed publication refuses malformed content and retains the hidden row.
+      await expect(remoteRoundTrip(slug, (c) => c.replace('| fact |', '| banana |'))).rejects.toMatchObject({code:'invalid_params'});
 
       const warnedGap = warnSpy.mock.calls.some(
         (c) => String(c[0]).includes('#2044 gap') && String(c[0]).includes(slug),
       );
       expect(warnedGap).toBe(true);
       const raw = await engine.getPage(slug, { sourceId: 'default' });
-      expect((raw?.compiled_truth ?? '')).not.toContain('SECRET_MAL');
+      expect((raw?.compiled_truth ?? '')).toContain('SECRET_MAL');
     } finally {
       warnSpy.mockRestore();
     }
@@ -456,7 +459,10 @@ describe('#4554 world-only fence deletion honored (no resurrection, no misfiring
       ...opts,
     };
   }
-  const putPageOp = () => operations.find((o) => o.name === 'put_page')!;
+  const putPageOp = () => ({ handler: async (ctx: OperationContext, params: Record<string, unknown>) => {
+    const snapshot = await ctx.engine.readPageSnapshot(String(params.slug), {sourceId:ctx.sourceId,includeDeleted:true});
+    return operations.find(o=>o.name==='put_page')!.handler(ctx, {...params,...(snapshot?{expected_revision:snapshot.revision}:{})});
+  } });
   const getPageOp = () => operations.find((o) => o.name === 'get_page')!;
 
   test('deleting a world-only fence over remote round-trip: deletion sticks, no restoration warn fires', async () => {
@@ -600,7 +606,10 @@ describe('#4546 timeline-embedded fence survives a remote round-trip', () => {
       ...opts,
     };
   }
-  const putPageOp = () => operations.find((o) => o.name === 'put_page')!;
+  const putPageOp = () => ({ handler: async (ctx: OperationContext, params: Record<string, unknown>) => {
+    const snapshot = await ctx.engine.readPageSnapshot(String(params.slug), {sourceId:ctx.sourceId,includeDeleted:true});
+    return operations.find(o=>o.name==='put_page')!.handler(ctx, {...params,...(snapshot?{expected_revision:snapshot.revision}:{})});
+  } });
   const getPageOp = () => operations.find((o) => o.name === 'get_page')!;
 
   const TIMELINE_FENCE_CONTENT = (slug: string) => `---

@@ -105,7 +105,9 @@ const DEFAULT_MAX_ERRORS = 200;
 const DEFAULT_PER_BATCH_TIMEOUT_SEC = 600;
 const MIN_BATCH_SIZE = 16;
 
-function checkpointKey(name: string): string {
+/** Config-table key a backfill's keyset cursor persists under. Exported so other
+ *  resumable keyset loops (reindex-search-vector) share the convention. */
+export function checkpointKey(name: string): string {
   return `backfill.${name}.last_id`;
 }
 

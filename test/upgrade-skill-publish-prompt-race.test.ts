@@ -21,7 +21,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 describe('gbrain upgrade — skill-publish prompt wiring (#4318 residual)', () => {
-  // test-reads-source-ok: the prompt is inline inside a large, side-effecting,
+  // test-reads-source-ok[structural]: the prompt is inline inside a large, side-effecting,
   // non-exported runUpgrade() with no injectable stdin — resolve/close
   // ordering is only observable in source text, not an executable boundary.
   const src = readFileSync(join(import.meta.dir, '../src/commands/upgrade.ts'), 'utf8');

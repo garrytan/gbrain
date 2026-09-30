@@ -5,13 +5,16 @@ node_modules
 bin/
 .DS_Store
 *.log
+# Committed test-audit evidence (mutation-probe and measured-run logs).
+!docs/test-audit/**/*.log
 .env
 .env.*
 !.env.*.example
 # Bun --compile temp artifacts. Each build emits a new hash-named .bun-build
 # file in cwd; glob catches all of them.
 *.bun-build
-.gstack/
+.gstack/*
+!.gstack/redact-allowlist
 supabase/.temp/
 .claude/skills/
 # admin/dist/ is the React SPA bundle. CLAUDE.md says it's committed for
@@ -46,6 +49,10 @@ AGENTS.local.md
 # Tier 3 PGLite snapshot fixture (built on demand by build:pglite-snapshot)
 test/fixtures/pglite-snapshot.tar
 test/fixtures/pglite-snapshot.version
+test/fixtures/pglite-snapshot-default.tar
+test/fixtures/pglite-snapshot-default.version
+test/fixtures/.pglite-snapshot*.lock*
+test/fixtures/pglite-snapshot*.tmp
 
 # Private brain reports — never check these in (per CLAUDE.md privacy rule)
 reports/network-intelligence/

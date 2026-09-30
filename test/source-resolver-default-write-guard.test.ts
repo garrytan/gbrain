@@ -18,7 +18,7 @@ import {
   defaultWriteAllowedByEnv,
   formatDefaultWriteRefusal,
   formatDefaultWriteWarning,
-  maybeWarnUnscopedDefaultWrite,
+  assessUnscopedDefaultWrite,
   GBRAIN_ALLOW_DEFAULT_WRITE_ENV,
 } from '../src/core/source-resolver.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -169,9 +169,9 @@ describe('formatDefaultWriteWarning', () => {
   });
 });
 
-describe('maybeWarnUnscopedDefaultWrite (stdio MCP lane, keyed on the RESOLVED tier)', () => {
+describe('assessUnscopedDefaultWrite warning (stdio MCP lane, keyed on the RESOLVED tier)', () => {
   test('warns for a mutating call on tier seed_default when the guard fires', async () => {
-    const msg = await maybeWarnUnscopedDefaultWrite(makeStub(BULK_NON_DEFAULT), 'seed_default', true);
+    const msg = (await assessUnscopedDefaultWrite(makeStub(BULK_NON_DEFAULT), 'seed_default', true)).warning;
     expect(msg).not.toBeNull();
     expect(msg).toContain('GBRAIN_SOURCE=<id>');
   });
@@ -182,23 +182,23 @@ describe('maybeWarnUnscopedDefaultWrite (stdio MCP lane, keyed on the RESOLVED t
   // shape) would false-positive on every one of these.
   for (const tier of ['flag', 'env', 'dotfile', 'local_path', 'brain_default', 'sole_non_default'] as const) {
     test(`stays silent on tier '${tier}' even on a bulk-non-default brain`, async () => {
-      expect(await maybeWarnUnscopedDefaultWrite(makeStub(BULK_NON_DEFAULT), tier, true)).toBeNull();
+      expect((await assessUnscopedDefaultWrite(makeStub(BULK_NON_DEFAULT), tier, true)).warning).toBeNull();
     });
   }
 
   test('stays silent for non-mutating calls', async () => {
-    expect(await maybeWarnUnscopedDefaultWrite(makeStub(BULK_NON_DEFAULT), 'seed_default', false)).toBeNull();
+    expect((await assessUnscopedDefaultWrite(makeStub(BULK_NON_DEFAULT), 'seed_default', false)).warning).toBeNull();
   });
 
   test('stays silent when the guard assessment does not fire', async () => {
-    expect(await maybeWarnUnscopedDefaultWrite(
+    expect((await assessUnscopedDefaultWrite(
       makeStub({ defaultPages: 100, nonDefaultPages: 1, nonDefaultSources: 1 }), 'seed_default', true,
-    )).toBeNull();
+    )).warning).toBeNull();
   });
 
   test('honors the env escape hatch', async () => {
     await withEnv({ [GBRAIN_ALLOW_DEFAULT_WRITE_ENV]: '1' }, async () => {
-      expect(await maybeWarnUnscopedDefaultWrite(makeStub(BULK_NON_DEFAULT), 'seed_default', true)).toBeNull();
+      expect((await assessUnscopedDefaultWrite(makeStub(BULK_NON_DEFAULT), 'seed_default', true)).warning).toBeNull();
     });
   });
 });

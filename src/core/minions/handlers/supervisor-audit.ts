@@ -158,7 +158,7 @@ export function readRecentSupervisorEvents(
  * silently underreporting — denylist semantics close the bug class this
  * helper was added to fix.
  */
-const CLEAN_EXIT_CAUSES = new Set(['clean_exit', 'graceful_shutdown', 'wedge_restart']);
+const CLEAN_EXIT_CAUSES = new Set(['clean_exit', 'graceful_shutdown', 'wedge_restart', 'configuration_blocked']);
 
 /**
  * Per-cause crash bucket shape returned by `summarizeCrashes()`. Bucket names

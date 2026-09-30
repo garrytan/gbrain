@@ -25,6 +25,8 @@
 
 import { describe, test, expect, spyOn } from 'bun:test';
 import * as childProcess from 'child_process';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 import { runAdvisorCli } from '../src/commands/advisor.ts';
 import { LATEST_VERSION } from '../src/core/migrate.ts';
@@ -39,11 +41,14 @@ import { withEnv, emptyHome } from './helpers/with-env.ts';
  * warn leak). */
 const EMBED_KEY_NAME = getRecipe(DEFAULT_EMBEDDING_MODEL.split(':')[0]!)?.auth_env?.required?.[0];
 
-/** Fresh hermetic env per call: empty GBRAIN_HOME + the embed key present. */
+/** Fresh hermetic env per call: an explicit supported model and its embed key. */
 function hermeticEnv(): Record<string, string | undefined> {
+  const home = emptyHome();
+  mkdirSync(join(home, '.gbrain'));
+  writeFileSync(join(home, '.gbrain', 'config.json'), JSON.stringify({ engine: 'pglite', embedding_model: DEFAULT_EMBEDDING_MODEL }));
   return {
-    GBRAIN_HOME: emptyHome(),
-    GBRAIN_EMBEDDING_MODEL: undefined, // effective model = DEFAULT_EMBEDDING_MODEL
+    GBRAIN_HOME: home,
+    GBRAIN_EMBEDDING_MODEL: undefined,
     ...(EMBED_KEY_NAME ? { [EMBED_KEY_NAME]: 'test-key-advisor-cli' } : {}),
   };
 }

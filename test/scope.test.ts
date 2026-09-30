@@ -4,6 +4,9 @@ import {
   isScope,
   ALLOWED_SCOPES,
   ALLOWED_SCOPES_LIST,
+  DCR_REGISTRABLE_SCOPES,
+  dcrScopeViolation,
+  scopesSupportedForDiscovery,
   assertAllowedScopes,
   filterAllowedScopes,
   InvalidScopeError,
@@ -131,19 +134,25 @@ describe('F3 refresh-token subset semantics under hasScope', () => {
 
 describe('ALLOWED_SCOPES — exact list pinned', () => {
   test('contains the 6 canonical scopes (v0.38: agent added)', () => {
-    expect(ALLOWED_SCOPES.size).toBe(6);
+    expect(ALLOWED_SCOPES.size).toBe(9);
     expect(ALLOWED_SCOPES.has('read')).toBe(true);
     expect(ALLOWED_SCOPES.has('write')).toBe(true);
     expect(ALLOWED_SCOPES.has('admin')).toBe(true);
     expect(ALLOWED_SCOPES.has('sources_admin')).toBe(true);
     expect(ALLOWED_SCOPES.has('users_admin')).toBe(true);
     expect(ALLOWED_SCOPES.has('agent')).toBe(true);
+    expect(ALLOWED_SCOPES.has('skill_editor')).toBe(true);
+    expect(ALLOWED_SCOPES.has('skill_publisher')).toBe(true);
+    expect(ALLOWED_SCOPES.has('skills_member_self')).toBe(true);
   });
   test('list is sorted alphabetically (deterministic for wire/drift check)', () => {
     expect([...ALLOWED_SCOPES_LIST]).toEqual([
       'admin',
       'agent',
       'read',
+      'skill_editor',
+      'skill_publisher',
+      'skills_member_self',
       'sources_admin',
       'users_admin',
       'write',
@@ -223,5 +232,35 @@ describe('parseScopeString', () => {
   });
   test('does NOT validate (separation of concerns)', () => {
     expect(parseScopeString('read flying-unicorn')).toEqual(['read', 'flying-unicorn']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// scopesSupportedForDiscovery — what `scopes_supported` advertises
+// ---------------------------------------------------------------------------
+describe('scopesSupportedForDiscovery', () => {
+  test('DCR on: exactly the self-registration ceiling, in ALLOWED_SCOPES_LIST order', () => {
+    expect(scopesSupportedForDiscovery({ enableDcr: true })).toEqual(['read', 'write']);
+  });
+  test('DCR off: every scope except operator-only agent (the pre-ceiling advertisement)', () => {
+    const list = scopesSupportedForDiscovery({ enableDcr: false });
+    expect(list).toEqual(['admin', 'read', 'skill_editor', 'skill_publisher', 'skills_member_self', 'sources_admin', 'users_admin', 'write']);
+    expect(list).toEqual(ALLOWED_SCOPES_LIST.filter((s) => s !== 'agent'));
+  });
+  test('neither list advertises agent (delegation bindings are operator-only)', () => {
+    expect(scopesSupportedForDiscovery({ enableDcr: true })).not.toContain('agent');
+    expect(scopesSupportedForDiscovery({ enableDcr: false })).not.toContain('agent');
+  });
+  test('DCR-on list is a subset of DCR_REGISTRABLE_SCOPES and every member passes the DCR ceiling', () => {
+    const advertised = scopesSupportedForDiscovery({ enableDcr: true });
+    expect(advertised.length).toBeGreaterThan(0);
+    for (const s of advertised) expect(DCR_REGISTRABLE_SCOPES.has(s)).toBe(true);
+    // A client that copies discovery into its /register request is accepted...
+    expect(dcrScopeViolation(advertised, ['authorization_code', 'refresh_token'])).toBeNull();
+    // ...and so is each advertised scope on its own.
+    for (const s of advertised) expect(dcrScopeViolation([s], ['authorization_code'])).toBeNull();
+  });
+  test('the DCR-off list would trip the ceiling — which is why DCR-on discovery must narrow', () => {
+    expect(dcrScopeViolation(scopesSupportedForDiscovery({ enableDcr: false }), ['authorization_code'])).not.toBeNull();
   });
 });

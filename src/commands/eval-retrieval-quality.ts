@@ -101,11 +101,12 @@ export async function runEvalRetrievalQuality(engine: BrainEngine, args: string[
       console.log(`  ${f.family.padEnd(22)} n=${f.n}  Hit@1=${(f.hit_at_1 * 100).toFixed(0)}%  Hit@3=${(f.hit_at_3 * 100).toFixed(0)}%  MRR=${f.mrr.toFixed(3)}`);
     }
     console.log('');
-    if (gate.breaches.length) {
+    if (!gate.pass) {
       console.log('GATE: FAIL');
       for (const b of gate.breaches) {
         console.log(`  ✗ ${b.family} ${b.metric}=${(b.got * 100).toFixed(0)}% < floor ${(b.floor * 100).toFixed(0)}%`);
       }
+      if (gate.errored > 0) console.log(`  ✗ ${gate.errored} question(s) errored in search (scored as misses)`);
     } else {
       console.log('GATE: PASS');
     }

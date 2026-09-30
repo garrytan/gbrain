@@ -45,6 +45,9 @@ import { GBrainError } from '../types.ts';
 import type { OperationContext } from '../operations.ts';
 import type { BrainEngine, Take, TakeResolution } from '../engine.ts';
 import type { PhaseStatus, CyclePhase } from '../cycle.ts';
+import { managedPersistenceEnabled } from '../persistence/ownership.ts';
+import { parseTakesFence } from '../takes-fence.ts';
+import { submitPageMutation } from '../persistence/page-mutations.ts';
 
 /**
  * Bump when the judge prompt or the JSON output shape changes. Old verdicts
@@ -585,6 +588,9 @@ class GradeTakesPhase extends BaseCyclePhase {
       opts.reporter.start('grade_takes.takes' as never, takes.length);
     }
 
+    // #5280: a managed brain refuses the raw takes update; resolutions go
+    // through the coordinated, markdown-canonical takes_resolve mutation.
+    const managed = await managedPersistenceEnabled(engine);
     const now = new Date();
     for (const take of takes) {
       // Phase deadline check (gbrain#4168). Break, not throw: verdicts
@@ -781,7 +787,28 @@ class GradeTakesPhase extends BaseCyclePhase {
       // Apply to canonical takes if eligible.
       if (shouldApply && resolution) {
         try {
-          await engine.resolveTake(take.page_id, take.row_num, resolution);
+          if (managed) {
+            // Resolve the judged take by page identity, not the cached slug: a
+            // rename during judging must not redirect the resolution to another page.
+            const [page] = await engine.executeRaw<{ slug: string; source_id: string }>(
+              `SELECT p.slug, p.source_id FROM pages p JOIN takes t ON t.page_id=p.id
+                WHERE p.id=$1 AND p.deleted_at IS NULL AND t.row_num=$2 AND t.claim=$3`, [take.page_id, take.row_num, take.claim]);
+            if (!page) throw new Error('the judged take moved or changed during grading; it is graded again next run');
+            const snapshot = await engine.readPageSnapshot(page.slug, { sourceId: page.source_id });
+            // The resolution publishes against this exact revision, so the judged
+            // claim must be the row this revision's fence holds.
+            const fenced = snapshot ? parseTakesFence(snapshot.page.compiled_truth ?? '').takes.find(t => t.rowNum === take.row_num) : undefined;
+            if (!snapshot || snapshot.page.id !== take.page_id || fenced?.claim !== take.claim) {
+              throw new Error('the judged page changed during grading; it is graded again next run');
+            }
+            await submitPageMutation({ engine, config: { engine: engine.kind } as never, remote: false, sourceId: page.source_id,
+              dryRun: false, logger: { info() {}, warn() {}, error() {} } }, { operation: 'takes_resolve', params: {
+              slug: page.slug, source_id: page.source_id, expected_revision: snapshot.revision, row_num: take.row_num, quality: resolution.quality,
+              evidence: resolution.source, resolved_by: resolution.resolvedBy,
+              request_id: createHash('sha256').update(`grade_takes:${take.id}:${recordedSig}:${snapshot.revision}`).digest('hex').replace(/^(.{8})(.{4}).(.{3}).(.{3})(.{12}).*/, '$1-$2-4$3-a$4-$5') } });
+          } else {
+            await engine.resolveTake(take.page_id, take.row_num, resolution);
+          }
           result.auto_applied += 1;
 
           // T11 / E4 — gstack-learnings coupling on incorrect / partial
@@ -814,6 +841,11 @@ class GradeTakesPhase extends BaseCyclePhase {
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           result.warnings.push(`auto-apply failed on take ${take.id}: ${msg}`);
+          // Managed: drop the cached verdict so the next run grades the take
+          // again instead of skipping it as already applied.
+          if (managed) await engine.executeRaw(`DELETE FROM take_grade_cache
+            WHERE take_id=$1 AND prompt_version=$2 AND judge_model_id=$3 AND evidence_signature=$4`,
+          [take.id, promptVersion, recordedJudgeModelId, recordedSig]);
         }
       }
 

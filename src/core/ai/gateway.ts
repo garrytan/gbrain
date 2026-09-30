@@ -21,7 +21,7 @@
  *     rotation (via configureGateway()) invalidates stale entries.
  */
 
-import { embed as aiEmbed, embedMany, generateObject, generateText, jsonSchema } from 'ai';
+import { embed as aiEmbed, embedMany, generateObject, generateText, jsonSchema, type JSONSchema7, type Output } from 'ai';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash, randomUUID } from 'node:crypto';
 import { listRecipes } from './recipes/index.ts';
@@ -31,12 +31,10 @@ import { createAnthropic } from '@ai-sdk/anthropic';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { z } from 'zod';
 
-import { truncateUtf8 } from '../text-safe.ts';
-import {
-  BudgetTracker,
-  extractUsageFromError as _extractUsageFromError,
-  type BudgetKind,
-} from '../budget/budget-tracker.ts';
+import { DEFAULT_CHARS_PER_TOKEN, DEFAULT_SAFETY_FACTOR, embedRequestMaxInputTokens, planEmbedRequests, rerankRequestMaxInputTokens, truncateEmbedInputs } from './embed-batch-plan.ts';
+export { splitByTokenBudget, capBatchItems, NO_BATCH_CAP_SUB_BATCH_ITEMS } from './embed-batch-plan.ts';
+import { BudgetTracker, type BudgetKind } from '../budget/budget-tracker.ts';
+import { failedCallUsage, recordOnTracker } from './budget-record.ts';
 import type {
   AIGatewayConfig,
   EmbedMultimodalOpts,
@@ -54,11 +52,13 @@ import {
 } from './recipes/openrouter.ts';
 import { resolveModelDetailed, resolveEffectiveChatModel, resolveEffectiveExpansionModel } from '../model-config.ts';
 import { snapshotConfigReader } from '../config-snapshot.ts';
+import { clearGatewayModelSources, gatewayModelSource, setGatewayModelSource } from './gateway-model-sources.ts';
 import { parseLlmJson } from '../llm-json.ts';
 import type { BrainEngine } from '../engine.ts';
 import { dimsProviderOptions } from './dims.ts';
 import { hasAnthropicKey, stashGatewayAnthropicKeyFromEnv } from './anthropic-key.ts';
-import { AIConfigError, AITransientError, normalizeAIError } from './errors.ts';
+import { AIConfigError, AITransientError, isStructuredOutputRejection, normalizeAIError } from './errors.ts';
+import { isEmbeddingZeroNormError, screenAlignedEmbeddings, screenEmbeddings, sendableEmbeddingInputs } from './embedding-guard.ts';
 import { getProviderCapabilities } from './capabilities.ts';
 import { runGuardrails, hasGuardrails, type GuardrailHook } from '../guardrails.ts';
 import { loadConfig } from '../config.ts';
@@ -105,24 +105,12 @@ function withDefaultTimeout(caller: AbortSignal | undefined, timeoutMs: number):
   return caller ? AbortSignal.any([caller, timeout]) : timeout;
 }
 
-const MAX_CHARS = 8000;
-// v0.46.3 SPLIT-DEFAULT: DEFAULT_EMBEDDING_MODEL / DEFAULT_EMBEDDING_DIMENSIONS
-// are now the LEGACY CONFIGLESS RUNTIME FALLBACK only (brains with no
-// `embedding_model` in file config, whose stored vectors live in ZE's 1280d
-// space). ZeroEntropy's hosted API shuts down on ZEROENTROPY_SUNSET_DATE; the
-// September removal release deletes this fallback. Every NEW-INSTALL surface
-// reads NEW_INSTALL_DEFAULT_* instead — full rationale in ./defaults.ts.
-// Re-exported from the leaf `defaults.ts` so heavy schema/registry modules
-// don't transitively load every provider SDK just to read the defaults.
 export { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } from './defaults.ts';
 import {
   DEFAULT_EMBEDDING_MODEL,
   DEFAULT_EMBEDDING_DIMENSIONS,
-  NEW_INSTALL_DEFAULT_EMBEDDING_MODEL,
   DEFAULT_RERANKER_MODEL,
   renderCanonicalMigrationCommands,
-  rerankerSunset, sunsetDateHasPassed,
-  type RerankerSunset,
 } from './defaults.ts';
 import { logRerankFailure, type RerankFailureReason } from '../rerank-audit.ts';
 const DEFAULT_EXPANSION_MODEL = 'anthropic:claude-haiku-4-5-20251001';
@@ -210,10 +198,6 @@ const _shrinkState = new Map<string, ShrinkEntry>();
 const SHRINK_FLOOR = 0.05;
 /** Successful batches needed before the factor heals back toward recipe default. */
 const SHRINK_HEAL_AFTER = 10;
-/** Default chars-per-token when a recipe omits it. Matches OpenAI tiktoken on English. */
-const DEFAULT_CHARS_PER_TOKEN = 4;
-/** Default safety factor when a recipe omits it. */
-const DEFAULT_SAFETY_FACTOR = 0.8;
 
 /**
  * v0.31.8 (D2 + D10): hard ceiling on Voyage response size, sized as
@@ -243,27 +227,6 @@ export class VoyageResponseTooLargeError extends Error {
   }
 }
 
-/**
- * v0.35.0.0+: same defense pattern as Voyage's cap but tagged separately so the
- * `instanceof` rethrow inside zeroEntropyCompatFetch only matches its own
- * throws (avoids cross-recipe entanglement if both shims fire in the same
- * process). Plan called for unifying these into one
- * `EmbeddingResponseTooLargeError` class — descoped because
- * `test/voyage-response-cap.test.ts` does structural source-text greps
- * pinning the Voyage name. Unification is a follow-up cleanup.
- */
-const MAX_ZEROENTROPY_RESPONSE_BYTES = 256 * 1024 * 1024;
-
-export class ZeroEntropyResponseTooLargeError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'ZeroEntropyResponseTooLargeError';
-  }
-}
-
-/** Perplexity twin of the Voyage/ZE OOM caps (#1046). Int8 components are
- * 1 byte each, so a real response (512 texts × 2560 dims) is ~1.3 MB —
- * anything near this cap is unambiguously not legitimate. */
 const MAX_PERPLEXITY_RESPONSE_BYTES = 256 * 1024 * 1024;
 
 export class PerplexityResponseTooLargeError extends Error {
@@ -462,19 +425,15 @@ export function recipeSupportsStructuredOutputs(recipe: Recipe): boolean {
 /** Configure the gateway. Called by cli.ts#connectEngine. Clears cached models. */
 export function configureGateway(config: AIGatewayConfig): void {
   _config = {
-    embedding_model: config.embedding_model ?? DEFAULT_EMBEDDING_MODEL,
+    embedding_model: config.embedding_model,
+    embedding_identity_unverified: config.embedding_identity_unverified,
     // #1292/D6: do NOT fabricate a default here. Every gateway-internal reader
     // already applies `?? DEFAULT_EMBEDDING_DIMENSIONS` (getEmbeddingDimensions,
     // embedQuery, the dim self-check) or `?? 0` (the multimodal path, which is
     // designed to SKIP validation when the dim is unknown rather than fabricate
-    // one). Backfilling 1280 here erased the "user never set a dimension" signal,
-    // which (a) defeated that intended skip and (b) let a user-provided recipe
-    // with no explicit dim look fully-configured to diagnoseEmbedding and then
-    // fail with a cryptic wrong-width error at embed time. Keep it honest.
+    // one).
     embedding_dimensions: config.embedding_dimensions,
     embedding_multimodal_model: config.embedding_multimodal_model,
-    // #4107: stays undefined when unset so getImageOcrModel() keeps the
-    // "fall back to the expansion model" signal honest.
     embedding_image_ocr_model: config.embedding_image_ocr_model,
     expansion_model: config.expansion_model ?? DEFAULT_EXPANSION_MODEL,
     chat_model: config.chat_model ?? DEFAULT_CHAT_MODEL,
@@ -603,12 +562,11 @@ export async function reconfigureGatewayWithEngine(engine: BrainEngine): Promise
       fileCfg = null;
     }
   }
-  const newChat = needsFileCfg(chatDetailed.source)
-    ? resolveEffectiveChatModel(fileCfg, cfg.env ?? process.env).model
-    : chatDetailed.model;
-  const newExpansion = needsFileCfg(expansionDetailed.source)
-    ? resolveEffectiveExpansionModel(fileCfg, cfg.env ?? process.env).model
-    : expansionDetailed.model;
+  const env = cfg.env ?? process.env;
+  const chatEffective = needsFileCfg(chatDetailed.source) ? resolveEffectiveChatModel(fileCfg, env) : null;
+  const expansionEffective = needsFileCfg(expansionDetailed.source) ? resolveEffectiveExpansionModel(fileCfg, env) : null;
+  const newChat = chatEffective?.model ?? chatDetailed.model;
+  const newExpansion = expansionEffective?.model ?? expansionDetailed.model;
 
   // Resolved values are bare model ids (e.g. `claude-sonnet-4-6`) — prepend
   // the existing provider prefix from cfg so the gateway keeps routing to
@@ -618,6 +576,8 @@ export async function reconfigureGatewayWithEngine(engine: BrainEngine): Promise
   const chatFull = newChat.includes(':') ? newChat : prefixWithProviderFrom(cfg.chat_model ?? DEFAULT_CHAT_MODEL, newChat);
 
   _config = { ...cfg, expansion_model: expansionFull, chat_model: chatFull };
+  setGatewayModelSource('expansion', expansionFull, gatewayModelSource('expansion', expansionDetailed, expansionEffective));
+  setGatewayModelSource('chat', chatFull, gatewayModelSource('chat', chatDetailed, chatEffective));
   _modelCache.clear();
   _shrinkState.clear();
   return _config;
@@ -681,26 +641,6 @@ function warnRecipesMissingBatchTokens(): void {
   }
 }
 
-/**
- * Test-only reset baseline (#3554). The bunfig preload
- * (`test/helpers/legacy-embedding-preload.ts`) pins the gateway to the legacy
- * OpenAI/1536 config at process start, but `resetGateway()` used to wipe that
- * pin to `_config = null`. The next test file's engine connect then
- * reconfigured from the SHIPPED default (zembed-1 @ 1280) and every 1536-d
- * fixture in that file exploded with `expected 1280 dimensions, not 1536` —
- * a cross-file mine whose placement depended on shard bin-packing.
- *
- * When a baseline factory is registered, `resetGateway()` means "back to the
- * test baseline" instead of "unconfigured": it clears everything as before,
- * then re-applies the factory's config via `configureGateway()`. A factory
- * (not a frozen config) so each re-application captures fresh
- * `process.env`, matching the preload's original `applyLegacy()` semantics.
- *
- * Production is untouched: nothing in `src/` calls `resetGateway()` or this
- * setter, so in production the baseline is never registered and
- * `resetGateway()` still fully unconfigures. Same `__*ForTests` seam
- * convention as `__setEmbedTransportForTests` above.
- */
 let _resetBaseline: (() => AIGatewayConfig) | null = null;
 
 /**
@@ -718,6 +658,7 @@ export function __setGatewayResetBaselineForTests(
 /** Clear every piece of module state. Shared by both reset flavors. */
 function clearGatewayState(): void {
   _config = null;
+  clearGatewayModelSources();
   stashGatewayAnthropicKeyFromEnv(undefined); // gateway-owned snapshot dies with the config
   _modelCache.clear();
   _shrinkState.clear();
@@ -834,11 +775,27 @@ export function requireConfig(): AIGatewayConfig {
 
 /** Public config accessors (for schema setup, doctor, etc.). */
 export function getEmbeddingModel(): string {
-  return requireConfig().embedding_model ?? DEFAULT_EMBEDDING_MODEL;
+  const cfg = requireConfig();
+  if (cfg.embedding_identity_unverified) throw unverifiedEmbeddingIdentityError();
+  return cfg.embedding_model ?? DEFAULT_EMBEDDING_MODEL;
+}
+
+export function getEmbeddingModelProvenance(): string | null {
+  const cfg = requireConfig();
+  return cfg.embedding_identity_unverified ? null : cfg.embedding_model?.trim() || null;
 }
 
 export function getEmbeddingDimensions(): number {
-  return requireConfig().embedding_dimensions ?? DEFAULT_EMBEDDING_DIMENSIONS;
+  const cfg = requireConfig();
+  if (cfg.embedding_identity_unverified) throw unverifiedEmbeddingIdentityError();
+  return cfg.embedding_dimensions ?? DEFAULT_EMBEDDING_DIMENSIONS;
+}
+
+function unverifiedEmbeddingIdentityError(): AIConfigError {
+  return new AIConfigError(
+    'This brain has no explicit embedding model. Its stored vectors must not be interpreted using a new default. Run gbrain migrate embeddings --status and preview an explicit migration with --dry-run.',
+    `Run gbrain migrate embeddings --status, then ${renderCanonicalMigrationCommands().recommendedDryRun}. Review the cost and explicitly approve the migration. Keyword search and read-only access remain available.`,
+  );
 }
 
 /**
@@ -915,6 +872,9 @@ export type EmbeddingDiagnosis =
   | { ok: false; reason: 'missing_env'; model: string; provider: string; recipeId: string; missingEnvVars: string[] };
 
 export function diagnoseEmbedding(modelOverride?: string): EmbeddingDiagnosis {
+  if (_config?.embedding_identity_unverified && !modelOverride) {
+    return { ok: false, reason: 'unknown_provider', model: 'unconfigured', provider: 'unconfigured', message: unverifiedEmbeddingIdentityError().message };
+  }
   // Test-transport fast path: matches the `if (touchpoint === 'chat' &&
   // _chatTransport) return true` shortcut in isAvailable() so tests that
   // install an embed transport stub also pass the preflight without
@@ -944,7 +904,9 @@ export function diagnoseEmbedding(modelOverride?: string): EmbeddingDiagnosis {
       reason: 'unknown_provider',
       model: modelStr,
       provider: providerId,
-      message: err instanceof Error ? err.message : String(err),
+      message: err instanceof AIConfigError && err.fix
+        ? `${err.message} ${err.fix}`
+        : err instanceof Error ? err.message : String(err),
     };
   }
 
@@ -1071,24 +1033,6 @@ export function isAvailable(touchpoint: TouchpointKind, modelOverride?: string):
 
 // ---- Embedding ----
 
-/**
- * Carries the asymmetric-embedding `input_type` ('query' | 'document')
- * across the AI SDK boundary, from embedSubBatch() to the per-recipe fetch
- * shims below (#1400).
- *
- * Why this exists: `dimsProviderOptions()` correctly emits `input_type`
- * into `providerOptions.openaiCompatible` for asymmetric models (ZE
- * zembed-1, Voyage v3+), but the AI SDK's openai-compatible adapter
- * validates providerOptions against a fixed schema (`dimensions`, `user`)
- * and silently DROPS every other field before building the wire body. By
- * the time a compat shim sees the request, the threaded 'query' is gone —
- * so every embedQuery() was encoded document-side and asymmetric retrieval
- * silently collapsed to surface-token overlap.
- *
- * embedSubBatch() populates the store only when providerOptions actually
- * threads an input_type; shims that need a default (ZE) apply their own.
- * Same module-level ALS pattern as `__budgetStore` below.
- */
 const __embedInputTypeStore = new AsyncLocalStorage<'query' | 'document'>();
 
 /**
@@ -1241,24 +1185,6 @@ const voyageCompatFetch = (async (input: RequestInfo | URL, init?: RequestInit) 
 }) as unknown as typeof fetch;
 
 /**
- * ZeroEntropy compatibility shim. ZE's `/v1/models/embed` endpoint is NOT
- * OpenAI-compatible at the wire level:
- *  - Path: AI SDK adapter calls `${base_url}/embeddings`; ZE wants
- *    `${base_url}/models/embed`. Rewrite the URL path.
- *  - Body: inject `input_type: 'document'` (or `'query'` when threaded via
- *    providerOptions.openaiCompatible.input_type) and `encoding_format:
- *    'float'` (don't trust SDK default; strip any base64 caller injected
- *    to keep the response rewriter simple).
- *  - Response: ZE returns `{results: [{embedding: float[]}], usage:
- *    {total_bytes, total_tokens}}`. AI SDK's openai-compatible Zod schema
- *    expects `{data: [{embedding, index}], usage: {prompt_tokens, ...}}`.
- *    Rewrite both shapes.
- *
- * Layer 1 / Layer 2 OOM caps mirror the Voyage pattern; ZE embeddings are
- * float[] (not base64), so the Layer 2 cap compares against the JSON
- * payload size of each embedding rather than a base64 string length.
- */
-/**
  * NVIDIA NIM compatibility shim. NVIDIA uses the OpenAI embeddings wire
  * shape but requires asymmetric input_type values: query for retrieval and
  * passage for indexed documents. The generic gateway store carries
@@ -1282,171 +1208,6 @@ const nvidiaCompatFetch = (async (input: RequestInfo | URL, init?: RequestInit) 
   return fetch(input as any, baseInit);
 }) as unknown as typeof fetch;
 
-const zeroEntropyCompatFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-  // OUTBOUND: normalize URL, rewrite path /embeddings → /models/embed, then
-  // rewrite body. fetch accepts RequestInfo (string | Request) | URL; we
-  // handle all three so a `new Request(...)`-shaped caller works.
-  let urlString: string;
-  let baseInit: RequestInit = init ?? {};
-  if (typeof input === 'string') {
-    urlString = input;
-  } else if (input instanceof URL) {
-    urlString = input.toString();
-  } else {
-    // input is a Request — pull URL + headers + method + body off it.
-    urlString = input.url;
-    baseInit = {
-      method: input.method,
-      headers: input.headers,
-      // Reading body off a Request consumes it; the test seam passes
-      // string/URL so this branch is rarely hit in practice. When it is,
-      // we copy what we can and trust the caller passes the body via init.
-      ...(init ?? {}),
-    };
-  }
-  try {
-    const u = new URL(urlString);
-    // Replace the trailing path segment '/embeddings' with '/models/embed'.
-    // `base_url_default` ends with `/v1`, so the SDK calls `/v1/embeddings`
-    // and we rewrite to `/v1/models/embed`. Use endsWith to avoid mangling
-    // any future ZE endpoints that happen to contain 'embeddings' as a
-    // substring.
-    if (u.pathname.endsWith('/embeddings')) {
-      u.pathname = u.pathname.slice(0, -'/embeddings'.length) + '/models/embed';
-      urlString = u.toString();
-    }
-  } catch {
-    // Malformed URL — let fetch handle the error.
-  }
-
-  // Rewrite request body: inject input_type + encoding_format, strip any
-  // base64 the caller smuggled in.
-  if (baseInit.body && typeof baseInit.body === 'string') {
-    try {
-      const parsed = JSON.parse(baseInit.body);
-      if (parsed && typeof parsed === 'object') {
-        let mutated = false;
-        // Force encoding_format: 'float' so the response is a plain
-        // float[] and the response-rewriter doesn't need to base64-decode.
-        if (parsed.encoding_format !== 'float') {
-          parsed.encoding_format = 'float';
-          mutated = true;
-        }
-        // Recover the SDK-stripped input_type (#1400): the threaded value
-        // arrives via __embedInputTypeStore because the openai-compatible
-        // adapter drops it from providerOptions before building the body.
-        // Document-side default preserved for paths that didn't thread one
-        // (ingest).
-        if (parsed.input_type === undefined) {
-          parsed.input_type = __embedInputTypeStore.getStore() ?? 'document';
-          mutated = true;
-        }
-        if (mutated) {
-          const headers = new Headers(baseInit.headers ?? {});
-          headers.delete('content-length');
-          baseInit = { ...baseInit, body: JSON.stringify(parsed), headers };
-        }
-      }
-    } catch {
-      // Body wasn't JSON — pass through untouched.
-    }
-  }
-
-  const resp = await fetch(urlString, baseInit);
-  if (!resp.ok) return resp;
-  const ct = resp.headers.get('content-type') ?? '';
-  if (!ct.toLowerCase().includes('application/json')) return resp;
-
-  // Layer 1 OOM cap (Content-Length pre-check). Same sizing rationale as
-  // Voyage — 256 MB is "unambiguously not a real ZE response" given
-  // zembed-1's max 2560-dim × 4 bytes × 16K embeddings = ~160 MB raw.
-  const contentLengthHeader = resp.headers.get('content-length');
-  if (contentLengthHeader) {
-    const len = parseInt(contentLengthHeader, 10);
-    if (Number.isFinite(len) && len > MAX_ZEROENTROPY_RESPONSE_BYTES) {
-      throw new ZeroEntropyResponseTooLargeError(
-        `ZeroEntropy response Content-Length=${len} exceeds ` +
-        `${MAX_ZEROENTROPY_RESPONSE_BYTES} bytes — likely compromised endpoint`,
-      );
-    }
-  }
-
-  // INBOUND: rewrite response shape from {results:[{embedding}]} to
-  // {data:[{embedding, index}]} so the AI SDK's openai-compatible schema
-  // validates. Also map usage.total_tokens → prompt_tokens (SDK requires
-  // prompt_tokens when `usage` is present — same divergence Voyage hit at
-  // gateway.ts:655).
-  try {
-    const json: any = await resp.clone().json();
-    if (!json || typeof json !== 'object') return resp;
-    let modified = false;
-    if (Array.isArray(json.results) && !Array.isArray(json.data)) {
-      // Layer 2 OOM cap — per-embedding size. ZE returns float[] arrays,
-      // so we count the elements × 4 bytes (the float32 width).
-      for (const item of json.results) {
-        if (item && Array.isArray(item.embedding)) {
-          const estBytes = item.embedding.length * 4;
-          if (estBytes > MAX_ZEROENTROPY_RESPONSE_BYTES) {
-            throw new ZeroEntropyResponseTooLargeError(
-              `ZeroEntropy embedding exceeds ${MAX_ZEROENTROPY_RESPONSE_BYTES} ` +
-              `bytes (estimated ${estBytes} from ${item.embedding.length} floats)`,
-            );
-          }
-        }
-      }
-      json.data = json.results.map((r: any, i: number) => ({
-        object: 'embedding',
-        embedding: r?.embedding ?? [],
-        index: i,
-      }));
-      delete json.results;
-      modified = true;
-    }
-    if (
-      json.usage &&
-      typeof json.usage === 'object' &&
-      json.usage.prompt_tokens === undefined
-    ) {
-      json.usage.prompt_tokens =
-        typeof json.usage.total_tokens === 'number' ? json.usage.total_tokens : 0;
-      // SDK also expects total_tokens; ZE provides it directly.
-      modified = true;
-    }
-    if (!modified) return resp;
-    return new Response(JSON.stringify(json), {
-      status: resp.status,
-      statusText: resp.statusText,
-      headers: resp.headers,
-    });
-  } catch (err) {
-    // OOM-cap throws MUST propagate. Voyage's pattern: instanceof check on
-    // its own tagged class. Same here — only rethrow our own cap class.
-    if (err instanceof ZeroEntropyResponseTooLargeError) throw err;
-    return resp;
-  }
-}) as unknown as typeof fetch;
-
-/**
- * Generic asymmetric-embedding shim for openai-compatible recipes that
- * ship no compat fetch of their own (llama-server, litellm, ollama, ...).
- * Those deployments are the canonical local/proxy paths for serving
- * asymmetric models (e.g. a zembed-1 behind llama.cpp, vLLM, or an
- * OpenAI-compatible proxy), and they need the same `input_type` signal the
- * hosted ZE endpoint gets — the serving layer can't apply query-side vs
- * document-side encoding without it.
- *
- * Strictly opt-in at the wire level: when no input_type was threaded (the
- * model isn't asymmetric — dims.ts threads it by model id, never for
- * Azure/DashScope/Zhipu-style fixed models — or the caller didn't ask),
- * the request passes through byte-identical. When one WAS threaded
- * (recovered from __embedInputTypeStore — see #1400), inject it into the
- * JSON body; OpenAI-compatible servers that don't understand the field
- * ignore unknown body keys (llama-server does), and asymmetric-aware
- * servers/proxies read it. URL + response shape are untouched — these
- * endpoints are already OpenAI-shaped. Recipes with their own compat
- * fetch (voyage, zeroentropyai, azure) never reach this shim: the
- * `compat.fetch ??` precedence in instantiateEmbedding wins.
- */
 const openAICompatAsymmetricFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   const threadedInputType = __embedInputTypeStore.getStore();
   if (threadedInputType === undefined) return fetch(input as any, init);
@@ -1574,25 +1335,10 @@ export const perplexityCompatFetch = (async (input: RequestInfo | URL, init?: Re
 }) as unknown as typeof fetch;
 
 /**
- * v0.46.3 once-per-(recipe,touchpoint) sunset warning. Fires when a recipe with
- * `sunset` metadata is actually USED (embedding resolution / rerank call), so
- * brains still riding a dying provider hear about it on every process, not
- * only at upgrade time. Module-level memoization (same pattern as
- * storage-config.ts's deprecation warn); `_resetSunsetWarningsForTest()` is
- * the test seam. Never throws — a warning must not take down an embed.
- */
-const _sunsetWarned = new Set<string>();
-export function _resetSunsetWarningsForTest(): void {
-  _sunsetWarned.clear();
-  _sunsetShortCircuited.clear();
-  _noKeyNoticed.clear();
-}
-
-/**
  * v0.48.2 `no_key` preflight traceability. The default reranker is keyed on
  * VOYAGE_API_KEY; a brain without it would otherwise burn one 'auth' audit
  * row PER SEARCH (the gateway's applyResolveAuth throws AIConfigError for the
- * missing key). Mirror of sunsetShortCircuitOnce MINUS the stderr line: the
+ * missing key). The
  * FIRST skip per process per model writes ONE `no_key` row to the
  * rerank-failures audit JSONL (doctor's reranker_health + `gbrain search
  * modes` read it); nothing is printed — shell-per-query agents would see a
@@ -1619,102 +1365,9 @@ function noKeyOnce(modelStr: string, keyName: string, query: string, docCount: n
   }
 }
 
-/**
- * #3657 post-sunset rerank short-circuit. Once a listed reranker's hosted API
- * has passed its announced shutdown date, every gateway.rerank() call against
- * it can only burn the per-query timeout (up to 5s) before failing — so the
- * check below skips the HTTP call entirely and applyReranker fails open at
- * once. It runs where the EFFECTIVE model is resolved (inside rerank(), after
- * `input.model ?? getRerankerModel() ?? DEFAULT_RERANKER_MODEL`) because the
- * main case is an ABSENT per-call model landing on the configured/legacy
- * default. Same base-URL-override suppression as warnSunsetOnce: a
- * self-hosted wire-compatible endpoint outlives the hosted shutdown.
- *
- * Traceability (F3): the FIRST short-circuit per process per model writes one
- * `sunset_short_circuit` row to the rerank-failures audit JSONL (doctor's
- * reranker_health signal) and one stderr line — per-query rows would flood
- * the audit file on every search until the user migrates. The injected clock
- * (`__setSunsetClockForTests`) exists for date-matrix tests only.
- */
-const _sunsetShortCircuited = new Set<string>();
-let _sunsetClock: (() => Date) | null = null;
-export function __setSunsetClockForTests(fn: (() => Date) | null): void {
-  _sunsetClock = fn;
-}
-function sunsetHasPassed(sunset: RerankerSunset): boolean {
-  // Shared date-itself-counts comparison with doctor's provider_sunset check
-  // (defaults.ts:sunsetDateHasPassed) so the two surfaces cannot drift.
-  return sunsetDateHasPassed(sunset.date, _sunsetClock ? _sunsetClock() : undefined);
-}
-function sunsetShortCircuitOnce(
-  modelStr: string,
-  sunset: RerankerSunset,
-  query: string,
-  docCount: number,
-): void {
-  try {
-    if (_sunsetShortCircuited.has(modelStr)) return;
-    _sunsetShortCircuited.add(modelStr);
-    logRerankFailure({
-      model: modelStr,
-      reason: 'sunset_short_circuit',
-      query_hash: createHash('sha256').update(query, 'utf8').digest('hex').slice(0, 8),
-      doc_count: docCount,
-      error_summary:
-        `provider sunset ${sunset.date} passed — rerank calls skipped this process ` +
-        `(results pass through unreranked); switch: gbrain config set search.reranker.model ${sunset.replacement}`,
-    });
-    process.stderr.write(
-      `[gbrain] reranker ${modelStr} passed its ${sunset.date} provider sunset — rerank calls ` +
-        `are skipped (results pass through unreranked). ` +
-        `Switch: \`gbrain config set search.reranker.model ${sunset.replacement}\`\n`,
-    );
-  } catch {
-    // Traceability must never block the fail-open path.
-  }
-}
-function warnSunsetOnce(recipe: Recipe, touchpoint: 'embedding' | 'reranker'): void {
-  try {
-    const sunset = recipe.sunset;
-    if (!sunset) return;
-    // A base-URL override routes this provider id to a user-supplied endpoint
-    // (typically a self-hosted wire-compatible server) — the HOSTED shutdown
-    // doesn't apply, so a per-call deprecation warning would be a false
-    // positive. The removal-release continuity story is carried by the
-    // migration notice/banner instead.
-    if (_config?.base_urls?.[recipe.id]) return;
-    const key = `${recipe.id}:${touchpoint}`;
-    if (_sunsetWarned.has(key)) return;
-    _sunsetWarned.add(key);
-    const replacement =
-      touchpoint === 'embedding' ? sunset.replacement?.embedding : sunset.replacement?.reranker;
-    // Canonical command (defaults.ts renderer) when the replacement IS the
-    // recommended default — always carries the valid --dim; a bespoke
-    // replacement falls back to the target's own declared width via --dim
-    // omission (the recipe default applies).
-    const fix =
-      touchpoint === 'embedding'
-        ? replacement
-          ? replacement === NEW_INSTALL_DEFAULT_EMBEDDING_MODEL
-            ? ` Migrate: \`${renderCanonicalMigrationCommands().recommendedDryRun}\``
-            : ` Migrate: \`gbrain migrate embeddings --to ${replacement} --dry-run\``
-          : ''
-        : replacement
-        ? ` Switch: \`gbrain config set search.reranker.model ${replacement}\``
-        : '';
-    process.stderr.write(
-      `[gbrain] DEPRECATED: ${recipe.name} ${touchpoint} stops working on ` +
-        `${sunset.date}.${sunset.message ? ` ${sunset.message}` : ''}${fix}\n`,
-    );
-  } catch {
-    // Cosmetic; never block the call path.
-  }
-}
-
 async function resolveEmbeddingProvider(modelStr: string): Promise<{ model: any; recipe: Recipe; modelId: string }> {
   const { parsed, recipe } = resolveRecipe(modelStr);
   assertTouchpoint(recipe, 'embedding', parsed.modelId);
-  warnSunsetOnce(recipe, 'embedding');
   const cfg = requireConfig();
 
   const cacheKey = `emb:${recipe.id}:${parsed.modelId}:${cfg.base_urls?.[recipe.id] ?? ''}`;
@@ -1772,7 +1425,6 @@ function instantiateEmbedding(recipe: Recipe, modelId: string, cfg: AIGatewayCon
       // request/response shape) when the recipe doesn't ship its own fetch
       // wrapper via resolveOpenAICompatConfig. Azure recipes ship their own
       // fetch (api-version splice); voyage doesn't — use voyageCompatFetch.
-      // ZeroEntropy needs zeroEntropyCompatFetch (URL path + body input_type
       // + response shape rewrite + OOM caps). Every other openai-compat
       // recipe (llama-server, litellm, ollama, ...) falls through to
       // openAICompatAsymmetricFetch so the threaded input_type reaches
@@ -1783,8 +1435,7 @@ function instantiateEmbedding(recipe: Recipe, modelId: string, cfg: AIGatewayCon
         compat.fetch ??
         (recipe.id === 'voyage'
           ? voyageCompatFetch
-          : recipe.id === 'zeroentropyai'
-          ? zeroEntropyCompatFetch
+
           : recipe.id === 'nvidia'
           ? nvidiaCompatFetch
           : recipe.id === 'perplexity'
@@ -1807,30 +1458,14 @@ function instantiateEmbedding(recipe: Recipe, modelId: string, cfg: AIGatewayCon
 const MIN_SUB_BATCH = 1;
 
 /**
- * #3875: default per-call item cap for `no_batch_cap` recipes (Ollama,
- * LiteLLM proxy). These recipes declare no static token/item cap because the
- * backend's capacity is user-launched — but the per-SDK-call
- * AI_EMBED_TIMEOUT_MS (60s default) then bounded a whole FILE's chunks in one
- * request. A slow local model (CPU Ollama) embedding a large file timed out
- * deterministically and every retry re-sent the same oversized batch. Capping
- * items per sub-batch makes the 60s timeout a per-BATCH budget: 16 chunks per
- * call finishes comfortably even on CPU-bound local models, and a genuinely
- * wedged provider still surfaces the timeout loudly on the first sub-batch.
- * An explicit `max_batch_items` on the recipe always wins over this default.
- *
- * @internal exported for tests; not part of the public gateway API.
- */
-export const NO_BATCH_CAP_SUB_BATCH_ITEMS = 16;
-
-/**
- * Embed many texts. Truncates to MAX_CHARS, then dispatches based on whether
+ * Embed many texts. Truncates to EMBED_MAX_CHARS, then dispatches based on whether
  * the recipe declares a per-batch token budget.
  *
  * Flow:
  * ```
  * embed(texts)
  *   ├─ resolve recipe + model
- *   ├─ truncate each text to MAX_CHARS (8000)
+ *   ├─ truncate each text to EMBED_MAX_CHARS (8000)
  *   ├─ read recipe.touchpoints.embedding.{max_batch_tokens, chars_per_token, safety_factor}
  *   │
  *   ├─ if max_batch_tokens declared (Voyage path):
@@ -1861,15 +1496,7 @@ export const NO_BATCH_CAP_SUB_BATCH_ITEMS = 16;
  * declared `safety_factor` so a transient miss doesn't permanently cap
  * throughput.
  */
-/**
- * Per-call passthroughs for `embed()`. Unifies v0.33.4 cancellation/retry
- * controls and v0.35.0.0 asymmetric-input plumbing into one interface so
- * a future passthrough doesn't churn the call signature again.
- *
- * All fields are optional; production callers that don't pass them get
- * unchanged pre-v0.33.4 behavior with document-side encoding (ZE / Voyage
- * v3+ semantics) as the default.
- */
+
 export interface EmbedOpts {
   /**
    * v0.33.4: propagated to Vercel AI SDK's `embedMany({abortSignal})`.
@@ -1886,14 +1513,6 @@ export interface EmbedOpts {
    * rate-limit pressure (3 × N wrapper attempts).
    */
   maxRetries?: number;
-  /**
-   * v0.35.0.0: asymmetric retrieval signal. `'query'` routes through
-   * `dimsProviderOptions` so providers that accept query/document
-   * encoding (ZE zembed-1, Voyage v3+) produce query-side vectors.
-   * Symmetric providers (OpenAI text-3, DashScope, Zhipu) ignore the
-   * field. Defaults to undefined (treated as 'document' by the dim
-   * resolver — the correct default for indexing paths).
-   */
   inputType?: 'query' | 'document';
   /**
    * v0.36 (D10): explicit model override. When set, routes through this
@@ -1926,7 +1545,7 @@ export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32A
   const resolveTarget = opts?.embeddingModel ?? getEmbeddingModel();
   const tracker = __budgetStore.getStore() ?? null;
   const { model, recipe, modelId } = await resolveEmbeddingProvider(resolveTarget);
-  const truncated = texts.map(t => truncateUtf8(t ?? '', MAX_CHARS));
+  const truncated = truncateEmbedInputs(texts);
 
   // Reserve up front for the worst-case batch token count. Embeddings have
   // no output rate, so maxOutputTokens=0. record() at the end uses the
@@ -1956,43 +1575,14 @@ export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32A
   );
   const expected = effectiveDims;
 
-  const embedding = recipe.touchpoints?.embedding;
   // GBRAIN_EMBED_MAX_BATCH_TOKENS (#3622): operator-declared cap for recipes
-  // that ship without one (ollama/llama-server/litellm declare no_batch_cap
-  // because real capacity depends on the operator's local server). Without
-  // any cap, a page's entire chunk set goes out as ONE request — on a serial
-  // local server that can outlive the embed timeout and starve the queue.
-  // Recipe-declared caps always win; invalid values are ignored. Read from
-  // the configure-time env snapshot (Codex C3), never process.env at call
-  // time — buildGatewayConfig folds the operator's process env into it.
+  // that ship without one. Read from the configure-time env snapshot (Codex
+  // C3), never process.env at call time; invalid values are ignored.
   const envCapRaw = parseInt(cfg.env?.GBRAIN_EMBED_MAX_BATCH_TOKENS ?? '', 10);
   const envCap = Number.isFinite(envCapRaw) && envCapRaw > 0 ? envCapRaw : undefined;
-  const maxBatchTokens = embedding?.max_batch_tokens ?? envCap;
-  const charsPerToken = embedding?.chars_per_token ?? DEFAULT_CHARS_PER_TOKEN;
-
-  // Pre-split is gated on max_batch_tokens. Recipes without it (e.g. OpenAI)
-  // ride the fast path: one embedMany call, no recursion safety net.
-  const tokenBatches = maxBatchTokens
-    ? splitByTokenBudget(truncated, Math.floor(maxBatchTokens * effectiveSafetyFactor(recipe)), charsPerToken)
-    : [truncated];
-
-  // Hard COUNT cap (e.g. llama-server's "maximum allowed batch size 32").
-  // Token budget can't bound item count, so re-split any oversized batch.
-  //
-  // #3875: recipes that declare `no_batch_cap` (Ollama, LiteLLM proxy) have
-  // NO static token cap AND no item cap, so a large file used to ride to the
-  // provider as ONE request — and the 60s AI_EMBED_TIMEOUT_MS (per SDK call)
-  // became a per-FILE budget. A slow local model embedding hundreds of chunks
-  // hit the timeout deterministically, and no amount of retrying could ever
-  // succeed. Default those recipes to a conservative item cap so the per-call
-  // timeout bounds a fixed amount of work; an explicit max_batch_items still
-  // wins.
-  const maxBatchItems =
-    embedding?.max_batch_items ??
-    (embedding?.no_batch_cap === true ? NO_BATCH_CAP_SUB_BATCH_ITEMS : undefined);
-  const batches = maxBatchItems
-    ? tokenBatches.flatMap(b => capBatchItems(b, maxBatchItems))
-    : tokenBatches;
+  // #4616: empty inputs never reach the provider; screenEmbeddings refuses them per item.
+  const sent = sendableEmbeddingInputs(truncated);
+  const batches = sent.length ? planEmbedRequests(sent.map(i => truncated[i]!), recipe, effectiveSafetyFactor(recipe), envCap) : [];
 
   const allEmbeddings: Float32Array[] = [];
   let _embedThrew = false;
@@ -2001,7 +1591,7 @@ export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32A
       const result = await embedSubBatch(batch, model, providerOpts, expected, recipe, modelId, opts);
       allEmbeddings.push(...result);
     }
-    return allEmbeddings;
+    return screenEmbeddings(truncated, sent, allEmbeddings, `${recipe.id}:${modelId}`);
   } catch (err) {
     _embedThrew = true;
     throw err;
@@ -2014,76 +1604,18 @@ export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32A
       // the worst case.
       const charsPerToken = recipe.touchpoints?.embedding?.chars_per_token ?? DEFAULT_CHARS_PER_TOKEN;
       const totalChars = truncated.reduce((s, t) => s + t.length, 0);
-      const inputTokens = Math.ceil(totalChars / Math.max(charsPerToken, 1));
-      try {
-        tracker.record({
-          modelId: `${recipe.id}:${modelId}`,
-          inputTokens,
-          outputTokens: 0,
-          embeddingDims: expected,
-          kind: 'embed',
-          label: _embedThrew ? 'gateway.embed.failed' : 'gateway.embed',
-        });
-      } catch {
-        // BudgetExhausted (TX1) — original throw (if any) wins.
-      }
+      recordOnTracker(tracker, {
+        modelId: `${recipe.id}:${modelId}`,
+        requestedModelId: resolveTarget,
+        inputTokens: Math.ceil(totalChars / Math.max(charsPerToken, 1)),
+        outputTokens: 0,
+        embeddingDims: expected,
+        kind: 'embed',
+        label: _embedThrew ? 'gateway.embed.failed' : 'gateway.embed',
+        estimated: true,
+      });
     }
   }
-}
-
-/**
- * Split texts into sub-batches that stay under the provided budget. Pure;
- * no module state. Exported for the adaptive-embed-batch test suite.
- *
- * @param texts - The texts to partition. Each text counts as
- *   `Math.ceil(text.length / charsPerToken)` tokens for budget purposes.
- * @param budgetTokens - The token ceiling for each sub-batch. Caller is
- *   responsible for applying any safety-factor shrink before passing in.
- * @param charsPerToken - Provider-specific character density. Defaults to
- *   `DEFAULT_CHARS_PER_TOKEN` (4) when omitted, matching OpenAI tiktoken.
- *
- * @internal exported for tests; not part of the public gateway API.
- */
-export function splitByTokenBudget(
-  texts: string[],
-  budgetTokens: number,
-  charsPerToken: number = DEFAULT_CHARS_PER_TOKEN,
-): string[][] {
-  const ratio = charsPerToken > 0 ? charsPerToken : DEFAULT_CHARS_PER_TOKEN;
-  const batches: string[][] = [];
-  let current: string[] = [];
-  let currentTokens = 0;
-
-  for (const text of texts) {
-    const estTokens = Math.ceil(text.length / ratio);
-    if (current.length > 0 && currentTokens + estTokens > budgetTokens) {
-      batches.push(current);
-      current = [];
-      currentTokens = 0;
-    }
-    current.push(text);
-    currentTokens += estTokens;
-  }
-  if (current.length > 0) batches.push(current);
-
-  return batches;
-}
-
-/**
- * Split a batch into sub-batches of at most `maxItems` inputs. Enforces a
- * hard COUNT cap that the token-budget split can't (many tiny inputs fit
- * under any token budget). Used for endpoints like llama.cpp's llama-server
- * that reject requests exceeding their launch batch size.
- *
- * @internal exported for tests; not part of the public gateway API.
- */
-export function capBatchItems(texts: string[], maxItems: number): string[][] {
-  if (maxItems <= 0 || texts.length <= maxItems) return [texts];
-  const batches: string[][] = [];
-  for (let i = 0; i < texts.length; i += maxItems) {
-    batches.push(texts.slice(i, i + maxItems));
-  }
-  return batches;
 }
 
 /**
@@ -2166,10 +1698,7 @@ async function embedSubBatch(
 ): Promise<Float32Array[]> {
   try {
     const callTransport = () => invokeAI({ operation: 'gateway.embed', kind: 'embedding', model: `${recipe.id}:${modelId}`,
-      maxInputTokens: recipe.touchpoints.embedding?.max_batch_tokens
-        ?? (recipe.touchpoints.embedding?.max_input_tokens?.[modelId] !== undefined
-          ? recipe.touchpoints.embedding.max_input_tokens[modelId]! * texts.length : undefined),
-      maxOutputTokens: 0 }, () => _embedTransport({
+      maxInputTokens: embedRequestMaxInputTokens(texts, recipe, modelId), maxOutputTokens: 0 }, () => _embedTransport({
       model,
       values: texts,
       providerOptions: providerOpts,
@@ -2179,7 +1708,7 @@ async function embedSubBatch(
       // deadline) — shorter wins.
       abortSignal: withDefaultTimeout(opts?.abortSignal, AI_EMBED_TIMEOUT_MS),
       ...(hasAIInvocationGuard() ? { maxRetries: 0 } : opts?.maxRetries !== undefined ? { maxRetries: opts.maxRetries } : {}),
-    }), sdkInvocationUsage);
+    }), sdkInvocationUsage, err => isTokenLimitError(err) ? { inputTokens: 0, outputTokens: 0 } : null);
     // Carry the threaded input_type across the SDK boundary via
     // __embedInputTypeStore (the adapter strips it from providerOptions —
     // see the store's doc comment). Populated only when dimsProviderOptions
@@ -2230,21 +1759,6 @@ export async function embedOne(text: string, opts?: EmbedOpts): Promise<Float32A
   return v;
 }
 
-/**
- * v0.35.0.0+: embed a single text on the QUERY side of an asymmetric retrieval
- * pipeline. Threads `inputType: 'query'` into `dimsProviderOptions`, which
- * for ZE (`zembed-1`) and Voyage v3+ models emits `input_type: 'query'` into
- * the request body so the provider returns query-side vectors. For
- * symmetric providers (OpenAI text-3, DashScope, Zhipu) the field is dropped
- * — no behavior change.
- *
- * Two call sites in v0.33.2: vector seed embed at hybrid.ts:400 (cache miss
- * path) and cache lookup embed at hybrid.ts:629. All ingest paths (sync,
- * import, embed CLI) continue to use `embed()` which defaults to document
- * encoding.
- *
- * Returns a single Float32Array (not a batch).
- */
 export async function embedQuery(
   text: string,
   opts?: { embeddingModel?: string; dimensions?: number; abortSignal?: AbortSignal },
@@ -2292,9 +1806,7 @@ export async function embedMultimodal(
   // Prefer embedding_multimodal_model when set, so brains using OpenAI for
   // text embeddings can route multimodal to Voyage without changing the
   // primary embedding_model. Falls back to embedding_model for single-model setups.
-  const modelStr = cfg.embedding_multimodal_model
-    ?? cfg.embedding_model
-    ?? DEFAULT_EMBEDDING_MODEL;
+  const modelStr = cfg.embedding_multimodal_model ?? getEmbeddingModel();
   const { parsed, recipe } = resolveRecipe(modelStr);
   const touchpoint = recipe.touchpoints.embedding;
   if (!touchpoint?.supports_multimodal) {
@@ -2439,7 +1951,7 @@ export async function embedMultimodal(
     }
   }
 
-  return allEmbeddings;
+  return screenAlignedEmbeddings(allEmbeddings, `${recipe.id}:${parsed.modelId}`);
 }
 
 // Documentation pointer: callers must size-check before calling. Voyage caps
@@ -2600,7 +2112,7 @@ async function embedMultimodalOpenAICompat(
     allEmbeddings.push(new Float32Array(row.embedding));
   }
 
-  return allEmbeddings;
+  return screenAlignedEmbeddings(allEmbeddings, `${recipe.id}:${modelId}`);
 }
 
 // ---- v0.36 cross-modal wave: query-side multimodal embedding + safe variant ----
@@ -2695,6 +2207,10 @@ export async function embedMultimodalSafe(
     } catch (err) {
       if (isAIInvocationPolicyError(err)) throw err;
       lastError = err instanceof Error ? err : new Error(String(err));
+      if (isEmbeddingZeroNormError(err)) {
+        err.vectors.forEach((v, i) => { if (v) embeddings[startIdx + i] = v; else failedIndices.push(startIdx + i); });
+        return;
+      }
       // AIConfigError = permanent misconfig. Retrying smaller won't help.
       if (lastError instanceof AIConfigError) {
         for (let i = 0; i < items.length; i++) failedIndices.push(startIdx + i);
@@ -2828,26 +2344,6 @@ function normalizeSdkUsage(usage: unknown): { inputTokens: number; outputTokens:
 }
 
 /**
- * #4121 — one fail-open record wrapper for every uninstrumented-path spend
- * site (expand + OCR): no-tracker is a no-op; BudgetExhausted from record()
- * (TX1) is swallowed exactly like chat()'s _recordBudget — the breach
- * surfaces on the NEXT reserve(), never here.
- */
-function recordSpendOnTracker(
-  tracker: ReturnType<typeof getCurrentBudgetTracker>,
-  modelId: string,
-  label: string,
-  tokens: { inputTokens: number; outputTokens: number },
-): void {
-  if (!tracker) return;
-  try {
-    tracker.record({ modelId, inputTokens: tokens.inputTokens, outputTokens: tokens.outputTokens, label });
-  } catch {
-    // BudgetExhausted (TX1) — surfaced via the next reserve().
-  }
-}
-
-/**
  * Expand a search query into up to 4 related queries.
  * Returns the original query PLUS expansions. On failure, returns just the original.
  * Caller is responsible for sanitizing the query (prompt-injection boundary stays in expansion.ts).
@@ -2881,31 +2377,27 @@ export async function expand(query: string): Promise<string[]> {
   // provider tokens; the viaText fallback then bills its own call, so one
   // expand() can legitimately produce TWO records). Fail-open (no tracker →
   // no-op) and swallow BudgetExhausted the same way chat()'s _recordBudget
-  // does — TX1 surfaces on the NEXT reserve(), not here.
+  // does — TX1 surfaces on the NEXT reserve(), not here. The fallback's
+  // record is an extra attempt of the same operation (countsAsCall: false).
   const tracker = getCurrentBudgetTracker();
-  const recordExpansion = (
-    modelLabel: string,
-    label: 'gateway.expand' | 'gateway.expand.failed',
-    tokens: { inputTokens: number; outputTokens: number },
-  ): void => recordSpendOnTracker(tracker, modelLabel, label, tokens);
-  const recordExpansionUsage = (modelLabel: string, usage: unknown): void =>
-    recordExpansion(modelLabel, 'gateway.expand', normalizeSdkUsage(usage));
   const estimatedPromptTokens = estimateChatInputTokens({
     messages: [{ content: expansionPrompt }],
   });
-  const recordExpansionFailure = (modelLabel: string, err: unknown): void =>
-    recordExpansion(
-      modelLabel,
-      'gateway.expand.failed',
-      _extractUsageFromError(err, {
-        inputTokens: estimatedPromptTokens,
-        outputTokens: EXPANSION_FAILED_PESSIMISTIC_OUTPUT_TOKENS,
-      }),
-    );
 
   try {
-    const { model, recipe, modelId } = await resolveExpansionProvider(getExpansionModel());
+    const requestedModelId = getExpansionModel();
+    const { model, recipe, modelId } = await resolveExpansionProvider(requestedModelId);
     const modelLabel = `${recipe.id}:${modelId}`;
+    const recordExpansionUsage = (usage: unknown, countsAsCall: boolean): void =>
+      recordOnTracker(tracker, { modelId: modelLabel, requestedModelId, label: 'gateway.expand', countsAsCall, ...normalizeSdkUsage(usage) });
+    const recordExpansionFailure = (err: unknown, countsAsCall: boolean): void =>
+      recordOnTracker(tracker, {
+        modelId: modelLabel,
+        requestedModelId,
+        label: 'gateway.expand.failed',
+        countsAsCall,
+        ...failedCallUsage(err, { inputTokens: estimatedPromptTokens, outputTokens: EXPANSION_FAILED_PESSIMISTIC_OUTPUT_TOKENS }),
+      });
 
     let expansions: string[];
 
@@ -2913,7 +2405,7 @@ export async function expand(query: string): Promise<string[]> {
     // support is unknown: the AI SDK can't send a json_schema response_format
     // there, so generateObject would warn and silently degrade. generateText + a
     // tolerant parse recovers the queries instead. Fresh abortSignal per call.
-    const viaText = async (): Promise<string[]> => {
+    const viaText = async (countsAsCall = true): Promise<string[]> => {
       let textResult: Awaited<ReturnType<GenerateTextFn>>;
       try {
         textResult = await guardedGeneration(modelLabel, _generateTextTransport, {
@@ -2923,10 +2415,10 @@ export async function expand(query: string): Promise<string[]> {
         });
       } catch (err) {
         if (isAIInvocationPolicyError(err)) throw err;
-        recordExpansionFailure(modelLabel, err); // failed call still billed upstream
+        recordExpansionFailure(err, countsAsCall); // failed call still billed upstream
         throw err; // outer catch degrades to [query]
       }
-      recordExpansionUsage(modelLabel, textResult.usage);
+      recordExpansionUsage(textResult.usage, countsAsCall);
       return parseExpansionResponse(textResult.text) ?? [];
     };
 
@@ -2980,10 +2472,10 @@ export async function expand(query: string): Promise<string[]> {
         });
       } catch (err) {
         if (isAIInvocationPolicyError(err)) throw err;
-        recordExpansionFailure(modelLabel, err);
+        recordExpansionFailure(err, true);
         throw err; // outer catch degrades to [query]
       }
-      recordExpansionUsage(modelLabel, result.usage);
+      recordExpansionUsage(result.usage, true);
       const parsed = ExpansionSchema.safeParse(result.object);
       expansions = parsed.success ? parsed.data.queries : [];
     } else if (recipeSupportsStructuredOutputs(recipe) && !_structuredOutputRejectedRecipes.has(recipe.id)) {
@@ -3003,18 +2495,18 @@ export async function expand(query: string): Promise<string[]> {
           abortSignal: withDefaultTimeout(undefined, AI_CHAT_TIMEOUT_MS),
           prompt: expansionPrompt,
         });
-        recordExpansionUsage(modelLabel, result.usage);
+        recordExpansionUsage(result.usage, true);
         const parsed = ExpansionSchema.safeParse(result.object);
         expansions = parsed.success ? parsed.data.queries : [];
       } catch (err) {
         if (isAIInvocationPolicyError(err)) throw err;
         // The rejected structured attempt billed real tokens — record it
         // before the fallback bills its own call (two records, both true).
-        recordExpansionFailure(modelLabel, err);
+        recordExpansionFailure(err, true);
         // Adversarial F5: don't re-pay this attempt on every call — the
         // capability mis-declaration is stable for the process lifetime.
         _structuredOutputRejectedRecipes.add(recipe.id);
-        expansions = await viaText();
+        expansions = await viaText(false);
       }
     } else {
       // openai-compatible backend, structured-output support unknown: skip the
@@ -3085,8 +2577,8 @@ export async function generateOcrText(imageBytes: Buffer, mime: string): Promise
   const estimatedOcrInputTokens =
     estimateChatInputTokens({ system: systemPrompt, messages: [{ content: 'Extract visible text only.' }] }) +
     OCR_IMAGE_INPUT_TOKEN_ESTIMATE;
-  const recordOcr = (label: 'gateway.ocr' | 'gateway.ocr.failed', tokens: { inputTokens: number; outputTokens: number }): void =>
-    recordSpendOnTracker(tracker, ocrModelId, label, tokens);
+  const recordOcr = (label: 'gateway.ocr' | 'gateway.ocr.failed', usage: { inputTokens: number; outputTokens: number }): void =>
+    recordOnTracker(tracker, { modelId: ocrModelId, requestedModelId: ocrModel, label, ...usage });
   let result: Awaited<ReturnType<GenerateTextFn>>;
   try {
     result = await guardedGeneration(ocrModelId, _generateTextTransport, {
@@ -3112,7 +2604,7 @@ export async function generateOcrText(imageBytes: Buffer, mime: string): Promise
     });
   } catch (err) {
     if (isAIInvocationPolicyError(err)) throw err;
-    recordOcr('gateway.ocr.failed', _extractUsageFromError(err, {
+    recordOcr('gateway.ocr.failed', failedCallUsage(err, {
       inputTokens: estimatedOcrInputTokens,
       outputTokens: DEFAULT_MAX_OUTPUT_TOKENS,
     }));
@@ -3510,6 +3002,44 @@ export interface ChatOpts {
    * request body — the AI SDK routes provider options by provider key.
    */
   cacheSystem?: boolean;
+  /**
+   * JSON Schema the reply must conform to (#4863). Honored ONLY on
+   * openai-compatible recipes that declare `supports_structured_outputs` —
+   * backends that enforce `response_format: json_schema` server-side
+   * (Ollama's grammar-constrained decoding). Every other lane ignores the
+   * field, so native / claude-cli calls are byte-identical with or without
+   * it, and the reply still arrives as `text`: callers keep parsing and
+   * validating it themselves (see `jsonSchemaOutput`).
+   */
+  responseSchema?: { name: string; description?: string; schema: Record<string, unknown> };
+  /** Caller purpose (`skillopt.judge`, …) stamped on the BudgetTracker ledger row. */
+  purpose?: string;
+}
+
+/**
+ * Tolerant AI SDK `Output` spec for `ChatOpts.responseSchema` (#4863). NOT
+ * `Output.object`: generateText parses `output` eagerly when finishReason is
+ * 'stop', and Output.object throws NoObjectGeneratedError on unparseable
+ * text — that would turn a recoverable malformed reply into a thrown
+ * provider_error and skip the caller's own parse + retry lane. This spec only
+ * carries the responseFormat (what the openai-compatible provider turns into
+ * `response_format: json_schema`) and hands the raw text back, so
+ * result.text / stopReason / usage / the facts #2113 truncation retry all run
+ * unchanged. The streaming members are inert (chat() never streams).
+ */
+function jsonSchemaOutput(spec: NonNullable<ChatOpts['responseSchema']>): Output.Output<string, string, never> {
+  return {
+    name: 'json_schema',
+    responseFormat: Promise.resolve({
+      type: 'json' as const,
+      schema: spec.schema as JSONSchema7,
+      name: spec.name,
+      ...(spec.description ? { description: spec.description } : {}),
+    }),
+    parseCompleteOutput: async ({ text }) => text,
+    parsePartialOutput: async () => undefined,
+    createElementStreamTransform: () => undefined,
+  };
 }
 
 /**
@@ -3869,6 +3399,7 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
   }
   const estimatedInputTokens = estimateChatInputTokens(opts);
   const maxOutputTokens = opts.maxTokens ?? defaultMaxOutputTokens(modelStrEarly);
+  const chatRecord = { requestedModelId: modelStrEarly, purpose: opts.purpose, label: 'gateway.chat' };
 
   // TX5: reserve BEFORE the provider call. Throws BudgetExhausted on cost,
   // runtime, or no_pricing (when cap is set). Pre-resolution model id is
@@ -3910,34 +3441,9 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
       threw = err;
       throw err;
     } finally {
-      if (tracker) {
-        try {
-          if (res) {
-            tracker.record({
-              modelId: res.model ?? modelStrEarly,
-              inputTokens: res.usage.input_tokens,
-              outputTokens: res.usage.output_tokens,
-              label: 'gateway.chat',
-            });
-          } else {
-            const usage = _extractUsageFromError(threw, {
-              inputTokens: estimatedInputTokens,
-              outputTokens: maxOutputTokens,
-            });
-            tracker.record({
-              modelId: modelStrEarly,
-              inputTokens: usage.inputTokens,
-              outputTokens: usage.outputTokens,
-              label: 'gateway.chat',
-            });
-          }
-        } catch {
-          // record() can throw BudgetExhausted (TX1) — suppress here so the
-          // original error (if any) wins; the BudgetExhausted is surfaced
-          // on the NEXT call via reserve(). For test transport this branch
-          // is rare in practice.
-        }
-      }
+      recordOnTracker(tracker, res
+        ? { ...chatRecord, modelId: res.model ?? modelStrEarly, inputTokens: res.usage.input_tokens, outputTokens: res.usage.output_tokens }
+        : { ...chatRecord, modelId: modelStrEarly, ...failedCallUsage(threw, { inputTokens: estimatedInputTokens, outputTokens: maxOutputTokens }) });
     }
   }
 
@@ -4027,19 +3533,10 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
   }
 
   let _budgetRecorded = false;
-  const _recordBudget = (modelLabel: string, inputTokens: number, outputTokens: number): void => {
-    if (!tracker || _budgetRecorded) return;
+  const _recordBudget = (usage: { inputTokens: number; outputTokens: number; failed?: boolean; estimated?: boolean }): void => {
+    if (_budgetRecorded) return;
     _budgetRecorded = true;
-    try {
-      tracker.record({
-        modelId: modelLabel,
-        inputTokens,
-        outputTokens,
-        label: 'gateway.chat',
-      });
-    } catch {
-      // BudgetExhausted (TX1) raised here; surface via next reserve()
-    }
+    recordOnTracker(tracker, { ...chatRecord, modelId: `${recipe.id}:${modelId}`, ...usage });
   };
 
   // The actual Anthropic system-prompt cache breakpoint. A bare string
@@ -4060,20 +3557,52 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
       }
     : opts.system;
 
+  // #4863: schema-constrained decoding for openai-compatible backends that
+  // honor json_schema. Gated on the recipe declaration so a backend that
+  // would reject the schema is never sent one; a declared backend that
+  // ignores it just returns unconstrained text, which the caller's parse
+  // lane already handles. Native + claude-cli lanes never see the field.
+  // A declared backend that REJECTS it at call time (older Ollama build,
+  // strict proxy) gets one schemaless retry below and is remembered in
+  // `_structuredOutputRejectedRecipes` — the same process-lifetime memory
+  // expand() keeps — so the caller's own retry lanes don't re-pay the
+  // rejection and turn every call into a permanent provider_error.
+  const output = opts.responseSchema
+    && recipe.implementation === 'openai-compatible'
+    && recipeSupportsStructuredOutputs(recipe)
+    && !_structuredOutputRejectedRecipes.has(recipe.id)
+    ? jsonSchemaOutput(opts.responseSchema)
+    : undefined;
+
+  const generate = (out: typeof output) => guardedGeneration(modelStr, _generateTextTransport, {
+    model,
+    system: systemParam,
+    messages: toModelMessages(repairToolPairing(opts.messages)) as any,
+    tools: opts.tools && opts.tools.length > 0 ? tools : undefined,
+    maxOutputTokens: opts.maxTokens ?? defaultMaxOutputTokens(modelStr),
+    ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
+    output: out,
+    // v0.42.20.0 — default a chat timeout (composes with the caller's signal,
+    // shorter wins). Covers native-anthropic (the default provider + facts Haiku).
+    // Fresh signal per attempt so the schemaless retry gets its own timeout.
+    abortSignal: withDefaultTimeout(opts.abortSignal, AI_CHAT_TIMEOUT_MS),
+    providerOptions: Object.keys(providerOptions).length > 0 ? providerOptions : undefined,
+    ...(requestHeaders ? { headers: requestHeaders } : {}),
+  });
+
   try {
-    const result = await guardedGeneration(modelStr, _generateTextTransport, {
-      model,
-      system: systemParam,
-      messages: toModelMessages(repairToolPairing(opts.messages)) as any,
-      tools: opts.tools && opts.tools.length > 0 ? tools : undefined,
-      maxOutputTokens: opts.maxTokens ?? defaultMaxOutputTokens(modelStr),
-      ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
-      // v0.42.20.0 — default a chat timeout (composes with the caller's signal,
-      // shorter wins). Covers native-anthropic (the default provider + facts Haiku).
-      abortSignal: withDefaultTimeout(opts.abortSignal, AI_CHAT_TIMEOUT_MS),
-      providerOptions: Object.keys(providerOptions).length > 0 ? providerOptions : undefined,
-      ...(requestHeaders ? { headers: requestHeaders } : {}),
-    });
+    let result: Awaited<ReturnType<GenerateTextFn>>;
+    try {
+      result = await generate(output);
+    } catch (err) {
+      if (!output || isAIInvocationPolicyError(err) || !isStructuredOutputRejection(err)) throw err;
+      _structuredOutputRejectedRecipes.add(recipe.id);
+      console.warn(
+        `[ai.gateway] ${recipe.id} rejected response_format json_schema; retrying without a schema ` +
+        `and skipping it for the rest of this process: ${(err as Error)?.message ?? String(err)}`,
+      );
+      result = await generate(undefined);
+    }
 
     // Normalize blocks. Vercel SDK gives us `result.content` (an array of typed
     // parts) for v6+; fall back to text + toolCalls for older shapes.
@@ -4122,7 +3651,7 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
     const anthropicCache = providerMetadata?.anthropic ?? {};
 
     const { inputTokens: inTok, outputTokens: outTok } = normalizeSdkUsage(usage);
-    _recordBudget(`${recipe.id}:${modelId}`, inTok, outTok);
+    _recordBudget({ inputTokens: inTok, outputTokens: outTok });
 
     const usageOut = {
       input_tokens: inTok,
@@ -4155,11 +3684,7 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
     if (isAIInvocationPolicyError(err)) throw err;
     // Pessimistic fallback (A3 amended): when err.usage isn't there, charge
     // the worst-case ceiling — better to overcount on failure than under.
-    const fallback = _extractUsageFromError(err, {
-      inputTokens: estimatedInputTokens,
-      outputTokens: maxOutputTokens,
-    });
-    _recordBudget(`${recipe.id}:${modelId}`, fallback.inputTokens, fallback.outputTokens);
+    _recordBudget(failedCallUsage(err, { inputTokens: estimatedInputTokens, outputTokens: maxOutputTokens }));
     throw normalizeAIError(err, `chat(${recipe.id}:${modelId})`);
   }
 }
@@ -4217,6 +3742,8 @@ export interface ToolLoopOpts {
    * Silently ignored on recipes that declare no prompt caching.
    */
   cacheSystem?: boolean;
+  /** Forwarded to every `chat()` turn; see `ChatOpts.purpose`. */
+  purpose?: string;
 
   /** Crash-replay state. When set, the loop resumes from the recorded position. */
   replayState?: ToolLoopReplayState;
@@ -4365,6 +3892,7 @@ export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
           ? (opts.abortSignal ? AbortSignal.any([opts.abortSignal, turnPermitSignal]) : turnPermitSignal)
           : opts.abortSignal,
         cacheSystem: opts.cacheSystem,
+        purpose: opts.purpose,
       });
     } catch (err) {
       if (isAIInvocationPolicyError(err)) throw err;
@@ -4591,24 +4119,6 @@ export function __setRerankTransportForTests(fn: RerankTransport | null): void {
 
 const DEFAULT_RERANK_TIMEOUT_MS = 5000;
 
-/**
- * Submit a query + N documents to the configured reranker. Returns a list of
- * `{index, relevanceScore}` sorted by relevanceScore descending (per upstream
- * convention).
- *
- * Resolution order: `input.model` → `getRerankerModel()` → `DEFAULT_RERANKER_MODEL`.
- *
- * Pre-flight: rejects payloads that would exceed
- * `recipe.touchpoints.reranker.max_payload_bytes` (default 5MB for ZE) with
- * `RerankError(reason: 'payload_too_large')`. applyReranker catches this in
- * the fail-open path so search never throws.
- *
- * Errors classified into RerankError.reason for the caller's fail-open
- * decision table. The model list check below is rerank-specific and
- * deliberate (assertTouchpoint never checks model ids): each listed reranker
- * model maps to a known request/response wire shape, so an unknown id could
- * mis-parse a response rather than fail cleanly.
- */
 export async function rerank(input: RerankInput): Promise<RerankResult[]> {
   if (!input.query) {
     throw new RerankError('rerank: query is required', 'unknown');
@@ -4638,23 +4148,6 @@ export async function rerank(input: RerankInput): Promise<RerankResult[]> {
       'unknown',
     );
   }
-  // #3657 post-sunset short-circuit (see sunsetShortCircuitOnce): past the
-  // provider's announced shutdown, skip the HTTP call entirely and throw the
-  // dedicated fail-open reason. Checked HERE — the effective model is resolved
-  // by now — and suppressed under a base-URL override (self-host continuity,
-  // same rule warnSunsetOnce applies).
-  const sunset = rerankerSunset(modelStr);
-  if (sunset && !_config?.base_urls?.[recipe.id] && sunsetHasPassed(sunset)) {
-    sunsetShortCircuitOnce(modelStr, sunset, input.query, input.documents.length);
-    throw new RerankError(
-      `Reranker ${modelStr} passed its ${sunset.date} provider sunset — rerank skipped. ` +
-        `Switch: gbrain config set search.reranker.model ${sunset.replacement}`,
-      'sunset_short_circuit',
-    );
-  }
-  warnSunsetOnce(recipe, 'reranker');
-
-  // Resolve base URL + auth from the recipe (same path Voyage/ZE embeddings use).
   const cfg = requireConfig();
   // v0.48.2 `no_key` preflight — fail-open, audit-only, once per process per
   // model (see noKeyOnce). A recipe without a custom resolveAuth needs every
@@ -4675,13 +4168,12 @@ export async function rerank(input: RerankInput): Promise<RerankResult[]> {
     }
   }
   const compat = applyOpenAICompatConfig(recipe, cfg);
-  // v0.40.6.1: rerank URL path is recipe-pluggable. Defaults to ZeroEntropy's
   // legacy `/models/rerank`; openai-style providers like llama.cpp's
   // llama-server set `/v1/rerank`; Voyage sets `/rerank`. Response shape is
   // shared across all current dialects ({results: [{index, relevance_score}]});
   // the only request-side difference is the top-N key, declared per recipe via
   // `top_param` (v0.46.3).
-  const url = `${compat.baseURL.replace(/\/$/, '')}${tp.path ?? '/models/rerank'}`;
+  const url = `${compat.baseURL.replace(/\/$/, '')}${tp.path ?? '/rerank'}`;
   let auth: { apiKey?: string; headers?: Record<string, string> };
   try {
     auth = applyResolveAuth(recipe, cfg, 'reranker');
@@ -4706,7 +4198,6 @@ export async function rerank(input: RerankInput): Promise<RerankResult[]> {
   });
 
   // Pre-flight payload size guard (CDX1-F17 / plan Phase 3 cost guard). The
-  // 5MB cap matches ZE's upstream limit; over-cap returns payload_too_large
   // so applyReranker can fail-open without ever issuing the HTTP request.
   const bodyBytes = Buffer.byteLength(body, 'utf8');
   if (bodyBytes > tp.max_payload_bytes) {
@@ -4722,7 +4213,7 @@ export async function rerank(input: RerankInput): Promise<RerankResult[]> {
   headers.set('Content-Type', 'application/json');
 
   // Budget admission happens HERE — after every preflight that can skip the
-  // call (sunset short-circuit, no_key, unknown model, payload cap) and BEFORE
+  // call (no_key, unknown model, payload cap) and BEFORE
   // the abort timer is armed, so a BudgetExhausted throw leaves no live timer.
   // A reservation ahead of the preflights was never settled when they threw,
   // leaking one projection per search on a keyless brain under a cost cap.
@@ -4752,25 +4243,24 @@ export async function rerank(input: RerankInput): Promise<RerankResult[]> {
   }
 
   let _rerankRecorded = false;
-  const _rerankRecord = (): void => {
-    if (!tracker || _rerankRecorded) return;
+  const _rerankRecord = (failed: boolean): void => {
+    if (_rerankRecorded) return;
     _rerankRecorded = true;
-    try {
-      const totalChars = input.query.length + input.documents.reduce((s, d) => s + d.length, 0);
-      tracker.record({
-        modelId: modelStr,
-        inputTokens: Math.ceil(totalChars / 4),
-        outputTokens: 0,
-        kind: 'rerank',
-        label: 'gateway.rerank',
-      });
-    } catch {
-      // BudgetExhausted (TX1) suppressed; surfaces on next reserve().
-    }
+    const totalChars = input.query.length + input.documents.reduce((s, d) => s + d.length, 0);
+    recordOnTracker(tracker, {
+      modelId: modelStr,
+      inputTokens: Math.ceil(totalChars / 4),
+      outputTokens: 0,
+      kind: 'rerank',
+      label: 'gateway.rerank',
+      estimated: true,
+      failed,
+    });
   };
   try {
     const transport: RerankTransport = _rerankTransport ?? ((u, init) => fetch(u, init));
-    const resp = await invokeAI({ operation: 'gateway.rerank', kind: 'rerank', model: modelStr }, () => transport(url, {
+    const maxInputTokens = rerankRequestMaxInputTokens(input.query, input.documents);
+    const resp = await invokeAI({ operation: 'gateway.rerank', kind: 'rerank', model: modelStr, maxInputTokens }, () => transport(url, {
       method: 'POST',
       headers,
       body,
@@ -4796,8 +4286,7 @@ export async function rerank(input: RerankInput): Promise<RerankResult[]> {
     }
     const json: any = await resp.json();
     // v0.46.3: two response dialects share the item shape {index,
-    // relevance_score} but differ in the array key — ZE/llama-server return
-    // `results[]`, Voyage's REST returns `data[]` ({object: "list", data:
+      // `results[]`, Voyage's REST returns `data[]` ({object: "list", data:
     // [...]}, live-wire verified 2026-08-15; Voyage's Python SDK renames it
     // `results`, which is why docs-level checks get this wrong). Accept both.
     const items: any[] | null = Array.isArray(json?.results)
@@ -4812,11 +4301,11 @@ export async function rerank(input: RerankInput): Promise<RerankResult[]> {
       index: typeof r.index === 'number' ? r.index : 0,
       relevanceScore: typeof r.relevance_score === 'number' ? r.relevance_score : 0,
     }));
-    _rerankRecord();
+    _rerankRecord(false);
     return mapped;
   } catch (err) {
     if (isAIInvocationPolicyError(err)) throw err;
-    _rerankRecord();
+    _rerankRecord(true);
     if (err instanceof RerankError) throw err;
     // AbortError on timeout — classify cleanly.
     if (err && typeof err === 'object' && (err as any).name === 'AbortError') {

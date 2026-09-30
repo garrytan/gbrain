@@ -22,6 +22,7 @@ function citationParagraphs(
 ): CitationParagraph[] {
   const paragraphs: CitationParagraph[] = [];
   let lines: string[] = [];
+  let skippedBlock = false;
 
   const flush = () => {
     if (lines.length === 0) return;
@@ -36,8 +37,12 @@ function citationParagraphs(
     }
     if (opts.skipLine?.(line)) {
       flush();
+      skippedBlock = true;
       continue;
     }
+    // Continuations belong to the already-indexed bullet, including citations.
+    if (skippedBlock && /^\s/.test(line)) { flush(); continue; }
+    skippedBlock = false;
     if (lines.length > 0 && startsMarkdownBlock(line)) flush();
     lines.push(line);
   }

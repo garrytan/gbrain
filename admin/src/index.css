@@ -2,6 +2,7 @@
   --bg-primary: #0a0a0f;
   --bg-secondary: #14141f;
   --bg-tertiary: #1e1e2e;
+  --border: #1e1e2e;
   --text-primary: #e0e0e0;
   --text-secondary: #888;
   /* v0.36.1.0 TD2 — bumped from #555 (contrast 4.0 on #0a0a0f bg, below WCAG AA
@@ -17,6 +18,10 @@
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
+
+.client-name-button { background: none; border: 0; padding: 0; color: inherit; font: inherit; font-weight: 500; cursor: pointer; text-align: left; }
+.client-name-button:hover { text-decoration: underline; }
+:focus-visible { outline: 2px solid #88aaff; outline-offset: 3px; }
 
 body {
   font-family: var(--font-sans);

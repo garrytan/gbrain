@@ -1,0 +1,547 @@
+{
+  "golden": [
+    {
+      "handlers": [
+        "resolveTrustProxy(process . env . GBRAIN_HTTP_TRUST_PROXY)"
+      ],
+      "method": "set",
+      "path": "trust proxy",
+      "when": []
+    },
+    {
+      "handlers": [
+        "cookieParser()"
+      ],
+      "method": "use",
+      "path": null,
+      "when": []
+    },
+    {
+      "handlers": [
+        "<inline>"
+      ],
+      "method": "use",
+      "path": null,
+      "when": []
+    },
+    {
+      "handlers": [
+        "metricsTrackingMiddleware(metricsCounters)"
+      ],
+      "method": "use",
+      "path": null,
+      "when": []
+    },
+    {
+      "handlers": [
+        "cors(corsOAuthOptions)"
+      ],
+      "method": "use",
+      "path": "/mcp",
+      "when": []
+    },
+    {
+      "handlers": [
+        "cors(corsOAuthOptions)"
+      ],
+      "method": "use",
+      "path": "/authorize",
+      "when": []
+    },
+    {
+      "handlers": [
+        "mountOAuthCorsGate(corsOAuthOptions)"
+      ],
+      "method": "use",
+      "path": "/token",
+      "when": []
+    },
+    {
+      "handlers": [
+        "mountOAuthCorsGate(corsOAuthOptions)"
+      ],
+      "method": "use",
+      "path": "/register",
+      "when": []
+    },
+    {
+      "handlers": [
+        "mountOAuthCorsGate(corsOAuthOptions)"
+      ],
+      "method": "use",
+      "path": "/revoke",
+      "when": []
+    },
+    {
+      "handlers": [
+        "express.json()",
+        "<inline>"
+      ],
+      "method": "use",
+      "path": "/register",
+      "when": []
+    },
+    {
+      "handlers": [
+        "ccRateLimiter",
+        "express.urlencoded({ extended : false })",
+        "<inline>"
+      ],
+      "method": "post",
+      "path": "/token",
+      "when": []
+    },
+    {
+      "handlers": [
+        "ccRateLimiter",
+        "express.urlencoded({ extended : false })",
+        "<inline>"
+      ],
+      "method": "post",
+      "path": "/revoke",
+      "when": []
+    },
+    {
+      "handlers": [
+        "<inline>"
+      ],
+      "method": "use",
+      "path": null,
+      "when": []
+    },
+    {
+      "handlers": [
+        "<inline>"
+      ],
+      "method": "all",
+      "path": "/.well-known/oauth-protected-resource",
+      "when": []
+    },
+    {
+      "handlers": [
+        "authRouter"
+      ],
+      "method": "use",
+      "path": null,
+      "when": []
+    },
+    {
+      "handlers": [
+        "<inline>"
+      ],
+      "method": "get",
+      "path": "/.well-known/gbrain",
+      "when": []
+    },
+    {
+      "handlers": [
+        "<inline>"
+      ],
+      "method": "get",
+      "path": "/health",
+      "when": []
+    },
+    {
+      "handlers": [
+        "adminLimits.total",
+        "adminLimits.failures",
+        "express.json()",
+        "<inline>"
+      ],
+      "method": "post",
+      "path": "/admin/login",
+      "when": []
+    },
+    {
+      "handlers": [
+        "adminLimits.total",
+        "adminLimits.failures",
+        "express.json()",
+        "<inline>"
+      ],
+      "method": "post",
+      "path": "/admin/api/issue-magic-link",
+      "when": []
+    },
+    {
+      "handlers": [
+        "adminLimits.total",
+        "adminLimits.failures",
+        "<inline>"
+      ],
+      "method": "get",
+      "path": "/admin/auth/:token",
+      "when": []
+    },
+    {
+      "handlers": [
+        "requireAdmin",
+        "adminLimits.consent",
+        "<inline>"
+      ],
+      "method": "get",
+      "path": "/admin/api/oauth-requests/:id",
+      "when": []
+    },
+    {
+      "handlers": [
+        "requireAdmin",
+        "adminLimits.consent",
+        "express.json()",
+        "<inline>"
+      ],
+      "method": "post",
+      "path": "/admin/api/oauth-requests/:id",
+      "when": []
+    },
+    {
+      "handlers": [
+        "requireAdmin",
+        "<inline>"
+      ],
+      "method": "get",
+      "path": "/metrics",
+      "when": []
+    },
+    {
+      "handlers": [
+        "requireAdmin",
+        "<inline>"
+      ],
+      "method": "post",
+      "path": "/admin/api/sign-out-everywhere",
+      "when": []
+    },
+    {
+      "handlers": [
+        "requireAdmin",
+        "<inline>"
+      ],
+      "method": "get",
+      "path": "/admin/api/agents",
+      "when": []
+    },
+    {
+      "handlers": [
+        "requireAdmin",
+        "<inline>"
+      ],
+      "method": "get",
+      "path": "/admin/api/sources",
+      "when": []
+    },
+    {
+      "handlers": [
+        "requireAdmin",
+        "<inline>"
+      ],
+      "method": "get",
+      "path": "/admin/api/agents/spend",
+      "when": []
+    },
+    {
+      "handlers": [
+        "requireAdmin",
+        "<inline>"
+      ],
+      "method": "get",
+      "path": "/admin/api/stats",
+      "when": []
+    },
+    {
+      "handlers": [
+        "requireAdmin",
+        "<inline>"
+      ],
+      "method": "get",
+      "path": "/admin/api/health-indicators",
+      "when": []
+    },
+    {
+      "handlers": [
+        "requireAdmin",
+        "<inline>"
+      ],
+      "method": "get",
+      "path": "/admin/api/full-stats",
+      "when": []
+    },
+    {
+      "handlers": [
+        "requireAdmin",
+        "<inline>"
+      ],
+      "method": "get",
+      "path": "/admin/api/jobs/watch",
+      "when": []
+    },
+    {
+      "handlers": [
+        "requireAdmin",
+        "<inline>"
+      ],
+      "method": "get",
+      "path": "/admin/api/calibration/pattern/:id",
+      "when": []
+    },
+    {
+      "handlers": [
+        "requireAdmin",
+        "<inline>"
+      ],
+      "method": "get",
+      "path": "/admin/api/calibration/profile",
+      "when": []
+    },
+    {
+      "handlers": [
+        "requireAdmin",
+        "<inline>"
+      ],
+      "method": "get",
+      "path": "/admin/api/calibration/charts/:type",
+      "when": []
+    },
+    {
+      "handlers": [
+        "requireAdmin",
+        "<inline>"
+      ],
+      "method": "get",
+      "path": "/admin/api/requests",
+      "when": []
+    },
+    {
+      "handlers": [
+        "requireAdmin",
+        "<inline>"
+      ],
+      "method": "get",
+      "path": "/admin/api/api-keys",
+      "when": []
+    },
+    {
+      "handlers": [
+        "requireAdmin",
+        "express.json()",
+        "<inline>"
+      ],
+      "method": "post",
+      "path": "/admin/api/api-keys",
+      "when": []
+    },
+    {
+      "handlers": [
+        "requireAdmin",
+        "express.json()",
+        "<inline>"
+      ],
+      "method": "post",
+      "path": "/admin/api/api-keys/revoke",
+      "when": []
+    },
+    {
+      "handlers": [
+        "requireAdmin",
+        "express.json()",
+        "<inline>"
+      ],
+      "method": "post",
+      "path": "/admin/api/grants",
+      "when": []
+    },
+    {
+      "handlers": [
+        "requireAdmin",
+        "<inline>"
+      ],
+      "method": "get",
+      "path": "/admin/api/grant-catalog",
+      "when": []
+    },
+    {
+      "handlers": [
+        "requireAdmin",
+        "<inline>"
+      ],
+      "method": "get",
+      "path": "/admin/api/grants/:clientId",
+      "when": []
+    },
+    {
+      "handlers": [
+        "requireAdmin",
+        "<inline>"
+      ],
+      "method": "get",
+      "path": "/admin/api/clients",
+      "when": []
+    },
+    {
+      "handlers": [
+        "requireAdmin",
+        "<inline>"
+      ],
+      "method": "get",
+      "path": "/admin/api/clients/:clientId",
+      "when": []
+    },
+    {
+      "handlers": [
+        "requireAdmin",
+        "<inline>"
+      ],
+      "method": "get",
+      "path": "/admin/api/clients/:clientId/setup",
+      "when": []
+    },
+    {
+      "handlers": [
+        "requireAdmin",
+        "express.json()",
+        "<inline>"
+      ],
+      "method": "post",
+      "path": "/admin/api/recover-client",
+      "when": []
+    },
+    {
+      "handlers": [
+        "requireAdmin",
+        "express.json()",
+        "<inline>"
+      ],
+      "method": "post",
+      "path": "/admin/api/clients/:clientId/lifecycle",
+      "when": []
+    },
+    {
+      "handlers": [
+        "requireAdmin",
+        "express.json()",
+        "<inline>"
+      ],
+      "method": "post",
+      "path": "/admin/api/register-client",
+      "when": []
+    },
+    {
+      "handlers": [
+        "requireAdmin",
+        "express.json()",
+        "<inline>"
+      ],
+      "method": "post",
+      "path": "/admin/api/update-client-ttl",
+      "when": []
+    },
+    {
+      "handlers": [
+        "requireAdmin",
+        "express.json()",
+        "<inline>"
+      ],
+      "method": "post",
+      "path": "/admin/api/rescope-client",
+      "when": []
+    },
+    {
+      "handlers": [
+        "requireAdmin",
+        "express.json()",
+        "<inline>"
+      ],
+      "method": "post",
+      "path": "/admin/api/revoke-client",
+      "when": []
+    },
+    {
+      "handlers": [
+        "requireAdmin",
+        "<inline>"
+      ],
+      "method": "get",
+      "path": "/admin/events",
+      "when": []
+    },
+    {
+      "handlers": [
+        "express.static(adminDistPath)"
+      ],
+      "method": "use",
+      "path": "/admin",
+      "when": [
+        "if useDevPath"
+      ]
+    },
+    {
+      "handlers": [
+        "<inline>"
+      ],
+      "method": "get",
+      "path": "/admin/{*path}",
+      "when": [
+        "if useDevPath"
+      ]
+    },
+    {
+      "handlers": [
+        "<inline>"
+      ],
+      "method": "get",
+      "path": "/admin",
+      "when": [
+        "else useDevPath"
+      ]
+    },
+    {
+      "handlers": [
+        "<inline>"
+      ],
+      "method": "get",
+      "path": "/admin/{*path}",
+      "when": [
+        "else useDevPath"
+      ]
+    },
+    {
+      "handlers": [
+        "<inline>"
+      ],
+      "method": "get",
+      "path": "/mcp",
+      "when": []
+    },
+    {
+      "handlers": [
+        "withBearerScopeHint(requireBearerAuth({ verifier : resourceVerifier , resourceMetadataUrl }), [ 'read' , 'write' ])",
+        "<inline>"
+      ],
+      "method": "post",
+      "path": "/mcp",
+      "when": []
+    },
+    {
+      "handlers": [
+        "ingestRateLimiter",
+        "requireBearerAuth({ verifier : resourceVerifier , requiredScopes : [ 'write' ] , resourceMetadataUrl })",
+        "express.raw({ type : '*/*' , limit : ingestMaxBytes })",
+        "<inline>"
+      ],
+      "method": "post",
+      "path": "/ingest",
+      "when": []
+    },
+    {
+      "handlers": [
+        "githubWebhookLimiter",
+        "express.raw({ type : '*/*' , limit : '1mb' })",
+        "<inline>"
+      ],
+      "method": "post",
+      "path": "/webhooks/github",
+      "when": []
+    }
+  ],
+  "normalizer": "serve-http-routes-v1"
+}

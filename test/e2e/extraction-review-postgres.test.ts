@@ -14,7 +14,7 @@
  */
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import type { PostgresEngine } from '../../src/core/postgres-engine.ts';
-import { hasDatabase, setupDB, teardownDB } from './helpers.ts';
+import { hasDatabase, setupLegacyEmbeddingDB, teardownDB } from './helpers.ts';
 import { enrichEntity } from '../../src/core/enrichment-service.ts';
 import { isUnverifiedExtraction, STATUS_VERIFIED, EXTRACTION_STATUS_KEY } from '../../src/core/extraction-review.ts';
 import { operationsByName, type OperationContext } from '../../src/core/operations.ts';
@@ -38,7 +38,7 @@ function ctx(over: Partial<OperationContext> = {}): OperationContext {
 
 d('extraction quarantine lane (live Postgres)', () => {
   beforeAll(async () => {
-    engine = await setupDB();
+    engine = await setupLegacyEmbeddingDB();
   }, 60_000);
 
   afterAll(async () => {

@@ -27,7 +27,8 @@
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
-import { runPhaseExtractAtoms, countExtractAtomsBacklog } from '../../src/core/cycle/extract-atoms.ts';
+import { countExtractAtomsBacklog } from '../../src/core/cycle/extract-atoms.ts';
+import { runPhaseWithStoredPageFixtures as runPhaseExtractAtoms } from '../helpers/extract-atoms-page-fixtures.ts';
 import { BudgetExhausted } from '../../src/core/budget/budget-tracker.ts';
 import { resetPgliteState } from '../helpers/reset-pglite.ts';
 import type { ChatResult, ChatOpts } from '../../src/core/ai/gateway.ts';

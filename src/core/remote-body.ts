@@ -1,6 +1,7 @@
 import { FACTS_FENCE_BEGIN, FACTS_FENCE_END, parseFactsFence, renderFactsTable } from './facts-fence.ts';
 import { TAKES_FENCE_BEGIN, TAKES_FENCE_END } from './takes-fence.ts';
 import { sanitizeText } from './batch-rows.ts';
+import { stripMaterializedMarkers } from './timeline-marker.ts';
 
 const protectedMarkerPattern = new RegExp(
   [FACTS_FENCE_BEGIN, FACTS_FENCE_END, TAKES_FENCE_BEGIN, TAKES_FENCE_END]
@@ -8,12 +9,17 @@ const protectedMarkerPattern = new RegExp(
   'g',
 );
 
-/** Strict protected-body boundary shared by remote reads and chunk creation. */
-export function sanitizeRemoteBody(body: string): string {
+/**
+ * Strict protected-body boundary shared by remote reads and chunk creation.
+ * #5567 materialized-timeline marker lines are dropped unless the caller
+ * round-trips the body (`keepMaterializedMarkers`).
+ */
+export function sanitizeRemoteBody(body: string, opts: { includeWithdrawn?: boolean; keepMaterializedMarkers?: boolean } = {}): string {
   if (typeof body !== 'string') return '';
   // Parse the same free-text bytes storage accepts. Removing NUL after fence
   // detection could turn an unrecognized marker into a protected stored fence.
   body = sanitizeText(body);
+  if (!opts.keepMaterializedMarkers) body = stripMaterializedMarkers(body);
   let cursor = 0;
   const output: string[] = [];
   let open: { start: number; endMarker: string; facts: boolean } | undefined;
@@ -34,7 +40,7 @@ export function sanitizeRemoteBody(body: string): string {
     if (open.facts) {
       try {
         const parsed = parseFactsFence(body.slice(open.start, cursor));
-        if (parsed.warnings.length === 0) output.push(renderFactsTable(parsed.facts.filter(row => row.visibility === 'world')));
+        if (parsed.warnings.length === 0) output.push(renderFactsTable(parsed.facts.filter(row => row.visibility === 'world' && (opts.includeWithdrawn || !row.forgotten))));
       } catch {
         // A protected block that cannot be parsed is omitted, never echoed.
       }

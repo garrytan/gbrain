@@ -2,7 +2,8 @@
 
 GBrain's Minion worker ships with a full set of built-in handlers,
 registered by `registerBuiltinHandlers` in `src/commands/jobs.ts` —
-that registry is the source of truth. Examples: `sync`, `embed`,
+that registry is the source of truth (handler bodies live in
+`src/core/minions/handlers/`). Examples: `sync`, `embed`,
 `lint`, `import`, `extract`, `backlinks`, `autopilot-cycle`, `shell`,
 `subagent`, `orphans`, `integrity`, plus dream-cycle phases and other
 maintenance jobs. Submitting an unknown job name with

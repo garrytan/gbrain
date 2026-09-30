@@ -146,8 +146,16 @@ describe('resolveEntitySlug — prefix expansion', () => {
     expect(result).toContain('alice-example');
   });
 
-  it('preserves a high-specificity multi-token typo match', async () => {
+  it('does not attach a near-name to an existing person (a typo and a different person look alike)', async () => {
+    // "Alice Exampl" is one edit from "Alice Example", exactly as "Carol Exampl" is
+    // one edit from "Carol Example": trigram similarity cannot tell a typo from a
+    // different person, so the reference keeps its own slug.
     const result = await resolveEntitySlug(engine as unknown as BrainEngine, 'default', 'Alice Exampl');
+    expect(result).toBe('alice-exampl');
+  });
+
+  it('resolves the same person written in another order or case', async () => {
+    const result = await resolveEntitySlug(engine as unknown as BrainEngine, 'default', 'example, ALICE');
     expect(result).toBe('people/alice-example');
   });
 
@@ -169,6 +177,51 @@ describe('resolveEntitySlug — prefix expansion', () => {
   it('returns null for empty input', async () => {
     const result = await resolveEntitySlug(engine as unknown as BrainEngine, 'default', '');
     expect(result).toBeNull();
+  });
+});
+
+describe('source-scoped full basename resolution', () => {
+  it('resolves hyphenated names and concepts without relying on title similarity', async () => {
+    for (const slug of ['companies/acme-example', 'concepts/retrieval-testing']) {
+      await engine.putPage(slug, {
+        type: 'note', title: 'Unrelated display title', compiled_truth: 'Existing page', frontmatter: {},
+      }, { sourceId: 'default' });
+      const basename = slug.split('/')[1];
+      for (const raw of [basename, basename.replaceAll('-', ' ')]) {
+        expect(await resolveEntitySlug(engine, 'default', raw)).toBe(slug);
+        expect(await resolveEntitySlugWithSource(engine, 'default', raw)).toEqual({
+          slug, source: 'fuzzy_match',
+        });
+      }
+    }
+  });
+
+  it('refuses same-basename ambiguity even if one title is a perfect fuzzy match', async () => {
+    for (const slug of ['companies/shared-example', 'projects/shared-example']) {
+      await engine.putPage(slug, {
+        type: 'note', title: slug.startsWith('companies/') ? 'shared-example' : 'Other title',
+        compiled_truth: 'Existing page', frontmatter: {},
+      }, { sourceId: 'default' });
+    }
+    expect(await resolveEntitySlug(engine, 'default', 'shared-example')).toBe('shared-example');
+    expect(await resolveEntitySlugWithSource(engine, 'default', 'shared-example')).toEqual({
+      slug: 'shared-example', source: 'fallback_slugify',
+    });
+  });
+
+  it('ignores same-basename pages in other sources and deleted pages', async () => {
+    await engine.executeRaw(`INSERT INTO sources (id, name) VALUES ('basename-other', 'Other')`);
+    await engine.putPage('companies/scoped-example', {
+      type: 'company', title: 'Unrelated title', compiled_truth: 'Other source', frontmatter: {},
+    }, { sourceId: 'basename-other' });
+    await engine.putPage('companies/scoped-example', {
+      type: 'company', title: 'Unrelated title', compiled_truth: 'Deleted page', frontmatter: {},
+    }, { sourceId: 'default' });
+    await engine.softDeletePage('companies/scoped-example', { sourceId: 'default' });
+    expect((await resolveEntitySlugWithSource(engine, 'default', 'scoped-example'))?.source)
+      .toBe('fallback_slugify');
+    expect(await resolveEntitySlug(engine, 'basename-other', 'scoped-example'))
+      .toBe('companies/scoped-example');
   });
 });
 
@@ -261,19 +314,22 @@ describe('resolveEntitySlugWithSource — fuzzy_match branch', () => {
     expect(result!.source).toBe<ResolutionSource>('fuzzy_match');
   });
 
-  it('returns fuzzy_match for prefix-expansion (bare first name "Alice")', async () => {
+});
+
+describe('resolveEntitySlugWithSource — prefix_expansion branch', () => {
+  it('returns prefix_expansion for a bare first name ("Alice")', async () => {
     // Bare name "Alice" doesn't exact-match any slug, fuzzy fails the
     // 0.4 threshold on short trigrams, so prefix expansion fires and
-    // resolves to people/alice-example. We tag this branch as
-    // fuzzy_match (not fallback_slugify) so trajectory routing knows
-    // it's a real-page resolution.
+    // resolves to people/alice-example. Tagged prefix_expansion: a
+    // real-page resolution, but chosen only because it is the sole
+    // people/alice-* page, so fact writes flag it as unverified.
     const result = await resolveEntitySlugWithSource(
       engine as unknown as BrainEngine,
       'default',
       'Alice',
     );
     expect(result!.slug).toBe('people/alice-example');
-    expect(result!.source).toBe<ResolutionSource>('fuzzy_match');
+    expect(result!.source).toBe<ResolutionSource>('prefix_expansion');
   });
 });
 

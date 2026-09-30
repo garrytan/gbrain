@@ -28,8 +28,11 @@
  */
 
 import type { PoolGaugeSnapshot } from '../pool-gauge.ts';
+import type { BrainEngine } from '../engine.ts';
+import { redactConnectionInfo } from '../audit/redact-connection-info.ts';
+import { isLocalConfigurationError, type LocalConfigurationError } from './configuration-error.ts';
 
-export type ProbeVerdict = 'pool_starved' | 'server_unreachable' | 'unknown';
+export type ProbeVerdict = 'pool_starved' | 'server_unreachable' | 'unknown' | 'client_misconfigured';
 
 /** Default budget for the direct-lane disambiguation probe. */
 export const DIRECT_PROBE_TIMEOUT_MS = 3_000;
@@ -61,7 +64,8 @@ export interface DbProbeDeps {
 
 export type DbProbeResult =
   | { ok: true }
-  | { ok: false; verdict: ProbeVerdict; detail: string };
+  | { ok: false; verdict: Exclude<ProbeVerdict, 'client_misconfigured'>; detail: string }
+  | { ok: false; verdict: 'client_misconfigured'; detail: string; configurationError: LocalConfigurationError };
 
 /**
  * Narrow, shared view of the engine's ConnectionManager for routing-aware
@@ -126,13 +130,43 @@ function renderDiagnostics(getDiagnostics?: () => PoolDiagnostics | null): strin
 }
 
 export async function runDbProbe(deps: DbProbeDeps): Promise<DbProbeResult> {
-  let readErrMsg: string;
+  return probeLanes(deps, false);
+}
+
+export async function runDbReadinessProbe(deps: DbProbeDeps): Promise<DbProbeResult> {
+  return probeLanes(deps, true);
+}
+
+export async function assertWorkerDbReadiness(engine: BrainEngine): Promise<void> {
+  if (engine.kind !== 'postgres') return;
+  const result = await runDbReadinessProbe({
+    probeRead: async signal => { await engine.executeRaw('SELECT 1', [], { signal }); },
+    probeDirect: getConnectionRouting(engine)?.isDualPoolActive?.()
+      ? async signal => { await engine.executeRawDirect('SELECT 1', [], { signal }); }
+      : undefined,
+    timeoutMs: 10_000,
+    directTimeoutMs: DIRECT_PROBE_TIMEOUT_MS,
+  });
+  if (result.ok) return;
+  if (result.verdict === 'client_misconfigured') throw result.configurationError;
+  throw new Error(`Database readiness ${result.verdict}: ${result.detail}`);
+}
+
+async function probeLanes(deps: DbProbeDeps, requireDirect: boolean): Promise<DbProbeResult> {
+  let readFailed = false;
+  let readError: unknown;
   try {
     await withDeadline(deps.probeRead, deps.timeoutMs, 'probe');
-    return { ok: true };
+    if (!requireDirect || !deps.probeDirect) return { ok: true };
   } catch (e) {
-    readErrMsg = e instanceof Error ? e.message : String(e);
+    readFailed = true;
+    readError = e;
   }
+
+  if (isLocalConfigurationError(readError)) {
+    return { ok: false, verdict: 'client_misconfigured', detail: readError.message, configurationError: readError };
+  }
+  const readErrMsg = redactConnectionInfo(readError instanceof Error ? readError.message : String(readError));
 
   if (!deps.probeDirect) {
     return {
@@ -145,6 +179,7 @@ export async function runDbProbe(deps: DbProbeDeps): Promise<DbProbeResult> {
   const t0 = Date.now();
   try {
     await withDeadline(deps.probeDirect, deps.directTimeoutMs, 'direct probe');
+    if (!readFailed) return { ok: true };
     return {
       ok: false,
       verdict: 'pool_starved',
@@ -155,7 +190,17 @@ export async function runDbProbe(deps: DbProbeDeps): Promise<DbProbeResult> {
         renderDiagnostics(deps.getDiagnostics),
     };
   } catch (e) {
-    const directErrMsg = e instanceof Error ? e.message : String(e);
+    if (isLocalConfigurationError(e)) {
+      return { ok: false, verdict: 'client_misconfigured', detail: e.message, configurationError: e };
+    }
+    const directErrMsg = redactConnectionInfo(e instanceof Error ? e.message : String(e));
+    if (!readFailed) {
+      return {
+        ok: false,
+        verdict: 'unknown',
+        detail: `read probe succeeded; required direct probe failed: ${directErrMsg} — direct lane is not ready`,
+      };
+    }
     return {
       ok: false,
       verdict: 'server_unreachable',

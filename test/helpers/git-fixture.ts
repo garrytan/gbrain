@@ -34,6 +34,8 @@ function git(dir: string, args: string[]): string {
 
 export async function makeGitFixture(dir: string): Promise<GitFixture> {
   git(dir, ['init', '-q']);
+  git(dir, ['config', 'maintenance.auto', 'false']);
+  git(dir, ['config', 'gc.auto', '0']);
   git(dir, ['config', 'user.email', 't@t.co']);
   git(dir, ['config', 'user.name', 't']);
   // Empty initial commit so rev-parse HEAD and reset --hard work immediately.

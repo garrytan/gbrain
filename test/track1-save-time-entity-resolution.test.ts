@@ -58,6 +58,37 @@ describe('save-time resolution vocabulary', () => {
 describe('resolveExtractedEntitiesForSave', () => {
   const engine = {} as BrainEngine;
 
+  for (const outcome of ['fallback', 'error'] as const) {
+    test(`${outcome} preserves the complete fact and provenance without an unverified target`, async () => {
+      const spy = stubResolve(async () => {
+        if (outcome === 'error') throw new Error('resolver unavailable');
+        return { slug: 'people/unverified-example', source: 'fallback_slugify' };
+      });
+      try {
+        const original: ExtractedFact = {
+          ...fact('people/unverified-example', 'An unverified participant committed to follow up'),
+          source: 'cli:extract-conversation-facts:seg', source_session: 'session-example',
+          context: 'from sessions/example segment 2026-01-01',
+          valid_from: new Date('2026-01-01T00:00:00Z'), embedding: new Float32Array([0.25, 0.75]),
+        };
+        const facts = [{ ...original }];
+        const errors: Array<{ raw: string; message: string }> = [];
+        const stats = await resolveExtractedEntitiesForSave(engine, 'source-example', facts,
+          (raw, message) => errors.push({ raw, message }));
+        expect(facts).toEqual([{ ...original, entity_slug: null }]);
+        expect(spy).toHaveBeenCalledWith(engine, 'source-example', original.entity_slug);
+        expect(stats).toEqual(outcome === 'fallback'
+          ? { counts: { fallback_slugify: 1 }, fallback_slugify_count: 1, resolution_errors: 0 }
+          : { counts: {}, fallback_slugify_count: 0, resolution_errors: 1 });
+        expect(errors).toEqual(outcome === 'fallback' ? [] : [{
+          raw: 'people/unverified-example', message: 'resolver unavailable',
+        }]);
+      } finally {
+        spy.mockRestore();
+      }
+    });
+  }
+
   test('rewrites slugs, preserves null, and counts fallback_slugify', async () => {
     const spy = stubResolve(async (raw) => {
       if (raw === 'Brian') {
@@ -77,7 +108,7 @@ describe('resolveExtractedEntitiesForSave', () => {
       const stats = await resolveExtractedEntitiesForSave(engine, 'default', facts);
       expect(facts.map((row) => row.entity_slug)).toEqual([
         'people/brian-example',
-        'unlisted-person',
+        null,
         null,
       ]);
       expect(stats.counts).toEqual({
@@ -92,7 +123,7 @@ describe('resolveExtractedEntitiesForSave', () => {
     }
   });
 
-  test('best-effort resolver failure keeps the raw value', async () => {
+  test('best-effort resolver failure keeps the fact unparented', async () => {
     const spy = stubResolve(async (raw) => {
       if (raw === 'Unlisted Person') throw new Error('resolver unavailable');
       return { slug: 'people/brian-example', source: 'alias_exact' };
@@ -108,7 +139,7 @@ describe('resolveExtractedEntitiesForSave', () => {
       );
       expect(facts.map((row) => row.entity_slug)).toEqual([
         'people/brian-example',
-        'Unlisted Person',
+        null,
       ]);
       expect(stats.resolution_errors).toBe(1);
       expect(stats.fallback_slugify_count).toBe(0);

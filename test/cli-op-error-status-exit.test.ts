@@ -78,8 +78,8 @@ afterAll(() => {
 
 describe('#4488 in-band {status:error} → CLI exit 1', () => {
   test('put with unparseable frontmatter exits 1 and echoes the error to stderr', () => {
-    const r = run(['put', 'notes/bad-yaml'], BAD_YAML_PAGE);
-    expect(r.stdout).toContain('"status"');
+    const r = run(['put', 'notes/bad-yaml', '--json'], BAD_YAML_PAGE);
+    expect(r.stdout).toContain('"error"');
     expect(r.stdout).toContain('error');
     // Pre-fix: exit 0 with the error envelope on stdout only.
     expect(r.status).toBe(1);
@@ -90,9 +90,10 @@ describe('#4488 in-band {status:error} → CLI exit 1', () => {
   }, 240_000);
 
   test("a dedup 'skipped' put stays exit 0 (no-op is not a failure)", () => {
-    const first = run(['put', 'notes/good-page'], GOOD_PAGE);
-    expect(first.status).toBe(0);
-    const second = run(['put', 'notes/good-page'], GOOD_PAGE);
+    const first = run(['put', 'notes/good-page', '--json'], GOOD_PAGE);
+    expect(first.status, first.stderr).toBe(0);
+    const firstResult = JSON.parse(first.stdout);
+    const second = run(['put', 'notes/good-page', '--expected-revision', firstResult.revision, '--json'], GOOD_PAGE);
     expect(second.status).toBe(0);
     expect(second.stdout).toContain('skipped');
   }, 480_000);

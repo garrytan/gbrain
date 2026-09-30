@@ -6,7 +6,7 @@
  * sessions lose track of the user's current time, location, and state.
  *
  * Enable in openclaw.json:
- *   plugins.slots.contextEngine: "gbrain-context"
+ *   plugins.slots.contextEngine: "gbrain-context-engine"
  *
  * @module
  */
@@ -20,7 +20,8 @@
  * and independently testable.
  */
 
-import { createGBrainContextEngine, ENGINE_ID } from './core/context-engine.ts';
+import { isAbsolute } from 'node:path';
+import { createGBrainContextEngine, ENGINE_ID, ENGINE_NAME, ENGINE_API_VERSION, type ContextEngine } from './core/context-engine.ts';
 import type { ResolveEntitiesFn } from './core/context/reflex.ts';
 
 /**
@@ -38,15 +39,29 @@ interface PluginEntry {
   id: string;
   name: string;
   description: string;
+  kind: 'context-engine';
   register(api: PluginApi): void;
 }
 
 interface PluginApi {
-  registerContextEngine(id: string, factory: (ctx: PluginCtx) => unknown): void;
+  registerContextEngine(id: string, factory: (ctx?: PluginCtx) => PluginContextEngine): void;
+  pluginConfig?: { workspaceDir?: string };
+  config?: { agents?: { defaults?: { workspace?: string }; list?: unknown[]; entries?: Record<string, unknown> } };
+  logger?: { warn(message: string): void };
 }
 
+type PluginContextEngine = ContextEngine & {
+  info: ContextEngine['info'] & {
+    transcriptSemantics: {
+      currentTurnFence: 'before-current-turn-entry-v1';
+      turnAdvancementIdempotency: 'atomic-idempotent-v1';
+    };
+  };
+  commitTurn(params: { advancementKey: string; messages: unknown[] }): Promise<{ status: 'committed' }>;
+};
+
 interface PluginCtx {
-  workspaceDir: string;
+  workspaceDir?: string;
   /**
    * Retrieval Reflex (#1981, D1=A): OPTIONAL host-provided resolve capability.
    * When the OpenClaw host supplies it (backed by the gbrain connection the
@@ -64,7 +79,32 @@ interface PluginCtx {
 }
 
 export function register(api: PluginApi) {
-  api.registerContextEngine(ENGINE_ID, (ctx: PluginCtx) => {
+  const factory = (ctx: PluginCtx = {}): ContextEngine => {
+    const configuredWorkspace = api.pluginConfig?.workspaceDir
+      ?? ((api.config?.agents?.list?.length ?? 0) === 0 && Object.keys(api.config?.agents?.entries ?? {}).length === 0
+        ? api.config?.agents?.defaults?.workspace
+        : undefined);
+    const workspaceDir = ctx.workspaceDir ?? configuredWorkspace;
+    if (typeof workspaceDir !== 'string' || !workspaceDir.trim() || !isAbsolute(workspaceDir)) {
+      const reason = 'GBrain context unavailable: the host must supply an absolute workspaceDir (or configure plugins.entries.gbrain-context-engine.config.workspaceDir). No brain source was selected.';
+      api.logger?.warn(reason);
+      return {
+        info: { id: ENGINE_ID, name: ENGINE_NAME, version: ENGINE_API_VERSION, ownsCompaction: false },
+        async ingest() { return { ingested: false }; },
+        async assemble({ messages }) {
+          const safeMessages = Array.isArray(messages) ? messages : [];
+          return {
+            messages: safeMessages,
+            estimatedTokens: safeMessages.reduce((sum, message) => {
+              const text = typeof message.content === 'string' ? message.content : JSON.stringify(message.content);
+              return sum + (typeof text === 'string' ? Math.ceil(text.length / 4) : 0);
+            }, 0),
+            systemPromptAddition: reason,
+          };
+        },
+        async compact() { return { ok: false, compacted: false, reason: 'workspace-unavailable' }; },
+      };
+    }
     const hostResolver =
       typeof ctx.resolveEntities === 'function'
         ? ctx.resolveEntities
@@ -72,16 +112,34 @@ export function register(api: PluginApi) {
           ? ctx.brainQuery
           : undefined;
     return createGBrainContextEngine({
-      workspaceDir: ctx.workspaceDir,
+      workspaceDir,
       resolveEntities: hostResolver,
     });
-  });
+  };
+  for (const id of [ENGINE_ID, 'gbrain-context-engine']) {
+    api.registerContextEngine(id, (ctx) => {
+      const engine = factory(ctx);
+      return {
+        ...engine,
+        info: {
+          ...engine.info,
+          id,
+          transcriptSemantics: {
+            currentTurnFence: 'before-current-turn-entry-v1',
+            turnAdvancementIdempotency: 'atomic-idempotent-v1',
+          },
+        },
+        async commitTurn() { return { status: 'committed' }; },
+      };
+    });
+  }
 }
 
 const entry: PluginEntry = {
   id: 'gbrain-context-engine',
   name: 'GBrain Context Engine',
   description: 'Deterministic temporal/spatial context injection on every turn',
+  kind: 'context-engine',
   register,
 };
 

@@ -96,6 +96,41 @@ describe('serve-sync-runner delegated jobs', () => {
     if (repoPath) rmSync(repoPath, { recursive: true, force: true });
   });
 
+  test('the legacy shared-secret sync lane cannot promote itself to a managed writer', async () => {
+    await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+    try {
+      const started = startDelegatedSync(engine, { sourceId: 'default', noPull: true, timeoutSeconds: 30 }, 'token-no-promotion');
+      const terminal = await waitForTerminal(started.jobId!);
+      expect(terminal.state).toBe('error');
+      expect(terminal.jobError).toContain('shared-secret sync delegation');
+      expect(await engine.executeRaw('SELECT id FROM pages')).toHaveLength(0);
+      expect(await engine.executeRaw('SELECT id FROM persistence_requests')).toHaveLength(0);
+    } finally { await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1'); }
+  });
+
+  test('activation after the legacy preflight still cannot grant CLI authority', async () => {
+    await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+    let preflight = true;
+    const crossingActivation = new Proxy(engine, { get(target, key) {
+      const value = Reflect.get(target, key, target);
+      if (key === 'executeRaw') return async (sql: string, params?: unknown[]) => {
+        if (preflight && sql === 'SELECT enabled FROM persistence_brain WHERE singleton=1') {
+          preflight = false; return [{ enabled: false }]; // activation occurs after this earlier snapshot
+        }
+        return target.executeRaw(sql, params);
+      };
+      return typeof value === 'function' ? value.bind(target) : value;
+    } });
+    try {
+      const started = startDelegatedSync(crossingActivation, { sourceId: 'default', noPull: true, timeoutSeconds: 30 }, 'token-activation-race');
+      const terminal = await waitForTerminal(started.jobId!);
+      expect(preflight).toBe(false); expect(terminal.state).toBe('error');
+      expect(terminal.jobError).toContain('durable CLI registration');
+      expect(await engine.executeRaw('SELECT id FROM pages')).toHaveLength(0);
+      expect(await engine.executeRaw('SELECT id FROM persistence_requests')).toHaveLength(0);
+    } finally { await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1'); }
+  });
+
   test('start → status polls → done with a real WireSyncResult; embeds deferred', async () => {
     const start = startDelegatedSync(
       engine,

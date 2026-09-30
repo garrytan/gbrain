@@ -6,14 +6,26 @@
  */
 
 import * as path from 'node:path';
-import { resolveModel } from '../core/model-config.ts';
 import { autoDetectSkillsDirReadOnly } from '../core/repo-root.ts';
-import { runBootstrap, runBootstrapFromSkill } from '../core/skillopt/bootstrap-benchmark.ts';
+import { runGuardedBootstrap } from '../core/skillopt/bootstrap-run.ts';
+import { buildSkillOptJobData } from '../core/skillopt/job.ts';
+import {
+  buildModelsPlan,
+  describeStrictVerdict,
+  formatModelsBanner,
+  resolveSkillOptModels,
+  skillOptModelOpts,
+  type ModelsPlanEntry,
+  type StrictVerdict,
+} from '../core/skillopt/models-plan.ts';
 import { SKILLOPT_HELP_TEXT } from '../core/skillopt/help.ts';
 import { runSkillOpt, parseSplit } from '../core/skillopt/orchestrator.ts';
+import { checkpointPath } from '../core/skillopt/checkpoint.ts';
+import { formatModelsUsedTable } from '../core/budget/models-used.ts';
+import { parsePositiveInt } from '../core/skillopt/output-cap.ts';
 import { serializeError, StructuredAgentError } from '../core/errors.ts';
 import type { BrainEngine } from '../core/engine.ts';
-import type { SkillOptOpts } from '../core/skillopt/types.ts';
+import type { RunReceipt, SkillOptOpts } from '../core/skillopt/types.ts';
 
 interface ParsedFlags {
   skillName: string;
@@ -31,6 +43,10 @@ interface ParsedFlags {
   optimizerModel?: string;
   targetModel?: string;
   judgeModel?: string;
+  /** Optimizer output cap; beats skillopt.reflect_max_tokens config. */
+  reflectMaxTokens?: number;
+  /** Abort before spend unless every active model was chosen by explicit configuration. */
+  modelsStrict: boolean;
   mode: 'patch' | 'rewrite';
   dryRun: boolean;
   noMutate: boolean;
@@ -85,47 +101,34 @@ export async function runSkillOptCommand(engine: BrainEngine | null, args: strin
     process.exit(2);
   }
 
-  // Resolve models via the tier system.
-  const optimizerModel = parsed.optimizerModel
-    ?? await resolveModel(engine, { tier: 'deep', fallback: 'anthropic:claude-opus-4-7' });
-  const targetModel = parsed.targetModel
-    ?? await resolveModel(engine, { tier: 'subagent', fallback: 'anthropic:claude-sonnet-4-6' });
-  const judgeModel = parsed.judgeModel
-    ?? await resolveModel(engine, { tier: 'reasoning', fallback: 'anthropic:claude-sonnet-4-6' });
+  // Resolve the three roles once (flag > role config chain), with provenance.
+  const modelFlags = { optimizerModel: parsed.optimizerModel, targetModel: parsed.targetModel, judgeModel: parsed.judgeModel };
+  const models = await resolveSkillOptModels(engine, modelFlags);
+  const { optimizerModel, targetModel, judgeModel } = skillOptModelOpts(models);
 
-  // ── Bootstrap mode (short-circuits before the optimization loop) ────────
-  if (parsed.bootstrapFromRouting) {
+  // ── Bootstrap modes (short-circuit before the optimization loop) ────────
+  // --bootstrap-from-skill reads SKILL.md directly (no routing-eval needed)
+  // and emits a full starter benchmark; --bootstrap-from-routing makes one
+  // call per routing intent. Both write the D15 sentinel, run under the
+  // --max-cost-usd tracker and honor --models-strict / --dry-run. Provider
+  // errors propagate so the user sees the real failure instead of "0 tasks".
+  if (parsed.bootstrapFromRouting || parsed.bootstrapFromSkill) {
     try {
-      const result = await runBootstrap({
+      const run = await runGuardedBootstrap({
+        engine,
+        mode: parsed.bootstrapFromRouting ? 'routing' : 'skill',
         skillsDir,
         skillName: parsed.skillName,
-        optimizerModel,
-        force: parsed.force,
-      });
-      if (parsed.json) {
-        process.stdout.write(JSON.stringify({ ok: true, ...result }) + '\n');
-      }
-      process.exit(0);
-    } catch (err) {
-      handleErrorAndExit(err, parsed.json, 2);
-    }
-  }
-
-  // ── Bootstrap-from-skill mode (short-circuits before the optimization loop) ─
-  // Reads SKILL.md directly (no routing-eval needed), emits a full starter
-  // benchmark, writes the D15 sentinel. Provider errors propagate so the user
-  // sees the real failure instead of "0 tasks".
-  if (parsed.bootstrapFromSkill) {
-    try {
-      const result = await runBootstrapFromSkill({
-        skillsDir,
-        skillName: parsed.skillName,
-        optimizerModel,
+        optimizer: models.optimizer,
         taskCount: parsed.bootstrapTasks ?? 15,
         force: parsed.force,
+        dryRun: parsed.dryRun,
+        modelsStrict: parsed.modelsStrict,
+        maxCostUsd: parsed.maxCostUsd,
       });
+      if (run.dry_run) exitDryRun(run.models_plan, run.strict, parsed.json, {});
       if (parsed.json) {
-        process.stdout.write(JSON.stringify({ ok: true, ...result }) + '\n');
+        process.stdout.write(JSON.stringify({ ok: true, ...run.result, cost_usd: run.cost_usd, models_plan: run.models_plan }) + '\n');
       }
       process.exit(0);
     } catch (err) {
@@ -137,6 +140,8 @@ export async function runSkillOptCommand(engine: BrainEngine | null, args: strin
   if (parsed.all) {
     try {
       const { runBatchAll } = await import('../core/skillopt/batch.ts');
+      const basePlan = await buildModelsPlan(engine, models);
+      process.stderr.write(formatModelsBanner(basePlan));
       const result = await runBatchAll({
         engine,
         skillsDir,
@@ -145,6 +150,10 @@ export async function runSkillOptCommand(engine: BrainEngine | null, args: strin
         optimizerModel,
         targetModel,
         judgeModel,
+        models,
+        modelsStrict: parsed.modelsStrict,
+        modelsBannerBaseline: basePlan,
+        ...(parsed.reflectMaxTokens !== undefined ? { reflectMaxTokens: parsed.reflectMaxTokens } : {}),
         epochs: parsed.epochs,
         batchSize: parsed.batchSize,
         lr: parsed.lr,
@@ -186,6 +195,9 @@ export async function runSkillOptCommand(engine: BrainEngine | null, args: strin
         targetModels: parsed.targetModelsFleet,
         optimizerModel,
         judgeModel,
+        models: { optimizer: models.optimizer, judge: models.judge },
+        modelsStrict: parsed.modelsStrict,
+        ...(parsed.reflectMaxTokens !== undefined ? { reflectMaxTokens: parsed.reflectMaxTokens } : {}),
         epochs: parsed.epochs,
         batchSize: parsed.batchSize,
         lr: parsed.lr,
@@ -233,28 +245,29 @@ export async function runSkillOptCommand(engine: BrainEngine | null, args: strin
       try {
         const { MinionQueue } = await import('../core/minions/queue.ts');
         const queue = new MinionQueue(engine);
-        const jobData = {
-          skills_dir: skillsDir,
-          skill_name: parsed.skillName,
-          benchmark_path: benchmarkPath,
+        const jobData = buildSkillOptJobData({
+          skillsDir,
+          skillName: parsed.skillName,
+          benchmarkPath,
           epochs: parsed.epochs,
-          batch_size: parsed.batchSize,
+          batchSize: parsed.batchSize,
           lr: parsed.lr,
-          lr_schedule: parsed.lrSchedule,
+          lrSchedule: parsed.lrSchedule,
           split: parsed.split,
-          optimizer_model: optimizerModel,
-          target_model: targetModel,
-          judge_model: judgeModel,
+          models,
+          modelFlags,
+          modelsStrict: parsed.modelsStrict,
+          ...(parsed.reflectMaxTokens !== undefined ? { reflectMaxTokens: parsed.reflectMaxTokens } : {}),
           mode: parsed.mode,
-          dry_run: parsed.dryRun,
-          no_mutate: parsed.noMutate,
-          allow_mutate_bundled: parsed.allowMutateBundled,
-          ...(parsed.heldOutPath ? { held_out_path: parsed.heldOutPath } : {}),
-          bootstrap_reviewed: parsed.bootstrapReviewed,
-          max_cost_usd: parsed.maxCostUsd,
-          max_runtime_min: parsed.maxRuntimeMin,
+          dryRun: parsed.dryRun,
+          noMutate: parsed.noMutate,
+          allowMutateBundled: parsed.allowMutateBundled,
+          ...(parsed.heldOutPath ? { heldOutPath: parsed.heldOutPath } : {}),
+          bootstrapReviewed: parsed.bootstrapReviewed,
+          maxCostUsd: parsed.maxCostUsd,
+          maxRuntimeMin: parsed.maxRuntimeMin,
           force: parsed.force,
-        };
+        });
         const job = await queue.add('skillopt', jobData, {
           queue: 'default',
           idempotency_key: `cli:skillopt:${parsed.skillName}`,
@@ -286,9 +299,9 @@ export async function runSkillOptCommand(engine: BrainEngine | null, args: strin
     lr: parsed.lr,
     lrSchedule: parsed.lrSchedule,
     split: parsed.split,
-    optimizerModel,
-    targetModel,
-    judgeModel,
+    ...skillOptModelOpts(models),
+    modelsStrict: parsed.modelsStrict,
+    ...(parsed.reflectMaxTokens !== undefined ? { reflectMaxTokens: parsed.reflectMaxTokens } : {}),
     mode: parsed.mode,
     dryRun: parsed.dryRun,
     noMutate: parsed.noMutate,
@@ -304,6 +317,9 @@ export async function runSkillOptCommand(engine: BrainEngine | null, args: strin
 
   try {
     const result = await runSkillOpt(opts);
+    if (parsed.dryRun) {
+      exitDryRun(result.receipt.models_plan ?? [], result.receipt.models_strict!, parsed.json, { receipt: result.receipt });
+    }
     if (parsed.json) {
       process.stdout.write(JSON.stringify({
         schema_version: 1,
@@ -313,17 +329,7 @@ export async function runSkillOptCommand(engine: BrainEngine | null, args: strin
         ...(result.proposedPath ? { proposed_path: result.proposedPath } : {}),
       }) + '\n');
     } else {
-      process.stderr.write(`[skillopt] Outcome: ${result.outcome}\n`);
-      // #3516: never a silent failure — say WHY the run aborted/errored.
-      if (result.outcome === 'aborted' || result.outcome === 'errored') {
-        const reason = result.receipt.abort_reason ?? 'unknown';
-        const detail = result.receipt.abort_detail ?? '(no detail captured)';
-        process.stderr.write(`[skillopt] Failure reason: ${reason}\n`);
-        process.stderr.write(`[skillopt] Detail: ${detail}\n`);
-        if (detail.includes('no_pricing')) {
-          process.stderr.write(`[skillopt] Hint: model has no pricing entry; pass --no-max-cost (or --max-cost-usd 0) to run uncapped with a warn-once.\n`);
-        }
-      }
+      process.stderr.write(formatRunSummary(result.outcome, result.receipt, skillsDir));
       process.stderr.write(`[skillopt] Best sel-score: ${(result.receipt.best_sel_score ?? 0).toFixed(3)}\n`);
       process.stderr.write(`[skillopt] Final cost: $${(result.receipt.final_cost_usd ?? 0).toFixed(2)}\n`);
       if (result.mutatedSkillFile) {
@@ -332,12 +338,73 @@ export async function runSkillOptCommand(engine: BrainEngine | null, args: strin
         process.stderr.write(`[skillopt] Proposed improvements written to ${result.proposedPath}. Review + copy manually.\n`);
       }
     }
-    // Exit codes: 0 accepted, 1 no improvement, 2 aborted, 3 errored.
+    // Exit codes: 0 accepted, 1 no improvement, 2 aborted or errored.
     const exitMap = { accepted: 0, no_improvement: 1, aborted: 2, errored: 2 };
     process.exit(exitMap[result.outcome]);
   } catch (err) {
     handleErrorAndExit(err, parsed.json, 2);
   }
+}
+
+type RunSkillOptOutcome = NonNullable<RunReceipt['outcome']>;
+
+/**
+ * `--dry-run` exit: the models plan (banner already printed) and the strict
+ * verdict, zero model calls. Exit 1 only when strict mode is on and fails.
+ */
+function exitDryRun(plan: ModelsPlanEntry[], strict: StrictVerdict, json: boolean, extra: Record<string, unknown>): never {
+  if (json) {
+    process.stdout.write(JSON.stringify({ schema_version: 1, dry_run: true, models_plan: plan, strict, ...extra }) + '\n');
+  } else {
+    process.stderr.write(`[skillopt] Dry run: no model calls made.\n${describeStrictVerdict(strict)}\n`);
+    if (!strict.ok && !strict.enabled) {
+      process.stderr.write('(strict mode is off; --models-strict or skillopt.models_strict would abort this run)\n');
+    }
+  }
+  process.exit(strict.enabled && !strict.ok ? 1 : 0);
+}
+
+/**
+ * Outcome + diagnostics block for the stderr summary. #3516: never a silent
+ * failure — say WHY the run aborted/errored. #5584: optimizer-reply errors
+ * warn even on a successful run; a retained checkpoint prints the run id,
+ * its location and the exact resume command. Exported for unit tests.
+ */
+export function formatRunSummary(outcome: RunSkillOptOutcome, receipt: RunReceipt, skillsDir: string): string {
+  const lines = [`[skillopt] Outcome: ${outcome}`];
+  if (outcome === 'aborted' || outcome === 'errored') {
+    const detail = receipt.abort_detail ?? '(no detail captured)';
+    lines.push(`[skillopt] Failure reason: ${receipt.abort_reason ?? 'unknown'}`);
+    lines.push(`[skillopt] Detail: ${detail}`);
+    if (detail.includes('no_pricing')) {
+      lines.push(`[skillopt] Hint: model has no pricing entry; pass --no-max-cost (or --max-cost-usd 0) to run uncapped with a warn-once.`);
+    }
+  }
+  if (receipt.stop_reason === 'early_stop_unusable_output') {
+    lines.push(`[skillopt] Stopped early: optimizer output was unusable for consecutive steps; remaining budget not spent.`);
+  }
+  const errors = receipt.reflect_errors ?? [];
+  if (errors.length > 0) {
+    lines.push(`[skillopt] Warning: ${errors.length} optimizer reply error(s) (optimizer output cap ${receipt.reflect_max_tokens ?? 'default'}); first: ${errors[0]}`);
+  }
+  if (receipt.skill_body_truncated) {
+    lines.push(`[skillopt] Warning: skill body truncated for the optimizer (sent ${receipt.skill_body_truncated.sent_chars} of ${receipt.skill_body_truncated.total_chars} chars).`);
+  }
+  const modelsUsed = receipt.models_used ?? [];
+  if (modelsUsed.length > 0) {
+    const scope = receipt.models_used_scope === 'since_resume' ? 'since resume; earlier segments predate the ledger' : 'full run';
+    lines.push(`[skillopt] Models called (${scope}; a call is one gateway operation, internal retries count once; ~ = estimated cost):`);
+    for (const row of formatModelsUsedTable(modelsUsed)) lines.push(`[skillopt]   ${row}`);
+  }
+  for (const r of receipt.remediation ?? []) {
+    lines.push(`[skillopt] Fix (${r.code}): ${r.fix} See ${r.docs}`);
+  }
+  if (receipt.resume_command) {
+    lines.push(`[skillopt] Run id: ${receipt.run_id}`);
+    lines.push(`[skillopt] Checkpoint: ${checkpointPath(skillsDir, receipt.skill, receipt.run_id)}`);
+    lines.push(`[skillopt] Resume: ${receipt.resume_command}`);
+  }
+  return lines.join('\n') + '\n';
 }
 
 /** Exported for unit tests (CLI flag parsing, --bootstrap-tasks cap, mutual exclusion). */
@@ -354,8 +421,10 @@ export function parseFlags(args: string[]): ParsedFlags {
   let lrSchedule: 'cosine' | 'linear' | 'constant' = 'cosine';
   let splitStr = '4:1:5';
   let optimizerModel: string | undefined;
+  let modelsStrict = false;
   let targetModel: string | undefined;
   let judgeModel: string | undefined;
+  let reflectMaxTokens: number | undefined;
   let mode: 'patch' | 'rewrite' = 'patch';
   let dryRun = false;
   let noMutate = false;
@@ -399,8 +468,15 @@ export function parseFlags(args: string[]): ParsedFlags {
     }
     if (a === '--split') { splitStr = args[++i]!; i += 1; continue; }
     if (a === '--optimizer-model') { optimizerModel = args[++i]; i += 1; continue; }
+    if (a === '--models-strict') { modelsStrict = true; i += 1; continue; }
     if (a === '--target-model') { targetModel = args[++i]; i += 1; continue; }
     if (a === '--judge-model') { judgeModel = args[++i]; i += 1; continue; }
+    if (a === '--reflect-max-tokens') {
+      const v = args[++i];
+      reflectMaxTokens = parsePositiveInt(v);
+      if (reflectMaxTokens === undefined) throw new Error(`--reflect-max-tokens requires a positive integer (got '${v}')`);
+      i += 1; continue;
+    }
     if (a === '--patch') { mode = 'patch'; i += 1; continue; }
     if (a === '--rewrite') { mode = 'rewrite'; i += 1; continue; }
     if (a === '--dry-run') { dryRun = true; i += 1; continue; }
@@ -483,6 +559,8 @@ export function parseFlags(args: string[]): ParsedFlags {
     ...(optimizerModel !== undefined ? { optimizerModel } : {}),
     ...(targetModel !== undefined ? { targetModel } : {}),
     ...(judgeModel !== undefined ? { judgeModel } : {}),
+    ...(reflectMaxTokens !== undefined ? { reflectMaxTokens } : {}),
+    modelsStrict,
     mode,
     dryRun,
     noMutate,

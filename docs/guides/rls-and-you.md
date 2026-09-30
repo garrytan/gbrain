@@ -120,8 +120,8 @@ CREATE EVENT TRIGGER auto_rls_on_create_table
   EXECUTE FUNCTION auto_enable_rls();
 ```
 
-(This is the same DDL migration v35 runs — the canonical copy lives in the
-`MIGRATIONS` array in `src/core/migrate.ts`. There's no CLI shortcut:
+(This is the same DDL migration v35 runs — the canonical copy lives in
+`src/core/schema-migrations/v035-auto-rls-event-trigger.ts`, one file per schema migration. There's no CLI shortcut:
 `gbrain apply-migrations --force-retry` targets the vX.Y.Z orchestrator
 registry, not numeric schema migrations like v35.)
 
@@ -226,6 +226,19 @@ COMMENT ON TABLE public.expenses_ramp IS NULL;
 
 `gbrain doctor` stops listing the table as exempt and goes back to checking
 it like any other.
+
+## Adding a gbrain table (contributors)
+
+A new gbrain-owned table gets RLS in both places a brain can receive it. For
+fresh installs, add `ALTER TABLE <table> ENABLE ROW LEVEL SECURITY;` to the
+BYPASSRLS-guarded RLS block in `src/schema.sql`, then run
+`bun run build:schema`; the generator keeps that block out of the PGLite
+template by an explicit rule (PGLite has no role system). For existing
+brains, the schema migration that creates the table
+(`bun run new:migration <name>`, one file in `src/core/schema-migrations/`)
+enables RLS too, with a `sqlFor: { pglite: ... }` variant that leaves it out.
+The auto-RLS event trigger and doctor's `rls` check backstop a table that
+slips through on Postgres, but they are the safety net, not the plan.
 
 ## PGLite
 

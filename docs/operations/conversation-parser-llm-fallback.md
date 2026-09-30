@@ -27,8 +27,7 @@ The key is registered explicitly, so neither command needs `--force`.
 Values other than the exact string `true` leave the fallback disabled.
 
 The setting affects conversation fact extraction. It does not make the
-synchronous `conversation-parser scan` command call a model, and it does not
-enable the separate LLM polish scaffold.
+synchronous `conversation-parser scan` command call a model.
 
 ## Select the utility model and run a canary
 

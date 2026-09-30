@@ -88,3 +88,45 @@ describe('authorize() scope default — omitted scope inherits client grant', ()
     expect(await authorizeAndReadScopes('read write', ['admin'])).toEqual([]);
   });
 });
+
+// A self-registered (DCR) client is capped at `read write` at registration;
+// the /authorize clamp then bounds every code it mints to that registered
+// grant. Together: an anonymous registrant can never mint a privileged code,
+// however it phrases the /authorize request.
+describe('authorize() clamp on a DCR-registered client', () => {
+  async function dcrAuthorizeAndReadScopes(requested: string[]): Promise<string[]> {
+    const info = await provider.clientsStore.registerClient!({
+      client_name: 'dcr-authz-clamp',
+      redirect_uris: ['https://example.test/cb'],
+      grant_types: ['authorization_code'],
+      scope: 'read write',
+      token_endpoint_auth_method: 'none',
+    } as any);
+    expect(info.scope).toBe('read write');
+    const client = await provider.clientsStore.getClient(info.client_id);
+    expect(client).toBeTruthy();
+    await authorizeAsOwner(provider,
+      client!,
+      {
+        scopes: requested,
+        codeChallenge: TEST_PKCE_CHALLENGE,
+        redirectUri: 'https://example.test/cb',
+        state: 'xyz',
+      } as any,
+      noopRes,
+    );
+    const rows = (await sql`
+      SELECT scopes FROM oauth_codes WHERE client_id = ${info.client_id}
+    `) as Array<{ scopes: string[] }>;
+    expect(rows.length).toBe(1);
+    return rows[0].scopes ?? [];
+  }
+
+  test('request "read write admin" → code carries ["read","write"]', async () => {
+    expect((await dcrAuthorizeAndReadScopes(['read', 'write', 'admin'])).sort()).toEqual(['read', 'write']);
+  });
+
+  test('request "admin" alone → code carries []', async () => {
+    expect(await dcrAuthorizeAndReadScopes(['admin'])).toEqual([]);
+  });
+});

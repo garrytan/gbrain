@@ -15,10 +15,13 @@ while [[ $# -gt 0 ]]; do
       if [[ "$1" == --root ]]; then gbrain_root=$2; else gbrain_harness=$2; fi
       shift 2 ;;
     --upgrade) gbrain_upgrade=1; gbrain_extra+=("$1"); shift ;;
+    --skills)
+      [[ $# -ge 2 && ( "$2" == follow || "$2" == memory-only ) ]] || { echo '--skills must be follow or memory-only' >&2; exit 2; }
+      gbrain_extra+=("$1" "$2"); shift 2 ;;
     --adopt|--json) gbrain_extra+=("$1"); shift ;;
     -h|--help)
-      echo 'setup-in-agent.sh --root ABS --harness grok-bot|muse [--adopt] [--upgrade] [--json]'
-      echo 'Repeat setup to repair the recorded runtime; memory is never reset.'
+      echo 'setup-in-agent.sh --root ABS --harness grok-bot|muse [--adopt] [--upgrade] [--skills follow|memory-only] [--json]'
+      echo 'Fresh installs follow the shared catalog; native loading is manual. Existing/adopted roots require approval. Memory is never reset.'
       exit 0 ;;
     *) echo "Unknown setup option: $1" >&2; exit 2 ;;
   esac
@@ -88,7 +91,7 @@ chmod 700 "$gbrain_work/bundle/bun"
 # recipe-coverage/parity test pins the standalone trampoline's literal pattern.
 for gbrain_env_name in $(compgen -e); do
   case "$gbrain_env_name" in
-    GBRAIN_*|ANTHROPIC_*|AZURE_OPENAI_*|DASHSCOPE_*|DEEPSEEK_*|GEMINI_*|GOOGLE_GENERATIVE_AI_*|GROQ_*|LITELLM_*|LLAMA_SERVER_*|LMSTUDIO_*|MINIMAX_*|MISTRAL_*|MOONSHOT_*|NAN_*|NVIDIA_*|OLLAMA_*|OPENAI_*|OPENROUTER_*|PERPLEXITY_*|TOGETHER_*|VOYAGE_*|ZEROENTROPY_*|ZHIPUAI_*|DATABASE_URL|BUN_OPTIONS|NODE_OPTIONS|CLAUDE_CODE_OAUTH_TOKEN|*_API_KEY|*_API_TOKEN|*_CLIENT_SECRET) unset "$gbrain_env_name" ;;
+    GBRAIN_*|ANTHROPIC_*|AZURE_OPENAI_*|DASHSCOPE_*|DEEPSEEK_*|GEMINI_*|GOOGLE_GENERATIVE_AI_*|GROQ_*|LITELLM_*|LLAMA_SERVER_*|LMSTUDIO_*|MINIMAX_*|MISTRAL_*|MOONSHOT_*|NAN_*|NVIDIA_*|OLLAMA_*|OPENAI_*|OPENROUTER_*|PERPLEXITY_*|TOGETHER_*|VOYAGE_*|ZHIPUAI_*|DATABASE_URL|BUN_OPTIONS|NODE_OPTIONS|CLAUDE_CODE_OAUTH_TOKEN|*_API_KEY|*_API_TOKEN|*_CLIENT_SECRET) unset "$gbrain_env_name" ;;
   esac
 done
 export GBRAIN_HOME="$gbrain_work/setup-home" GBRAIN_SKIP_STARTUP_HOOKS=1

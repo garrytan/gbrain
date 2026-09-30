@@ -49,5 +49,6 @@ export async function seedDenseHub(engine: BrainEngine, ringOffsets = 5): Promis
   for (let i = 0; i < links.length; i += 500) {
     await engine.addLinksBatch(links.slice(i, i + 500));
   }
+  await engine.executeRaw('ANALYZE pages, links');
   return { edges: links.length };
 }

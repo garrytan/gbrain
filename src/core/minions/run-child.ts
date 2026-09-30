@@ -38,8 +38,17 @@ import { withChatPhase } from '../ai/chat-usage.ts';
 import {
   JOB_CHILD_EXIT_NOT_CLAIMED,
   JOB_CHILD_EXIT_RESULT_WRITE_FAILED,
+  WORKER_EXIT_CONFIGURATION,
 } from './worker-exit-codes.ts';
 import { encodeHandlerError, unrefTimer, writeChildOutcomeFile } from './job-isolation.ts';
+import { isLocalConfigurationError } from './configuration-error.ts';
+
+export function writeChildBootstrapError(resultPath: string, error: unknown): number {
+  if (!isLocalConfigurationError(error)) return 1;
+  try { writeChildOutcomeFile(resultPath, encodeHandlerError(error)); }
+  catch { return JOB_CHILD_EXIT_RESULT_WRITE_FAILED; }
+  return WORKER_EXIT_CONFIGURATION;
+}
 
 export interface RunChildOpts {
   jobId: number;

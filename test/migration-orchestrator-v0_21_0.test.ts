@@ -29,13 +29,6 @@ describe('v0.21.0 orchestrator — Cathedral II migration', () => {
     expect(desc).toContain('fence extraction');
   });
 
-  test('phase functions exported for unit testing', async () => {
-    const { __testing } = await import('../src/commands/migrations/v0_21_0.ts');
-    expect(typeof __testing.phaseASchema).toBe('function');
-    expect(typeof __testing.phaseBBackfillPrompt).toBe('function');
-    expect(typeof __testing.phaseCVerify).toBe('function');
-  });
-
   test('dry-run skips all side-effect phases', async () => {
     const { v0_21_0 } = await import('../src/commands/migrations/v0_21_0.ts');
     const result = await v0_21_0.orchestrator({

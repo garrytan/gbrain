@@ -46,6 +46,7 @@ beforeAll(() => {
 
   copyFileSync(PARALLEL_SH_SRC, join(TMPROOT, 'scripts', 'run-unit-parallel.sh'));
   copyFileSync(SHARD_SH_SRC, join(TMPROOT, 'scripts', 'run-unit-shard.sh'));
+  copyFileSync(resolve(REPO_ROOT, 'scripts/sharding.ts'), join(TMPROOT, 'scripts/sharding.ts'));
   copyFileSync(SERIAL_SH_SRC, join(TMPROOT, 'scripts', 'run-serial-tests.sh'));
   chmodSync(join(TMPROOT, 'scripts', 'run-unit-parallel.sh'), 0o755);
   chmodSync(join(TMPROOT, 'scripts', 'run-unit-shard.sh'), 0o755);
@@ -184,7 +185,7 @@ describe('run-unit-parallel.sh operator-interrupt cleanup', () => {
       mkdirSync(join(root, 'scripts', 'lib'), { recursive: true });
       mkdirSync(join(root, 'test'), { recursive: true });
       mkdirSync(join(root, 'bin'), { recursive: true });
-      for (const s of ['run-unit-parallel.sh', 'run-unit-shard.sh', 'run-serial-tests.sh']) {
+      for (const s of ['sharding.ts', 'run-unit-parallel.sh', 'run-unit-shard.sh', 'run-serial-tests.sh']) {
         copyFileSync(resolve(REPO_ROOT, 'scripts', s), join(root, 'scripts', s));
         chmodSync(join(root, 'scripts', s), 0o755);
       }
@@ -193,6 +194,7 @@ describe('run-unit-parallel.sh operator-interrupt cleanup', () => {
 
       const fakeBun = join(root, 'bin', 'bun');
       writeFileSync(fakeBun, `#!/usr/bin/env bash
+[ "${'$'}{1:-}" = "scripts/sharding.ts" ] && exec ${JSON.stringify(process.execPath)} "${'$'}@"
 [ "${'$'}{1:-}" = "test" ] || exit 0
 echo "$$" > "${join(root, 'bun.pid')}"
 trap '' INT TERM
@@ -268,7 +270,7 @@ describe('run-unit-parallel.sh no-timeout-binary fallback (rc from shard wait, n
     FROOT = mkdtempSync(join(tmpdir(), 'gbrain-parallel-fallback-'));
     mkdirSync(join(FROOT, 'scripts'), { recursive: true });
     mkdirSync(join(FROOT, 'test'), { recursive: true });
-    for (const s of ['run-unit-parallel.sh', 'run-unit-shard.sh', 'run-serial-tests.sh', 'lib/test-env.sh']) {
+    for (const s of ['sharding.ts', 'run-unit-parallel.sh', 'run-unit-shard.sh', 'run-serial-tests.sh', 'lib/test-env.sh']) {
       mkdirSync(dirname(join(FROOT, 'scripts', s)), { recursive: true });
       copyFileSync(resolve(REPO_ROOT, 'scripts', s), join(FROOT, 'scripts', s));
       chmodSync(join(FROOT, 'scripts', s), 0o755);
@@ -282,7 +284,7 @@ describe('passing', () => {
 
     const bin = join(FROOT, 'bin');
     mkdirSync(bin);
-    for (const tool of ['bash', 'sh', 'env', 'dirname', 'basename', 'mktemp', 'date', 'sleep', 'cat', 'tail', 'head', 'rm', 'mkdir', 'pkill', 'grep', 'sed', 'awk', 'wc', 'tr', 'seq', 'find', 'sort', 'bun']) {
+    for (const tool of ['bash', 'sh', 'env', 'dirname', 'basename', 'mktemp', 'date', 'sleep', 'cat', 'tail', 'head', 'rm', 'mkdir', 'pkill', 'grep', 'sed', 'awk', 'wc', 'tr', 'seq', 'find', 'sort', 'tee', 'bun']) {
       const p = Bun.which(tool);
       if (p) symlinkSync(p, join(bin, tool));
     }
@@ -354,7 +356,7 @@ describe('run-unit-parallel.sh OOM rescue lane', () => {
     OROOT = mkdtempSync(join(tmpdir(), 'gbrain-parallel-oom-'));
     mkdirSync(join(OROOT, 'scripts'), { recursive: true });
     mkdirSync(join(OROOT, 'test'), { recursive: true });
-    for (const s of ['run-unit-parallel.sh', 'run-unit-shard.sh', 'run-serial-tests.sh', 'lib/test-env.sh']) {
+    for (const s of ['sharding.ts', 'run-unit-parallel.sh', 'run-unit-shard.sh', 'run-serial-tests.sh', 'lib/test-env.sh']) {
       mkdirSync(dirname(join(OROOT, 'scripts', s)), { recursive: true });
       copyFileSync(resolve(REPO_ROOT, 'scripts', s), join(OROOT, 'scripts', s));
       chmodSync(join(OROOT, 'scripts', s), 0o755);
@@ -531,7 +533,7 @@ describe('run-unit-parallel.sh no-timeout-binary wedge sentinel (rc 143 at cap â
     WROOT = mkdtempSync(join(tmpdir(), 'gbrain-parallel-wedge-'));
     mkdirSync(join(WROOT, 'scripts'), { recursive: true });
     mkdirSync(join(WROOT, 'test'), { recursive: true });
-    for (const s of ['run-unit-parallel.sh', 'run-unit-shard.sh', 'run-serial-tests.sh', 'lib/test-env.sh']) {
+    for (const s of ['sharding.ts', 'run-unit-parallel.sh', 'run-unit-shard.sh', 'run-serial-tests.sh', 'lib/test-env.sh']) {
       mkdirSync(dirname(join(WROOT, 'scripts', s)), { recursive: true });
       copyFileSync(resolve(REPO_ROOT, 'scripts', s), join(WROOT, 'scripts', s));
       chmodSync(join(WROOT, 'scripts', s), 0o755);
@@ -549,7 +551,7 @@ describe('hanging', () => { it('sleeps past the shard cap', async () => { await 
     // so the fallback branch executes even on hosts with coreutils.
     const bin = join(WROOT, 'bin');
     mkdirSync(bin);
-    for (const tool of ['bash', 'sh', 'env', 'dirname', 'basename', 'mktemp', 'date', 'sleep', 'cat', 'tail', 'head', 'rm', 'mkdir', 'pkill', 'grep', 'sed', 'awk', 'wc', 'tr', 'seq', 'find', 'sort', 'touch', 'stat', 'bun']) {
+    for (const tool of ['bash', 'sh', 'env', 'dirname', 'basename', 'mktemp', 'date', 'sleep', 'cat', 'tail', 'head', 'rm', 'mkdir', 'pkill', 'grep', 'sed', 'awk', 'wc', 'tr', 'seq', 'find', 'sort', 'touch', 'stat', 'tee', 'bun']) {
       const p = Bun.which(tool);
       if (p) symlinkSync(p, join(bin, tool));
     }

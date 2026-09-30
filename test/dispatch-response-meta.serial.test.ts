@@ -37,7 +37,7 @@ const { dispatchToolCall } = await import('../src/mcp/dispatch.ts');
 
 const engineStub = {
   getConfig: async () => null,
-  executeRaw: async () => [],
+  executeRaw: async (sql: string) => sql.includes('AS pending') ? [{ pending: false }] : [],
 } as unknown as BrainEngine;
 
 const DEGRADED_META = {
@@ -88,7 +88,7 @@ describe('dispatch response meta (WP2/D3/D8)', () => {
   });
 
   test('non-empty results → single block, _meta.retrieval still present (D3: on ALL responses)', async () => {
-    nextResults = [{ page_id: 1, slug: 'a', chunk_text: 'x' }];
+    nextResults = [{ page_id: 1, source_id: 'default', slug: 'a', chunk_text: 'x' }];
     nextMeta = DEGRADED_META;
     const out = await callSearch();
     expect(out.content.length).toBe(1);

@@ -13,11 +13,12 @@
  *      core rejects github_item on non-github kinds, so the job would die).
  */
 import { describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { githubKindCoversRepo, selectGitHubItemSources } from '../src/commands/serve-http.ts';
+import { surfaceFileSource } from './helpers/source-surface.ts';
 
 describe('githubKindCoversRepo', () => {
   test('scope=repos matches the configured list case-insensitively', () => {
@@ -103,7 +104,7 @@ describe('selectGitHubItemSources', () => {
 
 describe('handler wiring (source pin)', () => {
   test('legacy-only match ACKs 202 ignored before any job submission', () => {
-    const src = readFileSync(new URL('../src/commands/serve-http.ts', import.meta.url), 'utf8');
+    const src = surfaceFileSource('serve-http', 'src/commands/serve-http-webhooks.ts');
     const guard = src.indexOf('verified.length === 0 && legacyMatched');
     const enqueue = src.indexOf('github_item:', guard);
     expect(guard).toBeGreaterThan(0);

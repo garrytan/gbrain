@@ -18,10 +18,11 @@
 
 import { describe, test, expect } from 'bun:test';
 import { readFileSync } from 'fs';
+import { surfaceFileSource } from './helpers/source-surface.ts';
 
 describe('cli.ts — disconnect hard-deadline armed at teardown entry, not before the op body', () => {
   test('no timer arming exists between op-dispatch setup and the try; the deadline arms inside finishCliTeardown before the drain', () => {
-    const cli = readFileSync('src/cli.ts', 'utf8');
+    const cli = surfaceFileSource('cli', 'src/cli.ts');
 
     // The old pre-try arming constant must stay gone (its return is the
     // kill-slow-ops-with-exit-0 regression).
@@ -30,7 +31,7 @@ describe('cli.ts — disconnect hard-deadline armed at teardown entry, not befor
     // Between the op-dispatch engine connect and the try there is no
     // setTimeout call site (`setTimeout(` matches calls only; the
     // ReturnType<typeof setTimeout> annotation stays allowed).
-    const connectIdx = cli.indexOf('// Local engine path (unchanged behavior for local installs).');
+    const connectIdx = cli.indexOf('// No live serve owns the selected brain; connect through the normal lock path.');
     expect(connectIdx).toBeGreaterThan(-1);
     const tryIdx = cli.indexOf('try {', connectIdx);
     expect(tryIdx).toBeGreaterThan(-1);

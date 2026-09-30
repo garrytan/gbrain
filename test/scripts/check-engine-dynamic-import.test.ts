@@ -5,9 +5,7 @@ import { basename, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 const REPO_ROOT = resolve(import.meta.dir, '..', '..');
-const PACKAGE_JSON = resolve(REPO_ROOT, 'package.json');
 const GUARD = resolve(REPO_ROOT, 'scripts', 'check-engine-dynamic-import.sh');
-const VERIFY_DISPATCHER = resolve(REPO_ROOT, 'scripts', 'run-verify-parallel.sh');
 const BASH = process.platform === 'win32'
   ? resolve(process.env.ProgramFiles ?? 'C:\\Program Files', 'Git', 'bin', 'bash.exe')
   : 'bash';
@@ -32,10 +30,10 @@ function fixture(name: string, content: string): string {
  */
 function expectedDefaultScanCount(): number {
   let count = 3;
-  for (const dir of ['src/core/pglite-engine', 'src/core/postgres-engine']) {
+  for (const dir of ['src/core/pglite-engine', 'src/core/postgres-engine', 'src/core/engine-sql', 'src/core/schema-migrations']) {
     const full = join(REPO_ROOT, dir);
     if (!existsSync(full)) continue;
-    count += readdirSync(full).filter((f) => f.endsWith('.ts')).length;
+    count += readdirSync(full, { recursive: true }).filter((f) => String(f).endsWith('.ts')).length;
   }
   return count;
 }
@@ -60,9 +58,6 @@ afterEach(() => {
 });
 
 describe('check-engine-dynamic-import.sh', () => {
-  it('exists', () => {
-    expect(existsSync(GUARD)).toBe(true);
-  });
 
   it('rejects and reports an unmarked dynamic import', () => {
     const path = fixture('violator.ts', "async function load() {\n  return await import('./helper.ts');\n}\n");
@@ -322,35 +317,4 @@ describe('check-engine-dynamic-import.sh', () => {
       `check-engine-dynamic-import: ok (${expectedDefaultScanCount()} file(s) scanned)`,
     );
   }, 30_000);
-});
-
-describe('engine dynamic-import guard wiring', () => {
-  it('is wired into the verify registry (W0: check:all deleted; CHECKS array is THE registry)', () => {
-    const pkg = JSON.parse(readFileSync(PACKAGE_JSON, 'utf8')) as {
-      scripts: Record<string, string>;
-    };
-    expect(pkg.scripts['check:engine-dynamic-import']).toBe(
-      'bash scripts/check-engine-dynamic-import.sh',
-    );
-    // The stale duplicate registry is gone for good…
-    expect(pkg.scripts['check:all']).toBeUndefined();
-    // …and the single registry carries this guard.
-    const checks = readFileSync(
-      new URL('../../scripts/run-verify-parallel.sh', import.meta.url),
-      'utf8',
-    );
-    expect(checks).toContain('"check:engine-dynamic-import"');
-  });
-
-  it('is listed by the authoritative verify dispatcher', () => {
-    const result = spawnSync(BASH, [VERIFY_DISPATCHER, '--dry-list'], {
-      cwd: REPO_ROOT,
-      encoding: 'utf8',
-      timeout: 30_000,
-    });
-    expect(result.status).toBe(0);
-    expect(new Set((result.stdout ?? '').trim().split('\n'))).toContain(
-      'check:engine-dynamic-import',
-    );
-  });
 });

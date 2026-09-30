@@ -536,7 +536,7 @@ export async function runLintCore(opts: LintOpts): Promise<LintResult> {
     throw new Error(`Not found: ${opts.target}`);
   }
 
-  if (opts.engine && !hasSourceFilesystemLock(opts.target)) {
+  if (opts.engine && opts.fix && !opts.dryRun && !hasSourceFilesystemLock(opts.target)) {
     return withSourceFilesystemLock(opts.engine, opts.target, () => runLintCore(opts), { signal: opts.signal });
   }
 
