@@ -319,7 +319,7 @@ test/title-fuzzy-index.test.ts	findByTitleFuzzy indexed threshold	2	source-surfa
 test/transcription-injection.test.ts	transcription — command injection (#245)	2	readFileSync
 test/upgrade-skill-publish-prompt-race.test.ts	gbrain upgrade — skill-publish prompt wiring (#4318 residual)	3	readFileSync
 test/upgrade.serial.test.ts	detectInstallMethod — package-install classification (in-process)	4	readFileSync
-test/upgrade.serial.test.ts	runUpgrade target verification (#4366)	8	readFileSync
+test/upgrade.serial.test.ts	runUpgrade target verification (#4366)	9	readFileSync
 test/v0_37_fix_wave.serial.test.ts	v0.37 Lane A — defaults sweep	8	source-surface-helper
 test/v0_37_fix_wave.serial.test.ts	v0.37 Lane B — init paths	3	source-surface-helper
 test/v0_37_fix_wave.serial.test.ts	v0.37 Lane C.3 — Voyage key reaches buildGatewayConfig	2	source-surface-helper

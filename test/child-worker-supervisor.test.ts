@@ -818,10 +818,9 @@ describe('ChildWorkerSupervisor', () => {
   // process alive past bun's per-test timeout — a `bun test` run that never
   // terminates and never prints a totals line.
   //
-  // Platform-independent: `spawn()` of a nonexistent path is ENOENT everywhere,
-  // so this guards the fix on Linux CI too, not just on the Windows box where
-  // it surfaced (a `.sh` worker, since chmod is a no-op and there is no
-  // shebang handling).
+  // Force the direct-spawn path: when tini is on PATH it launches successfully
+  // and reports the missing binary as an ordinary child exit instead of an
+  // `error` event from spawn(). A nonexistent path is ENOENT everywhere.
   describe('spawn failure that never launches a process', () => {
     /** Harness for a cliPath guaranteed not to exist. Nothing to clean up. */
     function makeUnlaunchableHarness(name: string): Harness {
@@ -890,12 +889,12 @@ describe('ChildWorkerSupervisor', () => {
 
     it('honours isStopping so a shutdown mid-failure does not keep respawning', async () => {
       const h = makeUnlaunchableHarness('stop-early');
-      const { events } = await runUntilTerminal(h, {
+      const { events } = await withEnv({ PATH: '' }, () => runUntilTerminal(h, {
         maxCrashes: 99,
         hardStopMaxCrashes: 0, // never give up on its own
         _backoffFloorMs: 1,
         stopAfterEvents: 6, // the composer's stop flag is the only exit
-      });
+      }));
       // Terminated via isStopping rather than the wall-clock net (which would
       // have thrown), and did not run away past the event budget.
       expect(events.length).toBeGreaterThanOrEqual(6);
