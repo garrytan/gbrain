@@ -17,8 +17,10 @@
  * (`codex-cli:gpt-5.6-luna@low`), so a utility tier can run fast while the
  * reasoning tier thinks; GBRAIN_CODEX_CLI_REASONING_EFFORT sets the default
  * for suffix-less ids. The effort vocabulary is the CLI's
- * (`minimal|low|medium|high|xhigh` plus model-dependent `max`/`ultra`); it
- * is passed through verbatim and validated by the CLI/catalog, not here.
+ * (`minimal|low|medium|high|xhigh` plus model-dependent `max`/`ultra`); the
+ * level itself is validated by the CLI/catalog, but its SHAPE is checked
+ * here (`[a-z][a-z0-9_-]*`) because it is interpolated into a TOML `-c`
+ * override — anything else is refused before a subprocess exists.
  *
  * Agent isolation — the subprocess must behave like a raw model, not a coding
  * agent operating on this machine:
@@ -30,10 +32,11 @@
  *                             would recurse), no hooks, no plugins, no
  *                             project trust entries
  *   --ignore-rules            no execpolicy rules
- *   --skip-git-repo-check + -C <empty tmpdir>   no AGENTS.md discovery
+ *   --skip-git-repo-check, spawned with cwd = an empty per-process tmpdir
+ *                             no AGENTS.md discovery
  *   -s read-only              sandbox floor even if a tool slipped through
  *   --disable shell_tool / multi_agent / apps / browser_use / computer_use /
- *   plugins / memories, -c web_search="disabled", -c tools.view_image=false
+ *   plugins / memories / view_image, -c web_search="disabled"
  *                             every built-in tool surface off; the model can
  *                             only answer in text (which is where the
  *                             <use_tools> protocol lives)
@@ -49,7 +52,7 @@
  *                             replay anyway.
  *
  * Auth: the CLI owns it. OPENAI_API_KEY / OPENAI_BASE_URL are scrubbed from the
- * child env and `preferred_auth_method="chatgpt"` is pinned, so an API key in
+ * child env and `forced_login_method="chatgpt"` is pinned, so an API key in
  * gbrain's env (the setup this recipe exists to replace) cannot silently flip
  * billing to per-token API usage.
  *
@@ -74,8 +77,10 @@ import {
   renderPrompt,
   stripProviderPrefix,
 } from './cli-tool-protocol.ts';
+import { AIConfigError } from '../errors.ts';
 
 const TOOL_CALL_ID_PREFIX = 'toolu_codex_cli_';
+const CODE_MODE_DISABLED_NOTICE = 'Code Mode is unavailable because code-mode host is disabled. Code mode will fail closed; enable `features.code_mode_host` and install `codex-code-mode-host`.';
 
 function codexBin(): string {
   return process.env.GBRAIN_CODEX_CLI_BIN ?? 'codex';
@@ -85,12 +90,33 @@ function codexBin(): string {
 export const CODEX_CLI_EFFORTS = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'] as const;
 export type CodexCliEffort = typeof CODEX_CLI_EFFORTS[number];
 
+/** Codex CLI release the isolation argv (`--strict-config`, the `--disable` set) is verified against. */
+export const MIN_CODEX_CLI_VERSION = '0.159.0';
+
+/**
+ * The only shape an effort level may take. It is interpolated into
+ * `-c model_reasoning_effort="<effort>"`, a TOML override sitting beside the
+ * sandbox and login pins, so a quote, newline or space must never reach it.
+ */
+const EFFORT_SHAPE = /^[a-z][a-z0-9_-]{0,31}$/;
+
+function checkedEffort(effort: string, source: string): string {
+  if (!EFFORT_SHAPE.test(effort)) {
+    throw new AIConfigError(
+      `codex-cli: reasoning effort ${JSON.stringify(effort)} from ${source} is not a valid level name`,
+      `Use one of ${CODEX_CLI_EFFORTS.join(', ')} (letters, digits, '-' and '_' only), e.g. codex-cli:gpt-5.6-luna@low.`,
+    );
+  }
+  return effort;
+}
+
 /**
  * Split `gpt-5.6-luna@low` into the CLI model id and an optional reasoning
  * effort. A bare id keeps the CLI/catalog default unless
- * GBRAIN_CODEX_CLI_REASONING_EFFORT names one. Unknown suffixes are passed
- * through: the CLI validates against the live catalog, and a hard-coded
- * allowlist here would reject a level a newer model legitimately supports.
+ * GBRAIN_CODEX_CLI_REASONING_EFFORT names one. Unknown level NAMES are passed
+ * through (the CLI validates against the live catalog, and a hard-coded list
+ * here would reject a level a newer model legitimately supports), but a value
+ * outside `[a-z][a-z0-9_-]*` throws AIConfigError.
  */
 export function parseCodexModelId(
   raw: string,
@@ -99,10 +125,11 @@ export function parseCodexModelId(
   const bare = stripProviderPrefix(raw);
   const at = bare.lastIndexOf('@');
   if (at > 0 && at < bare.length - 1) {
-    return { model: bare.slice(0, at), effort: bare.slice(at + 1).trim().toLowerCase() };
+    const effort = bare.slice(at + 1).trim().toLowerCase();
+    return { model: bare.slice(0, at), effort: checkedEffort(effort, 'the model id suffix') };
   }
   const fallback = envDefault?.trim().toLowerCase();
-  return { model: bare, effort: fallback || undefined };
+  return { model: bare, effort: fallback ? checkedEffort(fallback, 'GBRAIN_CODEX_CLI_REASONING_EFFORT') : undefined };
 }
 
 /** One line of `codex exec --json` output. Only the fields this adapter reads. */
@@ -125,15 +152,17 @@ export interface CodexExecEvent {
 export interface CodexExecResult {
   text: string;
   usage: { input_tokens?: number; cached_input_tokens?: number; output_tokens?: number } | undefined;
-  /** Non-fatal `item.type: "error"` notices (skills budget etc.), for diagnostics. */
+  /** Non-fatal startup/code-mode and skills-budget notices, for diagnostics. */
   notices: string[];
 }
 
 /**
  * Typed failure for a `codex exec` run. `apiErrorStatus` is inferred from the
- * failure text for the classes callers branch on (429 usage limit, 401/403
- * auth) — the JSONL carries no HTTP status — so normalizeAIError can route a
- * whole-run auth/limit outage the same way it does for claude-cli.
+ * text of a structured CLI failure event (`turn.failed`, `error`, an error
+ * item) for the classes callers branch on (429 usage limit, 401/403 auth) —
+ * the JSONL carries no HTTP status — so normalizeAIError can route a
+ * whole-run auth/limit outage the same way it does for claude-cli. Raw,
+ * unstructured output never gets a status.
  */
 export class CodexCliProcessError extends Error {
   readonly apiErrorStatus: number | undefined;
@@ -149,11 +178,14 @@ export class CodexCliProcessError extends Error {
 /**
  * Map a Codex failure message to the HTTP status class gbrain's error
  * normalizer already understands. Conservative: only unambiguous phrasings.
+ * Request-shaped failures ("invalid max_output_tokens", "too many tokens",
+ * context length) must stay per-item, so token wording only counts when it
+ * names a credential token.
  */
 export function inferApiErrorStatus(message: string): number | undefined {
   const m = message.toLowerCase();
-  if (/usage limit|rate limit|too many requests|quota/.test(m)) return 429;
-  if (/not logged in|login required|unauthori[sz]ed|invalid.*token|expired.*token|run `?codex login/.test(m)) return 401;
+  if (/usage limit|rate limit|too many requests/.test(m)) return 429;
+  if (/not logged in|login required|\bunauthori[sz]ed\b|(?:access|auth|refresh|id)[ _-]?token (?:is |has )?(?:invalid|expired)|(?:invalid|expired) (?:access|auth|refresh|id)[ _-]?token|run `?codex login/.test(m)) return 401;
   if (/forbidden|not (?:permitted|allowed) for (?:this|your) (?:plan|account)/.test(m)) return 403;
   return undefined;
 }
@@ -199,25 +231,30 @@ export function summarizeExec(
   events: CodexExecEvent[],
   lastMessageFile: string | undefined,
   exitCode: number | null,
+  exitSignal: NodeJS.Signals | null = null,
 ): CodexExecResult | CodexCliProcessError {
   const notices: string[] = [];
   let failure: string | undefined;
   let agentText: string | undefined;
+  let completed = false;
+  let started = false;
   let usage: CodexExecResult['usage'];
   for (const ev of events) {
-    if (ev.type === 'item.completed' && ev.item) {
+    if (ev.type === 'turn.started') started = true;
+    else if (ev.type === 'item.completed' && ev.item) {
       if (ev.item.type === 'agent_message' && typeof ev.item.text === 'string') agentText = ev.item.text;
       else if (ev.item.type === 'error') {
         const msg = String(ev.item.message ?? '');
-        if (isSkillsBudgetNotice(msg)) notices.push(msg);
+        if (isSkillsBudgetNotice(msg) || (!started && msg === CODE_MODE_DISABLED_NOTICE)) notices.push(msg);
         else failure ??= msg;
       }
     } else if (ev.type === 'error') {
       failure ??= typeof ev.error === 'string' ? ev.error : ev.error?.message ?? ev.message ?? 'codex exec reported an error';
     } else if (ev.type === 'turn.failed') {
       failure ??= typeof ev.error === 'string' ? ev.error : ev.error?.message ?? 'codex exec turn failed';
-    } else if (ev.type === 'turn.completed' && ev.usage) {
-      usage = {
+    } else if (ev.type === 'turn.completed') {
+      completed = true;
+      if (ev.usage) usage = {
         input_tokens: numberOrUndefined(ev.usage.input_tokens),
         cached_input_tokens: numberOrUndefined(ev.usage.cached_input_tokens),
         output_tokens: numberOrUndefined(ev.usage.output_tokens),
@@ -227,6 +264,15 @@ export function summarizeExec(
   if (failure !== undefined) {
     return new CodexCliProcessError(`codex-cli reported error: ${failure}`,
       { apiErrorStatus: inferApiErrorStatus(failure), exitCode: exitCode ?? undefined });
+  }
+  // Partial text (including tool calls) is never a successful process result.
+  if (exitCode !== 0 || exitSignal) {
+    return new CodexCliProcessError(
+      exitSignal ? `codex-cli terminated by ${exitSignal}` : `codex-cli exited ${exitCode}`,
+      { exitCode: exitCode ?? undefined });
+  }
+  if (!completed) {
+    return new CodexCliProcessError('codex-cli stream ended without turn.completed', { exitCode });
   }
   // `-o` is exact bytes of the final message; the event text is the fallback
   // for CLI builds whose agent_message item is the only carrier.
@@ -267,6 +313,7 @@ export function buildCodexArgs(model: string, effort: string | undefined, lastMe
     '--ephemeral',
     '--ignore-user-config',
     '--ignore-rules',
+    '--strict-config',
     '--skip-git-repo-check',
     '--sandbox', 'read-only',
     '--model', model,
@@ -278,12 +325,25 @@ export function buildCodexArgs(model: string, effort: string | undefined, lastMe
     '--disable', 'computer_use',
     '--disable', 'plugins',
     '--disable', 'memories',
+    '--disable', 'view_image',
+    '--disable', 'image_generation',
+    '--disable', 'multi_agent_v2',
+    '--disable', 'browser_use_external',
+    '--disable', 'in_app_browser',
+    '--disable', 'code_mode_host',
+    '--disable', 'skill_search',
+    '--disable', 'sleep_tool',
+    '--disable', 'tool_suggest',
+    '--disable', 'goals',
+    '--disable', 'hooks',
     '-c', 'web_search="disabled"',
-    '-c', 'tools.view_image=false',
+    '-c', 'tools.experimental_request_user_input.enabled=false',
+    '-c', 'tools.update_plan.enabled=false',
+    '-c', 'agents.enabled=false',
     '-c', 'skills.max_context_tokens=1',
     '-c', 'hide_agent_reasoning=true',
     '-c', 'model_reasoning_summary="none"',
-    '-c', 'preferred_auth_method="chatgpt"',
+    '-c', 'forced_login_method="chatgpt"',
   ];
   if (effort) args.push('-c', `model_reasoning_effort="${effort}"`);
   // Prompt arrives on stdin (`-` sentinel) so long system prompts never hit
@@ -291,6 +351,9 @@ export function buildCodexArgs(model: string, effort: string | undefined, lastMe
   args.push('-');
   return args;
 }
+
+/** stderr shapes of a CLI that does not know one of the isolation flags/settings. */
+const REJECTED_FLAG_RE = /unexpected argument|unknown (?:option|argument|feature|field|key|config)|unrecognized (?:option|argument)/i;
 
 /**
  * Spawn `codex exec` and resolve the final message + usage. Aborts propagate
@@ -304,6 +367,9 @@ function runCodex(
   signal?: AbortSignal,
 ): Promise<CodexExecResult> {
   return new Promise((resolve, reject) => {
+    // Pre-aborted: refuse before any scratch dir or subprocess exists, so no
+    // child can emit an 'error' that has no listener yet.
+    if (signal?.aborted) { reject(new Error('codex-cli adapter aborted')); return; }
     const cwd = ensureScratchCwd();
     const lastMessageFile = join(mkdtempSync(join(cwd, 'out-')), 'last-message.md');
     const args = buildCodexArgs(model, effort, lastMessageFile);
@@ -333,44 +399,43 @@ function runCodex(
       cleanup();
       reject(new Error('codex-cli adapter aborted'));
     };
-    if (signal) {
-      if (signal.aborted) { onAbort(); return; }
-      signal.addEventListener('abort', onAbort, { once: true });
-    }
 
+    // Every child/stdin handler is attached before the abort listener, so no
+    // path leaves a spawn error without a listener.
     child.on('error', err => {
       if (signal) signal.removeEventListener('abort', onAbort);
       cleanup();
       reject(new Error(`codex-cli spawn failed: ${err instanceof Error ? err.message : String(err)}`));
     });
 
-    child.on('close', code => {
+    child.on('close', (code, exitSignal) => {
       if (signal) signal.removeEventListener('abort', onAbort);
       const parsed = parseExecEvents(stdout);
       if (!parsed.ok) {
         cleanup();
         // The blob goes AFTER the `--- raw ---` marker: classifyGlobalLlmError's
         // phrase regexes only scan text before the marker, so model/page text
-        // in stdout can never read as a whole-run auth outage.
+        // in stdout can never read as a whole-run auth outage. For the same
+        // reason no apiErrorStatus is inferred from it — a numeric status is
+        // classified before the marker check and would bypass it.
         const raw = (stderr.trim() || stdout.trim()).slice(0, 800);
-        reject(new CodexCliProcessError(
-          code !== 0
-            ? `codex-cli exited ${code}\n--- raw ---\n${raw}`
-            : `codex-cli output had no JSON events\n--- raw ---\n${raw}`,
-          { exitCode: code ?? undefined, apiErrorStatus: inferApiErrorStatus(raw) }));
+        const head = code !== 0 || exitSignal
+          ? `codex-cli ${exitSignal ? `terminated by ${exitSignal}` : `exited ${code}`}`
+          : 'codex-cli output had no JSON events';
+        const tooOld = code !== 0 && !exitSignal && REJECTED_FLAG_RE.test(stderr)
+          ? `: codex CLI ${MIN_CODEX_CLI_VERSION} or newer required (it rejected one of gbrain's isolation flags or settings); upgrade with \`npm i -g @openai/codex\``
+          : '';
+        reject(new CodexCliProcessError(`${head}${tooOld}\n--- raw ---\n${raw}`, { exitCode: code ?? undefined }));
         return;
       }
-      const summary = summarizeExec(parsed.events, lastMessageFile, code);
+      const summary = summarizeExec(parsed.events, lastMessageFile, code, exitSignal);
       cleanup();
       if (summary instanceof CodexCliProcessError) { reject(summary); return; }
-      if (code !== 0 && !summary.text) {
-        reject(new CodexCliProcessError(`codex-cli exited ${code}\n--- raw ---\n${stderr.trim().slice(0, 800)}`, { exitCode: code ?? undefined }));
-        return;
-      }
       resolve(summary);
     });
 
     child.stdin.on('error', () => { /* surfaced via child 'error'/'close' */ });
+    if (signal) signal.addEventListener('abort', onAbort, { once: true });
     try {
       child.stdin.write(stdinPrompt);
       child.stdin.end();

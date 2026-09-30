@@ -18,9 +18,26 @@ touchpoints — no embedding, Codex exposes no embedding endpoint — so a brain
 whose utility or reasoning tier points at `codex-cli:` keeps query expansion
 and pairs with `openai` / `google` / `voyage` / `ollama` for embeddings.
 
+**Say to your agent:** *"Use my Codex subscription for GBrain's utility and reasoning models, and keep embeddings on my existing provider."*
+
+The agent checks `codex login status`, then runs the `gbrain config set
+models.tier.<tier> codex-cli:<model>` commands from step 2 below; your
+embedding settings are left alone.
+
+**Say to your agent:** *"Make GBrain's Codex utility tier think less so it runs faster."*
+
+The agent re-points that tier with an `@<effort>` suffix, for example
+`gbrain config set models.tier.utility codex-cli:gpt-5.6-luna@low`.
+
 ## Setup
 
 1. Install the Codex CLI and log in once:
+
+   The isolation configuration is verified with Codex CLI 0.159.0. The
+   adapter uses `--strict-config`, so an incompatible CLI fails rather than
+   silently ignoring authentication or tool-isolation settings. When the CLI
+   rejects one of those flags, the error reads `codex CLI 0.159.0 or newer
+   required`, followed by the CLI's own message after `--- raw ---`.
 
    ```bash
    npm i -g @openai/codex
@@ -39,7 +56,8 @@ and pairs with `openai` / `google` / `voyage` / `ollama` for embeddings.
    Any model id the account's Codex catalog lists works — the recipe's list
    (`gpt-5.6-luna`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.5`, `gpt-6-astra`)
    is informational and ordered fast → deep. Short aliases: `codex-cli:luna`,
-   `codex-cli:sol`, `codex-cli:terra`, `codex-cli:astra`.
+   `codex-cli:sol`, `codex-cli:terra`, `codex-cli:astra`. Aliases do not take
+   an `@effort` suffix; write the full id instead (`codex-cli:gpt-5.6-luna@low`).
 
 3. Optional environment:
 
@@ -47,6 +65,9 @@ and pairs with `openai` / `google` / `voyage` / `ollama` for embeddings.
      PATH (trusted exec-target variable; see `src/core/env-trust.ts`).
    - `GBRAIN_CODEX_CLI_REASONING_EFFORT` — default reasoning effort for model
      ids that carry no `@effort` suffix.
+   - `CODEX_HOME` — the CLI's own home (login, skills, rules), inherited by
+     the child. Like `GBRAIN_CODEX_CLI_BIN`, a `.env` file in the current
+     directory cannot set it; export it in the shell or service unit.
 
 ## Reasoning effort: `@<effort>` on the model id
 
@@ -61,11 +82,15 @@ without a second provider:
 | `codex-cli:gpt-6-astra@xhigh` | `-c model_reasoning_effort="xhigh"` |
 
 The effort vocabulary is the CLI's: `minimal | low | medium | high | xhigh`,
-plus `max` / `ultra` on models whose catalog entry lists them. The suffix is
-passed through verbatim and validated by the CLI against the live catalog —
-a hard-coded allowlist here would reject levels a newer model legitimately
-supports. `parseCodexModelId` splits on the LAST `@`; a leading or trailing
-`@` is not treated as a suffix.
+plus `max` / `ultra` on models whose catalog entry lists them. The level
+name is validated by the CLI against the live catalog, so a level a newer
+model adds works without a gbrain change. The value is written into a
+`-c model_reasoning_effort="…"` override, so gbrain checks its shape first:
+it must match `[a-z][a-z0-9_-]*` (32 characters at most, matched
+case-insensitively). Anything else, such as a quote, space or newline, fails
+with an `AIConfigError` before the CLI starts. The same check applies to
+`GBRAIN_CODEX_CLI_REASONING_EFFORT`. `parseCodexModelId` splits on the LAST
+`@`; a leading or trailing `@` is not treated as a suffix.
 
 ## What actually happens on a call
 
@@ -86,13 +111,13 @@ supports. `parseCodexModelId` splits on the LAST `@`; a leading or trailing
    | `--ephemeral` | no session rollout under `$CODEX_HOME/sessions`, so transcript discovery never re-ingests gbrain's own calls (the #4472 class `claude-cli` needed a scratch-dir fingerprint for) |
    | `--ignore-user-config` | no `config.toml`: no MCP servers (gbrain's own MCP would recurse into the brain), hooks, plugins, project trust |
    | `--ignore-rules` | no execpolicy rules |
-   | `--skip-git-repo-check` + `-C <empty tmpdir>` | no `AGENTS.md` discovery |
+   | `--skip-git-repo-check`, spawned with cwd = an empty per-process tmpdir | no `AGENTS.md` discovery |
    | `--sandbox read-only` | floor, even if a tool slipped through |
-   | `--disable shell_tool / multi_agent / apps / browser_use / computer_use / plugins / memories` | every built-in tool surface off |
-   | `-c web_search="disabled"`, `-c tools.view_image=false` | remaining tools off |
+   | `--disable shell_tool / multi_agent / multi_agent_v2 / apps / browser_use / browser_use_external / in_app_browser / computer_use / plugins / memories / view_image / image_generation / code_mode_host / skill_search / sleep_tool / tool_suggest / goals / hooks` | built-in agent surfaces off |
+   | `-c web_search="disabled"`, `-c tools.experimental_request_user_input.enabled=false`, `-c tools.update_plan.enabled=false`, `-c agents.enabled=false` | remaining local tools and agent delegation off |
    | `-c skills.max_context_tokens=1` | the skills catalog under `$CODEX_HOME/skills` loads regardless of config; the minimum budget drops every description from the prompt (see the notice below) |
    | `-c hide_agent_reasoning=true`, `-c model_reasoning_summary="none"` | small JSONL; reasoning is dropped on replay anyway |
-   | `-c preferred_auth_method="chatgpt"` | subscription auth even if an API key were reachable |
+   | `-c forced_login_method="chatgpt"` + `--strict-config` | enforce ChatGPT auth; do not ignore unknown isolation settings |
 
 4. Env scrub: `OPENAI_API_KEY`, `OPENAI_BASE_URL` and `CODEX_API_KEY` are
    removed from the child's environment. Subscription-only is the recipe's
@@ -102,7 +127,10 @@ supports. `parseCodexModelId` splits on the LAST `@`; a leading or trailing
 5. Output: `--json` JSONL on stdout plus `--output-last-message <file>`.
    The file is the primary text source (exact bytes, no event reassembly);
    the events supply usage (`turn.completed`) and failures (`turn.failed`,
-   `error`). The `<use_tools>` block, if any, is parsed back into ai-sdk
+   `error`). Nonzero exits and signal termination fail the call even when
+   partial text or a last-message file exists; partial tool calls are not
+   executed. A zero exit also requires a `turn.completed` event. The
+   `<use_tools>` block, if any, is parsed back into ai-sdk
    `tool-call` parts with gbrain-minted ids (`toolu_codex_cli_<uuidv7>`) —
    never model-authored (#4155).
 
@@ -113,7 +141,10 @@ With the skills budget pinned to its minimum the CLI emits an
 skills context budget. All skill descriptions were removed …"*. The turn
 still completes normally. The adapter treats that one notice (matched by
 `isSkillsBudgetNotice`) as informational and records it in
-`CodexExecResult.notices`; any other `error` item fails the call.
+`CodexExecResult.notices`. Codex 0.159.0 also emits a startup notice when
+the code-mode host is deliberately disabled. Only that exact message before
+`turn.started` is informational; altered messages, in-turn errors and
+`turn.failed` still fail the call.
 
 ## Constraints
 
@@ -121,7 +152,10 @@ still completes normally. The adapter treats that one notice (matched by
   windows. Exhaustion arrives as `turn.failed` with a "usage limit" message;
   the adapter surfaces it as `CodexCliProcessError` with `apiErrorStatus:
   429`, so `normalizeAIError` and the subagent handler apply their existing
-  rate-limit handling. A logged-out CLI maps to `401`. Bulk backfills (a
+  rate-limit handling. A logged-out CLI maps to `401`. These statuses come
+  only from the CLI's structured failure events; request-shaped errors
+  (context length, an invalid `max_output_tokens`) stay per-item, and raw
+  non-JSON output never carries a status. Bulk backfills (a
   cold-corpus dream drain, thousands of atom extractions) belong on a
   metered provider; nightly cycles, pattern discovery and interactive `think`
   fit a subscription lane well.
@@ -134,9 +168,13 @@ still completes normally. The adapter treats that one notice (matched by
   mode; driving it as a background model for gbrain sits in the same
   posture as `claude-cli` does for Claude Code. It is the seat's quota you
   spend. Nothing here extracts or reuses OAuth tokens outside the CLI.
-- **Output budget.** The `litellm:`/`openai-compatible` thinking-headroom
-  heuristics do not apply; `agent.max_output_tokens` governs subagent turns
-  as for every other provider.
+- **No per-call output-token cap.** `codex exec` has no output-token flag,
+  so the adapter cannot pass the gateway's `maxOutputTokens` (or
+  `agent.max_output_tokens` for subagent turns) to the model. Response
+  length is whatever the model and its effort level produce. gbrain still
+  records the usage the CLI reports in `turn.completed` for budget
+  accounting, but that is a ledger entry, not a generation limit. The
+  `litellm:`/`openai-compatible` thinking-headroom heuristics do not apply.
 
 ## Doctor probe timeout: per-recipe, 45s for codex-cli
 

@@ -19,7 +19,8 @@ import type { Recipe } from '../types.ts';
  * utility tier, `codex-cli:gpt-6-astra@high` for deep work — so one recipe
  * serves both "fast stuff" and careful synthesis. Effort vocabulary is the
  * CLI's (`minimal|low|medium|high|xhigh`, plus model-dependent `max`/`ultra`)
- * and is validated by the CLI against the live catalog, not by this file.
+ * and the level is validated by the CLI against the live catalog; the
+ * adapter only refuses values outside `[a-z][a-z0-9_-]*`.
  *
  * Chat + expansion; no embedding (Codex exposes no embedding endpoint). Pair
  * with openai/google/voyage/ollama for embeddings as the `anthropic` and

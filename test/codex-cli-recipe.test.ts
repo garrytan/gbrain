@@ -7,7 +7,9 @@
  * writes the `--output-last-message` file, and emits scripted `--json`
  * JSONL events. Tests exercise doGenerate: text round trip, tool-call
  * extraction, `@effort` suffix, isolation argv, env scrub, the informational
- * skills-budget notice, usage-limit → 429 and login → 401 mapping, abort.
+ * skills-budget notice, usage-limit → 429 and login → 401 mapping, raw
+ * output kept status-free behind `--- raw ---`, the too-old-CLI headline,
+ * effort-shape refusal, abort (in flight and pre-aborted).
  * No Codex installation, login or plan quota required.
  *
  * Pure functions (parseCodexModelId, parseExecEvents, summarizeExec,
@@ -34,7 +36,7 @@ const exitCodePath = join(stubDir, 'exit-code');
  * The stub: record everything, write the -o file (if staged) to whatever path
  * the adapter asked for, print the staged events, exit with the staged code.
  */
-function installStub(): void {
+function installStub(signal?: 'KILL'): void {
   const stub = [
     '#!/bin/sh',
     `printf "%s\\n" "$@" > "${argvLog}"`,
@@ -47,6 +49,7 @@ function installStub(): void {
     `if [ -n "$OUT" ] && [ -f "${lastMessagePath}" ]; then cp "${lastMessagePath}" "$OUT"; fi`,
     `cat "${eventsPath}"`,
     `if [ -f "${exitCodePath}" ]; then exit "$(cat "${exitCodePath}")"; fi`,
+    ...(signal ? [`kill -${signal} $$`] : []),
     'exit 0',
   ].join('\n');
   writeFileSync(stubBin, stub);
@@ -131,6 +134,26 @@ describe('codex-cli model id parsing', () => {
     // A trailing or leading @ is not a suffix.
     expect(parseCodexModelId('gpt-5.6-luna@', undefined)).toEqual({ model: 'gpt-5.6-luna@', effort: undefined });
     expect(parseCodexModelId('@low', undefined)).toEqual({ model: '@low', effort: undefined });
+    // Levels outside the documented list but inside the safe charset still
+    // pass through to the CLI's live-catalog validation.
+    expect(parseCodexModelId('gpt-6-astra@ultra', undefined)).toEqual({ model: 'gpt-6-astra', effort: 'ultra' });
+  });
+
+  test('an @effort suffix or env default outside [a-z][a-z0-9_-]* is refused (no injection into -c model_reasoning_effort=)', async () => {
+    const { parseCodexModelId, CodexCliLanguageModel } = await import('../src/core/ai/providers/codex-cli-language-model.ts');
+    const { AIConfigError } = await import('../src/core/ai/errors.ts');
+    for (const bad of [
+      'codex-cli:gpt-5.6-luna@low", sandbox_mode="danger-full-access',
+      'gpt-5.6-luna@low\nsandbox_mode="danger-full-access"',
+      'gpt-5.6-luna@lo w',
+      'gpt-5.6-luna@"',
+      'gpt-5.6-luna@1high',
+    ]) {
+      expect(() => parseCodexModelId(bad, undefined)).toThrow(AIConfigError);
+      expect(() => new CodexCliLanguageModel(bad)).toThrow(AIConfigError);
+    }
+    expect(() => parseCodexModelId('gpt-5.6-luna', 'low" , x="y')).toThrow(AIConfigError);
+    expect(() => parseCodexModelId('gpt-5.6-luna', 'low\nsandbox_mode="danger-full-access"')).toThrow(AIConfigError);
   });
 });
 
@@ -167,6 +190,7 @@ describe('codex-cli event stream reduction', () => {
     const ok = summarizeExec([
       { type: 'item.completed', item: { type: 'error', message: notice } },
       { type: 'item.completed', item: { type: 'agent_message', text: 'fine' } },
+      { type: 'turn.completed' },
     ], undefined, 0);
     expect(ok).not.toBeInstanceOf(Error);
     if (!(ok instanceof Error)) { expect(ok.text).toBe('fine'); expect(ok.notices).toEqual([notice]); }
@@ -181,6 +205,36 @@ describe('codex-cli event stream reduction', () => {
     expect(inferApiErrorStatus("You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage or try again at Sep 26th")).toBe(429);
     expect(inferApiErrorStatus('Not logged in. Run `codex login`.')).toBe(401);
     expect(inferApiErrorStatus('something else entirely')).toBeUndefined();
+    expect(inferApiErrorStatus('Your access token is expired; sign in again.')).toBe(401);
+    expect(inferApiErrorStatus('401 Unauthorized')).toBe(401);
+  });
+
+  test('inferApiErrorStatus leaves request-size and context-length errors per-item (no 401 from "invalid … tokens")', async () => {
+    const { inferApiErrorStatus } = await import('../src/core/ai/providers/codex-cli-language-model.ts');
+    for (const msg of [
+      'Invalid value for max_output_tokens',
+      'invalid request: prompt has too many tokens for this model',
+      "invalid_request_error: This model's maximum context length is 272000 tokens",
+      'Invalid max_output_tokens: must be <= 128000',
+      'This essay discusses quota planning for public services.',
+    ]) expect(inferApiErrorStatus(msg)).toBeUndefined();
+  });
+
+  test('only the exact disabled-code-mode startup notice is informational', async () => {
+    const { summarizeExec, CodexCliProcessError } = await import('../src/core/ai/providers/codex-cli-language-model.ts');
+    const notice = 'Code Mode is unavailable because code-mode host is disabled. Code mode will fail closed; enable `features.code_mode_host` and install `codex-code-mode-host`.';
+    const warning = { type: 'item.completed', item: { type: 'error', message: notice } };
+    const success = [
+      { type: 'turn.started' },
+      { type: 'item.completed', item: { type: 'agent_message', text: 'fine' } },
+      { type: 'turn.completed' },
+    ];
+    const ok = summarizeExec([warning, ...success], undefined, 0);
+    expect(ok).not.toBeInstanceOf(Error);
+    if (!(ok instanceof Error)) expect(ok.notices).toEqual([notice]);
+    expect(summarizeExec([warning, { type: 'turn.failed', error: 'usage limit' }], undefined, 1)).toBeInstanceOf(CodexCliProcessError);
+    expect(summarizeExec([{ type: 'turn.started' }, warning, ...success], undefined, 0)).toBeInstanceOf(CodexCliProcessError);
+    expect(summarizeExec([{ ...warning, item: { ...warning.item, message: notice + ' unexpected error' } }, ...success], undefined, 0)).toBeInstanceOf(CodexCliProcessError);
   });
 });
 
@@ -251,18 +305,22 @@ describe('codex-cli LanguageModel — isolation', () => {
       await new CodexCliLanguageModel('codex-cli:gpt-6-astra@high').doGenerate({ prompt: [userMessage('hi')] } as LanguageModelV2CallOptions);
       const argv = readFileSync(argvLog, 'utf8').split('\n').filter(Boolean);
       const cwd = readFileSync(cwdLog, 'utf8').trim();
-      for (const flag of ['exec', '--json', '--ephemeral', '--ignore-user-config', '--ignore-rules', '--skip-git-repo-check', '--output-last-message']) {
+      for (const flag of ['exec', '--json', '--ephemeral', '--ignore-user-config', '--ignore-rules', '--strict-config', '--skip-git-repo-check', '--output-last-message']) {
         expect(argv).toContain(flag);
       }
       expect(argv[argv.indexOf('--sandbox') + 1]).toBe('read-only');
       expect(argv[argv.indexOf('--model') + 1]).toBe('gpt-6-astra');
       const disabled = argv.flatMap((a, i) => (a === '--disable' ? [argv[i + 1]] : []));
-      for (const f of ['shell_tool', 'multi_agent', 'apps', 'browser_use', 'computer_use', 'plugins', 'memories']) expect(disabled).toContain(f);
+      for (const f of ['shell_tool', 'multi_agent', 'apps', 'browser_use', 'computer_use', 'plugins', 'memories', 'view_image', 'image_generation', 'multi_agent_v2', 'browser_use_external', 'in_app_browser', 'code_mode_host', 'skill_search', 'sleep_tool', 'tool_suggest', 'goals', 'hooks']) expect(disabled).toContain(f);
       const configs = argv.flatMap((a, i) => (a === '-c' ? [argv[i + 1]] : []));
       expect(configs).toContain('web_search="disabled"');
-      expect(configs).toContain('tools.view_image=false');
+      expect(configs).toContain('tools.experimental_request_user_input.enabled=false');
+      expect(configs).toContain('tools.update_plan.enabled=false');
+      expect(configs).toContain('agents.enabled=false');
       expect(configs).toContain('skills.max_context_tokens=1');
-      expect(configs).toContain('preferred_auth_method="chatgpt"');
+      expect(configs).toContain('forced_login_method="chatgpt"');
+      expect(configs).not.toContain('preferred_auth_method="chatgpt"');
+      expect(configs).not.toContain('tools.view_image=false');
       expect(configs).toContain('model_reasoning_effort="high"');
       expect(cwd).toMatch(/gbrain-codex-cli-cwd-/);
       // The scratch cwd must hold no AGENTS.md the CLI could pick up.
@@ -296,6 +354,49 @@ describe('codex-cli LanguageModel — isolation', () => {
 });
 
 describe('codex-cli LanguageModel — failures and abort', () => {
+  test('zero exit with partial output but no turn.completed rejects', async () => {
+    await withStubEnv(async () => {
+      stageSuccess('partial');
+      writeFileSync(eventsPath, JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'partial' } }) + '\n');
+      const { CodexCliLanguageModel } = await import('../src/core/ai/providers/codex-cli-language-model.ts');
+      await expect(new CodexCliLanguageModel('gpt-5.6-luna').doGenerate({ prompt: [userMessage('hi')] } as LanguageModelV2CallOptions))
+        .rejects.toThrow('without turn.completed');
+    });
+  });
+
+  for (const withFile of [true, false]) {
+    for (const exitCode of [1, 137]) {
+      test(`partial output rejects on exit ${exitCode} (last-message file: ${withFile})`, async () => {
+        await withStubEnv(async () => {
+          stageSuccess('<use_tools>[{"name":"brain_search","input":{"query":"partial"}}]</use_tools>', { withFile });
+          writeFileSync(exitCodePath, String(exitCode));
+          const { CodexCliLanguageModel, CodexCliProcessError } = await import('../src/core/ai/providers/codex-cli-language-model.ts');
+          const p = new CodexCliLanguageModel('gpt-5.6-luna').doGenerate({ prompt: [userMessage('hi')] } as LanguageModelV2CallOptions);
+          await expect(p).rejects.toBeInstanceOf(CodexCliProcessError);
+          await p.catch((e: { exitCode?: number; message: string }) => {
+            expect(e.exitCode).toBe(exitCode);
+            expect(e.message).toContain(`exited ${exitCode}`);
+          });
+        });
+      });
+    }
+  }
+
+  test('SIGKILL after partial output rejects rather than returning tool calls', async () => {
+    await withStubEnv(async () => {
+      stageSuccess('<use_tools>[{"name":"brain_search","input":{"query":"partial"}}]</use_tools>');
+      installStub('KILL');
+      try {
+        const { CodexCliLanguageModel, CodexCliProcessError } = await import('../src/core/ai/providers/codex-cli-language-model.ts');
+        const p = new CodexCliLanguageModel('gpt-5.6-luna').doGenerate({ prompt: [userMessage('hi')] } as LanguageModelV2CallOptions);
+        await expect(p).rejects.toBeInstanceOf(CodexCliProcessError);
+        await p.catch((e: { message: string }) => expect(e.message).toContain('SIGKILL'));
+      } finally {
+        installStub();
+      }
+    });
+  });
+
   test('usage-limit turn.failed surfaces as CodexCliProcessError with apiErrorStatus 429', async () => {
     await withStubEnv(async () => {
       stageFailure("You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at Sep 26th, 2026 1:50 PM.");
@@ -312,18 +413,94 @@ describe('codex-cli LanguageModel — failures and abort', () => {
   test('not-logged-in maps to 401; non-zero exit with no events keeps the raw blob after the marker', async () => {
     await withStubEnv(async () => {
       stageFailure('Not logged in. Run `codex login` to authenticate.', 2);
-      const { CodexCliLanguageModel } = await import('../src/core/ai/providers/codex-cli-language-model.ts');
-      await new CodexCliLanguageModel('gpt-5.6-luna').doGenerate({ prompt: [userMessage('hi')] } as LanguageModelV2CallOptions)
-        .catch((e: { apiErrorStatus?: number }) => expect(e.apiErrorStatus).toBe(401));
+      const { CodexCliLanguageModel, CodexCliProcessError } = await import('../src/core/ai/providers/codex-cli-language-model.ts');
+      const { classifyGlobalLlmError } = await import('../src/core/ai/errors.ts');
+      const loggedOut = await new CodexCliLanguageModel('gpt-5.6-luna').doGenerate({ prompt: [userMessage('hi')] } as LanguageModelV2CallOptions)
+        .then(() => null, (e: unknown) => e);
+      expect(loggedOut).toBeInstanceOf(CodexCliProcessError);
+      expect((loggedOut as { apiErrorStatus?: number }).apiErrorStatus).toBe(401);
+      expect(classifyGlobalLlmError(loggedOut)).toBe('auth');
       // No JSON at all + non-zero exit.
       writeFileSync(eventsPath, 'error: codex binary exploded\n'); writeFileSync(exitCodePath, '3');
-      await new CodexCliLanguageModel('gpt-5.6-luna').doGenerate({ prompt: [userMessage('hi')] } as LanguageModelV2CallOptions)
-        .catch((e: { message: string; exitCode?: number }) => {
-          expect(e.exitCode).toBe(3);
-          expect(e.message).toContain('--- raw ---');
-          expect(e.message.indexOf('exited 3')).toBeLessThan(e.message.indexOf('--- raw ---'));
-        });
+      const noJson = await new CodexCliLanguageModel('gpt-5.6-luna').doGenerate({ prompt: [userMessage('hi')] } as LanguageModelV2CallOptions)
+        .then(() => null, (e: unknown) => e) as { message: string; exitCode?: number } | null;
+      expect(noJson).toBeInstanceOf(CodexCliProcessError);
+      expect(noJson!.exitCode).toBe(3);
+      expect(noJson!.message).toContain('--- raw ---');
+      expect(noJson!.message.indexOf('exited 3')).toBeLessThan(noJson!.message.indexOf('--- raw ---'));
     });
+  });
+
+  for (const exitCode of [0, 1]) {
+    test(`non-JSON output that reads like login/quota prose stays behind the raw marker (exit ${exitCode}): no status, no whole-run class`, async () => {
+      await withStubEnv(async () => {
+        const { CodexCliLanguageModel, CodexCliProcessError } = await import('../src/core/ai/providers/codex-cli-language-model.ts');
+        const { classifyGlobalLlmError } = await import('../src/core/ai/errors.ts');
+        for (const prose of [
+          'An article recommends run `codex login` to fix local tooling.',
+          'This essay discusses usage limit planning for public services.',
+        ]) {
+          stageSuccess('unused');
+          writeFileSync(eventsPath, prose + '\n');
+          writeFileSync(exitCodePath, String(exitCode));
+          const err = await new CodexCliLanguageModel('gpt-5.6-luna').doGenerate({ prompt: [userMessage('hi')] } as LanguageModelV2CallOptions)
+            .then(() => null, (e: unknown) => e) as { apiErrorStatus?: number; message: string } | null;
+          expect(err).toBeInstanceOf(CodexCliProcessError);
+          expect(err!.message.indexOf('--- raw ---')).toBeGreaterThan(0);
+          expect(err!.apiErrorStatus).toBeUndefined();
+          expect(classifyGlobalLlmError(err)).toBeNull();
+        }
+      });
+    });
+  }
+
+  test('a CLI that rejects an isolation flag names the minimum version before the raw marker', async () => {
+    writeFileSync(stubBin, ['#!/bin/sh', 'cat > /dev/null', `echo "error: unexpected argument '--strict-config' found" >&2`, 'exit 2'].join('\n'));
+    chmodSync(stubBin, 0o755);
+    try {
+      await withStubEnv(async () => {
+        const { CodexCliLanguageModel, CodexCliProcessError, MIN_CODEX_CLI_VERSION } = await import('../src/core/ai/providers/codex-cli-language-model.ts');
+        const err = await new CodexCliLanguageModel('gpt-5.6-luna').doGenerate({ prompt: [userMessage('hi')] } as LanguageModelV2CallOptions)
+          .then(() => null, (e: unknown) => e) as { message: string; exitCode?: number; apiErrorStatus?: number } | null;
+        expect(err).toBeInstanceOf(CodexCliProcessError);
+        expect(MIN_CODEX_CLI_VERSION).toBe('0.159.0');
+        const head = err!.message.slice(0, err!.message.indexOf('--- raw ---'));
+        expect(head).toContain('codex CLI 0.159.0 or newer required');
+        expect(err!.message).toContain("unexpected argument '--strict-config'");
+        expect(err!.exitCode).toBe(2);
+        expect(err!.apiErrorStatus).toBeUndefined();
+      });
+    } finally {
+      installStub();
+    }
+  });
+
+  test('an already-aborted signal rejects before spawning: no unhandled spawn error, the binary never runs', async () => {
+    const neverRun = join(stubDir, 'never-run.log');
+    await withEnv({ GBRAIN_CODEX_CLI_BIN: '/nonexistent/gbrain-codex-cli-test-binary', GBRAIN_CODEX_CLI_REASONING_EFFORT: undefined }, async () => {
+      const { CodexCliLanguageModel } = await import('../src/core/ai/providers/codex-cli-language-model.ts');
+      const ac = new AbortController(); ac.abort();
+      // A missing binary: pre-fix, spawn's ENOENT fired with no 'error'
+      // listener attached and escaped as an unhandled error.
+      await expect(new CodexCliLanguageModel('gpt-5.6-luna').doGenerate({ prompt: [userMessage('hi')], abortSignal: ac.signal } as LanguageModelV2CallOptions))
+        .rejects.toThrow('codex-cli adapter aborted');
+      await Bun.sleep(50);
+    });
+    // A real binary: a pre-aborted call must not start it at all.
+    writeFileSync(stubBin, ['#!/bin/sh', `echo ran > "${neverRun}"`, 'exit 0'].join('\n'));
+    chmodSync(stubBin, 0o755);
+    try {
+      await withStubEnv(async () => {
+        const { CodexCliLanguageModel } = await import('../src/core/ai/providers/codex-cli-language-model.ts');
+        const ac = new AbortController(); ac.abort();
+        await expect(new CodexCliLanguageModel('gpt-5.6-luna').doGenerate({ prompt: [userMessage('hi')], abortSignal: ac.signal } as LanguageModelV2CallOptions))
+          .rejects.toThrow('codex-cli adapter aborted');
+        await Bun.sleep(50);
+        expect(existsSync(neverRun)).toBe(false);
+      });
+    } finally {
+      installStub();
+    }
   });
 
   test('abort kills the child and rejects', async () => {
