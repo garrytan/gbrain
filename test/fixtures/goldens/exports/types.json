@@ -5940,6 +5940,20 @@
       },
       {
         "kind": "function",
+        "name": "readBootId",
+        "signature": [
+          "() => string | null"
+        ]
+      },
+      {
+        "kind": "function",
+        "name": "readPidNs",
+        "signature": [
+          "() => string | null"
+        ]
+      },
+      {
+        "kind": "function",
         "name": "releaseLock",
         "signature": [
           "(lock: LockHandle) => Promise<void>"

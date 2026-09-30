@@ -713,6 +713,8 @@
         "isProcessAlive",
         "msSinceLastReap",
         "peekLock",
+        "readBootId",
+        "readPidNs",
         "releaseLock"
       ],
       "./search/evidence-delivery": [
