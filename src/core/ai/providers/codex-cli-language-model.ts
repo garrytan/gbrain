@@ -33,7 +33,7 @@
  *   --skip-git-repo-check + -C <empty tmpdir>   no AGENTS.md discovery
  *   -s read-only              sandbox floor even if a tool slipped through
  *   --disable shell_tool / multi_agent / apps / browser_use / computer_use /
- *   plugins / memories, -c web_search="disabled", -c tools.view_image=false
+ *   plugins / memories / view_image, -c web_search="disabled"
  *                             every built-in tool surface off; the model can
  *                             only answer in text (which is where the
  *                             <use_tools> protocol lives)
@@ -49,7 +49,7 @@
  *                             replay anyway.
  *
  * Auth: the CLI owns it. OPENAI_API_KEY / OPENAI_BASE_URL are scrubbed from the
- * child env and `preferred_auth_method="chatgpt"` is pinned, so an API key in
+ * child env and `forced_login_method="chatgpt"` is pinned, so an API key in
  * gbrain's env (the setup this recipe exists to replace) cannot silently flip
  * billing to per-token API usage.
  *
@@ -76,6 +76,7 @@ import {
 } from './cli-tool-protocol.ts';
 
 const TOOL_CALL_ID_PREFIX = 'toolu_codex_cli_';
+const CODE_MODE_DISABLED_NOTICE = 'Code Mode is unavailable because code-mode host is disabled. Code mode will fail closed; enable `features.code_mode_host` and install `codex-code-mode-host`.';
 
 function codexBin(): string {
   return process.env.GBRAIN_CODEX_CLI_BIN ?? 'codex';
@@ -125,7 +126,7 @@ export interface CodexExecEvent {
 export interface CodexExecResult {
   text: string;
   usage: { input_tokens?: number; cached_input_tokens?: number; output_tokens?: number } | undefined;
-  /** Non-fatal `item.type: "error"` notices (skills budget etc.), for diagnostics. */
+  /** Non-fatal startup/code-mode and skills-budget notices, for diagnostics. */
   notices: string[];
 }
 
@@ -199,25 +200,30 @@ export function summarizeExec(
   events: CodexExecEvent[],
   lastMessageFile: string | undefined,
   exitCode: number | null,
+  exitSignal: NodeJS.Signals | null = null,
 ): CodexExecResult | CodexCliProcessError {
   const notices: string[] = [];
   let failure: string | undefined;
   let agentText: string | undefined;
+  let completed = false;
+  let started = false;
   let usage: CodexExecResult['usage'];
   for (const ev of events) {
-    if (ev.type === 'item.completed' && ev.item) {
+    if (ev.type === 'turn.started') started = true;
+    else if (ev.type === 'item.completed' && ev.item) {
       if (ev.item.type === 'agent_message' && typeof ev.item.text === 'string') agentText = ev.item.text;
       else if (ev.item.type === 'error') {
         const msg = String(ev.item.message ?? '');
-        if (isSkillsBudgetNotice(msg)) notices.push(msg);
+        if (isSkillsBudgetNotice(msg) || (!started && msg === CODE_MODE_DISABLED_NOTICE)) notices.push(msg);
         else failure ??= msg;
       }
     } else if (ev.type === 'error') {
       failure ??= typeof ev.error === 'string' ? ev.error : ev.error?.message ?? ev.message ?? 'codex exec reported an error';
     } else if (ev.type === 'turn.failed') {
       failure ??= typeof ev.error === 'string' ? ev.error : ev.error?.message ?? 'codex exec turn failed';
-    } else if (ev.type === 'turn.completed' && ev.usage) {
-      usage = {
+    } else if (ev.type === 'turn.completed') {
+      completed = true;
+      if (ev.usage) usage = {
         input_tokens: numberOrUndefined(ev.usage.input_tokens),
         cached_input_tokens: numberOrUndefined(ev.usage.cached_input_tokens),
         output_tokens: numberOrUndefined(ev.usage.output_tokens),
@@ -227,6 +233,15 @@ export function summarizeExec(
   if (failure !== undefined) {
     return new CodexCliProcessError(`codex-cli reported error: ${failure}`,
       { apiErrorStatus: inferApiErrorStatus(failure), exitCode: exitCode ?? undefined });
+  }
+  // Partial text (including tool calls) is never a successful process result.
+  if (exitCode !== 0 || exitSignal) {
+    return new CodexCliProcessError(
+      exitSignal ? `codex-cli terminated by ${exitSignal}` : `codex-cli exited ${exitCode}`,
+      { exitCode: exitCode ?? undefined });
+  }
+  if (!completed) {
+    return new CodexCliProcessError('codex-cli stream ended without turn.completed', { exitCode });
   }
   // `-o` is exact bytes of the final message; the event text is the fallback
   // for CLI builds whose agent_message item is the only carrier.
@@ -267,6 +282,7 @@ export function buildCodexArgs(model: string, effort: string | undefined, lastMe
     '--ephemeral',
     '--ignore-user-config',
     '--ignore-rules',
+    '--strict-config',
     '--skip-git-repo-check',
     '--sandbox', 'read-only',
     '--model', model,
@@ -278,12 +294,25 @@ export function buildCodexArgs(model: string, effort: string | undefined, lastMe
     '--disable', 'computer_use',
     '--disable', 'plugins',
     '--disable', 'memories',
+    '--disable', 'view_image',
+    '--disable', 'image_generation',
+    '--disable', 'multi_agent_v2',
+    '--disable', 'browser_use_external',
+    '--disable', 'in_app_browser',
+    '--disable', 'code_mode_host',
+    '--disable', 'skill_search',
+    '--disable', 'sleep_tool',
+    '--disable', 'tool_suggest',
+    '--disable', 'goals',
+    '--disable', 'hooks',
     '-c', 'web_search="disabled"',
-    '-c', 'tools.view_image=false',
+    '-c', 'tools.experimental_request_user_input.enabled=false',
+    '-c', 'tools.update_plan.enabled=false',
+    '-c', 'agents.enabled=false',
     '-c', 'skills.max_context_tokens=1',
     '-c', 'hide_agent_reasoning=true',
     '-c', 'model_reasoning_summary="none"',
-    '-c', 'preferred_auth_method="chatgpt"',
+    '-c', 'forced_login_method="chatgpt"',
   ];
   if (effort) args.push('-c', `model_reasoning_effort="${effort}"`);
   // Prompt arrives on stdin (`-` sentinel) so long system prompts never hit
@@ -344,7 +373,7 @@ function runCodex(
       reject(new Error(`codex-cli spawn failed: ${err instanceof Error ? err.message : String(err)}`));
     });
 
-    child.on('close', code => {
+    child.on('close', (code, exitSignal) => {
       if (signal) signal.removeEventListener('abort', onAbort);
       const parsed = parseExecEvents(stdout);
       if (!parsed.ok) {
@@ -354,19 +383,15 @@ function runCodex(
         // in stdout can never read as a whole-run auth outage.
         const raw = (stderr.trim() || stdout.trim()).slice(0, 800);
         reject(new CodexCliProcessError(
-          code !== 0
-            ? `codex-cli exited ${code}\n--- raw ---\n${raw}`
+          code !== 0 || exitSignal
+            ? `codex-cli ${exitSignal ? `terminated by ${exitSignal}` : `exited ${code}`}\n--- raw ---\n${raw}`
             : `codex-cli output had no JSON events\n--- raw ---\n${raw}`,
           { exitCode: code ?? undefined, apiErrorStatus: inferApiErrorStatus(raw) }));
         return;
       }
-      const summary = summarizeExec(parsed.events, lastMessageFile, code);
+      const summary = summarizeExec(parsed.events, lastMessageFile, code, exitSignal);
       cleanup();
       if (summary instanceof CodexCliProcessError) { reject(summary); return; }
-      if (code !== 0 && !summary.text) {
-        reject(new CodexCliProcessError(`codex-cli exited ${code}\n--- raw ---\n${stderr.trim().slice(0, 800)}`, { exitCode: code ?? undefined }));
-        return;
-      }
       resolve(summary);
     });
 

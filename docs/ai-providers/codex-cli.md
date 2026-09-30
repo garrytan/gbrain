@@ -22,6 +22,10 @@ and pairs with `openai` / `google` / `voyage` / `ollama` for embeddings.
 
 1. Install the Codex CLI and log in once:
 
+   The isolation configuration is verified with Codex CLI 0.159.0. The
+   adapter uses `--strict-config`, so an incompatible CLI fails rather than
+   silently ignoring authentication or tool-isolation settings.
+
    ```bash
    npm i -g @openai/codex
    codex login          # opens the ChatGPT sign-in; `codex login status` to check
@@ -88,11 +92,11 @@ supports. `parseCodexModelId` splits on the LAST `@`; a leading or trailing
    | `--ignore-rules` | no execpolicy rules |
    | `--skip-git-repo-check` + `-C <empty tmpdir>` | no `AGENTS.md` discovery |
    | `--sandbox read-only` | floor, even if a tool slipped through |
-   | `--disable shell_tool / multi_agent / apps / browser_use / computer_use / plugins / memories` | every built-in tool surface off |
-   | `-c web_search="disabled"`, `-c tools.view_image=false` | remaining tools off |
+   | `--disable shell_tool / multi_agent / multi_agent_v2 / apps / browser_use / browser_use_external / in_app_browser / computer_use / plugins / memories / view_image / image_generation / code_mode_host / skill_search / sleep_tool / tool_suggest / goals / hooks` | built-in agent surfaces off |
+   | `-c web_search="disabled"`, `-c tools.experimental_request_user_input.enabled=false`, `-c tools.update_plan.enabled=false`, `-c agents.enabled=false` | remaining local tools and agent delegation off |
    | `-c skills.max_context_tokens=1` | the skills catalog under `$CODEX_HOME/skills` loads regardless of config; the minimum budget drops every description from the prompt (see the notice below) |
    | `-c hide_agent_reasoning=true`, `-c model_reasoning_summary="none"` | small JSONL; reasoning is dropped on replay anyway |
-   | `-c preferred_auth_method="chatgpt"` | subscription auth even if an API key were reachable |
+   | `-c forced_login_method="chatgpt"` + `--strict-config` | enforce ChatGPT auth; do not ignore unknown isolation settings |
 
 4. Env scrub: `OPENAI_API_KEY`, `OPENAI_BASE_URL` and `CODEX_API_KEY` are
    removed from the child's environment. Subscription-only is the recipe's
@@ -102,7 +106,10 @@ supports. `parseCodexModelId` splits on the LAST `@`; a leading or trailing
 5. Output: `--json` JSONL on stdout plus `--output-last-message <file>`.
    The file is the primary text source (exact bytes, no event reassembly);
    the events supply usage (`turn.completed`) and failures (`turn.failed`,
-   `error`). The `<use_tools>` block, if any, is parsed back into ai-sdk
+   `error`). Nonzero exits and signal termination fail the call even when
+   partial text or a last-message file exists; partial tool calls are not
+   executed. A zero exit also requires a `turn.completed` event. The
+   `<use_tools>` block, if any, is parsed back into ai-sdk
    `tool-call` parts with gbrain-minted ids (`toolu_codex_cli_<uuidv7>`) —
    never model-authored (#4155).
 
@@ -113,7 +120,10 @@ With the skills budget pinned to its minimum the CLI emits an
 skills context budget. All skill descriptions were removed …"*. The turn
 still completes normally. The adapter treats that one notice (matched by
 `isSkillsBudgetNotice`) as informational and records it in
-`CodexExecResult.notices`; any other `error` item fails the call.
+`CodexExecResult.notices`. Codex 0.159.0 also emits a startup notice when
+the code-mode host is deliberately disabled. Only that exact message before
+`turn.started` is informational; altered messages, in-turn errors and
+`turn.failed` still fail the call.
 
 ## Constraints
 
