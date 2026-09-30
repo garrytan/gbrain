@@ -33,7 +33,7 @@ import {
   existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync, rmSync, statSync, renameSync,
 } from 'fs';
 import { join, dirname, relative, isAbsolute } from 'path';
-import { execFile, execFileSync, execSync } from 'child_process';
+import { execFile, execFileSync, execSync, type ExecFileException } from 'child_process';
 import {
   GIT_ENV, GIT_ENV_AUTH, divergenceSafePull, detectDefaultBranch, pushProbe,
   type PullOutcome, type PushProbeResult,
@@ -474,12 +474,48 @@ export function isDurabilityHardened(repoPath: string): boolean {
   }
 }
 
-/** A git probe that does not block the event loop; a failed probe reads as ''. */
-function gitOutput(repoPath: string, args: string[]): Promise<string> {
+export interface BoundedExecOptions {
+  timeout: number;
+  env?: NodeJS.ProcessEnv;
+  maxBuffer?: number;
+  signal?: AbortSignal;
+}
+
+/**
+ * `execFile` that settles within `timeout` or on abort even when the runtime
+ * never delivers the child's exit or pipe close. Bun through 1.3.x drops
+ * one-shot pidfd and pipe events when a callback re-enters the event loop
+ * (bun:test `expect().resolves/.rejects`, oven-sh/bun#30301): execFile's
+ * callback and its own `timeout` then never fire and the child stays a zombie,
+ * so the deadline and abort are enforced with our own timer.
+ */
+export function execFileBounded(file: string, args: string[], options: BoundedExecOptions): Promise<{ error: ExecFileException | null; stdout: string }> {
+  const { timeout, signal, ...rest } = options;
   return new Promise(resolve => {
-    execFile('git', ['-C', repoPath, ...args], { encoding: 'utf8', timeout: 10_000, env: { ...process.env, ...GIT_ENV } },
-      (error, stdout) => resolve(error ? '' : stdout.trim()));
+    let settled = false;
+    const finish = (error: ExecFileException | null, stdout: string) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
+      resolve({ error, stdout });
+    };
+    const child = execFile(file, args, { ...rest, encoding: 'utf8' }, (error, stdout) => finish(error, stdout));
+    const stop = (message: string, code: string) => {
+      child.kill('SIGKILL');
+      finish(Object.assign(new Error(message), { code, killed: true, signal: 'SIGKILL' as const }), '');
+    };
+    const timer = setTimeout(() => stop(`${file} did not finish within ${timeout}ms`, 'ETIMEDOUT'), timeout);
+    const onAbort = () => stop(`${file} was aborted`, 'ABORT_ERR');
+    if (signal?.aborted) onAbort();
+    else signal?.addEventListener('abort', onAbort, { once: true });
   });
+}
+
+/** A git probe that does not block the event loop; a failed probe reads as ''. */
+async function gitOutput(repoPath: string, args: string[]): Promise<string> {
+  const { error, stdout } = await execFileBounded('git', ['-C', repoPath, ...args], { timeout: 10_000, env: { ...process.env, ...GIT_ENV } });
+  return error ? '' : stdout.trim();
 }
 
 /**

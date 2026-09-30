@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [0.60.15.1] - 2026-09-30
+## [0.60.16.1] - 2026-09-30
 
 **`gbrain doctor` stopped warning about the lock doctor itself is holding.** `doctor` opens the brain's database to run its checks, and briefly holds the same PGLite lock file that a live `gbrain serve` process holds while it's running. One of doctor's own checks looks at that lock and warns whenever the holder isn't a `serve` process — so on a machine where you'd stopped `serve` and just ran `gbrain doctor`, it reported "a non-serve process holds the lock and hook IPC will fail" about itself, describing a collision that didn't exist.
 
@@ -18,7 +18,7 @@ Now the check only warns about a genuinely different process holding the lock. D
 
 **Say to your agent:** *"Run gbrain doctor and check whether the PGLite lock warning still shows up when serve is stopped"* — your agent runs `gbrain doctor`.
 
-## To take advantage of v0.60.15.1
+## To take advantage of v0.60.16.1
 
 Upgrade, then re-run doctor with serve stopped and confirm the warning is gone:
 
@@ -32,6 +32,30 @@ gbrain doctor
 - `src/core/bootstrap/uninstall.ts`: `probeLivePgliteHolder` now returns a namespace-aware `isSelf` field on `LiveHolder`. On Linux, it compares the lock's stored `pid_ns`/`boot_id` evidence against the running process's own via `pglite-lock.ts`'s exported readers, requiring both to be readable and matching before trusting a pid match — a pid alone (which a shared-mount container could coincidentally reuse) is never sufficient there, and unreadable evidence on either side fails closed (still warns). Non-Linux platforms have no PID namespaces, so pid equality alone decides there, matching `pglite-lock.ts`'s own unmodified lock-acquisition trust model. A pid+namespace match alone also does not decide: a lock whose `acquired_at` predates this process's own start time cannot be ours (we couldn't have acquired it before we existed) regardless of matching evidence, catching a stale legacy lock left behind by a dead process whose pid was later recycled.
 - `src/commands/doctor/bootstrap-checks.ts`: the `bootstrap_serve_lock` check now skips a lock holder only when `isSelf` is true, instead of treating any lock holder sharing the doctor's numeric pid as self.
 - Closes #5481.
+
+## [0.60.16.0] - 2026-09-30
+
+**Long-running brains stop getting stuck waiting on a `git` check that already finished.**
+
+Before GBrain publishes a page to your brain's git repo, it runs two quick `git` commands to confirm the repo is safe to write to. On the Bun versions GBrain runs on today, Bun can miss the signal that one of those commands has finished. GBrain then waited forever. The write queue stalled, and shutting down the owner process hung behind it. In our test suite this hit roughly one run in sixty under load and showed up as whole test files timing out after "killed 1 dangling process".
+
+Now every one of those `git` calls has its own deadline. If the command hasn't reported back in time, GBrain stops it and moves on, with the same "git unavailable" result a slow `git` already produced. The worst case is a 10 to 20 second delay instead of a hang.
+
+| Under load (16 parallel test workers) | Before | After |
+| --- | --- | --- |
+| Runs that hung | 4 of 250 | 0 of 320 |
+| Worst-case wait on a lost `git` exit | forever | 10 s (durability check), 20 s (page publish) |
+
+Nothing to configure and nothing to run after upgrading.
+
+### To take advantage of v0.60.16.0
+
+`gbrain upgrade` is all you need. There is no migration. To confirm, run `gbrain doctor`.
+
+### Itemized changes
+
+- `execFileBounded` in `src/core/brain-repo-durability.ts` settles from its own timer at the deadline or on abort and SIGKILLs the child, so a lost exit or pipe event (Bun 1.3.x, oven-sh/bun#30301) can no longer strand the caller. The durability probe (10 s) and the persistence effect `git` runner (20 s) use it; the staged topology clone's exit wait also returns once its deadline kill fires.
+- New `test/bounded-child-exec.test.ts` reproduces the lost exit event deterministically and pins deadline, abort, exit code and stdout behavior.
 
 ## [0.60.15.0] - 2026-09-30
 
