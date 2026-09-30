@@ -1,7 +1,10 @@
 import { afterEach, expect, test } from 'bun:test';
-import { existsSync, linkSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, linkSync, mkdirSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { publishGitEffect } from '../src/core/persistence/effect-git.ts';
+import { isDurabilityHardened } from '../src/core/brain-repo-durability.ts';
+// Namespace import: a missing export must fail only the tests that use it (RED clarity).
+import * as durability from '../src/core/brain-repo-durability.ts';
 import { git, gitFixture } from './helpers/git-publication.ts';
 import { withEnv } from './helpers/with-env.ts';
 
@@ -179,4 +182,79 @@ test('symlinked root works while escaping descendants and directory targets refu
   expect(readFileSync(join(f.root, '.git', 'index'))).toEqual(before);
   expect(readFileSync(join(outside, 'page.md'), 'utf8')).toBe('Outside\n');
   expect(existsSync(join(f.root, 'escape', 'page.md'))).toBe(true);
+});
+
+// #5182: managed roots opt into git effects through repo-local git config, not the legacy hook.
+const MANAGED_KEY = 'gbrain.durability.managed';
+const DENIED = { git: 'skipped', reason: 'durability_not_enabled', push: 'skipped' };
+/** Remove the fixture's legacy banner hook so only the managed key can enable the outbox. */
+function withoutLegacyHook(f: ReturnType<typeof fixture>): void { unlinkSync(join(f.root, '.git', 'hooks', 'post-commit')); }
+function markerHook(f: ReturnType<typeof fixture>, name: string, sentinel: string): void {
+  const hook = join(f.root, '.git', 'hooks', name);
+  writeFileSync(hook, `#!/bin/sh\ntouch '${sentinel}'\n`); chmodSync(hook, 0o755);
+}
+
+test('managed opt-in key publishes and pushes without any hook and never runs an installed hook', async () => {
+  const f = fixture(); withoutLegacyHook(f);
+  const sentinel = join(f.home, 'hook-ran');
+  for (const name of ['pre-commit', 'commit-msg', 'post-commit', 'pre-push']) markerHook(f, name, sentinel);
+  git(f.root, 'config', '--local', MANAGED_KEY, 'true');
+  expect(isDurabilityHardened(f.root)).toBe(false);
+  writeFileSync(join(f.root, 'unrelated.md'), 'Staged\n'); git(f.root, 'add', 'unrelated.md');
+  const index = git(f.root, 'ls-files', '--stage', '-z', '--', 'unrelated.md');
+  writeFileSync(join(f.root, 'Notes', 'page.md'), 'Managed\n');
+  expect(await publishGitEffect(f.root, 'Notes/page.md')).toEqual({ git: 'committed', push: 'committed' });
+  published(f, 'Notes/page.md', 'Managed\n');
+  expect(existsSync(sentinel)).toBe(false);
+  expect(git(f.root, 'ls-files', '--stage', '-z', '--', 'unrelated.md')).toBe(index);
+  expect(git(f.root, 'diff', '--cached', '--name-only', '-z')).toBe('unrelated.md\0');
+});
+
+test('without the managed key or a legacy hook git effects stay skipped and change nothing', async () => {
+  const f = fixture(); withoutLegacyHook(f);
+  const head = git(f.root, 'rev-parse', 'HEAD'); const remoteHead = git(f.remote, 'rev-parse', 'refs/heads/main');
+  writeFileSync(join(f.root, 'Notes', 'page.md'), 'Managed\n');
+  expect(await publishGitEffect(f.root, 'Notes/page.md')).toEqual(DENIED);
+  expect(git(f.root, 'rev-parse', 'HEAD')).toBe(head);
+  expect(git(f.remote, 'rev-parse', 'refs/heads/main')).toBe(remoteHead);
+});
+
+test('the legacy hook banner still enables git effects without the managed key', async () => {
+  const f = fixture();
+  expect(isDurabilityHardened(f.root)).toBe(true);
+  writeFileSync(join(f.root, 'Notes', 'page.md'), 'Legacy\n');
+  expect(await publishGitEffect(f.root, 'Notes/page.md')).toEqual({ git: 'committed', push: 'committed' });
+  published(f, 'Notes/page.md', 'Legacy\n');
+});
+
+for (const value of ['false', '1', 'TRUE', 'yes', '']) test(`managed key value ${JSON.stringify(value)} does not enable git effects`, async () => {
+  const f = fixture(); withoutLegacyHook(f);
+  git(f.root, 'config', '--local', MANAGED_KEY, value);
+  expect(durability.isManagedGitEffectEnabled(f.root)).toBe(false);
+  writeFileSync(join(f.root, 'Notes', 'page.md'), 'Managed\n');
+  expect(await publishGitEffect(f.root, 'Notes/page.md')).toEqual(DENIED);
+});
+
+test('the managed key is read from repo-local config only (global, environment and included config cannot enable it)', async () => {
+  const f = fixture(); withoutLegacyHook(f);
+  const extra = join(f.home, 'extra.gitconfig'); writeFileSync(extra, `[gbrain "durability"]\n\tmanaged = true\n`);
+  writeFileSync(join(f.root, 'Notes', 'page.md'), 'Managed\n');
+  await withEnv({ GIT_CONFIG_GLOBAL: extra, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_COUNT: '1',
+    GIT_CONFIG_KEY_0: MANAGED_KEY, GIT_CONFIG_VALUE_0: 'true' }, async () => {
+    expect(durability.isManagedGitEffectEnabled(f.root)).toBe(false);
+    expect(await publishGitEffect(f.root, 'Notes/page.md')).toEqual(DENIED);
+  });
+  git(f.root, 'config', '--local', 'include.path', extra);
+  expect(git(f.root, 'config', '--get', MANAGED_KEY).trim()).toBe('true'); // visible through the include...
+  expect(durability.isManagedGitEffectEnabled(f.root)).toBe(false); // ...but not to the local-only reader
+  expect(await publishGitEffect(f.root, 'Notes/page.md')).toEqual(DENIED);
+});
+
+test('isManagedGitEffectEnabled reads exactly true and never throws', () => {
+  const f = fixture();
+  expect(durability.isManagedGitEffectEnabled(f.root)).toBe(false);
+  git(f.root, 'config', '--local', MANAGED_KEY, 'true');
+  expect(durability.isManagedGitEffectEnabled(f.root)).toBe(true);
+  expect(durability.isManagedGitEffectEnabled(join(f.home, 'does-not-exist'))).toBe(false);
+  expect(durability.isManagedGitEffectEnabled(f.home)).toBe(false); // not a repository
 });

@@ -43,6 +43,9 @@ test/brain-durability-hook.serial.test.ts	durability push remote confirmation (#
 test/brain-durability-hook.serial.test.ts	durability schedule (installCron:true) [D2/D12]	0	readFileSync
 test/brain-durability-hook.serial.test.ts	post-commit hook (D9 local, D7 self-contained)	4	readFileSync
 test/brain-repo-durability.serial.test.ts	hardenBrainRepo	16	readFileSync
+test/brain-repo-durability.serial.test.ts	managed root (#5182)	20	readFileSync
+test/brain-repo-durability.serial.test.ts	unhardenBrainRepo	2	readFileSync
+test/brain-repo-durability.serial.test.ts	unmanaged root regression (#5182)	6	readFileSync
 test/brain-score-breakdown.test.ts	Bug 11 — BrainHealth type shape	1	bun-file
 test/brain-score-breakdown.test.ts	Bug 11 — doctor renders brain_score breakdown	1	doctor-source-helper
 test/brain-score-breakdown.test.ts	Bug 11 — orphan_pages is "no inbound links"	3	doctor-source-helper

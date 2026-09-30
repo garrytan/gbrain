@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
-import { existsSync, linkSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, linkSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -11,7 +11,8 @@ import { recordedPathFromFileUri } from '../src/core/write-through.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
 import { acquireWorktree, claimWorktree, getWorktreeBinding } from '../src/core/persistence/ownership.ts';
 import { runManagedSourceLifecycle } from '../src/core/persistence/source-lifecycle.ts';
-import { hasManagedRootMarker, nativeFilesystemPath } from '../src/core/persistence/root-registry.ts';
+import { hasManagedRootMarker, nativeFilesystemPath, recordManagedRoots } from '../src/core/persistence/root-registry.ts';
+import { hardenBrainRepo } from '../src/core/brain-repo-durability.ts';
 import { assertManagedFilesystemWrite } from '../src/core/persistence/filesystem-guard.ts';
 import { PHYSICAL_ROOT_MARKER, physicalRootReservationPath, reservePhysicalRootRecord } from '../src/core/persistence/physical-root-record.ts';
 import { inspectPhysicalRootRecovery } from '../src/core/persistence/physical-root-recovery.ts';
@@ -425,4 +426,58 @@ test.skipIf(process.platform === 'win32')('recorded POSIX literal backslash does
   expect(await run(effect.id)).toMatchObject({ state: 'committed', outcome: { git: 'committed', push: 'committed' } });
   expectBlob(f, 'literal\\page.md');
   expect(readFileSync(neighbor, 'utf8')).toBe('Unrelated\n');
+});
+
+/** #5182: a managed root has no legacy hook; only the repo-local opt-in enables Git effects. */
+async function managedFixture() {
+  const f = await fixture();
+  unlinkSync(join(f.root, '.git', 'hooks', 'post-commit'));
+  const [brain] = await engine.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1');
+  recordManagedRoots(brain.brain_id, [{ local_path: f.root, source_id: f.sourceId }]);
+  return f;
+}
+const harden = (f: Awaited<ReturnType<typeof fixture>>) => hardenBrainRepo({ repoPath: f.root, sourceId: f.sourceId, verify: false, installCron: false });
+
+test('managed Git effects skip terminally until sourced harden opts in; later writes commit and push with no scaffolding', async () => {
+  const f = await managedFixture();
+  const before = await publish(f, 'notes/before-opt-in');
+  expect(await run(before.effect.id)).toMatchObject({ state: 'committed', outcome: { git: 'skipped', reason: 'durability_not_enabled', push: 'skipped' } });
+  expect(git(f.remote, 'ls-tree', '-r', '--name-only', 'refs/heads/main')).toBe('initial.md\n');
+  const head = git(f.root, 'rev-parse', 'HEAD');
+
+  const report = await harden(f);
+  expect(report).toMatchObject({ managed: true });
+  expect(report.steps.find(step => step.step === 'outbox')).toMatchObject({ status: 'fixed' });
+  expect(git(f.root, 'rev-parse', 'HEAD')).toBe(head);
+  expect(existsSync(join(f.root, 'scripts'))).toBe(false);
+  expect(existsSync(join(f.root, 'AGENTS.md'))).toBe(false);
+  expect(existsSync(join(f.root, '.git', 'hooks', 'post-commit'))).toBe(false);
+
+  const after = await publish(f, 'notes/after-opt-in');
+  const target = after.effect.data.relative_path as string;
+  expect(await run(after.effect.id)).toMatchObject({ state: 'committed', outcome: { git: 'committed', push: 'committed' } });
+  expectBlob(f, target);
+  // The earlier skipped effect is terminal and is not replayed by opting in.
+  expect(git(f.remote, 'ls-tree', '-r', '--name-only', 'refs/heads/main')).toBe(`${target}\ninitial.md\n`);
+  expect(git(f.root, 'diff', '--cached', '--name-only')).toBe('');
+  expect(git(f.root, 'rev-parse', 'HEAD')).toBe(git(f.remote, 'rev-parse', 'refs/heads/main'));
+});
+
+test('managed harden neither takes the Git index lock nor waits for a running effect worker', async () => {
+  const f = await managedFixture();
+  const held = await publish(f, 'notes/held'); // committed before harden; its Git effect runs after the opt-in
+  const lock = (await acquireWorktree(f.binding))!;
+  expect(lock).not.toBeNull();
+  try {
+    const index = readFileSync(join(f.root, '.git', 'index'));
+    const head = git(f.root, 'rev-parse', 'HEAD');
+    expect(await harden(f)).toMatchObject({ managed: true });
+    expect(existsSync(join(f.root, '.git', 'index.lock'))).toBe(false);
+    expect(readFileSync(join(f.root, '.git', 'index'))).toEqual(index);
+    expect(git(f.root, 'rev-parse', 'HEAD')).toBe(head);
+    expect(git(f.root, 'config', '--local', '--get', 'gbrain.durability.managed').trim()).toBe('true');
+    expect(await run(held.effect.id)).toMatchObject({ state: 'queued', error_code: 'writer_busy' });
+  } finally { await lock.release(); }
+  expect(await run(held.effect.id)).toMatchObject({ state: 'committed', outcome: { git: 'committed', push: 'committed' } });
+  expectBlob(f, held.effect.data.relative_path as string);
 });

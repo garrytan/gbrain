@@ -40,10 +40,12 @@ export function hasFilesystemPublication(path: string): boolean {
   const held = active.getStore();
   return held?.active === true && held.roots.some(root => encloses(root, path));
 }
-export function assertManagedFilesystemWrite(path: string): void {
-  const managed = hasManagedRootMarker(path) || registeredManagedRoots().some(root => encloses(root, path) || encloses(path, root))
+export function isManagedFilesystemPath(path: string): boolean {
+  return hasManagedRootMarker(path) || registeredManagedRoots().some(root => encloses(root, path) || encloses(path, root))
     || [...managedRoots.values()].some(roots => [...roots].some(root => encloses(root, path) || encloses(path, root)));
-  if (managed && !hasFilesystemPublication(path)) throw new OperationError('writer_coordinator_required',
+}
+export function assertManagedFilesystemWrite(path: string): void {
+  if (isManagedFilesystemPath(path) && !hasFilesystemPublication(path)) throw new OperationError('writer_coordinator_required',
     'This file belongs to a managed canonical worktree.', 'Submit the change through the persistence coordinator.');
 }
 /** Invalidate inherited async contexts before the owner releases the kernel lock. */

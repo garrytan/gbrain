@@ -296,8 +296,18 @@ an unexpected edit needs repair. Other worktrees can continue. Recovery space
 is reserved before touching a file; insufficient capacity leaves the withdrawal
 effective and its physical mirror queued.
 
-Git work runs only for repositories already opted into durability hardening.
-It commits the affected file without invoking legacy hooks, then attempts a
+Git work runs only for repositories that opted into durability. A repository
+opts in through the legacy post-commit hook that `gbrain sources harden`
+installs on an unmanaged root, or, on a managed canonical worktree, through
+the repo-local git config key `gbrain.durability.managed=true` that
+`gbrain sources harden <id>` sets on the owner host. The managed opt-in
+installs no hook, helper, rules block or scheduled pull and writes no
+committed file; `gbrain sources unharden <id>` removes it. It is host-local
+and lives in the checkout's `.git/config`, so run harden again on the owner
+host after a reclone or transfer. Git effects that finished before the opt-in
+completed as skipped with `durability_not_enabled`; they are terminal and are
+not replayed, and the next write to that page commits and pushes it. Git work
+commits the affected file without invoking hooks, then attempts a
 plain push to the configured tracking remote. It never pulls or rebases source
 files. An unconfigured remote is reported as a skipped push. Embeddings wait
 for an enabled, configured provider and install only if the page revision and

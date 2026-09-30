@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, statSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve as resolvePath, sep } from 'node:path';
-import { execFileBounded, isDurabilityHardenedAsync } from '../brain-repo-durability.ts';
+import { execFileBounded, isGitEffectEnabledAsync } from '../brain-repo-durability.ts';
 import { OperationError } from '../ops/contract.ts';
 import { persistenceHome } from './identity.ts';
 import { nativeFileTarget } from './native-file-target.ts';
@@ -196,7 +196,7 @@ export async function pushGitRoot(root: string, signal?: AbortSignal): Promise<{
  */
 export async function publishGitEffect(root: string, relativePath: string, signal?: AbortSignal,
   hardened?: boolean): Promise<Record<string, unknown>> {
-  if (!(hardened ?? await isDurabilityHardenedAsync(root))) return { git: 'skipped', reason: 'durability_not_enabled', push: 'skipped' };
+  if (!(hardened ?? await isGitEffectEnabledAsync(root))) return { git: 'skipped', reason: 'durability_not_enabled', push: 'skipped' };
   const outcome = (await commitGitTargets(root, [relativePath], signal)).get(relativePath)!;
   if (outcome instanceof OperationError) throw outcome;
   if (outcome.reason === 'target_absent') return outcome;

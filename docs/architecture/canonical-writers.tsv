@@ -27,7 +27,7 @@ src/core/backfill-effective-date.ts	1	projection	Derived indexing, retrieval tel
 src/core/background-work.ts	1	projection	Derived indexing, retrieval telemetry, or source settings; canonical fields remain guarded by SQL triggers.
 src/core/backup/quarantine.ts	3	engine_guard	Canonical table SQL trigger requires coordinator capability; legacy calls fail before canonical DB publication.
 src/core/bootstrap/verify.ts	2	coordinator	Probe writes use put_page; a managed brain purges probes through delete_page purge and deletes probe facts inside withCoordinatedWrite, while the unmanaged cleanup keeps the engine primitives behind the canonical table trigger.
-src/core/brain-repo-durability.ts	0	filesystem_guard	Hardening checks the root; generated push/rebase helpers honor shared refusal markers.
+src/core/brain-repo-durability.ts	0	filesystem_guard	Hardening checks the root; managed roots opt in through repo-local git config only (no worktree, hook or committed-file writes); generated push/rebase helpers honor shared refusal markers.
 src/core/brain-writer.ts	0	filesystem_guard	Frontmatter repair checks the managed root before backup or file replacement.
 src/core/calibration/undo-wave.ts	1	engine_guard	Canonical table SQL trigger requires coordinator capability; legacy calls fail before canonical DB publication.
 src/core/chronicle/extract-events.ts	2	coordinator	A managed brain publishes each event page and its depth timeline row through publishMaintenancePage after maintenancePreflight; the unmanaged putPage/upsertEventProjection pair stays behind the canonical table trigger.

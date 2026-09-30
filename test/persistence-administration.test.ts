@@ -169,4 +169,18 @@ describe('local writer administration', () => {
     expect(() => parsePersistenceAdminArgs('writer', ['status', '--probe=false'])).toThrow('does not accept a value');
     expect(() => parsePersistenceAdminArgs('writer', ['transfer', 'steal', 'default'])).toThrow('prepare or accept');
   });
+
+  test('legacy hardening refusals name `sources harden <id>` as the supported managed opt-in (#5182)', async () => {
+    const { executeSourceLifecycle } = await import('../src/commands/sources-lifecycle.ts');
+    const { parseSourceLifecycleArgs } = await import('../src/commands/sources-lifecycle-args.ts');
+    const parsed = parseSourceLifecycleArgs(['add', 'hint-example', '--url', 'https://example.com/brain.git', '--pat-file', '/tmp/unused-pat']);
+    expect(parsed.legacyOnly).toBe(true);
+    await expect(executeSourceLifecycle(engine, parsed)).rejects.toMatchObject({
+      code: 'writer_coordinator_required', suggestion: expect.stringContaining('gbrain sources harden <id>') });
+    await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+    try {
+      await expect(runPersistenceAdministration(engine, 'source_add', { legacy_hardening: true })).rejects.toMatchObject({
+        code: 'writer_coordinator_required', suggestion: expect.stringContaining('gbrain sources harden <id>') });
+    } finally { await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1'); }
+  });
 });
