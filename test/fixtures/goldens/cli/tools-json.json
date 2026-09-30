@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 209860,
-    "stdoutSha256": "1ec5b407e08b2b2333a2f5fe2c24561fa47447bb9303de69902a0bfe562610df",
+    "stdoutBytes": 210362,
+    "stdoutSha256": "ccbf23b354746e14231df8922ff3b610b57e7846d1205e5fee907851d0e1b7c6",
     "toolNames": [
       "remember",
       "entity",
@@ -324,6 +324,7 @@
         "description": "Read a page by slug (supports optional fuzzy matching). Slug aliases left by renames redirect to the canonical page in the source that owns the alias (archived sources excluded); a redirected read reports `resolved_slug`. To edit a page, pass include_content: true — the returned `content` field is the canonical full markdown (frontmatter + body + timeline sentinel); edit THAT and pass it back to put_page to round-trip losslessly. Reassembling compiled_truth/timeline by hand risks dropping sections. Soft-deleted pages are hidden by default; pass include_deleted: true to surface them with deleted_at populated (see v0.26.5 recovery window). `timeline` is only the markdown section after the timeline sentinel; entries written by add_timeline_entry or extraction live in timeline rows, which include_timeline_entries: true returns as `timeline_entries` (the same rows get_timeline returns).",
         "name": "get_page",
         "parameters": {
+          "content_only": "boolean?",
           "fuzzy": "boolean?",
           "include_content": "boolean?",
           "include_deleted": "boolean?",
@@ -333,6 +334,10 @@
         },
         "schema": {
           "properties": {
+            "content_only": {
+              "description": "With include_content: true, return only what a get→edit→put_page round trip needs — slug, type, title, revision, tags and `content` (plus resolved_slug / content_flag / deleted_at when present). compiled_truth, timeline and frontmatter are already inside `content`, so omitting them halves the payload for large pages. Ignored without include_content (default: false).",
+              "type": "boolean"
+            },
             "fuzzy": {
               "description": "Enable fuzzy slug resolution (default: false)",
               "type": "boolean"
