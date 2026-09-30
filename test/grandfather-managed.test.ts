@@ -20,6 +20,8 @@ import { isolatedSharedSkillsEngine } from './helpers/shared-skills-engine.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { durableGitRepo, git } from './helpers/git-publication.ts';
 import { localHostId } from '../src/core/persistence/identity.ts';
+import { resolveRepairScope, runRepair } from '../src/core/repair/core.ts';
+import { visibilityRepair } from '../src/core/repair/visibility.ts';
 
 type FixtureOptions = { databaseUrl?: string; setup?: (f: { engine: BrainEngine; root: string }) => Promise<void> };
 async function fixture(run: (f: { engine: BrainEngine; ctx: OperationContext; home: string; root: string; slug: string }) => Promise<void>,
@@ -227,6 +229,37 @@ test('the missing-file guard still refuses outside declared db_only dirs', () =>
   rmSync(join(root, `${slug}.md`));
   await expect(replacePage(ctx, slug, 'Replacement body.')).rejects.toMatchObject({ code: 'source_changed' });
 }, { setup: dbOnlySource(declaring('conversations/')) }), 120_000);
+
+// Derive-phase output (atoms/, concepts/, ...) is database-only by design and never
+// declared in gbrain.yml; extraction writes it before persistence activation.
+const ATOM_SLUG = 'atoms/2026-09-02/probe-atom';
+const derivedSource = async ({ engine, root }: { engine: BrainEngine; root: string }) => {
+  writeFileSync(join(root, 'gbrain.yml'), 'storage:\n  db_tracked:\n    - notes/\n');
+  durableGitRepo(root, ['gbrain.yml']);
+  await importFromContent(engine, ATOM_SLUG, '---\ntype: atom\ntitle: Probe atom\nsource_slug: notes/example\n---\n\nAn atom derived from a public note.\n', { sourceId: 'default', noEmbed: true });
+};
+
+test('managed writes publish a never-filed derive-phase page database-only without declaring its dir', () => fixture(async ({ engine, ctx, root }) => {
+  expect((await engine.readPageSnapshot(ATOM_SLUG, { sourceId: 'default' }))?.page.source_path).toBeNull();
+  expect(await replacePage(ctx, ATOM_SLUG, 'A revised atom.')).toMatchObject({ write_through: { written: false, skipped: 'db_only' } });
+  expect((await engine.getPage(ATOM_SLUG, { sourceId: 'default' }))?.compiled_truth).toContain('A revised atom.');
+  expect(existsSync(join(root, 'atoms'))).toBe(false);
+  expect((await settledGitEffects(engine, ctx)).filter(effect => effect.slug === ATOM_SLUG)).toEqual([]);
+}, { setup: derivedSource }), 120_000);
+
+test('the visibility repair stamps an undeclared database-only atom on a managed brain', () => fixture(async ({ engine, ctx }) => {
+  expect((await engine.getPage(ATOM_SLUG, { sourceId: 'default' }))?.frontmatter.visibility).toBeUndefined();
+  await runRepair(ctx, visibilityRepair, await resolveRepairScope(engine), { apply: true });
+  expect((await engine.getPage(ATOM_SLUG, { sourceId: 'default' }))?.frontmatter.visibility).toBe('world');
+}, { setup: derivedSource }), 120_000);
+
+test('a derive-phase page whose recorded file went missing still refuses', () => fixture(async ({ ctx, root }) => {
+  const slug = 'atoms/filed-atom';
+  expect(await submitPageMutation(ctx, { operation: 'put_page', params: { slug, request_id: randomUUID(),
+    content: '---\ntype: atom\ntitle: Filed atom\n---\n\nFiled body.\n' } })).toMatchObject({ state: 'committed', write_through: { written: true } });
+  rmSync(join(root, `${slug}.md`));
+  await expect(replacePage(ctx, slug, 'Replacement body.')).rejects.toMatchObject({ code: 'source_changed' });
+}, { setup: derivedSource }), 120_000);
 
 const invalidStorage: Array<[string, string]> = [
   ['overlapping tiers', 'storage:\n  db_tracked:\n    - conversations/\n  db_only:\n    - conversations/\n'],

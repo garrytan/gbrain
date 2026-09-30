@@ -96,7 +96,7 @@ function resolveFilesystemPath(path: string, realpath: (path: string) => string)
  * refreshed but stale roots stay fenced until an explicit verified drain clears
  * them. Per-root files prevent independent registration from dropping siblings.
  */
-export function recordManagedRoots(brainId: string, records: ManagedRootRecord[]): void {
+export function recordManagedRoots(brainId: string, records: ManagedRootRecord[], modeEpoch?: number): void {
   if (!/^[a-f0-9-]{36}$/i.test(brainId)) throw new OperationError('storage_error', 'Invalid managed-root brain identity.');
   if (!records.length) return;
   const directory = registryDirectory(); mkdirSync(directory, { recursive: true, mode: 0o700 }); chmodSync(directory, 0o700);
@@ -106,12 +106,13 @@ export function recordManagedRoots(brainId: string, records: ManagedRootRecord[]
     const key = createHash('sha256').update(root).digest('hex');
     const file = join(directory, `${brainId}.${key}.json`);
     const value = JSON.stringify({ version: 1, brain_id: brainId, root, ...record, local_path: root,
-      ...(record.topology_generation != null ? { topology_generation: String(record.topology_generation) } : {}) });
+      ...(record.topology_generation != null ? { topology_generation: String(record.topology_generation) } : {}),
+      ...(modeEpoch !== undefined ? { mode_epoch: modeEpoch } : {}) });
     changed = writePrivateRecord(file, value) || changed;
     if (existsSync(root) && statSync(root).isDirectory()) {
       const metadata = enclosingGitMetadata(root);
       const marker = metadata ? join(metadata, 'gbrain-managed.json') : join(root, '.gbrain-managed');
-      if (!existsSync(marker)) writePrivateRecord(marker, JSON.stringify({ version: 1, managed: true, brain_id: brainId }));
+      if (!existsSync(marker)) writePrivateRecord(marker, JSON.stringify({ version: 1, managed: true, brain_id: brainId, ...(modeEpoch !== undefined ? { mode_epoch: modeEpoch } : {}) }));
     }
   }
   if (changed) syncDirectory(directory);

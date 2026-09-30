@@ -165,7 +165,9 @@ accordingly). Nothing is deleted or mutated; the doctor's
   `facts.default_visibility` is unset, the instruction template tells agents
   to write `world`; only an explicitly-private brain gets the private posture,
   stated with its trade-off: private facts are readable by the local CLI only,
-  so remote agents cannot recall them later. An explicit private setting is
+  so remote agents cannot recall them later. `gbrain bootstrap harness` and
+  `gbrain doctor` (`memory_writeback`) warn when an explicitly private default
+  meets remote readers on a brain not declared `brain.audience=shared`. An explicit private setting is
   never widened — not by the template, not by the backstop (which resolves
   `facts.default_visibility` exactly like `extract_facts` always has).
 - Backstop facts carry `source: 'hook:writeback'` and the session's

@@ -194,6 +194,9 @@ export function classifyWaveFindings(before: WaveFinding[], after: WaveFinding[]
     if (now.state === 'unknown') { findings.push({ ...base, class: 'pending', instruction: 'The check could not run; rerun gbrain doctor on the brain host.' }); continue; }
     if (now.spec.resolution === 'operator') { findings.push({ ...base, class: 'operator_required', instruction: now.spec.instruction }); continue; }
     if (now.spec.resolution === 'unsupported') { findings.push({ ...base, class: 'unsupported', instruction: now.spec.instruction }); continue; }
+    // A repairable finding the repair can only report blocked needs the operator first.
+    const blocked = now.check.details?.operator_instruction;
+    if (typeof blocked === 'string') { findings.push({ ...base, class: 'operator_required', instruction: blocked, ...(kind ? { repair_kind: kind } : {}) }); continue; }
     const skipped = result.repairs_skipped?.find(step => step.kind === kind);
     findings.push({ ...base, class: skipped ? 'consent_required' : 'pending', ...(kind ? { repair_kind: kind } : {}),
       ...(skipped ? { command: skipped.command } : kind ? { command: `gbrain repair ${kind} --apply` } : {}) });

@@ -287,8 +287,7 @@ export async function prepareCanonicalProjections(engine: BrainEngine, page: Par
     const pageId=snapshot.page.id;
     if (await collides(tx,pageId)) throw takeCollision();
     await tx.executeRaw('DELETE FROM takes WHERE page_id=$1 AND row_num=ANY($2::integer[])',[pageId,takeRowsGone]);
-    if (takes.length) await tx.addTakesBatch(takes.map(t=>takesPreparation.toBatchInput(pageId,t,
-      t.active?null:Number(t.source?.match(/superseded by #(\d+)/)?.[1])||null)));
+    if (takes.length) await tx.addTakesBatch(takes.map(t=>takesPreparation.toCanonicalBatchInput(pageId,t)));
     // Full canonical versions include resolution fields; a revert restores those
     // fields from Markdown too, without the ordinary immutable-resolution API.
     for (const take of takes) await tx.executeRaw(`UPDATE takes SET resolved_at=$3::timestamptz,

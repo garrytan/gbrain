@@ -1230,6 +1230,8 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'eval.scrub_pii',
   'embedding_multimodal',
   'embedding_multimodal_model',
+  // #5691: per-brain query instruction (DB plane; read by search/query-prefix.ts).
+  'embedding_query_prefix',
   'embedding_image_ocr',
   'embedding_image_ocr_model',
   'embedding_columns',

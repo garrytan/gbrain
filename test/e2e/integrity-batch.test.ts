@@ -140,6 +140,47 @@ describeE2E('scanIntegrity batch parity (E2E, Postgres-only)', () => {
     });
   });
 
+  describe('soft-deleted pages', () => {
+    // The sequential walk never sees a tombstone: listAllPageRefs() and
+    // getPage() both filter deleted_at IS NULL. The batch SQL must match, or
+    // `gbrain doctor`'s integrity sample reports hits from deleted pages and,
+    // once tombstones outnumber the sample, stops reaching live pages at all
+    // (ORDER BY source_id, slug LIMIT n fills with deleted rows first).
+    test('tombstones are skipped on both paths, and do not consume the sample', async () => {
+      const engine = getEngine();
+
+      // Two tombstones that sort BEFORE the live page, each carrying a
+      // bare-tweet hit.
+      for (const slug of ['archive/old-a', 'archive/old-b']) {
+        await engine.putPage(slug, {
+          type: 'note',
+          title: slug,
+          compiled_truth: 'Someone tweeted about this before it was deleted.',
+          timeline: '',
+          frontmatter: {},
+        });
+        await engine.softDeletePage(slug, { sourceId: 'default' });
+      }
+      await engine.putPage('people/alice', {
+        type: 'person',
+        title: 'Alice',
+        compiled_truth: 'Alice tweeted about AI safety last week.',
+        timeline: '',
+        frontmatter: {},
+      });
+
+      const batchResult = await scanIntegrity(engine, { limit: 100, batchLoad: true });
+      const seqResult = await scanIntegrity(engine, { limit: 100, batchLoad: false });
+      expect(seqResult.pagesScanned).toBe(1);
+      expect(batchResult.pagesScanned).toBe(seqResult.pagesScanned);
+      expect(batchResult.bareHits.map(h => h.slug)).toEqual(['people/alice']);
+
+      // A sample smaller than the tombstone count must still reach the live page.
+      const sampled = await scanIntegrity(engine, { limit: 2, batchLoad: true });
+      expect(sampled.bareHits.map(h => h.slug)).toEqual(['people/alice']);
+    });
+  });
+
   describe('topPages', () => {
     test('topPages ordering matches between paths', async () => {
       const engine = getEngine();

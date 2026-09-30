@@ -51,14 +51,35 @@ export interface GoogleSourceState {
    */
   gmail_backfill_floor_ms: number | null;
   gmail_backfill_done: boolean;
+  /**
+   * #5438 (adopted from #5581): lower bound (epoch ms) the completed backfill
+   * actually covered. A later, WIDER g_history_days reopens the backfill below
+   * it instead of silently leaving the extra history unimported; absent on
+   * legacy state (no reopen).
+   */
+  gmail_backfill_cutoff_ms?: number | null;
+  /**
+   * #5581: history-expired gap: `[gmail_gap_after_ms,
+   * gmail_gap_floor_ms)` is drained newest→oldest with the same resumable floor
+   * walk as the backfill. Both null when no gap is open.
+   */
+  gmail_gap_after_ms?: number | null;
+  gmail_gap_floor_ms?: number | null;
+  /**
+   * #5581: delta threads flagged by an already-consumed history window but
+   * not yet landed (capped: 1,000 ids or 64 KB). An aborted delta drain
+   * advances `gmail_history_id` and parks the remainder here.
+   */
+  gmail_pending_thread_ids?: string[];
   /** Bookmark for the history-expired fallback: newest internalDate imported. */
   gmail_newest_ms: number | null;
   /**
-   * Poison-thread ledger: consecutive fetch failures per thread id. A thread
-   * failing MAX_THREAD_FAILURES times is skipped (loudly) instead of wedging
-   * the backfill floor / delta cursor forever; entries clear on success.
+   * Pre-wave-4 poison-thread ledger (consecutive failures per thread id). Read
+   * once and carried into `item_holds`; never written again.
    */
   gmail_fail_counts?: Record<string, number>;
+  /** Fix wave 4: connector item holds (src/core/connectors/item-holds.ts). */
+  item_holds?: unknown;
   calendar_sync_token: string | null;
   /**
    * Calendar id `calendar_sync_token` was minted for. A token is only valid

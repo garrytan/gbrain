@@ -297,6 +297,44 @@ test('managed bulk conversation extraction writes its facts and terminal audit r
   });
 }, 120_000);
 
+test('managed conversation extraction preserves the prior batch when a replacement extraction fails', async () => {
+  const slug = 'conversations/synthetic-chat';
+  await managed(async ({ engine, sourceId, put }) => {
+    await put(slug, CONVERSATION);
+    await runExtractConversationFactsCore(engine, { sourceId, overrideDisabled: true, extractor, types: ['conversation'] });
+    await put(slug, CONVERSATION.replace('Staff engineer', 'Principal engineer'));
+  }, async ({ engine, sourceId }) => {
+    const failed = async () => { throw new Error('synthetic provider failure'); };
+    const result = await runExtractConversationFactsCore(engine, { sourceId, overrideDisabled: true, extractor: failed, types: ['conversation'] });
+    expect(result.pages_failed).toBe(1);
+    expect((await facts(engine, sourceId, slug)).map(row => row.fact)).toEqual([
+      'Alice Example joined Acme Corp as a staff engineer.', 'EXTRACTION_COMPLETE']);
+  });
+}, 120_000);
+
+test('managed conversation extraction keeps the prior batch when the page is edited while the model runs, then replaces it', async () => {
+  const slug = 'conversations/synthetic-chat';
+  await managed(async ({ engine, sourceId, put }) => {
+    await put(slug, CONVERSATION);
+    await runExtractConversationFactsCore(engine, { sourceId, overrideDisabled: true, extractor, types: ['conversation'] });
+    await put(slug, CONVERSATION.replace('Staff engineer', 'Senior engineer'));
+  }, async ({ engine, sourceId, put }) => {
+    const editing = async () => {
+      await put(slug, CONVERSATION.replace('Staff engineer', 'Principal engineer'));
+      return [{ ...(await extractor())[0]!, fact: 'Alice Example joined Acme Corp as a principal engineer.' }];
+    };
+    const raced = await runExtractConversationFactsCore(engine, { sourceId, overrideDisabled: true, extractor: editing, types: ['conversation'] });
+    expect(raced.pages_failed).toBe(1);
+    expect((await facts(engine, sourceId, slug)).map(row => row.fact)).toEqual([
+      'Alice Example joined Acme Corp as a staff engineer.', 'EXTRACTION_COMPLETE']);
+    const principal = async () => [{ ...(await extractor())[0]!, fact: 'Alice Example joined Acme Corp as a principal engineer.' }];
+    const replay = await runExtractConversationFactsCore(engine, { sourceId, overrideDisabled: true, extractor: principal, types: ['conversation'] });
+    expect(replay).toMatchObject({ pages_failed: 0, facts_inserted: 1, orphan_facts_cleaned: 2 });
+    expect((await facts(engine, sourceId, slug)).map(row => [row.fact, row.row_num])).toEqual([
+      ['Alice Example joined Acme Corp as a principal engineer.', 0], ['EXTRACTION_COMPLETE', 1]]);
+  });
+}, 120_000);
+
 test('republishing a managed conversation page keeps its extracted facts active and the page complete', async () => {
   // Conversation rows are numbered on the page coordinate but carry no fence;
   // like the legacy fence reconcile (#1928), the canonical projection must not

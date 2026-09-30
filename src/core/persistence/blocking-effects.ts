@@ -25,8 +25,8 @@ export async function listBlockingEffects(engine: SqlEngine, opts: { sourceId?: 
 export function blockingEffectHint(effect: BlockingEffect): string {
   return `${WRITER_INSPECTION_HINT} Blocking effect ${effect.effect_id} (kind ${effect.kind}, state ${effect.state}${effect.recovering ? ', recovering' : ''}) `
     + `for source ${effect.source_id}, page ${effect.slug}, request ${effect.request_id}. Inspect it with: ${effect.inspect}. `
-    + 'Inspection cannot clear it: the resident owner drains queued and running effects, gbrain sources writer retry-effects only re-authorizes failed or parked effects, '
-    + 'and a stuck queued embedding effect has no clearing command until the deferred reconcile path lands.';
+    + 'The resident owner drains queued and running effects; gbrain sources writer retry-effects re-authorizes failed or parked effects; '
+    + `a stuck queued or failed embedding effect is settled by gbrain repair embedding-effects --source ${effect.source_id} (preview first, then --apply).`;
 }
 
 /** `writer_not_quiesced` naming the first blocking request, else the first blocking effect. */

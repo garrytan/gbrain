@@ -309,7 +309,8 @@ export async function runFactsBackstop(
   // --- Extraction availability gate (engine-aware, EXECUTION-process only) ---
   // Resolves the ACTUAL extraction model (facts.extraction_model /
   // models.default / tier config / GBRAIN_MODEL / key-aware tier default) and
-  // asks the gateway whether it's servable. Deliberately NOT
+  // asks the gateway whether it's servable (the same resolution the corpus
+  // harvest gates use: extraction-availability.ts). Deliberately NOT
   // detectCapabilities(): that probe is engine-blind and would permanently
   // drop work for installs whose DB-plane override IS servable.
   //
@@ -325,10 +326,9 @@ export async function runFactsBackstop(
   // extraction does NOT re-resolve it — the resolve is up to 3 sequential
   // engine.getConfig round-trips per page write), or null on gate failure.
   const availabilityGate = async (): Promise<string | null> => {
-    const { getFactsExtractionModel } = await import('./extract.ts');
-    const { isAvailable } = await import('../ai/gateway.ts');
-    const extractionModel = ctx.model ?? (await getFactsExtractionModel(ctx.engine));
-    if (isAvailable('chat', extractionModel)) return extractionModel;
+    const { resolveExtractionAvailability } = await import('./extraction-availability.ts');
+    const { model: extractionModel, available } = await resolveExtractionAvailability(ctx.engine, ctx.model);
+    if (available) return extractionModel;
     await surfaceExtractionFailure(
       ctx.engine, parsedPage.slug, 'chat_unavailable', extractionModel, ctx.sourceId,
     );

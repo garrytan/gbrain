@@ -120,7 +120,7 @@ describe('runPhaseExtractAtoms — failure classes (gbrain#4148)', () => {
     // and the trailing prose from the sent prompt entirely.
     expect(capturedPrompt).not.toContain('trailing prose');
     expect(capturedPrompt).toContain('a'.repeat(49_999));
-    expect(capturedPrompt.length).toBe(`Source: note/surrogate-boundary\n\n---\n\n${'a'.repeat(49_999)}`.length);
+    expect(/<transcript>\n([\s\S]*)\n<\/transcript>/.exec(capturedPrompt)?.[1]).toBe('a'.repeat(49_999));
   });
 
   test('malformed output is a counted failure, NOT a zero-yield tombstone', async () => {

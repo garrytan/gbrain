@@ -23,9 +23,15 @@
  * `effective_date_health` check can detect "fell back to updated_at" rows
  * that look populated but are functionally equivalent to a NULL.
  *
- * Range validation: parsed value must be in [1990-01-01, NOW + 1 year].
- * Out-of-range values are dropped (the chain falls through to the next
- * element). NaN / unparseable strings drop the same way.
+ * Range validation: an explicit frontmatter date (event_date, date,
+ * published, created keys) written as a calendar date, datetime or YAML date
+ * accepts any year >= 1 up to NOW + 1 year, so historical works keep their
+ * real date; the epoch-0 and 0001-01-01 placeholders are dropped. Inferred
+ * dates (the filename, loosely parsed free text, bare numbers) and the
+ * fallback timestamps must be in [1990-01-01, NOW + 1 year]. Out-of-range
+ * values are dropped (the chain falls through to the next element). NaN /
+ * unparseable strings drop the same way. Timeline entries keep their own
+ * 1900-2199 window (src/core/ops/timeline.ts).
  *
  * Pure function. No DB. Tested in test/effective-date.test.ts.
  */
@@ -106,7 +112,8 @@ const DAY_MONTH_YEAR_RE = /^(\d{1,2})(?:st|nd|rd|th)?\s+([a-z]{3,9})\.?,?\s+(\d{
 
 /** A UTC calendar date, or null when Y/M/D does not name a real day (2024-02-30). */
 function utcCalendarDate(year: number, month: number, day: number, h = 0, m = 0, sec = 0, ms = 0): Date | null {
-  const d = new Date(Date.UTC(year, month - 1, day, h, m, sec, ms));
+  const d = new Date(Date.UTC(2000, 0, 1, h, m, sec, ms));
+  d.setUTCFullYear(year, month - 1, day);
   return d.getUTCFullYear() === year && d.getUTCMonth() === month - 1 && d.getUTCDate() === day ? d : null;
 }
 
@@ -197,6 +204,24 @@ function validateInRange(d: Date | null): Date | null {
   return d;
 }
 
+/**
+ * #5742: an explicit frontmatter date in a structured shape keeps any year >= 1
+ * (up to NOW + 1 year) except the epoch-0 and 0001-01-01 placeholders. Loosely
+ * parsed strings and bare numbers are inference, so they keep the 1990 floor.
+ */
+function validateExplicit(value: unknown, timeZone?: string): Date | null {
+  const d = parseDateLoose(value, timeZone);
+  const structured = value instanceof Date || (typeof value === 'string'
+    && [NUMERIC_DATE_RE, DATETIME_RE, MONTH_DAY_YEAR_RE, DAY_MONTH_YEAR_RE].some(re => re.test(value.trim())));
+  if (!structured) return validateInRange(d);
+  if (d === null) return null;
+  const ms = d.getTime();
+  if (!Number.isFinite(ms) || ms === 0 || ms > maxDateMs()) return null;
+  const year = d.getUTCFullYear();
+  if (year < 1 || (year === 1 && d.getUTCMonth() === 0 && d.getUTCDate() === 1)) return null;
+  return d;
+}
+
 function extractFilenameDate(filename: string | null | undefined): Date | null {
   if (!filename) return null;
   const m = filename.match(FILENAME_DATE_RE);
@@ -221,11 +246,11 @@ export function computeEffectiveDate(opts: ComputeEffectiveDateOpts): EffectiveD
   const filenameFirst = hasFilenameFirstPrefix(slug);
   const timeZone = opts.timeZone && isValidTimeZone(opts.timeZone) ? opts.timeZone : undefined;
 
-  const fmEvent = validateInRange(parseDateLoose(frontmatter.event_date, timeZone));
-  const fmDate = validateInRange(parseDateLoose(frontmatter.date, timeZone));
-  const fmPublished = validateInRange(parseDateLoose(frontmatter.published, timeZone));
+  const fmEvent = validateExplicit(frontmatter.event_date, timeZone);
+  const fmDate = validateExplicit(frontmatter.date, timeZone);
+  const fmPublished = validateExplicit(frontmatter.published, timeZone);
   const filenameDate = extractFilenameDate(filename);
-  const fmCreated = CREATED_KEYS.map(key => validateInRange(parseDateLoose(frontmatter[key], timeZone))).find(d => d !== null) ?? null;
+  const fmCreated = CREATED_KEYS.map(key => validateExplicit(frontmatter[key], timeZone)).find(d => d !== null) ?? null;
 
   // Build the ordered candidate list. For filename-first prefixes
   // (daily/, meetings/) the filename moves to the head of the chain.

@@ -49,6 +49,7 @@ import {
   TAKES_FENCE_END,
   type ParsedTake,
   type ParseResult,
+  type TakeQuality,
 } from './takes-fence.ts';
 import { withPageLock } from './page-lock.ts';
 import { resolvePageFilePath, resolveSourceLocalFilePath } from './markdown.ts';
@@ -409,6 +410,11 @@ function toBatchInput(pageId: number, t: ParsedTake, supersededBy?: number | nul
   };
 }
 
+/** The row a canonical takes fence projects: an inactive row citing `superseded by #N` points at row N. */
+function toCanonicalBatchInput(pageId: number, t: ParsedTake): TakeBatchInput {
+  return toBatchInput(pageId, t, t.active ? null : Number(t.source?.match(/superseded by #(\d+)/)?.[1]) || null);
+}
+
 async function withTakesLock<T>(
   target: Pick<TakesWriteTarget, 'slug' | 'lockTimeoutMs'>,
   fn: () => Promise<T>,
@@ -437,6 +443,82 @@ export interface AddTakeInput {
   weight?: number;
   source?: string;
   sinceDate?: string;
+}
+
+/**
+ * Carry take resolutions recorded only in the database into the page's takes
+ * fence, so a republication of the page keeps them: the canonical projection
+ * writes every resolution column from the fence. A resolution the fence
+ * cannot carry losslessly (no quality, a multi-line or fence-breaking cell)
+ * and a fence with rows the parser skipped refuse with a TakesWriteError
+ * instead of publishing a body that would clear or drop data.
+ */
+export async function materializeTakeResolutions(engine: BrainEngine, pageId: number, body: string): Promise<string> {
+  const parsed = parseTakesFence(body);
+  const rows = parsed.takes.length ? await engine.executeRaw<{ row_num: number; resolved_at: Date | string; resolved_quality: TakeQuality | null;
+    resolved_source: string | null; resolved_value: number | string | null; resolved_unit: string | null; resolved_by: string | null }>(
+    `SELECT row_num,resolved_at,resolved_quality,resolved_source,resolved_value,resolved_unit,resolved_by FROM takes
+      WHERE page_id=$1 AND resolved_at IS NOT NULL`, [pageId]) : [];
+  const missing = new Map(rows.filter(row => parsed.takes.some(take => take.rowNum === Number(row.row_num)
+    && take.resolvedAt === undefined && take.resolvedQuality === undefined)).map(row => [Number(row.row_num), row]));
+  if (!missing.size) return body;
+  assertFenceRoundTrips(parsed);
+  const takes = parsed.takes.map(take => {
+    const row = missing.get(take.rowNum);
+    if (!row) return take;
+    if (!row.resolved_quality) {
+      throw new TakesWriteError('invalid_input', `Take row #${take.rowNum} has a resolution without a quality, which the takes fence cannot carry; republishing would clear it.`);
+    }
+    for (const [field, value] of [['resolved_source', row.resolved_source], ['resolved_unit', row.resolved_unit], ['resolved_by', row.resolved_by]] as const) {
+      assertSafeCellText(field, value ?? undefined);
+    }
+    return { ...take, resolvedAt: new Date(row.resolved_at).toISOString(), resolvedQuality: row.resolved_quality,
+      resolvedEvidence: row.resolved_source ?? undefined, resolvedValue: row.resolved_value === null ? undefined : Number(row.resolved_value),
+      resolvedUnit: row.resolved_unit ?? undefined, resolvedBy: row.resolved_by ?? undefined };
+  });
+  const next = replaceFence(body, takes);
+  const reparsed = parseTakesFence(next);
+  assertFenceRoundTrips(reparsed);
+  if (reparsed.takes.length !== takes.length) throw new TakesWriteError('invalid_input', 'The takes fence lost rows while carrying database resolutions.');
+  for (const take of takes) {
+    if (!missing.has(take.rowNum)) continue;
+    const back = reparsed.takes.find(t => t.rowNum === take.rowNum);
+    if (!back || back.resolvedQuality !== take.resolvedQuality || (back.resolvedEvidence ?? undefined) !== take.resolvedEvidence
+      || back.resolvedValue !== take.resolvedValue || (back.resolvedUnit ?? undefined) !== take.resolvedUnit || (back.resolvedBy ?? undefined) !== take.resolvedBy) {
+      throw new TakesWriteError('invalid_input', `Take row #${take.rowNum}'s database resolution does not round-trip through the takes fence.`);
+    }
+  }
+  return next;
+}
+
+/** Compose the same append sequence used by the legacy md-first writer. */
+export function appendTakesToPageBody(body: string, rows: ReadonlyArray<AddTakeInput>): { body: string; rowNums: number[] } {
+  for (const row of rows) {
+    assertHolderAllowed(row.holder, null);
+    assertSafeCellText('claim', row.claim);
+    assertSafeCellText('kind', row.kind);
+    assertSafeCellText('holder', row.holder);
+    assertSafeCellText('source', row.source);
+    assertValidWeight(row.weight);
+    assertValidSinceDate(row.sinceDate);
+  }
+  assertFenceRoundTrips(parseTakesFence(body));
+  let nextBody = body;
+  const rowNums: number[] = [];
+  for (const row of rows) {
+    const result = upsertTakeRow(nextBody, {
+      claim: row.claim,
+      kind: row.kind,
+      holder: row.holder,
+      weight: row.weight ?? 0.5,
+      source: row.source,
+      sinceDate: row.sinceDate,
+      active: true,
+    });
+    nextBody = result.body;
+    rowNums.push(result.rowNum);
+  }
+  return { body: nextBody, rowNums };
 }
 
 export async function addTakeToPage(
@@ -537,23 +619,7 @@ export async function appendTakesToPageMdFirst(
     // Unlike addTakeToPage, a missing file REFUSES (readPageBody's
     // mirror_unavailable) — see the contract note above.
     const body = readPageBody(path);
-    // F1: a fence with parser-skipped rows must not be re-rendered.
-    assertFenceRoundTrips(parseTakesFence(body));
-    let nextBody = body;
-    const rowNums: number[] = [];
-    for (const row of rows) {
-      const r = upsertTakeRow(nextBody, {
-        claim: row.claim,
-        kind: row.kind,
-        holder: row.holder,
-        weight: row.weight ?? 0.5,
-        source: row.source,
-        sinceDate: row.sinceDate,
-        active: true,
-      });
-      nextBody = r.body;
-      rowNums.push(r.rowNum);
-    }
+    const { body: nextBody, rowNums } = appendTakesToPageBody(body, rows);
     writePageBody(path, nextBody, writeRoot);
     // Mirror md→DB with the reconcile primitive, exactly as the fence now
     // states the appended rows.
@@ -780,4 +846,4 @@ export async function resolveTakeOnPage(
 }
 
 /** Pure fence primitives shared by durable semantic preparation and legacy callers. */
-export const takesPreparation = { assertHolderAllowed, assertSafeCellText, assertValidWeight, assertValidSinceDate, findFenceRow, assertFenceRoundTrips, replaceFence, toBatchInput };
+export const takesPreparation = { assertHolderAllowed, assertSafeCellText, assertValidWeight, assertValidSinceDate, findFenceRow, assertFenceRoundTrips, replaceFence, toBatchInput, toCanonicalBatchInput };

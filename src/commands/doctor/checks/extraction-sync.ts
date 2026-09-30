@@ -118,10 +118,25 @@ export async function checkLinksExtractionLag(
       return { name, status: 'ok', message: `Extraction lag not applicable (${total} pages — too few to assess)` };
     }
 
-    const stale = await engine.countStalePagesForExtraction({ sourceId, versionTs: LINK_EXTRACTOR_VERSION_TS });
+    // #5761: a page left stale only by an unresolved attendee, and not edited
+    // since, is attendance-blocked: `extract --stale` cannot clear it, so it
+    // is reported apart from lag. Pre-v180 brains have no marker column.
+    const versionTs = LINK_EXTRACTOR_VERSION_TS;
+    let stale: number;
+    let attendanceBlocked = 0;
+    try {
+      stale = await engine.countStalePagesForExtraction({ sourceId, versionTs, attendance: 'exclude' });
+      attendanceBlocked = await engine.countStalePagesForExtraction({ sourceId, versionTs, attendance: 'blocked' });
+    } catch (e) {
+      if (!isUndefinedColumnError(e, 'links_attendance_blocked_revision')) throw e;
+      stale = await engine.countStalePagesForExtraction({ sourceId, versionTs });
+    }
     const pct = (stale / total) * 100;
     const pctStr = pct.toFixed(0);
     const scope = sourceId ? ` in source '${sourceId}'` : '';
+    const blockedNote = attendanceBlocked
+      ? `. ${attendanceBlocked} more page(s) wait on unresolved attendees; the next extraction clears each once its attendee's person page exists in the meeting's source (docs/guides/attendance-evidence.md)`
+      : '';
 
     const warnPct = _resolveEnvNumber('GBRAIN_EXTRACTION_LAG_WARN_PCT', EXTRACTION_LAG_WARN_PCT_DEFAULT, { unit: '%' });
     // Fail threshold is DISABLED unless explicitly set (warn-only default). A
@@ -140,14 +155,14 @@ export async function checkLinksExtractionLag(
       }
     }
 
-    const details = { total, stale, pct: Number(pctStr), warn_pct: warnPct, fail_pct: failPct ?? null, source_id: sourceId ?? null };
+    const details = { total, stale, attendance_blocked: attendanceBlocked, pct: Number(pctStr), warn_pct: warnPct, fail_pct: failPct ?? null, source_id: sourceId ?? null };
     if (failPct !== undefined && pct > failPct) {
-      return { name, status: 'fail', message: `${stale}/${total} pages (${pctStr}%)${scope} need link/timeline extraction (> ${failPct}% fail threshold). ${fix}`, details };
+      return { name, status: 'fail', message: `${stale}/${total} pages (${pctStr}%)${scope} need link/timeline extraction (> ${failPct}% fail threshold). ${fix}${blockedNote}`, details };
     }
     if (pct > warnPct) {
-      return { name, status: 'warn', message: `${stale}/${total} pages (${pctStr}%)${scope} have un-extracted edges. ${fix}`, details };
+      return { name, status: 'warn', message: `${stale}/${total} pages (${pctStr}%)${scope} have un-extracted edges. ${fix}${blockedNote}`, details };
     }
-    return { name, status: 'ok', message: `Extraction current: ${stale}/${total} pages (${pctStr}%) stale${scope}`, details };
+    return { name, status: 'ok', message: `Extraction current: ${stale}/${total} pages (${pctStr}%) stale${scope}${blockedNote}`, details };
   } catch (e) {
     // Pre-v112 brain: links_extracted_at column doesn't exist yet. Graceful OK
     // (migration/bootstrap adds it; nothing to assess until then).

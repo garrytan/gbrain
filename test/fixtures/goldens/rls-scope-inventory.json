@@ -201,6 +201,32 @@
           "src-a"
         ]
       },
+      "countStalePagesForExtraction#attendance-blocked+sourceId": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "scoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": [
+          "src-a"
+        ]
+      },
+      "countStalePagesForExtraction#attendance-exclude": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "scoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": [
+          "*"
+        ]
+      },
       "countStalePagesForExtraction#default": {
         "flagOffLanes": [
           "pool"
@@ -2217,6 +2243,17 @@
         ],
         "flagOnScopes": []
       },
+      "markPagesAttendanceBlocked#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "markPagesExtractedBatch#default": {
         "flagOffLanes": [
           "pool"
@@ -3378,6 +3415,7 @@
         "logEvalCandidate": "none",
         "logEvalCaptureFailure": "none",
         "logIngest": "none",
+        "markPagesAttendanceBlocked": "none",
         "markPagesExtractedBatch": "none",
         "mergeOntologyFact": "none",
         "migrateFactsToCanonical": "none",

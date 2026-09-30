@@ -1,0 +1,6 @@
+# Fix wave 4 lane B: synthetic hex Gmail thread ids in test/connector-holds.test.ts (commit 5458344) read as generic-api-key;
+# the tree now builds them through a helper. These history-only fingerprints are not secrets.
+5458344c9193ed39eb40a2549732500ccff92a9e:test/connector-holds.test.ts:generic-api-key:131
+5458344c9193ed39eb40a2549732500ccff92a9e:test/connector-holds.test.ts:generic-api-key:153
+5458344c9193ed39eb40a2549732500ccff92a9e:test/connector-holds.test.ts:generic-api-key:188
+5458344c9193ed39eb40a2549732500ccff92a9e:test/connector-holds.test.ts:generic-api-key:210

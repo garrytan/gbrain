@@ -756,6 +756,31 @@ describe('GmailClient', () => {
     expect(body.endsWith('[truncated]')).toBe(true);
     expect(body.length).toBe(8_000 + '\n[truncated]'.length);
   });
+
+  // #5752: a cap that cuts a UTF-16 code unit leaves a lone surrogate, which
+  // Postgres rejects inside the managed request intent's jsonb.
+  const emojiThread = (mimeType: string, text: string) => ({
+    id: '17aa5555dddd7777',
+    messages: [{
+      id: '18c2f4a9b3d21e05', threadId: '17aa5555dddd7777', labelIds: [], internalDate: String(Date.parse('2026-08-10T09:00:00Z')),
+      payload: { mimeType, headers: [{ name: 'From', value: 'Charlie Example <charlie@example.com>' }, { name: 'Subject', value: 'Emoji' }],
+        body: { data: b64url(text) } },
+    }],
+  });
+  test('the 8KB body cap never splits a surrogate pair (#5752)', async () => {
+    const h = makeHarness(() => json(emojiThread('text/plain', 'x'.repeat(7_999) + '\u{1F600}' + 'y'.repeat(50))));
+    const body = (await new GmailClient(h.tokens, h.fetchImpl, () => {}, CLIENT_ID).getThread('17aa5555dddd7777', 'a@example.com')).messages[0].bodyText;
+    expect(body.endsWith('[truncated]')).toBe(true);
+    expect(body.isWellFormed()).toBe(true);
+    expect(body.startsWith('x'.repeat(7_999))).toBe(true);
+  });
+  test('the HTML pre-truncation never splits a surrogate pair (#5752)', async () => {
+    const markup = '<b></b>'.repeat(Math.floor(127_999 / 7));
+    const html = markup + 'z'.repeat(127_999 - markup.length) + '\u{1F600}' + 'tail';
+    const h = makeHarness(() => json(emojiThread('text/html', html)));
+    const body = (await new GmailClient(h.tokens, h.fetchImpl, () => {}, CLIENT_ID).getThread('17aa5555dddd7777', 'a@example.com')).messages[0].bodyText;
+    expect(body.isWellFormed()).toBe(true);
+  });
 });
 
 // ── CalendarClient ───────────────────────────────────────────────────────────

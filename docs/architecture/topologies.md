@@ -487,10 +487,10 @@ overlay/tmpfs backing, but a mount shown as present is **not** attested durable.
 
 ### Claim and activate runbook
 
-Managed mode cannot be turned off from the CLI (there is no deactivate command
-yet, #5455), so treat activation as a one-way step. Take a database backup
-first: for Postgres, `pg_dump` the brain database; for PGLite, stop every gbrain
-process and copy the database directory.
+Activation is reversible through the [deactivate runbook](#deactivate-runbook)
+below, but treat deactivation as a planned mode conversion, not an undo. Take a
+database backup first: for Postgres, `pg_dump` the brain database; for PGLite,
+stop every gbrain process and copy the database directory.
 
 Quiesce every writer on every host that uses this database before activating:
 
@@ -527,9 +527,59 @@ autopilot with `gbrain autopilot resume` and re-enable the hooks you stopped.
 When activation refuses with `writer_not_quiesced` because of queued work, the
 refusal names the blocking effect (effect id, kind, source, page and request id)
 and the command that inspects it, `gbrain sources writer status <source> --json`.
-A committed write whose queued embedding effect is never claimed cannot be
-cleared by any command yet (`retry-effects` handles failed effects only);
-`gbrain doctor` reports it as `stale_embedding_effects`.
+A committed write whose embedding effect is stuck queued or failed is reported by
+`gbrain doctor` as `stale_embedding_effects` and settled by
+`gbrain repair embedding-effects --source <source>` (preview, then `--apply`).
+
+<a id="deactivate-runbook"></a>
+### Deactivate runbook
+
+`gbrain sources writer deactivate` converts the whole brain back to classic
+mode: classic writers, `gbrain sync` and older binaries then write as they did
+before managed mode. It is a planned mode conversion, not a proven rollback of
+everything that happened while managed. It keeps canonical files and database
+pages, retires every worktree (their rows stay so write receipts remain valid),
+removes source and host bindings, and records a committed `writer_deactivate`
+receipt. Shared-skill settings stay recorded but have no effect while the brain
+is classic. Reactivation is the normal claim and activate runbook above.
+
+**Say to your agent:** *"Switch this brain back to classic mode, but show me the
+dry run first."*
+
+1. Quiesce every writer on every host, as for activation: stop `gbrain serve`,
+   pause autopilot with `gbrain autopilot pause --reason "writer deactivation"`,
+   and let queued writes finish.
+2. Back up: `pg_dump` the Postgres database, or stop gbrain and copy the PGLite
+   directory.
+3. Dry run: `gbrain sources writer deactivate --dry-run`. It lists each blocker
+   with its exit and what would change, and changes nothing. Blocker exits:
+   `gbrain cancel-write-request <request_id>` for a queued write,
+   `gbrain sync --source <id> --no-pull --retry-failed` for one that needs
+   recovery, `gbrain repair embedding-effects --source <id>` for a stuck
+   embedding effect, `gbrain sources writer retry-effects <source> --request-id <id> --dry-run`
+   for a failed Git or withdrawal effect, and `gbrain sources writer unlock` for
+   the writer admin lock. A held Google or GitHub item is resolved first:
+   `gbrain sources status <id>` names its error; fix the cause, then run
+   `gbrain sources retry-held <id>` and `gbrain sync --source <id>` (a
+   successful re-attempt clears the hold), because classic mode does not read
+   managed holds. A live connector or maintenance
+   lease means waiting for that run. A clean dry run prints `apply_command`,
+   the deactivate command bound to the state it reviewed.
+4. Deactivate: run the printed `apply_command`, or `gbrain sources writer status --json`
+   (note `admin_state`) and then
+   `gbrain sources writer deactivate --admin-intent writer_deactivate --expected-state <admin_state>`.
+   It takes no `<source>`: deactivation is brain-wide.
+5. Verify on every host: `gbrain sources writer status` reports `mode: classic`
+   and this host's `local_markers`: `cleared`, or `pending` with each path that
+   still needs attention. Older binaries honor local markers without this
+   cleanup, so run a command from this release (for example
+   `gbrain sources writer status`) once on every other host before an older
+   binary writes there. That first command removes the markers and registry
+   records of the retired epoch; a marker from an unknown or newer epoch (for
+   example after restoring an older backup) is kept and reported.
+
+`min_writer_version` stays deferred: while the brain is managed, the database
+writer guard is the enforcement, and after deactivation that guard is inert.
 
 ### Writer admin lock
 

@@ -45,11 +45,12 @@ test('the persistence durability probe settles when the runtime drops child even
 }, 30_000);
 
 test('bounded execution keeps execFile exit codes and stdout', async () => {
-  const { error, stdout } = await execFileBounded('sh', ['-c', 'printf example; exit 3'], { timeout: 10_000 });
+  const { error, stdout, stderr } = await execFileBounded('sh', ['-c', 'printf example; printf refusal >&2; exit 3'], { timeout: 10_000 });
   expect(stdout).toBe('example');
+  expect(stderr).toBe('refusal');
   expect(error?.code).toBe(3);
   expect(error?.killed).toBeFalsy();
-  expect(await execFileBounded('sh', ['-c', 'printf ok'], { timeout: 10_000 })).toEqual({ error: null, stdout: 'ok' });
+  expect(await execFileBounded('sh', ['-c', 'printf ok'], { timeout: 10_000 })).toEqual({ error: null, stdout: 'ok', stderr: '' });
 });
 
 test('bounded execution stops a running child on abort and at its deadline', async () => {

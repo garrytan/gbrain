@@ -13,7 +13,9 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { __setChatTransportForTests, resetGateway, type ChatResult } from '../src/core/ai/gateway.ts';
+import { __setChatTransportForTests, configureGateway, isAvailable, resetGateway, type ChatResult } from '../src/core/ai/gateway.ts';
+import { detectCapabilities } from '../src/core/capability.ts';
+import { RECIPES } from '../src/core/ai/recipes/index.ts';
 import { __resetFactsQueueForTests } from '../src/core/facts/queue.ts';
 import type { CapabilityReport } from '../src/core/capability.ts';
 import { CORPUS_CLAIM_SUFFIX, CORPUS_INGESTED_SUFFIX } from '../src/core/sweep.ts';
@@ -257,6 +259,36 @@ describe('post-compaction recall (the done criterion)', () => {
 });
 
 describe('harvest discipline', () => {
+  test('DB-plane local extraction model is not mistaken for a keyless file-plane install', async () => {
+    const authNames = new Set(Array.from(RECIPES.values()).flatMap((recipe) => recipe.auth_env?.required ?? []));
+    const saved = new Map(Array.from(authNames, (name) => [name, process.env[name]]));
+    for (const name of authNames) delete process.env[name];
+    try {
+      await engine.setConfig('facts.extraction_model', 'ollama:qwen2.5-coder:14b');
+      configureGateway({ env: {} });
+      expect(detectCapabilities().extraction.available).toBe(false);
+      expect(isAvailable('chat', 'ollama:qwen2.5-coder:14b')).toBe(true);
+      chatStub([{ fact: 'The synthetic team chose a local extraction model.', entity: null }]);
+      const seg = bankSegment('sess-db-model', 'The synthetic team chose a local extraction model.\n');
+      const full = join(corpusDir, seg.file);
+      scheduleCheckpointHarvest({
+        engine, sourceId: 'default', sessionId: 'sess-db-model', corpusDir, file: seg.file,
+      });
+      await __drainCheckpointHarvestForTests();
+      expect(existsSync(full + CORPUS_INGESTED_SUFFIX)).toBe(true);
+      const rows = await engine.executeRaw<{ source_session: string }>(
+        `SELECT source_session FROM facts WHERE source = 'hook:compact'`,
+      );
+      expect(rows.some((row) => row.source_session === 'sess-db-model')).toBe(true);
+    } finally {
+      for (const [name, value] of saved) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+      await engine.unsetConfig('facts.extraction_model');
+    }
+  });
+
   test('abort mid-pipeline writes NOTHING and stays retryable (post-check on partial-returning pipeline)', async () => {
     __setChatTransportForTests(async (): Promise<ChatResult> => {
       await new Promise((r) => setTimeout(r, 200)); // outlive the 1ms budget
@@ -443,6 +475,36 @@ describe('writeback lane (ambient memory backstop)', () => {
     if (!banked.flushCorpusFile) throw new Error(`bank failed: ${banked.status}`);
     return banked.flushCorpusFile;
   }
+
+  test('DB-plane local model extracts an opted-in turn despite a keyless file plane', async () => {
+    const authNames = new Set(Array.from(RECIPES.values()).flatMap((recipe) => recipe.auth_env?.required ?? []));
+    const saved = new Map(Array.from(authNames, (name) => [name, process.env[name]]));
+    for (const name of authNames) delete process.env[name];
+    try {
+      await engine.setConfig('memory.auto_writeback', 'salient');
+      await engine.setConfig('facts.extraction_model', 'ollama:qwen2.5-coder:14b');
+      configureGateway({ env: {} });
+      expect(detectCapabilities().extraction.available).toBe(false);
+      expect(isAvailable('chat', 'ollama:qwen2.5-coder:14b')).toBe(true);
+      chatStub([{ fact: 'Prefers local models for private notes.', entity: null }]);
+      const file = await bankWb('sess-db-writeback', 'I prefer local models for my private notes from now on.');
+      scheduleCheckpointHarvest({
+        engine, sourceId: 'default', sessionId: 'sess-db-writeback', corpusDir, file, lane: 'writeback',
+      });
+      await __drainCheckpointHarvestForTests();
+      expect(existsSync(join(corpusDir, file + CORPUS_INGESTED_SUFFIX))).toBe(true);
+      const rows = await engine.executeRaw<{ source_session: string }>(
+        `SELECT source_session FROM facts WHERE source = 'hook:writeback'`,
+      );
+      expect(rows.some((row) => row.source_session === 'sess-db-writeback')).toBe(true);
+    } finally {
+      for (const [name, value] of saved) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+      await engine.unsetConfig('facts.extraction_model');
+    }
+  });
 
   test('gate ON: extracts with hook:writeback provenance, writeback heartbeat, NO manifest, terminal .ingested', async () => {
     await engine.setConfig('memory.auto_writeback', 'salient');

@@ -68,3 +68,49 @@ export async function dropInvalidConcurrentIndex(
   }
   return isInvalid;
 }
+
+export type OnlineIndexOutcome = 'present' | 'created' | 'rebuilt' | 'building';
+
+/**
+ * #5762: build one index without blocking writers. PGLite runs the plain
+ * `CREATE INDEX IF NOT EXISTS`. Postgres leaves a valid index alone, reports
+ * one another session is still building, drops an INVALID leftover of an
+ * interrupted concurrent build, then runs `CREATE INDEX CONCURRENTLY IF NOT
+ * EXISTS` on a dedicated connection under the session's startup timeouts, then
+ * confirms the index is valid. Callers build one index at a time;
+ * a lock timeout leaves an INVALID index that the next call drops and rebuilds.
+ */
+export async function buildIndexOnline(
+  engine: BrainEngine,
+  version: number,
+  index: { name: string; table: string; sql: string },
+  opts: { notice?: (line: string) => void } = {},
+): Promise<OnlineIndexOutcome> {
+  if (engine.kind !== 'postgres') {
+    const [row] = await engine.executeRaw<{ present: boolean }>('SELECT to_regclass($1) IS NOT NULL AS present', [index.name]);
+    if (row?.present) return 'present';
+    await engine.runMigration(version, index.sql);
+    return 'created';
+  }
+  const [row] = await engine.executeRaw<{ valid: boolean; building: boolean }>(
+    `SELECT i.indisvalid AS valid, EXISTS (SELECT 1 FROM pg_stat_progress_create_index p
+        WHERE p.relid=i.indrelid AND p.index_relid IN (i.indexrelid, 0)) AS building
+       FROM pg_index i WHERE i.indexrelid = to_regclass($1)`,
+    [index.name],
+  );
+  if (row?.valid) return 'present';
+  if (row?.building) return 'building';
+  if (row) await dropInvalidConcurrentIndex(engine, version, index.name);
+  const [size] = await engine.executeRaw<{ rows: number }>(
+    'SELECT GREATEST(reltuples, 0)::bigint AS rows FROM pg_class WHERE oid = to_regclass($1)', [index.table]);
+  opts.notice?.(`  building ${index.name} on ~${Number(size?.rows ?? 0)} rows; this can take minutes; it is safe to leave running; `
+    + 'if interrupted, gbrain doctor names the rebuild command\n');
+  // No session SET: a reservation can fall back to a transaction-pooled connection, where a SET or RESET
+  // reaches another client's backend. The build runs under the session's startup timeouts; one that times
+  // out leaves an INVALID index, which the next call drops and rebuilds.
+  await engine.withReservedConnection(conn => conn.executeRaw(index.sql.replace('CREATE INDEX', 'CREATE INDEX CONCURRENTLY')));
+  // IF NOT EXISTS also skips an INVALID index a concurrent caller's failed build left behind.
+  const [built] = await engine.executeRaw<{ valid: boolean }>('SELECT indisvalid AS valid FROM pg_index WHERE indexrelid = to_regclass($1)', [index.name]);
+  if (!built?.valid) throw new Error(`Index ${index.name} is not valid after its concurrent build; rerun: gbrain repair request-indexes --apply`);
+  return row ? 'rebuilt' : 'created';
+}

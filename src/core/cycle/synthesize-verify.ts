@@ -301,6 +301,7 @@ const ROLE_MENTION: Record<string, string> = {
   system: 'system',
 };
 const BOLD_ANCHOR_RE = /^[ \t]*\*\*([^*\n]{1,60}?)\*\*(?:[ \t]*\([^)\n]{0,40}\))?[ \t]*:/;
+const BRACKET_ROLE_RE = /^[ \t]*\[(user|human|assistant|ai|bot|system|tool)\][ \t]*\r?$/i;
 const PLAIN_ANCHOR_RE = /^[ \t]*(?:\[[^\]\n]{1,40}\][ \t]*)?([A-Za-z][A-Za-z0-9.'_-]*(?: [A-Za-z][A-Za-z0-9.'_-]*){0,3})(?:[ \t]*\([^)\n]{0,40}\))?[ \t]*:(?=[ \t]|\r?$)/;
 
 /** Canonical speaker identity: role labels fold to their role, names to lowercase. */
@@ -311,9 +312,10 @@ export function speakerKey(label: string): string {
 
 /**
  * Speaker turns from line-start anchors. Bold anchors (the transcript
- * renderer's format) always count; plain `Label:` anchors count when the
- * label is a role word or opens at least two lines, so a prose line such as
- * `Note: ...` is not mistaken for a speaker.
+ * renderer's format) and standalone `[user]` / `[assistant]` role lines (the
+ * session-corpus renderer's turn boundaries, #5717) always count; plain
+ * `Label:` anchors count when the label is a role word or opens at least two
+ * lines, so a prose line such as `Note: ...` is not mistaken for a speaker.
  */
 export function parseSpeakerTurns(content: string): SpeakerTurn[] {
   const turns: SpeakerTurn[] = [];
@@ -322,8 +324,11 @@ export function parseSpeakerTurns(content: string): SpeakerTurn[] {
   let offset = 0;
   for (const line of content.split('\n')) {
     const bold = BOLD_ANCHOR_RE.exec(line);
+    const role = bold ? null : BRACKET_ROLE_RE.exec(line);
     if (bold) {
       turns.push({ labelStart: offset, labelEnd: offset + bold[0].length, speaker: bold[1].trim() });
+    } else if (role) {
+      turns.push({ labelStart: offset, labelEnd: offset + line.length, speaker: speakerKey(role[1]) });
     } else {
       const p = PLAIN_ANCHOR_RE.exec(line);
       if (p) {

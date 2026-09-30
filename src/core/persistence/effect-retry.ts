@@ -173,7 +173,7 @@ export async function retryEmbeddingEffect(engine: BrainEngine, sourceId: string
           next_action: 'Embedding remains disabled; explicitly configure it before retrying.' };
       }
       if (effect.data.embedding_retry_base !== undefined) return { ...receipt, state: 'failed', action: 'blocked', reason: 'embedding_retry_exhausted',
-        next_action: 'The explicit retry allowance is already consumed. Inspect the provider and use a separately approved scoped repair.' };
+        next_action: `The explicit retry allowance is already consumed. Inspect the provider, then preview one new bounded retry cycle with gbrain repair embedding-effects --source ${sourceId} and apply it with --apply.` };
     }
     if (dryRun) return { ...receipt, state: 'failed', action: complete ? 'would_reconcile' : 'would_retry',
       pending_chunks: pending.length, next_action: 'Run the same command without --dry-run to approve this bounded action.' };

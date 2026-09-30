@@ -1049,6 +1049,7 @@ CREATE OR REPLACE FUNCTION gbrain_advance_tag_revision() RETURNS trigger LANGUAG
 DROP TRIGGER IF EXISTS tags_knowledge_revision ON tags;
 CREATE TRIGGER tags_knowledge_revision AFTER INSERT OR DELETE OR UPDATE ON tags
     FOR EACH ROW EXECUTE FUNCTION gbrain_advance_tag_revision();
+ALTER TABLE page_versions ADD COLUMN IF NOT EXISTS source_path TEXT;
 CREATE TABLE IF NOT EXISTS extract_atoms_page_state (
   source_incarnation UUID NOT NULL REFERENCES sources(incarnation) ON DELETE CASCADE,
   page_id INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
@@ -1156,6 +1157,10 @@ CREATE INDEX IF NOT EXISTS persistence_requests_recovery
   ON persistence_requests(worktree_id,sequence) WHERE recovery IS NOT NULL;
 CREATE INDEX IF NOT EXISTS persistence_requests_database_pending
   ON persistence_requests(source_incarnation,sequence) WHERE worktree_id IS NULL AND state IN ('queued','running','recovering');
+CREATE INDEX IF NOT EXISTS persistence_requests_sync_run_open
+  ON persistence_requests(worktree_id,(intent->>'runId')) WHERE state<>'committed' AND intent->>'kind' IN ('managed_sync_import','managed_sync_delete');
+CREATE INDEX IF NOT EXISTS persistence_requests_sync_run_committed
+  ON persistence_requests(source_id,(intent->>'runId'),(intent->>'index')) WHERE state='committed' AND intent ? 'runId';
 CREATE INDEX IF NOT EXISTS persistence_requests_principal ON persistence_requests(principal_kind,principal_id,sequence DESC);
 CREATE TABLE IF NOT EXISTS persistence_effects (
     id bigserial PRIMARY KEY,

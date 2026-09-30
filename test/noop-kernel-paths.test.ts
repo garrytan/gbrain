@@ -11,6 +11,7 @@ import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { registerLocalWriter } from '../src/core/persistence/identity.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
+import { rebuildPendingPageProjections } from '../src/core/page-state/projections.ts';
 import { inspectCompanyBrain } from '../src/core/company-brain/inspection.ts';
 import { resumeCompanyBrain } from '../src/core/company-brain/runtime.ts';
 import { admitCompanyBrain } from '../src/core/company-brain/admission.ts';
@@ -53,6 +54,13 @@ async function unmanaged<T>(engine: BrainEngine, fn: () => Promise<T>): Promise<
   try { return await fn(); } finally { await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1'); }
 }
 
+async function drainProjectionJobs(engine: BrainEngine, slug: string) {
+  await disposePersistenceConsumer(engine);
+  const pending = async () => (await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM page_projection_jobs WHERE slug=$1', [slug]))[0].n;
+  for (let attempt = 0; attempt < 10 && await pending() > 0; attempt++) await rebuildPendingPageProjections(engine);
+  expect(await pending()).toBe(0);
+}
+
 async function importFixture(engine: BrainEngine) {
   const sourceId = `import-${randomUUID().slice(0, 8)}`;
   const root = join(home, sourceId), input = join(home, `${sourceId}-input`);
@@ -80,6 +88,10 @@ test('#5470 managed import: an identical re-import takes no admission; a change,
   await engine.executeRaw("UPDATE pages SET chunker_version=1 WHERE source_id=$1 AND slug='note'", [f.sourceId]);
   await run();
   expect(await admissions(engine, f.sourceId, 'note')).toBe(3);
+  // The reseal publication queues an async safe_chunk_reseal projection job.
+  // Let it finish before injecting lag: a reseal landing after the injection
+  // re-seals the page and the next import is (correctly) skipped.
+  await drainProjectionJobs(engine, 'note');
   await engine.executeRaw('UPDATE pages SET text_projection_revision=gen_random_uuid() WHERE source_id=$1 AND slug=$2', [f.sourceId, 'note']);
   await run();
   expect(await admissions(engine, f.sourceId, 'note')).toBe(4);

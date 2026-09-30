@@ -73,7 +73,7 @@ import {
   type ExtractedFact,
 } from '../core/facts/extract.ts';
 import { configureGatewayIfUninitialized, isAvailable, withBudgetTracker } from '../core/ai/gateway.ts';
-import { managedDerivedFactsPreflight, writeDerivedFacts } from '../core/persistence/derived-facts.ts';
+import { managedDerivedFactsPreflight, replaceDerivedFactsForPage, writeDerivedFacts } from '../core/persistence/derived-facts.ts';
 import { managedPersistenceEnabled } from '../core/persistence/ownership.ts';
 import { BudgetTracker, BudgetExhausted, loadPricingOverrides } from '../core/budget/budget-tracker.ts';
 import { listSources } from '../core/sources-ops.ts';
@@ -722,6 +722,8 @@ interface ExtractCoreState {
   result: ExtractConversationFactsResult;
   engine: BrainEngine;
   sourceId: string;
+  /** Managed brain: a page's rows are buffered and replace the prior batch in one coordinator transaction. */
+  managed: boolean;
   dryRun: boolean;
   sleepMs: number;
   segmentLimit: number;
@@ -917,6 +919,30 @@ async function snapshotIsCurrent(
   return currentSnapshot.versionToken === snapshot.versionToken;
 }
 
+/**
+ * Managed publication: under the page lock the page must still be the same
+ * row at the same revision with the same parser input the batch came from.
+ * Counts the replaced prior batch as cleaned and returns the rows inserted.
+ */
+async function replacePageFacts(
+  state: ExtractCoreState,
+  snapshot: ConversationPageSnapshot,
+  build: (tx: BrainEngine) => Promise<Array<NewFact & { row_num: number; source_markdown_slug: string }>>,
+): Promise<number> {
+  const { page } = snapshot;
+  const { deleted, inserted } = await replaceDerivedFactsForPage(state.engine, state.sourceId, page.slug, {
+    sourcePrefix: 'cli:extract-conversation-facts',
+    isCurrent: async tx => {
+      const current = await tx.getPage(page.slug, { sourceId: state.sourceId });
+      return !!current && current.id === page.id && current.knowledge_revision === page.knowledge_revision &&
+        (await preparePageSnapshot(tx, current)).versionToken === snapshot.versionToken;
+    },
+    build,
+  });
+  state.result.orphan_facts_cleaned += deleted;
+  return inserted;
+}
+
 async function processPage(
   state: ExtractCoreState,
   snapshot: ConversationPageSnapshot,
@@ -1021,28 +1047,19 @@ async function processPage(
       // orphan cleanup below until the page re-extracts.)
       !declinedUnrecognizedSpeaker
     ) {
+      const reason = messages.length === 0
+        ? 'no conversation messages found'
+        : 'fewer than two eligible messages';
       if (await snapshotIsCurrent(state.engine, state.sourceId, snapshot)) {
-        const cleaned = await deleteOrphanFactsForPage(
-          state.engine,
-          state.sourceId,
-          page.slug,
-        );
-        state.result.orphan_facts_cleaned += cleaned;
-        const rowNum = await peekRowNumStart(
-          state.engine,
-          state.sourceId,
-          page.slug,
-        );
-        await writeNonExtractableAuditRow(
-          state.engine,
-          state.sourceId,
-          page.slug,
-          rowNum,
-          snapshot.versionToken,
-          messages.length === 0
-            ? 'no conversation messages found'
-            : 'fewer than two eligible messages',
-        );
+        if (state.managed) {
+          await replacePageFacts(state, snapshot, async tx => [
+            nonExtractableAuditFact(page.slug, await peekRowNumStart(tx, state.sourceId, page.slug), snapshot.versionToken, reason),
+          ]);
+        } else {
+          state.result.orphan_facts_cleaned += await deleteOrphanFactsForPage(state.engine, state.sourceId, page.slug);
+          const rowNum = await peekRowNumStart(state.engine, state.sourceId, page.slug);
+          await writeDerivedFacts(state.engine, state.sourceId, page.slug, db => db.insertFacts([nonExtractableAuditFact(page.slug, rowNum, snapshot.versionToken, reason)], { source_id: state.sourceId })); // gbrain-allow-direct-insert: durable non-extractable audit outcome prevents repeated scans while remaining distinct from successful extraction
+        }
         state.result.pages_marked_non_extractable++;
       }
     }
@@ -1061,8 +1078,9 @@ async function processPage(
   // a prior crashed / killed / partial run for this (sourceId, slug)
   // pair before we re-extract. The lock we hold (D2 + D12 refreshing
   // lock above the caller) guarantees no other worker is writing to
-  // this page right now, so the DELETE+INSERT pair is safe.
-  const cleaned = await deleteOrphanFactsForPage(state.engine, state.sourceId, page.slug);
+  // this page right now, so the DELETE+INSERT pair is safe. A managed brain
+  // keeps the prior batch until replacePageFacts swaps it atomically below.
+  const cleaned = state.managed ? 0 : await deleteOrphanFactsForPage(state.engine, state.sourceId, page.slug);
   if (cleaned > 0) {
     state.result.orphan_facts_cleaned += cleaned;
     process.stderr.write(
@@ -1076,6 +1094,7 @@ async function processPage(
   let newestEnd: string | null = null;
   let segmentsThisPage = 0;
   let pageInsertedTotal = 0;
+  const managedRows: Array<NewFact & { row_num: number; source_markdown_slug: string }> = [];
   const pageResolution = emptySaveTimeResolutionCounts();
 
   for (const seg of segments) {
@@ -1163,9 +1182,13 @@ async function processPage(
         context:
           fact.context ?? `from ${page.slug} segment ${seg.startIso}..${seg.endIso}`,
       }));
-      const ins = await writeDerivedFacts(state.engine, state.sourceId, page.slug, db => db.insertFacts(rows, { source_id: state.sourceId })); // gbrain-allow-direct-insert: canonical bulk extraction path for conversation pages — fences-as-system-of-record doesn't apply because conversations don't carry `## Facts` fences (the chat-log shape is the source-of-truth)
-      pageInsertedTotal += ins.inserted;
-      state.result.facts_inserted += ins.inserted;
+      if (state.managed) {
+        managedRows.push(...rows);
+      } else {
+        const ins = await writeDerivedFacts(state.engine, state.sourceId, page.slug, db => db.insertFacts(rows, { source_id: state.sourceId })); // gbrain-allow-direct-insert: canonical bulk extraction path for conversation pages — fences-as-system-of-record doesn't apply because conversations don't carry `## Facts` fences (the chat-log shape is the source-of-truth)
+        pageInsertedTotal += ins.inserted;
+        state.result.facts_inserted += ins.inserted;
+      }
     }
     rowNum += extracted.length;
     mergeSaveTimeResolutionCounts(pageResolution, segmentResolution);
@@ -1188,14 +1211,11 @@ async function processPage(
   ) {
     // A terminal insert is part of the page transaction contract. Propagate
     // failure so bulk accounting, CLI exit status, cycle status, and rollups all
-    // report the page as unfinished.
-    await writeTerminalAuditRow(
-      state.engine,
-      state.sourceId,
-      page.slug,
-      rowNum,
-      snapshot.versionToken,
-    );
+    // report the page as unfinished. A managed brain publishes it with the
+    // page's facts in one transaction.
+    const terminal = terminalAuditFact(page.slug, rowNum, snapshot.versionToken);
+    if (state.managed) managedRows.push(terminal);
+    else await writeDerivedFacts(state.engine, state.sourceId, page.slug, db => db.insertFacts([terminal], { source_id: state.sourceId })); // gbrain-allow-direct-insert: page-level TERMINAL audit row (Codex C7 / E16) marks extraction completion in the durable facts table — there's no fence equivalent because this is internal audit state, not user-facing knowledge
     rowNum++;
   } else if (fullyProcessed && newestEnd !== null) {
     process.stderr.write(
@@ -1205,6 +1225,12 @@ async function processPage(
     // outcome, so it counts as failed (CLI exit 1 / cycle 'warn'), not processed.
     state.result.pages_failed++;
     return { newEndIso: null };
+  }
+
+  if (state.managed && newestEnd !== null) {
+    pageInsertedTotal = await replacePageFacts(state, snapshot, async () => managedRows) -
+      managedRows.filter(row => row.source === TERMINAL_AUDIT_SOURCE).length;
+    state.result.facts_inserted += pageInsertedTotal;
   }
 
   if (newestEnd !== null) {
@@ -1225,14 +1251,12 @@ async function processPage(
   return { newEndIso: newestEnd };
 }
 
-async function writeTerminalAuditRow(
-  engine: BrainEngine,
-  sourceId: string,
+function terminalAuditFact(
   slug: string,
   rowNum: number,
   versionToken: string,
-): Promise<void> {
-  const fact: NewFact & { row_num: number; source_markdown_slug: string } = {
+): NewFact & { row_num: number; source_markdown_slug: string } {
+  return {
     fact: 'EXTRACTION_COMPLETE',
     kind: 'fact',
     entity_slug: null,
@@ -1243,28 +1267,15 @@ async function writeTerminalAuditRow(
     row_num: rowNum,
     source_markdown_slug: slug,
   };
-  await writeDerivedFacts(engine, sourceId, slug, db => db.insertFacts([fact], { source_id: sourceId })); // gbrain-allow-direct-insert: page-level TERMINAL audit row (Codex C7 / E16) marks extraction completion in the durable facts table — there's no fence equivalent because this is internal audit state, not user-facing knowledge
 }
 
-/**
- * Core entry point — one source per call. Caller (CLI / Minion / cycle
- * phase) handles multi-source iteration externally.
- *
- * Budget tracker semantics:
- *   - If `opts.budgetTracker` is set: use it as-is (no wrap). Caller
- *     owns lifecycle; nested wrap would REPLACE the active tracker.
- *   - If absent: create a fresh tracker scoped to `opts.maxCostUsd`
- *     and run the body inside `withBudgetTracker`.
- */
-async function writeNonExtractableAuditRow(
-  engine: BrainEngine,
-  sourceId: string,
+function nonExtractableAuditFact(
   slug: string,
   rowNum: number,
   versionToken: string,
   reason: string,
-): Promise<void> {
-  const fact: NewFact & { row_num: number; source_markdown_slug: string } = {
+): NewFact & { row_num: number; source_markdown_slug: string } {
+  return {
     fact: 'EXTRACTION_NOT_APPLICABLE',
     kind: 'fact',
     entity_slug: null,
@@ -1280,9 +1291,18 @@ async function writeNonExtractableAuditRow(
     row_num: rowNum,
     source_markdown_slug: slug,
   };
-  await writeDerivedFacts(engine, sourceId, slug, db => db.insertFacts([fact], { source_id: sourceId })); // gbrain-allow-direct-insert: durable non-extractable audit outcome prevents repeated scans while remaining distinct from successful extraction
 }
 
+/**
+ * Core entry point — one source per call. Caller (CLI / Minion / cycle
+ * phase) handles multi-source iteration externally.
+ *
+ * Budget tracker semantics:
+ *   - If `opts.budgetTracker` is set: use it as-is (no wrap). Caller
+ *     owns lifecycle; nested wrap would REPLACE the active tracker.
+ *   - If absent: create a fresh tracker scoped to `opts.maxCostUsd`
+ *     and run the body inside `withBudgetTracker`.
+ */
 export async function runExtractConversationFactsCore(
   engine: BrainEngine,
   opts: ExtractConversationFactsCoreOpts,
@@ -1292,7 +1312,7 @@ export async function runExtractConversationFactsCore(
   if (!sourceId) {
     throw new Error('runExtractConversationFactsCore: opts.sourceId is required');
   }
-  await managedDerivedFactsPreflight(engine, sourceId);
+  const managed = await managedDerivedFactsPreflight(engine, sourceId);
 
   const result: ExtractConversationFactsResult = {
     pages_considered: 0,
@@ -1374,6 +1394,7 @@ export async function runExtractConversationFactsCore(
     result,
     engine,
     sourceId,
+    managed,
     dryRun,
     sleepMs,
     segmentLimit,

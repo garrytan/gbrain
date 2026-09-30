@@ -81,6 +81,10 @@ function canonicalPath(path: string): string {
 export function getPgliteKernelLockPath(dataDir: string | undefined): string | undefined {
   return dataDir ? `${canonicalPath(dataDir)}.gbrain-owner.lock` : undefined;
 }
+/** Orchestration lock for `gbrain apply-migrations`; separate from the datastore lock above. */
+export function getPgliteMigrationLockPath(dataDir: string): string {
+  return `${canonicalPath(dataDir)}.gbrain-migrations.lock`;
+}
 function getLockDir(dataDir: string | undefined): string {
   return dataDir ? join(dataDir, '.gbrain-lock') : '';
 }

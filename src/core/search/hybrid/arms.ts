@@ -371,8 +371,11 @@ export async function runVectorArms(
     // the global default. Empty embeddingModel falls back to gateway
     // default — preserves pre-v0.36 behavior for the builtin 'embedding'
     // column.
-    const embedOpts = resolvedCol.embeddingModel
-      ? { embeddingModel: resolvedCol.embeddingModel, dimensions: resolvedCol.dimensions }
+    const embedOpts = resolvedCol.embeddingModel || opts?._queryPrefix
+      ? {
+        ...(resolvedCol.embeddingModel ? { embeddingModel: resolvedCol.embeddingModel, dimensions: resolvedCol.dimensions } : {}),
+        ...(opts?._queryPrefix ? { queryPrefix: opts._queryPrefix } : {}),
+      }
       : undefined;
     // v0.42.20.0 (Fix 3) — bound the query embed. Reuse the shared deadline
     // threaded from hybridSearchCached (so the cache-lookup embed + this one

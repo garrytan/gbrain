@@ -67,6 +67,7 @@ import {
 } from '../core/sources-load.ts';
 import { sqlQueryForEngine } from '../core/sql-query.ts';
 import { preflightOauthClientColumns } from './auth.ts';
+import { deleteSourceRow } from '../core/source-delete.ts';
 
 // ── Validation ──────────────────────────────────────────────
 
@@ -459,6 +460,9 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
   console.log(
     `  federated: ${fed}${fed ? ' — appears in cross-source default search' : ' — only searched when explicitly named via --source'}`,
   );
+  if (ghKind || gKind) {
+    console.log(`  sync: run \`gbrain sync --source ${id}\` once; after its first sync, autopilot keeps it synced on the autopilot interval.`);
+  }
 
   // v0.42.44 — auto-harden managed clones for git durability the moment a brain
   // repo is added with a PAT. Best-effort: NEVER fail `add` if hardening fails.
@@ -829,7 +833,7 @@ async function runRemove(engine: BrainEngine, args: string[]): Promise<void> {
         );
         if (Number(rows[0]?.n ?? 0) > 0) throw new SourceReferencedError();
       }
-      await tx.executeRaw(`DELETE FROM sources WHERE id = $1`, [id]);
+      await deleteSourceRow(tx, id);
     });
   } catch (e) {
     const code = typeof e === 'object' && e !== null && 'code' in e ? String((e as { code?: unknown }).code) : '';
@@ -1041,7 +1045,7 @@ async function runPurge(engine: BrainEngine, args: string[]): Promise<void> {
       process.exit(5);
     }
 
-    await engine.executeRaw(`DELETE FROM sources WHERE id = $1`, [id]);
+    await deleteSourceRow(engine, id);
     console.log(`Permanently deleted source "${id}" (${impact.pageCount} pages cascaded).`);
     return;
   }
@@ -1848,7 +1852,8 @@ export async function runSources(engine: BrainEngine, args: string[]): Promise<v
     return;
   }
 
-  if (['add', 'remove', 'archive', 'restore', 'purge', 'set-path', 'reclone'].includes(sub)) {
+  // #5673: `set-path --clear` is a connector-path clear, not a managed rebind.
+  if (['add', 'remove', 'archive', 'restore', 'purge', 'set-path', 'reclone'].includes(sub) && !(sub === 'set-path' && rest.includes('--clear'))) {
     const { runConnectedSourceLifecycle } = await import('./sources-lifecycle.ts');
     if (await runConnectedSourceLifecycle(engine, args)) return;
   }
@@ -1880,6 +1885,7 @@ export async function runSources(engine: BrainEngine, args: string[]): Promise<v
     case 'set-cr-mode': return runSetCrMode(engine, rest);
     // #4739 non-destructive local_path pointer repair
     case 'set-path':   { const { runSetPath } = await import('./sources-set-path.ts'); return runSetPath(engine, rest); }
+    case 'retry-held': { const { runRetryHeld } = await import('./sources-retry-held.ts'); return runRetryHeld(engine, rest); }
     case 'audit':      return runAudit(engine, rest);
     // v0.46 github-source demo (offline, privacy-clean fixtures)
     case 'demo':       { const { runSourcesDemo } = await import('./sources-demo.ts'); return runSourcesDemo(engine, rest); }
@@ -1956,6 +1962,10 @@ Subcommands:
                                     Rejects a missing source or a path that
                                     doesn't exist. See gbrain doctor's
                                     default_source_local_path check.
+  retry-held <id> [--dry-run] [--json]
+                                    Re-attempt a Google or GitHub source's held items on its next sync.
+  set-path <id> --clear             Clear a connector source's (google, github)
+                                    stale local_path; takes no path.
   webhook <set|show|rotate|clear> <id> [options]
                                     v0.40 — per-source webhook secret management.
                                     Run 'sources webhook --help' for subcommand detail.

@@ -9,6 +9,7 @@ import { dispatchToolCall } from '../../src/mcp/dispatch.ts';
 import { runThink } from '../../src/core/think/index.ts';
 import { prepareMarkdownChunks } from '../../src/core/markdown-chunks.ts';
 import { installFixtureChunks } from './page-projection.ts';
+import { withEnv } from './with-env.ts';
 
 export const OFF_PATH_PAGES: Array<{ slug: string; body: string; timeline?: string; frontmatter?: Record<string, unknown> }> = [
   {
@@ -51,11 +52,16 @@ export async function captureOffPath(engine: BrainEngine): Promise<Record<string
     await run(`recall${tag}`, 'recall', { query: 'ocelot', ...variant });
     await run(`recall-budget${tag}`, 'recall', { query: 'ocelot', budget_tokens: 1500, budget_policy: 'query_first', ...variant });
   }
-  for (const name of ['search', 'query', 'recall']) {
-    const res = await dispatchToolCall(engine, name, { query: 'ocelot', ...(name === 'query' ? { expand: false } : {}) },
-      { remote: true, transport: 'stdio', sourceId: 'default' });
-    out[`mcp-${name}`] = JSON.stringify(res);
-  }
+  // The stdio dispatcher appends a once-per-process monthly backup notice when GBRAIN_HOME holds a warn
+  // backup-status.json (an earlier file's sync or serve leaves one in the shared test home). That notice is host
+  // posture, not search output, so the off-path capture runs with the backup check off.
+  await withEnv({ GBRAIN_BACKUP_CHECK: '0' }, async () => {
+    for (const name of ['search', 'query', 'recall']) {
+      const res = await dispatchToolCall(engine, name, { query: 'ocelot', ...(name === 'query' ? { expand: false } : {}) },
+        { remote: true, transport: 'stdio', sourceId: 'default' });
+      out[`mcp-${name}`] = JSON.stringify(res);
+    }
+  });
   const prompts: string[] = [];
   await runThink(engine, {
     question: 'ocelot pricing', remote: false,

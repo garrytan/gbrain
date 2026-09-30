@@ -50,6 +50,7 @@ import {
 import {
   embeddingProviderEntry,
   alternativeProvidersEntry,
+  embeddingQueryPrefixEntry,
   embeddingColumnRegistryEntry,
   embeddingEnvOverrideEntry,
 } from './checks/embedding-health.ts';
@@ -104,6 +105,7 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   embeddingsEntry,
   embeddingProviderEntry,
   alternativeProvidersEntry,
+  embeddingQueryPrefixEntry,
   embeddingColumnRegistryEntry,
   embeddingEnvOverrideEntry,
   graphCoverageEntry,

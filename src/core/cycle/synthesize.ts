@@ -68,11 +68,12 @@ import { isQueueQuotaExceededError } from '../minions/admission.ts';
 import { waitForCompletionRenewing, TimeoutError } from '../minions/wait-for-completion.ts';
 import type { MinionJobInput, SubagentHandlerData } from '../minions/types.ts';
 import { resolveMaxOutputTokens } from '../minions/handlers/subagent.ts';
-import { BudgetMeter, loadAllowUnpriced, parseBudgetUsd } from './budget-meter.ts';
+import { BudgetMeter, loadAllowUnpriced, loadPricingOverrides, parseBudgetUsd } from './budget-meter.ts';
 import { runSubagentsInline, runDrainRenewalTick, percentile, INLINE_LOCK_MS } from './inline-drain.ts';
 import { buildManifestContext, buildLinkManifest, type ManifestContext } from './link-manifest.ts';
 import { resolveCycleDate, utcDate } from './cycle-date.ts';
 import { throwIfAborted } from '../abort-check.ts';
+import { stampDreamProvenance } from './dream-provenance.ts';
 
 // Re-exports: the drain was peeled to inline-drain.ts (dream-wave C7), the
 // allow-list loader to filing-rules.ts (#2397); patterns.ts and the
@@ -698,7 +699,7 @@ async function runPhaseSynthesizeInner(
     }
     // C-13: USD gate checked before every submission, from the prompt size and
     // the child's output cap (one call in oneshot mode, max_turns in agentic).
-    const synthMeter = new BudgetMeter({ budgetUsd: config.budgetUsd, allowUnpriced: config.allowUnpriced, phase: 'synthesize' });
+    const synthMeter = new BudgetMeter({ budgetUsd: config.budgetUsd, allowUnpriced: config.allowUnpriced, pricingOverrides: await loadPricingOverrides(engine), phase: 'synthesize' });
     const childMaxOutputTokens = resolveMaxOutputTokens(undefined, await engine.getConfig('agent.max_output_tokens').catch(() => null), config.model);
 
     const breaker = await loadDreamBreaker(engine);
@@ -3002,55 +3003,6 @@ function findLegacyCompletion(
     if (seen.size === n) return 'chunked';
   }
   return null;
-}
-
-// ── Dream-provenance DB stamp (#2569) ────────────────────────────────
-
-async function stampDreamProvenance(
-  engine: BrainEngine,
-  refs: Array<{ slug: string; source_id: string; raw_source?: string; first_write_at?: Date }>,
-  cycleDate: string,
-  signal?: AbortSignal,
-): Promise<void> {
-  if (refs.length === 0) return;
-  const { executeRawJsonb } = await import('../sql-query.ts');
-  for (const { slug, source_id, raw_source, first_write_at } of refs) {
-    // #4077: per-row abort check — the per-row try below is only for stamp
-    // failures and must not swallow the cancellation unwind.
-    throwIfAborted(signal, '[dream] synthesize provenance');
-    try {
-      await executeRawJsonb(
-        engine,
-        `UPDATE pages
-            SET frontmatter = COALESCE(frontmatter, '{}'::jsonb)
-                              || $5::jsonb
-                              || jsonb_build_object(
-                                   'dream_cycle_date',
-                                   COALESCE(NULLIF(frontmatter->>'dream_created_cycle_date', ''), NULLIF(frontmatter->>'dream_cycle_date', ''), $3),
-                                   'dream_created_cycle_date',
-                                   COALESCE(NULLIF(frontmatter->>'dream_created_cycle_date', ''), NULLIF(frontmatter->>'dream_cycle_date', ''), $3)
-                                 )
-          WHERE slug = $1 AND source_id = $2
-            AND ($4::timestamptz IS NULL
-                 OR frontmatter->>'dream_generated' = 'true'
-                 OR created_at >= $4::timestamptz)`,
-        // C-8: a page that existed before the child's first write to it is
-        // not dream output; stamping it would hide it from extract_facts
-        // and transcript discovery forever.
-        [slug, source_id, cycleDate, first_write_at?.toISOString() ?? null],
-        // #1978 raw-source persistence: record the transcript path the
-        // synthesis was derived from, so `gbrain doctor` (raw_provenance
-        // check) can verify every generated page carries a raw trace.
-        [{
-          dream_generated: true,
-          ...(raw_source ? { raw_source } : {}),
-        }],
-      );
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      process.stderr.write(`[dream] provenance stamp ${slug}@${source_id} failed: ${msg}\n`);
-    }
-  }
 }
 
 // ── Reverse-write DB rows → markdown files ───────────────────────────

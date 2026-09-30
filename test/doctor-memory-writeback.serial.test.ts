@@ -105,6 +105,41 @@ describe('memory_writeback doctor check', () => {
     });
   });
 
+  test('#5671 explicit private default + HTTP harness receipt → warn naming the remote read-back consequence (on and off)', async () => {
+    await engine.setConfig('facts.default_visibility', 'private');
+    const agents = join(tmp, 'codex-home', 'AGENTS.md');
+    writeReceipt(tmp, agents);
+    await withEnv({ GBRAIN_HOME: tmp, CODEX_HOME: join(tmp, 'codex-home') }, async () => {
+      const off = await buildMemoryWritebackCheck(engine);
+      expect(off.status).toBe('warn');
+      expect(off.message).toContain('facts.default_visibility is private but this brain is read remotely');
+      expect(off.message).toContain('bootstrap harness (HTTP MCP at http://127.0.0.1:19999)');
+      expect(off.message).toContain('gbrain config set facts.default_visibility world');
+      expect(off.details?.private_default_remote_readers).toEqual(['bootstrap harness (HTTP MCP at http://127.0.0.1:19999)']);
+
+      await engine.setConfig('memory.auto_writeback', 'salient');
+      writeFileMirror(tmp, { auto_writeback: 'salient', visibility_posture: 'private' });
+      const on = await buildMemoryWritebackCheck(engine);
+      expect(on.status).toBe('warn');
+      expect(on.message).toContain('facts.default_visibility is private but this brain is read remotely');
+    });
+  });
+
+  test('#5671 a declared shared brain keeps private-for-remote quietly (intended posture); world never warns', async () => {
+    await engine.setConfig('facts.default_visibility', 'private');
+    await engine.setConfig('brain.audience', 'shared');
+    writeReceipt(tmp, join(tmp, 'codex-home', 'AGENTS.md'));
+    await withEnv({ GBRAIN_HOME: tmp, CODEX_HOME: join(tmp, 'codex-home') }, async () => {
+      const shared = await buildMemoryWritebackCheck(engine);
+      expect(shared.status).toBe('ok');
+      await engine.unsetConfig('brain.audience');
+      await engine.setConfig('facts.default_visibility', 'world');
+      const world = await buildMemoryWritebackCheck(engine);
+      expect(world.status).toBe('ok');
+      expect(world.message).not.toContain('read remotely');
+    });
+  });
+
   test('instruction block: current → ok probe; config change → drift warn naming the re-run (OV-A3)', async () => {
     await engine.setConfig('memory.auto_writeback', 'salient');
     writeFileMirror(tmp, { auto_writeback: 'salient' });

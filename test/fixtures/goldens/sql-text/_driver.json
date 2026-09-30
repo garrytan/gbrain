@@ -2234,6 +2234,26 @@
     },
     "pages": {
       "countStalePagesForExtraction": {
+        "attendance-blocked+sourceId": [
+          {
+            "paramCount": 2,
+            "unsafeOptions": {
+              "prepare": false,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ],
+        "attendance-exclude": [
+          {
+            "paramCount": 1,
+            "unsafeOptions": {
+              "prepare": false,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ],
         "default": [
           {
             "paramCount": 0,
@@ -2302,7 +2322,7 @@
             "via": "unsafe"
           },
           {
-            "paramCount": 9,
+            "paramCount": 10,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": false,
@@ -2782,6 +2802,19 @@
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": false,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
+      "markPagesAttendanceBlocked": {
+        "default": [
+          {
+            "paramCount": 3,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
               "simple": false
             },
             "via": "unsafe"

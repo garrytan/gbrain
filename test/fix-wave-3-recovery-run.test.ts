@@ -88,7 +88,7 @@ for (const backend of testBackends()) test(`${backend}: post-upgrade to a clean 
       const classes = Object.fromEntries(body.findings.map((f: { check_id: string; class: string }) => [f.check_id, f.class]));
       expect(classes).toMatchObject({ timeline_history: 'cleared', derived_visibility: 'cleared', safe_index_pending: 'cleared', connector_checkpoints: 'cleared',
         persistence_capacity: 'operator_required', parked_effects: 'operator_required', self_capture: 'operator_required', writer_version: 'operator_required',
-        stale_embedding_effects: 'unsupported' });
+        stale_embedding_effects: 'operator_required' });
       expect(run.exit).toBe(0);
 
       const verify = await capture(() => runRemediationPlan(engine, ['--remediation-plan', '--json']));
