@@ -1,5 +1,6 @@
-import { FACTS_FENCE_BEGIN, FACTS_FENCE_END, FACTS_FENCE_OMITTED } from '../facts-fence.ts';
+import { FACTS_FENCE_BEGIN, FACTS_FENCE_END, FACTS_FENCE_OMITTED, omitFactsFence } from '../facts-fence.ts';
 import { OperationError } from '../ops/contract.ts';
+import type { Page } from '../types.ts';
 
 const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // Line-anchored: a placeholder or fence quoted inside prose (`like this`) is text, not structure.
@@ -27,4 +28,15 @@ export function restoreOmittedFacts(incoming: string, stored: string): string {
   }
   const at = found[0].index!;
   return incoming.slice(0, at) + stored.slice(begin, end + FACTS_FENCE_END.length) + incoming.slice(at + FACTS_FENCE_OMITTED.length);
+}
+
+/**
+ * get_page omit_facts: the facts fence becomes FACTS_FENCE_OMITTED in both
+ * compiled_truth and timeline, so editing an entity page never carries its
+ * (unbounded) facts table; restoreOmittedFacts puts the stored fence back on
+ * put_page. Returns the page unchanged unless `enabled`.
+ */
+export function omitFactsFromPage(page: Page, enabled: boolean): Page {
+  if (!enabled) return page;
+  return { ...page, compiled_truth: omitFactsFence(page.compiled_truth), timeline: omitFactsFence(page.timeline) };
 }
