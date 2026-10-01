@@ -7,7 +7,7 @@ import { operations, opError, OperationError } from '../core/operations.ts';
 import { isCallable, publishGatesFromDisabled } from '../core/ops/callable.ts';
 import { VERSION } from '../version.ts';
 import { buildToolDefs } from './tool-defs.ts';
-import { dispatchToolCall, buildOperationContext, dispatchRenderContext, type ToolResult } from './dispatch.ts';
+import { dispatchToolCall, buildOperationContext, dispatchRenderContext, requestMetaSessionId, type ToolResult } from './dispatch.ts';
 import { findInvalidParam, schemaInvalidParams, parseStrictParamsMode } from './validate-params.ts';
 import { clampSurface, createStdioSurfaceState, sessionWidenAllowed, surfaceEnvInvalidNotice, type McpAccess, type McpSurface, type SurfaceSource } from './surface.ts';
 import { startOnboardingRefresher } from '../core/onboard/mcp-onboarding.ts';
@@ -389,10 +389,7 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
     // request.params. Thread it (clamped in dispatch) into the typed
     // OperationContext.sessionId so the hot-memory metaHook's cache keys per
     // session instead of collapsing every caller onto the null-session key.
-    const rawMetaSession = (request.params as { _meta?: { session_id?: unknown } })?._meta?.session_id;
-    const sessionId = typeof rawMetaSession === 'string' && rawMetaSession.length > 0
-      ? rawMetaSession
-      : undefined;
+    const sessionId = requestMetaSessionId(request.params);
     // #4583 rework: warn (once per process) when a MUTATING call's RESOLVED
     // source scope actually lands in 'default' (tier seed_default) on a
     // bulk-non-default brain. Keyed on the already-computed resolution tier —

@@ -5,10 +5,11 @@
  * Protects: the options object the HTTP transport hands to
  * `dispatchToolCall`: remote: true, transport 'http', the fail-closed
  * takesHoldersAllowList default, the token's sourceId, the verified
- * AuthInfo, metaHook, the per-request surface / surfaceCeiling / allowedOps
- * and the stderr logger, with exactly today's key set.
+ * AuthInfo, metaHook, the per-request surface / surfaceCeiling / allowedOps,
+ * the request-level `_meta.session_id` as sessionId (CX2-11, as stdio threads
+ * it) and the stderr logger, with exactly today's key set.
  * Fails when: the decomposed handler drops or renames a dispatch option,
- * passes a stale surface, or widens allowedOps.
+ * passes a stale surface, widens allowedOps, or drops the request's session.
  * Why new: outcome tests show remote/auth/surface indirectly; nothing pinned
  * the literal dispatch context the handler builds.
  *
@@ -128,6 +129,22 @@ describe('POST /mcp dispatch context', () => {
     expect(calls[0].name).toBe('search');
     expect(calls[0].stderrBefore).toContain(line);
     expect(stderrLines.join('')).not.toContain('synthetic private phrase');
+  });
+
+  // CX2-11: MCP carries `_meta.session_id` beside `arguments`. Stdio threads it
+  // into dispatch; over HTTP it was dropped, so a remote `remember` stored no
+  // session and `recall({ session_id })` could not find the fact.
+  test('the request-level _meta.session_id reaches dispatch as sessionId; without it there is none', async () => {
+    const { base, token } = await start(undefined, 'session');
+    calls.length = 0;
+    await rpc(base, token, 'tools/call', { name: 'whoami', arguments: {}, _meta: { session_id: 'sess-http' } });
+    await rpc(base, token, 'tools/call', { name: 'whoami', arguments: {} });
+    expect(calls.map(c => c.name)).toEqual(['whoami', 'whoami']);
+    const [withSession, withoutSession] = calls.map(c => c.opts);
+    expect(withSession.sessionId).toBe('sess-http');
+    expect(Object.keys(withSession).sort()).toEqual([...FULL_SURFACE_KEYS, 'sessionId'].sort());
+    expect(withoutSession.sessionId).toBeUndefined();
+    expect(Object.keys(withoutSession).sort()).toEqual(FULL_SURFACE_KEYS);
   });
 
   test('starter ceiling: allowedOps is the surface-filtered remote catalog and the surface is threaded', async () => {
