@@ -210,7 +210,7 @@ brain_push() {
   fi
   if [ "$(git rev-parse HEAD)" = "$_head" ]; then
     echo "$(date -u +%FT%TZ) [push] rejected; rebase-pull $_branch" >>"$_log"
-    if git pull --rebase origin "$_branch" >>"$_log" 2>&1; then
+    if git pull --rebase --autostash origin "$_branch" >>"$_log" 2>&1; then
       _head="$(git rev-parse HEAD)" || return 1
       _push_urls="$(git remote get-url --push --all origin 2>/dev/null)" || _push_urls=""
       if git push origin "$_head:refs/heads/$_branch" >>"$_log" 2>&1; then
