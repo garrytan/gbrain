@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test';
 import * as childProcess from 'node:child_process';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -279,3 +279,29 @@ test('retained evidence is invalidated by local identity, source, commit, remote
     expect(result.verification?.state).not.toBe('verified');
   }
 }, 15_000);
+
+test('probes resolve git through the caller PATH, so hosts without /usr/bin/git still verify', async () => {
+  // NixOS and Nix-profile hosts have no git in /usr/bin:/bin. Put a logging
+  // wrapper first on PATH: the probe must run it for both the local reads and
+  // the ls-remote readback, and still reach `verified`.
+  const { root } = await repository();
+  const bin = join(tmp, 'bin');
+  const log = join(tmp, 'git-calls.log');
+  const realGit = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+  mkdirSync(bin);
+  writeFileSync(join(bin, 'git'), `#!/bin/sh\necho "$*" >> '${log}'\nexec '${realGit}' "$@"\n`);
+  chmodSync(join(bin, 'git'), 0o755);
+  const oldPath = process.env.PATH;
+  process.env.PATH = `${bin}:${oldPath ?? ''}`;
+  try {
+    const result = await assessBackupRepository(root, 'source_repo', 'source-id', now, { remaining: 1 });
+    expect(existsSync(log)).toBe(true);
+    const calls = readFileSync(log, 'utf8');
+    expect(calls).toContain('rev-parse --verify HEAD');
+    expect(calls).toContain('ls-remote');
+    expect(result.detail).not.toBe('probe_failed');
+    expect(result.verification?.state).toBe('verified');
+  } finally {
+    process.env.PATH = oldPath;
+  }
+});

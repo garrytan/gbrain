@@ -12,10 +12,21 @@ export const BACKUP_REMOTE_TIMEOUT_MS = 2_000;
 
 export interface RemoteProbeBudget { remaining: number; deadline?: number }
 
+// `env` replaces the child's whole environment, and GIT_ENV carries only the
+// prompt guards. Without PATH the child looks for `git` in the platform
+// default (/usr/bin:/bin), so on hosts that install git elsewhere (NixOS, Nix
+// profiles, Homebrew-only Macs) every probe throws and the repo reads as
+// `probe_failed`. Forward PATH alone: it locates the binary and brings no
+// config or credentials with it (#5500 covers that separate question). Read
+// at call time so a PATH change after import is honoured.
+function probeEnv(): Record<string, string> {
+  return process.env.PATH ? { ...GIT_ENV, PATH: process.env.PATH } : { ...GIT_ENV };
+}
+
 function git(root: string, args: string[]): string {
   return execFileSync('git', ['-C', root, ...args], {
     encoding: 'utf8', timeout: 2_000, maxBuffer: 1024 * 1024,
-    stdio: ['ignore', 'pipe', 'pipe'], env: GIT_ENV,
+    stdio: ['ignore', 'pipe', 'pipe'], env: probeEnv(),
   }).trim();
 }
 
@@ -99,7 +110,7 @@ export async function assessBackupRepository(
         '-c', 'protocol.https.allow=always', '-c', 'protocol.http.allow=always', '-c', 'protocol.ssh.allow=always',
         '-c', 'http.followRedirects=false', '-c', 'credential.interactive=false', 'ls-remote', '--exit-code', '--refs', 'origin', ref], {
         encoding: 'utf8', timeout: Math.min(BACKUP_REMOTE_TIMEOUT_MS, remainingMs), maxBuffer: 64 * 1024,
-        env: { ...GIT_ENV, GIT_TERMINAL_PROMPT: '0', GIT_ASKPASS: '', SSH_ASKPASS: '', SSH_ASKPASS_REQUIRE: 'never', GIT_SSH_COMMAND: 'ssh -oBatchMode=yes -oStrictHostKeyChecking=yes -oConnectTimeout=2' },
+        env: { ...probeEnv(), GIT_TERMINAL_PROMPT: '0', GIT_ASKPASS: '', SSH_ASKPASS: '', SSH_ASKPASS_REQUIRE: 'never', GIT_SSH_COMMAND: 'ssh -oBatchMode=yes -oStrictHostKeyChecking=yes -oConnectTimeout=2' },
       }, (error, stdout) => error ? reject(error) : resolve(stdout));
     }).catch(error => {
       asset.verification = { state: error.code === 2 ? 'missing_ref' : 'unavailable', checked_at: now.toISOString(), repository_fingerprint: fingerprint };
