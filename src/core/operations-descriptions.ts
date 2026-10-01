@@ -76,7 +76,8 @@ export const QUERY_DESCRIPTION =
   "description); pass `limit` explicitly for a stable count regardless of " +
   "mode. When the answer needs the surrounding conversation or section, pass " +
   "`return_unit` ('page' / 'section' / 'window') to get that evidence in one call " +
-  "instead of get_page per hit. For exhaustive enumeration use list_pages; for exact known tokens " +
+  "instead of get_page per hit; conversation pages already come back whole by default (return_unit " +
+  "'auto'; 'chunk' opts out). For exhaustive enumeration use list_pages; for exact known tokens " +
   "`search` is cheaper (no expansion LLM call). " +
   "For personal/emotional questions ('what's going on with me', 'anything notable', " +
   "'how am I feeling'), prefer get_recent_salience, find_anomalies, or " +
@@ -90,7 +91,8 @@ export const SEARCH_DESCRIPTION =
   "result set is NOT proof of coverage — for concept / synonym / landscape " +
   "questions use `query` (adds multi-query expansion); for exhaustive " +
   "enumeration use list_pages pagination. " +
-  "Pass `return_unit` ('window' / 'section' / 'page') for whole evidence instead of chunks. " +
+  "Pass `return_unit` ('window' / 'section' / 'page') for whole evidence instead of chunks; " +
+  "conversation pages already come back whole by default (return_unit 'auto'; 'chunk' opts out). " +
   "For personal/emotional questions, " +
   "prefer get_recent_salience or find_anomalies — they surface activity bursts " +
   "without needing a search term. " +

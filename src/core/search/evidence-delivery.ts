@@ -31,6 +31,7 @@ import { currentTextProjectionFilter, safeChunksFilter, requiresSafeChunks } fro
 import { resolveExcludePrivatePages } from './private-visibility.ts';
 import { safeSplitIndex } from '../text-safe.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
+import { stripChunkHeader } from '../chunkers/code.ts';
 import { OperationError } from '../ops/contract.ts';
 
 export const RETURN_UNITS = ['chunk', 'window', 'section', 'page', 'auto'] as const;
@@ -42,7 +43,10 @@ export const THINK_RETURN_UNIT_CONFIG_KEY = 'think.return_unit';
 export const RETURN_WINDOW_CONFIG_KEY = 'search.return_window';
 export const RETURN_BUDGET_DEFAULT_KEY = 'search.return_budget_default';
 export const RETURN_BUDGET_MAX_REMOTE_KEY = 'search.return_budget_max_remote';
+export const RETURN_BUDGET_CONVERSATION_KEY = 'search.return_budget_conversation';
 export const DEFAULT_RETURN_BUDGET = 6000;
+/** `auto`'s default budget: whole chat sessions run about 15K tokens, and 16K still trimmed some sessions. */
+export const DEFAULT_CONVERSATION_BUDGET = 24000;
 export const DEFAULT_REMOTE_BUDGET_MAX = 32000;
 export const EVIDENCE_BLOCK_CHAR_CAP = 60_000;
 export const EVIDENCE_OMISSION = '\n\n[…]\n\n';
@@ -50,12 +54,19 @@ export const EVIDENCE_FETCH_TIMEOUT_MS = 5000;
 /** First server release that understands `return_unit` (thin-client skew warning). */
 export const EVIDENCE_DELIVERY_MIN_SERVER_VERSION = '0.60.13.0';
 
-const AUTO_SHORT_PAGE_CHUNKS = 3;
 const PIECE_MAX_CHARS = 400;
 const MAX_ROWS = 1024;
 const MAX_WINDOW = 3;
 
 export interface MatchSpan { chunk_id: number; start: number; end: number }
+
+/**
+ * Why `auto` chose a result's unit: a conversation page (by type or slug
+ * prefix) gets the whole page; anything else keeps its ranked chunk exactly;
+ * a conversation whose matching span no longer fits the budget keeps its
+ * ranked chunks too.
+ */
+export type AutoReason = 'conversation_type' | 'conversation_slug' | 'not_conversation' | 'conversation_over_budget';
 
 export interface DeliveredEvidence {
   unit: DeliveredUnit;
@@ -66,6 +77,8 @@ export interface DeliveredEvidence {
   revision?: string;
   unmapped_chunk_ids?: number[];
   fallback_reason?: string;
+  /** Present only under `auto`: why this result got its unit. */
+  reason?: AutoReason;
 }
 
 export interface DeliveryMeta {
@@ -155,26 +168,35 @@ export interface ResolvePlanInput {
   snippetCap: number;
   configKey?: string;
   op: string;
+  /**
+   * The caller passed a chunk-mode budget knob (query's token_budget, recall's
+   * budget_policy): an implied unit stays `chunk` so that legacy budgeting
+   * keeps its meaning.
+   */
+  legacyBudget?: boolean;
 }
 
 /**
  * Resolve the per-call evidence plan, or null when the resolved unit is
- * `chunk` (the stage stays inert and the response is unchanged). Throws
+ * `chunk` (the stage stays inert and the response is unchanged). The unit is
+ * the call's `return_unit`, else the config unit, else `auto`. Throws
  * invalid_params for a bad `return_unit` / `return_window`.
  */
 export async function resolveEvidencePlan(engine: BrainEngine, input: ResolvePlanInput): Promise<EvidencePlan | null> {
   const explicit = parseReturnUnit(input.returnUnit, input.op);
   const explicitWindow = parseReturnWindow(input.returnWindow, input.op);
-  let unit: ReturnUnit = explicit ?? 'chunk';
+  let unit: ReturnUnit = explicit ?? 'auto';
   if (explicit === undefined) {
     try {
       const raw = await engine.getConfig(input.configKey ?? RETURN_UNIT_CONFIG_KEY);
       if (typeof raw === 'string' && (RETURN_UNITS as readonly string[]).includes(raw)) unit = raw as ReturnUnit;
-    } catch { /* config unreadable: stay on chunk */ }
-    // Snippet precedence: a config-level unit never overrides an explicit
-    // snippet cap or the subagent default token economy.
+    } catch { /* config unreadable: stay on the default */ }
+    // Snippet precedence: an implied or config-level unit never overrides an
+    // explicit snippet cap, the subagent default token economy, or a legacy
+    // chunk-mode budget knob.
     const explicitSnippet = typeof input.snippetChars === 'number' && Number.isFinite(input.snippetChars);
     if (unit !== 'chunk' && !explicitSnippet && input.viaSubagent === true && input.snippetCap > 0) unit = 'chunk';
+    if (input.legacyBudget === true) unit = 'chunk';
   }
   if (unit === 'chunk') return null;
   let window = explicitWindow ?? 1;
@@ -182,10 +204,11 @@ export async function resolveEvidencePlan(engine: BrainEngine, input: ResolvePla
     const w = await configNumber(engine, RETURN_WINDOW_CONFIG_KEY);
     if (w !== null) window = Math.min(MAX_WINDOW, Math.max(1, Math.floor(w)));
   }
+  const fallbackBudget = unit === 'auto' ? DEFAULT_CONVERSATION_BUDGET : DEFAULT_RETURN_BUDGET;
   let budget = typeof input.budget === 'number' && Number.isFinite(input.budget) && input.budget > 0
     ? Math.floor(input.budget)
-    : Math.floor((await configNumber(engine, RETURN_BUDGET_DEFAULT_KEY)) ?? DEFAULT_RETURN_BUDGET);
-  if (budget <= 0) budget = DEFAULT_RETURN_BUDGET;
+    : Math.floor((await configNumber(engine, unit === 'auto' ? RETURN_BUDGET_CONVERSATION_KEY : RETURN_BUDGET_DEFAULT_KEY)) ?? fallbackBudget);
+  if (budget <= 0) budget = fallbackBudget;
   let budgetClamped: EvidencePlan['budgetClamped'];
   if (input.remote !== false) {
     const cfgMax = await configNumber(engine, RETURN_BUDGET_MAX_REMOTE_KEY);
@@ -203,6 +226,43 @@ export async function resolveEvidencePlan(engine: BrainEngine, input: ResolvePla
     explicitUnit: explicit !== undefined,
     ...(budgetClamped ? { budgetClamped } : {}),
   };
+}
+
+// ---------------------------------------------------------------------------
+// auto: conversation detection
+// ---------------------------------------------------------------------------
+
+/**
+ * Page types that hold conversations: imported sessions (`conversation`, what
+ * the transcripts and chat-connector ingest paths write), `transcript` and
+ * `chat` pages, meetings, and the Slack / iMessage chat-log types the
+ * conversation-facts pipeline reads (including the collector's granular
+ * Slack types before type consolidation).
+ */
+const CONVERSATION_PAGE_TYPES: ReadonlySet<string> = new Set([
+  'conversation', 'transcript', 'chat', 'meeting',
+  'slack', 'slack-dm-day', 'slack-thread', 'imessage', 'imessage-daily',
+]);
+
+/** `chat/` (LongMemEval and chat imports) and `conversations/` (transcripts + connectors ingest). */
+const CONVERSATION_SLUG_PREFIXES: readonly string[] = ['chat/', 'conversations/'];
+
+/** Deterministic, row-local conversation signal for `auto` (no query, no model). */
+export function conversationSignal(hit: { type?: string | null; slug: string }): 'conversation_type' | 'conversation_slug' | null {
+  if (typeof hit.type === 'string' && CONVERSATION_PAGE_TYPES.has(hit.type.toLowerCase())) return 'conversation_type';
+  if (CONVERSATION_SLUG_PREFIXES.some(prefix => hit.slug.startsWith(prefix))) return 'conversation_slug';
+  return null;
+}
+
+/**
+ * The plan to run for these hits: an implied or config-level `auto` with no
+ * conversation hit is the chunk path (null), so responses without
+ * conversations stay byte-identical. An explicit `auto` always runs and
+ * reports its per-result decision.
+ */
+export function effectivePlan(plan: EvidencePlan | null, hits: SearchResult[]): EvidencePlan | null {
+  if (!plan || plan.unit !== 'auto' || plan.explicitUnit) return plan;
+  return hits.some(h => conversationSignal(h) !== null) ? plan : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -421,10 +481,25 @@ interface Block {
   selected: Set<number>;
   cut: boolean;
   title: string;
+  /** Index of the block's best hit in the ranked input. */
+  rank: number;
+  reason?: AutoReason;
 }
 
-function fallbackBlock(hit: SearchResult, hits: SearchResult[], reason: string): Omit<Block, 'titleTok' | 'title'> {
+type PlannedBlock = Omit<Block, 'titleTok' | 'title' | 'rank' | 'reason'>;
+
+/**
+ * The hit's text as it appears in the page: a fenced_code chunk carries the
+ * code chunker's synthesized `[Lang] fence.ts:N-M symbol` header, which is
+ * not page text, so it is stripped before the chunk anchors or is delivered.
+ */
+function hitPageText(hit: SearchResult): string {
   const text = hit.chunk_text ?? '';
+  return hit.chunk_source === 'fenced_code' ? stripChunkHeader(text) : text;
+}
+
+function fallbackBlock(hit: SearchResult, hits: SearchResult[], reason: string): PlannedBlock {
+  const text = hitPageText(hit);
   const doc = buildDoc(text, []);
   const all = doc.pieces.map((_, i) => i);
   return {
@@ -454,10 +529,17 @@ export function pageEvidenceText(page: { compiled_truth: string; timeline: strin
 function locateAnchor(doc: Doc, hit: SearchResult): Anchor {
   const byId = hit.chunk_id > 0 ? doc.spans.find(x => x.id === hit.chunk_id) : undefined;
   if (byId) return { chunk_id: hit.chunk_id, mapped: true, pieces: piecesOverlapping(doc, byId.start, byId.end), start: byId.start, end: byId.end, chunkIndex: byId.chunk_index };
-  const text = (hit.chunk_text ?? '').trim();
+  const text = hitPageText(hit).trim();
   if (text.length >= 16) {
     const found = locateChunks(doc.text, [{ id: hit.chunk_id, chunk_index: hit.chunk_index, chunk_text: text }])[0];
-    if (found) return { chunk_id: hit.chunk_id, mapped: true, pieces: piecesOverlapping(doc, found.start, found.end), start: found.start, end: found.end, chunkIndex: hit.chunk_index };
+    if (found) {
+      // A fenced_code chunk_index follows every prose chunk, so it says nothing
+      // about position: the window grows from the prose chunk holding the fence,
+      // or not at all when none was fetched.
+      const chunkIndex = hit.chunk_source !== 'fenced_code' ? hit.chunk_index
+        : doc.spans.find(sp => sp.start <= found.start && found.end <= sp.end)?.chunk_index ?? Number.NEGATIVE_INFINITY;
+      return { chunk_id: hit.chunk_id, mapped: true, pieces: piecesOverlapping(doc, found.start, found.end), start: found.start, end: found.end, chunkIndex };
+    }
   }
   // Positional anchor (the current revision no longer holds the hit chunk, or
   // a synthetic chunk_id 0 row): the nearest located chunk drives the unit
@@ -507,10 +589,10 @@ function sectionCandidates(doc: Doc, anchors: Anchor[], conversation: boolean): 
   return set.size === 0 ? null : [...set].sort((x, y) => x - y);
 }
 
-function planBlock(page: ChunkWindowPage, hits: SearchResult[], plan: EvidencePlan, includeTimeline: boolean): Omit<Block, 'titleTok' | 'title'> {
+function planBlock(page: ChunkWindowPage, hits: SearchResult[], plan: EvidencePlan, includeTimeline: boolean): PlannedBlock {
   const best = hits[0];
   if (!page.sealed) return fallbackBlock(best, hits, 'unsealed_page');
-  if (page.chunks.length === 0) return fallbackBlock(best, hits, page.row_limited ? 'row_limit' : 'no_text_chunks');
+  if (page.chunks.length === 0 && page.row_limited) return fallbackBlock(best, hits, 'row_limit');
   const { text, timelineAt } = pageEvidenceText(page, includeTimeline);
   const truthChunks = page.chunks.filter(c => c.chunk_source === 'compiled_truth');
   const timelineChunks = page.chunks.filter(c => c.chunk_source === 'timeline');
@@ -520,13 +602,13 @@ function planBlock(page: ChunkWindowPage, hits: SearchResult[], plan: EvidencePl
   ];
   const doc = buildDoc(text, spans);
   const anchors = hits.map(h => locateAnchor(doc, h));
-  if (anchors.every(a => a.pieces.length === 0)) return fallbackBlock(best, hits, page.row_limited ? 'row_limit' : 'anchor_not_located');
+  if (anchors.every(a => a.pieces.length === 0)) {
+    return fallbackBlock(best, hits, page.row_limited ? 'row_limit' : page.chunks.length === 0 ? 'no_text_chunks' : 'anchor_not_located');
+  }
   const labels = doc.pieces.map(p => p.speaker).filter((x): x is string => x !== null);
   const conversation = isConversationLabels(labels);
   const hasHeadings = doc.pieces.some(p => p.heading > 0);
-  let unit: DeliveredUnit = plan.unit === 'auto'
-    ? (conversation || page.max_chunk_index + 1 <= AUTO_SHORT_PAGE_CHUNKS ? 'page' : hasHeadings ? 'section' : 'window')
-    : plan.unit;
+  let unit: DeliveredUnit = plan.unit === 'auto' ? 'page' : plan.unit;
   let fallbackReason: string | undefined;
   let candidates: number[];
   if (unit === 'page') {
@@ -588,7 +670,11 @@ function enrichmentOrder(b: Block): number[] {
     });
 }
 
-function allocate(blocks: Block[], budget: number, tokenizer: 'cl100k' | 'heuristic', dropped: Record<string, number>): Block[] {
+/**
+ * Reserve each block's floor in rank order, then enrich. `spill` (auto) takes
+ * a block whose floor does not fit instead of dropping or cutting it.
+ */
+function allocate(blocks: Block[], budget: number, tokenizer: 'cl100k' | 'heuristic', dropped: Record<string, number>, spill?: (b: Block) => void): Block[] {
   const omitTok = pieceTokens(EVIDENCE_OMISSION, tokenizer);
   let remaining = budget;
   const kept: Block[] = [];
@@ -603,6 +689,7 @@ function allocate(blocks: Block[], budget: number, tokenizer: 'cl100k' | 'heuris
       kept.push(b);
       continue;
     }
+    if (spill) { spill(b); continue; }
     if (kept.length === 0 && !droppedAny) {
       // Rank one alone exceeds the budget: cut it to fit (minKeep).
       if (b.titleTok > remaining) {
@@ -734,15 +821,23 @@ export async function deliverEvidence(
   if (plan.budgetClamped) fallbacks.add('budget_clamped');
   if (tokenizer === 'heuristic') fallbacks.add('tokenizer_heuristic');
 
-  const groups: Array<{ pageId: number | null; hits: SearchResult[] }> = [];
-  const byPage = new Map<number, { pageId: number; hits: SearchResult[] }>();
-  for (const h of hits) {
+  // auto keeps every non-conversation hit as its ranked chunk, unchanged;
+  // conversation hits are grouped by page like every other unit.
+  const auto = plan.unit === 'auto';
+  const passthrough: Array<{ rank: number; hit: SearchResult; reason: AutoReason }> = [];
+  type Group = { pageId: number | null; hits: SearchResult[]; rank: number; reason?: AutoReason };
+  const groups: Group[] = [];
+  const byPage = new Map<number, Group>();
+  hits.forEach((h, rank) => {
+    const signal = auto ? conversationSignal(h) : null;
+    if (auto && !signal) { passthrough.push({ rank, hit: h, reason: 'not_conversation' }); return; }
     const id = Number.isFinite(h.page_id) ? h.page_id : null;
-    if (id === null) { groups.push({ pageId: null, hits: [h] }); continue; }
-    const g = byPage.get(id);
-    if (g) g.hits.push(h);
-    else { const ng = { pageId: id, hits: [h] }; byPage.set(id, ng); groups.push(ng); }
-  }
+    const g = id === null ? undefined : byPage.get(id);
+    if (g) { g.hits.push(h); return; }
+    const ng: Group = { pageId: id, hits: [h], rank, ...(signal ? { reason: signal } : {}) };
+    if (id !== null) byPage.set(id, ng);
+    groups.push(ng);
+  });
 
   // Chunks only anchor hits in the page text; every unit but window (and the
   // section fallback to window) needs just the hit chunks themselves.
@@ -777,7 +872,7 @@ export async function deliverEvidence(
 
   const planned: Block[] = [];
   for (const g of groups) {
-    let b: Omit<Block, 'titleTok' | 'title'>;
+    let b: PlannedBlock;
     if (g.pageId === null) {
       b = fallbackBlock(g.hits[0], g.hits, 'page_missing');
     } else if (fetchFailure) {
@@ -790,10 +885,15 @@ export async function deliverEvidence(
     }
     if (b.fallbackReason) fallbacks.add(b.fallbackReason);
     const title = b.hit.title ?? '';
-    planned.push({ ...b, title, titleTok: countEvidenceTokens(title, tokenizer) });
+    planned.push({ ...b, title, titleTok: countEvidenceTokens(title, tokenizer), rank: g.rank, ...(g.reason ? { reason: g.reason } : {}) });
   }
 
-  const kept = allocate(planned, plan.budgetTokens, tokenizer, dropped);
+  // Unchanged chunks are paid for first; conversations share the rest, and one
+  // whose matching span no longer fits keeps its ranked chunks instead.
+  const reserved = passthrough.reduce((n, p) => n + countEvidenceTokens(p.hit.chunk_text ?? '', tokenizer) + countEvidenceTokens(p.hit.title ?? '', tokenizer), 0);
+  const kept = allocate(planned, Math.max(0, plan.budgetTokens - reserved), tokenizer, dropped, auto
+    ? b => { for (const h of b.hits) passthrough.push({ rank: hits.indexOf(h), hit: h, reason: 'conversation_over_budget' }); }
+    : undefined);
   let results: DeliveredSearchResult[] = kept.map(b => {
     const out = emit(b, tokenizer);
     const truncated = b.cut || b.selected.size < b.candidates.length;
@@ -806,6 +906,7 @@ export async function deliverEvidence(
       ...(b.revision ? { revision: b.revision } : {}),
       ...(out.unmapped.length > 0 ? { unmapped_chunk_ids: out.unmapped } : {}),
       ...(b.fallbackReason && b.unit === 'chunk' ? { fallback_reason: b.fallbackReason } : {}),
+      ...(b.reason ? { reason: b.reason } : {}),
     };
     return { ...b.hit, title: b.title, chunk_text: out.text, delivered };
   });
@@ -836,6 +937,22 @@ export async function deliverEvidence(
       },
     };
   });
+
+  if (passthrough.length > 0) {
+    const ranked = results.map((r, i) => ({ rank: kept[i].rank, r }));
+    for (const p of passthrough) {
+      const text = p.hit.chunk_text ?? '';
+      ranked.push({ rank: p.rank, r: { ...p.hit, delivered: {
+        unit: 'chunk',
+        chunk_ids: [p.hit.chunk_id],
+        match_spans: text.length > 0 ? [{ chunk_id: p.hit.chunk_id, start: 0, end: text.length }] : [],
+        tokens: countEvidenceTokens(text, tokenizer),
+        truncated: false,
+        reason: p.reason,
+      } } });
+    }
+    results = ranked.sort((a, b) => a.rank - b.rank).map(x => x.r);
+  }
 
   const tokensDelivered = results.reduce((n, r) => n + r.delivered.tokens, 0);
   const budgetUsed = tokensDelivered + results.reduce((n, r) => n + countEvidenceTokens(r.title ?? '', tokenizer), 0);

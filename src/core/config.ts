@@ -1343,11 +1343,12 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'search.metadata_boost_gate',
   'search.crag_escalation',
   'search.crag_think',
-  // Evidence delivery (search/evidence-delivery.ts): default unit (chunk),
-  // window radius, default/remote-max token budgets; think reads its own unit.
+  // Evidence delivery (search/evidence-delivery.ts): default unit (auto),
+  // window radius, default/auto/remote-max token budgets; think reads its own unit.
   'search.return_unit',
   'search.return_window',
   'search.return_budget_default',
+  'search.return_budget_conversation',
   'search.return_budget_max_remote',
   'think.return_unit',
   // Models tier system (v0.31.12)

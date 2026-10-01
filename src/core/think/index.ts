@@ -33,7 +33,7 @@ import { normalizeModelId } from '../model-id.ts';
 import { hasAnthropicKey } from '../ai/anthropic-key.ts';
 import { parseTemporalWindow } from './temporal-window.ts';
 import { resolveExcludePrivatePages } from '../search/private-visibility.ts';
-import { deliverEvidence, resolveEvidencePlan, EVIDENCE_BLOCK_CHAR_CAP, THINK_RETURN_UNIT_CONFIG_KEY, type DeliveryMeta } from '../search/evidence-delivery.ts';
+import { deliverEvidence, effectivePlan, resolveEvidencePlan, EVIDENCE_BLOCK_CHAR_CAP, THINK_RETURN_UNIT_CONFIG_KEY, type DeliveryMeta } from '../search/evidence-delivery.ts';
 
 /** Anthropic Messages client interface — same shape used by subagent.ts so test stubs can be shared. */
 export interface ThinkLLMClient {
@@ -478,21 +478,27 @@ async function persistCitations(
 
 /**
  * Render the <pages> block. Evidence delivery (think.return_unit, default
- * chunk) replaces the gathered pages with budgeted delivered blocks, which
- * the renderer passes through whole instead of cutting its own excerpts.
+ * auto) replaces the gathered pages with budgeted delivered blocks, which
+ * the renderer passes through whole instead of cutting its own excerpts;
+ * auto's unchanged chunks keep the usual excerpts.
  */
 async function renderThinkPages(engine: BrainEngine, opts: RunThinkOpts, pages: SearchResult[]): Promise<{ pagesBlock: string; evidenceDelivery?: DeliveryMeta }> {
   const plan = await resolveEvidencePlan(engine, {
     remote: opts.remote, returnUnit: undefined, returnWindow: undefined, budget: undefined,
     snippetChars: undefined, snippetCap: 0, configKey: THINK_RETURN_UNIT_CONFIG_KEY, op: 'think',
   });
-  if (!plan) return { pagesBlock: renderPagesBlock(pages, pagesBlockExcerptLen(pages.length), opts.question) };
-  const delivered = await deliverEvidence(engine, pages, plan, {
+  const applied = effectivePlan(plan, pages);
+  if (!applied) return { pagesBlock: renderPagesBlock(pages, pagesBlockExcerptLen(pages.length), opts.question) };
+  const delivered = await deliverEvidence(engine, pages, applied, {
     ...(opts.allowedSources !== undefined && opts.allowedSources.length > 0 ? { sourceIds: opts.allowedSources } : opts.sourceId !== undefined ? { sourceId: opts.sourceId } : {}),
     excludePrivate: opts.excludePrivate ?? await resolveExcludePrivatePages(engine, opts.remote),
     requireSafeChunks: opts.remote !== false,
   });
-  return { pagesBlock: renderPagesBlock(delivered.results, EVIDENCE_BLOCK_CHAR_CAP, opts.question, { verbatim: true }), evidenceDelivery: delivered.delivery };
+  const pagesBlock = applied.unit === 'auto'
+    ? renderPagesBlock(delivered.results, pagesBlockExcerptLen(pages.length), opts.question,
+      { verbatim: r => r.delivered?.reason !== 'not_conversation' && r.delivered?.reason !== 'conversation_over_budget', verbatimLen: EVIDENCE_BLOCK_CHAR_CAP })
+    : renderPagesBlock(delivered.results, EVIDENCE_BLOCK_CHAR_CAP, opts.question, { verbatim: true });
+  return { pagesBlock, evidenceDelivery: delivered.delivery };
 }
 
 /**

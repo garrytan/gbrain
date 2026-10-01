@@ -1288,7 +1288,7 @@
           "chronicle_boost?: number | undefined",
           "chunk_id: number",
           "chunk_index: number",
-          "chunk_source: \"compiled_truth\" | \"timeline\"",
+          "chunk_source: \"compiled_truth\" | \"timeline\" | \"fenced_code\"",
           "chunk_text: string",
           "content_flag?: { reason: string; detail: string; } | undefined",
           "cosine?: number | undefined",
@@ -6003,6 +6003,20 @@
         "name": "AssembleEvidenceOutput"
       },
       {
+        "kind": "type",
+        "name": "AutoReason",
+        "signature": [
+          "\"conversation_type\" | \"conversation_slug\" | \"not_conversation\" | \"conversation_over_budget\""
+        ]
+      },
+      {
+        "kind": "variable",
+        "name": "DEFAULT_CONVERSATION_BUDGET",
+        "signature": [
+          "24000"
+        ]
+      },
+      {
         "kind": "variable",
         "name": "DEFAULT_REMOTE_BUDGET_MAX",
         "signature": [
@@ -6030,6 +6044,7 @@
           "chunk_ids: number[]",
           "fallback_reason?: string | undefined",
           "match_spans: MatchSpan[]",
+          "reason?: AutoReason | undefined",
           "revision?: string | undefined",
           "tokens: number",
           "truncated: boolean",
@@ -6149,6 +6164,13 @@
       },
       {
         "kind": "variable",
+        "name": "RETURN_BUDGET_CONVERSATION_KEY",
+        "signature": [
+          "\"search.return_budget_conversation\""
+        ]
+      },
+      {
+        "kind": "variable",
         "name": "RETURN_BUDGET_DEFAULT_KEY",
         "signature": [
           "\"search.return_budget_default\""
@@ -6187,6 +6209,7 @@
         "members": [
           "budget: unknown",
           "configKey?: string | undefined",
+          "legacyBudget?: boolean | undefined",
           "op: string",
           "remote: boolean | undefined",
           "returnUnit: unknown",
@@ -6234,6 +6257,13 @@
       },
       {
         "kind": "function",
+        "name": "conversationSignal",
+        "signature": [
+          "(hit: { type?: string | null; slug: string; }) => \"conversation_type\" | \"conversation_slug\" | null"
+        ]
+      },
+      {
+        "kind": "function",
         "name": "countEvidenceTokens",
         "signature": [
           "(text: string, tokenizer?: \"cl100k\" | \"heuristic\") => number"
@@ -6251,6 +6281,13 @@
         "name": "deliveryVersionSkewWarning",
         "signature": [
           "(opName: string, params: Record<string, unknown>, retrievalMeta: Record<string, unknown> | null | undefined, result: unknown) => string | null"
+        ]
+      },
+      {
+        "kind": "function",
+        "name": "effectivePlan",
+        "signature": [
+          "(plan: EvidencePlan | null, hits: SearchResult[]) => EvidencePlan | null"
         ]
       },
       {
@@ -7831,7 +7868,7 @@
           "chronicle_boost?: number | undefined",
           "chunk_id: number",
           "chunk_index: number",
-          "chunk_source: \"compiled_truth\" | \"timeline\"",
+          "chunk_source: \"compiled_truth\" | \"timeline\" | \"fenced_code\"",
           "chunk_text: string",
           "content_flag?: { reason: string; detail: string; } | undefined",
           "cosine?: number | undefined",
