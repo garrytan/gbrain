@@ -65,3 +65,19 @@ test('bounded execution stops a running child on abort and at its deadline', asy
   preAborted.abort();
   expect((await execFileBounded('sleep', ['30'], { timeout: 60_000, signal: preAborted.signal })).error).toMatchObject({ code: 'ABORT_ERR' });
 });
+
+test('a stopped child gets SIGTERM first so it can remove its lockfile, then SIGKILL after the grace period', async () => {
+  const lock = join(dir, 'index.lock');
+  const script = `touch '${lock}'; trap "rm -f '${lock}'; exit 143" TERM; while :; do sleep 0.05; done`;
+  const abort = new AbortController();
+  const running = execFileBounded('sh', ['-c', script], { timeout: 60_000, signal: abort.signal });
+  await Bun.sleep(200);
+  expect(await Bun.file(lock).exists()).toBe(true);
+  abort.abort();
+  expect((await running).error).toMatchObject({ code: 'ABORT_ERR', killed: true });
+  expect(await Bun.file(lock).exists()).toBe(false);
+  const started = performance.now();
+  const stubborn = await execFileBounded('sh', ['-c', 'trap "" TERM; while :; do sleep 0.05; done'], { timeout: 100 });
+  expect(stubborn.error).toMatchObject({ code: 'ETIMEDOUT', killed: true });
+  expect(performance.now() - started).toBeLessThan(5000);
+});

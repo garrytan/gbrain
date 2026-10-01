@@ -33,7 +33,7 @@ import {
   existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync, rmSync, statSync, renameSync,
 } from 'fs';
 import { join, dirname, relative, isAbsolute } from 'path';
-import { execFile, execFileSync, execSync, type ExecFileException } from 'child_process';
+import { execFile, execFileSync, execSync, type ChildProcess, type ExecFileException } from 'child_process';
 import {
   GIT_ENV, GIT_ENV_AUTH, divergenceSafePull, detectDefaultBranch, pushProbe,
   type PullOutcome, type PushProbeResult,
@@ -474,6 +474,24 @@ export function isDurabilityHardened(repoPath: string): boolean {
   }
 }
 
+const BOUNDED_EXEC_TERM_GRACE_MS = 2_000;
+
+/**
+ * Whether a stopped child has exited even if the runtime lost its exit event:
+ * on Linux an exited-but-unreaped child is a zombie ('Z' in /proc/<pid>/stat).
+ * Elsewhere only the delivered exit counts, so the grace timer bounds the wait.
+ */
+function childHasExited(child: ChildProcess): boolean {
+  if (child.exitCode !== null || child.signalCode !== null) return true;
+  if (process.platform !== 'linux' || child.pid === undefined) return false;
+  try {
+    const stat = readFileSync(`/proc/${child.pid}/stat`, 'utf8');
+    return stat.slice(stat.lastIndexOf(')') + 2).startsWith('Z');
+  } catch {
+    return true;
+  }
+}
+
 export interface BoundedExecOptions {
   timeout: number;
   env?: NodeJS.ProcessEnv;
@@ -488,6 +506,11 @@ export interface BoundedExecOptions {
  * (bun:test `expect().resolves/.rejects`, oven-sh/bun#30301): execFile's
  * callback and its own `timeout` then never fire and the child stays a zombie,
  * so the deadline and abort are enforced with our own timer.
+ *
+ * Stopping sends SIGTERM first so git can remove its lockfiles (a SIGKILLed
+ * `git add`/`commit` leaves `.git/index.lock` behind and every later git call
+ * in that worktree fails), then SIGKILLs after a short grace period and
+ * settles from the timer even if the exit event never arrives.
  */
 export function execFileBounded(file: string, args: string[], options: BoundedExecOptions): Promise<{ error: ExecFileException | null; stdout: string; stderr: string }> {
   const { timeout, signal, ...rest } = options;
@@ -500,10 +523,29 @@ export function execFileBounded(file: string, args: string[], options: BoundedEx
       signal?.removeEventListener('abort', onAbort);
       resolve({ error, stdout, stderr });
     };
-    const child = execFile(file, args, { ...rest, encoding: 'utf8' }, (error, stdout, stderr) => finish(error, stdout, stderr));
+    let stopped: ExecFileException | null = null;
+    let escalation: ReturnType<typeof setTimeout> | undefined;
+    let poll: ReturnType<typeof setInterval> | undefined;
+    const settleStopped = () => {
+      clearTimeout(escalation);
+      clearInterval(poll);
+      finish(stopped, '', '');
+    };
+    const child = execFile(file, args, { ...rest, encoding: 'utf8' }, (error, stdout, stderr) => {
+      clearTimeout(escalation);
+      clearInterval(poll);
+      if (stopped) finish(stopped, '', '');
+      else finish(error, stdout, stderr);
+    });
     const stop = (message: string, code: string) => {
-      child.kill('SIGKILL');
-      finish(Object.assign(new Error(message), { code, killed: true, signal: 'SIGKILL' as const }), '');
+      if (stopped) return;
+      stopped = Object.assign(new Error(message), { code, killed: true, signal: 'SIGTERM' as const });
+      child.kill('SIGTERM');
+      poll = setInterval(() => { if (childHasExited(child)) settleStopped(); }, 25);
+      escalation = setTimeout(() => {
+        child.kill('SIGKILL');
+        settleStopped();
+      }, BOUNDED_EXEC_TERM_GRACE_MS);
     };
     const timer = setTimeout(() => stop(`${file} did not finish within ${timeout}ms`, 'ETIMEDOUT'), timeout);
     const onAbort = () => stop(`${file} was aborted`, 'ABORT_ERR');
