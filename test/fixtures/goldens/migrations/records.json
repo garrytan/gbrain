@@ -1,6 +1,6 @@
 {
   "golden": {
-    "count": 178,
+    "count": 180,
     "gaps": [
       17,
       18,
@@ -23,9 +23,10 @@
       "repairLegacyTimelineSourceRows": "405d4ae158482c020b029b93aff1ae4ac6854e6948cafaf82dbef473e6e5552e",
       "seedConnectorDispatchAttempts": "2395a3995a6bf78776d37e72ce79b0dd15f6c6fa7f81c40612a744cb74ab01a5",
       "slugifyPath": "401dbca23580865d8b168dd8d84db4a6c708c6610d7cb61abafc7d0ee9809063",
+      "verifyEmbeddedHashStatistics": "5c42c660d9f27197fd01e46fd2ffc8ff0a22ee673bb1e80425a7e2ebc1af3436",
       "verifyProjectionStatistics": "59d9ccfea1c53384d8607874a51209a9c2dfd51b2b85a2cb6269fa4120faf1f3"
     },
-    "latest": 183,
+    "latest": 185,
     "records": [
       {
         "handler": {
@@ -2712,6 +2713,51 @@
         "transaction": "absent",
         "verify": "absent",
         "version": 183
+      },
+      {
+        "handler": {
+          "form": "identifier",
+          "helpers": [
+            "verifyEmbeddedHashStatistics"
+          ],
+          "sha256": "96c528ed935d73c44dc65fefa92a6eda751554329a011a554841ebd161fad366"
+        },
+        "idempotent": true,
+        "name": "embedded_hash_planner_statistics",
+        "sql": {
+          "length": 199,
+          "sha256": "8e1dcadcd4c517cd6b59fc677e690e7ac580968a61ec8b07da07d3eceaea045c"
+        },
+        "sqlFor": {
+          "pglite": "absent",
+          "postgres": {
+            "length": 266,
+            "sha256": "6401b622fe290f78087d7b54bc54e08e8931463b0ac981710cec4d7c028eca35"
+          }
+        },
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 184
+      },
+      {
+        "handler": {
+          "form": "arrow",
+          "helpers": [
+            "dropInvalidConcurrentIndex",
+            "getFtsLanguage"
+          ],
+          "sha256": "37ee9138dd2ffa751a18f58898292e653492fa00484090810da10c8c8e40d815"
+        },
+        "idempotent": true,
+        "name": "pages_title_fts_index",
+        "sql": {
+          "length": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "sqlFor": "absent",
+        "transaction": false,
+        "verify": "absent",
+        "version": 185
       }
     ],
     "versions": [
@@ -2892,7 +2938,9 @@
       180,
       181,
       182,
-      183
+      183,
+      184,
+      185
     ]
   },
   "normalizer": "migrations-record-v1"

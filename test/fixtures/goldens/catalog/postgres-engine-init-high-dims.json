@@ -723,6 +723,7 @@
       "idx_pages_projection_pending": "CREATE INDEX idx_pages_projection_pending ON public.pages USING btree (source_id, page_kind, slug) WHERE ((deleted_at IS NULL) AND (text_projection_revision IS DISTINCT FROM knowledge_revision))",
       "idx_pages_search": "CREATE INDEX idx_pages_search ON public.pages USING gin (search_vector)",
       "idx_pages_source_id": "CREATE INDEX idx_pages_source_id ON public.pages USING btree (source_id)",
+      "idx_pages_title_fts_english": "CREATE INDEX idx_pages_title_fts_english ON public.pages USING gin (to_tsvector('english'::regconfig, COALESCE(title, ''::text)))",
       "idx_pages_trgm": "CREATE INDEX idx_pages_trgm ON public.pages USING gin (title gin_trgm_ops)",
       "idx_pages_type": "CREATE INDEX idx_pages_type ON public.pages USING btree (type)",
       "idx_pages_updated_at_desc": "CREATE INDEX idx_pages_updated_at_desc ON public.pages USING btree (updated_at DESC)",

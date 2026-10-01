@@ -1510,7 +1510,7 @@ export class PostgresEngine implements BrainEngine {
     let generationClause = '';
     if (resolvedCol.name === 'embedding') {
       params.push(resolvedCol.embeddingModel || null);
-      generationClause = `AND ((cc.model=$${params.length} AND (cc.embedded_text_hash=md5(cc.chunk_text) OR cc.embedded_text_hash IS NULL))
+      generationClause = `AND ((cc.model=$${params.length} AND ((cc.embedded_text_hash = md5(cc.chunk_text)) IS TRUE OR cc.embedded_text_hash IS NULL))
         OR ($${params.length}::text IS NULL AND NOT EXISTS(SELECT 1 FROM config WHERE key='embedding_migration.state')))`;
     }
     params.push(innerLimit);

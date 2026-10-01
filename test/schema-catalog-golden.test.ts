@@ -104,12 +104,16 @@ describe('PGLite catalog goldens (E4)', () => {
     expect(embedding.udtName).toBe('vector');
   });
 
-  test('non-default FTS language changes only function bodies (search_vector triggers)', () => {
+  test('non-default FTS language changes trigger bodies and the migrated title index', () => {
     for (const path of ['engine', 'blob'] as const) {
       const diff = diffCatalogSnapshots(requireCaptured(`${path}:default`), requireCaptured(`${path}:fts-portuguese`));
       expect(diff.length).toBeGreaterThan(0);
-      expect([...new Set(diff.map((d) => d.section))]).toEqual(['functions']);
-      expect(diff.every((d) => d.kind === 'changed')).toBe(true);
+      const titleIndexes = diff.filter(d => d.section === 'indexes');
+      expect(titleIndexes.map(d => d.key).sort()).toEqual(path === 'engine'
+        ? ['idx_pages_title_fts_english', 'idx_pages_title_fts_portuguese'] : []);
+      const other = diff.filter(d => d.section !== 'indexes');
+      expect([...new Set(other.map(d => d.section))]).toEqual(['functions']);
+      expect(other.every(d => d.kind === 'changed')).toBe(true);
     }
   });
 });
