@@ -16,10 +16,14 @@ export function codeReadFilter(params: unknown[], scope: CodeReadScope): string 
   ].join(' AND ');
 }
 
-export function currentCodeEdgeFilter(edgeAlias: string, resolved: boolean): string {
+export function currentCodeEdgeFilter(
+  edgeAlias: string,
+  resolved: boolean,
+  policy: CodeReadScope = {},
+): string {
   const endpoint = (column: string) => `EXISTS (
     SELECT 1 FROM content_chunks cc JOIN pages p ON p.id=cc.page_id
-    WHERE cc.id=${edgeAlias}.${column} AND ${codeReadFilter([], {})}
+    WHERE cc.id=${edgeAlias}.${column} AND ${codeReadFilter([], policy)}
   )`;
   return `${endpoint('from_chunk_id')}${resolved ? ` AND ${endpoint('to_chunk_id')}` : ''}`;
 }

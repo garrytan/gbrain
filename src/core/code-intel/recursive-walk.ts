@@ -17,7 +17,7 @@
 import type { BrainEngine } from '../engine.ts';
 import type { CodeEdgeResult } from '../types.ts';
 import { classifySink, type SinkKind } from './sinks/index.ts';
-import { codeReadFilter } from './read-scope.ts';
+import { codeReadFilter, type CodeReadScope } from './read-scope.ts';
 
 export type WalkDirection = 'callers' | 'callees';
 
@@ -32,6 +32,9 @@ export interface WalkOpts {
   sourceId: string;
   /** Forces exact-string match (skips bare-name disambiguation). */
   exact?: boolean;
+  /** Remote-read redaction policy, threaded into every edge/chunk query the walk issues. */
+  excludePrivate?: boolean;
+  requireSafeChunks?: boolean;
 }
 
 export interface WalkNode {
@@ -79,6 +82,7 @@ async function disambiguateSymbol(
   engine: BrainEngine,
   bare: string,
   sourceId: string,
+  policy: CodeReadScope = {},
 ): Promise<{ matches: string[]; suggestions: { symbol_qualified: string; score: number }[] }> {
   try {
     // Exact-match candidates first: anything with symbol_name = bare
@@ -86,7 +90,7 @@ async function disambiguateSymbol(
       `SELECT DISTINCT symbol_name_qualified
          FROM content_chunks
          JOIN pages p ON p.id = content_chunks.page_id
-        WHERE p.source_id = $1 AND ${codeReadFilter([], {})}
+        WHERE p.source_id = $1 AND ${codeReadFilter([], policy)}
           AND symbol_name_qualified IS NOT NULL
           AND (symbol_name = $2 OR symbol_name_qualified = $2)
         LIMIT 25`,
@@ -101,7 +105,7 @@ async function disambiguateSymbol(
       `SELECT DISTINCT symbol_name_qualified
          FROM content_chunks
          JOIN pages p ON p.id = content_chunks.page_id
-        WHERE p.source_id = $1 AND ${codeReadFilter([], {})}
+        WHERE p.source_id = $1 AND ${codeReadFilter([], policy)}
           AND symbol_name_qualified IS NOT NULL
           AND symbol_name_qualified ILIKE $2
         LIMIT 5`,
@@ -127,13 +131,14 @@ async function detectSymbolLanguage(
   engine: BrainEngine,
   qualified: string,
   sourceId: string,
+  policy: CodeReadScope = {},
 ): Promise<string | null> {
   try {
     const rows = await engine.executeRaw<{ language: string | null }>(
       `SELECT content_chunks.language
          FROM content_chunks
          JOIN pages p ON p.id = content_chunks.page_id
-        WHERE p.source_id = $1 AND ${codeReadFilter([], {})}
+        WHERE p.source_id = $1 AND ${codeReadFilter([], policy)}
           AND content_chunks.symbol_name_qualified = $2
         LIMIT 1`,
       [sourceId, qualified],
@@ -154,11 +159,18 @@ export async function runRecursiveWalk(
 ): Promise<WalkResult> {
   const depthCap = opts.depth ?? (opts.direction === 'callers' ? 5 : 8);
   const maxNodes = opts.maxNodes ?? 200;
+  // Deliberately narrow, not `opts` itself: codeReadFilter/pageReadFilter pushes its
+  // own bound SQL parameter when `sourceId` is set, but these queries are already
+  // scoped via the explicit `p.source_id = $1` bind below — passing a policy that also
+  // carries `sourceId` double-filters via a second, colliding parameter index and
+  // zeroes every result (codeReadFilter is only safe nested like this with an empty-
+  // of-sourceId scope; see the identical note in engine-sql/code-edges.ts).
+  const policy: CodeReadScope = { excludePrivate: opts.excludePrivate, requireSafeChunks: opts.requireSafeChunks };
 
   // Step 1: disambiguate bare name (skip when --exact).
   let qualifiedStart = symbol;
   if (!opts.exact && !symbol.includes('::')) {
-    const { matches, suggestions } = await disambiguateSymbol(engine, symbol, opts.sourceId);
+    const { matches, suggestions } = await disambiguateSymbol(engine, symbol, opts.sourceId, policy);
     if (matches.length === 0) return { result: 'not_found', did_you_mean: suggestions };
     if (matches.length > 1) {
       return {
@@ -170,7 +182,7 @@ export async function runRecursiveWalk(
   }
 
   // Step 2: language gate (per D18 honest scope).
-  const lang = await detectSymbolLanguage(engine, qualifiedStart, opts.sourceId);
+  const lang = await detectSymbolLanguage(engine, qualifiedStart, opts.sourceId, policy);
   if (lang && !SUPPORTED_LANGS.includes(lang as (typeof SUPPORTED_LANGS)[number])) {
     return { result: 'unsupported_language', supported: SUPPORTED_LANGS };
   }
@@ -194,8 +206,8 @@ export async function runRecursiveWalk(
       try {
         edges =
           opts.direction === 'callers'
-            ? await engine.getCallersOf(sym, { sourceId: opts.sourceId, limit: maxNodes })
-            : await engine.getCalleesOf(sym, { sourceId: opts.sourceId, limit: maxNodes });
+            ? await engine.getCallersOf(sym, { sourceId: opts.sourceId, limit: maxNodes, ...policy })
+            : await engine.getCalleesOf(sym, { sourceId: opts.sourceId, limit: maxNodes, ...policy });
       } catch {
         edges = [];
       }

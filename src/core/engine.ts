@@ -2556,7 +2556,7 @@ export interface BrainEngine {
    */
   getCallersOf(
     qualifiedName: string,
-    opts?: { sourceId?: string; allSources?: boolean; limit?: number },
+    opts?: { sourceId?: string; allSources?: boolean; limit?: number; excludePrivate?: boolean; requireSafeChunks?: boolean },
   ): Promise<CodeEdgeResult[]>;
 
   /**
@@ -2566,7 +2566,7 @@ export interface BrainEngine {
    */
   getCalleesOf(
     qualifiedName: string,
-    opts?: { sourceId?: string; allSources?: boolean; limit?: number; bareFallback?: boolean },
+    opts?: { sourceId?: string; allSources?: boolean; limit?: number; bareFallback?: boolean; excludePrivate?: boolean; requireSafeChunks?: boolean },
   ): Promise<CodeEdgeResult[]>;
 
   /**

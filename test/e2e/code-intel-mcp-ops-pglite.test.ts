@@ -177,11 +177,13 @@ describe('v0.34 W3 — code_callers source scoping', () => {
 });
 
 describe('#4011 — graph ops re-route to the code-bearing federated source', () => {
-  test('remote code_callers is temporarily suspended before federated rerouting', async () => {
+  test('remote code_callers re-routes a code-less scalar scope to the one federated source that has code', async () => {
     // Vault+code brain: the caller's scalar scope ('default') holds no code;
     // the graph lives entirely in 'code-src'. Pre-#4011 the traversal stayed
     // on 'default' and readiness honestly reported not_built — masking a
-    // fully built graph that code_def / code_refs could already see.
+    // fully built graph that code_def / code_refs could already see. Code
+    // reads were blanket-suspended for remote callers until this PR, so this
+    // re-route could only be pinned at the resolver level, not through the op.
     await registerSource(engine, 'default');
     await registerSource(engine, 'code-src');
     const defPage = await insertCodePage(engine, 'code-src', 'src/foo.ts');
@@ -194,9 +196,11 @@ describe('#4011 — graph ops re-route to the code-bearing federated source', ()
       remote: true,
       localFederatedSourceIds: ['default', 'code-src'],
     };
-    await expect(operationsByName.code_callers!.handler(ctx, { symbol: 'parseMarkdown' })).rejects.toMatchObject({
-      code: 'permission_denied', message: expect.stringContaining('temporarily unavailable'),
-    });
+    const result = (await operationsByName.code_callers!.handler(ctx, { symbol: 'parseMarkdown' })) as {
+      callers: Array<{ from_symbol_qualified: string; source_id: string | null }>;
+      scoped_source_id?: string;
+    };
+    expect(result.callers.some((c) => c.from_symbol_qualified === 'callerInCode' && c.source_id === 'code-src')).toBe(true);
   });
 });
 
@@ -339,9 +343,14 @@ async function registerSource(engine: PGLiteEngine, id: string): Promise<void> {
 }
 
 async function insertCodePage(engine: PGLiteEngine, sourceId: string, slug: string): Promise<number> {
+  // chunker_version 999 (test/code-read-currency.test.ts's convention) marks the
+  // page already past SAFE_FENCE_CHUNKER_VERSION — makeCtx defaults remote:false
+  // so this is a no-op for every existing test here; only a remote: true override
+  // (the #4011 re-route test) needs it, otherwise requireSafeChunks silently
+  // excludes the fixture and a remote assertion passes vacuously on [].
   const rows = await engine.executeRaw<{ id: number }>(
-    `INSERT INTO pages (slug, source_id, title, type, page_kind, compiled_truth, frontmatter, updated_at, created_at)
-     VALUES ($1, $2, $3, 'code', 'code', '', '{}'::jsonb, NOW(), NOW())
+    `INSERT INTO pages (slug, source_id, title, type, page_kind, compiled_truth, frontmatter, chunker_version, updated_at, created_at)
+     VALUES ($1, $2, $3, 'code', 'code', '', '{}'::jsonb, 999, NOW(), NOW())
      RETURNING id`,
     [slug, sourceId, slug],
   );

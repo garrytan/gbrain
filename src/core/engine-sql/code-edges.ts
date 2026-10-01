@@ -68,24 +68,30 @@ export async function deleteCodeEdgesForChunks(exec: SqlExecutor, chunkIds: numb
 export async function getCallersOf(
   exec: LegacyUnscopedRead,
     qualifiedName: string,
-    opts?: { sourceId?: string; allSources?: boolean; limit?: number },
+    opts?: { sourceId?: string; allSources?: boolean; limit?: number; excludePrivate?: boolean; requireSafeChunks?: boolean },
   ): Promise<CodeEdgeResult[]> {
     const limit = Math.min(opts?.limit ?? 100, 500);
     const scopedSource: string | null =
       !opts?.allSources && opts?.sourceId ? opts.sourceId : null;
+    // Deliberately NOT `opts` itself: codeReadFilter/pageReadFilter pushes its own
+    // bound SQL parameter when `sourceId`/`sourceIds` is set, but this call is nested
+    // inside the outer query's already-parameterized text (via trustedSql), so that
+    // param would collide with the outer query's own $N indices — zeroing every
+    // result. Source scoping here is handled separately via `scopedSource` above.
+    const policy = { excludePrivate: opts?.excludePrivate, requireSafeChunks: opts?.requireSafeChunks };
     const rows = (await exec.run(sqlFragment`
       SELECT id, from_chunk_id, to_chunk_id, from_symbol_qualified, to_symbol_qualified,
              edge_type, edge_metadata, source_id, true as resolved
         FROM code_edges_chunk
         WHERE to_symbol_qualified = ${qualifiedName}
-        AND ${trustedSql(currentCodeEdgeFilter('code_edges_chunk', true))}
+        AND ${trustedSql(currentCodeEdgeFilter('code_edges_chunk', true, policy))}
         ${scopedSource ? sqlFragment`AND source_id = ${scopedSource}` : sqlFragment``}
       UNION ALL
       SELECT id, from_chunk_id, NULL::int as to_chunk_id, from_symbol_qualified, to_symbol_qualified,
              edge_type, edge_metadata, source_id, false as resolved
         FROM code_edges_symbol
         WHERE to_symbol_qualified = ${qualifiedName}
-        AND ${trustedSql(currentCodeEdgeFilter('code_edges_symbol', false))}
+        AND ${trustedSql(currentCodeEdgeFilter('code_edges_symbol', false, policy))}
         ${scopedSource ? sqlFragment`AND source_id = ${scopedSource}` : sqlFragment``}
       LIMIT ${limit}
     `)).rows;
@@ -95,24 +101,27 @@ export async function getCallersOf(
 export async function getCalleesOf(
   exec: LegacyUnscopedRead,
     qualifiedName: string,
-    opts?: { sourceId?: string; allSources?: boolean; limit?: number; bareFallback?: boolean },
+    opts?: { sourceId?: string; allSources?: boolean; limit?: number; bareFallback?: boolean; excludePrivate?: boolean; requireSafeChunks?: boolean },
   ): Promise<CodeEdgeResult[]> {
     const limit = Math.min(opts?.limit ?? 100, 500);
     const scopedSource: string | null =
       !opts?.allSources && opts?.sourceId ? opts.sourceId : null;
+    // See getCallersOf: deliberately narrow, not `opts` (would leak sourceId into
+    // codeReadFilter's own param-pushing and collide with the outer query's $N indices).
+    const policy = { excludePrivate: opts?.excludePrivate, requireSafeChunks: opts?.requireSafeChunks };
     const run = async (fromPredicate: SqlFragment) => (await exec.run(sqlFragment`
       SELECT id, from_chunk_id, to_chunk_id, from_symbol_qualified, to_symbol_qualified,
              edge_type, edge_metadata, source_id, true as resolved
         FROM code_edges_chunk
         WHERE ${fromPredicate}
-        AND ${trustedSql(currentCodeEdgeFilter('code_edges_chunk', true))}
+        AND ${trustedSql(currentCodeEdgeFilter('code_edges_chunk', true, policy))}
         ${scopedSource ? sqlFragment`AND source_id = ${scopedSource}` : sqlFragment``}
       UNION ALL
       SELECT id, from_chunk_id, NULL::int as to_chunk_id, from_symbol_qualified, to_symbol_qualified,
              edge_type, edge_metadata, source_id, false as resolved
         FROM code_edges_symbol
         WHERE ${fromPredicate}
-        AND ${trustedSql(currentCodeEdgeFilter('code_edges_symbol', false))}
+        AND ${trustedSql(currentCodeEdgeFilter('code_edges_symbol', false, policy))}
         ${scopedSource ? sqlFragment`AND source_id = ${scopedSource}` : sqlFragment``}
       LIMIT ${limit}
     `)).rows;

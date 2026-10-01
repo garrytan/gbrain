@@ -9,8 +9,7 @@
  */
 
 import type { Operation, OperationContext } from './contract.ts';
-import { OperationError } from './contract.ts';
-import { routeCodeIntelScope, readPolicyOpts } from './context.ts';
+import { routeCodeIntelScope, readPolicyOpts, redactionPolicyOpts } from './context.ts';
 import type { WalkResult } from '../code-intel/recursive-walk.ts';
 import {
   CODE_CALLERS_DESCRIPTION,
@@ -50,11 +49,16 @@ const code_callers: Operation = {
     // Single trust+grant resolver + federated code-source re-route (see
     // routeCodeIntelScope): remote callers can't span sources outside their
     // grant, and `__all__` collapses to their grant (not the whole brain).
+    // Sequential, not Promise.all: routeCodeIntelScope must resolve (and
+    // possibly throw permission_denied) BEFORE redactionPolicyOpts's DB-config
+    // read ever touches storage — a denied caller must see zero engine access.
     const { allSources, sourceId } = await routeCodeIntelScope(ctx, sourceIdParam, p.all_sources === true);
+    const policy = await redactionPolicyOpts(ctx);
     const edges = await ctx.engine.getCallersOf(symbol, {
       limit,
       allSources,
       sourceId,
+      ...policy,
     });
     const { resolveCodeReadiness } = await import('../code-graph-readiness.ts');
     // #4352: thread trust — the out_of_scope brain-wide rerun is local-only.
@@ -86,13 +90,16 @@ const code_callees: Operation = {
     const symbol = p.symbol as string;
     const limit = (p.limit as number) ?? 100;
     const sourceIdParam = typeof p.source_id === 'string' ? p.source_id : undefined;
-    // Single trust+grant resolver + federated re-route (see code_callers).
+    // Single trust+grant resolver + federated re-route (see code_callers; same
+    // sequential-not-parallel rationale — deny before touching storage).
     const { allSources, sourceId } = await routeCodeIntelScope(ctx, sourceIdParam, p.all_sources === true);
+    const policy = await redactionPolicyOpts(ctx);
     const edges = await ctx.engine.getCalleesOf(symbol, {
       limit,
       allSources,
       sourceId,
       bareFallback: true, // #4670: honor the documented "bare or qualified" contract
+      ...policy,
     });
     const { resolveCodeReadiness } = await import('../code-graph-readiness.ts');
     // #4352: thread trust — see code_callers.
@@ -207,8 +214,10 @@ const code_blast: Operation = {
     // Single trust+grant resolver: a remote federated client can't traverse a
     // source outside its grant (pre-fix this scoped by bare ctx.sourceId only).
     // Falls back to ctx.sourceId (a required string) for the trusted-local case,
-    // exactly preserving pre-fix local behavior.
+    // exactly preserving pre-fix local behavior. Sequential, not Promise.all —
+    // deny before redactionPolicyOpts ever touches storage (see code_callers).
     const { sourceId: scopedSourceId } = await routeCodeIntelScope(ctx, typeof p.source_id === 'string' ? p.source_id : undefined);
+    const policy = await redactionPolicyOpts(ctx);
     const sourceId = scopedSourceId ?? ctx.sourceId;
     const walk = await runRecursiveWalk(ctx.engine, symbol, {
         direction: 'callers',
@@ -216,6 +225,7 @@ const code_blast: Operation = {
         maxNodes: max_nodes,
         sourceId,
         exact,
+        ...policy,
       });
     return attachWalkReadiness(ctx, walk, sourceId);
   },
@@ -242,12 +252,14 @@ const code_flow: Operation = {
     // Single trust+grant resolver (see code_blast).
     const { sourceId: scopedSourceId } = await routeCodeIntelScope(ctx, typeof p.source_id === 'string' ? p.source_id : undefined);
     const sourceId = scopedSourceId ?? ctx.sourceId;
+    const policy = await redactionPolicyOpts(ctx);
     const walk = await runRecursiveWalk(ctx.engine, symbol, {
         direction: 'callees',
         depth,
         maxNodes: max_nodes,
         sourceId,
         exact,
+        ...policy,
       });
     return attachWalkReadiness(ctx, walk, sourceId);
   },
@@ -290,19 +302,20 @@ const codeReadOperations: Operation[] = [
   code_blast, code_flow,
 ];
 
-// Raw code fragments and cached traversals do not yet support the complete
-// remote read policy. Suspend this optional surface before touching storage.
+// Remote-eligible: every op in codeReadOperations routes snippet/edge/traversal
+// reads through redactionPolicyOpts(ctx) (excludePrivate + requireSafeChunks),
+// the same policy ordinary remote page reads enforce, and source scope through
+// routeCodeIntelScope/sourceScopeOpts — a remote caller never sees a source,
+// private page, or pre-safe-chunk-fence symbol outside its grant.
+//
+// code_blast/code_flow still compute live on every call — the traversal cache
+// (code-intel/traversal-cache.ts) stays unused. Its v0.34.0.0 implementation ships
+// with xmin_max=0 (no real snapshot isolation yet; see the module's own doc comment),
+// so a cached walk doesn't notice a source being archived or edges being rebuilt
+// between calls (test/code-projection-edge-recovery.test.ts pins this). Re-enabling
+// it needs that snapshot-isolation work first — out of scope here, since it's a
+// performance optimization, not a requirement for lifting the remote-read gate.
 export const codeIntelOperations: Operation[] = [
-  ...codeReadOperations.map((op): Operation => ({
-    ...op,
-    description: `${op.description} Temporarily available only to trusted local CLI callers; agent-facing code reads are suspended.`,
-    handler: async (ctx, params) => {
-      if (ctx.remote !== false) {
-        throw new OperationError('permission_denied',
-          `${op.name} is temporarily unavailable to agent callers. Use the trusted local CLI for code reads.`);
-      }
-      return op.handler(ctx, params);
-    },
-  })),
+  ...codeReadOperations,
   code_traversal_cache_clear,
 ];

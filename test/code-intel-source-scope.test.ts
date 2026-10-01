@@ -47,12 +47,17 @@ async function registerSource(id: string): Promise<void> {
   );
 }
 
-async function insertCodePage(sourceId: string, slug: string): Promise<number> {
+async function insertCodePage(sourceId: string, slug: string, opts: { private?: boolean } = {}): Promise<number> {
+  const frontmatter = opts.private ? '{"visibility":"private"}' : '{}';
+  // chunker_version 999 marks the page as already past SAFE_FENCE_CHUNKER_VERSION
+  // (test/code-read-currency.test.ts's convention) — without it every remote read
+  // (requireSafeChunks=true) excludes the fixture entirely, which silently turns
+  // every "the remote caller sees X" assertion below into a vacuous pass on [].
   const rows = await engine.executeRaw<{ id: number }>(
-    `INSERT INTO pages (slug, source_id, title, type, page_kind, compiled_truth, frontmatter, updated_at, created_at)
-     VALUES ($1, $2, $3, 'code', 'code', '', '{}'::jsonb, NOW(), NOW())
+    `INSERT INTO pages (slug, source_id, title, type, page_kind, compiled_truth, frontmatter, chunker_version, updated_at, created_at)
+     VALUES ($1, $2, $3, 'code', 'code', '', $4::jsonb, 999, NOW(), NOW())
      RETURNING id`,
-    [slug, sourceId, slug],
+    [slug, sourceId, slug, frontmatter],
   );
   return rows[0]!.id;
 }
@@ -113,28 +118,127 @@ async function seedTwoSourceCodeGraph(): Promise<void> {
 // Trusted local reads retain their historical source behavior.
 
 
-const readOps = ['code_callers', 'code_callees', 'code_def', 'code_refs', 'code_blast', 'code_flow'] as const;
-const parameters = { symbol: 'betaOnlyFunction', entry_point: 'betaOnlyFunction', exact: true };
+// The four "graph" ops share routeCodeIntelScope/resolveCodeIntelScope and the new
+// redaction-policy wiring (edge queries + traversal cache). code_def/code_refs were
+// already remote-safe via readPolicyOpts before this change and are untouched here —
+// their own coverage lives in the "trusted local definitions and references" test below
+// plus pre-existing upstream behavior this suite doesn't need to re-prove.
+const graphOps = ['code_callers', 'code_callees', 'code_blast', 'code_flow'] as const;
+// Direction matters: code_callers/code_blast walk CALLERS of their `symbol`
+// (alphaTargetFn has two: alphaCallerFn, sharedCallerFn); code_callees/code_flow
+// walk CALLEES of their `symbol`/`entry_point` (alphaCallerFn calls alphaTargetFn).
+// A shared params object with the wrong direction's symbol returns a legitimate
+// empty result (a leaf has no callees) that would make a "succeeds" assertion
+// pass vacuously — hence per-op params instead of one shared literal.
+const graphParams = { symbol: 'alphaTargetFn', entry_point: 'alphaTargetFn', exact: true };
+function paramsFor(name: (typeof graphOps)[number]): Record<string, unknown> {
+  return name === 'code_callees' || name === 'code_flow'
+    ? { symbol: 'alphaCallerFn', entry_point: 'alphaCallerFn', exact: true }
+    : graphParams;
+}
+function resultNodeCount(name: (typeof graphOps)[number], result: Record<string, unknown>): number {
+  if (name === 'code_callers') return (result.callers as unknown[]).length;
+  if (name === 'code_callees') return (result.callees as unknown[]).length;
+  const groups = (result.depth_groups as { nodes: unknown[] }[] | undefined) ?? [];
+  return groups.reduce((n, g) => n + g.nodes.length, 0);
+}
 
-describe('code reads require trusted local context while remote authorization is suspended', () => {
-  for (const name of readOps) {
-    test(`${name}: remote and omitted trust fail before accessing storage for every source grant`, async () => {
+describe('code reads are remote-eligible: scoped and redacted, never brain-wide by default', () => {
+  for (const name of graphOps) {
+    test(`${name}: a zero-grant or empty-allowlist remote caller is refused before accessing storage`, async () => {
       let accesses = 0;
       const inaccessibleEngine = new Proxy({}, { get() { accesses++; throw new Error('storage must not be accessed'); } });
-      for (const remote of [true, undefined]) {
-        for (const scope of [{ sourceId: 'srcalpha' }, { auth: { allowedSources: ['srcalpha', 'srcbeta'] } }, { auth: { allowedSources: [] } }, {}]) {
-          const ctx = ctxOf({ ...scope, remote, engine: inaccessibleEngine } as any);
-          let caught: unknown;
-          try { await operationsByName[name].handler(ctx, parameters); } catch (error) { caught = error; }
-          expect(caught).toBeInstanceOf(OperationError);
-          expect((caught as OperationError).code).toBe('permission_denied');
-          expect((caught as Error).message).toContain('temporarily unavailable');
-        }
+      for (const scope of [{ auth: { allowedSources: [] } }, {}]) {
+        const ctx = ctxOf({ ...scope, remote: true, engine: inaccessibleEngine } as any);
+        let caught: unknown;
+        try { await operationsByName[name].handler(ctx, graphParams); } catch (error) { caught = error; }
+        expect(caught).toBeInstanceOf(OperationError);
+        expect((caught as OperationError).code).toBe('permission_denied');
       }
       expect(accesses).toBe(0);
-      expect(operationsByName[name].description).toContain('agent-facing code reads are suspended');
     });
   }
+
+  for (const name of graphOps) {
+    test(`${name}: an in-grant remote caller succeeds, finds real data, and sees only their own source`, async () => {
+      await seedTwoSourceCodeGraph();
+      const ctx = ctxOf({ remote: true, sourceId: 'srcalpha' });
+      const result = (await operationsByName[name].handler(ctx, paramsFor(name))) as Record<string, unknown>;
+      expect(resultNodeCount(name, result)).toBeGreaterThan(0);
+      expect(JSON.stringify(result)).not.toContain('beta');
+    });
+  }
+
+  for (const name of graphOps) {
+    test(`${name}: an out-of-grant source_id is refused; all_sources clamps to grant (still finds alpha's data) instead of widening`, async () => {
+      await seedTwoSourceCodeGraph();
+      const scopedCtx = ctxOf({ remote: true, sourceId: 'srcalpha' });
+      const params = paramsFor(name);
+      let caught: unknown;
+      try { await operationsByName[name].handler(scopedCtx, { ...params, source_id: 'srcbeta' }); } catch (error) { caught = error; }
+      expect(caught).toBeInstanceOf(OperationError);
+      expect((caught as OperationError).code).toBe('permission_denied');
+      const clamped = (await operationsByName[name].handler(scopedCtx, { ...params, all_sources: true })) as Record<string, unknown>;
+      expect(resultNodeCount(name, clamped)).toBeGreaterThan(0);
+      expect(JSON.stringify(clamped)).not.toContain('beta');
+    });
+  }
+
+  test('cross-source leak: a remote caller scoped to srcalpha never sees srcbeta edges, in either direction', async () => {
+    await seedTwoSourceCodeGraph();
+    const ctx = ctxOf({ remote: true, sourceId: 'srcalpha' });
+    // betaCallerFn → alphaTargetFn is the cross-source trap: same TO symbol as
+    // alpha's own target, but the edge is owned by srcbeta.
+    const callers = (await operationsByName.code_callers.handler(ctx, { symbol: 'alphaTargetFn' })) as { callers: unknown[] };
+    expect(callers.callers.length).toBeGreaterThan(0);
+    expect(JSON.stringify(callers.callers)).not.toContain('beta');
+    // sharedCallerFn exists (as a FROM symbol) in both sources, calling a
+    // different TO symbol in each — alpha scope must only surface alpha's edge.
+    const callees = (await operationsByName.code_callees.handler(ctx, { symbol: 'sharedCallerFn' })) as { callees: unknown[] };
+    expect(callees.callees.length).toBeGreaterThan(0);
+    expect(JSON.stringify(callees.callees)).not.toContain('beta');
+  });
+
+  test('private-page parity: code_callers/callees/blast/flow exclude a private page for a remote caller, matching code_def/code_refs', async () => {
+    await seedTwoSourceCodeGraph();
+    const privatePage = await insertCodePage('srcalpha', 'src/alpha-private-caller.ts', { private: true });
+    const privateChunk = await insertChunk(privatePage, 0, 'privateCallerFn', 'function');
+    await insertUnresolvedEdge(privateChunk, 'privateCallerFn', 'alphaTargetFn', 'srcalpha');
+    await engine.executeRaw('UPDATE pages SET text_projection_revision=knowledge_revision');
+
+    const local = localAlpha(); // remote: false — sees everything, including private.
+    const localCallers = (await operationsByName.code_callers.handler(local, { symbol: 'alphaTargetFn' })) as { callers: unknown[] };
+    expect(JSON.stringify(localCallers.callers)).toContain('privateCallerFn');
+
+    const remote = ctxOf({ remote: true, sourceId: 'srcalpha' });
+    const remoteCallers = (await operationsByName.code_callers.handler(remote, { symbol: 'alphaTargetFn' })) as { callers: unknown[] };
+    // Non-private callers (alphaCallerFn, sharedCallerFn) still surface — only
+    // the private one is excluded, not everything.
+    expect(remoteCallers.callers.length).toBeGreaterThan(0);
+    expect(JSON.stringify(remoteCallers.callers)).not.toContain('privateCallerFn');
+    const remoteBlast = (await operationsByName.code_blast.handler(remote, { symbol: 'alphaTargetFn' })) as { depth_groups?: { nodes: unknown[] }[] };
+    const remoteBlastNodes = (remoteBlast.depth_groups ?? []).flatMap(g => g.nodes);
+    expect(remoteBlastNodes.length).toBeGreaterThan(0);
+    expect(JSON.stringify(remoteBlastNodes)).not.toContain('privateCallerFn');
+  });
+
+  test('trusted local (ctx.remote === false) behavior is unchanged: unscoped and --all-sources still span the whole brain', async () => {
+    await seedTwoSourceCodeGraph();
+    for (const name of graphOps) {
+      const ctx = ctxOf({ remote: false, sourceId: 'srcalpha' });
+      const scoped = (await operationsByName[name].handler(ctx, { ...paramsFor(name), all_sources: true })) as Record<string, unknown>;
+      // Trusted local + all_sources spans every source — must find real data,
+      // and (unlike the remote-scoped tests above) beta is allowed to appear.
+      expect(resultNodeCount(name, scoped)).toBeGreaterThan(0);
+    }
+    // code_callers has the clean cross-source fixture: confirm all_sources
+    // actually reaches srcbeta for a trusted caller, not just "some result".
+    const allSourcesCallers = (await operationsByName.code_callers.handler(
+      ctxOf({ remote: false, sourceId: 'srcalpha' }),
+      { symbol: 'alphaTargetFn', all_sources: true },
+    )) as { callers: unknown[] };
+    expect(JSON.stringify(allSourcesCallers.callers)).toContain('beta');
+  });
 
   test('trusted local definitions and references retain the brain-wide public contract', async () => {
     await seedTwoSourceCodeGraph();

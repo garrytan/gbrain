@@ -533,6 +533,19 @@ export function readHolders(ctx: OperationContext): string[] | undefined {
   return ctx.remote === false ? ctx.takesHoldersAllowList : ctx.takesHoldersAllowList ?? ['world'];
 }
 
+/** The two redaction booleans every remote-eligible read op must enforce. Shared so a new
+ * call site reuses the existing resolution instead of re-deriving it (code_callers/code_callees/
+ * code_blast/code_flow route edge/traversal queries through this directly; readPolicyOpts
+ * layers scope + holders on top for ops that also need those). */
+export async function redactionPolicyOpts(
+  ctx: OperationContext,
+): Promise<{ excludePrivate: boolean; requireSafeChunks: boolean }> {
+  return {
+    excludePrivate: await resolveExcludePrivatePages(ctx.engine, ctx.remote),
+    requireSafeChunks: ctx.remote !== false,
+  };
+}
+
 /** Resolve policy once at the operation boundary; callers may supply a canonical per-call scope. */
 export async function readPolicyOpts(
   ctx: OperationContext,
@@ -540,8 +553,7 @@ export async function readPolicyOpts(
 ): Promise<PageReadPolicy> {
   return {
     ...scope,
-    excludePrivate: await resolveExcludePrivatePages(ctx.engine, ctx.remote),
-    requireSafeChunks: ctx.remote !== false,
+    ...(await redactionPolicyOpts(ctx)),
     takesHoldersAllowList: readHolders(ctx),
   };
 }

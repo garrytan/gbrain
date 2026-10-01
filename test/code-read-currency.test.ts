@@ -201,15 +201,21 @@ describe('code definition and reference currency', () => {
   });
 
   for (const name of ['code_def', 'code_refs', 'code_callers', 'code_callees']) {
-    test(`${name} remains suspended for remote and omitted trust before touching storage`, async () => {
+    test(`${name}: an in-grant remote caller is no longer suspended — it proceeds to read storage`, async () => {
+      // Pre-fix this asserted the blanket gate ('temporarily unavailable') regardless
+      // of grant. code_def/code_refs were already grant-scoped via readPolicyOpts
+      // before this change; code_callers/code_callees now are too. All four proceed
+      // to storage for this in-grant ctx — zero-grant fail-closed coverage for the
+      // callers/callees pair lives in code-intel-source-scope.test.ts, which also
+      // covers code_blast/code_flow (not present in this file at all).
       let reads = 0;
       const inaccessible = new Proxy({}, { get() { reads++; throw new Error('storage access'); } });
       for (const remote of [true, undefined]) {
         await expect(operationsByName[name].handler({ engine: inaccessible, remote,
           sourceId: 'source-a', auth: { allowedSources: ['source-a'] } } as unknown as OperationContext,
-        { symbol: 'sampleSymbol' })).rejects.toThrow('temporarily unavailable');
+        { symbol: 'sampleSymbol' })).rejects.toThrow('storage access');
       }
-      expect(reads).toBe(0);
+      expect(reads).toBeGreaterThan(0);
     });
   }
 });
