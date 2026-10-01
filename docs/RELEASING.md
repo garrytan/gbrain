@@ -386,8 +386,8 @@ missing), and attaches the compiled binaries.
 The executable build job pins Bun 1.4.2 and verifies the Darwin artifact with
 strict native `codesign` before publishing it. A source merge does not repair
 already-published bad binaries; an affected release needs its own explicitly
-approved recovery and asset verification. The unrelated publishing jobs retain
-their own Bun pins.
+approved recovery and asset verification. The template and plugin publishing
+jobs pin the same Bun version.
 
 ### The `latest-stable` tag
 

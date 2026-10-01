@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { runInNewContext } from 'node:vm';
 import { safeLoad } from 'js-yaml';
+import { MINIMUM_BUN_VERSION } from '../../src/core/runtime-version.ts';
 
 type Matrix = Record<string, unknown> & { exclude?: string };
 type Job = { if?: string; 'runs-on'?: string; strategy?: { matrix: Matrix }; steps?: Array<{ id?: string; run?: string; env?: Record<string, string> }> };
@@ -50,16 +51,16 @@ describe('pull-request CI scope', () => {
 
   test('a pull request touching native paths runs every target on the primary Bun version', () => {
     const primary = nativeCells('primary');
-    expect(primary.native.sort()).toEqual(['darwin-arm64', 'darwin-x64', 'linux-arm64-glibc', 'linux-x64-glibc', 'win32-arm64', 'win32-x64'].map(target => `1.3.13/${target}`));
-    expect(primary.musl).toEqual(['1.3.13/linux-x64-musl', '1.3.13/linux-arm64-musl']);
-    expect(primary.console).toEqual(['windows-2022/1.3.13', 'windows-11-arm/1.3.13']);
-    expect(primary.dotnet).toEqual(['windows-2022/1.3.13', 'windows-11-arm/1.3.13']);
+    expect(primary.native.sort()).toEqual(['darwin-arm64', 'darwin-x64', 'linux-arm64-glibc', 'linux-x64-glibc', 'win32-arm64', 'win32-x64'].map(target => `1.4.2/${target}`));
+    expect(primary.musl).toEqual(['1.4.2/linux-x64-musl', '1.4.2/linux-arm64-musl']);
+    expect(primary.console).toEqual(['windows-2022/1.4.2', 'windows-11-arm/1.4.2']);
+    expect(primary.dotnet).toEqual(['windows-2022/1.4.2', 'windows-11-arm/1.4.2']);
     expect(primary.openclaw).toBe(true);
   });
 
   test('other pull requests keep one Linux smoke cell that runs the whole native step list', () => {
     const smoke = nativeCells('smoke');
-    expect(smoke).toEqual({ native: ['1.3.13/linux-x64-glibc'], musl: [], console: [], dotnet: [], openclaw: false });
+    expect(smoke).toEqual({ native: ['1.4.2/linux-x64-glibc'], musl: [], console: [], dotnet: [], openclaw: false });
   });
 
   test('native path changes, an empty list and docs-only diffs classify as expected', () => {
@@ -100,13 +101,13 @@ describe('pull-request CI scope', () => {
     const push = { github: { event_name: 'push' } };
     const security = load('test.yml').jobs['security-regressions'];
     expect(cells(security, push)).toHaveLength(6);
-    expect(cells(security, pr)).toEqual(['ubuntu-latest/1.3.13', 'macos-26/1.3.13', 'windows-latest/1.3.13']);
+    expect(cells(security, pr)).toEqual(['ubuntu-latest/1.4.2', 'macos-26/1.4.2', 'windows-latest/1.4.2']);
     const persistence = load('persistence-validation.yml').jobs;
     for (const name of ['read-performance', 'deployment-matrix', 'invariants', 'reconciliation']) {
       const full = cells(persistence[name], push);
       const primary = cells(persistence[name], pr);
       expect(full.filter(cell => cell.endsWith('1.3.11')).length, name).toBe(full.length / 2);
-      expect(primary, name).toEqual(full.filter(cell => cell.endsWith('1.3.13')));
+      expect(primary, name).toEqual(full.filter(cell => cell.endsWith('1.4.2')));
     }
   });
 
@@ -115,5 +116,30 @@ describe('pull-request CI scope', () => {
     const expression = step.env!.GBRAIN_TEST_EXPORT_SCALE_PAGES!;
     expect(evaluate(expression, { github: { event_name: 'pull_request' } })).toBe('10001');
     for (const event_name of ['push', 'schedule', 'workflow_dispatch']) expect(evaluate(expression, { github: { event_name } })).toBe('100001');
+  });
+
+  // #4479: a local gate or VM on a different Bun than CI produced
+  // runtime-only skew, so every single-version pin moves together.
+  test('every single-version Bun pin matches the primary, and matrices keep the oldest supported version', () => {
+    const primary = '1.4.2';
+    const read = (path: string) => readFileSync(join(root, path), 'utf8');
+    const workflows = ['test', 'e2e', 'heavy-tests', 'macos-validation', 'persistence-validation', 'release', 'native-locks']
+      .map(name => read(`.github/workflows/${name}.yml`)).join('\n');
+    const pinned = [...workflows.matchAll(/bun-version:\s*(\S+)/g)].map(match => match[1]).filter(value => !value.startsWith('$'));
+    expect(pinned.length).toBeGreaterThan(30);
+    expect([...new Set(pinned)]).toEqual([primary]);
+    expect(/oven\/bun:\$\{GBRAIN_CI_BUN_TAG:-([^}]+)\}/.exec(read('docker-compose.ci.yml'))?.[1]).toBe(primary);
+    expect(/BUN_VERSION="\$\{BUN_VERSION:-([^}]+)\}"/.exec(read('scripts/ubicloud/setup-ci-vm.sh'))?.[1]).toBe(primary);
+    expect(/\?\? "([\d.]+)";/.exec(read('scripts/ci-ubicloud.ts'))?.[1]).toBe(primary);
+    expect(/^gbrain_bun_version=(\S+)$/m.exec(read('scripts/setup-in-agent.sh'))?.[1]).toBe(primary);
+    expect(/ARG BUN_IMAGE=oven\/bun:(\S+)/.exec(read('tests/docker/Dockerfile'))?.[1]).toBe(primary);
+    expect(/GBRAIN_E2E_BUN_IMAGE:-oven\/bun:([^}]+)\}/.exec(read('tests/docker/bootstrap-e2e.sh'))?.[1]).toBe(primary);
+    const matrices = [load('test.yml').jobs['security-regressions'], ...Object.values(load('persistence-validation.yml').jobs)]
+      .map(job => job.strategy?.matrix.bun).filter(Boolean);
+    expect(matrices).toHaveLength(5);
+    for (const bun of matrices) expect(bun).toEqual([MINIMUM_BUN_VERSION, primary]);
+    for (const job of ['native', 'musl', 'windows-backup-console', 'windows-backup-dotnet']) {
+      expect(native[job].strategy!.matrix.bun as string[]).toEqual(expect.arrayContaining([MINIMUM_BUN_VERSION, primary]));
+    }
   });
 });
