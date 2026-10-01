@@ -165,6 +165,7 @@ describe("selectTests", () => {
   test("case 3: single mapped src -> only mapped tests", () => {
     expect(select(["src/core/search/intent.ts"])).toEqual([
       "test/e2e/chunk-canonical-text-privacy.test.ts",
+      "test/e2e/embedded-hash-statistics-postgres.test.ts",
       "test/e2e/engine-content-privacy.test.ts",
       "test/e2e/legacy-chunk-privacy.test.ts",
       "test/e2e/projection-readiness-currency.test.ts",
@@ -253,6 +254,7 @@ describe("selectTests", () => {
     ]);
     expect(result).toEqual([
       "test/e2e/chunk-canonical-text-privacy.test.ts",
+      "test/e2e/embedded-hash-statistics-postgres.test.ts",
       "test/e2e/engine-content-privacy.test.ts",
       "test/e2e/legacy-chunk-privacy.test.ts",
       "test/e2e/projection-readiness-currency.test.ts",

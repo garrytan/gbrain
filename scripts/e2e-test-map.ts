@@ -89,6 +89,7 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   // Source-aware ranking, hybrid search, intent classification.
   "src/core/search/private-visibility.ts": ["test/e2e/derived-page-visibility.test.ts", "test/e2e/derived-visibility-repair.test.ts"],
   "src/core/search/**": [
+    "test/e2e/embedded-hash-statistics-postgres.test.ts",
     "test/e2e/unsupported-embedding-identity-postgres.test.ts",
     "test/e2e/projection-statistics-postgres.test.ts",
     "test/e2e/search-query-contract-postgres.test.ts",
@@ -411,6 +412,7 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
     "test/e2e/schema-migrations-replay.test.ts",
   ],
   "src/core/schema-migrations/**": [
+    "test/e2e/search-planner-migrations-postgres.test.ts",
     "test/e2e/migration-vector-replay-postgres.test.ts",
     "test/e2e/schema-drift.test.ts",
     "test/e2e/schema-catalog-golden.test.ts",

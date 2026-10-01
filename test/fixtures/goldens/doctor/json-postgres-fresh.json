@@ -371,7 +371,7 @@
         },
         {
           "category": "meta",
-          "message": "Version 186 (latest: 186)",
+          "message": "Version 188 (latest: 188)",
           "name": "schema_version",
           "status": "ok"
         },

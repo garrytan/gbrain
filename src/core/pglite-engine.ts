@@ -1815,7 +1815,7 @@ export class PGLiteEngine implements BrainEngine {
 
     if (resolvedColEarly.name === 'embedding') {
       params.push(resolvedColEarly.embeddingModel || null);
-      extraFilter += ` AND ((cc.model=$${params.length} AND (cc.embedded_text_hash=md5(cc.chunk_text) OR cc.embedded_text_hash IS NULL))
+      extraFilter += ` AND ((cc.model=$${params.length} AND ((cc.embedded_text_hash = md5(cc.chunk_text)) IS TRUE OR cc.embedded_text_hash IS NULL))
         OR ($${params.length}::text IS NULL AND NOT EXISTS(SELECT 1 FROM config WHERE key='embedding_migration.state')))`;
     }
     const innerLimitIdx = params.length;
