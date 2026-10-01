@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-115",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/leonie-dremmere",
+      "content": "---\ntitle: Leonie Dremmere\ntype: person\naliases: [leonie]\nsummary: \"Leonie Dremmere is the head of partnerships at Fablereach.\"\n---\n\nLeonie Dremmere is the head of partnerships at Fablereach.\n"
+    },
+    {
+      "slug": "people/yusra-ostreholt",
+      "content": "---\ntitle: Yusra Ostreholt\ntype: person\naliases: [yusra]\nsummary: \"Yusra Ostreholt is the head of sales at Fablevane.\"\n---\n\nYusra Ostreholt is the head of sales at Fablevane.\n"
+    },
+    {
+      "slug": "people/mateo-quellthorpe",
+      "content": "---\ntitle: Mateo Quellthorpe\ntype: person\nsummary: \"Mateo Quellthorpe is the finance lead at Orchidyard.\"\n---\n\nMateo Quellthorpe is the finance lead at Orchidyard. Mateo pushed to move the reporting feature ahead of the mobile app.\n"
+    },
+    {
+      "slug": "companies/quartzreach",
+      "content": "---\ntitle: Quartzreach\ntype: company\nsummary: \"A company we met once at a trade show.\"\n---\n\nA company we met once at a trade show.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Turn this into a checklist: Dremmere sends the deck, I review it, we both sign off on Friday."
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "By the way, someone named Junie Wyrbrook emailed about partnerships. Never heard of them."
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "Ostreholt mentioned the pomodoro technique on a call. How does the pomodoro technique work?"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "quick one: what's mateo quellthorpe's view on the roadmap?"
+    }
+  ]
+}

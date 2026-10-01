@@ -1,0 +1,1397 @@
+{
+  "golden": {
+    "spaArm": "dev",
+    "trustProxy": "loopback",
+    "variants": {
+      "default": [
+        {
+          "handlers": [
+            "cookieParser"
+          ],
+          "method": "use",
+          "path": null
+        },
+        {
+          "handlers": [
+            "<anonymous>"
+          ],
+          "method": "use",
+          "path": null
+        },
+        {
+          "handlers": [
+            "<anonymous>"
+          ],
+          "method": "use",
+          "path": null
+        },
+        {
+          "handlers": [
+            "corsMiddleware"
+          ],
+          "method": "use",
+          "path": "/mcp"
+        },
+        {
+          "handlers": [
+            "corsMiddleware"
+          ],
+          "method": "use",
+          "path": "/authorize"
+        },
+        {
+          "handlers": [
+            "<anonymous>"
+          ],
+          "method": "use",
+          "path": "/token"
+        },
+        {
+          "handlers": [
+            "<anonymous>"
+          ],
+          "method": "use",
+          "path": "/register"
+        },
+        {
+          "handlers": [
+            "<anonymous>"
+          ],
+          "method": "use",
+          "path": "/revoke"
+        },
+        {
+          "handlers": [
+            "jsonParser"
+          ],
+          "method": "use",
+          "path": "/register"
+        },
+        {
+          "handlers": [
+            "<anonymous>"
+          ],
+          "method": "use",
+          "path": "/register"
+        },
+        {
+          "handlers": [
+            "rateLimit#1",
+            "urlencodedParser",
+            "<anonymous>"
+          ],
+          "method": "post",
+          "path": "/token"
+        },
+        {
+          "handlers": [
+            "rateLimit#1",
+            "urlencodedParser",
+            "<anonymous>"
+          ],
+          "method": "post",
+          "path": "/revoke"
+        },
+        {
+          "handlers": [
+            "<anonymous>"
+          ],
+          "method": "use",
+          "path": null
+        },
+        {
+          "handlers": [
+            "<anonymous>"
+          ],
+          "method": "all",
+          "path": "/.well-known/oauth-protected-resource"
+        },
+        {
+          "children": [
+            {
+              "children": [
+                {
+                  "handlers": [
+                    "<anonymous>"
+                  ],
+                  "method": "use",
+                  "path": null
+                },
+                {
+                  "handlers": [
+                    "urlencodedParser"
+                  ],
+                  "method": "use",
+                  "path": null
+                },
+                {
+                  "handlers": [
+                    "rateLimit"
+                  ],
+                  "method": "use",
+                  "path": null
+                },
+                {
+                  "handlers": [
+                    "<anonymous>"
+                  ],
+                  "method": "all",
+                  "path": "/"
+                }
+              ],
+              "handlers": [
+                "router"
+              ],
+              "method": "use",
+              "path": "/authorize"
+            },
+            {
+              "children": [
+                {
+                  "handlers": [
+                    "corsMiddleware"
+                  ],
+                  "method": "use",
+                  "path": null
+                },
+                {
+                  "handlers": [
+                    "<anonymous>"
+                  ],
+                  "method": "use",
+                  "path": null
+                },
+                {
+                  "handlers": [
+                    "urlencodedParser"
+                  ],
+                  "method": "use",
+                  "path": null
+                },
+                {
+                  "handlers": [
+                    "rateLimit"
+                  ],
+                  "method": "use",
+                  "path": null
+                },
+                {
+                  "handlers": [
+                    "<anonymous>"
+                  ],
+                  "method": "use",
+                  "path": null
+                },
+                {
+                  "handlers": [
+                    "<anonymous>"
+                  ],
+                  "method": "post",
+                  "path": "/"
+                }
+              ],
+              "handlers": [
+                "router"
+              ],
+              "method": "use",
+              "path": "/token"
+            },
+            {
+              "children": [
+                {
+                  "children": [
+                    {
+                      "handlers": [
+                        "corsMiddleware"
+                      ],
+                      "method": "use",
+                      "path": null
+                    },
+                    {
+                      "handlers": [
+                        "<anonymous>"
+                      ],
+                      "method": "use",
+                      "path": null
+                    },
+                    {
+                      "handlers": [
+                        "<anonymous>"
+                      ],
+                      "method": "get",
+                      "path": "/"
+                    }
+                  ],
+                  "handlers": [
+                    "router"
+                  ],
+                  "method": "use",
+                  "path": "/.well-known/oauth-protected-resource/mcp"
+                },
+                {
+                  "children": [
+                    {
+                      "handlers": [
+                        "corsMiddleware"
+                      ],
+                      "method": "use",
+                      "path": null
+                    },
+                    {
+                      "handlers": [
+                        "<anonymous>"
+                      ],
+                      "method": "use",
+                      "path": null
+                    },
+                    {
+                      "handlers": [
+                        "<anonymous>"
+                      ],
+                      "method": "get",
+                      "path": "/"
+                    }
+                  ],
+                  "handlers": [
+                    "router"
+                  ],
+                  "method": "use",
+                  "path": "/.well-known/oauth-authorization-server"
+                }
+              ],
+              "handlers": [
+                "router"
+              ],
+              "method": "use",
+              "path": null
+            },
+            {
+              "children": [
+                {
+                  "handlers": [
+                    "corsMiddleware"
+                  ],
+                  "method": "use",
+                  "path": null
+                },
+                {
+                  "handlers": [
+                    "<anonymous>"
+                  ],
+                  "method": "use",
+                  "path": null
+                },
+                {
+                  "handlers": [
+                    "urlencodedParser"
+                  ],
+                  "method": "use",
+                  "path": null
+                },
+                {
+                  "handlers": [
+                    "rateLimit"
+                  ],
+                  "method": "use",
+                  "path": null
+                },
+                {
+                  "handlers": [
+                    "<anonymous>"
+                  ],
+                  "method": "use",
+                  "path": null
+                },
+                {
+                  "handlers": [
+                    "<anonymous>"
+                  ],
+                  "method": "post",
+                  "path": "/"
+                }
+              ],
+              "handlers": [
+                "router"
+              ],
+              "method": "use",
+              "path": "/revoke"
+            }
+          ],
+          "handlers": [
+            "router"
+          ],
+          "method": "use",
+          "path": null
+        },
+        {
+          "handlers": [
+            "<anonymous>"
+          ],
+          "method": "get",
+          "path": "/.well-known/gbrain"
+        },
+        {
+          "handlers": [
+            "<anonymous>"
+          ],
+          "method": "get",
+          "path": "/health"
+        },
+        {
+          "handlers": [
+            "rateLimit#2",
+            "rateLimit#3",
+            "jsonParser",
+            "<anonymous>"
+          ],
+          "method": "post",
+          "path": "/admin/login"
+        },
+        {
+          "handlers": [
+            "rateLimit#2",
+            "rateLimit#3",
+            "jsonParser",
+            "<anonymous>"
+          ],
+          "method": "post",
+          "path": "/admin/api/issue-magic-link"
+        },
+        {
+          "handlers": [
+            "rateLimit#2",
+            "rateLimit#3",
+            "<anonymous>"
+          ],
+          "method": "get",
+          "path": "/admin/auth/:token"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "rateLimit#5",
+            "<anonymous>"
+          ],
+          "method": "get",
+          "path": "/admin/api/oauth-requests/:id"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "rateLimit#5",
+            "jsonParser",
+            "<anonymous>"
+          ],
+          "method": "post",
+          "path": "/admin/api/oauth-requests/:id"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "<anonymous>"
+          ],
+          "method": "get",
+          "path": "/metrics"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "<anonymous>"
+          ],
+          "method": "post",
+          "path": "/admin/api/sign-out-everywhere"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "<anonymous>"
+          ],
+          "method": "get",
+          "path": "/admin/api/agents"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "<anonymous>"
+          ],
+          "method": "get",
+          "path": "/admin/api/sources"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "<anonymous>"
+          ],
+          "method": "get",
+          "path": "/admin/api/agents/spend"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "<anonymous>"
+          ],
+          "method": "get",
+          "path": "/admin/api/stats"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "<anonymous>"
+          ],
+          "method": "get",
+          "path": "/admin/api/health-indicators"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "<anonymous>"
+          ],
+          "method": "get",
+          "path": "/admin/api/full-stats"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "<anonymous>"
+          ],
+          "method": "get",
+          "path": "/admin/api/jobs/watch"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "<anonymous>"
+          ],
+          "method": "get",
+          "path": "/admin/api/calibration/pattern/:id"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "<anonymous>"
+          ],
+          "method": "get",
+          "path": "/admin/api/calibration/profile"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "<anonymous>"
+          ],
+          "method": "get",
+          "path": "/admin/api/calibration/charts/:type"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "<anonymous>"
+          ],
+          "method": "get",
+          "path": "/admin/api/requests"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "<anonymous>"
+          ],
+          "method": "get",
+          "path": "/admin/api/api-keys"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "jsonParser",
+            "<anonymous>"
+          ],
+          "method": "post",
+          "path": "/admin/api/api-keys"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "jsonParser",
+            "<anonymous>"
+          ],
+          "method": "post",
+          "path": "/admin/api/api-keys/revoke"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "jsonParser",
+            "<anonymous>"
+          ],
+          "method": "post",
+          "path": "/admin/api/grants"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "<anonymous>"
+          ],
+          "method": "get",
+          "path": "/admin/api/grant-catalog"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "<anonymous>"
+          ],
+          "method": "get",
+          "path": "/admin/api/grants/:clientId"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "<anonymous>"
+          ],
+          "method": "get",
+          "path": "/admin/api/clients"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "<anonymous>"
+          ],
+          "method": "get",
+          "path": "/admin/api/clients/:clientId"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "<anonymous>"
+          ],
+          "method": "get",
+          "path": "/admin/api/clients/:clientId/setup"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "jsonParser",
+            "<anonymous>"
+          ],
+          "method": "post",
+          "path": "/admin/api/recover-client"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "jsonParser",
+            "<anonymous>"
+          ],
+          "method": "post",
+          "path": "/admin/api/clients/:clientId/lifecycle"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "jsonParser",
+            "<anonymous>"
+          ],
+          "method": "post",
+          "path": "/admin/api/register-client"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "jsonParser",
+            "<anonymous>"
+          ],
+          "method": "post",
+          "path": "/admin/api/update-client-ttl"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "jsonParser",
+            "<anonymous>"
+          ],
+          "method": "post",
+          "path": "/admin/api/rescope-client"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "jsonParser",
+            "<anonymous>"
+          ],
+          "method": "post",
+          "path": "/admin/api/revoke-client"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "<anonymous>"
+          ],
+          "method": "get",
+          "path": "/admin/events"
+        },
+        {
+          "handlers": [
+            "serveStatic"
+          ],
+          "method": "use",
+          "path": "/admin"
+        },
+        {
+          "handlers": [
+            "<anonymous>"
+          ],
+          "method": "get",
+          "path": "/admin/{*path}"
+        },
+        {
+          "handlers": [
+            "<anonymous>"
+          ],
+          "method": "get",
+          "path": "/mcp"
+        },
+        {
+          "handlers": [
+            "<anonymous>",
+            "<anonymous>"
+          ],
+          "method": "post",
+          "path": "/mcp"
+        },
+        {
+          "handlers": [
+            "rateLimit",
+            "<anonymous>",
+            "rawParser",
+            "<anonymous>"
+          ],
+          "method": "post",
+          "path": "/ingest"
+        },
+        {
+          "handlers": [
+            "rateLimit",
+            "rawParser",
+            "<anonymous>"
+          ],
+          "method": "post",
+          "path": "/webhooks/github"
+        }
+      ],
+      "enableDcr": [
+        {
+          "handlers": [
+            "cookieParser"
+          ],
+          "method": "use",
+          "path": null
+        },
+        {
+          "handlers": [
+            "<anonymous>"
+          ],
+          "method": "use",
+          "path": null
+        },
+        {
+          "handlers": [
+            "<anonymous>"
+          ],
+          "method": "use",
+          "path": null
+        },
+        {
+          "handlers": [
+            "corsMiddleware"
+          ],
+          "method": "use",
+          "path": "/mcp"
+        },
+        {
+          "handlers": [
+            "corsMiddleware"
+          ],
+          "method": "use",
+          "path": "/authorize"
+        },
+        {
+          "handlers": [
+            "<anonymous>"
+          ],
+          "method": "use",
+          "path": "/token"
+        },
+        {
+          "handlers": [
+            "<anonymous>"
+          ],
+          "method": "use",
+          "path": "/register"
+        },
+        {
+          "handlers": [
+            "<anonymous>"
+          ],
+          "method": "use",
+          "path": "/revoke"
+        },
+        {
+          "handlers": [
+            "jsonParser"
+          ],
+          "method": "use",
+          "path": "/register"
+        },
+        {
+          "handlers": [
+            "<anonymous>"
+          ],
+          "method": "use",
+          "path": "/register"
+        },
+        {
+          "handlers": [
+            "rateLimit#1",
+            "urlencodedParser",
+            "<anonymous>"
+          ],
+          "method": "post",
+          "path": "/token"
+        },
+        {
+          "handlers": [
+            "rateLimit#1",
+            "urlencodedParser",
+            "<anonymous>"
+          ],
+          "method": "post",
+          "path": "/revoke"
+        },
+        {
+          "handlers": [
+            "<anonymous>"
+          ],
+          "method": "use",
+          "path": null
+        },
+        {
+          "handlers": [
+            "<anonymous>"
+          ],
+          "method": "all",
+          "path": "/.well-known/oauth-protected-resource"
+        },
+        {
+          "children": [
+            {
+              "children": [
+                {
+                  "handlers": [
+                    "<anonymous>"
+                  ],
+                  "method": "use",
+                  "path": null
+                },
+                {
+                  "handlers": [
+                    "urlencodedParser"
+                  ],
+                  "method": "use",
+                  "path": null
+                },
+                {
+                  "handlers": [
+                    "rateLimit"
+                  ],
+                  "method": "use",
+                  "path": null
+                },
+                {
+                  "handlers": [
+                    "<anonymous>"
+                  ],
+                  "method": "all",
+                  "path": "/"
+                }
+              ],
+              "handlers": [
+                "router"
+              ],
+              "method": "use",
+              "path": "/authorize"
+            },
+            {
+              "children": [
+                {
+                  "handlers": [
+                    "corsMiddleware"
+                  ],
+                  "method": "use",
+                  "path": null
+                },
+                {
+                  "handlers": [
+                    "<anonymous>"
+                  ],
+                  "method": "use",
+                  "path": null
+                },
+                {
+                  "handlers": [
+                    "urlencodedParser"
+                  ],
+                  "method": "use",
+                  "path": null
+                },
+                {
+                  "handlers": [
+                    "rateLimit"
+                  ],
+                  "method": "use",
+                  "path": null
+                },
+                {
+                  "handlers": [
+                    "<anonymous>"
+                  ],
+                  "method": "use",
+                  "path": null
+                },
+                {
+                  "handlers": [
+                    "<anonymous>"
+                  ],
+                  "method": "post",
+                  "path": "/"
+                }
+              ],
+              "handlers": [
+                "router"
+              ],
+              "method": "use",
+              "path": "/token"
+            },
+            {
+              "children": [
+                {
+                  "children": [
+                    {
+                      "handlers": [
+                        "corsMiddleware"
+                      ],
+                      "method": "use",
+                      "path": null
+                    },
+                    {
+                      "handlers": [
+                        "<anonymous>"
+                      ],
+                      "method": "use",
+                      "path": null
+                    },
+                    {
+                      "handlers": [
+                        "<anonymous>"
+                      ],
+                      "method": "get",
+                      "path": "/"
+                    }
+                  ],
+                  "handlers": [
+                    "router"
+                  ],
+                  "method": "use",
+                  "path": "/.well-known/oauth-protected-resource/mcp"
+                },
+                {
+                  "children": [
+                    {
+                      "handlers": [
+                        "corsMiddleware"
+                      ],
+                      "method": "use",
+                      "path": null
+                    },
+                    {
+                      "handlers": [
+                        "<anonymous>"
+                      ],
+                      "method": "use",
+                      "path": null
+                    },
+                    {
+                      "handlers": [
+                        "<anonymous>"
+                      ],
+                      "method": "get",
+                      "path": "/"
+                    }
+                  ],
+                  "handlers": [
+                    "router"
+                  ],
+                  "method": "use",
+                  "path": "/.well-known/oauth-authorization-server"
+                }
+              ],
+              "handlers": [
+                "router"
+              ],
+              "method": "use",
+              "path": null
+            },
+            {
+              "children": [
+                {
+                  "handlers": [
+                    "corsMiddleware"
+                  ],
+                  "method": "use",
+                  "path": null
+                },
+                {
+                  "handlers": [
+                    "<anonymous>"
+                  ],
+                  "method": "use",
+                  "path": null
+                },
+                {
+                  "handlers": [
+                    "jsonParser"
+                  ],
+                  "method": "use",
+                  "path": null
+                },
+                {
+                  "handlers": [
+                    "rateLimit"
+                  ],
+                  "method": "use",
+                  "path": null
+                },
+                {
+                  "handlers": [
+                    "<anonymous>"
+                  ],
+                  "method": "post",
+                  "path": "/"
+                }
+              ],
+              "handlers": [
+                "router"
+              ],
+              "method": "use",
+              "path": "/register"
+            },
+            {
+              "children": [
+                {
+                  "handlers": [
+                    "corsMiddleware"
+                  ],
+                  "method": "use",
+                  "path": null
+                },
+                {
+                  "handlers": [
+                    "<anonymous>"
+                  ],
+                  "method": "use",
+                  "path": null
+                },
+                {
+                  "handlers": [
+                    "urlencodedParser"
+                  ],
+                  "method": "use",
+                  "path": null
+                },
+                {
+                  "handlers": [
+                    "rateLimit"
+                  ],
+                  "method": "use",
+                  "path": null
+                },
+                {
+                  "handlers": [
+                    "<anonymous>"
+                  ],
+                  "method": "use",
+                  "path": null
+                },
+                {
+                  "handlers": [
+                    "<anonymous>"
+                  ],
+                  "method": "post",
+                  "path": "/"
+                }
+              ],
+              "handlers": [
+                "router"
+              ],
+              "method": "use",
+              "path": "/revoke"
+            }
+          ],
+          "handlers": [
+            "router"
+          ],
+          "method": "use",
+          "path": null
+        },
+        {
+          "handlers": [
+            "<anonymous>"
+          ],
+          "method": "get",
+          "path": "/.well-known/gbrain"
+        },
+        {
+          "handlers": [
+            "<anonymous>"
+          ],
+          "method": "get",
+          "path": "/health"
+        },
+        {
+          "handlers": [
+            "rateLimit#2",
+            "rateLimit#3",
+            "jsonParser",
+            "<anonymous>"
+          ],
+          "method": "post",
+          "path": "/admin/login"
+        },
+        {
+          "handlers": [
+            "rateLimit#2",
+            "rateLimit#3",
+            "jsonParser",
+            "<anonymous>"
+          ],
+          "method": "post",
+          "path": "/admin/api/issue-magic-link"
+        },
+        {
+          "handlers": [
+            "rateLimit#2",
+            "rateLimit#3",
+            "<anonymous>"
+          ],
+          "method": "get",
+          "path": "/admin/auth/:token"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "rateLimit#5",
+            "<anonymous>"
+          ],
+          "method": "get",
+          "path": "/admin/api/oauth-requests/:id"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "rateLimit#5",
+            "jsonParser",
+            "<anonymous>"
+          ],
+          "method": "post",
+          "path": "/admin/api/oauth-requests/:id"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "<anonymous>"
+          ],
+          "method": "get",
+          "path": "/metrics"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "<anonymous>"
+          ],
+          "method": "post",
+          "path": "/admin/api/sign-out-everywhere"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "<anonymous>"
+          ],
+          "method": "get",
+          "path": "/admin/api/agents"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "<anonymous>"
+          ],
+          "method": "get",
+          "path": "/admin/api/sources"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "<anonymous>"
+          ],
+          "method": "get",
+          "path": "/admin/api/agents/spend"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "<anonymous>"
+          ],
+          "method": "get",
+          "path": "/admin/api/stats"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "<anonymous>"
+          ],
+          "method": "get",
+          "path": "/admin/api/health-indicators"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "<anonymous>"
+          ],
+          "method": "get",
+          "path": "/admin/api/full-stats"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "<anonymous>"
+          ],
+          "method": "get",
+          "path": "/admin/api/jobs/watch"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "<anonymous>"
+          ],
+          "method": "get",
+          "path": "/admin/api/calibration/pattern/:id"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "<anonymous>"
+          ],
+          "method": "get",
+          "path": "/admin/api/calibration/profile"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "<anonymous>"
+          ],
+          "method": "get",
+          "path": "/admin/api/calibration/charts/:type"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "<anonymous>"
+          ],
+          "method": "get",
+          "path": "/admin/api/requests"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "<anonymous>"
+          ],
+          "method": "get",
+          "path": "/admin/api/api-keys"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "jsonParser",
+            "<anonymous>"
+          ],
+          "method": "post",
+          "path": "/admin/api/api-keys"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "jsonParser",
+            "<anonymous>"
+          ],
+          "method": "post",
+          "path": "/admin/api/api-keys/revoke"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "jsonParser",
+            "<anonymous>"
+          ],
+          "method": "post",
+          "path": "/admin/api/grants"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "<anonymous>"
+          ],
+          "method": "get",
+          "path": "/admin/api/grant-catalog"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "<anonymous>"
+          ],
+          "method": "get",
+          "path": "/admin/api/grants/:clientId"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "<anonymous>"
+          ],
+          "method": "get",
+          "path": "/admin/api/clients"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "<anonymous>"
+          ],
+          "method": "get",
+          "path": "/admin/api/clients/:clientId"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "<anonymous>"
+          ],
+          "method": "get",
+          "path": "/admin/api/clients/:clientId/setup"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "jsonParser",
+            "<anonymous>"
+          ],
+          "method": "post",
+          "path": "/admin/api/recover-client"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "jsonParser",
+            "<anonymous>"
+          ],
+          "method": "post",
+          "path": "/admin/api/clients/:clientId/lifecycle"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "jsonParser",
+            "<anonymous>"
+          ],
+          "method": "post",
+          "path": "/admin/api/register-client"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "jsonParser",
+            "<anonymous>"
+          ],
+          "method": "post",
+          "path": "/admin/api/update-client-ttl"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "jsonParser",
+            "<anonymous>"
+          ],
+          "method": "post",
+          "path": "/admin/api/rescope-client"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "jsonParser",
+            "<anonymous>"
+          ],
+          "method": "post",
+          "path": "/admin/api/revoke-client"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "<anonymous>"
+          ],
+          "method": "get",
+          "path": "/admin/events"
+        },
+        {
+          "handlers": [
+            "serveStatic"
+          ],
+          "method": "use",
+          "path": "/admin"
+        },
+        {
+          "handlers": [
+            "<anonymous>"
+          ],
+          "method": "get",
+          "path": "/admin/{*path}"
+        },
+        {
+          "handlers": [
+            "<anonymous>"
+          ],
+          "method": "get",
+          "path": "/mcp"
+        },
+        {
+          "handlers": [
+            "<anonymous>",
+            "<anonymous>"
+          ],
+          "method": "post",
+          "path": "/mcp"
+        },
+        {
+          "handlers": [
+            "rateLimit",
+            "<anonymous>",
+            "rawParser",
+            "<anonymous>"
+          ],
+          "method": "post",
+          "path": "/ingest"
+        },
+        {
+          "handlers": [
+            "rateLimit",
+            "rawParser",
+            "<anonymous>"
+          ],
+          "method": "post",
+          "path": "/webhooks/github"
+        }
+      ]
+    }
+  },
+  "normalizer": "serve-http-routes-runtime-v1"
+}

@@ -10,7 +10,11 @@ import { currentVerifiedLocalWriter, localHostId } from './identity.ts';
 import { getWorktreeBinding } from './ownership.ts';
 import { initializeLocalPersistence, requestPrincipalForContext, submitPageMutation } from './page-mutations.ts';
 import { digest, sha256 } from './digest.ts';
-import { assertImportPaths, managedImportContent, readImportBytes, type ImportPack, type ManagedImportIntent } from './import-prepare.ts';
+import { assertImportPaths, managedImportContent, prepareManagedImportMutation, readImportBytes, type ImportPack, type ManagedImportIntent } from './import-prepare.ts';
+import { submissionAuthority } from './authority.ts';
+import { inspectUnchanged, screeningRequest } from './noop-kernel.ts';
+import type { WorktreeBinding } from './ownership.ts';
+import type { PageSnapshot } from '../page-state/types.ts';
 
 export async function importManagedFile(engine: BrainEngine, filePath: string, sourcePath: string,
   opts: { sourceId?: string; noEmbed?: boolean; activePack?: ImportPack; signal?: AbortSignal; slugRoot?: string } = {}): Promise<ImportResult> {
@@ -51,10 +55,13 @@ export async function importManagedFile(engine: BrainEngine, filePath: string, s
   let params = await readPending();
   if (!params) {
     const snapshot = await engine.readPageSnapshot(slug, { sourceId, includeDeleted: true });
-    params = { kind: 'managed_file_import', slug, content, sourcePath, path, inputPath, inputHash,
+    const intent: ManagedImportIntent = { kind: 'managed_file_import', slug, content, sourcePath, path, inputPath, inputHash,
       targetHash: existsSync(target) ? sha256(readImportBytes(target)) : null,
       ownerEpoch: String(binding.owner_epoch), ...(snapshot ? { expected_revision: snapshot.revision } : {}),
-      noEmbed: !!opts.noEmbed, ...(opts.activePack ? { activePack: opts.activePack } : {}), request_id: randomUUID(), source_id: sourceId };
+      noEmbed: !!opts.noEmbed, ...(opts.activePack ? { activePack: opts.activePack } : {}) };
+    // #5470: an import whose publication would change nothing takes no admission.
+    if (await unchangedManagedImport(ctx, binding, intent, snapshot)) return { slug, status: 'skipped', chunks: 0 };
+    params = { ...intent, request_id: randomUUID(), source_id: sourceId };
     await engine.executeRaw('INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES($1,$2,$3::text::jsonb) ON CONFLICT DO NOTHING', [op, key, JSON.stringify([params])]);
     params = (await readPending())!;
   }
@@ -69,5 +76,21 @@ export async function importManagedFile(engine: BrainEngine, filePath: string, s
       await engine.executeRaw('DELETE FROM op_checkpoints WHERE op=$1 AND fingerprint=$2 AND completed_keys=$3::text::jsonb', [op, key, JSON.stringify([params])]);
     }
     throw error;
+  }
+}
+
+/** Runs the managed-import preparer on an unadmitted request; true only when the no-op kernel finds nothing to publish. */
+async function unchangedManagedImport(ctx: OperationContext, binding: WorktreeBinding, intent: ManagedImportIntent, snapshot: PageSnapshot | null): Promise<boolean> {
+  if (!snapshot) return false;
+  try {
+    const authority = await submissionAuthority(ctx, 'put_page', binding.source_id, binding.source_incarnation, intent.slug);
+    const row = screeningRequest({ source_id: binding.source_id, source_incarnation: binding.source_incarnation, slug: intent.slug,
+      page_id: snapshot.page.id, worktree_id: binding.worktree_id, authority, intent, operation: 'put_page' });
+    const prepared = await prepareManagedImportMutation(ctx.engine, row, ctx.config);
+    if ((await inspectUnchanged(ctx.engine, { prepared, snapshot, sourcePath: intent.sourcePath, databaseOnly: false })).admitReason) return false;
+    await prepared.validate?.(ctx.engine);
+    return true;
+  } catch {
+    return false;
   }
 }

@@ -14,11 +14,11 @@
 #   - frozen dependencies and both PGLite snapshot fixtures, built once
 #   - gitleaks (GITLEAKS=1; pinned + checksum-verified like test.yml)
 #
-# Knobs: SLOTS (default nproc), BUN_VERSION (default 1.3.13), GITLEAKS=0|1.
+# Knobs: SLOTS (default nproc), BUN_VERSION (default 1.4.2), GITLEAKS=0|1.
 set -euo pipefail
 
 SLOTS="${SLOTS:-$(nproc)}"
-BUN_VERSION="${BUN_VERSION:-1.3.13}"
+BUN_VERSION="${BUN_VERSION:-1.4.2}"
 GITLEAKS="${GITLEAKS:-0}"
 GITLEAKS_VERSION=8.30.1
 PG_IMAGE=pgvector/pgvector:pg16

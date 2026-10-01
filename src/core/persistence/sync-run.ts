@@ -12,13 +12,17 @@ import { assertPersistenceAccepting, foregroundWriteCompletions, startPersistenc
 import { assertSyncEntryOrigin, discoverManagedSync, resolveManagedSyncContext, readSyncContent, readSyncFile, syncGit, type SyncDiscovery } from './sync-discovery.ts';
 import { assertSyncPageOrigin, sameSyncOrigin, syncOriginScope } from './sync-origin.ts';
 import { assertManagedSyncActive, assertSyncDispatchActive, managedSyncAuthority, validateSyncAuthority, validateManagedSyncOptions, syncProcessingOptions, SYNC_PROCESSING_KEYS, type SyncAuthority, type SyncProcessingOptions } from './sync-authority.ts';
-import type { SyncIntent } from './sync-prepare.ts';
+import { prepareManagedSyncMutation, type SyncCursorOptions, type SyncIntent } from './sync-prepare.ts';
+import { inspectUnchanged, screeningRequest, type NoopKernelWaiver } from './noop-kernel.ts';
+import type { GBrainConfig } from '../config.ts';
+import { join, resolve } from 'node:path';
 import { currentCompanyBrainSync, getCompanyBrainProfile, readCompanyBrainPlan } from '../company-brain/profile.ts';
 import { readCommittedBlob } from '../company-brain/revision.ts';
 import { refreshProjectionStatistics } from '../search/projection-statistics.ts';
 import { recordManagedSyncFailure, clearManagedSyncFailureAfterSuccess, formatManagedSyncFailure, type ManagedSyncFailure } from './sync-failures.ts';
 import { writeFailureDiagnostic } from './verb-errors.ts';
 import { extractManagedStaleLinks } from './links-maintenance.ts';
+import { CHECKPOINT_VALIDATION_TIMEOUT, checkpointTimeoutHint } from './checkpoint-validation.ts';
 import { isTerminalWriteState, publicWriteReceipt, type WriteReceipt } from './types.ts';
 import type { WriteRequest } from './model.ts';
 import { clearLegacyCheckpointFailuresAfterSuccessfulRetry } from '../sync-failure-ledger.ts';
@@ -34,12 +38,16 @@ export interface ManagedSyncWriteDiagnostic {
   write_request: WriteReceipt;
   line_endings?: 'crlf_lf_only';
   ledger_recorded?: boolean;
+  detail?: string;
+  docs?: string;
 }
 
-interface Pending { requestId: string; slug: string; pageId: number | null; intent: SyncIntent; }
+interface Pending { requestId: string; slug: string; pageId: number | null; intent: SyncIntent; rebound?: true; }
 interface Cursor extends SyncDiscovery { runId: string; index: number; authority: SyncAuthority; pending?: Pending; done?: boolean; companyReceiptId?: string;
-  processingOptions?: SyncProcessingOptions;
-  counts: { added: number; modified: number; deleted: number; chunks: number; renamed?: number }; }
+  processingOptions?: SyncProcessingOptions; syncOptions?: SyncCursorOptions; overtaken?: true;
+  counts: { added: number; modified: number; deleted: number; chunks: number; renamed?: number;
+    /** #5751: unchanged working-tree files skipped only because a no-op publication could never resolve their admit reason. */
+    skippedContextualMode?: number; skippedCanonicalBytes?: number }; }
 const OP = 'managed-sync';
 type CursorHeader = Omit<Cursor, 'entries' | 'companyPlan'> & { total: number };
 const header = ({ entries, companyPlan: _plan, ...value }: Cursor): CursorHeader => ({ ...value, total: entries.length });
@@ -110,7 +118,9 @@ function result(cursor: Cursor | CursorHeader, status: SyncResult['status'], rea
     toCommit: cursor.authority.writer.remote ? '' : cursor.target, added: cursor.counts.added, modified: cursor.counts.modified,
     deleted: cursor.counts.deleted, renamed: cursor.counts.renamed ?? 0, chunksCreated: cursor.counts.chunks, embedded: 0, pagesAffected: [],
     ...(cursor.slugCollisions?.length ? { slugCollisions: cursor.slugCollisions } : {}),
-    filesImported: cursor.index, bankedFiles: cursor.index, ...(cursor.uncommitted ? { uncommitted: cursor.uncommitted } : {}), ...(reason ? { reason } : {}) };
+    filesImported: cursor.index, bankedFiles: cursor.index, ...(cursor.uncommitted ? { uncommitted: cursor.uncommitted } : {}), ...(reason ? { reason } : {}),
+    ...(cursor.counts.skippedContextualMode || cursor.counts.skippedCanonicalBytes ? { legacySkips: {
+      contextualMode: cursor.counts.skippedContextualMode ?? 0, canonicalBytes: cursor.counts.skippedCanonicalBytes ?? 0 } } : {}) };
 }
 function writeDiagnostic(cursor: Cursor, pending: Pending, row: WriteRequest): ManagedSyncWriteDiagnostic {
   const terminal = isTerminalWriteState(row.state);
@@ -137,16 +147,18 @@ function writeDiagnostic(cursor: Cursor, pending: Pending, row: WriteRequest): M
   }
   return diagnostic;
 }
-async function freezeEntry(engine: BrainEngine, cursor: Cursor, key: string, assertActive: () => void): Promise<Pending> {
+async function freezeEntry(engine: BrainEngine, cursor: Cursor, key: string, assertActive: () => void,
+  run: { syncOptions: SyncCursorOptions; repoPath?: string }): Promise<Pending> {
   assertActive();
   const entry = cursor.entries[cursor.index];
   let slug = '__managed_sync_checkpoint__', pageId: number | null = null, revision: string | null = null;
   let content: string | null = null, rawHash: string | null = null;
-  let lineEndingOnly = false;
+  let lineEndingOnly = false, occupantRebound = false;
   if (entry) {
     assertSyncEntryOrigin(cursor, entry);
     const originScope = syncOriginScope(cursor);
-    await assertSyncPageOrigin(engine, cursor.sourceId, entry.sourcePath, entry.pageId ?? null, entry.action === 'delete', originScope);
+    // #5522: another cursor of this source may have imported this new file since enumeration.
+    const occupant = await alreadyImportedAtOrigin(engine, cursor, entry, originScope);
     assertActive();
     const bytes = readSyncFile(cursor.root, entry.path);
     rawHash = bytes === null ? null : sha256(bytes);
@@ -159,9 +171,13 @@ async function freezeEntry(engine: BrainEngine, cursor: Cursor, key: string, ass
     } else content = entry.action === 'import' ? readSyncContent(cursor, entry) : null;
     lineEndingOnly = bytes !== null && content !== null && bytes.equals(Buffer.from(bytes.toString('utf8'))) &&
       bytes.toString('utf8').replace(/\r\n/g, '\n') === content.replace(/\r\n/g, '\n');
-    slug = entry.slug!; pageId = entry.pageId ?? null; revision = entry.revision ?? null;
+    slug = entry.slug!; pageId = occupant?.page.id ?? entry.pageId ?? null; revision = occupant ? occupant.revision : entry.revision ?? null;
     const snapshot = await engine.readPageSnapshot(slug, { sourceId: cursor.sourceId, includeDeleted: true });
     assertActive();
+    if (occupant && !await sameContentAtOrigin(engine, cursor, entry, key, snapshot, content!, rawHash, lineEndingOnly)) {
+      throw new OperationError('page_identity_changed', 'The imported origin no longer identifies exactly the accepted page.');
+    }
+    occupantRebound = occupant !== null;
     const moved = entry.renameFrom;
     const recorded = moved?.slug === slug ? moved.sourcePath : entry.sourcePath;
     if ((snapshot?.page.id ?? null) !== pageId || (snapshot?.revision ?? null) !== revision ||
@@ -179,14 +195,56 @@ async function freezeEntry(engine: BrainEngine, cursor: Cursor, key: string, ass
   }
   await validateSyncAuthority(engine, cursor.authority, slug);
   assertActive();
-  return { requestId: randomUUID(), slug, pageId, intent: { kind: !entry ? 'managed_sync_checkpoint' : entry.action === 'import' ? 'managed_sync_import' : 'managed_sync_delete',
+  return { requestId: randomUUID(), slug, pageId, ...(occupantRebound ? { rebound: true as const } : {}), intent: { kind: !entry ? 'managed_sync_checkpoint' : entry.action === 'import' ? 'managed_sync_import' : 'managed_sync_delete',
     expected_revision: revision, sourcePath: entry?.sourcePath ?? null, path: entry?.path ?? null, rawHash, content, lineEndingOnly,
     ...(entry?.renameFrom ? { renameFrom: entry.renameFrom } : {}),
     processingOptions: cursor.processingOptions,
+    // A cursor created before its options were recorded has the same key, so this run's options are its options.
+    ...(!entry ? { syncOptions: cursor.syncOptions ?? run.syncOptions, ...(run.repoPath ? { repoPath: run.repoPath } : {}) } : {}),
+    ...(!entry && cursor.overtaken ? { overtaken: true } : {}),
     ownerEpoch: String(cursor.binding.owner_epoch), syncAuthority: cursor.authority, cursorKey: key, runId: cursor.runId,
     slugMode: cursor.slugMode, index: cursor.index, total: cursor.entries.length, from: cursor.from, target: cursor.target, working: entry?.working ?? false,
     ...(cursor.companyPlan ? { companyApproval: { schema: cursor.companyPlan.schema!, planDigest: cursor.companyPlan.plan_digest, extractorVersion: cursor.companyPlan.extractor_version,
       policyFingerprint: currentCompanyBrainSync(cursor.sourceId)!.policyFingerprint } } : {}) } };
+}
+
+/**
+ * #5522: an import entry enumerated before its page existed (`pageId: null`)
+ * whose origin now names exactly one live page at the entry's slug, in the
+ * cursor's source incarnation, was imported meanwhile by another cursor of the
+ * same source. That page is returned so the entry can be re-frozen against it;
+ * anything else keeps the origin refusal. The manifest is never rewritten.
+ */
+async function alreadyImportedAtOrigin(engine: BrainEngine, cursor: Cursor, entry: Cursor['entries'][number], originScope: ReturnType<typeof syncOriginScope>) {
+  try {
+    await assertSyncPageOrigin(engine, cursor.sourceId, entry.sourcePath, entry.pageId ?? null, entry.action === 'delete', originScope);
+    return null;
+  } catch (error) {
+    if (!(error instanceof OperationError) || error.code !== 'page_identity_changed' || entry.action !== 'import' || (entry.pageId ?? null) !== null
+      || entry.renameFrom || cursor.companyPlan || !cursor.processingOptions) throw error;
+    const [source] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text FROM sources WHERE id=$1', [cursor.sourceId]);
+    const occupant = await engine.readPageSnapshot(entry.slug!, { sourceId: cursor.sourceId, includeDeleted: true });
+    if (source?.incarnation !== cursor.incarnation || !occupant || occupant.page.deleted_at != null || occupant.page.source_path == null
+      || !sameSyncOrigin(occupant.page.source_path, entry.sourcePath, originScope, occupant.page.slug)) throw error;
+    await assertSyncPageOrigin(engine, cursor.sourceId, entry.sourcePath, occupant.page.id, true, originScope).catch(() => { throw error; });
+    return occupant;
+  }
+}
+
+/** #5522: the page now at the origin already holds exactly the content this entry would import (the preparer's own no-op verdict). */
+async function sameContentAtOrigin(engine: BrainEngine, cursor: Cursor, entry: Cursor['entries'][number], key: string,
+  snapshot: Awaited<ReturnType<BrainEngine['readPageSnapshot']>>, content: string, rawHash: string | null, lineEndingOnly: boolean): Promise<boolean> {
+  if (!snapshot || snapshot.page.deleted_at != null) return false;
+  const intent: SyncIntent = { kind: 'managed_sync_import', expected_revision: snapshot.revision, sourcePath: entry.sourcePath, path: entry.path, rawHash, content, lineEndingOnly,
+    processingOptions: cursor.processingOptions, ownerEpoch: String(cursor.binding.owner_epoch), syncAuthority: cursor.authority,
+    cursorKey: key, runId: cursor.runId, slugMode: cursor.slugMode, index: cursor.index, total: cursor.entries.length, from: cursor.from, target: cursor.target, working: entry.working ?? false };
+  try {
+    const prepared = await prepareManagedSyncMutation(engine, screeningRequest({ source_id: cursor.sourceId, source_incarnation: cursor.incarnation, slug: snapshot.page.slug,
+      page_id: snapshot.page.id, worktree_id: cursor.binding.worktree_id, authority: cursor.authority.writer, intent }), { engine: engine.kind });
+    return (prepared.contentUnchanged === true || prepared.noop === true) && !prepared.file && prepared.observedRevision === snapshot.revision;
+  } catch {
+    return false;
+  }
 }
 
 /** One immutable page is admitted at a time; foreground writes can never sit behind a whole scan. */
@@ -201,9 +259,11 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
   const authority = await managedSyncAuthority(engine, context.sourceId, context.incarnation, opts.repoPath ?? context.root);
   const company = currentCompanyBrainSync(context.sourceId);
   const processingOptions = syncProcessingOptions(opts);
+  const syncOptions: SyncCursorOptions = { full: opts.full ?? false, workingTree: opts.workingTree ?? false, srcSubpath: opts.srcSubpath ?? null,
+    exclude: opts.exclude ?? [], includeHidden: opts.includeHidden ?? [], strategy: opts.strategy ?? null };
+  const frozenRun = { syncOptions, ...(opts.repoPath ? { repoPath: resolve(opts.repoPath) } : {}) };
   const key = digest({ source: context.incarnation, principal: authority.writer.principal, authority, ...(company ? { company: { receiptId: company.receiptId, planDigest: company.plan.plan_digest } } : {}),
-    options: { full: opts.full ?? false, workingTree: opts.workingTree ?? false, srcSubpath: opts.srcSubpath ?? null,
-      exclude: opts.exclude ?? [], includeHidden: opts.includeHidden ?? [], strategy: opts.strategy ?? null } });
+    options: syncOptions });
   let cursor: Cursor | null = null;
   let missingManifestCursor: CursorHeader | null = null;
   let phase: ManagedSyncFailure['phase'] = 'resume';
@@ -240,7 +300,7 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
       discoveryTarget = syncGit(context.gitRoot, ['rev-parse', 'HEAD']).trim();
       const discovery = await discoverManagedSync(engine, opts, context);
       assertActive();
-      cursor = await replaceCursor(engine, key, error.cursor, { ...discovery, authority, processingOptions, runId: discoveryRun, index: 0, counts: { added: 0, modified: 0, deleted: 0, chunks: 0 } }, assertActive);
+      cursor = await replaceCursor(engine, key, error.cursor, { ...discovery, authority, processingOptions, syncOptions, runId: discoveryRun, index: 0, counts: { added: 0, modified: 0, deleted: 0, chunks: 0 } }, assertActive);
     }
     assertActive();
     if (company && opts.retryFailed && cursor && !cursor.done && !opts.dryRun) {
@@ -253,7 +313,7 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
         }
         phase = 'freeze';
         const retry = { ...cursor, processingOptions };
-        cursor = await saveCursor(engine, key, cursor, { ...retry, pending: await freezeEntry(engine, retry, key, assertActive) }, true, assertActive);
+        cursor = await saveCursor(engine, key, cursor, { ...retry, pending: await freezeEntry(engine, retry, key, assertActive, frozenRun) }, true, assertActive);
       }
     }
     if (cursor && opts.retryFailed && !opts.dryRun && !company && !cursor.done) {
@@ -269,7 +329,7 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
           discoveryTarget = syncGit(context.gitRoot, ['rev-parse', 'HEAD']).trim();
           const discovery = await discoverManagedSync(engine, opts, context);
           assertActive();
-          cursor = await replaceCursor(engine, key, header(cursor), { ...discovery, authority, processingOptions, runId: discoveryRun, index: 0, counts: { added: 0, modified: 0, deleted: 0, chunks: 0 } }, assertActive);
+          cursor = await replaceCursor(engine, key, header(cursor), { ...discovery, authority, processingOptions, syncOptions, runId: discoveryRun, index: 0, counts: { added: 0, modified: 0, deleted: 0, chunks: 0 } }, assertActive);
         }
       }
     }
@@ -298,7 +358,7 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
       discoveryTarget = company?.plan.revision?.commit ?? syncGit(context.gitRoot, ['rev-parse', 'HEAD']).trim();
       const discovery = await discoverManagedSync(engine, opts, context);
       assertActive();
-      const fresh: Cursor = { ...discovery, authority, processingOptions, runId: discoveryRun, index: 0, counts: { added: 0, modified: 0, deleted: 0, chunks: 0 }, ...(company ? { companyReceiptId: company.receiptId } : {}) };
+      const fresh: Cursor = { ...discovery, authority, processingOptions, syncOptions, runId: discoveryRun, index: 0, counts: { added: 0, modified: 0, deleted: 0, chunks: 0 }, ...(company ? { companyReceiptId: company.receiptId } : {}) };
       if (opts.dryRun) return result(fresh, 'dry_run');
       if (!fresh.entries.length && fresh.from === fresh.target) {
         await clearManagedSyncFailureAfterSuccess(engine, key);
@@ -360,13 +420,27 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
         }
         foregroundWaitStart = 0;
         phase = 'freeze';
-        cursor = await saveCursor(engine, key, cursor, { ...cursor, pending: await freezeEntry(engine, cursor, key, assertActive) }, false, assertActive);
+        const frozen = await freezeEntry(engine, cursor, key, assertActive, frozenRun);
+        cursor = await saveCursor(engine, key, cursor, { ...cursor, ...(frozen.rebound ? { overtaken: true as const } : {}), pending: frozen }, false, assertActive);
       }
       if (!cursor.pending) continue; // another owner-loop advanced the cursor
       const pending = cursor.pending;
       phase = 'admission';
       const prior = await getWriteRequest(engine, cursor.authority.writer.principal, pending.requestId);
       assertActive();
+      // #5470: a frozen import whose publication would change nothing advances the cursor without an admission.
+      const waived = prior ? null : await unchangedSyncImport(engine, cursor, pending, config);
+      if (waived) {
+        const skipped: Cursor = { ...cursor, index: cursor.index + 1, counts: { ...cursor.counts } }; delete skipped.pending;
+        if (waived.includes('contextual_mode')) skipped.counts.skippedContextualMode = (skipped.counts.skippedContextualMode ?? 0) + 1;
+        if (waived.includes('canonical_file_differs')) skipped.counts.skippedCanonicalBytes = (skipped.counts.skippedCanonicalBytes ?? 0) + 1;
+        cursor = await saveCursor(engine, key, cursor, skipped);
+        opts.onProgress?.({ phase: 'managed_sync.page_committed', bankedFiles: cursor.index });
+        assertActive();
+        // A skipped entry still counts toward the caller's slice, so a sliced run yields at the same positions.
+        if (slice && (cursor.index - sliceFirstIndex >= slice.maxPages || performance.now() - sliceStarted >= slice.maxMs)) return result(cursor, 'partial', 'writer_yield');
+        continue;
+      }
       const admitting = cursor;
       const row = prior ?? await retryWriteAdmission(pending.requestId, remaining => engine.transaction(async tx => {
         assertActive();
@@ -381,7 +455,9 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
       }));
       await validateSyncAuthority(engine, cursor.authority, pending.slug);
       assertSyncDispatchActive();
-      const done = await waitForWrite(engine, row, config, 5000);
+      // #5762: a checkpoint's validation runs under the coordinator's 5 s statement timeout, so its wait outlasts that
+      // budget; a timed-out checkpoint then reports its terminal refusal and hint in this run instead of the next.
+      const done = await waitForWrite(engine, row, config, pending.intent.kind === 'managed_sync_checkpoint' ? 8000 : 5000);
       assertSyncDispatchActive();
       if (!isTerminalWriteState(done.state)) {
         return { ...result(cursor, 'partial', signal?.aborted ? 'timeout' : 'writer_pending'),
@@ -393,9 +469,12 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
         request_id: pending.requestId, run_id: cursor.runId, target: cursor.target, cursor_key: key,
         phase: pending.intent.kind === 'managed_sync_checkpoint' ? 'checkpoint' : 'receipt', state: done.state, observation_id: pending.requestId,
         first_seen: new Date(done.completed_at ?? done.updated_at).toISOString() });
+        // #5762: the hint is built after the failed transaction, from a fresh read of the request indexes.
+        const hint = done.error_code === CHECKPOINT_VALIDATION_TIMEOUT && !authority.writer.remote ? await checkpointTimeoutHint(engine,
+          { requestId: pending.requestId, sourceId: cursor.sourceId, processingOptions: pending.intent.processingOptions, syncOptions: pending.intent.syncOptions ?? syncOptions, repoPath: pending.intent.repoPath ?? frozenRun.repoPath }) : null;
         return { ...result(cursor, 'blocked_by_failures'), failedFiles: 1,
           failureCodes: [{ code: failure.code, count: 1 }], ...(authority.writer.remote ? {} : { failures: [failure],
-            managedWrite: { ...writeDiagnostic(cursor, pending, done), ledger_recorded: ledgerRecorded } }) };
+            managedWrite: { ...writeDiagnostic(cursor, pending, done), ...hint, ledger_recorded: ledgerRecorded } }) };
       }
       if (pending.intent.kind === 'managed_sync_checkpoint') {
         cursor = (await readCursor(engine, key))!;
@@ -449,5 +528,35 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
       }
     }
     throw error;
+  }
+}
+
+/**
+ * #5470 no-op screen for working-tree and company-profile sync: runs the sync
+ * preparer on the frozen, unadmitted entry. A rename or a canonical overlay is
+ * always admitted. Returns null to admit, or the kernel waivers the skip used.
+ * #5751: a managed working-tree entry waives the two admit reasons its no-op
+ * publication can never resolve (a pending contextual-mode stamp, and file
+ * bytes that differ from the prepared content yet parse to the same page), so
+ * an unchanged legacy file stops taking a request ID on every run.
+ */
+async function unchangedSyncImport(engine: BrainEngine, cursor: Cursor, pending: Pending, config: GBrainConfig): Promise<NoopKernelWaiver[] | null> {
+  const intent = pending.intent;
+  if (intent.kind !== 'managed_sync_import' || intent.renameFrom || pending.pageId === null || typeof intent.path !== 'string' || typeof intent.content !== 'string') return null;
+  try {
+    const snapshot = await engine.readPageSnapshot(pending.slug, { sourceId: cursor.sourceId, includeDeleted: true });
+    const row = screeningRequest({ source_id: cursor.sourceId, source_incarnation: cursor.incarnation, slug: pending.slug, page_id: pending.pageId,
+      worktree_id: cursor.binding.worktree_id, authority: cursor.authority.writer, intent, request_id: pending.requestId });
+    const prepared = await prepareManagedSyncMutation(engine, row, config);
+    if (prepared.file || prepared.target === 'skill_bundle') return null;
+    const file = { root: cursor.root, path: join(cursor.root, intent.path), content: intent.content };
+    const inspected = await inspectUnchanged(engine, { prepared: { ...prepared, target: 'page', file }, snapshot, sourcePath: intent.sourcePath, databaseOnly: false,
+      embeddingRequested: !prepared.deferEmbedding && !config.embedding_disabled && !!config.embedding_model?.trim(),
+      waive: intent.working === true ? ['contextual_mode', 'canonical_file_differs'] : undefined });
+    if (inspected.admitReason) return null;
+    await prepared.validate?.(engine);
+    return inspected.waived ?? [];
+  } catch {
+    return null;
   }
 }

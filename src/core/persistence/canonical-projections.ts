@@ -264,9 +264,14 @@ export async function prepareCanonicalProjections(engine: BrainEngine, page: Par
     if (!snapshot) return;
     // Fact IDs in permanent receipts remain meaningful when a canonical row is
     // removed/replaced. Expire and detach its row position instead of deleting it.
+    // Conversation-extractor rows share the page coordinate without a fence
+    // (#1928, as in the extract_facts reconcile); their replay owns them. A
+    // fence row that takes one of their row numbers wins that position.
     const incoming=JSON.stringify(factRows.map(f=>({row_num:f.row_num,fact:f.fact,visibility:f.visibility})));
     await tx.executeRaw(`UPDATE facts f SET expired_at=COALESCE(expired_at,now()),row_num=NULL
       WHERE source_id=$1 AND source_markdown_slug=$2 AND row_num IS NOT NULL
+      AND (COALESCE(f.source,'') NOT LIKE 'cli:extract-conversation-facts%'
+        OR EXISTS (SELECT 1 FROM jsonb_to_recordset($3::text::jsonb) AS c(row_num integer) WHERE c.row_num=f.row_num))
       AND NOT EXISTS (SELECT 1 FROM jsonb_to_recordset($3::text::jsonb) AS n(row_num integer,fact text,visibility text)
         WHERE n.row_num=f.row_num AND n.fact=f.fact AND n.visibility=f.visibility)`,[sourceId,slug,incoming]);
     if (factRows.length) {
@@ -282,8 +287,7 @@ export async function prepareCanonicalProjections(engine: BrainEngine, page: Par
     const pageId=snapshot.page.id;
     if (await collides(tx,pageId)) throw takeCollision();
     await tx.executeRaw('DELETE FROM takes WHERE page_id=$1 AND row_num=ANY($2::integer[])',[pageId,takeRowsGone]);
-    if (takes.length) await tx.addTakesBatch(takes.map(t=>takesPreparation.toBatchInput(pageId,t,
-      t.active?null:Number(t.source?.match(/superseded by #(\d+)/)?.[1])||null)));
+    if (takes.length) await tx.addTakesBatch(takes.map(t=>takesPreparation.toCanonicalBatchInput(pageId,t)));
     // Full canonical versions include resolution fields; a revert restores those
     // fields from Markdown too, without the ordinary immutable-resolution API.
     for (const take of takes) await tx.executeRaw(`UPDATE takes SET resolved_at=$3::timestamptz,

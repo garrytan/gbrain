@@ -13,6 +13,7 @@ import {
   getEmbeddingDimensions as gatewayGetDims,
 } from './ai/gateway.ts';
 import { lookupEmbeddingPrice } from './embedding-pricing.ts';
+import { isEmbeddingZeroNormError, mergeZeroNormErrors, type EmbeddingZeroNormError } from './ai/embedding-guard.ts';
 
 // v0.27.1: re-export multimodal embedding so callers can pull both text and
 // image embedding APIs from `src/core/embedding`. import-image-file consumes
@@ -41,7 +42,7 @@ export async function embed(text: string): Promise<Float32Array> {
 
 export async function embedQuery(
   text: string,
-  opts?: { embeddingModel?: string; dimensions?: number; abortSignal?: AbortSignal },
+  opts?: { embeddingModel?: string; dimensions?: number; abortSignal?: AbortSignal; queryPrefix?: string },
 ): Promise<Float32Array> {
   return gatewayEmbedQuery(text, opts);
 }
@@ -91,14 +92,22 @@ export async function embedBatch(
   if (texts.length <= BATCH_SIZE && !options.onBatchComplete) {
     return gatewayEmbed(texts, gwOpts);
   }
-  const results: Float32Array[] = [];
+  // #4616: a degenerate vector fails only its item; later slices still run and
+  // the merged refusal carries every usable vector aligned with `texts`.
+  const slices: { offset: number; vectors: Float32Array[] | null; error?: EmbeddingZeroNormError }[] = [];
   for (let i = 0; i < texts.length; i += BATCH_SIZE) {
     const slice = texts.slice(i, i + BATCH_SIZE);
-    const out = await gatewayEmbed(slice, gwOpts);
-    results.push(...out);
-    options.onBatchComplete?.(results.length, texts.length);
+    try {
+      slices.push({ offset: i, vectors: await gatewayEmbed(slice, gwOpts) });
+    } catch (error) {
+      if (!isEmbeddingZeroNormError(error)) throw error;
+      slices.push({ offset: i, vectors: null, error });
+    }
+    options.onBatchComplete?.(Math.min(i + BATCH_SIZE, texts.length), texts.length);
   }
-  return results;
+  const refused = mergeZeroNormErrors(texts.length, slices, slices.find(s => s.error)?.error?.model ?? '');
+  if (refused) throw refused;
+  return slices.flatMap(s => s.vectors ?? []);
 }
 
 /** Currently-configured embedding model (short form without provider prefix). */

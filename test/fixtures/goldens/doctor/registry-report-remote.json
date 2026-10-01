@@ -1,0 +1,250 @@
+{
+  "golden": {
+    "checks": [
+      {
+        "category": "ops",
+        "name": "connection"
+      },
+      {
+        "category": "brain",
+        "name": "pglite_scratch_probe"
+      },
+      {
+        "category": "meta",
+        "name": "schema_version"
+      },
+      {
+        "category": "meta",
+        "name": "timeline_dedup_index"
+      },
+      {
+        "category": "meta",
+        "name": "pages_upsert_arbiter"
+      },
+      {
+        "category": "meta",
+        "name": "links_link_source_check"
+      },
+      {
+        "category": "brain",
+        "name": "chronicle_projection_health"
+      },
+      {
+        "category": "brain",
+        "name": "brain_score"
+      },
+      {
+        "category": "meta",
+        "name": "minions_migration"
+      },
+      {
+        "category": "brain",
+        "name": "sync_failures"
+      },
+      {
+        "category": "meta",
+        "name": "multi_source_drift"
+      },
+      {
+        "category": "ops",
+        "name": "queue_health"
+      },
+      {
+        "category": "ops",
+        "name": "wedged_queue"
+      },
+      {
+        "category": "ops",
+        "name": "orphaned_private_queue"
+      },
+      {
+        "category": "ops",
+        "name": "autopilot_fanout_concurrency"
+      },
+      {
+        "category": "ops",
+        "name": "subagent_health"
+      },
+      {
+        "category": "ops",
+        "name": "batch_retry_health"
+      },
+      {
+        "category": "brain",
+        "name": "embedding_env_override"
+      },
+      {
+        "category": "brain",
+        "name": "embedding_migration_state"
+      },
+      {
+        "category": "ops",
+        "name": "subagent_capability"
+      },
+      {
+        "category": "skill",
+        "name": "volunteer_channels"
+      },
+      {
+        "category": "brain",
+        "name": "sync_freshness"
+      },
+      {
+        "category": "ops",
+        "name": "canonical_content_writes"
+      },
+      {
+        "category": "ops",
+        "name": "sync_consolidation"
+      },
+      {
+        "category": "ops",
+        "name": "pool_budget"
+      },
+      {
+        "category": "brain",
+        "name": "links_extraction_lag"
+      },
+      {
+        "category": "brain",
+        "name": "extract_atoms_backlog"
+      },
+      {
+        "category": "meta",
+        "name": "schema_pack_active"
+      },
+      {
+        "category": "meta",
+        "name": "schema_pack_consistency"
+      },
+      {
+        "category": "meta",
+        "name": "schema_pack_source_drift"
+      },
+      {
+        "category": "ops",
+        "name": "chat_fallback_chain_inert"
+      },
+      {
+        "category": "ops",
+        "name": "search_mode"
+      },
+      {
+        "category": "brain",
+        "name": "eval_drift"
+      },
+      {
+        "category": "ops",
+        "name": "reranker_health"
+      },
+      {
+        "category": "brain",
+        "name": "graph_signals_coverage"
+      },
+      {
+        "category": "ops",
+        "name": "brainstorm_health"
+      },
+      {
+        "category": "brain",
+        "name": "abandoned_threads"
+      },
+      {
+        "category": "brain",
+        "name": "calibration_freshness"
+      },
+      {
+        "category": "brain",
+        "name": "grade_confidence_drift"
+      },
+      {
+        "category": "brain",
+        "name": "voice_gate_health"
+      },
+      {
+        "category": "brain",
+        "name": "contextual_retrieval_coverage"
+      },
+      {
+        "category": "brain",
+        "name": "text_projection_readiness"
+      },
+      {
+        "category": "brain",
+        "name": "hidden_by_search_policy"
+      },
+      {
+        "category": "brain",
+        "name": "link_resolution_opportunity"
+      },
+      {
+        "category": "ops",
+        "name": "federation_health"
+      },
+      {
+        "category": "ops",
+        "name": "self_upgrade_health"
+      },
+      {
+        "category": "brain",
+        "name": "timeline_history"
+      },
+      {
+        "category": "brain",
+        "name": "derived_visibility"
+      },
+      {
+        "category": "brain",
+        "name": "safe_index_pending"
+      },
+      {
+        "category": "brain",
+        "name": "connector_checkpoints"
+      },
+      {
+        "category": "ops",
+        "name": "persistence_request_indexes"
+      },
+      {
+        "category": "ops",
+        "name": "persistence_request_growth"
+      },
+      {
+        "category": "brain",
+        "name": "connector_held_items"
+      },
+      {
+        "category": "brain",
+        "name": "unbound_source"
+      },
+      {
+        "category": "ops",
+        "name": "persistence_capacity"
+      },
+      {
+        "category": "brain",
+        "name": "parked_effects"
+      },
+      {
+        "category": "ops",
+        "name": "dream_paid_loop"
+      },
+      {
+        "category": "ops",
+        "name": "writer_version"
+      },
+      {
+        "category": "brain",
+        "name": "self_capture"
+      },
+      {
+        "category": "ops",
+        "name": "stale_embedding_effects"
+      }
+    ],
+    "early_returns_after": [
+      "pglite_scratch_probe"
+    ]
+  },
+  "normalizer": "doctor-registry-v1"
+}

@@ -21,6 +21,7 @@ import { mkdtempSync, rmSync, readFileSync, existsSync, writeFileSync } from 'fs
 import { doctorSource } from './helpers/doctor-source.ts';
 import { join } from 'path';
 import { tmpdir } from 'os';
+import { surfaceFileSource, surfaceSource } from './helpers/source-surface.ts';
 
 // Point HOME at a tmpdir so we don't stomp the real ~/.gbrain/sync-failures.jsonl
 let tmpHome: string;
@@ -157,7 +158,7 @@ describe('Bug 9 — doctor surfaces sync failures', () => {
 
 describe('Bug 9 — sync.ts CLI flag wiring', () => {
   test('runSync parses --skip-failed and --retry-failed flags', async () => {
-    const source = await Bun.file(new URL('../src/commands/sync.ts', import.meta.url)).text();
+    const source = surfaceSource('sync');
     expect(source).toContain("args.includes('--skip-failed')");
     expect(source).toContain("args.includes('--retry-failed')");
     expect(source).toContain('skipFailed');
@@ -173,7 +174,7 @@ describe('Bug 9 — sync.ts CLI flag wiring', () => {
     // runSync so the flag means "ack whatever is currently flagged".
     // v0.42.42.0 (#2139, D13C): the pre-ack is now scoped PER SOURCE — `--all`
     // acks every source, single-source acks only its own.
-    const source = await Bun.file(new URL('../src/commands/sync.ts', import.meta.url)).text();
+    const source = surfaceFileSource('sync', 'src/commands/sync/run.ts');
     expect(source).toMatch(/if \(skipFailed\) \{[\s\S]*?syncAll \? acknowledgeFailures\(\) : acknowledgeFailures\(sourceId\)/);
   });
 
@@ -194,14 +195,14 @@ describe('Bug 9 — sync.ts CLI flag wiring', () => {
   });
 
   test('performSync gates the bookmark through the shared failure ledger', async () => {
-    const source = await Bun.file(new URL('../src/commands/sync.ts', import.meta.url)).text();
+    const source = surfaceSource('sync');
     // issue #1939: the gate is now the shared applySyncFailureGate orchestrator.
     expect(source).toContain('applySyncFailureGate');
     expect(source).toContain('blocked_by_failures');
   });
 
   test('performFullSync routes failures through the same shared gate', async () => {
-    const source = await Bun.file(new URL('../src/commands/sync.ts', import.meta.url)).text();
+    const source = surfaceSource('sync');
     expect(source).toContain('result.failures');
     expect(source).toContain('applySyncFailureGate');
   });
@@ -672,7 +673,7 @@ describe('#4543 blocked output names failing files', () => {
   });
 
   test('both blocked gates name the files and hint at frontmatter validate', async () => {
-    const source = await Bun.file(new URL('../src/commands/sync.ts', import.meta.url)).text();
+    const source = surfaceSource('sync');
     // Incremental gate names files from failedFiles; full gate from result.failures.
     expect(source).toContain('formatFailedFileList(failedFiles)');
     expect(source).toContain('formatFailedFileList(result.failures)');

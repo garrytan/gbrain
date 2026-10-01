@@ -1,0 +1,224 @@
+[user]
+I forgot the admin password for my home router. How do I reset it?
+
+[assistant]
+The usual solution is a factory reset, which clears the administrator password and restores the router’s default settings. Before doing that, check whether you can identify the exact model from the label on the underside or back. The reset procedure and default login details vary slightly.
+
+A factory reset normally erases:
+
+- Wi-Fi network name and password
+- Internet connection settings
+- Port forwarding rules
+- Parental-control and access settings
+- Custom DNS or firewall settings
+- Firmware preferences and other configuration changes
+
+If you only need to view or change the Wi-Fi password, avoid resetting until you have checked whether the router’s mobile app, desktop utility, or ISP account still provides access.
+
+[user]
+I can reach the router physically, but I’m not sure what model it is. There’s a label with several strings on it. Which ones matter?
+
+[assistant]
+Look for labels such as:
+
+- Model, Model No., or Product Name
+- Hardware version, often shown as “H/W” or “Ver.”
+- Firmware version, if listed
+- Serial number
+- Default access address, such as `192.168.0.1` or `192.168.1.1`
+- Default Wi-Fi name, sometimes called SSID
+- Wi-Fi key, wireless password, or PIN
+
+You do not need to paste the serial number or any Wi-Fi key here. The model and hardware version are usually enough to find the correct reset instructions. You can describe the label in a form like:
+
+```text
+Model: ABC-123
+Hardware version: 2.0
+Default address: 192.168.1.1
+```
+
+If the label only shows a regulatory model code, the exact wording and the manufacturer name may help identify the manual.
+
+[user]
+The label says model R7000P, hardware version 1.0, and the default address appears to be 192.168.1.1. I don’t want to expose the wireless key.
+
+[assistant]
+That is sufficient for the reset procedure; keep the wireless key private. For that model, use the physical reset button as follows:
+
+1. Leave the router powered on and wait about two minutes for it to finish starting.
+2. Find the recessed Reset button, usually near the Ethernet ports or power connector.
+3. Use a straightened paper clip or similar non-sharp tool.
+4. Press and hold the button for about 7 seconds, or until the status LEDs change or begin blinking.
+5. Release it and wait several minutes. Do not unplug it during this process.
+6. The router should return to its factory configuration.
+
+A reset can take several minutes, and the Wi-Fi connection may disappear temporarily. If the LEDs do not change, try holding the button for 10 seconds, then consult the model’s manual rather than repeatedly pressing it.
+
+[user]
+Before I do that, is there a way to confirm I’m connected to the router and find its address from my computer?
+
+[assistant]
+Yes. Connect your computer to the router, preferably with an Ethernet cable. Then check the default gateway; that is normally the router’s local management address.
+
+On Windows, open Command Prompt and run:
+
+```text
+ipconfig
+```
+
+Look under the active adapter for a line like:
+
+```text
+Default Gateway . . . . . . . . . : 192.168.1.1
+```
+
+On macOS, open Terminal and run:
+
+```text
+route -n get default | grep gateway
+```
+
+Typical output is:
+
+```text
+gateway: 192.168.1.1
+```
+
+On Linux, use:
+
+```text
+ip route | grep default
+```
+
+Example:
+
+```text
+default via 192.168.1.1 dev enp3s0 proto dhcp metric 100
+```
+
+If there is no gateway, check that the cable is connected or that the computer is joined to the router’s Wi-Fi. After the reset, the address may remain the same, but the network name and password will revert to the values on the label.
+
+[user]
+I’m on Windows, and `ipconfig` shows this:
+
+```text
+Wireless LAN adapter Wi-Fi:
+
+   IPv4 Address. . . . . . . . . . . : 192.168.1.23
+   Default Gateway . . . . . . . . . : 192.168.1.1
+```
+
+Can I try the login page before resetting?
+
+[assistant]
+Yes. Open a browser and enter the address directly:
+
+```text
+http://192.168.1.1
+```
+
+Do not search for that address; type it into the browser’s address bar. If the page does not load, also try:
+
+```text
+http://routerlogin.net
+```
+
+The login screen may ask for an administrator password, or it may display a setup wizard. If you previously enabled password recovery, use the recovery option and follow the prompts. Otherwise, there usually is no supported way to reveal the existing administrator password. Avoid repeated guessing if the interface temporarily blocks attempts.
+
+If you get in, change the administrator password from the administration or password settings page, and save a copy in a password manager. You can then avoid a factory reset and preserve the current configuration.
+
+[user]
+The page loads, but it asks for an admin password. I don’t remember setting one, and the recovery link asks security questions I don’t know.
+
+[assistant]
+In that case, a factory reset is the normal recovery method. It will not reveal the old password; it removes the saved configuration and starts the initial setup again.
+
+Before pressing Reset, record any information needed to reconnect the router to the Internet. Depending on the connection type, this might include:
+
+- ISP username and password for a PPPoE connection
+- A required VLAN or service setting
+- A static IP address, subnet mask, gateway, and DNS servers
+- Any special modem or bridge-mode arrangement
+- Your preferred Wi-Fi name and password
+
+If the router is connected behind another router or modem-router combination, note which device currently provides Wi-Fi and DHCP. Resetting the wrong device can interrupt the network. If you are unsure, identify the device whose label matches the model number before proceeding.
+
+[user]
+I only have a cable modem connected to this router, and the router supplies the Wi-Fi. I don’t know of any ISP username or special settings. What should I write down first?
+
+[assistant]
+Write down the current network details that you can observe, plus any settings you intentionally configured:
+
+```text
+Router model: R7000P
+Router address: 192.168.1.1
+Computer address: 192.168.1.23
+Internet type: unknown; likely automatic/DHCP
+Wi-Fi name: __________________
+Preferred new Wi-Fi name: __________________
+Preferred new Wi-Fi password: __________________
+```
+
+You can find the current Wi-Fi name by clicking the network icon in Windows. Do not paste the wireless password into chat. If the modem has a label, record its model separately, but do not reset the modem.
+
+For a typical cable connection using automatic IP assignment, the router should reconnect after setup. If it does not, power-cycle in this order: turn off the router and modem, wait about 60 seconds, turn on the modem, wait until its normal connection lights stabilize, then turn on the router.
+
+[user]
+I’ve noted the Wi-Fi name and I’m ready. Can you give me the exact reset and setup sequence, including what to do if the Internet doesn’t come back?
+
+[assistant]
+Use this sequence:
+
+1. Keep the router connected to the modem and powered on.
+2. If possible, connect a computer to a LAN port with Ethernet. This avoids losing Wi-Fi during the reset.
+3. Press the recessed Reset button with a paper clip and hold it for about 7–10 seconds, until the LEDs change or blink.
+4. Release the button and wait at least five minutes. Do not press Reset again or unplug the router while it is restarting.
+5. Join the default Wi-Fi network shown on the router label, or continue over Ethernet.
+6. Open `http://192.168.1.1` and complete the setup wizard.
+7. Create a new administrator password. Use a unique password of at least 12 characters and save it in a password manager.
+8. Set a new Wi-Fi name and password, then reconnect your devices.
+9. Leave the Internet connection type on Automatic/DHCP unless your ISP supplied different instructions.
+10. Check for a firmware update in the administration interface after Internet access is working.
+
+If Internet access does not return:
+
+- Confirm the Ethernet cable runs from the modem’s LAN port to the router’s Internet/WAN port.
+- Restart both devices in the order described earlier: modem first, router second.
+- Check the router’s Internet status page for an IP address.
+- If it shows no WAN address, make sure the modem has finished starting.
+- If the modem is bound to the previous router’s hardware address, look for a “release/renew” or MAC-clone option, or contact the ISP.
+- If the ISP requires PPPoE, VLAN, or a static configuration, enter those details from the ISP documentation.
+- Do not reset the modem unless its own instructions specifically require it.
+
+[user]
+After resetting, the setup page asks whether to use automatic IP, PPPoE, or a static address. I chose automatic, and it says the router has an Internet address. Is there a quick way to verify everything before reconnecting all my devices?
+
+[assistant]
+Yes. Verify in this order:
+
+1. On the router’s status page, confirm that the Internet/WAN connection says connected and displays an address that is not blank or `0.0.0.0`.
+2. From the setup computer, open two ordinary websites. If one fails, try another rather than relying on a single site.
+3. In Command Prompt, run:
+
+```text
+ipconfig
+ping 192.168.1.1
+nslookup example.com
+```
+
+Typical results should show:
+
+```text
+IPv4 Address . . . . . . . . . . : 192.168.1.x
+Default Gateway . . . . . . . . . : 192.168.1.1
+```
+
+The first ping should return replies from the router. `nslookup` should return one or more DNS addresses and an answer for the domain. You can also run:
+
+```text
+ping 1.1.1.1
+```
+
+If that succeeds but `nslookup` fails, the likely issue is DNS. If the router has a connected WAN address but websites fail, restart the router once and check its DNS and parental-control settings.
+
+After verification, reconnect devices to the new Wi-Fi name and password. Some devices may retain the old network profile, so select the new network manually. Keep the new administrator password separate from the Wi-Fi password, and avoid sharing either one in chat.

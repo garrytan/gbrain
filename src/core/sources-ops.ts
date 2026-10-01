@@ -57,6 +57,7 @@ import { gbrainPath } from './config.ts';
 import { isValidSourceId } from './source-id.ts';
 import { DEFAULT_CALENDAR_ID } from './google/types.ts';
 import { resolveSourceWithTier, type SourceTier } from './source-resolver.ts';
+import { deleteSourceRow } from './source-delete.ts';
 
 // ── Errors ──────────────────────────────────────────────────────────────────
 
@@ -1011,7 +1012,7 @@ export async function removeSource(
     }
   }
 
-  await engine.executeRaw(`DELETE FROM sources WHERE id = $1`, [opts.id]);
+  await deleteSourceRow(engine, opts.id);
 
   return {
     id: opts.id,

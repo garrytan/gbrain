@@ -7,7 +7,7 @@
 # binary's own code — before cli-preflight.ts, before the cwd-.env quarantine.
 # gbrain is a globally installed CLI that runs from arbitrary checkouts, so a
 # hostile repository carrying `bunfig.toml` + `preload = ["./x.ts"]` would get
-# code execution from a plain `gbrain --version` (verified on Bun 1.3.13). The
+# code execution from a plain `gbrain --version` (verified on Bun 1.3.13 and 1.4.2). The
 # flag makes a cwd bunfig.toml inert for the compiled binary. The dev runtime
 # (`bun src/cli.ts`) stays bun-native: a contributor's cwd is trusted.
 #

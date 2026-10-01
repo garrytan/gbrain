@@ -17,11 +17,11 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import { resolveAutopilotDispatchTimeoutMs } from '../src/commands/autopilot-timeout.ts';
 import { defaultTimeoutMsFor } from '../src/core/minions/handler-timeouts.ts';
+import { surfaceFileSource, surfaceSource } from './helpers/source-surface.ts';
 
-const AUTOPILOT_SRC = readFileSync(
-  join(import.meta.dir, '..', 'src', 'commands', 'autopilot.ts'),
-  'utf8',
-);
+// W4 autopilot: containment reads the autopilot surface; positional spans name the module that holds the dispatch tick.
+const AUTOPILOT_SRC = surfaceSource('autopilot');
+const DISPATCH_SRC = surfaceFileSource('autopilot', 'src/commands/autopilot-dispatch.ts');
 
 const AUTOPILOT_TIMEOUT_SRC = readFileSync(
   join(import.meta.dir, '..', 'src', 'commands', 'autopilot-timeout.ts'),
@@ -46,11 +46,11 @@ describe('autopilot.ts ↔ dispatchPerSource wiring', () => {
     // dispatchPerSource must appear in the same hot path as the
     // pre-fix `queue.add('autopilot-cycle', ...)` did — i.e. when
     // shouldFullCycle is true, not in the targeted-plan path.
-    const dispatchIdx = AUTOPILOT_SRC.indexOf('dispatchPerSource(engine, queue');
+    const dispatchIdx = DISPATCH_SRC.indexOf('dispatchPerSource(engine, queue');
     expect(dispatchIdx).toBeGreaterThan(-1);
     // Verify shouldFullCycle is structurally near the call (within
     // ~3000 chars of source, roughly the same if/else branch)
-    const fullCycleIdx = AUTOPILOT_SRC.indexOf('shouldFullCycle');
+    const fullCycleIdx = DISPATCH_SRC.indexOf('shouldFullCycle');
     expect(fullCycleIdx).toBeGreaterThan(-1);
     expect(Math.abs(dispatchIdx - fullCycleIdx)).toBeLessThan(3000);
   });
@@ -68,7 +68,7 @@ describe('autopilot.ts ↔ dispatchPerSource wiring', () => {
     expect(AUTOPILOT_SRC).toContain(
       'const fullCycleTimeoutMs = resolveAutopilotDispatchTimeoutMs(baseInterval, true);',
     );
-    expect(AUTOPILOT_SRC).toMatch(
+    expect(DISPATCH_SRC).toMatch(
       /dispatchPerSource\(engine, queue, \{[\s\S]{0,300}timeoutMs: fullCycleTimeoutMs/,
     );
   });
@@ -79,9 +79,9 @@ describe('autopilot.ts ↔ dispatchPerSource wiring', () => {
     // all-coalesced tick (maxPending single-flight suppression) retakes the
     // full-cycle branch every tick and starves the targeted-plan path for the
     // whole in-flight window.
-    const updateIdx = AUTOPILOT_SRC.indexOf('lastFullCycleAt = Date.now()');
+    const updateIdx = DISPATCH_SRC.indexOf('lastFullCycleAt = Date.now()');
     expect(updateIdx).toBeGreaterThan(-1);
-    const advanceGate = AUTOPILOT_SRC.slice(Math.max(0, updateIdx - 400), updateIdx + 80);
+    const advanceGate = DISPATCH_SRC.slice(Math.max(0, updateIdx - 400), updateIdx + 80);
     expect(advanceGate).toContain('result.coalesced.length > 0');
     // all_sources_handled subsumes all_sources_fresh (fresh + locally skipped
     // === every source); the redundant arm is gone (wave review).
@@ -101,28 +101,28 @@ describe('autopilot.ts ↔ dispatchPerSource wiring', () => {
   });
 
   test('fanout_summary reports coalesced separately from dispatched (honest surfaces)', () => {
-    expect(AUTOPILOT_SRC).toMatch(/event: 'fanout_summary',[\s\S]{0,200}coalesced: result\.coalesced/);
-    expect(AUTOPILOT_SRC).toMatch(/event: 'fanout_summary',[\s\S]{0,400}skipped_unavailable_path: result\.skipped_unavailable_path/);
+    expect(DISPATCH_SRC).toMatch(/event: 'fanout_summary',[\s\S]{0,200}coalesced: result\.coalesced/);
+    expect(DISPATCH_SRC).toMatch(/event: 'fanout_summary',[\s\S]{0,400}skipped_unavailable_path: result\.skipped_unavailable_path/);
   });
 
   test('targeted-plan dispatch honors the honest-dispatch contract (red-team finding)', () => {
     // The targeted remediation loop submits with maxWaiting:1 and expects
     // coalesces when a handler outlives one interval — its events must split
     // on job.coalesced like every other dispatch surface in this file.
-    expect(AUTOPILOT_SRC).toMatch(/event: 'dispatch_coalesced',[\s\S]{0,80}mode: 'targeted'/);
+    expect(DISPATCH_SRC).toMatch(/event: 'dispatch_coalesced',[\s\S]{0,80}mode: 'targeted'/);
   });
 
   test('freshness sync dispatch uses the parsed source config for pull policy', () => {
-    const freshnessIdx = AUTOPILOT_SRC.indexOf('idempotency_key: `autopilot-sync:');
+    const freshnessIdx = DISPATCH_SRC.indexOf('idempotency_key: `autopilot-sync:');
     expect(freshnessIdx).toBeGreaterThan(-1);
-    const freshnessBlock = AUTOPILOT_SRC.slice(Math.max(0, freshnessIdx - 700), freshnessIdx + 200);
+    const freshnessBlock = DISPATCH_SRC.slice(Math.max(0, freshnessIdx - 700), freshnessIdx + 200);
     expect(freshnessBlock).toContain('pull: await autopilotGitPullEnabled(engine) && sourceConfigHasRemoteUrl(src.config)');
   });
 
   test('freshness sync dispatch skips unavailable source paths before enqueueing', () => {
-    const freshnessIdx = AUTOPILOT_SRC.indexOf('idempotency_key: `autopilot-sync:');
+    const freshnessIdx = DISPATCH_SRC.indexOf('idempotency_key: `autopilot-sync:');
     expect(freshnessIdx).toBeGreaterThan(-1);
-    const freshnessBlock = AUTOPILOT_SRC.slice(Math.max(0, freshnessIdx - 1400), freshnessIdx + 100);
+    const freshnessBlock = DISPATCH_SRC.slice(Math.max(0, freshnessIdx - 1400), freshnessIdx + 100);
     expect(freshnessBlock).toContain('sourceLocalPathSkipWarning(src.id, src.local_path, undefined, src.config)');
   });
 
@@ -133,11 +133,11 @@ describe('autopilot.ts ↔ dispatchPerSource wiring', () => {
     // guard and the queue.add call this file already pins above, so it can
     // never fire too late to prevent the enqueue. isSyncDisabledConfig
     // itself has direct unit coverage in test/sync-policy.test.ts.
-    const loopIdx = AUTOPILOT_SRC.indexOf('for (const src of sources) {');
+    const loopIdx = DISPATCH_SRC.indexOf('for (const src of sources) {');
     expect(loopIdx).toBeGreaterThan(-1);
-    const queueAddIdx = AUTOPILOT_SRC.indexOf('idempotency_key: `autopilot-sync:');
+    const queueAddIdx = DISPATCH_SRC.indexOf('idempotency_key: `autopilot-sync:');
     expect(queueAddIdx).toBeGreaterThan(loopIdx);
-    const loopBody = AUTOPILOT_SRC.slice(loopIdx, queueAddIdx);
+    const loopBody = DISPATCH_SRC.slice(loopIdx, queueAddIdx);
     // Exact-literal match on the FULL guard clause (condition + continue),
     // not just the function-call substring — a mutation that keeps calling
     // isSyncDisabledConfig() but drops the `if (...) continue` (e.g.
@@ -156,6 +156,23 @@ describe('autopilot.ts ↔ dispatchPerSource wiring', () => {
     const localPathGuardIdx = loopBody.indexOf("if (!src.local_path) continue;");
     expect(localPathGuardIdx).toBeGreaterThan(-1);
     expect(skipIdx).toBeGreaterThan(localPathGuardIdx);
+  });
+
+  test('#5198: freshness sync dispatch skips a claimed source awaiting activation BEFORE queuing a job', () => {
+    // Same static-shape pin as #4399 above: the skip must sit inside the loop
+    // and before the queue.add call, and it must `continue` rather than only
+    // report. loadActivationPendingSourceIds is exercised against a real
+    // claim/activate sequence in test/persistence-onboarding.test.ts.
+    const loopIdx = DISPATCH_SRC.indexOf('for (const src of sources) {');
+    const queueAddIdx = DISPATCH_SRC.indexOf('idempotency_key: `autopilot-sync:');
+    expect(loopIdx).toBeGreaterThan(-1);
+    expect(queueAddIdx).toBeGreaterThan(loopIdx);
+    const loopBody = DISPATCH_SRC.slice(loopIdx, queueAddIdx);
+    expect(loopBody).toContain("if (skipActivationPendingSync(activationPending, src.id, 'freshness_sync_skipped', jsonMode,");
+    expect(loopBody).toMatch(/if \(skipActivationPendingSync\([^\n]*\)\) continue;/);
+    const setupIdx = DISPATCH_SRC.lastIndexOf('const activationPending = await loadActivationPendingSourceIds(engine);', loopIdx);
+    expect(setupIdx).toBeGreaterThan(-1);
+    expect(loopIdx - setupIdx).toBeLessThan(300);
   });
 
   test('#4046: targeted dispatch scopes stable recommendation keys to the interval', () => {
@@ -177,9 +194,9 @@ describe('autopilot.ts ↔ dispatchPerSource wiring', () => {
     // at exactly the #2781 symptom (600s budget at the default 300s
     // interval) even after the per-source path was fixed. Pin the correct
     // wiring by source-shape: the call must pass the *full-cycle* variable.
-    const dispatchGlobalIdx = AUTOPILOT_SRC.indexOf('dispatchGlobalMaintenance(engine, queue');
+    const dispatchGlobalIdx = DISPATCH_SRC.indexOf('dispatchGlobalMaintenance(engine, queue');
     expect(dispatchGlobalIdx).toBeGreaterThan(-1);
-    const dispatchGlobalCall = AUTOPILOT_SRC.slice(dispatchGlobalIdx, dispatchGlobalIdx + 200);
+    const dispatchGlobalCall = DISPATCH_SRC.slice(dispatchGlobalIdx, dispatchGlobalIdx + 200);
     expect(dispatchGlobalCall).toContain('timeoutMs: fullCycleTimeoutMs');
     // Guard against the exact regression: the shorthand `timeoutMs` (bare,
     // no colon) resolving to the non-full-cycle outer const.

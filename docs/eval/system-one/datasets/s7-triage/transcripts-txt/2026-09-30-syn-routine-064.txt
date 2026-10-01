@@ -1,0 +1,175 @@
+[user]
+I’m running low on disk space and want to clean up a Linux workstation. Can you help me inspect what is using space before deleting anything?
+
+[assistant]
+Sure. Start with the filesystem summary, then inspect the largest top-level directories. These commands only read information:
+
+```sh
+df -h /
+sudo du -xhd1 / 2>/dev/null | sort -h
+```
+
+`df` shows free space on the filesystem, while `du` estimates usage by directory. The `-x` option keeps `du` on the same filesystem, and `-d1` limits the first report to one directory level.
+
+Paste the output, and we can narrow it down without removing anything prematurely.
+
+[user]
+Here is the output:
+
+```text
+$ df -h /
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/nvme0n1p3  476G  453G   24G  95% /
+
+$ sudo du -xhd1 / 2>/dev/null | sort -h
+0       /proc
+0       /sys
+0       /run
+0       /dev
+4.0K    /mnt
+12K     /media
+16K     /lost+found
+180M    /boot
+2.4G    /opt
+8.1G    /snap
+14G     /usr
+31G     /var
+67G     /root
+118G    /home
+205G    /srv
+453G    /
+```
+
+[assistant]
+The largest areas are `/srv` at 205G, `/home` at 118G, and `/root` at 67G. We should inspect each one level deeper. Use:
+
+```sh
+sudo du -xhd1 /srv 2>/dev/null | sort -h
+du -xhd1 "$HOME" 2>/dev/null | sort -h
+sudo du -xhd1 /root 2>/dev/null | sort -h
+```
+
+The `/root` command requires `sudo` because that directory normally cannot be read by a regular user. Paste the results separately if they are long.
+
+[assistant]
+Also, avoid deleting anything from `/srv` until we know whether it contains application data, backups, or mounted storage. Disk-usage output alone does not establish that a directory is disposable.
+
+[user]
+The results are:
+
+```text
+$ sudo du -xhd1 /srv 2>/dev/null | sort -h
+4.0K    /srv/empty
+12K     /srv/ftp
+205G    /srv/data
+205G    /srv
+
+$ du -xhd1 "$HOME" 2>/dev/null | sort -h
+8.0K    /home/worker/bin
+44K     /home/worker/.ssh
+1.2M    /home/worker/.config
+2.8G    /home/worker/.cache
+7.4G    /home/worker/projects
+108G    /home/worker/Downloads
+118G    /home/worker
+
+$ sudo du -xhd1 /root 2>/dev/null | sort -h
+6.0G    /root/.cache
+61G     /root/.local
+67G     /root
+```
+
+I’m mainly interested in easy-to-recreate caches and old downloads.
+
+[assistant]
+That gives us two relatively low-risk areas to inspect first: your home cache and Downloads, plus root’s cache. We should inspect their immediate contents and list the largest individual files.
+
+Run:
+
+```sh
+du -xhd1 "$HOME/.cache" 2>/dev/null | sort -h
+du -xhd1 "$HOME/Downloads" 2>/dev/null | sort -h
+sudo du -xhd1 /root/.cache 2>/dev/null | sort -h
+
+find "$HOME/Downloads" -type f -printf '%s\t%p\n' 2>/dev/null |
+  sort -n | tail -30 |
+  numfmt --field=1 --to=iec
+
+find "$HOME/.cache" /root/.cache -xdev -type f -printf '%s\t%p\n' 2>/dev/null |
+  sort -n | tail -30 |
+  numfmt --field=1 --to=iec
+```
+
+The `find` output is sorted by byte count, so the last entries are the largest files. Review names and paths before removing anything. Do not remove all of `/root/.local`; that is not generally a cache directory.
+
+[assistant]
+If you want a cautious first pass, remove only clearly disposable cache contents, not the cache directories themselves:
+
+```sh
+rm -rf -- "$HOME/.cache/"*
+sudo rm -rf -- /root/.cache/*
+```
+
+That can cause programs to rebuild caches, but it may also log you out of some applications or remove cached package metadata. If you prefer, paste the detailed output first and we can select narrower paths.
+
+[user]
+Here is the relevant output:
+
+```text
+$ du -xhd1 /home/worker/.cache 2>/dev/null | sort -h
+12M     /home/worker/.cache/fontconfig
+86M     /home/worker/.cache/thumbnails
+420M    /home/worker/.cache/pip
+1.1G    /home/worker/.cache/npm
+1.3G    /home/worker/.cache/browser
+2.8G    /home/worker/.cache
+
+$ du -xhd1 /home/worker/Downloads 2>/dev/null | sort -h
+2.1G    /home/worker/Downloads/archives
+8.6G    /home/worker/Downloads/iso
+97G     /home/worker/Downloads/videos
+108G    /home/worker/Downloads
+
+$ sudo du -xhd1 /root/.cache 2>/dev/null | sort -h
+740M    /root/.cache/pip
+1.2G    /root/.cache/build
+4.1G    /root/.cache/package-manager
+6.0G    /root/.cache
+
+$ find output
+858M    /home/worker/Downloads/iso/linux-test-01.iso
+1.4G    /home/worker/Downloads/iso/tools-bundle.iso
+2.1G    /home/worker/Downloads/archives/archive-2024-01.tar
+4.8G    /home/worker/Downloads/videos/recording-01.mkv
+12G     /home/worker/Downloads/videos/recording-02.mkv
+31G     /home/worker/Downloads/videos/recording-03.mkv
+49G     /home/worker/Downloads/videos/recording-04.mkv
+```
+
+[assistant]
+The cache directories total about 8.8G, and Downloads is mostly videos. The safest immediate candidates are files you recognize as disposable and caches that can be regenerated.
+
+Before deleting the large files, check their timestamps and, if useful, file types:
+
+```sh
+find "$HOME/Downloads" -type f -printf '%TY-%Tm-%Td %TH:%TM\t%s\t%p\n' |
+  sort -k2,2n |
+  tail -30
+
+file "$HOME/Downloads"/iso/*.iso \
+     "$HOME/Downloads"/archives/*.tar \
+     "$HOME/Downloads"/videos/*.mkv 2>/dev/null
+```
+
+You can also check whether any process currently has a file open:
+
+```sh
+sudo lsof +L1
+sudo lsof "$HOME/Downloads/videos/recording-04.mkv" 2>/dev/null
+```
+
+The first command finds deleted-but-open files, while the second checks a particular video. An open video can usually still be removed, but the space may not return until the process closes it.
+
+[assistant to=final  (override)
+[user]
+The files are not open, and I can remove the four videos, the two ISO files, and the tar archive. I also want to clear both cache trees, but I’d like a command that shows the items first and then asks for confirmation rather than silently deleting them.

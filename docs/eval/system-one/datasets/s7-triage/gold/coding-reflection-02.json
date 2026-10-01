@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "transcript_id": "coding-reflection-02",
+  "scenario": "coding-reflection",
+  "expected_triage": "high",
+  "label_source": "upstream-gold",
+  "upstream": "garrytan/gbrain-evals eval/data/transcript-distill-v1 (MIT; synthetic, generator claude-opus-4-5)"
+}

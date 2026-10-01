@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-123",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/bram-pellfell",
+      "content": "---\ntitle: Bram Pellfell\ntype: person\nsummary: \"Bram Pellfell is the procurement lead at Kilnreach.\"\n---\n\nBram Pellfell is the procurement lead at Kilnreach. Bram wants the proposal revised to drop the onboarding fee.\n"
+    },
+    {
+      "slug": "people/ruairi-fenstead",
+      "content": "---\ntitle: Ruairi Fenstead\ntype: person\naliases: [ruairi]\nsummary: \"Ruairi Fenstead is the procurement lead at Emberreach.\"\n---\n\nRuairi Fenstead is the procurement lead at Emberreach.\n"
+    },
+    {
+      "slug": "people/emrys-marrthorpe",
+      "content": "---\ntitle: Emrys Marrthorpe\ntype: person\nsummary: \"Emrys Marrthorpe is the head of partnerships at Lumenwharf.\"\n---\n\nEmrys Marrthorpe is the head of partnerships at Lumenwharf.\n"
+    },
+    {
+      "slug": "companies/kilngate",
+      "content": "---\ntitle: Kilngate\ntype: company\nsummary: \"Kilngate is a software vendor we work with.\"\n---\n\nKilngate is a software vendor we work with.\n"
+    },
+    {
+      "slug": "companies/tidalvane",
+      "content": "---\ntitle: Tidalvane\ntype: company\nsummary: \"A company we met once at a trade show.\"\n---\n\nA company we met once at a trade show.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "quick one: what's bram pellfell's view on the proposal?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Okay, noted."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "How many letters are in the name Fenstead?"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "how do you pronounce the name emrys? it's for a character in my short story"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "Make this sentence shorter: 'Our team will be at the Kilngate office for the whole afternoon on Thursday.'"
+    }
+  ]
+}

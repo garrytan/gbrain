@@ -474,5 +474,11 @@ export async function doctorReportRemote(
   // File-plane only (no engine) — works on thin clients too.
   checks.push(checkSelfUpgradeHealth());
 
+  // 14. Wave checks as sanitized host-action lines (doctor/wave-checks.ts):
+  // stable check id, a count-free impact summary and the on-host preview
+  // command; a check that could not run reports unknown, never ok.
+  const { remoteWaveHandoff } = await import('./wave-checks.ts');
+  checks.push(...await remoteWaveHandoff(engine, opts.sourceIds));
+
   return computeDoctorReport(checks);
 }

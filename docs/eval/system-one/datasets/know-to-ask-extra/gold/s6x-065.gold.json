@@ -1,0 +1,23 @@
+{
+  "fixture_id": "s6x-065",
+  "turns": {
+    "1": {
+      "should_retrieve": false
+    },
+    "3": {
+      "should_retrieve": true,
+      "gold_slugs": [
+        "people/fintan-marrwaite"
+      ]
+    },
+    "5": {
+      "should_retrieve": true,
+      "gold_slugs": [
+        "companies/solaceloft"
+      ]
+    },
+    "7": {
+      "should_retrieve": false
+    }
+  }
+}

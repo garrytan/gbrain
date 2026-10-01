@@ -301,6 +301,7 @@ const ROLE_MENTION: Record<string, string> = {
   system: 'system',
 };
 const BOLD_ANCHOR_RE = /^[ \t]*\*\*([^*\n]{1,60}?)\*\*(?:[ \t]*\([^)\n]{0,40}\))?[ \t]*:/;
+const BRACKET_ROLE_RE = /^[ \t]*\[(user|human|assistant|ai|bot|system|tool)\][ \t]*\r?$/i;
 const PLAIN_ANCHOR_RE = /^[ \t]*(?:\[[^\]\n]{1,40}\][ \t]*)?([A-Za-z][A-Za-z0-9.'_-]*(?: [A-Za-z][A-Za-z0-9.'_-]*){0,3})(?:[ \t]*\([^)\n]{0,40}\))?[ \t]*:(?=[ \t]|\r?$)/;
 
 /** Canonical speaker identity: role labels fold to their role, names to lowercase. */
@@ -311,9 +312,10 @@ export function speakerKey(label: string): string {
 
 /**
  * Speaker turns from line-start anchors. Bold anchors (the transcript
- * renderer's format) always count; plain `Label:` anchors count when the
- * label is a role word or opens at least two lines, so a prose line such as
- * `Note: ...` is not mistaken for a speaker.
+ * renderer's format) and standalone `[user]` / `[assistant]` role lines (the
+ * session-corpus renderer's turn boundaries, #5717) always count; plain
+ * `Label:` anchors count when the label is a role word or opens at least two
+ * lines, so a prose line such as `Note: ...` is not mistaken for a speaker.
  */
 export function parseSpeakerTurns(content: string): SpeakerTurn[] {
   const turns: SpeakerTurn[] = [];
@@ -322,8 +324,11 @@ export function parseSpeakerTurns(content: string): SpeakerTurn[] {
   let offset = 0;
   for (const line of content.split('\n')) {
     const bold = BOLD_ANCHOR_RE.exec(line);
+    const role = bold ? null : BRACKET_ROLE_RE.exec(line);
     if (bold) {
       turns.push({ labelStart: offset, labelEnd: offset + bold[0].length, speaker: bold[1].trim() });
+    } else if (role) {
+      turns.push({ labelStart: offset, labelEnd: offset + line.length, speaker: speakerKey(role[1]) });
     } else {
       const p = PLAIN_ANCHOR_RE.exec(line);
       if (p) {
@@ -793,7 +798,8 @@ export type ClaimFailure = 'quote_not_in_source' | 'quote_crosses_speakers' | 's
 
 export interface QuarantinedClaim {
   text: string;
-  reason: ClaimFailure;
+  /** Mechanical failure, or S8's `unsupported_paraphrase` (grounding-decide.ts). */
+  reason: ClaimFailure | 'unsupported_paraphrase';
   detail: string;
 }
 
@@ -815,6 +821,8 @@ export interface BodyVerification {
   quarantined: QuarantinedClaim[];
   provenance: QuoteProvenance[];
   failures: Record<ClaimFailure, number>;
+  /** New units that pass only because they carry no quote, number or attribution (System One S8 checks these). */
+  groundingUnits: string[];
 }
 
 function groundAcross(inner: string, sources: GroundedSource[]): { result: Exclude<GroundResult, { status: 'none' }>; source: GroundedSource } | { result: Extract<GroundResult, { status: 'none' }> } {
@@ -854,6 +862,7 @@ export function verifyBody(body: string, sources: GroundedSource[], opts: { prio
   const edits: Array<{ start: number; end: number; text: string }> = [];
   const quarantined: QuarantinedClaim[] = [];
   const provenance: QuoteProvenance[] = [];
+  const groundingUnits: string[] = [];
   let quotes = 0, exact = 0, normalized = 0, near = 0;
 
   // Materialized timeline history (#5567) is database history a write rendered
@@ -919,21 +928,37 @@ export function verifyBody(body: string, sources: GroundedSource[], opts: { prio
     } else {
       edits.push(...unitEdits);
       provenance.push(...unitProvenance);
+      if (unitSpans.length === 0 && mentioned.size === 0 && isGroundingCandidate(body, u.start, unquoted)) groundingUnits.push(text);
     }
   }
 
   let out = body;
   for (const e of edits.sort((a, b) => b.start - a.start)) out = out.slice(0, e.start) + e.text + out.slice(e.end);
-  if (out.includes(REMOVED)) {
-    const lines: string[] = [];
-    for (const line of out.split('\n')) {
-      if (!line.includes(REMOVED)) { lines.push(line); continue; }
-      const rest = line.split(REMOVED).join('').replace(/([^ \t])[ \t]{2,}/g, '$1 ').replace(/[ \t]+$/, '');
-      if (!EMPTY_LINE_AFTER_REMOVAL_RE.test(rest)) lines.push(rest);
-    }
-    out = lines.join('\n').replace(/\n{3,}/g, '\n\n').replace(/^\n+/, '').replace(/\n+$/, body.endsWith('\n') ? '\n' : '');
+  out = collapseRemoved(out, body);
+  return { body: out, changed: out !== body, quotes, exact, normalized, near, unbalanced, quarantined, provenance, failures, groundingUnits };
+}
+
+/** Units shorter than this many words (labels, headings, fragments) are not claims S8 judges. */
+const MIN_GROUNDING_UNIT_WORDS = 5;
+
+/** A passing unit with no number, not a heading, long enough to be a claim. */
+function isGroundingCandidate(body: string, start: number, unquoted: string): boolean {
+  const lineStart = body.lastIndexOf('\n', start - 1) + 1;
+  if (/^[ \t]*#{1,6}[ \t]/.test(body.slice(lineStart, start + 1))) return false;
+  if (numericFacts(unquoted).size > 0) return false;
+  return (unquoted.match(/\p{L}[\p{L}'-]*/gu) ?? []).length >= MIN_GROUNDING_UNIT_WORDS;
+}
+
+/** Drop REMOVED markers and the empty list items / blank runs they leave, keeping the body's trailing newline. */
+function collapseRemoved(out: string, original: string): string {
+  if (!out.includes(REMOVED)) return out;
+  const lines: string[] = [];
+  for (const line of out.split('\n')) {
+    if (!line.includes(REMOVED)) { lines.push(line); continue; }
+    const rest = line.split(REMOVED).join('').replace(/([^ \t])[ \t]{2,}/g, '$1 ').replace(/[ \t]+$/, '');
+    if (!EMPTY_LINE_AFTER_REMOVAL_RE.test(rest)) lines.push(rest);
   }
-  return { body: out, changed: out !== body, quotes, exact, normalized, near, unbalanced, quarantined, provenance, failures };
+  return lines.join('\n').replace(/\n{3,}/g, '\n\n').replace(/^\n+/, '').replace(/\n+$/, original.endsWith('\n') ? '\n' : '');
 }
 
 export interface VerifiablePage {
@@ -956,12 +981,27 @@ function recordList<T>(fm: Record<string, unknown> | undefined, key: string, pic
  * run created. Quarantined units accumulate in `unverified_claims`; grounded
  * quotes accumulate source-span + speaker provenance in `grounding.quotes`.
  */
+export interface VerifiedDreamPage extends VerifiablePage {
+  changed: boolean;
+  /** New units that pass only for lack of a quote, number or attribution, per body (S8 input). */
+  groundingUnits: Array<{ body: 'compiled_truth' | 'timeline'; text: string }>;
+}
+
+/**
+ * System One S8 hook: runs after the mechanical checks and before the page is
+ * persisted, at both verifyDreamPage call sites. It may only remove units the
+ * mechanical checks passed (grounding-decide.ts); it can never admit one.
+ */
+export interface GroundingPass {
+  apply(page: VerifiedDreamPage, sources: GroundedSource[], subject: string, checkedAt: string): Promise<VerifiedDreamPage>;
+}
+
 export function verifyDreamPage(
   page: VerifiablePage,
   sources: GroundedSource[],
   opts: { prior: VerifiablePage | null; checkedAt: string },
   stats: QuoteVerifyStats,
-): VerifiablePage & { changed: boolean } {
+): VerifiedDreamPage {
   const priorNorm = opts.prior ? normForGrounding(`${opts.prior.compiled_truth}\n${opts.prior.timeline ?? ''}`) : undefined;
   const truth = verifyBody(page.compiled_truth ?? '', sources, { priorNorm });
   const timeline = verifyBody(page.timeline ?? '', sources, { priorNorm });
@@ -1010,7 +1050,45 @@ export function verifyDreamPage(
   }
   const changed = compiled !== page.compiled_truth || timeline.body !== (page.timeline ?? '')
     || JSON.stringify(frontmatter) !== JSON.stringify(page.frontmatter);
-  return { compiled_truth: compiled, timeline: timeline.body, frontmatter, changed };
+  const groundingUnits = [
+    ...truth.groundingUnits.map(text => ({ body: 'compiled_truth' as const, text })),
+    ...timeline.groundingUnits.map(text => ({ body: 'timeline' as const, text })),
+  ];
+  return { compiled_truth: compiled, timeline: timeline.body, frontmatter, changed, groundingUnits };
+}
+
+/**
+ * S8 quarantine: remove units (verbatim unit text as verifyBody reported it)
+ * from their body and keep each in `unverified_claims` with its reason. Only
+ * text that is still present is removed, so a unit can never be re-admitted
+ * or double-counted. Removing a unit always changes the page.
+ */
+export function quarantineUnits(
+  page: VerifiedDreamPage,
+  units: Array<{ body: 'compiled_truth' | 'timeline'; text: string; reason: QuarantinedClaim['reason']; detail: string }>,
+  sourcePaths: string[],
+  checkedAt: string,
+): VerifiedDreamPage {
+  if (units.length === 0) return page;
+  const bodies = { compiled_truth: page.compiled_truth, timeline: page.timeline };
+  const records: UnverifiedRecord[] = [];
+  for (const u of units) {
+    const at = bodies[u.body].indexOf(u.text);
+    if (at < 0) continue;
+    bodies[u.body] = bodies[u.body].slice(0, at) + REMOVED + bodies[u.body].slice(at + u.text.length);
+    records.push({ text: clip(u.text, 2000), reason: u.reason, detail: u.detail, sources: sourcePaths, detected_at: checkedAt });
+  }
+  if (records.length === 0) return page;
+  let compiled = collapseRemoved(bodies.compiled_truth, page.compiled_truth);
+  const timeline = collapseRemoved(bodies.timeline, page.timeline);
+  if (!compiled.trim() && page.compiled_truth.trim() && !timeline.trim()) compiled = ALL_CLAIMS_QUARANTINED_BODY;
+  const unverified = new Map<string, UnverifiedRecord>();
+  for (const r of [...recordList<UnverifiedRecord>(page.frontmatter, UNVERIFIED_CLAIMS_KEY), ...records]) {
+    if (typeof r.text === 'string') unverified.set(normForGrounding(r.text), r);
+  }
+  const frontmatter: Record<string, unknown> = { ...page.frontmatter, [UNVERIFIED_CLAIMS_KEY]: [...unverified.values()].slice(-MAX_UNVERIFIED_RECORDS) };
+  const removed = new Set(records.map(r => r.text));
+  return { compiled_truth: compiled, timeline, frontmatter, changed: true, groundingUnits: page.groundingUnits.filter(u => !removed.has(clip(u.text, 2000))) };
 }
 
 /** Database clock reading taken before a run's writes; pages created at or
@@ -1098,7 +1176,7 @@ export async function verifyAndRepairDreamPages(
   engine: BrainEngine,
   refs: Array<{ slug: string; source_id: string; raw_source?: string; first_write_at?: Date }>,
   transcriptsByPath: Map<string, TranscriptForVerify>,
-  opts: { since: Date; sinceByTranscript?: Map<string, Date>; checkedAt?: string; signal?: AbortSignal },
+  opts: { since: Date; sinceByTranscript?: Map<string, Date>; checkedAt?: string; signal?: AbortSignal; grounding?: GroundingPass },
 ): Promise<QuoteVerifyStats> {
   const stats = emptyQuoteVerifyStats();
   const checkedAt = opts.checkedAt ?? await resolveCycleDate(engine).catch(() => utcDate());
@@ -1137,7 +1215,9 @@ export async function verifyAndRepairDreamPages(
       const prior = await resolveVerifyPrior(engine, page, ref.source_id, since);
       if (prior === 'unchanged') { stats.skipped_unchanged++; continue; }
       if (prior) stats.preexisting_diffed++;
-      const verified = verifyDreamPage(page, ref.paths.map(sourceFor), { prior, checkedAt }, stats);
+      const sources = ref.paths.map(sourceFor);
+      const mechanical = verifyDreamPage(page, sources, { prior, checkedAt }, stats);
+      const verified = opts.grounding ? await opts.grounding.apply(mechanical, sources, `page:${ref.source_id}:${ref.slug}`, checkedAt) : mechanical;
       if (verified.changed) {
         const tags = await engine.getTags(ref.slug, { sourceId: ref.source_id });
         const next = { ...page, compiled_truth: verified.compiled_truth, timeline: verified.timeline, frontmatter: verified.frontmatter };

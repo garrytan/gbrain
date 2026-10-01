@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-121",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/tamsin-caldbrook",
+      "content": "---\ntitle: Tamsin Caldbrook\ntype: person\naliases: [tamsin]\nsummary: \"Tamsin Caldbrook is the procurement lead at Glintmoor.\"\n---\n\nTamsin Caldbrook is the procurement lead at Glintmoor.\n"
+    },
+    {
+      "slug": "people/yusra-pellgrove",
+      "content": "---\ntitle: Yusra Pellgrove\ntype: person\nsummary: \"Yusra Pellgrove is the operations director at Nimbuswharf.\"\n---\n\nYusra Pellgrove is the operations director at Nimbuswharf. Yusra pushed to move the reporting feature ahead of the mobile app.\n"
+    },
+    {
+      "slug": "companies/lumenspire",
+      "content": "---\ntitle: Lumenspire\ntype: company\nsummary: \"Lumenspire is a software vendor we work with.\"\n---\n\nLumenspire is a software vendor we work with. The integration slipped because their API still lacks webhooks.\n"
+    },
+    {
+      "slug": "companies/glintyard",
+      "content": "---\ntitle: Glintyard\ntype: company\nsummary: \"A company we met once at a trade show.\"\n---\n\nA company we met once at a trade show.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Translate into Spanish: 'Caldbrook will join the meeting at noon.'"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Happy to help."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "what did yusra say about the roadmap?"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Happy to help."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "haha fair enough"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Done."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "remind me what we know about lumenspire and the integration"
+    }
+  ]
+}

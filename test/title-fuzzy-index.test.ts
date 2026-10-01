@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { readFileSync } from 'fs';
+import { surfaceFileSource } from './helpers/source-surface.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 
 let engine: PGLiteEngine;
@@ -33,13 +33,10 @@ describe('findByTitleFuzzy indexed threshold', () => {
   });
 
   test('Postgres and PGLite implementations retain the indexed prefilter', () => {
-    for (const path of [
-      new URL('../src/core/postgres-engine.ts', import.meta.url),
-      new URL('../src/core/pglite-engine.ts', import.meta.url),
-    ]) {
-      const source = readFileSync(path, 'utf8');
-      const start = source.indexOf('async findByTitleFuzzy(');
-      const end = source.indexOf('\n  async traverseGraph(', start);
+    // test-reads-source-ok[structural]: the trigram prefilter is a planner property with no observable result difference; both engines run engine-sql/pages.ts (W1-extended).
+    for (const source of [surfaceFileSource('postgres-engine', 'src/core/engine-sql/pages.ts')]) {
+      const start = source.indexOf('export async function findByTitleFuzzy(');
+      const end = source.indexOf('\nexport async function getPageTimestamps(', start);
       const method = source.slice(start, end);
       expect(method).toContain('minSimilarity >= 0.3');
       expect(method).toContain('title %');

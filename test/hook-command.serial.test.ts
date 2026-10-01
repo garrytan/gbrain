@@ -34,8 +34,11 @@ import {
   type TurnContextRequest,
 } from '../src/core/context/resolve-ipc.ts';
 import { CLAUDE_HOOK_OUTPUT_CAP_CHARS } from '../src/core/bootstrap/host-specs.ts';
+import { TRANSCRIPT_HARD_CAP_BYTES } from '../src/core/transcripts/claude-code-jsonl.ts';
 import { writeReceipt } from '../src/core/bootstrap/format.ts';
 import type { RepoReceipt } from '../src/core/bootstrap/repo.ts';
+import { surfaceFileSource } from './helpers/source-surface.ts';
+import { STARTUP_HOOK_SKIP_COMMANDS } from '../src/cli/command-table.ts';
 
 const FIXTURE = join(import.meta.dir, 'fixtures', 'conversation-formats', 'claude-code.jsonl');
 const ENV_KEYS = [
@@ -316,6 +319,37 @@ describe('user-prompt', () => {
     expect((await lastHeartbeat())?.turns).toBe(5);
   });
 
+  // #5701: a >50MiB Claude session used to be refused at confinement, so the
+  // bounded tail read never ran and automatic capture stopped for the rest of
+  // the session. The newest turns still have to reach the window.
+  test('a transcript past TRANSCRIPT_HARD_CAP_BYTES still reaches the bounded tail read', async () => {
+    const dataDir = join(tmp, 'data');
+    writePgliteConfig(dataDir);
+    let seen: TurnContextRequest | null = null;
+    await startServer({ dataDir, blockText: 'ok', onRequest: (r) => { seen = r; } });
+    const projRoot = join(tmp, 'projects');
+    mkdirSync(join(projRoot, 'p1'), { recursive: true });
+    const transcript = join(projRoot, 'p1', 'long.jsonl');
+    // Oldest-first: bulk padding (not JSON — a whole-file parse would count it
+    // as skipped lines), then the newest real turns the tail read must find.
+    const fixture = readFileSync(FIXTURE, 'utf8').trimEnd();
+    writeFileSync(transcript, `${'x'.repeat(TRANSCRIPT_HARD_CAP_BYTES + 4096)}\n${fixture}\n`);
+    expect(statSync(transcript).size).toBeGreaterThan(TRANSCRIPT_HARD_CAP_BYTES);
+
+    const out = collectStdout();
+    await runHook(['user-prompt'], {
+      ...out.io,
+      stdin: JSON.stringify({ prompt: 'still capturing?', transcript_path: transcript, session_id: 's-5701' }),
+      transcriptRoot: projRoot,
+    });
+
+    const hb = await lastHeartbeat();
+    expect(hb?.outcome).not.toBe('degraded');
+    expect(hb?.reason).not.toBe('transcript_too_large');
+    expect(seen).not.toBeNull();
+    expect(seen!.window.map(t => t.text).join(' ')).not.toContain('SIDECHAIN-ONLY-TEXT');
+  });
+
   test('cross-turn dedupe: previously-injected blocks ride priorContextText; channel defaults to claude-code', async () => {
     const dataDir = join(tmp, 'data');
     writePgliteConfig(dataDir);
@@ -406,12 +440,15 @@ describe('user-prompt', () => {
   });
 
   test('hook ∈ STARTUP_HOOK_SKIP_COMMANDS (source grep — maybeEmitUpdateMarker no-ops under NODE_ENV=test, so no runtime test can pin this)', () => {
-    const cliSrc = readFileSync(join(import.meta.dir, '..', 'src', 'cli.ts'), 'utf8');
-    const m = cliSrc.match(/const STARTUP_HOOK_SKIP_COMMANDS = new Set\(\[[\s\S]*?\]\);/);
+    // Refactor wave 1 (W4 cli): STARTUP_HOOK_SKIP_COMMANDS is derived from the
+    // command table; the hook record carries the membership.
+    const tableSrc = surfaceFileSource('cli', 'src/cli/command-table.ts');
+    const m = tableSrc.match(/\{ name: 'hook', [^\n]*\},/);
     expect(m).not.toBeNull();
     // user-prompt fires once per user PROMPT: a stale update cache would
     // otherwise spawn a detached check-update child per prompt.
-    expect(m![0]).toContain("'hook'");
+    expect(m![0]).toContain('skipStartupHooks: true');
+    expect(STARTUP_HOOK_SKIP_COMMANDS.has('hook')).toBe(true);
   });
 
   test('confinement rejection aborts: heartbeat + exit 0 empty [S3#8]', async () => {

@@ -3,7 +3,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 export interface AIInvocation {
   operation: string;
   model: string;
-  kind: 'chat' | 'embedding' | 'rerank' | 'multimodal';
+  kind: 'chat' | 'embedding' | 'rerank' | 'multimodal' | 'decide';
   maxInputTokens?: number;
   maxOutputTokens?: number;
   cacheWriteTtl?: '5m' | '1h';
@@ -45,8 +45,13 @@ export function withAIInvocationPreflight<T>(preflight: (call: AIInvocation) => 
 }
 export function hasAIInvocationGuard(): boolean { return guards.getStore() !== undefined; }
 
-/** One provider attempt. No guessed usage, no release on an ambiguous failure. */
-export async function invokeAI<T>(call: AIInvocation, run: () => Promise<T>, usage: (result: T) => AIInvocationUsage | null | Promise<AIInvocationUsage | null>): Promise<T> {
+/**
+ * One provider attempt. No guessed usage, no release on an ambiguous failure:
+ * a failed attempt settles null (keep the maximum) unless `rejected` proves the
+ * provider refused the request unbilled.
+ */
+export async function invokeAI<T>(call: AIInvocation, run: () => Promise<T>, usage: (result: T) => AIInvocationUsage | null | Promise<AIInvocationUsage | null>,
+  rejected?: (error: unknown) => AIInvocationUsage | null): Promise<T> {
   const guard = guards.getStore();
   if (!guard) return run();
   let permit: AIInvocationPermit;
@@ -57,7 +62,7 @@ export async function invokeAI<T>(call: AIInvocation, run: () => Promise<T>, usa
   }
   let result: T;
   try { result = await run(); }
-  catch (error) { await permit.settle(null); throw error; }
+  catch (error) { await permit.settle(rejected?.(error) ?? null); throw error; }
   let measured: AIInvocationUsage | null;
   try { measured = await usage(result); }
   catch (error) { await permit.settle(null); throw error; }

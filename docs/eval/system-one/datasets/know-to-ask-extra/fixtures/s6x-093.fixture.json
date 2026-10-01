@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-093",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "companies/fablespire-systems",
+      "content": "---\ntitle: Fablespire Systems\ntype: company\nsummary: \"Fablespire Systems is a startup we evaluated as a partner.\"\n---\n\nFablespire Systems is a startup we evaluated as a partner. Their support team promised a named account manager after the last outage.\n"
+    },
+    {
+      "slug": "projects/pricing-overhaul",
+      "content": "---\ntitle: Pricing Overhaul\ntype: project\nsummary: \"Pricing Overhaul: We decided to move the starter plan to usage-based pricing and keep annual contracts for larger teams.\"\n---\n\nPricing Overhaul: We decided to move the starter plan to usage-based pricing and keep annual contracts for larger teams.\n"
+    },
+    {
+      "slug": "people/bastian-merrcombe",
+      "content": "---\ntitle: Bastian Merrcombe\ntype: person\naliases: [bastian]\nsummary: \"Bastian Merrcombe is the procurement lead at Lumenreach.\"\n---\n\nBastian Merrcombe is the procurement lead at Lumenreach.\n"
+    },
+    {
+      "slug": "people/lucan-griscombe",
+      "content": "---\ntitle: Lucan Griscombe\ntype: person\nsummary: \"Lucan Griscombe is the operations director at Vesperfold.\"\n---\n\nLucan Griscombe is the operations director at Vesperfold.\n"
+    },
+    {
+      "slug": "people/tobias-tessthorpe",
+      "content": "---\ntitle: Tobias Tessthorpe\ntype: person\naliases: [tobias]\nsummary: \"A contact from a conference last spring.\"\n---\n\nA contact from a conference last spring.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Prep notes for my Fablespire meeting please, mainly support."
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "where did we land on that pricing thing?"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Happy to help."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "Is Bastian usually a short form of a longer name?"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Okay, noted."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "how do you pronounce the name lucan? it's for a character in my short story"
+    }
+  ]
+}

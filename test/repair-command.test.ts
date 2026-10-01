@@ -174,7 +174,7 @@ describe('gbrain repair timeline', () => {
       } finally { console.log = log; }
       const json = JSON.parse(out[0]);
       expect(json.scope.source_ids).toEqual([source]);
-      expect(json.results.map((r: { kind: string }) => r.kind)).toEqual(['timeline', 'visibility', 'safe-chunks']);
+      expect(json.results.map((r: { kind: string }) => r.kind)).toEqual(['timeline', 'visibility', 'safe-chunks', 'contextual-mode', 'connector-checkpoints', 'request-indexes', 'connector-fences', 'orphan-bindings', 'embedding-effects']);
       expect(json.results[0]).toMatchObject({ mode: 'dry_run', affected: 1 });
       expect(out[1]).toContain(`Scope: brain `);
       expect(out[1]).toContain(`sources ${source}`);

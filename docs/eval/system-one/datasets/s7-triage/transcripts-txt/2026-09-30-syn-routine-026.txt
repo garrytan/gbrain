@@ -1,0 +1,199 @@
+[user]
+My linter is complaining about import order in a small Python project. I thought the imports were already sorted, but CI reports several violations. Can you help me check what it expects?
+
+[assistant]
+Sure. First, paste the exact lint output and the import section from one of the files. The rule name matters because different tools sort standard-library, third-party, and local imports differently.
+
+[user]
+The command and output are:
+
+```text
+$ ruff check src tests
+src/cli.py:1:1: I001 Import block is un-sorted or un-formatted
+src/config.py:1:1: I001 Import block is un-sorted or un-formatted
+tests/test_config.py:1:1: I001 Import block is un-sorted or un-formatted
+Found 3 errors.
+```
+
+`src/cli.py` starts like this:
+
+```python
+from project.config import load_config
+import argparse
+from pathlib import Path
+import sys
+
+from project.output import print_table
+```
+
+[assistant]
+That is the usual grouping issue. The standard-library imports should come first, alphabetically, followed by a blank line and then local imports. In this file, `argparse`, `pathlib`, and `sys` belong in the first group. The `project` imports belong in the second group.
+
+A manually reordered version would be:
+
+```python
+import argparse
+from pathlib import Path
+import sys
+
+from project.config import load_config
+from project.output import print_table
+```
+
+However, since the complaint is `I001`, let Ruff apply its configured formatting rather than editing every file by hand.
+
+[user]
+I ran the formatter on the source directory:
+
+```text
+$ ruff format src
+2 files reformatted, 1 file left unchanged
+```
+
+Then I ran the linter again, and it still says:
+
+```text
+$ ruff check src tests
+tests/test_config.py:1:1: I001 Import block is un-sorted or un-formatted
+Found 1 error.
+```
+
+Does that mean the formatter did not process the tests directory?
+
+[assistant]
+Yes. `ruff format src` only formats files under `src`; it does not touch `tests`. Run the formatter over both directories:
+
+```text
+ruff format src tests
+```
+
+Then run the import sorter/linter again:
+
+```text
+ruff check src tests
+```
+
+If the project uses Ruff’s formatter and import-sorting rule together, you can also use:
+
+```text
+ruff check --fix src tests
+```
+
+That asks Ruff to apply safe fixes, including `I001`, when the rule is enabled for fixing. It is still useful to inspect the diff afterward.
+
+[user]
+I ran the broader command:
+
+```text
+$ ruff format src tests
+3 files reformatted
+
+$ ruff check src tests
+All checks passed!
+```
+
+The diff for the test file is:
+
+```diff
+-import pytest
+-from project.config import load_config
+ import tempfile
++from pathlib import Path
+ 
++import pytest
++
++from project.config import load_config
+```
+
+Why did `Path` move even though it was not part of the complaint I noticed in the file?
+
+[assistant]
+The formatter considers the entire import block, not just the first visibly misplaced line. `tempfile` and `Path` are standard-library imports, so they are grouped together and ordered before the blank line. `pytest` is a third-party import, so it gets its own group after the standard-library imports. The project import is local and follows another blank line.
+
+The resulting structure is:
+
+```python
+import tempfile
+from pathlib import Path
+
+import pytest
+
+from project.config import load_config
+```
+
+The change to `Path` is therefore part of normalizing the complete block.
+
+[user]
+Here is the project configuration relevant to linting:
+
+```toml
+[tool.ruff]
+line-length = 88
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+
+[tool.ruff.format]
+quote-style = "double"
+```
+
+Is there anything unusual here that would explain the original result?
+
+[assistant]
+Nothing unusual. The `I` selection enables Ruff’s import-sorting rules, and `src` tells Ruff where the project’s source roots are. The formatter command was simply narrower than the configured scope because you supplied `src` explicitly.
+
+One small distinction is worth noting: `src = ["src", "tests"]` helps Ruff classify imports, but it does not make `ruff format src` automatically include `tests`. Command-line paths still determine which files are processed. Running this from the repository root covers both directories:
+
+```text
+ruff format src tests
+ruff check src tests
+```
+
+You can also use the repository root if the configuration and exclusions are set as expected:
+
+```text
+ruff format .
+ruff check .
+```
+
+The explicit paths are often clearer for a small project.
+
+[user]
+I want to reproduce the original failure in a temporary file so I can understand the difference. What is a simple example that will trigger `I001`?
+
+[assistant]
+Create a file such as `tmp_imports.py` with intentionally mixed groups:
+
+```python
+from project.config import load_config
+import sys
+import json
+
+import pytest
+from pathlib import Path
+```
+
+Then run:
+
+```text
+ruff check --select I tmp_imports.py
+```
+
+Typical output is:
+
+```text
+tmp_imports.py:1:1: I001 Import block is un-sorted or un-formatted
+Found 1 error.
+```
+
+To see the corrected version without changing the file, use Ruff’s diff option:
+
+```text
+ruff check --select I --fix --diff tmp_imports.py
+```
+
+It should show standard-library imports first, followed by third-party imports, then local imports.
+
+[assistant]
+You have 7 weighted tokens left

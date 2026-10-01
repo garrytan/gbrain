@@ -403,6 +403,17 @@ describe('MinionQueue: #1737 per-handler default timeout', () => {
     expect(job.timeout_ms).toBe(10 * 60 * 1000);
   });
 
+  // #5761 — a brain-wide `extract --stale` pass (the remediation plan submits
+  // it without --timeout-ms) was dead-lettered by the null-default wall-clock.
+  test('extract gets its 30-min default from the handler map (#5761)', async () => {
+    const job = await queue.add('extract', { stale: true });
+    expect(job.timeout_ms).toBe(30 * 60 * 1000);
+    await engine.executeRaw(`UPDATE minion_jobs SET timeout_ms = NULL, timeout_at = NULL WHERE id = $1`, [job.id]);
+    const claimed = await queue.claim('tok-extract', 30_000, 'default', ['extract']);
+    expect(claimed!.id).toBe(job.id);
+    expect(claimed!.timeout_ms).toBe(30 * 60 * 1000);
+  });
+
   test('contextual per-chunk reindex gets the 60-min default', async () => {
     const job = await queue.add('contextual_reindex_per_chunk', { page_slug: 'large-transcript' }, undefined, {
       allowProtectedSubmit: true,

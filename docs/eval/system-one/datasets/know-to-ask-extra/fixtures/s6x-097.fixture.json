@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-097",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/marisol-pellholt",
+      "content": "---\ntitle: Marisol Pellholt\ntype: person\naliases: [marisol]\nsummary: \"Marisol Pellholt is the operations director at Quartzreach.\"\n---\n\nMarisol Pellholt is the operations director at Quartzreach.\n"
+    },
+    {
+      "slug": "companies/quartzloft",
+      "content": "---\ntitle: Quartzloft\ntype: company\nsummary: \"Quartzloft is a software vendor we work with.\"\n---\n\nQuartzloft is a software vendor we work with. The renewal is blocked on a security review that is due next month.\n"
+    },
+    {
+      "slug": "people/rohan-merrridge",
+      "content": "---\ntitle: Rohan Merrridge\ntype: person\nsummary: \"Rohan Merrridge is the finance lead at Saffronspire.\"\n---\n\nRohan Merrridge is the finance lead at Saffronspire. Rohan wants to pause the second engineering hire until the renewal closes.\n"
+    },
+    {
+      "slug": "people/bastian-lornstead",
+      "content": "---\ntitle: Bastian Lornstead\ntype: person\naliases: [bastian]\nsummary: \"A contact from a conference last spring.\"\n---\n\nA contact from a conference last spring.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "write a regex that matches a simple email address"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Turn this into a checklist: Pellholt sends the deck, I review it, we both sign off on Friday."
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Okay, noted."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "how's quartzloft doing on the renewal?"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "before I reply to Rohan, what was their position on the hiring plan?"
+    }
+  ]
+}

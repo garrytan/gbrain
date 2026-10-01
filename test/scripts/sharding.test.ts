@@ -282,3 +282,68 @@ it('distributes a fully zero-weight corpus instead of concentrating it in shard 
   const files = ['a', 'b', 'c', 'd'];
   expect(partition(files, new Map(files.map(f => [f, 0])), 4)).toEqual([['a'], ['b'], ['c'], ['d']]);
 });
+
+// #5669 — the CLI must flush its ENTIRE selection before exiting. With
+// stdout a pipe (every shard consumer), `process.exit(code)` could
+// terminate before pending writes drained: a 10,000-file selection
+// delivered 8,187 paths at exit 0, so the wrapper ran a partial shard
+// without knowing. The entry point now sets process.exitCode and lets the
+// runtime drain. This spawns the real CLI, delays reading stdout (the
+// condition that exposed the truncation), and requires the complete
+// selection back.
+describe("sharding CLI stdout flush (#5669)", () => {
+  it("delivers every selected path when the reader is slow", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "shard-flush-"));
+    const weights = join(dir, "weights.json");
+    writeFileSync(weights, "{}", "utf8");
+    const files = Array.from(
+      { length: 10000 },
+      (_, i) => `test/long-path-${i.toString().padStart(5, "0")}.test.ts`,
+    );
+    try {
+      const child = Bun.spawn(
+        [process.execPath, join(import.meta.dir, "../../scripts/sharding.ts"), "1", "1", "--weights", weights],
+        { stdin: new TextEncoder().encode(files.join("\n") + "\n"), stdout: "pipe", stderr: "pipe" },
+      );
+      await Bun.sleep(100); // delay the reader — buffering exposes the truncation
+      const [output, errors, code] = await Promise.all([
+        new Response(child.stdout).text(),
+        new Response(child.stderr).text(),
+        child.exited,
+      ]);
+      const received = output.trim().split("\n").filter(Boolean);
+      expect({ code, stderr: errors }).toEqual({ code: 0, stderr: "" });
+      expect(received.sort()).toEqual([...files].sort());
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  // Bun.spawn's parent-side pipe drains eagerly on some Bun versions, which
+  // hides the truncation above; a kernel pipe to a reader that sleeps before
+  // its first read (the shell-wrapper shape) exposes it on Bun 1.3.14.
+  it("delivers every selected path through a shell pipe whose reader starts late", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "shard-flush-sh-"));
+    const weights = join(dir, "weights.json");
+    const input = join(dir, "files.txt");
+    writeFileSync(weights, "{}", "utf8");
+    const files = Array.from({ length: 10000 }, (_, i) => `test/long-path-${i.toString().padStart(5, "0")}.test.ts`);
+    writeFileSync(input, files.join("\n") + "\n", "utf8");
+    try {
+      const child = Bun.spawn(
+        ["sh", "-c", '"$0" "$1" 1 1 --weights "$2" < "$3" | (sleep 1; cat)',
+          process.execPath, join(import.meta.dir, "../../scripts/sharding.ts"), weights, input],
+        { stdout: "pipe", stderr: "pipe" },
+      );
+      const [output, errors, code] = await Promise.all([
+        new Response(child.stdout).text(),
+        new Response(child.stderr).text(),
+        child.exited,
+      ]);
+      expect({ code, stderr: errors }).toEqual({ code: 0, stderr: "" });
+      expect(output.trim().split("\n").filter(Boolean).sort()).toEqual([...files].sort());
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 60_000);
+});

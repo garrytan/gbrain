@@ -1,0 +1,105 @@
+[user]
+I bought a houseplant with a care label that says: “Water when the top 2 inches of soil are dry. Keep evenly moist, but never waterlogged. Reduce watering in winter. Bright, indirect light.” I’m trying to turn that into a simple watering schedule.
+
+[assistant]
+That label is better treated as a soil-check routine than a fixed calendar schedule. Start by checking the soil twice a week, such as Monday and Thursday. Push a finger or wooden skewer about 2 inches into the soil. If that depth feels dry, water; if it still feels cool or damp, wait and check again in a couple of days.
+
+When watering, add water slowly until a little drains from the bottom, then empty the saucer after about 10 minutes. This keeps the soil moist without leaving the pot sitting in water. Keep the plant in bright, indirect light, away from harsh direct sun.
+
+[assistant]
+Could I just water it every Sunday instead? I’d prefer one regular day and don’t want to keep checking it constantly.
+
+[assistant]
+You can use Sunday as a reminder, but I would not water automatically every Sunday. Use Sunday for the soil check, then water only if the top 2 inches are dry. A practical routine would be:
+
+- Every Sunday: check the top 2 inches.
+- If dry: water thoroughly and empty the saucer.
+- If damp: do not water; check again Wednesday or Thursday.
+- If still damp then: wait until the next Sunday.
+- In winter: keep the Sunday check, but expect watering to be less frequent.
+
+The exact interval can change with pot size, room temperature, light, and humidity, so the soil condition should decide whether water is actually added.
+
+[assistant]
+How much water counts as “thoroughly”? The pot is about 6 inches wide and has one drainage hole.
+
+[assistant]
+For a 6-inch pot, begin with roughly 400–600 milliliters, poured slowly around the soil surface rather than in one spot. Stop when you see a small amount of water drain from the hole. The volume is only a starting estimate; dry soil, compacted soil, and the pot shape can change how much is needed.
+
+Place the pot in a sink or tray while watering. Let it drain for 10–15 minutes, then empty any collected water. If no water drains after about 600 milliliters and the soil remains very dry, wait a few minutes and add another small amount, such as 100 milliliters. Avoid leaving the roots submerged.
+
+[assistant]
+I watered it last Sunday with 500 milliliters, and some water came out of the hole. Today is Thursday, and the top feels dry, but the skewer comes out with a little dark soil stuck to it. Should I water now?
+
+[assistant]
+Probably wait for now. A skewer with a little dark soil stuck to it suggests there is still moisture below the surface, even if the very top feels dry. Check again Sunday by inserting the skewer to the same 2-inch depth.
+
+If the skewer comes out mostly clean and the soil at that depth feels dry, water slowly. If it still has damp soil attached, wait another two or three days. Since the plant received a thorough watering only a few days ago, this is consistent with the label’s “evenly moist, but never waterlogged” instruction.
+
+[assistant]
+What if the top 2 inches are dry but the leaves look fine? Should I follow the soil test or wait for drooping?
+
+[assistantant]
+Use the soil test rather than waiting for drooping. Drooping is a later sign of water stress, and some plants can be harmed if they repeatedly dry out that far. When the top 2 inches are dry, water thoroughly as described, even if the leaves still look normal.
+
+For a simple decision rule:
+
+1. Check the soil at 2 inches.
+2. If it feels dry, water until a little drains.
+3. If it feels damp, wait and check again in two or three days.
+4. Empty the saucer after draining.
+5. During winter, keep checking but expect longer gaps between waterings.
+
+[assistant]
+The room is around 21°C, and the pot is near a bright window but not in direct sun. Does that change the Sunday check?
+
+[assistant]
+Keep the Sunday check. Those conditions are fairly moderate, so a weekly check is reasonable, but they do not guarantee a weekly watering. If the window area is warmer or brighter than the rest of the room, the soil may dry faster; if the air is cool or the plant is recently repotted, it may dry slower.
+
+You can record a few checks to find the local pattern:
+
+- Date checked
+- Soil dry or damp at 2 inches
+- Amount watered
+- Whether drainage occurred
+
+For example:
+
+Sunday — damp — no water  
+Thursday — dry — 500 mL, slight drainage  
+Next Sunday — check again
+
+The record is just for adjusting the reminder interval, not for replacing the soil check.
+
+[assistant]
+I’m worried I’ll accidentally overwater if I use 500 milliliters. Is it safer to give small amounts more often?
+
+[assistant]
+Usually, small amounts more often are less reliable. They may wet only the upper soil and leave the lower roots dry, while encouraging frequent watering before the pot has drained properly. A better approach is to wait until the top 2 inches are dry, then water slowly enough to moisten the full root area and produce a little drainage.
+
+To reduce overwatering risk:
+
+- Confirm the pot has an open drainage hole.
+- Water only when the soil test says it is dry.
+- Pour in stages, pausing for a minute between additions.
+- Stop after slight drainage rather than trying to use an exact volume.
+- Empty the saucer after 10–15 minutes.
+- Do not let the pot sit in a decorative container filled with water.
+
+If 500 milliliters causes heavy, continuous runoff, use less next time and pour more slowly. If it produces no drainage and the soil remains dry, add small increments until the soil is evenly moistened.
+
+[assistant]
+Could you give me a final routine I can put on a note beside the plant?
+
+[assistant]
+Sure:
+
+CHECK: Every Sunday, test the soil 2 inches down with a finger or skewer.
+
+WATER: If that depth is dry, pour water slowly around the soil until a small amount drains from the bottom. For this 6-inch pot, start with about 400–500 mL, but let drainage—not the number—be the guide.
+
+DRAIN: Leave the pot in a sink or tray for 10–15 minutes, then empty the saucer or outer container.
+
+WAIT: If the soil is damp at 2 inches, do not water. Check again Thursday, then continue checking every few days until it is dry.
+
+WINTER: Keep the same checks, but expect the plant to need water less often. Do not water just because it is Sunday, and do not wait for drooping before checking the soil.

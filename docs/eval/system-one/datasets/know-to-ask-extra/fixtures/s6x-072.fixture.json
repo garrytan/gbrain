@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-072",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "projects/support-rotation",
+      "content": "---\ntitle: Support Rotation\ntype: project\nsummary: \"Support Rotation: Engineers take one week of support each per month, and weekends go to an on-call pager.\"\n---\n\nSupport Rotation: Engineers take one week of support each per month, and weekends go to an on-call pager.\n"
+    },
+    {
+      "slug": "people/emrys-marrfell",
+      "content": "---\ntitle: Emrys Marrfell\ntype: person\nsummary: \"Emrys Marrfell is the head of partnerships at Solacemoor.\"\n---\n\nEmrys Marrfell is the head of partnerships at Solacemoor. Emrys wants the proposal revised to drop the onboarding fee.\n"
+    },
+    {
+      "slug": "companies/saffronspire",
+      "content": "---\ntitle: Saffronspire\ntype: company\nsummary: \"Saffronspire is a software vendor we work with.\"\n---\n\nSaffronspire is a software vendor we work with.\n"
+    },
+    {
+      "slug": "companies/kilngate",
+      "content": "---\ntitle: Kilngate\ntype: company\nsummary: \"A company we met once at a trade show.\"\n---\n\nA company we met once at a trade show.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "what is a good way to structure a postmortem doc?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Happy to help."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "how did we end up splitting that support rotation?"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Done."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "I owe Marrfell an answer on the proposal. What were they asking for?"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Done."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "Write a one-line out-of-office reply saying I'm visiting Saffronspire on Monday."
+    }
+  ]
+}

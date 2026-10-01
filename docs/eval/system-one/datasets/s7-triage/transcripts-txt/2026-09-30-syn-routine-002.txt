@@ -1,0 +1,134 @@
+[user]
+My package was supposed to arrive yesterday, but the tracking page still says “In transit.” Can you help me figure out what to do?
+
+[assistant]
+Sure. First, let’s gather the basic tracking details and check whether the status has changed recently. What does the latest scan say, and what date and time is shown next to it? You can paste the tracking history here, but redact your address, phone number, email, and the full tracking number if you prefer.
+
+[user]
+Here’s the recent history, with the tracking number shortened:
+
+Tracking: 9400 12XX XXXX 7784
+
+Mar 14, 8:42 AM — Departed regional facility
+Mar 14, 3:10 PM — In transit to next facility
+Mar 15, 6:05 AM — In transit to next facility
+Expected delivery: Mar 15
+Current date: Mar 16, 10:20 AM
+
+[assistant]
+That shows the parcel received movement on Mar 15, but it has not received an “Out for delivery,” “Arrived at local facility,” or delivery scan. Since the expected date has passed by less than one day, it may still be moving through the network rather than being lost.
+
+A practical next step is:
+
+1. Check the tracking page again later today.
+2. Look for a service-alert notice or an updated expected date.
+3. If there is no new scan by the end of today, contact support through the carrier’s official website or app.
+4. Ask whether they can confirm the last physical scan, the destination facility, and whether a package inquiry can be opened.
+
+Avoid posting the full tracking number or your address in a public forum.
+
+[user]
+Would it help to call, or is an online form better? I don’t want to spend a long time waiting on hold if the form is enough.
+
+[assistant]
+For a delay of about one day, an online form or chat is usually a reasonable first step, especially if the tracking page offers a “Where is my package?” or “Help with delivery” option. It creates a written record and lets you include the scan history.
+
+Calling can be more useful when:
+
+- The package is marked delivered but you do not have it.
+- The address appears incorrect.
+- The contents are time-sensitive.
+- The tracking has stopped updating for several business days.
+- The online form rejects the tracking number or gives only generic instructions.
+
+You could submit the form today and call only if the response is automated, the case cannot be opened, or there is still no movement after another business day.
+
+[user]
+The website has a form with a 500-character limit. Can you draft something that fits? I want it polite and clear, and I’d like it to ask for the last scan location without including my full address.
+
+[assistant]
+Here is a concise draft, under 500 characters:
+
+“Hello, I’m checking on a delayed package, tracking number ending in 7784. The expected delivery date was Mar 15. The latest tracking entries show ‘Departed regional facility’ on Mar 14 at 8:42 AM, followed by ‘In transit to next facility’ on Mar 15 at 6:05 AM. Could you please confirm the latest physical scan, the facility or city where it occurred, and whether any action is needed from me? Thank you.”
+
+You can replace “ending in 7784” with the identifier format the form requests, but do not include more personal information than necessary.
+
+[user]
+That’s good. The form also asks for a subject line, limited to 60 characters. What should I use?
+
+[assistant]
+A clear option is:
+
+“Request for update on delayed package”
+
+It is short, neutral, and explains the purpose without repeating the tracking number or including personal details. If you want the subject to mention the missed estimate, another option is:
+
+“Package past expected delivery date”
+
+Either should fit within a 60-character limit.
+
+[user]
+Before I submit it, should I ask them to open an investigation, or is that too strong after only one day?
+
+[assistant]
+After only one day, “please confirm the latest scan” is generally a softer and more appropriate request than asking for a formal investigation. Some carriers use “package inquiry” for ordinary delays, while “investigation” may be reserved for packages that are presumed lost or have had no movement for a longer period.
+
+You could add a conditional sentence without sounding forceful:
+
+“If the package cannot be located from the available scans, please let me know whether a package inquiry can be opened.”
+
+That asks about the process while leaving room for the support team to apply its normal timing rules.
+
+[user]
+I submitted the form. The confirmation page says:
+
+Request received
+Reference: SR-20481
+We’ll respond by email within 2 business days.
+Please continue checking tracking for updates.
+
+What should I watch for while I wait?
+
+[assistant]
+Keep the reference number with the tracking details, and check the tracking page once or twice a day rather than repeatedly. Useful changes to watch for include:
+
+- “Arrived at local facility”
+- “Out for delivery”
+- “Delivery attempted”
+- A new expected delivery date
+- A notice that the address or delivery instructions need attention
+- A delivery exception or service delay
+
+Save the confirmation page or screenshot if convenient. If you receive an email, verify that it relates to reference SR-20481 and does not ask for unnecessary payment or personal information. You can reply through the official support channel if requested, but avoid clicking unexpected links.
+
+[user]
+There’s a new scan now:
+
+Mar 16, 2:35 PM — Arrived at local facility
+Expected delivery: Mar 17
+
+Does that change the message I should send, since I already submitted it?
+
+[assistant]
+You do not need to send a second message immediately. The new scan is encouraging and gives a revised expected delivery date. The existing request can remain open, since support may see the same update.
+
+If the form or confirmation email allows replies, you could send a brief update, but it is optional:
+
+“Hello, an additional scan appeared after I submitted my request: ‘Arrived at local facility’ on Mar 16 at 2:35 PM, with an updated expected delivery date of Mar 17. Please add this information to reference SR-20481. Thank you.”
+
+Otherwise, keep checking the tracking page and wait for the revised date.
+
+[user]
+If it says “Out for delivery” tomorrow but nothing arrives, when should I contact them again?
+
+[assistant]
+If it changes to “Out for delivery” and the package is not delivered by the end of the carrier’s normal delivery window, first check for a delivery attempt notice or an updated scan. Sometimes an “Out for delivery” status remains until the route closes.
+
+If there is still no delivery or explanation by the next morning, reply to the existing support thread or cite reference SR-20481. You can write:
+
+“Hello, the package was marked ‘Out for delivery’ on Mar 17 but was not delivered, and there is no delivery attempt or exception shown. Could you please check the current status and advise on the next step? Thank you.”
+
+If the status changes to “Delivered” but you cannot find the package, contact support promptly and check common safe-delivery locations first.
+
+[tool]
+You have 697 weighted tokens left

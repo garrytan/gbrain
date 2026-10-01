@@ -1,0 +1,153 @@
+{
+  "golden": {
+    "domain": "cjk-search",
+    "methods": {
+      "searchKeyword": {
+        "cjk": [
+          {
+            "event": "begin",
+            "lane": "tx"
+          },
+          {
+            "lane": "tx",
+            "params": [],
+            "sql": "SET LOCAL statement_timeout = '8s'",
+            "textSha256": "7346ddf58ceeb31a31fd4f44990faf92a5bf015f93c675513e2bc17e5c3619db"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "number",
+              "number",
+              "number"
+            ],
+            "sql": "WITH ranked AS ( SELECT p.slug, p.id as page_id, p.title, p.type, p.source_id, p.effective_date, p.effective_date_source, CASE WHEN NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL THEN p.frontmatter->>'message_id' END AS message_id, p.frontmatter->>'thread_id' AS thread_id, CASE WHEN NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL THEN NULLIF(p.frontmatter->>'subject', '') END AS source_subject, cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source, ((((LENGTH(cc.chunk_text) - LENGTH(REPLACE(cc.chunk_text, $1, ''))) / NULLIF(LENGTH($2), 0)::real) + ((LENGTH(cc.chunk_text) - LENGTH(REPLACE(cc.chunk_text, $3, ''))) / NULLIF(LENGTH($4), 0)::real) + ((LENGTH(cc.chunk_text) - LENGTH(REPLACE(cc.chunk_text, $5, ''))) / NULLIF(LENGTH($6), 0)::real) + COALESCE(1.0 / NULLIF(POSITION($7 IN cc.chunk_text), 0)::real, 0.0)) * (CASE WHEN (COALESCE(p.frontmatter, '{}'::jsonb) ->> 'provenance') = 'auto-extracted' AND (COALESCE(p.frontmatter, '{}'::jsonb) ->> 'status') = 'unverified' THEN 1.0 WHEN p.slug LIKE 'media/articles/%' THEN 1.1 WHEN p.slug LIKE 'openclaw/chat/%' THEN 0.5 WHEN p.slug LIKE 'media/repos/%' THEN 1.1 WHEN p.slug LIKE 'originals/%' THEN 1.5 WHEN p.slug LIKE 'companies/%' THEN 1.2 WHEN p.slug LIKE 'concepts/%' THEN 1.3 WHEN p.slug LIKE 'meetings/%' THEN 1.1 WHEN p.slug LIKE 'extracts/%' THEN 0.3 WHEN p.slug LIKE 'writing/%' THEN 1.4 WHEN p.slug LIKE 'media/x/%' THEN 0.7 WHEN p.slug LIKE 'archive/%' THEN 0.5 WHEN p.slug LIKE 'people/%' THEN 1.2 WHEN p.slug LIKE 'deals/%' THEN 1.2 WHEN p.slug LIKE 'civic/%' THEN 1 WHEN p.slug LIKE 'daily/%' THEN 0.8 WHEN p.slug LIKE 'yc/%' THEN 1 ELSE 1.0 END)) AS score, CASE WHEN p.updated_at < ( SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id ) THEN true ELSE false END AS stale FROM content_chunks cc JOIN pages p ON p.id = cc.page_id JOIN sources s ON s.id = p.source_id WHERE cc.chunk_text LIKE $8 ESCAPE '\\' AND cc.chunk_text LIKE $9 ESCAPE '\\' AND NOT (p.slug LIKE 'test/%' OR p.slug LIKE 'attachments/%' OR p.slug LIKE '.raw/%') AND p.deleted_at IS NULL AND (p.text_projection_revision = p.knowledge_revision) IS TRUE AND NOT s.archived AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') AND cc.modality = 'text' ORDER BY score DESC, page_id ASC, chunk_id ASC LIMIT $10 ), best_per_page AS ( SELECT DISTINCT ON (COALESCE(source_id, 'default'), slug) * FROM ranked ORDER BY COALESCE(source_id, 'default'), slug, score DESC, page_id ASC, chunk_id ASC ) SELECT * FROM best_per_page ORDER BY score DESC, page_id ASC, chunk_id ASC LIMIT $11 OFFSET $12",
+            "textSha256": "2eb0242829461748b837d4ae67b9890abc59c3bd1daa6a026552b8d1130218f1"
+          },
+          {
+            "event": "commit",
+            "lane": "tx"
+          }
+        ],
+        "cjk+sourceIds+detailLow": [
+          {
+            "event": "begin",
+            "lane": "tx"
+          },
+          {
+            "lane": "tx",
+            "params": [],
+            "sql": "SET LOCAL statement_timeout = '8s'",
+            "textSha256": "7346ddf58ceeb31a31fd4f44990faf92a5bf015f93c675513e2bc17e5c3619db"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "array<string>",
+              "number",
+              "number",
+              "number"
+            ],
+            "sql": "WITH ranked AS ( SELECT p.slug, p.id as page_id, p.title, p.type, p.source_id, p.effective_date, p.effective_date_source, CASE WHEN NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL THEN p.frontmatter->>'message_id' END AS message_id, p.frontmatter->>'thread_id' AS thread_id, CASE WHEN NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL THEN NULLIF(p.frontmatter->>'subject', '') END AS source_subject, cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source, ((((LENGTH(cc.chunk_text) - LENGTH(REPLACE(cc.chunk_text, $1, ''))) / NULLIF(LENGTH($2), 0)::real) + ((LENGTH(cc.chunk_text) - LENGTH(REPLACE(cc.chunk_text, $3, ''))) / NULLIF(LENGTH($4), 0)::real) + ((LENGTH(cc.chunk_text) - LENGTH(REPLACE(cc.chunk_text, $5, ''))) / NULLIF(LENGTH($6), 0)::real) + COALESCE(1.0 / NULLIF(POSITION($7 IN cc.chunk_text), 0)::real, 0.0)) * (CASE WHEN (COALESCE(p.frontmatter, '{}'::jsonb) ->> 'provenance') = 'auto-extracted' AND (COALESCE(p.frontmatter, '{}'::jsonb) ->> 'status') = 'unverified' THEN 1.0 WHEN p.slug LIKE 'media/articles/%' THEN 1.1 WHEN p.slug LIKE 'openclaw/chat/%' THEN 0.5 WHEN p.slug LIKE 'media/repos/%' THEN 1.1 WHEN p.slug LIKE 'originals/%' THEN 1.5 WHEN p.slug LIKE 'companies/%' THEN 1.2 WHEN p.slug LIKE 'concepts/%' THEN 1.3 WHEN p.slug LIKE 'meetings/%' THEN 1.1 WHEN p.slug LIKE 'extracts/%' THEN 0.3 WHEN p.slug LIKE 'writing/%' THEN 1.4 WHEN p.slug LIKE 'media/x/%' THEN 0.7 WHEN p.slug LIKE 'archive/%' THEN 0.5 WHEN p.slug LIKE 'people/%' THEN 1.2 WHEN p.slug LIKE 'deals/%' THEN 1.2 WHEN p.slug LIKE 'civic/%' THEN 1 WHEN p.slug LIKE 'daily/%' THEN 0.8 WHEN p.slug LIKE 'yc/%' THEN 1 ELSE 1.0 END)) AS score, CASE WHEN p.updated_at < ( SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id ) THEN true ELSE false END AS stale FROM content_chunks cc JOIN pages p ON p.id = cc.page_id JOIN sources s ON s.id = p.source_id WHERE cc.chunk_text LIKE $8 ESCAPE '\\' AND cc.chunk_text LIKE $9 ESCAPE '\\' AND cc.chunk_source = 'compiled_truth' AND p.type = $10 AND p.source_id = ANY($11::text[]) AND NOT (p.slug LIKE 'test/%' OR p.slug LIKE 'attachments/%' OR p.slug LIKE '.raw/%') AND p.deleted_at IS NULL AND (p.text_projection_revision = p.knowledge_revision) IS TRUE AND NOT s.archived AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') AND cc.modality = 'text' ORDER BY score DESC, page_id ASC, chunk_id ASC LIMIT $12 ), best_per_page AS ( SELECT DISTINCT ON (COALESCE(source_id, 'default'), slug) * FROM ranked ORDER BY COALESCE(source_id, 'default'), slug, score DESC, page_id ASC, chunk_id ASC ) SELECT * FROM best_per_page ORDER BY score DESC, page_id ASC, chunk_id ASC LIMIT $13 OFFSET $14",
+            "textSha256": "d42f333b20b357f1699e3af4085c61612260cfce37185d7341a1b9f751813613"
+          },
+          {
+            "event": "commit",
+            "lane": "tx"
+          }
+        ]
+      },
+      "searchKeywordChunks": {
+        "cjk": [
+          {
+            "event": "begin",
+            "lane": "tx"
+          },
+          {
+            "lane": "tx",
+            "params": [],
+            "sql": "SET LOCAL statement_timeout = '8s'",
+            "textSha256": "7346ddf58ceeb31a31fd4f44990faf92a5bf015f93c675513e2bc17e5c3619db"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "number",
+              "number"
+            ],
+            "sql": "SELECT p.slug, p.id as page_id, p.title, p.type, p.source_id, p.effective_date, p.effective_date_source, CASE WHEN NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL THEN p.frontmatter->>'message_id' END AS message_id, p.frontmatter->>'thread_id' AS thread_id, CASE WHEN NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL THEN NULLIF(p.frontmatter->>'subject', '') END AS source_subject, cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source, ((((LENGTH(cc.chunk_text) - LENGTH(REPLACE(cc.chunk_text, $1, ''))) / NULLIF(LENGTH($2), 0)::real) + ((LENGTH(cc.chunk_text) - LENGTH(REPLACE(cc.chunk_text, $3, ''))) / NULLIF(LENGTH($4), 0)::real) + ((LENGTH(cc.chunk_text) - LENGTH(REPLACE(cc.chunk_text, $5, ''))) / NULLIF(LENGTH($6), 0)::real) + COALESCE(1.0 / NULLIF(POSITION($7 IN cc.chunk_text), 0)::real, 0.0)) * (CASE WHEN (COALESCE(p.frontmatter, '{}'::jsonb) ->> 'provenance') = 'auto-extracted' AND (COALESCE(p.frontmatter, '{}'::jsonb) ->> 'status') = 'unverified' THEN 1.0 WHEN p.slug LIKE 'media/articles/%' THEN 1.1 WHEN p.slug LIKE 'openclaw/chat/%' THEN 0.5 WHEN p.slug LIKE 'media/repos/%' THEN 1.1 WHEN p.slug LIKE 'originals/%' THEN 1.5 WHEN p.slug LIKE 'companies/%' THEN 1.2 WHEN p.slug LIKE 'concepts/%' THEN 1.3 WHEN p.slug LIKE 'meetings/%' THEN 1.1 WHEN p.slug LIKE 'extracts/%' THEN 0.3 WHEN p.slug LIKE 'writing/%' THEN 1.4 WHEN p.slug LIKE 'media/x/%' THEN 0.7 WHEN p.slug LIKE 'archive/%' THEN 0.5 WHEN p.slug LIKE 'people/%' THEN 1.2 WHEN p.slug LIKE 'deals/%' THEN 1.2 WHEN p.slug LIKE 'civic/%' THEN 1 WHEN p.slug LIKE 'daily/%' THEN 0.8 WHEN p.slug LIKE 'yc/%' THEN 1 ELSE 1.0 END)) AS score, CASE WHEN p.updated_at < ( SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id ) THEN true ELSE false END AS stale FROM content_chunks cc JOIN pages p ON p.id = cc.page_id JOIN sources s ON s.id = p.source_id WHERE cc.chunk_text LIKE $8 ESCAPE '\\' AND cc.chunk_text LIKE $9 ESCAPE '\\' AND NOT (p.slug LIKE 'test/%' OR p.slug LIKE 'attachments/%' OR p.slug LIKE '.raw/%') AND p.deleted_at IS NULL AND (p.text_projection_revision = p.knowledge_revision) IS TRUE AND NOT s.archived AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') ORDER BY score DESC, page_id ASC, chunk_id ASC LIMIT $10 OFFSET $11",
+            "textSha256": "55d31086faabf9b8967b84725a2c619a276941ca6cde9a630a3c2ccbba5b17d7"
+          },
+          {
+            "event": "commit",
+            "lane": "tx"
+          }
+        ],
+        "cjk+sourceId": [
+          {
+            "event": "begin",
+            "lane": "tx"
+          },
+          {
+            "lane": "tx",
+            "params": [],
+            "sql": "SET LOCAL statement_timeout = '8s'",
+            "textSha256": "7346ddf58ceeb31a31fd4f44990faf92a5bf015f93c675513e2bc17e5c3619db"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "number",
+              "number"
+            ],
+            "sql": "SELECT p.slug, p.id as page_id, p.title, p.type, p.source_id, p.effective_date, p.effective_date_source, CASE WHEN NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL THEN p.frontmatter->>'message_id' END AS message_id, p.frontmatter->>'thread_id' AS thread_id, CASE WHEN NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL THEN NULLIF(p.frontmatter->>'subject', '') END AS source_subject, cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source, ((((LENGTH(cc.chunk_text) - LENGTH(REPLACE(cc.chunk_text, $1, ''))) / NULLIF(LENGTH($2), 0)::real) + ((LENGTH(cc.chunk_text) - LENGTH(REPLACE(cc.chunk_text, $3, ''))) / NULLIF(LENGTH($4), 0)::real) + ((LENGTH(cc.chunk_text) - LENGTH(REPLACE(cc.chunk_text, $5, ''))) / NULLIF(LENGTH($6), 0)::real) + COALESCE(1.0 / NULLIF(POSITION($7 IN cc.chunk_text), 0)::real, 0.0)) * (CASE WHEN (COALESCE(p.frontmatter, '{}'::jsonb) ->> 'provenance') = 'auto-extracted' AND (COALESCE(p.frontmatter, '{}'::jsonb) ->> 'status') = 'unverified' THEN 1.0 WHEN p.slug LIKE 'media/articles/%' THEN 1.1 WHEN p.slug LIKE 'openclaw/chat/%' THEN 0.5 WHEN p.slug LIKE 'media/repos/%' THEN 1.1 WHEN p.slug LIKE 'originals/%' THEN 1.5 WHEN p.slug LIKE 'companies/%' THEN 1.2 WHEN p.slug LIKE 'concepts/%' THEN 1.3 WHEN p.slug LIKE 'meetings/%' THEN 1.1 WHEN p.slug LIKE 'extracts/%' THEN 0.3 WHEN p.slug LIKE 'writing/%' THEN 1.4 WHEN p.slug LIKE 'media/x/%' THEN 0.7 WHEN p.slug LIKE 'archive/%' THEN 0.5 WHEN p.slug LIKE 'people/%' THEN 1.2 WHEN p.slug LIKE 'deals/%' THEN 1.2 WHEN p.slug LIKE 'civic/%' THEN 1 WHEN p.slug LIKE 'daily/%' THEN 0.8 WHEN p.slug LIKE 'yc/%' THEN 1 ELSE 1.0 END)) AS score, CASE WHEN p.updated_at < ( SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id ) THEN true ELSE false END AS stale FROM content_chunks cc JOIN pages p ON p.id = cc.page_id JOIN sources s ON s.id = p.source_id WHERE cc.chunk_text LIKE $8 ESCAPE '\\' AND cc.chunk_text LIKE $9 ESCAPE '\\' AND p.source_id = $10 AND NOT (p.slug LIKE 'test/%' OR p.slug LIKE 'attachments/%' OR p.slug LIKE '.raw/%') AND p.deleted_at IS NULL AND (p.text_projection_revision = p.knowledge_revision) IS TRUE AND NOT s.archived AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') ORDER BY score DESC, page_id ASC, chunk_id ASC LIMIT $11 OFFSET $12",
+            "textSha256": "165e5d1a9283060bf2c551dc0b28b21dc004c8e75f980cb116e580e8e9fdbc99"
+          },
+          {
+            "event": "commit",
+            "lane": "tx"
+          }
+        ]
+      }
+    }
+  },
+  "normalizer": "sql-text-v1"
+}

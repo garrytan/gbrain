@@ -14,11 +14,10 @@
  * never mutates process.env (isolation rule R1).
  */
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { MinionQueue } from '../src/core/minions/queue.ts';
 import { maybeRunWorkerStartupRecovery } from '../src/commands/jobs.ts';
+import { surfaceFileSource } from './helpers/source-surface.ts';
 
 let engine: PGLiteEngine;
 let queue: MinionQueue;
@@ -123,10 +122,8 @@ describe('maybeRunWorkerStartupRecovery', () => {
 // reference heuristic can't leak onto sibling suites).
 describe('work-handler recovery placement (structural)', () => {
   test('the work handler awaits recovery right after ensureSchema, before the worker spawns', () => {
-    const jobsSource = readFileSync(
-      join(import.meta.dir, '..', 'src', 'commands', 'jobs.ts'),
-      'utf8',
-    );
+    // W4 jobs: the work handler is src/commands/jobs/work.ts.
+    const jobsSource = surfaceFileSource('jobs', 'src/commands/jobs/work.ts');
     const callSite = 'await maybeRunWorkerStartupRecovery(queue, process.env, true);';
     const callIdx = jobsSource.indexOf(callSite);
     expect(callIdx).toBeGreaterThan(-1);

@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-018",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/alaric-quellwaite",
+      "content": "---\ntitle: Alaric Quellwaite\ntype: person\naliases: [alaric]\nsummary: \"Alaric Quellwaite is the procurement lead at Brackenfold.\"\n---\n\nAlaric Quellwaite is the procurement lead at Brackenfold.\n"
+    },
+    {
+      "slug": "people/verity-haskdale",
+      "content": "---\ntitle: Verity Haskdale\ntype: person\naliases: [verity]\nsummary: \"Verity Haskdale is the head of sales at Saffronfold.\"\n---\n\nVerity Haskdale is the head of sales at Saffronfold. Verity wants the proposal revised to drop the onboarding fee.\n"
+    },
+    {
+      "slug": "people/ines-tulvthorpe",
+      "content": "---\ntitle: Ines Tulvthorpe\ntype: person\nsummary: \"Ines Tulvthorpe is the finance lead at Juniperfold.\"\n---\n\nInes Tulvthorpe is the finance lead at Juniperfold. Ines pushed to move the reporting feature ahead of the mobile app.\n"
+    },
+    {
+      "slug": "people/rasmus-wyrgrove",
+      "content": "---\ntitle: Rasmus Wyrgrove\ntype: person\nsummary: \"Rasmus Wyrgrove is the finance lead at Russetreach.\"\n---\n\nRasmus Wyrgrove is the finance lead at Russetreach.\n"
+    },
+    {
+      "slug": "people/ottilie-fencombe",
+      "content": "---\ntitle: Ottilie Fencombe\ntype: person\naliases: [ottilie]\nsummary: \"A contact from a conference last spring.\"\n---\n\nA contact from a conference last spring.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Is Alaric usually a short form of a longer name?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Remind me of Haskdale's position on the proposal before our sync."
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Here is what I have."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "what's the latest with tulvthorpe on the roadmap?"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Okay, noted."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "how do you pronounce the name rasmus? it's for a character in my short story"
+    }
+  ]
+}

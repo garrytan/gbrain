@@ -1,0 +1,154 @@
+[user]
+I’m fixing a spreadsheet where a formula started returning `#REF!` after I moved a column. Can you help me diagnose it?
+
+[assistant]
+Yes. Please paste the formula exactly as it appears now, identify the cell containing it, and describe which column was moved and where it went. Also mention whether this is Excel or Google Sheets, since the repair options differ slightly.
+
+[user]
+It’s in Google Sheets, cell `H12`, on a tab called `Orders`. The formula now reads:
+
+`=IFERROR(VLOOKUP($A12,Products!$A:$F,6,FALSE),"")`
+
+I moved the `Price` column from `Products!F:F` to `Products!D:D` because I was rearranging the layout. Other formulas in the sheet look okay, but this one shows `#REF!`.
+
+[assistant]
+The formula still asks `VLOOKUP` to return column 6 from the range `Products!$A:$F`. Moving `Price` to column D changes the needed index to 4, assuming the lookup key is still in column A and the range still starts at A.
+
+Try this in `Orders!H12`:
+
+`=IFERROR(VLOOKUP($A12,Products!$A:$F,4,FALSE),"")`
+
+Then press Enter and check whether the result is the expected price. If the lookup range was also changed, paste the current headers from `Products!A1:F1` so we can verify the layout.
+
+[user]
+I changed the index to 4, but it still returns `#REF!`. The headers in row 1 are:
+
+`A: SKU`
+`B: Description`
+`C: Category`
+`D: Price`
+`E: Stock`
+`F: Supplier`
+
+The formula bar shows exactly:
+
+`=IFERROR(VLOOKUP($A12,Products!$A:$F,4,FALSE),"")`
+
+Could the sheet name be causing it?
+
+[assistant]
+The sheet name `Products` does not need quotes because it contains no spaces or special characters. More importantly, that formula should not produce `#REF!` solely because the price column moved to D.
+
+A few checks will isolate the issue:
+
+1. In an empty cell, enter:
+   `=COLUMNS(Products!$A:$F)`
+   It should return `6`.
+
+2. Test the lookup without `IFERROR`:
+   `=VLOOKUP($A12,Products!$A:$F,4,FALSE)`
+
+3. Check the value in `Orders!A12`. Then search for that exact value in `Products!A:A`.
+
+4. Confirm that `Products!D:D` contains the price values and does not contain formulas with broken references.
+
+If the second formula returns `#N/A`, the SKU is missing or formatted differently. If it returns `#REF!`, Sheets may be resolving the reference differently than expected, or the copied formula may contain an unusual range reference.
+
+[user]
+The `COLUMNS` test returns `6`. The direct `VLOOKUP` returns `#REF!`. `Orders!A12` contains `SKU-1042`, and that exact text appears in `Products!A18`. I also checked `Products!D18`; it contains `12.50` as a number. I noticed the formula was copied down from an older version, and some cells had been edited manually.
+
+[assistant]
+Since the basic range and index are valid, test the reference components separately. In blank cells, enter these formulas:
+
+`=Products!A18`
+
+`=Products!D18`
+
+`=INDEX(Products!D:D,MATCH($A12,Products!A:A,0))`
+
+The first two should return the SKU and price. The third should return `12.50`. This avoids `VLOOKUP`’s fixed column-index behavior and directly matches column A to column D.
+
+Also inspect the formula through the Sheets formula bar rather than relying on displayed text. A hidden sheet reference, malformed range, or an accidental deleted-sheet reference can sometimes survive a copy/paste operation.
+
+If `INDEX`/`MATCH` works, replace the formula in `H12` with:
+
+`=IFERROR(INDEX(Products!$D:$D,MATCH($A12,Products!$A:$A,0)),"")`
+
+Then fill it down using the fill handle or copy and paste only the formula cell.
+
+[user]
+The two direct references work. The `INDEX`/`MATCH` test returns `12.50` too. I replaced `H12` with:
+
+`=IFERROR(INDEX(Products!$D:$D,MATCH($A12,Products!$A:$A,0)),"")`
+
+That works in `H12`. But when I paste it down through `H20`, a few rows still show `#REF!`. The affected cells are `H14`, `H17`, and `H20`.
+
+[assistant]
+That suggests the problem is in the copied formulas or in the source values for those specific rows, not in the lookup structure. First inspect each affected cell’s formula. Click `H14`, `H17`, and `H20` one at a time and compare the formula bar with the working formula in `H12`.
+
+For example, each should follow this pattern:
+
+`=IFERROR(INDEX(Products!$D:$D,MATCH($A14,Products!$A:$A,0)),"")`
+
+`=IFERROR(INDEX(Products!$D:$D,MATCH($A17,Products!$A:$A,0)),"")`
+
+`=IFERROR(INDEX(Products!$D:$D,MATCH($A20,Products!$A:$A,0)),"")`
+
+The row number after `$A` should change, while both source-column references remain fixed. If the formulas look correct, test the lookup keys with:
+
+`=MATCH($A14,Products!$A:$A,0)`
+
+and corresponding versions for rows 17 and 20. That will show whether each key is found and at which source row.
+
+[user]
+I checked them. `H14` has this formula:
+
+`=IFERROR(INDEX(Products!$D:$D,MATCH($A14,Products!$A:$A,0)),"")`
+
+`H17` has:
+
+`=IFERROR(INDEX(Products!$D:$D,MATCH($A17,Products!$A:$A,0)),"")`
+
+`H20` has:
+
+`=IFERROR(INDEX(Products!$D:$D,MATCH($A20,Products!$A:$A,0)),"")`
+
+The `MATCH` tests return 22, 31, and 45 respectively. So the keys are found. I’m starting to suspect those cells have some leftover formatting or an old array formula.
+
+[assistant]
+Formatting normally cannot cause `#REF!`, but an old array formula or a merged-cell layout can prevent a normal formula from behaving as expected. Check these items for each affected cell:
+
+- Select the cell and look for a colored outline around a larger range.
+- Check whether the cell is part of a merged range: `Format` → `Merge cells`.
+- Look for a small warning indicator or an array-formula message.
+- Check whether there are hidden rows or filters; these usually do not cause `#REF!`, but they can make inspection confusing.
+
+You can also clear only the affected cells, then enter the formulas again:
+
+1. Select `H14`, `H17`, and `H20`.
+2. Use `Delete` or `Backspace` to remove their contents.
+3. Enter the correct formula separately in each cell.
+4. Avoid pasting over any merged range.
+
+If the cells are in an array output range, clear the formula from the array’s top-left cell instead of clearing an individual result cell.
+
+[user]
+There are no merged cells or array indicators. Clearing and re-entering the formulas did not help. I then tried the `MATCH` result inside `INDEX` manually. For `H14`, I entered `=INDEX(Products!$D:$D,22)` and it returned `#REF!`, even though `Products!D22` visibly contains `18.75`.
+
+[assistant]
+That narrows it down: the problem is likely with the `Products!D:D` reference itself, not with `MATCH`. A direct reference such as `=Products!D22` should normally work, so test that exact formula in a blank cell, outside the affected area:
+
+`=Products!D22`
+
+If it returns `18.75`, then try a bounded range:
+
+`=INDEX(Products!$D$1:$D$1000,22)`
+
+If the bounded version works, use a bounded range in the lookup formula:
+
+`=IFERROR(INDEX(Products!$D$1:$D$1000,MATCH($A14,Products!$A$1:$A$1000,0)),"")`
+
+However, note that `INDEX(Products!$D:$D,22)` should ordinarily be valid. If the direct reference fails too, inspect whether column D contains a deleted or damaged range, unusual named-range behavior, or a sheet structure issue. A fresh helper tab can also test whether the reference works outside the current sheet.
+
+[assistant]
+You have 7 turns left.

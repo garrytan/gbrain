@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-131",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/mireille-orrinridge",
+      "content": "---\ntitle: Mireille Orrinridge\ntype: person\nsummary: \"Mireille Orrinridge is the procurement lead at Pylonspire.\"\n---\n\nMireille Orrinridge is the procurement lead at Pylonspire. Mireille objected to the auto-renewal clause in the draft contract.\n"
+    },
+    {
+      "slug": "people/eamon-tessbrook",
+      "content": "---\ntitle: Eamon Tessbrook\ntype: person\nsummary: \"Eamon Tessbrook is the product lead at Emberreach.\"\n---\n\nEamon Tessbrook is the product lead at Emberreach.\n"
+    },
+    {
+      "slug": "people/fintan-yarrgrove",
+      "content": "---\ntitle: Fintan Yarrgrove\ntype: person\naliases: [fintan]\nsummary: \"Fintan Yarrgrove is the operations director at Vespercrest.\"\n---\n\nFintan Yarrgrove is the operations director at Vespercrest.\n"
+    },
+    {
+      "slug": "companies/orchidmoor",
+      "content": "---\ntitle: Orchidmoor\ntype: company\nsummary: \"A company we met once at a trade show.\"\n---\n\nA company we met once at a trade show.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "sorry, got distracted for a minute"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Happy to help."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "can you pull up what mireille orrinridge told us about the contract"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Here is what I have."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "Tessbrook said the room is 12 by 15 feet. What is that in square meters?"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Done."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "Yarrgrove mentioned the pomodoro technique on a call. How does the pomodoro technique work?"
+    }
+  ]
+}

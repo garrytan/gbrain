@@ -1,0 +1,100 @@
+[user]
+I have a short list of temperatures and distances in mixed units. Can you convert them to the opposite system and keep the original values beside the results?
+
+[assistant]
+Sure. Paste the list, and I’ll convert temperatures between Celsius and Fahrenheit and distances between kilometers, meters, miles, feet, or yards as appropriate. I’ll preserve the order and label each result clearly.
+
+[user]
+Here it is:
+
+- 18 °C
+- 72 °F
+- 4.5 km
+- 2 miles
+- 850 m
+- 300 ft
+- 23.5 °C
+- 41 °F
+
+Please use sensible rounding rather than showing a long string of decimals.
+
+[assistant]
+I’ll use these standard conversions:
+
+- °F = °C × 9/5 + 32
+- °C = (°F − 32) × 5/9
+- miles = kilometers × 0.621371
+- kilometers = miles × 1.609344
+- feet = meters × 3.28084
+- meters = feet × 0.3048
+
+For the output, I’ll round temperatures to one decimal place and distances to two decimal places where that is useful.
+
+[user]
+Could you also show the distance results in both larger and smaller common units? For example, kilometers as miles and meters, and miles as kilometers and feet. I don’t need a spreadsheet; a plain text list is fine.
+
+[assistant]
+Yes. I’ll show each distance in its original unit, followed by a practical equivalent in the other larger unit and a smaller unit where it makes sense. For example, 4.5 km will include miles and meters, while 300 ft will include meters and yards. I’ll keep the temperature entries as direct Celsius/Fahrenheit conversions.
+
+[user]
+Please calculate the full list now. Make sure 850 m is not accidentally treated as 850 km, and keep 2 miles distinct from 2 kilometers.
+
+[assistant]
+Here are the conversions:
+
+- 18 °C = 64.4 °F
+- 72 °F = 22.2 °C
+- 4.5 km = 2.80 miles = 4,500 m
+- 2 miles = 3.22 km = 10,560 ft
+- 850 m = 0.85 km = 0.53 miles
+- 300 ft = 91.44 m = 0.09144 km = 100 yards
+- 23.5 °C = 74.3 °F
+- 41 °F = 5.0 °C
+
+The units are kept separate: 850 m is 0.85 km, whereas 2 miles is about 3.22 km.
+
+[user]
+Can you verify the arithmetic, especially the values involving 4.5 km, 850 m, and 300 ft? A compact calculation trace would help.
+
+[assistant]
+Here is a calculation trace using the exact factors above:
+
+```text
+4.5 km × 0.621371 = 2.7961695 miles
+4.5 km × 1,000 = 4,500 m
+
+850 m ÷ 1,000 = 0.85 km
+0.85 km × 0.621371 = 0.52816535 miles
+
+300 ft × 0.3048 = 91.44 m
+300 ft ÷ 3 = 100 yards
+91.44 m ÷ 1,000 = 0.09144 km
+```
+
+Rounded as listed:
+
+- 4.5 km = 2.80 miles = 4,500 m
+- 850 m = 0.85 km = 0.53 miles
+- 300 ft = 91.44 m = 0.09144 km = 100 yards
+
+The arithmetic checks out.
+
+[user]
+For consistency, could you put every distance in a single compact block, with metric and imperial equivalents on the same line? Also include the temperature conversions below it.
+
+[assistant]
+Distances:
+
+- 4.5 km = 4,500 m = 2.80 mi
+- 2 mi = 3.22 km = 10,560 ft
+- 850 m = 0.85 km = 0.53 mi
+- 300 ft = 91.44 m = 0.09144 km = 100 yd
+
+Temperatures:
+
+- 18 °C = 64.4 °F
+- 72 °F = 22.2 °C
+- 23.5 °C = 74.3 °F
+- 41 °F = 5.0 °C
+
+These use exact metric-to-imperial factors before rounding the displayed values.

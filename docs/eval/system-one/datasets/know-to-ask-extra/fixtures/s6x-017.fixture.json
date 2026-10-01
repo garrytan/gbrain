@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-017",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/marisol-wyrwick",
+      "content": "---\ntitle: Marisol Wyrwick\ntype: person\nsummary: \"Marisol Wyrwick is the head of partnerships at Lumenfold.\"\n---\n\nMarisol Wyrwick is the head of partnerships at Lumenfold. Marisol pushed to move the reporting feature ahead of the mobile app.\n"
+    },
+    {
+      "slug": "people/tamsin-wyrstead",
+      "content": "---\ntitle: Tamsin Wyrstead\ntype: person\naliases: [tamsin]\nsummary: \"Tamsin Wyrstead is the head of partnerships at Marbleloft.\"\n---\n\nTamsin Wyrstead is the head of partnerships at Marbleloft.\n"
+    },
+    {
+      "slug": "companies/vespercrest",
+      "content": "---\ntitle: Vespercrest\ntype: company\nsummary: \"Vespercrest is a software vendor we work with.\"\n---\n\nVespercrest is a software vendor we work with. Their pilot with our team ends after the next billing cycle.\n"
+    },
+    {
+      "slug": "companies/vespervane",
+      "content": "---\ntitle: Vespervane\ntype: company\nsummary: \"A company we met once at a trade show.\"\n---\n\nA company we met once at a trade show.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "remind me where marisol landed on the roadmap"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Here is what I have."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "explain the difference between gross margin and net margin"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "Wyrstead said the room is 12 by 15 feet. What is that in square meters?"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Happy to help."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "what's the status with vespercrest and the pilot?"
+    }
+  ]
+}

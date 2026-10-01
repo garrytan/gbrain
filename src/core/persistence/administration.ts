@@ -14,6 +14,9 @@ import type { PersistenceAdminOperation } from './admin-contract.ts';
 import { operationScopesAllowed } from '../scope.ts';
 import { assertWriterAdminState, requireWriterAdminIntent, writerAdminState, WRITER_INSPECTION_HINT } from './admin-intent.ts';
 import { writerOnboardingPreflight } from './onboarding.ts';
+import { assertWriterAdminUnlocked, readWriterAdminLock, setWriterAdminLock } from './admin-lock.ts';
+import { listBlockingEffects } from './blocking-effects.ts';
+import { listWriterVersions } from './writer-versions.ts';
 
 const invalid = (message: string) => new OperationError('invalid_params', message);
 function source(value: unknown): string {
@@ -62,6 +65,12 @@ async function registrationGrant(engine: BrainEngine, params: Record<string, unk
   return { sourceIds, scopes, operations, slugPrefixes };
 }
 
+/** Shown by `writer claim` (and its dry run) while persistence is not activated. */
+export const CLAIM_BEFORE_ACTIVATION_NOTICE = 'Persistence is not activated. After this claim, gbrain sync refuses this source with '
+  + 'writer_coordinator_required until activation, and legacy file writers in its checkout (sources push, lint --fix and other '
+  + 'file-writing maintenance) refuse while the checkout is managed. Stop older writers, review gbrain sources writer status, '
+  + 'then activate deliberately.';
+
 export async function runPersistenceAdministration(engine: BrainEngine, operation: PersistenceAdminOperation,
   params: Record<string, unknown>, config?: GBrainConfig, embeddingRetryPolicy: 'owner' | 'mounted_database' = 'owner'): Promise<Record<string, unknown>> {
   if (operation === 'writer_reconcile_preview') return (await import('./reconcile.ts')).runReconcilePreview(engine, params);
@@ -82,6 +91,12 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
     return { ...await runtime.connectCompanyBrain(engine, input) };
   }
   if (currentVerifiedLocalWriter()?.remote) throw new OperationError('permission_denied', 'Writer administration requires a trusted local CLI caller.');
+  if (operation === 'writer_lock' || operation === 'writer_unlock') {
+    keys(params, []);
+    return { ...await setWriterAdminLock(engine, operation === 'writer_lock') };
+  }
+  // Early refusal before any native lock or preview; the checks inside each transaction stay authoritative.
+  if (['writer_claim', 'writer_activate', 'writer_transfer_prepare', 'writer_transfer_accept'].includes(operation)) await assertWriterAdminUnlocked(engine);
   if (operation === 'writer_sync') return (await import('./sync-administration.ts')).runAuthenticatedSyncSlice(engine, params);
   if (operation === 'writer_extract_stale') {
     keys(params, ['source_id', 'dry_run']);
@@ -149,15 +164,28 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
     const onboarding = await writerOnboardingPreflight(engine, params.source_id as string | undefined);
     const [sharedSkills] = await engine.executeRaw<{ writer_protocol_floor: number; skill_bundles_enabled: boolean }>(
       'SELECT writer_protocol_floor,skill_bundles_enabled FROM persistence_brain WHERE singleton=1');
+    const adminLock = await readWriterAdminLock(engine);
+    const blockingEffects = await listBlockingEffects(engine, { sourceId: params.source_id as string | undefined, limit: 20 });
+    const writerVersions = await listWriterVersions(engine);
     await assertWriterAdminState(engine, adminState, false);
-    return { ...diagnostics, host_id: existingLocalHostId(), bindings, admin_state: adminState, onboarding, shared_skills: sharedSkills, ...(native ? { native_lock: native } : {}) };
+    const { cleanupRetiredManagedMarkers } = await import('./deactivation.ts');
+    const [mode] = await engine.executeRaw<{ enabled: boolean; mode_epoch: string | null }>(
+      "SELECT enabled, to_jsonb(persistence_brain)->>'mode_epoch' AS mode_epoch FROM persistence_brain WHERE singleton=1");
+    return { ...diagnostics, mode: mode?.enabled ? 'managed' : 'classic', mode_epoch: Number(mode?.mode_epoch ?? 1),
+      local_markers: await cleanupRetiredManagedMarkers(engine),
+      host_id: existingLocalHostId(), local_host_id: existingLocalHostId(), bindings, admin_state: adminState,
+      admin_lock: { locked: adminLock.locked, set_at: adminLock.set_at, host_id: adminLock.host_id }, blocking_effects: blockingEffects,
+      writer_versions: writerVersions, onboarding, shared_skills: sharedSkills, ...(native ? { native_lock: native } : {}) };
   }
   if (operation === 'writer_claim') {
     keys(params, ['source_id', 'path', 'dry_run', 'admin_intent', 'expected_state']);
     const sourceId = source(params.source_id), root = path(params.path);
-    if (params.dry_run) return { dry_run: true, action: operation, source_id: sourceId, path: root, current: await getWorktreeBinding(engine, sourceId, existingLocalHostId()) };
+    // #5198: say at claim time what the claim retires, before and after the fact.
+    const [brain] = await engine.executeRaw<{ enabled: boolean }>('SELECT enabled FROM persistence_brain WHERE singleton=1');
+    const notice = brain?.enabled ? {} : { activation_required: CLAIM_BEFORE_ACTIVATION_NOTICE };
+    if (params.dry_run) return { dry_run: true, action: operation, source_id: sourceId, path: root, current: await getWorktreeBinding(engine, sourceId, existingLocalHostId()), ...notice };
     const expectedState = await requireWriterAdminIntent(engine, operation, params);
-    return { claimed: true, binding: await claimWorktree(engine, sourceId, root, undefined, expectedState) };
+    return { claimed: true, binding: await claimWorktree(engine, sourceId, root, undefined, expectedState), ...notice };
   }
   if (operation === 'writer_activate') {
     keys(params, ['confirm_quiesced', 'dry_run', 'shared_skills', 'admin_intent', 'expected_state', 'cleanup_dead_local_locks']);
@@ -174,6 +202,28 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
     return { ...await activatePersistence(engine, { confirmQuiesced: true, dryRun: params.dry_run === true, expectedState, cleanupDeadLocalLocks: params.cleanup_dead_local_locks === true }),
       unsupported_maintenance: [...UNSUPPORTED_MANAGED_BULK_WRITERS],
       ...(params.dry_run ? { dry_run: true, action: operation } : {}) };
+  }
+  if (operation === 'writer_deactivate') {
+    if (params.source_id !== undefined) throw invalid('Deactivate is brain-wide: it converts every source of this brain back to classic mode. Omit the <source> argument.');
+    keys(params, ['dry_run', 'admin_intent', 'expected_state', 'request_id']);
+    const { deactivatePersistence } = await import('./deactivation.ts');
+    if (params.dry_run === true) {
+      // DX-O13: a clean preview prints the state-bound command that applies exactly what it reviewed, so the
+      // state is read before the preview and the command is printed only when nothing moved while it ran.
+      const state = await writerAdminState(engine);
+      const report = await deactivatePersistence(engine, { dryRun: true });
+      const unchanged = state === await writerAdminState(engine);
+      return { ...report, action: operation, ...(report.mode === 'managed' && report.blockers.length === 0 && unchanged
+        ? { apply_command: `gbrain sources writer deactivate --admin-intent writer_deactivate --expected-state ${state}` } : {}) };
+    }
+    let expectedState: string | undefined;
+    try { expectedState = await requireWriterAdminIntent(engine, operation, params); }
+    catch (error) {
+      if (!(error instanceof OperationError) || error.code !== 'writer_admin_state_changed') throw error;
+      error.suggestion = `The current admin_state is ${await writerAdminState(engine)}. Review gbrain sources writer status --json, then rerun with --expected-state <that admin_state>.`;
+      throw error;
+    }
+    return { ...await deactivatePersistence(engine, { expectedState, requestId: params.request_id === undefined ? undefined : uuid(params.request_id) }) };
   }
   if (operation === 'writer_transfer_prepare') {
     keys(params, ['source_id', 'dry_run', 'admin_intent', 'expected_state', 'self_transfer']);

@@ -1,0 +1,20 @@
+{
+  "fixture_id": "s6x-071",
+  "turns": {
+    "1": {
+      "should_retrieve": false
+    },
+    "3": {
+      "should_retrieve": true,
+      "gold_slugs": [
+        "companies/russetloft"
+      ]
+    },
+    "5": {
+      "should_retrieve": false
+    },
+    "7": {
+      "should_retrieve": false
+    }
+  }
+}

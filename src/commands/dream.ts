@@ -412,6 +412,9 @@ Options:
                       implied by --input or --drain does not count (bare
                       --once, or --once with --input/--drain and no
                       explicit --phase, is a usage error).
+  --eval-run          Eval harness run: honor GBRAIN_DECIDE_SLOTS (e.g. triage=on)
+                      for System One slots in this process; consent keys, the
+                      egress gate and the daily cap still apply
   --pull              git pull the brain repo before syncing (default: no pull)
   --dir <path>        Brain directory (default: configured brain). On a
                       postgres/remote brain with no local checkout, the
@@ -674,6 +677,10 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
     await runDreamResetKey(engine, args.slice(1));
     return;
   }
+  if (args.includes('--eval-run')) {
+    const { enableDecideEvalOverride } = await import('../core/ai/decide/config.ts');
+    enableDecideEvalOverride();
+  }
   // Fail-loud guard (structured-review r3 P1): the CLI flag registry unions
   // retriage's flags into `dream`, so the pre-dispatch validator accepts
   // `gbrain dream --reconcile-queue` — but without the `retriage` positional,
@@ -864,8 +871,9 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
   }
 
   // Exit non-zero when the cycle failed overall (helps cron spot real problems).
-  // 'partial' is not a failure — it means some phase warned but the cycle ran.
-  if (report.status === 'failed') {
+  // 'partial' is not a failure — it means some phase warned but the cycle ran —
+  // except when a phase threw and was contained so later phases could run.
+  if (report.status === 'failed' || report.phases.some(p => p.details?.contained === true)) {
     process.exit(1);
   }
 

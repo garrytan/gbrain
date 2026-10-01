@@ -1,0 +1,228 @@
+{
+  "golden": {
+    "domain": "tags",
+    "methods": {
+      "addTag": {
+        "default": [
+          {
+            "event": "begin",
+            "lane": "tx"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT incarnation FROM sources WHERE id=$1 FOR SHARE",
+            "textSha256": "414efa2a18b3a4ac2f6f6675b6f7273b71c262a6bab8a44f82963606fed221d7"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "INSERT INTO page_write_guards(source_incarnation,slug) VALUES ($1::uuid,$2) ON CONFLICT DO NOTHING",
+            "textSha256": "fa56fa770a66caa8ae77b19c2c3ae9caac336d8e8281bc16f09d36a7fcdd74fd"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT slug FROM page_write_guards WHERE source_incarnation=$1::uuid AND slug=$2 FOR UPDATE",
+            "textSha256": "3d08e10394edab70fb78946e378dd11528213526b214a8516d8cf3825e87ac19"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT id FROM pages WHERE source_id=$1 AND slug=$2 FOR UPDATE",
+            "textSha256": "6c2eb61492fe7470a32169e89b9f04d471f3311d55ff790ad08f4736af483a2c"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT id FROM pages WHERE source_id=$1 AND slug=$2",
+            "textSha256": "ae3109d4f50daf50a2e8749cdbc05b75cbb61bc2a8309fc4aa5f122b794dd49e"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "number",
+              "string"
+            ],
+            "sql": "INSERT INTO tags(page_id,tag,tag_source) VALUES ($1,$2,'added') ON CONFLICT (page_id,tag) DO UPDATE SET tag_source = 'added'",
+            "textSha256": "0a50367ece922fa905c5f8fc5eb2b2e5a41003ac0e015400fa54f2e24e53ad65"
+          },
+          {
+            "event": "commit",
+            "lane": "tx"
+          }
+        ],
+        "frontmatter": [
+          {
+            "event": "begin",
+            "lane": "tx"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT incarnation FROM sources WHERE id=$1 FOR SHARE",
+            "textSha256": "414efa2a18b3a4ac2f6f6675b6f7273b71c262a6bab8a44f82963606fed221d7"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "INSERT INTO page_write_guards(source_incarnation,slug) VALUES ($1::uuid,$2) ON CONFLICT DO NOTHING",
+            "textSha256": "fa56fa770a66caa8ae77b19c2c3ae9caac336d8e8281bc16f09d36a7fcdd74fd"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT slug FROM page_write_guards WHERE source_incarnation=$1::uuid AND slug=$2 FOR UPDATE",
+            "textSha256": "3d08e10394edab70fb78946e378dd11528213526b214a8516d8cf3825e87ac19"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT id FROM pages WHERE source_id=$1 AND slug=$2 FOR UPDATE",
+            "textSha256": "6c2eb61492fe7470a32169e89b9f04d471f3311d55ff790ad08f4736af483a2c"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT id FROM pages WHERE source_id=$1 AND slug=$2",
+            "textSha256": "ae3109d4f50daf50a2e8749cdbc05b75cbb61bc2a8309fc4aa5f122b794dd49e"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "number",
+              "string"
+            ],
+            "sql": "INSERT INTO tags(page_id,tag,tag_source) VALUES ($1,$2,'frontmatter') ON CONFLICT (page_id,tag) DO UPDATE SET tag_source = 'frontmatter' WHERE tags.tag_source IS NULL",
+            "textSha256": "7e815fa50ec25f300afbc1f58f29b6ed4b3f6d27d6dd70e5ef29a1dc13c7bea7"
+          },
+          {
+            "event": "commit",
+            "lane": "tx"
+          }
+        ]
+      },
+      "getTags": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT DISTINCT tag FROM tags WHERE page_id IN (SELECT id FROM pages WHERE slug = $1 AND source_id = $2 ) ORDER BY tag",
+            "textSha256": "6ed615895561127e50b086496d2e6b977590201c98a3a181721d8dc816f6f01c"
+          }
+        ],
+        "excludePrivate+liveOnly": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT DISTINCT tag FROM tags WHERE page_id IN (SELECT id FROM pages WHERE slug = $1 AND source_id = $2 AND (COALESCE(pages.frontmatter->>'visibility', CASE WHEN (pages.type = 'atom' OR (pages.type = 'concept' AND pages.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private' AND NOT (CASE WHEN pages.type = 'atom' THEN EXISTS (SELECT 1 FROM pages derived_origin WHERE derived_origin.source_id = pages.source_id AND derived_origin.slug = pages.frontmatter->>'source_slug' AND derived_origin.frontmatter->>'visibility' = 'private') WHEN (pages.type = 'atom' OR (pages.type = 'concept' AND pages.frontmatter->>'synthesized_by' IS NOT NULL)) THEN EXISTS (SELECT 1 FROM links derived_input_link JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id WHERE derived_input_link.from_page_id = pages.id AND derived_input_link.link_source = 'concept-provenance' AND derived_input_link.link_type = 'synthesized_from' AND (COALESCE(derived_input.frontmatter->>'visibility', CASE WHEN derived_input.type = 'atom' THEN 'private' ELSE 'world' END) = 'private' OR EXISTS (SELECT 1 FROM pages derived_input_origin WHERE derived_input_origin.source_id = derived_input.source_id AND derived_input_origin.slug = derived_input.frontmatter->>'source_slug' AND derived_input_origin.frontmatter->>'visibility' = 'private'))) ELSE false END)) AND deleted_at IS NULL) ORDER BY tag",
+            "textSha256": "3b525b811b5bb9db79a83cc91a99ee64a095c69a23b6846be08f094b2fe722a4"
+          }
+        ],
+        "sourceIds": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "array<string>"
+            ],
+            "sql": "SELECT DISTINCT tag FROM tags WHERE page_id IN (SELECT id FROM pages WHERE slug = $1 AND source_id = ANY($2::text[]) ) ORDER BY tag",
+            "textSha256": "0516543c54d2a83a3b4b9e7d87c2af62c0992fbc2df10d56f0f9c6c971cbbdf8"
+          }
+        ]
+      },
+      "removeTag": {
+        "default": [
+          {
+            "event": "begin",
+            "lane": "tx"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT incarnation FROM sources WHERE id=$1 FOR SHARE",
+            "textSha256": "414efa2a18b3a4ac2f6f6675b6f7273b71c262a6bab8a44f82963606fed221d7"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "INSERT INTO page_write_guards(source_incarnation,slug) VALUES ($1::uuid,$2) ON CONFLICT DO NOTHING",
+            "textSha256": "fa56fa770a66caa8ae77b19c2c3ae9caac336d8e8281bc16f09d36a7fcdd74fd"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT slug FROM page_write_guards WHERE source_incarnation=$1::uuid AND slug=$2 FOR UPDATE",
+            "textSha256": "3d08e10394edab70fb78946e378dd11528213526b214a8516d8cf3825e87ac19"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT id FROM pages WHERE source_id=$1 AND slug=$2 FOR UPDATE",
+            "textSha256": "6c2eb61492fe7470a32169e89b9f04d471f3311d55ff790ad08f4736af483a2c"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string",
+              "string"
+            ],
+            "sql": "DELETE FROM tags WHERE page_id=(SELECT id FROM pages WHERE source_id=$1 AND slug=$2) AND tag=$3",
+            "textSha256": "355553e6fa6f18c13c452c94921a33bff2c39a5b06c7b9c40ff21910db859ddc"
+          },
+          {
+            "event": "commit",
+            "lane": "tx"
+          }
+        ]
+      }
+    }
+  },
+  "normalizer": "sql-text-v1"
+}

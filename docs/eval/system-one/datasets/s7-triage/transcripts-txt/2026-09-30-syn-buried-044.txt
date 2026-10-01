@@ -1,0 +1,116 @@
+[user]
+I forgot the administrator password for my home router. How do I look up the correct reset procedure without making things worse?
+
+[assistant]
+Start by identifying the exact router brand and model, including any hardware revision printed on the label. The reset procedure varies, and a factory reset usually erases the Wi‑Fi name, Wi‑Fi password, port forwards, parental controls, and ISP settings.
+
+Look for a label on the underside or back, or check the router’s packaging or purchase email. Do not use a random “default password” list until you know the model. Also, distinguish the router administrator password from the Wi‑Fi password: they are often different.
+
+Once you have the model, use the manufacturer’s official support site and search for phrases such as:
+- “factory reset”
+- “forgot admin password”
+- “restore default settings”
+- the exact model number plus “manual”
+
+[user]
+The label says TP-Link Archer AX55, hardware version 1.0. I can still connect to Wi-Fi, but I cannot get into the admin page. I think the router might be using the TP-Link app.
+
+[assistant]
+For an Archer AX55, start with TP-Link’s official support page for the Archer AX55 V1, then open the user guide or support article for “reset router to factory defaults” and “recover or change administrator password.” Avoid instructions for AX55 V2 or another Archer model.
+
+Because you still have Wi‑Fi access, first try the local management page:
+- Connect to the router’s Wi‑Fi.
+- Open `http://tplinkwifi.net` or `http://192.168.0.1`.
+- If one does not load, try the other.
+- Use the administrator credentials you set during initial setup; these may not be the same as the Wi‑Fi password.
+
+You can confirm the gateway address instead of guessing. On Windows, run `ipconfig`; on macOS or Linux, run `ip route` or inspect the network details. The “Default Gateway” or “default via” address is normally the router’s local address. If the TP-Link Tether app is already signed in, it may let you change settings without typing the local admin password, but that depends on how the account and router were configured.
+
+[user]
+I ran the command. Here is the relevant output:
+
+```text
+Windows IP Configuration
+
+Wireless LAN adapter Wi-Fi:
+   IPv4 Address. . . . . . . . . . . : 192.168.0.117
+   Default Gateway . . . . . . . . . : 192.168.0.1
+```
+
+The browser page asks for an administrator password, and the app also asks me to sign in. Is there a way to retrieve the old password from Windows?
+
+[assistant]
+Windows generally cannot display the router’s administrator password. It may have saved the Wi‑Fi password, but that is a separate credential. You can check whether your browser’s password manager contains an entry for `tplinkwifi.net` or `192.168.0.1`, but do not export all saved passwords or install a “password recovery” utility.
+
+In your browser, open the password manager, search for `tplinkwifi.net`, `192.168.0.1`, or “TP-Link,” and reveal an entry only if you recognize it and Windows asks you to authenticate. If there is no entry, the supported option is recovery or a factory reset.
+
+Before resetting, record anything you may need to recreate:
+- ISP connection type and credentials, if your ISP requires them
+- Current Wi‑Fi network name and password
+- Guest network settings
+- Port forwarding or VPN settings
+- DHCP reservations and parental-control rules
+- Any custom DNS or IPv6 settings
+
+Also download the correct AX55 V1 firmware and user guide from TP-Link’s official site, but do not update firmware merely to fix a forgotten password.
+
+[user]
+I’m going to send Teo Moradi the brambleworks term sheet by Friday, October 9. I’ll include the revised pricing schedule and the implementation milestones, and I’ll ask him to confirm receipt. I’m blocking Thursday afternoon to finish the last edits, then I’ll send the PDF from my work account. After I send it, I’ll save the final version in the brambleworks project folder.
+
+[assistant]
+That sounds like a concrete plan: finish the edits Thursday afternoon, send Teo Moradi the brambleworks term sheet and supporting documents by Friday, October 9, request confirmation, and archive the final PDF. Returning to the router, make sure you have the ISP details and a record of the current network settings before performing a reset.
+
+[user]
+Right, back to the router. I do not see anything saved in the browser password manager, and I cannot find a recovery option in the Tether app. What exactly should I do before pressing the reset button?
+
+[assistant]
+Treat the reset as a last resort because it returns the AX55 to its factory state. Before pressing anything:
+
+1. Confirm that the label says Archer AX55 and hardware version V1.0.
+2. Photograph or write down the router label, including the default Wi‑Fi details and serial information. Do not post the full label publicly.
+3. Contact your ISP and ask whether the connection uses DHCP, PPPoE, static IP, or another method. If it uses PPPoE, obtain the username and password before resetting.
+4. Record your present Wi‑Fi network name and password so you can recreate them. If devices use a hidden network, note that too.
+5. List any devices that need fixed addresses, such as cameras, printers, or servers.
+6. Record port-forwarding rules, custom DNS servers, VPN settings, IPv6 settings, guest-network settings, and access-control rules if you can view them through the app or another signed-in device.
+7. Disconnect any Ethernet devices that could be disrupted, and plan to reconnect them after setup.
+8. Download the official AX55 V1 user guide and keep a phone or computer available for setup.
+
+Do not reset while the router is installing firmware or during a power interruption. A reset does not normally require firmware recovery; it only erases configuration.
+
+[user]
+Can I make a backup of the configuration even though I cannot sign in to the admin page? Also, should I unplug the fiber box first?
+
+[assistant]
+A configuration backup normally requires administrator access, so if neither the web interface nor Tether lets you authenticate, you usually cannot create one. Do not use third-party tools that claim to extract or bypass the password; they can expose your network credentials or damage the router.
+
+You generally do not need to unplug the fiber box, which may be an ONT or modem, before resetting the router. A safer sequence is:
+
+1. Leave the ONT/modem powered on.
+2. Unplug the router’s power adapter.
+3. Wait about 30 seconds.
+4. Reconnect the router and let it finish starting.
+5. Locate the recessed Reset button.
+6. With the router powered on, press and hold Reset with a paperclip for the duration specified in the official AX55 V1 guide—commonly around 10 seconds—until the status LEDs indicate a reset.
+7. Release it and wait several minutes. Do not remove power during this process.
+
+Use the guide’s exact LED behavior and timing rather than relying on a generic video. Afterward, connect to the default network shown on the label, open `http://tplinkwifi.net` or the gateway address, and create a new administrator password. Then select the correct internet connection type and restore settings manually. If the ISP uses PPPoE, enter those credentials; if it uses DHCP, the router may connect automatically.
+
+[user]
+What should I check after the reset, and how can I avoid locking myself out again?
+
+[assistant]
+After the reset, work through this checklist:
+
+- Connect one computer by Ethernet if practical; it reduces setup interruptions.
+- Join the default Wi‑Fi shown on the router label.
+- Open `http://tplinkwifi.net` or `http://192.168.0.1`.
+- Create a new, unique administrator password. Do not reuse the Wi‑Fi password, email password, or ISP password.
+- Set the correct time zone and allow the router to check for current firmware through its normal administration page. Verify that any update is specifically for Archer AX55 V1.
+- Configure the internet connection. Check the status page for an assigned WAN address and an “internet connected” state.
+- Set a new Wi‑Fi name and a long Wi‑Fi password, then reconnect your devices.
+- Recreate guest Wi‑Fi, DHCP reservations, port forwards, custom DNS, IPv6, VPN, and parental-control settings only as needed.
+- Confirm that the router’s remote-management feature is disabled unless you deliberately need it.
+- Test several sites, DNS resolution, wired connectivity, and Wi‑Fi from different rooms.
+- Save a configuration backup after setup, if the firmware provides that option, and store it in an encrypted password manager or secure drive.
+
+For future access, keep the administrator username and password in a reputable password manager, retain the model and hardware version, and document ISP settings separately. If the reset does not behave as described, stop repeating it and consult TP-Link support or your ISP rather than trying unofficial recovery firmware.

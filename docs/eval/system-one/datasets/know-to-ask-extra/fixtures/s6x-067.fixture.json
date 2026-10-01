@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-067",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/dario-tulvmere",
+      "content": "---\ntitle: Dario Tulvmere\ntype: person\nsummary: \"Dario Tulvmere is the head of partnerships at Halcyongate.\"\n---\n\nDario Tulvmere is the head of partnerships at Halcyongate.\n"
+    },
+    {
+      "slug": "people/lucan-drembarrow",
+      "content": "---\ntitle: Lucan Drembarrow\ntype: person\nsummary: \"Lucan Drembarrow is the product lead at Saffronwharf.\"\n---\n\nLucan Drembarrow is the product lead at Saffronwharf.\n"
+    },
+    {
+      "slug": "people/annika-griswick",
+      "content": "---\ntitle: Annika Griswick\ntype: person\nsummary: \"Annika Griswick is the finance lead at Pylonwharf.\"\n---\n\nAnnika Griswick is the finance lead at Pylonwharf. Annika wants the proposal revised to drop the onboarding fee.\n"
+    },
+    {
+      "slug": "companies/saffronyard",
+      "content": "---\ntitle: Saffronyard\ntype: company\nsummary: \"A company we met once at a trade show.\"\n---\n\nA company we met once at a trade show.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Fix the typos in this line of my email to Tulvmere: 'thnaks for the quick turnaround, talk soon'"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "explain the difference between gross margin and net margin"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Happy to help."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "Fix the typos in this line of my email to Drembarrow: 'thnaks for the quick turnaround, talk soon'"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Happy to help."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "annika griswick wants to meet again, what did we agree last time about the proposal?"
+    }
+  ]
+}

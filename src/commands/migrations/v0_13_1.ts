@@ -43,7 +43,7 @@ import { loadConfig, toEngineConfig, gbrainPath } from '../../core/config.ts';
 import { createEngine } from '../../core/engine-factory.ts';
 import type { BrainEngine } from '../../core/engine.ts';
 import { managedPersistenceEnabled } from '../../core/persistence/ownership.ts';
-import { grandfatherCanonicalPage } from '../../core/persistence/grandfather.ts';
+import { admitCanonicalGrandfather, assertGrandfatherCapacity } from '../../core/persistence/grandfather.ts';
 import { OperationError } from '../../core/ops/contract.ts';
 // Bug 3 — ledger writes moved to the runner (apply-migrations.ts).
 
@@ -107,6 +107,9 @@ const GRANDFATHER_WHERE =
 // (same rationale as engine-constants.ts DELETE_BATCH_SIZE).
 const CHUNK_SIZE = 1000;
 
+// Grandfather writes admitted before the step waits for them (#5530).
+const GRANDFATHER_WINDOW = 50;
+
 /** A page this run grandfathered and the revision its write produced. */
 export interface GrandfatheredPage { id: number; revision: string | null; }
 
@@ -149,6 +152,18 @@ export async function phaseCGrandfather(
     );
     const ids = idRows.map(r => Number(r.id));
     const managed = await managedPersistenceEnabled(engine);
+    if (managed) {
+      // Only pages the managed pass can admit need a request ID: archived
+      // sources, code and image pages and non-Markdown files are skipped below.
+      const [{ n: admissible }] = await engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM pages p
+        JOIN sources s ON s.id=p.source_id WHERE p.id=ANY($1::int[]) AND NOT s.archived AND p.type NOT IN ('code','image')
+          AND NOT (COALESCE(p.source_path,'') ~ '\\.[^./]+$' AND COALESCE(p.source_path,'') !~* '\\.mdx?$')`, [ids]);
+      try { await assertGrandfatherCapacity(engine, Number(admissible)); }
+      catch (error) {
+        if (!(error instanceof OperationError) || error.code !== 'queue_capacity') throw error;
+        return { result: { name: 'grandfather', status: 'failed', detail: `queue_capacity: ${error.message} ${error.suggestion ?? ''}`.trim() }, detail: gf };
+      }
+    }
 
     for (let i = 0; i < ids.length; i += CHUNK_SIZE) {
       const chunk = ids.slice(i, i + CHUNK_SIZE);
@@ -157,19 +172,31 @@ export async function phaseCGrandfather(
           const selected = await engine.executeRaw<{ id: number; slug: string; source_id: string; source_incarnation: string }>(
             'SELECT p.id,p.slug,p.source_id,s.incarnation AS source_incarnation FROM pages p JOIN sources s ON s.id=p.source_id WHERE p.id=ANY($1::int[]) AND NOT s.archived ORDER BY p.id', [chunk]);
           gf.skipped += chunk.length - selected.length;
-          for (const page of selected) {
-            try {
-              const outcome = await grandfatherCanonicalPage(engine, page, snapshot => appendRollbackBatch([snapshot]));
-              if (outcome.status === 'touched') {
+          const fail = (page: { id: number }, error: unknown) => {
+            gf.failed++;
+            const reason = error instanceof OperationError
+              ? `${error.code}${error.writeRequest ? ` request_id=${error.writeRequest.request_id}` : ''}`
+              : error instanceof Error ? error.message : String(error);
+            gf.failures.push(`page#${page.id}: ${reason}`.slice(0, 120));
+          };
+          // #5530: admit a bounded window before waiting (below the principal's
+          // outstanding-request limit), so the pages' Git effects are ready
+          // together and the effect runner commits and pushes them as groups.
+          for (let w = 0; w < selected.length; w += GRANDFATHER_WINDOW) {
+            const admitted: { page: typeof selected[number]; complete: () => Promise<{ revision: string | null }> }[] = [];
+            for (const page of selected.slice(w, w + GRANDFATHER_WINDOW)) {
+              try {
+                const outcome = await admitCanonicalGrandfather(engine, page, snapshot => appendRollbackBatch([snapshot]));
+                if (outcome.status === 'skipped') gf.skipped++;
+                else admitted.push({ page, complete: outcome.complete });
+              } catch (error) { fail(page, error); }
+            }
+            for (const { page, complete } of admitted) {
+              try {
+                const outcome = await complete();
                 gf.touched++;
                 gf.grandfathered.push({ id: page.id, revision: outcome.revision });
-              } else gf.skipped++;
-            } catch (error) {
-              gf.failed++;
-              const reason = error instanceof OperationError
-                ? `${error.code}${error.writeRequest ? ` request_id=${error.writeRequest.request_id}` : ''}`
-                : error instanceof Error ? error.message : String(error);
-              gf.failures.push(`page#${page.id}: ${reason}`.slice(0, 120));
+              } catch (error) { fail(page, error); }
             }
           }
           continue;

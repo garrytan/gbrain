@@ -30,7 +30,7 @@
  * by default.
  */
 
-import { BudgetMeter, loadAllowUnpriced, parseBudgetUsd, type SubmitEstimate, type BudgetCheckResult } from './budget-meter.ts';
+import { BudgetMeter, loadAllowUnpriced, loadPricingOverrides, parseBudgetUsd, type SubmitEstimate, type BudgetCheckResult } from './budget-meter.ts';
 import { sourceScopeOpts, type OperationContext } from '../operations.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { CyclePhase, PhaseResult, PhaseStatus, PhaseError } from '../cycle.ts';
@@ -216,7 +216,12 @@ export abstract class BaseCyclePhase {
     // Budget meter construction. The default path reads config; tests inject.
     if (!opts.meter) {
       const budgetUsd = this.resolveBudgetUsd(ctx, opts);
-      this.meter = new BudgetMeter({ budgetUsd, phase: this.name, allowUnpriced: await loadAllowUnpriced(ctx.engine) });
+      this.meter = new BudgetMeter({
+        budgetUsd,
+        phase: this.name,
+        allowUnpriced: await loadAllowUnpriced(ctx.engine),
+        pricingOverrides: await loadPricingOverrides(ctx.engine),
+      });
     } else {
       this.meter = opts.meter;
     }

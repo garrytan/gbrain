@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-086",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/ilse-caldfell",
+      "content": "---\ntitle: Ilse Caldfell\ntype: person\nsummary: \"Ilse Caldfell is the product lead at Juniperfold.\"\n---\n\nIlse Caldfell is the product lead at Juniperfold. Ilse pushed to move the reporting feature ahead of the mobile app.\n"
+    },
+    {
+      "slug": "people/delphine-tessbarrow",
+      "content": "---\ntitle: Delphine Tessbarrow\ntype: person\nsummary: \"Delphine Tessbarrow is the head of sales at Cobaltgate.\"\n---\n\nDelphine Tessbarrow is the head of sales at Cobaltgate.\n"
+    },
+    {
+      "slug": "people/dario-corvdale",
+      "content": "---\ntitle: Dario Corvdale\ntype: person\naliases: [dario]\nsummary: \"Dario Corvdale is the recruiter helping us hire engineers.\"\n---\n\nDario Corvdale is the recruiter helping us hire engineers. Dario pushed to move the reporting feature ahead of the mobile app.\n"
+    },
+    {
+      "slug": "people/mateo-kestbrook",
+      "content": "---\ntitle: Mateo Kestbrook\ntype: person\naliases: [mateo]\nsummary: \"A contact from a conference last spring.\"\n---\n\nA contact from a conference last spring.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Remind me of Caldfell's position on the roadmap before our sync."
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Here is what I have."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "sorry, got distracted for a minute"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "Tessbarrow said the room is 12 by 15 feet. What is that in square meters?"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "what did the recruiter suggest for the roadmap?"
+    }
+  ]
+}

@@ -48,7 +48,7 @@ import { join } from 'node:path';
 import { readdir, readFile, writeFile, rm, stat } from 'node:fs/promises';
 import type { BrainEngine, LinkBatchInput, TimelineBatchInput } from './engine.ts';
 import type { FactsBackstopCtx } from './facts/backstop.ts';
-import { detectCapabilities, type CapabilityReport } from './capability.ts';
+import type { CapabilityReport } from './capability.ts';
 
 /** Delay before the serve-startup sweep fires (post-connect settle). */
 export const STARTUP_SWEEP_DELAY_MS = 3_000;
@@ -92,7 +92,8 @@ export interface SweepOpts {
   log?: (msg: string) => void;
   /**
    * Capability report override (test seam / caller already computed one).
-   * Default: detectCapabilities() — config-plane, no network.
+   * Default: the engine-resolved extraction model checked against the
+   * configured gateway (facts/extraction-availability.ts) — no network.
    */
   capabilities?: CapabilityReport;
 }
@@ -299,7 +300,7 @@ async function runLinksTimelinePass(
 
   // #4196: honor the watermark this pass stamps, or repeated bounded sweeps
   // re-select the same newest batchLimit rows forever and page batchLimit+1
-  // is never reached. Same predicate as the engines' buildStalePagesWhere
+  // is never reached. Same predicate as engine-sql/pages.ts stalePagesWhere
   // (no versionTs branch — extractor-version catch-up is `extract --stale`'s
   // job; the sweep is a recency back-stop). The µs to_char projection is the
   // #1768 stamp discipline: stamp the row's READ updated_at, not now(), so an
@@ -605,8 +606,8 @@ async function runCorpusIngestPass(
 
   // [CX-P0.5] Keyless rule: no extraction provider configured ⇒ skip the
   // whole pass. Agent-authored fences (pass 1) carry keyless memory.
-  const caps = ctx.capabilities ?? detectCapabilities();
-  if (!caps.extraction.available) {
+  const { extractionAvailableForEngine } = await import('./facts/extraction-availability.ts');
+  if (!(await extractionAvailableForEngine(engine, ctx.capabilities))) {
     const retired = await retireWbCandidatesIfOff();
     skip('keyless', candidates.length - retired.size);
     return;

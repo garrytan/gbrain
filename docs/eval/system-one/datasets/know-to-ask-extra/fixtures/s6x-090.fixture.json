@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-090",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/tobias-marrwaite",
+      "content": "---\ntitle: Tobias Marrwaite\ntype: person\nsummary: \"Tobias Marrwaite is the procurement lead at Wanderyard.\"\n---\n\nTobias Marrwaite is the procurement lead at Wanderyard.\n"
+    },
+    {
+      "slug": "people/teodor-marrcombe",
+      "content": "---\ntitle: Teodor Marrcombe\ntype: person\nsummary: \"Teodor Marrcombe is the finance lead at Quartzloft.\"\n---\n\nTeodor Marrcombe is the finance lead at Quartzloft. Teodor wants the proposal revised to drop the onboarding fee.\n"
+    },
+    {
+      "slug": "people/annika-fenthorpe",
+      "content": "---\ntitle: Annika Fenthorpe\ntype: person\naliases: [annika]\nsummary: \"Annika Fenthorpe is the head of sales at Pylonwharf.\"\n---\n\nAnnika Fenthorpe is the head of sales at Pylonwharf. Annika pushed to move the reporting feature ahead of the mobile app.\n"
+    },
+    {
+      "slug": "companies/cobaltcrest",
+      "content": "---\ntitle: Cobaltcrest\ntype: company\nsummary: \"A company we met once at a trade show.\"\n---\n\nA company we met once at a trade show.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "By the way, someone named Verity Quellcombe emailed about partnerships. Never heard of them."
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Here is what I have."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Translate into French: 'Tobias Marrwaite will send the notes tomorrow.'"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Okay, noted."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "What did Marrcombe want changed in the proposal?"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "what's the latest with fenthorpe on the roadmap?"
+    }
+  ]
+}

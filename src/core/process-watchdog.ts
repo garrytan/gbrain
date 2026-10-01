@@ -113,15 +113,18 @@ const INERT: WatchdogHandle = { dispose() {}, get active() { return false; } };
 /**
  * Worker body (runs on its own OS thread). Inline string so `eval: true` bakes
  * it into the compiled binary. Uses only built-ins available in a Bun worker.
+ * Log lines go straight to fd 2: since Bun 1.4 a worker's `process.stderr` is
+ * forwarded through the parent's event loop, which a starved parent never runs.
  *
  * `label` is validated by the caller to a safe charset before it reaches here,
  * so it can't break the string literal or inject log lines.
  */
 const WORKER_SRC = `
 const { workerData } = require('node:worker_threads');
+const { writeSync } = require('node:fs');
 const { deadlineMs, graceMs, label, heartbeatMs } = workerData;
 const t0 = Date.now();
-function w(m) { try { process.stderr.write('[' + label + '] ' + m + '\\n'); } catch (e) {} }
+function w(m) { try { writeSync(2, '[' + label + '] ' + m + '\\n'); } catch (e) {} }
 if (heartbeatMs > 0) {
   const hb = setInterval(() => {
     const elapsed = Math.round((Date.now() - t0) / 1000);
@@ -348,11 +351,12 @@ export interface LoopStallWatchdogOpts {
  */
 const STALL_WORKER_SRC = `
 const { parentPort, workerData } = require('node:worker_threads');
+const { writeSync } = require('node:fs');
 const { stallMs, graceMs, label, checkIntervalMs } = workerData;
 let lastPet = Date.now();
 let lastCheck = Date.now();
 let latched = false;
-function w(m) { try { process.stderr.write('[' + label + '] ' + m + '\\n'); } catch (e) {} }
+function w(m) { try { writeSync(2, '[' + label + '] ' + m + '\\n'); } catch (e) {} }
 if (parentPort) parentPort.on('message', () => { lastPet = Date.now(); });
 setInterval(() => {
   const now = Date.now();

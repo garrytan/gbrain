@@ -213,7 +213,18 @@ vars — incident-time escape hatches, not everyday knobs.
    re-derived from the process working directory. Checkpoints written by
    gbrain include `schema_version: 1`, `owner: "gbrain"`, and
    `kind: "import"` so downstream tools can validate the contract before
-   deciding whether to resume.
+   deciding whether to resume. For ordinary imports, completed paths record
+   progress, not the revision imported: the next run re-reads current files
+   and compares their content hashes with the database, including paths listed
+   as completed.
+   Unchanged files avoid re-import, but resuming a large import still pays
+   the directory-walk, file-read, and hash-comparison cost. Checkpoint timestamps
+   and file mtimes are not used as proof that content is unchanged.
+
+   [Company-brain ingestion](company-brain-ingestion.md) uses a separate
+   protected database checkpoint tied to an immutable approved committed
+   manifest. It can skip paths completed for that admission receipt; it does
+   not treat the ordinary import checkpoint as approval to read changed files.
 
 7. **Sync imports commits, not your working tree.** Files written into the
    brain repo but never committed are invisible to incremental sync. Sync

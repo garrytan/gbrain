@@ -1230,6 +1230,8 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'eval.scrub_pii',
   'embedding_multimodal',
   'embedding_multimodal_model',
+  // #5691: per-brain query instruction (DB plane; read by search/query-prefix.ts).
+  'embedding_query_prefix',
   'embedding_image_ocr',
   'embedding_image_ocr_model',
   'embedding_columns',
@@ -1341,6 +1343,14 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'search.metadata_boost_gate',
   'search.crag_escalation',
   'search.crag_think',
+  // Evidence delivery (search/evidence-delivery.ts): default unit (auto),
+  // window radius, default/auto/remote-max token budgets; think reads its own unit.
+  'search.return_unit',
+  'search.return_window',
+  'search.return_budget_default',
+  'search.return_budget_conversation',
+  'search.return_budget_max_remote',
+  'think.return_unit',
   // Models tier system (v0.31.12)
   'models.default',
   'models.tier.utility',
@@ -1606,7 +1616,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'persistence.limits.principal_lifetime_ids', 'persistence.limits.brain_lifetime_ids',
   'persistence.limits.principal_terminal_bytes', 'persistence.limits.brain_terminal_bytes',
   'persistence.limits.brain_recovery_bytes', 'persistence.limits.worktree_recovery_bytes',
-  'persistence.receipt_retention_days',
+  'persistence.receipt_retention_days', 'persistence.unbound_write', // #5254: persistence/unbound-source.ts
 ];
 
 /**
@@ -1634,6 +1644,7 @@ export const KNOWN_CONFIG_KEY_PREFIXES: readonly string[] = [
   //   parser; numeric 0 disables.
   'minions.',
   'pace.',              // pace.mode + PACE_MODE_CONFIG_KEYS (src/core/pace-mode.ts)
+  'decide.',            // System One decide.* (validated by src/core/ai/decide/config.ts DECIDE_CONFIG_KEYS)
   'connectors.',        // chat-connectors: source_id, sync_floor_min, embed_kickoff_min_pages, doctor_stale_hours, <provider>.{auto_sync,last_sync_at,auth_error_at,watermark_iso} (no secrets — creds are file-plane)
 ];
 

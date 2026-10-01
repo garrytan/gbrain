@@ -27,6 +27,10 @@ import { findGbrainRoot } from '../core/skillpack/bundle.ts';
 import { FixtureValidationError, loadCorpus } from '../eval/brainbench/fixtures.ts';
 import { runBrainBench } from '../eval/brainbench/harness.ts';
 import {
+  DECIDE_EVAL_FLAGS, DecideEvalRefusal, applyDecideEvalFlag, newDecideEvalOptions, prepareDecideEval, summarizeDecideReceipts,
+  type DecideEvalOptions, type DecideEvalRun,
+} from '../eval/decide-eval-flags.ts';
+import {
   cellKey,
   compareBaselines,
   parseBaseline,
@@ -85,6 +89,9 @@ function usage(): void {
       `  --budget-usd N              Spend cap for --llm (default: $${DEFAULT_LLM_BUDGET_USD}).\n` +
       `  --seed N                    Recorded in the receipt (default: 42). Reserved —\n` +
       `                              the v1 run is fully deterministic; no knob consumes it yet.\n` +
+      DECIDE_EVAL_FLAGS.map((f) => `  ${`${f.name} ${f.arg}`.padEnd(27)} ${f.help.join(`\n${' '.repeat(30)}`)}\n`).join('') +
+      `                              A --decide arm configures the benchmark brain so the slot can act\n` +
+      `                              (S6 know-to-ask meta lands on turn_rows[].decide; see docs/eval-bench.md).\n` +
       `  -h, --help                  Show this help.\n\n` +
       `Exit codes: 0 pass · 1 regression · 2 error/inconclusive/usage.\n`,
   );
@@ -106,6 +113,7 @@ interface Args {
   llm: boolean;
   budgetUsd: number;
   seed: number;
+  decide: DecideEvalOptions;
 }
 
 function parseArgs(argv: string[]): Args | { usageError: string } {
@@ -125,6 +133,7 @@ function parseArgs(argv: string[]): Args | { usageError: string } {
     llm: false,
     budgetUsd: DEFAULT_LLM_BUDGET_USD,
     seed: 42,
+    decide: newDecideEvalOptions(),
   };
   const need = (flag: string, v: string | undefined): string => {
     if (v === undefined || v.startsWith('--')) throw new Error(`${flag} requires a value`);
@@ -211,6 +220,7 @@ function parseArgs(argv: string[]): Args | { usageError: string } {
           if (!Number.isInteger(args.seed)) return { usageError: '--seed must be an integer' };
           break;
         default:
+          if (DECIDE_EVAL_FLAGS.some((f) => f.name === a)) { applyDecideEvalFlag(args.decide, a, need(a, argv[++i])); break; }
           return { usageError: `unknown flag ${a}` };
       }
     }
@@ -267,6 +277,17 @@ export async function runEvalBrainBench(argv: string[]): Promise<never> {
     return exitWith(2);
   }
   const args = parsed;
+  let decideRun: DecideEvalRun | null;
+  try {
+    decideRun = prepareDecideEval(args.decide, { command: 'gbrain eval brainbench', throwaway: true });
+  } catch (err) {
+    process.stderr.write(`eval brainbench: ${(err as Error).message}\n`);
+    return exitWith(err instanceof DecideEvalRefusal ? 1 : 2);
+  }
+  if (decideRun && args.updateBaseline) {
+    process.stderr.write('eval brainbench: a --decide arm is never the committed baseline; drop --update-baseline\n');
+    return exitWith(2);
+  }
 
   // Pure file-vs-file compare: no run, no DB.
   if (args.compare && args.compare.length === 2) {
@@ -312,6 +333,7 @@ export async function runEvalBrainBench(argv: string[]): Promise<never> {
       llm: args.llm,
       budgetUsd: args.budgetUsd,
       onProgress: (note) => reporter.tick(1, note),
+      decide: decideRun,
     });
     reporter.finish();
 
@@ -345,6 +367,7 @@ export async function runEvalBrainBench(argv: string[]): Promise<never> {
       turn_rows: run.turn_rows,
       seed_failures: run.seed_failures,
       _meta: { metric_glossary: buildMetricGlossaryMeta(metricNames) },
+      ...(decideRun ? { decide: { ...decideRun.runConfig, summary: summarizeDecideReceipts(run.turn_rows.map((r) => r.decide)) } } : {}),
     };
   } catch (err) {
     reporter.finish('aborted');

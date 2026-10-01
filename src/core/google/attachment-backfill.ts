@@ -34,6 +34,7 @@ export async function runGoogleAttachmentBackfill(engine: BrainEngine, sourceId:
     if (profile.emailAddress?.toLowerCase() !== cfg.account) {
       throw new OperationError('source_changed', 'The Gmail credential belongs to a different account. No metadata was changed.');
     }
+    await managed.assertAccount({ kind: 'google', email: cfg.account });
     const state = managed.state<GoogleSourceState>({ gmail_history_id: null, gmail_backfill_floor_ms: null,
       gmail_backfill_done: false, gmail_newest_ms: null, calendar_sync_token: null, contacts_sync_token: null, last_full_at: null });
     return backfillGmailAttachments(engine, managed, gmail, state, cfg.account, opts.limit, options.signal);

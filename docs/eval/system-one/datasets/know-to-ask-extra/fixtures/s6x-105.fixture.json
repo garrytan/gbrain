@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-105",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "companies/lumenmoor",
+      "content": "---\ntitle: Lumenmoor\ntype: company\nsummary: \"Lumenmoor is a software vendor we work with.\"\n---\n\nLumenmoor is a software vendor we work with. They quoted a per-seat price with a minimum annual commitment.\n"
+    },
+    {
+      "slug": "people/tamsin-caldbarrow",
+      "content": "---\ntitle: Tamsin Caldbarrow\ntype: person\nsummary: \"Tamsin Caldbarrow is the head of sales at Nimbuswharf.\"\n---\n\nTamsin Caldbarrow is the head of sales at Nimbuswharf.\n"
+    },
+    {
+      "slug": "people/lucan-wyrfell",
+      "content": "---\ntitle: Lucan Wyrfell\ntype: person\nsummary: \"Lucan Wyrfell is the operations director at Cobaltfold.\"\n---\n\nLucan Wyrfell is the operations director at Cobaltfold. Lucan suggested holding the offsite somewhere reachable by train.\n"
+    },
+    {
+      "slug": "companies/fablereach",
+      "content": "---\ntitle: Fablereach\ntype: company\nsummary: \"A company we met once at a trade show.\"\n---\n\nA company we met once at a trade show.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "what's the status with lumenmoor and pricing?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Happy to help."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Put this sentence in the past tense: 'Tamsin Caldbarrow opens the meeting and shares the agenda.'"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Okay, noted."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "lucan is pinging me again about the offsite, what's the context?"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "By the way, someone named Elodie Vashbrook emailed about partnerships. Never heard of them."
+    }
+  ]
+}

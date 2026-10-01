@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "transcript_id": "syn-routine-037",
+  "scenario": "synthetic-routine",
+  "expected_triage": "low",
+  "label_source": "synthetic-construction",
+  "generator": {
+    "model": "openai:gpt-5.6-luna",
+    "reasoning": "none",
+    "temperature": 1,
+    "seed": 7350001
+  },
+  "spec": {
+    "id": "syn-routine-037",
+    "scenario": "synthetic-routine",
+    "expected_triage": "low",
+    "theme": "reformatting a CSV export so a budgeting app will import it",
+    "turns": 23
+  }
+}

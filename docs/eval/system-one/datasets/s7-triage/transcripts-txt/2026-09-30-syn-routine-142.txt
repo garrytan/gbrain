@@ -1,0 +1,338 @@
+[user]
+I’m trying to install a Python package in a virtual environment, but the build fails with an error about a missing system library. Can you help me work through it?
+
+[assistant]
+Sure. Please paste the command you ran and the complete error output, or at least the portion starting several lines before the first “error” message. Also include your operating system, Python version, and whether you’re using a virtual environment.
+
+[user]
+I’m on Ubuntu, using Python 3.12 in a virtual environment. The package is `psycopg2`:
+
+```text
+$ python -m pip install psycopg2
+Collecting psycopg2
+  Downloading psycopg2-2.9.9.tar.gz (384 kB)
+  Installing build dependencies ... done
+  Getting requirements to build wheel ... error
+  error: subprocess-exited-with-error
+
+  × Getting requirements to build wheel did not run successfully.
+  │ exit code: 1
+  ╰─> [18 lines of output]
+      Error: pg_config executable not found.
+      pg_config is required to build psycopg2 from source.
+      Please add the directory containing pg_config to the PATH
+      or specify the full executable path with the option:
+      
+          python setup.py build_ext --pg-config /path/to/pg_config build ...
+      
+      If you prefer to avoid building psycopg2 from source, install the PyPI
+      'psycopg2-binary' package instead.
+      [end of output]
+```
+
+[assistant]
+The immediate problem is that `psycopg2` is being built from source and cannot find PostgreSQL’s `pg_config` utility. On Ubuntu, install the PostgreSQL development package, then retry inside the same virtual environment:
+
+```bash
+sudo apt update
+sudo apt install libpq-dev python3.12-dev build-essential
+```
+
+Check that the executable is available:
+
+```bash
+command -v pg_config
+pg_config --version
+```
+
+You should see a path such as `/usr/bin/pg_config` and a PostgreSQL version. Then upgrade packaging tools and install the package again:
+
+```bash
+python -m pip install --upgrade pip setuptools wheel
+python -m pip install psycopg2
+```
+
+The virtual environment isolates Python packages, but it still uses system headers, libraries, and build tools when compiling an extension.
+
+[user]
+Before I install anything, can I confirm whether `pg_config` is already present? I’d rather not add packages unnecessarily.
+
+[assistant]
+Yes. Run these commands:
+
+```bash
+command -v pg_config || true
+pg_config --version 2>/dev/null || true
+dpkg -S "$(command -v pg_config)" 2>/dev/null || true
+```
+
+The first command prints the executable’s path if it is on `PATH`. The second prints its version if it can be run. The third identifies the Debian package that owns that file.
+
+You can also search common locations without requiring it to be on `PATH`:
+
+```bash
+find /usr /usr/local -type f -name pg_config -perm /111 2>/dev/null
+```
+
+If all of those produce no useful output, it is probably not installed. You can check the package database directly:
+
+```bash
+dpkg -l | grep -E '^(ii|rc)\s+libpq-dev\s'
+```
+
+An `ii` line means `libpq-dev` is installed. An `rc` line means it was installed previously but is currently removed.
+
+[user]
+I ran those commands. Here’s the output:
+
+```text
+$ command -v pg_config || true
+$ pg_config --version 2>/dev/null || true
+$ dpkg -S "$(command -v pg_config)" 2>/dev/null || true
+
+$ find /usr /usr/local -type f -name pg_config -perm /111 2>/dev/null
+
+$ dpkg -l | grep -E '^(ii|rc)\s+libpq-dev\s'
+```
+
+So it looks like it isn’t installed. Is `libpq-dev` the right package, or do I need the full PostgreSQL server?
+
+[assistant]
+`libpq-dev` is the appropriate package for compiling `psycopg2`; you do not need the full PostgreSQL server just for the Python extension. It supplies the PostgreSQL client headers, libraries, and `pg_config`.
+
+Install the build prerequisites:
+
+```bash
+sudo apt update
+sudo apt install libpq-dev python3.12-dev build-essential
+```
+
+The packages serve different purposes:
+
+- `libpq-dev`: PostgreSQL client development files and `pg_config`
+- `python3.12-dev`: Python headers needed by some extension builds
+- `build-essential`: compiler and standard build tools
+
+After installation, verify the key files:
+
+```bash
+command -v pg_config
+pg_config --version
+dpkg -S "$(command -v pg_config)"
+```
+
+Then, from the directory containing your activated virtual environment:
+
+```bash
+source .venv/bin/activate
+python -m pip install --upgrade pip setuptools wheel
+python -m pip install psycopg2
+```
+
+If the installation still fails, paste the new error output. It may reveal a different missing header or compiler issue.
+
+[user]
+I installed those packages and now `pg_config` is found:
+
+```text
+$ command -v pg_config
+/usr/bin/pg_config
+$ pg_config --version
+PostgreSQL 16.3
+$ python -m pip install psycopg2
+Collecting psycopg2
+  Using cached psycopg2-2.9.9.tar.gz (384 kB)
+  Installing build dependencies ... done
+  Getting requirements to build wheel ... done
+  Preparing metadata (pyproject.toml) ... done
+  Building wheel for psycopg2 ... error
+  error: subprocess-exited-with-error
+
+  × Building wheel for psycopg2 did not run successfully.
+  │ exit code: 1
+  ╰─> [28 lines of output]
+      gcc -Wsign-compare -DNDEBUG -g -fwrapv -O2 -Wall ... -I/usr/include/postgresql ...
+      error: command 'gcc' failed: No such file or directory
+      [end of output]
+```
+
+[assistant]
+That is a separate missing dependency: the compiler executable `gcc` is not available. Although `build-essential` normally includes it, the package may not have been installed successfully or the command may be running in a restricted environment.
+
+Check the package and executable:
+
+```bash
+command -v gcc || true
+gcc --version 2>/dev/null || true
+dpkg -s build-essential 2>/dev/null | grep -E '^(Status|Version):'
+dpkg -s gcc 2>/dev/null | grep -E '^(Status|Version):'
+```
+
+If `gcc` is missing, install it directly along with the usual build tools:
+
+```bash
+sudo apt update
+sudo apt install gcc g++ make build-essential
+```
+
+Verify:
+
+```bash
+command -v gcc
+gcc --version
+make --version
+```
+
+Then retry:
+
+```bash
+python -m pip install psycopg2
+```
+
+If `apt` reports that the packages are installed but `command -v gcc` still returns nothing, inspect your `PATH`:
+
+```bash
+printf '%s\n' "$PATH"
+ls -l /usr/bin/gcc /usr/bin/make
+```
+
+On a standard Ubuntu installation, `/usr/bin` should be included in `PATH`.
+
+[user]
+The compiler check showed that `build-essential` had an installed status, but `gcc` was missing. I installed `gcc`, `g++`, and `make`. Now the build gets farther but fails here:
+
+```text
+$ python -m pip install psycopg2
+Collecting psycopg2
+  Using cached psycopg2-2.9.9.tar.gz (384 kB)
+  Installing build dependencies ... done
+  Getting requirements to build wheel ... done
+  Preparing metadata (pyproject.toml) ... done
+  Building wheel for psycopg2 ... error
+  error: subprocess-exited-with-error
+
+  × Building wheel for psycopg2 did not run successfully
+  │ exit code: 1
+  ╰─> [35 lines of output]
+      gcc ... -I/usr/include/postgresql/16/server ...
+      In file included from psycopg/psycopgmodule.c:31:
+      /usr/include/postgresql/libpq-fe.h:27:10: fatal error: openssl/ssl.h: No such file or directory
+         27 | #include <openssl/ssl.h>
+            |          ^~~~~~~~~~~~~~~
+      compilation terminated.
+      error: command '/usr/bin/gcc' failed with exit code 1
+```
+
+[assistant]
+The compiler is now working, and the missing file is an OpenSSL development header. Install the OpenSSL development package:
+
+```bash
+sudo apt update
+sudo apt install libssl-dev
+```
+
+Confirm that the header exists:
+
+```bash
+test -f /usr/include/openssl/ssl.h && echo "ssl.h found"
+dpkg -S /usr/include/openssl/ssl.h
+```
+
+Then retry the installation:
+
+```bash
+python -m pip install psycopg2
+```
+
+If it fails again, capture the new output from the first relevant `fatal error:` or `error:` line through the final summary. The required packages so far are ordinary compilation dependencies:
+
+```text
+libpq-dev       PostgreSQL client headers and pg_config
+python3.12-dev  Python C headers
+gcc/g++/make    Compiler and build tools
+libssl-dev      OpenSSL headers and development files
+```
+
+You can see which of these are installed with:
+
+```bash
+dpkg-query -W -f='${binary:Package}\t${Status}\n' \
+  libpq-dev python3.12-dev gcc g++ make libssl-dev
+```
+
+[user]
+After installing `libssl-dev`, the package built successfully:
+
+```text
+$ python -m pip install psycopg2
+Collecting psycopg2
+  Using cached psycopg2-2.9.9.tar.gz (384 kB)
+  Installing build dependencies ... done
+  Getting requirements to build wheel ... done
+  Preparing metadata (pyproject.toml) ... done
+  Building wheel for psycopg2 ... done
+  Created wheel for psycopg2: filename=psycopg2-2.9.9-cp312-cp312-linux_x86_64.whl size=...
+Successfully built psycopg2
+Installing collected packages: psycopg2
+Successfully installed psycopg2-2.9.9
+```
+
+Is there a quick way to verify that the installed module loads and reports its linked PostgreSQL library?
+
+[assistant]
+Yes. Use the interpreter from the active virtual environment:
+
+```bash
+python -c 'import psycopg2; print(psycopg2.__version__); print(psycopg2.__libpq_version__)'
+```
+
+A successful result will look similar to:
+
+```text
+2.9.9 (dt dec pq3ext)
+160003
+```
+
+The first value is the Python package version and the integer is the linked `libpq` version encoded as major, minor, and patch components. You can also verify exactly which interpreter and package location are being used:
+
+```bash
+python -c 'import sys, psycopg2; print(sys.executable); print(psycopg2.__file__)'
+python -m pip show psycopg2
+```
+
+This only tests importing the extension and inspecting its linked client library. It does not connect to a database or require a PostgreSQL server to be running.
+
+[user]
+The import check worked:
+
+```text
+$ python -c 'import psycopg2; print(psycopg2.__version__); print(psycopg2.__libpq_version__)'
+2.9.9 (dt dec pq3ext)
+160003
+```
+
+For future setups, would installing `psycopg2-binary` avoid all these system packages?
+
+[assistant]
+Usually, yes. `psycopg2-binary` provides a prebuilt wheel for many common Python and platform combinations, so it generally does not require `pg_config`, a compiler, PostgreSQL headers, or OpenSSL development headers:
+
+```bash
+python -m pip install psycopg2-binary
+```
+
+For a clean test environment, you could create another virtual environment and install only that package:
+
+```bash
+python -m venv /tmp/psycopg2-test
+source /tmp/psycopg2-test/bin/activate
+python -m pip install --upgrade pip
+python -m pip install psycopg2-binary
+python -c 'import psycopg2; print(psycopg2.__version__)'
+deactivate
+rm -rf /tmp/psycopg2-test
+```
+
+The binary distribution is convenient for local development and simple applications. If you choose it, do not install both `psycopg2` and `psycopg2-binary` in the same environment because they provide the same import name. For a source build, keep `libpq-dev`, a compiler, Python development headers, and any headers reported by the build available.
+
+[tool]
+You have 1008 weighted tokens left

@@ -1,0 +1,505 @@
+[user]
+I’m merging `feature/cache-cleanup` into `main`, and Git stopped on a conflict in `package-lock.json`. I want to resolve it mechanically and avoid accidentally changing dependency versions beyond what the merge requires. What should I do first?
+
+[assistant]
+First, confirm the repository state and identify every unmerged path. From the repository root, run:
+
+```bash
+git status --short
+git diff --name-only --diff-filter=U
+```
+
+You should see something like:
+
+```text
+M  src/cache.js
+UU package-lock.json
+```
+
+Only `package-lock.json` is an unresolved conflict in that example. Do not run `git commit` yet. Also avoid `npm install` or `npm update` until the conflict is resolved, because those commands may rewrite more of the lockfile than necessary.
+
+[user]
+Here is the output:
+
+```text
+$ git status --short
+M  src/cache.js
+UU package-lock.json
+?? merge-notes.txt
+
+$ git diff --name-only --diff-filter=U
+package-lock.json
+```
+
+`merge-notes.txt` is just an untracked scratch file I made. I want to leave it untracked and not include it in the merge.
+
+[assistant]
+That state means `src/cache.js` is already staged as a clean merge result, `package-lock.json` still has unresolved conflict stages, and `merge-notes.txt` is unrelated. Leave the scratch file alone.
+
+Before editing, inspect the conflict without changing anything:
+
+```bash
+git diff -- package-lock.json
+git diff --cc package-lock.json
+```
+
+The first command shows the ordinary conflict markers and surrounding lines. The combined diff shows how the index currently represents the conflict. You can also count the markers:
+
+```bash
+grep -n -E '^(<<<<<<<|=======|>>>>>>>)' package-lock.json
+```
+
+Do not use `git add .`, since that could stage `merge-notes.txt`.
+
+[user]
+The conflict is large. The relevant part of the ordinary diff is:
+
+```diff
+<<<<<<< HEAD
+  "packages": {
+    "": {
+      "name": "saltbox",
+      "version": "2.4.0",
+      "dependencies": {
+        "fast-glob": "^3.3.2",
+        "pino": "^9.3.2"
+      },
+      "devDependencies": {
+        "vitest": "^2.0.5"
+      }
+    },
+    "node_modules/fast-glob": {
+      "version": "3.3.2",
+      "resolved": "https://registry.npmjs.org/fast-glob/-/fast-glob-3.3.2.tgz",
+      "integrity": "sha512-local-old",
+      "dev": false
+    },
+=======
+  "packages": {
+    "": {
+      "name": "saltbox",
+      "version": "2.4.0",
+      "dependencies": {
+        "fast-glob": "^3.3.2",
+        "pino": "^9.3.2",
+        "yaml": "^2.4.5"
+      },
+      "devDependencies": {
+        "vitest": "^2.0.5"
+      }
+    },
+    "node_modules/fast-glob": {
+      "version": "3.3.2",
+      "resolved": "https://registry.npmjs.org/fast-glob/-/fast-glob-3.3.2.tgz",
+      "integrity": "sha512-local-new",
+      "dev": false
+    },
+>>>>>>> feature/cache-cleanup
+```
+
+There are other conflict blocks too. How do I decide which side to keep?
+
+[assistant]
+Do not choose an entire side blindly. Treat the lockfile as generated data and compare the intended manifest change with both lockfile versions.
+
+First inspect the package manifest and the three index stages:
+
+```bash
+cat package.json
+git show :2:package-lock.json > /tmp/package-lock.ours.json
+git show :3:package-lock.json > /tmp/package-lock.theirs.json
+```
+
+During a merge, `:2:` is the “ours” version from `HEAD`, and `:3:` is the incoming version from `feature/cache-cleanup`. The conflict excerpt indicates that the incoming side adds `yaml` to the root dependencies, while both sides have the same `fast-glob` version and URL but different integrity text. Verify whether those integrity values are real and whether `yaml` is present in `package.json`:
+
+```bash
+node -e 'const p=require("./package.json"); console.log(p.dependencies); console.log(p.devDependencies)'
+```
+
+Also compare the manifests directly:
+
+```bash
+git diff HEAD...feature/cache-cleanup -- package.json package-lock.json
+```
+
+The correct result should reflect the intended `package.json`, preserve valid package metadata, and contain a internally consistent lockfile—not merely whichever conflict side has fewer markers.
+
+[user]
+The manifest on the incoming branch does contain `"yaml": "^2.4.5"`, and that dependency is intentional. The local `package.json` does not contain it. The integrity strings in the excerpt were shortened in my notes; the actual files contain long values. I’d like to use npm rather than hand-editing all the blocks.
+
+[assistant]
+That is a good case for regenerating the lockfile from the merged manifest, but first resolve `package.json` if it is also conflicted or make sure it already contains the intended incoming dependency. Check the status and package manifest:
+
+```bash
+git status --short
+node -e 'const p=require("./package.json"); console.log(JSON.stringify({dependencies:p.dependencies,devDependencies:p.devDependencies},null,2))'
+```
+
+If `package.json` is not listed as unmerged and contains `yaml`, preserve it. Then make a backup of the conflicted lockfile outside Git’s working-tree path:
+
+```bash
+cp package-lock.json /tmp/package-lock.conflicted.json
+```
+
+Now remove only the lockfile and recreate it from the merged `package.json`:
+
+```bash
+rm package-lock.json
+npm install --package-lock-only
+```
+
+`--package-lock-only` updates the lockfile without installing packages into `node_modules`. It may contact the registry and may produce changes based on the current npm version and registry metadata, so record the tool versions first if reproducibility matters:
+
+```bash
+node --version
+npm --version
+```
+
+Do not stage yet. Inspect the resulting diff carefully.
+
+[user]
+Before I do that, is deleting the conflicted lockfile safe? I’m concerned that removing it might make Git forget that this is a merge conflict or remove information I need.
+
+[assistant]
+Deleting the working-tree copy is safe if you have made the backup and the conflict stages remain in the index. Git’s conflict state is recorded in the index, not only by the marker text in the file. The backup lets you recover the exact conflicted file, and the original stage versions can be recovered with:
+
+```bash
+git show :1:package-lock.json > /tmp/package-lock.base.json
+git show :2:package-lock.json > /tmp/package-lock.ours.json
+git show :3:package-lock.json > /tmp/package-lock.theirs.json
+```
+
+Before deletion, verify the stages exist:
+
+```bash
+git ls-files -u -- package-lock.json
+```
+
+Typical output has three lines, with stage numbers at the end:
+
+```text
+100644 <base-blob> 1 package-lock.json
+100644 <ours-blob> 2 package-lock.json
+100644 <theirs-blob> 3 package-lock.json
+```
+
+After `npm install --package-lock-only`, Git will still consider the path unmerged until you explicitly stage the regenerated file. If npm fails, restore the backup with:
+
+```bash
+cp /tmp/package-lock.conflicted.json package-lock.json
+```
+
+Then investigate the error without staging anything.
+
+[user]
+I checked the stages and saved the backup. The versions are Node `22.5.1` and npm `10.8.2`. I ran the lockfile-only install, and it completed:
+
+```text
+$ npm install --package-lock-only
+
+up to date, audited 187 packages in 1s
+
+27 packages are looking for funding
+  run `npm fund` for details
+
+found 0 vulnerabilities
+```
+
+What should I inspect now?
+
+[assistant]
+Start with status and the lockfile diff relative to the merge result’s current `HEAD`:
+
+```bash
+git status --short
+git diff -- package-lock.json
+```
+
+The file should no longer contain conflict markers:
+
+```bash
+grep -n -E '^(<<<<<<<|=======|>>>>>>>)' package-lock.json || echo "no conflict markers"
+```
+
+Check that the root package and intended dependency are present:
+
+```bash
+node - <<'NODE'
+const lock = require('./package-lock.json');
+const root = lock.packages?.[''];
+console.log(JSON.stringify({
+  lockfileVersion: lock.lockfileVersion,
+  rootDependencies: root?.dependencies,
+  rootDevDependencies: root?.devDependencies,
+  yaml: lock.packages?.['node_modules/yaml']?.version
+}, null, 2));
+NODE
+```
+
+You should see `yaml: "^2.4.5"` under the root dependencies and a resolved `node_modules/yaml` entry. Also inspect whether npm rewrote unrelated sections or changed many versions. A large diff is not automatically wrong, but it should be explainable by the npm version, registry metadata, or the manifest change.
+
+[user]
+The checks look reasonable:
+
+```text
+$ git status --short
+M  src/cache.js
+UU package-lock.json
+?? merge-notes.txt
+
+$ grep -n -E '^(<<<<<<<|=======|>>>>>>>)' package-lock.json || echo "no conflict markers"
+no conflict markers
+
+$ node check-lock.js
+{
+  "lockfileVersion": 3,
+  "rootDependencies": {
+    "fast-glob": "^3.3.2",
+    "pino": "^9.3.2",
+    "yaml": "^2.4.5"
+  },
+  "yaml": "2.4.5"
+}
+```
+
+The diff is much larger than the conflict blocks, though. It changes about 140 lines. How can I tell whether that is acceptable?
+
+[assistant]
+First separate changes caused by the intended dependency from normalization caused by regeneration. Save the regenerated result, then compare it with each original stage:
+
+```bash
+cp package-lock.json /tmp/package-lock.regenerated.json
+
+git diff --no-index --stat /tmp/package-lock.ours.json /tmp/package-lock.regenerated.json || true
+git diff --no-index --stat /tmp/package-lock.theirs.json /tmp/package-lock.regenerated.json || true
+```
+
+Inspect the actual differences, not just the line count:
+
+```bash
+git diff --no-index -- /tmp/package-lock.ours.json /tmp/package-lock.regenerated.json > /tmp/ours-to-regenerated.diff || true
+git diff --no-index -- /tmp/package-lock.theirs.json /tmp/package-lock.regenerated.json > /tmp/theirs-to-regenerated.diff || true
+less /tmp/ours-to-regenerated.diff
+```
+
+Look for these categories:
+
+1. The root dependency adds `yaml`.
+2. `node_modules/yaml` and its transitive dependencies are added.
+3. Integrity or metadata fields are normalized consistently.
+4. npm changes lockfile formatting or metadata because the original was generated by another npm release.
+
+Be cautious if unrelated packages change versions, disappear, or gain platform-specific optional dependencies without an explanation. You can list package versions from the regenerated lockfile and compare them with each stage using a small script:
+
+```bash
+node - <<'NODE'
+const fs = require('fs');
+for (const file of ['/tmp/package-lock.ours.json','/tmp/package-lock.theirs.json','/tmp/package-lock.regenerated.json']) {
+  const lock = JSON.parse(fs.readFileSync(file));
+  const entries = Object.entries(lock.packages || {})
+    .filter(([path]) => path.startsWith('node_modules/'))
+    .map(([path, data]) => `${path.slice(13)}@${data.version}`)
+    .sort();
+  console.log(`\n${file}\n${entries.join('\n')}`);
+}
+NODE
+```
+
+If the extra changes are only generated metadata and the dependency graph is correct, they can be acceptable; if not, stop and investigate before staging.
+
+[assistant]
+I need to briefly switch topics. I’m committing to send Ravi Arkwright the saltbox term sheet by Friday, October 4. I’ll send it as a PDF by 3 p.m. that day and copy the project archive link. I’ll finish the final pricing table before sending it. After that, I’ll return to the lockfile review.
+
+[user]
+The package-version comparison shows that the regenerated file has the same versions as the incoming stage, plus `yaml` and its transitive packages. The unrelated differences are mostly `integrity` fields and formatting. I’m ready to validate the generated lockfile, but I don’t want to modify `node_modules` or run project scripts yet.
+
+[assistant]
+Use npm’s lockfile-only validation first. Since the lockfile has already been generated, run:
+
+```bash
+npm install --package-lock-only --ignore-scripts
+```
+
+This may rewrite the file if npm finds normalization differences, so check the diff afterward:
+
+```bash
+git diff --stat -- package-lock.json
+git diff --check -- package-lock.json
+grep -n -E '^(<<<<<<<|=======|>>>>>>>)' package-lock.json || echo "no conflict markers"
+```
+
+`--ignore-scripts` prevents lifecycle scripts from running. `--package-lock-only` avoids changing the installed package tree. You can also ask npm to verify the lockfile and cache metadata:
+
+```bash
+npm cache verify
+```
+
+That command does not install dependencies. Do not use `npm ci` yet if you specifically want to avoid modifying `node_modules`; `npm ci` removes and recreates it.
+
+[assistant]
+I ran the validation command. It said:
+
+```text
+$ npm install --package-lock-only --ignore-scripts
+
+up to date, audited 187 packages in 1s
+
+27 packages are looking for funding
+  run `npm fund` for details
+
+found 0 vulnerabilities
+```
+
+`git diff --check` is clean, and there are no markers. The second run made no diff changes. What is the precise command to mark only the lockfile resolved?
+
+[user]
+Stage exactly that path:
+
+```bash
+git add -- package-lock.json
+```
+
+Then verify that only the intended paths are staged and that the lockfile is no longer unmerged:
+
+```bash
+git status --short
+git diff --cached --name-status
+git diff --cached --name-only --diff-filter=U
+```
+
+Expected status is similar to:
+
+```text
+M  src/cache.js
+M  package-lock.json
+?? merge-notes.txt
+```
+
+The final command should print nothing. The staged-name output should list `src/cache.js` and `package-lock.json`, but not `merge-notes.txt`.
+
+Do not use `git add -A`, `git add .`, or `git commit -am`, because those could include or mishandle the scratch file.
+
+[user]
+I ran those commands:
+
+```text
+$ git add -- package-lock.json
+$ git status --short
+M  src/cache.js
+M  package-lock.json
+?? merge-notes.txt
+
+$ git diff --cached --name-status
+M	src/cache.js
+M	package-lock.json
+
+$ git diff --cached --name-only --diff-filter=U
+```
+
+The last command is empty. Should I inspect the staged lockfile against the incoming branch before committing?
+
+[assistant]
+Yes. Review the staged result and verify that the merge is mechanically complete:
+
+```bash
+git diff --cached --stat
+git diff --cached --check
+git diff --cached -- package-lock.json
+```
+
+Because the lockfile was regenerated, compare its dependency inventory with the incoming lockfile stage rather than expecting a textual match:
+
+```bash
+git diff --no-index --stat /tmp/package-lock.theirs.json package-lock.json || true
+```
+
+Recheck the root metadata:
+
+```bash
+node - <<'NODE'
+const lock = require('./package-lock.json');
+const root = lock.packages[''];
+if (root.dependencies?.yaml !== '^2.4.5') process.exit(1);
+if (!lock.packages['node_modules/yaml']) process.exit(1);
+console.log('lockfile root and yaml entry are present');
+NODE
+```
+
+Also confirm no unresolved paths remain:
+
+```bash
+git diff --name-only --diff-filter=U
+git ls-files -u
+```
+
+Both commands should produce no output. The untracked `merge-notes.txt` should remain untracked and absent from `git diff --cached`.
+
+[assistant]
+I reviewed the staged diff. It contains the expected root `yaml` addition, the `yaml` package entries, and metadata normalization. The package inventory matches the incoming stage for existing packages. Both unresolved-path commands are empty, and the scratch file is not staged. Is there a final check before I complete the merge?
+
+[user]
+Yes. Run a lockfile-only install once more against the staged working tree, then inspect status and the staged diff summary:
+
+```bash
+npm install --package-lock-only --ignore-scripts
+git diff --check
+git status --short
+git diff --cached --stat
+```
+
+If npm changes `package-lock.json`, review that change and stage only the lockfile again:
+
+```bash
+git diff -- package-lock.json
+git add -- package-lock.json
+```
+
+Then confirm the merge is still resolved:
+
+```bash
+git diff --name-only --diff-filter=U
+git ls-files -u
+```
+
+If both are empty, and the staged summary contains only the intended merge results, complete the merge with:
+
+```bash
+git commit
+```
+
+Git will open the merge commit message. Keep the default message or edit it to describe the merge. Before committing, make sure `git diff --cached --name-only` lists only the paths you intend to include. `merge-notes.txt` should remain untracked.
+
+[assistant]
+The final validation made no changes:
+
+```text
+$ npm install --package-lock-only --ignore-scripts
+up to date, audited 187 packages in 1s
+found 0 vulnerabilities
+
+$ git diff --check
+$ git diff --name-only --diff-filter=U
+$ git ls-files -u
+$ git diff --cached --name-only
+src/cache.js
+package-lock.json
+```
+
+I’m going to run `git commit` now with the default merge message.
+
+[user]
+Run:
+
+```bash
+git commit
+```
+
+After the editor closes, verify the resulting history and clean merge state:
+
+```bash
+git status --short
+git log -1 --oneline --decorate
+git show --stat --oneline --summary HEAD
+```
+
+You should see a merge commit, no unmerged paths, and `merge-notes.txt` still listed as untracked if it remains in the working tree. Do not remove or stage that scratch file as part of this merge. If the commit command reports that an editor is unavailable, set a commit message explicitly with `git commit -m "Merge feature/cache-cleanup into main"` rather than using a broad staging command.

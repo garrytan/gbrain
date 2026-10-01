@@ -20,18 +20,18 @@ if (input.crash) {
       if (input.crash === 'before_publication') tx.executeRaw = async function (sql, params) {
         if (sql.includes('publication_started=true')) {
           const [row] = await executeRaw.call(tx, 'SELECT intent FROM persistence_requests WHERE id=$1::uuid', [params![0]]);
-          if ((row as Partial<WriteRequest>)?.intent?.kind === 'managed_connector_google_receipts') kill();
+          if ((row as Partial<WriteRequest>)?.intent?.kind === 'connector_v2_google_receipts') kill();
         }
         return executeRaw.call(tx, sql, params);
       } as BrainEngine['executeRaw'];
       const value = await run(tx);
       const row = value as Partial<WriteRequest> | undefined;
-      if (input.crash === 'after_publication' && row?.state === 'committed' && row.intent?.kind === 'managed_connector_google_receipts') kill();
+      if (input.crash === 'after_publication' && row?.state === 'committed' && row.intent?.kind === 'connector_v2_google_receipts') kill();
       return value;
     });
     const row = result as Partial<WriteRequest> | undefined;
-    if (row?.state === 'committed' && (input.crash === 'after_metadata_commit' && row.intent?.kind === 'managed_connector_google_receipts' ||
-      input.crash === 'after_checkpoint_commit' && row.intent?.kind === 'managed_connector_checkpoint' &&
+    if (row?.state === 'committed' && (input.crash === 'after_metadata_commit' && row.intent?.kind === 'connector_v2_google_receipts' ||
+      input.crash === 'after_checkpoint_commit' && row.intent?.kind === 'connector_v2_checkpoint' &&
       ((row.intent.checkpointAfter as any)?.[0]?.state?.gmail_attachment_backfill?.afterPageId ?? 0) > 0)) kill();
     return result as T;
   };

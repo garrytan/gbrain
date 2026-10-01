@@ -1,4 +1,3 @@
-import { assertUnmanagedCanonicalWriter } from '../persistence/maintenance.ts';
 /**
  * v0.35.5 — phantom-page redirect pass.
  *
@@ -59,6 +58,7 @@ import { logPhantomEvent, type PhantomOutcome } from '../facts/phantom-audit.ts'
 import { MOVE_WITHDRAWAL_SUBJECT_SQL } from '../facts/withdrawal-schema.ts';
 import { resolvePageWriteTarget } from '../write-through.ts';
 import { recordRenameAlias } from '../page-state/rename-alias.ts';
+import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 
 /** Tagged-union outcome of a single phantom-redirect attempt. */
 export type RedirectOutcome =
@@ -220,9 +220,35 @@ function appendPhantomFenceRowsToCanonical(
   phantomFacts: ParsedFact[],
   dbMaxRowNum: number,
 ): Map<number, number> {
+  if (phantomFacts.length === 0) return new Map<number, number>();
+  const { body: newBody, renumber } = mergePhantomFenceRows(fs.readFileSync(canonicalPath, 'utf-8'), phantomFacts, dbMaxRowNum);
+  if (newBody === null) return renumber;
+
+  // Atomic write: .tmp first, parse-validate, rename.
+  const tmpPath = `${canonicalPath}.tmp`;
+  fs.writeFileSync(tmpPath, newBody, 'utf-8');
+  const reparsed = parseFactsFence(newBody);
+  if (reparsed.warnings.length > 0) {
+    // Leave .tmp as quarantine evidence; do NOT rename.
+    throw new Error(
+      `phantom-redirect: rendered fence failed re-parse: ${reparsed.warnings.join('; ')}`,
+    );
+  }
+  fs.renameSync(tmpPath, canonicalPath);
+  return renumber;
+}
+
+/**
+ * The canonical body with the phantom's rows appended (null when every row
+ * dedups onto an existing canonical row) and the phantom -> canonical row
+ * number map. Shared by the file writer above and the managed redirect.
+ */
+export function mergePhantomFenceRows(
+  body: string,
+  phantomFacts: ParsedFact[],
+  dbMaxRowNum: number,
+): { body: string | null; renumber: Map<number, number> } {
   const renumber = new Map<number, number>();
-  if (phantomFacts.length === 0) return renumber;
-  const body = fs.readFileSync(canonicalPath, 'utf-8');
   const { facts: existingFacts } = parseFactsFence(body);
 
   // Dedup key combines claim + valid_from. We deliberately do NOT include
@@ -247,7 +273,7 @@ function appendPhantomFenceRowsToCanonical(
     nextRowNum += 1;
   }
 
-  if (pending.length === 0) return renumber;
+  if (pending.length === 0) return { body: null, renumber };
 
   const merged: ParsedFact[] = [...existingFacts, ...pending.map((f) => {
     const target = f.supersededBy === undefined ? undefined : renumber.get(f.supersededBy);
@@ -257,20 +283,7 @@ function appendPhantomFenceRowsToCanonical(
 
   // Shared placement rule (#4756): replace in place, else insert ABOVE the
   // timeline sentinel — never a blind EOF append below `## Timeline`.
-  const newBody = replaceOrInsertFactsFence(body, renderFactsTable(merged));
-
-  // Atomic write: .tmp first, parse-validate, rename.
-  const tmpPath = `${canonicalPath}.tmp`;
-  fs.writeFileSync(tmpPath, newBody, 'utf-8');
-  const reparsed = parseFactsFence(newBody);
-  if (reparsed.warnings.length > 0) {
-    // Leave .tmp as quarantine evidence; do NOT rename.
-    throw new Error(
-      `phantom-redirect: rendered fence failed re-parse: ${reparsed.warnings.join('; ')}`,
-    );
-  }
-  fs.renameSync(tmpPath, canonicalPath);
-  return renumber;
+  return { body: replaceOrInsertFactsFence(body, renderFactsTable(merged)), renumber };
 }
 
 /**
@@ -289,32 +302,41 @@ async function migratePhantomFacts(
   canonicalSlug: string,
   rowMap: ReadonlyMap<number, number>,
 ): Promise<number> {
-  return engine.transaction(async (tx) => {
-    const rows = await tx.executeRaw<{ id: number; row_num: number | null }>(
-      'SELECT id, row_num FROM facts WHERE source_id = $1 AND source_markdown_slug = $2',
-      [sourceId, phantomSlug],
-    );
-    const taken = new Set((await tx.executeRaw<{ row_num: number }>(
-      'SELECT row_num FROM facts WHERE source_id = $1 AND source_markdown_slug = $2 AND row_num IS NOT NULL',
-      [sourceId, canonicalSlug],
-    )).map(r => Number(r.row_num)));
-    let moved = 0;
-    for (const row of rows) {
-      const mapped = row.row_num == null ? undefined : rowMap.get(Number(row.row_num));
-      const target = mapped !== undefined && !taken.has(mapped) ? mapped : undefined;
-      if (target !== undefined) {
-        taken.add(target);
-        moved += 1;
-      }
-      await tx.executeRaw(
-        `UPDATE facts SET entity_slug = $3, source_markdown_slug = $3, row_num = $4::integer,
-            expired_at = CASE WHEN $4::integer IS NULL THEN COALESCE(expired_at, now()) ELSE expired_at END
-          WHERE id = $1 AND source_id = $2`,
-        [row.id, sourceId, canonicalSlug, target ?? null],
-      );
+  return engine.transaction(tx => movePhantomFacts(tx, sourceId, phantomSlug, canonicalSlug, rowMap));
+}
+
+/** The body of migratePhantomFacts inside the caller's transaction. */
+export async function movePhantomFacts(
+  tx: BrainEngine,
+  sourceId: string,
+  phantomSlug: string,
+  canonicalSlug: string,
+  rowMap: ReadonlyMap<number, number>,
+): Promise<number> {
+  const rows = await tx.executeRaw<{ id: number; row_num: number | null }>(
+    'SELECT id, row_num FROM facts WHERE source_id = $1 AND source_markdown_slug = $2',
+    [sourceId, phantomSlug],
+  );
+  const taken = new Set((await tx.executeRaw<{ row_num: number }>(
+    'SELECT row_num FROM facts WHERE source_id = $1 AND source_markdown_slug = $2 AND row_num IS NOT NULL',
+    [sourceId, canonicalSlug],
+  )).map(r => Number(r.row_num)));
+  let moved = 0;
+  for (const row of rows) {
+    const mapped = row.row_num == null ? undefined : rowMap.get(Number(row.row_num));
+    const target = mapped !== undefined && !taken.has(mapped) ? mapped : undefined;
+    if (target !== undefined) {
+      taken.add(target);
+      moved += 1;
     }
-    return moved;
-  });
+    await tx.executeRaw(
+      `UPDATE facts SET entity_slug = $3, source_markdown_slug = $3, row_num = $4::integer,
+          expired_at = CASE WHEN $4::integer IS NULL THEN COALESCE(expired_at, now()) ELSE expired_at END
+        WHERE id = $1 AND source_id = $2`,
+      [row.id, sourceId, canonicalSlug, target ?? null],
+    );
+  }
+  return moved;
 }
 
 /**
@@ -323,7 +345,7 @@ async function migratePhantomFacts(
  * already carries, or one that would become a self-link, stays on the
  * soft-deleted phantom.
  */
-async function mergePhantomLinks(engine: BrainEngine, phantomId: number, canonicalId: number): Promise<void> {
+export async function mergePhantomLinks(engine: BrainEngine, phantomId: number, canonicalId: number): Promise<void> {
   await engine.executeRaw(
     `UPDATE links l SET to_page_id = $2
       WHERE l.to_page_id = $1 AND l.from_page_id <> $2
@@ -432,6 +454,15 @@ async function materializeCanonicalToDisk(
 /** Frontmatter a bare phantom stub may carry; any other key is residue. */
 const PHANTOM_STUB_FRONTMATTER = new Set(['title', 'type', 'tags']);
 
+/** Anything a redirect would lose: body beyond the fence, timeline text or rows, custom frontmatter. */
+export async function phantomHasResidue(engine: BrainEngine, page: Page): Promise<boolean> {
+  const residue = stripFenceAndFrontmatterAndLeadingH1(page.compiled_truth ?? '')
+    + (page.timeline ?? '').trim()
+    + Object.keys(page.frontmatter ?? {}).filter(key => !PHANTOM_STUB_FRONTMATTER.has(key)).join(',');
+  if (residue.length > 0) return true;
+  return (await engine.executeRaw('SELECT 1 FROM timeline_entries WHERE page_id=$1 LIMIT 1', [page.id])).length > 0;
+}
+
 /**
  * Single-phantom redirect. Caller (the pass) is responsible for the
  * outer lock + the audit-log cap.
@@ -451,12 +482,7 @@ export async function tryRedirectPhantom(
   // a facts fence. Only fence rows migrate, so anything else the page holds
   // (timeline text or rows, custom frontmatter) is residue that a redirect
   // would delete.
-  const residue = stripFenceAndFrontmatterAndLeadingH1(page.compiled_truth ?? '')
-    + (page.timeline ?? '').trim()
-    + Object.keys(page.frontmatter ?? {}).filter(key => !PHANTOM_STUB_FRONTMATTER.has(key)).join(',');
-  const timelineRows = residue.length > 0 ? [] : await engine.executeRaw(
-    'SELECT 1 FROM timeline_entries WHERE page_id=$1 LIMIT 1', [page.id]);
-  if (residue.length > 0 || timelineRows.length > 0) {
+  if (await phantomHasResidue(engine, page)) {
     logPhantomEvent({
       phantom_slug: page.slug,
       outcome: 'not_phantom_has_residue',
@@ -503,7 +529,10 @@ export async function tryRedirectPhantom(
   // D10: dry-run preview — no FS / DB / audit writes.
   if (dryRun) return { outcome: 'redirected', canonical };
 
-  await assertUnmanagedCanonicalWriter(engine, 'phantom canonical redirect');
+  if (await managedPersistenceEnabled(engine)) {
+    const { redirectManagedPhantom } = await import('./phantom-redirect-managed.ts');
+    return redirectManagedPhantom(engine, page, canonical, sourceId);
+  }
 
   // ─── Commit phase (codex #3/#4/#6/#7) ─────────────────────────────
   // The canonical file is the page's file of record (recorded source_path,

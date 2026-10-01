@@ -1,0 +1,400 @@
+[user]
+I exported transactions from my bank as a CSV, but my budgeting app rejects the file. Can you help me reformat it?
+
+[assistant]
+Yes. Paste the CSV header and a few representative rows, plus the budgeting app’s required import columns or error message. Redact account numbers and other sensitive information, but leave the date, description, amount, and sign conventions intact.
+
+[user]
+Here’s the bank export:
+
+Date,Merchant,Debit,Credit,Category,Reference
+01/03/2026,Cedar Market,42.18,,Groceries,AB1832
+01/04/2026,Northline Power,86.40,,Utilities,AB1841
+01/05/2026,Payroll,,2450.00,Income,AB1849
+01/06/2026,Metro Rail,2.75,,Transport,AB1857
+
+The app says: “Required columns missing: date, amount, description.”
+
+[assistant]
+The app likely needs one signed amount column and exact lowercase column names. Based on your sample, the converted rows would be:
+
+date,amount,description
+2026-01-03,-42.18,Cedar Market
+2026-01-04,-86.40,Northline Power
+2026-01-05,2450.00,Payroll
+2026-01-06,-2.75,Metro Rail
+
+I treated debits as negative expenses and credits as positive income. ISO dates are usually safest, but check whether the app documents another format.
+
+[user]
+Can you give me a script to convert the whole export? I’m on macOS and can run Python.
+
+[assistant]
+Save this as `convert_budget_csv.py` in the same folder as the bank export:
+
+```python
+import csv
+import sys
+from datetime import datetime
+from decimal import Decimal
+
+if len(sys.argv) != 3:
+    raise SystemExit("Usage: python3 convert_budget_csv.py input.csv output.csv")
+
+input_path, output_path = sys.argv[1], sys.argv[2]
+
+with open(input_path, newline="", encoding="utf-8-sig") as source:
+    reader = csv.DictReader(source)
+    required = {"Date", "Merchant", "Debit", "Credit"}
+    missing = required - set(reader.fieldnames or [])
+    if missing:
+        raise SystemExit(f"Missing columns: {', '.join(sorted(missing))}")
+
+    with open(output_path, "w", newline="", encoding="utf-8") as target:
+        writer = csv.DictWriter(
+            target, fieldnames=["date", "amount", "description"]
+        )
+        writer.writeheader()
+
+        for line_number, row in enumerate(reader, start=2):
+            date_text = (row["Date"] or "").strip()
+            merchant = (row["Merchant"] or "").strip()
+            debit = (row["Debit"] or "").strip()
+            credit = (row["Credit"] or "").strip()
+
+            if not date_text or not merchant:
+                raise SystemExit(f"Line {line_number}: missing date or merchant")
+
+            try:
+                date = datetime.strptime(date_text, "%m/%d/%Y").date()
+                debit_value = Decimal(debit) if debit else Decimal("0")
+                credit_value = Decimal(credit) if credit else Decimal("0")
+            except Exception as error:
+                raise SystemExit(f"Line {line_number}: {error}")
+
+            if debit_value and credit_value:
+                raise SystemExit(
+                    f"Line {line_number}: both Debit and Credit contain values"
+                )
+
+            amount = credit_value - debit_value
+            writer.writerow({
+                "date": date.isoformat(),
+                "amount": f"{amount:.2f}",
+                "description": merchant,
+            })
+```
+
+Run it with:
+
+```bash
+python3 convert_budget_csv.py bank_export.csv budget_import.csv
+```
+
+Then open `budget_import.csv` in a text editor and verify the first few lines before importing.
+
+[user]
+One concern: some rows have commas and quotes in the merchant name, and a few refunds appear as negative values in the Credit column. Will the script preserve those correctly?
+
+[assistant]
+Yes regarding commas and quotes: Python’s `csv.DictReader` and `DictWriter` handle quoted fields correctly. For example, a merchant such as `"Books, Coffee & Co."` remains one description field.
+
+The refund behavior needs a rule. The current calculation is:
+
+```text
+amount = Credit - Debit
+```
+
+That correctly handles ordinary positive debits and credits, but if the bank places a refund as `-12.50` in `Credit`, it produces `-12.50`, which is an expense rather than a refund. If negative Credit values mean refunds in your export, change the amount calculation to this:
+
+```python
+amount = credit_value - debit_value
+```
+
+Actually, that formula already preserves the sign supplied by the bank. A negative Credit becomes a negative amount. Whether that is correct depends on the app’s convention. If refunds should be positive, the bank must either put them in Debit as a negative value or provide a transaction-type field. Show me one refund row and one ordinary expense row so I can confirm.
+
+[user]
+Here’s one:
+
+01/08/2026,Harbor Outfitters,,-35.00,Refund,AB1872
+
+The app’s help page says positive amounts are income and negative amounts are spending, so the refund should be positive.
+
+[assistant]
+In that export, the refund is represented as a negative Credit, so the converter should normalize it as positive income. Replace the amount section with:
+
+```python
+if debit_value != 0 and credit_value != 0:
+    raise SystemExit(
+        f"Line {line_number}: both Debit and Credit contain values"
+    )
+
+if credit_value < 0:
+    amount = abs(credit_value)
+elif debit_value != 0:
+    amount = -abs(debit_value)
+else:
+    amount = credit_value
+```
+
+This produces:
+
+```text
+2026-01-08,35.00,Harbor Outfitters
+```
+
+It also makes a positive Debit an expense and a positive Credit income. If your bank sometimes records ordinary credits as negative values for another reason, we would need to distinguish them using `Category` or another field.
+
+[user]
+I’ve been thinking about quillmesh while we do this. Teo Solberg’s idea is that budgeting tools should treat transaction cleanup as a translation layer, not a one-time import wizard. Banks publish dialects, and apps publish schemas, so quillmesh would keep small, versioned adapters that explain each transformation. That makes debugging possible when a bank changes a column or reverses refund signs, instead of silently corrupting months of data.
+
+[assistant]
+That is a concrete product thesis: preserve the source record, apply an explicit adapter, and keep an audit trail of every normalized field. For this import, we can follow the same principle by retaining `Reference`, `Category`, and the original debit/credit values in a separate archive while generating the app’s three-column file. A manifest could record the date format, sign rules, and source headers used for the conversion. That would make a later correction reproducible without re-downloading or manually reconstructing transactions.
+
+[assistant/user]
+Exactly. The useful unit is not “CSV import” but “a reversible mapping between financial dialects.” A quillmesh adapter could run a validation report before writing anything: count rows, identify ambiguous signs, detect duplicate references, and show totals by month. People would trust the result more if the app displayed the mapping and let them approve exceptions rather than guessing.
+
+[assistant]
+For this file, we can add a validation pass before creating the import file. It should report row count, debit and credit totals, duplicate references, invalid dates, and rows where both amount columns are populated. Then it can stop if anything is ambiguous. I’ll keep the output focused on the budgeting app’s required columns, while writing a separate audit CSV with the original fields and normalized amount.
+
+[user]
+Please revise the script that way. I want it to create `budget_import.csv`, `budget_audit.csv`, and a readable validation report.
+
+[assistant]
+Use this revised script:
+
+```python
+import csv
+import sys
+from collections import Counter, defaultdict
+from datetime import datetime
+from decimal import Decimal, InvalidOperation
+
+if len(sys.argv) != 2:
+    raise SystemExit("Usage: python3 convert_budget_csv.py bank_export.csv")
+
+input_path = sys.argv[1]
+import_path = "budget_import.csv"
+audit_path = "budget_audit.csv"
+report_path = "budget_validation.txt"
+
+required = {"Date", "Merchant", "Debit", "Credit", "Reference"}
+rows = []
+errors = []
+monthly = defaultdict(lambda: {"count": 0, "total": Decimal("0")})
+
+with open(input_path, newline="", encoding="utf-8-sig") as source:
+    reader = csv.DictReader(source)
+    missing = required - set(reader.fieldnames or [])
+    if missing:
+        raise SystemExit(f"Missing columns: {', '.join(sorted(missing))}")
+
+    for line_number, row in enumerate(reader, start=2):
+        date_text = (row["Date"] or "").strip()
+        merchant = (row["Merchant"] or "").strip()
+        debit_text = (row["Debit"] or "").strip()
+        credit_text = (row["Credit"] or "").strip()
+        reference = (row["Reference"] or "").strip()
+
+        try:
+            date = datetime.strptime(date_text, "%m/%d/%Y").date()
+            debit = Decimal(debit_text) if debit_text else Decimal("0")
+            credit = Decimal(credit_text) if credit_text else Decimal("0")
+
+            if debit != 0 and credit != 0:
+                raise ValueError("both Debit and Credit are populated")
+            if not merchant:
+                raise ValueError("Merchant is blank")
+
+            if credit < 0:
+                amount = abs(credit)
+            elif debit != 0:
+                amount = -abs(debit)
+            else:
+                amount = credit
+
+            month = date.strftime("%Y-%m")
+            monthly[month]["count"] += 1
+            monthly[month]["total"] += amount
+
+            rows.append({
+                "date": date.isoformat(),
+                "amount": f"{amount:.2f}",
+                "description": merchant,
+                "source_line": line_number,
+                "reference": reference,
+                "original_date": date_text,
+                "original_debit": debit_text,
+                "original_credit": credit_text,
+                "category": (row["Category"] or "").strip(),
+            })
+        except (ValueError, InvalidOperation) as error:
+            errors.append(f"Line {line_number}: {error}")
+
+references = [row["reference"] for row in rows if row["reference"]]
+duplicates = sorted(
+    reference for reference, count in Counter(references).items() if count > 1
+)
+
+with open(report_path, "w", encoding="utf-8") as report:
+    report.write(f"Input: {input_path}\n")
+    report.write(f"Parsed rows: {len(rows)}\n")
+    report.write(f"Rejected rows: {len(errors)}\n")
+    report.write(f"Duplicate references: {len(duplicates)}\n\n")
+
+    report.write("Monthly normalized totals:\n")
+    for month in sorted(monthly):
+        report.write(
+            f"  {month}: {monthly[month]['count']} rows, "
+            f"{monthly[month]['total']:.2f}\n"
+        )
+
+    if duplicates:
+        report.write("\nDuplicate reference values:\n")
+        for reference in duplicates:
+            report.write(f"  {reference}\n")
+
+    if errors:
+        report.write("\nErrors:\n")
+        for error in errors:
+            report.write(f"  {error}\n")
+
+if errors or duplicates:
+    print(f"Validation found issues. See {report_path}. No output CSVs were written.")
+    sys.exit(2)
+
+with open(import_path, "w", newline="", encoding="utf-8") as target:
+    writer = csv.DictWriter(
+        target, fieldnames=["date", "amount", "description"]
+    )
+    writer.writeheader()
+    writer.writerows(
+        {key: row[key] for key in ("date", "amount", "description")}
+        for row in rows
+    )
+
+with open(audit_path, "w", newline="", encoding="utf-8") as target:
+    fields = [
+        "source_line", "reference", "original_date", "original_debit",
+        "original_credit", "category", "date", "amount", "description"
+    ]
+    writer = csv.DictWriter(target, fieldnames=fields)
+    writer.writeheader()
+    writer.writerows(rows)
+
+print(f"Wrote {import_path}, {audit_path}, and {report_path}")
+```
+
+Run:
+
+```bash
+python3 convert_budget_csv.py bank_export.csv
+cat budget_validation.txt
+```
+
+Import `budget_import.csv` only after reviewing the report.
+
+[user]
+I ran it. Here’s the report:
+
+Input: bank_export.csv
+Parsed rows: 1248
+Rejected rows: 0
+Duplicate references: 0
+
+Monthly normalized totals:
+  2026-01: 218 rows, 1842.63
+  2026-02: 196 rows, -326.19
+  2026-03: 221 rows, -711.42
+
+It completed and wrote all three files. Does the January total look suspicious?
+
+[assistant]
+The script’s January total is the net of normalized income and spending, so it is not necessarily suspicious. It includes the 2,450.00 payroll credit, which means January expenses and refunds together were approximately:
+
+```text
+1,842.63 - 2,450.00 = -607.37
+```
+
+That is a net January outflow of 607.37 excluding the payroll inflow, or 607.37 more spending than non-payroll credits. To verify the sign handling, run this audit command:
+
+```bash
+python3 - <<'PY'
+import csv
+from collections import defaultdict
+from decimal import Decimal
+
+totals = defaultdict(lambda: [Decimal("0"), Decimal("0")])
+
+with open("budget_audit.csv", newline="", encoding="utf-8") as f:
+    for row in csv.DictReader(f):
+        month = row["date"][:7]
+        amount = Decimal(row["amount"])
+        if amount >= 0:
+            totals[month][0] += amount
+        else:
+            totals[month][1] += amount
+
+for month in sorted(totals):
+    income, spending = totals[month]
+    print(month, "positive:", income, "negative:", spending, "net:", income + spending)
+PY
+```
+
+The January line should show positive totals including payroll and negative totals for expenses. Also compare the bank statement’s January credits and debits independently; the audit file preserves the original values for that check.
+
+[user]
+The command output was:
+
+2026-01 positive: 2597.50 negative: -754.87 net: 1842.63
+2026-02 positive: 42.00 negative: -368.19 net: -326.19
+2026-03 positive: 15.00 negative: -726.42 net: -711.42
+
+That looks right. How should I import it safely?
+
+[assistant]
+Use a cautious import sequence:
+
+1. Keep `bank_export.csv`, `budget_audit.csv`, and `budget_validation.txt` unchanged as your source record.
+2. In the budgeting app, back up or export the existing data first.
+3. Import `budget_import.csv` with duplicate detection enabled if the app offers it.
+4. If the app asks for columns, map `date` to date, `amount` to amount, and `description` to payee or description.
+5. Import a small test file first if possible—copy the header and the first five data rows to `budget_test.csv`.
+6. Confirm the dates, signs, descriptions, and January payroll entry.
+7. If the test is correct, delete the test transactions before importing the full file, unless the app automatically recognizes them as duplicates.
+8. After the full import, compare the app’s transaction count with 1,248 and spot-check the refund dated 2026-01-08.
+
+Do not edit the audit file to fix an app display issue; make any changes in the conversion script and regenerate both outputs.
+
+[user]
+The test import worked, but the app says it may interpret dates in the account’s local timezone. The CSV has date-only values. Is there anything I should change?
+
+[assistant]
+Date-only values normally avoid timezone shifts because they contain no time or offset. Keep the dates as `YYYY-MM-DD` unless the app specifically requires `MM/DD/YYYY`.
+
+Before the full import, verify three boundary cases in the test:
+
+```text
+2026-01-03
+2026-01-08
+2026-03-31
+```
+
+After importing, confirm each appears on the same calendar date. If the app requires timestamps, do not invent a timezone casually; use the app’s documented local-midnight format. The current output is preferable because it preserves the bank’s transaction date without adding an artificial time.
+
+[user]
+I also noticed the app’s categories are different from the bank’s categories. Should I add categories to the import file or leave them out?
+
+[assistant]
+Leave them out for this import. The app only requires `date`, `amount`, and `description`, and the current `budget_import.csv` intentionally excludes the bank’s `Category` column. Importing mismatched categories could create incorrect assignments or duplicate category names.
+
+Keep the bank category in `budget_audit.csv` for reference. After import, use the budgeting app’s own rules to categorize transactions, or create a separate mapping such as:
+
+```text
+Groceries -> Food
+Utilities -> Bills
+Transport -> Transportation
+Income -> Paycheck
+```
+
+If you later automate that mapping, add it as a documented transformation in the script rather than changing categories manually after every import.

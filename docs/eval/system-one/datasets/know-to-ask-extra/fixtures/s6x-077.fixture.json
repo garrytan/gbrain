@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-077",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/maren-orrinbarrow",
+      "content": "---\ntitle: Maren Orrinbarrow\ntype: person\naliases: [maren]\nsummary: \"Maren Orrinbarrow is the head of partnerships at Vesperwharf.\"\n---\n\nMaren Orrinbarrow is the head of partnerships at Vesperwharf.\n"
+    },
+    {
+      "slug": "companies/solacemoor-health",
+      "content": "---\ntitle: Solacemoor Health\ntype: company\nsummary: \"Solacemoor Health is a startup we evaluated as a partner.\"\n---\n\nSolacemoor Health is a startup we evaluated as a partner. They quoted a per-seat price with a minimum annual commitment.\n"
+    },
+    {
+      "slug": "projects/pricing-overhaul",
+      "content": "---\ntitle: Pricing Overhaul\ntype: project\nsummary: \"Pricing Overhaul: We decided to move the starter plan to usage-based pricing and keep annual contracts for larger teams.\"\n---\n\nPricing Overhaul: We decided to move the starter plan to usage-based pricing and keep annual contracts for larger teams.\n"
+    },
+    {
+      "slug": "people/teodor-haskstead",
+      "content": "---\ntitle: Teodor Haskstead\ntype: person\naliases: [teodor]\nsummary: \"A contact from a conference last spring.\"\n---\n\nA contact from a conference last spring.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Orrinbarrow's train gets in at 5:40pm and the walk is 15 minutes. What time will they reach the office?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Happy to help."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Remind me where things stand with Solacemoor on pricing."
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Happy to help."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "where did we land on that pricing thing?"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Okay, noted."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "what is a good way to structure a postmortem doc?"
+    }
+  ]
+}

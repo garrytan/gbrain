@@ -433,6 +433,32 @@ describe('dispatchPerSource — integration with stubbed engine + queue', () => 
     expect(normalData.pull).toBe(true);
   });
 
+  test('#5198: a claimed source awaiting activation keeps its freshness cycle but is never pulled or synced', async () => {
+    // performSync refuses a claimed-but-not-activated source by contract, so
+    // the fan-out drops its sync phase (and pull) instead of dispatching a
+    // cycle that fails the same way every tick. The reason is reported once.
+    const claimed = src('claimed-5198', undefined, { remote_url: 'https://github.com/x/y' });
+    const normal = src('normal-5198', undefined, { remote_url: 'https://github.com/x/y' });
+    const { engine, queue, added, events, fanoutOpts } = makeStubs([claimed, normal]);
+    (engine as unknown as { executeRaw: () => Promise<unknown[]> }).executeRaw = async () => [{ source_id: 'claimed-5198' }];
+    await dispatchPerSource(engine, queue, fanoutOpts);
+    const byId = new Map<string, AddedJob>(
+      added.map(j => [(j.data as Record<string, unknown>).source_id as string, j]),
+    );
+    const claimedData = byId.get('claimed-5198')!.data as Record<string, unknown>;
+    expect(claimedData.phases).toEqual(SOURCE_FRESHNESS_PHASES.filter((p) => p !== 'sync'));
+    expect(claimedData.pull).toBe(false);
+    const normalData = byId.get('normal-5198')!.data as Record<string, unknown>;
+    expect(normalData.phases).toEqual(SOURCE_FRESHNESS_PHASES);
+    expect(normalData.pull).toBe(true);
+    const skipped = () => events.filter(e => e.includes('"fanout_sync_skipped"'));
+    expect(skipped().map(e => JSON.parse(e))).toEqual([
+      { event: 'fanout_sync_skipped', source_id: 'claimed-5198', reason: 'activation_pending' },
+    ]);
+    await dispatchPerSource(engine, queue, fanoutOpts);
+    expect(skipped()).toHaveLength(1);
+  });
+
   test('fanoutMax cap: 3 sources, fanoutMax=1, 1 dispatched + 2 in skippedCap', async () => {
     const { engine, queue, added, fanoutOpts } = makeStubs([src('a'), src('b'), src('c')]);
     fanoutOpts.fanoutMax = 1;

@@ -7,6 +7,7 @@ import { authorizeWrite } from './authority.ts';
 import { journalLimitKey, oneYearCapacity, readJournalLimits, readReceiptRetentionDays } from './limits.ts';
 import { retryWriteAdmission } from './admission-retry.ts';
 import { writeHealth, type WriteHealthFacts } from './health.ts';
+import { writerStamp } from './writer-versions.ts';
 import { assertMutationProtocol, assertSharedSkillPersistence, declarePersistenceProtocol, PERSISTENCE_PROTOCOL_PREDICATE } from './protocol.ts';
 import {
   isTerminal, principalKey, requestPrincipal, recoveryFiles,
@@ -49,6 +50,25 @@ async function cumulativeCapacityError(tx: SqlEngine, resource: string, scope: s
     'Keep the same request_id and retry after the change. Accepted request IDs and retained receipts are never evicted.');
   error.detail = key.slice('persistence.limits.'.length);
   return error;
+}
+/**
+ * Up-front refusal for a backfill that will admit `needed` new requests: when
+ * the brain's or the principal's permanent request IDs cannot cover them, it
+ * refuses with the same filled capacity command an admission would, before
+ * the caller mutates anything.
+ */
+export async function assertLifetimeIdHeadroom(engine: SqlEngine, principal: Principal, needed: number): Promise<void> {
+  if (needed <= 0) return;
+  const limits = await readJournalLimits(engine);
+  const keys = ['brain', principalKey(principal)];
+  const rows = await engine.executeRaw<{ key: string; lifetime_ids: number | string }>(
+    'SELECT key,lifetime_ids FROM persistence_counters WHERE key=ANY($1::text[])', [keys]);
+  for (const key of keys) {
+    const scope = key === 'brain' ? 'brain' : 'principal';
+    const used = Number(rows.find(row => row.key === key)?.lifetime_ids ?? 0);
+    const limit = limits[`${scope}LifetimeIds`];
+    if (used + needed > limit) throw await cumulativeCapacityError(engine, `${scope} permanent request IDs`, key, `${scope}LifetimeIds`, used, limit);
+  }
 }
 export async function lockCounters(tx: SqlEngine, keys: string[]): Promise<Counter[]> {
   const sorted = [...new Set(keys)].sort();
@@ -104,6 +124,7 @@ async function prepareAdmission(engine: BrainEngine, input: WriteAdmission, over
   const bytes = jsonBytes(input.intent) + jsonBytes(input.authority);
   const terminalBytes = input.terminalReservation ?? Math.max(16_384,jsonBytes(input.authority)+8192);
   if (!Number.isSafeInteger(terminalBytes) || terminalBytes < 1024) throw new TypeError('Invalid terminal receipt reservation.');
+  const stamp = writerStamp();
   return { requestId, apply: async (tx: BrainEngine): Promise<WriteRequest> => {
     await declarePersistenceProtocol(tx);
     assertMutationProtocol({ target_kind: input.targetKind, protocol_version: input.protocolVersion });
@@ -147,11 +168,13 @@ async function prepareAdmission(engine: BrainEngine, input: WriteAdmission, over
     }
     const [row] = await tx.executeRaw<WriteRequest>(`INSERT INTO persistence_requests
       (principal_kind,principal_id,request_id,operation,source_id,source_incarnation,page_id,slug,
-       worktree_id,topology_generation,digest,intent,authority,intent_bytes,terminal_reservation,target_kind,protocol_version)
-      VALUES($1,$2,$3::uuid,$4,$5,$6::uuid,$7,$8,$9::uuid,$10,$11,$12::text::jsonb,$13::text::jsonb,$14,$15,$16,$17)
+       worktree_id,topology_generation,digest,intent,authority,intent_bytes,terminal_reservation,target_kind,protocol_version,
+       admitter_version,admitter_host_id)
+      VALUES($1,$2,$3::uuid,$4,$5,$6::uuid,$7,$8,$9::uuid,$10,$11,$12::text::jsonb,$13::text::jsonb,$14,$15,$16,$17,$18,$19::uuid)
       RETURNING *`, [input.principal.kind, input.principal.id, requestId, input.operation, input.sourceId,
       input.sourceIncarnation, input.pageId ?? null, input.slug, input.worktreeId ?? null, input.topologyGeneration ?? null,
-      fingerprint, JSON.stringify(input.intent), JSON.stringify(input.authority), bytes, terminalBytes, input.targetKind ?? 'page', input.protocolVersion ?? 1]);
+      fingerprint, JSON.stringify(input.intent), JSON.stringify(input.authority), bytes, terminalBytes, input.targetKind ?? 'page', input.protocolVersion ?? 1,
+      stamp.version, stamp.hostId]);
     await tx.executeRaw(`UPDATE persistence_counters SET outstanding_count=outstanding_count+1,
       intent_bytes=intent_bytes+$2,lifetime_ids=lifetime_ids+1,terminal_bytes=terminal_bytes+$3 WHERE key=ANY($1::text[])`,
     [counters.map(c => c.key), bytes, terminalBytes]);
@@ -234,9 +257,14 @@ export async function completeWrite(tx: SqlEngine, row: WriteRequest, state: 'co
   const [effects] = await tx.executeRaw<{bytes:string}>(`SELECT COALESCE(SUM(octet_length(data::text)+octet_length(kind)+1024),0)::text AS bytes
     FROM persistence_effects WHERE request_id=$1::uuid`,[row.id]);
   if (jsonBytes(outcome) + jsonBytes(current.authority) + 1024 + Buffer.byteLength(error?.message ?? '') + Number(effects.bytes) > Number(current.terminal_reservation)) throw capacityError('terminal result and effects exceed their reserved bounded encoding');
+  // Only publication stamps the consumer; failures, cancellations and conflicts leave it unset.
+  const stamp = writerStamp();
   const [done] = await tx.executeRaw<WriteRequest>(`UPDATE persistence_requests SET state=$2,outcome=$3::text::jsonb,
-    error_code=$4,error_message=$5,completed_at=now(),updated_at=now(),claim_expires_at=NULL,blocked_reason=NULL
-    WHERE id=$1::uuid RETURNING *`, [row.id, state, JSON.stringify(outcome), error?.code ?? null, error?.message ?? null]);
+    error_code=$4,error_message=$5,completed_at=now(),updated_at=now(),claim_expires_at=NULL,blocked_reason=NULL,
+    consumer_version=CASE WHEN $2='committed' THEN $6 ELSE consumer_version END,
+    consumer_host_id=CASE WHEN $2='committed' THEN $7::uuid ELSE consumer_host_id END,
+    published_at=CASE WHEN $2='committed' THEN now() ELSE published_at END
+    WHERE id=$1::uuid RETURNING *`, [row.id, state, JSON.stringify(outcome), error?.code ?? null, error?.message ?? null, stamp.version, stamp.hostId]);
   await tx.executeRaw(`UPDATE persistence_counters SET outstanding_count=outstanding_count-1,intent_bytes=intent_bytes-$2
     WHERE key=ANY($1::text[])`, [['brain', principalKey(requestPrincipal(row))], Number(current.intent_bytes)]);
   // Recovery bytes remain reserved until physical cleanup has been verified.

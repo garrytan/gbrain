@@ -14,9 +14,12 @@
  *     local-only sources don't try to git-pull.
  *   - P1-3: PGLite engines default `fanoutMax=1` (PGLite is single-writer;
  *     parallel fan-out would queue uselessly behind the file lock).
- *   - P1-4: enumeration filters `local_path IS NOT NULL` so pure-DB
+ *   - P1-4: enumeration keeps sources with a `local_path`, so pure-DB
  *     sources don't get dispatched (handler would fall back to global
- *     sync.repo_path, which is wrong for them).
+ *     sync.repo_path, which is wrong for them). Connector sources (#5673)
+ *     are enumerated whatever their `local_path` once they have a recorded
+ *     sync attempt; their cycles run only CONNECTOR_SOURCE_PHASES with no
+ *     brain directory, because the freshness loop owns their sync.
  *   - P1-5: archive recheck happens in the handler (jobs.ts:1146), not
  *     here, so a source archived between fan-out and worker claim still
  *     skips cleanly.
@@ -36,8 +39,12 @@ import { existsSync } from 'fs';
 import type { BrainEngine, SourceRow } from '../core/engine.ts';
 import type { MinionQueue } from '../core/minions/queue.ts';
 import { SOURCE_FRESHNESS_PHASES, MAINTENANCE_PHASES, LAST_GLOBAL_AT_KEY } from '../core/cycle.ts';
-import { sourceConfigHasRemoteUrl, sourceLocalPathSkipWarning } from '../core/sources-load.ts';
+import { CONNECTOR_SOURCE_PHASES } from '../core/cycle/phase-scope.ts';
+import { isConnectorSourceKind } from '../core/persistence/connector-identity.ts';
+import { attemptedConnectorSourceIds } from '../core/persistence/connector-state.ts';
+import { parseSourceConfig, sourceConfigHasRemoteUrl, sourceLocalPathSkipWarning } from '../core/sources-load.ts';
 import { autopilotGitPullEnabled, isSyncDisabledConfig } from '../core/sync-policy.ts';
+import { loadActivationPendingSourceIds, skipActivationPendingSync } from '../core/sync-policy.ts';
 import { AUTOPILOT_FULL_CYCLE_FLOOR_MINUTES } from './autopilot-remediation-policy.ts';
 
 // #2194 fix #2: failure cooldown. A source whose autopilot-cycle keeps
@@ -352,6 +359,7 @@ export function selectSourcesForDispatch(
   recentFailures: Map<string, SourceFailure> = new Map(),
   cooldownOpts: CooldownOpts = { baseMin: FAILURE_COOLDOWN_BASE_MIN, capMin: FAILURE_COOLDOWN_CAP_MIN },
   pathExists: (path: string) => boolean = () => true,
+  connectorIds: ReadonlySet<string> = new Set(),
 ): {
   dispatch: SourceRow[];
   skippedFresh: SourceRow[];
@@ -366,7 +374,7 @@ export function selectSourcesForDispatch(
   const cooldown: SourceRow[] = [];
   const unavailablePath: Array<SourceRow & { skip_warning: string }> = [];
   for (const s of sources) {
-    const skipWarning = s.local_path ? sourceLocalPathSkipWarning(s.id, s.local_path, pathExists, s.config) : null;
+    const skipWarning = s.local_path && !connectorIds.has(s.id) ? sourceLocalPathSkipWarning(s.id, s.local_path, pathExists, s.config) : null;
     if (skipWarning) {
       unavailablePath.push({ ...s, skip_warning: skipWarning });
       continue;
@@ -411,8 +419,20 @@ export async function dispatchPerSource(
   const automaticPull = await autopilotGitPullEnabled(engine);
 
   let sources: SourceRow[];
+  let connectorIds = new Set<string>();
+  let idleConnectors = 0;
   try {
     sources = await engine.listAllSources({ localPathOnly: true });
+    // The DX O1 dispatch gate is read whether or not any checkout source
+    // exists, so a connector whose path was cleared is never folded into the
+    // legacy cycle (#5673). An unreadable gate fails closed for connectors.
+    const { connectorAwaitingFirstSync } = await import('./autopilot-dispatch.ts');
+    const attempted = await attemptedConnectorSourceIds(engine).catch(() => null);
+    connectorIds = new Set(attempted ?? []);
+    const checkouts = new Set(sources.filter(s => !isConnectorSourceKind(parseSourceConfig(s.config).kind)).map(s => s.id));
+    idleConnectors = sources.filter(s => connectorAwaitingFirstSync(s, attempted, opts.jsonMode === true, emit)).length;
+    const all = connectorIds.size ? await engine.listAllSources() : sources;
+    sources = all.filter(s => connectorIds.has(s.id) || checkouts.has(s.id));
   } catch (e) {
     // Brand-new brain without sources table (pre-v0.18) — fall through
     // to the legacy single-job path. The error path here also covers
@@ -421,6 +441,12 @@ export async function dispatchPerSource(
       emit(JSON.stringify({ event: 'fanout_unavailable', error: e instanceof Error ? e.message : String(e) }));
     }
     sources = [];
+  }
+  // Sources exist but every one is a connector awaiting its first sync: stay
+  // idle rather than falling back to the legacy cycle on the global repo path.
+  if (sources.length === 0 && idleConnectors > 0) {
+    return { dispatched: [], coalesced: [], skipped_fresh: [], skipped_cap: [], skipped_cooldown: [], skipped_unavailable_path: [],
+      legacy_fallback: false, all_sources_fresh: false, all_sources_handled: false };
   }
 
   if (sources.length === 0) {
@@ -493,6 +519,7 @@ export async function dispatchPerSource(
       recentFailures,
       cooldownOpts,
       pathExists,
+      connectorIds,
     );
 
   for (const src of skippedUnavailablePath) {
@@ -503,6 +530,9 @@ export async function dispatchPerSource(
     }
   }
 
+  // #5198: claimed-but-not-activated sources refuse sync until activation.
+  const activationPending = await loadActivationPendingSourceIds(engine);
+
   const dispatched: string[] = [];
   const coalesced: string[] = [];
   for (const src of dispatch) {
@@ -511,18 +541,24 @@ export async function dispatchPerSource(
       // sync. It still gets its lint/backlinks/extract cycle and freshness
       // stamp; only the sync phase (and the pull that feeds it) is dropped —
       // normalizeQueuedSourcePhases passes a freshness subset through as-is.
-      const syncDisabled = isSyncDisabledConfig(src.config);
-      const shouldPull = automaticPull && sourceConfigHasRemoteUrl(src.config) && !syncDisabled;
+      // #5198: a claimed source awaiting activation is treated the same way,
+      // so its cycle does not fail on a sync that is refused by contract.
+      const pendingActivation = skipActivationPendingSync(
+        activationPending, src.id, 'fanout_sync_skipped', opts.jsonMode === true, opts.jsonMode ? emit : log,
+      );
+      const syncDisabled = isSyncDisabledConfig(src.config) || pendingActivation;
+      const connector = connectorIds.has(src.id);
+      const shouldPull = automaticPull && sourceConfigHasRemoteUrl(src.config) && !syncDisabled && !connector;
       const job = await queue.add(
         'autopilot-cycle',
         {
-          repoPath: opts.repoPath,
+          repoPath: connector ? null : opts.repoPath,
           source_id: src.id,
           pull: shouldPull,
           // Freshness is stamped by bounded deterministic work only. LLM-backed
           // source enrichment (atoms, takes, thin-page development, etc.) is
           // explicit/background work and cannot hold source freshness hostage.
-          phases: syncDisabled ? SOURCE_FRESHNESS_PHASES.filter((p) => p !== 'sync') : SOURCE_FRESHNESS_PHASES,
+          phases: connector ? CONNECTOR_SOURCE_PHASES : syncDisabled ? SOURCE_FRESHNESS_PHASES.filter((p) => p !== 'sync') : SOURCE_FRESHNESS_PHASES,
         },
         {
           queue: 'default',

@@ -1,0 +1,13 @@
+{
+  "calibration": "local:7",
+  "action_precision_lb": null,
+  "families": 0,
+  "correct_families": 0,
+  "actions": 0,
+  "status": "insufficient_n",
+  "required_n": 35,
+  "slices": {},
+  "min_action_precision": 0.9,
+  "policy_fingerprint": "6a50c19e7e3569c1",
+  "next": null
+}

@@ -1,0 +1,115 @@
+[user]
+I need to format a short bibliography for a school handout. Can you help me use MLA 9 consistently?
+
+[assistant]
+Yes. Paste the source details you have, and I’ll turn them into MLA 9 entries. I can also check alphabetization, capitalization, italics, dates, URLs, and hanging-indent formatting. If some information is missing, I’ll mark what needs to be verified rather than inventing it.
+
+[user]
+Here are the notes copied from my browser:
+
+- Book: The practical science of weather, by Dana Ruiz, Greenfield Press, 2018.
+- Website article: “Why clouds form,” by Morgan Lee, Earth Study Hub, 4 March 2022, https://earthstudy.example/clouds
+- Online video: “Reading a weather map,” uploaded by Northside Learning, 12 September 2021, https://video.example/watch?v=WX204
+- Journal article: “Rainfall patterns in small watersheds,” by T. K. Shah and L. Moreno, Journal of Local Hydrology, volume 7, issue 2, 2020, pages 44–59, DOI 10.1234/jlh.2020.77
+
+[assistant]
+Here is a first MLA 9 draft:
+
+Works Cited
+
+Lee, Morgan. “Why Clouds Form.” Earth Study Hub, 4 Mar. 2022, https://earthstudy.example/clouds.
+
+“Reading a Weather Map.” Northside Learning, 12 Sept. 2021, https://video.example/watch?v=WX204.
+
+Ruiz, Dana. The Practical Science of Weather. Greenfield Press, 2018.
+
+Shah, T. K., and L. Moreno. “Rainfall Patterns in Small Watersheds.” Journal of Local Hydrology, vol. 7, no. 2, 2020, pp. 44–59. https://doi.org/10.1234/jlh.2020.77.
+
+MLA normally uses title case for English titles, abbreviated months in dates, “vol.,” “no.,” and “pp.” for journal details, and a DOI in URL form when one is available. The entries are alphabetized by the first element. Because the video uploader is listed as a group rather than an individual, it appears at the beginning of that entry.
+
+[user]
+I’m not sure whether the video title should be in quotation marks or italics. Also, should I put “Accessed” dates after every URL?
+
+[assistant]
+For a standalone online video, put the video title in quotation marks, then list the uploader or channel, the upload date, and the URL. For example:
+
+“Reading a Weather Map.” Northside Learning, 12 Sept. 2021, https://video.example/watch?v=WX204.
+
+You do not need an access date for every URL in MLA 9. Add one when the page has no publication or update date, or when the content is likely to change over time and the access date helps document what you consulted. For your list, the website article, video, and journal article already have dates, so access dates are optional rather than required. If your teacher has a separate handout rule, follow that rule consistently.
+
+[user]
+Could you show me how to set the hanging indents in a document, and can you make the capitalization consistent? I’m using a plain text draft before moving it into a word processor.
+
+[assistant]
+Use this plain-text version as your clean draft:
+
+Works Cited
+
+Lee, Morgan. “Why Clouds Form.” Earth Study Hub, 4 Mar. 2022, https://earthstudy.example/clouds.
+
+“Reading a Weather Map.” Northside Learning, 12 Sept. 2021, https://video.example/watch?v=WX204.
+
+Ruiz, Dana. The Practical Science of Weather. Greenfield Press, 2018.
+
+Shah, T. K., and L. Moreno. “Rainfall Patterns in Small Watersheds.” Journal of Local Hydrology, vol. 7, no. 2, 2020, pp. 44–59. https://doi.org/10.1234/jlh.2020.77.
+
+The capitalization is now consistent: article, video, and book titles use title case, and the journal title is also capitalized as a publication title.
+
+After pasting into a word processor:
+
+1. Select the four entries, not the “Works Cited” heading.
+2. Open the paragraph-formatting settings.
+3. Find “Indentation” or “Special indent.”
+4. Choose “Hanging.”
+5. Set the hanging indent to 0.5 inch, or about 1.27 cm.
+6. Set line spacing to double if your class requires standard MLA layout.
+7. Keep the heading centered, with no hanging indent.
+
+Do not create the hanging indent by inserting spaces, because the alignment can change when the font or page width changes.
+
+[user]
+I noticed the book title and article titles are in title case. Is that definitely what MLA wants, and what about the URL punctuation?
+
+[assistant]
+Yes. For English-language MLA entries, use headline-style capitalization for titles: capitalize the first word, the last word, and the principal words, including nouns, verbs, adjectives, adverbs, and subordinating conjunctions. Keep short articles, coordinating conjunctions, and prepositions lowercase unless they are the first or last word.
+
+Your titles therefore appear as:
+
+- The Practical Science of Weather
+- “Why Clouds Form”
+- “Reading a Weather Map”
+- “Rainfall Patterns in Small Watersheds”
+
+For URLs, place a period after the URL when it ends the entry. The period is citation punctuation, not part of the web address. If a URL contains punctuation or wraps onto another line, do not add a manual hyphen. Let the word processor wrap it automatically. MLA also recommends using a DOI in the https://doi.org/ format when a DOI is supplied.
+
+[user]
+Can you give me a final checklist and a version I can paste into the document? Please keep the source information exactly as I supplied it, without adding access dates or other details.
+
+[assistant]
+Final checklist:
+
+- Use the heading “Works Cited.”
+- Alphabetize entries by the first word or name in each entry.
+- Use double spacing if required by the class instructions.
+- Apply a 0.5-inch hanging indent to every entry.
+- Use one readable font and the same font size throughout.
+- Keep book, journal, and website titles consistently capitalized.
+- Put shorter works, such as articles and videos, in quotation marks.
+- Put the book and journal title in italics.
+- Use the supplied publication dates and URLs.
+- Do not add access dates unless your teacher specifically requests them.
+- Check that each URL opens correctly before submitting.
+
+Paste-ready text:
+
+Works Cited
+
+Lee, Morgan. “Why Clouds Form.” Earth Study Hub, 4 Mar. 2022, https://earthstudy.example/clouds.
+
+“Reading a Weather Map.” Northside Learning, 12 Sept. 2021, https://video.example/watch?v=WX204.
+
+Ruiz, Dana. The Practical Science of Weather. Greenfield Press, 2018.
+
+Shah, T. K., and L. Moreno. “Rainfall Patterns in Small Watersheds.” Journal of Local Hydrology, vol. 7, no. 2, 2020, pp. 44–59. https://doi.org/10.1234/jlh.2020.77.
+
+In the word processor, italicize The Practical Science of Weather and Journal of Local Hydrology, then apply the hanging indent to the four entries.

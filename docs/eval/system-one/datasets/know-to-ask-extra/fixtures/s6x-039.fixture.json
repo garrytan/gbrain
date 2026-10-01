@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-039",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "companies/glintcrest",
+      "content": "---\ntitle: Glintcrest\ntype: company\nsummary: \"Glintcrest is the office cleaning vendor we picked.\"\n---\n\nGlintcrest is the office cleaning vendor we picked. The renewal is blocked on a security review that is due next month.\n"
+    },
+    {
+      "slug": "companies/marblereach",
+      "content": "---\ntitle: Marblereach\ntype: company\nsummary: \"Marblereach is a software vendor we work with.\"\n---\n\nMarblereach is a software vendor we work with.\n"
+    },
+    {
+      "slug": "people/ines-grisholt",
+      "content": "---\ntitle: Ines Grisholt\ntype: person\nsummary: \"Ines Grisholt is the procurement lead at Orchidmoor.\"\n---\n\nInes Grisholt is the procurement lead at Orchidmoor.\n"
+    },
+    {
+      "slug": "people/kasimir-brinmere",
+      "content": "---\ntitle: Kasimir Brinmere\ntype: person\naliases: [kasimir]\nsummary: \"Kasimir Brinmere is the product lead at Tidalwharf.\"\n---\n\nKasimir Brinmere is the product lead at Tidalwharf.\n"
+    },
+    {
+      "slug": "companies/kilnmoor",
+      "content": "---\ntitle: Kilnmoor\ntype: company\nsummary: \"A company we met once at a trade show.\"\n---\n\nA company we met once at a trade show.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "which days does the cleaning company we chose come in?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Here is what I have."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Make this sentence shorter: 'Our team will be at the Marblereach office for the whole afternoon on Thursday.'"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "In the novel I'm reading, Captain Grisholt betrays the crew. Is that a common trope?"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "Turn this into a checklist: Brinmere sends the deck, I review it, we both sign off on Friday."
+    }
+  ]
+}

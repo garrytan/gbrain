@@ -8,7 +8,7 @@ import { OperationError, type OperationContext } from '../ops/contract.ts';
 import { assertPageRevision } from '../page-state/types.ts';
 import { initializeLocalPersistence, requestPrincipalForContext } from './page-mutations.ts';
 import { submissionAuthority, authorizeStoredRequest } from './authority.ts';
-import { admitWrite, assertReplayIntent, getWriteRequest, intentDigest } from './journal.ts';
+import { admitWrite, assertLifetimeIdHeadroom, assertReplayIntent, getWriteRequest, intentDigest } from './journal.ts';
 import { getWorktreeBinding } from './ownership.ts';
 import { digest, requireUuid } from './digest.ts';
 import { waitForWrite, writeResponse } from './service.ts';
@@ -16,10 +16,34 @@ import { databaseOnlyPublication, prepareFileTarget } from './page-prepare.ts';
 import type { WriteRequest } from './model.ts';
 import type { PreparedMutation } from './coordinator.ts';
 
-export async function grandfatherCanonicalPage(engine: BrainEngine,
-  selected: { id: number; slug: string; source_id: string; source_incarnation: string },
-  before: (page: typeof selected & { frontmatter: Record<string, unknown>; knowledge_revision: string; request_id: string }) => void | Promise<void>,
-): Promise<{ status: 'touched'; revision: string | null } | { status: 'skipped' }> {
+type GrandfatherSelection = { id: number; slug: string; source_id: string; source_incarnation: string };
+type GrandfatherOutcome = { status: 'touched'; revision: string | null };
+
+export async function grandfatherCanonicalPage(engine: BrainEngine, selected: GrandfatherSelection,
+  before: (page: GrandfatherSelection & { frontmatter: Record<string, unknown>; knowledge_revision: string; request_id: string }) => void | Promise<void>,
+): Promise<GrandfatherOutcome | { status: 'skipped' }> {
+  const admitted = await admitCanonicalGrandfather(engine, selected, before);
+  return admitted.status === 'skipped' ? admitted : admitted.complete();
+}
+
+/**
+ * #5530: admit one page's grandfather write without waiting for it. The step
+ * admits a bounded window of pages before waiting, so their Git effects are
+ * ready together and the effect runner commits them as one group instead of
+ * one commit per page. `complete()` waits for the publication and settles the
+ * page's checkpoint exactly as the serial path does.
+ */
+/** Refuse a managed grandfather pass up front when its page admissions cannot fit the ID caps. */
+export async function assertGrandfatherCapacity(engine: BrainEngine, pages: number): Promise<void> {
+  const ctx: OperationContext = { engine, config: loadConfig() ?? { engine: engine.kind }, sourceId: 'default', remote: false, dryRun: false,
+    logger: { info() {}, warn() {}, error() {} } };
+  await initializeLocalPersistence(ctx);
+  await assertLifetimeIdHeadroom(engine, await requestPrincipalForContext(ctx), pages);
+}
+
+export async function admitCanonicalGrandfather(engine: BrainEngine, selected: GrandfatherSelection,
+  before: (page: GrandfatherSelection & { frontmatter: Record<string, unknown>; knowledge_revision: string; request_id: string }) => void | Promise<void>,
+): Promise<{ status: 'skipped' } | { status: 'admitted'; complete: () => Promise<GrandfatherOutcome> }> {
   const snapshot = await engine.readPageSnapshot(selected.slug, { sourceId: selected.source_id });
   if (!snapshot || snapshot.page.id !== selected.id || snapshot.sourceIncarnation !== selected.source_incarnation ||
     Object.hasOwn(snapshot.page.frontmatter ?? {}, 'validate')) return { status: 'skipped' };
@@ -43,21 +67,27 @@ export async function grandfatherCanonicalPage(engine: BrainEngine,
     assertReplayIntent(prior, intentDigest({ operation: 'put_page', sourceId: selected.source_id, slug: selected.slug, callerIntent }));
   } else await before({ ...selected, frontmatter: snapshot.page.frontmatter ?? {}, knowledge_revision: snapshot.revision, request_id: requestId });
   const binding = await getWorktreeBinding(engine, selected.source_id);
-  try {
-    const request = prior ?? await admitWrite(engine, { principal, operation: 'put_page', sourceId: selected.source_id,
-      sourceIncarnation: selected.source_incarnation, pageId: selected.id, slug: selected.slug, requestId, authority, callerIntent,
-      intent: { kind: 'managed_grandfather', expected_revision: snapshot.revision },
-      worktreeId: binding?.worktree_id, topologyGeneration: binding?.topology_generation });
-    const committed = writeResponse(await waitForWrite(engine, request, ctx.config));
-    await engine.executeRaw('DELETE FROM op_checkpoints WHERE op=$1 AND fingerprint=$2 AND completed_keys=$3::text::jsonb', [op, fingerprint, JSON.stringify([requestId])]);
-    // The publication revision lets verification tell a later rewrite from a lost grandfather.
-    return { status: 'touched', revision: typeof committed.revision === 'string' ? committed.revision : null };
-  } catch (error) {
+  const settleFailure = async (error: unknown): Promise<never> => {
     if (error instanceof OperationError && error.writeRequest && ['failed', 'conflict', 'cancelled'].includes(error.writeRequest.state)) {
       await engine.executeRaw('DELETE FROM op_checkpoints WHERE op=$1 AND fingerprint=$2 AND completed_keys=$3::text::jsonb', [op, fingerprint, JSON.stringify([requestId])]);
     }
     throw error;
-  }
+  };
+  let request: WriteRequest;
+  try {
+    request = prior ?? await admitWrite(engine, { principal, operation: 'put_page', sourceId: selected.source_id,
+      sourceIncarnation: selected.source_incarnation, pageId: selected.id, slug: selected.slug, requestId, authority, callerIntent,
+      intent: { kind: 'managed_grandfather', expected_revision: snapshot.revision },
+      worktreeId: binding?.worktree_id, topologyGeneration: binding?.topology_generation });
+  } catch (error) { return settleFailure(error); }
+  return { status: 'admitted', complete: async () => {
+    try {
+      const committed = writeResponse(await waitForWrite(engine, request, ctx.config));
+      await engine.executeRaw('DELETE FROM op_checkpoints WHERE op=$1 AND fingerprint=$2 AND completed_keys=$3::text::jsonb', [op, fingerprint, JSON.stringify([requestId])]);
+      // The publication revision lets verification tell a later rewrite from a lost grandfather.
+      return { status: 'touched', revision: typeof committed.revision === 'string' ? committed.revision : null };
+    } catch (error) { return settleFailure(error); }
+  } };
 }
 
 export async function prepareGrandfatherMutation(engine: BrainEngine, row: WriteRequest): Promise<PreparedMutation> {

@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-012",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "companies/wanderloft",
+      "content": "---\ntitle: Wanderloft\ntype: company\nsummary: \"Wanderloft is a software vendor we work with.\"\n---\n\nWanderloft is a software vendor we work with. Their support team promised a named account manager after the last outage.\n"
+    },
+    {
+      "slug": "companies/pylonspire",
+      "content": "---\ntitle: Pylonspire\ntype: company\nsummary: \"Pylonspire is a software vendor we work with.\"\n---\n\nPylonspire is a software vendor we work with.\n"
+    },
+    {
+      "slug": "people/rohan-caldholt",
+      "content": "---\ntitle: Rohan Caldholt\ntype: person\nsummary: \"Rohan Caldholt is the head of sales at Solacevane.\"\n---\n\nRohan Caldholt is the head of sales at Solacevane. Rohan asked for a longer pilot before signing, ideally a full quarter.\n"
+    },
+    {
+      "slug": "people/farah-marrridge",
+      "content": "---\ntitle: Farah Marrridge\ntype: person\naliases: [farah]\nsummary: \"A contact from a conference last spring.\"\n---\n\nA contact from a conference last spring.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "what's the status with wanderloft and support?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Okay, noted."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Write a one-line out-of-office reply saying I'm visiting Pylonspire on Monday."
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "What did Caldholt want changed in the pilot?"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "summarize the idea behind spaced repetition in two sentences"
+    }
+  ]
+}

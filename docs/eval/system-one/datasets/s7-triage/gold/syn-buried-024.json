@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "transcript_id": "syn-buried-024",
+  "scenario": "synthetic-buried-signal",
+  "expected_triage": "high",
+  "label_source": "synthetic-construction",
+  "generator": {
+    "model": "openai:gpt-5.6-luna",
+    "reasoning": "none",
+    "temperature": 1,
+    "seed": 7350001
+  },
+  "spec": {
+    "id": "syn-buried-024",
+    "scenario": "synthetic-buried-signal",
+    "expected_triage": "high",
+    "theme": "reformatting a CSV export so a budgeting app will import it",
+    "turns": 19,
+    "signal": {
+      "kind": "reflection",
+      "brief": "the user reflects on themselves: names a recurring pattern in how they work or feel, and what they want to change",
+      "person": "Saoirse Drummond",
+      "project": "brambleworks",
+      "position": "in the middle"
+    }
+  }
+}

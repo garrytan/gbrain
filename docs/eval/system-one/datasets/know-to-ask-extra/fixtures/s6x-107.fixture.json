@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-107",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/eamon-yarrthorpe",
+      "content": "---\ntitle: Eamon Yarrthorpe\ntype: person\nsummary: \"Eamon Yarrthorpe is the finance lead at Glintmoor.\"\n---\n\nEamon Yarrthorpe is the finance lead at Glintmoor. Eamon objected to the auto-renewal clause in the draft contract.\n"
+    },
+    {
+      "slug": "people/mireille-dremfell",
+      "content": "---\ntitle: Mireille Dremfell\ntype: person\nsummary: \"Mireille Dremfell is the head of partnerships at Nimbusfold.\"\n---\n\nMireille Dremfell is the head of partnerships at Nimbusfold.\n"
+    },
+    {
+      "slug": "people/hollis-fenstead",
+      "content": "---\ntitle: Hollis Fenstead\ntype: person\naliases: [hollis]\nsummary: \"Hollis Fenstead is the procurement lead at Brackenyard.\"\n---\n\nHollis Fenstead is the procurement lead at Brackenyard.\n"
+    },
+    {
+      "slug": "people/kofi-tulvthorpe",
+      "content": "---\ntitle: Kofi Tulvthorpe\ntype: person\naliases: [kofi]\nsummary: \"A contact from a conference last spring.\"\n---\n\nA contact from a conference last spring.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "eamon yarrthorpe wants to meet again, what did we agree last time about the contract?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Dremfell mentioned the pomodoro technique on a call. How does the pomodoro technique work?"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "How many letters are in the name Fenstead?"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Done."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "what are the pros and cons of a four-day work week?"
+    }
+  ]
+}

@@ -12,7 +12,7 @@ import { lookupEmbeddingPrice } from '../embedding-pricing.ts';
 import { splitProviderModelId } from '../model-id.ts';
 import { resolveRecipe } from '../ai/model-resolver.ts';
 
-export type BudgetKind = 'chat' | 'embed' | 'rerank';
+export type BudgetKind = 'chat' | 'embed' | 'rerank' | 'decide';
 
 /**
  * #4312 — normalized operator price overrides: model string (lowercased) →
@@ -44,7 +44,7 @@ export function canonicalPricingKey(modelId: string): string {
  * dated id must also price the alias the operator configured, or the alias
  * silently bills at list price while the table lookup below resolves it.
  */
-function overrideFor(modelId: string, overrides?: PricingOverrides): ModelPricing | null {
+export function overrideFor(modelId: string, overrides?: PricingOverrides): ModelPricing | null {
   if (!overrides) return null;
   const raw = modelId.trim().toLowerCase();
   return overrides[raw] ?? overrides[canonicalPricingKey(modelId.trim()).toLowerCase()] ?? null;
@@ -134,7 +134,7 @@ function lookupPricing(modelId: string, kind: BudgetKind): ModelPricing | null {
     const tailHit = ANTHROPIC_PRICING[modelTail];
     if (tailHit) return tailHit;
   }
-  if (kind === 'rerank') {
+  if (kind === 'rerank' || kind === 'decide') {
     const hit = lookupEmbeddingPrice(key);
     if (hit.kind === 'known') return { input: hit.pricePerMTok, output: 0 };
   }

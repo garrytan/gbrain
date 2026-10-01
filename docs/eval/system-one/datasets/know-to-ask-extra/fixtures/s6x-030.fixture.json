@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-030",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/verity-brindale",
+      "content": "---\ntitle: Verity Brindale\ntype: person\naliases: [verity]\nsummary: \"Verity Brindale is the product designer we hired last month.\"\n---\n\nVerity Brindale is the product designer we hired last month. Verity wants the proposal revised to drop the onboarding fee.\n"
+    },
+    {
+      "slug": "people/eamon-orrinholt",
+      "content": "---\ntitle: Eamon Orrinholt\ntype: person\nsummary: \"Eamon Orrinholt is the head of sales at Vesperreach.\"\n---\n\nEamon Orrinholt is the head of sales at Vesperreach.\n"
+    },
+    {
+      "slug": "people/cassius-brinfell",
+      "content": "---\ntitle: Cassius Brinfell\ntype: person\naliases: [cassius]\nsummary: \"Cassius Brinfell is the head of partnerships at Fablemoor.\"\n---\n\nCassius Brinfell is the head of partnerships at Fablemoor. Cassius objected to the auto-renewal clause in the draft contract.\n"
+    },
+    {
+      "slug": "people/ottilie-tesscombe",
+      "content": "---\ntitle: Ottilie Tesscombe\ntype: person\naliases: [ottilie]\nsummary: \"A contact from a conference last spring.\"\n---\n\nA contact from a conference last spring.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "By the way, someone named Fintan Pellstead emailed about partnerships. Never heard of them."
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Here is what I have."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "what did our new designer want to change in the proposal?"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "Translate into French: 'Eamon Orrinholt will send the notes tomorrow.'"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Done."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "What did Brinfell want changed in the contract?"
+    }
+  ]
+}

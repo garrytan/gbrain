@@ -184,6 +184,7 @@
   "test/e2e/salience-anomalies-source-isolation-pglite.test.ts": 1610,
   "test/e2e/salience-llm-routing.test.ts": 177,
   "test/e2e/salience-pglite.test.ts": 2200,
+  "test/e2e/schema-catalog-golden.test.ts": 17320,
   "test/e2e/schema-cathedral.test.ts": 4320,
   "test/e2e/schema-drift.test.ts": 4600,
   "test/e2e/search-exclude.test.ts": 1650,

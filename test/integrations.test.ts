@@ -171,19 +171,26 @@ Content.
 
 describe('CLI integration', () => {
   let cliSource: string;
+  let cliSurface: string;
+  let tableSource: string;
 
   beforeAll(() => {
-    const { readFileSync } = require('fs');
-    cliSource = readFileSync(new URL('../src/cli.ts', import.meta.url), 'utf-8');
+    cliSource = surfaceFileSource('cli', 'src/cli.ts');
+    // Refactor wave 1 (W4 cli): CLI_ONLY membership and dispatch phase live in
+    // the command table; containment reads the whole cli surface.
+    cliSurface = surfaceSource('cli');
+    tableSource = surfaceFileSource('cli', 'src/cli/command-table.ts');
   });
 
   test('CLI_ONLY set contains integrations', () => {
-    expect(cliSource).toContain("'integrations'");
+    expect(cliSurface).toContain("'integrations'");
   });
 
   test('handleCliOnly routes integrations before connectEngine', () => {
-    // integrations case must appear before "All remaining CLI-only commands need a DB"
-    const integrationsIdx = cliSource.indexOf("command === 'integrations'");
+    // integrations is a pre-connect record, and handleCliOnly runs the
+    // pre-connect table step before "All remaining CLI-only commands need a DB"
+    expect(tableSource).toMatch(/\{ name: 'integrations', phase: 'pre-connect'/);
+    const integrationsIdx = cliSource.indexOf('await dispatchPreConnectCommand(command, args)');
     const dbComment = cliSource.indexOf('All remaining CLI-only commands need a DB');
     expect(integrationsIdx).toBeGreaterThan(0);
     expect(dbComment).toBeGreaterThan(0);
@@ -705,6 +712,7 @@ describe('isInternalUrl', () => {
 // --- Recipe trust boundary (B1 regression) ---
 
 import { getRecipeDirs } from '../src/commands/integrations.ts';
+import { surfaceFileSource, surfaceSource } from './helpers/source-surface.ts';
 
 describe('getRecipeDirs (B1 trust boundary)', () => {
   test('returns tiered list with trusted flag', () => {

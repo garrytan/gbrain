@@ -9,7 +9,7 @@ import type { WriteRequest } from '../persistence/model.ts';
 import { publishMaintenancePage, type MaintenanceAuthority } from '../persistence/prepared-maintenance.ts';
 import { writeResponse } from '../persistence/service.ts';
 import type { DiscoveredTranscript } from './transcript-discovery.ts';
-import { emptyQuoteVerifyStats, groundSource, isDreamOwnedPage, resolveVerifyPrior, verifyDreamPage, type GroundedSource } from './synthesize-verify.ts';
+import { emptyQuoteVerifyStats, groundSource, isDreamOwnedPage, resolveVerifyPrior, verifyDreamPage, type GroundedSource, type GroundingPass } from './synthesize-verify.ts';
 
 interface OutputRef { slug: string; source_id: string; raw_source?: string; first_write_at?: Date; }
 interface RetainedOutput { job_id: number | bigint; job_key: string; request: WriteRequest; }
@@ -21,7 +21,7 @@ export async function postprocessManagedSynthesis(
   childIds: number[],
   jobRawSource: Map<number, string>,
   transcripts: DiscoveredTranscript[],
-  opts: { cycleDate: string; quoteVerify: boolean; sinceByTranscript: Map<string, Date>; signal?: AbortSignal },
+  opts: { cycleDate: string; quoteVerify: boolean; sinceByTranscript: Map<string, Date>; signal?: AbortSignal; grounding?: GroundingPass },
 ) {
   const stats = emptyQuoteVerifyStats();
   const writtenRefs: OutputRef[] = [];
@@ -80,7 +80,8 @@ export async function postprocessManagedSynthesis(
         else {
           if (prior) stats.preexisting_diffed++;
           const source = grounded?.path === transcript.filePath ? grounded : (grounded = groundSource(transcript.filePath, transcript.content));
-          const verified = verifyDreamPage(page, [source], { prior, checkedAt: opts.cycleDate }, stats);
+          const mechanical = verifyDreamPage(page, [source], { prior, checkedAt: opts.cycleDate }, stats);
+          const verified = opts.grounding ? await opts.grounding.apply(mechanical, [source], `page:${ref.source_id}:${ref.slug}`, opts.cycleDate) : mechanical;
           if (verified.changed) stats.pages_repaired++;
           page = { ...page, compiled_truth: verified.compiled_truth, timeline: verified.timeline, frontmatter: verified.frontmatter as typeof page.frontmatter };
         }

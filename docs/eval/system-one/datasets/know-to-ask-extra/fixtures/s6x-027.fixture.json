@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-027",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/soraya-quellbarrow",
+      "content": "---\ntitle: Soraya Quellbarrow\ntype: person\nsummary: \"Soraya Quellbarrow is the head of partnerships at Embercrest.\"\n---\n\nSoraya Quellbarrow is the head of partnerships at Embercrest. Soraya asked for a longer pilot before signing, ideally a full quarter.\n"
+    },
+    {
+      "slug": "people/cassius-brincombe",
+      "content": "---\ntitle: Cassius Brincombe\ntype: person\nsummary: \"Cassius Brincombe is the head of sales at Russetreach.\"\n---\n\nCassius Brincombe is the head of sales at Russetreach.\n"
+    },
+    {
+      "slug": "people/alaric-tulvridge",
+      "content": "---\ntitle: Alaric Tulvridge\ntype: person\naliases: [alaric]\nsummary: \"Alaric Tulvridge is the finance lead at Orchidloft.\"\n---\n\nAlaric Tulvridge is the finance lead at Orchidloft.\n"
+    },
+    {
+      "slug": "people/farah-tessgrove",
+      "content": "---\ntitle: Farah Tessgrove\ntype: person\naliases: [farah]\nsummary: \"A contact from a conference last spring.\"\n---\n\nA contact from a conference last spring.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "what are the pros and cons of a four-day work week?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Okay, noted."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "can you pull up what soraya quellbarrow told us about the pilot"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "Brincombe said the room is 12 by 15 feet. What is that in square meters?"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Done."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "Is Alaric usually a short form of a longer name?"
+    }
+  ]
+}

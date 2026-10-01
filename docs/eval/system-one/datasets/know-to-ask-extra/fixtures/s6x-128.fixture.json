@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-128",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/kofi-pellwick",
+      "content": "---\ntitle: Kofi Pellwick\ntype: person\naliases: [kofi]\nsummary: \"Kofi Pellwick is the operations director at Cobaltgate.\"\n---\n\nKofi Pellwick is the operations director at Cobaltgate.\n"
+    },
+    {
+      "slug": "projects/referral-program",
+      "content": "---\ntitle: Referral Program\ntype: project\nsummary: \"Referral Program: We chose a one-month credit for both sides and capped it at three referrals per account.\"\n---\n\nReferral Program: We chose a one-month credit for both sides and capped it at three referrals per account.\n"
+    },
+    {
+      "slug": "people/dario-tulvfell",
+      "content": "---\ntitle: Dario Tulvfell\ntype: person\nsummary: \"Dario Tulvfell is the finance lead at Vespercrest.\"\n---\n\nDario Tulvfell is the finance lead at Vespercrest.\n"
+    },
+    {
+      "slug": "people/linnea-orrinwick",
+      "content": "---\ntitle: Linnea Orrinwick\ntype: person\naliases: [linnea]\nsummary: \"Linnea Orrinwick is the head of partnerships at Lumenmoor.\"\n---\n\nLinnea Orrinwick is the head of partnerships at Lumenmoor. Linnea wants to pause the second engineering hire until the renewal closes.\n"
+    },
+    {
+      "slug": "companies/cobaltfold",
+      "content": "---\ntitle: Cobaltfold\ntype: company\nsummary: \"A company we met once at a trade show.\"\n---\n\nA company we met once at a trade show.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Fix the typos in this line of my email to Pellwick: 'thnaks for the quick turnaround, talk soon'"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "what were the terms of the referral thing we discussed?"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Happy to help."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "how do you pronounce the name dario? it's for a character in my short story"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Happy to help."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "I owe Orrinwick an answer on the hiring plan. What were they asking for?"
+    }
+  ]
+}

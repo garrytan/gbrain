@@ -798,7 +798,7 @@ export interface SearchResult {
   title: string;
   type: PageType;
   chunk_text: string;
-  chunk_source: 'compiled_truth' | 'timeline';
+  chunk_source: 'compiled_truth' | 'timeline' | 'fenced_code';
   chunk_id: number;
   chunk_index: number;
   score: number;
@@ -962,6 +962,10 @@ export interface SearchResult {
    *  (RRF + boosts). v0.42.3.0 autocut cuts on this — the trustworthy
    *  separatrix — never on RRF/cosine. */
   rerank_score?: number;
+  /** System One: `rubric` rerank scores (autocut/CRAG ignore them); the S3 evidence probability when the gate acted. */
+  rerank_score_kind?: 'rubric'; decide_evidence?: { p: number; clears: boolean };
+  /** System One S5 (on mode only): injection probability, and the flag that demoted it below clean same-class results. */
+  injection_p?: number; injection_suspected?: true;
   /**
    * v0.42 (T19, plan D6) — multiplier applied by applyAliasResolvedBoost
    * (1.0 = unchanged; default 1.05x). Fires when the result's slug is
@@ -1036,6 +1040,8 @@ export interface SearchResult {
    * incident's duplicate-stub class.
    */
   create_safety?: import('./search/evidence.ts').CreateSafety;
+  /** Evidence delivery (`return_unit`): present only when a non-chunk unit applied. */
+  delivered?: import('./search/evidence-delivery.ts').DeliveredEvidence;
 }
 
 /**
@@ -1882,6 +1888,7 @@ export const DEGRADED_REASONS = [
   'budget',
   'candidate_budget',
   'iterative_scan_unavailable',
+  'egress_denied', // System One: the Jev reranker skipped a query with a candidate from decide.egress.deny_sources
 ] as const;
 export type DegradedReason = (typeof DEGRADED_REASONS)[number];
 
@@ -1924,6 +1931,10 @@ export function affectsRecall(d: { stage?: string; reason?: string } | undefined
 export interface HybridSearchMeta {
   /** True iff vector search actually ran. False when OPENAI_API_KEY missing or embed failed. */
   vector_enabled: boolean;
+  /** System One: slot diagnostics (only when a slot ran visibly) and the reranker model version that answered. */
+  decide?: import('./search/decide-stage.ts').DecideSearchMeta; rerank?: { model_resolved: string };
+  /** System One S4 on the query op (diagnostic only): probability the top-k answer the query, threshold and verdict. */
+  answerability?: import('./search/decide-stage.ts').AnswerabilityMeta;
   /** Post-auto-detect detail level. */
   detail_resolved: 'low' | 'medium' | 'high' | null;
   /** True iff multi-query expansion (Haiku) actually fired and produced variants. */

@@ -21,6 +21,7 @@ const { runExtractConversationFactsCore } = await import('../src/commands/extrac
 const { runPhaseConversationFactsBackfill } = await import('../src/core/cycle/conversation-facts-backfill.ts');
 const { runExtractFacts } = await import('../src/core/cycle/extract-facts.ts');
 const { runPersistenceAdministration } = await import('../src/core/persistence/administration.ts');
+const { withSubmissionAuthority } = await import('../src/core/minions/submission-authority.ts');
 const home = mkdtempSync(join(tmpdir(), 'gbrain-managed-preflight-'));
 const env = { GBRAIN_HOME: home, GBRAIN_SOURCE: undefined, GBRAIN_BRAIN_ID: 'host' };
 let engine: InstanceType<typeof PGLiteEngine>;
@@ -35,9 +36,14 @@ beforeAll(async () => withEnv(env, async () => {
 
 afterAll(async () => { await engine.disconnect(); rmSync(home, { recursive: true, force: true }); });
 
-test('unsupported Google loop writes refuse before chat while unmanaged extraction remains usable', async () => withEnv(env, async () => {
+// #5280: these writers publish through the coordinator on a managed brain
+// (test/managed-facts-writers.test.ts). What stays pinned here is the order:
+// a caller the coordinator cannot accept refuses before any provider work.
+const remoteJob = <T>(fn: () => Promise<T>) => withSubmissionAuthority({ version: 1, kind: 'remote_generic' } as never, fn);
+
+test('managed Google loop extraction refuses an unaccepted writer before chat while unmanaged extraction remains usable', async () => withEnv(env, async () => {
   chatCalls = 0;
-  await expect(runLoopsExtract(engine, { slug: 'emails/example', sourceId: 'default' })).rejects.toMatchObject({ code: 'writer_coordinator_required' });
+  await expect(remoteJob(() => runLoopsExtract(engine, { slug: 'emails/example', sourceId: 'default' }))).rejects.toMatchObject({ code: 'writer_coordinator_required' });
   expect(chatCalls).toBe(0);
   await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
   try {
@@ -46,22 +52,24 @@ test('unsupported Google loop writes refuse before chat while unmanaged extracti
   } finally { await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1'); }
 }));
 
-test('unsupported bulk conversation extraction refuses before either preview or execution providers', async () => withEnv(env, async () => {
+test('managed bulk conversation extraction and fence reconciliation refuse an unaccepted writer before either preview or execution providers', async () => withEnv(env, async () => {
   let extractions = 0;
   for (const dryRun of [false, true]) {
-    await expect(runExtractConversationFactsCore(engine, {
+    await expect(remoteJob(() => runExtractConversationFactsCore(engine, {
       sourceId: 'default', dryRun, overrideDisabled: true,
       extractor: async () => { extractions++; return []; },
-    })).rejects.toMatchObject({ code: 'writer_coordinator_required' });
+    }))).rejects.toMatchObject({ code: 'permission_denied' });
   }
   expect(extractions).toBe(0);
-  await expect(runExtractFacts(engine, { sourceId: 'default' })).rejects.toMatchObject({ code: 'writer_coordinator_required' });
+  await expect(remoteJob(() => runExtractFacts(engine, { sourceId: 'default' }))).rejects.toMatchObject({ code: 'permission_denied' });
   expect(await engine.executeRaw('SELECT id FROM facts')).toHaveLength(0);
 }));
 
-test('bulk phase refuses before provider work but disabled gates retain their skip semantics', async () => withEnv(env, async () => {
+test('bulk phase records an unaccepted writer per source before provider work but disabled gates retain their skip semantics', async () => withEnv(env, async () => {
   chatCalls = 0;
-  await expect(runPhaseConversationFactsBackfill(engine)).rejects.toMatchObject({ code: 'writer_coordinator_required' });
+  const phase = await remoteJob(() => runPhaseConversationFactsBackfill(engine));
+  expect(phase.status).toBe('warn');
+  expect((phase.details.per_source as Record<string, { error?: string }>).default.error).toMatch(/local writer/);
   expect(chatCalls).toBe(0);
   await engine.setConfig('cycle.conversation_facts_backfill.enabled', 'false');
   await engine.setConfig('loops.extraction_enabled', 'false');
@@ -70,11 +78,11 @@ test('bulk phase refuses before provider work but disabled gates retain their sk
   expect(chatCalls).toBe(0);
 }));
 
-test('writer status and activation preview name unsupported bulk capabilities without changing them', async () => withEnv(env, async () => {
+test('writer status and activation preview report no unsupported bulk capabilities without changing them', async () => withEnv(env, async () => {
   const before = await engine.executeRaw('SELECT * FROM persistence_brain');
   const status = await runPersistenceAdministration(engine, 'writer_status', {}) as any;
   const activation = await runPersistenceAdministration(engine, 'writer_activate', { confirm_quiesced: true, dry_run: true });
-  expect(status.onboarding.unsupported_maintenance).toEqual(['cycle.extract_facts', 'extract-conversation-facts', 'conversation_facts_backfill', 'loops_extract']);
+  expect(status.onboarding.unsupported_maintenance).toEqual([]);
   expect(activation.unsupported_maintenance).toEqual(status.onboarding.unsupported_maintenance);
   expect(await engine.executeRaw('SELECT * FROM persistence_brain')).toEqual(before);
 }));

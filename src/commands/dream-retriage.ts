@@ -52,6 +52,7 @@ import {
 } from '../core/cycle/synthesize.ts';
 import { discoverTranscripts } from '../core/cycle/transcript-discovery.ts';
 import { passesTriageGate, rescueConfigOf } from '../core/cycle/triage-rescue.ts';
+import { estimateTriageDecideUsd, resolveTriageDecide } from '../core/cycle/triage-decide.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { MinionQueue } from '../core/minions/queue.ts';
 import { canonicalLookup } from '../core/model-pricing.ts';
@@ -245,6 +246,24 @@ function estimatePerFileUsd(model: string, maxChars: number, maxTokens: number):
   return (inputTokens / 1_000_000) * pricing.input + (maxTokens / 1_000_000) * pricing.output;
 }
 
+/**
+ * System One S7: when the slot acts, decide verdicts (cache identity =
+ * provider + model + policy), the slot threshold and Jev window pricing join
+ * every retriage read; otherwise this is today's triage model and estimate.
+ */
+async function retriageS7(engine: BrainEngine, config: Awaited<ReturnType<typeof loadSynthConfig>>, since: Date | undefined) {
+  const decide = await resolveTriageDecide(engine);
+  const llmUsd = estimatePerFileUsd(config.triage.model, config.triage.maxChars, config.triage.maxTokens);
+  return {
+    decide,
+    gate: decide?.gate,
+    cacheValid: (cached: DreamVerdict): boolean => isTriageCacheValid(cached, config.triage.model, since)
+      || (decide?.acting === true && isTriageCacheValid(cached, decide.identity, since)),
+    model: decide?.acting ? decide.stats.provider : config.triage.model,
+    perFileUsd: decide?.acting ? estimateTriageDecideUsd(decide.stats.provider, config.triage.maxChars) ?? llmUsd : llmUsd,
+  };
+}
+
 async function confirmOnTty(prompt: string): Promise<boolean> {
   if (!process.stdin.isTTY) return false;
   const rl = createInterface({ input: process.stdin, output: process.stderr });
@@ -287,6 +306,7 @@ export async function runDreamRetriage(engine: BrainEngine | null, args: string[
   // fan-out applies. An operator sweep must never cancel queued jobs the
   // rescue admitted (reconcile below), nor audit rescued files as "rejects".
   const rescueCfg = rescueConfigOf(config.triage);
+  const { decide, gate: decideGate, cacheValid, model: triageModel, perFileUsd } = await retriageS7(engine, config, parsed.since ?? undefined);
 
   let transcripts = discoverTranscripts({
     corpusDir: config.corpusDir,
@@ -310,12 +330,11 @@ export async function runDreamRetriage(engine: BrainEngine | null, args: string[
     reports = [];
     for (const t of transcripts) {
       const cached = await engine.getDreamVerdict(t.filePath, t.contentHash);
-      const valid = cached !== null && !parsed.force
-        && isTriageCacheValid(cached, config.triage.model, parsed.since ?? undefined);
+      const valid = cached !== null && !parsed.force && cacheValid(cached);
       if (cached && valid) {
         passStats.cacheHits++;
         byPath.set(t.filePath, cached);
-        const g = passesTriageGate(cached, t.content, threshold, rescueCfg);
+        const g = passesTriageGate(cached, t.content, threshold, rescueCfg, decideGate);
         reports.push({
           filePath: t.filePath,
           worth: g.pass,
@@ -345,16 +364,14 @@ export async function runDreamRetriage(engine: BrainEngine | null, args: string[
     for (const t of transcripts) {
       if (parsed.force) { missCount++; continue; }
       const cached = await engine.getDreamVerdict(t.filePath, t.contentHash);
-      const valid = cached !== null
-        && isTriageCacheValid(cached, config.triage.model, parsed.since ?? undefined);
+      const valid = cached !== null && cacheValid(cached);
       if (!valid) missCount++;
     }
-    const perFileUsd = estimatePerFileUsd(config.triage.model, config.triage.maxChars, config.triage.maxTokens);
     // CX3: --max-usd is estimate-based; an unpriced model would silently
     // disable the budget the operator explicitly asked for — refuse instead.
     if (parsed.maxUsd !== null && perFileUsd === null) {
       console.error(
-        `dream retriage: --max-usd requires a priced model; "${config.triage.model}" has no CANONICAL_PRICING entry`,
+        `dream retriage: --max-usd requires a priced model; "${triageModel}" has no CANONICAL_PRICING entry`,
       );
       setCliExitVerdict(2);
       return;
@@ -393,8 +410,8 @@ export async function runDreamRetriage(engine: BrainEngine | null, args: string[
       ? ` (audit model "${config.model}" unpriced — audit spend cannot be estimated)`
       : auditEstimateUsd > 0 ? ` (incl. ≤ $${auditEstimateUsd.toFixed(2)} audit)` : '';
     const estimateLine = estimateUsd !== null
-      ? `[retriage] ${missCount} file(s) to judge with ${config.triage.model} — estimated ≤ $${estimateUsd.toFixed(2)}${auditSuffix}`
-      : `[retriage] ${missCount} file(s) to judge with ${config.triage.model} — no pricing entry for this model (cannot estimate; the ${UNPRICED_CONFIRM_FILES}-file confirmation gate applies)${auditSuffix}`;
+      ? `[retriage] ${missCount} file(s) to judge with ${triageModel} — estimated ≤ $${estimateUsd.toFixed(2)}${auditSuffix}`
+      : `[retriage] ${missCount} file(s) to judge with ${triageModel} — no pricing entry for this model (cannot estimate; the ${UNPRICED_CONFIRM_FILES}-file confirmation gate applies)${auditSuffix}`;
     process.stderr.write(estimateLine + '\n');
     if (gateTriggered && !parsed.yes) {
       if (parsed.json || !process.stdin.isTTY) {
@@ -433,6 +450,7 @@ export async function runDreamRetriage(engine: BrainEngine | null, args: string[
       staleBefore: parsed.since ?? undefined,
       shouldStop,
       rescue: rescueCfg,
+      decide,
     });
     reports = pass.reports;
     for (const [k, v] of pass.byPath) byPath.set(k, v);
@@ -652,7 +670,7 @@ export async function runDreamRetriage(engine: BrainEngine | null, args: string[
       // F2: the cancel decision reads THE gate (threshold OR verified-segment
       // rescue) — a below-threshold job the rescue admitted must survive the
       // sweep, or reconcile cancels exactly what the last cycle fought to run.
-      if (!passesTriageGate(verdict, contentByKey.get(matchKey) ?? '', threshold, rescueCfg).pass) {
+      if (!passesTriageGate(verdict, contentByKey.get(matchKey) ?? '', threshold, rescueCfg, decideGate).pass) {
         if (!parsed.dryRun) {
           const outcome = await cancelRow(row.id);
           if (outcome === 'cancelled') reconcile.cancelled++;

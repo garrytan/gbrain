@@ -1,0 +1,144 @@
+[user]
+I need a generic out-of-office auto-reply drafted. I’ll be away from Monday, October 12 through Friday, October 16, and back on Monday, October 19. Can you give me a simple version?
+
+[assistant]
+Subject: Out of office
+
+Thank you for your message. I am out of the office from Monday, October 12 through Friday, October 16, and will return on Monday, October 19. I will respond to your email as soon as possible after I return.
+
+Best,
+[Your Name]
+
+[user]
+Please make it a little more polished but still generic. I don’t want to mention a reason for being away.
+
+[assistant]
+Subject: Out of office: October 12–16
+
+Thank you for your email. I am currently out of the office from Monday, October 12 through Friday, October 16, and will return on Monday, October 19. I will have limited access to email during this time and will respond as soon as possible after my return.
+
+Thank you for your patience.
+
+Best regards,
+[Your Name]
+
+[user]
+Could you include a line for urgent matters without giving a specific alternate contact?
+
+[assistant]
+Subject: Out of office: October 12–16
+
+Thank you for your email. I am out of the office from Monday, October 12 through Friday, October 16, and will return on Monday, October 19. I will have limited access to email during this time and will respond as soon as possible after my return.
+
+If your matter is urgent, please resend your message with “Urgent” in the subject line. Otherwise, I will reply after I return.
+
+Thank you for your patience.
+
+Best regards,
+[Your Name]
+
+[user]
+I’d rather not ask people to resend messages. Can the urgent line just say that urgent requests may take longer to receive a response?
+
+[assistant]
+Subject: Out of office: October 12–16
+
+Thank you for your email. I am out of the office from Monday, October 12 through Friday, October 16, and will return on Monday, October 19. I will have limited access to email during this time and will respond as soon as possible after my return.
+
+Please note that urgent requests may take longer than usual to receive a response.
+
+Thank you for your patience.
+
+Best regards,
+[Your Name]
+
+[user]
+Can you provide a version that says I will not be monitoring email at all?
+
+[assistant]
+Subject: Out of office: October 12–16
+
+Thank you for your email. I am out of the office from Monday, October 12 through Friday, October 16, and will return on Monday, October 19. I will not be monitoring email during this period and will respond as soon as possible after my return.
+
+Please note that urgent requests may take longer than usual to receive a response.
+
+Thank you for your patience.
+
+Best regards,
+[Your Name]
+
+[user]
+Please remove the sentence about urgent requests. I want the message to be as short as possible while retaining the dates.
+
+[assistant]
+Subject: Out of office: October 12–16
+
+Thank you for your email. I am out of the office from Monday, October 12 through Friday, October 16, and will return on Monday, October 19. I will not be monitoring email during this period and will respond as soon as possible after my return.
+
+Best regards,
+[Your Name]
+
+[user]
+Could you make the wording slightly more formal?
+
+[assistant]
+Subject: Out of office: October 12–16
+
+Thank you for your message. I am out of the office from Monday, October 12 through Friday, October 16, and will return on Monday, October 19. I will not be monitoring email during this period. I will respond to your message as soon as practicable following my return.
+
+Kind regards,
+[Your Name]
+
+[user]
+I need a plain-text version that I can paste into an auto-reply field. Please omit the subject and signature placeholders.
+
+[assistant]
+Thank you for your message. I am out of the office from Monday, October 12 through Friday, October 16, and will return on Monday, October 19. I will not be monitoring email during this period. I will respond to your message as soon as practicable following my return.
+
+[user]
+Can you also give me a shorter version, around two sentences?
+
+[assistant]
+Thank you for your message. I am out of the office from Monday, October 12 through Friday, October 16, and will return on Monday, October 19. I will not be monitoring email during this period and will respond as soon as practicable following my return.
+
+[user]
+Which of the two versions is clearer for a standard automatic reply?
+
+[assistant]
+The two-sentence version is clearer for a standard automatic reply because it keeps the essential information together: the absence dates, the return date, the lack of email monitoring, and the expected response timing. It is also easier to scan quickly.
+
+[user]
+Please show me the recommended version one more time, exactly as plain text.
+
+[assistant]
+Thank you for your message. I am out of the office from Monday, October 12 through Friday, October 16, and will return on Monday, October 19. I will not be monitoring email during this period and will respond as soon as practicable following my return.
+
+[user]
+Can you replace “as soon as practicable” with more ordinary wording?
+
+[assistant]
+Thank you for your message. I am out of the office from Monday, October 12 through Friday, October 16, and will return on Monday, October 19. I will not be monitoring email during this period and will respond as soon as possible after I return.
+
+[user]
+That works. Could you make the dates numerically formatted instead of spelling out the months?
+
+[assistant]
+Thank you for your message. I am out of the office from 10/12 through 10/16 and will return on 10/19. I will not be monitoring email during this period and will respond as soon as possible after I return.
+
+[user]
+Please include the year to avoid ambiguity.
+
+[assistant]
+Thank you for your message. I am out of the office from 10/12/2026 through 10/16/2026 and will return on 10/19/2026. I will not be monitoring email during this period and will respond as soon as possible after I return.
+
+[user]
+Can you use ISO-style dates instead?
+
+[assistant]
+Thank you for your message. I am out of the office from 2026-10-12 through 2026-10-16 and will return on 2026-10-19. I will not be monitoring email during this period and will respond as soon as possible after I return.
+
+[user]
+Please provide the final text only, with no introduction or quotation marks.
+
+[assistant]
+Thank you for your message. I am out of the office from 2026-10-12 through 2026-10-16 and will return on 2026-10-19. I will not be monitoring email during this period and will respond as soon as possible after I return.

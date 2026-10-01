@@ -1,0 +1,125 @@
+[user]
+I need a generic out-of-office auto-reply drafted with the dates filled in. I’ll be away from Monday, October 12 through Friday, October 16, and back on Monday, October 19.
+
+[assistant]
+Subject: Out of office
+
+Thank you for your message. I am out of the office from Monday, October 12 through Friday, October 16, and will return on Monday, October 19. I will respond to your message as soon as possible after I return.
+
+If your request is urgent, please resend it after October 19 with “Urgent” in the subject line.
+
+Best,
+[Your name]
+
+[user]
+Can you make it a little more concise and remove the instruction about resending?
+
+[assistant]
+Subject: Out of office
+
+Thank you for your message. I am out of the office from Monday, October 12 through Friday, October 16, and will return on Monday, October 19. I will respond as soon as possible after I return.
+
+Best,
+[Your name]
+
+[user]
+Please give me a version that works for both internal and external senders.
+
+[assistant]
+Subject: Out of office
+
+Thank you for your message. I am out of the office from Monday, October 12 through Friday, October 16, and will return on Monday, October 19. I will respond as soon as possible after I return.
+
+Best,
+[Your name]
+
+[user]
+Could you add that responses may be delayed, without making it sound too formal?
+
+[assistant]
+Subject: Out of office
+
+Thanks for your message. I’m out of the office from Monday, October 12 through Friday, October 16, and will be back on Monday, October 19. Responses may be delayed, but I’ll get back to you as soon as I can after I return.
+
+Best,
+[Your name]
+
+[user]
+I need the dates to include the year. Use 2026.
+
+[assistant]
+Subject: Out of office
+
+Thanks for your message. I’m out of the office from Monday, October 12, 2026, through Friday, October 16, 2026, and will be back on Monday, October 19, 2026. Responses may be delayed, but I’ll get back to you as soon as I can after I return.
+
+Best,
+[Your name]
+
+[user]
+Can you check that the weekdays match those dates?
+
+[assistant]
+Yes. The weekdays match the 2026 calendar:
+
+- Monday, October 12, 2026
+- Tuesday, October 13, 2026
+- Wednesday, October 14, 2026
+- Thursday, October 15, 2026
+- Friday, October 16, 2026
+- Monday, October 19, 2026
+
+Here is the checked version:
+
+Subject: Out of office
+
+Thanks for your message. I’m out of the office from Monday, October 12, 2026, through Friday, October 16, 2026, and will be back on Monday, October 19, 2026. Responses may be delayed, but I’ll get back to you as soon as I can after I return.
+
+Best,
+[Your name]
+
+[user]
+Please provide a plain-text version that I can paste directly into an auto-reply field.
+
+[assistant]
+Thanks for your message. I’m out of the office from Monday, October 12, 2026, through Friday, October 16, 2026, and will be back on Monday, October 19, 2026. Responses may be delayed, but I’ll get back to you as soon as I can after I return.
+
+Best,
+[Your name]
+
+[user]
+Can you make it slightly warmer while keeping it generic?
+
+[assistant]
+Thanks for reaching out. I’m out of the office from Monday, October 12, 2026, through Friday, October 16, 2026, and will be back on Monday, October 19, 2026. My responses may be delayed while I’m away, but I’ll reply as soon as I can after I return.
+
+Best,
+[Your name]
+
+[user]
+I’d prefer “away from email” instead of “out of the office.”
+
+[assistant]
+Thanks for reaching out. I’m away from email from Monday, October 12, 2026, through Friday, October 16, 2026, and will be back on Monday, October 19, 2026. My responses may be delayed while I’m away, but I’ll reply as soon as I can after I return.
+
+Best,
+[Your name]
+
+[user]
+Could you avoid repeating “away” in the same message?
+
+[assistant]
+Thanks for reaching out. I’m away from email from Monday, October 12, 2026, through Friday, October 16, 2026, and will be back on Monday, October 19, 2026. My responses may be delayed, but I’ll reply as soon as I can after I return.
+
+Best,
+[Your name]
+
+[user]
+Please show the final version with a subject line, and keep the placeholder for my name.
+
+[assistant]
+Subject: Away from email
+
+Thanks for reaching out. I’m away from email from Monday, October 12, 2026, through Friday, October 16, 2026, and will be back on Monday, October 19, 2026. My responses may be delayed, but I’ll reply as soon as I can after I return.
+
+Best,
+[Your name]

@@ -1,0 +1,731 @@
+[user]
+I have a folder of vacation photos with unhelpful names like IMG_4821.JPG and DSC_0198.JPG. I want to rename them by the date they were taken, ideally something like 2024-06-03_14-22-08.jpg. Can you help me make a small script?
+
+[assistant]
+Yes. A practical approach is to read the photo’s EXIF `DateTimeOriginal` value and use it for the new filename. The script below uses Python and Pillow, skips files without a usable date, preserves the original extension in lowercase, and adds a counter if two photos have the same timestamp.
+
+Install Pillow first:
+
+```bash
+python -m pip install Pillow
+```
+
+Save this as `rename_photos.py`:
+
+```python
+from pathlib import Path
+from datetime import datetime
+from PIL import Image
+from PIL.ExifTags import TAGS
+
+PHOTO_EXTENSIONS = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".webp"}
+
+def get_taken_time(path):
+    try:
+        with Image.open(path) as image:
+            exif = image.getexif()
+            for tag_id, value in exif.items():
+                tag_name = TAGS.get(tag_id, tag_id)
+                if tag_name == "DateTimeOriginal":
+                    return datetime.strptime(value, "%Y:%m:%d %H:%M:%S")
+    except Exception as error:
+        print(f"Could not read {path.name}: {error}")
+    return None
+
+def main():
+    folder = Path("photos")
+    used_names = set()
+
+    for path in sorted(folder.iterdir()):
+        if not path.is_file() or path.suffix.lower() not in PHOTO_EXTENSIONS:
+            continue
+
+        taken = get_taken_time(path)
+        if taken is None:
+            print(f"Skipping {path.name}: no DateTimeOriginal")
+            continue
+
+        base = taken.strftime("%Y-%m-%d_%H-%M-%S")
+        extension = path.suffix.lower()
+        new_name = f"{base}{extension}"
+        counter = 1
+
+        while new_name in used_names or (folder / new_name).exists():
+            new_name = f"{base}_{counter:02d}{extension}"
+            counter += 1
+
+        used_names.add(new_name)
+        destination = folder / new_name
+        print(f"{path.name} -> {new_name}")
+        path.rename(destination)
+
+if __name__ == "__main__":
+    main()
+```
+
+Put the script beside a folder named `photos`, make a backup first, and run:
+
+```bash
+python rename_photos.py
+```
+
+[assistant]
+The photos are all in `/Users/me/Desktop/Vacation Photos`, and I’m on macOS. Could the script use that folder directly instead of requiring a `photos` subfolder?
+
+[user]
+Yes. Change the folder assignment to a raw string containing the full path. On macOS, spaces in the path are fine inside Python strings.
+
+```python
+folder = Path("/Users/me/Desktop/Vacation Photos")
+```
+
+Here is the same script with that adjustment and a dry-run option, so it prints proposed changes first. This is useful for checking the output before actually renaming anything.
+
+```python
+from pathlib import Path
+from datetime import datetime
+from PIL import Image
+from PIL.ExifTags import TAGS
+
+PHOTO_EXTENSIONS = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".webp"}
+DRY_RUN = True
+
+def get_taken_time(path):
+    try:
+        with Image.open(path) as image:
+            exif = image.getexif()
+            for tag_id, value in exif.items():
+                if TAGS.get(tag_id, tag_id) == "DateTimeOriginal":
+                    if isinstance(value, bytes):
+                        value = value.decode(errors="replace")
+                    return datetime.strptime(value, "%Y:%m:%d %H:%M:%S")
+    except Exception as error:
+        print(f"Could not read {path.name}: {error}")
+    return None
+
+def main():
+    folder = Path("/Users/me/Desktop/Vacation Photos")
+
+    if not folder.is_dir():
+        raise SystemExit(f"Folder does not exist: {folder}")
+
+    used_names = set()
+    changes = []
+
+    for path in sorted(folder.iterdir()):
+        if not path.is_file() or path.suffix.lower() not in PHOTO_EXTENSIONS:
+            continue
+
+        taken = get_taken_time(path)
+        if taken is None:
+            print(f"Skipping {path.name}: no DateTimeOriginal")
+            continue
+
+        base = taken.strftime("%Y-%m-%d_%H-%M-%S")
+        extension = path.suffix.lower()
+        new_name = f"{base}{extension}"
+        counter = 1
+
+        while new_name in used_names or (folder / new_name).exists():
+            new_name = f"{base}_{counter:02d}{extension}"
+            counter += 1
+
+        used_names.add(new_name)
+        changes.append((path, folder / new_name))
+
+    for source, destination in changes:
+        print(f"{source.name} -> {destination.name}")
+        if not DRY_RUN:
+            source.rename(destination)
+
+    print(f"\nPhotos with dates: {len(changes)}")
+    print(f"Dry run: {DRY_RUN}")
+
+if __name__ == "__main__":
+    main()
+```
+
+Run it from Terminal with:
+
+```bash
+python3 rename_photos.py
+```
+
+Review the printed mappings. To perform the renames, change:
+
+```python
+DRY_RUN = False
+```
+
+Then run the command again.
+
+[assistant]
+I tried it with `DRY_RUN = True`. It printed a lot of “Skipping” lines, and a few files were processed. Here is a shortened example:
+
+```text
+Skipping IMG_4817.JPG: no DateTimeOriginal
+Skipping IMG_4818.JPG: no DateTimeOriginal
+IMG_4819.JPG -> 2024-06-03_14-22-08.jpg
+Skipping IMG_4820.JPG: no DateTimeOriginal
+DSC_0198.JPG -> 2024-06-04_09-11-42.jpg
+```
+
+What should I do with the photos that do not have `DateTimeOriginal`?
+
+[assistant]
+Those files may still have another EXIF date, or they may have no embedded date at all. You can use this fallback order:
+
+1. `DateTimeOriginal`, usually the capture time.
+2. `DateTimeDigitized`, often close to the capture time.
+3. `DateTime`, a general image-modified or saved time.
+4. The file’s filesystem modification time, if you explicitly want a fallback.
+
+The first three are stored in EXIF. The filesystem time can be changed by copying files, downloading them, or moving them between systems, so it is less reliable.
+
+Here is a replacement for `get_taken_time` that checks the three EXIF fields:
+
+```python
+def get_taken_time(path):
+    preferred_tags = [
+        "DateTimeOriginal",
+        "DateTimeDigitized",
+        "DateTime",
+    ]
+
+    try:
+        with Image.open(path) as image:
+            exif = image.getexif()
+            values = {}
+
+            for tag_id, value in exif.items():
+                tag_name = TAGS.get(tag_id, tag_id)
+                if tag_name in preferred_tags:
+                    if isinstance(value, bytes):
+                        value = value.decode(errors="replace")
+                    values[tag_name] = value
+
+            for tag_name in preferred_tags:
+                value = values.get(tag_name)
+                if not value:
+                    continue
+                try:
+                    return datetime.strptime(value, "%Y:%m:%d %H:%M:%S")
+                except ValueError:
+                    print(
+                        f"Ignoring invalid {tag_name} in "
+                        f"{path.name}: {value!r}"
+                    )
+
+    except Exception as error:
+        print(f"Could not read {path.name}: {error}")
+
+    return None
+```
+
+If you want to keep the original names for files with no usable EXIF date, leave the existing skip behavior. If you want them renamed using the filesystem time, that can be added separately.
+
+[assistant]
+Could you add the filesystem modification time as a fallback, but make the filename indicate that it is a fallback? I do not want those files mixed in without being obvious.
+
+[user]
+Add a separate result for the filesystem fallback. For example, use `NOEXIF_2024-06-05_16-30-00.jpg`. This keeps the timestamp visible while showing that it did not come from photo metadata.
+
+Replace the date-reading function with one that returns both a datetime and a source label:
+
+```python
+def get_date_and_source(path):
+    preferred_tags = [
+        ("DateTimeOriginal", "EXIF"),
+        ("DateTimeDigitized", "EXIF"),
+        ("DateTime", "EXIF"),
+    ]
+
+    try:
+        with Image.open(path) as image:
+            exif = image.getexif()
+
+            for tag_id, value in exif.items():
+                tag_name = TAGS.get(tag_id, tag_id)
+
+                for wanted_tag, source in preferred_tags:
+                    if tag_name != wanted_tag:
+                        continue
+
+                    if isinstance(value, bytes):
+                        value = value.decode(errors="replace")
+
+                    try:
+                        parsed = datetime.strptime(
+                            value, "%Y:%m:%d %H:%M:%S"
+                        )
+                        return parsed, source
+                    except ValueError:
+                        print(
+                            f"Ignoring invalid {tag_name} in "
+                            f"{path.name}: {value!r}"
+                        )
+
+    except Exception as error:
+        print(f"Could not read EXIF from {path.name}: {error}")
+
+    try:
+        modified = datetime.fromtimestamp(path.stat().st_mtime)
+        return modified, "NOEXIF"
+    except OSError as error:
+        print(f"Could not read file time for {path.name}: {error}")
+        return None, None
+```
+
+Then change this part of the main loop:
+
+```python
+taken = get_taken_time(path)
+if taken is None:
+    print(f"Skipping {path.name}: no DateTimeOriginal")
+    continue
+
+base = taken.strftime("%Y-%m-%d_%H-%M-%S")
+extension = path.suffix.lower()
+new_name = f"{base}{extension}"
+```
+
+to:
+
+```python
+taken, source = get_date_and_source(path)
+if taken is None:
+    print(f"Skipping {path.name}: no usable date")
+    continue
+
+base = taken.strftime("%Y-%m-%d_%H-%M-%S")
+extension = path.suffix.lower()
+prefix = "" if source == "EXIF" else "NOEXIF_"
+new_name = f"{prefix}{base}{extension}"
+```
+
+The output will look like:
+
+```text
+IMG_4817.JPG -> NOEXIF_2024-06-05_16-30-00.jpg
+IMG_4819.JPG -> 2024-06-03_14-22-08.jpg
+```
+
+[assistant]
+I pasted that in, but I’m getting this error:
+
+```text
+Traceback (most recent call last):
+  File "/Users/me/Desktop/rename_photos.py", line 78, in <module>
+    main()
+  File "/Users/me/Desktop/rename_photos.py", line 57, in main
+    taken, source = get_date_and_source(path)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^
+NameError: name 'get_date_and_source' is not defined
+```
+
+I probably left the old function in place or put the new one below `main`. Can you show the complete script in one piece?
+
+[user]
+Sure. In Python, a function must be defined before execution reaches the call in `main`. Here is the complete script with the imports, helper function, and `main` in a working order.
+
+```python
+from pathlib import Path
+from datetime import datetime
+from PIL import Image
+from PIL.ExifTags import TAGS
+
+PHOTO_EXTENSIONS = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".webp"}
+DRY_RUN = True
+FOLDER = Path("/Users/me/Desktop/Vacation Photos")
+
+
+def get_date_and_source(path):
+    preferred_tags = [
+        "DateTimeOriginal",
+        "DateTimeDigitized",
+        "DateTime",
+    ]
+
+    try:
+        with Image.open(path) as image:
+            exif = image.getexif()
+
+            for wanted_tag in preferred_tags:
+                for tag_id, value in exif.items():
+                    tag_name = TAGS.get(tag_id, tag_id)
+
+                    if tag_name != wanted_tag:
+                        continue
+
+                    if isinstance(value, bytes):
+                        value = value.decode(errors="replace")
+
+                    try:
+                        parsed = datetime.strptime(
+                            value, "%Y:%m:%d %H:%M:%S"
+                        )
+                        return parsed, "EXIF"
+                    except (TypeError, ValueError):
+                        print(
+                            f"Ignoring invalid {tag_name} in "
+                            f"{path.name}: {value!r}"
+                        )
+
+    except Exception as error:
+        print(f"Could not read EXIF from {path.name}: {error}")
+
+    try:
+        modified = datetime.fromtimestamp(path.stat().st_mtime)
+        return modified, "NOEXIF"
+    except OSError as error:
+        print(f"Could not read file time for {path.name}: {error}")
+        return None, None
+
+
+def main():
+    if not FOLDER.is_dir():
+        raise SystemExit(f"Folder does not exist: {FOLDER}")
+
+    used_names = set()
+    changes = []
+
+    for path in sorted(FOLDER.iterdir()):
+        if not path.is_file():
+            continue
+        if path.suffix.lower() not in PHOTO_EXTENSIONS:
+            continue
+
+        taken, source = get_date_and_source(path)
+        if taken is None:
+            print(f"Skipping {path.name}: no usable date")
+            continue
+
+        base = taken.strftime("%Y-%m-%d_%H-%M-%S")
+        extension = path.suffix.lower()
+        prefix = "" if source == "EXIF" else "NOEXIF_"
+        new_name = f"{prefix}{base}{extension}"
+        counter = 1
+
+        while new_name in used_names or (FOLDER / new_name).exists():
+            new_name = (
+                f"{prefix}{base}_{counter:02d}{extension}"
+            )
+            counter += 1
+
+        used_names.add(new_name)
+        changes.append((path, FOLDER / new_name, source))
+
+    for source_path, destination, source in changes:
+        print(
+            f"{source_path.name} -> {destination.name} "
+            f"[{source}]"
+        )
+        if not DRY_RUN:
+            source_path.rename(destination)
+
+    print(f"\nPhotos to rename: {len(changes)}")
+    print(f"Dry run: {DRY_RUN}")
+
+
+if __name__ == "__main__":
+    main()
+```
+
+With `DRY_RUN = True`, the script only prints. After checking the output, change it to `False` and run:
+
+```bash
+python3 /Users/me/Desktop/rename_photos.py
+```
+
+You can also save the dry-run output to a text file:
+
+```bash
+python3 /Users/me/Desktop/rename_photos.py > /Users/me/Desktop/rename_preview.txt
+```
+
+[assistant]
+I ran the complete script in dry-run mode. Most of the output looks good, but I noticed two issues. First, it proposes names that already exist in the folder, such as `2024-06-03_14-22-08_01.jpg`. Second, it might process files that were renamed during an earlier run if I execute it again. Is that expected?
+
+[assistant]
+Yes, the existing-name behavior is expected, but there is a subtle issue in the current collision check.
+
+The line:
+
+```python
+while new_name in used_names or (FOLDER / new_name).exists():
+```
+
+protects an incoming file from overwriting an existing path. However, if an existing file is itself one of the files being considered for renaming, the script still treats its current name as occupied. That can create unnecessary suffixes during a rerun or when several files are being renamed.
+
+Also, after a successful run, the script will scan the renamed files again. Files with ordinary date-based names still have photo extensions, so they are eligible. Files with `NOEXIF_` names are eligible too. With the current logic, they may be renamed again, usually to the same base name or a suffixed name depending on filesystem timestamps and collisions.
+
+A safer version should:
+
+- Ignore files already matching the generated naming pattern.
+- Reserve names of files that are not being renamed.
+- Use a temporary two-step rename when a source and destination overlap.
+- Keep dry-run output separate from actual changes.
+
+For the simplest improvement, add this import:
+
+```python
+import re
+```
+
+Then add this pattern near the constants:
+
+```python
+GENERATED_NAME = re.compile(
+    r"^(?:NOEXIF_)?\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}"
+    r"(?:_\d{2})?\.[^.]+$",
+    re.IGNORECASE,
+)
+```
+
+In the loop, after checking the extension, add:
+
+```python
+if GENERATED_NAME.fullmatch(path.name):
+    print(f"Skipping already generated name: {path.name}")
+    continue
+```
+
+That prevents ordinary reruns from reprocessing files created by the script. The collision suffix such as `_01` is intentional: it indicates that more than one file maps to the same timestamp, or that a name is already occupied.
+
+[assistant]
+Could you provide the safer complete version, including the overlap handling? I’d like to use dry-run first and then run it for real without changing the script much.
+
+[assistant]
+Here is a complete version. It skips names generated by the script, plans all changes before renaming, checks collisions against files that will remain in place, and uses temporary names during the real rename so a destination cannot block a source.
+
+```python
+from pathlib import Path
+from datetime import datetime
+import re
+from PIL import Image
+from PIL.ExifTags import TAGS
+
+PHOTO_EXTENSIONS = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".webp"}
+FOLDER = Path("/Users/me/Desktop/Vacation Photos")
+DRY_RUN = True
+
+GENERATED_NAME = re.compile(
+    r"^(?:NOEXIF_)?\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}"
+    r"(?:_\d{2})?\.[^.]+$",
+    re.IGNORECASE,
+)
+
+
+def get_date_and_source(path):
+    preferred_tags = (
+        "DateTimeOriginal",
+        "DateTimeDigitized",
+        "DateTime",
+    )
+
+    try:
+        with Image.open(path) as image:
+            exif = image.getexif()
+
+            for wanted_tag in preferred_tags:
+                for tag_id, value in exif.items():
+                    tag_name = TAGS.get(tag_id, tag_id)
+                    if tag_name != wanted_tag:
+                        continue
+
+                    if isinstance(value, bytes):
+                        value = value.decode(errors="replace")
+
+                    try:
+                        parsed = datetime.strptime(
+                            value, "%Y:%m:%d %H:%M:%S"
+                        )
+                        return parsed, "EXIF"
+                    except (TypeError, ValueError):
+                        print(
+                            f"Ignoring invalid {tag_name} in "
+                            f"{path.name}: {value!r}"
+                        )
+
+    except Exception as error:
+        print(f"Could not read EXIF from {path.name}: {error}")
+
+    try:
+        modified = datetime.fromtimestamp(path.stat().st_mtime)
+        return modified, "NOEXIF"
+    except OSError as error:
+        print(f"Could not read file time for {path.name}: {error}")
+        return None, None
+
+
+def make_unique_name(folder, base, extension, reserved):
+    candidate = f"{base}{extension}"
+    counter = 1
+
+    while candidate in reserved or (folder / candidate).exists():
+        candidate = f"{base}_{counter:02d}{extension}"
+        counter += 1
+
+    reserved.add(candidate)
+    return candidate
+
+
+def main():
+    if not FOLDER.is_dir():
+        raise SystemExit(f"Folder does not exist: {FOLDER}")
+
+    candidates = []
+
+    for path in sorted(FOLDER.iterdir()):
+        if not path.is_file():
+            continue
+        if path.suffix.lower() not in PHOTO_EXTENSIONS:
+            continue
+        if GENERATED_NAME.fullmatch(path.name):
+            print(f"Skipping already generated name: {path.name}")
+            continue
+
+        candidates.append(path)
+
+    candidate_paths = set(candidates)
+    reserved = {
+        path.name
+        for path in FOLDER.iterdir()
+        if path.is_file() and path not in candidate_paths
+    }
+
+    changes = []
+
+    for path in candidates:
+        taken, source = get_date_and_source(path)
+
+        if taken is None:
+            print(f"Skipping {path.name}: no usable date")
+            continue
+
+        timestamp = taken.strftime("%Y-%m-%d_%H-%M-%S")
+        prefix = "" if source == "EXIF" else "NOEXIF_"
+        base = prefix + timestamp
+        extension = path.suffix.lower()
+
+        new_name = make_unique_name(
+            FOLDER,
+            base,
+            extension,
+            reserved,
+        )
+
+        if new_name == path.name:
+            print(f"Skipping unchanged name: {path.name}")
+            continue
+
+        changes.append((path, FOLDER / new_name, source))
+
+    print("\nPlanned changes:")
+    for source_path, destination, source in changes:
+        print(
+            f"{source_path.name} -> {destination.name} "
+            f"[{source}]"
+        )
+
+    print(f"\nPhotos to rename: {len(changes)}")
+    print(f"Dry run: {DRY_RUN}")
+
+    if DRY_RUN or not changes:
+        return
+
+    temporary_changes = []
+
+    for index, (source_path, destination, source) in enumerate(changes):
+        temporary_name = (
+            f".rename_photos_tmp_{index:06d}{source_path.suffix.lower()}"
+        )
+        temporary_path = FOLDER / temporary_name
+
+        while temporary_path.exists():
+            index += 1
+            temporary_name = (
+                f".rename_photos_tmp_{index:06d}"
+                f"{source_path.suffix.lower()}"
+            )
+            temporary_path = FOLDER / temporary_name
+
+        source_path.rename(temporary_path)
+        temporary_changes.append((temporary_path, destination))
+
+    for temporary_path, destination in temporary_changes:
+        temporary_path.rename(destination)
+
+    print("Renaming complete.")
+
+
+if __name__ == "__main__":
+    main()
+```
+
+Run the preview:
+
+```bash
+python3 /Users/me/Desktop/rename_photos.py
+```
+
+When the list looks correct, change only:
+
+```python
+DRY_RUN = False
+```
+
+Then run the same command again. The temporary names begin with a dot, so they are hidden in Finder while the operation is in progress.
+
+[tool]
+You have 374 weighted tokens left
+
+[user]
+The dry-run now looks right. Before I switch `DRY_RUN` to `False`, can you give me a quick checklist for verifying the script and making a backup on macOS?
+
+[assistant]
+Use this short checklist:
+
+1. Make a backup copy of the folder. In Finder, select `Vacation Photos`, press `Command-D`, and rename the copy to something like `Vacation Photos backup`. Keep it outside the folder being processed.
+
+2. Confirm the script’s folder path exactly matches the intended folder:
+
+```python
+FOLDER = Path("/Users/me/Desktop/Vacation Photos")
+```
+
+3. Confirm the script is still in dry-run mode:
+
+```python
+DRY_RUN = True
+```
+
+4. Run the preview and save a copy of the output:
+
+```bash
+python3 /Users/me/Desktop/rename_photos.py \
+  | tee /Users/me/Desktop/rename_preview.txt
+```
+
+5. Check that:
+   - Each source file is from the intended folder.
+   - EXIF-based names do not have the `NOEXIF_` prefix.
+   - Files using filesystem dates do have `NOEXIF_`.
+   - Duplicate timestamps receive `_01`, `_02`, and so on.
+   - No destination name is unexpectedly associated with another file.
+
+6. Close applications that may be editing or exporting those photos.
+
+7. Change only this line:
+
+```python
+DRY_RUN = False
+```
+
+8. Run the script once:
+
+```bash
+python3 /Users/me/Desktop/rename_photos.py
+```
+
+9. Verify several files in Finder, then check the backup before deleting or moving anything.

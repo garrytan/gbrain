@@ -273,8 +273,10 @@ async function runOne(job: HarvestJob): Promise<{
       // Gates in the pinned sweep order: capability THEN kill switch. A
       // gate-skip releases the claim and writes NO sidecar — when the gate
       // opens later, the sweep (which applies the same gates) extracts.
-      const caps = job.capabilities ?? (await import('../capability.ts')).detectCapabilities();
-      if (!caps.extraction.available) return { outcome: 'degraded', reason: 'keyless' };
+      const { extractionAvailableForEngine } = await import('../facts/extraction-availability.ts');
+      if (!(await extractionAvailableForEngine(job.engine, job.capabilities))) {
+        return { outcome: 'degraded', reason: 'keyless' };
+      }
       const { isFactsExtractionEnabled } = await import('../facts/extract.ts');
       if (!(await isFactsExtractionEnabled(job.engine))) {
         return { outcome: 'degraded', reason: 'extraction_disabled' };
@@ -420,8 +422,10 @@ async function runWritebackTurn(job: HarvestJob, full: string, ingestedPath: str
     await writeFile(ingestedPath, writebackOffSidecarJson());
     return { outcome: 'ok', reason: 'writeback_off' };
   }
-  const caps = job.capabilities ?? (await import('../capability.ts')).detectCapabilities();
-  if (!caps.extraction.available) return { outcome: 'degraded', reason: 'keyless' };
+  const { extractionAvailableForEngine } = await import('../facts/extraction-availability.ts');
+  if (!(await extractionAvailableForEngine(job.engine, job.capabilities))) {
+    return { outcome: 'degraded', reason: 'keyless' };
+  }
   const { isFactsExtractionEnabled } = await import('../facts/extract.ts');
   if (!(await isFactsExtractionEnabled(job.engine))) {
     return { outcome: 'degraded', reason: 'extraction_disabled' };

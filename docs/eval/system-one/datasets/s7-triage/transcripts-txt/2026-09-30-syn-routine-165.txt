@@ -1,0 +1,757 @@
+[user]
+I have a folder of vacation photos with filenames like IMG_4381.JPG, DSC_1022.JPG, and photo-7.jpeg. I want to rename them using the date they were taken, such as 2024-06-03_001.jpg. I would prefer a small script rather than installing a full photo-management app. I’m on a desktop computer with Python available. Can you help me do this safely?
+
+[assistant]
+Yes. A small Python script can read the capture date from each image’s EXIF metadata, sort the photos by that date, and rename them with a zero-padded sequence number. We can make it preview changes first, skip files without a usable date, and avoid overwriting anything.
+
+Before running it on the real folder, make a copy of the folder or use a temporary test folder containing a few images. The script below uses only Python’s standard library, including `tkinter`-free file handling and the built-in `imghdr`-style limitations avoided by checking extensions. For EXIF parsing, Python’s standard library does not provide a convenient JPEG EXIF decoder, so install Pillow:
+
+```bash
+python -m pip install Pillow
+```
+
+Save the script as `rename_photos.py`:
+
+```python
+from pathlib import Path
+from datetime import datetime
+from PIL import Image
+import argparse
+import re
+import sys
+
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".JPG", ".JPEG"}
+
+def capture_datetime(path):
+    try:
+        with Image.open(path) as image:
+            exif = image.getexif()
+            value = exif.get(36867) or exif.get(306)  # DateTimeOriginal or DateTime
+            if not value:
+                return None
+            return datetime.strptime(str(value), "%Y:%m:%d %H:%M:%S")
+    except Exception as error:
+        print(f"Could not read EXIF from {path.name}: {error}", file=sys.stderr)
+        return None
+
+def available_name(folder, desired, reserved):
+    candidate = desired
+    counter = 1
+    while candidate.exists() or candidate in reserved:
+        candidate = desired.with_name(
+            f"{desired.stem}_{counter:03d}{desired.suffix}"
+        )
+        counter += 1
+    reserved.add(candidate)
+    return candidate
+
+parser = argparse.ArgumentParser()
+parser.add_argument("folder", type=Path)
+parser.add_argument("--apply", action="store_true")
+args = parser.parse_args()
+
+folder = args.folder
+if not folder.is_dir():
+    raise SystemExit(f"Not a folder: {folder}")
+
+files = [
+    path for path in folder.iterdir()
+    if path.is_file() and path.suffix in IMAGE_EXTENSIONS
+]
+
+dated = []
+skipped = []
+
+for path in files:
+    taken = capture_datetime(path)
+    if taken is None:
+        skipped.append(path)
+    else:
+        dated.append((taken, path))
+
+dated.sort(key=lambda item: (item[0], item[1].name.lower()))
+
+reserved = set()
+changes = []
+
+for number, (taken, old_path) in enumerate(dated, start=1):
+    new_name = f"{taken:%Y-%m-%d}_{number:03d}.jpg"
+    new_path = available_name(folder, new_name, reserved)
+    changes.append((old_path, new_path))
+
+print(f"Found {len(files)} image(s).")
+print(f"With capture dates: {len(dated)}")
+print(f"Skipped without usable EXIF date: {len(skipped)}")
+
+for old_path, new_path in changes:
+    print(f"{old_path.name} -> {new_path.name}")
+
+if skipped:
+    print("\nSkipped files:")
+    for path in skipped:
+        print(f"- {path.name}")
+
+if not args.apply:
+    print("\nPreview only. Re-run with --apply to perform these renames.")
+else:
+    for old_path, new_path in changes:
+        old_path.rename(new_path)
+    print("\nRenaming complete.")
+```
+
+The preview command will be:
+
+```bash
+python rename_photos.py "/path/to/vacation photos"
+```
+
+Only after checking the listed changes should you add `--apply`.
+
+[user]
+I’m on Windows, and the folder is `C:\Users\me\Pictures\Beach Trip`. The filenames have mixed capitalization, and there may also be PNG files and a few short video clips. I don’t want the videos touched. Also, can the renamed files keep their original extension instead of all becoming `.jpg`?
+
+[assistant]
+Yes. The script should include `.jpg`, `.jpeg`, and `.png`, while ignoring video extensions. It should preserve each file’s suffix, including its original capitalization if you want that. Since PNG files sometimes contain EXIF metadata but often do not, files without a usable date will be listed and skipped.
+
+Here is an updated Windows-friendly version. Replace the previous script with this one:
+
+```python
+from pathlib import Path
+from datetime import datetime
+from PIL import Image
+import argparse
+import sys
+
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png"}
+
+def capture_datetime(path):
+    try:
+        with Image.open(path) as image:
+            exif = image.getexif()
+            value = exif.get(36867) or exif.get(306)
+            if not value:
+                return None
+            return datetime.strptime(str(value), "%Y:%m:%d %H:%M:%S")
+    except Exception as error:
+        print(f"Could not read EXIF from {path.name}: {error}", file=sys.stderr)
+        return None
+
+def available_name(folder, desired, reserved):
+    candidate = desired
+    counter = 1
+    while candidate.exists() or candidate in reserved:
+        candidate = desired.with_name(
+            f"{desired.stem}_{counter:03d}{desired.suffix}"
+        )
+        counter += 1
+    reserved.add(candidate)
+    return candidate
+
+parser = argparse.ArgumentParser()
+parser.add_argument("folder", type=Path)
+parser.add_argument("--apply", action="store_true")
+args = parser.parse_args()
+
+folder = args.folder
+if not folder.is_dir():
+    raise SystemExit(f"Not a folder: {folder}")
+
+files = [
+    path for path in folder.iterdir()
+    if path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS
+]
+
+dated = []
+skipped = []
+
+for path in files:
+    taken = capture_datetime(path)
+    if taken is None:
+        skipped.append(path)
+    else:
+        dated.append((taken, path))
+
+dated.sort(key=lambda item: (item[0], item[1].name.lower()))
+
+reserved = set()
+changes = []
+
+for number, (taken, old_path) in enumerate(dated, start=1):
+    suffix = old_path.suffix
+    new_name = f"{taken:%Y-%m-%d}_{number:03d}{suffix}"
+    new_path = available_name(folder, new_name, reserved)
+    changes.append((old_path, new_path))
+
+print(f"Found {len(files)} supported image(s).")
+print(f"With capture dates: {len(dated)}")
+print(f"Skipped without usable EXIF date: {len(skipped)}")
+
+for old_path, new_path in changes:
+    print(f"{old_path.name} -> {new_path.name}")
+
+if skipped:
+    print("\nSkipped files:")
+    for path in skipped:
+        print(f"- {path.name}")
+
+if not args.apply:
+    print("\nPreview only. Add --apply after checking the list.")
+else:
+    for old_path, new_path in changes:
+        old_path.rename(new_path)
+    print("\nRenaming complete.")
+```
+
+Open Command Prompt and run:
+
+```bat
+python -m pip install Pillow
+python rename_photos.py "C:\Users\me\Pictures\Beach Trip"
+```
+
+The extension test uses `.lower()`, so `IMG_4381.JPG`, `photo.jpeg`, and `frame.PNG` are included. Video files such as `.mp4`, `.mov`, and `.avi` are not included because they are not in `IMAGE_EXTENSIONS`.
+
+[user]
+Before I try it, I want to understand the numbering. If there are photos from June 3 and June 4, will the sequence restart at 001 each day, or will it continue through the whole folder? I’d prefer the sequence to restart for each date, so names would look like `2024-06-03_001.jpg`, `2024-06-03_002.jpg`, then `2024-06-04_001.jpg`.
+
+[assistant]
+The current version numbers all dated images continuously, so it would produce something like:
+
+```text
+2024-06-03_001.jpg
+2024-06-03_002.jpg
+2024-06-04_003.jpg
+```
+
+To restart at `001` for each calendar date, keep a counter per date. Replace the section that builds `changes` with this version:
+
+```python
+reserved = set()
+changes = []
+numbers_by_date = {}
+
+for taken, old_path in dated:
+    date_key = taken.date()
+    number = numbers_by_date.get(date_key, 0) + 1
+    numbers_by_date[date_key] = number
+
+    suffix = old_path.suffix
+    new_name = f"{taken:%Y-%m-%d}_{number:03d}{suffix}"
+    new_path = available_name(folder, new_name, reserved)
+    changes.append((old_path, new_path))
+```
+
+The surrounding code remains unchanged. Because `dated` was sorted by capture date before this section runs, photos on the same date receive numbers in capture-time order. If two images have exactly the same timestamp, the earlier filename order is used by the existing sort:
+
+```python
+dated.sort(key=lambda item: (item[0], item[1].name.lower()))
+```
+
+For example, the preview could show:
+
+```text
+IMG_4381.JPG -> 2024-06-03_001.JPG
+IMG_4382.JPG -> 2024-06-03_002.JPG
+photo-7.jpeg -> 2024-06-04_001.jpeg
+```
+
+The suffix remains as it was in the original filename. If you want every new name to use lowercase extensions, change:
+
+```python
+suffix = old_path.suffix
+```
+
+to:
+
+```python
+suffix = old_path.suffix.lower()
+```
+
+Videos remain untouched because they never enter the `files` list.
+
+[user]
+I made a test copy with 12 images and ran the preview. The output says 10 have capture dates and 2 were skipped. The proposed names look right, but I noticed one existing file is already called `2024-06-03_001.JPG`. What exactly will happen if the script wants to create that name?
+
+[assistant]
+The script checks both names already present on disk and names it has already reserved during the current run. If `2024-06-03_001.JPG` already exists, it will choose a suffix before renaming, such as:
+
+```text
+IMG_4381.JPG -> 2024-06-03_001_001.JPG
+```
+
+If that candidate also exists, it will try `_002`, then `_003`, and so on. The loop is handled by `available_name()`:
+
+```python
+def available_name(folder, desired, reserved):
+    candidate = desired
+    counter = 1
+    while candidate.exists() or candidate in reserved:
+        candidate = desired.with_name(
+            f"{desired.stem}_{counter:03d}{desired.suffix}"
+        )
+        counter += 1
+    reserved.add(candidate)
+    return candidate
+```
+
+The preview does not rename anything. It only prints the proposed old and new names. When you use `--apply`, the script renames each source file to its selected destination.
+
+One Windows detail is worth noting: Windows normally treats `.JPG` and `.jpg` as the same filename for collision purposes. `Path.exists()` will detect an existing file regardless of extension capitalization, and the operating system will not allow two files that differ only by capitalization in the same folder.
+
+If you would rather skip a dated photo whenever its ideal destination already exists, instead of adding `_001`, you can use a different policy. For your current test, though, the existing function is a non-destructive collision-avoidance option. Check the preview for the exact destination names before applying it.
+
+[user]
+The collision suffix is fine. Could you provide the complete final script in one block so I don’t accidentally combine the earlier pieces incorrectly? Please also make it print a summary after applying, including how many files were renamed and how many were skipped.
+
+[assistant]
+Certainly. This complete version includes the requested behavior:
+
+- Processes only `.jpg`, `.jpeg`, and `.png`, case-insensitively.
+- Leaves videos and other files alone.
+- Reads `DateTimeOriginal` first, then `DateTime`.
+- Sorts by capture date and time.
+- Restarts numbering at `001` for each date.
+- Preserves the original extension and capitalization.
+- Avoids destination collisions by adding `_001`, `_002`, and so on.
+- Runs as a preview unless `--apply` is supplied.
+- Prints an after-application summary.
+
+```python
+from pathlib import Path
+from datetime import datetime
+import argparse
+import sys
+
+from PIL import Image
+
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png"}
+
+
+def capture_datetime(path):
+    try:
+        with Image.open(path) as image:
+            exif = image.getexif()
+            value = exif.get(36867) or exif.get(306)
+
+            if not value:
+                return None
+
+            return datetime.strptime(
+                str(value),
+                "%Y:%m:%d %H:%M:%S"
+            )
+
+    except Exception as error:
+        print(
+            f"Could not read EXIF from {path.name}: {error}",
+            file=sys.stderr
+        )
+        return None
+
+
+def available_name(folder, desired, reserved):
+    candidate = desired
+    counter = 1
+
+    while candidate.exists() or candidate in reserved:
+        candidate = desired.with_name(
+            f"{desired.stem}_{counter:03d}{desired.suffix}"
+        )
+        counter += 1
+
+    reserved.add(candidate)
+    return candidate
+
+
+parser = argparse.ArgumentParser(
+    description="Rename dated photos by capture date."
+)
+parser.add_argument(
+    "folder",
+    type=Path,
+    help="Folder containing the photos"
+)
+parser.add_argument(
+    "--apply",
+    action="store_true",
+    help="Actually rename files; without this, only show a preview"
+)
+args = parser.parse_args()
+
+folder = args.folder
+
+if not folder.is_dir():
+    raise SystemExit(f"Not a folder: {folder}")
+
+files = [
+    path
+    for path in folder.iterdir()
+    if path.is_file()
+    and path.suffix.lower() in IMAGE_EXTENSIONS
+]
+
+dated = []
+skipped = []
+
+for path in files:
+    taken = capture_datetime(path)
+
+    if taken is None:
+        skipped.append(path)
+    else:
+        dated.append((taken, path))
+
+dated.sort(
+    key=lambda item: (item[0], item[1].name.lower())
+)
+
+reserved = set()
+changes = []
+numbers_by_date = {}
+
+for taken, old_path in dated:
+    date_key = taken.date()
+    number = numbers_by_date.get(date_key, 0) + 1
+    numbers_by_date[date_key] = number
+
+    suffix = old_path.suffix
+    new_name = f"{taken:%Y-%m-%d}_{number:03d}{suffix}"
+    new_path = available_name(folder, folder / new_name, reserved)
+
+    changes.append((old_path, new_path))
+
+print(f"Found {len(files)} supported image(s).")
+print(f"With capture dates: {len(dated)}")
+print(f"Skipped without usable EXIF date: {len(skipped)}")
+print()
+
+if changes:
+    print("Proposed changes:")
+    for old_path, new_path in changes:
+        print(f"{old_path.name} -> {new_path.name}")
+else:
+    print("No files will be renamed.")
+
+if skipped:
+    print()
+    print("Skipped files:")
+    for path in skipped:
+        print(f"- {path.name}")
+
+if not args.apply:
+    print()
+    print("Preview only. Add --apply after checking the list.")
+else:
+    renamed_count = 0
+    errors = []
+
+    for old_path, new_path in changes:
+        try:
+            old_path.rename(new_path)
+            renamed_count += 1
+        except OSError as error:
+            errors.append((old_path, new_path, error))
+            print(
+                f"Could not rename {old_path.name}: {error}",
+                file=sys.stderr
+            )
+
+    print()
+    print("Summary:")
+    print(f"Renamed successfully: {renamed_count}")
+    print(f"Skipped without usable date: {len(skipped)}")
+    print(f"Rename errors: {len(errors)}")
+```
+
+Save it as `rename_photos.py`. From Command Prompt, preview the test folder with:
+
+```bat
+python rename_photos.py "C:\Users\me\Pictures\Beach Trip Test"
+```
+
+If the output is correct, apply it with:
+
+```bat
+python rename_photos.py "C:\Users\me\Pictures\Beach Trip Test" --apply
+```
+
+The `folder / new_name` expression in the script makes each proposed destination an explicit path inside the selected folder. The video clips are not counted as supported images and are not included in the rename list.
+
+[user]
+I copied the final script, but when I run it I get this error:
+
+```text
+Traceback (most recent call last):
+  File "C:\Users\me\Desktop\rename_photos.py", line 91, in <module>
+    new_path = available_name(folder, folder / new_name, reserved)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\me\Desktop\rename_photos.py", line 32, in available_name
+    candidate = desired.with_name(
+                ^^^^^^^^^^^^^^^^^^
+  File "C:\Program Files\Python312\Lib\pathlib.py", line 674, in with_name
+    raise ValueError(f"Invalid name {name!r}")
+ValueError: Invalid name 'C:\\Users\\me\\Pictures\\Beach Trip Test\\2024-06-03_001_001.JPG'
+```
+
+[assistant]
+The error is caused by passing a complete path as `desired` while the collision function builds a new filename with `desired.with_name()`. The function was written to receive a filename path, but the earlier call supplied `folder / new_name`, producing an invalid combined name during the suffix step.
+
+Use this corrected complete script. The main change is that `available_name()` now receives the folder and a filename separately, then constructs the full path internally.
+
+```python
+from pathlib import Path
+from datetime import datetime
+import argparse
+import sys
+
+from PIL import Image
+
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png"}
+
+
+def capture_datetime(path):
+    try:
+        with Image.open(path) as image:
+            exif = image.getexif()
+            value = exif.get(36867) or exif.get(306)
+
+            if not value:
+                return None
+
+            return datetime.strptime(
+                str(value),
+                "%Y:%m:%d %H:%M:%S"
+            )
+
+    except Exception as error:
+        print(
+            f"Could not read EXIF from {path.name}: {error}",
+            file=sys.stderr
+        )
+        return None
+
+
+def available_name(folder, filename, reserved):
+    desired = folder / filename
+    candidate = desired
+    counter = 1
+
+    while candidate.exists() or candidate in reserved:
+        candidate = folder / (
+            f"{desired.stem}_{counter:03d}{desired.suffix}"
+        )
+        counter += 1
+
+    reserved.add(candidate)
+    return candidate
+
+
+parser = argparse.ArgumentParser(
+    description="Rename dated photos by capture date."
+)
+parser.add_argument(
+    "folder",
+    type=Path,
+    help="Folder containing the photos"
+)
+parser.add_argument(
+    "--apply",
+    action="store_true",
+    help="Actually rename files; without this, only show a preview"
+)
+args = parser.parse_args()
+
+folder = args.folder
+
+if not folder.is_dir():
+    raise SystemExit(f"Not a folder: {folder}")
+
+files = [
+    path
+    for path in folder.iterdir()
+    if path.is_file()
+    and path.suffix.lower() in IMAGE_EXTENSIONS
+]
+
+dated = []
+skipped = []
+
+for path in files:
+    taken = capture_datetime(path)
+
+    if taken is None:
+        skipped.append(path)
+    else:
+        dated.append((taken, path))
+
+dated.sort(
+    key=lambda item: (item[0], item[1].name.lower())
+)
+
+reserved = set()
+changes = []
+numbers_by_date = {}
+
+for taken, old_path in dated:
+    date_key = taken.date()
+    number = numbers_by_date.get(date_key, 0) + 1
+    numbers_by_date[date_key] = number
+
+    suffix = old_path.suffix
+    new_name = f"{taken:%Y-%m-%d}_{number:03d}{suffix}"
+    new_path = available_name(folder, new_name, reserved)
+
+    changes.append((old_path, new_path))
+
+print(f"Found {len(files)} supported image(s).")
+print(f"With capture dates: {len(dated)}")
+print(f"Skipped without usable date: {len(skipped)}")
+print()
+
+if changes:
+    print("Proposed changes:")
+    for old_path, new_path in changes:
+        print(f"{old_path.name} -> {new_path.name}")
+else:
+    print("No files will be renamed.")
+
+if skipped:
+    print()
+    print("Skipped files:")
+    for path in skipped:
+        print(f"- {path.name}")
+
+if not args.apply:
+    print()
+    print("Preview only. Add --apply after checking the list.")
+else:
+    renamed_count = 0
+    errors = []
+
+    for old_path, new_path in changes:
+        try:
+            old_path.rename(new_path)
+            renamed_count += 1
+        except OSError as error:
+            errors.append((old_path, new_path, error))
+            print(
+                f"Could not rename {old_path.name}: {error}",
+                file=sys.stderr
+            )
+
+    print()
+    print("Summary:")
+    print(f"Renamed successfully: {renamed_count}")
+    print(f"Skipped without usable date: {len(skipped)}")
+    print(f"Rename errors: {len(errors)}")
+```
+
+Then run the preview again:
+
+```bat
+python "C:\Users\me\Desktop\rename_photos.py" "C:\Users\me\Pictures\Beach Trip Test"
+```
+
+If the output looks correct, apply it:
+
+```bat
+python "C:\Users\me\Desktop\rename_photos.py" "C:\Users\me\Pictures\Beach Trip Test" --apply
+```
+
+The video files remain untouched because the script filters the folder using only the three supported image extensions.
+
+[user]
+That fixed the error. The preview shows the expected names, and the collision gets an extra suffix as described. Is there anything else I should check before I run it with `--apply`?
+
+[assistant]
+A few routine checks are useful before applying it:
+
+1. **Confirm the folder path.** Make sure the command names the test copy or the intended photo folder, not its parent folder.
+
+2. **Keep a backup or duplicate.** Renaming normally does not alter image contents, but a copy makes it easy to return to the original filenames.
+
+3. **Review every proposed change.** Check that the dates and per-date numbering match the order you expect, and that existing collision names receive the extra suffix.
+
+4. **Check skipped files.** The two files without usable EXIF dates will remain unchanged. If they are PNGs or images exported by another program, that may be expected.
+
+5. **Close programs using the images.** A viewer or editor can sometimes prevent Windows from renaming a file.
+
+6. **Check the extension behavior.** The script preserves `.JPG`, `.jpeg`, or `.PNG` exactly as found in each original filename.
+
+7. **Use the same folder in the apply command.** For example:
+
+```bat
+python "C:\Users\me\Desktop\rename_photos.py" "C:\Users\me\Pictures\Beach Trip Test" --apply
+```
+
+Afterward, the summary should resemble:
+
+```text
+Summary:
+Renamed successfully: 10
+Skipped without usable date: 2
+Rename errors: 0
+```
+
+The video clips are not part of the supported-image count and will remain with their original names.
+
+[user]
+I ran the apply command on the test copy. It says 10 renamed successfully, 2 skipped, and 0 errors. The files now have the date-based names, and the videos were left alone. For the original folder, should I run the preview again first, or can I use `--apply` directly?
+
+[assistant]
+Run the preview on the original folder first. The test copy confirms that the script works, but the original folder may have different dates, existing destination names, files without EXIF data, or additional supported images.
+
+Use:
+
+```bat
+python "C:\Users\me\Desktop\rename_photos.py" "C:\Users\me\Pictures\Beach Trip"
+```
+
+Review:
+
+- The total supported-image count.
+- The number with usable capture dates.
+- The skipped-file list.
+- The proposed date and per-date sequence.
+- Any collision suffixes such as `_001`.
+- The absence of video files from the proposed changes.
+
+If the preview is correct, make a backup or duplicate of the original folder and then run:
+
+```bat
+python "C:\Users\me\Desktop\rename_photos.py" "C:\Users\me\Pictures\Beach Trip" --apply
+```
+
+Check the final summary for rename errors. No additional software or script changes are needed for the original folder.
+
+[user]
+I ran the preview on the original folder and the counts look reasonable. One thing I noticed is that a few files from the same day have identical capture times, so their order falls back to filename order. That’s acceptable. I’m going to make a copy and then apply the script.
+
+[assistant]
+That is the expected behavior. The sort key is capture timestamp followed by the lowercase original filename, so identical timestamps receive a stable filename-based order.
+
+After making the copy, run:
+
+```bat
+python "C:\Users\me\Desktop\rename_photos.py" "C:\Users\me\Pictures\Beach Trip" --apply
+```
+
+The script will:
+
+- Rename only supported images with usable EXIF dates.
+- Restart numbering at `001` for each date.
+- Preserve each original image extension.
+- Add a collision suffix when a destination already exists.
+- Leave undated images unchanged.
+- Leave video clips and other file types unchanged.
+
+You should see a final summary such as:
+
+```text
+Summary:
+Renamed successfully: 47
+Skipped without usable date: 5
+Rename errors: 0
+```
+
+If the error count is zero, the operation completed for every proposed rename.

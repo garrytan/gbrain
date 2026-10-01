@@ -1,0 +1,678 @@
+[user]
+I’m in the middle of a Git merge and the only conflict is in `package-lock.json`. I want to resolve it mechanically and verify the result without making any unrelated changes.
+
+[assistant]
+Start by checking the repository state and the unmerged paths:
+
+```bash
+git status --short
+git diff --name-only --diff-filter=U
+```
+
+You should see `package-lock.json` listed as unmerged, often with a line like:
+
+```text
+UU package-lock.json
+```
+
+Do not edit or stage anything yet. Also check which package manager and lockfile format the repository uses:
+
+```bash
+ls -1 package.json package-lock.json npm-shrinkwrap.json 2>/dev/null
+node --version
+npm --version
+```
+
+If `package-lock.json` is the only unmerged path, the cleanest approach is usually to regenerate it from the merged `package.json`, then inspect the resulting diff.
+
+[user]
+Here is the output:
+
+```text
+$ git status --short
+UU package-lock.json
+
+$ git diff --name-only --diff-filter=U
+package-lock.json
+
+$ ls -1 package.json package-lock.json npm-shrinkwrap.json 2>/dev/null
+package-lock.json
+package.json
+
+$ node --version
+v20.11.1
+
+$ npm --version
+10.2.4
+```
+
+I have not opened or edited the lockfile. What should I inspect before regenerating it?
+
+[assistant]
+First inspect the conflicted file only as a comparison, and inspect the package manifest and repository configuration:
+
+```bash
+git diff -- package-lock.json
+git diff -- package.json
+git show :2:package-lock.json > /tmp/package-lock.ours.json
+git show :3:package-lock.json > /tmp/package-lock.theirs.json
+git diff --no-index -- /tmp/package-lock.ours.json /tmp/package-lock.theirs.json || true
+```
+
+The `:2:` version is the “ours” side and `:3:` is the “theirs” side during this merge. The `git diff -- package-lock.json` command may show conflict markers or a combined diff, depending on Git’s output.
+
+Now inspect the manifest and relevant configuration:
+
+```bash
+cat package.json
+printf '\n--- npm-related files ---\n'
+find .. -maxdepth 2 -type f \( -name '.npmrc' -o -name 'npm-shrinkwrap.json' \) -print
+printf '\n--- packageManager fields ---\n'
+grep -nE '"(packageManager|engines|workspaces)"' package.json || true
+```
+
+Also check whether the lockfile declares a lockfile version and whether either side has different root dependency entries:
+
+```bash
+grep -nE '"lockfileVersion"|"name"|"version"|"dependencies"|"devDependencies"|"optionalDependencies"' \
+  /tmp/package-lock.ours.json /tmp/package-lock.theirs.json | head -80
+```
+
+Do not manually combine dependency sections yet. A lockfile is generated data, so the important inputs are the final merged `package.json`, npm configuration, and the registry metadata available when regeneration runs.
+
+[user]
+The manifest has no `packageManager` field. It contains `dependencies`, `devDependencies`, and an `engines` section. There is a root `.npmrc` with:
+
+```text
+fund=false
+audit=false
+```
+
+The two lockfile sides have the same `lockfileVersion`, but their root package entries differ. The conflict output is very large. I’d like to see the merged manifest first and then regenerate from that.
+
+[assistant]
+That is a good order. During a merge, `package.json` may already be merged and unstaged, or it may still be clean if only the lockfile conflicted. Confirm its state and inspect the merge result:
+
+```bash
+git status --short
+git diff -- package.json
+git diff --cached -- package.json
+```
+
+To compare the manifest with both parent versions:
+
+```bash
+git diff HEAD -- package.json
+git diff MERGE_HEAD -- package.json
+```
+
+If `package.json` is not listed as unmerged, the working-tree copy is the merge result. Save a temporary copy for reference:
+
+```bash
+cp package.json /tmp/package.json.merge-result
+node -e 'const p=require("./package.json"); console.log(JSON.stringify({name:p.name,version:p.version,dependencies:p.dependencies,devDependencies:p.devDependencies,optionalDependencies:p.optionalDependencies},null,2))'
+```
+
+Then validate its JSON syntax independently of npm:
+
+```bash
+node -e 'JSON.parse(require("fs").readFileSync("package.json","utf8")); console.log("package.json: valid JSON")'
+```
+
+If the file is valid and contains the intended merged dependency ranges, use it as the source for lockfile regeneration. If it is also unmerged, stop there and resolve `package.json` first; npm should not be used to infer an unresolved manifest.
+
+[user]
+`package.json` is not unmerged, and `git diff -- package.json` shows the expected merged dependency ranges. The JSON validation prints:
+
+```text
+package.json: valid JSON
+```
+
+There are no workspaces. Should I remove the conflicted lockfile before running npm, or can npm overwrite it?
+
+[assistant]
+Use Git to replace the conflicted working-tree lockfile with the merged manifest’s generated result. You do not need to hand-edit conflict markers. To avoid npm trying to interpret a conflicted file, move it outside the repository first:
+
+```bash
+mv package-lock.json /tmp/package-lock.conflicted.json
+```
+
+Confirm the file is gone and the manifest is still present:
+
+```bash
+test ! -e package-lock.json && echo "old lockfile moved"
+test -f package.json && echo "package.json present"
+```
+
+Now regenerate with the repository’s `.npmrc` settings and without changing `package.json`:
+
+```bash
+npm install --package-lock-only --ignore-scripts
+```
+
+`--package-lock-only` updates the lockfile without installing the dependency tree into `node_modules`. `--ignore-scripts` prevents lifecycle scripts from running. Because `audit=false` and `fund=false` are in `.npmrc`, those operations are already disabled; you can also state them explicitly if desired:
+
+```bash
+npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+```
+
+Use one command, not both. If npm reports registry or authentication errors, do not stage the file; preserve the output and address that environment issue first.
+
+[user]
+I moved the file and ran:
+
+```text
+$ npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+
+up to date in 2s
+```
+
+The new lockfile exists. What should I compare before staging it?
+
+[assistant]
+First check the repository state and inspect the generated diff:
+
+```bash
+git status --short
+git diff --stat
+git diff -- package-lock.json | less
+```
+
+You should normally see `package-lock.json` as modified rather than unmerged:
+
+```text
+ M package-lock.json
+```
+
+Check that no conflict markers remain:
+
+```bash
+grep -nE '^(<<<<<<<|=======|>>>>>>>)' package-lock.json || echo "no conflict markers"
+```
+
+Validate the lockfile as JSON and ask npm to verify its consistency with the manifest:
+
+```bash
+node -e 'JSON.parse(require("fs").readFileSync("package-lock.json","utf8")); console.log("package-lock.json: valid JSON")'
+npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+git diff --exit-code -- package-lock.json
+```
+
+The second npm command should be idempotent. If it rewrites the file, inspect why before staging. The final `git diff --exit-code` should produce no output and return status 0 if the file is unchanged by the second generation.
+
+Also compare the lockfile’s root metadata with the manifest:
+
+```bash
+node <<'NODE'
+const fs = require('fs');
+const pkg = JSON.parse(fs.readFileSync('package.json'));
+const lock = JSON.parse(fs.readFileSync('package-lock.json'));
+const root = lock.packages && lock.packages[''];
+console.log({manifestName: pkg.name, lockName: lock.name, rootName: root && root.name});
+console.log({manifestVersion: pkg.version, lockVersionField: lock.version, rootVersion: root && root.version});
+NODE
+```
+
+The dependency entries may be numerous, so focus on unexpected packages, changes outside the dependency graph, and whether npm has changed the manifest.
+
+[user]
+The output is:
+
+```text
+$ git status --short
+ M package-lock.json
+
+$ grep -nE '^(<<<<<<<|=======|>>>>>>>)' package-lock.json || echo "no conflict markers"
+no conflict markers
+
+package-lock.json: valid JSON
+
+$ npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+up to date in 1s
+
+$ git diff --exit-code -- package-lock.json
+```
+
+The last command produced no output. The metadata check shows matching `name` and `version`. How do I check whether npm changed anything else?
+
+[assistant]
+Check the complete working-tree diff, including the manifest and any untracked files:
+
+```bash
+git status --short
+git diff --name-status
+git diff -- package.json package-lock.json
+git ls-files --others --exclude-standard
+```
+
+The expected result is one modified path:
+
+```text
+ M package-lock.json
+```
+
+There should be no diff for `package.json` and no unexpected untracked files. To make that explicit:
+
+```bash
+git diff --quiet -- package.json
+test $? -eq 0 && echo "package.json unchanged"
+
+test -z "$(git ls-files --others --exclude-standard)" \
+  && echo "no untracked files" \
+  || git ls-files --others --exclude-standard
+```
+
+Review lockfile structure and dependency keys with a small script:
+
+```bash
+node <<'NODE'
+const fs = require('fs');
+const lock = JSON.parse(fs.readFileSync('package-lock.json'));
+const pkg = JSON.parse(fs.readFileSync('package.json'));
+const root = lock.packages?.[''] || {};
+const manifest = Object.keys({
+  ...(pkg.dependencies || {}),
+  ...(pkg.devDependencies || {}),
+  ...(pkg.optionalDependencies || {})
+}).sort();
+const locked = Object.keys({
+  ...(root.dependencies || {}),
+  ...(root.devDependencies || {}),
+  ...(root.optionalDependencies || {})
+}).sort();
+
+console.log('lockfileVersion:', lock.lockfileVersion);
+console.log('manifest root dependency names:', manifest);
+console.log('lock root dependency names:', locked);
+console.log('missing from lock root:', manifest.filter(x => !locked.includes(x)));
+console.log('extra in lock root:', locked.filter(x => !manifest.includes(x)));
+NODE
+```
+
+An empty `missing` and `extra` list is useful for a quick root-level check. It does not replace npm’s own validation, but it helps catch an obviously incomplete merge.
+
+[user]
+The working-tree check shows only:
+
+```text
+ M package-lock.json
+```
+
+`package.json` is unchanged, there are no untracked files, and both “missing” and “extra” lists are empty. The lockfile is large, so I want to compare the generated file against each original side without manually reading every line.
+
+[assistant]
+Use normalized JSON comparisons. Formatting and ordering can make ordinary text diffs noisy, so compare parsed JSON values after sorting object keys recursively.
+
+First create a temporary canonicalizer:
+
+```bash
+cat > /tmp/canonical-json.js <<'NODE'
+const fs = require('fs');
+
+function canonical(value) {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.keys(value).sort().map(key => [key, canonical(value[key])])
+    );
+  }
+  return value;
+}
+
+for (const file of process.argv.slice(2)) {
+  const value = JSON.parse(fs.readFileSync(file, 'utf8'));
+  process.stdout.write(JSON.stringify(canonical(value)) + '\n');
+}
+NODE
+```
+
+Canonicalize the two original sides and the generated file:
+
+```bash
+node /tmp/canonical-json.js \
+  /tmp/package-lock.ours.json \
+  /tmp/package-lock.theirs.json \
+  package-lock.json \
+  > /tmp/lockfiles.canonical
+```
+
+Split the output into separate files:
+
+```bash
+sed -n '1p' /tmp/lockfiles.canonical > /tmp/lock.ours.canonical.json
+sed -n '2p' /tmp/lockfiles.canonical > /tmp/lock.theirs.canonical.json
+sed -n '3p' /tmp/lock.generated.canonical.json
+```
+
+The last command above only displays line 3; write it correctly with:
+
+```bash
+sed -n '3p' /tmp/lockfiles.canonical > /tmp/lock.generated.canonical.json
+```
+
+Now compare each original side to the generated lockfile:
+
+```bash
+diff -u /tmp/lock.ours.canonical.json /tmp/lock.generated.canonical.json | less
+diff -u /tmp/lock.theirs.canonical.json /tmp/lock.generated.canonical.json | less
+```
+
+This shows semantic JSON differences rather than key-order differences. The generated file does not need to equal either side: it should represent the merged `package.json` and the dependency resolution produced by npm.
+
+[user]
+I ran those comparisons. Both have differences, mostly in package entries and integrity fields. The generated file has no conflict markers and is idempotent. Is there a more targeted way to identify packages that were added, removed, or changed?
+
+[assistant]
+Yes. Compare the `packages` maps by path and print additions, removals, and selected field changes. This avoids dumping the entire lockfile:
+
+```bash
+node <<'NODE'
+const fs = require('fs');
+
+const files = {
+  ours: '/tmp/package-lock.ours.json',
+  theirs: '/tmp/package-lock.theirs.json',
+  generated: 'package-lock.json'
+};
+
+const locks = Object.fromEntries(
+  Object.entries(files).map(([name, file]) => [
+    name,
+    JSON.parse(fs.readFileSync(file))
+  ])
+);
+
+function packages(lock) {
+  return lock.packages || {};
+}
+
+function value(obj, key) {
+  return obj && Object.prototype.hasOwnProperty.call(obj, key)
+    ? JSON.stringify(obj[key])
+    : '<absent>';
+}
+
+for (const side of ['ours', 'theirs']) {
+  const before = packages(locks[side]);
+  const after = packages(locks.generated);
+  const paths = new Set([...Object.keys(before), ...Object.keys(after)]);
+
+  const added = [];
+  const removed = [];
+  const changed = [];
+
+  for (const path of [...paths].sort()) {
+    if (!(path in before)) {
+      added.push(path);
+      continue;
+    }
+    if (!(path in after)) {
+      removed.push(path);
+      continue;
+    }
+
+    const fields = ['version', 'resolved', 'integrity', 'link', 'dev', 'optional'];
+    const differences = fields.filter(field =>
+      value(before[path], field) !== value(after[path], field)
+    );
+
+    if (differences.length) changed.push({path, fields: differences});
+  }
+
+  console.log(`\n=== generated versus ${side} ===`);
+  console.log(`added: ${added.length}`);
+  console.log(added.slice(0, 100).join('\n'));
+  console.log(`removed: ${removed.length}`);
+  console.log(removed.slice(0, 100).join('\n'));
+  console.log(`changed: ${changed.length}`);
+  for (const item of changed.slice(0, 100)) {
+    console.log(`${item.path}: ${item.fields.join(', ')}`);
+  }
+}
+NODE
+```
+
+The output is capped at 100 paths per category to keep it readable. To inspect one particular path in full, use:
+
+```bash
+node -e '
+const l=require("./package-lock.json");
+console.log(JSON.stringify(l.packages["node_modules/example-package"], null, 2));
+'
+```
+
+Replace the path with one from the report. For a root dependency, inspect `packages[""]`.
+
+Also check whether the generated lockfile uses a different registry URL or npm metadata convention:
+
+```bash
+grep -nE '"resolved"|"integrity"|"registry"' package-lock.json | head -40
+```
+
+Do not treat every integrity change as an error; regenerated lockfiles can update metadata while preserving the same package versions.
+
+[user]
+The targeted report shows several paths added and removed, and some `resolved` and `integrity` changes. The package versions for the direct dependencies match the merged manifest’s ranges. I want to verify the dependency tree without installing scripts or changing the lockfile again.
+
+[assistant]
+Use npm’s read-only checks first. `npm ls` examines the installed tree, if one exists, and does not normally rewrite the lockfile:
+
+```bash
+npm ls --all --ignore-scripts
+```
+
+If `node_modules` is absent or incomplete, that command may report missing packages; that does not necessarily mean the lockfile is invalid. For a lockfile-only validation, use:
+
+```bash
+npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+git diff --exit-code -- package-lock.json
+```
+
+You already established this is idempotent. To avoid another npm operation while inspecting the resolved graph, query the lockfile directly:
+
+```bash
+node <<'NODE'
+const fs = require('fs');
+const lock = JSON.parse(fs.readFileSync('package-lock.json'));
+const root = lock.packages?.[''] || {};
+const sections = ['dependencies', 'devDependencies', 'optionalDependencies'];
+
+for (const section of sections) {
+  console.log(`\n[${section}]`);
+  for (const [name, range] of Object.entries(root[section] || {}).sort()) {
+    const path = `node_modules/${name}`;
+    const entry = lock.packages?.[path];
+    console.log(`${name}: requested ${range}; locked ${entry?.version ?? '<missing>'}`);
+  }
+}
+NODE
+```
+
+For npm’s dependency resolution view without modifying files, this can be useful if the local npm version supports it:
+
+```bash
+npm explain <package-name>
+```
+
+Replace `<package-name>` with a package path from the lockfile. It reports why that package appears in the tree. It may rely on `node_modules`, so absence of installed packages can limit the output.
+
+Finally, check the generated file is syntactically valid and contains the expected top-level fields:
+
+```bash
+node <<'NODE'
+const l = require('./package-lock.json');
+for (const key of ['name', 'version', 'lockfileVersion', 'packages']) {
+  console.log(`${key}:`, l[key] === undefined ? 'missing' : 'present');
+}
+NODE
+```
+
+Avoid `npm install` without `--package-lock-only` at this stage, since that would install packages and create unrelated filesystem changes.
+
+[user]
+`npm ls --all --ignore-scripts` reports missing packages because `node_modules` is not complete, but the lockfile-only check remains idempotent. The direct dependency report shows every requested package has a locked version. I’m ready to stage the lockfile. What final checks should I perform first?
+
+[assistant]
+Before staging, take a final snapshot of status, verify there are no markers, and inspect the staged candidate by using a temporary index-independent diff:
+
+```bash
+git status --short
+git diff --check
+grep -nE '^(<<<<<<<|=======|>>>>>>>)' package-lock.json || echo "no conflict markers"
+```
+
+`git diff --check` should produce no output. Confirm only the intended file is modified:
+
+```bash
+test "$(git status --short | wc -l | tr -d ' ')" -eq 1 \
+  && echo "one changed path" \
+  || git status --short
+
+git diff --quiet -- package.json && echo "package.json unchanged"
+test -z "$(git ls-files --others --exclude-standard)" \
+  && echo "no untracked files" \
+  || git ls-files --others --exclude-standard
+```
+
+Review a concise summary and the root lockfile entry:
+
+```bash
+git diff --stat -- package-lock.json
+git diff --numstat -- package-lock.json
+node <<'NODE'
+const fs = require('fs');
+const pkg = JSON.parse(fs.readFileSync('package.json'));
+const lock = JSON.parse(fs.readFileSync('package-lock.json'));
+console.log('manifest:', pkg.name, pkg.version);
+console.log('lockfile:', lock.name, lock.version, 'format', lock.lockfileVersion);
+console.log('root package entry:', lock.packages?.[''] || {});
+NODE
+```
+
+If all checks are clean, stage only the lockfile:
+
+```bash
+git add package-lock.json
+```
+
+Then inspect the index and verify the file is no longer unmerged:
+
+```bash
+git status --short
+git diff --cached --name-status
+git diff --cached --check
+git diff --cached --name-only --diff-filter=U
+```
+
+The expected status is:
+
+```text
+M  package-lock.json
+```
+
+The last command should print nothing. The cached diff is the exact content that would be included for the lockfile.
+
+[user]
+The final checks passed. After staging, the output is:
+
+```text
+$ git status --short
+M  package-lock.json
+
+$ git diff --cached --name-status
+M	package-lock.json
+
+$ git diff --cached --check
+```
+
+`git diff --cached --name-only --diff-filter=U` prints nothing. What confirms that the merge is ready to conclude?
+
+[assistant]
+Confirm Git sees no remaining unmerged paths and show the merge summary:
+
+```bash
+git status
+git diff --cached --name-only --diff-filter=U
+git diff --cached --stat
+```
+
+The important part of `git status` should say that all conflicts have been fixed and identify the merge as ready to conclude. The unmerged-path command should print nothing.
+
+Because only the lockfile was conflicted, verify the index contains the expected number of stages:
+
+```bash
+git ls-files -u
+```
+
+This should print nothing after staging the resolution. For an additional index check:
+
+```bash
+git diff --cached --check
+git diff --cached -- package-lock.json | less
+```
+
+Review the cached diff one final time. If it is the intended regenerated lockfile and no unmerged entries remain, Git is ready for the normal merge completion command:
+
+```bash
+git commit
+```
+
+If the repository’s merge state is still active, Git will prepare a merge commit message. You can inspect the current merge metadata without changing anything:
+
+```bash
+test -f "$(git rev-parse --git-path MERGE_HEAD)" \
+  && echo "merge operation active"
+```
+
+Do not run `git merge --continue` unless the workflow specifically uses that command; for a normal Git merge, `git commit` concludes it. If you only wanted to verify readiness and not conclude the merge, stop after the checks above.
+
+[user]
+`git status` says all conflicts are fixed and the merge can be concluded. `git ls-files -u` prints nothing, and the cached diff contains only the regenerated lockfile. I’m not committing yet. Is there anything else mechanical to record or verify while leaving the merge in this state?
+
+[assistant]
+You can leave the merge staged and active. Record a compact, local verification snapshot without altering the index:
+
+```bash
+{
+  echo '--- status ---'
+  git status --short
+  echo '--- unmerged paths ---'
+  git diff --cached --name-only --diff-filter=U
+  echo '--- cached paths ---'
+  git diff --cached --name-status
+  echo '--- lockfile hash ---'
+  sha256sum package-lock.json
+  echo '--- lockfile metadata ---'
+  node -e 'const l=require("./package-lock.json"); console.log({name:l.name,version:l.version,lockfileVersion:l.lockfileVersion})'
+} | tee /tmp/merge-lockfile-verification.txt
+```
+
+The temporary report is outside the repository, so it will not become an untracked file. If you do not need it, remove it:
+
+```bash
+rm -f /tmp/merge-lockfile-verification.txt
+```
+
+You can also confirm the index and working tree agree for the staged file:
+
+```bash
+git diff --cached --quiet -- package-lock.json \
+  && echo "unexpected: no cached diff" \
+  || true
+
+git diff --quiet -- package-lock.json \
+  && echo "working tree matches index"
+```
+
+The first command is expected to return nonzero because the index differs from the merge base; the `|| true` prevents that expected result from affecting a shell script. The second should print that the working tree matches the index.
+
+Finally, preserve the original conflicted sides only if you still need them for comparison:
+
+```bash
+ls -l /tmp/package-lock.ours.json /tmp/package-lock.theirs.json /tmp/package-lock.conflicted.json
+```
+
+Those temporary files do not affect Git. At this point, with no unmerged paths and a clean staged diff, there is no further lockfile-resolution step required before concluding the merge later.
+
+[user]
+The verification report showed the expected single staged path, an empty unmerged-path section, and matching working-tree and index content. I removed the temporary report and do not need the original conflict copies. The merge remains staged but uncommitted, with no further lockfile work needed.

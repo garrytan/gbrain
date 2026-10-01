@@ -8,15 +8,21 @@
  * crossing 90% of a cumulative journal cap. Thin clients refuse (cli.ts).
  */
 import type { BrainEngine } from '../core/engine.ts';
-import { loadConfig } from '../core/config.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
-import { OperationError, type OperationContext } from '../core/ops/contract.ts';
-import { REPAIR_KINDS, resolveRepairScope, runRepair, type RepairHandler, type RepairKind, type RepairResult } from '../core/repair/core.ts';
-import { timelineRepair } from '../core/repair/timeline.ts';
-import { visibilityRepair } from '../core/repair/visibility.ts';
-import { safeChunksRepair } from '../core/repair/safe-chunks.ts';
+import { OperationError } from '../core/ops/contract.ts';
+import { REPAIR_KINDS, resolveRepairScope, runRepair, type RepairKind, type RepairResult } from '../core/repair/core.ts';
+import { REPAIR_REGISTRY, repairMaySpend, repairRunner, repairSpec } from '../core/repair/registry.ts';
 
-const HANDLERS: Record<RepairKind, RepairHandler> = { timeline: timelineRepair, visibility: visibilityRepair, 'safe-chunks': safeChunksRepair };
+function wrap(text: string, indent: number, width = 80): string {
+  const lines: string[] = [];
+  let line = '';
+  for (const word of text.split(' ')) {
+    if (line && indent + line.length + 1 + word.length > width) { lines.push(line); line = word; }
+    else line = line ? `${line} ${word}` : word;
+  }
+  if (line) lines.push(line);
+  return lines.join(`\n${' '.repeat(indent)}`);
+}
 
 export const REPAIR_HELP = `Usage: gbrain repair [<kind>] [--apply] [--source <id>] [--limit <n>] [--no-embed] [--json]
        gbrain repair --all [--apply] [--source <id>] [--json]
@@ -24,32 +30,58 @@ export const REPAIR_HELP = `Usage: gbrain repair [<kind>] [--apply] [--source <i
 Repair residual damage that \`gbrain doctor\` reports. Dry run unless --apply.
 
 Kinds:
-  timeline     Write database-only timeline rows back into their pages as marked
-               bullets (#5567). Rows that cannot round-trip are kept and counted.
-  visibility   Stamp explicit visibility on extracted atoms and synthesized
-               concepts, tighten-only (#5525). Transcript and missing origins
-               become private; nothing is ever loosened.
-  safe-chunks  Re-seal pages of every kind (markdown and code) chunked before the
-               safe-chunk fence, which remote/MCP search withholds (#5050, #5247).
-               Projection-only: no page write and no journal admission. Unchanged
-               vectors are kept; the rest are embedded unless --no-embed.
+${REPAIR_REGISTRY.map(spec => `  ${spec.kind.length < 13 ? spec.kind.padEnd(12) : `${spec.kind}\n${' '.repeat(14)}`} ${wrap(spec.summary, 15)}`).join('\n')}
 
 Options:
   --apply        Write the repair (no prompt). Without it, only preview.
   --source <id>  Limit to one source (default: every active source).
   --limit <n>    Repair at most n items; rerun the same command to continue.
-  --no-embed     safe-chunks: re-seal text only; embed later with gbrain embed --stale.
+  --no-embed     safe-chunks, contextual-mode: no provider call; embed later with gbrain embed --stale.
   --all          Run every kind in order (${REPAIR_KINDS.join(', ')}).
   --json         Machine-readable output with a stable shape.
 
+Any other option is refused. There is no --max-usd here: to cap paid embedding
+work, run the repairs through gbrain doctor --remediate --yes --include-repairs --max-usd <n>.
 With no kind, previews every kind. Run it on the brain host.`;
 
-function flag(args: string[], name: string): string | undefined {
-  const at = args.indexOf(name);
-  if (at < 0) return undefined;
-  const value = args[at + 1];
-  if (!value || value.startsWith('--')) throw new OperationError('invalid_params', `${name} requires a value.`);
-  return value;
+const BOOLEAN_FLAGS = new Set(['--apply', '--all', '--json', '--no-embed']);
+const VALUE_FLAGS = new Set(['--source', '--limit']);
+
+interface RepairArgs { kind?: string; apply: boolean; all: boolean; json: boolean; noEmbed: boolean; source?: string; limit?: string }
+
+/** Strict parse: every flag is known, value flags carry a value, at most one kind. */
+export function parseRepairArgs(args: string[]): RepairArgs {
+  const parsed: RepairArgs = { apply: false, all: false, json: false, noEmbed: false };
+  const positional: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const token = args[i]!;
+    if (!token.startsWith('-')) { positional.push(token); continue; }
+    const equal = token.indexOf('=');
+    const flag = equal < 0 ? token : token.slice(0, equal);
+    if (flag === '--yes') throw new OperationError('invalid_params', '`--yes` is not accepted by gbrain repair; pass --apply to write.');
+    if (flag === '--max-usd' || flag === '--max-cost') {
+      const cap = equal < 0 ? args[i + 1] : token.slice(equal + 1);
+      throw new OperationError('invalid_params', `${flag} is not a gbrain repair option; the repair did not run.`,
+        `To cap paid repair work, run: gbrain doctor --remediate --yes --include-repairs --max-usd ${cap && !cap.startsWith('-') ? cap : '<n>'}`);
+    }
+    if (BOOLEAN_FLAGS.has(flag)) {
+      if (equal >= 0) throw new OperationError('invalid_params', `${flag} does not accept a value.`);
+      if (flag === '--apply') parsed.apply = true;
+      else if (flag === '--all') parsed.all = true;
+      else if (flag === '--json') parsed.json = true;
+      else parsed.noEmbed = true;
+      continue;
+    }
+    if (!VALUE_FLAGS.has(flag)) throw new OperationError('invalid_params', `Unknown option ${flag} for gbrain repair.`, 'Run gbrain repair --help for the accepted options.');
+    const value = equal >= 0 ? token.slice(equal + 1) : args[++i];
+    if (!value || value.startsWith('--')) throw new OperationError('invalid_params', `${flag} requires a value.`);
+    if (flag === '--source') parsed.source = value;
+    else parsed.limit = value;
+  }
+  if (positional.length > 1) throw new OperationError('invalid_params', `Unexpected argument '${positional[1]}'; gbrain repair takes at most one kind.`,
+    `Kinds: ${REPAIR_KINDS.join(', ')}.`);
+  parsed.kind = positional[0];
+  return parsed;
 }
 
 function human(result: RepairResult): string {
@@ -69,39 +101,31 @@ function human(result: RepairResult): string {
 
 export async function runRepairCommand(engine: BrainEngine, args: string[]): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) { console.log(REPAIR_HELP); return; }
-  if (args.includes('--yes')) throw new OperationError('invalid_params', '`--yes` is not accepted by gbrain repair; pass --apply to write.');
-  const json = args.includes('--json');
-  const noEmbed = args.includes('--no-embed');
-  const apply = args.includes('--apply');
-  const source = flag(args, '--source');
-  const limitText = flag(args, '--limit');
+  const { kind, apply, all, json, noEmbed, source, limit: limitText } = parseRepairArgs(args);
   const limit = limitText === undefined ? undefined : Number(limitText);
   if (limit !== undefined && (!Number.isSafeInteger(limit) || limit < 1)) throw new OperationError('invalid_params', '--limit must be a positive integer.');
-  const positional = args.filter((arg, i) => !arg.startsWith('--') && !['--source', '--limit'].includes(args[i - 1] ?? ''));
-  const kind = positional[0];
   if (kind && !REPAIR_KINDS.includes(kind as RepairKind)) {
     throw new OperationError('invalid_params', `Unknown repair kind '${kind}'.`, `Kinds: ${REPAIR_KINDS.join(', ')}.`);
   }
-  if (!kind && apply && !args.includes('--all')) throw new OperationError('invalid_params', 'Name a kind or pass --all with --apply.');
+  if (kind && all) throw new OperationError('invalid_params', 'Pass either a kind or --all, not both.');
+  if (!kind && apply && !all) throw new OperationError('invalid_params', 'Name a kind or pass --all with --apply.');
   const kinds: RepairKind[] = kind ? [kind as RepairKind] : [...REPAIR_KINDS];
   const scope = await resolveRepairScope(engine, source);
-  const config = loadConfig() ?? { engine: engine.kind };
-  const ctx: OperationContext = { engine, config, logger: { info: console.error, warn: console.error, error: console.error },
-    dryRun: !apply, remote: false, sourceId: scope.source_ids[0] } as OperationContext;
-  let embeddingModel: string | undefined;
-  try { embeddingModel = config.embedding_disabled ? undefined : (await import('../core/ai/gateway.ts')).getEmbeddingModel(); } catch { embeddingModel = undefined; }
-  const results: RepairResult[] = [];
+  const runner = await repairRunner(engine, { apply, noEmbed });
+  const results: Array<RepairResult & { paid: boolean }> = [];
   for (const k of kinds) {
-    const result = await runRepair(ctx, HANDLERS[k], scope, { apply, limit, embeddingModel, sourceFlag: source,
-      embed: !noEmbed && embeddingModel !== undefined, applyArgs: noEmbed && k === 'safe-chunks' ? ['--no-embed'] : [] });
-    results.push(result);
+    const result = await runner.run(k, scope, { limit, sourceFlag: source });
+    results.push({ ...result, paid: repairMaySpend(repairSpec(k), noEmbed) });
     if (result.stopped) break;
   }
+  const paidKinds = results.filter(r => r.paid).map(r => r.kind);
   if (json) {
-    console.log(JSON.stringify({ scope, mode: apply ? 'apply' : 'dry_run', results }, null, 2));
+    console.log(JSON.stringify({ scope, mode: apply ? 'apply' : 'dry_run', results, paid_kinds: paidKinds }, null, 2));
   } else {
     console.log(`Scope: brain ${scope.brain_id}; sources ${scope.source_ids.join(', ') || '(none)'}`);
     for (const result of results) console.log(human(result));
+    if (!apply && paidKinds.length) console.log(`Kinds that may queue paid embeddings: ${paidKinds.join(', ')} (pass --no-embed to skip; `
+      + 'page-write kinds are re-embedded by their publication either way; cap spend with gbrain doctor --remediate --yes --include-repairs --max-usd <n>).');
   }
   if (results.some(r => r.stopped)) setCliExitVerdict(1);
 }

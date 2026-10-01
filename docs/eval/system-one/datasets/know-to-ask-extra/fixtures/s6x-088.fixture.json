@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-088",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "projects/support-rotation",
+      "content": "---\ntitle: Support Rotation\ntype: project\nsummary: \"Support Rotation: Engineers take one week of support each per month, and weekends go to an on-call pager.\"\n---\n\nSupport Rotation: Engineers take one week of support each per month, and weekends go to an on-call pager.\n"
+    },
+    {
+      "slug": "people/kofi-yarrcombe",
+      "content": "---\ntitle: Kofi Yarrcombe\ntype: person\naliases: [kofi]\nsummary: \"Kofi Yarrcombe is the product lead at Nimbusreach.\"\n---\n\nKofi Yarrcombe is the product lead at Nimbusreach.\n"
+    },
+    {
+      "slug": "people/solveig-orringrove",
+      "content": "---\ntitle: Solveig Orringrove\ntype: person\nsummary: \"Solveig Orringrove is the procurement lead at Marblegate.\"\n---\n\nSolveig Orringrove is the procurement lead at Marblegate.\n"
+    },
+    {
+      "slug": "people/elodie-gristhorpe",
+      "content": "---\ntitle: Elodie Gristhorpe\ntype: person\nsummary: \"Elodie Gristhorpe is the operations director at Saffronvane.\"\n---\n\nElodie Gristhorpe is the operations director at Saffronvane. Elodie asked for a longer pilot before signing, ideally a full quarter.\n"
+    },
+    {
+      "slug": "companies/pylonmoor",
+      "content": "---\ntitle: Pylonmoor\ntype: company\nsummary: \"A company we met once at a trade show.\"\n---\n\nA company we met once at a trade show.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "how did we end up splitting that support rotation?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Happy to help."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Translate into Spanish: 'Yarrcombe will join the meeting at noon.'"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Happy to help."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "how do you pronounce the name solveig? it's for a character in my short story"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "What did Gristhorpe want changed in the pilot?"
+    }
+  ]
+}

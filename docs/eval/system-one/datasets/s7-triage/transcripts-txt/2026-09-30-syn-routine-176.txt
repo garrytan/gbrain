@@ -1,0 +1,236 @@
+[user]
+My pre-commit check is failing on import order in `src/reporting/export_csv.py`. The message is a little vague. Can you help me interpret it?
+
+[assistant]
+Sure. Paste the complete linter output, plus the import section from `src/reporting/export_csv.py`. The exact rule code and the current grouping will show whether it wants standard-library imports first, third-party imports next, and local imports last.
+
+[user]
+Here’s the output:
+
+```text
+$ pre-commit run --files src/reporting/export_csv.py
+ruff.....................................................................Failed
+- hook id: ruff
+- exit code: 1
+
+src/reporting/export_csv.py:1:1: I001 [*] Import block is un-sorted or un-formatted
+Found 1 error.
+[*] 1 fixable with the `--fix` option.
+```
+
+The top of the file is:
+
+```python
+from reporting.formatters import format_row
+import csv
+from pathlib import Path
+
+import pandas as pd
+
+from reporting.schema import ExportRow
+```
+
+[assistant]
+`I001` is Ruff’s import-sorting rule. In this file, the standard-library imports should come first and be alphabetized, followed by the blank line, then the third-party import, another blank line, and the local project imports.
+
+The expected shape is:
+
+```python
+import csv
+from pathlib import Path
+
+import pandas as pd
+
+from reporting.formatters import format_row
+from reporting.schema import ExportRow
+```
+
+Since Ruff says the issue is fixable, you can let the formatter apply the change rather than editing it manually.
+
+[user]
+Should I run Ruff directly, or should I use the project’s pre-commit command? I want to avoid fixing only this file and then having the hook report something different.
+
+[assistant]
+Use the project’s normal formatting path if one is documented. For this single file, a typical command is:
+
+```bash
+ruff check --fix src/reporting/export_csv.py
+```
+
+Then run the same pre-commit command again:
+
+```bash
+pre-commit run --files src/reporting/export_csv.py
+```
+
+That gives Ruff permission to reorder the imports and lets the hook perform its usual check afterward. If the repository has a formatter wrapper such as `make format`, `just format`, or a documented `uv` command, use that instead of inventing a separate workflow.
+
+[user]
+There is a `pyproject.toml` entry that looks relevant:
+
+```toml
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+
+[tool.ruff.format]
+quote-style = "double"
+```
+
+The README only says to run `pre-commit run --all-files` before submitting changes. Is `ruff check --fix` still appropriate?
+
+[assistant]
+Yes. The `I` selection enables import sorting, and `ruff check --fix` handles that rule. The `[tool.ruff.format]` section controls Ruff’s formatter, but it does not change the basic import-sort fix.
+
+You can make the smallest targeted change with:
+
+```bash
+ruff check --fix src/reporting/export_csv.py
+git diff -- src/reporting/export_csv.py
+pre-commit run --files src/reporting/export_csv.py
+```
+
+The `git diff` step is just to inspect what changed. If the hook passes, you can stop there for this file; the README’s `--all-files` command is the broader repository check.
+
+[user]
+I ran the first command. Here’s the output:
+
+```text
+$ ruff check --fix src/reporting/export_csv.py
+Found 1 error (1 fixed, 0 remaining).
+```
+
+The diff is:
+
+```diff
+-from reporting.formatters import format_row
+ import csv
+ from pathlib import Path
+ 
+ import pandas as pd
+ 
++from reporting.formatters import format_row
+ from reporting.schema import ExportRow
+```
+
+That looks like exactly the import move you described.
+
+[assistant]
+Yes, that diff is the expected import-only change. Ruff moved the local `reporting.formatters` import below the standard-library and third-party groups, and it preserved the alphabetical order within the local group.
+
+Now run the hook against the file:
+
+```bash
+pre-commit run --files src/reporting/export_csv.py
+```
+
+If that passes, the linter complaint is resolved. You can also run the repository-wide command later if you want to check for unrelated files, but it is not required to verify this specific fix.
+
+[user]
+The targeted hook now passes:
+
+```text
+$ pre-commit run --files src/reporting/export_csv.py
+ruff.....................................................................Passed
+```
+
+Would `ruff format` have done the same thing, or is that a separate operation?
+
+[assistantistant]
+Ruff has two related but separate operations:
+
+```bash
+ruff check --fix src/reporting/export_csv.py
+```
+
+This applies lint fixes, including import sorting through rule `I001`.
+
+```bash
+ruff format src/reporting/export_csv.py
+```
+
+This applies Ruff’s code formatter, such as line wrapping, indentation, and quote normalization according to `[tool.ruff.format]`.
+
+Depending on the Ruff version and project setup, formatting may also reorder imports when the formatter is integrated with the configured toolchain, but `ruff check --fix` is the direct and unambiguous command for this `I001` diagnostic. The passing pre-commit result confirms the file is currently acceptable to the configured hook.
+
+[user]
+I noticed the README uses `pre-commit run --all-files`, while I only checked this file. Is there any reason to run the broader command now?
+
+[assistant]
+Only if you want a repository-wide verification. The targeted command confirms that this file passes, while `--all-files` checks every tracked file and may reveal existing issues elsewhere.
+
+A reasonable sequence is:
+
+```bash
+pre-commit run --all-files
+```
+
+If it reports failures in other files, inspect those separately. If it reports only this file or passes completely, there is no additional import-order action needed here. The targeted fix itself is already complete.
+
+[user]
+I ran it from the repository root. Most hooks passed, but one output is confusing:
+
+```text
+$ pre-commit run --all-files
+ruff.....................................................................Passed
+ruff-format..............................................................Failed
+- hook id: ruff-format
+- files were modified by this hook
+
+reformatted src/reporting/export_csv.py
+
+All done! ✨
+1 file reformatted, 47 files left unchanged.
+```
+
+Why did the format hook modify the file after the lint hook passed?
+
+[assistant]
+The two hooks perform different jobs. The lint hook accepted the import ordering, while `ruff-format` found a formatting difference elsewhere in the file and rewrote it. This can happen when the file had formatting that the formatter normalizes but the lint rules do not flag.
+
+Inspect the new diff:
+
+```bash
+git diff -- src/reporting/export_csv.py
+```
+
+Then rerun the repository checks:
+
+```bash
+pre-commit run --all-files
+```
+
+The second run should see the formatter’s changes already present. If the diff is limited to ordinary formatting, such as quote style or line wrapping, it is the expected result of the configured hook.
+
+[user]
+The new diff is still small:
+
+```diff
+ def write_rows(rows: list[ExportRow], output_path: Path) -> None:
+-    with output_path.open("w", newline="") as stream:
++    with output_path.open("w", newline="") as stream:
+         writer = csv.writer(stream)
+         writer.writerows(format_row(row) for row in rows)
+```
+
+It only changes the line ending shown by the diff viewer, and the file command reports:
+
+```text
+src/reporting/export_csv.py: Python script, ASCII text executable
+```
+
+The second all-files run passes. Is this finished?
+
+[assistant]
+Yes. The import-order change was applied by `ruff check --fix`, the formatter then normalized the file, and the second repository-wide run passed. The apparent line-ending-only diff may be how the viewer displays whitespace; since `pre-commit run --all-files` now passes, there is no remaining hook failure for this file.
+
+You can leave the final file state as-is and use the passing check as verification:
+
+```text
+ruff.....................................................................Passed
+ruff-format..............................................................Passed
+```
+
+No further command is needed for this routine import-order fix.

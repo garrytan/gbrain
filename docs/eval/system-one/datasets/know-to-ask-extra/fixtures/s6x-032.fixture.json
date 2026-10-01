@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-032",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "projects/support-rotation",
+      "content": "---\ntitle: Support Rotation\ntype: project\nsummary: \"Support Rotation: Engineers take one week of support each per month, and weekends go to an on-call pager.\"\n---\n\nSupport Rotation: Engineers take one week of support each per month, and weekends go to an on-call pager.\n"
+    },
+    {
+      "slug": "people/lucan-tulvwaite",
+      "content": "---\ntitle: Lucan Tulvwaite\ntype: person\naliases: [lucan]\nsummary: \"Lucan Tulvwaite is the finance lead at Solacevane.\"\n---\n\nLucan Tulvwaite is the finance lead at Solacevane.\n"
+    },
+    {
+      "slug": "people/ines-wyrgrove",
+      "content": "---\ntitle: Ines Wyrgrove\ntype: person\nsummary: \"Ines Wyrgrove is the head of sales at Russetvane.\"\n---\n\nInes Wyrgrove is the head of sales at Russetvane. Ines objected to the auto-renewal clause in the draft contract.\n"
+    },
+    {
+      "slug": "people/mireille-gristhorpe",
+      "content": "---\ntitle: Mireille Gristhorpe\ntype: person\naliases: [mireille]\nsummary: \"A contact from a conference last spring.\"\n---\n\nA contact from a conference last spring.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "how did we end up splitting that support rotation?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "what's a good agenda for a weekly one-on-one?"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Happy to help."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "Tulvwaite mentioned the pomodoro technique on a call. How does the pomodoro technique work?"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Here is what I have."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "Prep me for the Wyrgrove call, especially the contract."
+    }
+  ]
+}

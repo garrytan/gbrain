@@ -54,6 +54,11 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
+# Self-test seam: GBRAIN_GUARD_ROOT points at a fixture tree with its own src/.
+# The scan covers all of src/, including refactor wave 1's module dirs
+# (src/commands/serve-http-*.ts, src/core/engine-sql/, src/commands/sync/,
+# src/commands/doctor/checks/); each has a known-bad fixture.
+if [ -n "${GBRAIN_GUARD_ROOT:-}" ]; then cd "$GBRAIN_GUARD_ROOT"; fi
 
 FOUND=0
 
@@ -120,13 +125,13 @@ if [ -n "$FILTERED" ]; then
   while IFS= read -r LINE; do
     [ -z "$LINE" ] && continue
     FILE=$(echo "$LINE" | cut -d: -f1)
-    LINENO=$(echo "$LINE" | cut -d: -f2)
+    SITE_LINE=$(echo "$LINE" | cut -d: -f2)
     # Look in surrounding 20 lines
-    START=$((LINENO - 10))
+    START=$((SITE_LINE - 10))
     [ "$START" -lt 1 ] && START=1
-    END=$((LINENO + 5))
+    END=$((SITE_LINE + 5))
     CONTEXT=$(sed -n "${START},${END}p" "$FILE" 2>/dev/null || true)
-    if ! echo "$CONTEXT" | grep -q 'redactSourceConfig'; then
+    if ! grep -q 'redactSourceConfig' <<< "$CONTEXT"; then
       echo "POTENTIAL_LEAK: $LINE"
       echo "  Context lacks redactSourceConfig — verify webhook_secret cannot be serialized."
       FOUND=1

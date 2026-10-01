@@ -16,6 +16,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runPhaseProposeTakes, type ProposeTakesExtractor } from '../src/core/cycle/propose-takes.ts';
 import { runTakes } from '../src/commands/takes.ts';
 import { parseTakesFence } from '../src/core/takes-fence.ts';
+import { serializePageToMarkdown } from '../src/core/markdown.ts';
 import type { OperationContext } from '../src/core/operations.ts';
 
 let engine: PGLiteEngine;
@@ -59,7 +60,12 @@ beforeAll(async () => {
     compiled_truth: 'I bet drain-example doubles revenue within 12 months. They ship fast.',
   });
   mkdirSync(join(repo, 'companies'), { recursive: true });
-  writeFileSync(join(repo, `${SLUG}.md`), `# Drain Example\n\nprose body\n`, 'utf-8');
+  // Accept now promotes via a coordinated takes_add mutation, which compares
+  // the on-disk file against a canonical re-render of the DB snapshot before
+  // touching it — an arbitrary hand-written body reads as an "uncoordinated
+  // local edit". Write the fixture file to match what putPage recorded.
+  const snapshot = (await engine.readPageSnapshot(SLUG))!;
+  writeFileSync(join(repo, `${SLUG}.md`), serializePageToMarkdown(snapshot.page, snapshot.tags), 'utf-8');
 });
 
 afterAll(async () => {

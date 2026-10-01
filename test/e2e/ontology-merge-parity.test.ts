@@ -276,4 +276,19 @@ describeBoth('Engine parity — mergeOntologyFact matrix (D7)', () => {
       expect(all.filter((c) => c.entity_slug === ENTITY)).toEqual([]);
     }
   });
+  test('backdated observation of the current value is an earlier stint, not an expired corroboration', async () => {
+    const STINT = 'people/onto-stint';
+    const at = async (eng: BrainEngine, asof: string) =>
+      (await eng.getOntology(STINT, { sourceId: 'default', asof })).find(r => r.dimension === 'employer')?.value ?? null;
+    for (const eng of [pgEngine, pgliteEngine]) {
+      await eng.mergeOntologyFact({ entitySlug: STINT, dimension: 'employer', value: 'startup-1', source: 'notes/b', validFrom: '2023-01-01T00:00:00.000Z' });
+      await eng.mergeOntologyFact({ entitySlug: STINT, dimension: 'employer', value: 'startup-0', source: 'notes/c', validFrom: '2024-01-01T00:00:00.000Z' });
+      const late = await eng.mergeOntologyFact({ entitySlug: STINT, dimension: 'employer', value: 'startup-0', source: 'notes/a', validFrom: '2022-01-01T00:00:00.000Z' });
+      expect(late.action).toBe('inserted');
+      expect(await at(eng, '2022-06-01T00:00:00Z')).toBe('startup-0');
+      expect(await at(eng, '2023-06-01T00:00:00Z')).toBe('startup-1');
+      expect(await at(eng, '2024-06-01T00:00:00Z')).toBe('startup-0');
+    }
+    expect(await dumpFacts(pgEngine, STINT)).toEqual(await dumpFacts(pgliteEngine, STINT));
+  });
 });

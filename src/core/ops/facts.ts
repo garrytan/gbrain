@@ -1,4 +1,5 @@
 import { WRITE_REQUEST_PARAM } from '../persistence/params.ts';
+import { deliverEvidence, effectivePlan, resolveEvidencePlan, type DeliveryMeta, type EvidencePlan } from '../search/evidence-delivery.ts';
 import { randomUUID } from 'node:crypto';
 import { readHolders } from './context.ts';
 /**
@@ -15,7 +16,7 @@ import { readHolders } from './context.ts';
  * from '../operations.ts' here (cycle).
  */
 
-import type { Operation } from './contract.ts';
+import type { Operation, OperationContext } from './contract.ts';
 import { OperationError, verbError } from './contract.ts';
 import { assertExplicitSourceLive, federatedSearchScope, parseSourceIdParam, sourceScopeOpts, stampEvidenceSafe } from './context.ts';
 import { markKeywordHits } from '../search/evidence.ts';
@@ -30,6 +31,7 @@ import { ENTITY_HINTS_CAP } from '../facts/extract.ts';
 import { parseTtlShorthand } from '../facts/ttl-parse.ts';
 import { MEMORY_VERBS_VERSION } from '../verbs.ts';
 import type { SearchResult } from '../types.ts';
+import type { BrainEngine, FactRow } from '../engine.ts';
 import { AUDIT_ROW_SOURCES } from '../facts/audit-sources.ts';
 
 // ============================================================
@@ -176,12 +178,31 @@ const extract_facts: Operation = {
   },
 };
 
+/** One arm of recall's budget_packing accounting. */
+function packingArm<T>(candidates: T[], kept: T[], cost: (item: T) => number) {
+  return { candidates: candidates.length, kept: kept.length, dropped: candidates.length - kept.length, used: kept.reduce((sum, r) => sum + cost(r), 0) };
+}
+
+/**
+ * recall's evidence plan: budget_tokens budgets the delivered blocks before
+ * recall's own packing. Without return_unit, budget_tokens or budget_policy
+ * keeps legacy chunk packing (facts pack first, so a whole session would
+ * otherwise lose to them).
+ */
+function recallEvidencePlan(ctx: OperationContext, p: Record<string, unknown>): Promise<EvidencePlan | null> {
+  return resolveEvidencePlan(ctx.engine, {
+    legacyBudget: p.budget_policy !== undefined || (typeof p.budget_tokens === 'number' && Number.isFinite(p.budget_tokens) && p.budget_tokens > 0),
+    remote: ctx.remote, viaSubagent: ctx.viaSubagent, returnUnit: p.return_unit, returnWindow: p.return_window,
+    budget: p.budget_tokens, snippetChars: undefined, snippetCap: 0, op: 'recall',
+  });
+}
+
 const recall: Operation = {
   name: 'recall',
   description:
     'MEMORY VERB (v1): retrieve saved facts/snippets — the protocol read verb. Filters hot-memory facts by entity / since / session_id; pass `query` to ALSO run hybrid search over pages (results[] arm); pass `budget_tokens` for server-side packing (response reports budget_used + dropped_count — never trims client-side). Remote callers see visibility=world facts only. Routing: for ONE known person/company/project card use `entity` (zero LLM); for broad questions needing reasoning use `synthesize` (expensive). Branch on structured fields (status/kind/evidence), never on prose. Every response carries protocol_version.',
   params: {
-    entity: { type: 'string', description: 'Entity slug (canonical). Returns facts about this entity newest first.' },
+    entity: { type: 'string', description: 'Entity slug (canonical). Returns facts about this entity newest first, each labelled with its source_id. Across several granted sources, same-slug entities that no entity-identity group links are different entities: facts comes back empty and ambiguous_entity names each (source_id, entity_slug); pass source_id to read one.' },
     query: { type: 'string', description: 'MEMORY_VERBS v1: free-text retrieval over pages (hybrid search arm). Response adds results[] (slug, title, chunk, evidence, create_safety, provenance). Combinable with entity (both arms run). Degrades to keyword-only search when no embedding provider is configured (search_degraded notes it; never an error).' },
     budget_tokens: { type: 'number', description: 'MEMORY_VERBS v1: server-side token budget (char/4 estimate). Facts pack first, then results. Response adds budget_tokens, budget_used, dropped_count.' },
     budget_policy: { type: 'string', enum: ['facts_first', 'query_first'], description: 'Optional packing order. facts_first preserves legacy behavior (default). query_first packs the ranked page prefix before facts only with a nonblank query and positive finite budget; a positive budget below one token keeps neither arm. No query or inactive budget preserves legacy behavior. Neither policy skips oversized items or truncates. Supplying this option adds budget_packing accounting. Keep fact-focused/entity-filtered questions on facts_first.' },
@@ -193,6 +214,8 @@ const recall: Operation = {
     limit: { type: 'number', description: 'Per-arm cap: max fact rows AND max search results. Default 50, cap 100.' },
     grep: { type: 'string', description: 'Substring filter on fact text (case-insensitive). Applied in SQL before the limit, so matches on high-cardinality entities are found even outside the newest-N window.' },
     include_pending: { type: 'boolean', description: 'v0.32: when true, response includes pending_consolidation_count (facts not yet promoted to takes by the dream-cycle consolidate phase). One round trip; backward-compatible (field omitted when false).' },
+    return_unit: { type: 'string', enum: ['chunk', 'window', 'section', 'page', 'auto'], description: "Evidence unit for the results[] arm (needs `query`; default config search.return_unit = 'auto'). 'window' adds neighbor chunks, 'section' the enclosing section or conversation rounds, 'page' the whole page/session (best for multi-session questions), 'auto' the whole page for conversation pages and the ranked chunk unchanged for everything else (budget_tokens or budget_policy without return_unit keeps chunk packing). Non-chunk units return one result per page with `delivered` metadata and a top-level `delivery` block; the evidence is budgeted by budget_tokens (default 6000, auto 24000) and then packed by recall's usual rules." },
+    return_window: { type: 'number', description: "Neighbor chunks on each side for return_unit 'window' (integer 1-3, default 1)." },
   },
   scope: 'read',
   verb: true,
@@ -271,6 +294,7 @@ const recall: Operation = {
     const byEventTime = (rec: Record<string, unknown>) => rec.valid_from ?? rec.created_at;
 
     let rows: FactRows = [];
+    let ambiguousEntity: EntityCandidate[] | null = null;
 
     // `since` is parsed once, up front, and a value that does not parse is
     // rejected instead of silently widening the window: a caller that asked
@@ -317,29 +341,22 @@ const recall: Operation = {
       // in this session) since T" is a question about when the underlying
       // events occurred, not about when a batch extraction wrote the rows.
       const { resolveEntitySlug } = await import('../entities/resolve.ts');
-      rows = mergeNewest(
-        await Promise.all(factSources.map(async (src) => {
-          const entitySlug = entityParam
-            ? ((await resolveEntitySlug(ctx.engine, src, entityParam)) ?? entityParam)
-            : undefined;
-          return ctx.engine.listFactsSince(src, since, {
-            ...listOpts,
-            eventTime: true,
-            entitySlug,
-            sessionId: sessionParam ?? undefined,
-          });
-        })),
-        byEventTime,
-      );
+      const lists = await Promise.all(factSources.map(async (src) => {
+        const entitySlug = entityParam
+          ? ((await resolveEntitySlug(ctx.engine, src, entityParam)) ?? entityParam)
+          : undefined;
+        return ctx.engine.listFactsSince(src, since, { ...listOpts, eventTime: true, entitySlug, sessionId: sessionParam ?? undefined });
+      }));
+      ambiguousEntity = entityParam ? await unlinkedNamesakes(ctx.engine, lists) : null;
+      rows = ambiguousEntity ? [] : mergeNewest(lists, byEventTime);
     } else if (entityParam) {
       const { resolveEntitySlug } = await import('../entities/resolve.ts');
-      rows = mergeNewest(
-        await Promise.all(factSources.map(async (src) => {
-          const slug = (await resolveEntitySlug(ctx.engine, src, entityParam)) ?? entityParam;
-          return ctx.engine.listFactsByEntity(src, slug, listOpts);
-        })),
-        (rec) => rec.valid_from ?? rec.created_at,
-      );
+      const lists = await Promise.all(factSources.map(async (src) => {
+        const slug = (await resolveEntitySlug(ctx.engine, src, entityParam)) ?? entityParam;
+        return ctx.engine.listFactsByEntity(src, slug, listOpts);
+      }));
+      ambiguousEntity = await unlinkedNamesakes(ctx.engine, lists);
+      rows = ambiguousEntity ? [] : mergeNewest(lists, (rec) => rec.valid_from ?? rec.created_at);
     } else if (sessionParam) {
       rows = mergeNewest(
         await Promise.all(factSources.map(src =>
@@ -404,6 +421,8 @@ const recall: Operation = {
 
     let searchResults: SearchResult[] = [];
     let searchDegraded: string | undefined;
+    let delivery: DeliveryMeta | undefined;
+    const evidencePlan = queryText ? await recallEvidencePlan(ctx, p) : null;
     if (queryText) {
       // #3242 parity (#4707): the page-search arm widens an unqualified
       // no-grant caller across the transport-computed federated set, exactly
@@ -434,6 +453,8 @@ const recall: Operation = {
         });
       }
       bumpLastRetrievedAt(ctx.engine, searchResults.map(r => r.page_id));
+      const applied = effectivePlan(evidencePlan, searchResults);
+      if (applied) ({ results: searchResults, delivery } = await deliverEvidence(ctx.engine, searchResults, applied, { ...searchScope, excludePrivate, requireSafeChunks: ctx.remote !== false }));
     }
 
     let packedFacts = rows;
@@ -476,18 +497,8 @@ const recall: Operation = {
                 : rows.length + searchResults.length === 0 ? 'no_candidates'
                   : packedFacts.length + packedResults.length === 0 ? 'first_items_exceed_budget'
                     : 'packed',
-          facts: {
-            candidates: rows.length,
-            kept: packedFacts.length,
-            dropped: rows.length - packedFacts.length,
-            used: packedFacts.reduce((sum, r) => sum + estimateTokens(r.fact), 0),
-          },
-          results: {
-            candidates: searchResults.length,
-            kept: packedResults.length,
-            dropped: searchResults.length - packedResults.length,
-            used: packedResults.reduce((sum, r) => sum + resultTokens(r), 0),
-          },
+          facts: packingArm(rows, packedFacts, r => estimateTokens(r.fact)),
+          results: packingArm(searchResults, packedResults, resultTokens),
         }
       : undefined;
 
@@ -497,6 +508,7 @@ const recall: Operation = {
         fact: r.fact,
         kind: r.kind,
         entity_slug: r.entity_slug,
+        source_id: r.source_id,
         visibility: r.visibility,
         // v0.31.2: notability surfaced to recall consumers (CLI, MCP, admin).
         // Pre-v46 brains return 'medium' via the row mapper's fallback so the
@@ -523,6 +535,7 @@ const recall: Operation = {
         provenance: r.source,
       })),
       total: packedFacts.length,
+      ...(ambiguousEntity ? { ambiguous_entity: { candidates: ambiguousEntity, suggestion: AMBIGUOUS_ENTITY_SUGGESTION } } : {}),
       ...(pending_consolidation_count !== undefined ? { pending_consolidation_count } : {}),
       // MEMORY_VERBS v1 envelope (G1B superset — additive on every response).
       protocol_version: MEMORY_VERBS_VERSION,
@@ -535,6 +548,7 @@ const recall: Operation = {
               evidence: r.evidence,
               create_safety: r.create_safety,
               provenance: r.slug,
+              ...(r.delivered ? { delivered: r.delivered } : {}),
             })),
             ...(searchDegraded ? { search_degraded: searchDegraded } : {}),
           }
@@ -543,9 +557,30 @@ const recall: Operation = {
         ? { budget_tokens: budgetTokens, budget_used: budgetUsed, dropped_count: droppedCount }
         : {}),
       ...(budgetPacking ? { budget_packing: budgetPacking } : {}),
+      ...(delivery ? { delivery } : {}),
     };
   },
 };
+
+type EntityCandidate = { source_id: string; entity_slug: string };
+const AMBIGUOUS_ENTITY_SUGGESTION = 'These are different entities in different sources. Pass source_id to read one, or link them with entity_identity_link if they are the same.';
+
+/**
+ * The identity key is (source_id, slug): an entity name resolved in several
+ * granted sources names different entities unless an entity-identity group
+ * links their pages. Merging them would hand the caller a stranger's facts,
+ * so federated recall refuses unlinked namesakes and names the candidates.
+ * Returns null when the per-source fact lists are one entity.
+ */
+async function unlinkedNamesakes(engine: BrainEngine, lists: FactRow[][]): Promise<EntityCandidate[] | null> {
+  const candidates = [...new Map(lists.flat().map((r): [string, EntityCandidate] =>
+    [`${r.source_id}:${r.entity_slug}`, { source_id: r.source_id, entity_slug: r.entity_slug as string }])).values()];
+  if (candidates.length < 2) return null;
+  const { identityIdsForPages } = await import('../entity-identity.ts');
+  const ids = await identityIdsForPages(engine, candidates.map(c => ({ sourceId: c.source_id, slug: c.entity_slug })));
+  const groups = new Set(candidates.map(c => ids.get(`${c.source_id}:${c.entity_slug}`) ?? null));
+  return groups.size === 1 && !groups.has(null) ? null : candidates;
+}
 
 /** Parse an `entities` param (comma-string or array) to a trimmed name list. */
 function parseEntityList(v: unknown): string[] {

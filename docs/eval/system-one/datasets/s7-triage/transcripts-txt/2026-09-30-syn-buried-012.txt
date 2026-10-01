@@ -1,0 +1,217 @@
+[user]
+I’m preparing a small reference sheet for the fernpost project. Can you convert these temperatures from Celsius to Fahrenheit: -10°C, 0°C, 18°C, 23.5°C, and 37°C?
+
+[assistant]
+Using °F = (°C × 9/5) + 32:
+
+```text
+-10°C  = 14°F
+  0°C  = 32°F
+ 18°C  = 64.4°F
+ 23.5°C = 74.3°F
+ 37°C  = 98.6°F
+```
+
+For a compact reference sheet, you could round 64.4°F and 74.3°F to the nearest whole degree: 64°F and 74°F.
+
+[user]
+Please also convert these Fahrenheit temperatures to Celsius: 14°F, 32°F, 68°F, 77°F, and 104°F. Show the formula and keep one decimal place where needed.
+
+[assistant]
+Use °C = (°F − 32) × 5/9:
+
+```text
+14°F  = (14 − 32) × 5/9  = -10.0°C
+32°F  = (32 − 32) × 5/9  =   0.0°C
+68°F  = (68 − 32) × 5/9  =  20.0°C
+77°F  = (77 − 32) × 5/9  =  25.0°C
+104°F = (104 − 32) × 5/9  =  40.0°C
+```
+
+[user]
+Now convert these distances from kilometers to miles: 1, 5, 10, 42.195, and 100 km. Use 1 km = 0.621371 miles and give results to three decimal places.
+
+[assistant]
+Applying miles = kilometers × 0.621371:
+
+```text
+1 km      = 0.621 miles
+5 km      = 3.107 miles
+10 km     = 6.214 miles
+42.195 km = 26.219 miles
+100 km    = 62.137 miles
+```
+
+The unrounded value for 42.195 km is 26.218757345 miles, which rounds to 26.219 miles.
+
+[user]
+Can you convert 0.5, 2, 3.1, 10, and 26.2 miles to kilometers? Use the reciprocal conversion based on the same factor, and give three decimal places.
+
+[assistant]
+Using kilometers = miles ÷ 0.621371:
+
+```text
+0.5 miles  = 0.805 km
+2 miles     = 3.219 km
+3.1 miles   = 4.989 km
+10 miles    = 16.093 km
+26.2 miles  = 42.164 km
+```
+
+These use the reciprocal of 0.621371, approximately 1.609347 km per mile.
+
+[user]
+I’ve noticed I often start work by over-organizing the reference material instead of doing the first useful calculation. With fernpost, Saoirse Moradi keeps making elaborate templates and then feels stuck when a simple table would do. I want to change that pattern: make one calculation first, then decide what formatting is actually needed. I also tend to interpret a small delay as proof that the whole task is going badly, which I’d like to catch and name rather than follow.
+
+[assistant]
+That’s a concrete pattern to watch for: preparation expands before the task has produced a useful result, and a minor delay gets treated as a larger verdict. For fernpost, a simple rule could be: calculate one item, record it in a plain table, and only then choose headings, styling, or automation. When you notice the “this is going badly” thought, label it as a delay interpretation and check the next observable action instead. We can apply that approach here by keeping the remaining conversions compact and calculation-first.
+
+[user]
+Yes, let’s do that. I need a mixed table next: convert 5°C, 20°C, and 30°C to Fahrenheit, and convert 1, 10, and 50 miles to kilometers. Keep the two conversion types clearly separated.
+
+[assistant]
+Here’s a calculation-first table with the two conversion types separated.
+
+**Celsius to Fahrenheit**  
+Formula: °F = (°C × 9/5) + 32
+
+```text
+5°C  = 41.0°F
+20°C = 68.0°F
+30°C = 86.0°F
+```
+
+**Miles to kilometers**  
+Using the reciprocal of 1 km = 0.621371 miles: km = miles ÷ 0.621371
+
+```text
+1 mile  = 1.609 km
+10 miles = 16.093 km
+50 miles = 80.467 km
+```
+
+[user]
+For the final entries, convert 15°C and 100 miles. Use the same formulas and precision as above.
+
+[assistant]
+Using the same formulas and rounding to three decimal places for distance:
+
+**Celsius to Fahrenheit**
+
+```text
+15°C = (15 × 9/5) + 32 = 59.0°F
+```
+
+**Miles to kilometers**
+
+```text
+100 miles = 100 ÷ 0.621371 = 160.934 km
+```
+
+[user]
+Can you combine every conversion we’ve done into one clean list, preserving the original values and showing the converted values with units?
+
+[assistant]
+Here is the complete list, grouped by conversion direction.
+
+**Celsius to Fahrenheit**
+
+```text
+-10°C  → 14.0°F
+  0°C  → 32.0°F
+ 18°C  → 64.4°F
+ 23.5°C → 74.3°F
+ 37°C  → 98.6°F
+  5°C  → 41.0°F
+ 20°C  → 68.0°F
+ 30°C  → 86.0°F
+ 15°C  → 59.0°F
+```
+
+**Fahrenheit to Celsius**
+
+```text
+14°F  → -10.0°C
+32°F  →   0.0°C
+68°F  →  20.0°C
+77°F  →  25.0°C
+104°F →  40.0°C
+```
+
+**Kilometers to miles**
+
+```text
+1 km      → 0.621 mi
+5 km      → 3.107 mi
+10 km     → 6.214 mi
+42.195 km → 26.219 mi
+100 km    → 62.137 mi
+```
+
+**Miles to kilometers**
+
+```text
+0.5 mi → 0.805 km
+2 mi   → 3.219 km
+3.1 mi → 4.989 km
+10 mi  → 16.093 km
+26.2 mi → 42.164 km
+1 mi   → 1.609 km
+10 mi  → 16.093 km
+50 mi  → 80.467 km
+100 mi → 160.934 km
+```
+
+[user]
+One correction: in the combined list, please keep 15°C and 100 miles as the final entries in their respective sections, and preserve the order in which each section’s values were originally provided.
+
+[assistant]
+Understood. I’ll preserve the original order within each section and keep the later additions, 15°C and 100 miles, as the final entries in their respective sections.
+
+**Celsius to Fahrenheit**
+
+```text
+-10°C  → 14.0°F
+  0°C  → 32.0°F
+ 18°C  → 64.4°F
+ 23.5°C → 74.3°F
+ 37°C  → 98.6°F
+  5°C  → 41.0°F
+ 20°C  → 68.0°F
+ 30°C  → 86.0°F
+ 15°C  → 59.0°F
+```
+
+**Fahrenheit to Celsius**
+
+```text
+14°F  → -10.0°C
+32°F  →   0.0°C
+68°F  →  20.0°C
+77°F  →  25.0°C
+104°F →  40.0°C
+```
+
+**Kilometers to miles**
+
+```text
+1 km      → 0.621 mi
+5 km      → 3.107 mi
+10 km     → 6.214 mi
+42.195 km → 26.219 mi
+100 km    → 62.137 mi
+```
+
+**Miles to kilometers**
+
+```text
+0.5 mi → 0.805 km
+2 mi   → 3.219 km
+3.1 mi → 4.989 km
+10 mi  → 16.093 km
+26.2 mi → 42.164 km
+1 mi   → 1.609 km
+10 mi  → 16.093 km
+50 mi  → 80.467 km
+100 mi → 160.934 km
+```

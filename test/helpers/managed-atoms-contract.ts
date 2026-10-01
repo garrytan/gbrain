@@ -22,7 +22,7 @@ import { registerBuiltinHandlers } from '../../src/commands/jobs.ts';
 import type { MinionJobContext } from '../../src/core/minions/types.ts';
 import { withEnv } from './with-env.ts';
 
-export const atomContractCases = ['publication', 'zero_yield', 'revision', 'removal', 'deferred', 'unavailable', 'source_replaced', 'malformed', 'malformed_retry', 'malformed_retry_failure', 'publication_retry', 'pagination', 'transcript', 'transcript_changed'] as const;
+export const atomContractCases = ['publication', 'zero_yield', 'revision', 'removal', 'deferred', 'unavailable', 'source_replaced', 'malformed', 'malformed_retry', 'malformed_retry_failure', 'malformed_retry_revision', 'publication_retry', 'pagination', 'transcript', 'transcript_changed'] as const;
 type Case = typeof atomContractCases[number];
 
 export async function exerciseManagedAtoms(engine: BrainEngine, scenario: Case): Promise<void> {
@@ -110,6 +110,15 @@ export async function exerciseManagedAtoms(engine: BrainEngine, scenario: Case):
         expect(receipt.request_id).toBeTruthy();
         const [original] = await engine.executeRaw<{ state: string; outcome: unknown }>('SELECT state,outcome FROM persistence_requests WHERE request_id=$1::uuid', [receipt.request_id]);
         if (blockedPath) rmSync(blockedPath);
+        // #5699: a revision-only change (a tag) between the failed batch and
+        // its explicit retry leaves the atom input unchanged.
+        if (scenario === 'malformed_retry_revision') {
+          const before = (await engine.readPageSnapshot(page.slug, { sourceId }))!;
+          await engine.transaction(tx => withCoordinatedWrite(tx, [sourceId], () => tx.addTag(page.slug, 'reviewed', { sourceId })));
+          const after = (await engine.readPageSnapshot(page.slug, { sourceId }))!;
+          expect(after.revision).not.toBe(before.revision);
+          expect(after.page.content_hash).toBe(page.content_hash);
+        }
         await disposePersistenceConsumer(engine);
         const worker = new MinionWorker(engine, { queue: 'fixture' });
         await registerBuiltinHandlers(worker, engine, { quiet: true });
@@ -130,7 +139,7 @@ export async function exerciseManagedAtoms(engine: BrainEngine, scenario: Case):
         }
         const retried = await worker.getHandler('extract-atoms-drain')!(job) as Record<string, unknown>;
         expect(retried.model_rerun).toBe(scenario.startsWith('malformed_retry'));
-        const expectedCalls = scenario === 'malformed_retry_failure' ? 3 : scenario === 'malformed_retry' ? 2 : 1;
+        const expectedCalls = scenario === 'malformed_retry_failure' ? 3 : scenario.startsWith('malformed_retry') ? 2 : 1;
         expect(calls).toBe(expectedCalls);
         await disposePersistenceConsumer(engine);
         expect(await worker.getHandler('extract-atoms-drain')!(job)).toMatchObject({ replayed: true, model_rerun: false });
@@ -139,7 +148,7 @@ export async function exerciseManagedAtoms(engine: BrainEngine, scenario: Case):
         expect(await engine.executeRaw("SELECT id FROM pages WHERE source_id=$1 AND type='atom'", [sourceId])).toHaveLength(1);
         const [unchanged] = await engine.executeRaw<{ state: string; outcome: unknown }>('SELECT state,outcome FROM persistence_requests WHERE request_id=$1::uuid', [receipt.request_id]);
         expect(unchanged).toEqual(original);
-        expect(await readState()).toEqual([{ content_hash: page.content_hash!, fail_count: scenario === 'malformed_retry_failure' ? 2 : scenario === 'malformed_retry' ? 1 : 0, tombstoned: true }]);
+        expect(await readState()).toEqual([{ content_hash: page.content_hash!, fail_count: scenario === 'malformed_retry_failure' ? 2 : scenario.startsWith('malformed_retry') ? 1 : 0, tombstoned: true }]);
         expect(await countExtractAtomsBacklog(engine, sourceId)).toBe(0);
         expect(await discoverExtractablePages(engine, sourceId)).toEqual([]);
         return;
@@ -167,8 +176,9 @@ export async function exerciseManagedAtoms(engine: BrainEngine, scenario: Case):
         return;
       }
       if (scenario === 'deferred') {
-        expect(first.status).toBe('warn');
-        expect(first.details?.atoms_extracted).toBe(0);
+        // #5601: an atom batch the owner accepted but has not published is progress, not a failure.
+        expect(first.status).toBe('ok');
+        expect(first.details).toMatchObject({ write_pending: 1, failures: [] });
         expect(first.details?.write_requests).toEqual(expect.arrayContaining([expect.objectContaining({ state: 'queued' })]));
         await disposePersistenceConsumer(engine);
         const pending = await engine.executeRaw('SELECT request_id,state,outcome FROM persistence_requests WHERE source_id=$1 ORDER BY sequence', [sourceId]);

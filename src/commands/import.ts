@@ -34,6 +34,7 @@ import { realpathOrResolve } from '../core/path-confine.ts';
 import { slog } from '../core/console-prefix.ts';
 import { refreshProjectionStatistics } from '../core/search/projection-statistics.ts';
 import { importManagedFile } from '../core/persistence/import-mutations.ts';
+import { acceptedPendingReceipt } from '../core/persistence/accepted-pending.ts';
 import { estimateCostFromChars, lookupEmbeddingPrice } from '../core/embedding-pricing.ts';
 import { getEmbeddingModel } from '../core/ai/gateway.ts';
 
@@ -538,9 +539,6 @@ export async function runImport(
   // See src/core/sort-newest-first.ts for the policy.
   sortNewestFirst(allFiles);
 
-  // Resume from checkpoint if available. v0.33.2: path-based resume —
-  // see src/core/import-checkpoint.ts for the bug-class this fixes
-  // (parallel-import silent-skip and failed-file no-retry).
   const checkpointPath = gbrainPath('import-checkpoint.json');
   const completed = new Set<string>();
   if (company) {
@@ -550,11 +548,10 @@ export async function runImport(
   } else if (!fresh && !managedImport) {
     const cp = loadCheckpoint(checkpointPath, dir);
     if (cp) {
-      for (const p of cp.completedPaths) completed.add(p);
-      info(`Resuming from checkpoint: skipping ${completed.size} already-processed files`);
+      info(`Resuming from checkpoint: re-checking current files via content_hash (${cp.completedPaths.length} previously completed)`);
     }
   }
-  const files = resumeFilter(allFiles, dir, completed);
+  const files = company ? resumeFilter(allFiles, dir, completed) : allFiles;
 
   // Determine actual worker count. Import owns the same per-worker Postgres
   // pools as sync, so it must honor the shared opt-in connection budget too
@@ -643,7 +640,7 @@ export async function runImport(
     // #753/#774: slug + source_path base. When performFullSync syncs a
     // monorepo subdir, slugRoot is the git root so slugs stay git-root-
     // relative (matching the incremental path's git-diff paths). The
-    // checkpoint (`completed`) stays dir-relative — resumeFilter's contract.
+    // checkpoint (`completed`) stays dir-relative.
     const importRelPath = opts.slugRoot ? relative(opts.slugRoot, filePath) : relative(importRoot, filePath);
     // v0.31.2 (D5): per-file slow-path log. Fires only when a single
     // file takes >5s. The user's hang surfaces as one file taking
@@ -706,16 +703,19 @@ export async function runImport(
         if (e !== signal.reason && !(e instanceof Error && e.name === 'AbortError')) throw e;
         return;
       }
-      const msg = e instanceof Error ? e.message : String(e);
-      const { count, sample } = recordImportFailure(errorCounts, errorSamples, msg);
-      if (count <= 5) {
-        console.error(`  Warning: skipped ${relativePath}: ${msg}`);
-      } else if (count === 6) {
-        console.error(`  (suppressing further "${sample.slice(0, 60)}..." errors)`);
+      // #5600: an accepted managed import still publishing is not a failure; the next run resumes its request.
+      if (acceptedPendingReceipt(e)) { skipped++; console.error(`  Pending: ${relativePath} was accepted and is still publishing; rerun to confirm it.`); } else {
+        const msg = e instanceof Error ? e.message : String(e);
+        const { count, sample } = recordImportFailure(errorCounts, errorSamples, msg);
+        if (count <= 5) {
+          console.error(`  Warning: skipped ${relativePath}: ${msg}`);
+        } else if (count === 6) {
+          console.error(`  (suppressing further "${sample.slice(0, 60)}..." errors)`);
+        }
+        errors++;
+        skipped++;
+        failures.push({ path: importRelPath, error: msg });
       }
-      errors++;
-      skipped++;
-      failures.push({ path: importRelPath, error: msg });
     }
     processed++;
     tickProgress();

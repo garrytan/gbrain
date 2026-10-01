@@ -29,14 +29,12 @@ beforeEach(async () => {
 const NOW = Date.parse('2026-05-22T12:00:00.000Z');
 const agoH = (h: number) => new Date(NOW - h * 3600_000).toISOString();
 
-async function seed(id: string, lastFullCycleAt?: string, opts: { local_path?: string | null } = {}): Promise<void> {
-  const config = lastFullCycleAt
-    ? JSON.stringify({ last_full_cycle_at: lastFullCycleAt })
-    : '{}';
+async function seed(id: string, lastFullCycleAt?: string, opts: { local_path?: string | null; syncEnabled?: boolean } = {}): Promise<void> {
+  const config = JSON.stringify({ last_full_cycle_at: lastFullCycleAt, syncEnabled: opts.syncEnabled });
   const localPath = opts.local_path === undefined ? `/tmp/${id}` : opts.local_path;
   await engine.executeRaw(
     `INSERT INTO sources (id, name, local_path, config, archived, created_at)
-     VALUES ($1, $2, $3, $4::jsonb, false, NOW())
+     VALUES ($1, $2, $3, $4::text::jsonb, false, NOW())
      ON CONFLICT (id) DO UPDATE SET local_path = EXCLUDED.local_path, config = EXCLUDED.config`,
     [id, id, localPath, config],
   );
@@ -146,5 +144,21 @@ describe('doctor checkCycleFreshness', () => {
     const result = await checkCycleFreshness(engine, { nowMs: NOW });
     expect(result.status).toBe('ok');
     expect(result.message).toMatch(/No federated sources/);
+  });
+
+  test('sync-disabled sources still report stale maintenance cycles', async () => {
+    await seed('disabled-example', agoH(72), { syncEnabled: false });
+    await seed('enabled-example', agoH(1), { syncEnabled: true });
+    const result = await checkCycleFreshness(engine, { nowMs: NOW });
+    expect(result.status).toBe('fail');
+    expect(result.message).toContain("'disabled-example' last cycled 72h ago");
+    expect(result.message).not.toContain('enabled-example');
+  });
+
+  test('sync-disabled sources with fresh maintenance cycles remain healthy', async () => {
+    await seed('disabled-example', agoH(1), { syncEnabled: false });
+    const result = await checkCycleFreshness(engine, { nowMs: NOW });
+    expect(result.status).toBe('ok');
+    expect(result.message).toBe('All 1 federated source(s) cycled recently');
   });
 });

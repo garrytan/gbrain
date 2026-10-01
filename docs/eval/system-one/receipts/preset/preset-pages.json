@@ -1,0 +1,43 @@
+{
+  "A": {
+    "transcripts_with_pages": {
+      "cat35-high": 6,
+      "cat35-low": 0,
+      "buried": 3,
+      "routine": 1
+    },
+    "pages": {
+      "cat35-high": 13,
+      "cat35-low": 0,
+      "buried": 5,
+      "routine": 2
+    },
+    "unmapped_pages": 0,
+    "routine_pages": [
+      "wiki/originals/ideas/2026-09-30-iana-zone-over-fixed-abbreviation-05fe6b",
+      "wiki/personal/reflections/2026-09-30-dst-scheduling-pacific-europe-india-05fe6b"
+    ]
+  },
+  "B": {
+    "transcripts_with_pages": {
+      "cat35-high": 6,
+      "cat35-low": 1,
+      "buried": 10,
+      "routine": 2
+    },
+    "pages": {
+      "cat35-high": 13,
+      "cat35-low": 1,
+      "buried": 20,
+      "routine": 4
+    },
+    "unmapped_pages": 0,
+    "routine_pages": [
+      "wiki/personal/reflections/2026-08-11-five-dinners-one-chicken-f6de33",
+      "wiki/originals/ideas/2026-09-30-restaurant-bill-split-worksheet-28a800",
+      "wiki/personal/reflections/2026-09-30-service-charge-label-ambiguity-28a800",
+      "wiki/originals/ideas/2026-09-30-cent-remainder-allocation-pattern-1e86fd",
+      "wiki/personal/reflections/2026-09-30-bill-splitting-integer-cents-1e86fd"
+    ]
+  }
+}

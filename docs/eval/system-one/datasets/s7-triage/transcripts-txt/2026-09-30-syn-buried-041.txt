@@ -1,0 +1,786 @@
+[user]
+I have a CSV export from my bank and need to reformat it so my budgeting app will import it. Can you help me figure out what needs changing?
+
+[assistant]
+Yes. Paste the first 10–20 lines of the CSV, including the header, and tell me which budgeting app you’re importing into. Please redact account numbers, names, addresses, and any transaction descriptions you consider sensitive. Also mention whether the file uses commas, semicolons, or another delimiter if you know.
+
+[user]
+The app is Budgetwise. Here are the first lines; I replaced the real descriptions with examples.
+
+"Posted Date","Description","Debit","Credit","Balance","Category"
+"01/03/2026","Grocery Market","54.27","","1,245.83",""
+"01/04/2026","PAYROLL ACME","", "2,850.00","4,095.83","Income"
+"01/05/2026","Coffee, Downtown","6.50","","4,089.33","Dining"
+
+[assistant]
+A few things stand out:
+
+1. The file is comma-delimited and uses double quotes, which is good because descriptions contain commas.
+2. Your amounts contain thousands separators, so they must remain quoted or have the commas removed before importing.
+3. There is an extra space before `"2,850.00"` in the second transaction. A robust parser will usually ignore it, but it is best to remove.
+4. Budgetwise may require one signed amount column rather than separate Debit and Credit columns.
+
+Do you have Budgetwise’s import template or documentation? If not, export a blank sample CSV from Budgetwise, or tell me the exact error shown during import.
+
+[user]
+I exported a blank template. It has these columns:
+
+Date,Payee,Amount,Category,Notes,Account
+2026-01-03,Example Store,-54.27,Groceries,,Checking
+
+[assistant]
+That template gives us the target format:
+
+- `Date`: ISO format, `YYYY-MM-DD`
+- `Payee`: your bank’s `Description`
+- `Amount`: one signed number; debits are negative and credits are positive
+- `Category`: retain the source category when present
+- `Notes`: blank unless you want to preserve extra information
+- `Account`: likely the account name used in Budgetwise, such as `Checking`
+
+Your source maps as follows:
+
+| Source | Budgetwise |
+|---|---|
+| Posted Date | Date |
+| Description | Payee |
+| Debit | Amount, with a minus sign |
+| Credit | Amount, positive |
+| Category | Category |
+| no source column | Notes |
+| no source column | Account |
+
+The balance column should be omitted because the template has no place for it.
+
+[user]
+Can you show me what the converted rows should look like?
+
+[assistant]
+Using `Checking` as the account name, the sample would become:
+
+```csv
+Date,Payee,Amount,Category,Notes,Account
+2026-01-03,Grocery Market,-54.27,,
+Checking
+```
+
+That display accidentally split the first row because the account field was placed on a new line. The correct CSV is:
+
+```csv
+Date,Payee,Amount,Category,Notes,Account
+2026-01-03,Grocery Market,-54.27,,,Checking
+2026-01-04,PAYROLL ACME,2850.00,Income,,Checking
+2026-01-05,"Coffee, Downtown",-6.50,Dining,,Checking
+```
+
+The quotes around `Coffee, Downtown` are required because the payee contains a comma. Depending on Budgetwise, quotes around all text fields are also acceptable.
+
+[user]
+I have about 2,000 rows, so I’d rather automate it. I can run Python locally. The input file is called bank_export.csv, and I want the result saved as budgetwise_import.csv. Can you provide a script that validates the rows too?
+
+[assistant]
+Here is a Python script using only the standard library. It converts the dates and signed amounts, preserves commas safely, checks required fields, and writes a UTF-8 CSV.
+
+```python
+import csv
+from datetime import datetime
+from decimal import Decimal, InvalidOperation
+
+INPUT_FILE = "bank_export.csv"
+OUTPUT_FILE = "budgetwise_import.csv"
+ACCOUNT_NAME = "Checking"
+
+required_columns = {
+    "Posted Date", "Description", "Debit", "Credit", "Category"
+}
+
+def parse_amount(value, row_number, field_name):
+    value = value.strip().replace(",", "")
+    if not value:
+        return None
+    try:
+        amount = Decimal(value)
+    except InvalidOperation:
+        raise ValueError(
+            f"Row {row_number}: {field_name} is not numeric: {value!r}"
+        )
+    if amount < 0:
+        raise ValueError(
+            f"Row {row_number}: {field_name} cannot be negative: {value!r}"
+        )
+    return amount
+
+def format_amount(amount):
+    return f"{amount:.2f}"
+
+errors = []
+converted = []
+
+with open(INPUT_FILE, "r", encoding="utf-8-sig", newline="") as source:
+    reader = csv.DictReader(source)
+
+    if reader.fieldnames is None:
+        raise SystemExit("The input file has no header row.")
+
+    missing = required_columns - set(reader.fieldnames)
+    if missing:
+        raise SystemExit(
+            "Missing required columns: " + ", ".join(sorted(missing))
+        )
+
+    for row_number, row in enumerate(reader, start=2):
+        try:
+            raw_date = row["Posted Date"].strip()
+            try:
+                date = datetime.strptime(raw_date, "%m/%d/%Y").strftime("%Y-%m-%d")
+            except ValueError:
+                raise ValueError(
+                    f"Row {row_number}: invalid date {raw_date!r}; "
+                    "expected MM/DD/YYYY"
+                )
+
+            payee = row["Description"].strip()
+            if not payee:
+                raise ValueError(f"Row {row_number}: Description is blank")
+
+            debit = parse_amount(row["Debit"], row_number, "Debit")
+            credit = parse_amount(row["Credit"], row_number, "Credit")
+
+            if debit is not None and credit is not None:
+                raise ValueError(
+                    f"Row {row_number}: both Debit and Credit have values"
+                )
+            if debit is None and credit is None:
+                raise ValueError(
+                    f"Row {row_number}: both Debit and Credit are blank"
+                )
+
+            amount = -debit if debit is not None else credit
+            category = row["Category"].strip()
+
+            converted.append({
+                "Date": date,
+                "Payee": payee,
+                "Amount": format_amount(amount),
+                "Category": category,
+                "Notes": "",
+                "Account": ACCOUNT_NAME,
+            })
+
+        except (KeyError, ValueError) as exc:
+            errors.append(str(exc))
+
+if errors:
+    print(f"Validation failed with {len(errors)} error(s):")
+    for error in errors:
+        print(f"- {error}")
+    raise SystemExit(1)
+
+with open(OUTPUT_FILE, "w", encoding="utf-8", newline="") as target:
+    fieldnames = ["Date", "Payee", "Amount", "Category", "Notes", "Account"]
+    writer = csv.DictWriter(target, fieldnames=fieldnames)
+    writer.writeheader()
+    writer.writerows(converted)
+
+print(f"Converted {len(converted)} rows to {OUTPUT_FILE}")
+```
+
+Run it from the folder containing the input file:
+
+```text
+python convert_budgetwise.py
+```
+
+The script stops without creating a completed output if any row fails validation.
+
+[user]
+Can you make it handle dates that sometimes arrive as `2026-01-03` or `01/03/26` too? Also, the bank sometimes uses parentheses for negative values, although Debit should normally be positive.
+
+[assistant]
+Yes. Replace the date and amount helpers with these versions, then use the same main loop.
+
+```python
+DATE_FORMATS = (
+    "%m/%d/%Y",
+    "%Y-%m-%d",
+    "%m/%d/%y",
+)
+
+def parse_date(value, row_number):
+    value = value.strip()
+    for date_format in DATE_FORMATS:
+        try:
+            return datetime.strptime(value, date_format).strftime("%Y-%m-%d")
+        except ValueError:
+            pass
+    raise ValueError(
+        f"Row {row_number}: invalid date {value!r}; accepted formats are "
+        "MM/DD/YYYY, YYYY-MM-DD, and MM/DD/YY"
+    )
+
+def parse_amount(value, row_number, field_name):
+    value = value.strip().replace(",", "")
+    if not value:
+        return None
+
+    is_parenthesized = value.startswith("(") and value.endswith(")")
+    if is_parenthesized:
+        value = value[1:-1].strip()
+
+    try:
+        amount = Decimal(value)
+    except InvalidOperation:
+        raise ValueError(
+            f"Row {row_number}: {field_name} is not numeric: {value!r}"
+        )
+
+    if is_parenthesized:
+        amount = -amount
+
+    # Debit and Credit are expected to be nonnegative source fields.
+    # Parentheses are accepted, but the resulting value is normalized below.
+    return amount
+```
+
+In the loop, replace the old date parsing with:
+
+```python
+date = parse_date(row["Posted Date"], row_number)
+```
+
+Then replace the debit/credit checks and amount assignment with:
+
+```python
+debit = parse_amount(row["Debit"], row_number, "Debit")
+credit = parse_amount(row["Credit"], row_number, "Credit")
+
+if debit is not None and credit is not None:
+    raise ValueError(
+        f"Row {row_number}: both Debit and Credit have values"
+    )
+if debit is None and credit is None:
+    raise ValueError(
+        f"Row {row_number}: both Debit and Credit are blank"
+    )
+
+if debit is not None:
+    if debit > 0:
+        amount = -debit
+    elif debit < 0:
+        # A parenthesized Debit is already negative. Preserve its
+        # economic meaning rather than turning it into a credit.
+        amount = debit
+    else:
+        raise ValueError(f"Row {row_number}: Debit is zero")
+else:
+    if credit < 0:
+        # A parenthesized Credit represents money leaving the account.
+        amount = credit
+    elif credit > 0:
+        amount = credit
+    else:
+        raise ValueError(f"Row {row_number}: Credit is zero")
+```
+
+This gives these results:
+
+```text
+Debit       Credit       Budgetwise Amount
+54.27       blank        -54.27
+(54.27)     blank        -54.27
+blank       2850.00      2850.00
+blank       (25.00)      -25.00
+```
+
+You may want to flag parentheses separately if they indicate a source-data problem in your bank’s export, but the conversion above keeps their sign meaningful.
+
+[user]
+I’m worried about duplicate imports if I rerun the script. Can we add a stable transaction ID or at least produce a report that helps me detect duplicates?
+
+[assistant]
+Budgetwise’s template does not include an ID column, so adding one to the import file could make the import fail. A safer approach is to write a companion report containing a deterministic fingerprint for each converted row. The fingerprint is calculated from the normalized date, payee, amount, category, and account. Re-running the script produces the same fingerprint for unchanged rows.
+
+Add these imports:
+
+```python
+import hashlib
+from collections import Counter
+```
+
+Add this helper:
+
+```python
+def make_fingerprint(transaction):
+    parts = [
+        transaction["Date"],
+        transaction["Payee"].strip().casefold(),
+        transaction["Amount"],
+        transaction["Category"].strip().casefold(),
+        transaction["Account"].strip().casefold(),
+    ]
+    canonical = "\x1f".join(parts)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
+```
+
+After the output CSV is written, create a report:
+
+```python
+REPORT_FILE = "budgetwise_duplicate_report.csv"
+
+with open(REPORT_FILE, "w", encoding="utf-8", newline="") as report:
+    fieldnames = [
+        "Fingerprint", "Date", "Payee", "Amount",
+        "Category", "Account", "Occurrences", "PossibleDuplicate"
+    ]
+    writer = csv.DictWriter(report, fieldnames=fieldnames)
+    writer.writeheader()
+
+    fingerprints = [
+        make_fingerprint(transaction) for transaction in converted
+    ]
+    counts = Counter(fingerprints)
+
+    for transaction, fingerprint in zip(converted, fingerprints):
+        writer.writerow({
+            "Fingerprint": fingerprint,
+            "Date": transaction["Date"],
+            "Payee": transaction["Payee"],
+            "Amount": transaction["Amount"],
+            "Category": transaction["Category"],
+            "Account": transaction["Account"],
+            "Occurrences": counts[fingerprint],
+            "PossibleDuplicate": "YES" if counts[fingerprint] > 1 else "NO",
+        })
+
+print(f"Wrote duplicate report to {REPORT_FILE}")
+```
+
+This detects identical normalized rows within the current export. It cannot identify a legitimate repeated transaction that happens to have the same date, payee, amount, category, and account, so treat `PossibleDuplicate=YES` as a review flag rather than proof of duplication. For reruns, keep the report from the previous import and compare fingerprints before importing the new file.
+
+[user]
+Could you give me one complete script instead of separate snippets? I’d like it to create the import file and the duplicate report, and fail safely if there are validation errors.
+
+[assistant]
+Certainly. This complete version accepts the three date formats, handles comma-grouped amounts and parentheses, validates source columns and transaction rows, writes the Budgetwise CSV only after all rows pass, and creates a fingerprint report.
+
+```python
+import csv
+import hashlib
+from collections import Counter
+from datetime import datetime
+from decimal import Decimal, InvalidOperation
+from pathlib import Path
+
+INPUT_FILE = Path("bank_export.csv")
+OUTPUT_FILE = Path("budgetwise_import.csv")
+REPORT_FILE = Path("budgetwise_duplicate_report.csv")
+ACCOUNT_NAME = "Checking"
+
+SOURCE_COLUMNS = {
+    "Posted Date", "Description", "Debit", "Credit", "Category"
+}
+OUTPUT_COLUMNS = [
+    "Date", "Payee", "Amount", "Category", "Notes", "Account"
+]
+DATE_FORMATS = ("%m/%d/%Y", "%Y-%m-%d", "%m/%d/%y")
+
+
+def parse_date(value, row_number):
+    value = value.strip()
+    for date_format in DATE_FORMATS:
+        try:
+            return datetime.strptime(value, date_format).strftime("%Y-%m-%d")
+        except ValueError:
+            continue
+    raise ValueError(
+        f"Row {row_number}: invalid date {value!r}; expected "
+        "MM/DD/YYYY, YYYY-MM-DD, or MM/DD/YY"
+    )
+
+
+def parse_amount(value, row_number, field_name):
+    value = (value or "").strip().replace(",", "")
+    if not value:
+        return None
+
+    parenthesized = value.startswith("(") and value.endswith(")")
+    if parenthesized:
+        value = value[1:-1].strip()
+
+    try:
+        amount = Decimal(value)
+    except InvalidOperation:
+        raise ValueError(
+            f"Row {row_number}: {field_name} is not numeric: {value!r}"
+        )
+
+    if not amount.is_finite():
+        raise ValueError(
+            f"Row {row_number}: {field_name} must be finite: {value!r}"
+        )
+
+    return -amount if parenthesized else amount
+
+
+def fingerprint(transaction):
+    parts = [
+        transaction["Date"],
+        transaction["Payee"].strip().casefold(),
+        transaction["Amount"],
+        transaction["Category"].strip().casefold(),
+        transaction["Account"].strip().casefold(),
+    ]
+    canonical = "\x1f".join(parts)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
+
+
+def main():
+    errors = []
+    converted = []
+
+    if not INPUT_FILE.exists():
+        raise SystemExit(f"Input file not found: {INPUT_FILE}")
+
+    with INPUT_FILE.open("r", encoding="utf-8-sig", newline="") as source:
+        reader = csv.DictReader(source)
+
+        if not reader.fieldnames:
+            raise SystemExit("The input file has no header row.")
+
+        missing = SOURCE_COLUMNS - set(reader.fieldnames)
+        if missing:
+            raise SystemExit(
+                "Missing required columns: " + ", ".join(sorted(missing))
+            )
+
+        for row_number, row in enumerate(reader, start=2):
+            try:
+                date = parse_date(row["Posted Date"], row_number)
+
+                payee = (row["Description"] or "").strip()
+                if not payee:
+                    raise ValueError(
+                        f"Row {row_number}: Description is blank"
+                    )
+
+                debit = parse_amount(row["Debit"], row_number, "Debit")
+                credit = parse_amount(row["Credit"], row_number, "Credit")
+
+                if debit is not None and credit is not None:
+                    raise ValueError(
+                        f"Row {row_number}: both Debit and Credit have values"
+                    )
+                if debit is None and credit is None:
+                    raise ValueError(
+                        f"Row {row_number}: both Debit and Credit are blank"
+                    )
+
+                if debit is not None:
+                    if debit == 0:
+                        raise ValueError(
+                            f"Row {row_number}: Debit is zero"
+                        )
+                    amount = -abs(debit)
+                else:
+                    if credit == 0:
+                        raise ValueError(
+                            f"Row {row_number}: Credit is zero"
+                        )
+                    amount = credit
+
+                converted.append({
+                    "Date": date,
+                    "Payee": payee,
+                    "Amount": f"{amount:.2f}",
+                    "Category": (row["Category"] or "").strip(),
+                    "Notes": "",
+                    "Account": ACCOUNT_NAME,
+                })
+
+            except (KeyError, ValueError) as exc:
+                errors.append(str(exc))
+
+    if errors:
+        print(f"Validation failed with {len(errors)} error(s).")
+        for error in errors:
+            print(f"- {error}")
+        print("No output or report files were written.")
+        raise SystemExit(1)
+
+    with OUTPUT_FILE.open("w", encoding="utf-8", newline="") as target:
+        writer = csv.DictWriter(target, fieldnames=OUTPUT_COLUMNS)
+        writer.writeheader()
+        writer.writerows(converted)
+
+    fingerprints = [fingerprint(item) for item in converted]
+    counts = Counter(fingerprints)
+
+    with REPORT_FILE.open("w", encoding="utf-8", newline="") as report:
+        report_columns = [
+            "Fingerprint", "Date", "Payee", "Amount", "Category",
+            "Account", "Occurrences", "PossibleDuplicate"
+        ]
+        writer = csv.DictWriter(report, fieldnames=report_columns)
+        writer.writeheader()
+
+        for item, item_fingerprint in zip(converted, fingerprints):
+            writer.writerow({
+                "Fingerprint": item_fingerprint,
+                "Date": item["Date"],
+                "Payee": item["Payee"],
+                "Amount": item["Amount"],
+                "Category": item["Category"],
+                "Account": item["Account"],
+                "Occurrences": counts[item_fingerprint],
+                "PossibleDuplicate": (
+                    "YES" if counts[item_fingerprint] > 1 else "NO"
+                ),
+            })
+
+    print(f"Converted {len(converted)} rows.")
+    print(f"Import file: {OUTPUT_FILE}")
+    print(f"Duplicate report: {REPORT_FILE}")
+    duplicate_count = sum(
+        1 for count in counts.values() if count > 1
+    )
+    print(f"Duplicate fingerprint groups: {duplicate_count}")
+
+
+if __name__ == "__main__":
+    main()
+```
+
+Run:
+
+```text
+python convert_budgetwise.py
+```
+
+The script reads the entire input first. If any validation error occurs, it exits before writing either output file, so an old output file may remain in the folder. To avoid accidentally importing an old file after a failed run, delete or rename existing output files before running, or add an output-cleanup step.
+
+[user]
+The old output file warning makes me nervous. Please change it so it deletes any existing output and report files at startup, then validates everything, and only writes new files if validation succeeds. Also add a summary of total debits and credits.
+
+[assistant]
+That is safer for a repeatable workflow. At startup, delete only the two exact files this script is configured to generate. Then validation happens before either file is recreated. The summary can be calculated with `Decimal` values while processing and printed after successful validation.
+
+Here is the revised complete script:
+
+```python
+import csv
+import hashlib
+from collections import Counter
+from datetime import datetime
+from decimal import Decimal, InvalidOperation
+from pathlib import Path
+
+INPUT_FILE = Path("bank_export.csv")
+OUTPUT_FILE = Path("budgetwise_import.csv")
+REPORT_FILE = Path("budgetwise_duplicate_report.csv")
+ACCOUNT_NAME = "Checking"
+
+SOURCE_COLUMNS = {
+    "Posted Date", "Description", "Debit", "Credit", "Category"
+}
+OUTPUT_COLUMNS = [
+    "Date", "Payee", "Amount", "Category", "Notes", "Account"
+]
+DATE_FORMATS = ("%m/%d/%Y", "%Y-%m-%d", "%m/%d/%y")
+
+
+def parse_date(value, row_number):
+    value = (value or "").strip()
+    for date_format in DATE_FORMATS:
+        try:
+            return datetime.strptime(value, date_format).strftime("%Y-%m-%d")
+        except ValueError:
+            continue
+    raise ValueError(
+        f"Row {row_number}: invalid date {value!r}; expected "
+        "MM/DD/YYYY, YYYY-MM-DD, or MM/DD/YY"
+    )
+
+
+def parse_amount(value, row_number, field_name):
+    value = (value or "").strip().replace(",", "")
+    if not value:
+        return None
+
+    parenthesized = value.startswith("(") and value.endswith(")")
+    if parenthesized:
+        value = value[1:-1].strip()
+
+    try:
+        amount = Decimal(value)
+    except InvalidOperation:
+        raise ValueError(
+            f"Row {row_number}: {field_name} is not numeric: {value!r}"
+        )
+
+    if not amount.is_finite():
+        raise ValueError(
+            f"Row {row_number}: {field_name} must be finite: {value!r}"
+        )
+
+    return -amount if parenthesized else amount
+
+
+def make_fingerprint(transaction):
+    parts = [
+        transaction["Date"],
+        transaction["Payee"].strip().casefold(),
+        transaction["Amount"],
+        transaction["Category"].strip().casefold(),
+        transaction["Account"].strip().casefold(),
+    ]
+    canonical = "\x1f".join(parts)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
+
+
+def remove_old_outputs():
+    for path in (OUTPUT_FILE, REPORT_FILE):
+        try:
+            path.unlink()
+            print(f"Removed existing file: {path}")
+        except FileNotFoundError:
+            pass
+
+
+def main():
+    remove_old_outputs()
+
+    if not INPUT_FILE.exists():
+        raise SystemExit(f"Input file not found: {INPUT_FILE}")
+
+    errors = []
+    converted = []
+    total_debits = Decimal("0")
+    total_credits = Decimal("0")
+
+    with INPUT_FILE.open("r", encoding="utf-8-sig", newline="") as source:
+        reader = csv.DictReader(source)
+
+        if not reader.fieldnames:
+            raise SystemExit("The input file has no header row.")
+
+        missing = SOURCE_COLUMNS - set(reader.fieldnames)
+        if missing:
+            raise SystemExit(
+                "Missing required columns: " + ", ".join(sorted(missing))
+            )
+
+        for row_number, row in enumerate(reader, start=2):
+            try:
+                date = parse_date(row["Posted Date"], row_number)
+
+                payee = (row["Description"] or "").strip()
+                if not payee:
+                    raise ValueError(
+                        f"Row {row_number}: Description is blank"
+                    )
+
+                debit = parse_amount(row["Debit"], row_number, "Debit")
+                credit = parse_amount(row["Credit"], row_number, "Credit")
+
+                if debit is not None and credit is not None:
+                    raise ValueError(
+                        f"Row {row_number}: both Debit and Credit have values"
+                    )
+                if debit is None and credit is None:
+                    raise ValueError(
+                        f"Row {row_number}: both Debit and Credit are blank"
+                    )
+
+                if debit is not None:
+                    if debit == 0:
+                        raise ValueError(
+                            f"Row {row_number}: Debit is zero"
+                        )
+                    amount = -abs(debit)
+                    total_debits += abs(debit)
+                else:
+                    if credit == 0:
+                        raise ValueError(
+                            f"Row {row_number}: Credit is zero"
+                        )
+                    amount = credit
+                    total_credits += abs(credit)
+
+                converted.append({
+                    "Date": date,
+                    "Payee": payee,
+                    "Amount": f"{amount:.2f}",
+                    "Category": (row["Category"] or "").strip(),
+                    "Notes": "",
+                    "Account": ACCOUNT_NAME,
+                })
+
+            except (KeyError, ValueError) as exc:
+                errors.append(str(exc))
+
+    if errors:
+        print(f"Validation failed with {len(errors)} error(s).")
+        for error in errors:
+            print(f"- {error}")
+        print("No new output or report files were written.")
+        raise SystemExit(1)
+
+    with OUTPUT_FILE.open("w", encoding="utf-8", newline="") as target:
+        writer = csv.DictWriter(target, fieldnames=OUTPUT_COLUMNS)
+        writer.writeheader()
+        writer.writerows(converted)
+
+    fingerprints = [make_fingerprint(item) for item in converted]
+    counts = Counter(fingerprints)
+
+    with REPORT_FILE.open("w", encoding="utf-8", newline="") as report:
+        report_columns = [
+            "Fingerprint", "Date", "Payee", "Amount", "Category",
+            "Account", "Occurrences", "PossibleDuplicate"
+        ]
+        writer = csv.DictWriter(report, fieldnames=report_columns)
+        writer.writeheader()
+
+        for item, item_fingerprint in zip(converted, fingerprints):
+            writer.writerow({
+                "Fingerprint": item_fingerprint,
+                "Date": item["Date"],
+                "Payee": item["Payee"],
+                "Amount": item["Amount"],
+                "Category": item["Category"],
+                "Account": item["Account"],
+                "Occurrences": counts[item_fingerprint],
+                "PossibleDuplicate": (
+                    "YES" if counts[item_fingerprint] > 1 else "NO"
+                ),
+            })
+
+    duplicate_groups = sum(
+        1 for count in counts.values() if count > 1
+    )
+
+    print(f"Converted rows: {len(converted)}")
+    print(f"Total debits:  {total_debits:.2f}")
+    print(f"Total credits: {total_credits:.2f}")
+    print(f"Import file: {OUTPUT_FILE}")
+    print(f"Duplicate report: {REPORT_FILE}")
+    print(f"Duplicate fingerprint groups: {duplicate_groups}")
+
+
+if __name__ == "__main__":
+    main()
+```
+
+One important behavior: if the input is missing or has invalid headers, the script removes the old generated files before stopping. That prevents stale files from being mistaken for current output, but keep a backup if you need to preserve prior reports.
+
+[user]
+I want a quick final checklist, and then one unrelated thought: lumenkit should treat budgeting as a feedback loop rather than a ledger. Saoirse Drummond’s idea is that the product should show how a spending choice changes next month’s available options, because people act on consequences more readily than categories. It could simulate scenarios in plain language, making the budget feel like a set of controllable levers instead of a report card.
+
+[assistant]
+Final checklist:
+
+- Confirm `bank_export.csv` is in the same folder as the script.
+- Set `ACCOUNT_NAME` to the exact Budgetwise account name.
+- Confirm the source headers match the required columns.
+- Review the date and amount formats accepted by the script.
+- Back up any previous report before running, because startup cleanup deletes the

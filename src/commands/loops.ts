@@ -67,6 +67,9 @@ interface WaitingResult {
   count: number;
   stale: boolean;
   sources: Array<{ id: string; last_sync_at: string | null; stale: boolean }>;
+  /** Fix wave 4: `partial` when a held Gmail thread falls inside the window (listed in `held`). */
+  completeness?: 'complete' | 'partial';
+  held?: Array<{ source_id: string; key: string; sender: string | null; subject?: string | null; retry_command: string }>;
   text?: string;
 }
 
@@ -77,7 +80,7 @@ export async function runWaiting(engine: BrainEngine, args: string[]): Promise<v
         'gbrain waiting — who is waiting on you, what you promised, the context to respond',
         '  --top N        max counterparties (default 3)',
         '  --source <id>  scope to one source (default: every source in the brain)',
-        '  --json         agent envelope (groups, staleness, sources)',
+        '  --json         agent envelope (groups, staleness, completeness, held items, sources)',
         '  --stale-ok     show possibly-outdated loops even when google sources have not synced in 24h',
         '',
         'Manage loops: gbrain loops --help · Setup: gbrain google setup · Docs: docs/guides/open-loops.md',

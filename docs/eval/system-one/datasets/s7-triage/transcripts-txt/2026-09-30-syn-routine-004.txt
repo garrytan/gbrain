@@ -1,0 +1,101 @@
+[user]
+My home partition is almost full. Can you help me inspect it before deleting anything?
+
+[assistant]
+Sure. Start with the filesystem summary, then check the largest top-level directories:
+
+```sh
+df -h "$HOME"
+du -xhd1 "$HOME" 2>/dev/null | sort -h
+```
+
+`df` shows space available to the filesystem, while `du` estimates what files under your home directory are using. Paste both outputs, and avoid deleting anything until the large directories are identified.
+
+[user]
+Here is the output:
+
+```text
+$ df -h "$HOME"
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/nvme0n1p3  220G  211G  7.1G  97% /home
+
+$ du -xhd1 "$HOME" 2>/dev/null | sort -h
+4.0K    /home/sam/.ssh
+8.0K    /home/sam/.gnupg
+16K     /home/sam/bin
+28K     /home/sam/Templates
+44K     /home/sam/.local
+96K     /home/sam/Documents
+180K    /home/sam/Pictures
+1.2M    /home/sam/.config
+2.6M    /home/sam/Music
+5.4M    /home/sam/.cache
+12M     /home/sam/Downloads
+18M     /home/sam/projects
+1.1G    /home/sam/.npm
+3.8G    /home/sam/.cache2
+7.6G    /home/sam/.local-share
+29G     /home/sam/.containers
+41G     /home/sam
+```
+
+[assistant]
+The largest items are `.containers`, `.local-share`, `.cache2`, and `.npm`. Before removing anything, inspect their immediate contents:
+
+```sh
+du -xhd1 "$HOME/.containers" "$HOME/.local-share" "$HOME/.cache2" "$HOME/.npm" 2>/dev/null | sort -h
+```
+
+Also check whether deleted files are still held open, since that can explain a mismatch between `df` and `du`:
+
+```sh
+lsof +L1 2>/dev/null | head -50
+```
+
+Paste the directory breakdown and any relevant open-file lines. Keep the output for `.ssh`, `.gnupg`, and configuration directories out of deletion commands.
+
+[user]
+The breakdown is:
+
+```text
+$ du -xhd1 "$HOME/.containers" "$HOME/.local-share" "$HOME/.cache2" "$HOME/.npm" 2>/dev/null | sort -h
+8.0K    /home/sam/.local-share/tmp
+24M     /home/sam/.npm/_logs
+1.1G    /home/sam/.npm/_cacache
+1.4G    /home/sam/.local-share/toolchains
+2.2G    /home/sam/.cache2/thumbnails
+3.8G    /home/sam/.cache2
+6.0G    /home/sam/.local-share/archives
+7.6G    /home/sam/.local-share
+9.5G    /home/sam/.containers/images
+17G     /home/sam/.containers/volumes
+29G     /home/sam/.containers
+```
+
+`lsof +L1` produced no output.
+
+[assistant]
+There are several likely cleanup targets, but the safe action depends on what each directory contains. Get file counts, ages, and a little detail from the large areas:
+
+```sh
+printf '%s\n' '--- containers ---'
+find "$HOME/.containers" -xdev -type f -printf '%s %TY-%Tm-%Td %p\n' 2>/dev/null |
+  sort -n | tail -20
+
+printf '%s\n' '--- local-share archives ---'
+find "$HOME/.local-share/archives" -xdev -type f -printf '%s %TY-%Tm-%Td %p\n' 2>/dev/null |
+  sort -n | tail -20
+
+printf '%s\n' '--- cache2 thumbnails ---'
+find "$HOME/.cache2/thumbnails" -xdev -type f -printf '%s %TY-%Tm-%Td %p\n' 2>/dev/null |
+  sort -n | tail -20
+```
+
+The sizes are printed in bytes, so the output may be less readable, but it will show whether these are ordinary cache files, archives, or active data. Also run:
+
+```sh
+du -sh "$HOME/.containers"/{images,volumes} "$HOME/.local-share"/{archives,toolchains} \
+       "$HOME/.cache2/thumbnails" "$HOME/.npm/_cacache"
+```
+
+[assistant برس 񟿿Winvalid?]

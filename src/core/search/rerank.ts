@@ -1,6 +1,6 @@
 import { createHash } from 'crypto';
 import type { SearchResult } from '../types.ts';
-import { rerank as gatewayRerank, RerankError, type RerankInput, type RerankResult } from '../ai/gateway.ts';
+import { rerank as gatewayRerank, RerankError, type RerankInput, type RerankMeta, type RerankResult } from '../ai/gateway.ts';
 import { BudgetExhausted } from '../budget/budget-tracker.ts';
 import { logRerankFailure, type RerankFailureReason } from '../rerank-audit.ts';
 import { estimateTokens } from '../chunkers/token-estimate.ts';
@@ -42,6 +42,8 @@ export interface RerankerOpts {
    * stamps it as the `rerank_failed` degraded stage. Best-effort.
    */
   onFailure?: (reason: RerankFailedReason) => void;
+  /** System One reranker call facts (resolved model, rubric semantics). Best-effort. */
+  onMeta?: (meta: RerankMeta) => void;
 }
 
 /** The two skip classes (no HTTP call, no per-query audit row). */
@@ -132,6 +134,7 @@ export async function applyReranker(
   const documents = head.map(r => capRerankDoc(r.chunk_text || r.title || ''));
 
   let reranked: RerankResult[];
+  let rerankMeta: RerankMeta | undefined;
   try {
     const rerankerFn = opts.rerankerFn ?? gatewayRerank;
     reranked = await rerankerFn({
@@ -139,6 +142,7 @@ export async function applyReranker(
       documents,
       timeoutMs: opts.timeoutMs,
       ...(opts.model ? { model: opts.model } : {}),
+      onMeta: (m) => { rerankMeta = m; },
     });
   } catch (err) {
     const reason = classifyRerankFailure(err);
@@ -233,6 +237,7 @@ export async function applyReranker(
       // (telemetry, debug, autocut) can see the new ordering signal. Doesn't
       // replace `score` — that's RRF and other consumers may depend on it.
       item.rerank_score = r.relevanceScore;
+      if (rerankMeta?.score_semantics === 'rubric') item.rerank_score_kind = 'rubric';
       // v0.40.4 attribution stamp (D12=A) — rank delta. Positive means
       // rank improved (moved closer to top). new_index is the next
       // push position in reorderedHead; original index was r.index.
@@ -247,6 +252,9 @@ export async function applyReranker(
     if (!seen.has(i)) reorderedHead.push(head[i]!);
   }
 
+  if (rerankMeta) {
+    try { opts.onMeta?.(rerankMeta); } catch { /* caller hook must never break search */ }
+  }
   const combined = [...reorderedHead, ...tail];
   return opts.topNOut !== null && opts.topNOut > 0
     ? combined.slice(0, opts.topNOut)

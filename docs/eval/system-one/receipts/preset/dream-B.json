@@ -1,0 +1,285 @@
+{
+ "arm": "B",
+ "status": "ok",
+ "summary": "19 transcript(s) synthesized in 1427.1s",
+ "triage": {
+  "threshold": 0.5,
+  "judged": 29,
+  "cache_hits": 0,
+  "unreliable": 0,
+  "deferred": 0,
+  "degraded": 0,
+  "below_threshold": 10,
+  "tokens_in": 9885,
+  "tokens_out": 212,
+  "cost_usd": 0.010945,
+  "rescue_band": [
+   0.3,
+   0.5
+  ],
+  "rescue_checked": 3,
+  "rescue_fired": 0,
+  "decide": {
+   "mode": "on",
+   "provider": "typesafe:jev-1.13.0",
+   "threshold": 0.77,
+   "judged": 29,
+   "cache_hits": 0,
+   "pass": 19,
+   "reject": 8,
+   "margin_hold": 2,
+   "incomplete": 0,
+   "input_tokens": 184118,
+   "cost_usd": 0.007732956
+  }
+ },
+ "estimated_spend_usd": 2.579361,
+ "transcripts_processed": 19,
+ "pages_written": 38,
+ "written_slugs": [
+  "wiki/originals/ideas/2026-08-02-ci-perf-gate-criterion-15323a",
+  "wiki/personal/reflections/2026-08-02-regex-cache-regression-debug-15323a",
+  "wiki/originals/ideas/2026-08-04-focus-hours-visibility-widget-e2185c",
+  "wiki/personal/reflections/2026-08-04-driftless-pricing-debrief-e2185c",
+  "wiki/originals/ideas/2026-08-05-founder-clause-cheat-sheet-9fa016",
+  "wiki/personal/reflections/2026-08-05-lumopact-negotiation-debrief-9fa016",
+  "wiki/originals/ideas/2026-08-06-saas-diligence-red-flag-checklist-e1fb48",
+  "wiki/personal/reflections/2026-08-06-lumopact-dataroom-diligence-e1fb48",
+  "wiki/originals/ideas/2026-08-08-auto-draft-release-notes-4b75cb",
+  "wiki/personal/reflections/2026-08-08-lumopact-q3-signals-4b75cb",
+  "wiki/personal/reflections/2026-08-08-quartzlane-092-release-day-4b75cb",
+  "wiki/originals/ideas/2026-08-10-intentional-endings-51eea8",
+  "wiki/personal/reflections/2026-08-10-archiving-tidelamp-51eea8",
+  "wiki/personal/reflections/2026-08-11-five-dinners-one-chicken-f6de33",
+  "wiki/personal/reflections/2026-09-30-brother-printer-windows11-setup-64b189",
+  "wiki/personal/reflections/2026-09-30-harbor-ledger-wren-okonkwo-bell-64b189",
+  "wiki/personal/reflections/2026-09-30-anneke-arkwright-term-sheet-commitment-86e66b",
+  "wiki/personal/reflections/2026-09-30-git-merge-lockfile-resolution-86e66b",
+  "wiki/originals/ideas/2026-09-30-apa7-coastal-erosion-reference-9e5811",
+  "wiki/personal/reflections/2026-09-30-polishing-as-avoidance-9e5811",
+  "wiki/originals/ideas/2026-09-30-clean-shutdown-as-responsible-exit-75c950",
+  "wiki/personal/reflections/2026-09-30-northgate-labs-shutdown-75c950",
+  "wiki/originals/ideas/2026-09-30-trailing-whitespace-strip-reference-48d477",
+  "wiki/personal/reflections/2026-09-30-trailing-whitespace-strip-session-48d477",
+  "wiki/originals/ideas/2026-09-30-test-small-first-import-818ecf",
+  "wiki/personal/reflections/2026-09-30-perfectionism-import-workflow-818ecf",
+  "wiki/originals/ideas/2026-09-30-research-cutoff-protocol-f1175e",
+  "wiki/personal/reflections/2026-09-30-tobin-lindqvist-over-research-transit-f1175e",
+  "wiki/originals/ideas/2026-09-30-seller-first-carrier-escalation-2db260",
+  "wiki/personal/reflections/2026-09-30-cormac-castellan-fernpost-coordinator-2db260",
+  "wiki/originals/ideas/2026-09-30-compound-path-bug-pattern-8b8313",
+  "wiki/personal/reflections/2026-09-30-lumenkit-fixture-path-debug-8b8313",
+  "wiki/personal/reflections/2026-09-30-brambleworks-deadline-9cf68e",
+  "wiki/personal/reflections/2026-09-30-router-lockout-recovery-9cf68e",
+  "wiki/originals/ideas/2026-09-30-restaurant-bill-split-worksheet-28a800",
+  "wiki/personal/reflections/2026-09-30-service-charge-label-ambiguity-28a800",
+  "wiki/originals/ideas/2026-09-30-cent-remainder-allocation-pattern-1e86fd",
+  "wiki/personal/reflections/2026-09-30-bill-splitting-integer-cents-1e86fd"
+ ],
+ "budget_deferred_transcripts": [],
+ "verdicts": [
+  {
+   "filePath": "2026-08-02-coding-reflection-04.txt",
+   "worth": true,
+   "score": 0.86,
+   "content_type": "technical",
+   "rescued": null
+  },
+  {
+   "filePath": "2026-08-04-startup-ideation-03.txt",
+   "worth": true,
+   "score": 0.89,
+   "content_type": "strategy",
+   "rescued": null
+  },
+  {
+   "filePath": "2026-08-05-people-deal-02.txt",
+   "worth": true,
+   "score": 0.9,
+   "content_type": "reflection",
+   "rescued": null
+  },
+  {
+   "filePath": "2026-08-06-people-deal-04.txt",
+   "worth": true,
+   "score": 0.88,
+   "content_type": "strategy",
+   "rescued": null
+  },
+  {
+   "filePath": "2026-08-08-mixed-routine-signal-04.txt",
+   "worth": true,
+   "score": 0.91,
+   "content_type": "mixed",
+   "rescued": null
+  },
+  {
+   "filePath": "2026-08-10-emotional-processing-03.txt",
+   "worth": true,
+   "score": 0.93,
+   "content_type": "reflection",
+   "rescued": null
+  },
+  {
+   "filePath": "2026-08-11-pure-routine-01.txt",
+   "worth": true,
+   "score": 0.79,
+   "content_type": "mixed",
+   "rescued": null
+  },
+  {
+   "filePath": "2026-09-30-syn-buried-002.txt",
+   "worth": true,
+   "score": 0.83,
+   "content_type": "technical",
+   "rescued": null
+  },
+  {
+   "filePath": "2026-09-30-syn-buried-008.txt",
+   "worth": true,
+   "score": 0.9,
+   "content_type": "technical",
+   "rescued": null
+  },
+  {
+   "filePath": "2026-09-30-syn-buried-018.txt",
+   "worth": true,
+   "score": 0.89,
+   "content_type": "mixed",
+   "rescued": null
+  },
+  {
+   "filePath": "2026-09-30-syn-buried-019.txt",
+   "worth": true,
+   "score": 0.91,
+   "content_type": "mixed",
+   "rescued": null
+  },
+  {
+   "filePath": "2026-09-30-syn-buried-020.txt",
+   "worth": true,
+   "score": 0.91,
+   "content_type": "technical",
+   "rescued": null
+  },
+  {
+   "filePath": "2026-09-30-syn-buried-024.txt",
+   "worth": true,
+   "score": 0.89,
+   "content_type": "mixed",
+   "rescued": null
+  },
+  {
+   "filePath": "2026-09-30-syn-buried-030.txt",
+   "worth": true,
+   "score": 0.93,
+   "content_type": "mixed",
+   "rescued": null
+  },
+  {
+   "filePath": "2026-09-30-syn-buried-033.txt",
+   "worth": true,
+   "score": 0.91,
+   "content_type": "mixed",
+   "rescued": null
+  },
+  {
+   "filePath": "2026-09-30-syn-buried-043.txt",
+   "worth": true,
+   "score": 0.92,
+   "content_type": "technical",
+   "rescued": null
+  },
+  {
+   "filePath": "2026-09-30-syn-buried-044.txt",
+   "worth": true,
+   "score": 0.93,
+   "content_type": "technical",
+   "rescued": null
+  },
+  {
+   "filePath": "2026-09-30-syn-routine-029.txt",
+   "worth": false,
+   "score": 0.32,
+   "content_type": null,
+   "rescued": null
+  },
+  {
+   "filePath": "2026-09-30-syn-routine-054.txt",
+   "worth": false,
+   "score": 0.47,
+   "content_type": null,
+   "rescued": null
+  },
+  {
+   "filePath": "2026-09-30-syn-routine-076.txt",
+   "worth": false,
+   "score": 0.66,
+   "content_type": null,
+   "rescued": null
+  },
+  {
+   "filePath": "2026-09-30-syn-routine-087.txt",
+   "worth": true,
+   "score": 0.8,
+   "content_type": "technical",
+   "rescued": null
+  },
+  {
+   "filePath": "2026-09-30-syn-routine-103.txt",
+   "worth": false,
+   "score": 0.12,
+   "content_type": "routine",
+   "rescued": null
+  },
+  {
+   "filePath": "2026-09-30-syn-routine-105.txt",
+   "worth": false,
+   "score": 0.15,
+   "content_type": "routine",
+   "rescued": null
+  },
+  {
+   "filePath": "2026-09-30-syn-routine-125.txt",
+   "worth": false,
+   "score": 0.47,
+   "content_type": null,
+   "rescued": null
+  },
+  {
+   "filePath": "2026-09-30-syn-routine-126.txt",
+   "worth": false,
+   "score": 0.64,
+   "content_type": null,
+   "rescued": null
+  },
+  {
+   "filePath": "2026-09-30-syn-routine-129.txt",
+   "worth": true,
+   "score": 0.78,
+   "content_type": "technical",
+   "rescued": null
+  },
+  {
+   "filePath": "2026-09-30-syn-routine-142.txt",
+   "worth": false,
+   "score": 0.57,
+   "content_type": null,
+   "rescued": null
+  },
+  {
+   "filePath": "2026-09-30-syn-routine-171.txt",
+   "worth": false,
+   "score": 0.59,
+   "content_type": null,
+   "rescued": null
+  },
+  {
+   "filePath": "2026-09-30-syn-routine-178.txt",
+   "worth": false,
+   "score": 0.67,
+   "content_type": null,
+   "rescued": null
+  }
+ ]
+}

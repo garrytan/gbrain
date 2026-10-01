@@ -10,7 +10,7 @@ uses `gbrain jobs authorize-legacy` to preview selected work for review.
 
 ## Runtime and outbound requests
 
-Use Bun **1.3.11 or newer**. CI covers 1.3.11 and the build runtime, 1.3.13.
+Use Bun **1.3.11 or newer**. CI covers 1.3.11 and the build runtime, 1.4.2.
 Compiled distributions include their Bun runtime.
 
 URL reachability checks, HTTP integration checks, and remote image loading use

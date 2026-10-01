@@ -1,0 +1,27 @@
+{
+  "golden": {
+    "sweeps": [
+      {
+        "deferred": 0,
+        "duplicates": 0,
+        "effective": "on",
+        "facts": 2,
+        "first_run": false,
+        "independents": 0,
+        "mode": "on",
+        "pairs": 1,
+        "proposals": 1,
+        "retried": 0,
+        "shadow_proposals": 0,
+        "skipped": 0,
+        "source_id": "default",
+        "sweep_id": "<sweep>",
+        "watermark": {
+          "from": 0,
+          "to": "<fact id>"
+        }
+      }
+    ]
+  },
+  "normalizer": "decide-sweep-v1"
+}

@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-043",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/kofi-yarrmere",
+      "content": "---\ntitle: Kofi Yarrmere\ntype: person\naliases: [kofi]\nsummary: \"Kofi Yarrmere is the finance lead at Quartzgate.\"\n---\n\nKofi Yarrmere is the finance lead at Quartzgate.\n"
+    },
+    {
+      "slug": "people/ines-lornholt",
+      "content": "---\ntitle: Ines Lornholt\ntype: person\nsummary: \"Ines Lornholt is the head of partnerships at Embervane.\"\n---\n\nInes Lornholt is the head of partnerships at Embervane. Ines wants to pause the second engineering hire until the renewal closes.\n"
+    },
+    {
+      "slug": "people/delphine-quellbarrow",
+      "content": "---\ntitle: Delphine Quellbarrow\ntype: person\nsummary: \"Delphine Quellbarrow is the procurement lead at Emberspire.\"\n---\n\nDelphine Quellbarrow is the procurement lead at Emberspire.\n"
+    },
+    {
+      "slug": "people/idris-yarrfell",
+      "content": "---\ntitle: Idris Yarrfell\ntype: person\nsummary: \"Idris Yarrfell is the product lead at Glintcrest.\"\n---\n\nIdris Yarrfell is the product lead at Glintcrest.\n"
+    },
+    {
+      "slug": "people/ilse-dremridge",
+      "content": "---\ntitle: Ilse Dremridge\ntype: person\naliases: [ilse]\nsummary: \"A contact from a conference last spring.\"\n---\n\nA contact from a conference last spring.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Yarrmere's train gets in at 5:40pm and the walk is 15 minutes. What time will they reach the office?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Done."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "ines lornholt wants to meet again, what did we agree last time about the hiring plan?"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Done."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "Fix the typos in this line of my email to Quellbarrow: 'thnaks for the quick turnaround, talk soon'"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Here is what I have."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "how do you pronounce the name idris? it's for a character in my short story"
+    }
+  ]
+}

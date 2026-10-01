@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-109",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "projects/referral-program",
+      "content": "---\ntitle: Referral Program\ntype: project\nsummary: \"Referral Program: We chose a one-month credit for both sides and capped it at three referrals per account.\"\n---\n\nReferral Program: We chose a one-month credit for both sides and capped it at three referrals per account.\n"
+    },
+    {
+      "slug": "people/oskar-vashford",
+      "content": "---\ntitle: Oskar Vashford\ntype: person\nsummary: \"Oskar Vashford is the procurement lead at Juniperloft.\"\n---\n\nOskar Vashford is the procurement lead at Juniperloft.\n"
+    },
+    {
+      "slug": "companies/embervane-robotics",
+      "content": "---\ntitle: Embervane Robotics\ntype: company\nsummary: \"Embervane Robotics is a startup we evaluated as a partner.\"\n---\n\nEmbervane Robotics is a startup we evaluated as a partner. Their pilot with our team ends after the next billing cycle.\n"
+    },
+    {
+      "slug": "people/farah-grisstead",
+      "content": "---\ntitle: Farah Grisstead\ntype: person\nsummary: \"Farah Grisstead is the operations director at Quartzyard.\"\n---\n\nFarah Grisstead is the operations director at Quartzyard.\n"
+    },
+    {
+      "slug": "people/tamsin-brinholt",
+      "content": "---\ntitle: Tamsin Brinholt\ntype: person\naliases: [tamsin]\nsummary: \"A contact from a conference last spring.\"\n---\n\nA contact from a conference last spring.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "what were the terms of the referral thing we discussed?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Done."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Our hotel is on Vashford Street. Any tips for finding breakfast near a hotel in a new city?"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Okay, noted."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "Any news from Embervane on the pilot?"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Okay, noted."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "Grisstead's train gets in at 5:40pm and the walk is 15 minutes. What time will they reach the office?"
+    }
+  ]
+}

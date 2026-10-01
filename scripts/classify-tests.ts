@@ -15,8 +15,9 @@
  *        not a tmpdir
  *      - execSync/spawnSync windows that grep/scan repo sources or invoke
  *        scripts/check-*.sh
- *      - the doctor-source helpers (test/helpers/doctor-source.ts), which
- *        exist precisely to feed structural guards
+ *      - the doctor-source and per-surface source helpers
+ *        (test/helpers/doctor-source.ts, test/helpers/source-surface.ts),
+ *        which exist precisely to feed structural guards
  *   2. Bind each detector to constants it initializes; attribute a describe()
  *      suite as structural when its region contains a detector or references
  *      a bound constant. Hits outside any describe attribute to the suites
@@ -93,6 +94,7 @@ export function classifyFile(relPath: string, content: string): FileResult {
     else if (/\bBun\.file\s*\(/.test(line)) kind = 'bun-file';
     else if (/\b(?:execSync|spawnSync|execFileSync)\s*\(/.test(line)) kind = 'exec-scan';
     else if (/\bdoctor(?:File)?Source\s*\(/.test(line)) kind = 'doctor-source-helper';
+    else if (/\bsurface(?:File)?Source\s*\(/.test(line)) kind = 'source-surface-helper';
     if (!kind) continue;
 
     const win = windowAt(lines, i);
@@ -102,7 +104,7 @@ export function classifyFile(relPath: string, content: string): FileResult {
       // repo dirs bare (`grep ... src/`), not as quoted path prefixes.
       const scansRepo = /(^|[\s'"`=])(src|scripts|docs)\//.test(win) && !TMP_ANCHORS.test(win);
       if (!(/grep|rg\s|scripts\/check-|--include=.*\.ts/.test(win) && scansRepo)) continue;
-    } else if (kind !== 'doctor-source-helper' && !isRepoAnchored(win)) {
+    } else if (kind !== 'doctor-source-helper' && kind !== 'source-surface-helper' && !isRepoAnchored(win)) {
       continue;
     }
 

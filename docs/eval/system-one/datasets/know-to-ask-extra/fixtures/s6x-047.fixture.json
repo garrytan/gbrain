@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-047",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "companies/halcyonspire",
+      "content": "---\ntitle: Halcyonspire\ntype: company\nsummary: \"Halcyonspire is the payroll vendor we picked.\"\n---\n\nHalcyonspire is the payroll vendor we picked. The integration slipped because their API still lacks webhooks.\n"
+    },
+    {
+      "slug": "people/dario-brinbarrow",
+      "content": "---\ntitle: Dario Brinbarrow\ntype: person\nsummary: \"Dario Brinbarrow is the head of sales at Saffronspire.\"\n---\n\nDario Brinbarrow is the head of sales at Saffronspire.\n"
+    },
+    {
+      "slug": "people/bastian-merrholt",
+      "content": "---\ntitle: Bastian Merrholt\ntype: person\nsummary: \"Bastian Merrholt is the product lead at Quartzreach.\"\n---\n\nBastian Merrholt is the product lead at Quartzreach.\n"
+    },
+    {
+      "slug": "people/elodie-yarrdale",
+      "content": "---\ntitle: Elodie Yarrdale\ntype: person\naliases: [elodie]\nsummary: \"A contact from a conference last spring.\"\n---\n\nA contact from a conference last spring.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "what does the vendor we picked for payroll charge per employee?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Okay, noted."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Brinbarrow's train gets in at 5:40pm and the walk is 15 minutes. What time will they reach the office?"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "Fix the typos in this line of my email to Merrholt: 'thnaks for the quick turnaround, talk soon'"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Done."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "how do I convert a string to a date in python?"
+    }
+  ]
+}

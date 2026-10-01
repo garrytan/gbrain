@@ -90,7 +90,7 @@ for (const crash of ['before_publication', 'after_publication', 'after_metadata_
       expect(after.page.frontmatter.gmail_attachment_receipts).toMatchObject({ messages: [{ inspection: { state: 'present', attachments: [{ filename: 'fixture.pdf' }] } }] });
       expect(readFileSync(join(f.dir, `${slug}.md`), 'utf8')).toContain('Exact preserved historical body.');
       expect(await engine.executeRaw('SELECT id FROM persistence_requests WHERE source_id=$1 AND recovery IS NOT NULL', [f.id])).toHaveLength(0);
-      const [count] = await engine.executeRaw<{ count: string }>("SELECT count(*)::text AS count FROM persistence_requests WHERE source_id=$1 AND intent->>'kind'='managed_connector_google_receipts' AND state='committed' AND NOT COALESCE((outcome->>'noop')::boolean,false)", [f.id]);
+      const [count] = await engine.executeRaw<{ count: string }>("SELECT count(*)::text AS count FROM persistence_requests WHERE source_id=$1 AND intent->>'kind'='connector_v2_google_receipts' AND state='committed' AND NOT COALESCE((outcome->>'noop')::boolean,false)", [f.id]);
       expect(Number(count.count)).toBe(1);
     }
   }), 120_000);

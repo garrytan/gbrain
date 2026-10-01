@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-035",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/mireille-vashdale",
+      "content": "---\ntitle: Mireille Vashdale\ntype: person\naliases: [mireille]\nsummary: \"Mireille Vashdale is the operations director at Marbleyard.\"\n---\n\nMireille Vashdale is the operations director at Marbleyard.\n"
+    },
+    {
+      "slug": "people/verity-yarrstead",
+      "content": "---\ntitle: Verity Yarrstead\ntype: person\nsummary: \"Verity Yarrstead is the product lead at Russetyard.\"\n---\n\nVerity Yarrstead is the product lead at Russetyard. Verity pushed to move the reporting feature ahead of the mobile app.\n"
+    },
+    {
+      "slug": "people/annika-fenbarrow",
+      "content": "---\ntitle: Annika Fenbarrow\ntype: person\naliases: [annika]\nsummary: \"Annika Fenbarrow is the head of sales at Nimbusvane.\"\n---\n\nAnnika Fenbarrow is the head of sales at Nimbusvane.\n"
+    },
+    {
+      "slug": "people/corin-pelldale",
+      "content": "---\ntitle: Corin Pelldale\ntype: person\naliases: [corin]\nsummary: \"A contact from a conference last spring.\"\n---\n\nA contact from a conference last spring.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Translate into Spanish: 'Vashdale will join the meeting at noon.'"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Okay, noted."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "verity yarrstead wants to meet again, what did we agree last time about the roadmap?"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Okay, noted."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "By the way, someone named Delphine Corvbrook emailed about partnerships. Never heard of them."
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "Translate into Spanish: 'Fenbarrow will join the meeting at noon.'"
+    }
+  ]
+}

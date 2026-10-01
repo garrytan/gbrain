@@ -1,0 +1,171 @@
+[user]
+I have a short mixed list of temperatures and distances. Can you convert everything to the other unit system?
+
+[assistant]
+Yes. Paste the list and indicate which entries are temperatures versus distances if that is not obvious. I can convert Celsius to Fahrenheit, Fahrenheit to Celsius, kilometers to miles, miles to kilometers, meters to feet, feet to meters, centimeters to inches, and inches to centimeters. I’ll show the formula or rounded result as appropriate.
+
+[user]
+Here is the list:
+
+- 18 °C
+- 72 °F
+- 3.5 km
+- 2 mi
+- 850 m
+- 6 ft
+- 24 cm
+- 9 in
+- -5 °C
+- 104 °F
+
+Please give useful everyday rounding, but keep enough precision that the results are not misleading.
+
+[assistant]
+Here are the conversions with practical rounding:
+
+- 18 °C = 64.4 °F, usually rounded to 64 °F
+- 72 °F = 22.2 °C, usually rounded to 22 °C
+- 3.5 km = 2.17 mi, or about 2.2 mi
+- 2 mi = 3.22 km
+- 850 m = 2,789 ft, or about 2,790 ft
+- 6 ft = 1.83 m
+- 24 cm = 9.45 in, or about 9.4 in
+- 9 in = 22.86 cm, or about 22.9 cm
+- -5 °C = 23 °F
+- 104 °F = 40 °C
+
+For temperatures, I retained one decimal place when the converted value was not a whole number. For distances, I used two decimal places for kilometer/mile conversions and sensible whole-number or one-decimal rounding for smaller units.
+
+[user]
+Can you put that into a compact table with the original value, converted value, and a rounded everyday version?
+
+[assistant]
+| Original | Converted value | Rounded everyday version |
+|---|---:|---:|
+| 18 °C | 64.4 °F | 64 °F |
+| 72 °F | 22.2 °C | 22 °C |
+| 3.5 km | 2.174 mi | 2.2 mi |
+| 2 mi | 3.219 km | 3.2 km |
+| 850 m | 2,788.71 ft | 2,790 ft |
+| 6 ft | 1.8288 m | 1.8 m |
+| 24 cm | 9.449 in | 9.4 in |
+| 9 in | 22.86 cm | 22.9 cm |
+| -5 °C | 23 °F | 23 °F |
+| 104 °F | 40 °C | 40 °C |
+
+The “converted value” column keeps more digits for checking, while the final column is intended for ordinary conversation or quick estimates.
+
+[user]
+I also need the formulas, especially for temperatures. Could you show the calculation for each row without making it too bulky?
+
+[assistant]
+Certainly. The temperature formulas are:
+
+- Celsius to Fahrenheit: °F = (°C × 9/5) + 32
+- Fahrenheit to Celsius: °C = (°F − 32) × 5/9
+
+The distance formulas used here are:
+
+- kilometers to miles: mi = km × 0.621371
+- miles to kilometers: km = mi × 1.60934
+- meters to feet: ft = m × 3.28084
+- feet to meters: m = ft × 0.3048
+- centimeters to inches: in = cm ÷ 2.54
+- inches to centimeters: cm = in × 2.54
+
+Calculations:
+
+- 18 °C: (18 × 9/5) + 32 = 64.4 °F → 64 °F
+- 72 °F: (72 − 32) × 5/9 = 22.222... °C → 22 °C
+- 3.5 km: 3.5 × 0.621371 = 2.1748 mi → 2.2 mi
+- 2 mi: 2 × 1.60934 = 3.21868 km → 3.2 km
+- 850 m: 850 × 3.28084 = 2,788.714 ft → 2,790 ft
+- 6 ft: 6 × 0.3048 = 1.8288 m → 1.8 m
+- 24 cm: 24 ÷ 2.54 = 9.4488 in → 9.4 in
+- 9 in: 9 × 2.54 = 22.86 cm → 22.9 cm
+- -5 °C: (-5 × 9/5) + 32 = 23 °F → 23 °F
+- 104 °F: (104 − 32) × 5/9 = 40 °C → 40 °C
+
+[user]
+Could you provide a small command-line script so I can paste similar values later and get both the precise conversion and the rounded version?
+
+[assistant]
+Here is a small Python script. It accepts one value per line, recognizes the unit suffix, prints the exact conversion to a sensible decimal precision, and adds an everyday rounded result. It supports the units in your list.
+
+Save it as `convert_units.py`:
+
+```python
+import re
+
+def convert(value, unit):
+    unit = unit.lower()
+    if unit in ("c", "°c"):
+        return value * 9 / 5 + 32, "°F", round(value * 9 / 5 + 32)
+    if unit in ("f", "°f"):
+        result = (value - 32) * 5 / 9
+        return result, "°C", round(result)
+    if unit == "km":
+        result = value * 0.621371
+        return result, "mi", round(result, 1)
+    if unit in ("mi", "mile", "miles"):
+        result = value * 1.60934
+        return result, "km", round(result, 1)
+    if unit in ("m", "meter", "meters"):
+        result = value * 3.28084
+        return result, "ft", round(result)
+    if unit in ("ft", "foot", "feet"):
+        result = value * 0.3048
+        return result, "m", round(result, 1)
+    if unit in ("cm", "centimeter", "centimeters"):
+        result = value / 2.54
+        return result, "in", round(result, 1)
+    if unit in ("in", "inch", "inches"):
+        result = value * 2.54
+        return result, "cm", round(result, 1)
+    raise ValueError(f"Unsupported unit: {unit}")
+
+print("Enter values such as 18 C, 72 F, or 3.5 km.")
+print("Press Enter on a blank line to finish.")
+
+while True:
+    text = input("> ").strip()
+    if not text:
+        break
+
+    match = re.fullmatch(r"([-+]?(?:\d+(?:\.\d*)?|\.\d+))\s*([A-Za-z°]+)", text)
+    if not match:
+        print("Format error. Use a number followed by a unit, such as -5 C.")
+        continue
+
+    try:
+        value = float(match.group(1))
+        unit = match.group(2)
+        result, result_unit, rounded = convert(value, unit)
+        print(f"Precise: {result:.6g} {result_unit}")
+        print(f"Rounded: {rounded:g} {result_unit}")
+    except ValueError as error:
+        print(error)
+```
+
+Example run:
+
+```text
+$ python3 convert_units.py
+Enter values such as 18 C, 72 F, or 3.5 km.
+Press Enter on a blank line to finish.
+> 18 C
+Precise: 64.4 °F
+Rounded: 64 °F
+> 3.5 km
+Precise: 2.1748 mi
+Rounded: 2.2 mi
+> -5 C
+Precise: 23 °F
+Rounded: 23 °F
+> 850 m
+Precise: 2788.71 ft
+Rounded: 2789 ft
+>
+```
+
+The script treats the numerical conversion as precise to the limits of the supplied factors. The displayed “precise” result is formatted to six significant digits, while the rounded result follows the practical precision used in the table.

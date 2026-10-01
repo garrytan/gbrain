@@ -34,6 +34,8 @@
 set -euo pipefail
 
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+# Self-test seam: GBRAIN_GUARD_ROOT points at a fixture tree with its own src/.
+ROOT="${GBRAIN_GUARD_ROOT:-$ROOT}"
 cd "$ROOT"
 
 # Files allowed to import `operations` directly. Each entry must be
@@ -57,6 +59,7 @@ ALLOWED=(
   "src/core/persistence/administration.ts"      # trusted-admin grant diagnostics; does not expose an operation transport
   "src/core/persistence/provider.ts"            # authenticated local registrations; shared dispatch enforces localOnly and the immutable trust lane
   "src/commands/enrich.ts"                       # local CLI tool; calls put_page handler with remote=false, not network-exposed
+  "src/core/extract-takes-from-pages.ts"          # local CLI extraction calls put_page with remote=false; it does not expose operations to a transport
   "src/commands/book-mirror.ts"                 # local CLI tool; not network-exposed
   "src/commands/tools-json.ts"                  # gbrain --tools-json introspection; full op list IS the purpose
   "src/mcp/publish-gates.ts"                    # reads op.publishGateKey/name only to compute gate-DISABLED sets; never lists/exposes ops
@@ -117,13 +120,21 @@ while IFS= read -r file; do
   fi
 done <<< "$FOUND_FILES"
 
-# Check 2: serve-http.ts MUST contain the canonical filter expression near
-# its operations import. Without the filter, the entire HTTP MCP surface
-# leaks localOnly ops.
-SERVE_HTTP="src/commands/serve-http.ts"
-if [ -f "$SERVE_HTTP" ]; then
-  if ! grep -qE 'operations\.filter\(\s*op\s*=>\s*!op\.localOnly\s*\)' "$SERVE_HTTP"; then
-    echo "FAIL: $SERVE_HTTP no longer contains the canonical"
+# Check 2: the HTTP MCP surface MUST contain the canonical filter expression
+# near its operations import. Without the filter, the entire HTTP MCP surface
+# leaks localOnly ops. Refactor wave 1 moves the /mcp handler from
+# serve-http.ts into serve-http-mcp.ts, so the filter may live in either file
+# (a containment check over that two-file surface); a new serve-http-*.ts
+# module that imports operations must still pass check 1's ALLOWED list.
+SERVE_HTTP_SURFACE=()
+for f in src/commands/serve-http.ts src/commands/serve-http-mcp.ts; do
+  [ -f "$f" ] && SERVE_HTTP_SURFACE+=("$f")
+done
+if [ "${#SERVE_HTTP_SURFACE[@]}" -gt 0 ]; then
+  # grep the files directly: `cat | grep -q` under pipefail fails with
+  # SIGPIPE whenever grep exits on an early match.
+  if ! grep -qE 'operations\.filter\(\s*op\s*=>\s*!op\.localOnly\s*\)' "${SERVE_HTTP_SURFACE[@]}"; then
+    echo "FAIL: ${SERVE_HTTP_SURFACE[*]} no longer contain the canonical"
     echo "      operations.filter(op => !op.localOnly) expression. The HTTP MCP"
     echo "      surface depends on this filter to enforce localOnly. Restore"
     echo "      the filter or refactor the trust boundary explicitly."

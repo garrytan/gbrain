@@ -14,6 +14,7 @@ import { assertPhysicalRoot, claimPhysicalRoot, isPhysicalRootMetadata, prepareP
 import { readPhysicalRootStamp } from './physical-root-record.ts';
 import { canonicalFilesystemPath, nativeFilesystemPath } from './root-registry.ts';
 import { assertWriterAdminState } from './admin-intent.ts';
+import { assertWriterAdminUnlocked } from './admin-lock.ts';
 import { inspectPhysicalRootRecovery, repairPhysicalRoot, type PhysicalRootRecovery } from './physical-root-recovery.ts';
 
 export interface WorktreeBinding {
@@ -45,11 +46,13 @@ export async function getWorktreeBinding(engine: SqlEngine, sourceId: string, ho
     WHERE s.source_id=$1`, [sourceId, hostId]);
   return row ?? null;
 }
-export async function claimWorktree(engine: BrainEngine, sourceId: string, path: string, hostId = localHostId(), expectedAdminState?: string): Promise<WorktreeBinding> {
+/** `automatic` is only the ordinary first-write claim; the writer admin lock never blocks it. */
+export async function claimWorktree(engine: BrainEngine, sourceId: string, path: string, hostId = localHostId(), expectedAdminState?: string,
+  options: { automatic?: boolean } = {}): Promise<WorktreeBinding> {
   if(await managedPersistenceEnabled(engine)) {
     if(hostId!==localHostId()) throw new OperationError('permission_denied','A source can be claimed only by the local registered host.');
     const { runManagedSourceLifecycle }=await import('./source-lifecycle.ts');
-    await runManagedSourceLifecycle(engine,{operation:'claim',sourceId,path,expectedAdminState});
+    await runManagedSourceLifecycle(engine,{operation:'claim',sourceId,path,expectedAdminState,automaticClaim:options.automatic});
     return (await getWorktreeBinding(engine,sourceId,hostId))!;
   }
   let sourceRoot: string;
@@ -74,6 +77,7 @@ export async function claimWorktree(engine: BrainEngine, sourceId: string, path:
     await tx.executeRaw("SELECT set_config('synchronous_commit','on',true)");
     await tx.executeRaw('SELECT singleton FROM persistence_brain WHERE singleton=1 FOR UPDATE');
     await assertWriterAdminState(tx, expectedAdminState);
+    if (!options.automatic) await assertWriterAdminUnlocked(tx);
     const [source] = await tx.executeRaw<{ incarnation: string; archived: boolean }>('SELECT incarnation,archived FROM sources WHERE id=$1 FOR UPDATE', [sourceId]);
     if (!source || source.archived) throw new OperationError('source_changed', 'Only an active registered source can claim a worktree.');
     const current = await getWorktreeBinding(tx, sourceId, hostId);
@@ -200,6 +204,7 @@ export async function prepareWriterTransfer(engine: BrainEngine, sourceId: strin
     return await engine.transaction(async tx => {
       await tx.executeRaw("SELECT set_config('synchronous_commit','on',true)");
       await assertWriterAdminState(tx, expectedAdminState);
+      await assertWriterAdminUnlocked(tx);
       const [owner] = await tx.executeRaw<{ owner_host_id: string; owner_epoch: string; state: string }>('SELECT owner_host_id,owner_epoch,state FROM persistence_worktrees WHERE id=$1::uuid FOR UPDATE', [binding.worktree_id]);
       const current = await getWorktreeBinding(tx, sourceId, hostId);
       if (!owner || owner.owner_host_id !== hostId || JSON.stringify(current) !== JSON.stringify(binding)) throw new OperationError('owner_unavailable', 'Ownership changed during transfer.');
@@ -235,6 +240,7 @@ export async function acceptWriterTransfer(engine: BrainEngine, sourceId: string
     await engine.transaction(async tx => {
       await tx.executeRaw("SELECT set_config('synchronous_commit','on',true)");
       await assertWriterAdminState(tx, expectedAdminState);
+      await assertWriterAdminUnlocked(tx);
       const [owner] = await tx.executeRaw<{ owner_epoch: string; state: string; manifest: { digest: string; self_transfer?: PhysicalRootRecovery } }>('SELECT owner_epoch,state,manifest FROM persistence_worktrees WHERE id=$1::uuid FOR UPDATE', [binding.worktree_id]);
       if (!owner || owner.state !== 'draining' || String(owner.owner_epoch) !== expectedEpoch || owner.manifest?.digest !== expectedManifest) throw new OperationError('writer_transfer_conflict', 'Transfer preparation or epoch changed.');
       if (!!owner.manifest.self_transfer !== !!opts.selfTransfer || JSON.stringify(await getWorktreeBinding(tx, sourceId, hostId)) !== JSON.stringify(binding)) throw new OperationError('writer_transfer_conflict', 'The prepared transfer mode or binding changed.');

@@ -1,0 +1,106 @@
+[user]
+I need a generic out-of-office auto-reply with the dates filled in. I’ll be away from Monday, October 12 through Friday, October 16, and back on Monday, October 19.
+
+[assistant]
+Here’s a simple version:
+
+Subject: Out of office
+
+Hello,
+
+Thank you for your message. I am out of the office from Monday, October 12 through Friday, October 16, and will return on Monday, October 19. I will respond to your email as soon as possible after I return.
+
+Best,
+[Your name]
+
+[user]
+Can you make it a little more polished without sounding too formal? Please avoid mentioning an alternate contact.
+
+[assistant]
+Subject: Out of office: October 12–16
+
+Hello,
+
+Thanks for your message. I’m out of the office from Monday, October 12 through Friday, October 16, and I’ll be back on Monday, October 19. I’ll get back to you as soon as I can after I return.
+
+Best,
+[Your name]
+
+[user]
+Could you add that I may have limited access to email while I’m away?
+
+[assistant]
+Subject: Out of office: October 12–16
+
+Hello,
+
+Thanks for your message. I’m out of the office from Monday, October 12 through Friday, October 16, and I’ll be back on Monday, October 19. I may have limited access to email during this time, but I’ll get back to you as soon as I can after I return.
+
+Best,
+[Your name]
+
+[user]
+I need both an internal version and an external version. Keep the internal one slightly more casual, and don’t include a subject line in either version.
+
+[assistant]
+Internal:
+
+Hi,
+
+I’m out of the office from Monday, October 12 through Friday, October 16, and I’ll be back on Monday, October 19. I may only have limited access to email while I’m away, but I’ll reply when I can after I return.
+
+Thanks,
+[Your name]
+
+External:
+
+Hello,
+
+Thanks for your message. I’m out of the office from Monday, October 12 through Friday, October 16, and I’ll return on Monday, October 19. I may have limited access to email during this time, but I’ll respond as soon as possible after I return.
+
+Best,
+[Your name]
+
+[user]
+Can you make the wording consistent between the two, while keeping the internal greeting and sign-off casual?
+
+[assistant]
+Internal:
+
+Hi,
+
+Thanks for your message. I’m out of the office from Monday, October 12 through Friday, October 16, and I’ll return on Monday, October 19. I may have limited access to email during this time, but I’ll respond as soon as possible after I return.
+
+Thanks,
+[Your name]
+
+External:
+
+Hello,
+
+Thanks for your message. I’m out of the office from Monday, October 12 through Friday, October 16, and I’ll return on Monday, October 19. I may have limited access to email during this time, but I’ll respond as soon as possible after I return.
+
+Best,
+[Your name]
+
+[user]
+Please change “during this time” to “while I’m away” in both versions.
+
+[assistant]
+Internal:
+
+Hi,
+
+Thanks for your message. I’m out of the office from Monday, October 12 through Friday, October 16, and I’ll return on Monday, October 19. I may have limited access to email while I’m away, but I’ll respond as soon as possible after I return.
+
+Thanks,
+[Your name]
+
+External:
+
+Hello,
+
+Thanks for your message. I’m out of the office from Monday, October 12 through Friday, October 16, and I’ll return on Monday, October 19. I may have limited access to email while I’m away, but I’ll respond as soon as possible after I return.
+
+Best,
+[Your name]

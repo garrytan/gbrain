@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-073",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/leonie-lornfell",
+      "content": "---\ntitle: Leonie Lornfell\ntype: person\nsummary: \"Leonie Lornfell is the head of sales at Kilnloft.\"\n---\n\nLeonie Lornfell is the head of sales at Kilnloft. Leonie objected to the auto-renewal clause in the draft contract.\n"
+    },
+    {
+      "slug": "companies/emberwharf",
+      "content": "---\ntitle: Emberwharf\ntype: company\nsummary: \"Emberwharf is a software vendor we work with.\"\n---\n\nEmberwharf is a software vendor we work with. The renewal is blocked on a security review that is due next month.\n"
+    },
+    {
+      "slug": "people/lucan-dremthorpe",
+      "content": "---\ntitle: Lucan Dremthorpe\ntype: person\nsummary: \"Lucan Dremthorpe is the head of sales at Vespervane.\"\n---\n\nLucan Dremthorpe is the head of sales at Vespervane.\n"
+    },
+    {
+      "slug": "people/dario-merrridge",
+      "content": "---\ntitle: Dario Merrridge\ntype: person\naliases: [dario]\nsummary: \"Dario Merrridge is the product lead at Glintspire.\"\n---\n\nDario Merrridge is the product lead at Glintspire.\n"
+    },
+    {
+      "slug": "companies/kilnfold",
+      "content": "---\ntitle: Kilnfold\ntype: company\nsummary: \"A company we met once at a trade show.\"\n---\n\nA company we met once at a trade show.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "what did Leonie say about the contract?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "remind me what we know about emberwharf and the renewal"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Okay, noted."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "is lucan a common name anywhere? thinking about it for a character"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "Merrridge mentioned the pomodoro technique on a call. How does the pomodoro technique work?"
+    }
+  ]
+}

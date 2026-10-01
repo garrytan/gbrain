@@ -11,6 +11,7 @@ import {
   lockEmbeddingSources,
   splitEmbeddingSignature,
   currentSpaceChunkPredicate,
+  countRestampOnlyChunks,
 } from './embedding-invalidation.ts';
 import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } from './ai/defaults.ts';
 import { readPrimaryEmbeddingStores, readStoredEmbeddingIdentity } from './stored-embedding-identity.ts';
@@ -325,7 +326,8 @@ export const MIGRATION_COMPLETED_KEY = 'embedding_migration.completed';
 
 export interface MigrationState {
   authorization_version?: 1;
-  budget?: { max_cost_usd: number; debited_usd: number; requests: number };
+  authorization_generation?: number;
+  budget?: { max_cost_usd: number; debited_usd: number; requests: number; generation?: number; pending?: Record<string, number>; overshoot_usd?: number; halted?: boolean };
   /** Marker schema version. Absent = v1 (pre-hardening). */
   version?: 2;
   companion_vectors_invalidated?: boolean;
@@ -399,8 +401,14 @@ export interface EmbeddingMigrationPlan {
   to_dims: number;
   /** True when the schema column must be rebuilt at a new width. */
   dim_change: boolean;
-  /** Chunks not yet in the target embedding space (the migration workload). */
+  /** Chunks the run sends to the target model (the paid migration workload). */
   chunks_to_embed: number;
+  /**
+   * #5226: stale-signature chunks whose vectors are already in the target
+   * space (same model and width, column kept): the run only restamps them,
+   * with no provider call. Not part of chunks_to_embed; 0 on a width change.
+   */
+  chunks_to_restamp: number;
   /** Characters across those chunks (feeds the cost estimate). */
   total_chars: number;
   /**
@@ -588,6 +596,7 @@ export async function planEmbeddingMigration(
   let narrow: number;
   let totalChars: number;
   let falseStamped = { pages: 0, chunks: 0, chars: 0 };
+  let restamp = 0;
   if (col.exists) {
     wide = await engine.countStaleChunks({ signature: sig, includeNullSignature: true });
     narrow = await engine.countStaleChunks({ signature: sig });
@@ -596,6 +605,7 @@ export async function planEmbeddingMigration(
     // counts what the stamp hides. No overlap — the stale predicates skip
     // exactly the target-stamped pages' EMBEDDED chunks counted here.
     falseStamped = await countFalseStampedChunks(engine, toModel, toDims);
+    if (!schemaRebuildNeeded(col.dims, toDims)) restamp = await countRestampOnlyChunks(engine, { signature: sig, includeNullSignature: true });
   } else {
     // Column ABSENT: the stale predicates reference cc.embedding and would
     // throw. Every chunk needs embedding once the column is (re)built.
@@ -673,7 +683,8 @@ export async function planEmbeddingMigration(
     to_dims: toDims,
     // ONE computation shared with apply's trigger (absent column ⇒ build).
     dim_change: schemaRebuildNeeded(col.dims, toDims),
-    chunks_to_embed: wide + falseStamped.chunks,
+    chunks_to_embed: wide + falseStamped.chunks - restamp,
+    chunks_to_restamp: restamp,
     total_chars: totalChars,
     null_signature_chunks: wide - narrow,
     false_stamped_chunks: falseStamped.chunks,
@@ -1171,6 +1182,7 @@ export async function applyEmbeddingMigration(
       state.companion_vectors_invalidated = prior.state.companion_vectors_invalidated;
       state.budget = prior.state.budget;
       state.authorization_version = prior.state.authorization_version;
+      state.authorization_generation = prior.state.authorization_generation;
       if (prior.state.retargeted_at) state.retargeted_at = prior.state.retargeted_at;
       if (prior.state.superseded) state.superseded = prior.state.superseded;
     } else if (prior.state) {

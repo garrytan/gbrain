@@ -25,7 +25,7 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
-import { assertUnmanagedCanonicalWriter } from '../persistence/maintenance.ts';
+import { managedFactWritePreflight } from '../facts/managed-fact-write.ts';
 import { loadSuppressions, upsertOpenLoop, type LoopType } from '../loops/loops-store.ts';
 import { isCalendarSystemMail, isNoiseSender, sha8 } from './google-render.ts';
 import { bareAddress, type GmailMessageMeta, type GmailThreadData } from './types.ts';
@@ -323,7 +323,9 @@ export async function runLoopsExtract(
     return { ...empty, reason: 'suppressed' };
   }
 
-  await assertUnmanagedCanonicalWriter(engine, 'Google loop extraction');
+  // Managed brains publish the commitment fact through the coordinator; its
+  // authority and canonical owner are checked here, before the model call.
+  await managedFactWritePreflight(engine, payload.sourceId);
   const { isAvailable, chat } = await import('../ai/gateway.ts');
   // Keyless install / provider outage: NOT a skip. The sweep already refuses to
   // enqueue while chat is unavailable; a job that reaches here mid-outage must

@@ -159,30 +159,7 @@ done
 
 # Step 3: smoke-test run-e2e.sh argv + shard handling.
 echo "[ci-local] Smoke: run-e2e.sh argv + shard..."
-SMOKE_NO_ARGS=$(bash scripts/run-e2e.sh --dry-run-list | wc -l | tr -d ' ')
-# run-e2e.sh's no-arg list is the test/e2e glob PLUS phantom-redirect-engine-
-# parity (lives in test/; its Postgres arm is only reachable through this
-# DATABASE_URL-bearing lane — see the comment in run-e2e.sh). Mirror that +1
-# here or the smoke check fails on every tree where the counts drift.
-EXPECTED_ALL=$(( $(ls test/e2e/*.test.ts | wc -l | tr -d ' ') + 1 ))
-if [ "$SMOKE_NO_ARGS" != "$EXPECTED_ALL" ]; then
-  echo "[ci-local] ERROR: --dry-run-list (no args) printed $SMOKE_NO_ARGS, expected $EXPECTED_ALL" >&2
-  exit 1
-fi
-SMOKE_ONE_ARG=$(bash scripts/run-e2e.sh --dry-run-list test/e2e/sync.test.ts)
-if [ "$SMOKE_ONE_ARG" != "test/e2e/sync.test.ts" ]; then
-  echo "[ci-local] ERROR: --dry-run-list with 1 arg printed '$SMOKE_ONE_ARG'" >&2
-  exit 1
-fi
-SHARD_TOTAL=$(( $(SHARD=1/4 bash scripts/run-e2e.sh --dry-run-list | wc -l) + \
-                $(SHARD=2/4 bash scripts/run-e2e.sh --dry-run-list | wc -l) + \
-                $(SHARD=3/4 bash scripts/run-e2e.sh --dry-run-list | wc -l) + \
-                $(SHARD=4/4 bash scripts/run-e2e.sh --dry-run-list | wc -l) ))
-if [ "$SHARD_TOTAL" != "$EXPECTED_ALL" ]; then
-  echo "[ci-local] ERROR: shards 1-4 covered $SHARD_TOTAL files, expected $EXPECTED_ALL" >&2
-  exit 1
-fi
-echo "[ci-local] Smoke OK ($SMOKE_NO_ARGS files no-arg, 1 single-arg, ${SHARD_TOTAL}=4-shard total)."
+bash scripts/ci-local-e2e-smoke.sh
 
 # Step 4: build the runner-side command.
 # Tier 1: 4-shard parallel UNIT + E2E. Each shard runs ~46 unit files + ~9
@@ -208,6 +185,7 @@ else
   DATABASE_URL=postgresql://postgres:postgres@postgres-1:5432/gbrain_test \
   GBRAIN_PGBOUNCER_URL=postgresql://postgres:postgres@pgbouncer:5432/gbrain_pgbouncer_test \
   GBRAIN_PGBOUNCER_DIRECT_URL=postgresql://postgres:postgres@postgres-1:5432/gbrain_test \
+  GBRAIN_PGBOUNCER_E2E_DB=gbrain_test \
   GBRAIN_CI_REQUIRE_PGBOUNCER=1 \
   GBRAIN_TEST_DB=1 \
   xargs -a /tmp/e2e-selected.txt bash scripts/run-e2e.sh
@@ -226,6 +204,7 @@ echo "[runner] e2e (unsharded)"
 DATABASE_URL=postgresql://postgres:postgres@postgres-1:5432/gbrain_test \
 GBRAIN_PGBOUNCER_URL=postgresql://postgres:postgres@pgbouncer:5432/gbrain_pgbouncer_test \
 GBRAIN_PGBOUNCER_DIRECT_URL=postgresql://postgres:postgres@postgres-1:5432/gbrain_test \
+GBRAIN_PGBOUNCER_E2E_DB=gbrain_test \
 GBRAIN_CI_REQUIRE_PGBOUNCER=1 \
 GBRAIN_TEST_DB=1 \
 bash scripts/run-e2e.sh'
@@ -279,11 +258,14 @@ printf '%s\\n' 1 2 3 4 | xargs -P4 -I{} sh -c '
     exit \$unit_exit
   fi
   echo \"[shard \${shard}] e2e phase (SHARD=\${shard}/4, DATABASE_URL=postgres-\${shard})\" >> \$log
+  # Backend-matrix PgBouncer pass: the one pooler fronts postgres-1, so each
+  # shard gets its own pooled database there (run-e2e.sh creates it).
   if [ -s /tmp/e2e-selected.txt ]; then
     SHARD=\${shard}/4 \\
     DATABASE_URL=postgresql://postgres:postgres@postgres-\${shard}:5432/gbrain_test \\
     GBRAIN_PGBOUNCER_URL=postgresql://postgres:postgres@pgbouncer:5432/gbrain_pgbouncer_test \\
     GBRAIN_PGBOUNCER_DIRECT_URL=postgresql://postgres:postgres@postgres-1:5432/gbrain_test \\
+    GBRAIN_PGBOUNCER_E2E_DB=gbrain_pooled_\${shard}_test \\
     GBRAIN_CI_REQUIRE_PGBOUNCER=1 \\
     GBRAIN_TEST_DB=1 \\
     xargs -a /tmp/e2e-selected.txt bash scripts/run-e2e.sh >> \$log 2>&1
@@ -292,6 +274,7 @@ printf '%s\\n' 1 2 3 4 | xargs -P4 -I{} sh -c '
     DATABASE_URL=postgresql://postgres:postgres@postgres-\${shard}:5432/gbrain_test \\
     GBRAIN_PGBOUNCER_URL=postgresql://postgres:postgres@pgbouncer:5432/gbrain_pgbouncer_test \\
     GBRAIN_PGBOUNCER_DIRECT_URL=postgresql://postgres:postgres@postgres-1:5432/gbrain_test \\
+    GBRAIN_PGBOUNCER_E2E_DB=gbrain_pooled_\${shard}_test \\
     GBRAIN_CI_REQUIRE_PGBOUNCER=1 \\
     GBRAIN_TEST_DB=1 \\
     bash scripts/run-e2e.sh >> \$log 2>&1

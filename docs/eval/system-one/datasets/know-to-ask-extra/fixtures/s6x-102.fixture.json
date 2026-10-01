@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-102",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/noemi-ostrecombe",
+      "content": "---\ntitle: Noemi Ostrecombe\ntype: person\naliases: [noemi]\nsummary: \"Noemi Ostrecombe is the user's accountant.\"\n---\n\nNoemi Ostrecombe is the user's accountant. Noemi asked for a longer pilot before signing, ideally a full quarter.\n"
+    },
+    {
+      "slug": "people/teodor-pelldale",
+      "content": "---\ntitle: Teodor Pelldale\ntype: person\nsummary: \"Teodor Pelldale is the procurement lead at Russetcrest.\"\n---\n\nTeodor Pelldale is the procurement lead at Russetcrest. Teodor suggested holding the offsite somewhere reachable by train.\n"
+    },
+    {
+      "slug": "people/alaric-merrcombe",
+      "content": "---\ntitle: Alaric Merrcombe\ntype: person\naliases: [alaric]\nsummary: \"Alaric Merrcombe is the head of partnerships at Halcyonloft.\"\n---\n\nAlaric Merrcombe is the head of partnerships at Halcyonloft.\n"
+    },
+    {
+      "slug": "companies/orchidgate",
+      "content": "---\ntitle: Orchidgate\ntype: company\nsummary: \"A company we met once at a trade show.\"\n---\n\nA company we met once at a trade show.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "what did my accountant flag about the pilot?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Okay, noted."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Remind me of Pelldale's position on the offsite before our sync."
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Here is what I have."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "How do you pronounce Alaric? I want to say it right."
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Happy to help."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "what are the pros and cons of a four-day work week?"
+    }
+  ]
+}

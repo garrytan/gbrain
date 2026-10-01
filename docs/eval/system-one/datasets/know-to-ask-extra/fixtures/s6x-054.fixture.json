@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-054",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/soraya-yarrmere",
+      "content": "---\ntitle: Soraya Yarrmere\ntype: person\nsummary: \"Soraya Yarrmere is the procurement lead at Cobaltfold.\"\n---\n\nSoraya Yarrmere is the procurement lead at Cobaltfold.\n"
+    },
+    {
+      "slug": "people/teodor-brinwaite",
+      "content": "---\ntitle: Teodor Brinwaite\ntype: person\nsummary: \"Teodor Brinwaite is the procurement lead at Quartzyard.\"\n---\n\nTeodor Brinwaite is the procurement lead at Quartzyard.\n"
+    },
+    {
+      "slug": "people/solveig-haskdale",
+      "content": "---\ntitle: Solveig Haskdale\ntype: person\naliases: [solveig]\nsummary: \"Solveig Haskdale is the procurement lead at Vesperfold.\"\n---\n\nSolveig Haskdale is the procurement lead at Vesperfold. Solveig objected to the auto-renewal clause in the draft contract.\n"
+    },
+    {
+      "slug": "people/idris-yarrwick",
+      "content": "---\ntitle: Idris Yarrwick\ntype: person\naliases: [idris]\nsummary: \"Idris Yarrwick is the user's cofounder and CTO.\"\n---\n\nIdris Yarrwick is the user's cofounder and CTO. Idris suggested holding the offsite somewhere reachable by train.\n"
+    },
+    {
+      "slug": "people/junie-grismere",
+      "content": "---\ntitle: Junie Grismere\ntype: person\naliases: [junie]\nsummary: \"A contact from a conference last spring.\"\n---\n\nA contact from a conference last spring.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Translate into French: 'Soraya Yarrmere will send the notes tomorrow.'"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Our hotel is on Brinwaite Street. Any tips for finding breakfast near a hotel in a new city?"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "Prep me for the Haskdale call, especially the contract."
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Done."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "what did my cofounder think about the offsite?"
+    }
+  ]
+}

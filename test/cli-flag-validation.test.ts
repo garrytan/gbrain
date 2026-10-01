@@ -316,3 +316,95 @@ describe('#2185 subprocess smokes — end-to-end error surface', () => {
     expect(r.stderr).not.toContain('unknown flag --source');
   });
 });
+
+describe('#5700 parseOpArgs refuses to swallow a known flag as a value', () => {
+  test('a non-boolean flag followed by a known flag of the same command is an argument error', async () => {
+    const { parseOpArgs } = await import('../src/cli.ts');
+    const put = operations.find(o => o.cliHints?.name === 'put')!;
+    // The reported shape: `gbrain put x --content --source default` with the
+    // body on stdin used to store the literal "--source" as the page body,
+    // drop the real --source, and never read the pipe (content already set).
+    expect(() => parseOpArgs(put, ['repro-a', '--content', '--source', 'default'])).toThrow(
+      /--content requires a value, but '--source' is a flag/,
+    );
+    // The inline = spelling of the swallowed flag is refused the same way.
+    expect(() => parseOpArgs(put, ['repro-e', '--content', '--source=default'])).toThrow(
+      /--content requires a value, but '--source=default' is a flag/,
+    );
+    // A CLI-local boolean in the value slot is the same mistake.
+    expect(() => parseOpArgs(put, ['repro', '--content', '--dry-run'])).toThrow(
+      /--content requires a value, but '--dry-run' is a flag/,
+    );
+    // The --no-<boolean> form counts as a known flag too.
+    expect(() => parseOpArgs(put, ['repro', '--content', '--no-allow-empty'])).toThrow(
+      /--content requires a value, but '--no-allow-empty' is a flag/,
+    );
+  });
+
+  test('the stdin-capable flag names the stdin recovery; other flags do not', async () => {
+    const { parseOpArgs } = await import('../src/cli.ts');
+    const put = operations.find(o => o.cliHints?.name === 'put')!;
+    expect(() => parseOpArgs(put, ['repro', '--content', '--source', 'default'])).toThrow(
+      "--content requires a value, but '--source' is a flag; omit --content (or put it last) to read stdin.",
+    );
+    expect(() => parseOpArgs(put, ['repro', '--source-kind', '--content', 'x'])).toThrow(
+      "--source-kind requires a value, but '--content' is a flag.",
+    );
+  });
+
+  test('flag order alone still decides nothing: both orders reach the same params', async () => {
+    const { parseOpArgs } = await import('../src/cli.ts');
+    const put = operations.find(o => o.cliHints?.name === 'put')!;
+    // Working order — --content last, body from stdin (unit test: no pipe, so
+    // content stays unset and applyStdinParam would fill it).
+    const ok = parseOpArgs(put, ['repro-b', '--source', 'default', '--content']);
+    expect(ok.source).toBe('default');
+    expect(ok.slug).toBe('repro-b');
+    expect(ok.content).toBeUndefined();
+  });
+
+  test('a value that merely starts with -- is still a value', async () => {
+    const { parseOpArgs } = await import('../src/cli.ts');
+    const put = operations.find(o => o.cliHints?.name === 'put')!;
+    // Markdown bodies legitimately start with "--" (an em-dash list, a YAML
+    // comment). Only a token this command knows as a flag is refused.
+    const p = parseOpArgs(put, ['repro', '--content', '-- a body', '--source', 'default']);
+    expect(p.content).toBe('-- a body');
+    expect(p.source).toBe('default');
+    // An unknown flag-looking token is the validator's business, not the
+    // parser's — it stays a value here, exactly as before.
+    expect(parseOpArgs(put, ['repro', '--content', '--not-a-real-flag']).content).toBe('--not-a-real-flag');
+  });
+
+  test('findUnknownOpFlag still rejects a real unknown flag next to a known one', () => {
+    // The mirror keeps consuming the known flag's value, so the bogus flag
+    // after it is still seen.
+    const put = operations.find(o => o.cliHints?.name === 'put')!;
+    expect(findUnknownOpFlag(put, ['repro', '--source', 'default', BOGUS])).toBe(BOGUS);
+    expect(findUnknownOpFlag(put, ['repro', '--content', 'body', BOGUS])).toBe(BOGUS);
+  });
+});
+
+describe('#5700 subprocess smoke — the reported invocation fails loud', () => {
+  const run = (args: string[]) =>
+    spawnSync('bun', ['src/cli.ts', ...args], {
+      encoding: 'utf-8',
+      timeout: 30_000,
+      env: { ...process.env, GBRAIN_SKIP_STARTUP_HOOKS: '1' },
+    });
+
+  test('put --content --source <id> exits 1 naming both flags', () => {
+    const r = run(['put', 'repro-a', '--content', '--source', 'default']);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("--content requires a value, but '--source' is a flag");
+    // Pre-write: the page must not have been created with a flag token body.
+    expect(r.stdout).not.toContain('created_or_updated');
+  });
+
+  test('put --help documents stdin and that --content needs a value', () => {
+    const r = run(['put', '--help']);
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain('gbrain put <slug> [options] < file   (--content read from stdin)');
+    expect(r.stdout).toMatch(/--content .*\(required: --content needs a value; omit --content, or put it last, to read stdin\)/);
+  });
+});

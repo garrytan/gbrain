@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-015",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/anselm-vashridge",
+      "content": "---\ntitle: Anselm Vashridge\ntype: person\nsummary: \"Anselm Vashridge is the procurement lead at Pylongate.\"\n---\n\nAnselm Vashridge is the procurement lead at Pylongate.\n"
+    },
+    {
+      "slug": "companies/juniperspire",
+      "content": "---\ntitle: Juniperspire\ntype: company\nsummary: \"Juniperspire is a software vendor we work with.\"\n---\n\nJuniperspire is a software vendor we work with.\n"
+    },
+    {
+      "slug": "companies/brackenspire",
+      "content": "---\ntitle: Brackenspire\ntype: company\nsummary: \"Brackenspire is the cloud hosting vendor we picked.\"\n---\n\nBrackenspire is the cloud hosting vendor we picked. Their support team promised a named account manager after the last outage.\n"
+    },
+    {
+      "slug": "companies/fablefold",
+      "content": "---\ntitle: Fablefold\ntype: company\nsummary: \"A company we met once at a trade show.\"\n---\n\nA company we met once at a trade show.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Fix the typos in this line of my email to Vashridge: 'thnaks for the quick turnaround, talk soon'"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Okay, noted."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "By the way, someone named Teodor Dremholt emailed about partnerships. Never heard of them."
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Okay, noted."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "Make this sentence shorter: 'Our team will be at the Juniperspire office for the whole afternoon on Thursday.'"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Okay, noted."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "remind me why we went with the hosting provider we picked last week"
+    }
+  ]
+}

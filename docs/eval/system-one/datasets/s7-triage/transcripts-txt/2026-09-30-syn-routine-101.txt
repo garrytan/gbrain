@@ -1,0 +1,214 @@
+[user]
+I’m debugging a failing unit test in a small Python project. The test loads a JSON fixture, but it says the file does not exist. I suspect the fixture path is wrong. Can you help me trace it?
+
+[assistant]
+Yes. Start by capturing the exact test command and full traceback, then inspect the test’s path construction and the repository layout. Please paste the traceback and, if possible, the relevant test function plus the fixture-related directories.
+
+[user]
+Here is the traceback:
+
+```text
+$ pytest -q tests/test_parser.py::test_parse_invoice
+F
+=================================== FAILURES ===================================
+______________________________ test_parse_invoice ______________________________
+
+    def test_parse_invoice():
+>       data = load_fixture("invoice_basic.json")
+
+tests/test_parser.py:12: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/helpers.py:8: in load_fixture
+    return json.loads(Path("tests/fixtures/invoices/" + name).read_text())
+/usr/lib/python3.12/pathlib.py:1050: in read_text
+    with self.open(mode='r', encoding=encoding, errors=errors) as f:
+FileNotFoundError: [Errno 2] No such file or directory: 'tests/fixtures/invoices/invoice_basic.json'
+1 failed in 0.04s
+```
+
+[assistant]
+The failing path is explicitly:
+
+```text
+tests/fixtures/invoices/invoice_basic.json
+```
+
+First check whether the file exists under a slightly different directory or filename. From the repository root, run:
+
+```bash
+find tests -maxdepth 4 -type f | sort
+```
+
+Also run:
+
+```bash
+pwd
+ls -la tests/fixtures
+find tests/fixtures -maxdepth 3 -type d -print
+```
+
+The likely issue is a typo such as `invoice` versus `invoices`, or a filename mismatch such as `invoice-basic.json` versus `invoice_basic.json`.
+
+[user]
+I ran those commands:
+
+```text
+$ pwd
+/home/dev/sample-parser
+
+$ find tests -maxdepth 4 -type f | sort
+tests/__init__.py
+tests/fixtures/invoice/invoice_basic.json
+tests/helpers.py
+tests/test_parser.py
+
+$ ls -la tests/fixtures
+total 8
+drwxr-xr-x 3 dev dev 4096 Jun 12 10:14 .
+drwxr-xr-x 3 dev dev 4096 Jun 12 10:14 ..
+drwxr-xr-x 2 dev dev 4096 Jun 12 10:14 invoice
+
+$ find tests/fixtures -maxdepth 3 -type d -print
+tests/fixtures
+tests/fixtures/invoice
+```
+
+[assistant]
+That confirms the typo is in the directory name. The helper uses `tests/fixtures/invoices/`, but the actual directory is `tests/fixtures/invoice/`.
+
+Please show `tests/helpers.py` and `tests/test_parser.py` so we can check whether changing the helper path is sufficient and whether any other fixture references use the same incorrect plural directory.
+
+[user]
+Here are both files:
+
+```python
+# tests/helpers.py
+import json
+from pathlib import Path
+
+def load_fixture(name: str):
+    return json.loads(Path("tests/fixtures/invoices/" + name).read_text())
+```
+
+```python
+# tests/test_parser.py
+from app.parser import parse_invoice
+from tests.helpers import load_fixture
+
+def test_parse_invoice():
+    data = load_fixture("invoice_basic.json")
+    result = parse_invoice(data)
+    assert result["status"] == "paid"
+    assert result["total"] == 1250
+```
+
+[assistant]
+The fixture filename is correct; only the directory component is wrong. The smallest fix is:
+
+```diff
+ def load_fixture(name: str):
+-    return json.loads(Path("tests/fixtures/invoices/" + name).read_text())
++    return json.loads(Path("tests/fixtures/invoice/" + name).read_text())
+```
+
+Apply that change, then rerun the targeted test:
+
+```bash
+pytest -q tests/test_parser.py::test_parse_invoice
+```
+
+If it still fails, paste the new output. If it passes, run the complete suite to check for other references:
+
+```bash
+pytest -q
+```
+
+[assistant]
+You sent an assistant message twice in sequence. The transcript requires alternating turns, so I’ll treat the second assistant message as a correction to the previous one and wait for your test output.
+
+[user]
+I changed `invoices` to `invoice` and ran the targeted test:
+
+```text
+$ pytest -q tests/test_parser.py::test_parse_invoice
+.                                                                        [100%]
+1 passed in 0.03s
+```
+
+Then I ran the full suite:
+
+```text
+$ pytest -q
+...                                                                      [100%]
+3 passed in 0.05s
+```
+
+So it looks fixed. Is there anything else worth checking before I stop?
+
+[assistant]
+The path typo is fixed, and both the targeted test and full suite pass. A few routine checks are reasonable:
+
+1. Inspect the diff:
+
+```bash
+git diff -- tests/helpers.py
+```
+
+Expected output should contain only the directory correction.
+
+2. Search for the incorrect path in the repository:
+
+```bash
+grep -R "tests/fixtures/invoices" -n . --exclude-dir=.git
+```
+
+No matches should be returned.
+
+3. Check the working tree:
+
+```bash
+git status --short
+```
+
+4. Optionally verify the fixture path directly:
+
+```bash
+test -f tests/fixtures/invoice/invoice_basic.json && echo "fixture exists"
+```
+
+If the diff contains only the one-character directory correction, the search returns no stale references, and the suite remains green, there is no further debugging needed.
+
+[user]
+I ran the checks:
+
+```text
+$ git diff -- tests/helpers.py
+diff --git a/tests/helpers.py b/tests/helpers.py
+index 1d4f0a2..8a21c66 100644
+--- a/tests/helpers.py
++++ b/tests/helpers.py
+@@ -2,4 +2,4 @@ import json
+ from pathlib import Path
+ 
+ def load_fixture(name: str):
+-    return json.loads(Path("tests/fixtures/invoices/" + name).read_text())
++    return json.loads(Path("tests/fixtures/invoice/" + name).read_text())
+
+$ grep -R "tests/fixtures/invoices" -n . --exclude-dir=.git
+$ test -f tests/fixtures/invoice/invoice_basic.json && echo "fixture exists"
+fixture exists
+
+$ git status --short
+ M tests/helpers.py
+```
+
+[assistant]
+Everything is consistent:
+
+- The diff contains only the intended `invoices` → `invoice` correction.
+- The stale incorrect path search returned no matches.
+- The fixture exists at the path used by the helper.
+- The full test suite passes: `3 passed`.
+- The only modified file is `tests/helpers.py`.
+
+The unit-test failure was caused by the typo in the fixture directory path, and the fix is complete.

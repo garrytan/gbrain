@@ -14,6 +14,10 @@ The ranges below use the first path in each entry; grouped entries can document
 several related files. Search is the fallback when a path crosses subsystems.
 Edit the subsystem entry, not this routing page, when behavior changes.
 Keep entries current-state: release history belongs in `CHANGELOG.md` and Git.
+Where a new storage method, migration, doctor check, command, route or sync
+phase goes: [CONTRIBUTING.md](../../CONTRIBUTING.md#where-does-my-change-go).
+A branch written before refactor wave 1 follows the generated
+[porting guide](wave-1-porting.md) ([JSON map](wave-1-moves.json)).
 `scripts/check-key-files-current-state.sh` checks every subsystem for history,
 duplicate file entries, and size growth. Split a growing subsystem at a useful
 boundary and add its link here rather than raising the cap.
@@ -30,6 +34,7 @@ boundary and add its link here rather than raising the cap.
 | [Commands (5/6)](key-files/commands-5.md) | `src/commands/reindex.ts` through `src/commands/storage.ts` |
 | [Commands (6/6)](key-files/commands-6.md) | `src/commands/sync.ts` through `src/commands/whoknows.ts` |
 | [Core Ai](key-files/core-ai.md) | `src/core/ai/build-gateway-config.ts` through `src/core/ai/types.ts` |
+| [Core Decide](key-files/core-decide.md) | `src/core/ai/decide/*`, `src/core/search/decide-stage.ts`, `gbrain decide`, `decide_health` (System One) |
 | [Core Cycle](key-files/core-cycle.md) | `src/core/cycle/anomaly.ts` through `src/core/cycle/triage-rescue.ts` |
 | [Core Minions (1/2)](key-files/core-minions-1.md) | `src/core/minions/` through `src/core/minions/rss-default.ts` |
 | [Core Minions (2/2)](key-files/core-minions-2.md) | `src/core/minions/run-child.ts` through `src/core/minions/worker.ts` |

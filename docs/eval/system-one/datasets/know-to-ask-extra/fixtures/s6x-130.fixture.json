@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-130",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/cassius-lornridge",
+      "content": "---\ntitle: Cassius Lornridge\ntype: person\nsummary: \"Cassius Lornridge is the operations director at Kilnreach.\"\n---\n\nCassius Lornridge is the operations director at Kilnreach. Cassius wants the proposal revised to drop the onboarding fee.\n"
+    },
+    {
+      "slug": "people/tobias-vashmere",
+      "content": "---\ntitle: Tobias Vashmere\ntype: person\nsummary: \"Tobias Vashmere is the procurement lead at Marblecrest.\"\n---\n\nTobias Vashmere is the procurement lead at Marblecrest. Tobias asked for a longer pilot before signing, ideally a full quarter.\n"
+    },
+    {
+      "slug": "people/rohan-fenbrook",
+      "content": "---\ntitle: Rohan Fenbrook\ntype: person\nsummary: \"Rohan Fenbrook is the product lead at Orchidmoor.\"\n---\n\nRohan Fenbrook is the product lead at Orchidmoor.\n"
+    },
+    {
+      "slug": "companies/quartzreach",
+      "content": "---\ntitle: Quartzreach\ntype: company\nsummary: \"A company we met once at a trade show.\"\n---\n\nA company we met once at a trade show.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "What did Lornridge want changed in the proposal?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Done."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "did vashmere ever get back to me on the pilot?"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Done."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "By the way, someone named Elodie Wyrwick emailed about partnerships. Never heard of them."
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Okay, noted."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "How do you spell Fenbrook in the NATO phonetic alphabet?"
+    }
+  ]
+}

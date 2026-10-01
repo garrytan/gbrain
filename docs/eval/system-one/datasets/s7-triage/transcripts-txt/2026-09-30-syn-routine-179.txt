@@ -1,0 +1,203 @@
+[user]
+I need to format a bibliography for a school handout. The teacher asked for MLA 9, but I have a messy list of sources and I’m not sure how to arrange them.
+
+[assistant]
+Sure. Paste the source list exactly as you have it, including any URLs, dates, page numbers, or notes. I can help turn it into MLA 9 entries and then show how to arrange the finished Works Cited page.
+
+[user]
+Here’s the list:
+
+1. Book: The Practical Garden: Small-Space Planting, by Lena Ortiz, Green Field Press, 2021.
+2. Website article: “Watering Plants in Containers,” by Priya Nair, Home Study Garden, 14 May 2023, https://homestudygarden.example/watering-containers.
+3. Journal article: “Balcony Soil Mixtures,” by Jordan Lee, Journal of Urban Horticulture, vol. 12, no. 2, 2022, pp. 44–58. DOI: 10.5555/juh.2022.0044.
+4. Online video: “Three Easy Herb Pots,” uploaded by Kitchen Window Clips, 8 Aug. 2022, https://video.example/three-herb-pots.
+5. Government PDF: Community Garden Water Guide, Department of Local Parks, 2020, https://parks.example/guides/water.pdf.
+
+[assistant]
+Thanks. A few details may need checking, especially whether the first item is a single-author book and whether the website has a publication date separate from an update date. Based on what you supplied, these are reasonable MLA 9 drafts:
+
+Ortiz, Lena. *The Practical Garden: Small-Space Planting*. Green Field Press, 2021.
+
+Nair, Priya. “Watering Plants in Containers.” *Home Study Garden*, 14 May 2023, https://homestudygarden.example/watering-containers.
+
+Lee, Jordan. “Balcony Soil Mixtures.” *Journal of Urban Horticulture*, vol. 12, no. 2, 2022, pp. 44–58. https://doi.org/10.5555/juh.2022.0044.
+
+“Three Easy Herb Pots.” *Video Example*, uploaded by Kitchen Window Clips, 8 Aug. 2022, https://video.example/three-herb-pots.
+
+*Community Garden Water Guide*. Department of Local Parks, 2020, https://parks.example/guides/water.pdf.
+
+For the video, I used the platform name only as a placeholder because the URL domain does not identify a platform clearly. If your source displays a platform name, replace “Video Example” with that name.
+
+[user]
+Do I alphabetize by the author’s last name, and what do I do with the entries that have no person listed as author?
+
+[assistant]
+Yes. MLA generally alphabetizes entries by the first element of each citation.
+
+Use this order for your list:
+
+1. Lee, Jordan.
+2. Nair, Priya.
+3. Ortiz, Lena.
+4. “Three Easy Herb Pots.”
+5. *Community Garden Water Guide.*
+
+For entries without a named person, alphabetize by the title. Ignore a first article such as “A,” “An,” or “The” when alphabetizing. Thus, “Three Easy Herb Pots” is filed under T, while *Community Garden Water Guide* is filed under C.
+
+One small correction: because “Community Garden Water Guide” begins with “Community,” it should appear before “Three Easy Herb Pots.” The final order is therefore Lee, Nair, Ortiz, *Community Garden Water Guide*, and “Three Easy Herb Pots.”
+
+[user]
+Could you show the complete Works Cited page in the correct order? I also need the hanging-indent and spacing instructions.
+
+[assistant]
+Use the heading “Works Cited,” centered at the top. Do not bold, italicize, underline, or put it in quotation marks unless your teacher has a different format requirement.
+
+Set the page as follows:
+
+- Use a readable 12-point font, unless the assignment specifies another font.
+- Use one-inch margins.
+- Double-space every line, including blank space between entries; do not add extra spacing between entries.
+- Apply a hanging indent of 0.5 inch to each entry.
+- Alphabetize by the first element of each entry.
+- Continue the page number sequence from the rest of the handout, usually in the upper-right header.
+
+Here is the content in order:
+
+Works Cited
+
+Lee, Jordan. “Balcony Soil Mixtures.” *Journal of Urban Horticulture*, vol. 12, no. 2, 2022, pp. 44–58. https://doi.org/10.5555/juh.2022.0044.
+
+Nair, Priya. “Watering Plants in Containers.” *Home Study Garden*, 14 May 2023, https://homestudygarden.example/watering-containers.
+
+Ortiz, Lena. *The Practical Garden: Small-Space Planting*. Green Field Press, 2021.
+
+*Community Garden Water Guide*. Department of Local Parks, 2020, https://parks.example/guides/water.pdf.
+
+“Three Easy Herb Pots.” *Video Example*, uploaded by Kitchen Window Clips, 8 Aug. 2022, https://video.example/three-herb-pots.
+
+In a word processor, select all entries, open the paragraph settings, set line spacing to double, set the left indent to 0.5 inch, and set the special indent to “Hanging.” That makes the first line begin at the margin while later lines move inward.
+
+[user]
+I’m using a plain-text editor first. How can I represent the hanging indents and italics there without accidentally changing the citation text?
+
+[assistant]
+Plain text cannot preserve true italics or indentation settings, so treat it as a content draft and apply the visual formatting later in a word processor.
+
+For plain-text notes:
+
+- Keep the citation wording and punctuation exactly as written.
+- Use a blank line between entries only if that helps you read the draft; remove those blank lines when applying MLA double spacing.
+- Do not insert tabs or spaces at the beginning of continuation lines unless you are making a temporary visual mock-up.
+- Mark italicized titles with a note such as `[italics]` rather than adding underscores or asterisks that might remain accidentally.
+- Keep URLs as ordinary text.
+- Save a clean copy before transferring the entries.
+
+For example, you could write:
+
+Ortiz, Lena. [italics: The Practical Garden: Small-Space Planting]. Green Field Press, 2021.
+
+When you move this into a formatted document, delete `[italics: ...]`, select the title, and apply italics. The same applies to *Journal of Urban Horticulture*, *Home Study Garden*, and *Video Example*.
+
+[user]
+Can you give me a clean plain-text version, with no markup notes, so I can paste it into my document?
+
+[assistant]
+Yes. Here is a clean version with no markup symbols or formatting instructions. The order is alphabetical, and each citation is on one paragraph:
+
+Works Cited
+
+Lee, Jordan. “Balcony Soil Mixtures.” Journal of Urban Horticulture, vol. 12, no. 2, 2022, pp. 44–58. https://doi.org/10.5555/juh.2022.0044.
+
+Nair, Priya. “Watering Plants in Containers.” Home Study Garden, 14 May 2023, https://homestudygarden.example/watering-containers.
+
+Ortiz, Lena. The Practical Garden: Small-Space Planting. Green Field Press, 2021.
+
+Community Garden Water Guide. Department of Local Parks, 2020, https://parks.example/guides/water.pdf.
+
+“Three Easy Herb Pots.” Video Example, uploaded by Kitchen Window Clips, 8 Aug. 2022, https://video.example/three-herb-pots.
+
+After pasting, apply italics to the journal title, website title, book title, and video platform title. Then set the whole Works Cited section to double spacing and apply a 0.5-inch hanging indent.
+
+[user]
+I noticed the government PDF might have a corporate author. Should “Department of Local Parks” be listed first instead of the title?
+
+[assistant]
+Yes. If the department is identified as the author or issuing organization on the PDF, list it as the author:
+
+Department of Local Parks. *Community Garden Water Guide*. 2020, https://parks.example/guides/water.pdf.
+
+Then alphabetize the entry under D, so it would come after the entry by Jordan Lee and before the entry by Priya Nair.
+
+Do not repeat the department as the publisher if it is both the author and publisher. If the PDF names a different publisher, add that publisher after the title and before the year. Also check the PDF’s title page or first page for a fuller department name, a publication month or day, and a report number; include those only if they are clearly supplied by the document or required by your teacher.
+
+[user]
+Could you revise the full list with that corporate-author version and explain how the alphabetizing changes?
+
+[assistant]
+Here is the revised MLA-style list, assuming Department of Local Parks is the corporate author and is not repeated as publisher:
+
+Department of Local Parks. *Community Garden Water Guide*. 2020, https://parks.example/guides/water.pdf.
+
+Lee, Jordan. “Balcony Soil Mixtures.” *Journal of Urban Horticulture*, vol. 12, no. 2, 2022, pp. 44–58. https://doi.org/10.5555/juh.2022.0044.
+
+Nair, Priya. “Watering Plants in Containers.” *Home Study Garden*, 14 May 2023, https://homestudygarden.example/watering-containers.
+
+Ortiz, Lena. *The Practical Garden: Small-Space Planting*. Green Field Press, 2021.
+
+“Three Easy Herb Pots.” *Video Example*, uploaded by Kitchen Window Clips, 8 Aug. 2022, https://video.example/three-herb-pots.
+
+The change is that the PDF is now alphabetized under D for “Department,” rather than under C for “Community.” It moves from fourth position to first position. The other entries keep their relative order.
+
+Use a hanging indent for each entry, double-space throughout, and do not add extra blank lines between entries in the final document.
+
+[user]
+The video platform is actually called Stream Shelf, and the page says it was uploaded by Kitchen Window Clips. Does that change the entry?
+
+[assistant]
+Yes. Replace the placeholder platform name with Stream Shelf. Since no individual creator is listed, begin with the video title:
+
+“Three Easy Herb Pots.” *Stream Shelf*, uploaded by Kitchen Window Clips, 8 Aug. 2022, https://video.example/three-herb-pots.
+
+The platform title is italicized, while the video title remains in quotation marks. The uploader is included after the platform name with the label “uploaded by.” Because the entry begins with “Three,” it remains alphabetized under T, after Ortiz.
+
+Your current order is:
+
+Department of Local Parks.
+Lee, Jordan.
+Nair, Priya.
+Ortiz, Lena.
+“Three Easy Herb Pots.”
+
+If the page gives a specific individual as the video creator, that person would normally be placed at the beginning instead. Based on the details you provided, the title-first version is appropriate.
+
+[user]
+Please give me the final complete version, including a short checklist for checking it before I submit the handout.
+
+[assistant]
+Final MLA 9-style list:
+
+Works Cited
+
+Department of Local Parks. *Community Garden Water Guide*. 2020, https://parks.example/guides/water.pdf.
+
+Lee, Jordan. “Balcony Soil Mixtures.” *Journal of Urban Horticulture*, vol. 12, no. 2, 2022, pp. 44–58. https://doi.org/10.5555/juh.2022.0044.
+
+Nair, Priya. “Watering Plants in Containers.” *Home Study Garden*, 14 May 2023, https://homestudygarden.example/watering-containers.
+
+Ortiz, Lena. *The Practical Garden: Small-Space Planting*. Green Field Press, 2021.
+
+“Three Easy Herb Pots.” *Stream Shelf*, uploaded by Kitchen Window Clips, 8 Aug. 2022, https://video.example/three-herb-pots.
+
+Checklist:
+
+- The heading reads “Works Cited,” is centered, and has no extra styling.
+- Entries are alphabetized by the first element: Department, Lee, Nair, Ortiz, and Three.
+- Each entry uses a 0.5-inch hanging indent.
+- The entire page is double-spaced, with no extra blank lines between entries.
+- Book, journal, website, report, and platform titles are italicized.
+- Article and video titles use quotation marks.
+- The DOI is written as a URL.
+- URLs match the source pages and do not have accidental punctuation removed or added.
+- The page uses the same font and margins as the rest of the handout.
+- The Works Cited page number continues the handout’s page-number sequence.
+- Each source cited in the handout appears in the list, and each list entry is cited in the handout if your teacher requires that correspondence.

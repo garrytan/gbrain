@@ -1,0 +1,45 @@
+[user]
+I’m debugging a failing unit test for a small parser. The test should load a JSON fixture, but it fails before the parser is exercised. Here’s the command and output:
+
+```text
+$ pytest -q tests/test_parser.py::test_reads_nested_items
+F                                                                        [100%]
+=================================== FAILURES ===================================
+___________________________ test_reads_nested_items ____________________________
+
+    def test_reads_nested_items():
+>       data = load_fixture("fixtures/nested_items.json")
+
+tests/test_parser.py:8: 
+...
+E       FileNotFoundError: [Errno 2] No such file or directory: '/work/project/tests/fixtures/nested_item.json'
+1 failed in 0.09s
+```
+
+The test passes the plural-looking name, but the error mentions a singular filename.
+
+[assistant/analysis]
+[assistant]
+The failure is happening in the fixture-loading helper, and the path in the exception is the useful clue: something is changing `nested_items.json` into `nested_item.json` before opening it.
+
+First, inspect the test and helper:
+
+```bash
+sed -n '1,120p' tests/test_parser.py
+grep -R "def load_fixture\|nested_item" -n .
+find tests -maxdepth 3 -type f | sort
+```
+
+The likely possibilities are:
+
+- The actual file is named `nested_items.json`, but the helper has a typo.
+- The actual file is named `nested_item.json`, but the test argument is wrong.
+- A path-normalization or string-replacement line removes the final `s`.
+
+The test itself appears to request:
+
+```python
+load_fixture("fixtures/nested_items.json")
+```
+
+So compare that exact path with the repository contents and the helper implementation. Don’t change the parser assertion yet, because the parser has not run.

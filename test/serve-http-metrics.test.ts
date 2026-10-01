@@ -19,7 +19,6 @@
 import { describe, expect, test } from 'bun:test';
 import express from 'express';
 import type { Server } from 'http';
-import { readFileSync } from 'node:fs';
 import {
   createMetricsCounters,
   metricsTrackingMiddleware,
@@ -27,6 +26,7 @@ import {
   renderPrometheusMetrics,
   type MetricsCounters,
 } from '../src/commands/serve-http-metrics.ts';
+import { surfaceFileSource, surfaceSource } from './helpers/source-surface.ts';
 
 describe('recordCompletedRequest', () => {
   test('classifies status >= 400 as errors and records latency samples', () => {
@@ -141,20 +141,31 @@ describe('serve-http.ts wiring (structural — the two defects of the original P
   // test-reads-source-ok[trust-boundary]: mount ORDER (middleware before first route) and the requireAdmin
   // gate are wiring properties of the real serve-http.ts; the behavioral tests above run a
   // rebuilt harness app, so only a source scan pins the real module without booting it.
-  const src = readFileSync(new URL('../src/commands/serve-http.ts', import.meta.url), 'utf-8');
+  // Refactor wave 1 split: buildServeHttpApp (serve-http.ts) installs the
+  // tracker, then mountOAuth(app, ctx) registers /token + /revoke and the SDK
+  // auth router from serve-http-oauth.ts. Order is positional in the façade;
+  // both registrations are pinned inside mountOAuth's body.
+  const src = surfaceFileSource('serve-http', 'src/commands/serve-http.ts');
+  const oauthSrc = surfaceFileSource('serve-http', 'src/commands/serve-http-oauth.ts');
+  const mountOAuthStart = oauthSrc.indexOf('export function mountOAuth(app: Express, ctx: ServeHttpContext)');
+  const mountOAuthBody = oauthSrc.slice(mountOAuthStart, oauthSrc.indexOf('\n}\n', mountOAuthStart));
 
   test('tracking middleware is mounted before the first route registration', () => {
     const mw = src.indexOf('metricsTrackingMiddleware(');
-    const firstTokenRoute = src.indexOf('mountConfidentialOAuth(app,');
-    const authRouterMount = src.indexOf('app.use(authRouter)');
+    const oauthMount = src.indexOf('mountOAuth(app, ctx);');
+    const firstTokenRoute = mountOAuthBody.indexOf('mountConfidentialOAuth(app,');
+    const authRouterMount = mountOAuthBody.indexOf('app.use(authRouter)');
     expect(mw).toBeGreaterThan(-1);
+    expect(mountOAuthStart).toBeGreaterThan(-1);
     expect(firstTokenRoute).toBeGreaterThan(-1);
     expect(authRouterMount).toBeGreaterThan(-1);
-    expect(mw).toBeLessThan(firstTokenRoute);
-    expect(mw).toBeLessThan(authRouterMount);
+    expect(oauthMount).toBeGreaterThan(-1);
+    expect(mw).toBeLessThan(oauthMount);
+    expect(src.indexOf('mountConfidentialOAuth(')).toBe(-1);
+    expect(src.indexOf('app.use(authRouter)')).toBe(-1);
   });
 
   test('GET /metrics is gated behind requireAdmin', () => {
-    expect(src).toMatch(/app\.get\(\s*'\/metrics',\s*requireAdmin/);
+    expect(surfaceSource('serve-http')).toMatch(/app\.get\(\s*'\/metrics',\s*requireAdmin/);
   });
 });

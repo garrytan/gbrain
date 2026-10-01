@@ -1,0 +1,105 @@
+[user]
+The Wi‑Fi keeps dropping in the back bedroom, but it works normally in the living room. Can you help me troubleshoot it?
+
+[assistant]
+Sure. Since the problem is limited to one room, we can check signal strength, restart the router, and then try a different wireless channel if needed. First, is the connection dropping on one device or several devices in that room?
+
+[user]
+Several devices: a phone, a laptop, and a small streaming box. They all work better when I move them near the router.
+
+[assistant]
+That points toward a coverage or interference problem rather than one device. Before changing settings, let’s collect a simple comparison. In the living room, note the Wi‑Fi signal and run a speed test. Then repeat in the back bedroom while standing in the usual device location. If possible, use the same device and test server each time.
+
+[user]
+I used the laptop. In the living room it showed four bars and the test was 188 Mbps down and 23 Mbps up. In the bedroom it showed one or two bars, 31 Mbps down and 8 Mbps up, and the connection paused twice during the test.
+
+[assistant]
+That is a substantial signal difference. Do the router and devices use separate 2.4 GHz and 5 GHz network names, or do they appear as one combined network? The 2.4 GHz band usually reaches farther through walls, while 5 GHz can be faster but weaker at distance.
+
+[user]
+They show as one network name. I do not know which band the bedroom devices are using. The router is on a shelf in the living room, and there are two walls and a bookcase between it and the bedroom.
+
+[assistant]
+Let’s restart the router first, because a temporary radio or software issue can make the behavior worse. Unplug the router’s power cable, wait about 60 seconds, plug it back in, and wait until the Wi‑Fi indicator is steady. Do not press the reset button; that can erase settings. Then test the bedroom again.
+
+[user]
+I unplugged it at 8:14, waited a minute, and plugged it back in. The lights came back after about three minutes. The bedroom is a little better, but the laptop still dropped once and got 46 Mbps down and 9 Mbps up.
+
+[assistant]
+The restart helped slightly but did not solve the weak coverage. Next, check whether the router has an automatic channel setting and whether it has separate controls for 2.4 GHz and 5 GHz. You can usually reach this by opening a browser and entering the router’s local address, often something like 192.168.0.1 or 192.168.1.1. If you are unsure, the address may be printed on the router label or shown as “Gateway” in the laptop’s network details.
+
+[user]
+The gateway is 192.168.1.1. I opened it and found Wireless settings. Both bands are enabled, and the mode says “Smart Connect.” There is an option for channel selection that is set to Auto.
+
+[assistant]
+Smart Connect may be moving devices between bands based on its own rules. For a clear test, you can temporarily turn it off and give each band a distinct name, without changing the internet service or other settings. For example:
+
+2.4 GHz name: HomeTest-2G
+5 GHz name: HomeTest-5G
+
+Use the same existing Wi‑Fi password if the page allows it. Save the settings and wait for the router to restart its wireless service.
+
+[user]
+I changed the names to HomeTest-2G and HomeTest-5G and kept the same password. The router applied the change. The laptop connected to HomeTest-5G automatically in the living room, but the bedroom signal was still weak.
+
+[assistant]
+That is expected if the laptop stayed on 5 GHz. In the bedroom, manually select HomeTest-2G on the laptop and enter the password. Then run the same speed test from the same spot. Also connect the phone to HomeTest-2G for a few minutes and see whether it remains connected.
+
+[user]
+On HomeTest-2G, the laptop showed three bars and got 82 Mbps down and 14 Mbps up. It did not disconnect during a five-minute test. The phone also stayed connected. The streaming box is still on the old network name and is offline.
+
+[assistant]
+The 2.4 GHz result is more stable, so the distance and walls are affecting 5 GHz. The streaming box needs to be joined to the new 2.4 GHz name. Open its network settings, choose HomeTest-2G, enter the password, and wait for it to obtain an address. If it lists the old combined name, remove or forget that saved network first.
+
+[user]
+I reconnected the streaming box to HomeTest-2G. It played a video for ten minutes without buffering. I would still like to see whether changing the channel improves the bedroom connection.
+
+[assistant]
+You can test that on the 2.4 GHz band. In the router’s wireless settings, find the 2.4 GHz channel field and change it from Auto to one of the non-overlapping choices: 1, 6, or 11. Since we do not have a scan yet, start with channel 1. Keep channel width at 20 MHz if that option is available, because wider modes can be more affected by nearby networks.
+
+[user]
+I set 2.4 GHz to channel 1 and left the width at 20 MHz. The router briefly disconnected everything and came back. The laptop reconnected to HomeTest-2G and got 77 Mbps down and 13 Mbps up, with no drop during the test.
+
+[assistant]
+That is about the same as the previous result, so channel 1 is usable but not clearly better. To compare fairly, test channels 6 and 11 in the same way. After each change, wait for the wireless network to return, confirm the laptop is on HomeTest-2G, and run a short test from the bedroom. Record the result and whether the connection pauses.
+
+[user]
+Here are the results from the same bedroom spot:
+
+Channel 1: 77/13 Mbps, no pause
+Channel 6: 91/16 Mbps, no pause
+Channel 11: 64/11 Mbps, one brief pause
+
+The numbers are download/upload.
+
+[assistant]
+Channel 6 performed best in that quick comparison, so leave the 2.4 GHz channel set to 6 for now. Keep the width at 20 MHz. The improvement may vary when nearby networks change, but this gives you a straightforward stable configuration. Make sure the laptop, phone, and streaming box are all using HomeTest-2G in the bedroom.
+
+[user]
+They are all on HomeTest-2G now. Is there anything else I should check before leaving it this way?
+
+[assistant]
+Do a longer, simple check from the bedroom. Keep the laptop connected for 20–30 minutes, load a few ordinary pages, and play a video on the streaming box. You can also look at the laptop’s Wi‑Fi details to confirm it remains associated with the 2.4 GHz network. If it stays connected and the video does not buffer, there is no need to change more settings.
+
+[assistant]
+If you want to inspect the connection on a Windows laptop, open Command Prompt and run:
+
+ipconfig
+ping 192.168.1.1 -n 30
+
+A typical healthy result will show a gateway address and replies with low, fairly consistent times. Occasional variation is normal, but repeated “Request timed out” messages would indicate that the local wireless link is still having trouble.
+
+[user]
+The longer check went well. The video played for 25 minutes, and the laptop stayed connected. I ran the command and got:
+
+Reply from 192.168.1.1: bytes=32 time=4ms TTL=64
+Reply from 192.168.1.1: bytes=32 time=6ms TTL=64
+Reply from 192.168.1.1: bytes=32 time=5ms TTL=64
+Ping statistics for 192.168.1.1:
+    Packets: Sent = 30, Received = 30, Lost = 0 (0% loss)
+
+[assistant]
+That confirms the local connection is stable during the check. You can leave the router on 2.4 GHz channel 6 with 20 MHz width, and use HomeTest-2G for devices in the back bedroom. Devices close to the router can use HomeTest-5G for higher speeds. If the bedroom starts dropping again, first check whether the device has switched networks and then repeat the short ping test before changing another setting.
+
+[tool]
+You have 614 weighted tokens left

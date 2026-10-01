@@ -1,0 +1,105 @@
+{
+  "eligible_only": false,
+  "duplicate_threshold": {
+    "threshold": 0.49,
+    "metric": "precision",
+    "metric_value": 1,
+    "precision": 1,
+    "recall": 0.6904761904761905,
+    "f1": 0.8169014084507042
+  },
+  "proposal_floor": {
+    "threshold": 0.19,
+    "metric": "precision",
+    "metric_value": 0.9,
+    "precision": 0.9,
+    "recall": 0.9878048780487805,
+    "f1": 0.9418604651162791
+  },
+  "applied_policy": {
+    "threshold": 0.52,
+    "proposalFloor": 0.65
+  },
+  "eval": {
+    "baseline_cosine_rule": {
+      "n": 395,
+      "confusion": {
+        "supersede": {
+          "independent": 97
+        },
+        "duplicate": {
+          "independent": 65,
+          "supersede": 10
+        },
+        "independent": {
+          "independent": 223
+        }
+      },
+      "supersedes_found": 0,
+      "supersede_labels": 97,
+      "proposals": 10,
+      "wrong_supersedes": 10,
+      "wrong_supersede_rate": 1,
+      "proposal_precision_lb": 0,
+      "label_agreement": 0.5645569620253165
+    },
+    "s9_calibrated": {
+      "n": 395,
+      "confusion": {
+        "supersede": {
+          "proposal": 94,
+          "independent": 3
+        },
+        "duplicate": {
+          "independent": 20,
+          "duplicate": 55
+        },
+        "independent": {
+          "independent": 222,
+          "proposal": 1
+        }
+      },
+      "supersedes_found": 94,
+      "supersede_labels": 97,
+      "proposals": 95,
+      "wrong_supersedes": 1,
+      "wrong_supersede_rate": 0.010526315789473684,
+      "proposal_precision_lb": 0.9427612979894158,
+      "label_agreement": 0.9392405063291139
+    },
+    "s9_default_floor_0_5": {
+      "n": 395,
+      "confusion": {
+        "supersede": {
+          "proposal": 95,
+          "independent": 2
+        },
+        "duplicate": {
+          "independent": 20,
+          "duplicate": 55
+        },
+        "independent": {
+          "independent": 222,
+          "proposal": 1
+        }
+      },
+      "supersedes_found": 95,
+      "supersede_labels": 97,
+      "proposals": 96,
+      "wrong_supersedes": 1,
+      "wrong_supersede_rate": 0.010416666666666666,
+      "proposal_precision_lb": 0.9433338231810274,
+      "label_agreement": 0.9417721518987342
+    }
+  },
+  "retest_flip_rate": {
+    "n": 395,
+    "flips": 0
+  },
+  "latency_ms_per_request": {
+    "p50": 146,
+    "p95": 221,
+    "p99": 324
+  },
+  "cost_usd_per_swept_fact": 0.00002326604411764706
+}

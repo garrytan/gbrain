@@ -756,6 +756,31 @@ describe('GmailClient', () => {
     expect(body.endsWith('[truncated]')).toBe(true);
     expect(body.length).toBe(8_000 + '\n[truncated]'.length);
   });
+
+  // #5752: a cap that cuts a UTF-16 code unit leaves a lone surrogate, which
+  // Postgres rejects inside the managed request intent's jsonb.
+  const emojiThread = (mimeType: string, text: string) => ({
+    id: '17aa5555dddd7777',
+    messages: [{
+      id: '18c2f4a9b3d21e05', threadId: '17aa5555dddd7777', labelIds: [], internalDate: String(Date.parse('2026-08-10T09:00:00Z')),
+      payload: { mimeType, headers: [{ name: 'From', value: 'Charlie Example <charlie@example.com>' }, { name: 'Subject', value: 'Emoji' }],
+        body: { data: b64url(text) } },
+    }],
+  });
+  test('the 8KB body cap never splits a surrogate pair (#5752)', async () => {
+    const h = makeHarness(() => json(emojiThread('text/plain', 'x'.repeat(7_999) + '\u{1F600}' + 'y'.repeat(50))));
+    const body = (await new GmailClient(h.tokens, h.fetchImpl, () => {}, CLIENT_ID).getThread('17aa5555dddd7777', 'a@example.com')).messages[0].bodyText;
+    expect(body.endsWith('[truncated]')).toBe(true);
+    expect(body.isWellFormed()).toBe(true);
+    expect(body.startsWith('x'.repeat(7_999))).toBe(true);
+  });
+  test('the HTML pre-truncation never splits a surrogate pair (#5752)', async () => {
+    const markup = '<b></b>'.repeat(Math.floor(127_999 / 7));
+    const html = markup + 'z'.repeat(127_999 - markup.length) + '\u{1F600}' + 'tail';
+    const h = makeHarness(() => json(emojiThread('text/html', html)));
+    const body = (await new GmailClient(h.tokens, h.fetchImpl, () => {}, CLIENT_ID).getThread('17aa5555dddd7777', 'a@example.com')).messages[0].bodyText;
+    expect(body.isWellFormed()).toBe(true);
+  });
 });
 
 // ── CalendarClient ───────────────────────────────────────────────────────────
@@ -899,6 +924,41 @@ describe('CalendarClient', () => {
 // ── PeopleClient ─────────────────────────────────────────────────────────────
 
 describe('PeopleClient', () => {
+  test.each([null, {}, [null], ['invalid'], []])('malformed expiry details preserve typed errors: %j', async details => {
+    for (const expired of [true, false]) {
+      const h = makeHarness(() => json({ error: {
+        code: 400,
+        message: expired ? 'Sync token is expired.' : 'Invalid personFields',
+        details,
+      } }, 400));
+      const people = new PeopleClient(h.tokens, h.fetchImpl, () => {}, CLIENT_ID);
+      await expect(people.listConnections({ syncToken: 'stale' })).rejects.toBeInstanceOf(
+        expired ? GoogleCursorExpiredError : CredentialError,
+      );
+    }
+  });
+
+  test.each([
+    { message: 'Sync token is expired. Clear local cache and retry call without the sync token.' },
+    { details: [{ '@type': 'type.googleapis.com/google.rpc.ErrorInfo', reason: 'EXPIRED_SYNC_TOKEN' }] },
+  ])('HTTP 400 expired sync tokens surface cursor expiry: %j', async error => {
+    const h = makeHarness(() => json({ error: { code: 400, ...error } }, 400));
+    const people = new PeopleClient(h.tokens, h.fetchImpl, () => {}, CLIENT_ID);
+    await expect(people.listConnections({ syncToken: 'stale' })).rejects.toBeInstanceOf(GoogleCursorExpiredError);
+  });
+
+  test.each([
+    ['people', 'https://people.googleapis.com/v1/people/me/connections?syncToken=stale', { message: 'Invalid personFields' }],
+    ['people', 'https://people.googleapis.com/v1/people/me/connections', { message: 'Sync token is expired.' }],
+    ['gmail', 'https://gmail.googleapis.com/gmail/v1/users/me/history?syncToken=stale', { message: 'Sync token is expired.' }],
+    ['calendar-json', 'https://www.googleapis.com/calendar/v3/calendars/primary/events?syncToken=stale', { message: 'Sync token is expired.' }],
+    ['people', 'https://people.googleapis.com/v1/people/me/connections?syncToken=stale', { details: [{ reason: 'INVALID_ARGUMENT' }] }],
+  ] as const)('other HTTP 400 errors remain upstream failures: %s %s', async (api, url, error) => {
+    const h = makeHarness(() => json({ error: { code: 400, ...error } }, 400));
+    const client = new GoogleApiClient(h.tokens, h.fetchImpl, () => {}, CLIENT_ID);
+    await expect(client.fetchJSON(url, api)).rejects.toBeInstanceOf(CredentialError);
+  });
+
   test('listConnections requests personFields and normalizes contacts', async () => {
     const h = makeHarness((u) => {
       expect(u.searchParams.get('personFields')).toBe('names,emailAddresses,organizations');
