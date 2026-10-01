@@ -45,9 +45,9 @@ export const RECOMMENDED: RecommendedSkill[] = [
       'Deduplicate raw concept stubs into a tiered intellectual map (T1 Canon to T4 Riff). Trace idea evolution across years.',
   },
   {
-    slug: 'perplexity-research',
+    slug: 'web-research',
     description:
-      'Brain-augmented web research. Sends brain context to the search so it focuses on what is NEW vs already-known.',
+      'Brain-augmented web research with Context Answers by default. Finds what is NEW vs already-known, with source verification.',
   },
   {
     slug: 'archive-crawler',

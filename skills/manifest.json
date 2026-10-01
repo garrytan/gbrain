@@ -215,9 +215,14 @@
       "description": "Trace one idea's evolution through the brain: first mention, best articulation, reversals, contradictions, abandoned branches, related concepts, and current live version."
     },
     {
+      "name": "web-research",
+      "path": "web-research/SKILL.md",
+      "description": "Brain-augmented web research using Context Answers by default; finds cited developments against existing brain knowledge and honors explicit provider choices."
+    },
+    {
       "name": "perplexity-research",
       "path": "perplexity-research/SKILL.md",
-      "description": "Brain-augmented web research via Perplexity plus Opus; surfaces what is NEW vs already-known about a topic by cross-referencing against the brain first."
+      "description": "Optional brain-augmented web research through the Perplexity Agent API when explicitly selected."
     },
     {
       "name": "archive-crawler",

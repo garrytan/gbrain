@@ -1,22 +1,17 @@
 ---
 name: perplexity-research
-version: 0.1.0
-description: Brain-augmented web research. Sends brain context about a topic to Perplexity, which searches the web with citations and returns what is NEW vs what the brain already knows. Use for entity enrichment, current-state checks, deal monitoring, and freshness deltas. NOT for simple URL fetches (use web_fetch) or brain-only queries (use gbrain query).
+version: 0.2.0
+description: Optional brain-augmented web research through the Perplexity Agent API. Use when Perplexity is explicitly selected; general research uses web-research.
 triggers:
   - "perplexity research"
   - "perplexity-research"
-  - "what's new about"
-  - "current state of"
-  - "web research"
-  - "what changed about"
-  - "surface new developments"
 mutating: true
 writes_pages: true
 writes_to:
   - research/
 ---
 
-# perplexity-research — Brain-Augmented Web Research
+# perplexity-research — Optional Web Research
 
 > **Convention:** see [conventions/quality.md](../conventions/quality.md) for
 > citation rules; every claim from web research lands with a verifiable
@@ -26,6 +21,15 @@ writes_to:
 > for the lookup chain. This skill ENFORCES brain-first by sending brain
 > context as part of the Perplexity prompt — the web search focuses on
 > the delta between brain knowledge and current web state.
+
+Use this skill only when the user or their workflow explicitly selects
+Perplexity. For a general research request from an existing caller, use
+[web-research](../web-research/SKILL.md) instead.
+
+The previous Sonar integration is outdated: [support ended September 27,
+2026](https://docs.perplexity.ai/docs/agent-api/migrate-from-sonar/overview).
+Synchronous and streaming calls are being translated automatically; this
+skill uses the Agent API directly.
 
 ## What this does
 
@@ -43,7 +47,7 @@ instead of repeating settled fact.
 
 | Need | Use |
 |------|-----|
-| Deep research with citations | **This skill** — Perplexity + Opus |
+| Deep research with citations | **This skill** — Perplexity Agent API |
 | Quick URL content | `web_fetch` |
 | Brain-only lookup | `gbrain query` / `gbrain search` |
 | Real-time social monitoring | external X / social-media collectors |
@@ -90,7 +94,7 @@ Each item: which page, what to add or change, source URL.
 ## Invocation
 
 The skill is markdown agent instructions; the agent uses Perplexity's
-API directly (or a host-provided `perplexity` CLI if installed):
+Agent API directly:
 
 ```bash
 # 1. Pull brain context
@@ -105,11 +109,11 @@ gbrain query "<topic keywords>"
 #    Cite every claim.
 #    """
 
-# 3. Call Perplexity API or the host's perplexity binary:
-#    curl https://api.perplexity.ai/chat/completions \
-#      -H "Authorization: Bearer $PERPLEXITY_API_KEY" \
-#      -H "Content-Type: application/json" \
-#      -d '{"model": "sonar-pro", "messages": [{"role":"user","content":"..."}]}'
+# 3. Call the Agent API, replacing input with the prepared research prompt:
+curl --fail-with-body --silent --show-error https://api.perplexity.ai/v1/agent \
+  -H "Authorization: Bearer $PERPLEXITY_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"preset":"fast","input":"<topic, permitted brain context, and research questions>"}'
 
 # 4. Write the structured research page via put_page:
 gbrain put research/<slug>      # via the put_page operation
@@ -117,15 +121,18 @@ gbrain put research/<slug>      # via the put_page operation
 # 5. Cross-link entities mentioned (people, companies) per Iron Law.
 ```
 
-## Models
+Read the typed `output` array: answer text is in `message.content[]` items
+of type `output_text`; sources are in `search_results.results[]`. Match
+citation markers to result `id` values, not array positions. `fast` uses
+`[1]`; deeper presets use markers such as `[web:1]`. Verify material claims
+at the cited URLs and surface incomplete output or missing citations.
 
-| Model | Cost / query | Use when |
-|-------|-------------|----------|
-| Perplexity sonar-pro | ~\$0.04 | Deep analysis, entity enrichment, deal research |
-| Perplexity sonar | ~\$0.007 | Quick lookups, bulk monitoring, briefing pipelines |
+## Presets
 
-Default to sonar-pro. Drop to sonar for bulk / cron contexts where cost
-matters more than depth.
+Default to `fast`, which includes web search and is the recommended
+replacement for `sonar` / `sonar-pro`. Use `high` for deeper research when
+needed. See the [migration guide](https://docs.perplexity.ai/docs/agent-api/migrate-from-sonar/how-to)
+for current presets and request/response examples.
 
 ## Integration patterns
 
@@ -155,8 +162,10 @@ the agent doesn't re-narrate already-known facts.
 
 ## Recency filter
 
-Pass `recency_filter` to Perplexity: `hour | day | week | month`. Useful
-for news-cycle topics; omit for evergreen research.
+Add `"tools": [{"type": "web_search", "filters":
+{"search_recency_filter": "month"}}]` to the request for a recency window.
+Supported values: `hour`, `day`, `week`, `month`. Omit for evergreen research;
+this is a tool filter, not a top-level request field.
 
 ## Anti-Patterns
 
@@ -169,9 +178,10 @@ for news-cycle topics; omit for evergreen research.
 
 ## Environment
 
-- `PERPLEXITY_API_KEY` set in the agent's environment (or in
-  `~/.gbrain/.env`).
-- Optional: install Perplexity's official CLI for richer streaming output.
+- Export `PERPLEXITY_API_KEY` in the agent's environment. If stored in
+  `~/.gbrain/.env`, load it before calling the API.
+- On missing credentials or API errors, report the blocker; do not silently
+  switch providers.
 
 ## Related skills
 

@@ -138,10 +138,11 @@
               "testing",
               "two-tier-extraction",
               "voice-note-ingest",
+              "web-research",
               "webhook-transforms"
             ]
           },
-          "message": "64 new built-in skill(s) available that this workspace hasn't installed: academic-verify, archive-crawler, article-enrichment, ask-user, blog-ingest, book-mirror, brain-ingest-gate, brain-link-discipline, … +56 more. Add them with `gbrain skillpack sync`.",
+          "message": "65 new built-in skill(s) available that this workspace hasn't installed: academic-verify, archive-crawler, article-enrichment, ask-user, blog-ingest, book-mirror, brain-ingest-gate, brain-link-discipline, … +57 more. Add them with `gbrain skillpack sync`.",
           "name": "skill_currency",
           "status": "warn"
         },
@@ -1157,7 +1158,7 @@
           "tier": "symptom"
         },
         {
-          "fix": "64 new built-in skill(s) available that this workspace hasn't installed: academic-verify, archive-crawler, article-enrichment, ask-user, blog-ingest, book-mirror, brain-ingest-gate, brain-link-discipline, … +56 more. Add them with `gbrain skillpack sync`.",
+          "fix": "65 new built-in skill(s) available that this workspace hasn't installed: academic-verify, archive-crawler, article-enrichment, ask-user, blog-ingest, book-mirror, brain-ingest-gate, brain-link-discipline, … +57 more. Add them with `gbrain skillpack sync`.",
           "name": "skill_currency",
           "status": "warn",
           "tier": "symptom"
