@@ -40,6 +40,29 @@ describe('classifyGlobalLlmError — positives', () => {
     expect(classifyGlobalLlmError(Object.assign(new Error('request failed'), { api_error_status: 401 }))).toBe('auth');
   });
 
+  // #5473: after the AI SDK's own retries exhaust, it throws `RetryError`
+  // whose final attempt's status lives on `.lastError` — a SIBLING field,
+  // not `.cause` (verified against node_modules/ai's RetryError class). The
+  // top-level RetryError message here deliberately carries no rate-limit
+  // phrasing ("upstream busy") so only the `lastError` walk can classify it.
+  test('RetryError-shaped wrapper: status lives on .lastError (not .cause), no rate-limit phrase in the message', () => {
+    const retryError = Object.assign(new Error('Failed after 3 attempts. Last error: upstream busy'), {
+      name: 'AI_RetryError',
+      reason: 'maxRetriesExceeded',
+      errors: [],
+      lastError: Object.assign(new Error('upstream busy'), { statusCode: 429 }),
+    });
+    expect(classifyGlobalLlmError(retryError)).toBe('rate_limit');
+  });
+
+  test('RetryError-shaped wrapper: a 5xx on .lastError does not falsely classify (no auth/billing/rate_limit class for 5xx)', () => {
+    const retryError = Object.assign(new Error('Failed after 3 attempts. Last error: gateway down'), {
+      name: 'AI_RetryError',
+      lastError: Object.assign(new Error('gateway down'), { statusCode: 503 }),
+    });
+    expect(classifyGlobalLlmError(retryError)).toBeNull();
+  });
+
   test('AIConfigError classifies structurally as auth (missing-key gateway errors carry no status, no phrase)', () => {
     expect(classifyGlobalLlmError(new AIConfigError('OpenAI chat requires OPENAI_API_KEY.'))).toBe('auth');
     expect(classifyGlobalLlmError(new AIConfigError('Anthropic chat requires ANTHROPIC_API_KEY.'))).toBe('auth');

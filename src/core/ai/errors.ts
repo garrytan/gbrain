@@ -200,11 +200,20 @@ function statusToClass(status: number): GlobalLlmErrorClass | null {
  * halt instead of accumulating one swallowed warning per item.
  *
  * Matching is conservative by design: numeric status properties on the error
- * (or its `cause` chain), STRUCTURED status forms in the message, or specific
- * provider phrases. Plain 400s (context length, malformed request) stay
- * per-item — they can genuinely differ page to page. Billing phrases outrank
- * a 429 status because a monthly spend limit surfaces as 429 but is a billing
- * condition, not a transient rate limit.
+ * (or its `cause`/`lastError` chain), STRUCTURED status forms in the
+ * message, or specific provider phrases. Plain 400s (context length,
+ * malformed request) stay per-item — they can genuinely differ page to
+ * page. Billing phrases outrank a 429 status because a monthly spend limit
+ * surfaces as 429 but is a billing condition, not a transient rate limit.
+ *
+ * Walks `cause ?? lastError` (mirrors `isStructuredOutputRejection` above):
+ * after the AI SDK's own retries exhaust, it throws `RetryError`, whose
+ * `.lastError` — NOT `.cause` — carries the final attempt's status (#5473).
+ * A cause-only walk never sees a 429/5xx that only surfaced on that final
+ * attempt, so a status-rewritten HTTP-200 envelope (see
+ * `openrouter.ts:rewriteOpenRouterErrorEnvelopeStatus`) could reach the SDK's
+ * retry lane but still classify as an unrecognized transient error once
+ * retries are exhausted.
  */
 export function classifyGlobalLlmError(err: unknown): GlobalLlmErrorClass | null {
   const messages: string[] = [];
@@ -216,7 +225,8 @@ export function classifyGlobalLlmError(err: unknown): GlobalLlmErrorClass | null
     else if (typeof (cur as { message?: unknown }).message === 'string') {
       messages.push((cur as { message: string }).message);
     }
-    cur = (cur as { cause?: unknown }).cause;
+    const next = cur as { cause?: unknown; lastError?: unknown };
+    cur = next.cause ?? next.lastError;
   }
   const message = messages.join('\n');
   // Phrase regexes (and the prose-shaped status forms) only see text BEFORE
