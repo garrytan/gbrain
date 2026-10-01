@@ -59,6 +59,7 @@ ALLOWED=(
   "src/core/persistence/administration.ts"      # trusted-admin grant diagnostics; does not expose an operation transport
   "src/core/persistence/provider.ts"            # authenticated local registrations; shared dispatch enforces localOnly and the immutable trust lane
   "src/commands/enrich.ts"                       # local CLI tool; calls put_page handler with remote=false, not network-exposed
+  "src/core/extract-takes-from-pages.ts"          # local CLI extraction calls put_page with remote=false; it does not expose operations to a transport
   "src/commands/book-mirror.ts"                 # local CLI tool; not network-exposed
   "src/commands/tools-json.ts"                  # gbrain --tools-json introspection; full op list IS the purpose
   "src/mcp/publish-gates.ts"                    # reads op.publishGateKey/name only to compute gate-DISABLED sets; never lists/exposes ops

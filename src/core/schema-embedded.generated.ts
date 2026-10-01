@@ -138,6 +138,9 @@ CREATE TABLE IF NOT EXISTS pages (
   -- path). Powers \`gbrain extract --stale\` + the \`links_extraction_lag\` doctor
   -- check. NULL = never extracted.
   links_extracted_at    TIMESTAMPTZ,
+  -- #5761: links_attendance_blocked_revision / _at (the attendance marker) are
+  -- added by migration v180 on every install, after the migration-added pages
+  -- columns, so fresh and upgraded brains share their ordinals.
   -- #5254 (migration v177): 'unbound_source' marks a page written database-only
   -- while its filesystem source had no canonical owner. Writes and sync after
   -- binding keep it database-only. NULL for every other page.
@@ -1750,6 +1753,10 @@ DROP TRIGGER IF EXISTS tags_knowledge_revision ON tags;
 CREATE TRIGGER tags_knowledge_revision AFTER INSERT OR DELETE OR UPDATE ON tags
     FOR EACH ROW EXECUTE FUNCTION gbrain_advance_tag_revision();
 -- END GENERATED from src/core/page-state/schema.ts (PAGE_STATE_SCHEMA_SQL)
+-- #5393 (migration v182): the page's recorded canonical file when a version
+-- was taken, so a revert is judged on the version it writes. After the
+-- page-state columns so fresh and upgraded brains share its ordinal.
+ALTER TABLE page_versions ADD COLUMN IF NOT EXISTS source_path TEXT;
 CREATE TABLE IF NOT EXISTS extract_atoms_page_state (
   source_incarnation UUID NOT NULL REFERENCES sources(incarnation) ON DELETE CASCADE,
   page_id INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,

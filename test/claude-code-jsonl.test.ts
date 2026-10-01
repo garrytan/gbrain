@@ -277,6 +277,59 @@ describe('confineTranscriptPath [S3#8]', () => {
     expect(confineTranscriptPath(big, { root, maxBytes: 16 })).toEqual({ ok: false, reason: 'too_large' });
   });
 
+  // #5701: a hook lane tail-reads a bounded window, so the whole-file size
+  // gate must not fire before the read it is about to bound.
+  test('allowOversize skips ONLY the size gate — confinement still applies', () => {
+    const root = tdir();
+    const big = join(root, 'big.jsonl');
+    writeFileSync(big, 'x'.repeat(64));
+    // Gate still fires without the opt-in.
+    expect(confineTranscriptPath(big, { root, maxBytes: 16 })).toEqual({ ok: false, reason: 'too_large' });
+    // Opt-in lets the file through, with its size reported.
+    const r = confineTranscriptPath(big, { root, maxBytes: 16, allowOversize: true });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.size).toBe(64);
+    // Path confinement is NOT relaxed by the opt-in.
+    const outside = join(root, '..', `gb-outside-${process.pid}.jsonl`);
+    writeFileSync(outside, '{}\n');
+    try {
+      expect(confineTranscriptPath(outside, {
+        root, maxBytes: 16, allowOversize: true,
+      })).toEqual({ ok: false, reason: 'outside_projects_dir' });
+    } finally {
+      rmSync(outside, { force: true });
+    }
+    // Nor is the symlink ladder.
+    const link = join(root, 'link.jsonl');
+    symlinkSync(big, link);
+    expect(confineTranscriptPath(link, { root, allowOversize: true })).toEqual({ ok: false, reason: 'symlink' });
+  });
+
+  test('a >TRANSCRIPT_HARD_CAP_BYTES session reaches the bounded tail read', () => {
+    const root = tdir();
+    const p = join(root, 'long.jsonl');
+    // A real Claude-shaped line, then padding past the 50MiB hard cap. The
+    // padding is NOT valid JSON, so a whole-file parse would count it as
+    // skipped lines while the bounded tail read never sees it.
+    const line = JSON.stringify({
+      type: 'user', sessionId: 'sess-5701', cwd: '/w', timestamp: '2026-09-29T00:00:00Z',
+      message: { role: 'user', content: 'remember the deploy window' },
+    });
+    const pad = 'x'.repeat(TRANSCRIPT_HARD_CAP_BYTES + 1024);
+    writeFileSync(p, `${line}\n${pad}\n`);
+
+    // Pre-fix the confinement refused the file outright.
+    expect(confineTranscriptPath(p, { root })).toEqual({ ok: false, reason: 'too_large' });
+
+    const conf = confineTranscriptPath(p, { root, allowOversize: true });
+    expect(conf.ok).toBe(true);
+    if (!conf.ok) return;
+    const parsed = parseTranscript(conf.path, { maxBytes: 64 * 1024 });
+    // The newest line (the padding) is what the tail holds; the read stayed
+    // bounded instead of pulling 50MiB into the hook lane.
+    expect(parsed.bytesRead).toBeLessThanOrEqual(64 * 1024);
+  });
+
   test('rejects: directory named like a transcript', () => {
     const root = tdir();
     const dirAsFile = join(root, 'dir.jsonl');

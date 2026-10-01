@@ -29,8 +29,8 @@ import type { PageSnapshot } from '../page-state/types.ts';
 import { LockStolenError, syncLockId, withRefreshingLock, type DbLockHandle } from '../db-lock.ts';
 import { ownedGoogleReceipts, prepareGoogleReceiptPatch, type GoogleReceipts } from './connector-google-receipts.ts';
 import { connectorCheckpointKey, connectorIdentity, type ConnectorIdentity, type ConnectorKind } from './connector-identity.ts';
-import { readManagedConnectorState, sameConnectorAccount, writeManagedConnectorState, type ConnectorAccount, type ConnectorPendingEntry, type ConnectorRunCounts, type ConnectorState } from './connector-state.ts';
-import { connectorAccountChanged, CONNECTOR_INTENT_OUTDATED_OLD_HOST, CONNECTOR_INTENT_OUTDATED_PRE_UPGRADE } from './connector-errors.ts';
+import { readManagedConnectorState, recordConnectorSyncAttempt, sameConnectorAccount, writeManagedConnectorState, type ConnectorAccount, type ConnectorPendingEntry, type ConnectorRunCounts, type ConnectorState } from './connector-state.ts';
+import { connectorAccountChanged, connectorFenceHint, docsAnchor, CONNECTOR_INTENT_OUTDATED_OLD_HOST, CONNECTOR_INTENT_OUTDATED_PRE_UPGRADE } from './connector-errors.ts';
 import { inspectUnchanged, screeningRequest } from './noop-kernel.ts';
 import { conceptPreservationHold, preserveCanonicalFences } from '../cycle/concept-publication.ts';
 import { FACTS_FENCE_BEGIN } from '../facts-fence.ts';
@@ -78,6 +78,8 @@ interface ConnectorRetry {
   requestId: string;
   retryOf: string;
   attempt: number;
+  /** Written by `gbrain sources retry-held` (fix wave 4): approved, but nothing is admitted under `requestId` yet. */
+  pending?: boolean;
 }
 interface ConnectorIntent extends Record<string, unknown> {
   kind: ConnectorIntentKind;
@@ -130,6 +132,22 @@ function connectorBindingRoot(sourceId: string, source: ConnectorSource, binding
   } catch {
     throw new OperationError('source_changed', 'The connector directory no longer matches its canonical source root.');
   }
+}
+
+/**
+ * Fix wave 4: a page intent binds to the connector cursor, not to its item
+ * holds or the checkpoint generation. A holds-only publication (the abort
+ * path, a partial run) therefore neither invalidates accepted page writes nor
+ * changes their request identity, so an ordinary rerun still replays the same
+ * receipt. Checkpoint intents keep the full checkpoint.
+ */
+function cursorOnly(checkpoint: unknown): unknown[] {
+  return (Array.isArray(checkpoint) ? checkpoint : []).map(entry => {
+    const state = (entry as { state?: unknown } | null)?.state ?? null;
+    if (!state || typeof state !== 'object') return { state };
+    const { item_holds: _holds, ...cursor } = state as Record<string, unknown>;
+    return { state: cursor };
+  });
 }
 
 function stableId(value: unknown): string {
@@ -193,6 +211,8 @@ export async function withConnectorSync<T>(engine: BrainEngine, sourceId: string
   if (!brain?.enabled) {
     if (opts.resetCheckpoint) throw new OperationError('invalid_params', '--reset-checkpoint applies to managed connector sources.',
       `This brain does not use managed persistence; re-walk this connector with: gbrain sync --source ${sourceId} --full`);
+    // A preview never opens the autopilot dispatch gate (#5673).
+    if (!opts.dryRun) await recordConnectorSyncAttempt(engine, sourceId);
     return work(null, opts);
   }
   opts.signal?.throwIfAborted();
@@ -201,6 +221,10 @@ export async function withConnectorSync<T>(engine: BrainEngine, sourceId: string
     const options = { ...opts, signal: combined };
     const session = await beginConnectorSync(engine, sourceId, connector, config, options, { handle, signal: combined });
     if (!session) throw new OperationError('source_changed', 'The managed connector mode changed before the sweep.');
+    // Only a validated, authorized sweep opens the autopilot dispatch gate (#5673); the
+    // session keeps the stamp in the state row it writes back.
+    await recordConnectorSyncAttempt(engine, sourceId);
+    session.markSyncAttempted();
     let result: T;
     try {
       result = await work(session, options);
@@ -248,6 +272,8 @@ export class ManagedConnectorSync {
   private stopped = false;
   private blockedByCheckpoint = false;
   private pendingCheckpoint: ConnectorPendingEntry | null = null;
+  /** Page slugs of held connector items: their terminal, recovery-free failed receipts leave the automatic retry set. */
+  private heldSlugs = new Set<string>();
   /** True when this run ended with accepted writes pending, so its checkpoint did not advance. */
   deferred = false;
   readonly counts: Omit<ConnectorRunCounts, 'finished_at' | 'pending' | 'stopped_on_wait_budget'> & { created: number; updated: number; deleted: number } = {
@@ -579,7 +605,9 @@ export class ManagedConnectorSync {
     const dropUnreached = complete && this.fullSweep && !this.targeted;
     const unresolved = dropUnreached ? [] : unreached;
     if (dropUnreached) this.counts.dropped_upstream += unreached.filter(entry => entry.itemRef !== CHECKPOINT_SLUG).length;
+    const released = await this.releasableHeldEntries([...unresolved, ...this.failedPending]).catch(() => new Set<string>());
     const pending = [...new Map([...unresolved, ...this.failedPending, ...outstanding, ...(this.pendingCheckpoint ? [this.pendingCheckpoint] : [])]
+      .filter(entry => !released.has(entry.requestId))
       .map(entry => [entry.requestId, entry])).values()];
     if (outstanding.length || this.failedPending.length || this.pendingCheckpoint || this.stopped) this.deferred = true;
     const recovery = this.connectorState.upgrade_recovery === 'rewalking_once' && complete ? 'none' : this.connectorState.upgrade_recovery;
@@ -587,6 +615,46 @@ export class ManagedConnectorSync {
       page_admissions: this.counts.page_admissions, skipped_unchanged: this.counts.skipped_unchanged, pending: pending.length,
       checkpoint_admissions: this.counts.checkpoint_admissions, stopped_on_wait_budget: this.stopped, dropped_upstream: this.counts.dropped_upstream, finished_at: now } };
     await this.writeState();
+  }
+  /**
+   * Fix wave 4: marks connector items held by this run. Only their terminal,
+   * recovery-free failed receipts leave the automatic retry set; a queued,
+   * running or recovering receipt stays outstanding.
+   */
+  holdSlugs(slugs: Iterable<string>): void {
+    for (const slug of slugs) this.heldSlugs.add(slugifyPath(`${slug}.md`));
+  }
+  private async releasableHeldEntries(entries: ConnectorPendingEntry[]): Promise<Set<string>> {
+    const candidates = entries.filter(entry => entry.itemRef !== CHECKPOINT_SLUG && this.heldSlugs.has(entry.itemRef));
+    if (!candidates.length) return new Set();
+    const rows = await this.engine.executeRaw<{ request_id: string }>(`SELECT request_id::text AS request_id FROM persistence_requests
+      WHERE request_id=ANY($1::uuid[]) AND source_id=$2 AND state IN ('failed','conflict','cancelled') AND recovery IS NULL`,
+    [candidates.map(entry => entry.requestId), this.sourceId]);
+    return new Set(rows.map(row => row.request_id));
+  }
+  /**
+   * Fix wave 4 abort path: publishes one checkpoint whose state is the last
+   * committed cursor state plus the updated `item_holds`, so the cursor never
+   * moves past an uncommitted receipt. A stale publication is refused by the
+   * `checkpointBefore` digest; any failure records nothing and returns false.
+   */
+  async publishHolds(empty: Record<string, unknown>, holds: unknown): Promise<boolean> {
+    if (this.resetRequested || this.stopped) return false;
+    const committed = (this.checkpoint[0] as { state?: Record<string, unknown> | null } | undefined)?.state ?? null;
+    if (digest(committed?.item_holds ?? { version: 1, items: {} }) === digest(holds)) return true;
+    const state = { ...empty, ...(committed ?? {}), item_holds: holds };
+    const next = [{ generation: Number((this.checkpoint[0] as { generation?: number } | undefined)?.generation ?? 0) + 1, state }];
+    try {
+      await this.submit('connector_v2_checkpoint', CHECKPOINT_SLUG, null, { checkpointAfter: next, receipts: [], fresh: false });
+      this.checkpoint = next;
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  /** #5673: keep the dispatch-gate stamp in the state this session writes back. */
+  markSyncAttempted(): void {
+    this.connectorState = { ...this.connectorState, first_attempt_at: this.connectorState.first_attempt_at ?? new Date().toISOString() };
   }
   /** One statement: the state row changes only while this run still holds the connector sync lease. */
   private async writeState(): Promise<void> {
@@ -639,7 +707,8 @@ export class ManagedConnectorSync {
     }
     const intent: ConnectorIntent = { kind, connector: this.connector, sourceRoot: this.source.local_path,
       configHash: this.identity.digest, syncAuthority: this.authority, expected_revision: snapshot?.revision ?? null,
-      sourcePath, noEmbed: this.noEmbed, noSchemaPack: this.noSchemaPack, checkpointKey: this.checkpointKey, checkpointBefore: this.checkpoint,
+      sourcePath, noEmbed: this.noEmbed, noSchemaPack: this.noSchemaPack, checkpointKey: this.checkpointKey,
+      checkpointBefore: kind === 'connector_v2_checkpoint' ? this.checkpoint : cursorOnly(this.checkpoint),
       ownerEpoch: this.binding ? String(this.binding.owner_epoch) : null, canonicalRoot: this.canonicalRoot,
       filePath: file?.path ?? null, fileBeforeHash: file?.expectedBeforeHash ?? null, ...extra };
     const callerIntent = { ...intent, syncAuthority: undefined, newestContentAt: undefined,
@@ -664,7 +733,7 @@ export class ManagedConnectorSync {
       if (row) {
         await authorizeStoredRequest(engine, row);
         assertReplayIntent(row, intentDigest(input));
-      } else if (retry) throw new OperationError('storage_error', 'The approved connector retry receipt is unavailable.');
+      } else if (retry && !retry.pending) throw new OperationError('storage_error', 'The approved connector retry receipt is unavailable.');
       return { retry, input, row };
     };
     const automatic = this.autoRetry.has(baseRequestId);
@@ -722,7 +791,11 @@ export class ManagedConnectorSync {
       }
       row = await this.engine.transaction(async tx => {
         await this.assertLease(tx);
-        return admitWriteInTransaction(tx, prior.input);
+        const accepted = await admitWriteInTransaction(tx, prior.input);
+        // A `retry-held` approval is consumed by this admission under its new request identity.
+        if (prior.retry?.pending) await tx.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES('managed-connector-retry',$1,$2::text::jsonb)
+          ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=EXCLUDED.completed_keys,updated_at=now()`, [baseRequestId, JSON.stringify([{ ...prior.retry, pending: undefined }])]);
+        return accepted;
       });
       admitted = true;
     }
@@ -788,7 +861,7 @@ export async function prepareConnectorMutation(engine: BrainEngine, row: WriteRe
     }
     if (p.kind !== 'connector_v2_checkpoint') {
       const [checkpoint] = await tx.executeRaw<{ completed_keys: unknown[] }>("SELECT completed_keys FROM op_checkpoints WHERE op='managed-connector' AND fingerprint=$1", [p.checkpointKey]);
-      if (digest(checkpoint?.completed_keys ?? []) !== digest(p.checkpointBefore)) throw new OperationError('revision_conflict', 'The connector checkpoint changed before publication.');
+      if (digest(cursorOnly(checkpoint?.completed_keys)) !== digest(cursorOnly(p.checkpointBefore))) throw new OperationError('revision_conflict', 'The connector checkpoint changed before publication.');
     }
   };
   await validate(engine);
@@ -839,8 +912,13 @@ export async function prepareConnectorMutation(engine: BrainEngine, row: WriteRe
   // carry them over verbatim so a re-render does not expire those facts. A render that brings its own fence
   // (a provider body that contains one) owns it, and ambiguous stored fences are left to the existing path.
   const hasFence = (text: string | null | undefined) => [FACTS_FENCE_BEGIN, TAKES_FENCE_BEGIN].some(begin => (text ?? '').includes(begin));
-  const fenced = snapshot && hasFence(snapshot.page.compiled_truth) && !hasFence(parsed.compiled_truth) && !conceptPreservationHold(snapshot.page)
-    ? preserveCanonicalFences(snapshot.page, parsed.compiled_truth) : parsed.compiled_truth;
+  // Fix wave 4: a stored fence the render cannot carry verbatim (below the timeline sentinel, duplicated,
+  // unbalanced or unparseable) is refused instead of silently expiring its rows on re-render.
+  const storedFence = snapshot && !hasFence(parsed.compiled_truth) && (hasFence(snapshot.page.compiled_truth) || hasFence(snapshot.page.timeline));
+  const hold = storedFence ? conceptPreservationHold(snapshot!.page) : null;
+  if (hold) throw connectorFenceRefusal(row.source_id, row.slug, hold);
+  const fenced = storedFence && hasFence(snapshot!.page.compiled_truth)
+    ? preserveCanonicalFences(snapshot!.page, parsed.compiled_truth) : parsed.compiled_truth;
   const content = (carried.materialized || fenced !== parsed.compiled_truth) && snapshot
     ? serializePageToMarkdown({ ...snapshot.page, ...parsed, compiled_truth: fenced, timeline: carried.timeline, type: parsed.typeExplicit ? parsed.type : snapshot.page.type }, parsed.tags)
     : p.content;
@@ -881,6 +959,15 @@ export async function prepareOutdatedConnectorMutation(engine: BrainEngine, row:
   const cutoff = await readConnectorV2Cutoff(engine);
   const preUpgrade = cutoff !== null && new Date(row.created_at).getTime() < new Date(cutoff).getTime();
   throw new OperationError('connector_intent_outdated', preUpgrade ? CONNECTOR_INTENT_OUTDATED_PRE_UPGRADE : CONNECTOR_INTENT_OUTDATED_OLD_HOST);
+}
+
+/** `connector_fence_below_timeline`: the item is counted toward a hold; the repair moves the fence above the sentinel. */
+export function connectorFenceRefusal(sourceId: string, slug: string, hold: string): OperationError {
+  const error = new OperationError('connector_fence_below_timeline',
+    `The stored page ${slug} has a facts or takes fence the connector render cannot carry (${hold}); refusing instead of expiring its rows.`,
+    connectorFenceHint(sourceId), docsAnchor('connector_fence_below_timeline'));
+  error.detail = 'fence_not_carried';
+  return error;
 }
 
 export function rethrowConnectorWriteError(error: unknown): void {

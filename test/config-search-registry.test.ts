@@ -37,6 +37,7 @@ const DIRECTLY_READ_SINGLETONS = [
   'search.return_unit',                      // search/evidence-delivery.ts
   'search.return_window',
   'search.return_budget_default',
+  'search.return_budget_conversation',
   'search.return_budget_max_remote',
 ];
 

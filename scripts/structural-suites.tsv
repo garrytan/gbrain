@@ -168,7 +168,7 @@ test/frontmatter-install-hook.test.ts	frontmatter install-hook (B13)	22	readFile
 test/get-page-federated-scope.test.ts	#2555 get_chunks federated scope	5	source-surface-helper
 test/get-page-federated-scope.test.ts	#4275 alias hop scope: archived sources, include_deleted, fuzzy precedence, grant precedence	5	source-surface-helper
 test/harness-onboarding.test.ts	harness identity and private handoff	5	readFileSync
-test/hook-command.serial.test.ts	user-prompt	14	source-surface-helper
+test/hook-command.serial.test.ts	user-prompt	15	source-surface-helper
 test/hook-push-spawn-env.test.ts	spawnDetachedPush env handoff	2	readFileSync
 test/hook-push-spawn-env.test.ts	tryExecAsync env handoff	1	readFileSync
 test/integrations-install.test.ts	installRecipeIntoHostRepo — happy path	6	readFileSync
@@ -182,6 +182,7 @@ test/link-source-check-repair.test.ts	regex literal drift guard (#4613)	1	readFi
 test/longmemeval-embed-cache.test.ts	EmbeddingCache — canonical hash	4	readFileSync
 test/loops-extract-wiring.test.ts	jobs.ts wiring	2	source-surface-helper
 test/loops-extract-wiring.test.ts	relational edge vocabulary	2	readFileSync,source-surface-helper
+test/meeting-ingestion-attendance-template.test.ts	(file-level)	3	readFileSync
 test/migrate-stdout-clean.test.ts	migration output stays off stdout	2	source-surface-helper
 test/migrate.test.ts	PR #356 + #363 — session timeouts applied via startup parameters	1	readFileSync,source-surface-helper
 test/migrate.test.ts	PR #356 — LATEST_VERSION is max(versions), not array[-1]	2	readFileSync,source-surface-helper
@@ -215,6 +216,7 @@ test/openclaw-plugin-manifest.test.ts	bundled-skill reference closure (nothing b
 test/openclaw-plugin-manifest.test.ts	plugin membership curation (skills = plugin ∪ exclusions, disjoint)	9	readFileSync
 test/openclaw-plugin-manifest.test.ts	root OpenClaw plugin manifest	2	readFileSync
 test/persistence-git-subdir-origin.test.ts	(file-level)	6	readFileSync
+test/persistence-request-indexes.test.ts	(file-level)	4	readFileSync
 test/persistence-sync-options.serial.test.ts	(file-level)	1	readFileSync
 test/pg-access-classify.test.ts	marker contract (skill↔binary lockstep, the UPGRADE_AVAILABLE pattern)	3	bun-file
 test/pglite-engine.test.ts	PGLiteEngine: v0.13.1 error-wrap on connect() (#223)	1	source-surface-helper
@@ -247,12 +249,13 @@ test/scripts/ci-local-rendering.test.ts	ci-local command rendering	1	readFileSyn
 test/scripts/ci-local-rendering.test.ts	ci-local execution coverage	3	readFileSync
 test/scripts/ci-local-rendering.test.ts	local test configuration through run-e2e	2	readFileSync
 test/scripts/ci-local-rendering.test.ts	required PgBouncer execution through run-e2e	1	readFileSync
-test/scripts/ci-pr-scope.test.ts	pull-request CI scope	7	readFileSync
+test/scripts/ci-pr-scope.test.ts	pull-request CI scope	8	readFileSync
 test/scripts/ci-runner-routing.test.ts	CI runner routing	6	readFileSync
 test/scripts/classify-tests.test.ts	classify-tests detectors	23	bun-file,doctor-source-helper,exec-scan,readFileSync,source-surface-helper
 test/scripts/coverage-diff-gate.test.ts	exemptions	3	readFileSync
 test/scripts/data-safety-native-workflow.test.ts	data-safety native CI coverage	12	readFileSync
 test/scripts/e2e-backend-matrix.test.ts	scripts/e2e-backend-matrix.txt	3	readFileSync
+test/scripts/e2e-live-key-only.test.ts	shared live-key E2E exclusion list	4	readFileSync
 test/scripts/e2e-runner.test.ts	second	5	readFileSync
 test/scripts/e2e-runner.test.ts	sequential E2E runner (GITHUB_ACTIONS=${githubActions})	7	readFileSync
 test/scripts/e2e-wiring.test.ts	e2e file claim ratchet	5	readFileSync

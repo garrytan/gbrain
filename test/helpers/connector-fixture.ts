@@ -141,3 +141,19 @@ export async function connectorPendingSet(engine: BrainEngine, sourceId: string)
   const [source] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text FROM sources WHERE id=$1', [sourceId]);
   return (await readManagedConnectorState(engine, sourceId, source.incarnation)).pending;
 }
+
+/**
+ * Fix wave 4: the connector cursor a checkpoint row carries, without its item
+ * holds or generation. A failed or partial run may publish updated holds, but
+ * never moves this cursor.
+ */
+export async function sourceCursor(engine: BrainEngine, id: string) {
+  return cursorOf(await sourceCheckpoint(engine, id));
+}
+export function cursorOf(rows: Array<{ completed_keys?: unknown }> | Record<string, unknown>[]) {
+  return (rows as Array<{ completed_keys?: Array<{ state?: Record<string, unknown> | null }> }>).map(row => (row.completed_keys ?? []).map(entry => {
+    if (!entry?.state) return { state: entry?.state ?? null };
+    const { item_holds: _holds, ...cursor } = entry.state;
+    return { state: cursor };
+  }));
+}

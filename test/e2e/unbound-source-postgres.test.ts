@@ -299,4 +299,80 @@ d('#5254 Postgres put_page to an unbound filesystem source', () => {
     expect(bound.message).toContain('outside canonical files');
     expect(bound.details).toMatchObject({ sources: [{ source_id: 'default', pages: 1, bound: true }] });
   });
+
+  // #5393: persistence.unbound_write=database_only covers every page mutation
+  // whose target has no recorded canonical file, not only put_page.
+  async function mutateAt(name: string, pageSlug: string, params: Record<string, unknown> = {}) {
+    const current = await engine.readPageSnapshot(pageSlug, { sourceId: 'default', includeDeleted: true });
+    return dispatch(name, { slug: pageSlug, request_id: randomUUID(), ...(current ? { expected_revision: current.revision } : {}), ...params });
+  }
+
+  test('#5393 database_only covers capture, add_tag, remove_tag and delete_page of pages with no recorded file', async () => {
+    await engine.setConfig('persistence.unbound_write', 'database_only');
+    const captured = await dispatch('capture', { slug: 'notes/captured', content: 'Captured while unbound.', request_id: randomUUID() });
+    expect(captured.response.isError, JSON.stringify(captured.payload)).not.toBe(true);
+    expect(captured.payload.write_through).toMatchObject({ written: false, skipped: 'unbound_source' });
+    expect(captured.payload.write_through.warning).toContain('capture wrote only to the database');
+    expect(await classification('notes/captured')).toBe('unbound_source');
+    expect(existsSync(join(root, 'notes', 'captured.md'))).toBe(false);
+
+    expect((await put('Database-only note.')).payload.state).toBe('committed');
+    for (const [name, params] of [['add_tag', { tag: 'example' }], ['remove_tag', { tag: 'example' }], ['delete_page', {}]] as const) {
+      const result = await mutateAt(name, slug, params);
+      expect(result.response.isError, `${name}: ${JSON.stringify(result.payload)}`).not.toBe(true);
+      expect(result.payload.state).toBe('committed');
+      expect(result.payload.write_through).toMatchObject({ written: false, skipped: 'unbound_source' });
+    }
+    expect(existsSync(join(root, `${slug}.md`))).toBe(false);
+    const { checkUnboundSource } = await import('../../src/commands/doctor/checks/unbound-source.ts');
+    expect((await checkUnboundSource(engine)).details?.total).toBe(1);
+  });
+
+  test('#5393 add_tag on a page with a recorded canonical file still refuses with the bind hint', async () => {
+    await engine.setConfig('persistence.unbound_write', 'database_only');
+    await engine.putPage('notes/seed', { type: 'note', title: 'Seed', compiled_truth: 'Seed file.', timeline: '', frontmatter: {} }, { sourceId: 'default' });
+    await engine.executeRaw("UPDATE pages SET source_path='notes/seed.md' WHERE source_id='default' AND slug='notes/seed'");
+    const refused = await mutateAt('add_tag', 'notes/seed', { tag: 'example' });
+    expect(refused.payload.error).toBe('owner_unavailable');
+    expect(refused.payload.detail).toBe('unbound_source');
+    expect(refused.payload.suggestion).toContain('gbrain sources writer claim default --path');
+    expect(refused.payload.suggestion).toContain('came from a canonical file');
+    expect(refused.payload.suggestion).not.toContain('gbrain config set persistence.unbound_write database_only');
+  });
+
+  test('#5393 revert_version is judged on the version written: a version recorded with a canonical file refuses', async () => {
+    const { createPageVersion } = await import('../../src/core/page-state/versions.ts');
+    await engine.setConfig('persistence.unbound_write', 'database_only');
+    expect((await put('Database-only original.')).payload.state).toBe('committed');
+    const fileLess = await createPageVersion(engine, slug, 'default');
+    await engine.executeRaw("UPDATE pages SET source_path='notes/unbound-example.md' WHERE source_id='default' AND slug=$1", [slug]);
+    const fileBacked = await createPageVersion(engine, slug, 'default');
+    await engine.executeRaw("UPDATE pages SET source_path=NULL WHERE source_id='default' AND slug=$1", [slug]);
+    expect((await put('Database-only edit.')).payload.state).toBe('committed');
+
+    const refused = await mutateAt('revert_version', slug, { version_id: Number(fileBacked.id) });
+    expect(refused.payload.error, JSON.stringify(refused.payload)).toBe('owner_unavailable');
+    expect(refused.payload.detail).toBe('unbound_source');
+    expect(refused.payload.suggestion).toContain('came from a canonical file');
+
+    const reverted = await mutateAt('revert_version', slug, { version_id: Number(fileLess.id) });
+    expect(reverted.response.isError, JSON.stringify(reverted.payload)).not.toBe(true);
+    expect(reverted.payload.write_through).toMatchObject({ written: false, skipped: 'unbound_source' });
+    expect((await engine.getPage(slug, { sourceId: 'default' }))?.compiled_truth).toContain('Database-only original.');
+  });
+
+  test('#5393 with persistence.unbound_write unset, capture, add_tag and delete_page refuse as before', async () => {
+    await engine.setConfig('persistence.unbound_write', 'database_only');
+    expect((await put('Database-only note.')).payload.state).toBe('committed');
+    await engine.executeRaw("DELETE FROM config WHERE key='persistence.unbound_write'");
+    const captured = await dispatch('capture', { slug: 'notes/captured', content: 'Captured.', request_id: randomUUID() });
+    expect(captured.payload.detail).toBe('unbound_source');
+    for (const [name, params] of [['add_tag', { tag: 'example' }], ['delete_page', {}]] as const) {
+      const refused = await mutateAt(name, slug, params);
+      expect(refused.payload.error, name).toBe('owner_unavailable');
+      expect(refused.payload.detail).toBe('unbound_source');
+      expect(refused.payload.suggestion).toContain('gbrain config set persistence.unbound_write database_only');
+    }
+  });
+
 });

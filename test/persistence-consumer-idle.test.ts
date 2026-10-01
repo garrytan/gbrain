@@ -92,7 +92,7 @@ test('idle polling backs off to the cap, then a wake runs a full tick immediatel
   const { proxy, statements } = counting(engine);
   const consumer = new PersistenceConsumer(proxy, { engine: 'pglite' }, async () => { throw new Error('no work expected'); },
     { hostId: config.hostId, pollMs: 20, idleMaxMs: 160, onError: () => {} });
-  const refreshes = () => statements.filter(sql => sql.startsWith('SELECT brain_id,enabled FROM persistence_brain')).length;
+  const refreshes = () => statements.filter(sql => sql.startsWith('SELECT brain_id,enabled,')).length;
   consumer.start();
   try {
     await Bun.sleep(2_000);

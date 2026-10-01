@@ -1,5 +1,5 @@
 import { WRITE_REQUEST_PARAM } from '../persistence/params.ts';
-import { deliverEvidence, resolveEvidencePlan, type DeliveryMeta, type EvidencePlan } from '../search/evidence-delivery.ts';
+import { deliverEvidence, effectivePlan, resolveEvidencePlan, type DeliveryMeta, type EvidencePlan } from '../search/evidence-delivery.ts';
 import { randomUUID } from 'node:crypto';
 import { readHolders } from './context.ts';
 /**
@@ -183,9 +183,15 @@ function packingArm<T>(candidates: T[], kept: T[], cost: (item: T) => number) {
   return { candidates: candidates.length, kept: kept.length, dropped: candidates.length - kept.length, used: kept.reduce((sum, r) => sum + cost(r), 0) };
 }
 
-/** recall's evidence plan: budget_tokens budgets the delivered blocks before recall's own packing. */
+/**
+ * recall's evidence plan: budget_tokens budgets the delivered blocks before
+ * recall's own packing. Without return_unit, budget_tokens or budget_policy
+ * keeps legacy chunk packing (facts pack first, so a whole session would
+ * otherwise lose to them).
+ */
 function recallEvidencePlan(ctx: OperationContext, p: Record<string, unknown>): Promise<EvidencePlan | null> {
   return resolveEvidencePlan(ctx.engine, {
+    legacyBudget: p.budget_policy !== undefined || (typeof p.budget_tokens === 'number' && Number.isFinite(p.budget_tokens) && p.budget_tokens > 0),
     remote: ctx.remote, viaSubagent: ctx.viaSubagent, returnUnit: p.return_unit, returnWindow: p.return_window,
     budget: p.budget_tokens, snippetChars: undefined, snippetCap: 0, op: 'recall',
   });
@@ -208,7 +214,7 @@ const recall: Operation = {
     limit: { type: 'number', description: 'Per-arm cap: max fact rows AND max search results. Default 50, cap 100.' },
     grep: { type: 'string', description: 'Substring filter on fact text (case-insensitive). Applied in SQL before the limit, so matches on high-cardinality entities are found even outside the newest-N window.' },
     include_pending: { type: 'boolean', description: 'v0.32: when true, response includes pending_consolidation_count (facts not yet promoted to takes by the dream-cycle consolidate phase). One round trip; backward-compatible (field omitted when false).' },
-    return_unit: { type: 'string', enum: ['chunk', 'window', 'section', 'page', 'auto'], description: "Evidence unit for the results[] arm (needs `query`; default config search.return_unit = 'chunk'). 'window' adds neighbor chunks, 'section' the enclosing section or conversation rounds, 'page' the whole page/session (best for multi-session questions), 'auto' picks per page. Non-chunk units return one result per page with `delivered` metadata and a top-level `delivery` block; the evidence is budgeted by budget_tokens (default 6000) and then packed by recall's usual rules." },
+    return_unit: { type: 'string', enum: ['chunk', 'window', 'section', 'page', 'auto'], description: "Evidence unit for the results[] arm (needs `query`; default config search.return_unit = 'auto'). 'window' adds neighbor chunks, 'section' the enclosing section or conversation rounds, 'page' the whole page/session (best for multi-session questions), 'auto' the whole page for conversation pages and the ranked chunk unchanged for everything else (budget_tokens or budget_policy without return_unit keeps chunk packing). Non-chunk units return one result per page with `delivered` metadata and a top-level `delivery` block; the evidence is budgeted by budget_tokens (default 6000, auto 24000) and then packed by recall's usual rules." },
     return_window: { type: 'number', description: "Neighbor chunks on each side for return_unit 'window' (integer 1-3, default 1)." },
   },
   scope: 'read',
@@ -447,7 +453,8 @@ const recall: Operation = {
         });
       }
       bumpLastRetrievedAt(ctx.engine, searchResults.map(r => r.page_id));
-      if (evidencePlan) ({ results: searchResults, delivery } = await deliverEvidence(ctx.engine, searchResults, evidencePlan, { ...searchScope, excludePrivate, requireSafeChunks: ctx.remote !== false }));
+      const applied = effectivePlan(evidencePlan, searchResults);
+      if (applied) ({ results: searchResults, delivery } = await deliverEvidence(ctx.engine, searchResults, applied, { ...searchScope, excludePrivate, requireSafeChunks: ctx.remote !== false }));
     }
 
     let packedFacts = rows;

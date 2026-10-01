@@ -43,3 +43,10 @@ export const SOURCE_FRESHNESS_PHASES: CyclePhase[] = [
   'lint', 'backlinks', 'sync', 'extract', 'extract_facts',
   'recompute_emotional_weight',
 ];
+
+/**
+ * #5673: the database phases a per-source cycle runs for a connector source
+ * (google, github). Connector sync runs only from the freshness loop, and a
+ * connector cycle has no brain directory, so filesystem phases never run.
+ */
+export const CONNECTOR_SOURCE_PHASES: CyclePhase[] = ['extract', 'extract_facts', 'recompute_emotional_weight'];

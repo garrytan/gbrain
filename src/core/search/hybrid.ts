@@ -23,6 +23,7 @@ import { affectsRecall } from '../types.ts';
 export { resolveDateBoundary, resolveSearchDateBounds } from './date-bounds.ts';
 import { hasReadPolicy, pageReadFilter } from './read-policy-sql.ts';
 import { embedQuery } from '../embedding.ts';
+import { loadEmbeddingQueryPrefix } from './query-prefix.ts';
 import { registerBackgroundWorkDrainer } from '../background-work.ts';
 import { applyAliasHop, isExcludedIdentity, type IdentityTierOpts } from './alias-hop.ts';
 export { applyAliasHop, isExcludedIdentity, type IdentityTierOpts };
@@ -934,6 +935,12 @@ export interface HybridSearchOpts extends SearchOpts {
    * a fresh per-call deadline. Not part of the public contract.
    */
   _queryEmbedDeadline?: QueryEmbedDeadline;
+  /**
+   * #5691 INTERNAL — the brain's `embedding_query_prefix`, read once per
+   * request (by `hybridSearchCached`, or by `hybridSearch` when undefined) and
+   * prepended to the text vector arm's query embeddings only.
+   */
+  _queryPrefix?: string;
 
   /**
    * Hermetic eval canaries/CI — non-semantic embeddings. When set, the query
@@ -1017,7 +1024,7 @@ export function makeQueryEmbedDeadline(ms = QUERY_EMBED_TIMEOUT_MS): QueryEmbedD
  */
 export async function embedQueryBounded(
   text: string,
-  embedOpts: { embeddingModel?: string; dimensions?: number } | undefined,
+  embedOpts: { embeddingModel?: string; dimensions?: number; queryPrefix?: string } | undefined,
   dl: QueryEmbedDeadline,
 ): Promise<Float32Array> {
   // Floor the budget so a healthy embed isn't starved when the shared absolute
@@ -1055,6 +1062,7 @@ export async function hybridSearch(
     if (filters.types?.length === 0) return [];
     opts = { ...opts, ...filters };
   }
+  if (opts?._queryPrefix === undefined) opts = { ...opts, _queryPrefix: await loadEmbeddingQueryPrefix(engine) };
   // Named stages (src/core/search/hybrid/): request -> lexical arms ->
   // relational arm -> [keyword-only return] -> modality + expansion ->
   // vector arms -> [keyword fallback return] -> fusion + post-fusion boosts
@@ -1165,10 +1173,11 @@ export async function hybridSearchCached(
 ): Promise<SearchResult[]> {
   if (opts?.types?.length === 0) return [];
   const { modeInputForCache, resolvedForCache, knobsHash } = await resolveCacheSearchMode(engine, opts);
+  const queryPrefix = opts?._queryPrefix ?? await loadEmbeddingQueryPrefix(engine);
   // Result caching is off (semanticResultCacheAvailable() === false): skip the
   // key/config setup entirely so the wrapper costs no round-trips of its own.
   const semanticCache = semanticResultCacheAvailable()
-    ? await prepareSemanticCache(engine, query, opts, resolvedForCache, knobsHash)
+    ? await prepareSemanticCache(engine, query, opts, resolvedForCache, knobsHash, queryPrefix)
     : null;
   const skipCache = semanticCacheSkipped(opts, semanticCache);
 
@@ -1200,7 +1209,7 @@ export async function hybridSearchCached(
         // v0.42.20.0 (Fix 3) — bounded by the shared deadline; on timeout this
         // throws → caught below → cacheStatus 'disabled' → falls through to the
         // inner hybridSearch (which reuses the same elapsed deadline).
-        queryEmbedding = await embedQueryBounded(query, undefined, queryEmbedDl);
+        queryEmbedding = await embedQueryBounded(query, queryPrefix ? { queryPrefix } : undefined, queryEmbedDl);
       } else {
         cacheStatus = 'disabled';
       }
@@ -1226,6 +1235,7 @@ export async function hybridSearchCached(
     // v0.42.20.0 (Fix 3) — share the query-embed deadline so the inner embed
     // doesn't start a fresh 6s budget after the cache-lookup already spent it.
     _queryEmbedDeadline: queryEmbedDl,
+    _queryPrefix: queryPrefix,
     // #2952 — classify this search's telemetry record (emitted by the inner
     // function) with the cache-consult outcome. 'hit' already returned above,
     // so only miss/disabled reach this call.

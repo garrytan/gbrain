@@ -359,13 +359,13 @@
         },
         {
           "category": "meta",
-          "message": "Version 178 (latest: 178)",
+          "message": "Version 183 (latest: 183)",
           "name": "schema_version",
           "status": "ok"
         },
         {
           "category": "meta",
-          "message": "707 column(s) verified against live schema",
+          "message": "708 column(s) verified against live schema",
           "name": "schema_columns",
           "status": "ok"
         },
@@ -499,6 +499,90 @@
           "status": "ok"
         },
         {
+          "category": "ops",
+          "details": {
+            "command": "gbrain repair request-indexes --apply",
+            "count": 0,
+            "docs": "docs/guides/repair.md#request-indexes",
+            "indexes": [
+              {
+                "name": "persistence_requests_sync_run_open",
+                "state": "valid"
+              },
+              {
+                "name": "persistence_requests_sync_run_committed",
+                "state": "valid"
+              }
+            ],
+            "repair": "request-indexes"
+          },
+          "message": "Managed sync request indexes are valid.",
+          "name": "persistence_request_indexes",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "details": {
+            "commands": [],
+            "docs": "docs/guides/repair.md#request-growth",
+            "rows": 1,
+            "rows_exact": true,
+            "scopes": [
+              {
+                "admissions_in_window": 1,
+                "config_key": "persistence.limits.brain_lifetime_ids",
+                "days_to_exhaustion": null,
+                "exhaustion_date": null,
+                "lifetime_ids": 1,
+                "limit": 1000000,
+                "per_day": 0,
+                "scope": "brain",
+                "window_days": 7
+              },
+              {
+                "admissions_in_window": 1,
+                "config_key": "persistence.limits.principal_lifetime_ids",
+                "days_to_exhaustion": null,
+                "exhaustion_date": null,
+                "lifetime_ids": 1,
+                "limit": 250000,
+                "per_day": 0,
+                "scope": "principal:local_cli:<uuid>",
+                "window_days": 7
+              }
+            ],
+            "verify": "gbrain doctor --json (check persistence_request_growth)",
+            "window_days": 7
+          },
+          "message": "1 request row(s); no scope exhausts its lifetime request IDs within 90 days at its last-7-day rate.",
+          "name": "persistence_request_growth",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "docs": "docs/guides/repair.md#connector-held-items",
+            "held": 0,
+            "sources": []
+          },
+          "message": "No connector items are held.",
+          "name": "connector_held_items",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "bindings": [],
+            "count": 0,
+            "docs": "docs/guides/repair.md#orphan-bindings",
+            "repair": "orphan-bindings",
+            "truncated": false
+          },
+          "message": "Every persistence source binding belongs to an existing source.",
+          "name": "orphan_persistence_bindings",
+          "status": "ok"
+        },
+        {
           "category": "brain",
           "details": {
             "sources": [],
@@ -552,14 +636,18 @@
         {
           "category": "ops",
           "details": {
+            "command": "gbrain repair embedding-effects",
             "count": "exact",
             "docs": "docs/guides/repair.md#stale-queued-embedding-effects",
             "effects": [],
-            "resolution": "unsupported",
+            "failed_effects": 0,
+            "repair": "embedding-effects",
+            "resolution": "repairable",
+            "retry_queued_effects": 0,
             "stale_effects": 0,
             "truncated": false
           },
-          "message": "No committed write has a queued embedding effect older than an hour.",
+          "message": "No committed write has a stale queued or failed embedding effect.",
           "name": "stale_embedding_effects",
           "status": "ok"
         },

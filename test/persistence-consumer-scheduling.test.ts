@@ -331,7 +331,7 @@ test('an uncancellable PGLite scheduler phase stays observed and awaited through
   let entered = false, stopped = false;
   const proxy = new Proxy(engine, { get(target, key) {
     if (key === 'executeRaw') return async (...args: Parameters<typeof engine.executeRaw>) => {
-      if (args[0] === 'SELECT brain_id,enabled FROM persistence_brain WHERE singleton=1') {
+      if (String(args[0]).startsWith('SELECT brain_id,enabled,to_jsonb(persistence_brain)')) {
         expect(args[2]?.signal).toBeUndefined();
         entered = true; return release.promise;
       }

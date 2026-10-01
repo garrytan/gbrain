@@ -1853,7 +1853,7 @@ async function embedAllStale(
     ? 'updated_desc'
     : 'page_id';
 
-  let totalProcessedPages = 0;
+  const processedPageKeys = new Set<string>(); // #5226: a page spanning listing batches counts once
   let afterPageId = 0;
   let afterChunkIndex = -1;
   let afterUpdatedAt: string | null = null;
@@ -1977,7 +1977,7 @@ async function embedAllStale(
           if (healed.changed) {
             stale = healedChunksToStaleRows(healed.chunks, slug, keySourceId);
             if (stale.length === 0) {
-              totalProcessedPages++;
+              processedPageKeys.add(key);
               result.pages_processed++;
               return;
             }
@@ -2041,11 +2041,11 @@ async function embedAllStale(
           serr(`\n  Error embedding ${slug}: ${e instanceof Error ? e.message : e}`);
           noteEmbedQuarantineFailure(key, slug);
         }
-        totalProcessedPages++;
+        processedPageKeys.add(key);
         result.pages_processed++;
         // Use staleCount as the estimated total for progress (not exact after
         // pagination starts, but directionally correct).
-        onProgress?.(totalProcessedPages, Math.ceil(staleCount / PAGE_SIZE) * keys.length, result.embedded);
+        onProgress?.(processedPageKeys.size, Math.ceil(staleCount / PAGE_SIZE) * keys.length, result.embedded);
         // Cooperative DB-contention pace between keys (no-op when unpaced).
         // E-4 (Codex P1): pace() is subject to the EXTERNAL abort only, NOT the
         // wall-clock budget — a contended DB's sleep must not be cut by the
@@ -2086,7 +2086,7 @@ async function embedAllStale(
     await reportArchived();
   }
 
-  if (!staleOpts?.quiet) slog(`Embedded ${result.embedded} chunks across ${totalProcessedPages} pages`);
+  if (!staleOpts?.quiet) slog(`Embedded ${result.embedded} chunks across ${processedPageKeys.size} pages`);
 
   // #1946 (OV2a): a catch-up pass that completed without being aborted but left
   // chunks unembedded means those chunks are stuck (a non-transient embed

@@ -106,6 +106,12 @@ export function formatResultExplain(
   }
 
   lines.push(`   = final ${fmt(result.score)}`);
+  // Evidence delivery: the unit this result was delivered as, and under auto why.
+  const d = result.delivered;
+  if (d) {
+    const why = [d.reason, d.fallback_reason ? `fallback ${d.fallback_reason}` : null].filter(Boolean).join(', ');
+    lines.push(`   evidence: ${d.unit}${why ? ` (${why})` : ''}${d.truncated ? ', truncated' : ''}`);
+  }
   return lines.join('\n');
 }
 

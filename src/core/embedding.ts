@@ -42,7 +42,7 @@ export async function embed(text: string): Promise<Float32Array> {
 
 export async function embedQuery(
   text: string,
-  opts?: { embeddingModel?: string; dimensions?: number; abortSignal?: AbortSignal },
+  opts?: { embeddingModel?: string; dimensions?: number; abortSignal?: AbortSignal; queryPrefix?: string },
 ): Promise<Float32Array> {
   return gatewayEmbedQuery(text, opts);
 }

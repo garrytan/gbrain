@@ -4,6 +4,24 @@ export const PERSISTENCE_REQUEST_RECOVERY_INDEX_SQL = `CREATE INDEX IF NOT EXIST
   ON persistence_requests(worktree_id,sequence) WHERE recovery IS NOT NULL`;
 export const PERSISTENCE_DATABASE_PENDING_INDEX_SQL = `CREATE INDEX IF NOT EXISTS persistence_requests_database_pending
   ON persistence_requests(source_incarnation,sequence) WHERE worktree_id IS NULL AND state IN ('queued','running','recovering')`;
+/**
+ * #5762: the managed sync checkpoint validation probes (sync-prepare.ts) read a
+ * run's open page receipts and its committed siblings through these. Postgres
+ * builds them CONCURRENTLY in a schema migration (never inside the blob);
+ * PGLite and a brand-new request table (v151) build them inline.
+ */
+export const PERSISTENCE_SYNC_RUN_OPEN_INDEX_SQL = `CREATE INDEX IF NOT EXISTS persistence_requests_sync_run_open
+  ON persistence_requests(worktree_id,(intent->>'runId')) WHERE state<>'committed' AND intent->>'kind' IN ('managed_sync_import','managed_sync_delete')`;
+export const PERSISTENCE_SYNC_RUN_COMMITTED_INDEX_SQL = `CREATE INDEX IF NOT EXISTS persistence_requests_sync_run_committed
+  ON persistence_requests(source_id,(intent->>'runId'),(intent->>'index')) WHERE state='committed' AND intent ? 'runId'`;
+export const PERSISTENCE_SYNC_RUN_INDEXES = [
+  { name: 'persistence_requests_sync_run_open', sql: PERSISTENCE_SYNC_RUN_OPEN_INDEX_SQL },
+  { name: 'persistence_requests_sync_run_committed', sql: PERSISTENCE_SYNC_RUN_COMMITTED_INDEX_SQL },
+] as const;
+/** Indexes the Postgres blob omits because a migration builds them CONCURRENTLY. */
+export const POSTGRES_CONCURRENT_PERSISTENCE_INDEXES: ReadonlySet<string> = new Set([
+  PERSISTENCE_DATABASE_PENDING_INDEX_SQL, PERSISTENCE_SYNC_RUN_OPEN_INDEX_SQL, PERSISTENCE_SYNC_RUN_COMMITTED_INDEX_SQL,
+]);
 /** Durable infrastructure: never reconstruct or discard these rows during page reindexing. */
 export const PERSISTENCE_SCHEMA_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS persistence_brain (
@@ -91,6 +109,8 @@ export const PERSISTENCE_SCHEMA_STATEMENTS = [
     WHERE state IN ('queued','running','recovering')`,
   PERSISTENCE_REQUEST_RECOVERY_INDEX_SQL,
   PERSISTENCE_DATABASE_PENDING_INDEX_SQL,
+  PERSISTENCE_SYNC_RUN_OPEN_INDEX_SQL,
+  PERSISTENCE_SYNC_RUN_COMMITTED_INDEX_SQL,
   `CREATE INDEX IF NOT EXISTS persistence_requests_principal ON persistence_requests(principal_kind,principal_id,sequence DESC)`,
   `CREATE TABLE IF NOT EXISTS persistence_effects (
     id bigserial PRIMARY KEY,

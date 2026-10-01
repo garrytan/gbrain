@@ -161,3 +161,27 @@ test('strict attendance resolution caches repeated lookups separately within a b
   expect(await makeResolver(engine as never, { mode: 'live', sourceId: 'other' }).resolveAttendance!(person)).toBe(person);
   expect(calls.at(-1)?.[0]).toBe('other');
 });
+
+// #5765: the meeting-ingestion template used to write a bold `**Attendees:**`
+// label. A bare link list after the bold label is the same evidence as the
+// plain label; a qualified or indented bold line is still not.
+for (const label of ['**Attendees:**', '**Attendees**:']) {
+  test(`a bold ${label} label before a bare link list is canonical attendance`, async () => {
+    const body = `${label} [[${person}]], [Bob Example](../people/bob-example.md)`;
+    const pageTypes = new Map([...types, ['people/bob-example', 'person']]);
+    const both = { async resolve(value: string) { return pageTypes.has(value) ? value : null; } };
+    const db = await extractPageLinks(meeting, body, {}, 'meeting', both, { targetType: slug => pageTypes.get(slug) });
+    expect(db.attendanceComplete).toBe(true);
+    expect(db.candidates.filter(row => row.canonicalAttendance).map(row => row.targetSlug).sort()).toEqual([person, 'people/bob-example']);
+    const fs = await extractLinksFromFile(`---\ntype: meeting\n---\n${body}`, `${meeting}.md`, new Set(pageTypes.keys()), { pageTypes });
+    expect(fs.filter(row => row.link_type === 'attended').map(row => row.from_slug).sort()).toEqual([person, 'people/bob-example']);
+  });
+}
+
+for (const body of [`**Attendees:** [[${person}]] (Acme)`, `- **Attendees:** [[${person}]]`, `**Attendees** [[${person}]]`]) {
+  test(`a qualified or non-label bold line is not attendance evidence: ${JSON.stringify(body)}`, async () => {
+    expect(attendanceEvidenceRanges(body)).toEqual([]);
+    const db = await extractPageLinks(meeting, body, {}, 'meeting', resolver, { targetType: slug => types.get(slug) });
+    expect(db.candidates.filter(row => row.canonicalAttendance)).toEqual([]);
+  });
+}

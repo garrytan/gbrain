@@ -123,8 +123,9 @@ export async function scriptedRecoveryRun(databaseUrl?: string): Promise<{ wall_
     expect(byId.writer_version).toMatchObject({ class: 'operator_required' });
     expect(byId.writer_version.instruction).toContain('gbrain upgrade');
     expect(byId.writer_version.message).toContain('0.60.4.0');
-    expect(byId.stale_embedding_effects).toMatchObject({ class: 'unsupported' });
-    expect(byId.stale_embedding_effects.message).toContain('inspection cannot clear it');
+    // #5629: repairable now; with no embedding model configured the repair can only report it blocked, so the operator acts first.
+    expect(byId.stale_embedding_effects).toMatchObject({ class: 'operator_required', repair_kind: 'embedding-effects' });
+    expect(byId.stale_embedding_effects.instruction).toContain('gbrain repair embedding-effects');
     expect(run.body.repairs_completed).toBe(3);
     expect(run.body.healthy).toBe(false);
     expect(run.body.exit_status).toBe(0);

@@ -6,7 +6,7 @@
 #
 # BUN_IMAGE is overridable so the harness can track CI's pinned bun version
 # (see .github/workflows/heavy-tests.yml setup-bun) without editing this file.
-ARG BUN_IMAGE=oven/bun:1.3.13
+ARG BUN_IMAGE=oven/bun:1.4.2
 FROM ${BUN_IMAGE}
 
 # git drives the interview/render/repo phases; ca-certificates is build-time

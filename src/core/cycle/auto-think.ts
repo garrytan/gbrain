@@ -18,7 +18,7 @@ import type { BrainEngine } from '../engine.ts';
 import { runThink, persistSynthesis, type ThinkLLMClient } from '../think/index.ts';
 import { resolveModel } from '../model-config.ts';
 import { embedQuery } from '../embedding.ts';
-import { BudgetMeter, loadAllowUnpriced, parseBudgetUsd } from './budget-meter.ts';
+import { BudgetMeter, loadAllowUnpriced, loadPricingOverrides, parseBudgetUsd } from './budget-meter.ts';
 
 /**
  * Local phase-result type for auto-think/drift. These phases are not yet
@@ -126,6 +126,7 @@ export async function runPhaseAutoThink(
   const meter = new BudgetMeter({
     budgetUsd: config.budgetUsd,
     allowUnpriced: config.allowUnpriced,
+    pricingOverrides: await loadPricingOverrides(engine),
     phase: 'auto_think',
     auditPath: opts.auditPath,
   });

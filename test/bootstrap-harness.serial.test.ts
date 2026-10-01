@@ -1493,6 +1493,41 @@ describe('ambient-writeback instruction blocks (kind: instructions, WP3)', () =>
     expect(payload.instructions_blocks.find((p) => p.host === 'claude-code')?.probe).toBe('installed');
   });
 
+  // #5671: an explicitly-private brain default meets an HTTP harness — the
+  // wired sessions are remote readers, which only read world facts back.
+  const WB_PRIVATE = (): GBrainConfig => ({ engine: 'pglite', memory: { auto_writeback: 'salient', visibility_posture: 'private' } });
+  const PRIVATE_WARN = /WARNING: facts\.default_visibility is private, but this harness reads the brain over HTTP MCP/;
+
+  test('#5671 private default + HTTP harness → warning names the consequence and the fix before consent', async () => {
+    const f = makeFake();
+    expect(await applyHarness(flags(), { ...f.deps, loadFileConfig: WB_PRIVATE })).toBe(0);
+    const err = f.err.join('\n');
+    expect(err).toMatch(PRIVATE_WARN);
+    expect(err).toContain('cannot recall');
+    expect(err).toContain('gbrain config set facts.default_visibility world');
+    // The installed block states the same consequence to the agent.
+    expect(readFileSync(memoryPath(f), 'utf8')).toContain('cannot recall or forget a fact you save as private');
+  });
+
+  test('#5671 private default warns even with writeback off (extract_facts and harvests still write private)', async () => {
+    const f = makeFake();
+    const PRIVATE_OFF = (): GBrainConfig => ({ engine: 'pglite', memory: { visibility_posture: 'private' } });
+    expect(await applyHarness(flags(), { ...f.deps, loadFileConfig: PRIVATE_OFF })).toBe(0);
+    expect(f.err.join('\n')).toMatch(PRIVATE_WARN);
+  });
+
+  test('#5671 world posture and registrar mode stay quiet', async () => {
+    const world = makeFake();
+    expect(await applyHarness(flags(), { ...world.deps, loadFileConfig: WB_ON })).toBe(0);
+    expect(world.err.join('\n')).not.toMatch(PRIVATE_WARN);
+    const registrar = makeFake();
+    expect(await applyHarness(
+      flags(['--url', 'http://192.168.1.50:3131/mcp', '--token', TOKEN_A, '--harness', 'codex']),
+      { ...registrar.deps, loadFileConfig: WB_PRIVATE },
+    )).toBe(0);
+    expect(registrar.err.join('\n')).not.toMatch(PRIVATE_WARN);
+  });
+
   test('default file-plane read honors GBRAIN_HOME: config.json with salient enables the target without an injected loader', async () => {
     const parent = mkdtempSync(join(tmpdir(), 'gb-wb-home-'));
     mkdirSync(join(parent, '.gbrain'), { recursive: true });

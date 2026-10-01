@@ -6,8 +6,8 @@
  * docs/evidence-delivery.md (the bytes gbrain-evals measures). Regressions it
  * catches: page text that differs from the body (lost paragraph breaks, duplicated overlap), budget overrun, spans that
  * point at the wrong text, a config flip overriding the subagent snippet cap,
- * mutated shared hit rows, recall/think consumers dropping the evidence.
- * Existing search tests never exercise the stage (it is opt-in). No seams:
+ * mutated shared hit rows, recall/think consumers dropping the evidence, and
+ * the auto default touching anything but conversation pages. No seams:
  * the property half drives `deliverEvidence` through a stub engine that only
  * answers `getChunkWindows`; the op half runs the real ops on PGLite.
  */
@@ -22,8 +22,9 @@ import { prepareMarkdownChunks } from '../src/core/markdown-chunks.ts';
 import { installFixtureChunks } from './helpers/page-projection.ts';
 import { renderPagesBlock } from '../src/core/think/gather.ts';
 import { runThink } from '../src/core/think/index.ts';
-import { formatDeliverySummary } from '../src/core/search/explain-formatter.ts';
+import { formatDeliverySummary, formatResultsExplain } from '../src/core/search/explain-formatter.ts';
 import {
+  conversationSignal,
   countEvidenceTokens,
   deliverEvidence,
   deliveryVersionSkewWarning,
@@ -179,7 +180,7 @@ function randomCorpus(r: () => number, pageCount: number): FakePage[] {
     const body = conversational
       ? Array.from({ length: 6 + Math.floor(r() * 30) }, (_, t) => `**${t % 2 ? 'assistant' : 'user'}:** ${prose(r, 1)}`).join('\n\n')
       : Array.from({ length: 1 + Math.floor(r() * 4) }, (_, s) => `## Section ${s}\n\n${prose(r, 2 + Math.floor(r() * 8))}`).join('\n\n');
-    return { page_id: i + 1, slug: `pages/p${i + 1}`, title: `Page ${i + 1}`, body, chunks: chunkText(body).map(c => c.text) };
+    return { page_id: i + 1, slug: `${conversational ? 'chat' : 'pages'}/p${i + 1}`, title: `Page ${i + 1}`, body, chunks: chunkText(body).map(c => c.text) };
   });
 }
 
@@ -193,7 +194,7 @@ describe('allocation and boundary properties', () => {
         const p = pages[Math.floor(r() * pages.length)];
         hits.push(hitFor(p, Math.floor(r() * p.chunks.length)));
       }
-      const unit = (['window', 'section', 'page', 'auto'] as const)[Math.floor(r() * 4)];
+      const unit = (['window', 'section', 'page'] as const)[Math.floor(r() * 3)];
       const budget = [40, 200, 800, 3000, 12000][Math.floor(r() * 5)];
       const snapshot = JSON.stringify(hits);
       const engine = fakeEngine(pages);
@@ -219,6 +220,69 @@ describe('allocation and boundary properties', () => {
       const again = await deliverEvidence(fakeEngine(pages), hits, planOf(unit, budget, delivery.return_window), {});
       expect(evidenceFingerprint(again.results)).toBe(evidenceFingerprint(results));
     }
+  });
+
+  test('auto: conversation pages whole, every other hit its unchanged chunk, nothing lost, expansion within budget', async () => {
+    const r = rng(20261001);
+    let sawPage = 0;
+    let sawChunk = 0;
+    for (let trial = 0; trial < 60; trial++) {
+      const pages = randomCorpus(r, 1 + Math.floor(r() * 8));
+      const hits: SearchResult[] = [];
+      for (let k = 0; k < 1 + Math.floor(r() * 10); k++) {
+        const p = pages[Math.floor(r() * pages.length)];
+        const h = hitFor(p, Math.floor(r() * p.chunks.length));
+        if (!hits.some(x => x.chunk_id === h.chunk_id)) hits.push(h);
+      }
+      const budget = [40, 200, 800, 3000, 24000][Math.floor(r() * 5)];
+      const snapshot = JSON.stringify(hits);
+      const engine = fakeEngine(pages);
+      const { results, delivery } = await deliverEvidence(engine, hits, planOf('auto', budget), {});
+      expect(JSON.stringify(hits)).toBe(snapshot);
+      expect(engine.calls).toBe(hits.some(h => h.slug.startsWith('chat/')) ? 1 : 0);
+      expect(delivery.dropped).toBe(0);
+      const cost = (x: SearchResult) => countEvidenceTokens(x.chunk_text) + countEvidenceTokens(x.title);
+      for (const h of hits) expect(results.some(x => x.delivered.chunk_ids.includes(h.chunk_id)), `hit ${h.chunk_id} lost`).toBe(true);
+      const firstRank = (x: SearchResult) => Math.min(...x.delivered!.chunk_ids.map(id => hits.findIndex(h => h.chunk_id === id)));
+      expect(results.map(firstRank)).toEqual(results.map(firstRank).sort((a, b) => a - b));
+      for (const res of results) {
+        if (res.delivered.reason === 'not_conversation' || res.delivered.reason === 'conversation_over_budget') {
+          sawChunk++;
+          const { delivered, ...row } = res;
+          expect(row).toEqual(hits.find(h => h.chunk_id === delivered.chunk_ids[0])!);
+          expect(delivered).toMatchObject({ unit: 'chunk', truncated: false, match_spans: [{ chunk_id: delivered.chunk_ids[0], start: 0, end: row.chunk_text.length }] });
+          expect(delivered.reason === 'not_conversation').toBe(!row.slug.startsWith('chat/'));
+        } else {
+          sawPage++;
+          expect(res.slug.startsWith('chat/')).toBe(true);
+          expect(res.delivered).toMatchObject({ unit: 'page', reason: 'conversation_slug' });
+          expect(res.delivered.match_spans.length).toBeGreaterThan(0);
+        }
+      }
+      const unchanged = results.filter(x => x.delivered.reason === 'not_conversation');
+      const expanded = results.filter(x => x.delivered.unit === 'page');
+      expect(new Set(expanded.map(x => x.page_id)).size).toBe(expanded.length);
+      expect(expanded.reduce((n, x) => n + cost(x), 0)).toBeLessThanOrEqual(Math.max(0, budget - unchanged.reduce((n, x) => n + cost(x), 0)));
+    }
+    expect(sawPage).toBeGreaterThan(10);
+    expect(sawChunk).toBeGreaterThan(10);
+  });
+
+  test('auto gives lower-ranked sessions their matching span, and spills a session that cannot fit to its chunks', async () => {
+    const pages = randomCorpus(rng(5), 12).filter(p => p.slug.startsWith('chat/')).slice(0, 3);
+    expect(pages).toHaveLength(3);
+    const hits = pages.map(p => hitFor(p, Math.floor(p.chunks.length / 2)));
+    const floors = hits.reduce((n, h) => n + countEvidenceTokens(h.chunk_text) + countEvidenceTokens(h.title), 0);
+    const roomy = await deliverEvidence(fakeEngine(pages), hits, planOf('auto', Math.ceil(floors * 1.5)), {});
+    expect(roomy.results.map(x => x.delivered.unit)).toEqual(['page', 'page', 'page']);
+    for (const res of roomy.results) expect(res.delivered.match_spans.length).toBeGreaterThan(0);
+    // The smallest budget that still gives rank one its page leaves no room for the others' spans.
+    let budget = countEvidenceTokens(hits[0].chunk_text);
+    let tight = await deliverEvidence(fakeEngine(pages), hits, planOf('auto', budget), {});
+    while (tight.results[0].delivered.unit !== 'page') tight = await deliverEvidence(fakeEngine(pages), hits, planOf('auto', ++budget), {});
+    expect(tight.results.map(x => x.delivered.reason)).toEqual(['conversation_slug', 'conversation_over_budget', 'conversation_over_budget']);
+    expect(tight.results.slice(1).map(x => x.chunk_text)).toEqual(hits.slice(1).map(h => h.chunk_text));
+    expect(tight.delivery.dropped).toBe(0);
   });
 
   test('a budget below every floor cuts rank one to fit and drops the rest', async () => {
@@ -345,12 +409,18 @@ const SESSION = Array.from({ length: 24 }, (_, i) =>
   `**user:** question ${i} ${'about the renewal and the widget roadmap '.repeat(6)}\n\n**assistant:** reply ${i} ${'we discussed timelines and owners '.repeat(6)}${i === 13 ? ' the launch moved to march narwhal' : ''}`,
 ).join('\n\n');
 const HANDBOOK = `## Overview\n\n${prose(rng(21), 6)}\n\n## Pricing\n\n${prose(rng(22), 6)} narwhal pricing note.\n\n## Support\n\n${prose(rng(23), 6)}`;
+const codeFn = (name: string) => `export function ${name}(input: number): number {\n${Array.from({ length: 12 }, (_, i) => `  const step${i} = input * ${i + 2} + ${name.length};`).join('\n')}\n  return input;\n}`;
+// One prose chunk (index 0) holding the whole fence, then one fenced_code
+// chunk per function (indices 1-3): a hit on index 2 or 3 has no prose chunk
+// within return_window, and every code chunk carries a synthesized header.
+const CODE_PAGE = `## Setup\n\nThe quokka service boots from this module.\n\n\`\`\`ts\n${codeFn('alpha')}\n\n${codeFn('beta')}\n\n${codeFn('gamma')}\n\`\`\`\n\nClosing prose about the quokka service.`;
+const CHUNK_HEADER_LINE = /^\[[^\]]+\] fence\.\w+:\d+-\d+ /m;
 
 beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
-  for (const [slug, body] of [['chat/session-1', SESSION], ['notes/handbook', HANDBOOK]] as const) {
+  for (const [slug, body] of [['chat/session-1', SESSION], ['notes/handbook', HANDBOOK], ['notes/quokka-code', CODE_PAGE]] as const) {
     await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: body, timeline: slug === 'notes/handbook' ? '- 2026-01-02 narwhal timeline entry' : '', frontmatter: {} });
     await installFixtureChunks(engine, slug, await prepareMarkdownChunks({ compiled_truth: body, timeline: slug === 'notes/handbook' ? '- 2026-01-02 narwhal timeline entry' : '' }));
   }
@@ -362,12 +432,91 @@ afterAll(async () => {
 }, 240_000);
 
 describe('ops', () => {
-  test('omitted return_unit leaves search output without delivery fields', async () => {
+  test('omitted return_unit with no conversation hit is exactly the chunk response', async () => {
     lastMeta = null;
-    const rows = await op('search').handler(ctxOf(), { query: 'narwhal' }) as SearchResult[];
+    const rows = await op('search').handler(ctxOf(), { query: 'pricing' }) as SearchResult[];
     expect(rows.length).toBeGreaterThan(0);
+    expect(rows.every(r => !r.slug.startsWith('chat/'))).toBe(true);
     expect(rows.every(r => r.delivered === undefined)).toBe(true);
     expect((lastMeta as Record<string, unknown> | null)?.delivery).toBeUndefined();
+    const offMeta = lastMeta;
+    const chunk = await op('search').handler(ctxOf(), { query: 'pricing', return_unit: 'chunk' }) as SearchResult[];
+    expect(JSON.stringify(rows)).toBe(JSON.stringify(chunk));
+    expect(JSON.stringify(offMeta)).toBe(JSON.stringify(lastMeta));
+  });
+
+  test('omitted return_unit delivers conversation pages whole and keeps other hits as their chunks', async () => {
+    lastMeta = null;
+    const chunk = await op('search').handler(ctxOf(), { query: 'narwhal', return_unit: 'chunk' }) as SearchResult[];
+    const rows = await op('search').handler(ctxOf(), { query: 'narwhal' }) as SearchResult[];
+    expect(lastMeta!.delivery).toMatchObject({ requested_unit: 'auto', applied_unit: 'auto', budget_tokens: 24000 });
+    const chat = rows.find(r => r.slug === 'chat/session-1')!;
+    expect(chat.delivered).toMatchObject({ unit: 'page', reason: 'conversation_slug', truncated: false });
+    const [page] = await engine.executeRaw<{ compiled_truth: string; timeline: string }>('SELECT compiled_truth, timeline FROM pages WHERE id = $1', [chat.page_id]);
+    expect(chat.chunk_text).toBe(pageEvidenceText(page, true).text.trimEnd());
+    expect(rows.filter(r => r.slug === 'chat/session-1')).toHaveLength(1);
+    const others = rows.filter(r => r.slug !== 'chat/session-1');
+    expect(others.length).toBeGreaterThan(0);
+    expect(others.map(({ delivered, ...r }) => { expect(delivered).toMatchObject({ unit: 'chunk', reason: 'not_conversation' }); return r; }))
+      .toEqual(chunk.filter(r => r.slug !== 'chat/session-1'));
+    const typed = await op('search').handler(ctxOf(), { query: 'quokka' }) as SearchResult[];
+    expect(typed.every(r => r.delivered === undefined)).toBe(true);
+  });
+
+  test('auto detects conversations by type or slug, deterministically', () => {
+    const at = (type: string, slug: string) => conversationSignal({ type, slug });
+    for (const t of ['conversation', 'transcript', 'chat', 'meeting', 'slack', 'slack-thread', 'imessage', 'Conversation']) expect(at(t, 'notes/x')).toBe('conversation_type');
+    expect(at('note', 'chat/s-1')).toBe('conversation_slug');
+    expect(at('note', 'conversations/sessions/2026-01-01-codex-abc')).toBe('conversation_slug');
+    for (const [t, slug] of [['note', 'notes/chat'], ['email', 'emails/a'], ['code', 'src/chat.ts'], ['person', 'people/meeting-maker']]) expect(at(t, slug)).toBeNull();
+  });
+
+  test('query token_budget, recall budget_tokens/budget_policy and an explicit chunk keep the legacy chunk path under the auto default', async () => {
+    lastMeta = null;
+    await op('query').handler(ctxOf(), { query: 'narwhal', expand: false, token_budget: 900 });
+    expect(lastMeta!.delivery).toBeUndefined();
+    await op('search').handler(ctxOf(), { query: 'narwhal', return_unit: 'chunk' });
+    expect(lastMeta!.delivery).toBeUndefined();
+    const legacy = await op('recall').handler(ctxOf(), { query: 'narwhal', budget_tokens: 5000, budget_policy: 'query_first' }) as Record<string, any>;
+    expect(legacy.delivery).toBeUndefined();
+    const packed = await op('recall').handler(ctxOf(), { query: 'narwhal', budget_tokens: 5000 }) as Record<string, any>;
+    expect(packed.delivery).toBeUndefined();
+    const auto = await op('recall').handler(ctxOf(), { query: 'narwhal' }) as Record<string, any>;
+    expect(auto.delivery.requested_unit).toBe('auto');
+    expect(auto.results.find((r: Record<string, any>) => r.slug === 'chat/session-1').delivered).toMatchObject({ unit: 'page', reason: 'conversation_slug' });
+    await engine.setConfig('search.return_unit', 'chunk');
+    try {
+      await op('search').handler(ctxOf(), { query: 'narwhal' });
+      expect(lastMeta!.delivery).toBeUndefined();
+    } finally {
+      await engine.executeRaw(`DELETE FROM config WHERE key = 'search.return_unit'`);
+    }
+  });
+
+  test('auto keeps the subagent snippet economy, the remote cap and its own budget key', async () => {
+    const sub = await op('search').handler(ctxOf({ viaSubagent: true } as Partial<OperationContext>), { query: 'narwhal' }) as SearchResult[];
+    expect(sub.every(r => r.delivered === undefined && r.chunk_text.length <= 300 + 80)).toBe(true);
+    await op('search').handler(ctxOf({ remote: true }), { query: 'narwhal', token_budget: 90000 });
+    expect(lastMeta!.delivery).toMatchObject({ applied_unit: 'auto', budget_tokens: 32000, budget_clamped: { requested: 90000, max: 32000 } });
+    await engine.setConfig('search.return_budget_conversation', '40000');
+    try {
+      await op('search').handler(ctxOf({ remote: true }), { query: 'narwhal' });
+      expect(lastMeta!.delivery.budget_tokens).toBe(32000);
+      await op('search').handler(ctxOf(), { query: 'narwhal' });
+      expect(lastMeta!.delivery.budget_tokens).toBe(40000);
+    } finally {
+      await engine.executeRaw(`DELETE FROM config WHERE key = 'search.return_budget_conversation'`);
+    }
+    const capped = await op('search').handler(ctxOf(), { query: 'narwhal', snippet_chars: 120 }) as SearchResult[];
+    expect(capped.every(r => r.chunk_text.length <= 120 + 200)).toBe(true);
+  });
+
+  test('explain names each result\'s unit and the auto reason', async () => {
+    const rows = await op('search').handler(ctxOf(), { query: 'narwhal' }) as SearchResult[];
+    const text = formatResultsExplain(rows, { delivery: lastMeta!.delivery } as never);
+    expect(text).toContain('evidence: auto — ');
+    expect(text).toContain('evidence: page (conversation_slug)');
+    expect(text).toContain('evidence: chunk (not_conversation)');
   });
 
   test('every unit delivers through search with delivered + delivery meta', async () => {
@@ -435,7 +584,7 @@ describe('ops', () => {
       const human = await op('search').handler(ctxOf(), { query: 'narwhal' }) as SearchResult[];
       expect(human[0].delivered).toBeDefined();
     } finally {
-      await engine.setConfig('search.return_unit', 'chunk');
+      await engine.executeRaw(`DELETE FROM config WHERE key = 'search.return_unit'`);
     }
   });
 
@@ -447,7 +596,7 @@ describe('ops', () => {
   });
 
   test('recall keeps legacy fields and packing, adding delivered/delivery only when on', async () => {
-    const off = await op('recall').handler(ctxOf(), { query: 'narwhal', budget_tokens: 5000 }) as Record<string, any>;
+    const off = await op('recall').handler(ctxOf(), { query: 'narwhal', budget_tokens: 5000, return_unit: 'chunk' }) as Record<string, any>;
     expect(off.delivery).toBeUndefined();
     expect(off.results.every((r: Record<string, unknown>) => Object.keys(r).join(',') === 'slug,title,chunk,evidence,create_safety,provenance')).toBe(true);
     const on = await op('recall').handler(ctxOf(), { query: 'narwhal', budget_tokens: 5000, return_unit: 'page' }) as Record<string, any>;
@@ -476,25 +625,83 @@ describe('ops', () => {
     expect(bad.unresolved).toEqual([0]);
   });
 
+  test('a fenced-code best hit delivers the page text for return_unit page, not the code chunk', async () => {
+    const [page] = await engine.executeRaw<{ compiled_truth: string; timeline: string }>(`SELECT compiled_truth, timeline FROM pages WHERE slug = 'notes/quokka-code'`);
+    const code = await engine.executeRaw<{ id: number; chunk_index: number; chunk_text: string }>(
+      `SELECT cc.id, cc.chunk_index, cc.chunk_text FROM content_chunks cc JOIN pages p ON p.id = cc.page_id WHERE p.slug = 'notes/quokka-code' AND cc.chunk_source = 'fenced_code' ORDER BY cc.chunk_index`);
+    expect(code.map(c => c.chunk_index)).toEqual([1, 2, 3]);
+    const text = pageEvidenceText(page, true).text;
+    for (const c of code) {
+      const out = await op('assemble_evidence').handler(ctxOf(), {
+        hits: [{ source_id: 'default', slug: 'notes/quokka-code', chunk_id: c.id }], return_unit: 'page', token_budget: 32000,
+      }) as { results: SearchResult[]; delivery: { fallbacks: string[] } };
+      const [r] = out.results;
+      expect(r.delivered!.unit, `chunk_index ${c.chunk_index}`).toBe('page');
+      expect(r.delivered!.fallback_reason).toBeUndefined();
+      expect(r.delivered!.unmapped_chunk_ids).toBeUndefined();
+      expect(r.chunk_text).toBe(text.trimEnd());
+      const [span] = r.delivered!.match_spans;
+      expect(span.chunk_id).toBe(c.id);
+      expect(norm(r.chunk_text.slice(span.start, span.end))).toBe(norm(c.chunk_text.replace(/^[^\n]*\n\n/, '')));
+    }
+  });
+
+  test('fenced-code evidence never carries the chunker header, in any expanding unit or fallback', async () => {
+    const [page] = await engine.executeRaw<{ compiled_truth: string; timeline: string }>(`SELECT compiled_truth, timeline FROM pages WHERE slug = 'notes/quokka-code'`);
+    const text = pageEvidenceText(page, true).text;
+    const code = await engine.executeRaw<{ id: number }>(
+      `SELECT cc.id FROM content_chunks cc JOIN pages p ON p.id = cc.page_id WHERE p.slug = 'notes/quokka-code' AND cc.chunk_source = 'fenced_code'`);
+    for (const unit of ['window', 'section', 'page']) {
+      for (const budget of [32000, 60]) {
+        const out = await op('assemble_evidence').handler(ctxOf(), {
+          hits: code.map(c => ({ source_id: 'default', slug: 'notes/quokka-code', chunk_id: c.id })), return_unit: unit, token_budget: budget,
+        }) as { results: SearchResult[] };
+        for (const r of out.results) {
+          expect(r.chunk_text, `${unit}/${budget}`).not.toMatch(CHUNK_HEADER_LINE);
+          for (const seg of r.chunk_text.split(EVIDENCE_OMISSION)) expect(text.includes(seg), `${unit}/${budget}: ${seg.slice(0, 60)}`).toBe(true);
+        }
+      }
+    }
+    // auto leaves a non-conversation page on the chunk path: the ranked rows, unchanged.
+    const auto = await op('assemble_evidence').handler(ctxOf(), {
+      hits: code.map(c => ({ source_id: 'default', slug: 'notes/quokka-code', chunk_id: c.id })), return_unit: 'auto',
+    }) as { results: SearchResult[] };
+    expect(auto.results.map(r => r.delivered!.reason)).toEqual(['not_conversation', 'not_conversation', 'not_conversation']);
+    const plain = await op('assemble_evidence').handler(ctxOf(), {
+      hits: code.map(c => ({ source_id: 'default', slug: 'notes/quokka-code', chunk_id: c.id })), return_unit: 'chunk',
+    }) as { results: SearchResult[] };
+    expect(auto.results.map(r => r.chunk_text)).toEqual(plain.results.map(r => r.chunk_text));
+    const hits = await op('search').handler(ctxOf(), { query: 'quokka' }) as SearchResult[];
+    const codeHit = { ...hits.find(h => h.slug === 'notes/quokka-code')!, chunk_id: code[1].id, chunk_index: 2, chunk_source: 'fenced_code' as const,
+      chunk_text: (await engine.executeRaw<{ chunk_text: string }>('SELECT chunk_text FROM content_chunks WHERE id = $1', [code[1].id]))[0].chunk_text };
+    expect(codeHit.chunk_text).toMatch(CHUNK_HEADER_LINE);
+    const failing = { getChunkWindows: async () => { throw new Error('synthetic fetch failure'); } } as unknown as BrainEngine;
+    const fallback = await deliverEvidence(failing, [codeHit], planOf('page', 5000), {});
+    expect(fallback.results[0].delivered).toMatchObject({ unit: 'chunk', fallback_reason: 'fetch_failed' });
+    expect(fallback.results[0].chunk_text).not.toMatch(CHUNK_HEADER_LINE);
+    expect(text.includes(fallback.results[0].chunk_text)).toBe(true);
+  });
+
   test('think renders delivered blocks whole under think.return_unit, and only then', async () => {
     const prompts: string[] = [];
     const client = { create: async (params: { messages: Array<{ content: unknown }> }) => {
       prompts.push(JSON.stringify(params.messages));
       return { content: [{ type: 'text', text: '{"answer":"ok","citations":[],"gaps":[]}' }], usage: { input_tokens: 1, output_tokens: 1 } };
     } };
-    await runThink(engine, { question: 'narwhal launch march', client: client as never, remote: false });
-    expect(prompts[0]).not.toContain('reply 23 ');
-    await engine.setConfig('search.return_unit', 'page');
+    const auto = await runThink(engine, { question: 'narwhal launch march', client: client as never, remote: false });
+    expect(prompts[0]).toContain('reply 23 ');
+    expect(auto.evidence_delivery?.requested_unit).toBe('auto');
+    await engine.setConfig('think.return_unit', 'chunk');
     try {
       await runThink(engine, { question: 'narwhal launch march', client: client as never, remote: false });
       expect(prompts[1]).not.toContain('reply 23 ');
+      await engine.setConfig('search.return_unit', 'chunk');
       await engine.setConfig('think.return_unit', 'page');
       const r = await runThink(engine, { question: 'narwhal launch march', client: client as never, remote: false });
       expect(prompts[2]).toContain('reply 23 ');
       expect(r.evidence_delivery?.requested_unit).toBe('page');
     } finally {
-      await engine.setConfig('search.return_unit', 'chunk');
-      await engine.setConfig('think.return_unit', 'chunk');
+      await engine.executeRaw(`DELETE FROM config WHERE key IN ('search.return_unit', 'think.return_unit')`);
     }
   });
 

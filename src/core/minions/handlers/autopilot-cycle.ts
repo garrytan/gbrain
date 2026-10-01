@@ -4,6 +4,8 @@
 import type { BrainEngine } from '../../engine.ts';
 import type { MinionHandler } from '../types.ts';
 import { resolveJobPull } from './job-pull.ts';
+import { isConnectorSourceKind } from '../../persistence/connector-identity.ts';
+import { CONNECTOR_SOURCE_PHASES } from '../../cycle/phase-scope.ts';
 
 /**
  * Autopilot-cycle handler: delegates to runCycle. Shares the exact same
@@ -28,10 +30,6 @@ export function makeAutopilotCycleHandler(engine: BrainEngine): MinionHandler {
     // postgres brain should skip filesystem phases (no_brain_dir) and run the
     // DB-only phases (resolve_symbol_edges, embed, ...) — not silently lint/sync
     // against whatever directory the worker happens to be running in.
-    const repoPath: string | null = typeof job.data.repoPath === 'string'
-      ? job.data.repoPath
-      : (await engine.getConfig('sync.repo_path')) ?? null;
-
     // v0.38 (codex r1 P1-2 + P1-5): per-source dispatch threading.
     //   - source_id: when set, runCycle uses the per-source lock ID and
     //     writes last_full_cycle_at on success. Validated at handler entry
@@ -51,6 +49,7 @@ export function makeAutopilotCycleHandler(engine: BrainEngine): MinionHandler {
     // made cooldown/freshness attribute to the wrong source. We resolve the
     // source's `local_path` here and use it as the cycle's brainDir below.
     let sourceLocalPath: string | null = null;
+    let connectorSource = false;
     if (rawSourceId !== undefined && rawSourceId !== null) {
       if (typeof rawSourceId !== 'string') {
         throw new Error(`autopilot-cycle: invalid source_id (not a string): ${JSON.stringify(rawSourceId)}`);
@@ -66,8 +65,8 @@ export function makeAutopilotCycleHandler(engine: BrainEngine): MinionHandler {
       // immediately if source is gone or archived; runCycle never even
       // acquires a lock. Also fetches local_path so FS phases bind to the
       // source's own checkout (the #2227/#2194 mixed-scope fix).
-      const rows = await engine.executeRaw<{ archived: boolean | null; local_path: string | null }>(
-        `SELECT archived, local_path FROM sources WHERE id = $1`,
+      const rows = await engine.executeRaw<{ archived: boolean | null; local_path: string | null; kind: string | null }>(
+        `SELECT archived, local_path, config->>'kind' AS kind FROM sources WHERE id = $1`,
         [rawSourceId],
       );
       if (rows.length === 0) {
@@ -85,7 +84,9 @@ export function makeAutopilotCycleHandler(engine: BrainEngine): MinionHandler {
         };
       }
       sourceId = rawSourceId;
-      sourceLocalPath = typeof rows[0].local_path === 'string' && rows[0].local_path.length > 0
+      // #5673: a connector source's local_path is never a brain directory.
+      connectorSource = isConnectorSourceKind(rows[0].kind);
+      sourceLocalPath = !connectorSource && typeof rows[0].local_path === 'string' && rows[0].local_path.length > 0
         ? rows[0].local_path
         : null;
     }
@@ -94,7 +95,9 @@ export function makeAutopilotCycleHandler(engine: BrainEngine): MinionHandler {
     // SOURCE's local_path (or null → skip FS phases for a pure-DB source);
     // NEVER fall through to the global repoPath, which would run sync/lint
     // against the wrong tree. Legacy (no source_id) keeps the global repoPath.
-    const effectiveBrainDir: string | null = sourceId ? sourceLocalPath : repoPath;
+    const effectiveBrainDir: string | null = sourceId
+      ? sourceLocalPath
+      : typeof job.data.repoPath === 'string' ? job.data.repoPath : (await engine.getConfig('sync.repo_path')) ?? null;
 
     // Allow callers to select phases via job data (e.g. skip embed for
     // fast cycles). Validates against ALL_PHASES to prevent injection, then
@@ -102,9 +105,11 @@ export function makeAutopilotCycleHandler(engine: BrainEngine): MinionHandler {
     // are machine-authored; see normalizeQueuedSourcePhases in cycle.ts).
     const { ALL_PHASES, normalizeQueuedSourcePhases } = await import('../../cycle.ts');
     const validPhases = new Set(ALL_PHASES);
-    const requestedPhases = Array.isArray(job.data.phases)
-      ? (job.data.phases as string[]).filter(p => validPhases.has(p as any))
-      : undefined;
+    const requestedPhases = connectorSource
+      ? (Array.isArray(job.data.phases) ? job.data.phases as string[] : CONNECTOR_SOURCE_PHASES).filter(p => CONNECTOR_SOURCE_PHASES.includes(p as any))
+      : Array.isArray(job.data.phases)
+        ? (job.data.phases as string[]).filter(p => validPhases.has(p as any))
+        : undefined;
     const { phases: effectivePhases, rejected: phasesRejectedByNormalization } =
       normalizeQueuedSourcePhases(requestedPhases as any, sourceId);
     // An explicitly-empty phase list (arrived empty, or emptied by the

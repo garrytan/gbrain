@@ -3,6 +3,27 @@
     "domain": "pages",
     "methods": {
       "countStalePagesForExtraction": {
+        "attendance-blocked+sourceId": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT count(*)::int AS count FROM pages WHERE deleted_at IS NULL AND (links_extracted_at IS NULL OR links_extracted_at < $1::timestamptz OR updated_at > links_extracted_at) AND source_id = $2 AND links_attendance_blocked_revision = knowledge_revision",
+            "textSha256": "be4f84c6281e3977a29eab4c2d35b5cab52a54f87936fb84eed35ac55b5a3bf3"
+          }
+        ],
+        "attendance-exclude": [
+          {
+            "lane": "pool",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT count(*)::int AS count FROM pages WHERE deleted_at IS NULL AND (links_extracted_at IS NULL OR links_extracted_at < $1::timestamptz OR updated_at > links_extracted_at) AND links_attendance_blocked_revision IS DISTINCT FROM knowledge_revision",
+            "textSha256": "ac18ba62c816b3be4564d5a24bdc69304c45d24022c7ade0de8a81d0b36e3123"
+          }
+        ],
         "default": [
           {
             "lane": "pool",
@@ -86,10 +107,11 @@
               "string",
               "string",
               "string",
-              "boolean"
+              "boolean",
+              "null"
             ],
-            "sql": "INSERT INTO page_versions (page_id,compiled_truth,frontmatter,knowledge_revision,timeline,title,type,tags,is_deleted) VALUES ($1,$2,$3::text::jsonb,$4::uuid,$5,$6,$7,$8::text::jsonb,$9) RETURNING *",
-            "textSha256": "d1f6b289883fc8dac309b8714b7879467836eee93d34b407e8d60c0532fd57d4"
+            "sql": "INSERT INTO page_versions (page_id,compiled_truth,frontmatter,knowledge_revision,timeline,title,type,tags,is_deleted,source_path) VALUES ($1,$2,$3::text::jsonb,$4::uuid,$5,$6,$7,$8::text::jsonb,$9,$10) RETURNING *",
+            "textSha256": "b2ff46c472f9770ffbf0c2aec78494499be17ecdd7f5661d0c268d3dd6c7e9bb"
           },
           {
             "event": "commit",
@@ -655,6 +677,20 @@
           }
         ]
       },
+      "markPagesAttendanceBlocked": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "array<string>",
+              "array<string>",
+              "array<string>"
+            ],
+            "sql": "UPDATE pages p SET links_attendance_blocked_revision = v.revision::uuid, links_attendance_blocked_at = now() FROM unnest($1::text[], $2::text[], $3::text[]) AS v(slug, source_id, revision) WHERE p.slug = v.slug AND p.source_id = v.source_id AND p.knowledge_revision = v.revision::uuid AND p.deleted_at IS NULL",
+            "textSha256": "ce508f2d149e38a8dbdfcdafb0ae8cbf454f6971dd9ab72304013633b7c51f99"
+          }
+        ]
+      },
       "markPagesExtractedBatch": {
         "default": [
           {
@@ -664,8 +700,8 @@
               "array<string>",
               "array<string>"
             ],
-            "sql": "UPDATE pages p SET links_extracted_at = v.ts::timestamptz FROM unnest($1::text[], $2::text[], $3::text[]) AS v(slug, source_id, ts) WHERE p.slug = v.slug AND p.source_id = v.source_id",
-            "textSha256": "f9d4fcb8f8710584f182e9636aa678a79e0b2f111c0794a7bb26322af90ed2d4"
+            "sql": "UPDATE pages p SET links_extracted_at = v.ts::timestamptz, links_attendance_blocked_revision = NULL, links_attendance_blocked_at = NULL FROM unnest($1::text[], $2::text[], $3::text[]) AS v(slug, source_id, ts) WHERE p.slug = v.slug AND p.source_id = v.source_id",
+            "textSha256": "38571ef9bc7efbcc636e789f18047fbcfab31eb71509440e6b7fadc7e70a93ad"
           }
         ]
       },

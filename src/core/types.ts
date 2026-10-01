@@ -798,7 +798,7 @@ export interface SearchResult {
   title: string;
   type: PageType;
   chunk_text: string;
-  chunk_source: 'compiled_truth' | 'timeline';
+  chunk_source: 'compiled_truth' | 'timeline' | 'fenced_code';
   chunk_id: number;
   chunk_index: number;
   score: number;

@@ -17,7 +17,9 @@ import {
   unsupportedNumericClaims,
   verifyAndRepairDreamPages,
   readVerifyEpoch,
+  speakerAt,
 } from '../src/core/cycle/synthesize-verify.ts';
+import { toCorpusText } from '../src/core/transcripts/claude-code-jsonl.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { importFromContent } from '../src/core/import-file.ts';
 import { renderMaterializedBullet } from '../src/core/persistence/canonical-projections.ts';
@@ -561,4 +563,32 @@ describe('verifyAndRepairDreamPages — PGLite write-back integration', () => {
     expect((await engine.getPage(slug, { sourceId: 'default' }))!.timeline).not.toContain('shutting down');
     expect((await rows()).map(r => r.summary)).toEqual(['Database-only history']);
   }, 60_000);
+});
+
+// #5717: the stock Claude Code renderer (toCorpusText) opens each turn with a
+// standalone `[user]` / `[assistant]` line. Those lines are speaker anchors, so
+// a `Name:` label repeated inside an assistant turn cannot carry over the next
+// user turn. Fixture from the issue, driven renderer -> verifier.
+describe('bracket-role transcript grounding (#5717)', () => {
+  const text = toCorpusText([
+    { role: 'user', text: 'Please review the build.' },
+    { role: 'assistant', text: 'ReviewerBot: first status.\nReviewerBot: second status.' },
+    { role: 'user', text: 'Do not create handoffs unless I ask.' },
+  ]);
+  const src = groundSource('/t/2026-09-20-session.txt', text);
+
+  test('a later user line is spoken by the user, embedded agent labels by their agent', () => {
+    expect(text).toContain('[assistant]\nReviewerBot: first status.');
+    expect(speakerAt(src.turns, text.indexOf('Do not create'))).toBe('user');
+    expect(speakerAt(src.turns, text.indexOf('second status'))).toBe('ReviewerBot');
+    expect(speakerAt(src.turns, text.indexOf('Please review'))).toBe('user');
+  });
+
+  test('the persisted quote speaker is the user, and a quote pinned on the agent is a speaker mismatch', () => {
+    const direct = verifyBody('The user set a rule: "Do not create handoffs unless I ask."', [src]);
+    expect(direct.quarantined).toEqual([]);
+    expect(direct.provenance.map(p => p.speaker)).toEqual(['user']);
+    const misattributed = verifyBody('ReviewerBot said: "Do not create handoffs unless I ask."', [src]);
+    expect(misattributed.failures.speaker_mismatch).toBe(1);
+  });
 });

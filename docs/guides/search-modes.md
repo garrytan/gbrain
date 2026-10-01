@@ -214,6 +214,46 @@ preserved. This differs from retrieval's `balanced` fallback when no valid
 `search.mode` is stored; the picker asks agents to confirm the choice with
 their operator before continuing a real setup.
 
+## Query instruction prefix
+
+Instruction-style embedding models (Qwen3-Embedding, e5, BGE v1.5, nomic-embed)
+expect a query instruction in front of each search query and none in front of
+documents. GBrain sends no instruction unless you set one for the brain;
+nothing is guessed from the model id at query time. `gbrain doctor` reports
+`embedding_query_prefix` when the configured model belongs to one of those
+families and no prefix is set, and prints the model card's value as a command
+you can run as printed.
+
+| Family | Documented value |
+|---|---|
+| Qwen3-Embedding | `Instruct: Given a web search query, retrieve relevant passages that answer the query` + newline + `Query:` |
+| e5 | `query: ` |
+| BGE v1.5 | `Represent this sentence for searching relevant passages: ` |
+| nomic-embed | `search_query: ` |
+
+**Set.** Quote the value so trailing spaces and newlines survive the shell;
+a newline needs ANSI-C quoting:
+
+```bash
+gbrain config set embedding_query_prefix "query: "
+gbrain config set embedding_query_prefix $'Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery:'
+```
+
+The prefix is stored in the brain's database config, so each brain (and each
+mounted brain in one MCP server) uses its own. It applies to query embeddings
+only: keyword search uses the original query, stored document vectors are not
+re-embedded, and the query-cache key includes the prefix. It takes effect on
+the next CLI or MCP query without restarting a running server.
+
+**Verify.** `gbrain config get embedding_query_prefix --raw` prints the stored
+bytes, and `gbrain doctor` stops reporting `embedding_query_prefix`.
+
+**Unset.** `gbrain config unset embedding_query_prefix` restores bare query
+embeddings on the next query.
+
+nomic-embed also expects `search_document: ` in front of documents. GBrain does
+not prefix documents, so on nomic the query prefix is a partial fix (#3783).
+
 ## Choosing a lookup verb (search vs query vs get)
 
 Independent of which bundle is active, every individual lookup should use

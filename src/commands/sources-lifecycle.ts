@@ -20,6 +20,7 @@ export const SOURCE_LIFECYCLE_HELP = `Managed source administration:
   gbrain sources remove <id> --confirm-destructive
   gbrain sources purge <archived-id> --confirm-destructive
   gbrain sources set-path <id> <verified-directory>
+  gbrain sources set-path <id> --clear   (connector sources: clear a stale local_path)
   gbrain sources reclone <id>
 
 All commands accept --request-id <uuid>, --expected-incarnation <uuid>, --dry-run,
@@ -65,6 +66,11 @@ export async function runSourceLifecycleCli(args: string[], getEngine: () => Pro
     const config = persistenceConfigForBrain(loadConfig(), brainId, brainId === 'host' ? [] : loadMounts());
     if (!config) throw new OperationError('invalid_params', 'No brain is configured. Run gbrain init first.');
     if (isThinClient(config)) throw new OperationError('permission_denied', 'Source administration runs locally on the selected brain host; an ordinary remote token is not administration authority.');
+    if (args[0] === 'set-path' && args.includes('--clear')) {
+      const { runSetPath } = await import('./sources-set-path.ts');
+      await runSetPath(await getEngine(), args.slice(1));
+      return;
+    }
     if (parsed) {
       // --pat-file must refuse before the resident owner can create anything.
       const delegated = await maybeDelegateLocalAdministration(parsed.operation,

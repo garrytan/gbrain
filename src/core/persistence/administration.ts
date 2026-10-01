@@ -168,7 +168,12 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
     const blockingEffects = await listBlockingEffects(engine, { sourceId: params.source_id as string | undefined, limit: 20 });
     const writerVersions = await listWriterVersions(engine);
     await assertWriterAdminState(engine, adminState, false);
-    return { ...diagnostics, host_id: existingLocalHostId(), local_host_id: existingLocalHostId(), bindings, admin_state: adminState,
+    const { cleanupRetiredManagedMarkers } = await import('./deactivation.ts');
+    const [mode] = await engine.executeRaw<{ enabled: boolean; mode_epoch: string | null }>(
+      "SELECT enabled, to_jsonb(persistence_brain)->>'mode_epoch' AS mode_epoch FROM persistence_brain WHERE singleton=1");
+    return { ...diagnostics, mode: mode?.enabled ? 'managed' : 'classic', mode_epoch: Number(mode?.mode_epoch ?? 1),
+      local_markers: await cleanupRetiredManagedMarkers(engine),
+      host_id: existingLocalHostId(), local_host_id: existingLocalHostId(), bindings, admin_state: adminState,
       admin_lock: { locked: adminLock.locked, set_at: adminLock.set_at, host_id: adminLock.host_id }, blocking_effects: blockingEffects,
       writer_versions: writerVersions, onboarding, shared_skills: sharedSkills, ...(native ? { native_lock: native } : {}) };
   }
@@ -197,6 +202,28 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
     return { ...await activatePersistence(engine, { confirmQuiesced: true, dryRun: params.dry_run === true, expectedState, cleanupDeadLocalLocks: params.cleanup_dead_local_locks === true }),
       unsupported_maintenance: [...UNSUPPORTED_MANAGED_BULK_WRITERS],
       ...(params.dry_run ? { dry_run: true, action: operation } : {}) };
+  }
+  if (operation === 'writer_deactivate') {
+    if (params.source_id !== undefined) throw invalid('Deactivate is brain-wide: it converts every source of this brain back to classic mode. Omit the <source> argument.');
+    keys(params, ['dry_run', 'admin_intent', 'expected_state', 'request_id']);
+    const { deactivatePersistence } = await import('./deactivation.ts');
+    if (params.dry_run === true) {
+      // DX-O13: a clean preview prints the state-bound command that applies exactly what it reviewed, so the
+      // state is read before the preview and the command is printed only when nothing moved while it ran.
+      const state = await writerAdminState(engine);
+      const report = await deactivatePersistence(engine, { dryRun: true });
+      const unchanged = state === await writerAdminState(engine);
+      return { ...report, action: operation, ...(report.mode === 'managed' && report.blockers.length === 0 && unchanged
+        ? { apply_command: `gbrain sources writer deactivate --admin-intent writer_deactivate --expected-state ${state}` } : {}) };
+    }
+    let expectedState: string | undefined;
+    try { expectedState = await requireWriterAdminIntent(engine, operation, params); }
+    catch (error) {
+      if (!(error instanceof OperationError) || error.code !== 'writer_admin_state_changed') throw error;
+      error.suggestion = `The current admin_state is ${await writerAdminState(engine)}. Review gbrain sources writer status --json, then rerun with --expected-state <that admin_state>.`;
+      throw error;
+    }
+    return { ...await deactivatePersistence(engine, { expectedState, requestId: params.request_id === undefined ? undefined : uuid(params.request_id) }) };
   }
   if (operation === 'writer_transfer_prepare') {
     keys(params, ['source_id', 'dry_run', 'admin_intent', 'expected_state', 'self_transfer']);

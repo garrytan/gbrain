@@ -175,10 +175,16 @@ the write path:
   `gbrain serve --http` does not self-sweep — reconcile on demand with
   `gbrain sweep --once` (delegates to the live serve over IPC) or
   `gbrain extract links --source db`.
-  Use `add_link` for relationships you need immediately. Untrusted body text can plant
+  Use `add_link` for relationships you need immediately, except meeting
+  attendance, which auto-link derives from the meeting page. Untrusted body text can plant
   ranking-boosting edges, which is why the inline path is local-only.
-- Inferred link types: `attended` (meeting -> person), `works_at`, `invested_in`,
-  `founded`, `advises`, `source` (frontmatter), `mentions` (default).
+- Inferred link types: `attended`, `works_at`, `invested_in`, `founded`,
+  `advises`, `source` (frontmatter), `mentions` (default). Where the active
+  schema pack does not override attendance (gbrain-base-v2, which `gbrain init`
+  sets), `attended` comes only from a meeting page's explicit attendee list
+  (its `Attendees:` line or `attendees:` frontmatter) and points
+  `person -> meeting`; a pack that overrides it, such as the older
+  `gbrain-base`, sets its own rule and direction.
 - To disable: `gbrain config set auto_link false`. Default is on.
 - Timeline entries with specific dates still need explicit `gbrain timeline-add`
   (or batch via `gbrain extract timeline --source db`).

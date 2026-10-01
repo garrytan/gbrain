@@ -1327,7 +1327,8 @@
           "8 title text/text NULL",
           "9 type text/text NULL",
           "10 tags jsonb/jsonb NULL",
-          "11 is_deleted boolean/bool NULL"
+          "11 is_deleted boolean/bool NULL",
+          "12 source_path text/text NULL"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },

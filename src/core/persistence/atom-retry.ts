@@ -1,8 +1,7 @@
 import { readFileSync } from 'node:fs';
 import type { BrainEngine } from '../engine.ts';
 import { OperationError } from '../ops/contract.ts';
-import { managedAtomSession, publishManagedAtoms, readAtomOrigin, resumeManagedAtoms, type AtomIntent } from './atom-maintenance.ts';
-import { digest } from './digest.ts';
+import { atomRetryInputKey, managedAtomSession, publishManagedAtoms, readAtomOrigin, resumeManagedAtoms, type AtomIntent } from './atom-maintenance.ts';
 import { isWriteReceipt } from './types.ts';
 
 export async function retryManagedAtomBatch(engine: BrainEngine, sourceId: string, requestId: string, retryId: string): Promise<Record<string, unknown>> {
@@ -17,7 +16,9 @@ export async function retryManagedAtomBatch(engine: BrainEngine, sourceId: strin
       ? { kind: 'page' as const, slug: origin.locator, content: (await engine.readPageSnapshot(origin.locator, { sourceId }))?.page.compiled_truth ?? '', contentHash: origin.contentHash }
       : { kind: 'transcript' as const, filePath: origin.locator, content: readFileSync(origin.locator, 'utf8'), contentHash: origin.contentHash };
     const current = await readAtomOrigin(engine, session, item);
-    if (digest(current) !== digest(origin)) throw new OperationError('source_changed', 'The original atom input changed; this retry cannot reuse it.');
+    // The retry runs against the current origin (its revision and visibility);
+    // only a change to the input the run key covers refuses it.
+    if (atomRetryInputKey(session, current) !== atomRetryInputKey(session, origin)) throw new OperationError('source_changed', 'The original atom input changed; this retry cannot reuse it.');
     if (await resumeManagedAtoms(engine, session, current)) return { status: 'completed', replayed: true, model_rerun: false };
     const checkpoint = retry.expectedCheckpoint as Array<{ failure?: string }> | null;
     if (checkpoint && !checkpoint[0]?.failure) return { status: 'completed', replayed: true, model_rerun: false };

@@ -27,7 +27,11 @@ import type { CompanyBrainPlan } from '../company-brain/types.ts';
 import { companyBrainProfile } from '../company-brain/profile.ts';
 import { companyBrainPolicyFingerprint } from '../company-brain/policy.ts';
 import { isUnboundSourcePage, UNBOUND_COLLISION_MESSAGE } from './unbound-source.ts';
+import { findIncompleteSyncReceipt } from './checkpoint-validation.ts';
+import { frontmatterSlugConflictMessage } from './verb-errors.ts';
 
+/** The options that select a managed sync cursor (its key), recorded so a refusal can print the exact retry. */
+export interface SyncCursorOptions { full: boolean; workingTree: boolean; srcSubpath: string | null; exclude: string[]; includeHidden: string[]; strategy: string | null }
 export interface SyncIntent extends Record<string, unknown> {
   companyApproval?: { schema: NonNullable<CompanyBrainPlan['schema']>; planDigest: string; extractorVersion: string; policyFingerprint: string };
   kind: 'managed_sync_import' | 'managed_sync_delete' | 'managed_sync_checkpoint';
@@ -37,6 +41,11 @@ export interface SyncIntent extends Record<string, unknown> {
   working?: boolean;
   renameFrom?: SyncRename;
   processingOptions?: SyncProcessingOptions;
+  syncOptions?: SyncCursorOptions;
+  /** The `--repo` base a relative `--src-subpath` resolved against, for the printed retry. */
+  repoPath?: string;
+  /** #5522: another cursor of this source imported entries of this run, so the source may already sit at the target. */
+  overtaken?: boolean;
   syncAuthority: SyncAuthority; cursorKey: string; runId: string; index: number;
   from: string | null; target: string; total: number; slugMode: 'git-root' | 'source-root';
 }
@@ -127,16 +136,13 @@ export async function prepareManagedSyncMutation(engine: BrainEngine, row: Write
     }
     const [manifest] = await tx.executeRaw<{ count: number }>("SELECT jsonb_array_length(completed_keys) AS count FROM op_checkpoints WHERE op='managed-sync-manifest' AND fingerprint=$1", [p.runId]);
     if (!manifest || Number(manifest.count) !== p.total) throw new OperationError('storage_error', 'The immutable sync manifest is incomplete.');
-    const [incomplete] = await tx.executeRaw(`SELECT r.id FROM persistence_requests r WHERE r.worktree_id=$1::uuid AND
-      (r.recovery IS NOT NULL OR (r.intent->>'runId'=$2 AND r.intent->>'kind' IN ('managed_sync_import','managed_sync_delete') AND r.state<>'committed'
-        AND (r.state IN ('queued','running','recovering') OR NOT EXISTS (SELECT 1 FROM persistence_requests committed
-          WHERE committed.source_id=r.source_id AND committed.intent->>'runId'=$2 AND committed.intent->>'index'=r.intent->>'index' AND committed.state='committed')))) LIMIT 1`,
-      [row.worktree_id, p.runId]);
-    if (incomplete) throw new OperationError('recovery_required', 'An incomplete page receipt still blocks the sync checkpoint.');
+    const incomplete = await findIncompleteSyncReceipt(tx, row.worktree_id!, p.runId);
+    if (incomplete) throw new OperationError('recovery_required', `An incomplete page receipt (request ${incomplete}) still blocks the sync checkpoint.`);
+    // #5522: an overtaken run accepts a source another cursor already checkpointed at this exact target.
     const changed = await tx.executeRaw(`UPDATE sources SET last_commit=$3,last_sync_at=now(),config=jsonb_set(${SOURCE_CONFIG_OBJECT_SQL},'{slug_root_mode}',to_jsonb($5::text)),
       newest_content_at=(SELECT MAX(updated_at) FROM pages WHERE source_id=$1 AND deleted_at IS NULL)
-      WHERE id=$1 AND incarnation=$2::uuid AND last_commit IS NOT DISTINCT FROM $4
-      AND (config->>'slug_root_mode' IS NULL OR config->>'slug_root_mode'=$5) RETURNING id`, [row.source_id, row.source_incarnation, p.target, p.from, p.slugMode]);
+      WHERE id=$1 AND incarnation=$2::uuid AND (last_commit IS NOT DISTINCT FROM $4 OR ($6::boolean AND last_commit=$3))
+      AND (config->>'slug_root_mode' IS NULL OR config->>'slug_root_mode'=$5) RETURNING id`, [row.source_id, row.source_incarnation, p.target, p.from, p.slugMode, p.overtaken === true]);
     if (!changed.length) throw new OperationError('revision_conflict', 'The source checkpoint changed during this sync.');
     await tx.executeRaw("UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,done}','true'::jsonb),updated_at=now() WHERE op='managed-sync' AND fingerprint=$1", [p.cursorKey]);
     return { status: 'synced', source_id: row.source_id, committed_pages: p.total };
@@ -191,7 +197,7 @@ export async function prepareManagedSyncMutation(engine: BrainEngine, row: Write
   const retainedWindowsOrigin = process.platform === 'win32' && snapshot?.page.source_path != null &&
     syncOriginPath(snapshot.page.source_path) === syncOriginPath(p.sourcePath) && parsedInput.slug === snapshot.page.slug;
   if (expectedSlug && parsedInput.slug !== expectedSlug && slugifyPath(parsedInput.slug) !== expectedSlug && !retainedWindowsOrigin) {
-    throw new OperationError('invalid_params', 'The file frontmatter slug conflicts with its physical origin.');
+    throw new OperationError('invalid_params', frontmatterSlugConflictMessage(p.sourcePath, parsedInput.slug, expectedSlug));
   }
   if (!p.companyApproval && base && !p.lineEndingOnly && p.rawHash !== sha256(p.content) && !sameCanonicalImport(base, parsedInput)) {
     throw new OperationError('source_changed', 'Newer working-tree bytes and the current page disagree with this pinned Git import.');
