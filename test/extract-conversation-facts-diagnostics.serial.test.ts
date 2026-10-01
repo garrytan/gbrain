@@ -53,6 +53,7 @@ beforeEach(async () => {
   await engine.executeRaw('TRUNCATE facts, pages, op_checkpoints, extract_rollup_7d CASCADE');
   await engine.executeRaw('DELETE FROM gbrain_cycle_locks');
   await engine.setConfig('facts.extraction_enabled', 'true');
+  await engine.setConfig('facts.extraction_model', 'anthropic:claude-sonnet-4-6');
   await engine.setConfig('conversation_parser.llm_fallback_enabled', 'false');
   await engine.setConfig('cycle.conversation_facts_backfill.enabled', 'true');
   await engine.setConfig('cycle.conversation_facts_backfill.workers', '3');
@@ -72,6 +73,39 @@ beforeEach(async () => {
 });
 
 describe('#5364 diagnostics across workers, sources, CLI, and cycle', () => {
+  // #5823: execute CLI diagnostics and parsing, not source-text assertions.
+  test('explicit unpriced cap names pricing recovery rather than recommending a larger cap', async () => {
+    await engine.setConfig('facts.extraction_model', 'anthropic:synthetic-unpriced-model');
+    const log = spyOn(console, 'log').mockImplementation(() => {});
+    const exit = spyOn(process, 'exit').mockImplementation(((code: number) => { throw new Error(`exit:${code}`); }) as never);
+    try {
+      await expect(runExtractConversationFacts(engine, ['--source-id', 'speaker-a', '--max-cost-usd', '0.1', '--sleep', '0'])).rejects.toThrow('exit:1');
+      const summary = log.mock.calls.map(call => call.join(' ')).join('\n');
+      expect(summary).toContain('no_pricing: anthropic:synthetic-unpriced-model');
+      expect(summary).toContain('pricing.overrides');
+      expect(summary).not.toContain('Re-run with a higher --max-cost-usd');
+      expect(calls).toBe(0);
+    } finally {
+      exit.mockRestore();
+      log.mockRestore();
+    }
+  });
+
+  test.each(['0', '-1', 'invalid', '1junk', 'Infinity', undefined])('invalid explicit cap %s is rejected before extraction or background submission', async value => {
+    const error = spyOn(console, 'error').mockImplementation(() => {});
+    const exit = spyOn(process, 'exit').mockImplementation(((code: number) => { throw new Error(`exit:${code}`); }) as never);
+    const args = ['--source-id', 'speaker-a', '--max-cost-usd', ...(value === undefined ? [] : [value])];
+    try {
+      await expect(runExtractConversationFacts(engine, args)).rejects.toThrow('exit:1');
+      await expect(runExtractConversationFacts(engine, ['--background', ...args])).rejects.toThrow('--max-cost-usd requires a positive finite number');
+      expect(error.mock.calls[0]?.[0]).toContain('--max-cost-usd requires a positive finite number');
+      expect(calls).toBe(0);
+    } finally {
+      exit.mockRestore();
+      error.mockRestore();
+    }
+  });
+
   test('dry-run help promises segmentation without model calls', async () => {
     const log = spyOn(console, 'log').mockImplementation(() => {});
     try {

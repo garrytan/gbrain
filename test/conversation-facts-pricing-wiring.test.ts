@@ -120,6 +120,63 @@ beforeEach(async () => {
 });
 
 describe('Conversation Facts pricing override wiring', () => {
+  // Default-cap regressions execute the real core/cycle and gateway reservation
+  // boundary. Existing cases only covered explicit caps WITH a price override.
+  // No new production seam: reuse the synthetic transport and isolated engine.
+  test('an unpriced extraction model can run under a default core budget', async () => {
+    await engine.setConfig('pricing.overrides', '{}');
+    const result = await runExtractConversationFactsCore(engine, {
+      sourceId: 'default', slug: SLUG, sleepMs: 0,
+    });
+    expect(result.budget_exhausted).not.toBe(true);
+    expect(chatCalls).toBeGreaterThan(0);
+    expect(await terminalCount()).toBe(1);
+  });
+
+  test('an explicit core cap fails closed with a no_pricing diagnostic, not an expected spend limit', async () => {
+    await engine.setConfig('pricing.overrides', '{}');
+    const result = await runExtractConversationFactsCore(engine, {
+      sourceId: 'default', slug: SLUG, maxCostUsd: 0.1, sleepMs: 0,
+    });
+    expect(result).toMatchObject({ budget_exhausted: true, budget_reason: 'no_pricing', budget_model: MODEL, spent_usd: 0 });
+    expect(chatCalls).toBe(0);
+    expect(await terminalCount()).toBe(0);
+    const [rollup] = await engine.executeRaw<{ halt_count: number; expected_limit_count: number }>(
+      "SELECT halt_count, expected_limit_count FROM extract_rollup_7d WHERE kind='facts.conversation' AND source_id='default'",
+    );
+    expect(Number(rollup.halt_count)).toBe(1);
+    expect(Number(rollup.expected_limit_count)).toBe(0);
+  });
+
+  test('cycle defaults allow an unpriced model while retaining per-source runtime limits', async () => {
+    await engine.setConfig('pricing.overrides', '{}');
+    await engine.unsetConfig('cycle.conversation_facts_backfill.max_cost_usd');
+    await engine.unsetConfig('cycle.conversation_facts_backfill.max_total_cost_usd');
+    const result = await runPhaseConversationFactsBackfill(engine, {});
+    expect(result.details.sources_budget_exhausted).toBe(0);
+    expect(chatCalls).toBeGreaterThan(0);
+    expect(await terminalCount()).toBe(1);
+  });
+
+  test.each(['max_cost_usd', 'max_total_cost_usd'])('cycle explicit %s remains fail-closed without pricing', async key => {
+    await engine.setConfig('pricing.overrides', '{}');
+    await engine.unsetConfig('cycle.conversation_facts_backfill.max_cost_usd');
+    await engine.unsetConfig('cycle.conversation_facts_backfill.max_total_cost_usd');
+    await engine.setConfig(`cycle.conversation_facts_backfill.${key}`, '0.1');
+    const result = await runPhaseConversationFactsBackfill(engine, {});
+    expect(result.status).toBe('warn');
+    expect(result.details.per_source).toMatchObject({ default: { budget_reason: 'no_pricing', budget_model: MODEL } });
+    expect(chatCalls).toBe(0);
+    expect(await terminalCount()).toBe(0);
+  });
+
+  test('transcript facts default does not strand an unpriced model', async () => {
+    await engine.setConfig('pricing.overrides', '{}');
+    await runIngestFacts(engine, { sourceId: 'default', slugs: [SLUG], quiet: true });
+    expect(chatCalls).toBeGreaterThan(0);
+    expect(await terminalCount()).toBe(1);
+  });
+
   test('the documented config key is accepted by the strict config registry', () => {
     expect(KNOWN_CONFIG_KEYS).toContain('pricing.overrides');
   });

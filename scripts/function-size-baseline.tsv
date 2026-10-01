@@ -17,7 +17,7 @@ src/commands/embed.ts	embedAllStale	551	seed: W5 baseline, refactor wave 1 (deco
 src/commands/embed.ts	runEmbedCore	376	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
 src/commands/eval-longmemeval.ts	runEvalLongMemEval	740	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
 src/commands/extract-conversation-facts.ts	processPage	307	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
-src/commands/extract-conversation-facts.ts	runExtractConversationFactsCore	372	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1); +1 #5757: managed flag threaded into ExtractCoreState
+src/commands/extract-conversation-facts.ts	runExtractConversationFactsCore	376	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1); +1 #5757: managed flag threaded into ExtractCoreState; +4 #5823: shared default-cap wiring and structured budget reason/model; decision logic is in facts/conversation-budget.ts
 src/commands/extract.ts	runExtract	398	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
 src/commands/import.ts	runImport	959	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
 src/commands/mcp-expose.ts	runPublish	443	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)

@@ -75,7 +75,8 @@ import {
 import { configureGatewayIfUninitialized, isAvailable, withBudgetTracker } from '../core/ai/gateway.ts';
 import { managedDerivedFactsPreflight, replaceDerivedFactsForPage, writeDerivedFacts } from '../core/persistence/derived-facts.ts';
 import { managedPersistenceEnabled } from '../core/persistence/ownership.ts';
-import { BudgetTracker, BudgetExhausted, loadPricingOverrides } from '../core/budget/budget-tracker.ts';
+import { BudgetTracker, BudgetExhausted, loadPricingOverrides, type BudgetReason } from '../core/budget/budget-tracker.ts';
+import { conversationFactsCostCap } from '../core/facts/conversation-budget.ts';
 import { listSources } from '../core/sources-ops.ts';
 import {
   loadOpCheckpoint,
@@ -383,6 +384,8 @@ export interface ExtractConversationFactsResult {
   /** Entity values kept raw after a best-effort resolution failure. */
   resolution_errors: number;
   budget_exhausted?: boolean;
+  budget_reason?: BudgetReason;
+  budget_model?: string;
   spent_usd?: number;
 }
 
@@ -1615,10 +1618,11 @@ export async function runExtractConversationFactsCore(
       // tracker per gateway.ts AsyncLocalStorage semantics).
       await body();
     } else {
+      const pricingOverrides = await loadPricingOverrides(engine);
       const tracker = new BudgetTracker({
-        maxCostUsd: opts.maxCostUsd ?? DEFAULT_MAX_COST_USD,
+        maxCostUsd: await conversationFactsCostCap(engine, opts.maxCostUsd ?? DEFAULT_MAX_COST_USD, opts.maxCostUsd !== undefined, pricingOverrides),
         label: `extract-conversation-facts:${sourceId}`,
-        pricingOverrides: await loadPricingOverrides(engine),
+        pricingOverrides,
       });
       ownedTracker = tracker;
       try {
@@ -1630,6 +1634,8 @@ export async function runExtractConversationFactsCore(
   } catch (err) {
     if (err instanceof BudgetExhausted) {
       result.budget_exhausted = true;
+      result.budget_reason = err.reason;
+      result.budget_model = err.modelId;
       if (opts.budgetTracker) {
         result.spent_usd = opts.budgetTracker.totalSpent;
       }
@@ -1655,6 +1661,7 @@ export async function runExtractConversationFactsCore(
     effectiveTracker.totalSpent > effectiveTracker.cap
   ) {
     result.budget_exhausted = true;
+    result.budget_reason = 'cost';
     result.spent_usd = effectiveTracker.totalSpent;
   }
 
@@ -1740,7 +1747,7 @@ async function writeRunReceiptAndRollup(
     cost_delta: result.spent_usd ?? 0,
     ...classifyRunStop({
       budget_exhausted: halted,
-      error: result.pages_failed > 0,
+      error: result.pages_failed > 0 || result.budget_reason === 'no_pricing',
     }),
   });
 }
@@ -1833,8 +1840,12 @@ function parseArgs(args: string[]): ParsedArgs {
       continue;
     }
     if (a === '--max-cost-usd') {
-      const n = parseFloat(args[++i] ?? '');
-      if (Number.isFinite(n) && n > 0) out.maxCostUsd = n;
+      const n = Number(args[++i]);
+      if (!Number.isFinite(n) || n <= 0) {
+        out.error = '--max-cost-usd requires a positive finite number.';
+        return out;
+      }
+      out.maxCostUsd = n;
       continue;
     }
     if (a === '--workers' || a === '--concurrency') {
@@ -1900,6 +1911,8 @@ Multi-source: when --source-id is omitted, the command iterates ALL
 sources from gbrain sources list. Per-source budget cap defaults to
 --max-cost-usd; the brain-wide cap when running via the autopilot cycle
 phase is cycle.conversation_facts_backfill.max_total_cost_usd.
+Default USD caps are not enforced for unpriced chat models (a warning is emitted).
+Explicit caps remain fail-closed; configure pricing.overrides to supply missing prices.
 
 Resumability: per-page completion is durable via a terminal audit row
 in the facts table (source='${TERMINAL_AUDIT_SOURCE}'). gbrain doctor's
@@ -1908,6 +1921,7 @@ conversation_facts_backlog check counts pages without this row.
 
 function buildJobParams(args: string[]): Record<string, unknown> {
   const parsed = parseArgs(args);
+  if (parsed.error) throw new Error(parsed.error);
   return {
     sourceId: parsed.sourceId,
     types: parsed.types,
@@ -1995,6 +2009,7 @@ export async function runExtractConversationFacts(
   };
   let totalSpent = 0;
   let anyBudgetExhausted = false;
+  const unpricedModels = new Set<string>();
 
   const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
 
@@ -2045,6 +2060,7 @@ export async function runExtractConversationFacts(
       aggregate.fallback_slugify_count += perSource.fallback_slugify_count;
       aggregate.resolution_errors += perSource.resolution_errors;
       if (perSource.budget_exhausted) anyBudgetExhausted = true;
+      if (perSource.budget_reason === 'no_pricing') unpricedModels.add(perSource.budget_model ?? 'unknown model');
       if (perSource.spent_usd) totalSpent += perSource.spent_usd;
 
       progress.tick(1, `${sourceId}: ${perSource.facts_inserted} facts inserted`);
@@ -2103,7 +2119,9 @@ export async function runExtractConversationFacts(
     console.log(`  Preserved ${aggregate.resolution_errors} fact(s) without an entity target after best-effort resolution errors.`);
   }
   if (anyBudgetExhausted) {
-    console.log(`  Budget cap reached. Re-run with a higher --max-cost-usd to continue.`);
+    console.log(unpricedModels.size > 0
+      ? `  no_pricing: ${[...unpricedModels].join(', ')}. Configure pricing.overrides; raising --max-cost-usd cannot resolve missing pricing.`
+      : `  Budget cap reached. Re-run with a higher --max-cost-usd to continue.`);
   }
 
   // v0.41.15.0 (codex #3): exit 3 when pages were skipped due to
@@ -2112,7 +2130,7 @@ export async function runExtractConversationFacts(
   // anyBudgetExhausted doesn't trigger exit 3; the budget message
   // above already tells the user what to do, and exit 0 is the right
   // signal for "ran to the cap intentionally."
-  if (aggregate.pages_failed > 0) {
+  if (aggregate.pages_failed > 0 || unpricedModels.size > 0) {
     process.exit(1);
   }
   if (aggregate.pages_lock_skipped > 0 && !anyBudgetExhausted) {

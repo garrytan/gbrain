@@ -59,6 +59,7 @@ import {
 // binding extract-conversation-facts.ts re-exports) so this phase is part of
 // the drift-guarded set in test/conversation-facts-type-allowlist-drift.test.ts.
 import { ALLOWED_TYPES, type AllowedType } from '../facts/conversation-types.ts';
+import { conversationFactsCostCap } from '../facts/conversation-budget.ts';
 
 /** Per-phase wrapper opts. */
 export interface ConversationFactsBackfillPhaseOpts {
@@ -89,6 +90,7 @@ interface ResolvedConfig {
   enabled: boolean;
   maxCostUsd: number;          // per source per cycle
   maxTotalCostUsd: number;     // brain-wide per cycle
+  explicitCostCap: boolean;
   maxWalltimeMin: number;      // per source per cycle
   maxTotalWalltimeMin: number; // brain-wide per cycle
   types: AllowedType[];
@@ -156,6 +158,7 @@ async function loadCfg(engine: BrainEngine): Promise<ResolvedConfig> {
     enabled: enabledFlag,
     maxCostUsd: parseFloatOrDefault(maxCost, 1.0),
     maxTotalCostUsd: parseFloatOrDefault(maxTotalCost, 5.0),
+    explicitCostCap: maxCost !== null || maxTotalCost !== null,
     maxWalltimeMin: parseFloatOrDefault(maxWall, 20),
     maxTotalWalltimeMin: parseFloatOrDefault(maxTotalWall, 30),
     types,
@@ -191,6 +194,7 @@ export async function runPhaseConversationFactsBackfill(
   }
 
   const startedAt = Date.now();
+  const costCap = await conversationFactsCostCap(engine, cfg.maxTotalCostUsd, cfg.explicitCostCap, pricingOverrides);
   const maxTotalWalltimeMs = cfg.maxTotalWalltimeMin * 60_000;
   const maxWalltimeMs = cfg.maxWalltimeMin * 60_000;
 
@@ -265,14 +269,14 @@ export async function runPhaseConversationFactsBackfill(
       }
 
       // Brain-wide cost check (sum of per-source tracker spends).
-      const remainingCostUsd = cfg.maxTotalCostUsd - totalSpent;
+      const remainingCostUsd = costCap === undefined ? Infinity : costCap - totalSpent;
       if (remainingCostUsd <= 0) {
         skippedByBrainWideCap = sources.length - i;
         break;
       }
 
       const perSourceWallMs = Math.min(maxWalltimeMs, remainingWallMs);
-      const perSourceCapUsd = Math.min(cfg.maxCostUsd, remainingCostUsd);
+      const perSourceCapUsd = costCap === undefined ? undefined : Math.min(cfg.maxCostUsd, remainingCostUsd);
       const tracker = new BudgetTracker({
         maxCostUsd: perSourceCapUsd,
         maxRuntimeMs: perSourceWallMs,
@@ -331,6 +335,8 @@ export async function runPhaseConversationFactsBackfill(
           perSourceResults[src.id] = {
             ...zeroResult(),
             budget_exhausted: true,
+            budget_reason: err.reason,
+            budget_model: err.modelId,
             error: err.message,
           };
         } else if (isAbortError(err)) {
@@ -407,7 +413,7 @@ export async function runPhaseConversationFactsBackfill(
   }
 
   const anyError = Object.values(perSourceResults).some(
-    (r) => r.error || r.pages_failed > 0,
+    (r) => r.error || r.pages_failed > 0 || r.budget_reason === 'no_pricing',
   );
   const status = anyError ? 'warn' : 'ok';
   const summary = `${totals.facts_inserted} facts inserted across ${totals.sources_processed}/${sources.length} sources, ~$${totalSpent.toFixed(4)} spent`;
@@ -442,6 +448,7 @@ export async function runPhaseConversationFactsBackfill(
       sources_walltime_exhausted: sourcesWalltimeExhausted,
       types: cfg.types,
       max_cost_usd: cfg.maxCostUsd,
+      cost_cap_enforced: costCap !== undefined,
       max_walltime_min: cfg.maxWalltimeMin,
       max_total_cost_usd: cfg.maxTotalCostUsd,
       max_total_walltime_min: cfg.maxTotalWalltimeMin,
