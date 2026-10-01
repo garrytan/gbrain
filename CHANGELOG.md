@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [0.60.22.1] - 2026-09-30
+## [0.60.23.1] - 2026-09-30
 
 **Dream synthesize on an OpenRouter model no longer dies to a rate limit it never saw.** OpenRouter sometimes reports "you're being rate-limited, try again shortly" as a normal-looking HTTP 200 response with an error message buried inside the body, instead of a real HTTP 429. Every retry mechanism in gbrain (and in the underlying AI library) decides whether to retry by looking at the HTTP status code, so a 200-with-hidden-error looked like success failing to parse, not like a rate limit, and nothing retried. If you pointed a dream phase at a busy OpenRouter model, a burst of calls could trip the shared limit and the whole phase would fail outright instead of backing off and trying again.
 
@@ -18,7 +18,7 @@ Now gbrain reads that hidden error and turns the response into a real 429 (or 5x
 
 **Say to your agent:** *"Re-run dream synthesize and check it survives an OpenRouter rate limit"* — your agent runs `gbrain dream --phase synthesize --once`.
 
-## To take advantage of v0.60.22.1
+## To take advantage of v0.60.23.1
 
 Upgrade, then re-run the phase that was failing:
 
@@ -31,6 +31,67 @@ gbrain dream --phase synthesize --once
 
 - `src/core/ai/recipes/openrouter.ts`: the OpenRouter compat-fetch shim now detects an HTTP-200 response body shaped like `{error:{code,metadata?}}` and rewrites the response's status to match (429, or the reported 5xx), so the AI SDK's own retry logic and gbrain's rate-limit classification both see the real condition. An existing `Retry-After` header is preserved; a `retry_after` value inside the error body is promoted to one when the response didn't already carry it. Every other response shape (a real success, a 4xx, an unparseable body) passes through unchanged.
 - Closes #5473.
+
+## [0.60.23.0] - 2026-09-30
+
+**Search now returns whole conversations by default. A hit on a session, transcript, meeting or chat log comes back as the full page, and every other hit stays exactly the chunk it was. On development data this answered far more conversation questions than chunks, at about four times the reading cost for those hits. A held-out check could not confirm the gain because its chats were too short to show one. Also fixed: two evidence-delivery bugs where a page whose best hit was fenced code got that code chunk instead of the page, and the code chunker's synthesized header line leaked into delivered text.**
+
+`return_unit` now defaults to `auto`, and `auto` changed meaning. It decides per hit from fields every search row already has, with no extra query and no model call. When the page type is `conversation`, `transcript`, `chat`, `meeting`, `slack` or `imessage` (and their collector variants), or the slug starts with `chat/` or `conversations/`, the hit gets the `page` unit: the whole sanitized body plus timeline, exactly what `return_unit: "page"` returns. Pages from `gbrain transcripts ingest` and the chat connectors match both rules. Everything else keeps its ranked chunk byte for byte, and a response with no conversation hit is exactly the chunk response.
+
+What was measured (gbrain-evals report, [PR #49](https://github.com/garrytan/gbrain-evals/pull/49), `docs/benchmarks/2026-09-30-evidence-auto-v2.md`). Both runs used an earlier 16,000-token default budget:
+
+| | Correct | Reader input per question |
+| --- | --- | --- |
+| LongMemEval-S (500 questions, development data): chunks | 312 | about 3,500 tokens |
+| LongMemEval-S: `auto` | 445 (+145 / −12 against chunks, p = 4e-30) | about 15,100 tokens |
+| LongMemEval-S: whole page (reference) | 457 | about 15,300 tokens |
+| Sealed confirmation set (150 new questions, preregistered): chunks | 147 | about 3,100 tokens |
+| Sealed confirmation set: `auto` | 149 (+2 / −0) | about 5,000 tokens |
+
+LongMemEval-S is development data: the evidence-delivery work was designed on it, so its result is not an independent test. The preregistered sealed check returned **fail**. Chunks already scored 147 of 150, because the sealed chats are short, so the check could show neither a benefit nor harm. Garry chose to ship `auto` on the development-data evidence. A harder sealed set is being built to confirm it.
+
+The default budget is now **24,000 tokens**, raised after that measurement. At 16,000, 81 of the 500 LongMemEval questions had sessions trimmed, which cost about 4 correct answers against whole pages. A follow-up check measures the 24,000 default.
+
+| | Before | After |
+| --- | --- | --- |
+| Hit on a conversation page, `return_unit` omitted | the ranked chunk | the whole page, one result per page at its best rank |
+| Any other hit | the ranked chunk | the same chunk, unchanged |
+| Response with no conversation hit | — | byte-identical to `return_unit: "chunk"` (no `delivered`, no `delivery`) |
+| Budget for conversations | — | 24,000 tokens (`search.return_budget_conversation`), clamped to 32,000 for remote callers |
+| Why a result got its unit | — | `delivered.reason` and `gbrain search --explain` |
+
+Things to watch: the cost is real. When search hits conversations, your agent reads whole sessions: about 15,000 tokens per question instead of about 3,500 in the LongMemEval run, and up to the 24,000-token budget. Searches with no conversation hits cost exactly what they did before. To get the old behavior everywhere, pass `return_unit: "chunk"`, or run `gbrain config set search.return_unit chunk` and `gbrain config set think.return_unit chunk`. To keep `auto` with less reading, lower `search.return_budget_conversation`. Old knobs keep their meaning: with no `return_unit`, `query`'s `token_budget` and `recall`'s `budget_tokens` or `budget_policy` still work on chunks, and subagent snippet caps still keep subagent searches on chunks. Expansion still never shows more than `get_page` shows the same caller.
+
+### To take advantage of v0.60.23.0
+
+`gbrain upgrade`. There is no migration. To see what `auto` decided for each result:
+
+```bash
+gbrain search "when did we move the launch?" --explain
+```
+
+**Say to your agent:** *"Search my brain for what we decided about the acme-example renewal, then read the sessions that come back."*
+
+The detection rules, budget sharing and fallback codes are in `docs/evidence-delivery.md`. To measure the default on a frozen hit list, call `assemble_evidence` with `return_unit: "auto"`.
+
+### Itemized changes
+
+#### Evidence delivery: `auto` v2 is the default
+- `resolveEvidencePlan` resolves an omitted `return_unit` (and unset `search.return_unit` / `think.return_unit`) to `auto`. `auto` uses `search.return_budget_conversation` (new, default 24,000) when no budget is passed, with the same remote clamp. An implied `auto` stays on `chunk` under the subagent snippet cap, `query`'s `token_budget` and `recall`'s `budget_tokens` or `budget_policy`, because recall packs facts first and a whole session would lose to them.
+- `conversationSignal` detects conversation hits from page type or slug prefix. `effectivePlan` skips the stage when an implied `auto` sees no conversation hit, so those responses, image queries included, stay byte-identical. An explicit `auto` always runs and reports each decision.
+- In `deliverEvidence`, `auto` gives conversation pages the `page` unit and passes every other hit through as its unchanged row with `delivered: { unit: "chunk", reason: "not_conversation" }`. Those unchanged chunks are paid for first. Conversation pages then share the rest of the budget in rank order, each reserving its matching span first. A conversation whose span no longer fits keeps its ranked chunks (`conversation_over_budget`) instead of being dropped.
+- `delivered.reason` (auto only): `conversation_type`, `conversation_slug`, `not_conversation`, `conversation_over_budget`. `--explain` prints `evidence: <unit> (<reason>)` per result.
+- `think` renders conversation pages whole under `auto` and keeps its usual excerpts for every other page. `recall` applies the same default.
+- `assemble_evidence` accepts `auto`, so gbrain-evals can measure the product default on frozen hits.
+
+#### Evidence delivery fixes
+- **A fenced-code best hit gets the page.** Fenced-code chunks are indexed after every prose chunk, so a hit on the second or later code chunk had no text chunk within `return_window`. The assembler fell back to that code chunk even for `return_unit: "page"`. The hit is now placed in the page text by its code, and the fallback fires only when nothing can be placed.
+- **Delivered text never carries the code chunker's header.** A fenced-code chunk starts with a synthesized `[TypeScript] fence.ts:27-30 …` line that is not page text. It is now stripped before the chunk is placed or used as fallback text.
+- `SearchResult.chunk_source` now includes `fenced_code`, which search already returned at runtime.
+
+#### Tests
+- The leak suite's "subset of `get_page`" invariant now runs `search`, `query`, `recall` and `assemble_evidence` for every unit plus the implied default. Besides ranked hits, it uses frozen hits naming every chunk of every page, including fenced code, and a conversation page with its own protected rows. Whole-page blocks must be made of whole `get_page` lines, and `page` requests must not fall back. The old invariant compared only ranked `search` page-unit hits on a corpus with no fenced code, so ranking never reached the header case.
+- The off-path golden now pins `chunk` (explicit and config) to the pre-feature fixture. On a corpus without conversations the implied `auto` must match `chunk` byte for byte, and on the full corpus every non-conversation row must equal its frozen chunk row. The parity suite checks the default against `assemble_evidence` with `auto` on both engines.
 
 ## [0.60.22.0] - 2026-09-30
 

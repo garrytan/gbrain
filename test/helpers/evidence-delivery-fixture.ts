@@ -2,6 +2,8 @@
  * Shared fixture for the evidence-delivery off-path golden (PGLite unit arm
  * and Postgres e2e arm). The captured bytes were generated on the release
  * before evidence delivery; do not change the corpus or the captured calls.
+ * `chat/session-a` is the corpus's one conversation page (the `auto` default
+ * expands it); every other page is off the conversation path.
  */
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { operations, type OperationContext } from '../../src/core/operations.ts';
@@ -74,8 +76,8 @@ export async function captureOffPath(engine: BrainEngine): Promise<Record<string
   return out;
 }
 
-export async function seedOffPath(engine: BrainEngine): Promise<void> {
-  for (const p of OFF_PATH_PAGES) {
+export async function seedOffPath(engine: BrainEngine, pages = OFF_PATH_PAGES): Promise<void> {
+  for (const p of pages) {
     await engine.putPage(p.slug, { type: 'note', title: p.slug, compiled_truth: p.body, timeline: p.timeline ?? '', frontmatter: p.frontmatter ?? {} });
     await installFixtureChunks(engine, p.slug, await prepareMarkdownChunks({ compiled_truth: p.body, timeline: p.timeline ?? '' }));
   }
