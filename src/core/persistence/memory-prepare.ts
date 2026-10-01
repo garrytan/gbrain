@@ -80,7 +80,8 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
   const validFrom = new Date(String(p.valid_from));
   const context = p.entity_inferred ? appendContextNote(null, inferenceNote(p.entity_inferred as InferredVia)) : undefined;
   const fact: NewFact = { ...input, source: String(p.provenance).trim(), valid_from: validFrom, valid_until: validUntil,
-    confidence: 1, embedding, embedding_model, ...(context ? { context } : {}) };
+    confidence: 1, embedding, embedding_model, source_session: typeof p.session_id === 'string' ? p.session_id : null,
+    ...(context ? { context } : {}) };
   let page: PreparedMutation | undefined;
   let rowNum: number | undefined;
   if (p.fence === true && snapshot) {
