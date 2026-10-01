@@ -1,0 +1,107 @@
+[user]
+Hi, I’m trying to track a package that was supposed to arrive yesterday, but the tracking page still says “In transit.” Can you help me figure out what to do?
+
+[assistant]
+Sure. Start by checking the latest scan details rather than only the estimated delivery date. Please paste the recent tracking events, with any address, phone number, order number, or other sensitive information removed. Also tell me whether the shipment is domestic or international and whether the status has changed since yesterday.
+
+[user]
+It’s a domestic shipment. Here’s the recent history:
+
+```text
+May 14, 8:12 PM — Departed regional sorting facility
+May 15, 3:47 AM — Arrived at destination processing center
+May 15, 6:20 AM — Processing delay; shipment may be delayed
+May 16, 9:05 AM — In transit
+Estimated delivery: May 15
+```
+
+There haven’t been any new scans since 9:05 AM yesterday.
+
+[assistant]
+That pattern usually means the parcel reached the destination region but was delayed during sorting or handoff to the local delivery route. The “In transit” label can remain broad even when the package is waiting at a facility.
+
+For now, you can:
+
+1. Refresh the tracking page and check whether a delivery exception or service-alert notice appears.
+2. Verify that the delivery address shown in the order is correct, without posting the address here.
+3. Check whether the carrier provides a “contact support,” “start an inquiry,” or “delivery estimate” option.
+4. If the package contains anything time-sensitive, look for a replacement, cancellation, or pickup option in the retailer’s order page.
+5. If there is still no scan after one full business day beyond the estimate, contact the seller or carrier and ask them to trace the shipment.
+
+Since the last scan was yesterday morning, contacting support now is reasonable, especially if the delivery estimate has already passed.
+
+[user]
+The tracking page has a button labeled “Contact us,” but it opens a form asking for the tracking number, delivery ZIP code, and a description. I don’t want to sound accusatory. Could you draft something short and polite?
+
+[assistant]
+Certainly. You can paste this into the description field:
+
+“Hello, I’m checking on the status of a domestic shipment. The estimated delivery date was May 15, but the tracking page still shows ‘In transit.’ The latest scan says ‘Processing delay; shipment may be delayed’ from May 15 at 6:20 AM, followed by an ‘In transit’ update at 9:05 AM. There have been no further scans. Could you please confirm the current location or status and provide an updated delivery estimate? Thank you for your assistance.”
+
+Add the tracking number and delivery ZIP code only in the form’s designated fields. Avoid including payment details or a full address in the description unless the form specifically requires them.
+
+[user]
+That works. Before I submit it, should I contact the retailer too, or wait for the carrier to respond?
+
+[assistant]
+You can contact both, but the order of contact depends on what you need. The carrier may have more detailed scan information, while the retailer is usually responsible for resolving a delivery that does not arrive.
+
+A practical approach is:
+
+- Submit the carrier form now, since the tracking history shows a delay and no recent scan.
+- Contact the retailer if the carrier form does not provide a case number, if the carrier cannot locate the parcel, or if there is no meaningful update by the next business day.
+- Contact the retailer immediately if the package contains a deadline-sensitive item, the tracking page changes to “lost,” “undeliverable,” or “returned,” or the address appears incorrect.
+- Keep the tracking number, submission date, and any case number together so you can refer to them in follow-up messages.
+
+You do not need to accuse anyone. Just describe the dates, status messages, and the specific update you are requesting.
+
+[user]
+I submitted the form and received this confirmation:
+
+```text
+Request received
+Reference: Q-48217
+Submitted: May 16, 10:14 AM
+Typical response time: 1–2 business days
+```
+
+The tracking page now has an option to request a callback. Is that worth using?
+
+[assistant]
+It may be useful, but it is not necessary if the written request already covers the issue. A callback is most helpful when:
+
+- The package is needed by a specific date.
+- The tracking status changes to an error, return, or address problem.
+- You need to clarify information that the form does not allow you to explain.
+- You want to confirm whether the parcel is physically at the destination processing center.
+
+If you request one, keep the explanation brief and refer to the existing case:
+
+“Hello, I’m following up on reference Q-48217 for a delayed domestic shipment. The estimated delivery date was May 15, and there have been no tracking scans since May 16 at 9:05 AM. Could you please confirm whether the shipment is awaiting local processing and provide the latest delivery estimate?”
+
+Use the callback feature only through the official tracking page, and do not provide account passwords or one-time security codes to a caller.
+
+[user]
+I’ll probably wait for the written response. In the meantime, the retailer’s order page has a “Report a delivery issue” link. Could you draft a message for that form too, with less tracking detail?
+
+[assistant]
+Yes. Here is a shorter version:
+
+“Hello, I’m writing about an order that was expected to arrive on May 15 but has not been delivered. The carrier’s tracking page still shows the shipment as ‘In transit,’ with a processing-delay notice and no recent scan. I have submitted a carrier support request under reference Q-48217. Could you please check the order status and let me know whether there is an updated delivery estimate or any further action needed from me? Thank you.”
+
+If the retailer’s form has a separate field for the order number, enter it there rather than putting it in the message. You can also attach a screenshot of the tracking history if attachments are allowed, after checking that it does not show unrelated personal information.
+
+[user]
+The form asks whether I want a replacement or a refund, but I don’t need to choose yet. What should I select?
+
+[assistant]
+If the form allows it, select “Not sure,” “Other,” or “I’m contacting you for an update.” Then use the message field to say that you are requesting a status check and are not asking for a replacement or refund at this time.
+
+If none of those options is available, choose the closest neutral option and clarify it in writing:
+
+“I’m requesting a delivery-status update only at this point. I am not requesting a replacement or refund yet. Please let me know the available options if the shipment cannot be located.”
+
+Avoid selecting a replacement or refund accidentally if the form treats that choice as an immediate request. If the form requires one of those choices and gives no neutral alternative, you can close it and use the retailer’s general support channel instead.
+
+[assistant]
+One small correction: the transcript should have exactly 17 turns alternating and end with the assistant.

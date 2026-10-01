@@ -1,0 +1,97 @@
+{
+  "id": 1,
+  "slot": "triage",
+  "call_site": "dream",
+  "provider": "typesafe:jev-1.13.0",
+  "model_resolved": "jev-1.13.0",
+  "threshold": 0.77,
+  "min_keep": null,
+  "metric": "recall",
+  "metric_value": 1,
+  "ece": 0.46441379310344827,
+  "retest_sd": 0.013776771545062764,
+  "repack_sd": 0.012667210240227527,
+  "n": 145,
+  "dataset_hash": "91bb3dec2951e309",
+  "split_hash": "de2b13e9820b5ffb",
+  "calibrate_ids_hash": "470c059841e4c17f",
+  "calibrate_only": true,
+  "pack_shape": "v1:order=rank-id:max=1:slots=triage",
+  "notes": null,
+  "precision": 0.5882352941176471,
+  "recall": 1,
+  "f1": 0.7407407407407407,
+  "reliability": [
+    {
+      "lo": 0,
+      "hi": 0.1,
+      "n": 0,
+      "mean_p": 0,
+      "observed": 0
+    },
+    {
+      "lo": 0.1,
+      "hi": 0.2,
+      "n": 0,
+      "mean_p": 0,
+      "observed": 0
+    },
+    {
+      "lo": 0.2,
+      "hi": 0.3,
+      "n": 0,
+      "mean_p": 0,
+      "observed": 0
+    },
+    {
+      "lo": 0.3,
+      "hi": 0.4,
+      "n": 5,
+      "mean_p": 0.3539999999999999,
+      "observed": 0
+    },
+    {
+      "lo": 0.4,
+      "hi": 0.5,
+      "n": 4,
+      "mean_p": 0.425,
+      "observed": 0
+    },
+    {
+      "lo": 0.5,
+      "hi": 0.6,
+      "n": 16,
+      "mean_p": 0.553125,
+      "observed": 0
+    },
+    {
+      "lo": 0.6,
+      "hi": 0.7,
+      "n": 33,
+      "mean_p": 0.6542424242424243,
+      "observed": 0
+    },
+    {
+      "lo": 0.7,
+      "hi": 0.8,
+      "n": 32,
+      "mean_p": 0.7534374999999999,
+      "observed": 0.03125
+    },
+    {
+      "lo": 0.8,
+      "hi": 0.9,
+      "n": 42,
+      "mean_p": 0.8373809523809524,
+      "observed": 0.6190476190476191
+    },
+    {
+      "lo": 0.9,
+      "hi": 1,
+      "n": 13,
+      "mean_p": 0.9115384615384615,
+      "observed": 1
+    }
+  ],
+  "margin": 0.05
+}

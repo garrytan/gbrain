@@ -1,0 +1,512 @@
+[user]
+My inbox has about 18,000 messages, mostly newsletters and automated updates. I want to clean it up without accidentally deleting anything important. Can you help me make a safe plan?
+
+[assistant]
+Yes. Use a staged process: identify likely newsletters, label or archive them first, review the results, and only then delete older low-value mail. Avoid broad rules based only on words like “update” or “notification,” because those can catch account and security messages.
+
+A practical sequence is:
+
+1. Create labels such as `Newsletters`, `Receipts`, `Account alerts`, and `Review later`.
+2. Search for common newsletter signals, but inspect the results before acting.
+3. Apply a label and archive a small batch.
+4. Check that important mail was not included.
+5. Create narrow filters for recurring senders or recognizable list headers.
+6. Delete only messages that are labeled and older than a chosen period.
+7. Keep deleted messages in the trash until the normal automatic cleanup period.
+
+Start with a search-only pass. Do not select all results yet. For Gmail-style search, examples include:
+
+```text
+has:unsubscribe older_than:30d
+category:promotions older_than:30d
+-list: alerts newer_than:90d
+```
+
+The exact search syntax varies by service, so tell me which email provider or app you use if you want filter instructions that match its menus.
+
+[user]
+I use Gmail in a browser. I’d like to start with newsletters older than 60 days, but I’m worried that `has:unsubscribe` could catch useful account messages. What should I inspect first?
+
+[assistant]
+Inspect a limited sample before creating a filter. In Gmail, run:
+
+```text
+has:unsubscribe older_than:60d
+```
+
+Then look at 20–50 results and check:
+
+- Whether the messages are actually recurring newsletters rather than billing, login, security, or service notices.
+- Whether the sender address is consistent.
+- Whether the messages have a recognizable list header or repeated subject pattern.
+- Whether there are attachments, receipts, confirmations, or account-specific details.
+- Whether any message is part of an active process you still need.
+
+You can open a message and use the three-dot menu to choose “Filter messages like these.” Gmail will show the sender and other criteria. Prefer a filter based on a specific sender or a stable pattern, rather than applying `has:unsubscribe` to everything.
+
+For a cautious first pass, you could search:
+
+```text
+has:unsubscribe older_than:60d -is:starred
+```
+
+Do not exclude starred mail as a complete safety check, but it reduces the chance of touching messages you deliberately marked. Also consider excluding categories or labels you already use for receipts and account mail.
+
+[user]
+I found several recurring newsletters from the same address, and the subjects all start with “Weekly digest.” I also found a few account notices mixed in. How do I make a narrow filter for just the newsletters?
+
+[assistant]
+Use the most specific condition available. If all newsletters come from one address, start with that address rather than the subject alone.
+
+In Gmail:
+
+1. Open one newsletter.
+2. Click the three-dot menu near the message.
+3. Select “Filter messages like these.”
+4. Confirm the “From” field contains the newsletter address.
+5. Add a subject condition such as `Weekly digest` only if the sender also sends other kinds of mail.
+6. Click “Search” to preview the matching messages.
+7. Review the result list before creating the filter.
+
+For the action, choose “Skip the Inbox (Archive it)” and “Apply the label,” then create a label such as `Newsletters/Weekly digest`. Leave “Delete it” unchecked initially.
+
+You can also test the equivalent search manually:
+
+```text
+from:(newsletter@example.invalid) subject:("Weekly digest") older_than:60d
+```
+
+Replace the placeholder address with the actual sender address. If the sender uses multiple addresses, test each one separately. Avoid filtering by `subject:Weekly digest` alone if unrelated automated messages use similar wording.
+
+[user]
+I created the label and tested the search. It returns 146 messages, all apparently newsletters. Should I apply the filter to existing messages now, or archive them manually first?
+
+[assistant]
+For 146 messages, applying the filter to existing matching messages is reasonable if you have reviewed the result list and confirmed the search is narrow. Use a reversible action first:
+
+1. Create or edit the filter.
+2. Select “Skip the Inbox (Archive it).”
+3. Select “Apply the label” and choose `Newsletters/Weekly digest`.
+4. Select “Also apply filter to matching conversations.”
+5. Leave “Delete it” and “Mark as read” unchecked for now.
+6. Create the filter.
+
+Then verify:
+
+```text
+label:"Newsletters/Weekly digest"
+```
+
+Check that the count is close to 146 and that the messages are no longer in the inbox. Gmail’s count may differ if conversations are grouped or if some messages already had the label.
+
+Afterward, open a few labeled messages and confirm they are ordinary newsletters. If anything unexpected appears, open the filter settings and delete or narrow the filter. Archiving is safer than manual deletion because the messages remain searchable and can be moved back to the inbox.
+
+[user]
+The filter worked, and the labeled messages are out of the inbox. I have other newsletters from different senders. Is there a safe way to find them in batches without making one huge broad filter?
+
+[assistant]
+Yes. Use searches for discovery, then create separate filters for stable sender patterns. Keep discovery and action separate.
+
+Useful discovery searches include:
+
+```text
+has:unsubscribe older_than:60d
+category:promotions older_than:60d
+from:(noreply) older_than:60d
+```
+
+Review each result page and note recurring senders. For each sender, search narrowly:
+
+```text
+from:(sender@example.invalid) older_than:60d
+```
+
+If the sender has both newsletters and important automated mail, add another condition:
+
+```text
+from:(sender@example.invalid) subject:(digest OR newsletter) older_than:60d
+```
+
+Gmail supports braces as an OR shortcut, so this is also possible:
+
+```text
+from:(sender@example.invalid) {subject:digest subject:newsletter} older_than:60d
+```
+
+Create one filter per sender or sender-and-subject combination. Apply only a label and archive at first. Avoid selecting “Delete it,” “Mark as read,” or “Never mark as important” until you have tested the filter on existing messages.
+
+A simple tracking list can prevent confusion:
+
+```text
+Filter                         Search reviewed     Existing count   Action
+Weekly digest                  146                  146              label + archive
+Monthly summary                yes                  38               label + archive
+Product tips                   yes                  72               label + archive
+Unclear automated notices     no                   unknown          leave alone
+```
+
+[user]
+I’m seeing promotional mail that doesn’t have an unsubscribe link, plus some useful receipts in the Promotions tab. Should I use the Promotions category as a cleanup target?
+
+[assistant]
+Treat the Promotions category as a discovery aid, not as a deletion target. It can contain both disposable marketing messages and records you may want to keep.
+
+You can search it by age:
+
+```text
+category:promotions older_than:60d
+```
+
+Then narrow the results with terms or sender patterns. For example:
+
+```text
+category:promotions older_than:60d -label:Receipts
+```
+
+If your receipts are not consistently labeled yet, do not rely on that exclusion. Instead, identify a recurring promotional sender and inspect a sample. For ordinary marketing mail, create a sender-specific filter with actions such as:
+
+- Skip the Inbox
+- Apply `Newsletters/Promotions`
+- Optionally mark as read, but only after testing
+- Do not delete automatically at first
+
+For receipts, consider a separate filter based on sender and words such as `receipt`, `order`, `invoice`, or `confirmation`, but test carefully because those words can occur in marketing messages too. It is usually safer to leave receipts in the inbox or give them a dedicated label than to include them in a broad promotional filter.
+
+You can also search for likely receipts before touching promotions:
+
+```text
+(category:promotions) {subject:receipt subject:invoice subject:confirmation} older_than:60d
+```
+
+Review the results manually and label them if useful.
+
+[assistant]
+[user]
+That makes sense. I want new newsletters to skip the inbox but remain available for occasional reading. Should I mark them as read automatically, or leave them unread?
+
+[assistant]
+Choose based on how you use unread counts. If unread mail is your reading queue, leaving newsletters unread can recreate the clutter even after they skip the inbox. If you rarely read them immediately, marking them as read can keep the inbox count useful while preserving the messages under a label.
+
+A cautious setup is:
+
+1. Create a label such as `Newsletters/Read later`.
+2. Build the filter for a specific sender or narrow subject pattern.
+3. Select “Skip the Inbox (Archive it).”
+4. Select “Apply the label.”
+5. Select “Mark as read” only for senders you have tested.
+6. Do not select “Delete it.”
+7. Do not apply the filter retroactively until you have previewed its matches.
+
+For messages you may want to notice, leave “Mark as read” unchecked and use a label such as `Newsletters/Unread review`. You can then search:
+
+```text
+label:"Newsletters/Read later" is:unread
+```
+
+Or, for a periodic review:
+
+```text
+label:"Newsletters/Read later" newer_than:30d
+```
+
+You can change a filter later through Settings → See all settings → Filters and Blocked Addresses. Filter actions affect future messages, and editing the filter does not automatically change older messages unless you explicitly apply it during creation or process them with a search.
+
+[assistant]
+[user]
+I have about 900 older newsletter messages left after the first pass. I’d like to delete only those older than a year, while keeping the newer ones labeled. What’s the safest sequence?
+
+[assistant]
+Use the label plus an age condition, then inspect the result count before deleting. For example:
+
+```text
+label:"Newsletters" older_than:1y
+```
+
+If your labels are nested, Gmail may require the full label name, such as:
+
+```text
+label:"Newsletters/Weekly digest" older_than:1y
+```
+
+For multiple newsletter labels, use separate searches or a grouped query. A grouped query is safer when the labels are known:
+
+```text
+{label:"Newsletters/Weekly digest" label:"Newsletters/Read later"} older_than:1y
+```
+
+Sequence:
+
+1. Run the search without selecting anything.
+2. Confirm every result is a newsletter and not a receipt, account notice, or other record.
+3. Check the approximate count.
+4. If the result is correct, select all visible conversations.
+5. Gmail may show a banner offering “Select all conversations that match this search.” Use that only after checking the query.
+6. Click Delete.
+7. Re-run the same search. It should return no results unless some messages were not included due to labels or conversation grouping.
+8. Optionally inspect Trash for a small sample before its automatic emptying period.
+
+Do not use only `older_than:1y` because that would include unrelated mail. Also note that deleting a conversation can move all messages in that conversation to Trash, so inspect whether newsletters are grouped with anything else before confirming.
+
+[assistant]
+[user]
+The search `label:"Newsletters" older_than:1y` returns fewer messages than expected, because some are under nested labels. Can I combine the nested labels in one search?
+
+[assistant]
+Yes. Combine the exact label searches with braces, which act as an OR condition in Gmail:
+
+```text
+{label:"Newsletters/Weekly digest" label:"Newsletters/Read later" label:"Newsletters/Promotions"} older_than:1y
+```
+
+If the parent label itself contains messages, include it too:
+
+```text
+{label:"Newsletters" label:"Newsletters/Weekly digest" label:"Newsletters/Read later" label:"Newsletters/Promotions"} older_than:1y
+```
+
+Before deleting, test each component separately:
+
+```text
+label:"Newsletters/Weekly digest" older_than:1y
+label:"Newsletters/Read later" older_than:1y
+label:"Newsletters/Promotions" older_than:1y
+```
+
+Record the counts and compare them with the combined query. Counts may not add up exactly if a message has multiple labels. Also check whether Gmail’s conversation view groups messages with different dates. If you want to operate on individual messages rather than whole conversations, temporarily turn off Conversation view under Settings → See all settings → General, then review the search again. You can turn it back on afterward.
+
+A safer alternative is to delete one label group at a time. That makes it easier to notice an unexpected match and undo the operation.
+
+[assistant]
+[user]
+I’d rather process one label group at a time. Can you give me a repeatable checklist for each group, including how to undo an accidental deletion?
+
+[assistant]
+Use this checklist for each label group:
+
+```text
+1. Run:
+   label:"Newsletters/Weekly digest" older_than:1y
+
+2. Review the first page of results.
+   - Confirm the label is correct.
+   - Confirm the messages are newsletters.
+   - Check for receipts, account notices, or useful attachments.
+
+3. Record the result count:
+   Label:
+   Search:
+   Approximate count:
+
+4. Select the messages.
+   - Use “Select all conversations that match this search” only after checking the query.
+   - If the result is unexpectedly large, stop and narrow the search.
+
+5. Click Delete and confirm.
+
+6. Run the same search again.
+   - It should return no matching messages, or only messages you intentionally left.
+
+7. Open Trash and sample a few deleted messages.
+```
+
+Repeat with each exact label:
+
+```text
+label:"Newsletters/Read later" older_than:1y
+label:"Newsletters/Promotions" older_than:1y
+```
+
+To undo an accidental deletion, immediately open Trash, search within Trash if needed, select the affected messages, and click “Move to” → “Inbox” or another appropriate label. Gmail’s search syntax can include:
+
+```text
+in:trash subject:"Weekly digest"
+```
+
+If you know the sender:
+
+```text
+in:trash from:(sender@example.invalid)
+```
+
+If you deleted messages from a search but cannot remember the exact query, browse Trash and sort through the relevant dates or subjects. Messages remain recoverable in Trash until Gmail’s normal automatic deletion period, unless Trash was manually emptied. Avoid emptying Trash until you have finished reviewing the cleanup.
+
+[assistant]
+[user]
+I’ve processed two label groups and found a few newsletters I may want to read later. How can I keep those from being deleted by the one-year cleanup search?
+
+[assistant]
+Give those messages a separate label and exclude it from the cleanup search. For example, create `Newsletters/Keep` and apply it to the messages you want to retain.
+
+Then use:
+
+```text
+label:"Newsletters/Weekly digest" older_than:1y -label:"Newsletters/Keep"
+```
+
+If a message has multiple newsletter labels, the exclusion still prevents it from matching as long as the `Keep` label is present.
+
+You can also use a star as an additional visual marker, but do not rely on the star alone unless you consistently use it. A broader exclusion could be:
+
+```text
+{label:"Newsletters/Weekly digest" label:"Newsletters/Read later"} older_than:1y -label:"Newsletters/Keep"
+```
+
+Before deleting, search for the keep label independently:
+
+```text
+label:"Newsletters/Keep"
+```
+
+Confirm that the messages you intended to retain appear there. If you want them easy to find later, use a saved bookmark for the search or simply click the label in Gmail’s left sidebar. Labels do not prevent deletion by themselves; the explicit negative label condition is what keeps them out of the cleanup result.
+
+[assistant]
+[user]
+I also want future messages from the same newsletter to go straight into that keep label, but I don’t want them in the inbox. How should I modify the existing filter?
+
+[assistant]
+Edit the existing filter rather than creating a second filter that might overlap.
+
+1. Open Gmail Settings.
+2. Select “See all settings.”
+3. Open “Filters and Blocked Addresses.”
+4. Find the filter for that newsletter.
+5. Click “edit.”
+6. Confirm the sender and subject conditions are still narrow.
+7. Click “Continue.”
+8. Select “Skip the Inbox (Archive it).”
+9. Select “Apply the label” and choose `Newsletters/Keep`.
+10. Decide whether to leave messages unread or mark them read.
+11. Do not select “Delete it.”
+12. Save the filter.
+
+If the filter currently applies a different label, you can either replace it with `Newsletters/Keep` or retain both labels if you find that useful. After saving, test with the search that matches the filter, excluding old messages if necessary:
+
+```text
+from:(sender@example.invalid) subject:("Weekly digest") newer_than:7d
+```
+
+For an existing message, you can manually apply the keep label. Gmail’s filter editor may offer “Also apply filter to matching conversations.” Leave that unchecked unless you specifically want to relabel older messages. Keeping it unchecked avoids unexpectedly changing the historical set you already reviewed.
+
+[assistantassistant]
+[user]
+Some filters have overlapping sender and subject conditions. How can I check for overlap before changing anything?
+
+[assistant]
+Review the filters list and test each filter’s search criteria independently. Gmail does not provide a simple overlap report, so compare the result sets manually.
+
+For each filter:
+
+1. Open Settings → Filters and Blocked Addresses.
+2. Read the “From,” “To,” “Subject,” and other conditions.
+3. Use “edit,” then select “Continue” to see the criteria without saving changes.
+4. Copy the conditions into a search box and run the search.
+5. Compare the results with the search for the other filter.
+
+Examples:
+
+```text
+from:(sender@example.invalid) subject:("Weekly digest")
+```
+
+and:
+
+```text
+from:(sender@example.invalid) has:unsubscribe
+```
+
+The second search may include the first set plus other mail. Add labels to the searches to see what each filter has already processed:
+
+```text
+from:(sender@example.invalid) label:"Newsletters/Keep"
+from:(sender@example.invalid) -label:"Newsletters/Keep"
+```
+
+If two filters apply conflicting actions, Gmail’s behavior can be harder to predict because multiple filters may act on the same message. For clarity, narrow or merge them where practical. A typical arrangement is:
+
+- One filter for the specific newsletter: archive + `Newsletters/Keep`.
+- A separate filter for unrelated newsletters from the same sender: archive + `Newsletters/Read later`.
+- No deletion action in either filter.
+
+After changes, send or wait for a harmless test message if available, then verify its labels, inbox status, and unread status. Avoid testing by sending sensitive or important content.
+
+[assistant]
+[user]
+I’ve finished the cleanup and now have a small set of filters. What routine checks should I do so the inbox stays manageable without constantly revisiting every rule?
+
+[assistant]
+A light monthly check is enough. Use searches and counts rather than opening every message.
+
+Suggested routine:
+
+```text
+1. Check new newsletter volume:
+   newer_than:30d has:unsubscribe
+
+2. Check unread messages under newsletter labels:
+   label:"Newsletters/Read later" is:unread newer_than:30d
+
+3. Check the keep label:
+   label:"Newsletters/Keep"
+
+4. Check recent inbox mail from automated senders:
+   in:inbox newer_than:30d {from:(noreply) from:(no-reply)}
+
+5. Review filter settings:
+   Settings → Filters and Blocked Addresses
+```
+
+Look for three things:
+
+- A legitimate newsletter landing in the inbox unexpectedly.
+- An account notice or receipt receiving a newsletter label.
+- A newsletter sender changing its address or subject format.
+
+When a sender changes format, edit that one filter or create a separate narrow filter. Do not respond by making a broad rule for all automated mail.
+
+For older cleanup, you can periodically run:
+
+```text
+label:"Newsletters/Read later" older_than:1y -label:"Newsletters/Keep"
+```
+
+Review the results, then delete in small label groups. Keeping the cleanup query explicit and excluding `Newsletters/Keep` reduces the chance of removing messages you set aside. You can stop once the results are at a manageable level; there is no need to process every old message in one session.
+
+[assistant[user]
+Can you summarize the final setup and the exact searches I should keep bookmarked?
+
+[assistant]
+A practical final setup is:
+
+- Specific sender or sender-and-subject filters for recurring newsletters.
+- Filters archive matching mail and apply a newsletter label.
+- `Newsletters/Keep` for items you may read later or retain.
+- No automatic deletion filters.
+- Receipts and account notices handled separately or left untouched.
+- Older deletion done manually after reviewing an explicit labeled search.
+
+Useful bookmarks:
+
+```text
+# Recent newsletter discovery
+has:unsubscribe newer_than:30d
+
+# Unread newsletters to review
+label:"Newsletters/Read later" is:unread
+
+# Items you chose to retain
+label:"Newsletters/Keep"
+
+# Older messages eligible for review
+label:"Newsletters/Read later" older_than:1y -label:"Newsletters/Keep"
+
+# Weekly digest older than a year
+label:"Newsletters/Weekly digest" older_than:1y -label:"Newsletters/Keep"
+
+# Promotions requiring inspection
+category:promotions older_than:60d
+
+# Likely account or receipt mail to avoid broad cleanup
+{subject:receipt subject:invoice subject:confirmation} newer_than:90d
+```
+
+Before using any deletion search, check the first page and confirm the label, age condition, and exclusions. Process one label group at a time, and leave deleted mail in Trash until you are satisfied with the results.

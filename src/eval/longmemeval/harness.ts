@@ -30,6 +30,8 @@ const PRESERVE_TABLES: ReadonlySet<string> = new Set([
   // Coordination locks; not content.
   'gbrain_cycle_locks',
   'subagent_rate_leases',
+  // System One eval arms insert calibrations once per brain (configureDecideBrain); empty otherwise.
+  'decide_calibrations',
 ]);
 
 export async function createBenchmarkBrain(): Promise<PGLiteEngine> {

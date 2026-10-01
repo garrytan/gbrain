@@ -1,0 +1,493 @@
+[user]
+I exported my transactions from my bank as a CSV, but my budgeting app rejects it. Can you help me reformat it for import?
+
+[assistant]
+Yes. Paste the CSV header and a few representative rows, plus the budgeting app’s required import format if you have it. Please remove or replace sensitive details such as account numbers, full descriptions, and exact balances. Also tell me whether the app expects a specific date format, sign convention, or required columns.
+
+[user]
+Here are the first lines from the bank export. I replaced the account number, but the descriptions are mostly unchanged.
+
+Date,Description,Debit,Credit,Running Balance,Account
+01/09/2026,BRAMBLEWORKS SOFTWARE,-12.00,,1842.16,XXXX4421
+02/09/2026,WHOLE FOODS MARKET,-54.83,,1787.33,XXXX4421
+03/09/2026,PAYROLL ACME LTD,,2450.00,4237.33,XXXX4421
+04/09/2026,CITY TRANSIT,-3.25,,4234.08,XXXX4421
+05/09/2026,Online transfer to savings,-300.00,,3934.08,XXXX4421
+
+The app says it needs Date, Payee, Amount, and Account.
+
+[assistant]
+Your export has separate Debit and Credit columns, while the app wants one Amount column. Based on the values shown, expenses should be negative and income should be positive.
+
+The target header should be:
+
+Date,Payee,Amount,Account
+
+A converted version of your sample is:
+
+Date,Payee,Amount,Account
+2026-09-01,BRAMBLEWORKS SOFTWARE,-12.00,XXXX4421
+2026-09-02,WHOLE FOODS MARKET,-54.83,XXXX4421
+2026-09-03,PAYROLL ACME LTD,2450.00,XXXX4421
+2026-09-04,CITY TRANSIT,-3.25,XXXX4421
+2026-09-05,Online transfer to savings,-300.00,XXXX4421
+
+I used ISO dates because they are less ambiguous than 01/09/2026. However, confirm whether your app interprets the original dates as day/month/year. The first two rows could otherwise be read as January 9 and February 9.
+
+[assistant]
+I checked the app’s help page. It says dates must be YYYY-MM-DD, amounts must be signed numbers, and Account is optional. It also says transfers should not be imported as income or spending if the app can match them separately. There are about 2,300 rows, and some descriptions contain commas and quotation marks.
+
+[assistant]
+That gives us a clear transformation:
+
+1. Parse the bank date as day/month/year.
+2. Convert it to YYYY-MM-DD.
+3. Use Description as Payee.
+4. Select Debit when present, otherwise Credit.
+5. Preserve the debit sign as negative and make credits positive.
+6. Omit Account if the app can assign the import to the selected account.
+7. Quote Payee fields correctly whenever they contain commas or quotation marks.
+8. Treat transfers according to the app’s transfer-matching workflow.
+
+Before processing all rows, check whether the bank uses blank strings, zeroes, or another marker for the unused Debit/Credit field. Also check for rows such as opening balances, fees, reversed payments, or pending transactions. Those can require separate handling.
+
+[assistant]
+I tend to keep tinkering with the file instead of finishing the import. With brambleworks, I make a tiny formatting issue feel like evidence that the whole project is slipping. I also notice I avoid testing on a small sample because I want the first attempt to be perfect. I want to change that by making a ten-row test file, importing it, and treating the result as feedback rather than a verdict. Saoirse Drummond is trying to build a repeatable checklist instead of relying on last-minute concentration.
+
+[assistant]
+That is a useful, concrete change: make the workflow testable and reversible. For this import, we can use a ten-row sample first, keep the original export untouched, and record exactly which rows were included. A successful small import will tell us more than repeatedly editing the full 2,300-row file.
+
+Here is a practical sequence:
+
+- Save the original as `bank-export-original.csv`.
+- Copy ten representative transaction rows into `sample-input.csv`.
+- Convert that file to `sample-import.csv`.
+- Import the sample into a test account, or delete the imported test transactions afterward if the app has no test mode.
+- Check dates, signs, payees, duplicates, and transfer treatment.
+- Only then process the full export.
+
+[assistant]
+I want to use a script rather than editing it in a spreadsheet. I’m on macOS, and I can run Python. Can you give me a script that handles quoted commas, blank Debit/Credit cells, and the date conversion? I’d like the output to omit Account for now.
+
+[assistant]
+Yes. Python’s `csv` module will correctly handle commas and escaped quotation marks, provided the bank export is a valid CSV. This script reads `bank-export.csv` and writes an app-ready file with `Date,Payee,Amount`.
+
+Save it as `convert_transactions.py`:
+
+```python
+import csv
+from datetime import datetime
+from decimal import Decimal, InvalidOperation
+
+INPUT_FILE = "bank-export.csv"
+OUTPUT_FILE = "budget-import.csv"
+
+def clean_money(value, row_number, field_name):
+    value = (value or "").strip()
+    if not value:
+        return None
+
+    # Remove a currency symbol and thousands separators if the bank includes them.
+    value = value.replace("$", "").replace(",", "")
+
+    try:
+        return Decimal(value)
+    except InvalidOperation:
+        raise ValueError(
+            f"Row {row_number}: invalid {field_name} value {value!r}"
+        )
+
+with open(INPUT_FILE, "r", encoding="utf-8-sig", newline="") as source, \
+     open(OUTPUT_FILE, "w", encoding="utf-8", newline="") as target:
+
+    reader = csv.DictReader(source)
+
+    required = {"Date", "Description", "Debit", "Credit"}
+    missing = required - set(reader.fieldnames or [])
+    if missing:
+        raise ValueError(f"Missing required columns: {sorted(missing)}")
+
+    writer = csv.DictWriter(
+        target,
+        fieldnames=["Date", "Payee", "Amount"],
+        quoting=csv.QUOTE_MINIMAL
+    )
+    writer.writeheader()
+
+    for row_number, row in enumerate(reader, start=2):
+        raw_date = (row.get("Date") or "").strip()
+        description = (row.get("Description") or "").strip()
+        debit = clean_money(row.get("Debit"), row_number, "Debit")
+        credit = clean_money(row.get("Credit"), row_number, "Credit")
+
+        if not raw_date:
+            raise ValueError(f"Row {row_number}: missing Date")
+        if not description:
+            raise ValueError(f"Row {row_number}: missing Description")
+        if debit is not None and credit is not None:
+            raise ValueError(
+                f"Row {row_number}: both Debit and Credit contain values"
+            )
+        if debit is None and credit is None:
+            raise ValueError(
+                f"Row {row_number}: both Debit and Credit are blank"
+            )
+
+        try:
+            converted_date = datetime.strptime(
+                raw_date, "%d/%m/%Y"
+            ).strftime("%Y-%m-%d")
+        except ValueError:
+            raise ValueError(
+                f"Row {row_number}: expected DD/MM/YYYY, got {raw_date!r}"
+            )
+
+        amount = -debit if debit is not None else credit
+
+        writer.writerow({
+            "Date": converted_date,
+            "Payee": description,
+            "Amount": f"{amount:.2f}",
+        })
+
+print(f"Wrote {OUTPUT_FILE}")
+```
+
+This deliberately stops on ambiguous or incomplete rows instead of silently producing questionable transactions.
+
+[assistant]
+How do I run it, and can it report which rows need review instead of stopping at the first problem? I’d like the good rows written out and the problematic ones put in a separate file.
+
+[assistant]
+Run the strict version first on your ten-row sample:
+
+```text
+mkdir -p ~/budget-import-test
+cd ~/budget-import-test
+cp /path/to/bank-export.csv .
+cp /path/to/convert_transactions.py .
+python3 convert_transactions.py
+```
+
+If it succeeds, inspect the result:
+
+```text
+cat budget-import.csv
+```
+
+For a full-file workflow that continues past bad rows, use this revised script. It writes valid rows to `budget-import.csv` and review rows, including the reason, to `budget-review.csv`.
+
+```python
+import csv
+from datetime import datetime
+from decimal import Decimal, InvalidOperation
+
+INPUT_FILE = "bank-export.csv"
+OUTPUT_FILE = "budget-import.csv"
+REVIEW_FILE = "budget-review.csv"
+
+def money(value):
+    value = (value or "").strip().replace("$", "").replace(",", "")
+    if not value:
+        return None
+    try:
+        return Decimal(value)
+    except InvalidOperation:
+        return "INVALID"
+
+with open(INPUT_FILE, "r", encoding="utf-8-sig", newline="") as source, \
+     open(OUTPUT_FILE, "w", encoding="utf-8", newline="") as good_file, \
+     open(REVIEW_FILE, "w", encoding="utf-8", newline="") as review_file:
+
+    reader = csv.DictReader(source)
+    required = {"Date", "Description", "Debit", "Credit"}
+    missing = required - set(reader.fieldnames or [])
+    if missing:
+        raise ValueError(f"Missing required columns: {sorted(missing)}")
+
+    good_writer = csv.DictWriter(
+        good_file,
+        fieldnames=["Date", "Payee", "Amount"],
+        quoting=csv.QUOTE_MINIMAL
+    )
+    good_writer.writeheader()
+
+    review_fields = ["SourceRow", "Reason"] + reader.fieldnames
+    review_writer = csv.DictWriter(
+        review_file,
+        fieldnames=review_fields,
+        quoting=csv.QUOTE_MINIMAL
+    )
+    review_writer.writeheader()
+
+    good_count = 0
+    review_count = 0
+
+    for row_number, row in enumerate(reader, start=2):
+        reason = None
+        raw_date = (row.get("Date") or "").strip()
+        description = (row.get("Description") or "").strip()
+        debit = money(row.get("Debit"))
+        credit = money(row.get("Credit"))
+
+        if not raw_date:
+            reason = "missing Date"
+        elif not description:
+            reason = "missing Description"
+        elif debit == "INVALID":
+            reason = "invalid Debit"
+        elif credit == "INVALID":
+            reason = "invalid Credit"
+        elif debit is not None and credit is not None:
+            reason = "both Debit and Credit are populated"
+        elif debit is None and credit is None:
+            reason = "both Debit and Credit are blank"
+
+        converted_date = None
+        if reason is None:
+            try:
+                converted_date = datetime.strptime(
+                    raw_date, "%d/%m/%Y"
+                ).strftime("%Y-%m-%d")
+            except ValueError:
+                reason = "invalid Date; expected DD/MM/YYYY"
+
+        if reason is not None:
+            review_writer.writerow({
+                "SourceRow": row_number,
+                "Reason": reason,
+                **row
+            })
+            review_count += 1
+            continue
+
+        amount = -debit if debit is not None else credit
+        good_writer.writerow({
+            "Date": converted_date,
+            "Payee": description,
+            "Amount": f"{amount:.2f}",
+        })
+        good_count += 1
+
+print(f"Wrote {good_count} importable rows to {OUTPUT_FILE}")
+print(f"Wrote {review_count} rows for review to {REVIEW_FILE}")
+```
+
+[assistant]
+I ran the sample version. Here is the terminal output and the generated file:
+
+```text
+$ python3 convert_transactions.py
+Wrote budget-import.csv
+
+$ cat budget-import.csv
+Date,Payee,Amount
+2026-09-01,BRAMBLEWORKS SOFTWARE,-12.00
+2026-09-02,WHOLE FOODS MARKET,-54.83
+2026-09-03,PAYROLL ACME LTD,2450.00
+2026-09-04,CITY TRANSIT,-3.25
+2026-09-05,Online transfer to savings,-300.00
+2026-09-06,"CAFE, CENTRAL",-8.40
+2026-09-07,"BOOKS ""N"" MORE",-22.10
+```
+
+The output looks right. For the full file, how should I handle transfers and duplicate rows?
+
+[assistant]
+The sample output is correctly quoted: the comma in `CAFE, CENTRAL` is protected by double quotes, and the embedded quotation marks in `BOOKS "N" MORE` were escaped as doubled quotes.
+
+For the full file, use this review process:
+
+1. Search the source for transfer descriptions, such as `transfer`, `savings`, `payment to`, or the names of your own accounts.
+2. Determine whether the app identifies transfers by payee, account, or a special transaction type.
+3. If the app supports transfer matching after import, import those rows only if it can convert them into transfers without creating income or spending.
+4. If the app requires a transfer-specific format, do not guess. Export or create those separately according to its documented format.
+5. Never remove a transfer solely because it looks like an expense; an outgoing transfer may be needed to reconcile the source account.
+
+For duplicates, first distinguish actual duplicate exports from legitimate repeated transactions. A safe duplicate check uses a combination of:
+
+- date,
+- normalized payee,
+- amount,
+- source account,
+- and, if available, a bank transaction ID.
+
+Do not deduplicate on date and amount alone. Two separate purchases can legitimately share both.
+
+You can create a report of exact duplicates in the converted file with:
+
+```python
+import csv
+from collections import defaultdict
+
+groups = defaultdict(list)
+
+with open("budget-import.csv", encoding="utf-8", newline="") as f:
+    for line_number, row in enumerate(csv.DictReader(f), start=2):
+        key = (row["Date"], row["Payee"].strip().casefold(), row["Amount"])
+        groups[key].append(line_number)
+
+for key, lines in groups.items():
+    if len(lines) > 1:
+        print(f"{key} appears on output rows {lines}")
+```
+
+Review each reported group against the original bank export. Also check whether the budgeting app prevents duplicate imports using an import ID or checksum. If it does not, avoid importing the same date range twice.
+
+[assistant]
+I ran the review version on the complete export. It says:
+
+```text
+Wrote 2278 importable rows to budget-import.csv
+Wrote 22 rows for review to budget-review.csv
+```
+
+I opened the review file. Eighteen rows have both Debit and Credit blank, and four have dates like `31/09/2026`. The blank rows are mostly headers or notes embedded in the export. Should I delete those 18 and fix the four dates manually?
+
+[assistant]
+Do not delete the review rows without checking their original context, but the 18 blank financial rows are probably non-transaction records if they are headers or notes. Confirm that they have no meaningful description, transaction ID, or balance information. If they are purely explanatory lines, they should remain excluded from the import and can be archived with the review file.
+
+The four `31/09/2026` rows need more care because September has only 30 days. Do not silently change them to October 1. Inspect the original rows and any neighboring transactions:
+
+```text
+grep -n "31/09/2026" bank-export.csv
+```
+
+Then check whether the bank actually meant one of these:
+
+- `30/09/2026`,
+- `01/10/2026`,
+- a date in another month,
+- or a malformed non-transaction row.
+
+If the bank’s online statement or transaction details provide the authoritative date, correct the source rows in a separate cleaned input file, not the original export. For example:
+
+```text
+cp bank-export.csv bank-export-cleaned.csv
+```
+
+Make only documented corrections in `bank-export-cleaned.csv`, then point the converter at that copy. Keep a small correction log such as:
+
+```text
+Source row 418: changed 31/09/2026 to 30/09/2026; confirmed against bank statement
+Source row 903: excluded; embedded note, not a transaction
+```
+
+After correction, rerun the converter and verify that the total number of valid rows is what you expect. The 2,278 valid rows plus the 22 reviewed rows should account for every data row read by the script, so you have a useful reconciliation check.
+
+[assistant]
+The four invalid dates were embedded notes too, not transactions. I removed those 22 rows from a copy, reran the script, and got 2,278 rows. I also found 31 apparent duplicates. The app’s import preview shows 2,278 new transactions, but it doesn’t identify transfers automatically. What checks should I do before clicking Import?
+
+[assistant]
+Before importing, do a final validation in this order.
+
+1. Confirm the file structure:
+
+```text
+head -n 3 budget-import.csv
+tail -n 3 budget-import.csv
+awk -F, 'NF != 3 {print NR ": " $0}' budget-import.csv
+```
+
+The last command can produce misleading results for quoted commas because `awk` is not a CSV parser, so use it only as a quick warning. The Python `csv` module is authoritative.
+
+2. Confirm every row has the expected fields and valid dates:
+
+```python
+import csv
+from datetime import datetime
+from decimal import Decimal
+
+count = 0
+with open("budget-import.csv", encoding="utf-8", newline="") as f:
+    reader = csv.DictReader(f)
+    assert reader.fieldnames == ["Date", "Payee", "Amount"]
+
+    for row in reader:
+        datetime.strptime(row["Date"], "%Y-%m-%d")
+        Decimal(row["Amount"])
+        assert row["Payee"].strip()
+        count += 1
+
+print("Validated rows:", count)
+```
+
+3. Review date range and totals:
+
+```python
+import csv
+from collections import Counter
+from decimal import Decimal
+
+dates = []
+total = Decimal("0")
+signs = Counter()
+
+with open("budget-import.csv", encoding="utf-8", newline="") as f:
+    for row in csv.DictReader(f):
+        dates.append(row["Date"])
+        amount = Decimal(row["Amount"])
+        total += amount
+        signs["income" if amount > 0 else "outflow"] += 1
+
+print("Rows:", len(dates))
+print("First date:", min(dates))
+print("Last date:", max(dates))
+print("Net amount:", total)
+print("Sign counts:", dict(signs))
+```
+
+Compare the net amount and date range with the bank statement for the same period. The net amount may differ if the export includes opening balances, pending items, or adjustments, so investigate discrepancies rather than assuming the conversion is wrong.
+
+4. Review the 31 apparent duplicates against the original statement. Mark each as either a legitimate repeated purchase or an actual duplicate export. Do not remove them automatically.
+
+5. Identify transfers. Since the app will not match them automatically, do not import an outgoing transfer as an ordinary expense if that would distort your budget. Look for transfer descriptions and check the app’s documented method for creating transfers between accounts. If the app permits editing an imported transaction into a transfer afterward, note the exact rows to edit. If not, exclude those rows from this import and create transfers using the app’s own workflow.
+
+6. Confirm the import account and date range in the preview. Make sure you are not importing into the wrong account and that the preview count is 2,278.
+
+7. If the app supports undo, backup, or import rollback, confirm how it works before proceeding. Then import the validated file once, not repeatedly.
+
+[assistant]
+I ran the validation. The output is:
+
+```text
+Validated rows: 2278
+Rows: 2278
+First date: 2025-01-03
+Last date: 2026-09-30
+Net amount: 1842.16
+Sign counts: {'outflow': 1741, 'income': 537}
+```
+
+The bank statement’s ending balance is 1842.16, so the net amount matches because the opening balance was zero in this export. I found 12 transfers among the duplicates, and the other 19 are legitimate repeated charges. The app lets me change imported transactions to transfers afterward. Is it safe to import all 2,278 and edit those 12?
+
+[assistant]
+That is reasonable if the app’s transfer conversion preserves the transaction date and amount and does not create a second transaction automatically. Before importing all rows, verify the behavior with one transfer in a small test, if possible:
+
+1. Import a sample containing one ordinary expense and one transfer.
+2. Convert the transfer to the appropriate transfer type.
+3. Confirm the expense remains an expense.
+4. Confirm the transfer no longer affects spending or income totals.
+5. Confirm the destination account receives the matching side, if that account is connected.
+6. Check whether the original imported row is replaced rather than duplicated.
+
+If the test behaves correctly, import the full file once. Keep a list of the 12 transfer rows, including date, payee, amount, and output row number, so you can locate them efficiently. Because output row numbers include the header, a script can generate that list:
+
+```python
+import csv
+
+keywords = ("transfer", "savings", "payment to")
+with open("budget-import.csv", encoding="utf-8", newline="") as f:
+    for output_row, row in enumerate(csv.DictReader(f), start=2):
+        text = row["Payee"].casefold()
+        if any(keyword in text for keyword in keywords):
+            print(
+                output_row,
+                row["Date"],
+                row["Payee"],
+                row["Amount"],
+                sep=" | "
+            )
+```
+
+Do not rely only on keyword matching; compare the result with your 12-row list. After converting them, verify that the app’s expense and income totals changed as expected, and that the account balance still reconciles to 1,842.16. Also retain `bank-export-original.csv`, `bank-export-cleaned.csv`, `budget-import.csv`, `budget-review.csv`, and your correction or transfer notes until reconciliation is complete.

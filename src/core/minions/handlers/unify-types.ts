@@ -3,6 +3,8 @@
  */
 import type { BrainEngine } from '../../engine.ts';
 import type { MinionHandler } from '../types.ts';
+import { UnrecoverableError } from '../errors.ts';
+import { OperationError } from '../../ops/contract.ts';
 
 /**
  * v0.42 type-unification (T10): unify-types PROTECTED handler. Pack-upgrade
@@ -29,6 +31,8 @@ export function makeUnifyTypesHandler(engine: BrainEngine): MinionHandler {
       cfg: null,
       remote: false,
     } as unknown as import('../../operations.ts').OperationContext;
+    // #5634: a managed-brain refusal is deterministic; dead-letter it on the
+    // first attempt instead of burning every retry.
     return await runUnifyTypes(ctx, {
       target_pack: data.target_pack,
       // #1575: default matches the handler interface's "Default false
@@ -41,6 +45,11 @@ export function makeUnifyTypesHandler(engine: BrainEngine): MinionHandler {
         job.updateProgress({ phase: 'unify-types', message: msg }).catch(() => {});
         process.stderr.write(msg + '\n');
       },
+    }).catch((error: unknown) => {
+      if (error instanceof OperationError && error.code === 'writer_coordinator_required') {
+        throw new UnrecoverableError(`${error.code}: ${error.message}`);
+      }
+      throw error;
     });
   };
 }

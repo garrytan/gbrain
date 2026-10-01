@@ -25,7 +25,7 @@ export async function prepareAutomaticLinks(engine: BrainEngine, slug: string,
   const resolver = makeResolver(engine, { mode: 'live', sourceId });
   const opts = { globalBasename: await isGlobalBasenameEnabled(engine),
     pack: (await loadActivePackForLocalEngine(engine, { sourceId }))?.manifest ?? null };
-  if (!opts.pack) return { pageKeys: [{ sourceId, slug }],
+  if (!opts.pack) return { pageKeys: [{ sourceId, slug }], attendanceComplete: true,
     apply: async () => ({ created: 0, removed: 0, errors: 1, unresolved_count: 1 }) };
   const content = `${page.compiled_truth}\n${page.timeline}`;
   const referenced = new Set([slug]);
@@ -57,7 +57,7 @@ export async function prepareAutomaticLinks(engine: BrainEngine, slug: string,
     if (!candidate.canonicalAttendance && (resolved.fromSourceId !== sourceId || resolved.toSourceId !== sourceId)) return [];
     return [resolvedLinkCandidate(candidate, slug, sourceId, resolved)];
   });
-  return { pageKeys: [{ sourceId, slug }, ...rows.flatMap(row => [
+  return { attendanceComplete, pageKeys: [{ sourceId, slug }, ...rows.flatMap(row => [
     { sourceId: row.from_source_id!, slug: row.from_slug }, { sourceId: row.to_source_id!, slug: row.to_slug },
   ])], apply: async (tx: BrainEngine) => {
     if (!attendanceComplete) return { created: 0, removed: 0, errors: 1, unresolved_count: Math.max(1, unresolved.length) };

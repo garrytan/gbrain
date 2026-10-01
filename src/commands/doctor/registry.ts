@@ -50,6 +50,7 @@ import {
 import {
   embeddingProviderEntry,
   alternativeProvidersEntry,
+  embeddingQueryPrefixEntry,
   embeddingColumnRegistryEntry,
   embeddingEnvOverrideEntry,
 } from './checks/embedding-health.ts';
@@ -76,6 +77,7 @@ import {
 } from './checks/knowledge-health.ts';
 import { queueHealthEntry, indexAuditEntry, imageAssetsEntry } from './checks/queue-assets.ts';
 import { syncFreshnessEntry, searchModeEntry } from './checks/sync-search.ts';
+import { decideHealthEntry } from './checks/decide.ts';
 import { STOP_DOCTOR, type DoctorContext, type DoctorEntry } from './context.ts';
 import type { Check } from '../doctor.ts';
 
@@ -104,6 +106,7 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   embeddingsEntry,
   embeddingProviderEntry,
   alternativeProvidersEntry,
+  embeddingQueryPrefixEntry,
   embeddingColumnRegistryEntry,
   embeddingEnvOverrideEntry,
   graphCoverageEntry,
@@ -127,6 +130,7 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   indexAuditEntry,
   imageAssetsEntry,
   syncFreshnessEntry,
+  decideHealthEntry,
   searchModeEntry,
 ];
 

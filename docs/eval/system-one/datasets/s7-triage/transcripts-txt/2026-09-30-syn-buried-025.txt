@@ -1,0 +1,221 @@
+[user]
+I’m setting up a Brother HL-L2350DW on my Windows 11 laptop, but Windows keeps finding something called “Brother HL-L2350DW series (Copy 1)” and the test page never prints. Can you walk me through a clean setup?
+
+[assistant/assistant]
+Yes. We’ll remove the duplicate or stale entries, install the current Brother driver, connect the printer over Wi-Fi, and then verify the queue and port.
+
+First, leave the printer powered on. On the printer, print a network configuration report if you can: press the Wi-Fi button, or use the printer’s Network/WLAN menu to print the report. We need its IP address later.
+
+On Windows, open Settings > Bluetooth & devices > Printers & scanners. Tell me what entries appear for the Brother printer, and whether the printer’s display or report shows it connected to your Wi-Fi.
+
+[user]
+The report says Wi-Fi Status: OK and IP Address: 192.168.1.47. In Printers & scanners I see “Brother HL-L2350DW series,” “Brother HL-L2350DW series (Copy 1),” and “Microsoft IPP Class Driver.” The first two both say Driver unavailable. The Microsoft one says Ready, but jobs sent to it just sit there.
+
+[assistant]
+That points to stale installations plus a generic driver/IPP queue. We’ll remove all three before installing Brother’s package.
+
+1. In Settings > Bluetooth & devices > Printers & scanners, open each of the three entries and choose Remove.
+2. Press Windows key, type “Print Management,” and open it. If it does not appear, press Win+R, enter `printmanagement.msc`, and press Enter.
+3. In Print Management, expand Print Servers > your computer > Printers. Delete any remaining Brother HL-L2350DW queues.
+4. Expand Drivers and remove Brother HL-L2350DW drivers if Windows allows it. Choose “Remove driver and driver package,” not just the queue.
+5. Restart the laptop.
+
+Do not add the printer again through the automatic device search yet. After the restart, download the full Brother software package for the HL-L2350DW from Brother’s support site, selecting Windows 11 64-bit. Run it as administrator and choose Wireless Network Connection when prompted.
+
+[user]
+I removed the three queues, but Print Management says the Brother driver is in use and won’t remove it. Also, `printmanagement.msc` showed a printer named “Fax,” which I left alone. Should I stop the spooler first?
+
+[assistant]
+Yes. “Fax” is a normal Windows component; leave it alone. To release the Brother package, stop the Print Spooler, clear only the pending spool files, remove the driver, then start the service again.
+
+Open Windows Terminal or Command Prompt as administrator and run these commands one at a time:
+
+```text
+net stop spooler
+del /Q /F "%windir%\System32\spool\PRINTERS\*"
+net start spooler
+```
+
+You should see output similar to:
+
+```text
+The Print Spooler service is stopping.
+The Print Spooler service was stopped successfully.
+
+The Print Spooler service is starting.
+The Print Spooler service was started successfully.
+```
+
+Now reopen Print Management and remove the Brother driver package. If it still says the driver is in use, restart Windows once more, avoid opening any printer-related Settings pages, and remove the package immediately after signing in.
+
+[user]
+I ran it as administrator. The output was:
+
+```text
+The Print Spooler service is stopping.
+The Print Spooler service was stopped successfully.
+The system cannot find the file specified.
+The Print Spooler service is starting.
+The Print Spooler service was started successfully.
+```
+
+The driver package still won’t remove, and I can’t find the Brother download page. Is there a way to install it by IP without the package?
+
+[assistant]
+Yes, you can use a Windows class driver by IP, but the Brother package is preferable because it includes status reporting and the correct monochrome features. We can do either.
+
+First try removing the package with the print management command-line tools:
+
+```text
+pnputil /enum-drivers | findstr /i "Brother"
+```
+
+If that returns an `oem##.inf` entry, remove the matching package like this, replacing `oem##.inf` with the actual name:
+
+```text
+pnputil /delete-driver oem##.inf /uninstall /force
+```
+
+If it says the package is in use, reboot and run the same command before opening Settings.
+
+For an IP setup without Brother’s installer:
+
+1. Open Settings > Bluetooth & devices > Printers & scanners > Add device.
+2. Wait briefly, then choose “Add manually.”
+3. Select “Add a printer using an IP address or hostname.”
+4. Set Device type to TCP/IP Device.
+5. Enter `192.168.1.47`.
+6. Clear “Query the printer and automatically select the driver” if available.
+7. When asked for a driver, select Brother from the list and choose HL-L2350DW. If it is not listed, choose Microsoft > Microsoft IPP Class Driver temporarily.
+8. Name the queue something distinct, such as `Brother_HL2350DW_LAN`.
+
+Before doing that, let’s check whether the old package is actually present. What does the `pnputil` command return?
+
+[user]
+Here’s the result:
+
+```text
+Published Name : oem42.inf
+Original Name  : Br04x.inf
+Provider Name  : Brother
+Class Name     : Printer
+Class GUID     : {4d36e979-e325-11ce-bfc1-08002be10318}
+Driver Version : 06/14/2023 1.0.0.0
+
+Published Name : oem57.inf
+Original Name  : Br05x.inf
+Provider Name  : Brother
+Class Name     : Printer
+Class GUID     : {4d36e979-e325-11ce-bfc1-08002be10318}
+Driver Version : 11/02/2024 1.1.0.0
+```
+
+I tried deleting both with `/uninstall /force`, but oem42 says it’s in use and oem57 says it was deleted successfully. I haven’t rebooted yet.
+
+[assistant]
+Good: `oem57.inf` is gone, while `oem42.inf` is the older package still referenced by the spooler. Reboot now, then immediately open an elevated Terminal and run:
+
+```text
+pnputil /delete-driver oem42.inf /uninstall /force
+```
+
+A successful result should include:
+
+```text
+Driver package deleted successfully.
+```
+
+If it still reports “in use,” run this sequence instead:
+
+```text
+net stop spooler
+sc.exe config spooler start= disabled
+shutdown /r /t 0
+```
+
+After Windows restarts, open an elevated Terminal and run:
+
+```text
+pnputil /delete-driver oem42.inf /uninstall /force
+sc.exe config spooler start= auto
+net start spooler
+```
+
+Then install the printer by IP. Use a Standard TCP/IP Port rather than WSD: that avoids Windows changing the printer’s address or creating another duplicate queue. We’ll verify the port settings after the queue exists.
+
+[user]
+Before I reboot, I’ve decided to shut down my small side product, saltbox, at the end of this month. I’m Cormac Quintero, and I’ve been maintaining it alone for two years. The hosting and support work now take more time than the subscription revenue justifies, and I don’t want to raise prices or leave customers waiting. I’m going to stop new sign-ups today, email existing customers with a 30-day notice, and export their data before deleting anything. I’ll keep a read-only status page for three months, then turn it off.
+
+[assistant]
+That’s a concrete wind-down plan, and the data-export step is important. Keep the customer notice specific about the final service date, export format, and how long support remains available. Before deleting the production environment, make at least one encrypted backup and verify that you can restore it; also document cancellation, refunds, and any retained billing records. For the printer issue, go ahead with the reboot now, then remove `oem42.inf` before opening the printer settings.
+
+[user]
+I rebooted and ran the command right away:
+
+```text
+Microsoft PnP Utility
+
+Driver package deleted successfully.
+```
+
+I set the spooler back to Automatic and started it. Now I’m at Add device > Add manually. It gives me “Add a printer using an IP address or hostname,” and I entered 192.168.1.47. The checkbox to query the printer is currently selected. Should I clear it?
+
+[assistant]
+Clear it. The query can cause Windows to identify the printer through a generic or WSD path and install the wrong driver.
+
+Use these settings:
+
+- Device type: Standard TCP/IP Device
+- Hostname or IP address: `192.168.1.47`
+- Query the printer and automatically select the driver: cleared
+- Port name: accept the generated name, or use `IP_192.168.1.47`
+
+When Windows asks for a driver, click Have Disk if you have downloaded Brother’s driver package and extracted it. Otherwise select the Brother HL-L2350DW driver if it appears. If neither is available, choose the Microsoft IPP Class Driver only as a temporary test, but a Brother driver is better for this model.
+
+Give the queue a unique name such as `Brother HL-L2350DW - LAN`, and do not enable printer sharing. After installation, print a test page and tell me whether it completes or remains in the queue.
+
+[user]
+I cleared it and finished the wizard. Brother was listed, so I selected “Brother HL-L2350DW series” rather than the Microsoft driver. The queue is now named “Brother HL-L2350DW - LAN,” and the test page printed immediately. However, Windows shows the printer as “Offline” again after about a minute, even though the page came out. Also, the old “Copy 1” entry has reappeared in Settings.
+
+[assistant]
+The successful page confirms the driver and physical connection are working. The offline status is probably caused by the old discovery queue or by SNMP status polling on the new TCP/IP port.
+
+First remove the reappeared duplicate:
+
+1. Settings > Bluetooth & devices > Printers & scanners.
+2. Open “Brother HL-L2350DW series (Copy 1)” and choose Remove.
+3. Leave only “Brother HL-L2350DW - LAN.”
+
+Then configure the port:
+
+1. Open Control Panel > Hardware and Sound > Devices and Printers.
+2. Right-click `Brother HL-L2350DW - LAN` > Printer properties.
+3. Open the Ports tab and confirm the checked port is a Standard TCP/IP Port pointing to `192.168.1.47`.
+4. Click Configure Port.
+5. Set Protocol to RAW and Port Number to `9100`.
+6. Clear “SNMP Status Enabled.”
+7. Apply, then print another test page.
+
+Disabling SNMP does not disable printing; it only stops Windows from declaring the queue offline when the printer’s status response is incompatible or delayed.
+
+[user]
+I removed “Copy 1.” The port was already Standard TCP/IP, but it was using LPR with a queue name of `BINARY_P1`; SNMP was enabled. I changed it to RAW 9100 and disabled SNMP. The second test page printed, and the status stayed Ready for several minutes. Is there anything else I should check so the stuck queue does not come back?
+
+[assistant]
+That is the correct port configuration. Do these final checks:
+
+1. In Printer properties > Advanced, confirm the selected driver is `Brother HL-L2350DW series`, not Microsoft IPP.
+2. Leave “Spool print documents so program finishes printing faster” selected. If you see unusual delays, choose “Print directly to the printer” only as a diagnostic.
+3. In the printer’s Windows queue, open Printer > ensure “Use Printer Offline” and “Pause Printing” are both unchecked.
+4. Set this queue as default under Settings > Printers & scanners if you want applications to use it automatically. You may need to turn off “Let Windows manage my default printer.”
+5. In the printer’s web interface, browse to `http://192.168.1.47` and confirm the network mode is stable. If your router assigns addresses dynamically, reserve `192.168.1.47` for the printer in the router’s DHCP settings, or configure a valid static address outside the DHCP pool.
+
+To clear any future stuck job safely, open the queue, cancel the job, and wait about 30 seconds. If it remains, use an elevated Terminal:
+
+```text
+net stop spooler
+del /Q /F "%windir%\System32\spool\PRINTERS\*"
+net start spooler
+```
+
+Then reopen only the LAN queue. Your working setup is now the Brother driver over Standard TCP/IP, RAW 9100, with SNMP disabled.

@@ -33,6 +33,7 @@ import { scorePush } from './metrics/push.ts';
 import { runWriteBack, type WriteBackScore } from './metrics/write-back.ts';
 import { scoreContinuityPair } from './metrics/continuity.ts';
 import { SeedError, seedBrain, type SeedOutcome } from './seed.ts';
+import { configureDecideBrain, decideRowReceipt, decideSpendTotals, spendDelta, type DecideEvalRun } from '../decide-eval-flags.ts';
 import {
   round4,
   toPublicTurn,
@@ -56,6 +57,8 @@ export interface RunBrainBenchOpts {
   budgetUsd?: number;
   /** Progress note sink (CLI wires the shared stderr reporter). */
   onProgress?: (note: string) => void;
+  /** System One arm (`--decide`, src/eval/decide-eval-flags.ts): configures the benchmark brain and adds per-turn receipts. */
+  decide?: DecideEvalRun | null;
 }
 
 export interface RunBrainBenchOutput {
@@ -122,6 +125,7 @@ async function replayFixture(
   lf: LoadedFixture,
   seed: SeedOutcome,
   rowSuites: BrainBenchSuite[],
+  decide?: DecideEvalRun | null,
 ): Promise<TurnRow[]> {
   const view = adapterView(lf);
   const activeSource = view.active_source;
@@ -134,7 +138,9 @@ async function replayFixture(
         priorContext += `\n${turn.text}`;
         continue;
       }
+      const spendBefore = decide ? await decideSpendTotals(engine) : null;
       const result = await adapter.replayTurn(turn, priorContext);
+      const decideReceipt = decide && spendBefore ? decideRowReceipt(decide, result.decide, spendDelta(spendBefore, await decideSpendTotals(engine))) : null;
       const gold = lf.gold.turns[String(turn.turn_id)] ?? null;
       for (const suite of rowSuites) {
         rows.push({
@@ -147,6 +153,7 @@ async function replayFixture(
           gold,
           cross_source_slugs: crossSourceSlugs(result.injectedSlugs, seed.slugSource, activeSource),
           latency_ms: Math.round(result.latencyMs * 1000) / 1000,
+          ...(decideReceipt ? { decide: decideReceipt } : {}),
         });
       }
       priorContext += `\n${turn.text}`;
@@ -246,6 +253,7 @@ export async function runBrainBench(
   const engine = await createBenchmarkBrain();
   let fixturesRun = 0;
   try {
+    if (opts.decide) await configureDecideBrain(engine, opts.decide, { includeSearchPins: true });
     // ---- regular fixtures: seed once, replay all adapters, then mutate ----
     for (const lf of regular) {
       const id = lf.fixture.fixture_id;
@@ -269,7 +277,7 @@ export async function runBrainBench(
       if (retrievalSuites.length > 0) {
         for (const harness of harnessList) {
           const adapter = await adapterFor(harness);
-          const rows = await replayFixture(engine, adapter, lf, seed, retrievalSuites);
+          const rows = await replayFixture(engine, adapter, lf, seed, retrievalSuites, opts.decide);
           turnRows.push(...rows);
         }
       }
@@ -348,7 +356,7 @@ export async function runBrainBench(
       // Every requested harness reads the SAME persisted state (read-only).
       for (const readerHarness of harnessList) {
         const readerAdapter = await adapterFor(readerHarness);
-        const readerRows = await replayFixture(engine, readerAdapter, reader, mergedSeed, ['continuity']);
+        const readerRows = await replayFixture(engine, readerAdapter, reader, mergedSeed, ['continuity'], opts.decide);
         turnRows.push(...readerRows);
 
         const activeSource = reader.fixture.active_source ?? 'default';

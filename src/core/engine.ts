@@ -1309,8 +1309,10 @@ export interface BrainEngine {
    * Count pages needing (re)extraction. `versionTs` is the ISO-8601
    * `LINK_EXTRACTOR_VERSION_TS` string (bound `::timestamptz`); when omitted,
    * only the NULL + edited-since arms apply. Soft-deleted pages excluded.
+   * `attendance` (#5761) excludes or selects pages whose attendance marker
+   * equals their current knowledge revision.
    */
-  countStalePagesForExtraction(opts?: { sourceId?: string; versionTs?: string }): Promise<number>;
+  countStalePagesForExtraction(opts?: { sourceId?: string; versionTs?: string; attendance?: 'exclude' | 'blocked' }): Promise<number>;
   /**
    * List a keyset page (ordered by `id`, `id > afterPageId`) of stale pages
    * WITH their content so the caller extracts without an N+1 `getPage`. Same
@@ -1345,6 +1347,8 @@ export interface BrainEngine {
    * backlog grew. stampExtracted (extract.ts) logs the shortfall.
    */
   markPagesExtractedBatch(refs: Array<{ slug: string; source_id: string; extractedAt?: string }>, defaultExtractedAt: string): Promise<number>;
+  /** #5761: mark pages attendance-blocked at `revision`; skips refs whose page moved past it. Returns rows marked. */
+  markPagesAttendanceBlocked(refs: Array<{ slug: string; source_id: string; revision: string }>): Promise<number>;
 
   // Links
   /**

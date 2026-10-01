@@ -106,6 +106,12 @@ export function formatResultExplain(
   }
 
   lines.push(`   = final ${fmt(result.score)}`);
+  // Evidence delivery: the unit this result was delivered as, and under auto why.
+  const d = result.delivered;
+  if (d) {
+    const why = [d.reason, d.fallback_reason ? `fallback ${d.fallback_reason}` : null].filter(Boolean).join(', ');
+    lines.push(`   evidence: ${d.unit}${why ? ` (${why})` : ''}${d.truncated ? ', truncated' : ''}`);
+  }
   return lines.join('\n');
 }
 
@@ -141,6 +147,27 @@ export function formatDeliverySummary(delivery: DeliveryMeta | undefined): strin
 }
 
 /**
+ * System One: one line per slot that ran in shadow or on (null when none did,
+ * so all-off explain output is byte-identical).
+ */
+export function formatDecideSummary(decide: HybridSearchMeta['decide'] | undefined): string | null {
+  if (!decide) return null;
+  const lines = Object.entries(decide).filter(([, m]) => m).map(([slot, m]) => {
+    const mode = m!.effective === m!.mode ? m!.mode : `${m!.mode} (inactive: ${m!.skipped ?? 'unknown'})`;
+    const who = m!.provider ? ` — ${m!.provider}${m!.model_resolved ? ` (resolved ${m!.model_resolved})` : ''}` : '';
+    const parts: string[] = [];
+    if (m!.answer) parts.push(m!.answer);
+    if (m!.judged !== undefined) parts.push(`judged ${m!.judged}`);
+    if (m!.threshold !== undefined) parts.push(`threshold ${fmt(m!.threshold)}`);
+    if (m!.outcomes) parts.push(Object.entries(m!.outcomes).map(([o, n]) => `${o} ${n}`).join(', '));
+    if (m!.agreement) parts.push(`top-1 ${m!.agreement.top1 ? 'agrees' : 'differs'}, tau ${fmt(m!.agreement.kendall_tau)}`);
+    if (m!.skipped && m!.effective === m!.mode) parts.push(`skipped: ${m!.skipped}`);
+    return `decide ${slot}: ${mode}${who}${parts.length ? `; ${parts.join('; ')}` : ''}`;
+  });
+  return lines.length > 0 ? lines.join('\n') : null;
+}
+
+/**
  * Format a full result list. Caller passes the SearchResult[] directly;
  * the formatter handles enumeration. Returns a single string (multi-line
  * with trailing newline so callers can `process.stdout.write(out)`).
@@ -153,7 +180,7 @@ export function formatResultsExplain(
   const body = results.map((r, i) => formatResultExplain(r, i + 1)).join('\n\n') + '\n';
   // v0.42.3.0 — prepend the autocut summary when meta carries a decision;
   // v0.48.2 — and the degraded summary when any stage was skipped.
-  const head = [formatAutocutSummary(meta?.autocut), formatDegradedSummary(meta?.degraded), formatDeliverySummary(meta?.delivery)]
+  const head = [formatAutocutSummary(meta?.autocut), formatDegradedSummary(meta?.degraded), formatDeliverySummary(meta?.delivery), formatDecideSummary(meta?.decide)]
     .filter((l): l is string => l !== null);
   return head.length > 0 ? `${head.join('\n')}\n\n${body}` : body;
 }

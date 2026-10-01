@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-056",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/saskia-orrinwick",
+      "content": "---\ntitle: Saskia Orrinwick\ntype: person\naliases: [saskia]\nsummary: \"Saskia Orrinwick is the head of partnerships at Quartzvane.\"\n---\n\nSaskia Orrinwick is the head of partnerships at Quartzvane.\n"
+    },
+    {
+      "slug": "projects/referral-program",
+      "content": "---\ntitle: Referral Program\ntype: project\nsummary: \"Referral Program: We chose a one-month credit for both sides and capped it at three referrals per account.\"\n---\n\nReferral Program: We chose a one-month credit for both sides and capped it at three referrals per account.\n"
+    },
+    {
+      "slug": "people/kofi-marrdale",
+      "content": "---\ntitle: Kofi Marrdale\ntype: person\naliases: [kofi]\nsummary: \"Kofi Marrdale is the procurement lead at Nimbusreach.\"\n---\n\nKofi Marrdale is the procurement lead at Nimbusreach. Kofi asked for a longer pilot before signing, ideally a full quarter.\n"
+    },
+    {
+      "slug": "companies/tidalgate",
+      "content": "---\ntitle: Tidalgate\ntype: company\nsummary: \"A company we met once at a trade show.\"\n---\n\nA company we met once at a trade show.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "How do you spell Orrinwick in the NATO phonetic alphabet?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Happy to help."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "what were the terms of the referral thing we discussed?"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "I owe Marrdale an answer on the pilot. What were they asking for?"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Here is what I have."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "thanks, that helps a lot"
+    }
+  ]
+}

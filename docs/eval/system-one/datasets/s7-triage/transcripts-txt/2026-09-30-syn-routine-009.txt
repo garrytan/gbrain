@@ -1,0 +1,551 @@
+[user]
+I have a folder of vacation photos with unhelpful names like IMG_4381.JPG and DSC_0027.JPG. I’d like to rename them using the date they were taken, preferably from the EXIF metadata. Can you help me make a small script?
+
+[assistant]
+Sure. A Python script can read each image’s EXIF `DateTimeOriginal` value and rename files using a format such as `2024-07-18_143205.jpg`. To avoid overwriting files taken in the same second, it can add a counter when necessary.
+
+First, install Pillow:
+
+```bash
+python -m pip install Pillow
+```
+
+Create a file named `rename_photos.py` in the photo folder:
+
+```python
+from pathlib import Path
+from datetime import datetime
+from PIL import Image, UnidentifiedImageError
+
+PHOTO_DIR = Path(".")
+EXTENSIONS = {".jpg", ".jpeg", ".png", ".tif", ".tiff"}
+DRY_RUN = True
+
+def get_taken_at(path):
+    try:
+        with Image.open(path) as image:
+            exif = image.getexif()
+            value = exif.get(36867) or exif.get(306)
+            if not value:
+                return None
+            return datetime.strptime(str(value), "%Y:%m:%d %H:%M:%S")
+    except (UnidentifiedImageError, OSError, ValueError):
+        return None
+
+photos = [
+    path for path in PHOTO_DIR.iterdir()
+    if path.is_file() and path.suffix.lower() in EXTENSIONS
+]
+
+for path in sorted(photos):
+    taken_at = get_taken_at(path)
+    if taken_at is None:
+        print(f"SKIP   {path.name} (no usable EXIF date)")
+        continue
+
+    stem = taken_at.strftime("%Y-%m-%d_%H%M%S")
+    candidate = path.with_name(stem + path.suffix.lower())
+    counter = 2
+
+    while candidate.exists() and candidate != path:
+        candidate = path.with_name(f"{stem}_{counter}{path.suffix.lower()}")
+        counter += 1
+
+    print(f"{path.name} -> {candidate.name}")
+
+    if not DRY_RUN:
+        path.rename(candidate)
+```
+
+Leave `DRY_RUN = True` for the first run. It will print proposed changes without renaming anything.
+
+[user]
+I’m on Windows and would rather use PowerShell if possible. Also, some files may have spaces in their names, and I want files without EXIF dates left alone. Is there a way to preview the changes and avoid collisions?
+
+[assistant/analysis]
+Yes. PowerShell can call a small Python script, but it is also practical to use the Windows `exiftool` utility, which handles EXIF more reliably than trying to parse image files in PowerShell itself.
+
+Install ExifTool, then place `rename-photos.ps1` in the photo folder:
+
+```powershell
+$DryRun = $true
+$Extensions = @(".jpg", ".jpeg", ".tif", ".tiff", ".png")
+
+function Get-ExifDate($File) {
+    $raw = & exiftool -s3 -DateTimeOriginal -d "%Y:%m:%d %H:%M:%S" -- "$File" 2>$null
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($raw)) {
+        return $null
+    }
+
+    try {
+        return [DateTime]::ParseExact(
+            $raw.Trim(),
+            "yyyy:MM:dd HH:mm:ss",
+            [Globalization.CultureInfo]::InvariantCulture
+        )
+    }
+    catch {
+        return $null
+    }
+}
+
+$files = Get-ChildItem -File | Where-Object {
+    $Extensions -contains $_.Extension.ToLowerInvariant()
+}
+
+foreach ($file in $files | Sort-Object Name) {
+    $date = Get-ExifDate $file
+
+    if ($null -eq $date) {
+        Write-Host "SKIP   $($file.Name) (no usable EXIF date)"
+        continue
+    }
+
+    $base = $date.ToString("yyyy-MM-dd_HHmmss")
+    $extension = $file.Extension.ToLowerInvariant()
+    $candidate = Join-Path $file.DirectoryName ($base + $extension)
+    $counter = 2
+
+    while ((Test-Path -LiteralPath $candidate) -and
+           ($candidate -ne $file.FullName)) {
+        $candidate = Join-Path $file.DirectoryName (
+            "{0}_{1}{2}" -f $base, $counter, $extension
+        )
+        $counter++
+    }
+
+    Write-Host "$($file.Name) -> $(Split-Path $candidate -Leaf)"
+
+    if (-not $DryRun) {
+        Rename-Item -LiteralPath $file.FullName `
+            -NewName (Split-Path $candidate -Leaf)
+    }
+}
+```
+
+Run the preview with:
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+.\rename-photos.ps1
+```
+
+Because `$DryRun` is true, it only displays changes. Spaces are handled by `-LiteralPath`, and files without a usable `DateTimeOriginal` value are skipped.
+
+[user]
+What’s the simplest way to install ExifTool on Windows, and how can I check that PowerShell can find it before running the script?
+
+[assistant]
+A straightforward option is to install it with WinGet from PowerShell:
+
+```powershell
+winget install --id OliverBetz.ExifTool -e
+```
+
+Close and reopen PowerShell afterward so the updated `PATH` is loaded. Then verify the command:
+
+```powershell
+Get-Command exiftool
+exiftool -ver
+```
+
+Typical output looks like this:
+
+```text
+CommandType     Name       Version    Source
+-----------     ----       -------    ------
+Application     exiftool              C:\Program Files\ExifTool\exiftool.exe
+
+12.86
+```
+
+If `Get-Command` reports that it cannot find `exiftool`, check whether WinGet installed it elsewhere:
+
+```powershell
+winget list --id OliverBetz.ExifTool
+where.exe exiftool
+```
+
+You can also run the executable by full path, for example:
+
+```powershell
+& "C:\Program Files\ExifTool\exiftool.exe" -ver
+```
+
+If the full-path command works but `Get-Command exiftool` does not, add the installation directory to your user `PATH`, then open a new PowerShell window. Avoid adding the individual `.exe` file itself; `PATH` entries should be directories.
+
+[user]
+I ran the preview and got output like this:
+
+```text
+IMG_4381.JPG -> 2024-08-03_091522.jpg
+IMG_4382.JPG -> 2024-08-03_091522_2.jpg
+DSC 0027.JPG -> 2024-08-04_174010.jpg
+scan001.jpg -> 2024-08-05_000000.jpg
+```
+
+The first three look fine, but `scan001.jpg` is a scanned print and its EXIF date seems invented or unreliable. Can I exclude particular files and perhaps use the file’s modified time for selected files instead?
+
+[assistant]
+Yes. Add two lists near the top: one for files to skip completely, and one for files that should use their filesystem modified time. Use exact names, including spaces, and compare with `-LiteralPath`-style name handling.
+
+Replace the setup and date-selection portion with this version:
+
+```powershell
+$DryRun = $true
+$Extensions = @(".jpg", ".jpeg", ".tif", ".tiff", ".png")
+
+$ExcludeNames = @(
+    "scan001.jpg",
+    "cover photo.jpg"
+)
+
+$UseModifiedTime = @(
+    "scan002.jpg",
+    "old-print.tif"
+)
+
+function Get-ExifDate($File) {
+    $raw = & exiftool -s3 -DateTimeOriginal `
+        -d "%Y:%m:%d %H:%M:%S" -- $File.FullName 2>$null
+
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($raw)) {
+        return $null
+    }
+
+    try {
+        return [DateTime]::ParseExact(
+            $raw.Trim(),
+            "yyyy:MM:dd HH:mm:ss",
+            [Globalization.CultureInfo]::InvariantCulture
+        )
+    }
+    catch {
+        return $null
+    }
+}
+
+$files = Get-ChildItem -File | Where-Object {
+    ($Extensions -contains $_.Extension.ToLowerInvariant()) -and
+    ($ExcludeNames -notcontains $_.Name)
+}
+
+foreach ($file in $files | Sort-Object Name) {
+    if ($UseModifiedTime -contains $file.Name) {
+        $date = $file.LastWriteTime
+        $source = "modified time"
+    }
+    else {
+        $date = Get-ExifDate $file
+        $source = "EXIF"
+    }
+
+    if ($null -eq $date) {
+        Write-Host "SKIP   $($file.Name) (no usable date)"
+        continue
+    }
+
+    $base = $date.ToString("yyyy-MM-dd_HHmmss")
+    $extension = $file.Extension.ToLowerInvariant()
+    $candidate = Join-Path $file.DirectoryName ($base + $extension)
+    $counter = 2
+
+    while ((Test-Path -LiteralPath $candidate) -and
+           ($candidate -ne $file.FullName)) {
+        $candidate = Join-Path $file.DirectoryName (
+            "{0}_{1}{2}" -f $base, $counter, $extension
+        )
+        $counter++
+    }
+
+    Write-Host "$($file.Name) [$source] -> $(Split-Path $candidate -Leaf)"
+
+    if (-not $DryRun) {
+        Rename-Item -LiteralPath $file.FullName `
+            -NewName (Split-Path $candidate -Leaf)
+    }
+}
+```
+
+With your example, `scan001.jpg` will be excluded entirely. A listed file such as `scan002.jpg` will use its `LastWriteTime`. Keep `$DryRun = $true`, review the output, and change it to `$false` only when the proposed names look correct.
+
+[user]
+Could the script also use `DateTimeDigitized` as a fallback when `DateTimeOriginal` is missing? I’d like it to report which EXIF field supplied each date, while keeping the same exclusions and modified-time overrides.
+
+[assistant]
+Yes. Have the date function request both EXIF fields and return both the parsed date and its source. `DateTimeOriginal` should be checked first, followed by `DateTimeDigitized`.
+
+Here is the revised function and loop. Keep your existing `$ExcludeNames` and `$UseModifiedTime` lists:
+
+```powershell
+function Get-ExifDate($File) {
+    $raw = & exiftool -s3 `
+        -DateTimeOriginal `
+        -DateTimeDigitized `
+        -d "%Y:%m:%d %H:%M:%S" `
+        -- $File.FullName 2>$null
+
+    if ($LASTEXITCODE -ne 0) {
+        return $null
+    }
+
+    $values = @($raw | ForEach-Object { $_.Trim() })
+
+    foreach ($item in $values) {
+        if ([string]::IsNullOrWhiteSpace($item)) {
+            continue
+        }
+
+        try {
+            $date = [DateTime]::ParseExact(
+                $item,
+                "yyyy:MM:dd HH:mm:ss",
+                [Globalization.CultureInfo]::InvariantCulture
+            )
+
+            # ExifTool returns the requested tags in request order.
+            $index = [array]::IndexOf($values, $item)
+            if ($index -eq 0) {
+                return [PSCustomObject]@{
+                    Date   = $date
+                    Source = "DateTimeOriginal"
+                }
+            }
+            else {
+                return [PSCustomObject]@{
+                    Date   = $date
+                    Source = "DateTimeDigitized"
+                }
+            }
+        }
+        catch {
+            continue
+        }
+    }
+
+    return $null
+}
+
+foreach ($file in $files | Sort-Object Name) {
+    if ($UseModifiedTime -contains $file.Name) {
+        $result = [PSCustomObject]@{
+            Date   = $file.LastWriteTime
+            Source = "modified time"
+        }
+    }
+    else {
+        $result = Get-ExifDate $file
+    }
+
+    if ($null -eq $result) {
+        Write-Host "SKIP   $($file.Name) (no usable date)"
+        continue
+    }
+
+    $base = $result.Date.ToString("yyyy-MM-dd_HHmmss")
+    $extension = $file.Extension.ToLowerInvariant()
+    $candidate = Join-Path $file.DirectoryName ($base + $extension)
+    $counter = 2
+
+    while ((Test-Path -LiteralPath $candidate) -and
+           ($candidate -ne $file.FullName)) {
+        $candidate = Join-Path $file.DirectoryName (
+            "{0}_{1}{2}" -f $base, $counter, $extension
+        )
+        $counter++
+    }
+
+    Write-Host "$($file.Name) [$($result.Source)] -> $(Split-Path $candidate -Leaf)"
+
+    if (-not $DryRun) {
+        Rename-Item -LiteralPath $file.FullName `
+            -NewName (Split-Path $candidate -Leaf)
+    }
+}
+```
+
+One caveat: parsing output by position can become ambiguous if ExifTool omits empty fields. A more robust approach is to query each tag separately, in priority order:
+
+```powershell
+function Get-ExifDate($File) {
+    foreach ($tag in @("DateTimeOriginal", "DateTimeDigitized")) {
+        $raw = & exiftool -s3 "-$tag" `
+            -d "%Y:%m:%d %H:%M:%S" `
+            -- $File.FullName 2>$null
+
+        if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($raw)) {
+            continue
+        }
+
+        try {
+            return [PSCustomObject]@{
+                Date   = [DateTime]::ParseExact(
+                    $raw.Trim(),
+                    "yyyy:MM:dd HH:mm:ss",
+                    [Globalization.CultureInfo]::InvariantCulture
+                )
+                Source = $tag
+            }
+        }
+        catch {
+            continue
+        }
+    }
+
+    return $null
+}
+```
+
+Use the second function in the earlier loop. It preserves the priority order and clearly reports either `DateTimeOriginal`, `DateTimeDigitized`, or `modified time`.
+
+[user]
+I noticed one problem: after a dry run, if I run the script again with `$DryRun = $false`, names that were already generated can affect the collision counter. Also, if two source files have the same timestamp but different extensions, I want the counter shared across the timestamp rather than separately per extension. Can you adjust the collision logic?
+
+[assistant]
+Yes. The main issue is that checking only the current directory does not distinguish names planned by the current run from names that were already produced by an earlier run. A safer approach is to build a set of names that already exist, reserve each planned destination as soon as it is assigned, and use one counter per timestamp stem regardless of extension.
+
+Replace the collision section with this setup before the loop:
+
+```powershell
+$ReservedNames = @{}
+
+Get-ChildItem -File | ForEach-Object {
+    $ReservedNames[$_.Name.ToLowerInvariant()] = $true
+}
+
+function Get-AvailableName($Directory, $Stem, $Extension) {
+    if (-not $ReservedNames.ContainsKey(
+        ($Stem + $Extension).ToLowerInvariant()
+    )) {
+        $name = $Stem + $Extension
+        $ReservedNames[$name.ToLowerInvariant()] = $true
+        return $name
+    }
+
+    if (-not $ReservedNames.ContainsKey($Stem.ToLowerInvariant())) {
+        # This entry initializes the shared counter for the stem.
+        $ReservedNames[$Stem.ToLowerInvariant()] = $true
+    }
+
+    $counter = 2
+    do {
+        $name = "{0}_{1}{2}" -f $Stem, $counter, $Extension
+        $key = $name.ToLowerInvariant()
+        $counter++
+    } while ($ReservedNames.ContainsKey($key))
+
+    $ReservedNames[$key] = $true
+    return $name
+}
+```
+
+Then, inside the main loop, replace the old `while` block with:
+
+```powershell
+$base = $result.Date.ToString("yyyy-MM-dd_HHmmss")
+$extension = $file.Extension.ToLowerInvariant()
+$newName = Get-AvailableName $file.DirectoryName $base $extension
+
+Write-Host "$($file.Name) [$($result.Source)] -> $newName"
+
+if (-not $DryRun) {
+    Rename-Item -LiteralPath $file.FullName -NewName $newName
+}
+```
+
+However, there is a subtle issue with a file that is already named exactly as its destination. To handle reruns cleanly, remove the current source name from the reserved set before asking for a destination:
+
+```powershell
+$currentKey = $file.Name.ToLowerInvariant()
+$ReservedNames.Remove($currentKey)
+
+$newName = Get-AvailableName `
+    $file.DirectoryName `
+    $base `
+    $extension
+```
+
+The complete relevant section becomes:
+
+```powershell
+$ReservedNames = @{}
+
+Get-ChildItem -File | ForEach-Object {
+    $ReservedNames[$_.Name.ToLowerInvariant()] = $true
+}
+
+function Get-AvailableName($Directory, $Stem, $Extension) {
+    $counter = 1
+
+    do {
+        if ($counter -eq 1) {
+            $name = $Stem + $Extension
+        }
+        else {
+            $name = "{0}_{1}{2}" -f $Stem, $counter, $Extension
+        }
+
+        $key = $name.ToLowerInvariant()
+        $counter++
+    } while ($ReservedNames.ContainsKey($key))
+
+    $ReservedNames[$key] = $true
+    return $name
+}
+
+foreach ($file in $files | Sort-Object Name) {
+    # Date-selection code remains unchanged.
+
+    if ($null -eq $result) {
+        Write-Host "SKIP   $($file.Name) (no usable date)"
+        continue
+    }
+
+    $base = $result.Date.ToString("yyyy-MM-dd_HHmmss")
+    $extension = $file.Extension.ToLowerInvariant()
+
+    $ReservedNames.Remove($file.Name.ToLowerInvariant())
+
+    $newName = Get-AvailableName `
+        $file.DirectoryName `
+        $base `
+        $extension
+
+    Write-Host "$($file.Name) [$($result.Source)] -> $newName"
+
+    if (-not $DryRun) {
+        Rename-Item -LiteralPath $file.FullName -NewName $newName
+    }
+}
+```
+
+One correction: this shares the numeric sequence only when the exact candidate name is occupied. If you need the counter to be strictly shared across extensions—for example, `.jpg` gets `_2` and `.png` then gets `_3`—use a separate per-stem counter:
+
+```powershell
+$NextCounter = @{}
+
+function Get-AvailableName($Stem, $Extension) {
+    if (-not $NextCounter.ContainsKey($Stem)) {
+        $NextCounter[$Stem] = 1
+    }
+
+    do {
+        $number = $NextCounter[$Stem]
+        $NextCounter[$Stem] = $number + 1
+
+        if ($number -eq 1) {
+            $name = $Stem + $Extension
+        }
+        else {
+            $name = "{0}_{1}{2}" -f $Stem, $number, $Extension
+        }
+
+        $key = $name.ToLowerInvariant()
+    } while ($ReservedNames.ContainsKey($key))
+
+    $ReservedNames[$key] = $true
+    return $name
+}
+```
+
+Use this function with the same `$ReservedNames` initialization and source-name removal. This gives one sequence for each timestamp stem, regardless of extension, and reserves names during a dry run so the preview itself shows the final collision results.

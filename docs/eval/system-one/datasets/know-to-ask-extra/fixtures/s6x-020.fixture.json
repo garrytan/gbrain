@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-020",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "companies/nimbusreach",
+      "content": "---\ntitle: Nimbusreach\ntype: company\nsummary: \"Nimbusreach is a software vendor we work with.\"\n---\n\nNimbusreach is a software vendor we work with. They quoted a per-seat price with a minimum annual commitment.\n"
+    },
+    {
+      "slug": "people/leonie-kestcombe",
+      "content": "---\ntitle: Leonie Kestcombe\ntype: person\nsummary: \"Leonie Kestcombe is the finance lead at Kilnyard.\"\n---\n\nLeonie Kestcombe is the finance lead at Kilnyard. Leonie wants the proposal revised to drop the onboarding fee.\n"
+    },
+    {
+      "slug": "people/tamsin-caldcombe",
+      "content": "---\ntitle: Tamsin Caldcombe\ntype: person\naliases: [tamsin]\nsummary: \"Tamsin Caldcombe is the procurement lead at Wandermoor.\"\n---\n\nTamsin Caldcombe is the procurement lead at Wandermoor.\n"
+    },
+    {
+      "slug": "companies/tidalreach",
+      "content": "---\ntitle: Tidalreach\ntype: company\nsummary: \"A company we met once at a trade show.\"\n---\n\nA company we met once at a trade show.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "how's nimbusreach doing on pricing?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Happy to help."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "What did Kestcombe want changed in the proposal?"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "By the way, someone named Annika Yarrthorpe emailed about partnerships. Never heard of them."
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "Turn this into a checklist: Caldcombe sends the deck, I review it, we both sign off on Friday."
+    }
+  ]
+}

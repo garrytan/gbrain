@@ -48,7 +48,8 @@ const SYNOPSIS_MAX = 160;
 const PURE_CJK_RE = new RegExp(`^[${CJK_SLUG_CHARS}]+$`, 'u');
 
 /** Which resolution arm produced a pointer (provenance → honest confidence). */
-export type ResolveArm = 'alias' | 'title' | 'slug-suffix' | 'title-surname' | 'cjk-title';
+/** `recall`: a System One S6 keyword-only retrieval fired by the know-to-ask slot (never produced by the resolver). */
+export type ResolveArm = 'alias' | 'title' | 'slug-suffix' | 'title-surname' | 'cjk-title' | 'recall';
 
 /**
  * v0.43 (#2095) — arm → confidence. Lives HERE, next to the arm definitions,
@@ -72,6 +73,7 @@ export const ARM_CONFIDENCE: Record<ResolveArm, number> = {
   'title-surname': 0.72,
   'cjk-title': 0.72,
   'slug-suffix': 0.6,
+  recall: 0.5,
 };
 
 export interface ReflexPointer {

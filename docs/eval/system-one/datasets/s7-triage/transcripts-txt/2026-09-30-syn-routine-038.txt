@@ -1,0 +1,171 @@
+[user]
+My Wi-Fi keeps dropping in one room, but it works normally in the rest of the apartment. It usually happens when I’m at the desk near the window. Can you help me troubleshoot it?
+
+[assistant]
+Yes. Since the problem is limited to one room, start by checking whether it is signal-related or caused by interference.
+
+In the problem room, note:
+
+- Whether the network name disappears completely or stays visible but says “No internet”
+- Whether the issue affects one device or several
+- Approximate signal strength when connected
+- Whether moving the device a few feet changes anything
+- Whether both 2.4 GHz and 5 GHz networks are available
+
+First, stand near the desk and run a speed test or simply try loading a few sites. Then move the same device halfway toward the router and test again. Tell me what happens, and include the device type and whether the router has separate network names for 2.4 GHz and 5 GHz.
+
+[user]
+It affects my laptop and phone, so it isn’t just one device. The network stays visible, but pages stop loading. The phone shows one or two bars near the desk and four bars in the living room. The router is in the living room, about 30 feet away through two walls. I see separate names ending in “2.4” and “5”.
+
+[assistant]
+That points to weak 5 GHz coverage or interference in that room. The 5 GHz band is faster nearby but usually loses strength more quickly through walls. The 2.4 GHz band travels farther and may be more reliable at the desk.
+
+Try connecting both devices to the network ending in “2.4” and use them at the desk for several minutes. If the connection remains stable, the immediate workaround is to use 2.4 GHz in that room and 5 GHz closer to the router.
+
+Before changing settings, restart the router:
+
+1. Unplug its power cable.
+2. Wait at least 60 seconds.
+3. Plug it back in.
+4. Wait until the normal Wi-Fi indicator is steady, which may take several minutes.
+5. Reconnect the devices and test first on 2.4 GHz, then on 5 GHz.
+
+Avoid pressing the small reset button, since that can erase the configuration.
+
+[user]
+I switched both devices to 2.4 GHz without restarting. The laptop stayed connected for about ten minutes, and the phone loaded pages normally. On 5 GHz, the laptop lost access twice in five minutes. Should I restart the router now, or change the channel first?
+
+[assistant]
+Restart the router first. A restart is simple and can clear a temporary radio or software issue, while changing the channel is more useful after you confirm the behavior continues.
+
+Use this order:
+
+1. Save anything open that needs an internet connection.
+2. Unplug the router’s power cable, not the Ethernet or fiber cable.
+3. Wait 60–90 seconds.
+4. Reconnect power.
+5. Wait about five minutes for the network names to reappear.
+6. Test the laptop at the desk on 2.4 GHz for 10 minutes.
+7. Then test 5 GHz in the same location for 10 minutes.
+
+Record whether the network remains visible, whether pages load, and whether the device disconnects. If 2.4 GHz remains stable and 5 GHz still fails, change the 5 GHz channel. If both become unreliable, check the router’s placement and nearby sources of interference.
+
+[user]
+I restarted it and waited until both network names came back. The laptop stayed connected to 2.4 GHz for 15 minutes. On 5 GHz, it dropped once after about three minutes, then reconnected by itself. The router is on a low shelf beside a TV and a game console. There’s also a cordless phone base nearby. What should I check before changing the channel?
+
+[assistant]
+Check placement and the local sources of interference first, since they are easy to test without changing router settings.
+
+For a short test:
+
+- Move the router out from behind or beside the TV if possible.
+- Keep it several inches away from the console, power strip, and other electronics.
+- Move the cordless phone base at least a few feet away from the router.
+- Make sure the router is not inside a cabinet or pressed against a wall.
+- Keep its antennas in their normal upright position, if it has external antennas.
+- Leave cables connected and avoid moving the fiber or coaxial cable sharply.
+
+Then wait two or three minutes for the signal to settle and test 5 GHz at the desk for 10–15 minutes. Also test with the TV and console powered off, but do not change several things at once if you want to identify the cause. If moving the router and phone base makes no difference, channel selection is the next reasonable step.
+
+[user]
+I moved the router about two feet away from the TV and console and moved the phone base to another shelf. It is still in the living room, but now it is in the open. The 5 GHz connection still dropped once at the desk after about ten minutes. The 2.4 GHz connection has stayed steady. How do I change the channel?
+
+[assistant]
+You’ll change it in the router’s administration page. The exact labels vary, but the process is usually:
+
+1. Connect to the router, preferably on 2.4 GHz or with an Ethernet cable.
+2. Open a browser and enter the router address. Common addresses are:
+   - `192.168.0.1`
+   - `192.168.1.1`
+   - `10.0.0.1`
+3. Sign in using the router’s admin credentials. These may be printed on its label or shown in the setup documentation.
+4. Look for **Wi-Fi**, **Wireless**, or **Advanced wireless settings**.
+5. Select the **5 GHz** band.
+6. Find **Channel** or **Control channel**.
+7. If it is set to **Auto**, choose a fixed non-DFS channel such as 36, 40, 44, or 48.
+8. Save or apply the change. The 5 GHz network may disappear briefly.
+9. Reconnect the laptop and test from the desk.
+
+Do not change the 2.4 GHz channel yet. Also leave channel width on Auto for the first test. If the page offers separate settings for “channel” and “channel width,” change only the channel.
+
+[user]
+I opened the settings at `192.168.1.1`. Under 5 GHz, the channel is set to Auto and the width is 80 MHz. The available channels are 36, 40, 44, 48, 52, 56, 60, and 64. There’s also a setting called “radar detection.” Which channel should I try?
+
+[assistant]
+Try channel 36 first and leave the width at 80 MHz for this initial test. Channel 36 is a common non-DFS option, so it avoids radar-detection events that can make some routers temporarily stop using a channel.
+
+Use these settings:
+
+- Band: 5 GHz
+- Channel: 36
+- Width: 80 MHz
+- Radar detection or DFS: leave it enabled if the setting is only an automatic feature, but do not select a DFS channel such as 52–64 for this test
+- Security and network name: unchanged
+
+Apply the settings and wait for the 5 GHz network to return. Then reconnect the laptop and stand at the desk for at least 15 minutes. Note the time of any drop and whether the Wi-Fi icon changes or pages simply stop loading.
+
+If channel 36 still drops, repeat the test with channel 44, keeping all other settings unchanged. One short drop does not prove the channel is bad, so compare each setting for roughly the same amount of time.
+
+[user]
+I selected channel 36, left the width at 80 MHz, and applied it. The 5 GHz network disappeared for about 30 seconds and then came back. The laptop has been connected at the desk for 20 minutes without dropping, and the phone also loaded pages normally. The signal is still only two bars. Is that enough to say the channel change fixed it?
+
+[assistant]
+It is a good indication, but one 20-minute test is not enough to be certain. The router restart, changed placement, and channel change all happened before this test, so the improvement could be from one or more of those changes.
+
+Do a simple repeat test:
+
+1. Continue using 5 GHz at the desk for another 20–30 minutes.
+2. Load a few pages periodically and run one speed test near the middle of the test.
+3. Briefly lock and unlock the phone, then check whether it reconnects normally.
+4. If possible, test again later for another 30 minutes under ordinary use.
+5. Keep the router on channel 36 and avoid changing width or other settings during this comparison.
+
+You can also check whether the laptop is actually connected to 5 GHz by opening its Wi-Fi details. The band or frequency should show approximately 5 GHz, often with a channel number around 36.
+
+If it remains stable for several sessions, use 5 GHz in that room as long as performance is acceptable. If it drops again, record whether the Wi-Fi connection disconnects or stays connected while only internet access fails.
+
+[user]
+I checked the laptop details. It says 5 GHz, channel 36, and the connection speed is 433 Mbps. It stayed connected for another 35 minutes, including a video call and a download. The phone also remained online. What should I do if it starts dropping again later?
+
+[assistant]
+If it starts dropping again, troubleshoot one variable at a time so the cause is easier to identify.
+
+First, note:
+
+- The approximate time and duration of the drop
+- Whether the 5 GHz network disappears or remains listed
+- Whether both devices are affected
+- Whether 2.4 GHz still works at the same time
+- Whether the router’s Wi-Fi indicators change
+- Whether the issue ends by itself or requires reconnecting
+
+Then try these steps in order:
+
+1. Confirm the laptop is still on 5 GHz channel 36.
+2. Test 2.4 GHz from the same desk. If 2.4 GHz works, the issue remains specific to 5 GHz coverage or interference.
+3. Test 5 GHz closer to the router. If it works there but not at the desk, distance and wall penetration are likely involved.
+4. Restart the router once if the problem affects both bands.
+5. If only 5 GHz is unstable at the desk, try channel 44, leaving width at 80 MHz.
+6. If both channels are unstable, temporarily set 5 GHz width to 40 MHz and test again. This may reduce peak speed but can improve reliability in a crowded area.
+
+Avoid changing the 2.4 GHz settings unless that band also becomes unreliable.
+
+[user]
+It dropped again later, but only the laptop lost access. The phone stayed connected. The laptop still showed the 5 GHz network, but pages would not load for about a minute. Switching the laptop to 2.4 GHz fixed it immediately. Does that suggest the laptop is the problem?
+
+[assistant]
+It suggests the laptop may be contributing, but it does not prove the laptop is the only problem. Since the phone stayed connected, the event could be a laptop Wi-Fi driver issue, a power-saving setting, or a brief compatibility problem with the 5 GHz connection.
+
+Check the laptop while it is connected to 5 GHz:
+
+- Confirm it still reports channel 36.
+- Check whether its Wi-Fi status says “Connected, no internet” or simply shows a normal connection.
+- Note whether other applications also lose access.
+- Look in the laptop’s Wi-Fi adapter properties for a power-management option that allows the system to turn off the adapter. Temporarily clear that option for testing.
+- Install any ordinary, available Wi-Fi driver update from the laptop manufacturer or operating system update tool.
+- Forget the 5 GHz network and reconnect to it, leaving the network name and password unchanged.
+
+Do not change multiple adapter settings at once. After each change, test the laptop at the desk for a while. Keep using 2.4 GHz as a practical fallback if it remains stable.
+
+[tool]
+You have 1000 weighted tokens left

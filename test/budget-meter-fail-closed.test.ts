@@ -112,6 +112,17 @@ describe('drift budget', () => {
     expect((await judgeCalls('unlimited')).calls).toBe(1);
   });
 
+  test('pricing.overrides reach the drift gate (#4312)', async () => {
+    // The same budget that cannot fit one Sonnet judge call at list price
+    // (asserted above) fits once the operator declares a $0 rate for it.
+    await engine.setConfig('pricing.overrides', '{"anthropic:claude-sonnet-4-6": 0}');
+    try {
+      expect((await judgeCalls('0.02')).calls).toBe(1);
+    } finally {
+      await engine.setConfig('pricing.overrides', '');
+    }
+  });
+
   test('loadAllowUnpriced reads dream.budget.allow_unpriced', async () => {
     expect(await loadAllowUnpriced(engine)).toBe(false);
     await engine.setConfig('dream.budget.allow_unpriced', 'true');

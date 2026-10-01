@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-129",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/mateo-lornthorpe",
+      "content": "---\ntitle: Mateo Lornthorpe\ntype: person\nsummary: \"Mateo Lornthorpe is the procurement lead at Saffronmoor.\"\n---\n\nMateo Lornthorpe is the procurement lead at Saffronmoor. Mateo wants the proposal revised to drop the onboarding fee.\n"
+    },
+    {
+      "slug": "people/solveig-merrford",
+      "content": "---\ntitle: Solveig Merrford\ntype: person\nsummary: \"Solveig Merrford is the head of sales at Russetvane.\"\n---\n\nSolveig Merrford is the head of sales at Russetvane.\n"
+    },
+    {
+      "slug": "companies/orchidmoor",
+      "content": "---\ntitle: Orchidmoor\ntype: company\nsummary: \"Orchidmoor is a software vendor we work with.\"\n---\n\nOrchidmoor is a software vendor we work with. The renewal is blocked on a security review that is due next month.\n"
+    },
+    {
+      "slug": "people/yusra-caldfell",
+      "content": "---\ntitle: Yusra Caldfell\ntype: person\naliases: [yusra]\nsummary: \"Yusra Caldfell is the product lead at Glintyard.\"\n---\n\nYusra Caldfell is the product lead at Glintyard.\n"
+    },
+    {
+      "slug": "people/tamsin-corvthorpe",
+      "content": "---\ntitle: Tamsin Corvthorpe\ntype: person\naliases: [tamsin]\nsummary: \"A contact from a conference last spring.\"\n---\n\nA contact from a conference last spring.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "what did mateo say about the proposal?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Okay, noted."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Our hotel is on Merrford Street. Any tips for finding breakfast near a hotel in a new city?"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "what's the status with orchidmoor and the renewal?"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Here is what I have."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "How do you pronounce Yusra? I want to say it right."
+    }
+  ]
+}

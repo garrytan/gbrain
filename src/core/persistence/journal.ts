@@ -51,6 +51,25 @@ async function cumulativeCapacityError(tx: SqlEngine, resource: string, scope: s
   error.detail = key.slice('persistence.limits.'.length);
   return error;
 }
+/**
+ * Up-front refusal for a backfill that will admit `needed` new requests: when
+ * the brain's or the principal's permanent request IDs cannot cover them, it
+ * refuses with the same filled capacity command an admission would, before
+ * the caller mutates anything.
+ */
+export async function assertLifetimeIdHeadroom(engine: SqlEngine, principal: Principal, needed: number): Promise<void> {
+  if (needed <= 0) return;
+  const limits = await readJournalLimits(engine);
+  const keys = ['brain', principalKey(principal)];
+  const rows = await engine.executeRaw<{ key: string; lifetime_ids: number | string }>(
+    'SELECT key,lifetime_ids FROM persistence_counters WHERE key=ANY($1::text[])', [keys]);
+  for (const key of keys) {
+    const scope = key === 'brain' ? 'brain' : 'principal';
+    const used = Number(rows.find(row => row.key === key)?.lifetime_ids ?? 0);
+    const limit = limits[`${scope}LifetimeIds`];
+    if (used + needed > limit) throw await cumulativeCapacityError(engine, `${scope} permanent request IDs`, key, `${scope}LifetimeIds`, used, limit);
+  }
+}
 export async function lockCounters(tx: SqlEngine, keys: string[]): Promise<Counter[]> {
   const sorted = [...new Set(keys)].sort();
   for (const key of sorted) await tx.executeRaw('INSERT INTO persistence_counters(key) VALUES ($1) ON CONFLICT DO NOTHING', [key]);

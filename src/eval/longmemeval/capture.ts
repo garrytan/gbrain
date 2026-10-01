@@ -42,6 +42,32 @@ export interface CaptureExtrasInput {
   meta: HybridSearchMeta | undefined;
   results: readonly SearchResult[];
   slugToRaw: SlugToRawMap;
+  /** Answer session ids: when present, the row gains `pool_recall` over the fused (pre-rerank) pool. */
+  gold?: readonly string[];
+}
+
+/** Fused-pool depths `pool_recall` reports (the recall experiment's 30/50/100/300). */
+export const POOL_RECALL_DEPTHS = [30, 50, 100, 300] as const;
+
+export interface PoolRecall {
+  /** Rows in the fused pool (pre-rerank, post-dedup). */
+  fused_pool_size: number;
+  /** 1-based rank of each answer session's first chunk in the fused pool; null when absent. */
+  gold_rank: Record<string, number | null>;
+  /** Per depth: answer sessions present in the first `depth` rows, and whether all / any are. */
+  at: Record<string, { present: number; all: boolean; any: boolean }>;
+}
+
+/** Whether each answer session is present in the fused pool at depths 30/50/100/300. */
+export function poolRecall(fused: readonly SearchResult[], gold: readonly string[], slugToRaw: SlugToRawMap): PoolRecall {
+  const rank = new Map<string, number>();
+  fused.forEach((r, i) => { const sid = rawSessionId(r.slug, slugToRaw); if (!rank.has(sid)) rank.set(sid, i + 1); });
+  const goldRank = Object.fromEntries(gold.map((g) => [g, rank.get(g) ?? null]));
+  const at = Object.fromEntries(POOL_RECALL_DEPTHS.map((d) => {
+    const present = gold.filter((g) => (goldRank[g] ?? Infinity) <= d).length;
+    return [String(d), { present, all: present === gold.length, any: present > 0 }];
+  }));
+  return { fused_pool_size: fused.length, gold_rank: goldRank, at };
 }
 
 /**
@@ -50,13 +76,15 @@ export interface CaptureExtrasInput {
  * returned — then the returned rows ARE the kept set and the replay validates
  * the cut byte-for-byte (a further limit/budget slice would hide the exact
  * set, so the replay falls back to count/gap-level validation).
+ * `pool_recall`: only when answer session ids are passed (a gold-less or
+ * abstention row has none).
  */
-export function buildCaptureExtras(input: CaptureExtrasInput): { rerank_pool?: CapturedPoolRow[]; autocut_kept_keys?: string[] } {
-  const { pool, preRerank, meta, results, slugToRaw } = input;
+export function buildCaptureExtras(input: CaptureExtrasInput): { rerank_pool?: CapturedPoolRow[]; autocut_kept_keys?: string[]; pool_recall?: PoolRecall } {
+  const { pool, preRerank, meta, results, slugToRaw, gold } = input;
   if (!pool) return {};
   const rrfRank = new Map<string, number>();
   (preRerank ?? []).forEach((r, i) => rrfRank.set(poolKey(r), i + 1));
-  const out: { rerank_pool?: CapturedPoolRow[]; autocut_kept_keys?: string[] } = {
+  const out: { rerank_pool?: CapturedPoolRow[]; autocut_kept_keys?: string[]; pool_recall?: PoolRecall } = {
     rerank_pool: pool.map((r, i) => ({
       slug: r.slug,
       chunk_id: r.chunk_id,
@@ -71,5 +99,6 @@ export function buildCaptureExtras(input: CaptureExtrasInput): { rerank_pool?: C
     })),
   };
   if (meta?.autocut && meta.autocut.kept === results.length) out.autocut_kept_keys = results.map(poolKey);
+  if (gold && gold.length > 0) out.pool_recall = poolRecall(preRerank ?? pool, gold, slugToRaw);
   return out;
 }

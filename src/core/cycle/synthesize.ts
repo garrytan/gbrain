@@ -68,11 +68,12 @@ import { isQueueQuotaExceededError } from '../minions/admission.ts';
 import { waitForCompletionRenewing, TimeoutError } from '../minions/wait-for-completion.ts';
 import type { MinionJobInput, SubagentHandlerData } from '../minions/types.ts';
 import { resolveMaxOutputTokens } from '../minions/handlers/subagent.ts';
-import { BudgetMeter, loadAllowUnpriced, parseBudgetUsd } from './budget-meter.ts';
+import { BudgetMeter, loadAllowUnpriced, loadPricingOverrides, parseBudgetUsd } from './budget-meter.ts';
 import { runSubagentsInline, runDrainRenewalTick, percentile, INLINE_LOCK_MS } from './inline-drain.ts';
 import { buildManifestContext, buildLinkManifest, type ManifestContext } from './link-manifest.ts';
 import { resolveCycleDate, utcDate } from './cycle-date.ts';
 import { throwIfAborted } from '../abort-check.ts';
+import { stampDreamProvenance } from './dream-provenance.ts';
 
 // Re-exports: the drain was peeled to inline-drain.ts (dream-wave C7), the
 // allow-list loader to filing-rules.ts (#2397); patterns.ts and the
@@ -90,6 +91,8 @@ import { PAGE_SLUG_SEG } from '../cjk.ts';
 import { withChatPhase, estimateChatCostUsd } from '../ai/chat-usage.ts';
 import { verifyAndRepairDreamPages, normForGrounding, readVerifyEpoch, loadChildWriteEpochs, isDreamOwnedPage, type QuoteVerifyStats, type TranscriptForVerify } from './synthesize-verify.ts';
 import { dreamBreakerRefusal, loadDreamBreaker } from './dream-breaker.ts';
+import { resolveTriageDecide, type TriageDecide, type TriageDecideStats } from './triage-decide.ts';
+import { resolveGroundingDecide } from './grounding-decide.ts';
 import { passesTriageGate, rescueConfigOf, DEFAULT_RESCUE_FLOOR, DEFAULT_RESCUE_MIN_SEGMENTS, DEFAULT_RESCUE_CONTENT_TYPES, DEFAULT_RESCUE_CONFIG, type RescueConfig, type RescueVerdictLike } from './triage-rescue.ts';
 
 // Slug grammar from validatePageSlug — shared via PAGE_SLUG_SEG (#738).
@@ -532,7 +535,7 @@ async function runPhaseSynthesizeInner(
       concurrency: config.triage.concurrency,
       maxMs: config.triage.maxMs,
       signal: opts.signal,
-      rescue: rescueConfigOf(config.triage),
+      rescue: rescueConfigOf(config.triage), decide: await resolveTriageDecide(engine),
     }, opts.yieldDuringPhase);
     pass.reports.push(...transcripts.filter(t => retained.has(t.filePath)).map(t => ({ filePath: t.filePath,
       worth: true, score: null, content_type: null, cached: true, reasons: ['retained_completed_output'] })));
@@ -574,7 +577,7 @@ async function runPhaseSynthesizeInner(
       rescue_checked: pass.reports.filter(
         r => r.score !== null && r.score < config.triage.threshold && r.score >= config.triage.rescueFloor,
       ).length,
-      rescue_fired: pass.reports.filter(r => r.rescued === true).length,
+      rescue_fired: pass.reports.filter(r => r.rescued === true).length, ...(pass.decide ? { decide: pass.decide } : {}),
     };
     // 3A: a time-boxed cold pass must never read as mass rejection.
     const deferralSuffix = pass.deferred > 0
@@ -698,7 +701,7 @@ async function runPhaseSynthesizeInner(
     }
     // C-13: USD gate checked before every submission, from the prompt size and
     // the child's output cap (one call in oneshot mode, max_turns in agentic).
-    const synthMeter = new BudgetMeter({ budgetUsd: config.budgetUsd, allowUnpriced: config.allowUnpriced, phase: 'synthesize' });
+    const synthMeter = new BudgetMeter({ budgetUsd: config.budgetUsd, allowUnpriced: config.allowUnpriced, pricingOverrides: await loadPricingOverrides(engine), phase: 'synthesize' });
     const childMaxOutputTokens = resolveMaxOutputTokens(undefined, await engine.getConfig('agent.max_output_tokens').catch(() => null), config.model);
 
     const breaker = await loadDreamBreaker(engine);
@@ -1139,19 +1142,18 @@ async function runPhaseSynthesizeInner(
     // switch: dream.synthesize.quote_verify=false.
     let quoteVerifyStats: QuoteVerifyStats | null = null;
     const sinceByTranscript = await loadChildWriteEpochs(engine, childIds, jobRawSource, verifySince);
+    const grounding = config.quoteVerify ? await resolveGroundingDecide(engine) : undefined;
     if (maintenance) {
       const processed = await postprocessManagedSynthesis(engine, maintenance, writtenRefs, childIds, jobRawSource,
-        worthProcessing, { cycleDate: summaryDate, quoteVerify: config.quoteVerify, sinceByTranscript, signal: opts.signal });
+        worthProcessing, { cycleDate: summaryDate, quoteVerify: config.quoteVerify, sinceByTranscript, signal: opts.signal, grounding });
       writtenRefs = processed.writtenRefs;
       finalizedRefs = processed.finalizedRefs;
       quoteVerifyStats = config.quoteVerify ? processed.stats : null;
     } else if (config.quoteVerify && writtenRefs.length > 0) {
-      const transcriptsForVerify = new Map<string, TranscriptForVerify>(
-        worthProcessing.map(t => [t.filePath, { content: t.content }]),
-      );
+      const transcriptsForVerify = new Map<string, TranscriptForVerify>(worthProcessing.map(t => [t.filePath, { content: t.content }]));
       try {
         quoteVerifyStats = await verifyAndRepairDreamPages(engine, writtenRefs, transcriptsForVerify,
-          { since: verifySince, sinceByTranscript, checkedAt: summaryDate, signal: opts.signal });
+          { since: verifySince, sinceByTranscript, checkedAt: summaryDate, signal: opts.signal, grounding });
       } catch (e) {
         throwIfAborted(opts.signal, '[dream] quote verify');
         process.stderr.write(`[dream] quote verify pass failed open: ${e instanceof Error ? e.message : String(e)}\n`);
@@ -1400,6 +1402,7 @@ async function runPhaseSynthesizeInner(
         // F1b/F4b telemetry (null when the kill switch is off or nothing
         // was written).
         quote_verify: quoteVerifyStats,
+        ...(grounding ? { grounding: grounding.stats } : {}),
         // F6: phase spend, from the two authoritative sources (minion_jobs
         // child counters + triage pass usage). cost_usd null when unpriced.
         spend: spendBlock,
@@ -2307,6 +2310,8 @@ export interface TriagePassCfg {
    * loadSynthConfig where available. minSegments 0 disables the band.
    */
   rescue?: RescueConfig;
+  /** System One S7 (triage-decide.ts); undefined when the slot is off. */
+  decide?: TriageDecide;
 }
 
 export interface TriageFileReport {
@@ -2341,6 +2346,8 @@ export interface TriagePassResult {
   deferred: number;
   /** F6: summed judge-call usage across cache MISSES this pass (hits are free). */
   tokens: { in: number; out: number };
+  /** S7 decide stats, present only when the slot is not off. */
+  decide?: TriageDecideStats;
 }
 
 /**
@@ -2415,9 +2422,25 @@ export async function runTriagePass(
   // one decision.
   const rescueCfg = cfg.rescue ?? DEFAULT_RESCUE_CONFIG;
   const gate = (v: RescueVerdictLike, content: string) =>
-    passesTriageGate(v, content, cfg.threshold, rescueCfg);
+    passesTriageGate(v, content, cfg.threshold, rescueCfg, cfg.decide?.gate);
 
   const processOne = async (idx: number): Promise<void> => {
+    const d = cfg.decide;
+    if (!d?.acting) { await processLlm(idx); if (d) await d.observe(transcripts[idx]); return; }
+    const t = transcripts[idx];
+    const r = await d.triage(t, { triageVersion: TRIAGE_VERSION, force: cfg.force, staleBefore: cfg.staleBefore, signal: cfg.signal, budgetExhausted });
+    if (!r.verdict) {
+      if (r.deferred || judge) return processLlm(idx);
+      reports[idx] = { filePath: t.filePath, worth: true, score: null, content_type: null, reasons: [r.reason ?? 'decide triage no-change'], cached: false };
+      return;
+    }
+    if (r.cached) cacheHits++;
+    else { judged++; if (cfg.shouldStop?.()) stopped = true; }
+    byPath.set(t.filePath, r.verdict);
+    reports[idx] = { filePath: t.filePath, worth: gate(r.verdict, t.content).pass, score: r.verdict.score, content_type: r.verdict.content_type, reasons: r.verdict.reasons, cached: r.cached === true };
+  };
+
+  const processLlm = async (idx: number): Promise<void> => {
     const t = transcripts[idx];
     // Cache lookup is always free — never deferred by the time budget.
     const cached = cfg.force ? null : await engine.getDreamVerdict(t.filePath, t.contentHash);
@@ -2604,7 +2627,7 @@ export async function runTriagePass(
     }
   }
 
-  return { reports, byPath, judged, cacheHits, unreliable: unreliableCount, deferred: deferredCount, tokens: { in: tokensIn, out: tokensOut } };
+  return { reports, byPath, judged, cacheHits, unreliable: unreliableCount, deferred: deferredCount, tokens: { in: tokensIn, out: tokensOut }, ...(cfg.decide ? { decide: cfg.decide.stats } : {}) };
 }
 
 // ── Subagent prompt ──────────────────────────────────────────────────
@@ -3002,55 +3025,6 @@ function findLegacyCompletion(
     if (seen.size === n) return 'chunked';
   }
   return null;
-}
-
-// ── Dream-provenance DB stamp (#2569) ────────────────────────────────
-
-async function stampDreamProvenance(
-  engine: BrainEngine,
-  refs: Array<{ slug: string; source_id: string; raw_source?: string; first_write_at?: Date }>,
-  cycleDate: string,
-  signal?: AbortSignal,
-): Promise<void> {
-  if (refs.length === 0) return;
-  const { executeRawJsonb } = await import('../sql-query.ts');
-  for (const { slug, source_id, raw_source, first_write_at } of refs) {
-    // #4077: per-row abort check — the per-row try below is only for stamp
-    // failures and must not swallow the cancellation unwind.
-    throwIfAborted(signal, '[dream] synthesize provenance');
-    try {
-      await executeRawJsonb(
-        engine,
-        `UPDATE pages
-            SET frontmatter = COALESCE(frontmatter, '{}'::jsonb)
-                              || $5::jsonb
-                              || jsonb_build_object(
-                                   'dream_cycle_date',
-                                   COALESCE(NULLIF(frontmatter->>'dream_created_cycle_date', ''), NULLIF(frontmatter->>'dream_cycle_date', ''), $3),
-                                   'dream_created_cycle_date',
-                                   COALESCE(NULLIF(frontmatter->>'dream_created_cycle_date', ''), NULLIF(frontmatter->>'dream_cycle_date', ''), $3)
-                                 )
-          WHERE slug = $1 AND source_id = $2
-            AND ($4::timestamptz IS NULL
-                 OR frontmatter->>'dream_generated' = 'true'
-                 OR created_at >= $4::timestamptz)`,
-        // C-8: a page that existed before the child's first write to it is
-        // not dream output; stamping it would hide it from extract_facts
-        // and transcript discovery forever.
-        [slug, source_id, cycleDate, first_write_at?.toISOString() ?? null],
-        // #1978 raw-source persistence: record the transcript path the
-        // synthesis was derived from, so `gbrain doctor` (raw_provenance
-        // check) can verify every generated page carries a raw trace.
-        [{
-          dream_generated: true,
-          ...(raw_source ? { raw_source } : {}),
-        }],
-      );
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      process.stderr.write(`[dream] provenance stamp ${slug}@${source_id} failed: ${msg}\n`);
-    }
-  }
 }
 
 // ── Reverse-write DB rows → markdown files ───────────────────────────

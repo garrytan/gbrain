@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-083",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/ines-merrgrove",
+      "content": "---\ntitle: Ines Merrgrove\ntype: person\naliases: [ines]\nsummary: \"Ines Merrgrove is the head of sales at Russetwharf.\"\n---\n\nInes Merrgrove is the head of sales at Russetwharf.\n"
+    },
+    {
+      "slug": "people/oriel-lornridge",
+      "content": "---\ntitle: Oriel Lornridge\ntype: person\nsummary: \"Oriel Lornridge is the product lead at Vesperloft.\"\n---\n\nOriel Lornridge is the product lead at Vesperloft. Oriel wants to pause the second engineering hire until the renewal closes.\n"
+    },
+    {
+      "slug": "people/kofi-vashthorpe",
+      "content": "---\ntitle: Kofi Vashthorpe\ntype: person\nsummary: \"Kofi Vashthorpe is the procurement lead at Vesperspire.\"\n---\n\nKofi Vashthorpe is the procurement lead at Vesperspire.\n"
+    },
+    {
+      "slug": "people/alaric-tessbarrow",
+      "content": "---\ntitle: Alaric Tessbarrow\ntype: person\naliases: [alaric]\nsummary: \"Alaric Tessbarrow is the head of partnerships at Kilnvane.\"\n---\n\nAlaric Tessbarrow is the head of partnerships at Kilnvane.\n"
+    },
+    {
+      "slug": "people/rohan-orrinwick",
+      "content": "---\ntitle: Rohan Orrinwick\ntype: person\naliases: [rohan]\nsummary: \"A contact from a conference last spring.\"\n---\n\nA contact from a conference last spring.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Translate into Spanish: 'Merrgrove will join the meeting at noon.'"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "quick one: what's oriel lornridge's view on the hiring plan?"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Done."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "is kofi a common name anywhere? thinking about it for a character"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Okay, noted."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "Tessbarrow said the room is 12 by 15 feet. What is that in square meters?"
+    }
+  ]
+}

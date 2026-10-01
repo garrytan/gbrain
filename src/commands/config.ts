@@ -219,6 +219,25 @@ export async function tryRunConfigEngineFree(args: string[]): Promise<boolean> {
   return handleDbPlaneRoutedKeys(key, value);
 }
 
+/**
+ * System One: decide.* keys validate at set time (enums, numeric ranges), and a
+ * decide.slots.* write prints the requested-versus-effective mode line after it
+ * persists (best-effort).
+ */
+async function setConfigWithDecideHooks(engine: BrainEngine, key: string, value: string): Promise<void> {
+  if (key.startsWith('decide.')) {
+    const { validateDecideConfigValue } = await import('../core/ai/decide/config.ts');
+    const err = validateDecideConfigValue(key, value);
+    if (err) { console.error(`[config] ${err}`); process.exit(1); }
+  }
+  await engine.setConfig(key, value);
+  if (!key.startsWith('decide.slots.')) return;
+  try {
+    const { printEffectiveModeLines } = await import('./decide.ts');
+    await printEffectiveModeLines(engine, key.split('.')[2]);
+  } catch { /* the value already persisted */ }
+}
+
 export async function runConfig(engine: BrainEngine, args: string[]) {
   const action = args[0];
 
@@ -1037,7 +1056,7 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
       }
     }
 
-    await engine.setConfig(key, value);
+    await setConfigWithDecideHooks(engine, key, value);
     // v0.36.x #892: redact sensitive values in confirmation output. API
     // keys / tokens / passwords are commonly set from terminals with
     // scrollback; echoing the raw value to stderr leaks the secret.

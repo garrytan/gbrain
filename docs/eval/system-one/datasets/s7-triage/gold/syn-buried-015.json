@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "transcript_id": "syn-buried-015",
+  "scenario": "synthetic-buried-signal",
+  "expected_triage": "high",
+  "label_source": "synthetic-construction",
+  "generator": {
+    "model": "openai:gpt-5.6-luna",
+    "reasoning": "none",
+    "temperature": 1,
+    "seed": 7350001
+  },
+  "spec": {
+    "id": "syn-buried-015",
+    "scenario": "synthetic-buried-signal",
+    "expected_triage": "high",
+    "theme": "troubleshooting home wifi dropping in one room: router restart, channel change",
+    "turns": 15,
+    "signal": {
+      "kind": "person-fact",
+      "brief": "the user reveals a new durable fact about a named person they work with (their new role, a health situation they are handling, a move, a preference that matters for working together)",
+      "person": "Cormac Ishikawa-Roe",
+      "project": "fernpost",
+      "position": "near the end, before the wrap-up"
+    }
+  }
+}

@@ -113,6 +113,8 @@ import {
   renderCanonicalMigrationCommands,
 } from './defaults.ts';
 import { logRerankFailure, type RerankFailureReason } from '../rerank-audit.ts';
+import { rerankViaDecide } from './decide/rerank-adapter.ts';
+import { runDecide, type DecideContext, type DecideRequest, type DecideResult } from './decide/index.ts';
 const DEFAULT_EXPANSION_MODEL = 'anthropic:claude-haiku-4-5-20251001';
 const DEFAULT_CHAT_MODEL = 'anthropic:claude-sonnet-4-6';
 // v0.35.0.0+: reranker runtime fallback. Used only when search.reranker.enabled
@@ -1761,9 +1763,12 @@ export async function embedOne(text: string, opts?: EmbedOpts): Promise<Float32A
 
 export async function embedQuery(
   text: string,
-  opts?: { embeddingModel?: string; dimensions?: number; abortSignal?: AbortSignal },
+  opts?: { embeddingModel?: string; dimensions?: number; abortSignal?: AbortSignal; queryPrefix?: string },
 ): Promise<Float32Array> {
-  const [v] = await embed([text], {
+  // #5691: instruction-style models (Qwen3-Embedding, e5, BGE, nomic) take a
+  // query instruction. The caller resolves it per brain (search/query-prefix.ts);
+  // documents are never prefixed.
+  const [v] = await embed([(opts?.queryPrefix ?? '') + text], {
     inputType: 'query',
     embeddingModel: opts?.embeddingModel,
     dimensions: opts?.dimensions,
@@ -4096,7 +4101,11 @@ export interface RerankInput {
   signal?: AbortSignal;
   /** Timeout in ms (default 5000). Search hot path; long stalls degrade UX. */
   timeoutMs?: number;
+  /** Provider-reported call facts (resolved model, score semantics, usage); System One reranker only. */
+  onMeta?: (meta: RerankMeta) => void;
 }
+
+export interface RerankMeta { model_resolved: string; score_semantics: 'rubric'; input_tokens: number; output_tokens: number; latency_ms: number; batches: number }
 
 export interface RerankResult {
   index: number;
@@ -4149,6 +4158,11 @@ export async function rerank(input: RerankInput): Promise<RerankResult[]> {
     );
   }
   const cfg = requireConfig();
+  if (tp.wire_format === 'typesafe-systemone') { // System One reranker: packed score questions via the decide core (#5178 contract)
+    if (recipe.authPresent && !recipe.authPresent(cfg.env)) { noKeyOnce(modelStr, 'TYPESAFE_API_KEY', input.query, input.documents.length); throw new RerankError(`Reranker ${modelStr} needs TYPESAFE_API_KEY (not set) — rerank skipped, results pass through unreranked.`, 'no_key'); }
+    return rerankViaDecide(input, { model: modelStr, modelId: parsed.modelId, maxPayloadBytes: tp.max_payload_bytes, defaultTimeoutMs: DEFAULT_RERANK_TIMEOUT_MS, tracker, transport: _rerankTransport ?? ((u, init) => fetch(u, init)),
+      url: `${applyOpenAICompatConfig(recipe, cfg).baseURL.replace(/\/$/, '')}${tp.path ?? '/systemone'}`, headers: { ...authToHeaders(applyResolveAuth(recipe, cfg, 'reranker')), 'Content-Type': 'application/json' } });
+  }
   // v0.48.2 `no_key` preflight — fail-open, audit-only, once per process per
   // model (see noKeyOnce). A recipe without a custom resolveAuth needs every
   // `auth_env.required` key in the gateway env snapshot; when one is missing
@@ -4319,6 +4333,15 @@ export async function rerank(input: RerankInput): Promise<RerankResult[]> {
     clearTimeout(t);
   }
 }
+
+// ---- Decide (System One; logic in src/core/ai/decide/) ----
+
+let _decideTransport: RerankTransport | null = null;
+/** Test seam for System One decide requests (same shape as the rerank seam). */
+export function __setDecideTransportForTests(fn: RerankTransport | null): void { _decideTransport = fn; }
+export function decideTransport(): RerankTransport { return _decideTransport ?? ((u, init) => fetch(u, init)); }
+/** One logical typed decision; see src/core/ai/decide/index.ts and docs/architecture/decide.md. */
+export function decide(req: DecideRequest, ctx: DecideContext): Promise<DecideResult> { return runDecide(req, ctx); }
 
 // ---- Future touchpoint stubs ----
 

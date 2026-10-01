@@ -11,6 +11,7 @@ export function printManagedSyncDiagnostic(result: SyncResult, sink: NodeJS.Writ
   write(`  Source: ${JSON.stringify(d.source_id)}; slug: ${JSON.stringify(d.slug)}; path: ${JSON.stringify(d.path)}`);
   write(`  Request: ${d.write_request.request_id} (${d.write_request.state})`);
   write(`  Fix: ${d.suggestion}`);
+  if (d.docs) write(`  Docs: ${d.docs}`);
   if (d.ledger_recorded === false) write('  Local failure ledger unavailable; the durable receipt above remains authoritative.');
   return true;
 }
@@ -20,6 +21,9 @@ export function printManagedSyncNotes(result: SyncResult, write: (line: string) 
   for (const collision of result.slugCollisions ?? []) {
     write(`  Slug collision: ${collision.skipped.join(', ')} and ${collision.kept} map to ${collision.slug}; kept ${collision.kept}. Rename one file to import both.`);
   }
+  const skips = result.legacySkips;
+  if (skips?.contextualMode) write(`  ${skips.contextualMode} legacy file(s) skipped because they parse to the same page but have no contextual retrieval mode, which a skipped import cannot stamp; to stamp it: gbrain repair contextual-mode`);
+  if (skips?.canonicalBytes) write(`  ${skips.canonicalBytes} legacy file(s) skipped because they parse to the same page but their bytes are not what gbrain reads back (for example, not valid UTF-8); re-save them as UTF-8 to publish them exactly.`);
   const links = result.links;
   if (links && (links.created || links.removed || links.remaining)) {
     write(`  Links: ${links.created} created, ${links.removed} removed across ${links.pages} page(s)` +

@@ -72,6 +72,12 @@ describe('buildAmbientWritebackSection (F1 leaf — the single source)', () => {
     expect(priv).toContain('not by remote sessions');
   });
 
+  test('#5671 private posture states the remote read-back consequence in the instruction itself', () => {
+    const priv = buildAmbientWritebackSection({ ...BASE_OPTS, visibility: 'private' });
+    expect(priv).toContain('you, and every other MCP or HTTP session, cannot recall or forget a fact you save as private');
+    expect(buildAmbientWritebackSection(BASE_OPTS)).not.toContain('cannot recall');
+  });
+
   test('every requirement-3 bullet is present (skip-list, no assistant inference, no raw transcripts, provenance, one claim, scope, silence, durable-no-ttl)', () => {
     const s = buildAmbientWritebackSection(BASE_OPTS);
     expect(s).toContain('ONE claim per call');

@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-052",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/kofi-ostrebrook",
+      "content": "---\ntitle: Kofi Ostrebrook\ntype: person\nsummary: \"Kofi Ostrebrook is the head of sales at Juniperloft.\"\n---\n\nKofi Ostrebrook is the head of sales at Juniperloft. Kofi objected to the auto-renewal clause in the draft contract.\n"
+    },
+    {
+      "slug": "people/solveig-tesswaite",
+      "content": "---\ntitle: Solveig Tesswaite\ntype: person\nsummary: \"Solveig Tesswaite is the head of sales at Emberloft.\"\n---\n\nSolveig Tesswaite is the head of sales at Emberloft.\n"
+    },
+    {
+      "slug": "companies/vespervane",
+      "content": "---\ntitle: Vespervane\ntype: company\nsummary: \"Vespervane is a software vendor we work with.\"\n---\n\nVespervane is a software vendor we work with. Their support team promised a named account manager after the last outage.\n"
+    },
+    {
+      "slug": "companies/saffronreach",
+      "content": "---\ntitle: Saffronreach\ntype: company\nsummary: \"A company we met once at a trade show.\"\n---\n\nA company we met once at a trade show.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Prep me for the Ostrebrook call, especially the contract."
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Done."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "How do you spell Tesswaite in the NATO phonetic alphabet?"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "write a regex that matches a simple email address"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Happy to help."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "remind me what we know about vespervane and support"
+    }
+  ]
+}

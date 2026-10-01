@@ -483,6 +483,25 @@
         "thinClient": "none",
         "thinClientRoutedSubcommands": []
       },
+      "decide": {
+        "hasSwitchCase": false,
+        "phase": "pre-connect-own-engine",
+        "preConnectRules": [
+          {
+            "condition": "command === 'decide'",
+            "connectsEngine": true,
+            "refusesThinClient": false,
+            "routesThinClient": false,
+            "terminates": true,
+            "thinClientCheck": false,
+            "unconditionalFor": [
+              "decide"
+            ]
+          }
+        ],
+        "thinClient": "refuse",
+        "thinClientRoutedSubcommands": []
+      },
       "doctor": {
         "hasSwitchCase": false,
         "phase": "pre-connect-own-engine",

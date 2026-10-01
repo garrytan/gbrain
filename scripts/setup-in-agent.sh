@@ -45,7 +45,7 @@ done
 
 # The runtime pin follows the repository's supported CI release. Repair reads
 # its prior version from the non-secret receipt; no mutable latest runtime URL.
-gbrain_bun_version=1.3.13
+gbrain_bun_version=1.4.2
 gbrain_source_ref=''
 if [[ -f "$gbrain_receipt" && "$gbrain_upgrade" == 0 ]]; then
   gbrain_prior_bun=$(sed -n 's/.*"bun_version": *"\([0-9.]*\)".*/\1/p' "$gbrain_receipt" | head -1)

@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-014",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/verity-kestwaite",
+      "content": "---\ntitle: Verity Kestwaite\ntype: person\nsummary: \"Verity Kestwaite is the head of partnerships at Glintwharf.\"\n---\n\nVerity Kestwaite is the head of partnerships at Glintwharf. Verity objected to the auto-renewal clause in the draft contract.\n"
+    },
+    {
+      "slug": "people/thea-merrwick",
+      "content": "---\ntitle: Thea Merrwick\ntype: person\naliases: [thea]\nsummary: \"Thea Merrwick is the operations director at Pylonreach.\"\n---\n\nThea Merrwick is the operations director at Pylonreach.\n"
+    },
+    {
+      "slug": "people/junie-ostrebarrow",
+      "content": "---\ntitle: Junie Ostrebarrow\ntype: person\naliases: [junie]\nsummary: \"Junie Ostrebarrow is the product designer we hired last month.\"\n---\n\nJunie Ostrebarrow is the product designer we hired last month. Junie wants the proposal revised to drop the onboarding fee.\n"
+    },
+    {
+      "slug": "people/ottilie-orrinwaite",
+      "content": "---\ntitle: Ottilie Orrinwaite\ntype: person\nsummary: \"Ottilie Orrinwaite is the product lead at Solaceloft.\"\n---\n\nOttilie Orrinwaite is the product lead at Solaceloft.\n"
+    },
+    {
+      "slug": "people/rohan-lornmere",
+      "content": "---\ntitle: Rohan Lornmere\ntype: person\naliases: [rohan]\nsummary: \"A contact from a conference last spring.\"\n---\n\nA contact from a conference last spring.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "I owe Kestwaite an answer on the contract. What were they asking for?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Turn this into a checklist: Merrwick sends the deck, I review it, we both sign off on Friday."
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Here is what I have."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "what did our new designer want to change in the proposal?"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Here is what I have."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "Our hotel is on Orrinwaite Street. Any tips for finding breakfast near a hotel in a new city?"
+    }
+  ]
+}

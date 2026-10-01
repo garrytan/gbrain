@@ -433,3 +433,14 @@ function bucketStats(b: RecallBucket): RecallTypeStats {
 function uniq<T>(xs: readonly T[]): T[] {
   return Array.from(new Set(xs));
 }
+
+/** `--by-type-floor` gate: one line per question_type whose rate is below `floor`. */
+export function floorBreaches(summary: ByTypeSummaryV2, floor: number, metric: 'recall_all' | 'recall_any'): string[] {
+  const breaches: string[] = [];
+  for (const [t, v] of Object.entries(summary.recall_by_type)) {
+    const rate = metric === 'recall_all' ? v.all_rate : v.any_rate;
+    // null = empty bucket; JS `null < F` is true, so guard explicitly.
+    if (rate !== null && rate < floor) breaches.push(`${t}: ${metric} ${(rate * 100).toFixed(1)}% < ${(floor * 100).toFixed(1)}%`);
+  }
+  return breaches;
+}

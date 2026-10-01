@@ -33,9 +33,10 @@ import { GRANT_AUDIT_SCHEMA_SQL } from '../src/core/grants/schema.ts';
 import { LEASE_TOKEN_SCHEMA_SQL } from '../src/core/lease-schema.ts';
 import { PAGE_PROJECTION_SCHEMA_SQL } from '../src/core/page-state/projection-schema.ts';
 import { PAGE_STATE_SCHEMA_SQL } from '../src/core/page-state/schema.ts';
-import { PERSISTENCE_DATABASE_PENDING_INDEX_SQL, PERSISTENCE_SCHEMA_STATEMENTS } from '../src/core/persistence/schema.ts';
+import { POSTGRES_CONCURRENT_PERSISTENCE_INDEXES, PERSISTENCE_SCHEMA_STATEMENTS } from '../src/core/persistence/schema.ts';
 import { PERSISTENCE_TOPOLOGY_SCHEMA_SQL } from '../src/core/persistence/topology-schema.ts';
 import { SHARED_SKILLS_SCHEMA_SQL } from '../src/core/shared-skills/schema-all.ts';
+import { DECIDE_SCHEMA_SQL } from '../src/core/ai/decide/schema.ts';
 
 const REPO = resolve(import.meta.dir, '..');
 export const SCHEMA_SQL_PATH = 'src/schema.sql';
@@ -79,15 +80,17 @@ export const FRAGMENTS: readonly Fragment[] = [
     source: 'src/core/persistence/schema.ts',
     expr: 'PERSISTENCE_SCHEMA_STATEMENTS',
     // Capability rule: Postgres builds persistence_requests_database_pending
-    // CONCURRENTLY in migration v165 (never inside the blob); PGLite has no
-    // concurrent builds, so its bootstrap creates it inline.
-    postgres: persistenceSql(PERSISTENCE_SCHEMA_STATEMENTS.filter((s) => s !== PERSISTENCE_DATABASE_PENDING_INDEX_SQL)),
+    // (v165) and the #5762 sync-run indexes CONCURRENTLY in migrations (never
+    // inside the blob); PGLite has no concurrent builds, so its bootstrap
+    // creates them inline.
+    postgres: persistenceSql(PERSISTENCE_SCHEMA_STATEMENTS.filter((s) => !POSTGRES_CONCURRENT_PERSISTENCE_INDEXES.has(s))),
     pglite: persistenceSql(PERSISTENCE_SCHEMA_STATEMENTS),
   },
   { source: 'src/core/page-state/projection-schema.ts', expr: 'PAGE_PROJECTION_SCHEMA_SQL', postgres: PAGE_PROJECTION_SCHEMA_SQL, pglite: PAGE_PROJECTION_SCHEMA_SQL },
   { source: 'src/core/persistence/topology-schema.ts', expr: 'PERSISTENCE_TOPOLOGY_SCHEMA_SQL', postgres: PERSISTENCE_TOPOLOGY_SCHEMA_SQL, pglite: PERSISTENCE_TOPOLOGY_SCHEMA_SQL },
   { source: 'src/core/company-brain/receipt-schema.ts', expr: 'SOURCE_INGESTION_RECEIPTS_SCHEMA_SQL', postgres: SOURCE_INGESTION_RECEIPTS_SCHEMA_SQL, pglite: SOURCE_INGESTION_RECEIPTS_SCHEMA_SQL },
   { source: 'src/core/shared-skills/schema-all.ts', expr: 'SHARED_SKILLS_SCHEMA_SQL', postgres: SHARED_SKILLS_SCHEMA_SQL, pglite: SHARED_SKILLS_SCHEMA_SQL },
+  { source: 'src/core/ai/decide/schema.ts', expr: 'DECIDE_SCHEMA_SQL', postgres: DECIDE_SCHEMA_SQL, pglite: DECIDE_SCHEMA_SQL },
 ];
 
 const fragmentLabel = (f: Fragment) => `${f.source} (${f.expr})`;

@@ -1,0 +1,41 @@
+[user]
+I'm still processing the Lumopact term sheet negotiation from yesterday. Tomas traded the board seat away for stronger pro rata rights, which honestly surprised me at first. Can you help me think through whether that was actually a smart move given the stage they're at?
+
+[assistant]
+That trade-off makes more sense than it might look on the surface. At the seed stage, board seats can be more symbolic than powerful, especially if the investor only has one seat on a five-person board. Pro-rata rights, on the other hand, lock in Tomas's ability to maintain his ownership percentage in future rounds when valuations climb. If Lumopact hits even a modest Series A step-up, those rights could be worth far more than the governance leverage a single board seat would have provided. Did Tomas negotiate any observer rights as a consolation, or did he walk away from the board entirely?
+
+[user]
+He walked away entirely, no observer seat. I think his reasoning was that Anouk would keep him in the loop informally anyway since they've known each other for years. But there's something else that's been nagging at me. When I looked back at the Vantabrook docs, their standard docs hide a ninety day exclusivity clause buried in the appendix. I almost missed it.
+
+[assistant]
+That's a classic move from funds that want to lock founders into a commitment window before the deal even closes. Ninety days is long enough to kill competing term sheets and short enough that most founders don't push back. The fact that it's buried in an appendix rather than stated upfront in the term sheet summary is a red flag about how Vantabrook operates. Did Anouk catch it herself, or did you have to point it out?
+
+[user]
+I had to point it out, which is partly why I'm annoyed. She's sharp but she was moving fast and trusted the docs too much. Lesson learned on my end too... from now on I flag exclusivity language every single time, no matter how friendly the fund seems. I'm adding it to my personal checklist.
+
+[assistant]
+Good instinct. Exclusivity clauses are one of those things that seem benign until you're three weeks into diligence and a better offer shows up that you can't even discuss. Making it a standard flag on your checklist means you'll catch it even when you're tired or rushing. You might also want to note the exact section number from Vantabrook's docs so you can reference it if you ever see their paper again. Patterns tend to repeat with the same funds.
+
+[user]
+That's a great point, I'll note the section. Switching gears a bit... I caught myself feeling protective of Anouk in that room, which is probably not ideal objectivity-wise. She's a first-time founder and Tomas is experienced, so the dynamic was a bit uneven. Also, completely unrelated, but the meeting room coffee was genuinely criminal. I don't know how they serve that to people.
+
+[assistant]
+Ha, bad conference room coffee is a universal constant in term sheet meetings. On the protectiveness thing, it's worth being aware of but it doesn't have to be a problem. You can advocate for a founder while still being honest about risks and trade-offs. The real question is whether you're giving Anouk the same candid feedback you'd give a more experienced founder, or if you're softening things. If you're still flagging issues like the exclusivity clause, you're probably fine. Did she seem rattled by the power imbalance with Tomas, or did she hold her own?
+
+[user]
+She actually held her own better than I expected. At one point she argued the pool down from fifteen to ten pre money, which is not easy to do with someone like Tomas pushing back. I was impressed. Also, my pen died halfway through the meeting, of course, so I was typing notes on my phone like a teenager. Not my most professional moment.
+
+[assistant]
+Arguing the option pool down from fifteen to ten percent pre-money is a real skill, especially against a seasoned investor who knows exactly how pool size affects founder dilution. That tells you Anouk understands the math and isn't afraid to push back on points that matter. The phone-typing happens to everyone... honestly, it probably made you look less like you were taking verbatim notes for a lawsuit, which can put investors at ease. Did Tomas concede the pool point cleanly, or did he extract something else in return?
+
+[user]
+He conceded it cleanly, which surprised me. I think he'd already gotten what he really wanted with the pro-rata. One thing I want to do after all this is put together a cheat sheet of sneaky clauses founders should ctrl f for when they get docs from any fund. The exclusivity thing is just one example... there are probably a dozen others I've seen over the years.
+
+[assistant]
+That would be genuinely useful. Beyond exclusivity, you'd want to include things like: drag-along thresholds that are set too low, pay-to-play provisions that can force founders to participate in down rounds, information rights that require excessive reporting cadence, and any anti-dilution language that's full ratchet instead of weighted average. I evened out the bullet indentation, no content change, but the list is cleaner now. You could structure it as a two-column table... clause name on the left, what to search for on the right. Want me to draft a starting version you can iterate on?
+
+[user]
+Yes, let's do that soon. But first I want to capture my overall read on working with Vantabrook and on Tomas specifically. Tomas is tough but he does not play games, which I respect. He's direct about what he wants and he doesn't pretend to be your friend while slipping things past you. The exclusivity clause is a Vantabrook institutional thing, not a Tomas thing. I'm sending Anouk my diligence checklist tonight so she's better prepared next time.
+
+[assistant]
+That's a useful distinction to remember. Separating the investor's personal style from the fund's institutional habits helps you know where to direct your skepticism. With Tomas, you can negotiate hard and trust that a handshake means something. With Vantabrook's docs, you always read the appendices twice. Sending Anouk your diligence checklist is a good move... it levels her up without you having to be in every room. If you want, I can help you add a Vantabrook-specific section to that checklist noting the exclusivity clause location and anything else you spotted in their paper. That way she's prepped if she ever sees their docs again.

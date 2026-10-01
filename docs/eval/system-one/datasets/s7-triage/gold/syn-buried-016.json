@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "transcript_id": "syn-buried-016",
+  "scenario": "synthetic-buried-signal",
+  "expected_triage": "high",
+  "label_source": "synthetic-construction",
+  "generator": {
+    "model": "openai:gpt-5.6-luna",
+    "reasoning": "none",
+    "temperature": 1,
+    "seed": 7350001
+  },
+  "spec": {
+    "id": "syn-buried-016",
+    "scenario": "synthetic-buried-signal",
+    "expected_triage": "high",
+    "theme": "trivia chat about why the sky is blue and how rainbows form",
+    "turns": 23,
+    "signal": {
+      "kind": "project-fact",
+      "brief": "the user states a new durable fact about their project or company (a metric milestone, a lost customer and why, a key hire, a legal constraint)",
+      "person": "Tobin Okonkwo-Bell",
+      "project": "brambleworks",
+      "position": "about two thirds of the way through"
+    }
+  }
+}

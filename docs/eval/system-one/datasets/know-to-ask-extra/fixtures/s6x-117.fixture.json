@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-117",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "companies/brackenloft-robotics",
+      "content": "---\ntitle: Brackenloft Robotics\ntype: company\nsummary: \"Brackenloft Robotics is a startup we evaluated as a partner.\"\n---\n\nBrackenloft Robotics is a startup we evaluated as a partner. Their support team promised a named account manager after the last outage.\n"
+    },
+    {
+      "slug": "projects/pricing-overhaul",
+      "content": "---\ntitle: Pricing Overhaul\ntype: project\nsummary: \"Pricing Overhaul: We decided to move the starter plan to usage-based pricing and keep annual contracts for larger teams.\"\n---\n\nPricing Overhaul: We decided to move the starter plan to usage-based pricing and keep annual contracts for larger teams.\n"
+    },
+    {
+      "slug": "companies/saffronyard",
+      "content": "---\ntitle: Saffronyard\ntype: company\nsummary: \"Saffronyard is a software vendor we work with.\"\n---\n\nSaffronyard is a software vendor we work with.\n"
+    },
+    {
+      "slug": "people/oskar-tulvstead",
+      "content": "---\ntitle: Oskar Tulvstead\ntype: person\naliases: [oskar]\nsummary: \"A contact from a conference last spring.\"\n---\n\nA contact from a conference last spring.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Any news from Brackenloft on support?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "write a regex that matches a simple email address"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Here is what I have."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "where did we land on that pricing thing?"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Okay, noted."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "Write a one-line out-of-office reply saying I'm visiting Saffronyard on Monday."
+    }
+  ]
+}

@@ -139,10 +139,13 @@ claiming activation; otherwise report adoption as unverified.
 
 - `gbrain search` / `gbrain query` return ranked chunks with context snippets.
   These are often enough to answer the question directly.
-- For multi-conversation or "when did X change" questions, where the answer
-  depends on the surrounding conversation rather than one chunk, ask for whole
-  evidence in the same call: `return_unit: "page"` (whole page or session,
-  budgeted by `token_budget`, default 6,000) or `"window"` (neighbor chunks).
+- Hits on conversation pages (sessions, transcripts, meetings, chat logs)
+  already come back as the whole session by default (`return_unit: "auto"`,
+  24,000-token default budget). For other multi-page or "when did X change"
+  questions, where the answer depends on the surrounding text rather than one
+  chunk, ask for whole evidence in the same call: `return_unit: "page"` (whole
+  page, budgeted by `token_budget`, default 6,000) or `"window"` (neighbor
+  chunks). `return_unit: "chunk"` opts out.
   Each result then carries the evidence in `chunk_text` plus a `delivered`
   block; see [evidence delivery](../../docs/evidence-delivery.md).
   `gbrain query "when did the launch move?" --return-unit page --token-budget 6000`

@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-037",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "companies/brackenvane-labs",
+      "content": "---\ntitle: Brackenvane Labs\ntype: company\nsummary: \"Brackenvane Labs is a startup we evaluated as a partner.\"\n---\n\nBrackenvane Labs is a startup we evaluated as a partner. The integration slipped because their API still lacks webhooks.\n"
+    },
+    {
+      "slug": "people/lucan-dremridge",
+      "content": "---\ntitle: Lucan Dremridge\ntype: person\naliases: [lucan]\nsummary: \"Lucan Dremridge is the operations director at Pylonwharf.\"\n---\n\nLucan Dremridge is the operations director at Pylonwharf.\n"
+    },
+    {
+      "slug": "projects/onboarding-revamp",
+      "content": "---\ntitle: Onboarding Revamp\ntype: project\nsummary: \"Onboarding Revamp: The plan is to replace the setup call with a guided checklist and a two-week check-in.\"\n---\n\nOnboarding Revamp: The plan is to replace the setup call with a guided checklist and a two-week check-in.\n"
+    },
+    {
+      "slug": "companies/tidalwharf",
+      "content": "---\ntitle: Tidalwharf\ntype: company\nsummary: \"A company we met once at a trade show.\"\n---\n\nA company we met once at a trade show.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "what are the pros and cons of a four-day work week?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Prep notes for my Brackenvane meeting please, mainly the integration."
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Okay, noted."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "Dremridge said the room is 12 by 15 feet. What is that in square meters?"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "remind me what we settled on for that onboarding idea"
+    }
+  ]
+}

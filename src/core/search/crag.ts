@@ -49,7 +49,8 @@ export interface ConfidenceGrade {
     | 'rerank_top'
     | 'rerank_top_below_floor'
     | 'keyword_exact_top'
-    | 'weak_semantic_top';
+    | 'weak_semantic_top'
+    | 'decide_evidence';
   /** Rank-1 evidence label when present (auditability). */
   top_evidence?: string;
   /** Rank-1 cross-encoder score when the reranker ran. */
@@ -65,7 +66,8 @@ export const DEFAULT_CRAG_MIN_TOP = 0.2;
 
 export function gradeRetrievalConfidence(
   results: SearchResult[],
-  opts: { minTopScore?: number } = {},
+  /** `ignoreDecideEvidence`: the deterministic grade (S4's agreement rule excludes the S3-derived input). */
+  opts: { minTopScore?: number; ignoreDecideEvidence?: boolean } = {},
 ): ConfidenceGrade {
   if (results.length === 0) return { level: 'weak', reason: 'zero_results' };
   const top = results[0];
@@ -85,8 +87,13 @@ export function gradeRetrievalConfidence(
     return { level: 'strong', reason: 'high_vector_match', top_evidence: top.evidence };
   }
 
-  // Calibrated cross-encoder signal when the reranker ran.
-  if (typeof top.rerank_score === 'number' && Number.isFinite(top.rerank_score)) {
+  // System One S3 (only stamped when the slot acted): the top kept candidate cleared the evidence threshold.
+  if (!opts.ignoreDecideEvidence && top.decide_evidence?.clears) {
+    return { level: 'strong', reason: 'decide_evidence', top_evidence: top.evidence };
+  }
+
+  // Calibrated cross-encoder signal when the reranker ran (System One rubric levels are not calibrated).
+  if (typeof top.rerank_score === 'number' && Number.isFinite(top.rerank_score) && top.rerank_score_kind !== 'rubric') {
     return top.rerank_score >= floor
       ? { level: 'strong', reason: 'rerank_top', top_evidence: top.evidence, top_rerank_score: top.rerank_score }
       : { level: 'weak', reason: 'rerank_top_below_floor', top_evidence: top.evidence, top_rerank_score: top.rerank_score };

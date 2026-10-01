@@ -1,0 +1,296 @@
+[user]
+I’m trying to install the Python package `psycopg2` in a small virtual environment, but `pip install psycopg2` fails. I’m on Ubuntu and only need it for a local script.
+
+[assistant]
+What exact error appears near the end of the installation output? The final 20–30 lines usually show whether the problem is a missing PostgreSQL client library, compiler, or Python header.
+
+[user]
+The relevant part is:
+
+```text
+Error: pg_config executable not found.
+
+pg_config is required to build psycopg2 from source. Please add the directory
+containing pg_config to the PATH or specify the full executable path with:
+    python setup.py build_ext --pg-config /path/to/pg_config build ...
+```
+
+I’m using Python 3.12 in a virtual environment.
+
+[assistant]
+That means the PostgreSQL development files are missing from the operating system. The virtual environment isolates Python packages, but it does not provide system commands such as `pg_config`.
+
+On Ubuntu, install the development package and a compiler:
+
+```bash
+sudo apt update
+sudo apt install libpq-dev python3.12-dev build-essential
+```
+
+Then verify that the command is available:
+
+```bash
+command -v pg_config
+pg_config --version
+```
+
+After that, activate the same virtual environment and retry:
+
+```bash
+python -m pip install --upgrade pip
+python -m pip install psycopg2
+```
+
+[user]
+I ran the first command, but `apt` says:
+
+```text
+E: Unable to locate package python3.12-dev
+E: Couldn't find any package by glob 'python3.12-dev'
+```
+
+`libpq-dev` and `build-essential` seem to be available. I don’t want to replace my Python installation.
+
+[assistant]
+You do not need to replace Python. The package name for the headers depends on which Ubuntu release and repository configuration you have. First check the version and available development packages:
+
+```bash
+. /etc/os-release
+printf '%s\n' "$PRETTY_NAME"
+
+apt-cache policy python3-dev python3.12-dev
+apt-cache search '^python3(\.[0-9]+)?-dev$'
+```
+
+If your system’s default Python is compatible with the interpreter in the virtual environment, install the generic headers:
+
+```bash
+sudo apt install libpq-dev build-essential python3-dev
+```
+
+If the virtual environment uses a separately installed Python 3.12, its headers may need to come from the same source that provided that interpreter. Check the executable location and version:
+
+```bash
+which python
+python --version
+python -c "import sys; print(sys.executable); print(sys.prefix)"
+```
+
+[user]
+The output is:
+
+```text
+Ubuntu 22.04.4 LTS
+/usr/bin/python3
+Python 3.10.12
+```
+
+But inside the virtual environment I get:
+
+```text
+/home/me/venvs/dbtest/bin/python
+Python 3.12.3
+```
+
+The 3.12 interpreter came from a manually installed archive. `python3-dev` installed successfully, but `pip install psycopg2` still says it cannot find `Python.h`.
+
+[assistant]
+That explains the remaining error: `python3-dev` supplies headers for Ubuntu’s Python 3.10, while your virtual environment uses Python 3.12. `psycopg2` needs headers matching the interpreter that runs its build.
+
+You have two routine options.
+
+Option 1 is to use the system Python for this environment:
+
+```bash
+deactivate 2>/dev/null || true
+rm -rf ~/venvs/dbtest
+python3 -m venv ~/venvs/dbtest
+. ~/venvs/dbtest/bin/activate
+python -m pip install --upgrade pip
+python -m pip install psycopg2
+```
+
+Option 2 is to install the Python 3.12 development files that match the manually installed interpreter. If you built Python yourself, rerun that build with the development prerequisites and make sure the installation includes its headers. If the archive provides a separate `include` directory, locate it with:
+
+```bash
+find /opt /usr/local -type f -name Python.h 2>/dev/null
+```
+
+Do not point Python 3.12 at the Python 3.10 headers; they are not interchangeable.
+
+[user]
+I’d rather keep the 3.12 environment. I found `/usr/local/include/python3.12/Python.h`, and `/usr/local/bin/python3.12` is the interpreter used to create the environment. `pg_config` now exists at `/usr/bin/pg_config`.
+
+[assistant]
+Good. Confirm the environment sees the expected interpreter and PostgreSQL configuration:
+
+```bash
+. ~/venvs/dbtest/bin/activate
+python -c "import sys; print(sys.executable); print(sys.version)"
+python -c "import sysconfig; print(sysconfig.get_path('include'))"
+command -v pg_config
+pg_config --includedir
+pg_config --libdir
+```
+
+If the include path printed by `sysconfig` is not `/usr/local/include/python3.12`, the 3.12 installation may be missing or misconfigured development metadata. You can still test the build by explicitly supplying the include and library locations:
+
+```bash
+export CPPFLAGS="-I/usr/local/include/python3.12"
+export LDFLAGS="-L/usr/local/lib"
+python -m pip install --no-cache-dir psycopg2
+```
+
+The `libpq-dev` package should provide the PostgreSQL headers and library. Check that they are present:
+
+```bash
+test -f /usr/include/postgresql/libpq-fe.h && echo "libpq headers found"
+ldconfig -p | grep libpq
+```
+
+[user]
+The checks show:
+
+```text
+/home/me/venvs/dbtest/bin/python
+3.12.3 (main, ...)
+/usr/local/include/python3.12
+/usr/bin/pg_config
+/usr/include/postgresql
+/usr/lib/x86_64-linux-gnu
+libpq headers found
+```
+
+But the install now fails while linking:
+
+```text
+/usr/bin/ld: cannot find -lpython3.12: No such file or directory
+collect2: error: ld returned 1 exit status
+error: command '/usr/bin/cc' failed with exit code 1
+```
+
+There is a `libpython3.12.a` under `/usr/local/lib`, but no `.so` file.
+
+[assistant]
+The compiler can find the Python headers, but the linker is being asked for a shared Python library and only finds a static archive. This commonly happens when the manually built Python was installed without a shared library, or when the library directory is not in the linker search path.
+
+First inspect the available files and the interpreter’s configuration:
+
+```bash
+ls -l /usr/local/lib/libpython3.12*
+/usr/local/bin/python3.12-config --ldflags
+/usr/local/bin/python3.12-config --embed --ldflags
+```
+
+For a normal extension build, try using the interpreter’s configuration directly and include `/usr/local/lib`:
+
+```bash
+export PATH="/usr/local/bin:$PATH"
+export CPPFLAGS="-I/usr/local/include/python3.12"
+export LDFLAGS="-L/usr/local/lib"
+python -m pip install --no-cache-dir --force-reinstall psycopg2
+```
+
+If the build specifically requires `libpython3.12.so`, the Python installation must be rebuilt with shared-library support. That does not replace the system Python; it only recreates the separately installed `/usr/local` Python.
+
+[user]
+`python3.12-config --ldflags` prints `-L/usr/local/lib -ldl -lm`, while `--embed --ldflags` adds `-lpython3.12`. The package build is using the embed flags somehow. Is there a way to avoid that for this package?
+
+[assistant]
+A normal CPython extension should not need to link against `libpython`; it is loaded by the Python executable. The `-lpython3.12` flag suggests that the build environment or package configuration is forcing embedding flags.
+
+Clear variables that may inject linker options, then retry in a fresh shell or after unsetting them:
+
+```bash
+unset CFLAGS CPPFLAGS CXXFLAGS LDFLAGS LDSHARED
+. ~/venvs/dbtest/bin/activate
+python -m pip install --no-cache-dir --force-reinstall psycopg2
+```
+
+Also inspect pip’s configuration and environment:
+
+```bash
+python -m pip config list -v
+env | grep -E '^(PIP|CFLAGS|CPPFLAGS|CXXFLAGS|LDFLAGS|LDSHARED)='
+```
+
+If `LDFLAGS` or a pip configuration entry includes `-lpython3.12`, remove that setting. You can test without changing configuration permanently:
+
+```bash
+env -u CFLAGS -u CPPFLAGS -u CXXFLAGS -u LDFLAGS -u LDSHARED \
+  python -m pip install --no-cache-dir psycopg2
+```
+
+Keep `libpq-dev` installed; `pg_config` and the PostgreSQL headers are still required for building `psycopg2`.
+
+[user]
+After unsetting the variables, the build gets farther but ends with:
+
+```text
+Successfully built psycopg2
+Successfully installed psycopg2-2.9.9
+```
+
+Importing it works:
+
+```bash
+python -c "import psycopg2; print(psycopg2.__version__)"
+2.9.9 (dt dec pq3 ext lo64)
+```
+
+What should I record so I can reproduce this setup later?
+
+[assistant]
+For a routine reproduction, record the environment and the commands that mattered, without copying the entire build log. For example:
+
+```text
+OS: Ubuntu 22.04.4 LTS
+Python: 3.12.3 from /usr/local/bin/python3.12
+Virtual environment: ~/venvs/dbtest
+System packages: libpq-dev, build-essential
+pg_config: /usr/bin/pg_config
+Python headers: /usr/local/include/python3.12
+pip package: psycopg2==2.9.9
+Important cleanup: unset CFLAGS CPPFLAGS CXXFLAGS LDFLAGS LDSHARED
+```
+
+A short setup sequence would be:
+
+```bash
+sudo apt update
+sudo apt install libpq-dev build-essential
+
+/usr/local/bin/python3.12 -m venv ~/venvs/dbtest
+. ~/venvs/dbtest/bin/activate
+
+unset CFLAGS CPPFLAGS CXXFLAGS LDFLAGS LDSHARED
+python -m pip install --upgrade pip
+python -m pip install "psycopg2==2.9.9"
+python -c "import psycopg2; print(psycopg2.__version__)"
+```
+
+Also save the package list if useful:
+
+```bash
+python -m pip freeze > requirements.txt
+```
+
+The key detail is that the virtual environment uses the `/usr/local` Python 3.12 installation and that no embedding linker flags are injected during installation.
+
+[user]
+That works. I’ll keep the short command sequence and the package version in the project notes.
+
+[assistant]
+A compact note like this should be sufficient:
+
+```text
+Build notes:
+- Ubuntu 22.04
+- Use /usr/local/bin/python3.12 to create the venv
+- Install apt packages: libpq-dev build-essential
+- Before pip install, unset CFLAGS CPPFLAGS CXXFLAGS LDFLAGS LDSHARED
+- Install psycopg2==2.9.9
+- Verify with: python -c "import psycopg2; print(psycopg2.__version__)"
+```
+
+If the same linker error returns, check the shell environment first, especially `LDFLAGS`, and confirm that `pg_config` resolves to `/usr/bin/pg_config`.

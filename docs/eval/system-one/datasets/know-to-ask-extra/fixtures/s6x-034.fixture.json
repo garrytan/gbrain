@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-034",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/kofi-tulvwaite",
+      "content": "---\ntitle: Kofi Tulvwaite\ntype: person\naliases: [kofi]\nsummary: \"Kofi Tulvwaite is the procurement lead at Nimbusmoor.\"\n---\n\nKofi Tulvwaite is the procurement lead at Nimbusmoor.\n"
+    },
+    {
+      "slug": "people/calder-brinfell",
+      "content": "---\ntitle: Calder Brinfell\ntype: person\naliases: [calder]\nsummary: \"Calder Brinfell is the procurement lead at Vesperloft.\"\n---\n\nCalder Brinfell is the procurement lead at Vesperloft. Calder asked for a longer pilot before signing, ideally a full quarter.\n"
+    },
+    {
+      "slug": "people/emrys-vashholt",
+      "content": "---\ntitle: Emrys Vashholt\ntype: person\nsummary: \"Emrys Vashholt is the procurement lead at Russetmoor.\"\n---\n\nEmrys Vashholt is the procurement lead at Russetmoor. Emrys wants the proposal revised to drop the onboarding fee.\n"
+    },
+    {
+      "slug": "people/alaric-pellbrook",
+      "content": "---\ntitle: Alaric Pellbrook\ntype: person\nsummary: \"Alaric Pellbrook is the head of sales at Brackenvane.\"\n---\n\nAlaric Pellbrook is the head of sales at Brackenvane.\n"
+    },
+    {
+      "slug": "people/farah-lornmere",
+      "content": "---\ntitle: Farah Lornmere\ntype: person\naliases: [farah]\nsummary: \"A contact from a conference last spring.\"\n---\n\nA contact from a conference last spring.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "How do you spell Tulvwaite in the NATO phonetic alphabet?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "need to answer brinfell today, remind me what they wanted on the pilot"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "Prep me for the Vashholt call, especially the proposal."
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Done."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "In the novel I'm reading, Captain Pellbrook betrays the crew. Is that a common trope?"
+    }
+  ]
+}

@@ -611,16 +611,24 @@ export async function resolveSlugs(
 
 // ── v0.42.7 (#1696): link/timeline extraction freshness watermark ──
 
-/** Shared stale-for-extraction predicate. */
-function stalePagesWhere(opts?: { sourceId?: string; versionTs?: string }) {
+/**
+ * Shared stale-for-extraction predicate. `attendance` narrows it by the #5761
+ * marker: a page is attendance-blocked while its marker equals its current
+ * knowledge revision. Extraction itself never passes it, so it keeps
+ * reconsidering blocked pages.
+ */
+function stalePagesWhere(opts?: { sourceId?: string; versionTs?: string; attendance?: 'exclude' | 'blocked' }) {
   const version = opts?.versionTs
     ? sqlFragment`(links_extracted_at IS NULL OR links_extracted_at < ${opts.versionTs}::timestamptz OR updated_at > links_extracted_at)`
     : sqlFragment`(links_extracted_at IS NULL OR updated_at > links_extracted_at)`;
   const source = opts?.sourceId ? sqlFragment` AND source_id = ${opts.sourceId}` : sqlFragment``;
-  return sqlFragment`deleted_at IS NULL AND ${version}${source}`;
+  const attendance = opts?.attendance === 'exclude'
+    ? sqlFragment` AND links_attendance_blocked_revision IS DISTINCT FROM knowledge_revision`
+    : opts?.attendance === 'blocked' ? sqlFragment` AND links_attendance_blocked_revision = knowledge_revision` : sqlFragment``;
+  return sqlFragment`deleted_at IS NULL AND ${version}${source}${attendance}`;
 }
 
-export async function countStalePagesForExtraction(exec: ScopedRead, opts?: { sourceId?: string; versionTs?: string }): Promise<number> {
+export async function countStalePagesForExtraction(exec: ScopedRead, opts?: { sourceId?: string; versionTs?: string; attendance?: 'exclude' | 'blocked' }): Promise<number> {
     const { text, params } = renderFragment(sqlFragment`SELECT count(*)::int AS count FROM pages WHERE ${stalePagesWhere(opts)}`);
     const { rows } = await exec.unsafe<{ count?: number }>(text, params);
     return Number(rows[0]?.count ?? 0);
@@ -660,10 +668,31 @@ export async function markPagesExtractedBatch(
     // #3957: the stamped-row count is observable so callers (stampExtracted)
     // can surface a wrong-source shortfall instead of claiming success while
     // every ref missed.
+    // #5761: a stamped page's links were published, so its attendance marker clears with the watermark.
     const result = await exec.run(sqlFragment`
-      UPDATE pages p SET links_extracted_at = v.ts::timestamptz
+      UPDATE pages p SET links_extracted_at = v.ts::timestamptz,
+        links_attendance_blocked_revision = NULL, links_attendance_blocked_at = NULL
       FROM unnest(${slugs}::text[], ${srcs}::text[], ${tss}::text[]) AS v(slug, source_id, ts)
       WHERE p.slug = v.slug AND p.source_id = v.source_id
+    `);
+    return result.affectedRows;
+  }
+
+/**
+ * #5761: record that extraction left a page stale only because an attendee did
+ * not resolve. Written only while the captured knowledge revision is still the
+ * page's current one, so a concurrent edit is never marked.
+ */
+export async function markPagesAttendanceBlocked(
+  exec: SqlExecutor,
+  refs: Array<{ slug: string; source_id: string; revision: string }>,
+): Promise<number> {
+    if (refs.length === 0) return 0;
+    const result = await exec.run(sqlFragment`
+      UPDATE pages p SET links_attendance_blocked_revision = v.revision::uuid, links_attendance_blocked_at = now()
+      FROM unnest(${refs.map(r => r.slug)}::text[], ${refs.map(r => r.source_id)}::text[], ${refs.map(r => r.revision)}::text[])
+        AS v(slug, source_id, revision)
+      WHERE p.slug = v.slug AND p.source_id = v.source_id AND p.knowledge_revision = v.revision::uuid AND p.deleted_at IS NULL
     `);
     return result.affectedRows;
   }

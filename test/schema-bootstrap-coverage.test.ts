@@ -1012,10 +1012,20 @@ const COLUMN_EXEMPTIONS = new Set<string>([
   'persistence_requests.consumer_host_id',
   'persistence_requests.published_at',
   'persistence_brain.writer_version_cutoff',
+  // #5455 (migration v183) — managed mode epoch. persistence_brain is
+  // migration-created on PGLite; no index in either blob references it, and
+  // pre-migration readers go through to_jsonb(persistence_brain)->'mode_epoch'.
+  'persistence_brain.mode_epoch',
   // #5254 (migration v177) — unbound-source page classification. Column-only
   // and nullable; no index in either schema blob references it, and every
   // reader treats NULL as an ordinary page.
   'pages.database_only_reason',
+  // #5761 (migration v180) — attendance marker. Deliberately absent from both
+  // schema blobs so fresh and upgraded brains share its ordinals; column-only
+  // and nullable, no index or function in either blob references it, and the
+  // doctor reader probes for the column on older brains.
+  'pages.links_attendance_blocked_revision',
+  'pages.links_attendance_blocked_at',
 ]);
 
 test('every ALTER TABLE ADD COLUMN in MIGRATIONS is covered by applyForwardReferenceBootstrap (column-only class)', async () => {

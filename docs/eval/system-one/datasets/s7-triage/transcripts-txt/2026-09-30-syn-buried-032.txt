@@ -1,0 +1,685 @@
+[user]
+I’m trying to install `psycopg2` in a fresh Python 3.12 virtual environment, but `pip install psycopg2` fails. Can you help me diagnose it?
+
+[assistant]
+Sure. Please paste the complete command you ran and the relevant portion of the error output. Also include your operating system, Python version, and whether you’re using a virtual environment.
+
+[user]
+I’m on Ubuntu 22.04. I created the environment with `python3.12 -m venv .venv`, activated it, and ran:
+
+```text
+(.venv) $ python --version
+Python 3.12.3
+(.venv) $ python -m pip install psycopg2
+Collecting psycopg2
+  Downloading psycopg2-2.9.9.tar.gz (384 kB)
+  Installing build dependencies ... done
+  Getting requirements to build wheel ... error
+  error: subprocess-exited-with-error
+
+  × Getting requirements to build wheel did not run successfully.
+  │ exit code: 1
+  ╰─> [32 lines of output]
+      Error: pg_config executable not found.
+
+      pg_config is required to build psycopg2 from source. Please add the directory
+      containing pg_config to the $PATH or specify the full executable path with the
+      option:
+      
+          python setup.py build_ext --pg-config /path/to/pg_config build ...
+      
+      or install the binary package instead.
+  note: This error originates from a subprocess, and is likely not a problem with pip.
+ERROR: Could not build wheels for psycopg2
+
+[assistant]
+The immediate problem is that `psycopg2` is being built from source, and its build process cannot find PostgreSQL’s `pg_config` utility. On Ubuntu, that utility is provided by the PostgreSQL development package.
+
+First, confirm whether it is installed:
+
+```bash
+command -v pg_config || true
+pg_config --version || true
+```
+
+If both commands show nothing useful, install the development headers and build tooling:
+
+```bash
+sudo apt update
+sudo apt install -y libpq-dev build-essential python3.12-dev
+```
+
+Then reactivate the virtual environment and retry:
+
+```bash
+source .venv/bin/activate
+python -m pip install --upgrade pip setuptools wheel
+python -m pip install psycopg2
+```
+
+`libpq-dev` supplies `pg_config`, headers, and the client library needed to compile `psycopg2`.
+
+[user]
+I ran the checks before installing anything:
+
+```text
+(.venv) $ command -v pg_config || true
+(.venv) $ pg_config --version || true
+/bin/bash: pg_config: command not found
+```
+
+Does installing `libpq-dev` install the PostgreSQL server too? I only need the client library for an application that connects to a managed database.
+
+[assistant]
+No. `libpq-dev` does not install the PostgreSQL server. It installs client-side development files, including:
+
+- `pg_config`
+- PostgreSQL client headers
+- The `libpq` client library
+- Files needed to compile software such as `psycopg2`
+
+Your application can continue connecting to a managed PostgreSQL database. You do not need the `postgresql` server package locally unless you specifically want to run a database server.
+
+You can inspect what the package contains before installing it:
+
+```bash
+apt-cache show libpq-dev | sed -n '1,20p'
+apt-file list libpq-dev 2>/dev/null | grep -E 'pg_config|libpq-fe.h' || true
+```
+
+The practical installation is:
+
+```bash
+sudo apt update
+sudo apt install -y libpq-dev build-essential python3.12-dev
+```
+
+Afterward, verify:
+
+```bash
+command -v pg_config
+pg_config --version
+```
+
+Then retry the package installation inside the same virtual environment.
+
+[user]
+Before I install the system package, is there a way to avoid compiling anything? I’ve seen `psycopg2-binary` mentioned, but I’m not sure whether it is appropriate for a deployed application.
+
+[assistant]
+Yes. `psycopg2-binary` supplies a prebuilt wheel in common environments, so it generally avoids the local `pg_config` and compiler requirement:
+
+```bash
+python -m pip install --upgrade pip
+python -m pip install psycopg2-binary
+```
+
+You still import it using the normal module name:
+
+```python
+import psycopg2
+```
+
+The distinction is:
+
+- `psycopg2-binary`: convenient for development, tests, and environments where installing OS packages is difficult.
+- `psycopg2`: source-oriented installation that links against the system’s PostgreSQL client library.
+
+For production, the psycopg2 documentation traditionally recommends building `psycopg2` from source rather than relying on the binary distribution, because the binary wheel bundles `libpq` and OpenSSL libraries. That can create maintenance or upgrade concerns in long-running deployments. If your deployment process can install Debian packages, use `libpq-dev` while building the wheel, then install the resulting wheel in the runtime image. If it cannot, `psycopg2-binary` may be the pragmatic choice, provided you test it with your deployment’s Python and platform.
+
+Another option, if you are starting new code, is Psycopg 3:
+
+```bash
+python -m pip install "psycopg[binary]"
+```
+
+But that has API differences, so it is not a drop-in replacement for every existing psycopg2 application.
+
+[user]
+I installed the packages you suggested:
+
+```text
+$ sudo apt update
+...
+$ sudo apt install -y libpq-dev build-essential python3.12-dev
+...
+Setting up libpq-dev (14.13-0ubuntu0.22.04.1) ...
+Setting up python3.12-dev ...
+```
+
+Now I get:
+
+```text
+(.venv) $ command -v pg_config
+/usr/bin/pg_config
+(.venv) $ pg_config --version
+PostgreSQL 14.13
+(.venv) $ python -m pip install --upgrade pip setuptools wheel
+Requirement already satisfied: pip in ./.venv/lib/python3.12/site-packages (24.0)
+Successfully installed pip-24.2 setuptools-72.1.0 wheel-0.44.0
+(.venv) $ python -m pip install psycopg2
+Collecting psycopg2
+...
+Successfully built psycopg2
+Successfully installed psycopg2-2.9.9
+```
+
+What should I test next?
+
+[assistant]
+Test both the import and a real connection path, while keeping credentials out of the shell history and transcript.
+
+First, verify the installed distribution and linked client library:
+
+```bash
+python - <<'PY'
+import psycopg2
+from psycopg2 import extensions
+
+print("psycopg2 version:", psycopg2.__version__)
+print("libpq version:", extensions.libpq_version())
+print("module:", psycopg2.__file__)
+PY
+```
+
+A successful result should resemble:
+
+```text
+psycopg2 version: 2.9.9 (dt dec pq3 ext lo64)
+libpq version: 140013
+module: /path/to/project/.venv/lib/python3.12/site-packages/psycopg2/__init__.py
+```
+
+Then test the managed database using a connection string supplied through an environment variable. For example:
+
+```bash
+export DATABASE_URL='postgresql://app_user:REDACTED_PASSWORD@db.example.net:5432/appdb?sslmode=require'
+python - <<'PY'
+import os
+import psycopg2
+
+url = os.environ["DATABASE_URL"]
+with psycopg2.connect(url, connect_timeout=10) as conn:
+    with conn.cursor() as cur:
+        cur.execute("select current_database(), current_user, version()")
+        print(cur.fetchone())
+PY
+unset DATABASE_URL
+```
+
+Do not commit the URL or print it in logs because it contains credentials. If the connection fails, distinguish package problems from network, TLS, authentication, or database authorization problems by pasting the exception with passwords and hostnames redacted.
+
+[user]
+The import test worked:
+
+```text
+psycopg2 version: 2.9.9 (dt dec pq3 ext lo64)
+libpq version: 140013
+module: /home/me/northgate-labs/.venv/lib/python3.12/site-packages/psycopg2/__init__.py
+```
+
+The connection test fails with:
+
+```text
+psycopg2.OperationalError: connection to server at "db.example.net" (203.0.113.42), port 5432 failed: timeout expired
+```
+
+I used the actual managed database hostname, but I replaced it here. Is this still related to the package installation?
+
+[assistant]
+No, the package installation is working. The import succeeded, and `psycopg2` loaded its linked `libpq` client library. A timeout occurs before PostgreSQL authentication, so it usually indicates a network path or endpoint configuration issue rather than a Python dependency issue.
+
+Check the following from the same machine:
+
+1. Confirm DNS resolution:
+
+```bash
+getent hosts db.example.net
+```
+
+2. Test whether TCP port 5432 is reachable:
+
+```bash
+nc -vz -w 5 db.example.net 5432
+```
+
+If `nc` is unavailable:
+
+```bash
+timeout 5 bash -c '</dev/tcp/db.example.net/5432' \
+  && echo "TCP connection succeeded" \
+  || echo "TCP connection failed"
+```
+
+3. Verify that you are using the provider’s public endpoint, if the database is meant to be reached from your current network. Private endpoints often resolve only inside a VPC, VPN, peered network, or bastion path.
+
+4. Check the managed database firewall or security-group rules. Your current public egress IP may need to be allowlisted.
+
+5. Confirm the database is running and listening on port 5432. Some providers use a different port.
+
+6. If the provider requires TLS, retain `sslmode=require`; however, a TLS setting issue usually produces an SSL or certificate error after TCP connectivity, not a timeout.
+
+[user]
+I ran the network checks:
+
+```text
+$ getent hosts db.example.net
+203.0.113.42 db.example.net
+
+$ nc -vz -w 5 db.example.net 5432
+nc: connect to db.example.net (203.0.113.42) port 5432 (tcp) timed out
+```
+
+The provider dashboard says the instance is healthy. I’m working from my home connection, and the dashboard has an “allowed networks” setting. What should I add there?
+
+[assistant]
+You should add the public IPv4 address from which your current connection reaches the provider, ideally as a single-host CIDR (`/32`), not your computer’s private address.
+
+Find your apparent public IPv4 address with a trusted service:
+
+```bash
+curl -4 https://api.ipify.org
+printf '\n'
+```
+
+Or:
+
+```bash
+curl -4 https://ifconfig.me
+printf '\n'
+```
+
+Suppose the result is `198.51.100.27`. Add this to the provider’s allowed networks field:
+
+```text
+198.51.100.27/32
+```
+
+Do not add `192.168.x.x`, `10.x.x.x`, or `172.16.x.x`–`172.31.x.x`; those are private LAN ranges and are not the source address visible to the managed service. Also avoid opening the database to everyone with `0.0.0.0/0` except for a tightly controlled, short-lived diagnostic test, and remove it immediately if used.
+
+After the provider applies the rule, retest:
+
+```bash
+nc -vz -w 5 db.example.net 5432
+```
+
+A successful TCP check may say:
+
+```text
+Connection to db.example.net 5432 port [tcp/postgresql] succeeded!
+```
+
+Then rerun the Python connection test. If your home ISP uses changing addresses, the allowlist may need updating, or you may need a VPN, fixed egress IP, or a private networking arrangement.
+
+[user]
+I checked the address and added it as a `/32`. Now `nc` succeeds:
+
+```text
+$ nc -vz -w 5 db.example.net 5432
+Connection to db.example.net (203.0.113.42) 5432 port [tcp/postgresql] succeeded!
+```
+
+The Python test now returns:
+
+```text
+('appdb', 'app_user', 'PostgreSQL 16.4 on x86_64-pc-linux-gnu, compiled by gcc, 64-bit')
+```
+
+Can you help me make the dependency reproducible for the project?
+
+[assistant]
+Yes. Record the direct dependency with a version constraint and generate a lock-style requirements file from the working environment.
+
+First decide whether this project will use the source-built package or the binary wheel. Since you successfully installed `psycopg2` against Ubuntu’s `libpq`, the source package is reasonable if your deployment can provide the same build prerequisites.
+
+Create a minimal input file:
+
+```bash
+cat > requirements.in <<'EOF'
+psycopg2==2.9.9
+EOF
+```
+
+Then produce a requirements file containing hashes. One common approach is `pip-tools`:
+
+```bash
+python -m pip install pip-tools
+pip-compile --generate-hashes --output-file requirements.txt requirements.in
+```
+
+The generated file will include the exact package version and hashes for distributions selected by the resolver. Commit both files:
+
+```bash
+git add requirements.in requirements.txt
+git commit -m "Pin PostgreSQL Python dependency"
+```
+
+For a deployment that builds from source, document the OS prerequisites separately, because `requirements.txt` cannot install `libpq-dev`:
+
+```text
+Ubuntu/Debian build prerequisites:
+- build-essential
+- libpq-dev
+- python3.12-dev
+```
+
+In CI or a container, install those before:
+
+```bash
+python -m pip install --require-hashes -r requirements.txt
+```
+
+If you instead choose `psycopg2-binary`, change the input to:
+
+```text
+psycopg2-binary==2.9.9
+```
+
+Do not list both packages: they provide the same import name and can make the environment ambiguous.
+
+[user]
+I’m going to send Bram Quintero the northgate-labs term sheet by Friday, October 4, after I finish the database setup. I’ll include the pricing table and the proposed pilot milestones, and I’ll ask him to confirm receipt. That’s the only project follow-up I need to commit to right now.
+
+[assistant]
+Understood. Returning to the dependency setup, make sure the requirements file reflects the package choice you intend to deploy. Since you are using the source-built `psycopg2`, keep `psycopg2==2.9.9` in `requirements.in`, and ensure the deployment documentation installs `libpq-dev` before running pip.
+
+You can validate a clean installation in a temporary environment:
+
+```bash
+python3.12 -m venv /tmp/northgate-labs-test
+source /tmp/northgate-labs-test/bin/activate
+python -m pip install --upgrade pip
+python -m pip install --require-hashes -r requirements.txt
+python -c 'import psycopg2; print(psycopg2.__version__)'
+deactivate
+rm -rf /tmp/northgate-labs-test
+```
+
+If the generated file contains hashes for a wheel but your target deployment has to build from the source archive, make sure the source distribution’s hash is included and that the resolver’s selected artifact matches your installation workflow.
+
+[user]
+I generated `requirements.txt`, but `pip-compile` selected `psycopg2==2.9.9` and produced several hashes. The file starts like this:
+
+```text
+#
+# This file was autogenerated by pip-compile with Python 3.12
+# by the following command:
+#
+#    pip-compile --generate-hashes --output-file=requirements.txt requirements.in
+#
+--index-url https://pypi.org/simple
+--trusted-host pypi.org
+
+psycopg2==2.9.9 \
+    --hash=sha256:... \
+    --hash=sha256:...
+```
+
+When I run the clean test, I get a hash mismatch because pip chooses a different distribution than the one used on my machine. How should I handle that?
+
+[assistant]
+This is usually caused by artifact selection: pip may choose a platform-specific wheel in one environment, while your original environment built from the source archive. With `--require-hashes`, every artifact pip might select must have a matching hash, or you must constrain the allowed artifact.
+
+First inspect all hashes generated for `psycopg2`:
+
+```bash
+grep -A20 '^psycopg2==' requirements.txt
+```
+
+Also see what the index offers:
+
+```bash
+python -m pip index versions psycopg2
+```
+
+If your deployment is intentionally source-built, the cleanest approach is to generate requirements for the exact source archive and build prerequisites. You can download it explicitly:
+
+```bash
+mkdir -p vendor
+python -m pip download --no-binary psycopg2 --dest vendor psycopg2==2.9.9
+sha256sum vendor/psycopg2-2.9.9.tar.gz
+```
+
+Then reference the archive directly in `requirements.in`:
+
+```text
+psycopg2 @ file:///absolute/path/to/vendor/psycopg2-2.9.9.tar.gz
+```
+
+That local path is useful for a controlled build context, but it is not portable as a committed requirements file. A more portable pattern is to host the approved source archive in an internal artifact store and reference its HTTPS URL with a hash, or let `pip-compile` include all valid hashes for the platforms you support.
+
+For most teams, allowing the generated hashes for the source distribution and supported wheels is simpler:
+
+```bash
+python -m pip download --dest /tmp/psycopg2-artifacts psycopg2==2.9.9
+python -m pip hash /tmp/psycopg2-artifacts/*
+```
+
+Add the hashes for every artifact that your supported Python/OS combinations may select, then test each deployment target. Do not remove `--require-hashes` merely to hide the mismatch; identify why the selected artifact differs.
+
+Also verify that your clean test is actually running on Ubuntu with access to `libpq-dev`. If it is a different OS or container, a wheel may be selected by design.
+
+[assistant]
+One important correction: a normal hash-locked requirements file can include multiple hashes for the same pinned version, and pip will accept whichever matching artifact it selects. You do not necessarily need to force a source archive.
+
+For a reproducible Linux build, choose one policy:
+
+1. **Wheel policy:** use a compatible prebuilt wheel and include its exact hash.
+2. **Source policy:** use the source distribution, install `libpq-dev` and compiler packages, and include the source archive hash.
+3. **Multi-platform policy:** include hashes for every permitted wheel and the source archive, then test each supported target.
+
+For the source policy, regenerate in a clean environment while explicitly downloading only source:
+
+```bash
+rm -f requirements.txt
+PIP_NO_BINARY=psycopg2 pip-compile \
+  --generate-hashes \
+  --output-file=requirements.txt \
+  requirements.in
+```
+
+Then inspect the result:
+
+```bash
+awk '/^psycopg2==/{flag=1} flag{print} flag && /^[^ ]/ && !/^psycopg2==/{exit}' requirements.txt
+```
+
+In CI, make the artifact choice explicit:
+
+```bash
+export PIP_NO_BINARY=psycopg2
+python -m pip install --require-hashes -r requirements.txt
+```
+
+If you use the wheel policy instead, remove `PIP_NO_BINARY`, regenerate on the same Python/platform family as deployment, and verify that the selected wheel is compatible with Python 3.12 and your CPU architecture. The key is that the lock file, pip options, and build environment must express the same policy.
+
+[user]
+I’m confused because the clean test is on the same Ubuntu machine and Python version. I deleted the temporary environment, recreated it, and ran:
+
+```text
+$ python3.12 -m venv /tmp/northgate-labs-test
+$ source /tmp/northgate-labs-test/bin/activate
+$ python -m pip install --require-hashes -r requirements.txt
+Collecting psycopg2==2.9.9
+  Downloading psycopg2-2.9.9.tar.gz (384 kB)
+ERROR: THESE PACKAGES DO NOT MATCH THE HASHES FROM THE REQUIREMENTS FILE.
+    psycopg2==2.9.9 from https://files.pythonhosted.org/.../psycopg2-2.9.9.tar.gz:
+        Expected sha256 ... 
+        Got        sha256 ...
+```
+
+I copied the expected hash from the generated file, but it still differs.
+
+[assistant]
+The most likely issue is that the generated hash was produced for a different artifact than the source archive pip is downloading now, or the requirements file was manually edited or generated against a cached/local file. The filename alone is not enough; compare the actual artifact bytes and metadata.
+
+Start clean and disable the cache:
+
+```bash
+rm -rf /tmp/psycopg2-check
+mkdir /tmp/psycopg2-check
+python -m pip download \
+  --no-binary psycopg2 \
+  --no-deps \
+  --no-cache-dir \
+  --dest /tmp/psycopg2-check \
+  psycopg2==2.9.9
+sha256sum /tmp/psycopg2-check/psycopg2-2.9.9.tar.gz
+python -m pip hash /tmp/psycopg2-check/psycopg2-2.9.9.tar.gz
+```
+
+Compare that hash exactly with the `--hash=sha256:` entry in `requirements.txt`, without the `...` abbreviation. If it differs, replace the stale or incorrect source hash by regenerating from a clean resolver run:
+
+```bash
+rm -f requirements.txt
+python -m piptools compile \
+  --generate-hashes \
+  --no-binary psycopg2 \
+  --output-file requirements.txt \
+  requirements.in
+```
+
+If your installed `pip-compile` does not accept `--no-binary`, use the environment variable:
+
+```bash
+rm -f requirements.txt
+PIP_NO_BINARY=psycopg2 pip-compile \
+  --generate-hashes \
+  --output-file requirements.txt \
+  requirements.in
+```
+
+Then inspect the exact block:
+
+```bash
+sed -n '/^psycopg2==/,/^[^ ]/p' requirements.txt
+```
+
+Do not type a shortened hash such as `sha256:...` into the file. It must contain the complete 64-character hexadecimal SHA-256 digest.
+
+Also check that you are using the same index and no private mirror in the two commands:
+
+```bash
+python -m pip config list
+env | grep -E '^PIP_(INDEX_URL|EXTRA_INDEX_URL|NO_BINARY|ONLY_BINARY)=' || true
+```
+
+If a proxy or mirror serves a modified or repackaged artifact, its bytes can legitimately differ. In that case, use one trusted index consistently and regenerate the lock file from it.
+
+[user]
+I found the problem: I had pasted abbreviated hashes into the file while redacting the output for my question, then accidentally saved that redacted version. I regenerated it cleanly, and the source hash now matches.
+
+Could you show me a simple deployment checklist so this doesn’t recur?
+
+[assistant]
+Use a checklist that separates OS prerequisites, Python artifacts, configuration, and connectivity.
+
+```text
+Deployment checklist: psycopg2 source build
+
+1. Base image/host
+   [ ] Python 3.12 is installed.
+   [ ] The virtual environment uses the intended interpreter:
+       python --version
+       python -c 'import sys; print(sys.executable)'
+   [ ] Build tools are installed:
+       build-essential
+       python3.12-dev
+       libpq-dev
+   [ ] pg_config is available:
+       command -v pg_config
+       pg_config --version
+
+2. Python dependency installation
+   [ ] requirements.txt is committed and generated, not manually redacted.
+   [ ] All hashes are complete 64-character SHA-256 values.
+   [ ] Installation uses:
+       python -m pip install --require-hashes -r requirements.txt
+   [ ] The pip index and proxy configuration are approved and consistent.
+   [ ] If source-only policy is required, set:
+       PIP_NO_BINARY=psycopg2
+
+3. Verification
+   [ ] Import test passes:
+       python -c 'import psycopg2; print(psycopg2.__version__)'
+   [ ] The linked libpq version is recorded:
+       python -c 'from psycopg2 import extensions; print(extensions.libpq_version())'
+   [ ] A database health check succeeds with a short connection timeout.
+
+4. Database configuration
+   [ ] The hostname and port come from secret/configuration management.
+   [ ] Credentials are not committed or printed.
+   [ ] TLS settings match the provider requirements.
+   [ ] The deployment egress IP or private network is allowlisted.
+   [ ] The database user has only the required permissions.
+
+5. Troubleshooting
+   [ ] DNS is checked with getent hosts.
+   [ ] TCP reachability is checked with nc -vz.
+   [ ] Timeouts are investigated as network/firewall issues.
+   [ ] Authentication errors are investigated separately from installation errors.
+```
+
+For CI, add a clean-build job that starts from the base image, installs the OS packages, creates a fresh virtual environment, installs with `--require-hashes`, and runs the import test. That catches missing system libraries and malformed lock files before deployment.
+
+[assistant]
+You can also prevent accidental redaction from entering version control with a simple validation step. For example, this shell check fails if the psycopg2 requirement has an incomplete hash:
+
+```bash
+python - <<'PY'
+import re
+from pathlib import Path
+
+text = Path("requirements.txt").read_text()
+block = re.search(r"(?ms)^psycopg2==.*?(?=^[^ \t].*|\Z)", text)
+if not block:
+    raise SystemExit("psycopg2 requirement not found")
+
+hashes = re.findall(r"--hash=sha256:([0-9a-fA-F]+)", block.group())
+if not hashes:
+    raise SystemExit("no psycopg2 SHA-256 hashes found")
+
+bad = [value for value in hashes if len(value) != 64]
+if bad:
+    raise SystemExit(f"incomplete SHA-256 hash(es): {bad}")
+
+print(f"validated {len(hashes)} psycopg2 hash(es)")
+PY
+```
+
+You can put that in CI before installation:
+
+```bash
+set -eu
+python validate_requirements.py
+python -m pip install --require-hashes -r requirements.txt
+```
+
+For a source build, also fail early if the system dependency is missing:
+
+```bash
+test -x "$(command -v pg_config)" || {
+  echo "pg_config is required; install libpq-dev" >&2
+  exit 1
+}
+```
+
+That gives you a fast, clear failure instead of a long pip traceback.
+
+[assistant]
+One final distinction is useful for the deployment documentation:
+
+```text
+Build stage:
+  install build-essential, python3.12-dev, libpq-dev
+  install requirements.txt
+  run tests
+  optionally build an application wheel/image
+
+Runtime stage:
+  include the Python runtime and installed application dependencies
+  include libpq runtime libraries if the built extension needs them
+  do not assume libpq-dev is needed at runtime
+```
+
+If you use a multi-stage container build, test the final runtime image rather than only the builder. A compiled extension can build successfully and still fail at startup if its runtime shared library is absent

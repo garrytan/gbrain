@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-124",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "companies/marblecrest",
+      "content": "---\ntitle: Marblecrest\ntype: company\nsummary: \"Marblecrest is a software vendor we work with.\"\n---\n\nMarblecrest is a software vendor we work with. The integration slipped because their API still lacks webhooks.\n"
+    },
+    {
+      "slug": "people/rasmus-fenwaite",
+      "content": "---\ntitle: Rasmus Fenwaite\ntype: person\naliases: [rasmus]\nsummary: \"Rasmus Fenwaite is the procurement lead at Russetfold.\"\n---\n\nRasmus Fenwaite is the procurement lead at Russetfold.\n"
+    },
+    {
+      "slug": "people/elodie-quellbarrow",
+      "content": "---\ntitle: Elodie Quellbarrow\ntype: person\naliases: [elodie]\nsummary: \"Elodie Quellbarrow is the product lead at Fablemoor.\"\n---\n\nElodie Quellbarrow is the product lead at Fablemoor. Elodie pushed to move the reporting feature ahead of the mobile app.\n"
+    },
+    {
+      "slug": "people/greta-corvfell",
+      "content": "---\ntitle: Greta Corvfell\ntype: person\nsummary: \"Greta Corvfell is the procurement lead at Cobaltspire.\"\n---\n\nGreta Corvfell is the procurement lead at Cobaltspire.\n"
+    },
+    {
+      "slug": "people/saskia-ostrefell",
+      "content": "---\ntitle: Saskia Ostrefell\ntype: person\naliases: [saskia]\nsummary: \"A contact from a conference last spring.\"\n---\n\nA contact from a conference last spring.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "remind me what we know about marblecrest and the integration"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Done."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "How do you spell Fenwaite in the NATO phonetic alphabet?"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Okay, noted."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "Prep me for the Quellbarrow call, especially the roadmap."
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "Our hotel is on Corvfell Street. Any tips for finding breakfast near a hotel in a new city?"
+    }
+  ]
+}

@@ -1,0 +1,3175 @@
+{
+  "seed": 60601,
+  "fixtures": 132,
+  "label_source": "synthetic-construction",
+  "turns": {
+    "s6x-001#1": {
+      "intent": "fire",
+      "subtype": "lowercase-company",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-001#3": {
+      "intent": "suppress",
+      "subtype": "surname-arithmetic-from-prompt",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-001#5": {
+      "intent": "fire",
+      "subtype": "first-name-no-alias",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-001#7": {
+      "intent": "negative",
+      "subtype": "small-talk",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-002#1": {
+      "intent": "negative",
+      "subtype": "generic-question",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-002#3": {
+      "intent": "suppress",
+      "subtype": "surname-spelling",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-002#5": {
+      "intent": "fire",
+      "subtype": "lowercase-surname",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-002#7": {
+      "intent": "keep",
+      "subtype": "surname-needed",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-003#1": {
+      "intent": "fire",
+      "subtype": "lowercase-full-name-no-alias",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-003#3": {
+      "intent": "suppress",
+      "subtype": "surname-translate",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-003#5": {
+      "intent": "negative",
+      "subtype": "incidental-lowercase-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-003#7": {
+      "intent": "suppress",
+      "subtype": "company-title-self-contained",
+      "expect_reflex": "fired",
+      "expect_protected": true
+    },
+    "s6x-004#1": {
+      "intent": "suppress",
+      "subtype": "surname-letter-count",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-004#3": {
+      "intent": "negative",
+      "subtype": "other-referent-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-004#5": {
+      "intent": "fire",
+      "subtype": "lowercase-company",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-004#7": {
+      "intent": "keep",
+      "subtype": "surname-needed",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-005#1": {
+      "intent": "suppress",
+      "subtype": "surname-spelling",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-005#3": {
+      "intent": "fire",
+      "subtype": "partial-company-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-005#5": {
+      "intent": "fire",
+      "subtype": "indirect-project",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-005#7": {
+      "intent": "negative",
+      "subtype": "unseeded-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-006#1": {
+      "intent": "suppress",
+      "subtype": "company-title-self-contained",
+      "expect_reflex": "fired",
+      "expect_protected": true
+    },
+    "s6x-006#3": {
+      "intent": "negative",
+      "subtype": "small-talk",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-006#5": {
+      "intent": "keep",
+      "subtype": "surname-needed",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-006#7": {
+      "intent": "fire",
+      "subtype": "indirect-person",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-007#1": {
+      "intent": "negative",
+      "subtype": "generic-question",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-007#3": {
+      "intent": "fire",
+      "subtype": "indirect-vendor",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-007#5": {
+      "intent": "suppress",
+      "subtype": "surname-arithmetic-from-prompt",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-007#7": {
+      "intent": "suppress",
+      "subtype": "surname-spelling",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-008#1": {
+      "intent": "keep",
+      "subtype": "surname-needed",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-008#3": {
+      "intent": "suppress",
+      "subtype": "surname-translate",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-008#5": {
+      "intent": "fire",
+      "subtype": "indirect-project",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-008#7": {
+      "intent": "negative",
+      "subtype": "incidental-lowercase-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-009#1": {
+      "intent": "fire",
+      "subtype": "lowercase-company",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-009#3": {
+      "intent": "fire",
+      "subtype": "first-name-no-alias",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-009#5": {
+      "intent": "negative",
+      "subtype": "other-referent-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-009#7": {
+      "intent": "suppress",
+      "subtype": "alias-name-question",
+      "expect_reflex": "fired",
+      "expect_protected": true
+    },
+    "s6x-010#1": {
+      "intent": "fire",
+      "subtype": "lowercase-surname",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-010#3": {
+      "intent": "negative",
+      "subtype": "unseeded-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-010#5": {
+      "intent": "keep",
+      "subtype": "surname-needed",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-010#7": {
+      "intent": "suppress",
+      "subtype": "surname-translate",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-011#1": {
+      "intent": "fire",
+      "subtype": "lowercase-full-name-no-alias",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-011#3": {
+      "intent": "suppress",
+      "subtype": "surname-copyedit",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-011#5": {
+      "intent": "suppress",
+      "subtype": "surname-copyedit",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-011#7": {
+      "intent": "negative",
+      "subtype": "small-talk",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-012#1": {
+      "intent": "fire",
+      "subtype": "lowercase-company",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-012#3": {
+      "intent": "suppress",
+      "subtype": "company-title-self-contained",
+      "expect_reflex": "fired",
+      "expect_protected": true
+    },
+    "s6x-012#5": {
+      "intent": "keep",
+      "subtype": "surname-needed",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-012#7": {
+      "intent": "negative",
+      "subtype": "generic-question",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-013#1": {
+      "intent": "fire",
+      "subtype": "partial-company-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-013#3": {
+      "intent": "fire",
+      "subtype": "indirect-project",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-013#5": {
+      "intent": "suppress",
+      "subtype": "surname-translate",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-013#7": {
+      "intent": "negative",
+      "subtype": "incidental-lowercase-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-014#1": {
+      "intent": "keep",
+      "subtype": "surname-needed",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-014#3": {
+      "intent": "suppress",
+      "subtype": "surname-reformat",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-014#5": {
+      "intent": "fire",
+      "subtype": "indirect-person",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-014#7": {
+      "intent": "negative",
+      "subtype": "other-referent-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-015#1": {
+      "intent": "suppress",
+      "subtype": "surname-copyedit",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-015#3": {
+      "intent": "negative",
+      "subtype": "unseeded-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-015#5": {
+      "intent": "suppress",
+      "subtype": "company-title-self-contained",
+      "expect_reflex": "fired",
+      "expect_protected": true
+    },
+    "s6x-015#7": {
+      "intent": "fire",
+      "subtype": "indirect-vendor",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-016#1": {
+      "intent": "suppress",
+      "subtype": "surname-translate",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-016#3": {
+      "intent": "keep",
+      "subtype": "surname-needed",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-016#5": {
+      "intent": "negative",
+      "subtype": "small-talk",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-016#7": {
+      "intent": "fire",
+      "subtype": "indirect-project",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-017#1": {
+      "intent": "fire",
+      "subtype": "first-name-no-alias",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-017#3": {
+      "intent": "negative",
+      "subtype": "generic-question",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-017#5": {
+      "intent": "suppress",
+      "subtype": "surname-unit-conversion",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-017#7": {
+      "intent": "fire",
+      "subtype": "lowercase-company",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-018#1": {
+      "intent": "suppress",
+      "subtype": "alias-name-question",
+      "expect_reflex": "fired",
+      "expect_protected": true
+    },
+    "s6x-018#3": {
+      "intent": "keep",
+      "subtype": "surname-needed",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-018#5": {
+      "intent": "fire",
+      "subtype": "lowercase-surname",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-018#7": {
+      "intent": "negative",
+      "subtype": "incidental-lowercase-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-019#1": {
+      "intent": "fire",
+      "subtype": "lowercase-full-name-no-alias",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-019#3": {
+      "intent": "suppress",
+      "subtype": "surname-arithmetic-from-prompt",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-019#5": {
+      "intent": "negative",
+      "subtype": "other-referent-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-019#7": {
+      "intent": "suppress",
+      "subtype": "surname-letter-count",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-020#1": {
+      "intent": "fire",
+      "subtype": "lowercase-company",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-020#3": {
+      "intent": "keep",
+      "subtype": "surname-needed",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-020#5": {
+      "intent": "negative",
+      "subtype": "unseeded-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-020#7": {
+      "intent": "suppress",
+      "subtype": "surname-reformat",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-021#1": {
+      "intent": "suppress",
+      "subtype": "company-title-self-contained",
+      "expect_reflex": "fired",
+      "expect_protected": true
+    },
+    "s6x-021#3": {
+      "intent": "fire",
+      "subtype": "indirect-project",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-021#5": {
+      "intent": "negative",
+      "subtype": "small-talk",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-021#7": {
+      "intent": "fire",
+      "subtype": "partial-company-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-022#1": {
+      "intent": "negative",
+      "subtype": "generic-question",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-022#3": {
+      "intent": "keep",
+      "subtype": "surname-needed",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-022#5": {
+      "intent": "fire",
+      "subtype": "indirect-person",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-022#7": {
+      "intent": "suppress",
+      "subtype": "surname-spelling",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-023#1": {
+      "intent": "fire",
+      "subtype": "indirect-vendor",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-023#3": {
+      "intent": "negative",
+      "subtype": "incidental-lowercase-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-023#5": {
+      "intent": "suppress",
+      "subtype": "surname-copyedit",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-023#7": {
+      "intent": "suppress",
+      "subtype": "surname-spelling",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-024#1": {
+      "intent": "negative",
+      "subtype": "other-referent-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-024#3": {
+      "intent": "fire",
+      "subtype": "indirect-project",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-024#5": {
+      "intent": "suppress",
+      "subtype": "full-name-self-contained",
+      "expect_reflex": "fired",
+      "expect_protected": true
+    },
+    "s6x-024#7": {
+      "intent": "keep",
+      "subtype": "surname-needed",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-025#1": {
+      "intent": "fire",
+      "subtype": "lowercase-company",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-025#3": {
+      "intent": "fire",
+      "subtype": "first-name-no-alias",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-025#5": {
+      "intent": "negative",
+      "subtype": "unseeded-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-025#7": {
+      "intent": "suppress",
+      "subtype": "surname-letter-count",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-026#1": {
+      "intent": "keep",
+      "subtype": "surname-needed",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-026#3": {
+      "intent": "suppress",
+      "subtype": "surname-spelling",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-026#5": {
+      "intent": "negative",
+      "subtype": "small-talk",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-026#7": {
+      "intent": "fire",
+      "subtype": "lowercase-surname",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-027#1": {
+      "intent": "negative",
+      "subtype": "generic-question",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-027#3": {
+      "intent": "fire",
+      "subtype": "lowercase-full-name-no-alias",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-027#5": {
+      "intent": "suppress",
+      "subtype": "surname-unit-conversion",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-027#7": {
+      "intent": "suppress",
+      "subtype": "alias-name-question",
+      "expect_reflex": "fired",
+      "expect_protected": true
+    },
+    "s6x-028#1": {
+      "intent": "suppress",
+      "subtype": "surname-arithmetic-from-prompt",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-028#3": {
+      "intent": "keep",
+      "subtype": "surname-needed",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-028#5": {
+      "intent": "negative",
+      "subtype": "incidental-lowercase-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-028#7": {
+      "intent": "fire",
+      "subtype": "lowercase-company",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-029#1": {
+      "intent": "fire",
+      "subtype": "indirect-project",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-029#3": {
+      "intent": "suppress",
+      "subtype": "surname-general-knowledge",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-029#5": {
+      "intent": "negative",
+      "subtype": "other-referent-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-029#7": {
+      "intent": "fire",
+      "subtype": "partial-company-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-030#1": {
+      "intent": "negative",
+      "subtype": "unseeded-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-030#3": {
+      "intent": "fire",
+      "subtype": "indirect-person",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-030#5": {
+      "intent": "suppress",
+      "subtype": "full-name-self-contained",
+      "expect_reflex": "fired",
+      "expect_protected": true
+    },
+    "s6x-030#7": {
+      "intent": "keep",
+      "subtype": "surname-needed",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-031#1": {
+      "intent": "negative",
+      "subtype": "small-talk",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-031#3": {
+      "intent": "suppress",
+      "subtype": "surname-reformat",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-031#5": {
+      "intent": "suppress",
+      "subtype": "surname-translate",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-031#7": {
+      "intent": "fire",
+      "subtype": "indirect-vendor",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-032#1": {
+      "intent": "fire",
+      "subtype": "indirect-project",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-032#3": {
+      "intent": "negative",
+      "subtype": "generic-question",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-032#5": {
+      "intent": "suppress",
+      "subtype": "surname-general-knowledge",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-032#7": {
+      "intent": "keep",
+      "subtype": "surname-needed",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-033#1": {
+      "intent": "fire",
+      "subtype": "lowercase-company",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-033#3": {
+      "intent": "negative",
+      "subtype": "incidental-lowercase-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-033#5": {
+      "intent": "suppress",
+      "subtype": "alias-name-question",
+      "expect_reflex": "fired",
+      "expect_protected": true
+    },
+    "s6x-033#7": {
+      "intent": "fire",
+      "subtype": "first-name-no-alias",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-034#1": {
+      "intent": "suppress",
+      "subtype": "surname-spelling",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-034#3": {
+      "intent": "fire",
+      "subtype": "lowercase-surname",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-034#5": {
+      "intent": "keep",
+      "subtype": "surname-needed",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-034#7": {
+      "intent": "negative",
+      "subtype": "other-referent-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-035#1": {
+      "intent": "suppress",
+      "subtype": "surname-translate",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-035#3": {
+      "intent": "fire",
+      "subtype": "lowercase-full-name-no-alias",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-035#5": {
+      "intent": "negative",
+      "subtype": "unseeded-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-035#7": {
+      "intent": "suppress",
+      "subtype": "surname-translate",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-036#1": {
+      "intent": "negative",
+      "subtype": "small-talk",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-036#3": {
+      "intent": "fire",
+      "subtype": "lowercase-company",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-036#5": {
+      "intent": "keep",
+      "subtype": "surname-needed",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-036#7": {
+      "intent": "suppress",
+      "subtype": "full-name-self-contained",
+      "expect_reflex": "fired",
+      "expect_protected": true
+    },
+    "s6x-037#1": {
+      "intent": "negative",
+      "subtype": "generic-question",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-037#3": {
+      "intent": "fire",
+      "subtype": "partial-company-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-037#5": {
+      "intent": "suppress",
+      "subtype": "surname-unit-conversion",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-037#7": {
+      "intent": "fire",
+      "subtype": "indirect-project",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-038#1": {
+      "intent": "negative",
+      "subtype": "incidental-lowercase-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-038#3": {
+      "intent": "suppress",
+      "subtype": "surname-copyedit",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-038#5": {
+      "intent": "fire",
+      "subtype": "indirect-person",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-038#7": {
+      "intent": "keep",
+      "subtype": "surname-needed",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-039#1": {
+      "intent": "fire",
+      "subtype": "indirect-vendor",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-039#3": {
+      "intent": "suppress",
+      "subtype": "company-title-self-contained",
+      "expect_reflex": "fired",
+      "expect_protected": true
+    },
+    "s6x-039#5": {
+      "intent": "negative",
+      "subtype": "other-referent-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-039#7": {
+      "intent": "suppress",
+      "subtype": "surname-reformat",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-040#1": {
+      "intent": "negative",
+      "subtype": "unseeded-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-040#3": {
+      "intent": "fire",
+      "subtype": "indirect-project",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-040#5": {
+      "intent": "suppress",
+      "subtype": "surname-general-knowledge",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-040#7": {
+      "intent": "keep",
+      "subtype": "surname-needed",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-041#1": {
+      "intent": "suppress",
+      "subtype": "surname-reformat",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-041#3": {
+      "intent": "fire",
+      "subtype": "lowercase-company",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-041#5": {
+      "intent": "fire",
+      "subtype": "first-name-no-alias",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-041#7": {
+      "intent": "negative",
+      "subtype": "small-talk",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-042#1": {
+      "intent": "keep",
+      "subtype": "surname-needed",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-042#3": {
+      "intent": "fire",
+      "subtype": "lowercase-surname",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-042#5": {
+      "intent": "negative",
+      "subtype": "generic-question",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-042#7": {
+      "intent": "suppress",
+      "subtype": "company-title-self-contained",
+      "expect_reflex": "fired",
+      "expect_protected": true
+    },
+    "s6x-043#1": {
+      "intent": "suppress",
+      "subtype": "surname-arithmetic-from-prompt",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-043#3": {
+      "intent": "fire",
+      "subtype": "lowercase-full-name-no-alias",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-043#5": {
+      "intent": "suppress",
+      "subtype": "surname-copyedit",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-043#7": {
+      "intent": "negative",
+      "subtype": "incidental-lowercase-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-044#1": {
+      "intent": "fire",
+      "subtype": "lowercase-company",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-044#3": {
+      "intent": "negative",
+      "subtype": "other-referent-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-044#5": {
+      "intent": "keep",
+      "subtype": "surname-needed",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-044#7": {
+      "intent": "suppress",
+      "subtype": "surname-arithmetic-from-prompt",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-045#1": {
+      "intent": "fire",
+      "subtype": "indirect-project",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-045#3": {
+      "intent": "fire",
+      "subtype": "partial-company-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-045#5": {
+      "intent": "suppress",
+      "subtype": "full-name-self-contained",
+      "expect_reflex": "fired",
+      "expect_protected": true
+    },
+    "s6x-045#7": {
+      "intent": "negative",
+      "subtype": "unseeded-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-046#1": {
+      "intent": "fire",
+      "subtype": "indirect-person",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-046#3": {
+      "intent": "negative",
+      "subtype": "small-talk",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-046#5": {
+      "intent": "suppress",
+      "subtype": "surname-reformat",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-046#7": {
+      "intent": "keep",
+      "subtype": "surname-needed",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-047#1": {
+      "intent": "fire",
+      "subtype": "indirect-vendor",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-047#3": {
+      "intent": "suppress",
+      "subtype": "surname-arithmetic-from-prompt",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-047#5": {
+      "intent": "suppress",
+      "subtype": "surname-copyedit",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-047#7": {
+      "intent": "negative",
+      "subtype": "generic-question",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-048#1": {
+      "intent": "fire",
+      "subtype": "indirect-project",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-048#3": {
+      "intent": "keep",
+      "subtype": "surname-needed",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-048#5": {
+      "intent": "suppress",
+      "subtype": "alias-name-question",
+      "expect_reflex": "fired",
+      "expect_protected": true
+    },
+    "s6x-048#7": {
+      "intent": "negative",
+      "subtype": "incidental-lowercase-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-049#1": {
+      "intent": "negative",
+      "subtype": "other-referent-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-049#3": {
+      "intent": "fire",
+      "subtype": "lowercase-company",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-049#5": {
+      "intent": "fire",
+      "subtype": "first-name-no-alias",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-049#7": {
+      "intent": "suppress",
+      "subtype": "surname-arithmetic-from-prompt",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-050#1": {
+      "intent": "suppress",
+      "subtype": "surname-letter-count",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-050#3": {
+      "intent": "keep",
+      "subtype": "surname-needed",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-050#5": {
+      "intent": "negative",
+      "subtype": "unseeded-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-050#7": {
+      "intent": "fire",
+      "subtype": "lowercase-surname",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-051#1": {
+      "intent": "suppress",
+      "subtype": "full-name-self-contained",
+      "expect_reflex": "fired",
+      "expect_protected": true
+    },
+    "s6x-051#3": {
+      "intent": "negative",
+      "subtype": "small-talk",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-051#5": {
+      "intent": "suppress",
+      "subtype": "surname-letter-count",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-051#7": {
+      "intent": "fire",
+      "subtype": "lowercase-full-name-no-alias",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-052#1": {
+      "intent": "keep",
+      "subtype": "surname-needed",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-052#3": {
+      "intent": "suppress",
+      "subtype": "surname-spelling",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-052#5": {
+      "intent": "negative",
+      "subtype": "generic-question",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-052#7": {
+      "intent": "fire",
+      "subtype": "lowercase-company",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-053#1": {
+      "intent": "negative",
+      "subtype": "incidental-lowercase-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-053#3": {
+      "intent": "fire",
+      "subtype": "indirect-project",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-053#5": {
+      "intent": "suppress",
+      "subtype": "surname-letter-count",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-053#7": {
+      "intent": "fire",
+      "subtype": "partial-company-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-054#1": {
+      "intent": "suppress",
+      "subtype": "full-name-self-contained",
+      "expect_reflex": "fired",
+      "expect_protected": true
+    },
+    "s6x-054#3": {
+      "intent": "negative",
+      "subtype": "other-referent-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-054#5": {
+      "intent": "keep",
+      "subtype": "surname-needed",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-054#7": {
+      "intent": "fire",
+      "subtype": "indirect-person",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-055#1": {
+      "intent": "fire",
+      "subtype": "indirect-vendor",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-055#3": {
+      "intent": "suppress",
+      "subtype": "surname-translate",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-055#5": {
+      "intent": "negative",
+      "subtype": "unseeded-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-055#7": {
+      "intent": "suppress",
+      "subtype": "surname-arithmetic-from-prompt",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-056#1": {
+      "intent": "suppress",
+      "subtype": "surname-spelling",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-056#3": {
+      "intent": "fire",
+      "subtype": "indirect-project",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-056#5": {
+      "intent": "keep",
+      "subtype": "surname-needed",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-056#7": {
+      "intent": "negative",
+      "subtype": "small-talk",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-057#1": {
+      "intent": "suppress",
+      "subtype": "full-name-self-contained",
+      "expect_reflex": "fired",
+      "expect_protected": true
+    },
+    "s6x-057#3": {
+      "intent": "fire",
+      "subtype": "lowercase-company",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-057#5": {
+      "intent": "fire",
+      "subtype": "first-name-no-alias",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-057#7": {
+      "intent": "negative",
+      "subtype": "generic-question",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-058#1": {
+      "intent": "negative",
+      "subtype": "incidental-lowercase-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-058#3": {
+      "intent": "keep",
+      "subtype": "surname-needed",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-058#5": {
+      "intent": "fire",
+      "subtype": "lowercase-surname",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-058#7": {
+      "intent": "suppress",
+      "subtype": "surname-translate",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-059#1": {
+      "intent": "negative",
+      "subtype": "other-referent-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-059#3": {
+      "intent": "fire",
+      "subtype": "lowercase-full-name-no-alias",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-059#5": {
+      "intent": "suppress",
+      "subtype": "surname-copyedit",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-059#7": {
+      "intent": "suppress",
+      "subtype": "surname-letter-count",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-060#1": {
+      "intent": "keep",
+      "subtype": "surname-needed",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-060#3": {
+      "intent": "fire",
+      "subtype": "lowercase-company",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-060#5": {
+      "intent": "negative",
+      "subtype": "unseeded-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-060#7": {
+      "intent": "suppress",
+      "subtype": "company-title-self-contained",
+      "expect_reflex": "fired",
+      "expect_protected": true
+    },
+    "s6x-061#1": {
+      "intent": "negative",
+      "subtype": "small-talk",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-061#3": {
+      "intent": "suppress",
+      "subtype": "surname-unit-conversion",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-061#5": {
+      "intent": "fire",
+      "subtype": "indirect-project",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-061#7": {
+      "intent": "fire",
+      "subtype": "partial-company-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-062#1": {
+      "intent": "fire",
+      "subtype": "indirect-person",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-062#3": {
+      "intent": "suppress",
+      "subtype": "surname-general-knowledge",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-062#5": {
+      "intent": "negative",
+      "subtype": "generic-question",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-062#7": {
+      "intent": "keep",
+      "subtype": "surname-needed",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-063#1": {
+      "intent": "fire",
+      "subtype": "indirect-vendor",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-063#3": {
+      "intent": "negative",
+      "subtype": "incidental-lowercase-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-063#5": {
+      "intent": "suppress",
+      "subtype": "surname-arithmetic-from-prompt",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-063#7": {
+      "intent": "suppress",
+      "subtype": "company-title-self-contained",
+      "expect_reflex": "fired",
+      "expect_protected": true
+    },
+    "s6x-064#1": {
+      "intent": "negative",
+      "subtype": "other-referent-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-064#3": {
+      "intent": "fire",
+      "subtype": "indirect-project",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-064#5": {
+      "intent": "keep",
+      "subtype": "surname-needed",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-064#7": {
+      "intent": "suppress",
+      "subtype": "surname-reformat",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-065#1": {
+      "intent": "suppress",
+      "subtype": "surname-unit-conversion",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-065#3": {
+      "intent": "fire",
+      "subtype": "first-name-no-alias",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-065#5": {
+      "intent": "fire",
+      "subtype": "lowercase-company",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-065#7": {
+      "intent": "negative",
+      "subtype": "unseeded-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-066#1": {
+      "intent": "suppress",
+      "subtype": "alias-name-question",
+      "expect_reflex": "fired",
+      "expect_protected": true
+    },
+    "s6x-066#3": {
+      "intent": "negative",
+      "subtype": "small-talk",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-066#5": {
+      "intent": "keep",
+      "subtype": "surname-needed",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-066#7": {
+      "intent": "fire",
+      "subtype": "lowercase-surname",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-067#1": {
+      "intent": "suppress",
+      "subtype": "surname-copyedit",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-067#3": {
+      "intent": "negative",
+      "subtype": "generic-question",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-067#5": {
+      "intent": "suppress",
+      "subtype": "surname-copyedit",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-067#7": {
+      "intent": "fire",
+      "subtype": "lowercase-full-name-no-alias",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-068#1": {
+      "intent": "keep",
+      "subtype": "surname-needed",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-068#3": {
+      "intent": "fire",
+      "subtype": "lowercase-company",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-068#5": {
+      "intent": "suppress",
+      "subtype": "surname-translate",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-068#7": {
+      "intent": "negative",
+      "subtype": "incidental-lowercase-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-069#1": {
+      "intent": "fire",
+      "subtype": "indirect-project",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-069#3": {
+      "intent": "fire",
+      "subtype": "partial-company-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-069#5": {
+      "intent": "suppress",
+      "subtype": "alias-name-question",
+      "expect_reflex": "fired",
+      "expect_protected": true
+    },
+    "s6x-069#7": {
+      "intent": "negative",
+      "subtype": "other-referent-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-070#1": {
+      "intent": "suppress",
+      "subtype": "surname-general-knowledge",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-070#3": {
+      "intent": "fire",
+      "subtype": "indirect-person",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-070#5": {
+      "intent": "negative",
+      "subtype": "unseeded-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-070#7": {
+      "intent": "keep",
+      "subtype": "surname-needed",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-071#1": {
+      "intent": "suppress",
+      "subtype": "surname-general-knowledge",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-071#3": {
+      "intent": "fire",
+      "subtype": "indirect-vendor",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-071#5": {
+      "intent": "suppress",
+      "subtype": "surname-spelling",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-071#7": {
+      "intent": "negative",
+      "subtype": "small-talk",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-072#1": {
+      "intent": "negative",
+      "subtype": "generic-question",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-072#3": {
+      "intent": "fire",
+      "subtype": "indirect-project",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-072#5": {
+      "intent": "keep",
+      "subtype": "surname-needed",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-072#7": {
+      "intent": "suppress",
+      "subtype": "company-title-self-contained",
+      "expect_reflex": "fired",
+      "expect_protected": true
+    },
+    "s6x-073#1": {
+      "intent": "fire",
+      "subtype": "first-name-no-alias",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-073#3": {
+      "intent": "fire",
+      "subtype": "lowercase-company",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-073#5": {
+      "intent": "negative",
+      "subtype": "incidental-lowercase-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-073#7": {
+      "intent": "suppress",
+      "subtype": "surname-general-knowledge",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-074#1": {
+      "intent": "negative",
+      "subtype": "other-referent-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-074#3": {
+      "intent": "suppress",
+      "subtype": "surname-letter-count",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-074#5": {
+      "intent": "keep",
+      "subtype": "surname-needed",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-074#7": {
+      "intent": "fire",
+      "subtype": "lowercase-surname",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-075#1": {
+      "intent": "suppress",
+      "subtype": "company-title-self-contained",
+      "expect_reflex": "fired",
+      "expect_protected": true
+    },
+    "s6x-075#3": {
+      "intent": "suppress",
+      "subtype": "surname-copyedit",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-075#5": {
+      "intent": "negative",
+      "subtype": "unseeded-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-075#7": {
+      "intent": "fire",
+      "subtype": "lowercase-full-name-no-alias",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-076#1": {
+      "intent": "suppress",
+      "subtype": "surname-letter-count",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-076#3": {
+      "intent": "fire",
+      "subtype": "lowercase-company",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-076#5": {
+      "intent": "negative",
+      "subtype": "small-talk",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-076#7": {
+      "intent": "keep",
+      "subtype": "surname-needed",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-077#1": {
+      "intent": "suppress",
+      "subtype": "surname-arithmetic-from-prompt",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-077#3": {
+      "intent": "fire",
+      "subtype": "partial-company-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-077#5": {
+      "intent": "fire",
+      "subtype": "indirect-project",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-077#7": {
+      "intent": "negative",
+      "subtype": "generic-question",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-078#1": {
+      "intent": "suppress",
+      "subtype": "alias-name-question",
+      "expect_reflex": "fired",
+      "expect_protected": true
+    },
+    "s6x-078#3": {
+      "intent": "negative",
+      "subtype": "incidental-lowercase-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-078#5": {
+      "intent": "keep",
+      "subtype": "surname-needed",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-078#7": {
+      "intent": "fire",
+      "subtype": "indirect-person",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-079#1": {
+      "intent": "suppress",
+      "subtype": "surname-arithmetic-from-prompt",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-079#3": {
+      "intent": "negative",
+      "subtype": "other-referent-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-079#5": {
+      "intent": "fire",
+      "subtype": "indirect-vendor",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-079#7": {
+      "intent": "suppress",
+      "subtype": "surname-spelling",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-080#1": {
+      "intent": "negative",
+      "subtype": "unseeded-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-080#3": {
+      "intent": "fire",
+      "subtype": "indirect-project",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-080#5": {
+      "intent": "keep",
+      "subtype": "surname-needed",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-080#7": {
+      "intent": "suppress",
+      "subtype": "surname-spelling",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-081#1": {
+      "intent": "fire",
+      "subtype": "lowercase-company",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-081#3": {
+      "intent": "fire",
+      "subtype": "first-name-no-alias",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-081#5": {
+      "intent": "negative",
+      "subtype": "small-talk",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-081#7": {
+      "intent": "suppress",
+      "subtype": "company-title-self-contained",
+      "expect_reflex": "fired",
+      "expect_protected": true
+    },
+    "s6x-082#1": {
+      "intent": "keep",
+      "subtype": "surname-needed",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-082#3": {
+      "intent": "fire",
+      "subtype": "lowercase-surname",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-082#5": {
+      "intent": "suppress",
+      "subtype": "surname-copyedit",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-082#7": {
+      "intent": "negative",
+      "subtype": "generic-question",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-083#1": {
+      "intent": "suppress",
+      "subtype": "surname-translate",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-083#3": {
+      "intent": "fire",
+      "subtype": "lowercase-full-name-no-alias",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-083#5": {
+      "intent": "negative",
+      "subtype": "incidental-lowercase-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-083#7": {
+      "intent": "suppress",
+      "subtype": "surname-unit-conversion",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-084#1": {
+      "intent": "suppress",
+      "subtype": "company-title-self-contained",
+      "expect_reflex": "fired",
+      "expect_protected": true
+    },
+    "s6x-084#3": {
+      "intent": "fire",
+      "subtype": "lowercase-company",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-084#5": {
+      "intent": "keep",
+      "subtype": "surname-needed",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-084#7": {
+      "intent": "negative",
+      "subtype": "other-referent-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-085#1": {
+      "intent": "fire",
+      "subtype": "indirect-project",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-085#3": {
+      "intent": "suppress",
+      "subtype": "surname-translate",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-085#5": {
+      "intent": "negative",
+      "subtype": "unseeded-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-085#7": {
+      "intent": "fire",
+      "subtype": "partial-company-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-086#1": {
+      "intent": "keep",
+      "subtype": "surname-needed",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-086#3": {
+      "intent": "negative",
+      "subtype": "small-talk",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-086#5": {
+      "intent": "suppress",
+      "subtype": "surname-unit-conversion",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-086#7": {
+      "intent": "fire",
+      "subtype": "indirect-person",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-087#1": {
+      "intent": "fire",
+      "subtype": "indirect-vendor",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-087#3": {
+      "intent": "suppress",
+      "subtype": "surname-spelling",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-087#5": {
+      "intent": "negative",
+      "subtype": "generic-question",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-087#7": {
+      "intent": "suppress",
+      "subtype": "company-title-self-contained",
+      "expect_reflex": "fired",
+      "expect_protected": true
+    },
+    "s6x-088#1": {
+      "intent": "fire",
+      "subtype": "indirect-project",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-088#3": {
+      "intent": "suppress",
+      "subtype": "surname-translate",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-088#5": {
+      "intent": "negative",
+      "subtype": "incidental-lowercase-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-088#7": {
+      "intent": "keep",
+      "subtype": "surname-needed",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-089#1": {
+      "intent": "suppress",
+      "subtype": "surname-letter-count",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-089#3": {
+      "intent": "fire",
+      "subtype": "first-name-no-alias",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-089#5": {
+      "intent": "negative",
+      "subtype": "other-referent-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-089#7": {
+      "intent": "fire",
+      "subtype": "lowercase-company",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-090#1": {
+      "intent": "negative",
+      "subtype": "unseeded-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-090#3": {
+      "intent": "suppress",
+      "subtype": "full-name-self-contained",
+      "expect_reflex": "fired",
+      "expect_protected": true
+    },
+    "s6x-090#5": {
+      "intent": "keep",
+      "subtype": "surname-needed",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-090#7": {
+      "intent": "fire",
+      "subtype": "lowercase-surname",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-091#1": {
+      "intent": "fire",
+      "subtype": "lowercase-full-name-no-alias",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-091#3": {
+      "intent": "suppress",
+      "subtype": "surname-spelling",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-091#5": {
+      "intent": "suppress",
+      "subtype": "surname-general-knowledge",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-091#7": {
+      "intent": "negative",
+      "subtype": "small-talk",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-092#1": {
+      "intent": "negative",
+      "subtype": "generic-question",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-092#3": {
+      "intent": "suppress",
+      "subtype": "surname-unit-conversion",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-092#5": {
+      "intent": "fire",
+      "subtype": "lowercase-company",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-092#7": {
+      "intent": "keep",
+      "subtype": "surname-needed",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-093#1": {
+      "intent": "fire",
+      "subtype": "partial-company-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-093#3": {
+      "intent": "fire",
+      "subtype": "indirect-project",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-093#5": {
+      "intent": "suppress",
+      "subtype": "alias-name-question",
+      "expect_reflex": "fired",
+      "expect_protected": true
+    },
+    "s6x-093#7": {
+      "intent": "negative",
+      "subtype": "incidental-lowercase-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-094#1": {
+      "intent": "suppress",
+      "subtype": "surname-copyedit",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-094#3": {
+      "intent": "keep",
+      "subtype": "surname-needed",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-094#5": {
+      "intent": "fire",
+      "subtype": "indirect-person",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-094#7": {
+      "intent": "negative",
+      "subtype": "other-referent-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-095#1": {
+      "intent": "suppress",
+      "subtype": "surname-arithmetic-from-prompt",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-095#3": {
+      "intent": "suppress",
+      "subtype": "surname-copyedit",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-095#5": {
+      "intent": "fire",
+      "subtype": "indirect-vendor",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-095#7": {
+      "intent": "negative",
+      "subtype": "unseeded-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-096#1": {
+      "intent": "fire",
+      "subtype": "indirect-project",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-096#3": {
+      "intent": "keep",
+      "subtype": "surname-needed",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-096#5": {
+      "intent": "suppress",
+      "subtype": "full-name-self-contained",
+      "expect_reflex": "fired",
+      "expect_protected": true
+    },
+    "s6x-096#7": {
+      "intent": "negative",
+      "subtype": "small-talk",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-097#1": {
+      "intent": "negative",
+      "subtype": "generic-question",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-097#3": {
+      "intent": "suppress",
+      "subtype": "surname-reformat",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-097#5": {
+      "intent": "fire",
+      "subtype": "lowercase-company",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-097#7": {
+      "intent": "fire",
+      "subtype": "first-name-no-alias",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-098#1": {
+      "intent": "fire",
+      "subtype": "lowercase-surname",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-098#3": {
+      "intent": "keep",
+      "subtype": "surname-needed",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-098#5": {
+      "intent": "negative",
+      "subtype": "incidental-lowercase-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-098#7": {
+      "intent": "suppress",
+      "subtype": "surname-translate",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-099#1": {
+      "intent": "negative",
+      "subtype": "other-referent-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-099#3": {
+      "intent": "suppress",
+      "subtype": "alias-name-question",
+      "expect_reflex": "fired",
+      "expect_protected": true
+    },
+    "s6x-099#5": {
+      "intent": "suppress",
+      "subtype": "surname-reformat",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-099#7": {
+      "intent": "fire",
+      "subtype": "lowercase-full-name-no-alias",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-100#1": {
+      "intent": "keep",
+      "subtype": "surname-needed",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-100#3": {
+      "intent": "negative",
+      "subtype": "unseeded-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-100#5": {
+      "intent": "suppress",
+      "subtype": "surname-spelling",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-100#7": {
+      "intent": "fire",
+      "subtype": "lowercase-company",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-101#1": {
+      "intent": "negative",
+      "subtype": "small-talk",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-101#3": {
+      "intent": "suppress",
+      "subtype": "surname-arithmetic-from-prompt",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-101#5": {
+      "intent": "fire",
+      "subtype": "indirect-project",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-101#7": {
+      "intent": "fire",
+      "subtype": "partial-company-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-102#1": {
+      "intent": "fire",
+      "subtype": "indirect-person",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-102#3": {
+      "intent": "keep",
+      "subtype": "surname-needed",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-102#5": {
+      "intent": "suppress",
+      "subtype": "alias-name-question",
+      "expect_reflex": "fired",
+      "expect_protected": true
+    },
+    "s6x-102#7": {
+      "intent": "negative",
+      "subtype": "generic-question",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-103#1": {
+      "intent": "fire",
+      "subtype": "indirect-vendor",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-103#3": {
+      "intent": "suppress",
+      "subtype": "surname-spelling",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-103#5": {
+      "intent": "negative",
+      "subtype": "incidental-lowercase-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-103#7": {
+      "intent": "suppress",
+      "subtype": "surname-unit-conversion",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-104#1": {
+      "intent": "keep",
+      "subtype": "surname-needed",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-104#3": {
+      "intent": "suppress",
+      "subtype": "surname-letter-count",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-104#5": {
+      "intent": "fire",
+      "subtype": "indirect-project",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-104#7": {
+      "intent": "negative",
+      "subtype": "other-referent-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-105#1": {
+      "intent": "fire",
+      "subtype": "lowercase-company",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-105#3": {
+      "intent": "suppress",
+      "subtype": "full-name-self-contained",
+      "expect_reflex": "fired",
+      "expect_protected": true
+    },
+    "s6x-105#5": {
+      "intent": "fire",
+      "subtype": "first-name-no-alias",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-105#7": {
+      "intent": "negative",
+      "subtype": "unseeded-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-106#1": {
+      "intent": "keep",
+      "subtype": "surname-needed",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-106#3": {
+      "intent": "fire",
+      "subtype": "lowercase-surname",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-106#5": {
+      "intent": "negative",
+      "subtype": "small-talk",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-106#7": {
+      "intent": "suppress",
+      "subtype": "surname-arithmetic-from-prompt",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-107#1": {
+      "intent": "fire",
+      "subtype": "lowercase-full-name-no-alias",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-107#3": {
+      "intent": "suppress",
+      "subtype": "surname-general-knowledge",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-107#5": {
+      "intent": "suppress",
+      "subtype": "surname-letter-count",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-107#7": {
+      "intent": "negative",
+      "subtype": "generic-question",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-108#1": {
+      "intent": "negative",
+      "subtype": "incidental-lowercase-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-108#3": {
+      "intent": "suppress",
+      "subtype": "company-title-self-contained",
+      "expect_reflex": "fired",
+      "expect_protected": true
+    },
+    "s6x-108#5": {
+      "intent": "fire",
+      "subtype": "lowercase-company",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-108#7": {
+      "intent": "keep",
+      "subtype": "surname-needed",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-109#1": {
+      "intent": "fire",
+      "subtype": "indirect-project",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-109#3": {
+      "intent": "negative",
+      "subtype": "other-referent-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-109#5": {
+      "intent": "fire",
+      "subtype": "partial-company-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-109#7": {
+      "intent": "suppress",
+      "subtype": "surname-arithmetic-from-prompt",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-110#1": {
+      "intent": "negative",
+      "subtype": "unseeded-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-110#3": {
+      "intent": "keep",
+      "subtype": "surname-needed",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-110#5": {
+      "intent": "fire",
+      "subtype": "indirect-person",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-110#7": {
+      "intent": "suppress",
+      "subtype": "surname-copyedit",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-111#1": {
+      "intent": "fire",
+      "subtype": "indirect-vendor",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-111#3": {
+      "intent": "suppress",
+      "subtype": "full-name-self-contained",
+      "expect_reflex": "fired",
+      "expect_protected": true
+    },
+    "s6x-111#5": {
+      "intent": "suppress",
+      "subtype": "surname-copyedit",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-111#7": {
+      "intent": "negative",
+      "subtype": "small-talk",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-112#1": {
+      "intent": "suppress",
+      "subtype": "surname-reformat",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-112#3": {
+      "intent": "fire",
+      "subtype": "indirect-project",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-112#5": {
+      "intent": "negative",
+      "subtype": "generic-question",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-112#7": {
+      "intent": "keep",
+      "subtype": "surname-needed",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-113#1": {
+      "intent": "suppress",
+      "subtype": "surname-translate",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-113#3": {
+      "intent": "fire",
+      "subtype": "lowercase-company",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-113#5": {
+      "intent": "negative",
+      "subtype": "incidental-lowercase-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-113#7": {
+      "intent": "fire",
+      "subtype": "first-name-no-alias",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-114#1": {
+      "intent": "negative",
+      "subtype": "other-referent-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-114#3": {
+      "intent": "fire",
+      "subtype": "lowercase-surname",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-114#5": {
+      "intent": "suppress",
+      "subtype": "alias-name-question",
+      "expect_reflex": "fired",
+      "expect_protected": true
+    },
+    "s6x-114#7": {
+      "intent": "keep",
+      "subtype": "surname-needed",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-115#1": {
+      "intent": "suppress",
+      "subtype": "surname-reformat",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-115#3": {
+      "intent": "negative",
+      "subtype": "unseeded-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-115#5": {
+      "intent": "suppress",
+      "subtype": "surname-general-knowledge",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-115#7": {
+      "intent": "fire",
+      "subtype": "lowercase-full-name-no-alias",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-116#1": {
+      "intent": "fire",
+      "subtype": "lowercase-company",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-116#3": {
+      "intent": "keep",
+      "subtype": "surname-needed",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-116#5": {
+      "intent": "negative",
+      "subtype": "small-talk",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-116#7": {
+      "intent": "suppress",
+      "subtype": "surname-arithmetic-from-prompt",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-117#1": {
+      "intent": "fire",
+      "subtype": "partial-company-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-117#3": {
+      "intent": "negative",
+      "subtype": "generic-question",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-117#5": {
+      "intent": "fire",
+      "subtype": "indirect-project",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-117#7": {
+      "intent": "suppress",
+      "subtype": "company-title-self-contained",
+      "expect_reflex": "fired",
+      "expect_protected": true
+    },
+    "s6x-118#1": {
+      "intent": "suppress",
+      "subtype": "surname-letter-count",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-118#3": {
+      "intent": "keep",
+      "subtype": "surname-needed",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-118#5": {
+      "intent": "negative",
+      "subtype": "incidental-lowercase-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-118#7": {
+      "intent": "fire",
+      "subtype": "indirect-person",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-119#1": {
+      "intent": "negative",
+      "subtype": "other-referent-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-119#3": {
+      "intent": "suppress",
+      "subtype": "surname-translate",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-119#5": {
+      "intent": "suppress",
+      "subtype": "surname-letter-count",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-119#7": {
+      "intent": "fire",
+      "subtype": "indirect-vendor",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-120#1": {
+      "intent": "negative",
+      "subtype": "unseeded-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-120#3": {
+      "intent": "keep",
+      "subtype": "surname-needed",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-120#5": {
+      "intent": "suppress",
+      "subtype": "alias-name-question",
+      "expect_reflex": "fired",
+      "expect_protected": true
+    },
+    "s6x-120#7": {
+      "intent": "fire",
+      "subtype": "indirect-project",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-121#1": {
+      "intent": "suppress",
+      "subtype": "surname-translate",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-121#3": {
+      "intent": "fire",
+      "subtype": "first-name-no-alias",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-121#5": {
+      "intent": "negative",
+      "subtype": "small-talk",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-121#7": {
+      "intent": "fire",
+      "subtype": "lowercase-company",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-122#1": {
+      "intent": "fire",
+      "subtype": "lowercase-surname",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-122#3": {
+      "intent": "negative",
+      "subtype": "generic-question",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-122#5": {
+      "intent": "suppress",
+      "subtype": "surname-reformat",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-122#7": {
+      "intent": "keep",
+      "subtype": "surname-needed",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-123#1": {
+      "intent": "fire",
+      "subtype": "lowercase-full-name-no-alias",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-123#3": {
+      "intent": "suppress",
+      "subtype": "surname-letter-count",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-123#5": {
+      "intent": "negative",
+      "subtype": "incidental-lowercase-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-123#7": {
+      "intent": "suppress",
+      "subtype": "company-title-self-contained",
+      "expect_reflex": "fired",
+      "expect_protected": true
+    },
+    "s6x-124#1": {
+      "intent": "fire",
+      "subtype": "lowercase-company",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-124#3": {
+      "intent": "suppress",
+      "subtype": "surname-spelling",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-124#5": {
+      "intent": "keep",
+      "subtype": "surname-needed",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-124#7": {
+      "intent": "negative",
+      "subtype": "other-referent-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-125#1": {
+      "intent": "fire",
+      "subtype": "indirect-project",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-125#3": {
+      "intent": "negative",
+      "subtype": "unseeded-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-125#5": {
+      "intent": "suppress",
+      "subtype": "surname-copyedit",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-125#7": {
+      "intent": "fire",
+      "subtype": "partial-company-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-126#1": {
+      "intent": "suppress",
+      "subtype": "company-title-self-contained",
+      "expect_reflex": "fired",
+      "expect_protected": true
+    },
+    "s6x-126#3": {
+      "intent": "fire",
+      "subtype": "indirect-person",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-126#5": {
+      "intent": "negative",
+      "subtype": "small-talk",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-126#7": {
+      "intent": "keep",
+      "subtype": "surname-needed",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-127#1": {
+      "intent": "suppress",
+      "subtype": "surname-arithmetic-from-prompt",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-127#3": {
+      "intent": "suppress",
+      "subtype": "surname-translate",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-127#5": {
+      "intent": "negative",
+      "subtype": "generic-question",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-127#7": {
+      "intent": "fire",
+      "subtype": "indirect-vendor",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-128#1": {
+      "intent": "suppress",
+      "subtype": "surname-copyedit",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-128#3": {
+      "intent": "fire",
+      "subtype": "indirect-project",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-128#5": {
+      "intent": "negative",
+      "subtype": "incidental-lowercase-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-128#7": {
+      "intent": "keep",
+      "subtype": "surname-needed",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-129#1": {
+      "intent": "fire",
+      "subtype": "first-name-no-alias",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-129#3": {
+      "intent": "negative",
+      "subtype": "other-referent-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-129#5": {
+      "intent": "fire",
+      "subtype": "lowercase-company",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-129#7": {
+      "intent": "suppress",
+      "subtype": "alias-name-question",
+      "expect_reflex": "fired",
+      "expect_protected": true
+    },
+    "s6x-130#1": {
+      "intent": "keep",
+      "subtype": "surname-needed",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-130#3": {
+      "intent": "fire",
+      "subtype": "lowercase-surname",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-130#5": {
+      "intent": "negative",
+      "subtype": "unseeded-name",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-130#7": {
+      "intent": "suppress",
+      "subtype": "surname-spelling",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-131#1": {
+      "intent": "negative",
+      "subtype": "small-talk",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-131#3": {
+      "intent": "fire",
+      "subtype": "lowercase-full-name-no-alias",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-131#5": {
+      "intent": "suppress",
+      "subtype": "surname-unit-conversion",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-131#7": {
+      "intent": "suppress",
+      "subtype": "surname-general-knowledge",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-132#1": {
+      "intent": "keep",
+      "subtype": "surname-needed",
+      "expect_reflex": "fired",
+      "expect_protected": false
+    },
+    "s6x-132#3": {
+      "intent": "fire",
+      "subtype": "lowercase-company",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    },
+    "s6x-132#5": {
+      "intent": "suppress",
+      "subtype": "company-title-self-contained",
+      "expect_reflex": "fired",
+      "expect_protected": true
+    },
+    "s6x-132#7": {
+      "intent": "negative",
+      "subtype": "generic-question",
+      "expect_reflex": "silent",
+      "expect_protected": false
+    }
+  }
+}

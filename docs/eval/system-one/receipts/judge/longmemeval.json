@@ -1,0 +1,1226 @@
+{
+  "suite": "longmemeval",
+  "input": "lme-judged-voy30.ndjson",
+  "provider": "typesafe:jev-1.13.0",
+  "threshold": 0.5,
+  "items": 100,
+  "skipped": {},
+  "reference": {
+    "kind": "llm_judge",
+    "label_source": {
+      "llm:openai:gpt-4o": 100
+    }
+  },
+  "models": [
+    "jev-1.13.0"
+  ],
+  "n": 100,
+  "raw_agreement": 0.95,
+  "kappa": 0.7346,
+  "kappa_ci95": [
+    0.5079,
+    0.9613
+  ],
+  "confusion": {
+    "both_yes": 87,
+    "reference_yes_jev_no": 4,
+    "reference_no_jev_yes": 1,
+    "both_no": 8
+  },
+  "errors": {},
+  "cost_usd": 0.00293294,
+  "input_tokens": 69832,
+  "latency_ms": {
+    "p50": 133,
+    "p95": 208
+  },
+  "slices": {
+    "knowledge-update": {
+      "n": 18,
+      "raw_agreement": 0.9444,
+      "kappa": 0.7692,
+      "kappa_ci95": [
+        0.3297,
+        1
+      ],
+      "confusion": {
+        "both_yes": 15,
+        "reference_yes_jev_no": 1,
+        "reference_no_jev_yes": 0,
+        "both_no": 2
+      }
+    },
+    "multi-session": {
+      "n": 30,
+      "raw_agreement": 0.9333,
+      "kappa": 0.6341,
+      "kappa_ci95": [
+        0.1443,
+        1
+      ],
+      "confusion": {
+        "both_yes": 26,
+        "reference_yes_jev_no": 2,
+        "reference_no_jev_yes": 0,
+        "both_no": 2
+      }
+    },
+    "single-session-assistant": {
+      "n": 8,
+      "raw_agreement": 1,
+      "kappa": null,
+      "kappa_ci95": null,
+      "confusion": {
+        "both_yes": 8,
+        "reference_yes_jev_no": 0,
+        "reference_no_jev_yes": 0,
+        "both_no": 0
+      }
+    },
+    "single-session-preference": {
+      "n": 6,
+      "raw_agreement": 0.8333,
+      "kappa": 0,
+      "kappa_ci95": [
+        -1,
+        1
+      ],
+      "confusion": {
+        "both_yes": 5,
+        "reference_yes_jev_no": 0,
+        "reference_no_jev_yes": 1,
+        "both_no": 0
+      }
+    },
+    "single-session-user": {
+      "n": 13,
+      "raw_agreement": 1,
+      "kappa": null,
+      "kappa_ci95": null,
+      "confusion": {
+        "both_yes": 13,
+        "reference_yes_jev_no": 0,
+        "reference_no_jev_yes": 0,
+        "both_no": 0
+      }
+    },
+    "temporal-reasoning": {
+      "n": 25,
+      "raw_agreement": 0.96,
+      "kappa": 0.8649,
+      "kappa_ci95": [
+        0.6054,
+        1
+      ],
+      "confusion": {
+        "both_yes": 20,
+        "reference_yes_jev_no": 1,
+        "reference_no_jev_yes": 0,
+        "both_no": 4
+      }
+    }
+  },
+  "note": "reference labels are the existing LLM judge verdicts: this is judge-vs-judge agreement, not accuracy against human labels",
+  "rows": [
+    {
+      "id": "25e5aa4f",
+      "slice": "single-session-user",
+      "reference": true,
+      "p": 0.99,
+      "predicted": true,
+      "latency_ms": 510,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000020874000000000004,
+      "input_tokens": 497
+    },
+    {
+      "id": "91b15a6e",
+      "slice": "multi-session",
+      "reference": true,
+      "p": 0.99,
+      "predicted": true,
+      "latency_ms": 499,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000034314000000000004,
+      "input_tokens": 817
+    },
+    {
+      "id": "0db4c65d",
+      "slice": "temporal-reasoning",
+      "reference": true,
+      "p": 0.99,
+      "predicted": true,
+      "latency_ms": 504,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000034188000000000005,
+      "input_tokens": 814
+    },
+    {
+      "id": "ba61f0b9",
+      "slice": "knowledge-update",
+      "reference": false,
+      "p": 0.06,
+      "predicted": false,
+      "latency_ms": 493,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000023352,
+      "input_tokens": 556
+    },
+    {
+      "id": "46a3abf7",
+      "slice": "multi-session",
+      "reference": true,
+      "p": 0.99,
+      "predicted": true,
+      "latency_ms": 137,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000031542000000000004,
+      "input_tokens": 751
+    },
+    {
+      "id": "cc06de0d",
+      "slice": "multi-session",
+      "reference": true,
+      "p": 0.95,
+      "predicted": true,
+      "latency_ms": 128,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000030282,
+      "input_tokens": 721
+    },
+    {
+      "id": "d905b33f",
+      "slice": "multi-session",
+      "reference": true,
+      "p": 0.99,
+      "predicted": true,
+      "latency_ms": 131,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000023856000000000003,
+      "input_tokens": 568
+    },
+    {
+      "id": "92a0aa75",
+      "slice": "multi-session",
+      "reference": false,
+      "p": 0.02,
+      "predicted": false,
+      "latency_ms": 123,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000027930000000000002,
+      "input_tokens": 665
+    },
+    {
+      "id": "bb7c3b45",
+      "slice": "multi-session",
+      "reference": true,
+      "p": 0.99,
+      "predicted": true,
+      "latency_ms": 116,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000028350000000000005,
+      "input_tokens": 675
+    },
+    {
+      "id": "37f165cf",
+      "slice": "multi-session",
+      "reference": false,
+      "p": 0.05,
+      "predicted": false,
+      "latency_ms": 122,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000031836000000000005,
+      "input_tokens": 758
+    },
+    {
+      "id": "e5ba910e_abs",
+      "slice": "multi-session",
+      "reference": true,
+      "p": 0.76,
+      "predicted": true,
+      "latency_ms": 138,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000030156,
+      "input_tokens": 718
+    },
+    {
+      "id": "gpt4_4ef30696",
+      "slice": "temporal-reasoning",
+      "reference": true,
+      "p": 0.99,
+      "predicted": true,
+      "latency_ms": 160,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000032508,
+      "input_tokens": 774
+    },
+    {
+      "id": "72e3ee87",
+      "slice": "knowledge-update",
+      "reference": true,
+      "p": 0.99,
+      "predicted": true,
+      "latency_ms": 130,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000025620000000000002,
+      "input_tokens": 610
+    },
+    {
+      "id": "f0e564bc",
+      "slice": "multi-session",
+      "reference": true,
+      "p": 0.99,
+      "predicted": true,
+      "latency_ms": 139,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000024108,
+      "input_tokens": 574
+    },
+    {
+      "id": "bbf86515",
+      "slice": "temporal-reasoning",
+      "reference": true,
+      "p": 0.99,
+      "predicted": true,
+      "latency_ms": 122,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00002877,
+      "input_tokens": 685
+    },
+    {
+      "id": "4b24c848",
+      "slice": "knowledge-update",
+      "reference": true,
+      "p": 0.98,
+      "predicted": true,
+      "latency_ms": 132,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000027426000000000005,
+      "input_tokens": 653
+    },
+    {
+      "id": "561fabcd",
+      "slice": "single-session-assistant",
+      "reference": true,
+      "p": 0.99,
+      "predicted": true,
+      "latency_ms": 115,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000030408000000000004,
+      "input_tokens": 724
+    },
+    {
+      "id": "577d4d32",
+      "slice": "single-session-user",
+      "reference": true,
+      "p": 0.99,
+      "predicted": true,
+      "latency_ms": 155,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000022763999999999998,
+      "input_tokens": 542
+    },
+    {
+      "id": "19b5f2b3_abs",
+      "slice": "single-session-user",
+      "reference": true,
+      "p": 0.89,
+      "predicted": true,
+      "latency_ms": 142,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000030408000000000004,
+      "input_tokens": 724
+    },
+    {
+      "id": "a4996e51",
+      "slice": "multi-session",
+      "reference": true,
+      "p": 0.97,
+      "predicted": true,
+      "latency_ms": 137,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000027342,
+      "input_tokens": 651
+    },
+    {
+      "id": "6456829e_abs",
+      "slice": "multi-session",
+      "reference": true,
+      "p": 0.94,
+      "predicted": true,
+      "latency_ms": 128,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000025536000000000004,
+      "input_tokens": 608
+    },
+    {
+      "id": "gpt4_e414231e",
+      "slice": "temporal-reasoning",
+      "reference": true,
+      "p": 0.99,
+      "predicted": true,
+      "latency_ms": 147,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000028476000000000003,
+      "input_tokens": 678
+    },
+    {
+      "id": "e61a7584",
+      "slice": "knowledge-update",
+      "reference": true,
+      "p": 0.98,
+      "predicted": true,
+      "latency_ms": 141,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000024864,
+      "input_tokens": 592
+    },
+    {
+      "id": "cc5ded98",
+      "slice": "knowledge-update",
+      "reference": true,
+      "p": 0.88,
+      "predicted": true,
+      "latency_ms": 146,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000028686000000000003,
+      "input_tokens": 683
+    },
+    {
+      "id": "7401057b",
+      "slice": "knowledge-update",
+      "reference": true,
+      "p": 0.6,
+      "predicted": true,
+      "latency_ms": 176,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00003108,
+      "input_tokens": 740
+    },
+    {
+      "id": "4baee567",
+      "slice": "single-session-assistant",
+      "reference": true,
+      "p": 0.99,
+      "predicted": true,
+      "latency_ms": 169,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000028728000000000003,
+      "input_tokens": 684
+    },
+    {
+      "id": "gpt4_5501fe77",
+      "slice": "multi-session",
+      "reference": true,
+      "p": 0.97,
+      "predicted": true,
+      "latency_ms": 132,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000031248,
+      "input_tokens": 744
+    },
+    {
+      "id": "75f70248",
+      "slice": "single-session-preference",
+      "reference": true,
+      "p": 0.6,
+      "predicted": true,
+      "latency_ms": 180,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000036372000000000003,
+      "input_tokens": 866
+    },
+    {
+      "id": "gpt4_ec93e27f",
+      "slice": "temporal-reasoning",
+      "reference": true,
+      "p": 0.99,
+      "predicted": true,
+      "latency_ms": 143,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000033012,
+      "input_tokens": 786
+    },
+    {
+      "id": "gpt4_2655b836",
+      "slice": "temporal-reasoning",
+      "reference": true,
+      "p": 0.96,
+      "predicted": true,
+      "latency_ms": 139,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00002898,
+      "input_tokens": 690
+    },
+    {
+      "id": "982b5123_abs",
+      "slice": "temporal-reasoning",
+      "reference": true,
+      "p": 0.93,
+      "predicted": true,
+      "latency_ms": 139,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000030156,
+      "input_tokens": 718
+    },
+    {
+      "id": "e66b632c",
+      "slice": "knowledge-update",
+      "reference": true,
+      "p": 0.98,
+      "predicted": true,
+      "latency_ms": 155,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000032886,
+      "input_tokens": 783
+    },
+    {
+      "id": "f685340e",
+      "slice": "knowledge-update",
+      "reference": true,
+      "p": 0.99,
+      "predicted": true,
+      "latency_ms": 156,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000026544,
+      "input_tokens": 632
+    },
+    {
+      "id": "dc439ea3",
+      "slice": "single-session-assistant",
+      "reference": true,
+      "p": 0.98,
+      "predicted": true,
+      "latency_ms": 127,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000026754,
+      "input_tokens": 637
+    },
+    {
+      "id": "dccbc061",
+      "slice": "single-session-user",
+      "reference": true,
+      "p": 0.96,
+      "predicted": true,
+      "latency_ms": 123,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000026712,
+      "input_tokens": 636
+    },
+    {
+      "id": "76d63226",
+      "slice": "single-session-user",
+      "reference": true,
+      "p": 0.98,
+      "predicted": true,
+      "latency_ms": 133,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000025746000000000004,
+      "input_tokens": 613
+    },
+    {
+      "id": "3d86fd0a",
+      "slice": "single-session-user",
+      "reference": true,
+      "p": 0.96,
+      "predicted": true,
+      "latency_ms": 124,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000022763999999999998,
+      "input_tokens": 542
+    },
+    {
+      "id": "0862e8bf_abs",
+      "slice": "single-session-user",
+      "reference": true,
+      "p": 0.96,
+      "predicted": true,
+      "latency_ms": 132,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000021588000000000004,
+      "input_tokens": 514
+    },
+    {
+      "id": "gpt4_2ba83207",
+      "slice": "multi-session",
+      "reference": true,
+      "p": 0.96,
+      "predicted": true,
+      "latency_ms": 115,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000036750000000000006,
+      "input_tokens": 875
+    },
+    {
+      "id": "bf659f65",
+      "slice": "multi-session",
+      "reference": true,
+      "p": 0.3,
+      "predicted": false,
+      "latency_ms": 180,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000036708,
+      "input_tokens": 874
+    },
+    {
+      "id": "681a1674",
+      "slice": "multi-session",
+      "reference": true,
+      "p": 0.95,
+      "predicted": true,
+      "latency_ms": 147,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000031332000000000004,
+      "input_tokens": 746
+    },
+    {
+      "id": "a96c20ee_abs",
+      "slice": "multi-session",
+      "reference": true,
+      "p": 0.84,
+      "predicted": true,
+      "latency_ms": 158,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00002814,
+      "input_tokens": 670
+    },
+    {
+      "id": "gpt4_a1b77f9c",
+      "slice": "temporal-reasoning",
+      "reference": false,
+      "p": 0.09,
+      "predicted": false,
+      "latency_ms": 125,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000039648000000000004,
+      "input_tokens": 944
+    },
+    {
+      "id": "993da5e2",
+      "slice": "temporal-reasoning",
+      "reference": true,
+      "p": 0.95,
+      "predicted": true,
+      "latency_ms": 171,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000034944,
+      "input_tokens": 832
+    },
+    {
+      "id": "f685340e_abs",
+      "slice": "knowledge-update",
+      "reference": true,
+      "p": 0.08,
+      "predicted": false,
+      "latency_ms": 120,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00002709,
+      "input_tokens": 645
+    },
+    {
+      "id": "4c36ccef",
+      "slice": "single-session-assistant",
+      "reference": true,
+      "p": 0.99,
+      "predicted": true,
+      "latency_ms": 164,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000022680000000000003,
+      "input_tokens": 540
+    },
+    {
+      "id": "5809eb10",
+      "slice": "single-session-assistant",
+      "reference": true,
+      "p": 0.99,
+      "predicted": true,
+      "latency_ms": 181,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00002184,
+      "input_tokens": 520
+    },
+    {
+      "id": "fca70973",
+      "slice": "single-session-preference",
+      "reference": true,
+      "p": 0.61,
+      "predicted": true,
+      "latency_ms": 122,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000043218,
+      "input_tokens": 1029
+    },
+    {
+      "id": "9a707b81",
+      "slice": "temporal-reasoning",
+      "reference": false,
+      "p": 0.02,
+      "predicted": false,
+      "latency_ms": 170,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000034482,
+      "input_tokens": 821
+    },
+    {
+      "id": "gpt4_6dc9b45b",
+      "slice": "temporal-reasoning",
+      "reference": true,
+      "p": 0.99,
+      "predicted": true,
+      "latency_ms": 125,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000027342,
+      "input_tokens": 651
+    },
+    {
+      "id": "gpt4_a2d1d1f6",
+      "slice": "temporal-reasoning",
+      "reference": true,
+      "p": 0.98,
+      "predicted": true,
+      "latency_ms": 119,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00002709,
+      "input_tokens": 645
+    },
+    {
+      "id": "08f4fc43",
+      "slice": "temporal-reasoning",
+      "reference": true,
+      "p": 0.98,
+      "predicted": true,
+      "latency_ms": 125,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00002898,
+      "input_tokens": 690
+    },
+    {
+      "id": "gpt4_2c50253f",
+      "slice": "temporal-reasoning",
+      "reference": true,
+      "p": 0.46,
+      "predicted": false,
+      "latency_ms": 116,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000029568000000000002,
+      "input_tokens": 704
+    },
+    {
+      "id": "d52b4f67",
+      "slice": "single-session-user",
+      "reference": true,
+      "p": 0.99,
+      "predicted": true,
+      "latency_ms": 124,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000021504,
+      "input_tokens": 512
+    },
+    {
+      "id": "1faac195",
+      "slice": "single-session-user",
+      "reference": true,
+      "p": 0.81,
+      "predicted": true,
+      "latency_ms": 144,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000021126,
+      "input_tokens": 503
+    },
+    {
+      "id": "edced276",
+      "slice": "multi-session",
+      "reference": true,
+      "p": 0.99,
+      "predicted": true,
+      "latency_ms": 141,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000026628000000000003,
+      "input_tokens": 634
+    },
+    {
+      "id": "afdc33df",
+      "slice": "single-session-preference",
+      "reference": false,
+      "p": 0.66,
+      "predicted": true,
+      "latency_ms": 117,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000033600000000000004,
+      "input_tokens": 800
+    },
+    {
+      "id": "3fdac837",
+      "slice": "multi-session",
+      "reference": true,
+      "p": 0.8,
+      "predicted": true,
+      "latency_ms": 133,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000031248,
+      "input_tokens": 744
+    },
+    {
+      "id": "77eafa52",
+      "slice": "multi-session",
+      "reference": true,
+      "p": 0.99,
+      "predicted": true,
+      "latency_ms": 135,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000028266,
+      "input_tokens": 673
+    },
+    {
+      "id": "6c49646a",
+      "slice": "multi-session",
+      "reference": true,
+      "p": 0.99,
+      "predicted": true,
+      "latency_ms": 122,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000029064,
+      "input_tokens": 692
+    },
+    {
+      "id": "4dfccbf8",
+      "slice": "temporal-reasoning",
+      "reference": true,
+      "p": 0.98,
+      "predicted": true,
+      "latency_ms": 130,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000031122000000000005,
+      "input_tokens": 741
+    },
+    {
+      "id": "gpt4_2d58bcd6",
+      "slice": "temporal-reasoning",
+      "reference": true,
+      "p": 0.98,
+      "predicted": true,
+      "latency_ms": 119,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000029652000000000003,
+      "input_tokens": 706
+    },
+    {
+      "id": "gpt4_fe651585_abs",
+      "slice": "temporal-reasoning",
+      "reference": true,
+      "p": 0.94,
+      "predicted": true,
+      "latency_ms": 166,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000032088,
+      "input_tokens": 764
+    },
+    {
+      "id": "0977f2af",
+      "slice": "knowledge-update",
+      "reference": true,
+      "p": 0.87,
+      "predicted": true,
+      "latency_ms": 147,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000032676000000000004,
+      "input_tokens": 778
+    },
+    {
+      "id": "80ec1f4f",
+      "slice": "multi-session",
+      "reference": true,
+      "p": 0.81,
+      "predicted": true,
+      "latency_ms": 117,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000029526,
+      "input_tokens": 703
+    },
+    {
+      "id": "edced276_abs",
+      "slice": "multi-session",
+      "reference": true,
+      "p": 0.9,
+      "predicted": true,
+      "latency_ms": 129,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000033642,
+      "input_tokens": 801
+    },
+    {
+      "id": "b0479f84",
+      "slice": "single-session-preference",
+      "reference": true,
+      "p": 0.88,
+      "predicted": true,
+      "latency_ms": 119,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000033684,
+      "input_tokens": 802
+    },
+    {
+      "id": "gpt4_74aed68e",
+      "slice": "temporal-reasoning",
+      "reference": true,
+      "p": 0.99,
+      "predicted": true,
+      "latency_ms": 123,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000030114,
+      "input_tokens": 717
+    },
+    {
+      "id": "gpt4_0a05b494",
+      "slice": "temporal-reasoning",
+      "reference": true,
+      "p": 0.92,
+      "predicted": true,
+      "latency_ms": 134,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000027720000000000002,
+      "input_tokens": 660
+    },
+    {
+      "id": "gpt4_2f584639",
+      "slice": "temporal-reasoning",
+      "reference": true,
+      "p": 0.98,
+      "predicted": true,
+      "latency_ms": 124,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000031374,
+      "input_tokens": 747
+    },
+    {
+      "id": "gpt4_c27434e8_abs",
+      "slice": "temporal-reasoning",
+      "reference": true,
+      "p": 0.91,
+      "predicted": true,
+      "latency_ms": 150,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000035322,
+      "input_tokens": 841
+    },
+    {
+      "id": "2133c1b5",
+      "slice": "knowledge-update",
+      "reference": true,
+      "p": 0.97,
+      "predicted": true,
+      "latency_ms": 121,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000032214,
+      "input_tokens": 767
+    },
+    {
+      "id": "1568498a",
+      "slice": "single-session-assistant",
+      "reference": true,
+      "p": 0.99,
+      "predicted": true,
+      "latency_ms": 157,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000029358,
+      "input_tokens": 699
+    },
+    {
+      "id": "d596882b",
+      "slice": "single-session-assistant",
+      "reference": true,
+      "p": 0.99,
+      "predicted": true,
+      "latency_ms": 125,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000025998,
+      "input_tokens": 619
+    },
+    {
+      "id": "e47becba",
+      "slice": "single-session-user",
+      "reference": true,
+      "p": 0.98,
+      "predicted": true,
+      "latency_ms": 153,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00001869,
+      "input_tokens": 445
+    },
+    {
+      "id": "6f9b354f",
+      "slice": "single-session-user",
+      "reference": true,
+      "p": 0.99,
+      "predicted": true,
+      "latency_ms": 172,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000024066000000000003,
+      "input_tokens": 573
+    },
+    {
+      "id": "15745da0_abs",
+      "slice": "single-session-user",
+      "reference": true,
+      "p": 0.65,
+      "predicted": true,
+      "latency_ms": 143,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000029316000000000005,
+      "input_tokens": 698
+    },
+    {
+      "id": "eeda8a6d",
+      "slice": "multi-session",
+      "reference": true,
+      "p": 0.99,
+      "predicted": true,
+      "latency_ms": 123,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000031332000000000004,
+      "input_tokens": 746
+    },
+    {
+      "id": "gpt4_2f91af09",
+      "slice": "multi-session",
+      "reference": true,
+      "p": 0.42,
+      "predicted": false,
+      "latency_ms": 122,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000042714,
+      "input_tokens": 1017
+    },
+    {
+      "id": "21d02d0d",
+      "slice": "multi-session",
+      "reference": true,
+      "p": 0.96,
+      "predicted": true,
+      "latency_ms": 125,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000025914000000000003,
+      "input_tokens": 617
+    },
+    {
+      "id": "c8090214_abs",
+      "slice": "temporal-reasoning",
+      "reference": true,
+      "p": 0.94,
+      "predicted": true,
+      "latency_ms": 142,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000030912000000000005,
+      "input_tokens": 736
+    },
+    {
+      "id": "d682f1a2",
+      "slice": "multi-session",
+      "reference": true,
+      "p": 0.98,
+      "predicted": true,
+      "latency_ms": 164,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000025830000000000002,
+      "input_tokens": 615
+    },
+    {
+      "id": "eeda8a6d_abs",
+      "slice": "multi-session",
+      "reference": true,
+      "p": 0.89,
+      "predicted": true,
+      "latency_ms": 128,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000025577999999999998,
+      "input_tokens": 609
+    },
+    {
+      "id": "gpt4_372c3eed_abs",
+      "slice": "multi-session",
+      "reference": true,
+      "p": 0.88,
+      "predicted": true,
+      "latency_ms": 141,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000034146,
+      "input_tokens": 813
+    },
+    {
+      "id": "505af2f5",
+      "slice": "single-session-preference",
+      "reference": true,
+      "p": 0.72,
+      "predicted": true,
+      "latency_ms": 205,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000035112000000000005,
+      "input_tokens": 836
+    },
+    {
+      "id": "0a34ad58",
+      "slice": "single-session-preference",
+      "reference": true,
+      "p": 0.81,
+      "predicted": true,
+      "latency_ms": 208,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00003759,
+      "input_tokens": 895
+    },
+    {
+      "id": "gpt4_1916e0ea",
+      "slice": "temporal-reasoning",
+      "reference": false,
+      "p": 0.07,
+      "predicted": false,
+      "latency_ms": 132,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000030954,
+      "input_tokens": 737
+    },
+    {
+      "id": "41698283",
+      "slice": "knowledge-update",
+      "reference": true,
+      "p": 0.96,
+      "predicted": true,
+      "latency_ms": 114,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000038304000000000005,
+      "input_tokens": 912
+    },
+    {
+      "id": "22d2cb42",
+      "slice": "knowledge-update",
+      "reference": true,
+      "p": 0.71,
+      "predicted": true,
+      "latency_ms": 208,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000023436,
+      "input_tokens": 558
+    },
+    {
+      "id": "c8f1aeed",
+      "slice": "single-session-assistant",
+      "reference": true,
+      "p": 0.99,
+      "predicted": true,
+      "latency_ms": 168,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000029862000000000003,
+      "input_tokens": 711
+    },
+    {
+      "id": "a06e4cfe",
+      "slice": "single-session-user",
+      "reference": true,
+      "p": 0.98,
+      "predicted": true,
+      "latency_ms": 116,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000024948000000000002,
+      "input_tokens": 594
+    },
+    {
+      "id": "60036106",
+      "slice": "multi-session",
+      "reference": true,
+      "p": 0.99,
+      "predicted": true,
+      "latency_ms": 131,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00002625,
+      "input_tokens": 625
+    },
+    {
+      "id": "2311e44b_abs",
+      "slice": "multi-session",
+      "reference": true,
+      "p": 0.94,
+      "predicted": true,
+      "latency_ms": 123,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000025956,
+      "input_tokens": 618
+    },
+    {
+      "id": "370a8ff4",
+      "slice": "temporal-reasoning",
+      "reference": false,
+      "p": 0.02,
+      "predicted": false,
+      "latency_ms": 130,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000030324,
+      "input_tokens": 722
+    },
+    {
+      "id": "gpt4_468eb064",
+      "slice": "temporal-reasoning",
+      "reference": true,
+      "p": 0.79,
+      "predicted": true,
+      "latency_ms": 164,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00002604,
+      "input_tokens": 620
+    },
+    {
+      "id": "852ce960",
+      "slice": "knowledge-update",
+      "reference": false,
+      "p": 0.03,
+      "predicted": false,
+      "latency_ms": 133,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000022428,
+      "input_tokens": 534
+    },
+    {
+      "id": "d7c942c3",
+      "slice": "knowledge-update",
+      "reference": true,
+      "p": 0.95,
+      "predicted": true,
+      "latency_ms": 135,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000030030000000000002,
+      "input_tokens": 715
+    },
+    {
+      "id": "184da446",
+      "slice": "knowledge-update",
+      "reference": true,
+      "p": 0.83,
+      "predicted": true,
+      "latency_ms": 124,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000030282,
+      "input_tokens": 721
+    },
+    {
+      "id": "e493bb7c",
+      "slice": "knowledge-update",
+      "reference": true,
+      "p": 0.78,
+      "predicted": true,
+      "latency_ms": 131,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000032424,
+      "input_tokens": 772
+    },
+    {
+      "id": "8fb83627",
+      "slice": "knowledge-update",
+      "reference": true,
+      "p": 0.98,
+      "predicted": true,
+      "latency_ms": 149,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000028602,
+      "input_tokens": 681
+    }
+  ]
+}

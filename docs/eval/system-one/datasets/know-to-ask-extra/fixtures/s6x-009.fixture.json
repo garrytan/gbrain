@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-009",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "companies/quartzgate",
+      "content": "---\ntitle: Quartzgate\ntype: company\nsummary: \"Quartzgate is a software vendor we work with.\"\n---\n\nQuartzgate is a software vendor we work with. They quoted a per-seat price with a minimum annual commitment.\n"
+    },
+    {
+      "slug": "people/joaquin-corvbarrow",
+      "content": "---\ntitle: Joaquin Corvbarrow\ntype: person\nsummary: \"Joaquin Corvbarrow is the head of partnerships at Orchidgate.\"\n---\n\nJoaquin Corvbarrow is the head of partnerships at Orchidgate. Joaquin pushed to move the reporting feature ahead of the mobile app.\n"
+    },
+    {
+      "slug": "people/rohan-caldbarrow",
+      "content": "---\ntitle: Rohan Caldbarrow\ntype: person\nsummary: \"Rohan Caldbarrow is the operations director at Fablewharf.\"\n---\n\nRohan Caldbarrow is the operations director at Fablewharf.\n"
+    },
+    {
+      "slug": "people/fintan-tesscombe",
+      "content": "---\ntitle: Fintan Tesscombe\ntype: person\naliases: [fintan]\nsummary: \"Fintan Tesscombe is the head of sales at Kilnyard.\"\n---\n\nFintan Tesscombe is the head of sales at Kilnyard.\n"
+    },
+    {
+      "slug": "people/leonie-yarrwaite",
+      "content": "---\ntitle: Leonie Yarrwaite\ntype: person\naliases: [leonie]\nsummary: \"A contact from a conference last spring.\"\n---\n\nA contact from a conference last spring.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "what's the status with quartzgate and pricing?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Here is what I have."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "remind me where joaquin landed on the roadmap"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Done."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "In the novel I'm reading, Captain Caldbarrow betrays the crew. Is that a common trope?"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Here is what I have."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "Is Fintan usually a short form of a longer name?"
+    }
+  ]
+}

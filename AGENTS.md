@@ -99,9 +99,18 @@ writing or reviewing an operation, consult `src/core/operations.ts` for the cont
   preview `gbrain doctor --remediation-plan` (or `gbrain repair`), then, after the
   user agrees, `gbrain doctor --remediate --yes --include-repairs --max-usd <n>`
   or `gbrain repair <kind> --apply` on the brain host. After an upgrade, follow
-  [recover after upgrading](./docs/guides/repair.md#recover-after-upgrading-to-this-release). A refused
+  [recover after upgrading](./docs/guides/repair.md#recover-after-upgrading-to-this-release).
+  A Google or GitHub item held after repeated failures (doctor
+  `connector_held_items`, `gbrain waiting` says coverage is partial):
+  `gbrain sources status <id>`, fix the cause, then after the user agrees
+  `gbrain sources retry-held <id>` and `gbrain sync --source <id>`
+  ([held items](./docs/guides/google-connect.md#held-items)). A refused
   write names its reason and recovery command
-  ([write refusal reasons](./docs/guides/write-refusals.md)).
+  ([write refusal reasons](./docs/guides/write-refusals.md)). A managed sync
+  blocked with `checkpoint_validation_timeout`: run the printed commands
+  (`gbrain repair request-indexes --apply` when an index is missing or INVALID,
+  then the printed `gbrain sync --source <id> --no-pull --retry-failed …`);
+  doctor `persistence_request_growth` warns before lifetime request IDs run out.
 - **Migrate / upgrade:** `gbrain upgrade` (binary self-update + schema migrations + post-upgrade prompts),
   [`docs/UPGRADING_DOWNSTREAM_AGENTS.md`](./docs/UPGRADING_DOWNSTREAM_AGENTS.md),
   [`skills/migrations/`](./skills/migrations/), `gbrain apply-migrations --yes --no-autopilot-install` (manual migration orchestration without service installation).
@@ -156,6 +165,14 @@ writing or reviewing an operation, consult `src/core/operations.ts` for the cont
   [`docs/guides/open-loops.md`](./docs/guides/open-loops.md) (how detection
   works); the harness protocol lives in
   [`skills/google-loops/SKILL.md`](./skills/google-loops/SKILL.md).
+- **Turn on System One decisions (TypeSafe Jev):** every slot is off by
+  default and nothing is sent until the user opts in. With `TYPESAFE_API_KEY`
+  set, `gbrain decide probe` (sends nothing from the brain), then
+  `gbrain decide probe --query "<q>"` to preview on the user's own brain, then
+  `gbrain decide enable --recommended` after showing the user what leaves the
+  machine. `gbrain decide disable --all` is the kill switch. Guide:
+  [`docs/guides/system-one.md`](./docs/guides/system-one.md); key setup:
+  [`docs/ai-providers/typesafe.md`](./docs/ai-providers/typesafe.md).
 - **Contribute code:** [`CONTRIBUTING.md`, "Where does my change go?"](./CONTRIBUTING.md#where-does-my-change-go)
   names the files, registry, regenerate command and smallest test for a storage method,
   schema migration, doctor check, CLI-only command, HTTP route or sync phase. A branch written

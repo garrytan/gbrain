@@ -3,7 +3,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 export interface AIInvocation {
   operation: string;
   model: string;
-  kind: 'chat' | 'embedding' | 'rerank' | 'multimodal';
+  kind: 'chat' | 'embedding' | 'rerank' | 'multimodal' | 'decide';
   maxInputTokens?: number;
   maxOutputTokens?: number;
   cacheWriteTtl?: '5m' | '1h';

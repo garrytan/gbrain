@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-071",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/verity-kestford",
+      "content": "---\ntitle: Verity Kestford\ntype: person\naliases: [verity]\nsummary: \"Verity Kestford is the head of partnerships at Saffrongate.\"\n---\n\nVerity Kestford is the head of partnerships at Saffrongate.\n"
+    },
+    {
+      "slug": "companies/russetloft",
+      "content": "---\ntitle: Russetloft\ntype: company\nsummary: \"Russetloft is the bookkeeping vendor we picked.\"\n---\n\nRussetloft is the bookkeeping vendor we picked. Their support team promised a named account manager after the last outage.\n"
+    },
+    {
+      "slug": "people/lucan-tulvdale",
+      "content": "---\ntitle: Lucan Tulvdale\ntype: person\nsummary: \"Lucan Tulvdale is the product lead at Halcyonmoor.\"\n---\n\nLucan Tulvdale is the product lead at Halcyonmoor.\n"
+    },
+    {
+      "slug": "companies/halcyonreach",
+      "content": "---\ntitle: Halcyonreach\ntype: company\nsummary: \"A company we met once at a trade show.\"\n---\n\nA company we met once at a trade show.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Kestford mentioned the pomodoro technique on a call. How does the pomodoro technique work?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "when is the bookkeeping service we signed with closing the books this month?"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Here is what I have."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "How do you spell Tulvdale in the NATO phonetic alphabet?"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Done."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "haha fair enough"
+    }
+  ]
+}

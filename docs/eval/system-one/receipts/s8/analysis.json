@@ -1,0 +1,69 @@
+{
+  "threshold": 0.29,
+  "margin": 0.05,
+  "eval_all": {
+    "n": 496,
+    "supported": 206,
+    "unsupported": 290,
+    "outcomes": {
+      "quarantine": 88,
+      "margin_hold": 24,
+      "pass": 329,
+      "insufficient_context": 55
+    },
+    "quarantined": 88,
+    "quarantine_precision": 0.9659090909090909,
+    "quarantine_precision_lb_items": 0.9045039571274427,
+    "unsupported_caught": 0.29310344827586204,
+    "false_quarantine_rate": 0.014563106796116505,
+    "useful_claims_lost": 3
+  },
+  "eval_dream_page_units": {
+    "n": 370,
+    "supported": 206,
+    "unsupported": 164,
+    "outcomes": {
+      "pass": 297,
+      "margin_hold": 13,
+      "insufficient_context": 35,
+      "quarantine": 25
+    },
+    "quarantined": 25,
+    "quarantine_precision": 0.88,
+    "quarantine_precision_lb_items": 0.7004420590811533,
+    "unsupported_caught": 0.13414634146341464,
+    "false_quarantine_rate": 0.014563106796116505,
+    "useful_claims_lost": 3
+  },
+  "eval_perturbations": {
+    "n": 126,
+    "supported": 0,
+    "unsupported": 126,
+    "outcomes": {
+      "quarantine": 63,
+      "margin_hold": 11,
+      "pass": 32,
+      "insufficient_context": 20
+    },
+    "quarantined": 63,
+    "quarantine_precision": 1,
+    "quarantine_precision_lb_items": 0.9425287995566036,
+    "unsupported_caught": 0.5,
+    "false_quarantine_rate": 0,
+    "useful_claims_lost": 0
+  },
+  "off": {
+    "quarantined": 0,
+    "unsupported_caught": 0,
+    "false_quarantine_rate": 0
+  },
+  "retest_flip_rate": {
+    "n": 496,
+    "flips": 10
+  },
+  "latency_ms_per_request": {
+    "p50": 5654,
+    "p95": 28073,
+    "p99": 28073
+  }
+}

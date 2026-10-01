@@ -1,5 +1,33 @@
 # TODOS
 
+## System One v1 follow-ups (filed 2026-09-30; plan: docs/designs/SYSTEM_ONE_JEV_V1.md)
+
+- [ ] **P2 — Local decide provider (CEO E6).**
+  **What:** a local classifier or cross-encoder provider behind the `decide` provider interface (llama-server or ONNX). **Why:** private brains that keep egress denied run S6-S9 as LLM slots today; a local provider makes them fast and calibratable without a third party. **Cons:** new runtime dependency and model packaging. **Depends on:** System One v1 merged. **Effort:** L. **Priority:** P2.
+- [ ] **P2 — Production candidate depth beyond 100 if the recall experiment wins.**
+  **What:** lift `MAX_SEARCH_LIMIT`-bound per-arm depth for Jev-reranked queries when the v1 recall experiment's deep-pool arm wins. **Why:** 270 of 404 GBRA-4 misses were candidate-generation misses. **Cons:** latency and rate-limit load. **Depends on:** the v1 recall experiment verdict in `docs/eval/system-one/`. **Effort:** M. **Priority:** P2.
+- [ ] **P3 — Online calibration labels (CEO E7).**
+  **What:** operator feedback on abstentions, prunes and proposals as calibration labels. **Why:** shadow receipts carry predictions, not labels. **Cons:** needs label UX and local text storage that receipts deliberately avoid. **Effort:** M. **Priority:** P3.
+- [ ] **P3 — Jev-scored query-expansion decision (CEO E8, A5).**
+  **What:** a runtime slot deciding when to expand a query. **Why:** the v1 recall experiment measures expansion only as an eval arm. **Depends on:** recall experiment results. **Effort:** M. **Priority:** P3.
+- [ ] **P3 — Cross-process decide rate-limit coordination.**
+  **What:** share lane budgets across serve, dream and CLI processes. **Why:** v1 lanes are per process, so separate processes can still contend for the account-wide limit. **Effort:** M. **Priority:** P3.
+- [ ] **P3 — Decide knobs in the semantic cache when the cache is re-enabled.**
+  **What:** verify the decide part of `knobsHash` (effective thresholds, `min_keep`, calibration id, resolved model) once `semanticResultCacheAvailable()` returns true again. **Effort:** S. **Priority:** P3.
+- [ ] **P3 — Time the System One quickstart on a fresh machine (`/devex-review`).**
+  **What:** measure the documented key-in-hand to first-decision clock against the under-5-minute target. **Effort:** S. **Priority:** P3.
+
+## Fix wave 4 follow-ups (filed 2026-09-30, follow-up from v0.60.20.0)
+
+- [ ] **P2 — #5731 residual: restore extractor facts the pre-fix projection expired (wave 5).**
+  **What:** the #5731 fix stops the canonical projection from expiring conversation-extractor facts, but rows it expired before the fix stay expired. **Fix:** the explicit-only `gbrain repair extractor-facts` kind from the wave 4 plan: a preview that lists every candidate with its class and evidence and a preview hash, `--apply` that restores only defect-evidenced rows through a named maintenance intent, `--include-ambiguous <hash>` for rows a fence takeover could explain, and a stale-hash refusal. **Why deferred:** below the wave 4 cut line. **Effort:** M. **Priority:** P2.
+- [ ] **P3 — #5751 follow-up: `gbrain repair file-normalization` (wave 5).**
+  **What:** managed working-tree sync now skips unchanged legacy files whose bytes differ from what gbrain reads back (for example non-UTF-8), and the summary tells the user to re-save them. **Fix:** an explicit-only repair kind that rewrites each such file in canonical form through a canonical file publication followed by its Git effect, reported by `gbrain repair`, remediation and the post-upgrade banner as `explicit_kind_required`. **Why deferred:** below the wave 4 cut line. **Effort:** M. **Priority:** P3.
+- [ ] **P3 — Carry connector holds across `gbrain sources writer deactivate`.**
+  **What:** a managed brain keeps connector holds in the managed connector checkpoint, which classic mode does not read, so deactivate refuses while any item is held (exit: fix the cause `gbrain sources status <id>` names, then `gbrain sources retry-held <id>` and `gbrain sync --source <id>`). An item that can never succeed therefore blocks deactivation. **Fix:** copy `item_holds` into the classic state file during deactivation, so a still-failing item stays held and visible instead of blocking the mode change. **Effort:** S. **Priority:** P3.
+- [ ] **P3 — Convert a bound connector's filesystem worktree to database-only operation (#5673).**
+  **What:** `gbrain sources set-path <id> --clear` refuses a connector source that has a live persistence source binding, because its worktree still owns that checkout; that refusal is the interim exit. **Fix:** a supported conversion that retires the connector's worktree binding and leaves it syncing database-only. **Effort:** M. **Priority:** P3.
+
 ## Refactor wave 1 follow-ups (filed 2026-09-30; plan: docs/designs/REFACTOR_WAVE_1.md, review record: docs/designs/refactor-wave-1/)
 
 - [ ] **P2 — Wave 2: decompose the remaining >300-line functions (plan D1).**
@@ -27,20 +55,14 @@
 
 - [ ] **P1 — Bounded replay window for lifetime request IDs (wave-2 CEO-E7).**
   **What:** every admitted write keeps a permanent request ID for replay protection, so the principal and brain lifetime-ID limits only move later (`persistence_capacity` warns at 80% and names a `gbrain config set` value). **Fix:** a bounded replay window with a documented horizon and an eviction rule that never replays a committed write twice; size it from the default of 600 admissions a day (about 417 days of headroom at the default limit). **Effort:** L. **Priority:** P1.
-- [ ] **P1 — `gbrain sources writer deactivate` (#5455).**
-  **What:** managed mode is a one-way door: the claim and activate runbook in `docs/architecture/topologies.md` tells operators to take a database backup because nothing turns activation off. **Fix:** a deliberate, state-bound deactivate with the same `--admin-intent` / `--expected-state` contract and quiescence checks, honoring the writer admin lock. **Effort:** M. **Priority:** P1.
 - [ ] **P1 — Opt-in `min_writer_version` floor.**
   **What:** the `writer_version` doctor advisory only observes: a binary older than v0.60.5.0 can still delete database-only timeline rows. **Fix:** an opt-in floor enforced at admission and publication by the database (reusing the `writer_protocol_floor` trigger pattern), a binary version declaration older binaries lack, quiescence to enable it, and a floor that cannot be lowered. Eng estimate 1,500-3,000 changed lines against 800-1,500 for the advisory. **Effort:** L. **Priority:** P1.
-- [ ] **P1 — #5629: reconcile or re-queue a stale queued embedding effect.**
-  **What:** a committed write whose queued embedding effect is never claimed blocks shared-skill activation (`writer_not_quiesced` names it; doctor reports `stale_embedding_effects` as unsupported), and `retry-effects` refuses effects that have not failed. **Fix:** let the operator reconcile existing vectors or re-queue the effect under the owner, never silently drop the embedding obligation; then reclassify the doctor finding as repairable. **Effort:** M. **Priority:** P1.
-- [ ] **P2 — #5522: write the reproduction first.** Plausible but unreproduced; no code until a failing repro exists. **Priority:** P2.
 - [ ] **P2 — #5226 part 2.** Revisit only after part 1 is confirmed fixed with pacing on. **Priority:** P2.
 - [ ] **P2 — Database remediation run record with a reservation ledger.**
   **What:** the remediation cap, consent and spend live in the local checkpoint (`~/.gbrain/remediation/<plan hash>.json`), which covers one host. **Fix:** a `remediation_runs` record plus per-attempt reservations that delegated workers enforce, so a cap holds across processes and hosts. This also closes two known gaps: the embedding effects that `timeline` and `visibility` repairs queue are charged at their pre-repair estimate but the persistence consumer does not enforce the cap per provider call, and a resumed safe-chunks embedding pass is scoped by source rather than by the exact re-sealed pages. **Effort:** L. **Priority:** P2.
 - [ ] **P3 — Host-label registry for writer-version warnings.** The advisory names hosts by persistence host UUID because no hostname is recorded (`identity.ts` `host.json`). Record an operator-chosen label per host and show it beside the UUID. **Effort:** S. **Priority:** P3.
 - [ ] **P3 — `source-paths` / `source-uris` repair kinds and the metadata-repair intent (dropped from W8).** Revisit when `invalid_source_uri` reports arrive; the manual step in `docs/guides/write-refusals.md` stands until then. **Priority:** P3.
 - [ ] **P3 — Doctor check for unpushed managed commits by age (#5198 thread).** **Priority:** P3.
-- [ ] **P3 — #3783 with #5691: query-side embedding prefixes behind a setting.** **Priority:** P3.
 - [ ] **P3 — #5392 inert single-writer mode.** Recommended no: resolve through the #5198/#5254 family instead. Recorded so the decision is visible. **Priority:** P3.
 - [ ] **P3 — Retire `safeChunkUpgradeAdvisory`.** Post-upgrade now reports `safe_index_pending` through the recovery banner; the function remains only for `test/safe-chunk-reseal.test.ts`. Move that assertion onto the doctor check and delete the function. **Effort:** S. **Priority:** P3.
 
@@ -56,10 +78,8 @@
   **What:** each connector run bounds its own waits and records `stopped_on_wait_budget`, but no in-process fan-out dispatches many connector sources against one shared deadline, so the plan's 50-source fan-out stop was not built. **Fix:** when such a fan-out exists (for example `sync --all` over connector sources), stop dispatching new sources at the deadline and report the rest.
 - [ ] **P3 — Connector ingest waits on its whole pending set while the owner is delayed.**
   **What:** under a delayed consumer each run first waits on its recorded pending set and stops on the wait budget, so new upstream items are not admitted until the backlog drains (measured by `test/fix-wave-3-chaos.test.ts`). Nothing is lost; the items wait upstream. **Fix:** if time-to-searchable under sustained arrivals matters, admit new items up to the outstanding limit while the pending set resolves.
-- [ ] **P3 — User timeline bullets on pages other preserving writers regenerate.**
-  **What:** `add_timeline_entry` on a connector page now writes a materialized-marked bullet so the connector re-render keeps it (#5567). Other preserving writers that regenerate an ordinary page still treat an unmarked bullet their new body drops as removed. **Fix:** audit those writers and mark user-added bullets on the pages they own, with a regression per writer.
-- [ ] **P2 — Facts and takes fences below the timeline sentinel on connector pages.**
-  **What:** a connector re-render carries the page's facts and takes fences (so remembered facts are not expired), but only when the stored fences sit in the page body and pass the preservation check. A legacy page with a fence below the timeline sentinel, or an ambiguous fence, still loses those rows on re-render. **Fix:** move such fences above the sentinel in a repair, or refuse the connector publication for that page with a typed hold and a repair command.
+- [ ] **P3 — Hold tuning keys if field reports show the fixed thresholds misfire.**
+  **What:** fix wave 4 (v0.60.20.0) holds a connector item after 3 consecutive failed syncs, with a fixed circuit breaker (5 attempted items; half transient, or 5 and half with one code), a fixed transient backoff (1 h, 6 h, 24 h, then daily for 7 days) and a cap of 100 holds per source. **Fix:** only if field reports show these misfire, add validated `connectors.hold.threshold_runs`, `connectors.hold.breaker_items`, `connectors.hold.backoff` and `connectors.hold.window_days` config keys with today's values as defaults, with tests and the connector guides updated.
 - [ ] **P3 — Row-level ownership for fences in connector renders.**
   **What:** when the provider's own render carries a facts fence (for example a GitHub issue body), the provider owns the whole fence: upstream corrections win, and rows added on the brain to that fence are not carried. When the provider later drops its fence entirely, the stored fence is carried as brain-added. **Fix:** record which fence rows came from the provider so each side's rows follow its owner.
 - [ ] **P3 — Resume a partially refused embedding without re-embedding its siblings.**

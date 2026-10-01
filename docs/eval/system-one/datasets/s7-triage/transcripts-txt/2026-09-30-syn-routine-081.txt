@@ -1,0 +1,260 @@
+[user]
+My inbox is overflowing with newsletters. I want to clean it up without accidentally hiding receipts, account notices, or messages I actually need. Can you help me set up a safe process?
+
+[assistant]
+A cautious process is:
+
+1. Export or back up your current mailbox if your provider supports it.
+2. Search for likely newsletter messages without deleting anything.
+3. Review the search results and identify recurring senders.
+4. Create filters that label or archive newsletters rather than deleting them.
+5. Test each filter on a small batch.
+6. Only after checking the results, bulk-archive older newsletter messages.
+7. Keep a temporary review label so mistakes are easy to undo.
+
+Start with a broad search such as:
+
+```text
+-category:primary newer_than:90d
+```
+
+That syntax varies by provider, so tell me which email service you use and I can give exact filter steps.
+
+[user]
+I use Gmail in a desktop browser. I have about 8,000 messages, and I do not want to inspect them one by one. Most newsletters have an unsubscribe link, but I would rather filter them first and unsubscribe later. What search queries should I try?
+
+[assistant]
+In Gmail, use searches that surface likely bulk mail while excluding common message types. Try these one at a time:
+
+```text
+older_than:30d (unsubscribe OR "manage preferences")
+```
+
+```text
+older_than:30d {category:promotions category:updates} (unsubscribe OR "email preferences")
+```
+
+```text
+older_than:30d -label:starred -is:important (unsubscribe OR "view in browser")
+```
+
+```text
+older_than:30d from:(newsletter OR news OR digest OR updates)
+```
+
+The `from:` example is only a rough pass because it matches addresses containing those words. Before selecting all results, scan the sender column and exclude anything that looks like an order confirmation, password notice, security alert, billing message, appointment reminder, or service notification.
+
+You can also add:
+
+```text
+-in:anywhere
+```
+
+if you want to avoid messages already in Trash or Spam. Gmail’s search operators are not perfect, so treat results as candidates for review, not proof that every message is safe to archive.
+
+[user]
+How can I turn a search into a filter that adds a label and archives future messages? I want the messages out of the inbox but still searchable.
+
+[assistant]
+In Gmail:
+
+1. Run a search that represents one newsletter pattern.
+2. Click the search-options icon at the right side of the search bar.
+3. Confirm the criteria, then click **Create filter**.
+4. Select **Skip the Inbox (Archive it)**.
+5. Select **Apply the label**, choose **Create new label**, and use a name such as `Review/Newsletters`.
+6. Leave **Never send it to Spam** unchecked unless you have a specific reason to override Gmail’s spam handling.
+7. Consider selecting **Also apply filter to matching conversations** only after reviewing the result count.
+8. Click **Create filter**.
+
+For example, a sender-specific filter might use:
+
+```text
+from:(updates@sample.invalid)
+```
+
+A broader filter might use:
+
+```text
+from:(updates@sample.invalid) OR from:(digest@sample.invalid)
+```
+
+Afterward, open the label and verify that ordinary receipts or account notices were not captured. Archived messages remain available through the label and Gmail search. If a filter is too broad, go to **Settings → See all settings → Filters and Blocked Addresses**, edit it, and remove or adjust the matching action.
+
+[user]
+I found several recurring senders. Can you suggest a labeling scheme that stays simple? I also want to distinguish newsletters I may read from ones I can probably discard later.
+
+[assistant]
+Use two labels and keep the hierarchy shallow:
+
+- `Review/Newsletters` — suspected newsletters that you want to inspect or unsubscribe from.
+- `Review/Newsletters/Low-priority` — newsletters you rarely read and may later delete in batches.
+
+Optionally add a third label only if needed:
+
+- `Review/Newsletters/Keep` — recurring mail you want to retain, even if it stays archived.
+
+Apply `Review/Newsletters` by default. Put only clearly low-value recurring mail under `Low-priority`; do not classify messages merely because they are old. Avoid labels such as `Important` or `Receipts` for automated decisions unless you have already defined those categories separately. Gmail’s nested labels let you collapse the whole `Review` group when you want a less busy sidebar.
+
+A practical filter pattern is one filter per sender or sender family. That makes corrections easier than one large filter with many unrelated conditions.
+
+[user]
+Can you show me a batch cleanup plan for the existing messages? I want to avoid deleting anything during the first pass.
+
+[assistant]
+Use this staged plan:
+
+1. Create the labels and sender-specific filters, with **Skip the Inbox** and **Apply the label** enabled.
+2. For existing mail, run each sender search and inspect the first page of results.
+3. If the results look correct, select the visible messages first. Gmail may offer **Select all conversations that match this search**; do not use that option until the sender pattern has been checked.
+4. Apply `Review/Newsletters`, then archive. Archiving removes the Inbox label but does not delete the messages.
+5. Repeat in groups of one or two senders.
+6. Open `label:Review/Newsletters` and spot-check dates, subjects, and attachments.
+7. Leave the messages labeled for several days before considering deletion.
+8. Keep a short list of false positives, such as order emails or service alerts, and add exclusions to the relevant filter.
+
+Useful searches include:
+
+```text
+label:Review/Newsletters in:inbox
+```
+
+to find newsletter messages that were not archived, and:
+
+```text
+label:Review/Newsletters older_than:180d
+```
+
+to review older labeled messages without deleting them.
+
+[user]
+Some senders use several addresses, and some newsletters arrive from the same domain as regular updates. How should I make the filters more precise?
+
+[assistant]
+Use multiple signals instead of relying on the domain alone.
+
+For a sender family, combine addresses or distinctive subject text:
+
+```text
+{from:(bulletin@sample.invalid) from:(digest@sample.invalid)}
+```
+
+If the sender uses a stable list header or phrase in the body, include it:
+
+```text
+from:(bulletin@sample.invalid) ("unsubscribe" OR "manage preferences")
+```
+
+To avoid likely account or transaction mail, add exclusions:
+
+```text
+from:(sample.invalid) -subject:(receipt OR invoice OR password OR security OR verification)
+```
+
+Be careful with domain-wide rules. A domain condition such as:
+
+```text
+from:(@sample.invalid)
+```
+
+may catch both newsletters and operational messages. Instead, list known newsletter addresses individually, or combine a domain with a distinctive subject phrase.
+
+For subject variants, use braces:
+
+```text
+{subject:(weekly digest) subject:(monthly roundup) subject:(subscriber update)}
+```
+
+Gmail’s matching behavior can be broader than natural-language expectations, so test the query in the search bar before saving it as a filter. If a query returns a mixture, narrow it rather than relying on manual cleanup after every run.
+
+[user]
+Is there a way to see which filters are currently active and test whether they overlap?
+
+[assistant]
+Yes. Go to **Settings → See all settings → Filters and Blocked Addresses**. You will see each filter’s search criteria and actions. For each filter:
+
+1. Copy the criteria from the **Matches** section.
+2. Paste it into Gmail’s search bar.
+3. Check the result count and inspect a sample.
+4. Compare it with other filters’ results.
+
+To find possible overlap, temporarily add a label to one filter, then search for that label plus the second filter’s criteria. For example:
+
+```text
+label:Review/Newsletters from:(bulletin@sample.invalid)
+```
+
+If you use nested labels, Gmail displays them in the filter action. Keep a small plain-text inventory while testing:
+
+```text
+Filter: newsletter-bulletin
+Search: from:(bulletin@sample.invalid) "unsubscribe"
+Actions: archive, Review/Newsletters
+
+Filter: newsletter-digest
+Search: from:(digest@sample.invalid) "manage preferences"
+Actions: archive, Review/Newsletters/Low-priority
+```
+
+Overlapping filters are not harmful when they apply the same archive and label actions, but they can make later edits confusing. Prefer one clear filter per sender pattern and remove redundant rules after confirming the replacement works.
+
+[user]
+I tested a few rules, but one caught a monthly account summary because it included an unsubscribe link. How can I exclude account-related messages while still catching newsletters?
+
+[assistant]
+Add explicit exclusions for account and transaction language, then test the revised query. For example:
+
+```text
+("unsubscribe" OR "manage preferences")
+-(subject:(account OR statement OR summary OR balance OR invoice OR receipt OR billing))
+-(subject:(security OR password OR verification OR confirmation))
+```
+
+If the account summary has a consistent sender address, exclude that address directly:
+
+```text
+("unsubscribe" OR "manage preferences")
+-from:(alerts@sample.invalid)
+```
+
+You can combine both:
+
+```text
+("unsubscribe" OR "manage preferences")
+-from:(alerts@sample.invalid)
+-(subject:(statement OR balance OR account))
+```
+
+If the message includes a stable phrase such as “account summary,” exclude that exact phrase:
+
+```text
+("unsubscribe" OR "manage preferences") -"account summary"
+```
+
+After changing the filter, run the search and inspect several pages if the result count is large. Check for receipts, password resets, security notices, billing messages, and delivery updates. Then edit the filter under **Filters and Blocked Addresses** and use the updated criteria. Gmail will not automatically undo labels or archiving already applied by the old version, so search for the account summary and move it back to the Inbox if necessary.
+
+[user]
+What should I do with the labeled messages after I have watched the filters for a while? I want a cautious way to unsubscribe and eventually remove obvious junk.
+
+[assistant]
+Use a separate review cycle rather than changing the filters immediately:
+
+1. Open `Review/Newsletters` and sort your review mentally by sender, using searches such as:
+   ```text
+   label:Review/Newsletters from:(bulletin@sample.invalid)
+   ```
+2. For senders you regularly read, leave the filter active and keep the messages archived under the label.
+3. For senders you never open, open one recent message and use its **Unsubscribe** link or Gmail’s unsubscribe option when available. Do not use links that look suspicious or ask for unrelated information.
+4. Wait to see whether new messages stop. Keep the label during this period.
+5. If unwanted mail continues, update the filter to archive it and optionally mark it as read. Avoid automatically deleting it at first.
+6. After a longer review period, search the low-priority label:
+   ```text
+   label:Review/Newsletters/Low-priority older_than:180d
+   ```
+7. Select a small batch, verify the sender and subject pattern, and move it to Trash. Gmail normally retains Trash temporarily, giving you a recovery window.
+8. Empty Trash only when you are certain those messages are not needed.
+
+Do not unsubscribe from messages that appear to be account, billing, security, order, delivery, or service notices, even if they include an unsubscribe link. Keep filters narrow and revisit them if a sender changes addresses or subject formats.
+
+[tool]
+You have 1019 weighted tokens left

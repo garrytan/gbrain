@@ -13,8 +13,8 @@ count people who were only invited or mentioned."*
 ## Supported evidence
 
 On a `meeting` page, use canonical structured `attendees` frontmatter, a bare
-`Attendees:` link list, or a dedicated `## Attendees` section containing only
-bare link-list entries. Each reference must resolve unambiguously to a live
+`Attendees:` link list (the bold `**Attendees:**` label works the same way), or
+a dedicated `## Attendees` section containing only bare link-list entries. Each reference must resolve unambiguously to a live
 `person` page in the allowed source scope. For example:
 
 ```markdown
@@ -80,6 +80,24 @@ summaries add `skipped_attendance_incomplete` only when it is nonzero. Sweep
 reports `attendance_resolution_incomplete`, not a budget timeout, for that case.
 Filesystem extraction omits incomplete pages from its processed set, but does
 not currently provide a per-reason skip counter.
+
+Attendance lookups stay within the meeting page's own source. An attendee
+name, address or slug resolves only against `person` pages (slug, title or
+`aliases`) in the source that holds the meeting; a person page carrying the
+same address or alias in another source, such as `default` for a
+connector-sourced calendar page, does not satisfy it. This is policy, not a
+missing search step: to make such a page converge, create the person page (or
+an alias-carrying one) in the meeting's source.
+
+Stale extraction (`gbrain extract --stale`, managed or not) marks a page it
+skips for unresolved attendance as attendance-blocked at the page revision it
+read. The `links_extraction_lag` doctor check leaves those pages out of its lag
+count and reports them in their own count (`details.attendance_blocked`), so
+running `extract --stale` again is not suggested for them. Extraction still
+reconsiders every marked page: once the attendee's person page exists, the next
+run publishes the page's links, advances its watermark and clears the marker.
+Editing the page changes its revision, so it counts as lag again until the next
+extraction.
 
 ## Schema-pack boundary
 

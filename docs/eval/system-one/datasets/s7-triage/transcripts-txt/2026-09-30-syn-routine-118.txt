@@ -1,0 +1,572 @@
+[user]
+I have a merge conflict in `package-lock.json` after running `git merge feature/update-parser`. I want to resolve it mechanically and verify the result. What should I do first?
+
+[assistant]
+Start by checking the repository state and identifying the conflicted paths:
+
+```sh
+git status --short
+git diff --name-only --diff-filter=U
+```
+
+You should see `package-lock.json` listed as unmerged, possibly with output like:
+
+```text
+UU package-lock.json
+```
+
+Do not edit or stage anything yet. Also check the lockfile version and package-manager context:
+
+```sh
+node --version
+npm --version
+head -n 12 package-lock.json
+```
+
+The first few lines should show whether this is a lockfile v2 or v3. The important thing is to use the same npm major version that generated the lockfile, if that is known. If `git status` shows other unmerged files, include those in the review too rather than staging only the lockfile.
+
+[user]
+Here is the output:
+
+```text
+$ git status --short
+M  package.json
+UU package-lock.json
+M  src/parser.js
+
+$ git diff --name-only --diff-filter=U
+package-lock.json
+
+$ node --version
+v20.11.1
+
+$ npm --version
+10.2.4
+
+$ head -n 12 package-lock.json
+<<<<<<< HEAD
+{
+  "name": "sample-tool",
+  "version": "1.4.0",
+  "lockfileVersion": 3,
+```
+
+What does this tell me, and should I manually edit the conflict markers?
+
+[assistant]
+It confirms that only `package-lock.json` is unmerged. The `M` entries are already staged or otherwise changed but are not currently unmerged. The lockfile contains conflict markers, beginning with:
+
+```text
+<<<<<<< HEAD
+```
+
+The other markers will be:
+
+```text
+=======
+>>>>>>> feature/update-parser
+```
+
+For a generated lockfile, avoid manually selecting arbitrary blocks. First inspect the conflict scope and the two versions:
+
+```sh
+git diff --cc -- package-lock.json
+git diff HEAD -- package-lock.json
+git diff MERGE_HEAD -- package-lock.json
+```
+
+Also inspect both complete sides without conflict markers:
+
+```sh
+git show HEAD:package-lock.json > /tmp/package-lock.ours.json
+git show MERGE_HEAD:package-lock.json > /tmp/package-lock.theirs.json
+```
+
+Do not run `git checkout --ours` or `git checkout --theirs` yet unless you have confirmed that one side should entirely replace the other. Since this is an npm lockfile, the usual mechanical resolution is to use the merged `package.json` as the input and regenerate the lockfile with npm.
+
+[user]
+I ran the comparison commands. The combined diff is long, but the relevant part looks like this:
+
+```text
+diff --cc package-lock.json
+index 0f1a2b3,7c8d9e0..0000000
+--- a/package-lock.json
++++ b/package-lock.json
+@@@ -1,8 -1,8 +1,14 @@@
+++<<<<<<< HEAD
+ +{
+ +  "name": "sample-tool",
+ +  "version": "1.4.0",
+ +  "lockfileVersion": 3,
+++=======
++ {
++   "name": "sample-tool",
++   "version": "1.4.0",
++   "lockfileVersion": 3,
++>>>>>>> feature/update-parser
+```
+
+The files also differ in dependency entries farther down. Is regenerating safe, and how do I preserve the merged `package.json`?
+
+[assistant]
+Yes, regeneration is normally safer than hand-editing a v3 lockfile, provided the working-tree `package.json` is the intended merged file. First inspect its diff and confirm it has no conflict markers:
+
+```sh
+git diff --check
+grep -nE '^(<<<<<<<|=======|>>>>>>>)' package.json package-lock.json || true
+git diff -- package.json
+```
+
+If `package.json` is clean of markers and contains the desired dependency declarations, make a backup outside the repository:
+
+```sh
+cp package-lock.json /tmp/package-lock.before-regenerate.json
+cp package.json /tmp/package.json.before-regenerate.json
+```
+
+Then remove only the conflicted lockfile from the working tree and regenerate it from the current `package.json`:
+
+```sh
+rm package-lock.json
+npm install --package-lock-only --ignore-scripts
+```
+
+`--package-lock-only` updates the lockfile without installing packages, and `--ignore-scripts` prevents lifecycle scripts from running during this operation. It uses the current `package.json`; it does not replace that file. If npm reports an error, stop and show the error rather than staging the partial result.
+
+[user]
+Before I do that, `git diff -- package.json` shows:
+
+```diff
+diff --git a/package.json b/package.json
+index 1111111..2222222 100644
+--- a/package.json
++++ b/package.json
+@@ -8,7 +8,7 @@
+   "dependencies": {
+-    "parse-util": "^2.3.0",
++    "parse-util": "^2.4.0",
+     "text-format": "^5.1.0"
+   }
+ }
+```
+
+`git diff --check` is clean, and the grep only finds markers in `package-lock.json`. Is this enough to proceed?
+
+[assistant]
+Yes. The merged `package.json` is syntactically clean, and its dependency declaration shows the intended range is `parse-util` `^2.4.0`. Proceed with the backup and lockfile-only regeneration:
+
+```sh
+cp package-lock.json /tmp/package-lock.before-regenerate.json
+cp package.json /tmp/package.json.before-regenerate.json
+
+rm package-lock.json
+npm install --package-lock-only --ignore-scripts
+```
+
+Then check the command status and repository state:
+
+```sh
+printf 'npm exit status: %s\n' "$?"
+git status --short
+git diff --check
+grep -nE '^(<<<<<<<|=======|>>>>>>>)' package-lock.json || true
+```
+
+The grep should produce no output. Do not stage yet. First inspect the generated lockfile diff, especially the `parse-util` entry and any related transitive dependencies:
+
+```sh
+git diff -- package-lock.json
+npm ls --package-lock-only --all
+```
+
+If npm prints peer-dependency warnings or exits nonzero, keep the generated file unstaged and capture the complete output.
+
+[user]
+The command completed successfully. The output was:
+
+```text
+npm WARN config ignore-scripts This configuration is not supported in this command
+npm exit status: 0
+ M package.json
+ M package-lock.json
+ M src/parser.js
+```
+
+The marker grep returned nothing. `npm ls --package-lock-only --all` reports:
+
+```text
+sample-tool@1.4.0 /work/sample-tool
+├── parse-util@2.4.1
+└── text-format@5.1.3
+```
+
+Why did npm print that warning if the exit status was zero?
+
+[assistant]
+That warning is about npm’s configuration handling for the specific command, not a failure to generate the lockfile. The zero exit status means npm completed successfully. Since `npm ls --package-lock-only --all` also resolved the tree and showed `parse-util@2.4.1`, the regenerated lockfile is structurally usable for the declared `^2.4.0` range.
+
+Next inspect the actual lockfile changes and verify JSON syntax:
+
+```sh
+git diff --stat
+git diff -- package-lock.json
+node --check package-lock.json
+```
+
+`node --check` is not a general JSON validator for every Node version, so use Node’s JSON parser as the definitive syntax check:
+
+```sh
+node -e "JSON.parse(require('fs').readFileSync('package-lock.json','utf8')); console.log('valid JSON')"
+```
+
+You can also inspect the top-level dependency declaration and the resolved package entry:
+
+```sh
+node <<'NODE'
+const lock = JSON.parse(require('fs').readFileSync('package-lock.json', 'utf8'));
+console.log({
+  lockfileVersion: lock.lockfileVersion,
+  rootDependencies: lock.packages?.['']?.dependencies,
+  parseUtil: lock.packages?.['node_modules/parse-util']?.version
+});
+NODE
+```
+
+Do not rely only on the short `npm ls` output; review the diff for unexpected broad changes.
+
+[user]
+Here is the relevant diff after regeneration:
+
+```diff
+diff --git a/package-lock.json b/package-lock.json
+index 0f1a2b3..4e5f6a7 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -10,7 +10,7 @@
+     "": {
+       "dependencies": {
+-        "parse-util": "^2.3.0",
++        "parse-util": "^2.4.0",
+         "text-format": "^5.1.0"
+       }
+     },
+@@ -145,9 +145,9 @@
+     "node_modules/parse-util": {
+-      "version": "2.3.2",
+-      "resolved": ".../parse-util-2.3.2.tgz",
+-      "integrity": "sha512-old"
++      "version": "2.4.1",
++      "resolved": ".../parse-util-2.4.1.tgz",
++      "integrity": "sha512-new"
+     }
+```
+
+The JSON parser printed `valid JSON`. Is this the expected kind of change?
+
+[assistant]
+Yes. The diff is consistent with the merged `package.json`: the root lockfile dependency range changed from `^2.3.0` to `^2.4.0`, and npm selected `parse-util` `2.4.1`, which satisfies that range. The corresponding tarball URL and integrity value changed with the package version. No conflict markers remain, and the file parses as JSON.
+
+Now compare the generated lockfile against both branch versions to check for unrelated changes:
+
+```sh
+git diff --stat HEAD -- package-lock.json
+git diff --stat MERGE_HEAD -- package-lock.json
+
+git diff HEAD -- package-lock.json > /tmp/package-lock.diff-from-ours
+git diff MERGE_HEAD -- package-lock.json > /tmp/package-lock.diff-from-theirs
+```
+
+Review the full diff for changes outside the expected dependency and its transitive packages:
+
+```sh
+git diff -- package-lock.json
+```
+
+Also verify the lockfile’s root dependency data against `package.json`:
+
+```sh
+node <<'NODE'
+const fs = require('fs');
+const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+const lock = JSON.parse(fs.readFileSync('package-lock.json', 'utf8'));
+const root = lock.packages[''];
+for (const section of ['dependencies', 'devDependencies', 'optionalDependencies']) {
+  const expected = pkg[section] || {};
+  const actual = root[section] || {};
+  console.log(section, JSON.stringify(expected) === JSON.stringify(actual) ? 'match' : 'DIFF');
+}
+NODE
+```
+
+The sections should report `match`.
+
+[user]
+The review shows only the `parse-util` changes and formatting that npm normally produces. The comparison script printed:
+
+```text
+dependencies match
+devDependencies match
+optionalDependencies match
+```
+
+`git diff --check` is still clean. What checks should I run before staging the resolved lockfile?
+
+[assistant]
+Run a focused validation sequence before staging:
+
+```sh
+# Confirm there are no unmerged paths
+git diff --name-only --diff-filter=U
+
+# Confirm no conflict markers anywhere in tracked working files
+git grep -nE '^(<<<<<<<|=======|>>>>>>>)' -- . ':!node_modules' || true
+
+# Validate JSON
+node -e "JSON.parse(require('fs').readFileSync('package-lock.json','utf8')); console.log('package-lock.json: valid JSON')"
+
+# Check npm’s lockfile-only dependency view
+npm ls --package-lock-only --all
+
+# Check repository whitespace
+git diff --check
+```
+
+The first command should print nothing. The marker search should also print nothing. `npm ls` should exit successfully; its displayed tree should be consistent with the current `package.json`.
+
+Then inspect the staged-versus-working distinction:
+
+```sh
+git diff -- package.json package-lock.json src/parser.js
+git diff --cached -- package.json package-lock.json src/parser.js
+```
+
+Because `package.json` and `src/parser.js` were already staged or carried into the merge state, the exact output depends on the index. Do not assume the lockfile is staged just because it is now valid. If all checks pass, stage only the resolved lockfile first:
+
+```sh
+git add package-lock.json
+git status --short
+```
+
+You should then see the lockfile no longer marked `U`.
+
+[user]
+The checks passed. `git diff --name-only --diff-filter=U` printed nothing, the marker search printed nothing, and `npm ls --package-lock-only --all` exited zero. After `git add package-lock.json`, status is:
+
+```text
+M  package.json
+M  package-lock.json
+M  src/parser.js
+```
+
+How do I verify that the index contains the resolved file and that there are no remaining merge stages?
+
+[assistant]
+Use the index-specific commands:
+
+```sh
+git ls-files -u
+git diff --cached --name-status
+git diff --cached --check
+```
+
+`git ls-files -u` should print nothing. If it prints entries, the path still has unmerged index stages. The cached name-status output should include the resolved files, for example:
+
+```text
+M       package.json
+M       package-lock.json
+M       src/parser.js
+```
+
+Inspect the lockfile exactly as stored in the index, rather than the working tree:
+
+```sh
+git show :package-lock.json | sed -n '1,20p'
+git show :package-lock.json | grep -nE '^(<<<<<<<|=======|>>>>>>>)' || true
+git show :package-lock.json | node -e "let s=''; process.stdin.on('data',d=>s+=d).on('end',()=>{JSON.parse(s); console.log('indexed lockfile: valid JSON')})"
+```
+
+The marker grep should be empty and the parser should print the validation message. You can compare the indexed file with the working-tree file:
+
+```sh
+git diff --no-index --exit-code \
+  <(git show :package-lock.json) package-lock.json
+printf 'comparison exit status: %s\n' "$?"
+```
+
+In a shell supporting process substitution, status `0` means they are identical. Finally, confirm the merge is still in progress and identify the merge head:
+
+```sh
+git status
+git rev-parse -q --verify MERGE_HEAD
+```
+
+Do not create the merge commit until the staged diff is the intended one.
+
+[user]
+`git ls-files -u` is empty. The cached diff shows all three files as modified, and the indexed lockfile parser says `valid JSON`. The process-substitution comparison returned exit status 0. `git status` says:
+
+```text
+All conflicts fixed but you are still merging.
+  (use "git commit" to conclude merge)
+```
+
+What final checks are useful before concluding the merge?
+
+[assistant]
+Run checks against the staged merge result and the repository’s normal test commands. First inspect the complete staged diff and summary:
+
+```sh
+git diff --cached --stat
+git diff --cached --summary
+git diff --cached -- package.json package-lock.json src/parser.js
+```
+
+Confirm that the index has no unresolved entries and that all staged files pass whitespace checks:
+
+```sh
+git ls-files -u
+git diff --cached --check
+```
+
+Then run the project’s routine validation. If the repository has an npm test script, use:
+
+```sh
+npm test
+```
+
+If it has a lint script, use:
+
+```sh
+npm run lint
+```
+
+You can see available scripts without changing files:
+
+```sh
+node -e "const p=require('./package.json'); console.log(p.scripts || {})"
+```
+
+Because the lockfile was generated with `--ignore-scripts`, running the project’s tests separately is useful. If the test or lint command modifies generated files, check afterward:
+
+```sh
+git status --short
+git diff -- package-lock.json
+git diff --cached -- package-lock.json
+```
+
+The last two commands should show that the tested working-tree lockfile still matches the staged lockfile. If the commands pass and the staged diff is expected, the merge is ready to conclude.
+
+[user]
+The scripts are:
+
+```text
+{
+  "test": "node --test",
+  "lint": "eslint ."
+}
+```
+
+`npm test` passed 18 tests, and `npm run lint` passed. The working tree is still clean relative to the index, and `git diff --cached --check` is empty. Is it time to commit, and should I use a special merge message?
+
+[assistant]
+Yes. Since all conflicts are resolved, the index has no unmerged entries, the lockfile is valid, and the tests and lint pass, you can conclude the merge.
+
+First review the staged summary one last time:
+
+```sh
+git diff --cached --stat
+git status
+```
+
+Then create the merge commit. A normal merge message is sufficient; Git will provide a default message based on the branch names:
+
+```sh
+git commit
+```
+
+Your editor will open with a message similar to:
+
+```text
+Merge branch 'feature/update-parser'
+```
+
+You can keep the generated message and save it. There is no need for a special lockfile note because the staged diff already records the dependency and lockfile updates. If you prefer to provide the default message noninteractively, use the message shown by Git or a concise equivalent:
+
+```sh
+git commit -m "Merge branch 'feature/update-parser'"
+```
+
+Do not use `git commit --no-verify` unless a hook specifically fails and you have separately checked why. After committing, verify that the merge completed and the working tree is clean.
+
+[user]
+I ran `git commit` and kept the generated message. The hook output was:
+
+```text
+[main 91ab234] Merge branch 'feature/update-parser'
+```
+
+What commands confirm the merge commit contains the resolved lockfile and that the repository is finished?
+
+[assistant]
+Run these post-commit checks:
+
+```sh
+git status --short
+git log -1 --oneline --decorate
+git show --stat --oneline --summary HEAD
+```
+
+`git status --short` should produce no output. Confirm the new commit is a merge commit with two parents:
+
+```sh
+git rev-list --parents -n 1 HEAD
+```
+
+The output should contain the merge commit ID followed by two parent IDs. Confirm the committed lockfile is valid and has no conflict markers:
+
+```sh
+git show HEAD:package-lock.json | \
+  node -e "let s=''; process.stdin.on('data',d=>s+=d).on('end',()=>{JSON.parse(s); console.log('committed lockfile: valid JSON')})"
+
+git grep -nE '^(<<<<<<<|=======|>>>>>>>)' HEAD -- . ':!node_modules' || true
+```
+
+Inspect the commit’s file list and lockfile portion:
+
+```sh
+git diff-tree --no-commit-id --name-status -r HEAD
+git show --format= -- package-lock.json
+```
+
+Finally, rerun the lightweight dependency view from the committed checkout:
+
+```sh
+npm ls --package-lock-only --all
+```
+
+You should see the resolved dependency tree, no unmerged paths, a clean status, and the merge commit containing `package.json`, `package-lock.json`, and the other merged changes.
+
+[user]
+The status output is empty, `git rev-list --parents -n 1 HEAD` shows the commit plus two parent IDs, and the committed lockfile parser reports valid JSON. `npm ls --package-lock-only --all` still shows `parse-util@2.4.1`. Is there anything else mechanical to clean up?
+
+[assistant]
+No repository cleanup is needed. The temporary backup files were written under `/tmp`, so they are outside the repository and do not affect Git. If you want to remove those temporary files explicitly:
+
+```sh
+rm -f /tmp/package-lock.before-regenerate.json \
+      /tmp/package.json.before-regenerate.json \
+      /tmp/package-lock.diff-from-ours \
+      /tmp/package-lock.diff-from-theirs
+```
+
+You can verify the final state once more:
+
+```sh
+git status --porcelain=v1
+git diff HEAD^1 HEAD -- package.json package-lock.json
+git log -1 --format='%H%n%P%n%s'
+```
+
+The porcelain status should be empty. The first-parent diff should show the dependency range and regenerated lockfile entries in the merge commit. The log command should show one commit hash, two parent hashes, and the merge subject.
+
+No conflict markers, unmerged index stages, or generated lockfile artifacts remain. The merge has been concluded normally, and the committed lockfile is the one validated after regeneration.

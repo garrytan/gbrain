@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-075",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "companies/halcyonyard",
+      "content": "---\ntitle: Halcyonyard\ntype: company\nsummary: \"Halcyonyard is a software vendor we work with.\"\n---\n\nHalcyonyard is a software vendor we work with.\n"
+    },
+    {
+      "slug": "people/soraya-quellgrove",
+      "content": "---\ntitle: Soraya Quellgrove\ntype: person\nsummary: \"Soraya Quellgrove is the operations director at Quartzgate.\"\n---\n\nSoraya Quellgrove is the operations director at Quartzgate.\n"
+    },
+    {
+      "slug": "people/alaric-wyrcombe",
+      "content": "---\ntitle: Alaric Wyrcombe\ntype: person\nsummary: \"Alaric Wyrcombe is the product lead at Wandercrest.\"\n---\n\nAlaric Wyrcombe is the product lead at Wandercrest. Alaric wants to pause the second engineering hire until the renewal closes.\n"
+    },
+    {
+      "slug": "people/farah-pellholt",
+      "content": "---\ntitle: Farah Pellholt\ntype: person\naliases: [farah]\nsummary: \"A contact from a conference last spring.\"\n---\n\nA contact from a conference last spring.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Make this sentence shorter: 'Our team will be at the Halcyonyard office for the whole afternoon on Thursday.'"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Here is what I have."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Fix the typos in this line of my email to Quellgrove: 'thnaks for the quick turnaround, talk soon'"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Done."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "By the way, someone named Delphine Corvmere emailed about partnerships. Never heard of them."
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Done."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "alaric wyrcombe wants to meet again, what did we agree last time about the hiring plan?"
+    }
+  ]
+}

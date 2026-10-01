@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
-import { withGoogleAccount } from './helpers/connector-fixture.ts';
+import { withGoogleAccount, sourceCursor, cursorOf } from './helpers/connector-fixture.ts';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -113,7 +113,8 @@ test('GitHub partial detail and pagination do not advance freshness or delete su
     const cfg = parseGitHubSourceConfig(githubConfig, f.dir);
     expect((await runGitHubSync(engine, f.id, cfg, options, githubFetch({ failDetail: true }))).status).toBe('partial');
     expect((await engine.getPage('gh/acme-example/app/1', { sourceId: f.id }))?.frontmatter.detail_fetched).toBe(false);
-    expect(await sourceCheckpoint(engine, f.id)).toHaveLength(0);
+    // Fix wave 4: the partial run publishes the item's failure count, never a cursor.
+    expect(await sourceCursor(engine, f.id)).toEqual([[{ state: { last_sweep_at: null, repos: [] } }]]);
     expect((await engine.executeRaw<{ last_sync_at: unknown }>('SELECT last_sync_at FROM sources WHERE id=$1', [f.id]))[0].last_sync_at).toBeNull();
     await disposePersistenceConsumer(engine);
     expect((await runGitHubSync(engine, f.id, cfg, options, githubFetch())).status).not.toBe('partial');
@@ -231,7 +232,7 @@ test('Google Gmail and Calendar ingest, fail without advancing, restart, and del
     delta = true;
     fail = true;
     expect((await runGoogleSync(engine, f.id, cfg, options, withGoogleAccount(fetcher))).status).toBe('partial');
-    expect(await sourceCheckpoint(engine, f.id)).toEqual(checkpoint);
+    expect(await sourceCursor(engine, f.id)).toEqual(cursorOf(checkpoint));
     fail = false;
     await disposePersistenceConsumer(engine);
     expect((await runGoogleSync(engine, f.id, cfg, options, withGoogleAccount(fetcher))).status).not.toBe('partial');

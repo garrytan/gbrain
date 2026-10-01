@@ -285,5 +285,11 @@ async function main(): Promise<number> {
 }
 
 if (import.meta.main) {
-  main().then((code) => process.exit(code));
+  // #5669: set exitCode and let the runtime drain instead of process.exit().
+  // With stdout a PIPE (test-shard.sh / run-unit-shard.sh / the serial pool
+  // all consume this CLI), process.exit() can terminate before the pending
+  // writes flush — a 10,000-file selection delivered 8,187 paths at exit 0,
+  // so the wrapper ran a partial shard without knowing. Setting exitCode
+  // keeps the codes identical while the event loop flushes stdout first.
+  main().then((code) => { process.exitCode = code; });
 }

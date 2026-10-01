@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-042",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/maren-brinwaite",
+      "content": "---\ntitle: Maren Brinwaite\ntype: person\nsummary: \"Maren Brinwaite is the head of sales at Cobaltcrest.\"\n---\n\nMaren Brinwaite is the head of sales at Cobaltcrest. Maren suggested holding the offsite somewhere reachable by train.\n"
+    },
+    {
+      "slug": "people/greta-wyrbrook",
+      "content": "---\ntitle: Greta Wyrbrook\ntype: person\naliases: [greta]\nsummary: \"Greta Wyrbrook is the procurement lead at Halcyonyard.\"\n---\n\nGreta Wyrbrook is the procurement lead at Halcyonyard. Greta asked for a longer pilot before signing, ideally a full quarter.\n"
+    },
+    {
+      "slug": "companies/pylonmoor",
+      "content": "---\ntitle: Pylonmoor\ntype: company\nsummary: \"Pylonmoor is a software vendor we work with.\"\n---\n\nPylonmoor is a software vendor we work with.\n"
+    },
+    {
+      "slug": "people/verity-caldfell",
+      "content": "---\ntitle: Verity Caldfell\ntype: person\naliases: [verity]\nsummary: \"A contact from a conference last spring.\"\n---\n\nA contact from a conference last spring.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Prep me for the Brinwaite call, especially the offsite."
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Here is what I have."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "need to answer wyrbrook today, remind me what they wanted on the pilot"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Done."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "what's a good agenda for a weekly one-on-one?"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Here is what I have."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "Write a one-line out-of-office reply saying I'm visiting Pylonmoor on Monday."
+    }
+  ]
+}

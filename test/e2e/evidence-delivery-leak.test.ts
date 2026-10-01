@@ -10,7 +10,16 @@
  * protected tail, timeline fact rows, a `visibility: private` page, a derived
  * atom (private by default), and the same slug in an ungranted source. The
  * mid-flight cases re-authorize stale hits: grant revocation, a page turning
- * private, and an edit between ranking and expansion.
+ * private, and an edit between ranking and expansion. A conversation page
+ * (with its own protected rows) covers the implied `auto` default, which
+ * delivers conversation pages whole.
+ *
+ * The subset invariant runs every op and unit, including the auto default,
+ * over ranked hits AND over frozen hits naming every chunk of every page, so
+ * anchor paths ranking rarely reaches (a fenced-code chunk as the best hit,
+ * whose synthesized `[Lang] fence.ts:N-M` header is not page text) are
+ * exercised. It once ran only ranked `search` page-unit hits on a corpus with
+ * no fenced code, so that header slipped through.
  *
  * Postgres arm runs when DATABASE_URL is set.
  */
@@ -43,13 +52,16 @@ import { withEnv } from '../helpers/with-env.ts';
 const BOUND = 'evd-bound';
 const FOREIGN = 'evd-foreign';
 const UNITS = ['window', 'section', 'page', 'auto'] as const;
+const CODE_HEADER_LINE = /^\[[^\]]+\] fence\.\w+:\d+-\d+ /m;
 
 // Public presence controls (must appear in page-unit evidence).
 const PRESENT = ['PUBLICMARKALPHA', 'PUBLICMARKOMEGA', 'WORLDFACTKESTREL', 'TIMELINEPUBLICWREN', 'TIMELINEWORLDFINCH'];
+// Must appear when the auto default (or page) delivers the conversation whole.
+const CONVERSATION_PRESENT = ['SESSIONOPENERHERON', 'SESSIONCLOSERHERON'];
 // Protected for remote callers.
 const REMOTE_CANARIES = ['PRIVATEPAGECANARY', 'ATOMCANARY'];
 // Protected for every caller (whole-body sanitizing) plus other-source text.
-const ALWAYS_CANARIES = ['FACTCANARYPRIVATE', 'TAKECANARYPRIVATE', 'WITHDRAWNCANARY', 'MALFORMEDTAILCANARY', 'TIMELINEFACTCANARY', 'FOREIGNSOURCECANARY', 'EDITSECRETCANARY'];
+const ALWAYS_CANARIES = ['FACTCANARYPRIVATE', 'TAKECANARYPRIVATE', 'WITHDRAWNCANARY', 'MALFORMEDTAILCANARY', 'TIMELINEFACTCANARY', 'FOREIGNSOURCECANARY', 'EDITSECRETCANARY', 'SESSIONTAKECANARY'];
 
 const filler = (n: number) => Array.from({ length: n }, (_, i) => `Heron field notes paragraph ${i} describing ordinary public observations of the marsh and the weather that day.`).join('\n\n');
 
@@ -66,12 +78,22 @@ function heronPage(): string {
   return `---\ntitle: heron\ntype: note\n---\n\nheron PUBLICMARKALPHA introduction.\n\n## Field notes\n\n${filler(30)}\n\n${facts}\n\n${TAKES_FENCE_BEGIN}\n| # | claim | kind | who | weight | since | source |\n|---|-------|------|-----|--------|-------|--------|\n| 1 | TAKECANARYPRIVATE heron opinion | take | owner-example | 0.8 | | |\n${TAKES_FENCE_END}\n\n## Closing\n\n${filler(8)}\n\nheron PUBLICMARKOMEGA closing line.\n\n<!-- timeline -->\n\n- 2026-01-01 heron TIMELINEPUBLICWREN sighting\n\n${timelineFacts}\n\n${TAKES_FENCE_BEGIN}\nMALFORMEDTAILCANARY heron unterminated protected tail\n`;
 }
 
+function heronSession(): string {
+  const turns = Array.from({ length: 24 }, (_, i) =>
+    `**user:** heron question ${i} about the marsh walk ${'and the tide tables '.repeat(8)}\n\n**assistant:** heron answer ${i} ${'about the nesting season '.repeat(8)}`).join('\n\n');
+  return `---\ntitle: heron session\ntype: conversation\n---\n\n**user:** SESSIONOPENERHERON heron opening question.\n\n${turns}\n\n${TAKES_FENCE_BEGIN}\n| # | claim | kind | who | weight | since | source |\n|---|-------|------|-----|--------|-------|--------|\n| 1 | SESSIONTAKECANARY heron session opinion | take | owner-example | 0.8 | | |\n${TAKES_FENCE_END}\n\n**assistant:** SESSIONCLOSERHERON heron closing answer.\n`;
+}
+
+const codeFn = (name: string) => `export function ${name}(heron: number): number {\n${Array.from({ length: 12 }, (_, i) => `  const step${i} = heron * ${i + 2} + ${name.length};`).join('\n')}\n  return heron;\n}`;
+
 const FIXTURES: Array<[slug: string, source: string, body: string]> = [
   ['notes/heron', BOUND, heronPage()],
   ['notes/heron-private', BOUND, `---\ntitle: heron private\ntype: note\nvisibility: private\n---\n\nheron PRIVATEPAGECANARY private memo.\n`],
   ['atoms/heron-atom', BOUND, `---\ntitle: heron atom\ntype: atom\nsource_slug: notes/heron\n---\n\nheron ATOMCANARY derived atom.\n`],
   ['notes/heron-edit', BOUND, `---\ntitle: heron edit\ntype: note\n---\n\nheron editable page. EDITSECRETCANARY line to be removed.\n\n${filler(6)}\n`],
   ['notes/heron', FOREIGN, `---\ntitle: heron\ntype: note\n---\n\nheron FOREIGNSOURCECANARY other source page.\n\n${filler(4)}\n`],
+  ['conversations/sessions/heron-session', BOUND, heronSession()],
+  ['notes/heron-code', BOUND, `---\ntitle: heron code\ntype: note\n---\n\nThe heron tracker module.\n\n\`\`\`ts\n${codeFn('heronAlpha')}\n\n${codeFn('heronBeta')}\n\n${codeFn('heronGamma')}\n\`\`\`\n\nheron tracker closing note.\n`],
 ];
 
 const backends = process.env.DATABASE_URL ? ['pglite', 'postgres'] as const : ['pglite'] as const;
@@ -248,19 +270,22 @@ for (const backend of backends) describe(`evidence delivery leak canaries (${bac
     await mutate(async () => {
       for (const remote of [false, true]) {
         const canaries = remote ? [...ALWAYS_CANARIES.filter(c => c !== 'EDITSECRETCANARY'), ...REMOTE_CANARIES] : ALWAYS_CANARIES.filter(c => c !== 'EDITSECRETCANARY');
-        for (const unit of UNITS) {
+        for (const unit of [...UNITS, undefined]) {
           const meta: { value?: Record<string, unknown> } = {};
           const search = await operations.find(o => o.name === 'search')!.handler(ctxOf(remote, meta), { query: 'heron', return_unit: unit, token_budget: 32000, source_id: BOUND, limit: 50 });
           assertNoLeak(`local remote=${remote} search ${unit}`, search, canaries);
           expect(meta.value?.delivery, `delivery meta for ${unit}`).toBeDefined();
           if (unit === 'page') assertPresent(`local remote=${remote} search page`, search);
+          if (unit === 'page' || unit === 'auto' || unit === undefined) {
+            for (const c of CONVERSATION_PRESENT) expect(JSON.stringify(search), `${unit} remote=${remote} missing ${c}`).toContain(c);
+          }
           const query = await operations.find(o => o.name === 'query')!.handler(ctxOf(remote), { query: 'heron', return_unit: unit, token_budget: 32000, source_id: BOUND, expand: false });
           assertNoLeak(`local remote=${remote} query ${unit}`, query, canaries);
-          const recall = await operations.find(o => o.name === 'recall')!.handler(ctxOf(remote), { query: 'heron', return_unit: unit, budget_tokens: 32000, source_id: BOUND });
+          const recall = await operations.find(o => o.name === 'recall')!.handler(ctxOf(remote), { query: 'heron', return_unit: unit, ...(unit ? { budget_tokens: 32000 } : {}), source_id: BOUND });
           assertNoLeak(`local remote=${remote} recall ${unit}`, recall, canaries);
           const hits = (search as SearchResult[]).map(h => ({ source_id: h.source_id, slug: h.slug, chunk_id: h.chunk_id }));
           const assembled = await operations.find(o => o.name === 'assemble_evidence')!.handler(ctxOf(remote), {
-            hits: [...hits, { source_id: FOREIGN, slug: 'notes/heron', chunk_id: 0 }], return_unit: unit, token_budget: 32000,
+            hits: [...hits, { source_id: FOREIGN, slug: 'notes/heron', chunk_id: 0 }], return_unit: unit ?? 'auto', token_budget: 32000,
           });
           assertNoLeak(`local remote=${remote} assemble ${unit}`, assembled, remote ? canaries : canaries.filter(c => c !== 'FOREIGNSOURCECANARY'));
         }
@@ -272,23 +297,63 @@ for (const backend of backends) describe(`evidence delivery leak canaries (${bac
     });
   }, 120_000);
 
-  test('delivered text is a subset of get_page for the same caller', async () => {
+  test('delivered text is a subset of get_page for the same caller, for every op, unit and anchor', async () => {
     await mutate(async () => {
+      const allChunks = await engine.executeRaw<{ slug: string; id: number; chunk_source: string }>(
+        `SELECT p.slug, cc.id, cc.chunk_source FROM content_chunks cc JOIN pages p ON p.id = cc.page_id WHERE p.source_id = $1 ORDER BY p.slug, cc.chunk_index`, [BOUND]);
+      expect(allChunks.some(c => c.chunk_source === 'fenced_code')).toBe(true);
+      let checked = 0;
       for (const remote of [false, true]) {
-        const rows = await operations.find(o => o.name === 'search')!.handler(ctxOf(remote), { query: 'heron', return_unit: 'page', token_budget: 32000, source_id: BOUND, limit: 50 }) as SearchResult[];
-        expect(rows.length).toBeGreaterThan(0);
-        for (const row of rows) {
-          const page = await operations.find(o => o.name === 'get_page')!.handler(ctxOf(remote), { slug: row.slug, source_id: row.source_id, include_content: true }) as { content: string };
-          const reference = page.content;
-          for (const line of row.chunk_text.split('\n')) {
-            const t = line.trim();
-            if (!t || t === '[…]') continue;
-            expect(reference.includes(t), `${row.slug} remote=${remote}: delivered line not in get_page: ${t.slice(0, 80)}`).toBe(true);
+        const refs = new Map<string, { content: string; lines: Set<string> } | null>();
+        const reference = async (slug: string) => {
+          if (!refs.has(slug)) {
+            try {
+              const page = await operations.find(o => o.name === 'get_page')!.handler(ctxOf(remote), { slug, source_id: BOUND, include_content: true }) as { content: string };
+              refs.set(slug, { content: page.content, lines: new Set(page.content.split('\n').map(l => l.trim())) });
+            } catch { refs.set(slug, null); }
+          }
+          return refs.get(slug)!;
+        };
+        const check = async (label: string, unit: string, rows: Array<{ slug: string; chunk_text?: string; chunk?: string; delivered?: { unit: string; truncated: boolean; reason?: string; fallback_reason?: string } }>) => {
+          for (const row of rows) {
+            const text = row.chunk_text ?? row.chunk ?? '';
+            // auto's unchanged rows are the chunk response itself (raw chunk text), not delivered evidence.
+            if (!row.delivered || row.delivered.reason === 'not_conversation' || row.delivered.reason === 'conversation_over_budget') continue;
+            const ref = await reference(row.slug);
+            expect(ref, `${label}: ${row.slug} delivered but not readable via get_page`).not.toBeNull();
+            expect(text, `${label}: ${row.slug} carries a code-chunk header`).not.toMatch(CODE_HEADER_LINE);
+            if (unit === 'page') expect(row.delivered?.fallback_reason, `${label}: ${row.slug} fell back to a chunk`).toBeUndefined();
+            const whole = row.delivered?.unit === 'page' && !row.delivered.truncated;
+            for (const segment of text.split('\n\n[…]\n\n')) {
+              for (const line of segment.split('\n')) {
+                const t = line.trim();
+                if (!t) continue;
+                if (whole) expect(ref!.lines.has(t), `${label}: ${row.slug} page line is not a get_page line: ${t.slice(0, 80)}`).toBe(true);
+                else expect(ref!.content.includes(t), `${label}: ${row.slug} delivered line not in get_page: ${t.slice(0, 80)}`).toBe(true);
+              }
+            }
+            checked++;
+          }
+        };
+        for (const unit of [...UNITS, undefined]) {
+          const label = `remote=${remote} ${unit ?? 'default'}`;
+          const search = await operations.find(o => o.name === 'search')!.handler(ctxOf(remote), { query: 'heron', return_unit: unit, token_budget: 32000, source_id: BOUND, limit: 50 }) as SearchResult[];
+          await check(`${label} search`, unit ?? 'auto', search);
+          const query = await operations.find(o => o.name === 'query')!.handler(ctxOf(remote), { query: 'heron tracker', return_unit: unit, source_id: BOUND, expand: false }) as SearchResult[];
+          await check(`${label} query`, unit ?? 'auto', query);
+          const recall = await operations.find(o => o.name === 'recall')!.handler(ctxOf(remote), { query: 'heron', return_unit: unit, ...(unit ? { budget_tokens: 32000 } : {}), source_id: BOUND }) as { results: Array<{ slug: string; chunk: string }> };
+          await check(`${label} recall`, unit ?? 'auto', recall.results);
+          for (const chunk of allChunks) {
+            const assembled = await operations.find(o => o.name === 'assemble_evidence')!.handler(ctxOf(remote), {
+              hits: [{ source_id: BOUND, slug: chunk.slug, chunk_id: chunk.id }], return_unit: unit ?? 'auto', token_budget: 32000,
+            }) as { results: SearchResult[] };
+            await check(`${label} assemble ${chunk.slug}#${chunk.id} (${chunk.chunk_source})`, unit ?? 'auto', assembled.results);
           }
         }
       }
+      expect(checked).toBeGreaterThan(100);
     });
-  }, 60_000);
+  }, 180_000);
 
   test('stdio and HTTP transports deliver presence controls and no canaries', async () => {
     const canaries = [...ALWAYS_CANARIES.filter(c => c !== 'EDITSECRETCANARY'), ...REMOTE_CANARIES];
@@ -357,6 +422,7 @@ for (const backend of backends) describe(`evidence delivery leak canaries (${bac
 
   test('the fixture canaries are protected content, not absent content', () => {
     expect(heronPage()).toContain(FACTS_FENCE_BEGIN);
-    for (const c of [...ALWAYS_CANARIES.filter(c => !['FOREIGNSOURCECANARY', 'EDITSECRETCANARY'].includes(c))]) expect(heronPage()).toContain(c);
+    expect(heronSession()).toContain(TAKES_FENCE_BEGIN);
+    for (const c of [...ALWAYS_CANARIES.filter(c => !['FOREIGNSOURCECANARY', 'EDITSECRETCANARY'].includes(c))]) expect(heronPage() + heronSession()).toContain(c);
   });
 });

@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-122",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/delphine-orrinwaite",
+      "content": "---\ntitle: Delphine Orrinwaite\ntype: person\naliases: [delphine]\nsummary: \"Delphine Orrinwaite is the operations director at Brackenfold.\"\n---\n\nDelphine Orrinwaite is the operations director at Brackenfold. Delphine pushed to move the reporting feature ahead of the mobile app.\n"
+    },
+    {
+      "slug": "people/verity-quelldale",
+      "content": "---\ntitle: Verity Quelldale\ntype: person\naliases: [verity]\nsummary: \"Verity Quelldale is the head of sales at Wanderreach.\"\n---\n\nVerity Quelldale is the head of sales at Wanderreach.\n"
+    },
+    {
+      "slug": "people/mireille-grisridge",
+      "content": "---\ntitle: Mireille Grisridge\ntype: person\naliases: [mireille]\nsummary: \"Mireille Grisridge is the product lead at Kilnloft.\"\n---\n\nMireille Grisridge is the product lead at Kilnloft. Mireille suggested holding the offsite somewhere reachable by train.\n"
+    },
+    {
+      "slug": "companies/glintreach",
+      "content": "---\ntitle: Glintreach\ntype: company\nsummary: \"A company we met once at a trade show.\"\n---\n\nA company we met once at a trade show.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "what's the latest with orrinwaite on the roadmap?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "summarize the idea behind spaced repetition in two sentences"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Here is what I have."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "Turn this into a checklist: Quelldale sends the deck, I review it, we both sign off on Friday."
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Happy to help."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "Prep me for the Grisridge call, especially the offsite."
+    }
+  ]
+}

@@ -1,0 +1,86 @@
+[user]
+I need to format a bibliography for a school handout. I have about twelve sources, and my teacher says to use MLA 9. Can you help me clean them up?
+
+[assistant]
+Yes. Paste the source details exactly as you have them, even if they are incomplete or inconsistent. I can normalize capitalization, punctuation, dates, containers, URLs, and access dates into MLA 9 entries. I can also flag information that is missing instead of guessing.
+
+[user]
+Here are the first four:
+
+1. Jane Austen. Pride and Prejudice. Penguin Classics, 2003.
+2. “How to Compost at Home” Green Living Magazine, vol 8, no. 2, 2021, pp 14-19. https://greenliving.example/compost
+3. National Park Service. “Trail Safety.” 7 June 2022, www.nps.gov/trailsafety.
+4. Rivera, Sam. “Why Paper Still Matters.” The Daily Desk, March 4, 2020, https://daily-desk.example/paper-matters
+
+[assistant]
+Here are cleaned-up MLA 9 versions, with a few notes:
+
+Austen, Jane. Pride and Prejudice. Penguin Classics, 2003.
+
+“How to Compost at Home.” Green Living Magazine, vol. 8, no. 2, 2021, pp. 14–19, https://greenliving.example/compost.
+
+National Park Service. “Trail Safety.” 7 June 2022, www.nps.gov/trailsafety.
+
+Rivera, Sam. “Why Paper Still Matters.” The Daily Desk, 4 Mar. 2020, https://daily-desk.example/paper-matters.
+
+MLA generally omits the access date unless your instructor requests it or the page is likely to change. For the third entry, I kept the organization as the author. If “Trail Safety” is part of a larger website title, adding that site title between the article title and date would make the entry more complete.
+
+[user]
+For the remaining sources, some details are in a copied spreadsheet. I want the final list alphabetized and easy to paste into a document. Here is the spreadsheet text:
+
+author | title | site or publisher | date | url
+(blank) | “Rain Barrels: A Beginner’s Guide” | Home Projects | 2023 | https://home.example/rain
+Chen, Lila | “Notes on Recycled Paper” | Classroom Journal | 12 Sept 2022 | https://classroom.example/recycled
+World Health Organization | “Handwashing Basics” | 2020 | 2020 | https://who.example/handwashing
+Miller, T. | The Little Seed Book | Bright Leaf Press | 2018 | 
+“Sorting Waste at School” | Eco Classroom | 2021 | https://eco.example/sorting
+Olsen, Kari | “Repairing a Torn Backpack” | Practical Skills | vol. 4, no. 1, 2022 | https://skills.example/backpack
+
+[assistant]
+I see two rows with shifted or ambiguous columns:
+
+- “Handwashing Basics” appears to have “2020” in both the site/publisher and date columns.
+- “Sorting Waste at School” appears to start in the author column, with no separate author supplied.
+
+I’ll treat “Handwashing Basics” as a page with the World Health Organization as the author and 2020 as the publication date, omitting a separate site title because the spreadsheet does not provide one. I’ll treat “Sorting Waste at School” as a container title or page title with no author, but its row may need confirmation. The other entries can be formatted as follows.
+
+[user]
+Before you format them, can you explain how MLA handles missing authors and dates? Also, should I include URLs, and do I need hanging indents?
+
+[assistant]
+For missing authors, begin with the title, alphabetizing by the first significant word. Do not use “Anonymous” unless that is explicitly given as the author.
+
+For missing dates, omit the date rather than writing “n.d.” in a standard MLA 9 Works Cited entry. If your instructor or assignment sheet specifically asks for access dates, add “Accessed” followed by the day, month, and year.
+
+URLs are commonly included for online sources. MLA usually omits the protocol prefix “https://,” although leaving it in is not generally a serious formatting problem if your teacher accepts clickable links. Remove a final period from a URL only when the punctuation could be mistaken as part of the address; otherwise, MLA entries end with a period.
+
+Use double spacing throughout, with a hanging indent of 0.5 inch for each entry. In a word processor, select the bibliography, open Paragraph settings, choose a 0.5-inch hanging indent, and set line spacing to double. Alphabetize the complete list by author surname or by title when no author is available.
+
+[user]
+That helps. Could you format the complete list now? Please use the information as supplied, avoid inventing missing details, and mark anything that needs checking.
+
+[assistant]
+Certainly. I’ll use the supplied information only and put bracketed notes after entries that need checking. Remove the notes before submitting.
+
+Austen, Jane. Pride and Prejudice. Penguin Classics, 2003.
+
+Chen, Lila. “Notes on Recycled Paper.” Classroom Journal, 12 Sept. 2022, https://classroom.example/recycled.
+
+“How to Compost at Home.” Green Living Magazine, vol. 8, no. 2, 2021, pp. 14–19, https://greenliving.example/compost.
+
+“Rain Barrels: A Beginner’s Guide.” Home Projects, 2023, https://home.example/rain.
+
+“Repairing a Torn Backpack.” Practical Skills, vol. 4, no. 1, 2022, https://skills.example/backpack. [Check whether “Olsen, Kari” is the author; the row supplies that name before the title.]
+
+“Sorting Waste at School.” Eco Classroom, 2021, https://eco.example/sorting. [Check whether “Eco Classroom” is the site or publisher; the row appears shifted.]
+
+“Trail Safety.” National Park Service, 7 June 2022, www.nps.gov/trailsafety.
+
+“Why Paper Still Matters.” The Daily Desk, 4 Mar. 2020, https://daily-desk.example/paper-matters.
+
+World Health Organization. “Handwashing Basics.” 2020, https://who.example/handwashing. [Check whether a website or publisher title should appear after the article title.]
+
+Miller, T. The Little Seed Book. Bright Leaf Press, 2018.
+
+[assistant/analysis  ...]
+Oops missing order and entry author. Need continue 22 turns. Must exact. We have 11 turns? Count user assistant pairs 5? User1 asst1, user2 asst2, user3 asst3, user4 asst4, user5 asst5, user6 asst6 = 12 turns. Need 10 more turns alternating, starting user next, ending assistant. Need correct prior perhaps assistant omitted Olsen author incorrectly and alphabetization. Continue realistically.

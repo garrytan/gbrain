@@ -341,7 +341,7 @@ async function recordFailure(engine: BrainEngine, effect: PersistenceEffect, err
 }
 
 /** Waits that say nothing about the target never count toward parking. */
-const CONTENTION_CODES = ['projection_pending', 'revision_conflict', 'writer_busy', 'writer_pool_capacity'];
+const CONTENTION_CODES = ['projection_pending', 'revision_conflict', 'writer_busy', 'writer_pool_capacity', 'git_index_locked'];
 const DEPENDENCY_CODES = ['recovery_required', 'owner_unavailable', 'write_claim_lost', 'queue_capacity'];
 
 /**

@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-104",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/tamsin-calddale",
+      "content": "---\ntitle: Tamsin Calddale\ntype: person\nsummary: \"Tamsin Calddale is the product lead at Saffronspire.\"\n---\n\nTamsin Calddale is the product lead at Saffronspire. Tamsin wants the proposal revised to drop the onboarding fee.\n"
+    },
+    {
+      "slug": "people/bastian-bringrove",
+      "content": "---\ntitle: Bastian Bringrove\ntype: person\nsummary: \"Bastian Bringrove is the head of partnerships at Brackenwharf.\"\n---\n\nBastian Bringrove is the head of partnerships at Brackenwharf.\n"
+    },
+    {
+      "slug": "projects/pricing-overhaul",
+      "content": "---\ntitle: Pricing Overhaul\ntype: project\nsummary: \"Pricing Overhaul: We decided to move the starter plan to usage-based pricing and keep annual contracts for larger teams.\"\n---\n\nPricing Overhaul: We decided to move the starter plan to usage-based pricing and keep annual contracts for larger teams.\n"
+    },
+    {
+      "slug": "people/oriel-grisbarrow",
+      "content": "---\ntitle: Oriel Grisbarrow\ntype: person\nsummary: \"Oriel Grisbarrow is the finance lead at Kilncrest.\"\n---\n\nOriel Grisbarrow is the finance lead at Kilncrest.\n"
+    },
+    {
+      "slug": "companies/juniperloft",
+      "content": "---\ntitle: Juniperloft\ntype: company\nsummary: \"A company we met once at a trade show.\"\n---\n\nA company we met once at a trade show.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Remind me of Calddale's position on the proposal before our sync."
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Here is what I have."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "How many letters are in the name Bringrove?"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Okay, noted."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "where did we land on that pricing thing?"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Done."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "In the novel I'm reading, Captain Grisbarrow betrays the crew. Is that a common trope?"
+    }
+  ]
+}

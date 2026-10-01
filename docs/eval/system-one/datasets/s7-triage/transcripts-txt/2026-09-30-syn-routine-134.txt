@@ -1,0 +1,167 @@
+[user]
+My package was supposed to arrive yesterday, but the tracking page still says “In transit.” Can you help me figure out what to do?
+
+[assistant]
+Sure. Start by checking the latest scan details rather than only the delivery estimate. Please paste the recent tracking events, removing your address, phone number, order number, and any other personal information. Also include the carrier’s name if it is shown, but you can replace any names or identifying labels with generic descriptions.
+
+[user]
+Here’s the recent history:
+
+```text
+Shipment ID: [removed]
+Carrier: [removed]
+Service: Standard
+Estimated delivery: Tuesday
+Monday 02:14 — Departed regional sorting facility
+Monday 18:47 — Arrived at local distribution center
+Tuesday 07:05 — Processing at local distribution center
+Tuesday 21:30 — In transit
+Wednesday 08:10 — In transit
+```
+
+[assistant]
+That usually means the parcel is still moving through the network, but the expected date has passed without a “loaded for delivery” or “out for delivery” scan. The repeated “In transit” entries do not necessarily mean it is traveling continuously; they can also be routine status updates while the parcel waits for the next processing step.
+
+A practical sequence is:
+
+1. Check whether the tracking page lists a revised estimate.
+2. Look for a delivery-exception note, such as an address issue, weather delay, or operating delay.
+3. Confirm that the delivery address shown in your order is correct, without pasting it here.
+4. Check whether the carrier offers a “start an inquiry” or “report missing package” option.
+5. If there is no movement after one full business day, contact the seller or carrier.
+
+[user]
+The page does not show a new estimate or an exception. It has a button labeled “Get help with this shipment,” but I’m not sure whether I should use it now or wait.
+
+[assistant]
+You can use it now if the button opens a general help page or lets you request a status check. Since the original estimate has already passed, asking for clarification is reasonable. It may be better to contact the seller first if the button appears to start a formal claim, because some carriers require the sender to open the inquiry.
+
+Before submitting anything, check:
+
+- Whether the form says “delivery inquiry,” “missing shipment,” or “claim.”
+- Whether it asks for a deadline or a declaration that the parcel is lost.
+- Whether it provides a case number after submission.
+- Whether the seller’s order page has a separate support contact.
+- Whether the parcel is eligible for pickup, redirection, or a delivery hold.
+
+If it is only a chat or status-request form, there is little downside to using it now. If it asks you to declare the package lost, wait until you have checked the seller’s instructions.
+
+[user]
+I opened it, and it offers two choices: “Ask about delayed delivery” and “Report package missing.” I also found the order page, which says to contact support for deliveries more than one day late. It is now one day late. Which option should I choose?
+
+[assistant]
+Choose “Ask about delayed delivery.” The tracking still shows recent activity at the local distribution center, so “Report package missing” would be premature unless the carrier specifically instructs you to use that option after a certain number of days.
+
+You can describe the situation briefly and ask for the current estimated delivery date. Include:
+
+- The shipment or order reference, entered only in the carrier’s secure form.
+- The original estimated delivery date.
+- The latest scan date and location category, such as “local distribution center.”
+- The fact that no revised estimate or exception is displayed.
+- A request to confirm whether any action is needed from you.
+
+Avoid including payment details, passwords, or a full copy of the tracking page if the form does not require it.
+
+[user]
+The form has a 500-character limit. Could you draft something polite that fits? I want it to mention the missed estimate, the latest scan, and that no exception is shown.
+
+[assistant]
+Here is a concise draft:
+
+Hello, I’m checking on a shipment that was estimated for delivery on Tuesday but has not arrived. The latest tracking update shows it was processed at the local distribution center on Wednesday morning, followed by “In transit,” but no revised delivery estimate or exception is displayed. Could you please confirm the current status and expected delivery date, and let me know whether any action is needed from me? Thank you.
+
+This is about 380 characters, so it should fit within a 500-character limit. Add the reference number only in the form’s designated field, if one is provided.
+
+[user]
+That works. The form also asks whether I want email updates. Is it okay to select that?
+
+[assistant]
+Yes, if you would find status messages useful. Select email updates only if the form shows the correct email address and you are comfortable receiving automated notices. If the address is masked, such as “j***@example.com,” compare it with the address used for the order. You can usually turn updates off later through a link in the messages or the support page.
+
+If you prefer not to receive extra messages, leave it unchecked and save the confirmation page or case number instead. The choice generally affects notifications, not how the inquiry is handled.
+
+[user]
+I selected email updates and submitted the message. The confirmation says, “Request received,” and gives a reference code. There is no delivery estimate yet. What should I do while waiting?
+
+[assistant]
+Keep the reference code and note the submission time. You can take a screenshot or copy the confirmation into a local note, but remove the code if you share the note anywhere. Then:
+
+- Check the tracking page once or twice per day rather than repeatedly.
+- Watch for a revised estimate, an “out for delivery” scan, or a delivery exception.
+- Check the order page for any separate support response.
+- Keep an eye on the delivery area in case the parcel arrives without an immediate tracking update.
+- Avoid submitting duplicate inquiries unless the carrier tells you to.
+
+If the carrier gives a response window, use that as the next checkpoint. If it does not, contact the seller after one or two business days without movement.
+
+[user]
+The confirmation says they usually respond within 48 hours. Should I contact the seller now too, or wait until that window ends?
+
+[assistant]
+Because the seller’s page says to contact support once the delivery is more than one day late, you can contact the seller now, but it is also reasonable to wait for the carrier’s 48-hour response if you prefer fewer messages. Contacting the seller now may create a second case, while waiting keeps the inquiry in one place.
+
+A practical middle option is to send the seller a short notice that you have already opened a carrier inquiry and ask whether they need anything from you. Do not request a replacement or refund unless you actually want to pursue that; simply reporting the delay avoids unnecessary escalation.
+
+[assistant]
+[user]
+I’d rather send the seller a short notice now. Can you draft one that does not sound demanding?
+
+[assistant]
+Certainly:
+
+Hello, I’m writing because my order was estimated for delivery on Tuesday but has not arrived. The latest tracking updates show processing at the local distribution center followed by “In transit,” with no revised estimate or delivery exception. I have submitted a delayed-delivery inquiry to the carrier and was told to expect a response within 48 hours. Please let me know if you need any information from me or if there are any additional steps I should take. Thank you.
+
+Use the seller’s order reference in the subject line or account form if requested, rather than placing it in the message body unnecessarily.
+
+[assistant]
+[user]
+The seller’s form has a subject field and a separate order-number field. What should I put in each?
+
+[assistant]
+For the subject, use a short description such as:
+
+Delayed delivery — status request
+
+In the order-number field, enter the order number exactly as shown in your account. If the form has a separate shipment or tracking-number field, enter that there as well. Avoid adding extra punctuation, spaces, or explanatory text to identifier fields unless the form specifically asks for it. Keep the message body focused on the missed estimate, latest status, and carrier inquiry.
+
+[assistant]
+[user]
+I submitted it and received an automated reply saying support will respond within two business days. The carrier tracking now says “Arrived at delivery facility,” but there is still no delivery date. Does that change the message I should send?
+
+[assistant]
+You do not need to send a new message immediately. The new scan is a positive movement update, and the seller already has your report. If you receive a human reply before delivery, you can provide the new status as an update. Otherwise, wait for the carrier or seller response.
+
+For your own tracking, note the scan sequence:
+
+```text
+Tuesday — Estimated delivery date
+Wednesday — Processing at local distribution center
+Wednesday — In transit
+Thursday — Arrived at delivery facility
+```
+
+Check whether the page adds “out for delivery” or a delivery window later today. If there is still no delivery or meaningful update after the seller’s two-business-day response period, reply in the existing support thread and mention the carrier inquiry reference.
+
+[assistant]
+[user]
+The seller replied asking me to confirm whether the shipping address is correct. I checked the order page, and it matches the address I entered. How should I answer?
+
+[assistant]
+You can reply briefly without repeating the full address. For example:
+
+Hello, I checked the shipping details in my order, and the address shown there is correct. There does not appear to be an address issue. The carrier tracking now shows “Arrived at delivery facility,” but no delivery date is listed yet. I have also submitted a delayed-delivery inquiry to the carrier. Please let me know if you need any other information. Thank you.
+
+If the seller specifically needs address confirmation for a secure account form, confirm it there rather than sending the complete address in ordinary email. Since the address is correct, do not request a correction or redirect unless the carrier gives you a separate reason to do so.
+
+[assistant]
+[user]
+That reply is good. The seller also asks whether I want them to keep the case open. What should I say if I just want them to monitor it without starting anything else?
+
+[assistant]
+You can say:
+
+Please keep the case open and monitor the shipment for now. The address is correct, and the carrier’s latest update says “Arrived at delivery facility.” I would prefer to wait for the next tracking update before taking any further action. Please let me know if the status changes or if you need additional information. Thank you.
+
+This makes clear that you want the existing case left open, without requesting a replacement, refund, redirection, or formal missing-package claim. Keep the seller’s case reference and the carrier inquiry reference together so you can refer to both if another update is needed.
+
+[assistant અંત]

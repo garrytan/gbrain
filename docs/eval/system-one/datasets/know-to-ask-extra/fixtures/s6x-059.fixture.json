@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-059",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/fintan-lornmere",
+      "content": "---\ntitle: Fintan Lornmere\ntype: person\nsummary: \"Fintan Lornmere is the head of partnerships at Nimbusreach.\"\n---\n\nFintan Lornmere is the head of partnerships at Nimbusreach.\n"
+    },
+    {
+      "slug": "people/anselm-fengrove",
+      "content": "---\ntitle: Anselm Fengrove\ntype: person\nsummary: \"Anselm Fengrove is the finance lead at Marblespire.\"\n---\n\nAnselm Fengrove is the finance lead at Marblespire. Anselm wants to pause the second engineering hire until the renewal closes.\n"
+    },
+    {
+      "slug": "people/dario-lornridge",
+      "content": "---\ntitle: Dario Lornridge\ntype: person\naliases: [dario]\nsummary: \"Dario Lornridge is the operations director at Pylonvane.\"\n---\n\nDario Lornridge is the operations director at Pylonvane.\n"
+    },
+    {
+      "slug": "people/bastian-dremcombe",
+      "content": "---\ntitle: Bastian Dremcombe\ntype: person\nsummary: \"Bastian Dremcombe is the finance lead at Marblevane.\"\n---\n\nBastian Dremcombe is the finance lead at Marblevane.\n"
+    },
+    {
+      "slug": "people/linnea-tulvgrove",
+      "content": "---\ntitle: Linnea Tulvgrove\ntype: person\naliases: [linnea]\nsummary: \"A contact from a conference last spring.\"\n---\n\nA contact from a conference last spring.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "In the novel I'm reading, Captain Lornmere betrays the crew. Is that a common trope?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Done."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "anselm fengrove wants to meet again, what did we agree last time about the hiring plan?"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Here is what I have."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "Fix the typos in this line of my email to Lornridge: 'thnaks for the quick turnaround, talk soon'"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Happy to help."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "How many letters are in the name Dremcombe?"
+    }
+  ]
+}

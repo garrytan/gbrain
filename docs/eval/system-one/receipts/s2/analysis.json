@@ -1,0 +1,135 @@
+{
+  "search": {
+    "n_eval": 172,
+    "threshold": 0.98,
+    "calibrate_accuracy": 0.6612903225806451,
+    "regex_accuracy": 0.46511627906976744,
+    "jev_raw_choice_accuracy": 0.6104651162790697,
+    "on_accuracy": 0.6686046511627907,
+    "overrides": 51,
+    "overrides_helped": 41,
+    "overrides_hurt": 6,
+    "by_slice": {
+      "search:multi-session": {
+        "n": 61,
+        "regex": 47,
+        "on": 42
+      },
+      "search:temporal-reasoning": {
+        "n": 56,
+        "regex": 11,
+        "on": 46
+      },
+      "search:knowledge-update": {
+        "n": 36,
+        "regex": 3,
+        "on": 9
+      },
+      "search:relational:who_rel": {
+        "n": 8,
+        "regex": 8,
+        "on": 7
+      },
+      "search:relational:connects": {
+        "n": 11,
+        "regex": 11,
+        "on": 11
+      }
+    },
+    "on_accuracy_with_wait": {
+      "150": 0.5813953488372093,
+      "200": 0.6627906976744186,
+      "250": 0.6686046511627907,
+      "300": 0.6686046511627907,
+      "400": 0.6686046511627907
+    },
+    "late_rate": {
+      "150": 0.388268156424581,
+      "200": 0.07262569832402235,
+      "250": 0.030726256983240222,
+      "300": 0.008379888268156424,
+      "400": 0
+    },
+    "latency_ms": {
+      "p50": 142,
+      "p95": 217,
+      "p99": 292
+    }
+  },
+  "think": {
+    "n_eval": 252,
+    "threshold": 0.89,
+    "calibrate_accuracy": 0.7265625,
+    "regex_accuracy": 0.5873015873015873,
+    "jev_raw_choice_accuracy": 0.7063492063492064,
+    "on_accuracy": 0.7698412698412699,
+    "overrides": 72,
+    "overrides_helped": 55,
+    "overrides_hurt": 9,
+    "by_slice": {
+      "think:single-session-user": {
+        "n": 33,
+        "regex": 23,
+        "on": 21
+      },
+      "think:multi-session": {
+        "n": 61,
+        "regex": 48,
+        "on": 47
+      },
+      "think:single-session-preference": {
+        "n": 17,
+        "regex": 12,
+        "on": 16
+      },
+      "think:temporal-reasoning": {
+        "n": 56,
+        "regex": 9,
+        "on": 47
+      },
+      "think:knowledge-update": {
+        "n": 36,
+        "regex": 10,
+        "on": 17
+      },
+      "think:single-session-assistant": {
+        "n": 30,
+        "regex": 27,
+        "on": 27
+      },
+      "think:relational:who_rel": {
+        "n": 8,
+        "regex": 8,
+        "on": 8
+      },
+      "think:relational:connects": {
+        "n": 11,
+        "regex": 11,
+        "on": 11
+      }
+    },
+    "on_accuracy_with_wait": {
+      "150": 0.6865079365079365,
+      "200": 0.7619047619047619,
+      "250": 0.7698412698412699,
+      "300": 0.7698412698412699,
+      "400": 0.7698412698412699
+    },
+    "late_rate": {
+      "150": 0.4074803149606299,
+      "200": 0.07874015748031496,
+      "250": 0.011811023622047244,
+      "300": 0.005905511811023622,
+      "400": 0
+    },
+    "latency_ms": {
+      "p50": 146,
+      "p95": 215,
+      "p99": 270
+    }
+  },
+  "retest_choice_flips": {
+    "n": 866,
+    "flips": 7
+  }
+}

@@ -20,8 +20,11 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runMaintenanceSweep, CORPUS_INGESTED_SUFFIX } from '../src/core/sweep.ts';
 import { bankWritebackTurn } from '../src/core/context/corpus-segments.ts';
 import { gateWritebackTurn } from '../src/core/facts/writeback-gate.ts';
-import { __setChatTransportForTests, type ChatResult } from '../src/core/ai/gateway.ts';
+import { __setChatTransportForTests, configureGateway, isAvailable, resetGateway, type ChatResult } from '../src/core/ai/gateway.ts';
 import type { CapabilityReport } from '../src/core/capability.ts';
+import { detectCapabilities } from '../src/core/capability.ts';
+import { RECIPES } from '../src/core/ai/recipes/index.ts';
+import { withEnv, emptyHome } from './helpers/with-env.ts';
 
 const KEYED: CapabilityReport = {
   embeddings: { available: false },
@@ -55,6 +58,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   __setChatTransportForTests(null);
+  resetGateway();
   await engine.unsetConfig('memory.auto_writeback');
 });
 
@@ -67,6 +71,32 @@ async function bankWb(sessionId: string, turn: string): Promise<string> {
 }
 
 describe('runMaintenanceSweep — ambient-writeback turn files (OV2-11)', () => {
+  test('sweep retries a turn with a DB-plane local extraction model on a file-plane keyless install', async () => {
+    const authNames = new Set(Array.from(RECIPES.values()).flatMap((recipe) => recipe.auth_env?.required ?? []));
+    const overrides = Object.fromEntries(Array.from(authNames, (name) => [name, undefined]));
+    try {
+      await withEnv({ ...overrides, GBRAIN_HOME: emptyHome() }, async () => {
+        await engine.setConfig('memory.auto_writeback', 'salient');
+        await engine.setConfig('facts.extraction_model', 'ollama:qwen2.5-coder:14b');
+        configureGateway({ env: {} });
+        expect(detectCapabilities().extraction.available).toBe(false);
+        expect(isAvailable('chat', 'ollama:qwen2.5-coder:14b')).toBe(true);
+        __setChatTransportForTests(async (): Promise<ChatResult> => ({
+          text: JSON.stringify({ facts: [{ fact: 'Prefers a local model for private notes.', kind: 'preference', entity: null, confidence: 1, notability: 'high' }] }),
+          blocks: [], stopReason: 'end',
+          usage: { input_tokens: 1, output_tokens: 1, cache_read_tokens: 0, cache_creation_tokens: 0 },
+          model: 'ollama:qwen2.5-coder:14b', providerId: 'ollama',
+        }));
+        const file = await bankWb('sess-local-sweep', 'I prefer a local model for my private notes from now on.');
+        const result = await runMaintenanceSweep(engine, { sourceId: 'default' });
+        expect(result.corpusIngested).toBe(1);
+        expect(existsSync(join(corpusDir, file + CORPUS_INGESTED_SUFFIX))).toBe(true);
+      });
+    } finally {
+      await engine.unsetConfig('facts.extraction_model');
+    }
+  });
+
   test('gate OFF: terminal writeback_off sidecar, zero LLM, zero facts', async () => {
     let chatCalls = 0;
     __setChatTransportForTests(async (): Promise<ChatResult> => {

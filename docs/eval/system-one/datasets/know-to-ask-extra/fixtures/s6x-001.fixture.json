@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-001",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "companies/saffronvane",
+      "content": "---\ntitle: Saffronvane\ntype: company\nsummary: \"Saffronvane is a software vendor we work with.\"\n---\n\nSaffronvane is a software vendor we work with. They quoted a per-seat price with a minimum annual commitment.\n"
+    },
+    {
+      "slug": "people/verity-dremcombe",
+      "content": "---\ntitle: Verity Dremcombe\ntype: person\naliases: [verity]\nsummary: \"Verity Dremcombe is the finance lead at Saffronspire.\"\n---\n\nVerity Dremcombe is the finance lead at Saffronspire.\n"
+    },
+    {
+      "slug": "people/rasmus-quellholt",
+      "content": "---\ntitle: Rasmus Quellholt\ntype: person\nsummary: \"Rasmus Quellholt is the product lead at Pylonvane.\"\n---\n\nRasmus Quellholt is the product lead at Pylonvane. Rasmus wants the proposal revised to drop the onboarding fee.\n"
+    },
+    {
+      "slug": "companies/russetgate",
+      "content": "---\ntitle: Russetgate\ntype: company\nsummary: \"A company we met once at a trade show.\"\n---\n\nA company we met once at a trade show.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "how's saffronvane doing on pricing?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Dremcombe's train gets in at 5:40pm and the walk is 15 minutes. What time will they reach the office?"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "before I reply to rasmus, what was their position on the proposal?"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "ok cool, talk later"
+    }
+  ]
+}

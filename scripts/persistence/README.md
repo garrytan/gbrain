@@ -99,7 +99,7 @@ never a connection URL. Keep the retained directory private: its original
 the diagnostic manifest. Successful runs retain no fixtures.
 
 `persistence-validation.yml` runs the full gate on Linux x64 for both engines
-under Bun 1.3.11 and 1.3.13 and uploads every manifest. Native OS/architecture
+under Bun 1.3.11 and 1.4.2 and uploads every manifest. Native OS/architecture
 coverage is separately required by `native-locks.yml`; its configured matrix
 must not be mistaken for locally executed runtime evidence.
 

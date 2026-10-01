@@ -1,0 +1,254 @@
+{
+ "arm": "A",
+ "status": "ok",
+ "summary": "10 transcript(s) synthesized in 733.0s",
+ "triage": {
+  "threshold": 0.5,
+  "judged": 29,
+  "cache_hits": 0,
+  "unreliable": 0,
+  "deferred": 0,
+  "degraded": 0,
+  "below_threshold": 19,
+  "tokens_in": 106803,
+  "tokens_out": 7484,
+  "cost_usd": 0.144223,
+  "rescue_band": [
+   0.3,
+   0.5
+  ],
+  "rescue_checked": 5,
+  "rescue_fired": 3
+ },
+ "estimated_spend_usd": 1.3567889999999998,
+ "transcripts_processed": 10,
+ "pages_written": 20,
+ "written_slugs": [
+  "wiki/originals/ideas/2026-08-02-ci-perf-gate-pattern-15323a",
+  "wiki/personal/reflections/2026-08-02-ql-4620-regex-regression-15323a",
+  "wiki/originals/ideas/2026-08-04-driftless-pricing-strategy-e2185c",
+  "wiki/personal/reflections/2026-08-04-mira-voss-driftless-debrief-e2185c",
+  "wiki/originals/ideas/2026-08-05-fund-vs-partner-distinction-9fa016",
+  "wiki/personal/reflections/2026-08-05-lumopact-term-sheet-lessons-9fa016",
+  "wiki/originals/ideas/2026-08-06-saas-diligence-red-flag-framework-e1fb48",
+  "wiki/personal/reflections/2026-08-06-lumopact-diligence-concentration-risk-e1fb48",
+  "wiki/originals/ideas/2026-08-08-auto-draft-release-notes-from-pr-titles-4b75cb",
+  "wiki/personal/reflections/2026-08-08-lumopact-q3-signals-4b75cb",
+  "wiki/personal/reflections/2026-08-08-quartzlane-v092-release-day-4b75cb",
+  "wiki/originals/ideas/2026-08-10-intentional-endings-vs-entropy-51eea8",
+  "wiki/personal/reflections/2026-08-10-tidelamp-shutdown-51eea8",
+  "wiki/personal/reflections/2026-09-30-fernpost-term-sheet-commitment-48d477",
+  "wiki/originals/ideas/2026-09-30-import-result-as-feedback-not-verdict-818ecf",
+  "wiki/personal/reflections/2026-09-30-perfectionism-blocking-import-818ecf",
+  "wiki/originals/ideas/2026-09-30-research-cutoff-as-default-plan-f1175e",
+  "wiki/personal/reflections/2026-09-30-over-research-cutoff-tobin-lindqvist-f1175e",
+  "wiki/originals/ideas/2026-09-30-iana-zone-over-fixed-abbreviation-05fe6b",
+  "wiki/personal/reflections/2026-09-30-dst-scheduling-pacific-europe-india-05fe6b"
+ ],
+ "budget_deferred_transcripts": [],
+ "verdicts": [
+  {
+   "filePath": "2026-08-02-coding-reflection-04.txt",
+   "worth": true,
+   "score": 0.78,
+   "content_type": "mixed",
+   "rescued": null
+  },
+  {
+   "filePath": "2026-08-04-startup-ideation-03.txt",
+   "worth": true,
+   "score": 0.78,
+   "content_type": "strategy",
+   "rescued": null
+  },
+  {
+   "filePath": "2026-08-05-people-deal-02.txt",
+   "worth": true,
+   "score": 0.72,
+   "content_type": "mixed",
+   "rescued": null
+  },
+  {
+   "filePath": "2026-08-06-people-deal-04.txt",
+   "worth": true,
+   "score": 0.72,
+   "content_type": "strategy",
+   "rescued": null
+  },
+  {
+   "filePath": "2026-08-08-mixed-routine-signal-04.txt",
+   "worth": true,
+   "score": 0.38,
+   "content_type": "mixed",
+   "rescued": true
+  },
+  {
+   "filePath": "2026-08-10-emotional-processing-03.txt",
+   "worth": true,
+   "score": 0.78,
+   "content_type": "reflection",
+   "rescued": null
+  },
+  {
+   "filePath": "2026-08-11-pure-routine-01.txt",
+   "worth": false,
+   "score": 0.12,
+   "content_type": "routine",
+   "rescued": null
+  },
+  {
+   "filePath": "2026-09-30-syn-buried-002.txt",
+   "worth": false,
+   "score": 0.22,
+   "content_type": "technical",
+   "rescued": null
+  },
+  {
+   "filePath": "2026-09-30-syn-buried-008.txt",
+   "worth": false,
+   "score": 0.22,
+   "content_type": "routine",
+   "rescued": null
+  },
+  {
+   "filePath": "2026-09-30-syn-buried-018.txt",
+   "worth": false,
+   "score": 0.25,
+   "content_type": "routine",
+   "rescued": null
+  },
+  {
+   "filePath": "2026-09-30-syn-buried-019.txt",
+   "worth": false,
+   "score": 0.42,
+   "content_type": "mixed",
+   "rescued": null
+  },
+  {
+   "filePath": "2026-09-30-syn-buried-020.txt",
+   "worth": true,
+   "score": 0.32,
+   "content_type": "mixed",
+   "rescued": true
+  },
+  {
+   "filePath": "2026-09-30-syn-buried-024.txt",
+   "worth": true,
+   "score": 0.42,
+   "content_type": "mixed",
+   "rescued": true
+  },
+  {
+   "filePath": "2026-09-30-syn-buried-030.txt",
+   "worth": true,
+   "score": 0.72,
+   "content_type": "mixed",
+   "rescued": null
+  },
+  {
+   "filePath": "2026-09-30-syn-buried-033.txt",
+   "worth": false,
+   "score": 0.32,
+   "content_type": "mixed",
+   "rescued": null
+  },
+  {
+   "filePath": "2026-09-30-syn-buried-043.txt",
+   "worth": false,
+   "score": 0.18,
+   "content_type": "technical",
+   "rescued": null
+  },
+  {
+   "filePath": "2026-09-30-syn-buried-044.txt",
+   "worth": false,
+   "score": 0.25,
+   "content_type": "routine",
+   "rescued": null
+  },
+  {
+   "filePath": "2026-09-30-syn-routine-029.txt",
+   "worth": false,
+   "score": 0.08,
+   "content_type": "routine",
+   "rescued": null
+  },
+  {
+   "filePath": "2026-09-30-syn-routine-054.txt",
+   "worth": false,
+   "score": 0.15,
+   "content_type": "routine",
+   "rescued": null
+  },
+  {
+   "filePath": "2026-09-30-syn-routine-076.txt",
+   "worth": false,
+   "score": 0.18,
+   "content_type": "routine",
+   "rescued": null
+  },
+  {
+   "filePath": "2026-09-30-syn-routine-087.txt",
+   "worth": false,
+   "score": 0.12,
+   "content_type": "routine",
+   "rescued": null
+  },
+  {
+   "filePath": "2026-09-30-syn-routine-103.txt",
+   "worth": false,
+   "score": 0.12,
+   "content_type": "routine",
+   "rescued": null
+  },
+  {
+   "filePath": "2026-09-30-syn-routine-105.txt",
+   "worth": false,
+   "score": 0.12,
+   "content_type": "routine",
+   "rescued": null
+  },
+  {
+   "filePath": "2026-09-30-syn-routine-125.txt",
+   "worth": false,
+   "score": 0.08,
+   "content_type": "routine",
+   "rescued": null
+  },
+  {
+   "filePath": "2026-09-30-syn-routine-126.txt",
+   "worth": true,
+   "score": 0.62,
+   "content_type": "technical",
+   "rescued": null
+  },
+  {
+   "filePath": "2026-09-30-syn-routine-129.txt",
+   "worth": false,
+   "score": 0.15,
+   "content_type": "routine",
+   "rescued": null
+  },
+  {
+   "filePath": "2026-09-30-syn-routine-142.txt",
+   "worth": false,
+   "score": 0.15,
+   "content_type": "routine",
+   "rescued": null
+  },
+  {
+   "filePath": "2026-09-30-syn-routine-171.txt",
+   "worth": false,
+   "score": 0.18,
+   "content_type": "routine",
+   "rescued": null
+  },
+  {
+   "filePath": "2026-09-30-syn-routine-178.txt",
+   "worth": false,
+   "score": 0.15,
+   "content_type": "routine",
+   "rescued": null
+  }
+ ]
+}

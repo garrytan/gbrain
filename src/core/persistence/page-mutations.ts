@@ -169,9 +169,13 @@ export async function submitPageMutation(ctx: OperationContext,
   else if (writeThrough && root && !binding) {
     if (ctx.engine.kind === 'pglite') binding = await claimWorktree(ctx.engine, sourceId, root, undefined, undefined, { automatic: true });
     else {
-      const scope = input.operation !== 'put_page' ? 'other' : snapshot?.page.source_path ? 'file_backed' : 'put_page';
-      if (scope !== 'put_page' || await readUnboundWritePolicy(ctx.engine) !== 'database_only') {
-        throw unboundSourceError(sourceId, ctx.remote === false ? root : null, scope);
+      // #5393: the opt-in covers every page mutation whose target has no
+      // recorded canonical file; a revert is also judged on the version it writes.
+      const fileBacked = Boolean(snapshot?.page.source_path) || (input.operation === 'revert_version' && snapshot
+        && (await ctx.engine.executeRaw<{ source_path: string | null }>('SELECT source_path FROM page_versions WHERE id=$1 AND page_id=$2',
+          [p.version_id, snapshot.page.id]))[0]?.source_path);
+      if (fileBacked || await readUnboundWritePolicy(ctx.engine) !== 'database_only') {
+        throw unboundSourceError(sourceId, ctx.remote === false ? root : null, fileBacked ? 'file_backed' : 'database_only_eligible');
       }
       authority.databaseOnlyReason = 'unbound_source';
     }

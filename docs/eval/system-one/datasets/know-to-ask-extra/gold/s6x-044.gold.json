@@ -1,0 +1,23 @@
+{
+  "fixture_id": "s6x-044",
+  "turns": {
+    "1": {
+      "should_retrieve": true,
+      "gold_slugs": [
+        "companies/tidalyard"
+      ]
+    },
+    "3": {
+      "should_retrieve": false
+    },
+    "5": {
+      "should_retrieve": true,
+      "gold_slugs": [
+        "people/calder-pellbarrow"
+      ]
+    },
+    "7": {
+      "should_retrieve": false
+    }
+  }
+}

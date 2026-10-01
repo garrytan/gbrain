@@ -1,0 +1,166 @@
+[user]
+My printer is showing as offline on my laptop, and one document has been stuck in the queue for about ten minutes. Can you walk me through fixing it?
+
+[assistant]
+Sure. We can first cancel the stuck document, then check the printer connection and add it again if necessary. Are you using Windows or macOS?
+
+[user]
+Windows 11. The printer is connected to my home Wi-Fi, and the laptop is on the same network. I already turned the printer off and back on, but the queue still says “Printing.”
+
+[assistant]
+Let’s clear the job from the normal Windows interface first.
+
+1. Press `Windows + I` to open Settings.
+2. Select **Bluetooth & devices**.
+3. Select **Printers & scanners**.
+4. Choose the affected printer.
+5. Select **Open print queue**.
+6. In the queue window, select the stuck document, click the three-dot menu, and choose **Cancel**.
+7. If there is an option for **Cancel all**, use that only if you do not need any other queued documents.
+
+Wait about 30 seconds after canceling. Does the document disappear, or does it remain listed as “Deleting” or “Printing”?
+
+[user]
+It stays there as “Deleting.” The queue window has been open for a minute, and the printer itself is idle. There are no other documents listed.
+
+[assistant]
+That usually means the Print Spooler service has not released the job. We can restart that service, but first close the print queue window.
+
+1. Press `Windows + R`.
+2. Enter `services.msc`, then press Enter.
+3. Find **Print Spooler** in the list.
+4. Right-click it and select **Restart**.
+5. Reopen **Settings > Bluetooth & devices > Printers & scanners**, open the queue, and check whether it is empty.
+
+If the document is still present after restarting the service, tell me what status it shows.
+
+[user]
+I restarted Print Spooler. The document still appears, now as “Error - Printing.” The printer page also has a message that says “Driver is unavailable.”
+
+[assistant]
+The queue is probably clearable now, but the driver issue may prevent Windows from communicating correctly. Let’s verify whether the job is still listed and then remove the printer so Windows can install it cleanly.
+
+First, open the queue and try **Printer > Cancel All Documents**. If it disappears, continue:
+
+1. Go to **Settings > Bluetooth & devices > Printers & scanners**.
+2. Select the printer.
+3. Click **Remove** and confirm.
+4. Restart the laptop.
+5. Make sure the printer is powered on and connected to Wi-Fi.
+6. Return to **Printers & scanners** and click **Add device**.
+7. Wait for the printer to appear, then select **Add device** beside it.
+
+If Windows does not find it, we can add it by IP address. Before removing it, do you have any other printers installed that you need to keep?
+
+[user]
+No, there are no other printers. I canceled the document, but it still shows “Error - Printing.” I’m okay removing this printer. The printer’s network page shows an IP address of 192.168.1.47.
+
+[assistant]
+Use the following cleanup sequence. It removes the printer and any remaining spool files before reinstalling it.
+
+1. Open **Settings > Bluetooth & devices > Printers & scanners**.
+2. Select the printer and choose **Remove**.
+3. Press `Windows + R`, type `services.msc`, and press Enter.
+4. Right-click **Print Spooler** and select **Stop**.
+5. Press `Windows + R`, paste this path, and press Enter:
+
+`%WINDIR%\System32\spool\PRINTERS`
+
+6. Approve the administrator prompt if one appears.
+7. Delete the files inside that folder, but do not delete the folder itself.
+8. Return to **Services**, right-click **Print Spooler**, and select **Start**.
+9. Restart the laptop.
+
+After restarting, try **Add device** first. If automatic discovery does not work, use the manual option and add a TCP/IP printer at `192.168.1.47`.
+
+[user]
+I followed that. The PRINTERS folder was empty after I stopped the service, so there was nothing to delete. I restarted the laptop, and the printer did not appear when I clicked Add device. I chose the manual option, but I’m not sure which type to select.
+
+[assistant]
+Choose **Add a printer using an IP address or hostname**, then select **Next**.
+
+Use these values:
+
+- **Device type:** TCP/IP Device
+- **Hostname or IP address:** `192.168.1.47`
+- **Query the printer and automatically select the driver:** leave this checked initially
+- **Port name:** you can leave the automatically generated value
+
+Select **Next** and wait for Windows to query the printer. If it reports that the device cannot be found, check that the laptop still has an address beginning with `192.168.1.` and that the printer’s displayed address has not changed.
+
+What message do you get after selecting **Next**?
+
+[user]
+It says, “The device could not be found.” The laptop’s Wi-Fi details show an address of 192.168.1.23, and the printer still shows 192.168.1.47. I can open the printer’s web page by entering that address in a browser.
+
+[assistant]
+Since the web page opens, the laptop can reach the printer, so the automatic driver query is likely the part failing. Try adding the port without querying the driver automatically.
+
+1. Open **Settings > Bluetooth & devices > Printers & scanners**.
+2. Select **Add device**, then **Add manually**.
+3. Choose **Add a printer using an IP address or hostname**.
+4. Set **Device type** to **TCP/IP Device**.
+5. Enter `192.168.1.47`.
+6. Clear **Query the printer and automatically select the driver**.
+7. Select **Next**.
+
+Windows should create the port and then ask for a driver. If it displays a manufacturer list, choose the matching printer family if available. Otherwise select **Have Disk** only if you already downloaded a driver package.
+
+Tell me what appears on the driver selection page.
+
+[user]
+That worked differently. It created the port, and now I’m on a page titled “Install the printer driver.” There’s a list of manufacturers on the left and printer models on the right. I see a matching manufacturer, but the exact model is not listed.
+
+[assistant]
+Use the matching manufacturer option and check whether Windows can retrieve a broader driver list.
+
+1. Select the matching manufacturer.
+2. Click **Windows Update** near the lower-right area of the window.
+3. Wait for the list to refresh. This can take several minutes.
+4. Search the model list again for the exact model or a nearby model in the same series.
+5. If the exact model appears, select it and click **Next**.
+6. If it still does not appear, choose a model labeled **Class Driver**, **Universal**, or **Basic**, if one is available for that manufacturer and series.
+
+Avoid selecting a different manufacturer. If you use a generic driver, basic printing usually works, but advanced features such as duplex settings or ink-level reporting may be unavailable.
+
+[assistant]
+If the printer model still does not appear after the driver list refreshes, cancel the wizard and download the Windows 11 driver from the printer manufacturer’s support page using the exact model number shown on the printer. Run the downloaded installer, select network or wireless setup, and point it to `192.168.1.47` if the installer asks for an address.
+
+If you continue with a generic driver, give the printer a simple name such as `Home Printer`, leave printer sharing disabled, and print a test page. In the test page’s **Printer Properties**, confirm that the selected port is the TCP/IP port associated with `192.168.1.47`, not an old WSD port.
+
+[user]
+I clicked Windows Update and waited. The exact model appeared, so I selected it and finished the wizard. The printer now shows as ready, and I’m about to print a test page. Is there anything I should check first?
+
+[assistant]
+Before printing, open the printer’s settings and check these items:
+
+1. **Settings > Bluetooth & devices > Printers & scanners**.
+2. Select the newly added printer.
+3. Open **Printer properties**.
+4. On the **Ports** tab, confirm the selected port points to `192.168.1.47`.
+5. On the **Advanced** tab, confirm the exact driver model is selected.
+6. On the **General** tab, select **Print Test Page**.
+
+If the test page prints, open the queue afterward and confirm it is empty. You can then print the original document again. If the test page remains stuck, cancel it and check whether the printer’s IP address changed; a changed address would require updating the port or adding the printer again.
+
+[assistant]
+Also check **Printing preferences** before sending the original document:
+
+- Paper size: the size loaded in the tray
+- Orientation: portrait or landscape as needed
+- Color: color or grayscale as needed
+- Duplex: off unless both sides are wanted
+- Scale: actual size or fit to page, depending on the document
+
+For routine use, leave the printer selected as the default only if you want Windows applications to use it automatically. Otherwise, choose it from the print dialog each time.
+
+[assistant]
+If the test page does not print, here is a quick status check:
+
+1. Open the printer queue and make sure **Pause Printing** and **Use Printer Offline** are not selected.
+2. Confirm the printer display shows it is connected to Wi-Fi.
+3. In **Printer Properties > Ports**, select **Configure Port** and verify the IP address is `192.168.1.47`.
+4. Open a browser and confirm the printer’s web page still loads.
+5. Restart **Print Spooler** once more only if a new test page becomes stuck.
+
+If the test page prints normally, the queue problem and the driver problem have both been resolved.

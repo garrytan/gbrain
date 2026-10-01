@@ -1,0 +1,34 @@
+{
+  "calibration": "local:1",
+  "action_precision_lb": 0.9103331450047064,
+  "families": 39,
+  "correct_families": 39,
+  "actions": 39,
+  "status": "qualified",
+  "required_n": 35,
+  "slices": {
+    "windows:5-8": {
+      "families": 14,
+      "correct": 14,
+      "lb": 0.7846891945970195
+    },
+    "windows:9-16": {
+      "families": 17,
+      "correct": 17,
+      "lb": 0.8156818626193444
+    },
+    "windows:1-4": {
+      "families": 6,
+      "correct": 6,
+      "lb": 0.6096657083436264
+    },
+    "windows:17+": {
+      "families": 2,
+      "correct": 2,
+      "lb": 0.34238022395464934
+    }
+  },
+  "min_action_precision": 0.9,
+  "policy_fingerprint": "4d1429790e67d15d",
+  "next": "gbrain decide enable triage"
+}

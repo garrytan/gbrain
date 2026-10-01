@@ -1,0 +1,246 @@
+[user]
+I have a short list of temperatures and distances and need them converted between metric and imperial. Can you help me check the arithmetic?
+
+[assistant]
+Yes. Send the values, specify the direction for each one, and I’ll show the formulas and rounded results. For temperatures, I can convert Celsius to Fahrenheit or Fahrenheit to Celsius. For distances, I can convert kilometers to miles or miles to kilometers.
+
+[user]
+Here’s the first batch:
+
+- 18 °C to °F
+- 72 °F to °C
+- 4.5 km to miles
+- 2.75 miles to km
+- -5 °C to °F
+- 86 °F to °C
+
+Please give results to two decimal places.
+
+[assistant]
+Using:
+- °F = (°C × 9/5) + 32
+- °C = (°F − 32) × 5/9
+- miles = kilometers × 0.6213711922
+- kilometers = miles × 1.609344
+
+Results:
+- 18 °C = 64.40 °F
+- 72 °F = 22.22 °C
+- 4.5 km = 2.80 miles
+- 2.75 miles = 4.43 km
+- -5 °C = 23.00 °F
+- 86 °F = 30.00 °C
+
+[user]
+Can you show the intermediate arithmetic for each rather than only the final values?
+
+[assistant]
+Certainly:
+
+1. 18 °C to °F  
+   (18 × 9/5) + 32  
+   = 32.4 + 32  
+   = 64.40 °F
+
+2. 72 °F to °C  
+   (72 − 32) × 5/9  
+   = 40 × 5/9  
+   = 200/9  
+   = 22.22 °C
+
+3. 4.5 km to miles  
+   4.5 × 0.6213711922  
+   = 2.7961703649  
+   = 2.80 miles
+
+4. 2.75 miles to km  
+   2.75 × 1.609344  
+   = 4.425696  
+   = 4.43 km
+
+5. -5 °C to °F  
+   (-5 × 9/5) + 32  
+   = -9 + 32  
+   = 23.00 °F
+
+6. 86 °F to °C  
+   (86 − 32) × 5/9  
+   = 54 × 5/9  
+   = 270/9  
+   = 30.00 °C
+
+[user]
+I also have these values:
+
+- 0 °C
+- 37 °C
+- 100 °C
+- 32 °F
+- 212 °F
+- 1 km
+- 10 km
+- 1 mile
+
+Convert each to the other unit, again to two decimal places.
+
+[assistant]
+Here are the conversions:
+
+Temperatures:
+- 0 °C = 32.00 °F
+- 37 °C = 98.60 °F
+- 100 °C = 212.00 °F
+- 32 °F = 0.00 °C
+- 212 °F = 100.00 °C
+
+Distances:
+- 1 km = 0.62 miles
+- 10 km = 6.21 miles
+- 1 mile = 1.61 km
+
+[user]
+I want to verify those with a shell command. Could you give me a small Python one-liner or script that prints the conversions and uses two decimal places?
+
+[assistant]
+A short Python script is clearer for a mixed list:
+
+```python
+temps_c = [0, 37, 100]
+temps_f = [32, 212]
+dist_km = [1, 10]
+dist_mi = [1]
+
+for c in temps_c:
+    print(f"{c:.2f} °C = {(c * 9/5 + 32):.2f} °F")
+
+for f in temps_f:
+    print(f"{f:.2f} °F = {((f - 32) * 5/9):.2f} °C")
+
+for km in dist_km:
+    print(f"{km:.2f} km = {(km * 0.6213711922):.2f} miles")
+
+for mi in dist_mi:
+    print(f"{mi:.2f} miles = {(mi * 1.609344):.2f} km")
+```
+
+Save it as `convert_units.py`, then run:
+
+```sh
+python3 convert_units.py
+```
+
+Expected output:
+
+```text
+0.00 °C = 32.00 °F
+37.00 °C = 98.60 °F
+100.00 °C = 212.00 °F
+32.00 °F = 0.00 °C
+212.00 °F = 100.00 °C
+1.00 km = 0.62 miles
+10.00 km = 6.21 miles
+1.00 miles = 1.61 km
+```
+
+The distance factors used are 0.6213711922 miles per kilometer and 1.609344 kilometers per mile.
+
+[user]
+Could you make it accept values from the command line, such as `python3 convert_units.py C 18` or `python3 convert_units.py mi 2.75`?
+
+[assistant]
+Here is a command-line version that accepts `C`, `F`, `km`, or `mi`:
+
+```python
+#!/usr/bin/env python3
+import sys
+
+if len(sys.argv) != 3:
+    print(f"Usage: {sys.argv[0]} C|F|km|mi value")
+    raise SystemExit(2)
+
+unit = sys.argv[1].lower()
+try:
+    value = float(sys.argv[2])
+except ValueError:
+    print("The value must be numeric.")
+    raise SystemExit(2)
+
+if unit == "c":
+    result = value * 9 / 5 + 32
+    print(f"{value:.2f} °C = {result:.2f} °F")
+elif unit == "f":
+    result = (value - 32) * 5 / 9
+    print(f"{value:.2f} °F = {result:.2f} °C")
+elif unit == "km":
+    result = value * 0.6213711922
+    print(f"{value:.2f} km = {result:.2f} miles")
+elif unit == "mi":
+    result = value * 1.609344
+    print(f"{value:.2f} miles = {result:.2f} km")
+else:
+    print("Unit must be C, F, km, or mi.")
+    raise SystemExit(2)
+```
+
+Example commands:
+
+```sh
+$ python3 convert_units.py C 18
+18.00 °C = 64.40 °F
+
+$ python3 convert_units.py mi 2.75
+2.75 miles = 4.43 km
+
+$ python3 convert_units.py F 72
+72.00 °F = 22.22 °C
+
+$ python3 convert_units.py km 4.5
+4.50 km = 2.80 miles
+```
+
+For shell scripts, quote the degree symbol only if your terminal or file encoding causes display problems; the numeric calculations do not depend on it.
+
+[user]
+I tried it and got this output:
+
+```text
+$ python3 convert_units.py C 18
+18.00 °C = 64.40 °F
+$ python3 convert_units.py mi 2.75
+2.75 miles = 4.43 km
+$ python3 convert_units.py km 4.5
+4.50 km = 2.80 miles
+```
+
+That matches my calculator. I have one more mixed list to check.
+
+[assistant]
+Paste the remaining values and indicate the source unit for each item. I’ll calculate them with the same conversion factors and round only the displayed results to two decimal places.
+
+[user]
+Here it is:
+
+- 23.5 °C to °F
+- 41 °F to °C
+- 12.8 km to miles
+- 7.2 miles to km
+- -40 °C to °F
+- -40 °F to °C
+- 305 K to °C
+- 15 km to miles
+
+I know Kelvin was not in the original script, so please handle that one separately.
+
+[assistant]
+Here are the calculations:
+
+- 23.5 °C to °F: (23.5 × 9/5) + 32 = 42.3 + 32 = 74.30 °F
+- 41 °F to °C: (41 − 32) × 5/9 = 9 × 5/9 = 5.00 °C
+- 12.8 km to miles: 12.8 × 0.6213711922 = 7.95355126016 = 7.95 miles
+- 7.2 miles to km: 7.2 × 1.609344 = 11.5872768 = 11.59 km
+- -40 °C to °F: (-40 × 9/5) + 32 = -72 + 32 = -40.00 °F
+- -40 °F to °C: (-40 − 32) × 5/9 = -72 × 5/9 = -40.00 °C
+- 305 K to °C: 305 − 273.15 = 31.85 °C
+- 15 km to miles: 15 × 0.6213711922 = 9.320567883 = 9.32 miles
+
+For Kelvin, the conversion is °C = K − 273.15. Kelvin is an absolute temperature scale, so it is written as K rather than °K.

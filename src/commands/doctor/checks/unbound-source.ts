@@ -13,7 +13,8 @@ export async function checkUnboundSource(engine: BrainEngine): Promise<Check> {
   try {
     const rows = await engine.executeRaw<{ source_id: string; pages: number; bound: boolean; local_path: string | null }>(
       `SELECT p.source_id,COUNT(*)::int AS pages,
-        EXISTS(SELECT 1 FROM persistence_source_bindings b WHERE b.source_id=p.source_id) AS bound,
+        EXISTS(SELECT 1 FROM persistence_source_bindings b JOIN sources s ON s.id=b.source_id AND s.incarnation=b.source_incarnation
+          WHERE b.source_id=p.source_id) AS bound,
         COALESCE((SELECT s.local_path FROM sources s WHERE s.id=p.source_id),
           CASE WHEN p.source_id='default' THEN (SELECT c.value FROM config c WHERE c.key='sync.repo_path') END) AS local_path
        FROM pages p WHERE p.database_only_reason='unbound_source' AND p.deleted_at IS NULL

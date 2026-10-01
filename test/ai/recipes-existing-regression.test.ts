@@ -191,7 +191,11 @@ describe('IRON RULE: existing 9 recipes survive the v0.32 resolveAuth refactor',
     const overrides = listRecipes().filter(
       r => r.implementation === 'openai-compatible' && r.resolveAuth,
     );
-    expect(overrides.map(r => r.id).sort()).toEqual(['azure-openai']);
+    // typesafe (System One) is reviewed: plain `Authorization: Bearer` from
+    // TYPESAFE_API_KEY or its JEV_TYPESAFE_API_KEY alias, no default_headers,
+    // and a new recipe (no back-compat surface); test/ai/typesafe-reranker.test.ts
+    // pins the single Bearer header.
+    expect(overrides.map(r => r.id).sort()).toEqual(['azure-openai', 'typesafe']);
   });
 });
 

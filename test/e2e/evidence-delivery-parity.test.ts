@@ -1,13 +1,15 @@
 /**
  * Evidence delivery engine parity (PGLite vs Postgres) and product-path
  * parity (plan amendment 8 / E3):
- *   - the off-path golden holds on Postgres too (byte-identical to the
- *     pre-feature release fixture);
+ *   - the off-path golden holds on Postgres too (a config-level chunk unit is
+ *     byte-identical to the pre-feature release fixture);
  *   - getChunkWindows returns the same windows, authorization and seal
  *     decisions on both engines;
  *   - for the same ordered hits, `query`/`search` and `assemble_evidence`
  *     produce the same evidence fingerprint, and both engines deliver the
- *     same text for every unit.
+ *     same text for every unit;
+ *   - the implied `auto` default (return_unit omitted) delivers exactly what
+ *     `assemble_evidence` with `auto` delivers for the same hits.
  *
  * Postgres arm runs when DATABASE_URL is set.
  */
@@ -59,9 +61,39 @@ afterAll(async () => {
 describe('evidence delivery parity', () => {
   for (const backend of backends) {
     test(`off-path output is byte-identical to the pre-feature release (${backend})`, async () => {
+      const engine = engines[backend]!;
       const want = JSON.parse(readFileSync(FIXTURE, 'utf8')) as Record<string, string>;
-      const got = await captureOffPath(engines[backend]!);
-      for (const key of Object.keys(want)) expect(`${key}: ${got[key]}`).toBe(`${key}: ${want[key]}`);
+      await engine.setConfig('search.return_unit', 'chunk');
+      await engine.setConfig('think.return_unit', 'chunk');
+      try {
+        const got = await captureOffPath(engine);
+        for (const key of Object.keys(want)) expect(`${key}: ${got[key]}`).toBe(`${key}: ${want[key]}`);
+      } finally {
+        await engine.executeRaw(`DELETE FROM config WHERE key IN ('search.return_unit', 'think.return_unit')`);
+      }
+    }, 120_000);
+
+    test(`the implied auto default matches assemble_evidence auto for the same hits (${backend})`, async () => {
+      const engine = engines[backend]!;
+      let expanded = 0;
+      for (const remote of [false, true]) {
+        for (const query of ['ocelot', 'ocelot renewal roadmap']) {
+          const hits = await op('search').handler(ctxOf(engine, remote), { query, return_unit: 'chunk' }) as SearchResult[];
+          const viaDefault = await op('search').handler(ctxOf(engine, remote), { query }) as SearchResult[];
+          const viaAssemble = await op('assemble_evidence').handler(ctxOf(engine, remote), {
+            hits: hits.map(h => ({ source_id: h.source_id, slug: h.slug, chunk_id: h.chunk_id })), return_unit: 'auto',
+          }) as { results: SearchResult[] };
+          expect(evidenceFingerprint(viaAssemble.results)).toBe(evidenceFingerprint(viaDefault));
+          const chat = viaDefault.filter(r => r.slug === 'chat/session-a');
+          for (const r of chat) {
+            const [page] = await engine.executeRaw<{ compiled_truth: string; timeline: string }>('SELECT compiled_truth, timeline FROM pages WHERE id = $1', [r.page_id]);
+            expect(r.delivered).toMatchObject({ unit: 'page', reason: 'conversation_slug' });
+            expect(r.chunk_text).toBe(pageEvidenceText(page, true).text.trimEnd());
+            expanded++;
+          }
+        }
+      }
+      expect(expanded).toBeGreaterThan(0);
     }, 120_000);
 
     test(`page evidence is byte-identical to the stored body minus frontmatter and protected content (${backend})`, async () => {
@@ -102,7 +134,7 @@ describe('evidence delivery parity', () => {
     test('both engines deliver the same windows and the same text for every unit', async () => {
       const [a, b] = [engines.pglite!, engines.postgres!];
       const textOf = (rows: SearchResult[]) => rows.map(r => [r.slug, r.chunk_text, r.delivered?.unit, r.delivered?.tokens, r.delivered?.truncated]);
-      for (const unit of UNITS) {
+      for (const unit of [...UNITS, undefined]) {
         const ra = await op('search').handler(ctxOf(a), { query: 'ocelot', return_unit: unit, token_budget: 2500 }) as SearchResult[];
         const rb = await op('search').handler(ctxOf(b), { query: 'ocelot', return_unit: unit, token_budget: 2500 }) as SearchResult[];
         expect(textOf(rb)).toEqual(textOf(ra));

@@ -201,6 +201,40 @@ export const alternativeProvidersEntry: DoctorEntry = {
   run: runAlternativeProviders,
 };
 
+async function runEmbeddingQueryPrefix(ctx: DoctorContext): Promise<Check[]> {
+  const engine = connectedEngine(ctx);
+  const checks: Check[] = [];
+  // #5691 / #3783: suggest (never apply) the query instruction a model family
+  // documents. Instruction-style models retrieve measurably worse without it.
+  ctx.progress.heartbeat('embedding_query_prefix');
+  try {
+    const { getEmbeddingModel } = await import('../../../core/ai/gateway.ts');
+    const { loadEmbeddingQueryPrefix, suggestedQueryPrefix, shellQuoteConfigValue } = await import('../../../core/search/query-prefix.ts');
+    const model = getEmbeddingModel() || '';
+    const suggestion = suggestedQueryPrefix(model);
+    if (suggestion && !(await loadEmbeddingQueryPrefix(engine))) {
+      const command = `gbrain config set embedding_query_prefix ${shellQuoteConfigValue(suggestion.value)}`;
+      checks.push({
+        name: 'embedding_query_prefix',
+        status: 'warn',
+        message: `Embedding model ${model} is a ${suggestion.family} model, whose model card asks for a query instruction; `
+          + `none is set, so query embeddings miss it. Set the documented value: ${command} . `
+          + 'It applies to query embeddings only; stored document vectors are not re-embedded. '
+          + 'It takes effect on the next CLI or MCP query, without restarting a running server. '
+          + 'Remove it with: gbrain config unset embedding_query_prefix . See docs/guides/search-modes.md#query-instruction-prefix.',
+        details: { model, family: suggestion.family, value: suggestion.value, command },
+      });
+    }
+  } catch { /* gateway not configured — no advisory */ }
+  return checks;
+}
+
+export const embeddingQueryPrefixEntry: DoctorEntry = {
+  name: 'embedding_query_prefix',
+  emits: ['embedding_query_prefix'],
+  run: runEmbeddingQueryPrefix,
+};
+
 async function runEmbeddingColumnRegistry(ctx: DoctorContext): Promise<Check[]> {
   const { progress } = ctx;
   const engine = connectedEngine(ctx);

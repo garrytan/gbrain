@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-079",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/corin-fenmere",
+      "content": "---\ntitle: Corin Fenmere\ntype: person\naliases: [corin]\nsummary: \"Corin Fenmere is the head of partnerships at Juniperloft.\"\n---\n\nCorin Fenmere is the head of partnerships at Juniperloft.\n"
+    },
+    {
+      "slug": "people/florian-quellcombe",
+      "content": "---\ntitle: Florian Quellcombe\ntype: person\nsummary: \"Florian Quellcombe is the procurement lead at Russetmoor.\"\n---\n\nFlorian Quellcombe is the procurement lead at Russetmoor.\n"
+    },
+    {
+      "slug": "companies/quartzloft",
+      "content": "---\ntitle: Quartzloft\ntype: company\nsummary: \"Quartzloft is the bookkeeping vendor we picked.\"\n---\n\nQuartzloft is the bookkeeping vendor we picked. The integration slipped because their API still lacks webhooks.\n"
+    },
+    {
+      "slug": "people/eamon-dremmere",
+      "content": "---\ntitle: Eamon Dremmere\ntype: person\naliases: [eamon]\nsummary: \"Eamon Dremmere is the head of partnerships at Pylonmoor.\"\n---\n\nEamon Dremmere is the head of partnerships at Pylonmoor.\n"
+    },
+    {
+      "slug": "companies/nimbusvane",
+      "content": "---\ntitle: Nimbusvane\ntype: company\nsummary: \"A company we met once at a trade show.\"\n---\n\nA company we met once at a trade show.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Fenmere's train gets in at 5:40pm and the walk is 15 minutes. What time will they reach the office?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "In the novel I'm reading, Captain Quellcombe betrays the crew. Is that a common trope?"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Happy to help."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "when is the bookkeeping service we signed with closing the books this month?"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "How do you spell Dremmere in the NATO phonetic alphabet?"
+    }
+  ]
+}

@@ -52,7 +52,8 @@ import { logBatchRetry as auditLogBatchRetry, logBatchExhausted as auditLogBatch
 import type {
   DomainBankSampleOpts, CorpusSampleOpts, DomainBankRow,
 } from './types.ts';
-import { DREAM_VERDICT_TTL_SECONDS, MAX_SEARCH_LIMIT, clampSearchLimit } from './engine.ts';
+import { DREAM_VERDICT_TTL_SECONDS, clampSearchLimit } from './engine.ts';
+import { searchLimitCap } from './search/eval-pool-depth.ts';
 import { executeRawJsonb, type SqlValue } from './sql-query.ts';
 import { sanitizeForJsonb, sanitizeText, buildLinkRows, buildTimelineRows } from './batch-rows.ts';
 import { runMigrations } from './migrate.ts';
@@ -890,22 +891,22 @@ export class PostgresEngine implements BrainEngine {
   // list_pages etc. see zero breaking changes. A2 two-pass (Layer 7)
   // consumes searchKeywordChunks for the raw chunk-grain primitive.
   async searchKeyword(query: string, opts?: SearchOpts): Promise<SearchResult[]> {
-    const limit = clampSearchLimit(opts?.limit);
+    const limit = clampSearchLimit(opts?.limit, 20, searchLimitCap());
     const offset = opts?.offset || 0;
     const type = opts?.type;
     const excludeSlugs = opts?.exclude_slugs;
     const language = opts?.language;
     const symbolKind = opts?.symbolKind;
 
-    if (opts?.limit && opts.limit > MAX_SEARCH_LIMIT) {
-      console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${MAX_SEARCH_LIMIT}`);
+    if (opts?.limit && opts.limit > searchLimitCap()) {
+      console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${searchLimitCap()}`);
     }
 
     const detailLow = opts?.detail === 'low';
     // Fetch headroom for dedup: if we only fetch `limit` chunks, a cluster of
     // co-occurring terms in one page can eat the entire result set and we'd
     // ship < limit pages. 3x gives dedup enough to pick top N distinct pages.
-    const innerLimit = Math.min(limit * 3, MAX_SEARCH_LIMIT * 3);
+    const innerLimit = Math.min(limit * 3, searchLimitCap() * 3);
 
     // Source-aware ranking (v0.22): boost curated content (originals/,
     // concepts/, writing/) and dampen bulk content (chat/, daily/, media/x/)
@@ -1104,12 +1105,12 @@ export class PostgresEngine implements BrainEngine {
     // meaning; a code-scoped query gets no title candidates rather than
     // rows that silently violate the caller's filter.
     if (opts?.language || opts?.symbolKind) return [];
-    const limit = clampSearchLimit(opts?.limit);
+    const limit = clampSearchLimit(opts?.limit, 20, searchLimitCap());
     const offset = opts?.offset || 0;
     const detailLow = opts?.detail === 'low';
 
-    if (opts?.limit && opts.limit > MAX_SEARCH_LIMIT) {
-      console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${MAX_SEARCH_LIMIT}`);
+    if (opts?.limit && opts.limit > searchLimitCap()) {
+      console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${searchLimitCap()}`);
     }
 
     const boostMap = opts?.source_boosts ?? resolveBoostMap();
@@ -1248,7 +1249,7 @@ export class PostgresEngine implements BrainEngine {
    * contract). This is intentionally a narrow internal knob.
    */
   async searchKeywordChunks(query: string, opts?: SearchOpts): Promise<SearchResult[]> {
-    const limit = clampSearchLimit(opts?.limit);
+    const limit = clampSearchLimit(opts?.limit, 20, searchLimitCap());
     const offset = opts?.offset || 0;
     const type = opts?.type;
     const excludeSlugs = opts?.exclude_slugs;
@@ -1256,8 +1257,8 @@ export class PostgresEngine implements BrainEngine {
     const language = opts?.language;
     const symbolKind = opts?.symbolKind;
 
-    if (opts?.limit && opts.limit > MAX_SEARCH_LIMIT) {
-      console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${MAX_SEARCH_LIMIT}`);
+    if (opts?.limit && opts.limit > searchLimitCap()) {
+      console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${searchLimitCap()}`);
     }
 
     // Source-aware ranking applies here too — searchKeywordChunks is the
@@ -1406,7 +1407,7 @@ export class PostgresEngine implements BrainEngine {
   }
 
   async searchVector(embedding: Float32Array, opts?: SearchOpts): Promise<SearchResult[]> {
-    const limit = clampSearchLimit(opts?.limit);
+    const limit = clampSearchLimit(opts?.limit, 20, searchLimitCap());
     const offset = opts?.offset || 0;
     const type = opts?.type;
     const excludeSlugs = opts?.exclude_slugs;
@@ -1414,8 +1415,8 @@ export class PostgresEngine implements BrainEngine {
     const language = opts?.language;
     const symbolKind = opts?.symbolKind;
 
-    if (opts?.limit && opts.limit > MAX_SEARCH_LIMIT) {
-      console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${MAX_SEARCH_LIMIT}`);
+    if (opts?.limit && opts.limit > searchLimitCap()) {
+      console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${searchLimitCap()}`);
     }
 
     const vecStr = '[' + Array.from(embedding).join(',') + ']';
@@ -1801,7 +1802,7 @@ export class PostgresEngine implements BrainEngine {
     return chunksImpl.deleteChunks(this.engineSql, slug, opts);
   }
 
-  async countStalePagesForExtraction(opts?: { sourceId?: string; versionTs?: string }): Promise<number> {
+  async countStalePagesForExtraction(opts?: { sourceId?: string; versionTs?: string; attendance?: 'exclude' | 'blocked' }): Promise<number> {
     return this.withScopedReadTransaction(undefined, opts?.sourceId, tx => pagesImpl.countStalePagesForExtraction(scopedRead(this.engineSqlOn(tx)), opts));
   }
 
@@ -1816,6 +1817,10 @@ export class PostgresEngine implements BrainEngine {
 
   async markPagesExtractedBatch(refs: Array<{ slug: string; source_id: string; extractedAt?: string }>, defaultExtractedAt: string): Promise<number> {
     return pagesImpl.markPagesExtractedBatch(this.engineSql, refs, defaultExtractedAt);
+  }
+
+  async markPagesAttendanceBlocked(refs: Array<{ slug: string; source_id: string; revision: string }>): Promise<number> {
+    return pagesImpl.markPagesAttendanceBlocked(this.engineSql, refs);
   }
 
   // Links

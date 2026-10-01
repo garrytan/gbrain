@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-111",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "companies/emberspire",
+      "content": "---\ntitle: Emberspire\ntype: company\nsummary: \"Emberspire is the bookkeeping vendor we picked.\"\n---\n\nEmberspire is the bookkeeping vendor we picked. They quoted a per-seat price with a minimum annual commitment.\n"
+    },
+    {
+      "slug": "people/teodor-fenbrook",
+      "content": "---\ntitle: Teodor Fenbrook\ntype: person\nsummary: \"Teodor Fenbrook is the finance lead at Wanderreach.\"\n---\n\nTeodor Fenbrook is the finance lead at Wanderreach.\n"
+    },
+    {
+      "slug": "people/joaquin-fendale",
+      "content": "---\ntitle: Joaquin Fendale\ntype: person\nsummary: \"Joaquin Fendale is the product lead at Nimbusreach.\"\n---\n\nJoaquin Fendale is the product lead at Nimbusreach.\n"
+    },
+    {
+      "slug": "people/idris-brinridge",
+      "content": "---\ntitle: Idris Brinridge\ntype: person\naliases: [idris]\nsummary: \"A contact from a conference last spring.\"\n---\n\nA contact from a conference last spring.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "when is the bookkeeping service we signed with closing the books this month?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Done."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Translate into French: 'Teodor Fenbrook will send the notes tomorrow.'"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "Fix the typos in this line of my email to Fendale: 'thnaks for the quick turnaround, talk soon'"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Done."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "ok cool, talk later"
+    }
+  ]
+}

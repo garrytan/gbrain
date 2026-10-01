@@ -14,6 +14,7 @@ import { dedupResults } from '../dedup.ts';
 import { enforceTokenBudget } from '../token-budget.ts';
 import { pushDegraded, stampBudgetStage } from './degraded.ts';
 import { stampEvidence } from '../evidence.ts';
+import { applyEvidenceGate } from '../decide-stage.ts';
 import { warnOncePerProcess } from '../../utils.ts';
 
 /** No embedding provider (and no multimodal route): keyword + title + relational only. */
@@ -52,14 +53,16 @@ export async function searchWithoutEmbeddings(
   // #1663 — structural exact-lookup tier (slug / exact-title identity).
   const noEmbedHopped = await applyExactLookupTier(engine, noEmbedPreExact, query, exactLookupOpts);
   stampEvidence(noEmbedHopped, { cosineFloor: resolvedMode.evidence_cosine_floor });
+  // System One S3 evidence gate (no-op when the slot is off), at the fused path's position.
+  const noEmbedGated = await applyEvidenceGate(req.decide, query, noEmbedHopped);
   // #3995 — guaranteed page-1 relational evidence: a fired arm's answer is
   // often lexically unrecoverable, so its single-arm fused row can land
   // beyond the limit slice on keyword-heavy corpora. Promote/inject before
   // slicing (first page only; pure no-op when the arm didn't fire).
-  let noEmbedPool = noEmbedHopped;
+  let noEmbedPool = noEmbedGated;
   let noEmbedRelSlot: RelationalEvidenceSlotDecision | undefined;
   if (relationalList.length > 0) {
-    const r = ensureRelationalEvidenceSlot(noEmbedHopped, relationalList, limit, offset, {
+    const r = ensureRelationalEvidenceSlot(noEmbedGated, relationalList, limit, offset, {
       cosineFloor: resolvedMode.evidence_cosine_floor,
     });
     noEmbedPool = r.pool;
@@ -74,23 +77,26 @@ export async function searchWithoutEmbeddings(
   // WP2/T3 — no silent bypass: the keyword-only-config branch names why
   // vector didn't run, and whether the keyword arm itself came up empty
   // (skipped-by-modality is not a keyword miss, hence the image gate).
-  pushDegraded(degraded, 'embed_unavailable', 'no_provider');
-  // #3808: meta names the degradation for programmatic callers, but a CLI
-  // human never saw it — mirror the embed-failure warn (once per process,
-  // stderr) with the diagnose reason so a silently keyword-only brain is
-  // visible the first time it ships results.
-  try {
-    const { diagnoseEmbedding } = await import('../../ai/gateway.ts');
-    const diag = diagnoseEmbedding(providerProbe);
-    const reason = diag.ok ? 'provider_unreachable' : (diag.reason ?? 'provider_unreachable');
-    warnOncePerProcess(
-      'search-vector-leg-unavailable',
-      `[gbrain] vector search unavailable (${reason}) — results are keyword-only. Run \`gbrain doctor\` to diagnose.`,
-    );
-  } catch {
-    // Fail-open like every sibling stage: the warning is best-effort and a
-    // gateway import/diagnose throw must never fail the already-computed
-    // keyword-only degraded results it exists to explain.
+  // System One S6 fire retrieval asks for keyword-only on purpose: vector is not degraded.
+  if (!opts?.decide?.keywordOnly) {
+    pushDegraded(degraded, 'embed_unavailable', 'no_provider');
+    // #3808: meta names the degradation for programmatic callers, but a CLI
+    // human never saw it — mirror the embed-failure warn (once per process,
+    // stderr) with the diagnose reason so a silently keyword-only brain is
+    // visible the first time it ships results.
+    try {
+      const { diagnoseEmbedding } = await import('../../ai/gateway.ts');
+      const diag = diagnoseEmbedding(providerProbe);
+      const reason = diag.ok ? 'provider_unreachable' : (diag.reason ?? 'provider_unreachable');
+      warnOncePerProcess(
+        'search-vector-leg-unavailable',
+        `[gbrain] vector search unavailable (${reason}) — results are keyword-only. Run \`gbrain doctor\` to diagnose.`,
+      );
+    } catch {
+      // Fail-open like every sibling stage: the warning is best-effort and a
+      // gateway import/diagnose throw must never fail the already-computed
+      // keyword-only degraded results it exists to explain.
+    }
   }
   if (keywordResults.length === 0 && earlyModality !== 'image') {
     pushDegraded(degraded, 'keyword_zero');
@@ -148,7 +154,9 @@ export async function searchVectorFallback(
   // #1663 — structural exact-lookup tier (slug / exact-title identity).
   const kwHopped = await applyExactLookupTier(engine, kwPreExact, query, exactLookupOpts);
   stampEvidence(kwHopped, { cosineFloor: resolvedMode.evidence_cosine_floor });
-  const kwSliced = kwHopped.slice(offset, offset + limit);
+  // System One S3 evidence gate (no-op when the slot is off), at the fused path's position.
+  const kwGated = await applyEvidenceGate(req.decide, query, kwHopped);
+  const kwSliced = kwGated.slice(offset, offset + limit);
   // v0.32.3 search-lite: budget enforcement on the keyword-fallback path too.
   const { results: kwBudgeted, meta: kwBudgetMeta } = enforceTokenBudget(kwSliced, resolvedMode.tokenBudget);
   await stampContentFlags(engine, kwBudgeted, opts);

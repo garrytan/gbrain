@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-099",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/mireille-lornford",
+      "content": "---\ntitle: Mireille Lornford\ntype: person\nsummary: \"Mireille Lornford is the head of sales at Russetvane.\"\n---\n\nMireille Lornford is the head of sales at Russetvane.\n"
+    },
+    {
+      "slug": "people/bram-marrstead",
+      "content": "---\ntitle: Bram Marrstead\ntype: person\naliases: [bram]\nsummary: \"Bram Marrstead is the head of partnerships at Nimbusloft.\"\n---\n\nBram Marrstead is the head of partnerships at Nimbusloft.\n"
+    },
+    {
+      "slug": "people/zainab-orrinfell",
+      "content": "---\ntitle: Zainab Orrinfell\ntype: person\naliases: [zainab]\nsummary: \"Zainab Orrinfell is the head of partnerships at Kilnmoor.\"\n---\n\nZainab Orrinfell is the head of partnerships at Kilnmoor.\n"
+    },
+    {
+      "slug": "people/ruairi-orrinmere",
+      "content": "---\ntitle: Ruairi Orrinmere\ntype: person\nsummary: \"Ruairi Orrinmere is the head of sales at Brackenmoor.\"\n---\n\nRuairi Orrinmere is the head of sales at Brackenmoor. Ruairi objected to the auto-renewal clause in the draft contract.\n"
+    },
+    {
+      "slug": "companies/nimbusvane",
+      "content": "---\ntitle: Nimbusvane\ntype: company\nsummary: \"A company we met once at a trade show.\"\n---\n\nA company we met once at a trade show.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "In the novel I'm reading, Captain Lornford betrays the crew. Is that a common trope?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Is Bram usually a short form of a longer name?"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "Turn this into a checklist: Orrinfell sends the deck, I review it, we both sign off on Friday."
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "can you pull up what ruairi orrinmere told us about the contract"
+    }
+  ]
+}

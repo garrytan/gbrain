@@ -85,6 +85,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'createVersion': 'pages', 'getVersions': 'pages', 'revertToVersion': 'pages', 'updateSlug': 'pages',
   'resolveSlugWithAlias': 'pages', 'resolveSlugWithAliasDetailed': 'pages', 'setPageAliases': 'pages',
   'countStalePagesForExtraction': 'pages', 'listStalePagesForExtraction': 'pages', 'markPagesExtractedBatch': 'pages',
+  'markPagesAttendanceBlocked': 'pages',
   // links
   'addLink': 'links', 'addLinksBatch': 'links', 'replaceDerivedLinks': 'links', 'removeLinksByPagesAndSource': 'links',
   'removeLink': 'links', 'getLinks': 'links', 'getBacklinks': 'links', 'listLinkSources': 'links',
@@ -370,12 +371,15 @@ export const SQL_CASES: SqlCase[] = [
   ...variants('countStalePagesForExtraction', [
     ['default', (e) => e.countStalePagesForExtraction()],
     ['versionTs+sourceId', (e) => e.countStalePagesForExtraction({ versionTs: '2026-01-01T00:00:00Z', sourceId: SRC })],
+    ['attendance-exclude', (e) => e.countStalePagesForExtraction({ versionTs: '2026-01-01T00:00:00Z', attendance: 'exclude' })],
+    ['attendance-blocked+sourceId', (e) => e.countStalePagesForExtraction({ versionTs: '2026-01-01T00:00:00Z', sourceId: SRC, attendance: 'blocked' })],
   ]),
   ...variants('listStalePagesForExtraction', [
     ['default', (e) => e.listStalePagesForExtraction({ batchSize: 10 })],
     ['afterPageId+versionTs+sourceId', (e) => e.listStalePagesForExtraction({ batchSize: 10, afterPageId: 4, versionTs: '2026-01-01T00:00:00Z', sourceId: SRC })],
   ]),
   ...variants('markPagesExtractedBatch', [['default', (e) => e.markPagesExtractedBatch([{ slug: SLUG, source_id: SRC }], '2026-01-01T00:00:00Z')]]),
+  ...variants('markPagesAttendanceBlocked', [['default', (e) => e.markPagesAttendanceBlocked([{ slug: SLUG, source_id: SRC, revision: '00000000-0000-4000-8000-000000000001' }])]]),
 
   // ── links ──
   ...variants('addLink', [

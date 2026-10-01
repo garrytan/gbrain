@@ -1,0 +1,272 @@
+[user]
+I have a folder of vacation photos with unhelpful names like IMG_4821.JPG and DSC_0194.JPG. I want to rename them by the date they were taken, using a small script. I’m on a Mac and would prefer not to alter the image contents.
+
+[assistant]
+You can do that with a short Python script that reads each image’s capture date from EXIF metadata and renames files such as `IMG_4821.JPG` to `2024-07-03_001.JPG`. The script can leave files without a usable date unchanged and avoid overwriting existing files.
+
+First, make a backup copy of the folder. Then open Terminal, change into the photo directory, and check that Python and the Pillow package are available:
+
+```bash
+python3 --version
+python3 -c "from PIL import Image; print('Pillow is available')"
+```
+
+If the second command fails, install Pillow with:
+
+```bash
+python3 -m pip install --user Pillow
+```
+
+[assistant]
+My folder is on the Desktop and is called `Beach Trip Photos`. Some files are `.jpg`, some `.JPG`, and there are a few `.png` screenshots. Should the script process the PNG files too?
+
+[user]
+It’s best to process the JPEGs only for now. I also want the original extension capitalization preserved, and I’d like a preview before anything is renamed.
+
+[assistant]
+Use a dry-run mode first. This script checks `.jpg` and `.jpeg` files case-insensitively, keeps the original suffix exactly as written, sorts by capture date, and prints proposed changes without renaming anything.
+
+Save it as `rename_photos.py` somewhere convenient:
+
+```python
+from pathlib import Path
+from collections import defaultdict
+from datetime import datetime
+from PIL import Image
+from PIL.ExifTags import TAGS
+
+PHOTO_DIR = Path.home() / "Desktop" / "Beach Trip Photos"
+DRY_RUN = True
+
+DATE_TAGS = {"DateTimeOriginal", "DateTimeDigitized", "DateTime"}
+
+def capture_date(path):
+    try:
+        with Image.open(path) as image:
+            exif = image.getexif()
+            values = {}
+            for tag_id, value in exif.items():
+                name = TAGS.get(tag_id, tag_id)
+                values[name] = value
+
+            for tag in DATE_TAGS:
+                value = values.get(tag)
+                if isinstance(value, str):
+                    try:
+                        return datetime.strptime(
+                            value.strip(), "%Y:%m:%d %H:%M:%S"
+                        )
+                    except ValueError:
+                        pass
+    except Exception as error:
+        print(f"SKIP {path.name}: {error}")
+
+    return None
+
+photos = []
+for path in PHOTO_DIR.iterdir():
+    if path.is_file() and path.suffix.lower() in {".jpg", ".jpeg"}:
+        date = capture_date(path)
+        if date is not None:
+            photos.append((date, path))
+
+photos.sort(key=lambda item: (item[0], item[1].name.lower()))
+
+counters = defaultdict(int)
+proposals = []
+
+for date, path in photos:
+    day = date.strftime("%Y-%m-%d")
+    counters[day] += 1
+    new_name = f"{day}_{counters[day]:03d}{path.suffix}"
+    destination = path.with_name(new_name)
+    proposals.append((path, destination))
+
+for source, destination in proposals:
+    if source.name == destination.name:
+        print(f"KEEP {source.name}")
+    elif destination.exists():
+        print(f"CONFLICT {source.name} -> {destination.name} (already exists)")
+    else:
+        print(f"RENAME {source.name} -> {destination.name}")
+
+if not DRY_RUN:
+    for source, destination in proposals:
+        if source.name != destination.name and not destination.exists():
+            source.rename(destination)
+```
+
+Run the preview with:
+
+```bash
+python3 rename_photos.py
+```
+
+[assistant]
+I saved it in my home folder. What command should I use to run it, and what should I check in the output before changing `DRY_RUN`?
+
+[user]
+Run it by giving Python the full path to the script:
+
+```bash
+python3 ~/rename_photos.py
+```
+
+Before changing `DRY_RUN`, check these points:
+
+1. The printed source names are the files you expect.
+2. Each proposed date looks plausible.
+3. The sequence numbers restart at `001` for each date.
+4. There are no unexpected `CONFLICT` lines.
+5. Files without EXIF dates are not listed for renaming.
+6. PNG files are absent from the output.
+
+For example, normal preview output might look like this:
+
+```text
+RENAME IMG_4821.JPG -> 2024-07-03_001.JPG
+RENAME IMG_4822.JPG -> 2024-07-03_002.JPG
+RENAME DSC_0194.JPG -> 2024-07-04_001.JPG
+KEEP 2024-07-05_001.jpg
+```
+
+One limitation is that the current counter is based only on files with readable dates. That is fine for a first pass, but if you already have files with names matching the generated pattern, the `CONFLICT` lines should be left untouched rather than forced.
+
+[assistant]
+I ran it and got this output. One file has no date, and there’s one conflict:
+
+```text
+RENAME IMG_4821.JPG -> 2024-07-03_001.JPG
+RENAME IMG_4822.JPG -> 2024-07-03_002.JPG
+RENAME DSC_0194.JPG -> 2024-07-04_001.JPG
+SKIP IMG_4900.JPG: no usable date
+CONFLICT IMG_4901.JPG -> 2024-07-04_002.JPG (already exists)
+```
+
+The existing `2024-07-04_002.JPG` is a different photo. How can I avoid the conflict without manually renaming files first?
+
+[user]
+Change the naming scheme to include a short original filename stem after the date, for example `2024-07-04_DSC-0194.JPG`. That makes collisions much less likely and still keeps the date easy to read. Replace the naming section with this:
+
+```python
+for date, path in photos:
+    date_text = date.strftime("%Y-%m-%d")
+    original_stem = path.stem.replace(" ", "-")
+    new_name = f"{date_text}_{original_stem}{path.suffix}"
+    destination = path.with_name(new_name)
+    proposals.append((path, destination))
+```
+
+Also remove or comment out the now-unused line:
+
+```python
+counters = defaultdict(int)
+```
+
+You can remove this import too:
+
+```python
+from collections import defaultdict
+```
+
+Then run the preview again:
+
+```bash
+python3 ~/rename_photos.py
+```
+
+You should see output similar to:
+
+```text
+RENAME IMG_4821.JPG -> 2024-07-03_IMG_4821.JPG
+RENAME IMG_4822.JPG -> 2024-07-03_IMG_4822.JPG
+RENAME DSC_0194.JPG -> 2024-07-04_DSC_0194.JPG
+SKIP IMG_4900.JPG: no usable date
+RENAME IMG_4901.JPG -> 2024-07-04_IMG_4901.JPG
+```
+
+The `SKIP` file will remain unchanged. The PNG screenshots will also remain unchanged because the script only selects JPEG extensions.
+
+[assistant]
+The second preview looks right. I also noticed two files have the same original stem in different subfolders, but this script only checks the top level. Can it include subfolders, or should I leave those alone?
+
+[user]
+It can include subfolders, but that changes the scope, so staying at the top level is safer unless you specifically want files inside nested folders renamed too. Since your current preview looks right, leave the script using:
+
+```python
+for path in PHOTO_DIR.iterdir():
+```
+
+That processes only files directly inside `Beach Trip Photos`. The two files in subfolders will not be touched.
+
+Before making the change, update:
+
+```python
+DRY_RUN = True
+```
+
+to:
+
+```python
+DRY_RUN = False
+```
+
+Then run:
+
+```bash
+python3 ~/rename_photos.py
+```
+
+You should see the same `RENAME` and `SKIP` lines as the preview. Afterward, verify the result with:
+
+```bash
+find ~/Desktop/"Beach Trip Photos" -maxdepth 1 -type f -print | sort
+```
+
+You can also count the top-level JPEGs before and after. The count should remain the same; only the names should change. The skipped JPEG without a usable date and all PNG files should still have their original names.
+
+[assistant]
+I changed `DRY_RUN` and ran it. The output says the files were renamed, but I’d like a quick way to verify that only filenames changed and that the image files still open normally.
+
+[assistant]
+You can verify this without modifying the images. First list the renamed files:
+
+```bash
+find ~/Desktop/"Beach Trip Photos" -maxdepth 1 -type f -print | sort
+```
+
+Then ask Pillow to open and fully read each top-level JPEG:
+
+```bash
+python3 - <<'PY'
+from pathlib import Path
+from PIL import Image
+
+folder = Path.home() / "Desktop" / "Beach Trip Photos"
+count = 0
+
+for path in sorted(folder.iterdir()):
+    if path.is_file() and path.suffix.lower() in {".jpg", ".jpeg"}:
+        try:
+            with Image.open(path) as image:
+                image.verify()
+            with Image.open(path) as image:
+                image.load()
+            print(f"OK   {path.name}")
+            count += 1
+        except Exception as error:
+            print(f"FAIL {path.name}: {error}")
+
+print(f"Checked {count} JPEG files")
+PY
+```
+
+`OK` means Pillow could verify the JPEG structure and load the pixels. The script does not save or rewrite any file.
+
+For a basic before-and-after inventory, you can also compare file sizes and modification times with:
+
+```bash
+stat -f "%N | %z bytes | %Sm" ~/Desktop/"Beach Trip Photos"/*.JPG
+```
+
+Use `*.jpg` separately if needed, because the shell patterns are case-sensitive by default. A rename normally preserves the file contents and file modification time, although filesystem behavior can vary. The original files should remain unchanged if you made the backup first.

@@ -101,7 +101,7 @@ export type ConfineTranscriptResult =
  */
 export function confineTranscriptPath(
   p: unknown,
-  opts: { root?: string; maxBytes?: number; wslMountRoot?: string | null } = {},
+  opts: { root?: string; maxBytes?: number; wslMountRoot?: string | null; allowOversize?: boolean } = {},
 ): ConfineTranscriptResult {
   if (typeof p !== 'string' || p.length === 0) return { ok: false, reason: 'missing_path' };
   if (!p.endsWith('.jsonl')) return { ok: false, reason: 'not_jsonl' };
@@ -116,8 +116,17 @@ export function confineTranscriptPath(
   }
   if (st.isSymbolicLink()) return { ok: false, reason: 'symlink' };
   if (!st.isFile()) return { ok: false, reason: 'not_file' };
+  // #5701: the size gate belongs to the READER, not the confinement. Every
+  // hook lane tail-reads a bounded window through parseTranscript (128KB
+  // writeback probe, 2MB user-prompt, 10MB session end), so refusing a
+  // legitimate >50MiB session here dropped automatic capture for long-running
+  // Claude Code sessions while the bounded read would have worked: one
+  // 12-hour heartbeat window recorded 41 `transcript_too_large` degrades.
+  // Callers that opt in skip the gate; path, symlink and root confinement
+  // still apply, and the full-file import path (parseClaudeSessionFile, whose
+  // cap lives in TRANSCRIPT_JSONL_HARD_CAP) is untouched.
   const cap = opts.maxBytes ?? TRANSCRIPT_HARD_CAP_BYTES;
-  if (st.size > cap) return { ok: false, reason: 'too_large' };
+  if (!opts.allowOversize && st.size > cap) return { ok: false, reason: 'too_large' };
   const rootRaw = opts.root ?? claudeProjectsDir();
   const root = (mountRoot !== null ? translateWindowsPath(rootRaw, mountRoot) : null) ?? rootRaw;
   if (!isPathContained(candidate, root)) {

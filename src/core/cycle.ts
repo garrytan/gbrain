@@ -1509,6 +1509,7 @@ async function runPhaseExtractFacts(
         `destructive full walk may have wiped non-fence facts (#1928).`,
       );
     }
+    const decideConflict = dryRun ? undefined : await (await import('./ai/decide/sweep.ts')).conflictSweepTail(engine, sourceId, signal);
     return {
       phase: 'extract_facts',
       status: result.warnings.length > 0 ? 'warn' : 'ok',
@@ -1531,6 +1532,7 @@ async function runPhaseExtractFacts(
         phantoms_skipped_drift: result.phantomsSkippedDrift,
         phantoms_lock_busy: result.phantomsLockBusy,
         phantoms_more_pending: result.phantomsMorePending,
+        ...(decideConflict ? { decide_conflict: decideConflict } : {}),
       },
     };
   } catch (e) {
@@ -1763,6 +1765,9 @@ async function runPhasePurge(engine: BrainEngine, dryRun: boolean): Promise<Phas
     } catch {
       // Non-fatal.
     }
+    // System One: decision receipts past decide.receipts.retention_days (reported only when rows were pruned).
+    let purgedDecisionReceipts = 0;
+    try { purgedDecisionReceipts = await (await import('./ai/decide/store.ts')).pruneReceiptsForCycle(engine); } catch { /* pre-v179 brain */ }
     return {
       phase: 'purge',
       status: purgedPages.error ? 'fail' : 'ok', error: purgedPages.error,
@@ -1787,6 +1792,7 @@ async function runPhasePurge(engine: BrainEngine, dryRun: boolean): Promise<Phas
         purged_brainstorm_checkpoints_count: purgedBrainstormCheckpoints,
         purged_batch_retry_audit_files_count: purgedBatchRetryAuditFiles,
         purged_volunteer_events_count: purgedVolunteerEvents,
+        ...(purgedDecisionReceipts > 0 ? { purged_decision_receipts_count: purgedDecisionReceipts } : {}),
       },
     };
   } catch (e) {

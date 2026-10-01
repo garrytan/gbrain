@@ -1,0 +1,23 @@
+{
+  "fixture_id": "s6x-117",
+  "turns": {
+    "1": {
+      "should_retrieve": true,
+      "gold_slugs": [
+        "companies/brackenloft-robotics"
+      ]
+    },
+    "3": {
+      "should_retrieve": false
+    },
+    "5": {
+      "should_retrieve": true,
+      "gold_slugs": [
+        "projects/pricing-overhaul"
+      ]
+    },
+    "7": {
+      "should_retrieve": false
+    }
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "fixture_id": "s6x-109",
+  "turns": {
+    "1": {
+      "should_retrieve": true,
+      "gold_slugs": [
+        "projects/referral-program"
+      ]
+    },
+    "3": {
+      "should_retrieve": false
+    },
+    "5": {
+      "should_retrieve": true,
+      "gold_slugs": [
+        "companies/embervane-robotics"
+      ]
+    },
+    "7": {
+      "should_retrieve": false
+    }
+  }
+}

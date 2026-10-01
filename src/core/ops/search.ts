@@ -25,7 +25,7 @@ import type { HybridSearchMeta, SearchResult } from '../types.ts';
 import { bumpLastRetrievedAt } from '../last-retrieved.ts';
 import { applySnippetCap, DEFAULT_AGENT_SNIPPET_CHARS } from '../search/snippet-cap.ts';
 import { redactRetrievalOutput } from '../search/output-redaction.ts';
-import { assembleEvidenceForHits, capDeliveredSnippets, deliverEvidence, resolveEvidencePlan, unsupportedDelivery, type DeliveryMeta, type DeliveryScope, type EvidencePlan, type FrozenHit, type ReturnUnit } from '../search/evidence-delivery.ts';
+import { assembleEvidenceForHits, capDeliveredSnippets, deliverEvidence, effectivePlan, resolveEvidencePlan, unsupportedDelivery, type DeliveryMeta, type DeliveryScope, type EvidencePlan, type FrozenHit, type ReturnUnit } from '../search/evidence-delivery.ts';
 import { resolveExcludePrivatePages } from '../search/private-visibility.ts';
 import { SAFE_FENCE_CHUNKER_VERSION } from '../search/safe-chunks.ts';
 import { expandEngineTypeFilters } from '../schema-pack/query-types.ts';
@@ -87,22 +87,27 @@ const RETURN_UNIT_PARAM = {
   type: 'string' as const,
   enum: ['chunk', 'window', 'section', 'page', 'auto'],
   description:
-    "Evidence unit returned in each result's chunk_text (default: config search.return_unit, which defaults to 'chunk').\n" +
+    "Evidence unit returned in each result's chunk_text (default: config search.return_unit, which defaults to 'auto').\n" +
     "  'chunk'   — the ranked chunk only (~300-450 tokens per result).\n" +
     "  'window'  — the hit chunk plus return_window neighbor chunks each side (local context, ~3x chunk).\n" +
     "  'section' — the enclosing markdown section, or the conversation rounds around the hit.\n" +
     "  'page'    — the whole page/session, capped. Use for multi-session or temporal questions where the answer needs the whole conversation.\n" +
-    "  'auto'    — page for conversations and short pages, section or window for long curated pages.\n" +
-    'Non-chunk units return one result per page, packed into token_budget (default 6000; remote max 32000), with a `delivered` object (unit, chunk_ids, match_spans, tokens, truncated) per result and `delivery` in the response meta.',
+    "  'auto'    — the whole page for conversation pages (conversation/transcript/chat/meeting/slack/imessage types, chat/ or conversations/ slugs), the ranked chunk unchanged for everything else. When no hit is a conversation the response is exactly the chunk response.\n" +
+    'Non-chunk units return one result per page, packed into token_budget (default 6000, auto 24000; remote max 32000), with a `delivered` object (unit, chunk_ids, match_spans, tokens, truncated; reason under auto) per result and `delivery` in the response meta.',
 };
 const RETURN_WINDOW_PARAM = {
   type: 'number' as const,
   description: "Neighbor chunks on each side for return_unit 'window' (integer 1-3, default 1).",
 };
 
-/** With a plan, `token_budget` budgets the delivered evidence, so query's chunk-level budget stays off. */
-async function evidencePlanFor(ctx: OperationContext, p: Record<string, unknown>, snippetCap: number, op: string): Promise<EvidencePlan | null> {
+/**
+ * With a plan, `token_budget` budgets the delivered evidence, so query's
+ * chunk-level budget stays off; query's token_budget without a return_unit
+ * keeps its chunk-mode meaning.
+ */
+async function evidencePlanFor(ctx: OperationContext, p: Record<string, unknown>, snippetCap: number, op: 'search' | 'query'): Promise<EvidencePlan | null> {
   return resolveEvidencePlan(ctx.engine, {
+    legacyBudget: op === 'query' && typeof p.token_budget === 'number',
     remote: ctx.remote,
     viaSubagent: ctx.viaSubagent,
     returnUnit: p.return_unit,
@@ -121,8 +126,9 @@ async function evidencePlanFor(ctx: OperationContext, p: Record<string, unknown>
  */
 async function withEvidence(ctx: OperationContext, p: Record<string, unknown>, results: SearchResult[], plan: EvidencePlan | null,
   scope: DeliveryScope, meta: HybridSearchMeta | null): Promise<{ rows: SearchResult[]; evidence?: { delivery: DeliveryMeta; explicitSnippet: boolean } }> {
-  if (!plan) return { rows: results };
-  const d = await deliverEvidence(ctx.engine, results, plan, { ...scope, requireSafeChunks: ctx.remote !== false }, { liveHits: meta?.cache?.status !== 'hit' });
+  const applied = effectivePlan(plan, results);
+  if (!applied) return { rows: results };
+  const d = await deliverEvidence(ctx.engine, results, applied, { ...scope, requireSafeChunks: ctx.remote !== false }, { liveHits: meta?.cache?.status !== 'hit' });
   return { rows: d.results, evidence: { delivery: d.delivery, explicitSnippet: typeof p.snippet_chars === 'number' && Number.isFinite(p.snippet_chars) } };
 }
 
@@ -226,6 +232,9 @@ async function buildRetrievalResponseMeta(
       ...(m.cache ? { cache: m.cache.status } : {}),
       ...(m.token_budget ? { token_budget: m.token_budget } : {}),
       ...(m.vector_pool_underfilled ? { vector_pool_underfilled: m.vector_pool_underfilled } : {}),
+      ...(m.decide ? { decide: m.decide } : {}),
+      ...(m.rerank ? { rerank: m.rerank } : {}),
+      ...(m.answerability ? { answerability: m.answerability } : {}),
     } : {}),
     ...((m?.degraded !== undefined || degraded.length > 0) ? { degraded } : {}),
     projection_readiness: readiness,
@@ -317,7 +326,7 @@ const search: Operation = {
     snippet_chars: { type: 'number', description: SNIPPET_CHARS_PARAM_DESCRIPTION },
     return_unit: RETURN_UNIT_PARAM,
     return_window: RETURN_WINDOW_PARAM,
-    token_budget: { type: 'number', description: "Token budget for delivered evidence when return_unit is not 'chunk' (default search.return_budget_default = 6000). Ignored in chunk mode." },
+    token_budget: { type: 'number', description: "Token budget for delivered evidence when return_unit is not 'chunk' (default search.return_budget_default = 6000; auto: search.return_budget_conversation = 24000). Ignored in chunk mode." },
     // #4415: explicit ranking-axis overrides (the same knobs `query` has had
     // since v0.29.1). The auto-detect banks are English regex, so on a
     // non-English brain the recency/salience stages never fire — these flags
@@ -415,6 +424,7 @@ const search: Operation = {
       // #4415: agent-explicit recency + salience (same posture as `query`).
       salience: p.salience as 'off' | 'on' | 'strong' | undefined,
       recency: p.recency as 'off' | 'on' | 'strong' | undefined,
+      decide: { remote: ctx.remote !== false },
       onMeta: (m) => { capturedMeta = m; },
     })).map(r => ({ ...r }));
     stampDeepResearchIds(results);
@@ -468,7 +478,7 @@ const query: Operation = {
     snippet_chars: { type: 'number', description: SNIPPET_CHARS_PARAM_DESCRIPTION },
     return_unit: RETURN_UNIT_PARAM,
     return_window: RETURN_WINDOW_PARAM,
-    token_budget: { type: 'number', description: "Token budget. Chunk mode: caps the cumulative chunk payload (results that would overflow are skipped). Non-chunk return_unit: the budget for delivered evidence (default search.return_budget_default = 6000; remote max search.return_budget_max_remote = 32000)." },
+    token_budget: { type: 'number', description: "Token budget. Chunk mode, and whenever return_unit is omitted: caps the cumulative chunk payload (results that would overflow are skipped). Explicit non-chunk return_unit: the budget for delivered evidence (default search.return_budget_default = 6000, auto 24000; remote max search.return_budget_max_remote = 32000)." },
     expand: { type: 'boolean', description: 'Request multi-query expansion (default: true in every search mode, regardless of search.expansion). Set false to opt out. Requires configured embedding and expansion providers; a cloud expander receives the query and may charge for the call. Response metadata expansion_applied reports whether variants were actually used.' },
     detail: { type: 'string', description: 'Result detail level: low (compiled truth only), medium (default, all with dedup), high (all chunks)' },
     mode: { type: 'string', description: 'Search mode (conservative|balanced|tokenmax). Local callers only; remote uses configured mode.' },
@@ -631,7 +641,7 @@ const query: Operation = {
       })).map(r => ({ ...r }));
       stampDeepResearchIds(results);
       imageMeta.retrieved_count = results.length;
-      return searchOutput(ctx, results, { ...await buildRetrievalResponseMeta(ctx, querySourceScope, queryText ?? '', results, imageMeta, { types }), ...(plan ? { delivery: unsupportedDelivery(plan, 'image_query_unsupported') } : {}) }, snippetCap);
+      return searchOutput(ctx, results, { ...await buildRetrievalResponseMeta(ctx, querySourceScope, queryText ?? '', results, imageMeta, { types }), ...(plan && (plan.unit !== 'auto' || plan.explicitUnit) ? { delivery: unsupportedDelivery(plan, 'image_query_unsupported') } : {}) }, snippetCap);
     }
 
     if (!queryText) {
@@ -670,7 +680,7 @@ const query: Operation = {
       limit: (p.limit as number) || undefined,
       offset: (p.offset as number) || 0,
       excludePrivate,
-      requireSafeChunks: ctx.remote !== false,
+      requireSafeChunks: ctx.remote !== false, decide: { remote: ctx.remote !== false, answerability: true },
       takesHoldersAllowList: readHolders(ctx),
       expansion: expand,
       expandFn: expand ? expandQuery : undefined,
@@ -761,7 +771,7 @@ const query: Operation = {
             expansion: true,
             expandFn: expandQuery,
             relationalRetrieval: true,
-            autocut: false,
+            autocut: false, decide: { remote: ctx.remote !== false, rerankOnly: true }, // System One: S2-S5 off on the re-run
             detail,
             // Preserve the caller's #3985 type filter on the re-run (raw
             // pass-through; the base call already rejected malformed input).
@@ -902,7 +912,7 @@ const assemble_evidence: Operation = {
     hits: { type: 'array', required: true, items: { type: 'object' }, description: 'Ordered hits, best first (max 50): [{ "source_id": "default", "slug": "chat/session-0412", "chunk_id": 8812 }]. chunk_id 0 addresses the page\'s first chunk.' },
     return_unit: { ...RETURN_UNIT_PARAM, description: "Evidence unit: 'chunk' | 'window' | 'section' | 'page' | 'auto' (default 'page')." },
     return_window: RETURN_WINDOW_PARAM,
-    token_budget: { type: 'number', description: 'Token budget for the delivered evidence (default search.return_budget_default = 6000; remote max 32000).' },
+    token_budget: { type: 'number', description: 'Token budget for the delivered evidence (default search.return_budget_default = 6000, auto search.return_budget_conversation = 24000; remote max 32000).' },
     detail: { type: 'string', enum: ['low', 'medium', 'high'], description: "As query: 'low' delivers compiled truth only (no timeline text)." },
   },
   scope: 'read',

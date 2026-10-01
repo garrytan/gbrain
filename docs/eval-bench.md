@@ -828,7 +828,14 @@ Unknown flags exit 1 before any work starts.
 | `--include-abstention` | off | Count `_abs` (abstention) questions in the recall denominators (default: emitted with `abstention: true`, excluded; the count lands in `excluded_abstention`) |
 | `--embed-cache FILE` | `~/.cache/gbrain-eval/longmemeval-embed.sqlite` | Content-addressed embedding cache (bun:sqlite); hits/misses land in `run_config.cache`, and misses must be 0 for a like-for-like arm |
 | `--no-embed-cache` | — | Disable the embedding cache for this run |
-| `--capture-pool` | off | Record `rerank_pool` per row: the post-rerank candidate pool BEFORE autocut / the limit slice (`slug`, `chunk_id`, `session_id`, `rrf_rank`, `rerank_score`, `alias_hit`, `est_tokens`) for `scripts/replay-autocut-floor.ts` |
+| `--capture-pool` | off | Record `rerank_pool` per row: the post-rerank candidate pool BEFORE autocut / the limit slice (`slug`, `chunk_id`, `session_id`, `rrf_rank`, `rerank_score`, `alias_hit`, `est_tokens`) for `scripts/replay-autocut-floor.ts`. Rows with answer sessions also get `pool_recall`: the fused (pre-rerank) pool size, each answer session's first rank in it (`gold_rank`, null when absent) and, at fused depths 30/50/100/300, how many answer sessions are present plus `all` / `any` |
+| `--eval-pool-depth N` | off | Eval-only recall experiment: every retrieval arm fetches N candidates (N ≤ 300; production caps each arm at 100, unchanged) and `search.reranker.top_n_in` is pinned to N unless a `--search-pin` sets it. Folds into `retrieval_config_hash` and `run_config.eval_pool_depth` |
+| `--decide SLOT=MODE` | all off | System One arm (repeatable; `off`, `on`, `shadow`). See "System One arms" below |
+| `--decide-provider ID` | `typesafe:jev-1.13.0` | Decide provider written into the benchmark brain |
+| `--decide-calibration FILE\|ref:ID` | none | Calibration row(s) for `on` slots: `gbrain decide calibrate --slot X --json` or `decide calibrations list --json` output (object, array or JSONL), or a reference id; inserted and adopted in each benchmark brain |
+| `--decide-threshold SLOT=X` | none | Operator threshold override (the action-precision gate still applies) |
+| `--decide-force-on SLOT` | off | Bypass the action-precision gate for SLOT (loud stderr WARN, recorded in `run_config.decide.force_on`) |
+| `--decide-dataset JSONL` | none | The frozen labelled dataset (`gbrain decide dataset`): the run keeps only question ids in its eval half, and refuses (exit 1, `split_mismatch`) a calibration whose `split_hash` differs or whose `calibrate_only` is false |
 | `--record` | off | Append an `EvalRunRecord` (suite `longmemeval`, params = `run_config`, error text secret-redacted) to `.gbrain-evals/eval-results.jsonl` |
 | `--judge` | off | LLM-judge each reader answer against the gold with the official LongMemEval `evaluate_qa.py` prompts (temperature 0, max_tokens 16 — the official 10 is below the OpenAI API minimum; a one-token verdict is unaffected). Implies `--by-type` (the summary gains `qa_accuracy`, whose headline scores judge errors as incorrect); incompatible with `--retrieval-only`. With `--resume-from FILE`: judge-only backfill of rows lacking a settled verdict (no reader call; `judge_error` rows are re-judged), then `qa_accuracy` is rebuilt from ALL rows and FILE is rewritten with the judged rows |
 | `--judge-model M` | `openai:gpt-4o` | Judge model (the official scorer's model); a bare id is read as an `openai` model |
@@ -846,6 +853,68 @@ of `recall_any_hit`, kept for v1 readers), `abstention`,
 `reader_config_hash`, `reader_finish_reason` (`--retrieval-only` rows carry `retrieval_only: true`
 instead); with `--judge`, the `judge_*` fields listed under "Judged answer
 accuracy".
+
+### System One arms (`--decide`)
+
+`gbrain eval longmemeval`, `gbrain eval brainbench` and `gbrain eval
+retrieval-quality` accept the same flags, so matched runs differ only in the
+slot under test:
+
+```bash
+# Baseline and S3 arm (same commit, data and pins; both --no-trajectory, see below)
+gbrain eval longmemeval data.jsonl --retrieval-only --no-trajectory --reranker off --by-type --output base.jsonl
+gbrain eval longmemeval data.jsonl --retrieval-only --no-trajectory --reranker off --by-type --output s3.jsonl \
+  --decide evidence=on --decide-calibration evidence-cal.json --decide-dataset evidence.jsonl
+
+# S1: --decide rerank=on also pins search.reranker.model typesafe:jev-1.13.0 and enables the reranker
+gbrain eval longmemeval data.jsonl --retrieval-only --no-trajectory --decide rerank=on --by-type --output s1.jsonl
+
+# Recall experiment: a fused pool of 300, reranked with top_n_in 300, with pool_recall per row
+gbrain eval longmemeval data.jsonl --retrieval-only --no-trajectory --decide rerank=on --eval-pool-depth 300 --capture-pool --output deep.jsonl
+
+# S4: the harness reader abstains when the S4 verdict is abstain (scored by --judge on the _abs questions)
+gbrain eval longmemeval data.jsonl --no-trajectory --judge --decide answerable=on --decide-calibration answerable-cal.json
+
+gbrain eval brainbench --suite know-to-ask --decide recall_needed=on --decide-calibration s6-cal.json --out bb.json
+gbrain eval retrieval-quality fixture.jsonl --json --decide evidence=on
+```
+
+- The flags merge over an inherited `GBRAIN_DECIDE_SLOTS` (flags win), set it
+  for the process and opt the command in; the effective value lands in
+  `run_config.decide.gbrain_decide_slots` and every receipt. With no slot on
+  or shadow, output is byte-identical to a run without the flags.
+- LongMemEval and BrainBench build throwaway in-memory brains, so the command
+  writes what the slot needs there: `decide.provider`, consent for the
+  slot's data classes, `decide.egress.private allow` (public benchmark data),
+  thresholds, `force_on`, awaited shadow (`shadow_wait on`, `shadow_sample
+  1`) and the supplied calibrations. `retrieval-quality` runs on your
+  connected brain and never writes its config: it refuses with the
+  catalogued line when the provider, key or consent is missing, and refuses
+  `--decide-calibration` / `--decide-threshold` / `--decide-force-on`.
+- A LongMemEval `--decide` arm refuses trajectory routing, which reads the
+  dataset's `question_type` labels; run both arms with `--no-trajectory` so
+  routing uses text-only classifiers and the labels only score.
+- Per-row receipts: each LongMemEval row gains `decide.<slot>` (mode,
+  effective, skipped reason — `not_reached` when the slot's call site never
+  ran — threshold, outcome tally, latency, resolved model, judged count,
+  decide input tokens and cost from the benchmark brain's `decide_spend`
+  for that question; S1 `on` reports the Jev reranker's latency and tokens;
+  S2 adds `late` when the answer missed `decide.slots.intent.wait_ms`;
+  S4 adds `answerability` and `reader_abstained`). The summary's `run_config`
+  gains `decide` (flags, provider, calibration ids, thresholds, force_on,
+  dataset split hashes; folded into `retrieval_config_hash`) and
+  `decide_summary` (per slot: rows, acted, outcomes, skips, latency p50/p95,
+  tokens, cost, S2 `late_rate`). BrainBench adds `turn_rows[].decide` (S6
+  `recall_needed` at the claude-code turn-context seam) and a result-level
+  `decide` block, and refuses `--update-baseline`; retrieval-quality `--json`
+  adds `decide` with per-query receipts.
+- Judge agreement (eval-only, no brain needed): `gbrain decide
+  judge-agreement --suite longmemeval --input judged.jsonl` (a `--judge`
+  output) or `--suite grounding --input grounding-labels.jsonl` asks Jev one
+  question per item and reports n, raw agreement, Cohen's kappa with a 95%
+  CI, the confusion matrix, per `question_type` slices, Jev cost and latency
+  p50/p95. The reference labels are LLM verdicts: this is judge-vs-judge
+  agreement. `--dry-run` estimates tokens and cost without sending anything.
 
 ### Numbers
 

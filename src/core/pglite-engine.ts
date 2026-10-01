@@ -51,7 +51,8 @@ import type {
   NewFact, FactListOpts, FactsHealth,
   SourceRow,
 } from './engine.ts';
-import { DREAM_VERDICT_TTL_SECONDS, MAX_SEARCH_LIMIT, clampSearchLimit } from './engine.ts';
+import { DREAM_VERDICT_TTL_SECONDS, clampSearchLimit } from './engine.ts';
+import { searchLimitCap } from './search/eval-pool-depth.ts';
 // Engine-path imports stay static unless a call site carries an explicit
 // engine-dynamic-import-ok justification. The gateway is the only current
 // exception because its local try/catch preserves a soft fallback.
@@ -1322,16 +1323,16 @@ export class PGLiteEngine implements BrainEngine {
   // than direct window function + GROUP BY. Fetch more chunks than the
   // page limit (3x) to ensure N dedup'd pages survive; bounded and fast.
   async searchKeyword(query: string, opts?: SearchOpts): Promise<SearchResult[]> {
-    const limit = clampSearchLimit(opts?.limit);
+    const limit = clampSearchLimit(opts?.limit, 20, searchLimitCap());
     const offset = opts?.offset || 0;
     const detailFilter = opts?.detail === 'low' ? `AND cc.chunk_source = 'compiled_truth'` : '';
 
-    if (opts?.limit && opts.limit > MAX_SEARCH_LIMIT) {
-      console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${MAX_SEARCH_LIMIT}`);
+    if (opts?.limit && opts.limit > searchLimitCap()) {
+      console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${searchLimitCap()}`);
     }
 
     // Fetch 3x to give dedup headroom, then page-dedup + re-limit.
-    const innerLimit = Math.min(limit * 3, MAX_SEARCH_LIMIT * 3);
+    const innerLimit = Math.min(limit * 3, searchLimitCap() * 3);
 
     // Source-aware ranking (v0.22): see postgres-engine.ts for rationale.
     const boostMap = opts?.source_boosts ?? resolveBoostMap();
@@ -1477,12 +1478,12 @@ export class PGLiteEngine implements BrainEngine {
     // meaning; a code-scoped query gets no title candidates rather than
     // rows that silently violate the caller's filter.
     if (opts?.language || opts?.symbolKind) return [];
-    const limit = clampSearchLimit(opts?.limit);
+    const limit = clampSearchLimit(opts?.limit, 20, searchLimitCap());
     const offset = opts?.offset || 0;
     const detailLow = opts?.detail === 'low';
 
-    if (opts?.limit && opts.limit > MAX_SEARCH_LIMIT) {
-      console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${MAX_SEARCH_LIMIT}`);
+    if (opts?.limit && opts.limit > searchLimitCap()) {
+      console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${searchLimitCap()}`);
     }
 
     const boostMap = opts?.source_boosts ?? resolveBoostMap();
@@ -1635,12 +1636,12 @@ export class PGLiteEngine implements BrainEngine {
    * contract). This method is intentionally a narrow internal knob.
    */
   async searchKeywordChunks(query: string, opts?: SearchOpts): Promise<SearchResult[]> {
-    const limit = clampSearchLimit(opts?.limit);
+    const limit = clampSearchLimit(opts?.limit, 20, searchLimitCap());
     const offset = opts?.offset || 0;
     const detailFilter = opts?.detail === 'low' ? `AND cc.chunk_source = 'compiled_truth'` : '';
 
-    if (opts?.limit && opts.limit > MAX_SEARCH_LIMIT) {
-      console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${MAX_SEARCH_LIMIT}`);
+    if (opts?.limit && opts.limit > searchLimitCap()) {
+      console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${searchLimitCap()}`);
     }
 
     // Source-aware ranking applied here too — searchKeywordChunks is the
@@ -1723,13 +1724,13 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   async searchVector(embedding: Float32Array, opts?: SearchOpts): Promise<SearchResult[]> {
-    const limit = clampSearchLimit(opts?.limit);
+    const limit = clampSearchLimit(opts?.limit, 20, searchLimitCap());
     const offset = opts?.offset || 0;
     const vecStr = '[' + Array.from(embedding).join(',') + ']';
     const detailFilter = opts?.detail === 'low' ? `AND cc.chunk_source = 'compiled_truth'` : '';
 
-    if (opts?.limit && opts.limit > MAX_SEARCH_LIMIT) {
-      console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${MAX_SEARCH_LIMIT}`);
+    if (opts?.limit && opts.limit > searchLimitCap()) {
+      console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${searchLimitCap()}`);
     }
 
     // Two-stage CTE (v0.22): pure-distance ORDER BY in inner CTE preserves
@@ -2049,7 +2050,7 @@ export class PGLiteEngine implements BrainEngine {
     return chunksImpl.deleteChunks(this.engineSql, slug, opts);
   }
 
-  async countStalePagesForExtraction(opts?: { sourceId?: string; versionTs?: string }): Promise<number> {
+  async countStalePagesForExtraction(opts?: { sourceId?: string; versionTs?: string; attendance?: 'exclude' | 'blocked' }): Promise<number> {
     return pagesImpl.countStalePagesForExtraction(scopedRead(this.engineSql), opts);
   }
 
@@ -2064,6 +2065,10 @@ export class PGLiteEngine implements BrainEngine {
 
   async markPagesExtractedBatch(refs: Array<{ slug: string; source_id: string; extractedAt?: string }>, defaultExtractedAt: string): Promise<number> {
     return pagesImpl.markPagesExtractedBatch(this.engineSql, refs, defaultExtractedAt);
+  }
+
+  async markPagesAttendanceBlocked(refs: Array<{ slug: string; source_id: string; revision: string }>): Promise<number> {
+    return pagesImpl.markPagesAttendanceBlocked(this.engineSql, refs);
   }
 
   // Links

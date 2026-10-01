@@ -32,7 +32,7 @@ async function openEndpoint() {
   const server = createServer(socket => {
     dials++;
     held.push(socket);
-    socket.on('data', () => { if (refusing) socket.end(fatal()); });
+    socket.on('data', () => { if (refusing && !socket.writableEnded) socket.end(fatal()); });
   });
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   return {

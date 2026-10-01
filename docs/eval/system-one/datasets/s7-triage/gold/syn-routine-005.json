@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "transcript_id": "syn-routine-005",
+  "scenario": "synthetic-routine",
+  "expected_triage": "low",
+  "label_source": "synthetic-construction",
+  "generator": {
+    "model": "openai:gpt-5.6-luna",
+    "reasoning": "none",
+    "temperature": 1,
+    "seed": 7350001
+  },
+  "spec": {
+    "id": "syn-routine-005",
+    "scenario": "synthetic-routine",
+    "expected_triage": "low",
+    "theme": "fixing a spreadsheet formula that returns #REF after a column was moved",
+    "turns": 14
+  }
+}

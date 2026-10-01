@@ -1,0 +1,250 @@
+[user]
+My inbox is overflowing with newsletters. I want to clean it up without accidentally deleting receipts, account alerts, or messages from people I actually need to reply to. Can you suggest a safe approach?
+
+[assistant]
+Use a staged cleanup rather than deleting everything at once:
+
+1. Create a label or folder called `Newsletters - Review`.
+2. Search for likely newsletters using terms such as `unsubscribe`, `manage preferences`, and `email preferences`.
+3. Review the results for a few minutes and exclude receipts, alerts, invoices, and personal messages.
+4. Move the obvious newsletters into the review label.
+5. Create filters that skip the inbox and apply that label to future messages.
+6. Keep them for 30 days, then delete the ones you have not needed.
+7. Unsubscribe from recurring messages you do not want at all.
+
+Before changing anything, make sure your mail service has an undo option or that you can restore messages from Trash.
+
+[user]
+I use Gmail. What searches would be reasonably safe for finding newsletters, and how should I avoid catching useful mail?
+
+[assistant]
+Start with narrow searches and inspect the results before creating a filter. Useful examples:
+
+```text
+in:anywhere "unsubscribe"
+in:anywhere ("manage preferences" OR "email preferences")
+in:anywhere {newsletter "weekly update" "monthly digest"}
+```
+
+To reduce false positives, add exclusions for common useful categories:
+
+```text
+in:anywhere "unsubscribe" -receipt -invoice -order -shipping -security -alert -verification
+```
+
+You can also limit by sender patterns after checking a few messages:
+
+```text
+from:(*@example.invalid) "unsubscribe"
+```
+
+For messages currently in the inbox, remove `in:anywhere` and use:
+
+```text
+in:inbox "unsubscribe" -receipt -invoice -security -verification
+```
+
+Search operators vary slightly depending on Gmail’s current interface, so treat the results as a review queue, not an automatic deletion list. Open several results from each search and check the sender, subject, and message body.
+
+[user]
+I searched for `in:inbox "unsubscribe" -receipt -invoice -security -verification`, and it found 1,842 messages. That includes years of old newsletters. How can I review them in manageable batches?
+
+[assistant]
+Use date and category slices. For example:
+
+```text
+in:inbox "unsubscribe" -receipt -invoice -security -verification older:2024/01/01
+in:inbox "unsubscribe" -receipt -invoice -security -verification newer:2024/01/01 older:2025/01/01
+in:inbox "unsubscribe" -receipt -invoice -security -verification newer:2025/01/01
+```
+
+If those are still large, add a sender or subject term:
+
+```text
+in:inbox "unsubscribe" subject:(digest OR newsletter OR updates)
+```
+
+A practical batch size is 50–100 messages. In each batch:
+
+- Select only obvious recurring newsletters.
+- Apply the label `Newsletters - Review`.
+- Archive them instead of deleting them.
+- Leave anything that looks like an account notice, purchase record, appointment, delivery update, or a message needing a response.
+- Open a few messages from unfamiliar senders before selecting the rest.
+
+You can use Gmail’s page-size setting to show 100 conversations per page, but still work one page at a time.
+
+[user]
+I would like a filter that moves future newsletters out of the inbox but keeps them searchable. What settings should I use?
+
+[assistant]
+Create the filter from a representative newsletter rather than starting with a very broad search.
+
+1. Open a newsletter.
+2. Click the three-dot menu and choose “Filter messages like these.”
+3. Check that the sender field is correct. If the sender address changes frequently, use a stable domain only when you recognize it.
+4. Click “Create filter.”
+5. Select:
+   - `Skip the Inbox (Archive it)`
+   - `Apply the label` → create or choose `Newsletters - Review`
+   - optionally `Mark as read`, if you do not need unread counts for these messages
+6. Do not select `Delete it` initially.
+7. Leave “Also apply filter to matching conversations” unchecked unless you have reviewed the existing matches.
+8. Create the filter and test it with the next message.
+
+Archived messages remain searchable. You can find them with:
+
+```text
+label:"Newsletters - Review"
+```
+
+If you later decide a particular newsletter is unwanted, unsubscribe separately or make a narrower filter that sends only that sender to Trash.
+
+[user]
+I have several senders, and some use different addresses for different editions. Is it better to make one broad filter or several narrow ones?
+
+[assistant]
+Several narrow filters are safer. A single broad filter based on `unsubscribe` can catch useful mail because many receipts, service notices, and account messages include an unsubscribe link.
+
+For each recurring newsletter family:
+
+1. Open a recent example.
+2. Confirm the sender address and the visible publication or mailing-list name.
+3. Use “Filter messages like these.”
+4. Apply `Newsletters - Review` and skip the inbox.
+5. If the sender uses multiple addresses, add them explicitly with `OR`, for example:
+
+```text
+from:(updates@example.invalid OR digest@example.invalid OR news@example.invalid)
+```
+
+If the filter dialog does not make the grouping clear, create one filter per address. That is easier to audit and disable later.
+
+You can review your rules under Settings → See all settings → Filters and Blocked Addresses. Give each rule a recognizable description, such as `Newsletter review - address group`, if your interface allows descriptions.
+
+[user]
+Can I bulk-label the 1,842 search results without changing their read status or moving them out of the inbox yet?
+
+[assistant]
+Yes. First verify that the search is limited to the intended messages. Then:
+
+1. Run the search.
+2. Select the checkbox at the top of the results.
+3. If Gmail displays “All 50 conversations on this page are selected. Select all conversations that match this search,” click that second link only after reviewing several pages.
+4. Click the Labels icon.
+5. Create or select `Newsletters - Review`.
+6. Click Apply.
+
+Applying a label does not normally mark messages read, archive them, or delete them. To confirm, check a small sample before selecting all results. You can also label in date ranges, such as one year at a time, to limit the scope.
+
+Afterward, use:
+
+```text
+label:"Newsletters - Review" in:inbox
+```
+
+That shows the labeled messages still in the inbox. If the count looks wrong, stop and remove the label from a small test batch rather than continuing.
+
+[user]
+I labeled an older batch and noticed some messages that are useful occasionally, like product update digests. How should I handle those differently?
+
+[assistant]
+Keep occasional-use digests searchable without treating them as routine inbox mail. You have a few low-risk options:
+
+- Leave them in `Newsletters - Review` and archive them.
+- Create a second label such as `Digests - Keep`, then remove the newsletter label from those messages.
+- Star only the specific messages you may revisit soon.
+- Create a narrower filter for future editions that applies `Digests - Keep` and skips the inbox.
+- Leave the filter’s “Mark as read” option off if unread status helps you notice new editions.
+
+To move already labeled messages:
+
+1. Search:
+
+```text
+label:"Newsletters - Review" from:(digest@example.invalid)
+```
+
+2. Select the appropriate messages.
+3. Apply `Digests - Keep`.
+4. Remove `Newsletters - Review` if you want the categories separate.
+5. Archive them if they should leave the inbox.
+
+Avoid making the filter based only on words like `update` or `digest`; those terms can appear in account and service messages.
+
+[user]
+What is a sensible retention process once the newsletters are archived?
+
+[assistant]
+Use a review-and-delete schedule rather than automatic deletion at first:
+
+- Keep new items under `Newsletters - Review` for 30–60 days.
+- Once a month, search for older items:
+
+```text
+label:"Newsletters - Review" older:2025/01/01
+```
+
+- Sort through a small batch and remove anything you have not needed.
+- Keep occasional-use digests under their separate label.
+- Unsubscribe from senders you never open.
+- After you are comfortable, consider a filter that applies a retention label, then use Gmail’s storage and search tools to review older items manually.
+
+Gmail filters generally do not provide a simple “delete after 60 days” action. Avoid routing newsletters directly to Trash unless you are confident you will not need them. Messages in Trash are typically removed automatically after a limited period, so archive-and-review is the safer default.
+
+[user]
+Could you give me a compact checklist I can follow, including a way to test each filter before applying it broadly?
+
+[assistant]
+- Create labels:
+  - `Newsletters - Review`
+  - `Digests - Keep`, if useful
+- Run a narrow search containing `unsubscribe`.
+- Exclude obvious useful categories such as receipts, invoices, security, verification, shipping, and account alerts.
+- Review several pages before selecting a large result set.
+- Apply the review label first; do not archive or delete during the initial pass.
+- For each recurring sender, create a narrow filter from a representative message.
+- Set the filter to:
+  - Skip the Inbox
+  - Apply `Newsletters - Review`
+  - Leave Delete unchecked
+  - Leave Mark as read unchecked unless desired
+- Test each filter:
+  1. Search the exact filter criteria.
+  2. Confirm the results contain only the intended newsletter.
+  3. Send or wait for one normal example if practical.
+  4. Check that it receives the label and leaves the inbox.
+  5. Check that a receipt, alert, or personal message is not matched.
+- Review filters under Settings → See all settings → Filters and Blocked Addresses.
+- Once a filter works, optionally apply it to existing matches after a sample review.
+- Keep archived newsletters for 30–60 days, then remove old items in batches.
+- Unsubscribe from senders you consistently ignore.
+- Retain useful digests under a separate label and keep them searchable with:
+
+```text
+label:"Digests - Keep"
+```
+
+[user]
+I’ve completed the first pass: 1,842 messages are labeled, 37 useful digests are separated, and three sender filters are working. What should I do next today?
+
+[assistant]
+For today, keep the next steps limited and reversible:
+
+1. Search the remaining labeled inbox messages:
+
+```text
+label:"Newsletters - Review" in:inbox
+```
+
+2. Review one page, or up to 100 conversations.
+3. Archive only the messages that are clearly newsletters and do not need inbox visibility.
+4. Leave uncertain messages in the inbox for later.
+5. Open Settings → Filters and Blocked Addresses and verify the three filters:
+   - correct sender or address group
+   - `Skip the Inbox` enabled
+   - `Newsletters - Review` applied
+   - `Delete` disabled
+6. Send yourself a test message only if you already have a harmless test address or draft workflow; otherwise wait for the next normal newsletter.
+7. Record no additional broad rule yet. After a few days, review whether the filters are catching the intended mail and whether useful messages are being labeled incorrectly.
+8. Do not empty Trash or make a bulk deletion today. Archive-and-review gives you time to correct mistakes.

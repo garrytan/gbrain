@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-132",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/yusra-grisbrook",
+      "content": "---\ntitle: Yusra Grisbrook\ntype: person\naliases: [yusra]\nsummary: \"Yusra Grisbrook is the product lead at Halcyonfold.\"\n---\n\nYusra Grisbrook is the product lead at Halcyonfold. Yusra wants the proposal revised to drop the onboarding fee.\n"
+    },
+    {
+      "slug": "companies/cobaltreach",
+      "content": "---\ntitle: Cobaltreach\ntype: company\nsummary: \"Cobaltreach is a software vendor we work with.\"\n---\n\nCobaltreach is a software vendor we work with. They quoted a per-seat price with a minimum annual commitment.\n"
+    },
+    {
+      "slug": "companies/quartzloft",
+      "content": "---\ntitle: Quartzloft\ntype: company\nsummary: \"Quartzloft is a software vendor we work with.\"\n---\n\nQuartzloft is a software vendor we work with.\n"
+    },
+    {
+      "slug": "people/teodor-kestbarrow",
+      "content": "---\ntitle: Teodor Kestbarrow\ntype: person\naliases: [teodor]\nsummary: \"A contact from a conference last spring.\"\n---\n\nA contact from a conference last spring.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "What did Grisbrook want changed in the proposal?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Here is what I have."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "how's cobaltreach doing on pricing?"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Done."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "Make this sentence shorter: 'Our team will be at the Quartzloft office for the whole afternoon on Thursday.'"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "how do I convert a string to a date in python?"
+    }
+  ]
+}

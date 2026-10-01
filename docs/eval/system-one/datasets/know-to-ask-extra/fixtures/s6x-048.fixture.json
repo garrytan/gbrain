@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-048",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "projects/support-rotation",
+      "content": "---\ntitle: Support Rotation\ntype: project\nsummary: \"Support Rotation: Engineers take one week of support each per month, and weekends go to an on-call pager.\"\n---\n\nSupport Rotation: Engineers take one week of support each per month, and weekends go to an on-call pager.\n"
+    },
+    {
+      "slug": "people/noemi-drembarrow",
+      "content": "---\ntitle: Noemi Drembarrow\ntype: person\nsummary: \"Noemi Drembarrow is the head of sales at Wandervane.\"\n---\n\nNoemi Drembarrow is the head of sales at Wandervane. Noemi objected to the auto-renewal clause in the draft contract.\n"
+    },
+    {
+      "slug": "people/bram-dremridge",
+      "content": "---\ntitle: Bram Dremridge\ntype: person\naliases: [bram]\nsummary: \"Bram Dremridge is the procurement lead at Fableyard.\"\n---\n\nBram Dremridge is the procurement lead at Fableyard.\n"
+    },
+    {
+      "slug": "people/linnea-tulvholt",
+      "content": "---\ntitle: Linnea Tulvholt\ntype: person\nsummary: \"Linnea Tulvholt is the operations director at Tidalvane.\"\n---\n\nLinnea Tulvholt is the operations director at Tidalvane.\n"
+    },
+    {
+      "slug": "people/yusra-quellbarrow",
+      "content": "---\ntitle: Yusra Quellbarrow\ntype: person\naliases: [yusra]\nsummary: \"A contact from a conference last spring.\"\n---\n\nA contact from a conference last spring.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "how did we end up splitting that support rotation?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Happy to help."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "What did Drembarrow want changed in the contract?"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "Is Bram usually a short form of a longer name?"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Okay, noted."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "is linnea a common name anywhere? thinking about it for a character"
+    }
+  ]
+}

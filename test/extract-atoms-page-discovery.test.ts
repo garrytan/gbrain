@@ -621,9 +621,9 @@ describe('local extract-atoms config knobs', () => {
     // Discovery honored the configured budget: 2 eligible pages, 1 processed.
     expect(result.details.pages_processed).toBe(1);
     expect(captured.length).toBe(1);
-    // Payload after the "Source: ...\n\n---\n\n" preamble is sliced to the
+    // Payload inside the <transcript> wrapper is sliced to the
     // configured max_source_chars (default would have been 50_000 → 2000 z's).
-    const body = captured[0].split('\n\n---\n\n')[1] ?? '';
+    const body = /<transcript>\n([\s\S]*)\n<\/transcript>/.exec(captured[0])?.[1] ?? '';
     expect(body).toBe('z'.repeat(600));
   }, 30_000);
 });
@@ -695,7 +695,7 @@ describe('local extract-atoms config knobs — invalid-value fallbacks', () => {
     const captured: string[] = [];
     await runPhaseExtractAtoms(engine, { _transcripts: [], _chat: capturingChat(captured) as never });
     expect(captured.length).toBe(1);
-    const body = captured[0].split('\n\n---\n\n')[1] ?? '';
+    const body = /<transcript>\n([\s\S]*)\n<\/transcript>/.exec(captured[0])?.[1] ?? '';
     expect(body).toBe('z'.repeat(2000)); // default 50_000 → no truncation
   }, 30_000);
 
@@ -705,7 +705,7 @@ describe('local extract-atoms config knobs — invalid-value fallbacks', () => {
     const captured: string[] = [];
     await runPhaseExtractAtoms(engine, { _transcripts: [], _chat: capturingChat(captured) as never });
     expect(captured.length).toBe(1);
-    const body = captured[0].split('\n\n---\n\n')[1] ?? '';
+    const body = /<transcript>\n([\s\S]*)\n<\/transcript>/.exec(captured[0])?.[1] ?? '';
     expect(body).toBe('z'.repeat(500));
   }, 30_000);
 });

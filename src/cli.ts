@@ -38,6 +38,7 @@ import { shouldForceExitAfterMain, finishCliTeardown, flushThenExit, currentExit
 import { serializeMarkdown } from './core/markdown.ts';
 import { parseGlobalFlags, setCliOptions, getCliOptions } from './core/cli-options.ts';
 import { runCliPreflight } from './core/cli-preflight.ts';
+import { isBooleanLiteral, isKnownOpFlag } from './core/op-flag-tokens.ts';
 import { conceptNudge } from './core/search/query-intent.ts';
 import { redactRetrievalOutput } from './core/search/output-redaction.ts';
 import type { CliOptions } from './core/cli-options.ts';
@@ -980,12 +981,6 @@ export function resolveQueryImage(
   return { path: imagePath, base64, mime };
 }
 
-// #4602: the ONE definition of "a literal true/false value token" — shared by
-// parseOpArgs (consume it as the boolean flag's value) and findUnknownOpFlag
-// (mirror the traversal so the token counts as consumed) so the parser and
-// the validator can never disagree on what a boolean flag swallows.
-const isBooleanLiteral = (tok: string | undefined): boolean => tok === 'true' || tok === 'false';
-
 export function parseOpArgs(op: Operation, args: string[]): Record<string, unknown> {
   const params: Record<string, unknown> = {};
   const positional = op.cliHints?.positional || [];
@@ -1047,6 +1042,13 @@ export function parseOpArgs(op: Operation, args: string[]): Record<string, unkno
         // flag's value (never a plausible positional), same as above.
         params[key] = isBooleanLiteral(args[i + 1]) ? args[++i] === 'true' : true;
       } else if (i + 1 < args.length) {
+        // #5700: a known flag of this command in the value slot is a missing
+        // argument, not a value (see op-flag-tokens.ts).
+        if (isKnownOpFlag(op, args[i + 1])) {
+          const flag = `--${key.replace(/_/g, '-')}`;
+          const stdinHint = op.cliHints?.stdin === key ? `; omit ${flag} (or put it last) to read stdin` : '';
+          throw new OperationError('invalid_params', `${flag} requires a value, but '${args[i + 1]}' is a flag${stdinHint}.`);
+        }
         // #2822: a flag silently overwriting an already-set positional is
         // almost always an argument-plumbing mistake (e.g. `gbrain put
         // notes.md --content "..."` — the file path landed in `content`
@@ -1859,6 +1861,7 @@ const THIN_CLIENT_REFUSE_HINTS: Record<string, string> = {
   connectors: 'connectors manage provider session credentials in ~/.gbrain/connectors and sync your chat history on the host. Credentials never cross the wire — run on the host machine.',
   sweep: 'sweep runs the serve-resident maintenance passes against the LOCAL engine. Run it on the host (the serve process also runs it automatically).',
   'compile-context': 'compile-context compiles from the local brain; run it on the host install.',
+  decide: '`gbrain decide` runs on the brain host; run it there.',
   // v0.32 audit additions
   pages: '`pages purge-deleted` is admin+localOnly (hard-deletes from the local DB). Run on the host.',
   files: '`files list` and `files url` MCP ops are localOnly (paths live on the host filesystem). Use `gbrain files` on the host machine.',
@@ -2127,9 +2130,9 @@ async function routeEngineFreeSubcommands(command: string, args: string[]): Prom
   // explicitly via its grace-tick exit path (PGLite exitCode-hijack guard).
   if (command === 'eval' && args[0] === 'brainbench') {
     const { runEvalBrainBench } = await import('./commands/eval-brainbench.ts');
-    if (args.includes('--llm') && !args.includes('--help') && !args.includes('-h')) {
-      // --llm is the one mode that talks to a provider; mirror the
-      // longmemeval gateway bootstrap so extraction calls are priced.
+    if ((args.includes('--llm') || args.some((a) => a === '--decide' || a.startsWith('--decide='))) && !args.includes('--help') && !args.includes('-h')) {
+      // --llm and --decide arms talk to a provider; mirror the longmemeval
+      // gateway bootstrap so extraction and decide calls are keyed and priced.
       const config = loadConfig() ?? ({} as GBrainConfig);
       const { configureGateway } = await import('./core/ai/gateway.ts');
       configureGateway(buildGatewayConfig(config));
@@ -2801,6 +2804,9 @@ async function connectEngine(opts?: { probeOnly?: boolean }): Promise<BrainEngin
     console.warn('  Re-run: `gbrain apply-migrations --yes`');
   }
 
+  // #5628: drop this host's markers of a retired managed epoch before any filesystem guard check.
+  try { await (await import('./core/persistence/deactivation.ts')).cleanupRetiredManagedMarkers(engine); } catch { /* status reports pending markers */ }
+
   // v0.27.1 (F3 fix): re-merge DB-plane config now that the engine is up.
   // Flags like `embedding_multimodal` are user-mutable via `gbrain config set`
   // (DB plane) and need to flow into the gateway after connect. Schema-sizing
@@ -2854,14 +2860,19 @@ export function printOpHelp(op: Operation, invokedName?: string) {
   // v114 (#1941): when invoked via an alias (e.g. `gbrain link-add --help`),
   // show the alias the user typed, not the primary op name.
   const name = invokedName || op.cliHints?.name || op.name;
-  console.log(`Usage: gbrain ${name} ${positional} [options]\n`);
-  console.log(op.description + '\n');
+  const stdinKey = op.cliHints?.stdin;
+  const stdinFlag = stdinKey ? `--${stdinKey.replace(/_/g, '-')}` : '';
+  console.log(`Usage: gbrain ${name} ${positional} [options]`);
+  if (stdinKey) console.log(`       gbrain ${name} ${positional} [options] < file   (${stdinFlag} read from stdin)`);
+  console.log('\n' + op.description + '\n');
   const entries = Object.entries(op.params);
   if (entries.length > 0) {
     console.log('Options:');
     for (const [key, def] of entries) {
       const isPos = op.cliHints?.positional?.includes(key);
-      const req = def.required ? ' (required)' : '';
+      const req = key === stdinKey
+        ? ` (required: ${stdinFlag} needs a value; omit ${stdinFlag}, or put it last, to read stdin)`
+        : def.required ? ' (required)' : '';
       const prefix = isPos ? `  <${key}>` : `  --${key.replace(/_/g, '-')}`;
       console.log(`${prefix.padEnd(28)} ${def.description || ''}${req}`);
     }
@@ -2970,6 +2981,7 @@ TOOLS
                                      See also: autopilot --install (continuous daemon).
   compile-context --target <t>       Compile a deterministic, scanned, budgeted context
         [--budget N] [--check]       file (claude-code | codex | openclaw)
+  decide <status|probe|enable|...>   System One decision support (Jev); every slot off by default
   check-resolvable [--json] [--fix]  Validate skill tree (reachability/MECE/DRY)
   report --type <name> --content ... Save timestamped report to brain/reports/
 

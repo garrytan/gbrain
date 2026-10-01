@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-118",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/odette-vashcombe",
+      "content": "---\ntitle: Odette Vashcombe\ntype: person\naliases: [odette]\nsummary: \"Odette Vashcombe is the procurement lead at Glintreach.\"\n---\n\nOdette Vashcombe is the procurement lead at Glintreach.\n"
+    },
+    {
+      "slug": "people/mireille-fenridge",
+      "content": "---\ntitle: Mireille Fenridge\ntype: person\nsummary: \"Mireille Fenridge is the procurement lead at Junipergate.\"\n---\n\nMireille Fenridge is the procurement lead at Junipergate. Mireille wants the proposal revised to drop the onboarding fee.\n"
+    },
+    {
+      "slug": "people/zainab-quellstead",
+      "content": "---\ntitle: Zainab Quellstead\ntype: person\nsummary: \"Zainab Quellstead is the head of partnerships at Glintspire.\"\n---\n\nZainab Quellstead is the head of partnerships at Glintspire.\n"
+    },
+    {
+      "slug": "people/ottilie-corvthorpe",
+      "content": "---\ntitle: Ottilie Corvthorpe\ntype: person\naliases: [ottilie]\nsummary: \"Ottilie Corvthorpe is the user's accountant.\"\n---\n\nOttilie Corvthorpe is the user's accountant. Ottilie suggested holding the offsite somewhere reachable by train.\n"
+    },
+    {
+      "slug": "people/rasmus-lornwaite",
+      "content": "---\ntitle: Rasmus Lornwaite\ntype: person\naliases: [rasmus]\nsummary: \"A contact from a conference last spring.\"\n---\n\nA contact from a conference last spring.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "How many letters are in the name Vashcombe?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Happy to help."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "What did Fenridge want changed in the proposal?"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "is zainab a common name anywhere? thinking about it for a character"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Here is what I have."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "what did my accountant flag about the offsite?"
+    }
+  ]
+}

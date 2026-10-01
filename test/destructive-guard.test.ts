@@ -726,7 +726,7 @@ describe('formatters (display helpers)', () => {
     const removeStart = src.indexOf('async function runRemove');
     const removeEnd = src.indexOf('async function', removeStart + 1);
     const body = src.slice(removeStart, removeEnd);
-    const deleteIdx = body.indexOf(`DELETE FROM sources WHERE id = $1`);
+    const deleteIdx = body.indexOf('deleteSourceRow(tx, id)');
     const teardownIdx = body.indexOf('unhardenBrainRepo');
     expect(deleteIdx).toBeGreaterThan(0);
     expect(teardownIdx).toBeGreaterThan(0);

@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-066",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/solveig-orrinwick",
+      "content": "---\ntitle: Solveig Orrinwick\ntype: person\naliases: [solveig]\nsummary: \"Solveig Orrinwick is the head of partnerships at Tidalwharf.\"\n---\n\nSolveig Orrinwick is the head of partnerships at Tidalwharf.\n"
+    },
+    {
+      "slug": "people/fintan-merrbarrow",
+      "content": "---\ntitle: Fintan Merrbarrow\ntype: person\naliases: [fintan]\nsummary: \"Fintan Merrbarrow is the head of partnerships at Cobaltspire.\"\n---\n\nFintan Merrbarrow is the head of partnerships at Cobaltspire. Fintan asked for a longer pilot before signing, ideally a full quarter.\n"
+    },
+    {
+      "slug": "people/thea-tesswick",
+      "content": "---\ntitle: Thea Tesswick\ntype: person\naliases: [thea]\nsummary: \"Thea Tesswick is the procurement lead at Juniperspire.\"\n---\n\nThea Tesswick is the procurement lead at Juniperspire. Thea objected to the auto-renewal clause in the draft contract.\n"
+    },
+    {
+      "slug": "companies/vesperspire",
+      "content": "---\ntitle: Vesperspire\ntype: company\nsummary: \"A company we met once at a trade show.\"\n---\n\nA company we met once at a trade show.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "How do you pronounce Solveig? I want to say it right."
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Okay, noted."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "ok cool, talk later"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Done."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "What did Merrbarrow want changed in the pilot?"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "did tesswick ever get back to me on the contract?"
+    }
+  ]
+}

@@ -30,6 +30,7 @@ import { preparePageAdvisories, remoteLinkHint, pageNoopAdvisories } from './pag
 import { assertKnowledgePublicationAllowed } from '../shared-skills/knowledge-guard.ts';
 import { nativeFileTarget } from './native-file-target.ts';
 import { isSourceDbOnlySlug } from './source-storage.ts';
+import { DERIVE_PHASE_DB_ONLY_DEFAULTS } from '../storage-config.ts';
 import { SOURCE_CONFIG_OBJECT_SQL } from '../source-config-sql.ts';
 import { readSlugRootMode } from '../sync-anchor.ts';
 
@@ -66,6 +67,10 @@ function putProvenance(row: WriteRequest, snapshot: PageSnapshot | null, parsed:
   Object.assign(parsed.frontmatter, stamp);
   return stamp;
 }
+/** A derive-phase page (DERIVE_PHASE_DB_ONLY_DEFAULTS) that never recorded a canonical file. */
+function isNeverFiledDerivedPage(slug: string, page: { source_path?: string | null; source_uri?: string | null }): boolean {
+  return !page.source_path && !page.source_uri && DERIVE_PHASE_DB_ONLY_DEFAULTS.some(prefix => slug.startsWith(prefix));
+}
 export async function prepareFileTarget(engine: BrainEngine, row: Pick<WriteRequest, 'source_id' | 'worktree_id' | 'slug'>, snapshot: PageSnapshot | null,
   content: string | null, hostId?: string, options: { allowMissing?: boolean; capture?: { path: string; hash: string } } = {}): Promise<PreparedMutation['file']> {
   if (!row.worktree_id) return undefined;
@@ -88,6 +93,11 @@ export async function prepareFileTarget(engine: BrainEngine, row: Pick<WriteRequ
     // the database only. gbrain.yml is consulted only here, where the write
     // would otherwise refuse, so an invalid config can only change the refusal.
     if (isSourceDbOnlySlug(root, row.slug, 'refuse')) return undefined;
+    // Derive-phase output (atoms/, concepts/, ...) is database-only by design and
+    // deliberately never declared in gbrain.yml. A page there that never recorded a
+    // canonical file publishes to the database only; a recorded file that went
+    // missing still refuses below.
+    if (isNeverFiledDerivedPage(row.slug, snapshot.page)) return undefined;
     throw new OperationError('source_changed', 'The canonical file was removed outside coordinated publication.',
       'Import the local deletion or recover the canonical file before editing this page.');
   }

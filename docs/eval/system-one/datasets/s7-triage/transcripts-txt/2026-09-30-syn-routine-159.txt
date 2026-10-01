@@ -1,0 +1,183 @@
+[user]
+I’m trying to split a restaurant bill among four people and calculate the tip. Can you help me work it out carefully?
+
+[assistant]
+Sure. Send me the bill subtotal, the tax, the tip percentage you want to use, and how the charges should be divided. For example, tell me whether everyone had an equal share, whether there were shared items, and whether tax and tip should be split in the same proportions as the food.
+
+[user]
+Here are the numbers from the receipt:
+
+Subtotal: $186.40
+Tax: $16.78
+There’s also a $4.50 service charge.
+I want to leave 20% tip, but I’m not sure whether to calculate that on the subtotal only or on the subtotal plus tax and service charge.
+
+Three people had similar meals, and the fourth person had a meal that cost $18 less than each of those three meals. There was also a shared appetizer for $24 and shared drinks for $16.40.
+
+[assistant]
+Yes. There are two common conventions:
+
+1. Tip on the food and drinks subtotal, excluding tax and service charge.
+2. Tip on the amount after adding tax and sometimes the service charge.
+
+Unless the restaurant states otherwise, using the pre-tax subtotal is easy to explain. Your listed item amounts also reconcile exactly:
+
+- Three similar meals: 3 × $52.00 = $156.00
+- Fourth meal: $52.00 − $18.00 = $34.00
+- Shared appetizer: $24.00
+- Shared drinks: $16.40
+- Subtotal: $156.00 + $34.00 + $24.00 + $16.40 = $230.40
+
+That does not match the stated subtotal of $186.40, so one of the item amounts or the subtotal needs checking before we split it.
+
+[assistant]
+[user]
+You’re right; I copied something incorrectly. The three similar meals were $38 each, not $52. So the items are:
+
+Three meals: 3 × $38 = $114
+Fourth meal: $20
+Shared appetizer: $24
+Shared drinks: $16.40
+
+That gives $174.40, still not $186.40. I may be missing a dessert or another charge.
+
+[assistant]
+The difference is:
+
+```text
+Receipt subtotal:        $186.40
+Listed item subtotal:    $174.40
+Unaccounted amount:       $12.00
+```
+
+If that $12.00 is another shared item, it can be divided equally. If it belongs to one or more specific people, the split will change. For now, I’ll keep it as an unidentified amount and show the calculation both ways once you confirm how to allocate it.
+
+Also, the receipt total before tip is:
+
+```text
+Subtotal              $186.40
+Tax                    $16.78
+Service charge          $4.50
+--------------------------------
+Before-tip total      $207.68
+```
+
+[assistant]
+[user]
+Let’s treat the missing $12 as a shared item. Please calculate the 20% tip on the subtotal only, excluding tax and the service charge. Then split everything four ways, but allocate the meal costs individually and divide all shared costs equally.
+
+[assistant]
+Using that method:
+
+```text
+Food and shared-item subtotal:  $186.40
+Tip rate:                         20%
+Tip:                             $186.40 × 0.20 = $37.28
+
+Tax:                             $16.78
+Service charge:                   $4.50
+---------------------------------------
+Grand total:                    $228.96
+```
+
+For the allocation:
+
+- Person 1 meal: $38.00
+- Person 2 meal: $38.00
+- Person 3 meal: $38.00
+- Person 4 meal: $20.00
+- Shared subtotal: appetizer $24.00 + drinks $16.40 + missing item $12.00 = $52.40
+- Each person’s shared subtotal: $52.40 ÷ 4 = $13.10
+
+Before tax, tip, and service charge, the four shares are:
+
+```text
+Person 1: $38.00 + $13.10 = $51.10
+Person 2: $38.00 + $13.10 = $51.10
+Person 3: $38.00 + $13.10 = $51.10
+Person 4: $20.00 + $13.10 = $33.10
+```
+
+These add to $186.40.
+
+[assistant]
+[user]
+How should I distribute the tax, tip, and service charge? I’d like each person’s additions to reflect their share of the subtotal rather than just splitting those charges equally.
+
+[assistant]
+Use each person’s subtotal share as a percentage of $186.40. The combined additions are:
+
+```text
+Tax + tip + service charge
+$16.78 + $37.28 + $4.50 = $58.56
+```
+
+For each person:
+
+```text
+Person 1 share: $51.10 ÷ $186.40 = 27.413%
+Person 2 share: $51.10 ÷ $186.40 = 27.413%
+Person 3 share: $51.10 ÷ $186.40 = 27.413%
+Person 4 share: $33.10 ÷ $186.40 = 17.757%
+```
+
+Applying those percentages to $58.56 gives approximate additions:
+
+```text
+Person 1: $58.56 × 51.10 ÷ 186.40 = $16.04
+Person 2: $16.04
+Person 3: $16.04
+Person 4: $10.44
+```
+
+The total additions are $58.56, so the final amounts are:
+
+```text
+Person 1: $51.10 + $16.04 = $67.14
+Person 2: $51.10 + $16.04 = $67.14
+Person 3: $51.10 + $16.04 = $67.14
+Person 4: $33.10 + $10.44 = $43.54
+--------------------------------------------
+Total:                             $244.96
+```
+
+There is an arithmetic issue in the grand total above: $186.40 + $58.56 equals $244.96, not $228.96. The earlier grand total omitted the tip when adding the charges. The corrected total is $244.96.
+
+[assistant/final]
+[user]
+Could you show the tax, tip, and service charge separately for each person instead of combining them?
+
+[assistant]
+Yes. Allocate each charge in proportion to each person’s subtotal share. To keep the cents exact, calculate unrounded amounts first and then adjust the final cents.
+
+The four pre-charge shares are:
+
+```text
+Person 1: $51.10
+Person 2: $51.10
+Person 3: $51.10
+Person 4: $33.10
+Total:    $186.40
+```
+
+The formulas are:
+
+```text
+Person’s tax = $16.78 × person’s subtotal ÷ $186.40
+Person’s tip = $37.28 × person’s subtotal ÷ $186.40
+Person’s service charge = $4.50 × person’s subtotal ÷ $186.40
+```
+
+Rounded to cents, the allocation is:
+
+```text
+                 Tax     Tip     Service   Base     Final
+Person 1         $4.60    $10.22    $1.23    $51.10    $67.15
+Person 2         $4.60    $10.22    $1.23    $51.10    $67.15
+Person 3         $4.60    $10.22    $1.23    $51.10    $67.15
+Person 4         $2.98    $ 6.62    $0.81    $33.10    $43.51
+------------------------------------------------------------
+Total           $16.78    $37.28    $4.50   $186.40   $244.96
+```
+
+The first three rows are identical because those people have identical subtotal shares. Adding the displayed row amounts gives the receipt total exactly.

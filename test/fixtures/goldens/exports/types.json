@@ -58,7 +58,7 @@
           "consolidateFact: (id: number, takeId: number) => Promise<void>",
           "countChunklessPagesWithContent: (opts?: { sourceId?: string; }) => Promise<number>",
           "countStaleChunks: (opts?: { sourceId?: string; signature?: string; includeNullSignature?: boolean; }) => Promise<number>",
-          "countStalePagesForExtraction: (opts?: { sourceId?: string; versionTs?: string; }) => Promise<number>",
+          "countStalePagesForExtraction: (opts?: { sourceId?: string; versionTs?: string; attendance?: \"exclude\" | \"blocked\"; }) => Promise<number>",
           "countStaleTakes: () => Promise<number>",
           "countUnconsolidatedFacts: (source_id: string) => Promise<number>",
           "createVersion: (slug: string, opts?: { sourceId?: string; }) => Promise<PageVersion>",
@@ -151,6 +151,7 @@
           "logEvalCandidate: (input: EvalCandidateInput) => Promise<number>",
           "logEvalCaptureFailure: (reason: EvalCaptureFailureReason) => Promise<void>",
           "logIngest: (entry: IngestLogInput) => Promise<void>",
+          "markPagesAttendanceBlocked: (refs: Array<{ slug: string; source_id: string; revision: string; }>) => Promise<number>",
           "markPagesExtractedBatch: (refs: Array<{ slug: string; source_id: string; extractedAt?: string; }>, defaultExtractedAt: string) => Promise<number>",
           "mergeOntologyFact: (obs: OntologyObservationInput) => Promise<OntologyMergeResult>",
           "migrateFactsToCanonical: (phantomSlug: string, canonicalSlug: string, sourceId: string) => Promise<{ migrated: number; }>",
@@ -397,7 +398,7 @@
         "kind": "variable",
         "name": "DEGRADED_REASONS",
         "signature": [
-          "readonly [\"no_provider\", \"provider_error\", \"timeout\", \"variant_embed_failed\", \"original_embed_failed\", \"first_result_truncated\", \"no_key\", \"empty_result_set\", \"malformed_shape\", \"budget\", \"candidate_budget\", \"iterative_scan_unavailable\"]"
+          "readonly [\"no_provider\", \"provider_error\", \"timeout\", \"variant_embed_failed\", \"original_embed_failed\", \"first_result_truncated\", \"no_key\", \"empty_result_set\", \"malformed_shape\", \"budget\", \"candidate_budget\", \"iterative_scan_unavailable\", \"egress_denied\"]"
         ]
       },
       {
@@ -411,7 +412,7 @@
         "kind": "type",
         "name": "DegradedReason",
         "signature": [
-          "\"candidate_budget\" | \"iterative_scan_unavailable\" | \"no_provider\" | \"provider_error\" | \"timeout\" | \"variant_embed_failed\" | \"original_embed_failed\" | \"first_result_truncated\" | \"no_key\" | \"empty_result_set\" | \"malformed_shape\" | \"budget\""
+          "\"candidate_budget\" | \"iterative_scan_unavailable\" | \"no_provider\" | \"provider_error\" | \"timeout\" | \"variant_embed_failed\" | \"original_embed_failed\" | \"first_result_truncated\" | \"no_key\" | \"empty_result_set\" | \"malformed_shape\" | \"budget\" | \"egress_denied\""
         ]
       },
       {
@@ -424,7 +425,7 @@
       {
         "kind": "interface",
         "members": [
-          "reason?: \"candidate_budget\" | \"iterative_scan_unavailable\" | \"no_provider\" | \"provider_error\" | \"timeout\" | \"variant_embed_failed\" | \"original_embed_failed\" | \"first_result_truncated\" | \"no_key\" | \"empty_result_set\" | \"malformed_shape\" | \"budget\" | undefined",
+          "reason?: \"candidate_budget\" | \"iterative_scan_unavailable\" | \"no_provider\" | \"provider_error\" | \"timeout\" | \"variant_embed_failed\" | \"original_embed_failed\" | \"first_result_truncated\" | \"no_key\" | \"empty_result_set\" | \"malformed_shape\" | \"budget\" | \"egress_denied\" | undefined",
           "stage: \"embed_unavailable\" | \"embed_timeout\" | \"expansion_failed\" | \"expansion_partial\" | \"rescore_skipped\" | \"vector_arm_failed\" | \"keyword_arm_failed\" | \"title_arm_failed\" | \"budget_dropped_all\" | \"budget_truncated\" | \"keyword_zero\" | \"cache_prestamp\" | \"reranker_skipped\" | \"rerank_passthrough\" | \"rerank_failed\" | \"keyword_relaxed_carried\" | \"safe_index_pending\" | \"vector_candidates_incomplete\" | \"projection_pending\" | \"projection_status_unknown\""
         ],
         "name": "DegradedStageEntry"
@@ -652,8 +653,10 @@
         "kind": "interface",
         "members": [
           "adaptive_return?: AdaptiveReturnDecision | undefined",
+          "answerability?: AnswerabilityVerdict | undefined",
           "autocut?: AutocutDecision | undefined",
           "cache?: { status: \"hit\" | \"miss\" | \"disabled\"; similarity?: number; age_seconds?: number; } | undefined",
+          "decide?: Partial<Record<\"rerank\" | \"intent\" | \"evidence\" | \"answerable\" | \"injection\" | \"recall_needed\" | \"triage\" | \"grounding\" | \"conflict\", DecideSlotMeta>> | undefined",
           "degraded?: DegradedStageEntry[] | undefined",
           "detail_resolved: \"low\" | \"medium\" | \"high\" | null",
           "embedding_column?: string | undefined",
@@ -665,6 +668,7 @@
           "relational_evidence_slot?: RelationalEvidenceSlotDecision | undefined",
           "relational_rerank_pin?: RelationalRerankPinDecision | undefined",
           "relaxed_dropped?: number | undefined",
+          "rerank?: { model_resolved: string; } | undefined",
           "retrieved_count?: number | undefined",
           "token_budget?: { budget: number; used: number; kept: number; dropped: number; truncated?: boolean; } | undefined",
           "vector_enabled: boolean",
@@ -927,6 +931,7 @@
           "knowledge_revision?: string | null | undefined",
           "page_id: number",
           "snapshot_at: Date",
+          "source_path?: string | null | undefined",
           "tags?: string[] | null | undefined",
           "timeline?: string | null | undefined",
           "title?: string | null | undefined",
@@ -951,7 +956,7 @@
           "consolidateFact: (id: number, takeId: number) => Promise<void>",
           "countChunklessPagesWithContent: (opts?: { sourceId?: string; }) => Promise<number>",
           "countStaleChunks: (opts?: { sourceId?: string; signature?: string; includeNullSignature?: boolean; }) => Promise<number>",
-          "countStalePagesForExtraction: (opts?: { sourceId?: string; versionTs?: string; }) => Promise<number>",
+          "countStalePagesForExtraction: (opts?: { sourceId?: string; versionTs?: string; attendance?: \"exclude\" | \"blocked\"; }) => Promise<number>",
           "countStaleTakes: () => Promise<number>",
           "countUnconsolidatedFacts: (source_id: string) => Promise<number>",
           "createVersion: (slug: string, opts?: { sourceId?: string; }) => Promise<PageVersion>",
@@ -1045,6 +1050,7 @@
           "logEvalCandidate: (input: EvalCandidateInput) => Promise<number>",
           "logEvalCaptureFailure: (reason: EvalCaptureFailureReason) => Promise<void>",
           "logIngest: (entry: IngestLogInput) => Promise<void>",
+          "markPagesAttendanceBlocked: (refs: Array<{ slug: string; source_id: string; revision: string; }>) => Promise<number>",
           "markPagesExtractedBatch: (refs: Array<{ slug: string; source_id: string; extractedAt?: string; }>, defaultExtractedAt: string) => Promise<number>",
           "mergeOntologyFact: (obs: OntologyObservationInput) => Promise<OntologyMergeResult>",
           "migrateFactsToCanonical: (phantomSlug: string, canonicalSlug: string, sourceId: string) => Promise<{ migrated: number; }>",
@@ -1285,11 +1291,12 @@
           "chronicle_boost?: number | undefined",
           "chunk_id: number",
           "chunk_index: number",
-          "chunk_source: \"compiled_truth\" | \"timeline\"",
+          "chunk_source: \"compiled_truth\" | \"timeline\" | \"fenced_code\"",
           "chunk_text: string",
           "content_flag?: { reason: string; detail: string; } | undefined",
           "cosine?: number | undefined",
           "create_safety?: CreateSafety | undefined",
+          "decide_evidence?: { p: number; clears: boolean; } | undefined",
           "delivered?: DeliveredEvidence | undefined",
           "effective_date?: string | null | undefined",
           "effective_date_source?: string | null | undefined",
@@ -1302,6 +1309,8 @@
           "graph_cross_source_hits?: number | undefined",
           "graph_session_demoted?: boolean | undefined",
           "graph_session_prefix?: string | undefined",
+          "injection_p?: number | undefined",
+          "injection_suspected?: true | undefined",
           "keyword_hit?: boolean | undefined",
           "keyword_relaxed?: boolean | undefined",
           "message_id?: string | undefined",
@@ -1314,6 +1323,7 @@
           "relational_seed?: string | undefined",
           "relational_via_link_types?: string[] | undefined",
           "rerank_score?: number | undefined",
+          "rerank_score_kind?: \"rubric\" | undefined",
           "reranker_delta?: number | undefined",
           "salience_boost?: number | undefined",
           "score: number",
@@ -1624,12 +1634,25 @@
         "members": [
           "documents: string[]",
           "model?: string | undefined",
+          "onMeta?: ((meta: RerankMeta) => void) | undefined",
           "query: string",
           "signal?: AbortSignal | undefined",
           "timeoutMs?: number | undefined",
           "topN?: number | undefined"
         ],
         "name": "RerankInput"
+      },
+      {
+        "kind": "interface",
+        "members": [
+          "batches: number",
+          "input_tokens: number",
+          "latency_ms: number",
+          "model_resolved: string",
+          "output_tokens: number",
+          "score_semantics: \"rubric\""
+        ],
+        "name": "RerankMeta"
       },
       {
         "kind": "interface",
@@ -1748,6 +1771,13 @@
       },
       {
         "kind": "function",
+        "name": "__setDecideTransportForTests",
+        "signature": [
+          "(fn: RerankTransport | null) => void"
+        ]
+      },
+      {
+        "kind": "function",
         "name": "__setEmbedTransportForTests",
         "signature": [
           "(fn: EmbedManyFn | null) => void"
@@ -1853,6 +1883,20 @@
       },
       {
         "kind": "function",
+        "name": "decide",
+        "signature": [
+          "(req: DecideRequest, ctx: DecideContext) => Promise<DecideResult>"
+        ]
+      },
+      {
+        "kind": "function",
+        "name": "decideTransport",
+        "signature": [
+          "() => RerankTransport"
+        ]
+      },
+      {
+        "kind": "function",
         "name": "defaultMaxOutputTokens",
         "signature": [
           "(modelStr: string | undefined) => number"
@@ -1904,7 +1948,7 @@
         "kind": "function",
         "name": "embedQuery",
         "signature": [
-          "(text: string, opts?: { embeddingModel?: string; dimensions?: number; abortSignal?: AbortSignal; }) => Promise<Float32Array>"
+          "(text: string, opts?: { embeddingModel?: string; dimensions?: number; abortSignal?: AbortSignal; queryPrefix?: string; }) => Promise<Float32Array>"
         ]
       },
       {
@@ -2186,7 +2230,7 @@
         "kind": "interface",
         "members": [
           "cacheWriteTtl?: \"5m\" | \"1h\" | undefined",
-          "kind: \"embedding\" | \"chat\" | \"rerank\" | \"multimodal\"",
+          "kind: \"embedding\" | \"rerank\" | \"chat\" | \"multimodal\" | \"decide\"",
           "maxInputTokens?: number | undefined",
           "maxOutputTokens?: number | undefined",
           "model: string",
@@ -2881,7 +2925,7 @@
         "kind": "function",
         "name": "embedQuery",
         "signature": [
-          "(text: string, opts?: { embeddingModel?: string; dimensions?: number; abortSignal?: AbortSignal; }) => Promise<Float32Array>"
+          "(text: string, opts?: { embeddingModel?: string; dimensions?: number; abortSignal?: AbortSignal; queryPrefix?: string; }) => Promise<Float32Array>"
         ]
       },
       {
@@ -2973,7 +3017,7 @@
           "consolidateFact: (id: number, takeId: number) => Promise<void>",
           "countChunklessPagesWithContent: (opts?: { sourceId?: string; }) => Promise<number>",
           "countStaleChunks: (opts?: { sourceId?: string; signature?: string; includeNullSignature?: boolean; }) => Promise<number>",
-          "countStalePagesForExtraction: (opts?: { sourceId?: string; versionTs?: string; }) => Promise<number>",
+          "countStalePagesForExtraction: (opts?: { sourceId?: string; versionTs?: string; attendance?: \"exclude\" | \"blocked\"; }) => Promise<number>",
           "countStaleTakes: () => Promise<number>",
           "countUnconsolidatedFacts: (source_id: string) => Promise<number>",
           "createVersion: (slug: string, opts?: { sourceId?: string; }) => Promise<PageVersion>",
@@ -3066,6 +3110,7 @@
           "logEvalCandidate: (input: EvalCandidateInput) => Promise<number>",
           "logEvalCaptureFailure: (reason: EvalCaptureFailureReason) => Promise<void>",
           "logIngest: (entry: IngestLogInput) => Promise<void>",
+          "markPagesAttendanceBlocked: (refs: Array<{ slug: string; source_id: string; revision: string; }>) => Promise<number>",
           "markPagesExtractedBatch: (refs: Array<{ slug: string; source_id: string; extractedAt?: string; }>, defaultExtractedAt: string) => Promise<number>",
           "mergeOntologyFact: (obs: OntologyObservationInput) => Promise<OntologyMergeResult>",
           "migrateFactsToCanonical: (phantomSlug: string, canonicalSlug: string, sourceId: string) => Promise<{ migrated: number; }>",
@@ -4438,7 +4483,7 @@
         "kind": "variable",
         "name": "LINK_EXTRACTOR_VERSION_TS",
         "signature": [
-          "\"2026-09-21T00:00:00Z\""
+          "\"2026-09-30T00:00:00Z\""
         ]
       },
       {
@@ -4482,7 +4527,15 @@
       {
         "kind": "interface",
         "members": [
-          "resolve: (name: string, dirHint?: string | string[]) => Promise<string | null>",
+          "globalBasename?: boolean | undefined",
+          "selfSlug?: string | undefined"
+        ],
+        "name": "ResolveOptions"
+      },
+      {
+        "kind": "interface",
+        "members": [
+          "resolve: (name: string, dirHint?: string | string[], opts?: ResolveOptions) => Promise<string | null>",
           "resolveAttendance?: ((name: string, dirHint?: string | string[]) => Promise<string | null>) | undefined",
           "resolveBasenameMatches?: ((name: string) => Promise<string[]>) | undefined"
         ],
@@ -5260,7 +5313,7 @@
         "kind": "type",
         "name": "ErrorCode",
         "signature": [
-          "\"writer_lock_unavailable\" | \"writer_pool_capacity\" | \"owner_unavailable\" | \"recovery_required\" | \"queue_capacity\" | \"revision_required\" | \"revision_conflict\" | \"idempotency_conflict\" | \"source_changed\" | \"write_pending\" | \"storage_error\" | \"cancelled\" | \"permission_denied\" | \"scope_denied\" | \"invalid_params\" | \"not_found\" | \"page_not_found\" | \"page_identity_changed\" | \"write_claim_lost\" | \"request_too_large\" | \"response_too_large\" | \"writer_registration_required\" | \"writer_identity_invalid\" | \"writer_not_initialized\" | \"writer_coordinator_required\" | \"fact_already_expired\" | \"source_writeback_required\" | \"unsupported_mutation_protocol\" | \"writer_upgrade_required\" | \"writer_not_quiesced\" | \"skill_bundle_required\" | \"take_row_collision\" | \"invalid_source_uri\" | \"writer_admin_locked\" | \"connector_account_changed\" | \"connector_intent_outdated\" | \"embedding_failed\" | \"bucket_not_found\" | \"database_error\" | \"unknown_transport\" | \"rate_limited\" | \"extraction_failed\" | \"fact_not_found\" | \"provenance_required\" | \"unavailable\" | \"budget_unsatisfiable\" | \"embedding_budget_below_worst_case\" | (string & {})"
+          "\"writer_lock_unavailable\" | \"writer_pool_capacity\" | \"owner_unavailable\" | \"recovery_required\" | \"queue_capacity\" | \"revision_required\" | \"revision_conflict\" | \"idempotency_conflict\" | \"source_changed\" | \"write_pending\" | \"storage_error\" | \"cancelled\" | \"permission_denied\" | \"scope_denied\" | \"invalid_params\" | \"not_found\" | \"page_not_found\" | \"page_identity_changed\" | \"write_claim_lost\" | \"request_too_large\" | \"response_too_large\" | \"writer_registration_required\" | \"writer_identity_invalid\" | \"writer_not_initialized\" | \"writer_coordinator_required\" | \"fact_already_expired\" | \"source_writeback_required\" | \"unsupported_mutation_protocol\" | \"writer_upgrade_required\" | \"writer_not_quiesced\" | \"skill_bundle_required\" | \"take_row_collision\" | \"invalid_source_uri\" | \"writer_admin_locked\" | \"connector_account_changed\" | \"connector_intent_outdated\" | \"checkpoint_validation_timeout\" | \"invalid_connector_text\" | \"connector_holds_exhausted\" | \"connector_fence_below_timeline\" | \"embedding_failed\" | \"bucket_not_found\" | \"database_error\" | \"unknown_transport\" | \"rate_limited\" | \"extraction_failed\" | \"fact_not_found\" | \"provenance_required\" | \"unavailable\" | \"budget_unsatisfiable\" | \"embedding_budget_below_worst_case\" | (string & {})"
         ]
       },
       {
@@ -5344,8 +5397,8 @@
           "protocolVersion?: number | undefined",
           "stack?: string | undefined",
           "suggestion?: string | undefined",
-          "toJSON: () => { write_error?: \"writer_lock_unavailable\" | \"writer_pool_capacity\" | \"owner_unavailable\" | \"recovery_required\" | \"queue_capacity\" | \"revision_required\" | \"revision_conflict\" | \"idempotency_conflict\" | \"source_changed\" | \"write_pending\" | \"storage_error\" | \"cancelled\" | \"permission_denied\" | \"scope_denied\" | \"invalid_params\" | \"not_found\" | \"page_not_found\" | \"page_identity_changed\" | \"write_claim_lost\" | \"request_too_large\" | \"response_too_large\" | \"writer_registration_required\" | \"writer_identity_invalid\" | \"writer_not_initialized\" | \"writer_coordinator_required\" | \"fact_already_expired\" | \"source_writeback_required\" | \"unsupported_mutation_protocol\" | \"writer_upgrade_required\" | \"writer_not_quiesced\" | \"skill_bundle_required\" | \"take_row_collision\" | \"invalid_source_uri\" | \"writer_admin_locked\" | \"connector_account_changed\" | \"connector_intent_outdated\" | undefined; write_request?: WriteReceipt | undefined; error: ErrorCode; message: string; suggestion: string | undefined; docs: string | undefined; detail: string | undefined; protocol_version: number | undefined; }",
-          "writeError?: \"writer_lock_unavailable\" | \"writer_pool_capacity\" | \"owner_unavailable\" | \"recovery_required\" | \"queue_capacity\" | \"revision_required\" | \"revision_conflict\" | \"idempotency_conflict\" | \"source_changed\" | \"write_pending\" | \"storage_error\" | \"cancelled\" | \"permission_denied\" | \"scope_denied\" | \"invalid_params\" | \"not_found\" | \"page_not_found\" | \"page_identity_changed\" | \"write_claim_lost\" | \"request_too_large\" | \"response_too_large\" | \"writer_registration_required\" | \"writer_identity_invalid\" | \"writer_not_initialized\" | \"writer_coordinator_required\" | \"fact_already_expired\" | \"source_writeback_required\" | \"unsupported_mutation_protocol\" | \"writer_upgrade_required\" | \"writer_not_quiesced\" | \"skill_bundle_required\" | \"take_row_collision\" | \"invalid_source_uri\" | \"writer_admin_locked\" | \"connector_account_changed\" | \"connector_intent_outdated\" | undefined",
+          "toJSON: () => { write_error?: \"writer_lock_unavailable\" | \"writer_pool_capacity\" | \"owner_unavailable\" | \"recovery_required\" | \"queue_capacity\" | \"revision_required\" | \"revision_conflict\" | \"idempotency_conflict\" | \"source_changed\" | \"write_pending\" | \"storage_error\" | \"cancelled\" | \"permission_denied\" | \"scope_denied\" | \"invalid_params\" | \"not_found\" | \"page_not_found\" | \"page_identity_changed\" | \"write_claim_lost\" | \"request_too_large\" | \"response_too_large\" | \"writer_registration_required\" | \"writer_identity_invalid\" | \"writer_not_initialized\" | \"writer_coordinator_required\" | \"fact_already_expired\" | \"source_writeback_required\" | \"unsupported_mutation_protocol\" | \"writer_upgrade_required\" | \"writer_not_quiesced\" | \"skill_bundle_required\" | \"take_row_collision\" | \"invalid_source_uri\" | \"writer_admin_locked\" | \"connector_account_changed\" | \"connector_intent_outdated\" | \"checkpoint_validation_timeout\" | \"invalid_connector_text\" | \"connector_holds_exhausted\" | \"connector_fence_below_timeline\" | undefined; write_request?: WriteReceipt | undefined; error: ErrorCode; message: string; suggestion: string | undefined; docs: string | undefined; detail: string | undefined; protocol_version: number | undefined; }",
+          "writeError?: \"writer_lock_unavailable\" | \"writer_pool_capacity\" | \"owner_unavailable\" | \"recovery_required\" | \"queue_capacity\" | \"revision_required\" | \"revision_conflict\" | \"idempotency_conflict\" | \"source_changed\" | \"write_pending\" | \"storage_error\" | \"cancelled\" | \"permission_denied\" | \"scope_denied\" | \"invalid_params\" | \"not_found\" | \"page_not_found\" | \"page_identity_changed\" | \"write_claim_lost\" | \"request_too_large\" | \"response_too_large\" | \"writer_registration_required\" | \"writer_identity_invalid\" | \"writer_not_initialized\" | \"writer_coordinator_required\" | \"fact_already_expired\" | \"source_writeback_required\" | \"unsupported_mutation_protocol\" | \"writer_upgrade_required\" | \"writer_not_quiesced\" | \"skill_bundle_required\" | \"take_row_collision\" | \"invalid_source_uri\" | \"writer_admin_locked\" | \"connector_account_changed\" | \"connector_intent_outdated\" | \"checkpoint_validation_timeout\" | \"invalid_connector_text\" | \"connector_holds_exhausted\" | \"connector_fence_below_timeline\" | undefined",
           "writeRequest?: WriteReceipt | undefined"
         ],
         "name": "OperationError",
@@ -5530,7 +5583,7 @@
           "consolidateFact: (id: number, takeId: number) => Promise<void>",
           "countChunklessPagesWithContent: (opts?: { sourceId?: string; }) => Promise<number>",
           "countStaleChunks: (opts?: { sourceId?: string; signature?: string; includeNullSignature?: boolean; }) => Promise<number>",
-          "countStalePagesForExtraction: (opts?: { sourceId?: string; versionTs?: string; }) => Promise<number>",
+          "countStalePagesForExtraction: (opts?: { sourceId?: string; versionTs?: string; attendance?: \"exclude\" | \"blocked\"; }) => Promise<number>",
           "countStaleTakes: () => Promise<number>",
           "countUnconsolidatedFacts: (source_id: string) => Promise<number>",
           "createVersion: (slug: string, opts?: { sourceId?: string; }) => Promise<PageVersion>",
@@ -5624,6 +5677,7 @@
           "logEvalCandidate: (input: EvalCandidateInput) => Promise<number>",
           "logEvalCaptureFailure: (reason: EvalCaptureFailureReason) => Promise<void>",
           "logIngest: (entry: IngestLogInput) => Promise<void>",
+          "markPagesAttendanceBlocked: (refs: Array<{ slug: string; source_id: string; revision: string; }>) => Promise<number>",
           "markPagesExtractedBatch: (refs: Array<{ slug: string; source_id: string; extractedAt?: string; }>, defaultExtractedAt: string) => Promise<number>",
           "mergeOntologyFact: (obs: OntologyObservationInput) => Promise<OntologyMergeResult>",
           "migrateFactsToCanonical: (phantomSlug: string, canonicalSlug: string, sourceId: string) => Promise<{ migrated: number; }>",
@@ -5905,6 +5959,13 @@
       },
       {
         "kind": "function",
+        "name": "getPgliteMigrationLockPath",
+        "signature": [
+          "(dataDir: string) => string"
+        ]
+      },
+      {
+        "kind": "function",
         "name": "inspectLockHolder",
         "signature": [
           "(dataDir: string | undefined) => LockHolderInfo"
@@ -5969,6 +6030,20 @@
         "name": "AssembleEvidenceOutput"
       },
       {
+        "kind": "type",
+        "name": "AutoReason",
+        "signature": [
+          "\"conversation_type\" | \"conversation_slug\" | \"not_conversation\" | \"conversation_over_budget\""
+        ]
+      },
+      {
+        "kind": "variable",
+        "name": "DEFAULT_CONVERSATION_BUDGET",
+        "signature": [
+          "24000"
+        ]
+      },
+      {
         "kind": "variable",
         "name": "DEFAULT_REMOTE_BUDGET_MAX",
         "signature": [
@@ -5996,6 +6071,7 @@
           "chunk_ids: number[]",
           "fallback_reason?: string | undefined",
           "match_spans: MatchSpan[]",
+          "reason?: AutoReason | undefined",
           "revision?: string | undefined",
           "tokens: number",
           "truncated: boolean",
@@ -6115,6 +6191,13 @@
       },
       {
         "kind": "variable",
+        "name": "RETURN_BUDGET_CONVERSATION_KEY",
+        "signature": [
+          "\"search.return_budget_conversation\""
+        ]
+      },
+      {
+        "kind": "variable",
         "name": "RETURN_BUDGET_DEFAULT_KEY",
         "signature": [
           "\"search.return_budget_default\""
@@ -6153,6 +6236,7 @@
         "members": [
           "budget: unknown",
           "configKey?: string | undefined",
+          "legacyBudget?: boolean | undefined",
           "op: string",
           "remote: boolean | undefined",
           "returnUnit: unknown",
@@ -6200,6 +6284,13 @@
       },
       {
         "kind": "function",
+        "name": "conversationSignal",
+        "signature": [
+          "(hit: { type?: string | null; slug: string; }) => \"conversation_type\" | \"conversation_slug\" | null"
+        ]
+      },
+      {
+        "kind": "function",
         "name": "countEvidenceTokens",
         "signature": [
           "(text: string, tokenizer?: \"cl100k\" | \"heuristic\") => number"
@@ -6217,6 +6308,13 @@
         "name": "deliveryVersionSkewWarning",
         "signature": [
           "(opName: string, params: Record<string, unknown>, retrievalMeta: Record<string, unknown> | null | undefined, result: unknown) => string | null"
+        ]
+      },
+      {
+        "kind": "function",
+        "name": "effectivePlan",
+        "signature": [
+          "(plan: EvidencePlan | null, hits: SearchResult[]) => EvidencePlan | null"
         ]
       },
       {
@@ -6346,6 +6444,7 @@
         "kind": "interface",
         "members": [
           "_queryEmbedDeadline?: QueryEmbedDeadline | undefined",
+          "_queryPrefix?: string | undefined",
           "_searchModeInput?: ResolveSearchModeInput | undefined",
           "_telemetryCacheStatus?: \"miss\" | \"disabled\" | undefined",
           "adaptiveReturn?: AdaptiveReturnInput",
@@ -6356,6 +6455,7 @@
           "beforeDate?: string | undefined",
           "beforeDateInclusive?: boolean | undefined",
           "crossModal?: \"image\" | \"text\" | \"both\" | \"auto\" | undefined",
+          "decide?: DecideSearchOpts | undefined",
           "dedupOpts?: { cosineThreshold?: number; maxTypeRatio?: number; maxPerPage?: number; } | undefined",
           "detail?: \"low\" | \"medium\" | \"high\" | undefined",
           "embeddingColumn?: string | ResolvedColumn | undefined",
@@ -6586,7 +6686,7 @@
         "kind": "function",
         "name": "embedQueryBounded",
         "signature": [
-          "(text: string, embedOpts: { embeddingModel?: string; dimensions?: number; } | undefined, dl: QueryEmbedDeadline) => Promise<Float32Array>"
+          "(text: string, embedOpts: { embeddingModel?: string; dimensions?: number; queryPrefix?: string; } | undefined, dl: QueryEmbedDeadline) => Promise<Float32Array>"
         ]
       },
       {
@@ -6756,6 +6856,7 @@
       {
         "kind": "interface",
         "members": [
+          "abstained?: ThinkAbstention | undefined",
           "answer: string",
           "citations: ParsedCitation[]",
           "cost_usd?: number | undefined",
@@ -7114,7 +7215,7 @@
         "kind": "variable",
         "name": "DEGRADED_REASONS",
         "signature": [
-          "readonly [\"no_provider\", \"provider_error\", \"timeout\", \"variant_embed_failed\", \"original_embed_failed\", \"first_result_truncated\", \"no_key\", \"empty_result_set\", \"malformed_shape\", \"budget\", \"candidate_budget\", \"iterative_scan_unavailable\"]"
+          "readonly [\"no_provider\", \"provider_error\", \"timeout\", \"variant_embed_failed\", \"original_embed_failed\", \"first_result_truncated\", \"no_key\", \"empty_result_set\", \"malformed_shape\", \"budget\", \"candidate_budget\", \"iterative_scan_unavailable\", \"egress_denied\"]"
         ]
       },
       {
@@ -7128,7 +7229,7 @@
         "kind": "type",
         "name": "DegradedReason",
         "signature": [
-          "\"candidate_budget\" | \"iterative_scan_unavailable\" | \"no_provider\" | \"provider_error\" | \"timeout\" | \"variant_embed_failed\" | \"original_embed_failed\" | \"first_result_truncated\" | \"no_key\" | \"empty_result_set\" | \"malformed_shape\" | \"budget\""
+          "\"candidate_budget\" | \"iterative_scan_unavailable\" | \"no_provider\" | \"provider_error\" | \"timeout\" | \"variant_embed_failed\" | \"original_embed_failed\" | \"first_result_truncated\" | \"no_key\" | \"empty_result_set\" | \"malformed_shape\" | \"budget\" | \"egress_denied\""
         ]
       },
       {
@@ -7141,7 +7242,7 @@
       {
         "kind": "interface",
         "members": [
-          "reason?: \"candidate_budget\" | \"iterative_scan_unavailable\" | \"no_provider\" | \"provider_error\" | \"timeout\" | \"variant_embed_failed\" | \"original_embed_failed\" | \"first_result_truncated\" | \"no_key\" | \"empty_result_set\" | \"malformed_shape\" | \"budget\" | undefined",
+          "reason?: \"candidate_budget\" | \"iterative_scan_unavailable\" | \"no_provider\" | \"provider_error\" | \"timeout\" | \"variant_embed_failed\" | \"original_embed_failed\" | \"first_result_truncated\" | \"no_key\" | \"empty_result_set\" | \"malformed_shape\" | \"budget\" | \"egress_denied\" | undefined",
           "stage: \"embed_unavailable\" | \"embed_timeout\" | \"expansion_failed\" | \"expansion_partial\" | \"rescore_skipped\" | \"vector_arm_failed\" | \"keyword_arm_failed\" | \"title_arm_failed\" | \"budget_dropped_all\" | \"budget_truncated\" | \"keyword_zero\" | \"cache_prestamp\" | \"reranker_skipped\" | \"rerank_passthrough\" | \"rerank_failed\" | \"keyword_relaxed_carried\" | \"safe_index_pending\" | \"vector_candidates_incomplete\" | \"projection_pending\" | \"projection_status_unknown\""
         ],
         "name": "DegradedStageEntry"
@@ -7369,8 +7470,10 @@
         "kind": "interface",
         "members": [
           "adaptive_return?: AdaptiveReturnDecision | undefined",
+          "answerability?: AnswerabilityVerdict | undefined",
           "autocut?: AutocutDecision | undefined",
           "cache?: { status: \"hit\" | \"miss\" | \"disabled\"; similarity?: number; age_seconds?: number; } | undefined",
+          "decide?: Partial<Record<\"rerank\" | \"intent\" | \"evidence\" | \"answerable\" | \"injection\" | \"recall_needed\" | \"triage\" | \"grounding\" | \"conflict\", DecideSlotMeta>> | undefined",
           "degraded?: DegradedStageEntry[] | undefined",
           "detail_resolved: \"low\" | \"medium\" | \"high\" | null",
           "embedding_column?: string | undefined",
@@ -7382,6 +7485,7 @@
           "relational_evidence_slot?: RelationalEvidenceSlotDecision | undefined",
           "relational_rerank_pin?: RelationalRerankPinDecision | undefined",
           "relaxed_dropped?: number | undefined",
+          "rerank?: { model_resolved: string; } | undefined",
           "retrieved_count?: number | undefined",
           "token_budget?: { budget: number; used: number; kept: number; dropped: number; truncated?: boolean; } | undefined",
           "vector_enabled: boolean",
@@ -7644,6 +7748,7 @@
           "knowledge_revision?: string | null | undefined",
           "page_id: number",
           "snapshot_at: Date",
+          "source_path?: string | null | undefined",
           "tags?: string[] | null | undefined",
           "timeline?: string | null | undefined",
           "title?: string | null | undefined",
@@ -7795,11 +7900,12 @@
           "chronicle_boost?: number | undefined",
           "chunk_id: number",
           "chunk_index: number",
-          "chunk_source: \"compiled_truth\" | \"timeline\"",
+          "chunk_source: \"compiled_truth\" | \"timeline\" | \"fenced_code\"",
           "chunk_text: string",
           "content_flag?: { reason: string; detail: string; } | undefined",
           "cosine?: number | undefined",
           "create_safety?: CreateSafety | undefined",
+          "decide_evidence?: { p: number; clears: boolean; } | undefined",
           "delivered?: DeliveredEvidence | undefined",
           "effective_date?: string | null | undefined",
           "effective_date_source?: string | null | undefined",
@@ -7812,6 +7918,8 @@
           "graph_cross_source_hits?: number | undefined",
           "graph_session_demoted?: boolean | undefined",
           "graph_session_prefix?: string | undefined",
+          "injection_p?: number | undefined",
+          "injection_suspected?: true | undefined",
           "keyword_hit?: boolean | undefined",
           "keyword_relaxed?: boolean | undefined",
           "message_id?: string | undefined",
@@ -7824,6 +7932,7 @@
           "relational_seed?: string | undefined",
           "relational_via_link_types?: string[] | undefined",
           "rerank_score?: number | undefined",
+          "rerank_score_kind?: \"rubric\" | undefined",
           "reranker_delta?: number | undefined",
           "salience_boost?: number | undefined",
           "score: number",

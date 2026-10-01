@@ -1056,8 +1056,8 @@ export function createGBrainContextEngine(ctx: {
       if (ingested(fullPath + sweep.CORPUS_INGESTED_SUFFIX)) {
         return { status: 'banked', reason: 'already_ingested' };
       }
-      const { detectCapabilities } = await import('./capability.ts');
-      if (!detectCapabilities().extraction.available) return { status: 'banked', reason: 'keyless' };
+      const { extractionAvailableForEngine } = await import('./facts/extraction-availability.ts');
+      if (!(await extractionAvailableForEngine(pg))) return { status: 'banked', reason: 'keyless' };
       const { isFactsExtractionEnabled } = await import('./facts/extract.ts');
       if (!(await isFactsExtractionEnabled(pg))) return { status: 'banked', reason: 'extraction_disabled' };
       const { resolveSourceId } = await import('./source-resolver.ts');

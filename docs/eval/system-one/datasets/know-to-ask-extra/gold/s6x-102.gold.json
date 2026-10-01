@@ -1,0 +1,23 @@
+{
+  "fixture_id": "s6x-102",
+  "turns": {
+    "1": {
+      "should_retrieve": true,
+      "gold_slugs": [
+        "people/noemi-ostrecombe"
+      ]
+    },
+    "3": {
+      "should_retrieve": true,
+      "gold_slugs": [
+        "people/teodor-pelldale"
+      ]
+    },
+    "5": {
+      "should_retrieve": false
+    },
+    "7": {
+      "should_retrieve": false
+    }
+  }
+}

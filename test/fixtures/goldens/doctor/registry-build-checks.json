@@ -279,6 +279,10 @@
       },
       {
         "category": "brain",
+        "name": "embedding_query_prefix"
+      },
+      {
+        "category": "brain",
         "name": "embedding_column_registry"
       },
       {
@@ -328,6 +332,22 @@
       {
         "category": "brain",
         "name": "connector_checkpoints"
+      },
+      {
+        "category": "ops",
+        "name": "persistence_request_indexes"
+      },
+      {
+        "category": "ops",
+        "name": "persistence_request_growth"
+      },
+      {
+        "category": "brain",
+        "name": "connector_held_items"
+      },
+      {
+        "category": "brain",
+        "name": "orphan_persistence_bindings"
       },
       {
         "category": "brain",
@@ -496,6 +516,10 @@
       {
         "category": "ops",
         "name": "db_only_collector_collision"
+      },
+      {
+        "category": "ops",
+        "name": "decide_health"
       },
       {
         "category": "ops",

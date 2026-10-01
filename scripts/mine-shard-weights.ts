@@ -205,6 +205,7 @@ export function sourceE2ECorpus(commit: string): string[] {
   try {
     mkdirSync(join(root, "scripts"));
     writeFileSync(join(root, "scripts/run-e2e.sh"), git(["show", `${commit}:scripts/run-e2e.sh`]));
+    writeFileSync(join(root, "scripts/e2e-live-key-only.txt"), git(["show", `${commit}:scripts/e2e-live-key-only.txt`]));
     for (const file of tracked) {
       mkdirSync(dirname(join(root, file)), { recursive: true });
       writeFileSync(join(root, file), "");

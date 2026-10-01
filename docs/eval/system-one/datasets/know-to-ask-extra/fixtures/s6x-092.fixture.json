@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-092",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/yusra-pellbarrow",
+      "content": "---\ntitle: Yusra Pellbarrow\ntype: person\nsummary: \"Yusra Pellbarrow is the product lead at Nimbusspire.\"\n---\n\nYusra Pellbarrow is the product lead at Nimbusspire.\n"
+    },
+    {
+      "slug": "companies/saffronspire",
+      "content": "---\ntitle: Saffronspire\ntype: company\nsummary: \"Saffronspire is a software vendor we work with.\"\n---\n\nSaffronspire is a software vendor we work with. Their pilot with our team ends after the next billing cycle.\n"
+    },
+    {
+      "slug": "people/tamsin-wyrholt",
+      "content": "---\ntitle: Tamsin Wyrholt\ntype: person\naliases: [tamsin]\nsummary: \"Tamsin Wyrholt is the head of sales at Marblefold.\"\n---\n\nTamsin Wyrholt is the head of sales at Marblefold. Tamsin suggested holding the offsite somewhere reachable by train.\n"
+    },
+    {
+      "slug": "people/ines-grisbarrow",
+      "content": "---\ntitle: Ines Grisbarrow\ntype: person\naliases: [ines]\nsummary: \"A contact from a conference last spring.\"\n---\n\nA contact from a conference last spring.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "summarize the idea behind spaced repetition in two sentences"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Pellbarrow said the room is 12 by 15 feet. What is that in square meters?"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "how's saffronspire doing on the pilot?"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "Prep me for the Wyrholt call, especially the offsite."
+    }
+  ]
+}

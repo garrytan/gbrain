@@ -22,6 +22,9 @@ import { normalizeRelationalRerankPin } from '../relational-rerank-pin.ts';
 import { recordSearchTelemetry } from '../telemetry.ts';
 import { resolveEffectiveRecency, resolveEffectiveSalience } from './effective-modes.ts';
 import { resolveHardExcludes } from '../source-boost.ts';
+import { loadConfigSnapshot } from '../../config-snapshot.ts';
+import { pickDecideConfig } from '../../ai/decide/config.ts';
+import { decideKnobsPart, resolveDecideSearchContext } from '../decide-stage.ts';
 
 /** What prepareSemanticCache hands the wrapper when result caching is available. */
 export interface SemanticCacheHandle {
@@ -94,6 +97,7 @@ export async function prepareSemanticCache(
   opts: HybridSearchOpts | undefined,
   resolvedForCache: ResolvedSearchKnobs,
   knobsHash: typeof KnobsHashFn,
+  queryPrefix = '',
 ): Promise<SemanticCacheHandle> {
   const mergedCfgCached = await loadConfigWithEngine(engine).catch(() => null);
   const cfgCached = mergedCfgCached ?? ((await import('../../config.ts')).loadConfig()) ?? { engine: 'pglite' as const };
@@ -126,7 +130,13 @@ export async function prepareSemanticCache(
 
   // Cache key carries the column + provider so different embedding spaces
   // never collide on the same `(source_id, query_text)` row.
+  const decideSnapshot = pickDecideConfig(await loadConfigSnapshot(engine));
+  const decideCtx = decideSnapshot ? await resolveDecideSearchContext(engine, decideSnapshot, {
+    rerankerModel: resolvedForCache.reranker_model, rerankerEnabled: resolvedForCache.reranker_enabled, decide: opts?.decide,
+  }).catch(() => undefined) : undefined;
+  const decideKnobs = decideKnobsPart(decideCtx);
   const cacheKnobsHash = knobsHash(resolvedForCache, {
+    ...(decideKnobs ? { decide: decideKnobs } : {}),
     embeddingColumn: resolvedColCached.name,
     embeddingModel: resolvedColCached.embeddingModel,
     // #2825 — fold the resolved hard-exclude prefix list (defaults ∪
@@ -165,6 +175,8 @@ export async function prepareSemanticCache(
       minKeep: adaptiveResolvedForCache.minKeep,
       intent: cacheSuggestions.intent,
     },
+    // #5691: the query embedding input includes the brain's prefix.
+    queryPrefix,
   });
 
   // Cache decision: opts.useCache (explicit) wins over global config; global

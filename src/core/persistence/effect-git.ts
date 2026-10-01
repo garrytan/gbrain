@@ -1,23 +1,62 @@
-import { execFile } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
-import { dirname, join, relative, resolve as resolvePath, sep } from 'node:path';
-import { isDurabilityHardenedAsync } from '../brain-repo-durability.ts';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, statSync } from 'node:fs';
+import { basename, dirname, join, relative, resolve as resolvePath, sep } from 'node:path';
+import { execFileBounded, isDurabilityHardenedAsync } from '../brain-repo-durability.ts';
 import { OperationError } from '../ops/contract.ts';
 import { persistenceHome } from './identity.ts';
 import { nativeFileTarget } from './native-file-target.ts';
 
-function git(root: string, hooks: string, args: string[], signal?: AbortSignal): Promise<{ stdout: string; code: number }> {
-  return new Promise((resolve, reject) => {
-    execFile('git', ['--literal-pathspecs', '-C', root, '-c', `core.hooksPath=${hooks}`, '-c', 'commit.gpgsign=false', ...args], {
-      encoding: 'utf8', timeout: 20_000, maxBuffer: 1024 * 1024, signal,
-      env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'Never',
-        GIT_GLOB_PATHSPECS: '0', GIT_NOGLOB_PATHSPECS: '0', GIT_ICASE_PATHSPECS: '0' },
-    }, (error, stdout) => {
-      if (error && (error.killed || typeof error.code !== 'number')) reject(new OperationError('git_unavailable', 'Git execution did not finish within its bounded attempt.'));
-      else resolve({ stdout, code: error?.code as number ?? 0 });
-    });
+/** An index lock younger than this is contention; an older one is reported as stale. */
+const INDEX_LOCK_GRACE_MS = 10 * 60 * 1000;
+/** Git's lock refusal (LC_ALL=C below keeps it untranslated); greedy across lines so a path may hold apostrophes or newlines. */
+const LOCK_REFUSAL = /Unable to create '([\s\S]*)': File exists/;
+/**
+ * One filesystem spelling for a lock path: the directory is canonicalized (a symlinked or PWD-preserved spelling of
+ * the same checkout compares equal) but the lock's own name is not, because git locks the directory entry and a
+ * symlink named like another lock must stay a different lock.
+ */
+const canonical = (path: string) => { try { return join(realpathSync(dirname(path)), basename(path)); } catch { return path; } };
+
+const GIT_ENV = { GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'Never', GIT_GLOB_PATHSPECS: '0', GIT_NOGLOB_PATHSPECS: '0',
+  GIT_ICASE_PATHSPECS: '0', LC_ALL: 'C' };
+
+async function run(root: string, hooks: string, args: string[], signal?: AbortSignal) {
+  return execFileBounded('git', ['--literal-pathspecs', '-C', root, '-c', `core.hooksPath=${hooks}`, '-c', 'commit.gpgsign=false', ...args], {
+    timeout: 20_000, maxBuffer: 1024 * 1024, signal, env: { ...process.env, ...GIT_ENV },
   });
 }
+
+/**
+ * Git refused because another process holds this checkout's index lock. Only the checkout's own index lock
+ * (`git rev-parse --git-path index.lock`, so linked worktrees resolve) qualifies; a ref or remote lock with
+ * the same wording does not. The lock is never removed here: its holder may be a live git of the user or of
+ * this owner, and a timestamp cannot prove otherwise. A fresh lock is contention; one older than the grace,
+ * or dated in the future, is `git_index_stale`, which counts toward parking and names the lock.
+ */
+async function indexLockError(root: string, hooks: string, stderr: string, signal?: AbortSignal): Promise<OperationError | null> {
+  const refused = LOCK_REFUSAL.exec(stderr)?.[1];
+  if (!refused) return null;
+  const located = await run(root, hooks, ['rev-parse', '--git-path', 'index.lock'], signal);
+  if (located.error) return null;
+  const lock = resolvePath(root, located.stdout.replace(/\n$/, ''));
+  if (canonical(resolvePath(root, refused)) !== canonical(lock)) return null;
+  let age: number;
+  try { age = Date.now() - statSync(lock).mtimeMs; } catch { return null; }
+  if (age >= 0 && age < INDEX_LOCK_GRACE_MS) {
+    return new OperationError('git_index_locked', 'Another Git process holds the canonical checkout index lock.', 'The effect is retried shortly.');
+  }
+  return new OperationError('git_index_stale', `A Git index lock older than 10 minutes blocks the canonical checkout: ${lock}.`,
+    `If no git command is running in that checkout, remove ${lock}, then retry the effect with gbrain sources writer retry-effects <source> --request-id <id>.`);
+}
+
+async function git(root: string, hooks: string, args: string[], signal?: AbortSignal): Promise<{ stdout: string; code: number }> {
+  const { error, stdout, stderr } = await run(root, hooks, args, signal);
+  if (error && (error.killed || typeof error.code !== 'number')) throw new OperationError('git_unavailable', 'Git execution did not finish within its bounded attempt.');
+  const code = error?.code as number ?? 0;
+  if (code !== 0) { const locked = await indexLockError(root, hooks, stderr, signal); if (locked) throw locked; }
+  return { stdout, code };
+}
+
+export const INDEX_LOCK_GRACE_FOR_TESTS = INDEX_LOCK_GRACE_MS;
 
 type GitOutcome = { git: string; reason?: string; push?: string };
 

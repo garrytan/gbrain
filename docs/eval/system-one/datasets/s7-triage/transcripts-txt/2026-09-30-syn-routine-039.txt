@@ -1,0 +1,257 @@
+[user]
+I have a folder of vacation photos with names like IMG_4821.JPG and DSC_1042.jpg. I want to rename them by the date they were taken, preferably to something like 2024-07-03_001.jpg. Can you suggest a small script?
+
+[assistant]
+A small Python script can read each image’s EXIF capture date, sort the photos by that date, and rename them with a sequence number. It can preserve the original extension and avoid overwriting files.
+
+Before changing anything, copy the folder or run the script in preview mode. This version uses only Python’s standard library plus Pillow for EXIF reading:
+
+```bash
+python -m pip install Pillow
+```
+
+Save this as `rename_photos.py`:
+
+```python
+from pathlib import Path
+from datetime import datetime
+from PIL import Image, ExifTags
+import argparse
+
+parser = argparse.ArgumentParser()
+parser.add_argument("folder", type=Path)
+parser.add_argument("--apply", action="store_true")
+args = parser.parse_args()
+
+date_tag = next(
+    tag for tag, name in ExifTags.TAGS.items()
+    if name == "DateTimeOriginal"
+)
+
+photos = []
+for path in args.folder.iterdir():
+    if path.suffix.lower() not in {".jpg", ".jpeg", ".png", ".tif", ".tiff"}:
+        continue
+
+    try:
+        with Image.open(path) as image:
+            exif = image.getexif()
+            value = exif.get(date_tag)
+        taken = datetime.strptime(str(value), "%Y:%m:%d %H:%M:%S")
+    except Exception:
+        print(f"Skipping {path.name}: no readable capture date")
+        continue
+
+    photos.append((taken, path))
+
+photos.sort(key=lambda item: (item[0], item[1].name.lower()))
+
+for number, (taken, old_path) in enumerate(photos, start=1):
+    new_name = f"{taken:%Y-%m-%d}_{number:03d}{old_path.suffix.lower()}"
+    new_path = old_path.with_name(new_name)
+    print(f"{old_path.name} -> {new_name}")
+
+    if args.apply and old_path != new_path:
+        old_path.rename(new_path)
+```
+
+Run it first without `--apply`:
+
+```bash
+python rename_photos.py "/path/to/vacation photos"
+```
+
+Then add `--apply` after checking the proposed names.
+
+[user]
+Could you make it handle duplicate dates better? I have several photos taken in the same second, and I would like the sequence number to restart for each date, so the names would be `2024-07-03_001.jpg`, `2024-07-03_002.jpg`, then `2024-07-04_001.jpg`.
+
+[assistant]
+Yes. Group by the calendar date rather than the full timestamp, then maintain a separate counter for each date. The sort can still use the full capture timestamp so photos from the same date stay in chronological order.
+
+Replace the loop that builds `new_name` with this version:
+
+```python
+from collections import defaultdict
+
+counts = defaultdict(int)
+
+for taken, old_path in photos:
+    date_text = taken.strftime("%Y-%m-%d")
+    counts[date_text] += 1
+
+    new_name = (
+        f"{date_text}_{counts[date_text]:03d}"
+        f"{old_path.suffix.lower()}"
+    )
+    new_path = old_path.with_name(new_name)
+
+    print(f"{old_path.name} -> {new_name}")
+
+    if args.apply and old_path != new_path:
+        old_path.rename(new_path)
+```
+
+Because `photos` was sorted before this loop, the numbering restarts at `001` for each date while retaining chronological order. The output should look like:
+
+```text
+IMG_4821.JPG -> 2024-07-03_001.jpg
+DSC_1042.jpg -> 2024-07-03_002.jpg
+IMG_4900.JPG -> 2024-07-04_001.jpg
+```
+
+If two source files would produce the same destination name, the script should detect that before renaming. The next version can add a collision check and a safer two-step rename.
+
+[user]
+Yes, please add the collision check and make the rename safer. I am on Windows, and the folder path contains spaces.
+
+[assistant]
+Here is a Windows-friendly version that accepts quoted paths, checks for duplicate destination names, and uses temporary names before applying the final names. The temporary step prevents one rename from getting in the way of another.
+
+```python
+from pathlib import Path
+from datetime import datetime
+from collections import defaultdict
+from PIL import Image, ExifTags
+import argparse
+import uuid
+import sys
+
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".tif", ".tiff"}
+
+parser = argparse.ArgumentParser()
+parser.add_argument("folder", type=Path)
+parser.add_argument("--apply", action="store_true")
+args = parser.parse_args()
+
+folder = args.folder.expanduser().resolve()
+if not folder.is_dir():
+    sys.exit(f"Not a folder: {folder}")
+
+date_tag = next(
+    tag for tag, name in ExifTags.TAGS.items()
+    if name == "DateTimeOriginal"
+)
+
+photos = []
+for path in folder.iterdir():
+    if path.suffix.lower() not in IMAGE_EXTENSIONS:
+        continue
+
+    try:
+        with Image.open(path) as image:
+            value = image.getexif().get(date_tag)
+        taken = datetime.strptime(
+            str(value), "%Y:%m:%d %H:%M:%S"
+        )
+    except Exception:
+        print(f"Skipping {path.name}: no readable capture date")
+        continue
+
+    photos.append((taken, path))
+
+photos.sort(key=lambda item: (item[0], item[1].name.casefold()))
+
+counts = defaultdict(int)
+plans = []
+destination_names = set()
+
+for taken, old_path in photos:
+    date_text = taken.strftime("%Y-%m-%d")
+    counts[date_text] += 1
+    new_name = f"{date_text}_{counts[date_text]:03d}{old_path.suffix.lower()}"
+
+    if new_name.casefold() in destination_names:
+        sys.exit(f"Collision in generated names: {new_name}")
+    destination_names.add(new_name.casefold())
+
+    new_path = folder / new_name
+    if new_path.exists() and new_path.resolve() != old_path.resolve():
+        sys.exit(f"Destination already exists: {new_path.name}")
+
+    plans.append((old_path, new_path))
+
+for old_path, new_path in plans:
+    print(f"{old_path.name} -> {new_path.name}")
+
+if not args.apply:
+    print("\nPreview only. Add --apply to rename files.")
+    sys.exit(0)
+
+temporary = []
+try:
+    for old_path, new_path in plans:
+        temp_path = folder / f".rename_tmp_{uuid.uuid4().hex}{old_path.suffix}"
+        old_path.rename(temp_path)
+        temporary.append((temp_path, new_path))
+
+    for temp_path, new_path in temporary:
+        temp_path.rename(new_path)
+
+except Exception as error:
+    print(f"Rename stopped: {error}", file=sys.stderr)
+    print("Some files may still have temporary names.", file=sys.stderr)
+    sys.exit(1)
+```
+
+Save it as `rename_photos.py`. In Command Prompt, quote the path because it contains spaces:
+
+```bat
+python rename_photos.py "C:\Users\Public\Pictures\Summer Vacation"
+```
+
+If the preview looks correct, apply it with:
+
+```bat
+python rename_photos.py "C:\Users\Public\Pictures\Summer Vacation" --apply
+```
+
+The script treats extensions case-insensitively for collision checks and writes the new extension in lowercase.
+
+[user]
+What happens with files that do not contain `DateTimeOriginal`? I have a few screenshots and edited images mixed into the folder.
+
+[assistant]
+With the current script, those files are skipped and printed in the console:
+
+```text
+Skipping screenshot.png: no readable capture date
+Skipping edited_01.jpg: no readable capture date
+```
+
+They are not renamed, moved, or deleted. The numbered sequence only includes images with a readable `DateTimeOriginal`, so if the first dated photo is found, it can still receive `_001`.
+
+One small issue is that the current script catches every exception while reading EXIF, so a damaged image is reported the same way as a file with missing metadata. If you want a clearer report, replace the `except` block with:
+
+```python
+    except ValueError:
+        print(f"Skipping {path.name}: invalid EXIF date")
+        continue
+    except Exception as error:
+        print(f"Skipping {path.name}: could not read metadata ({error})")
+        continue
+```
+
+However, a missing EXIF value currently reaches `datetime.strptime("None", ...)` and is caught as a `ValueError`, so it will be labeled as an invalid EXIF date. To distinguish missing metadata explicitly, use this complete section:
+
+```python
+    try:
+        with Image.open(path) as image:
+            value = image.getexif().get(date_tag)
+
+        if not value:
+            print(f"Skipping {path.name}: DateTimeOriginal is missing")
+            continue
+
+        taken = datetime.strptime(
+            str(value), "%Y:%m:%d %H:%M:%S"
+        )
+    except ValueError:
+        print(f"Skipping {path.name}: invalid EXIF date")
+        continue
+    except Exception as error:
+        print(f"Skipping {path.name}: could not read metadata ({error})")
+        continue
+```
+
+The rest of the collision checking and two-stage rename logic can remain unchanged.

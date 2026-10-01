@@ -3,7 +3,8 @@
  * Each stage reads the resolved request (HybridRequest, request.ts) and
  * writes its per-request accumulators only as `req.<field>`.
  */
-import { type BrainEngine, MAX_SEARCH_LIMIT } from '../../engine.ts';
+import type { BrainEngine } from '../../engine.ts';
+import { perArmPoolLimit } from '../eval-pool-depth.ts';
 import type { DegradedStageEntry, HybridSearchMeta, SearchOpts, SearchResult } from '../../types.ts';
 import { type GBrainConfig, loadConfigWithEngine } from '../../config.ts';
 import { type HybridSearchOpts, PRE_FUSION_POOL_FLOOR, compiledTruthFusionBoost } from '../hybrid.ts';
@@ -21,6 +22,8 @@ import { recordSearchTelemetry } from '../telemetry.ts';
 import { resolveBoostMap, resolveHardExcludes } from '../source-boost.ts';
 import { resolveEmbeddingColumn } from '../embedding-column.ts';
 import { resolveSearchDateBounds } from '../date-bounds.ts';
+import { type DecideSearchContext, decideMetaFor, resolveAndLaunchDecide } from '../decide-stage.ts';
+import { applySearchIntent } from '../decide-retrieval.ts';
 
 /**
  * Everything the stages read, resolved once at hybridSearch entry, plus the
@@ -56,6 +59,10 @@ export interface HybridRequest {
   lastResultsCount: number;
   /** T7 — rank-1 base_score for the telemetry drift signal; undefined when there are no results. */
   lastRank1Score: number | undefined;
+  /** System One slots for this request; undefined when every slot is off (no decide work at all). */
+  decide?: DecideSearchContext;
+  /** Set by the rerank stage when the System One reranker answered. */
+  rerankMeta?: { model_resolved: string };
 }
 
 const DEBUG = process.env.GBRAIN_SEARCH_DEBUG === '1';
@@ -123,6 +130,14 @@ export async function resolveHybridRequest(
     },
   });
 
+  // System One: resolve the decide context and launch S2 now, alongside the
+  // regex classifier (undefined when every slot is off: no decide work).
+  const decidePending = modeInput.decide ? resolveAndLaunchDecide(engine, modeInput.decide, query, {
+    rerankerModel: opts?.reranker?.model ?? resolvedMode.reranker_model,
+    rerankerEnabled: opts?.reranker?.enabled ?? resolvedMode.reranker_enabled,
+    decide: opts?.decide, sourceId: opts?.sourceId,
+  }).catch(() => undefined) : undefined;
+
   // v0.36 (D7+D11): resolve embedding column once at entry. Single
   // round-trip to read DB-plane config (mirrors loadSearchModeConfig).
   // Resolver throws on unknown name with a paste-ready hint; let it
@@ -138,17 +153,18 @@ export async function resolveHybridRequest(
 
   const limit = opts?.limit || resolvedMode.searchLimit;
   const offset = opts?.offset || 0;
-  const innerLimit = Math.min(
-    Math.max(limit * 2, PRE_FUSION_POOL_FLOOR, offset + limit),
-    MAX_SEARCH_LIMIT,
-  );
+  const innerLimit = perArmPoolLimit(limit, offset, PRE_FUSION_POOL_FLOOR);
 
   // v0.32.x search-lite: classify intent once up front. Drives BOTH the
   // legacy auto-detail / salience / recency suggestions AND the new
   // weight-adjustment path. Intent weighting is on by default (off via
   // `opts.intentWeighting = false`; mode bundle supplies the default).
   // #4415: merges the brain's `search.intent_patterns` config over the banks.
-  const suggestions = await classifyQueryWithBrainPatterns(engine, query);
+  const regexSuggestions = await classifyQueryWithBrainPatterns(engine, query);
+  // System One S2: an above-threshold intent replaces the regex one before
+  // weights, detail and search options are derived (regex is the fallback).
+  const decide = decidePending ? await decidePending : undefined;
+  const suggestions = decide ? await applySearchIntent(decide, query, regexSuggestions).catch(() => regexSuggestions) : regexSuggestions;
   const intentWeightingOn = resolvedMode.intentWeighting;
   const intentWeights = intentWeightingOn
     ? weightsForIntent(suggestions.intent)
@@ -258,6 +274,7 @@ export async function resolveHybridRequest(
     lastResultsCount: 0,
     lastRank1Score: undefined,
   };
+  if (decide) req.decide = decide;
   return req;
 }
 
@@ -290,8 +307,13 @@ export async function applyIdentityBoosts(req: HybridRequest, list: SearchResult
   // search_telemetry rollup. Telemetry write is sync (bumps a bucket map),
   // flush is fire-and-forget on 60s / 100-call thresholds. The hot path
   // never waits.
-export function emitHybridMeta(req: HybridRequest, meta: HybridSearchMeta): void {
+export function emitHybridMeta(req: HybridRequest, rawMeta: HybridSearchMeta): void {
   const { engine, opts } = req;
+  const decide = decideMetaFor(req.decide);
+  const answerability = req.decide?.answerability;
+  const meta: HybridSearchMeta = decide || req.rerankMeta || answerability
+    ? { ...rawMeta, ...(decide ? { decide } : {}), ...(req.rerankMeta ? { rerank: req.rerankMeta } : {}), ...(answerability ? { answerability } : {}) }
+    : rawMeta;
   try {
     opts?.onMeta?.(meta);
   } catch {

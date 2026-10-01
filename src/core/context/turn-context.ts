@@ -36,6 +36,7 @@ import { volunteerContext, type VolunteeredPage } from './volunteer.ts';
 import { getBrainHotMemoryMeta } from '../facts/meta-hook.ts';
 import { buildEntityCard, type EntityCard, type EntityOpenThread } from '../verbs/entity-card.ts';
 import { estimateTokens } from '../search/token-budget.ts';
+import type { DecideSlotMeta } from '../search/decide-stage.ts';
 
 /**
  * v0.45.7 ambient recall (issue #1). The per-turn assembler is extended into the
@@ -133,6 +134,8 @@ export interface TurnContextResult {
    * request: the harvest was scheduled, or skipped with a reason code.
    */
   checkpointFlush?: { status: 'scheduled' | 'skipped'; reason?: string };
+  /** System One (turn mode): present only when S6 recall_needed is not off — what it did this turn. */
+  decide?: { recall_needed: DecideSlotMeta };
 }
 
 export interface AssembleTurnContextOpts {
@@ -206,6 +209,14 @@ export async function assembleTurnContext(
       ? Math.floor(opts.maxBytes)
       : TURN_CONTEXT_DEFAULT_MAX_BYTES;
   const window = Array.isArray(opts.window) ? opts.window : [];
+  // System One S6 runs concurrently with the reflex arms under its own
+  // deadline; the reflex block below is assembled first and stands unchanged
+  // unless S6 finishes in time and acts (src/core/context/recall-needed.ts,
+  // loaded lazily so pack/delta and envelope importers stay light).
+  const startedAt = Date.now();
+  const s6Module = import('./recall-needed.ts');
+  const recall = s6Module.then((m) => m.startRecallNeeded(engine, { sourceId: opts.sourceId, window, sessionId: opts.sessionId, startedAt }));
+  recall.catch(() => {});
 
   // Sections 1+2 form a dependent chain (volunteer dedupes against the
   // pointers surfaced THIS turn); section 3 is independent, so the two arms
@@ -287,28 +298,16 @@ export async function assembleTurnContext(
     }
   })();
 
-  const [{ pointers, volunteered }, facts] = await Promise.all([pointersVolunteerArm, factsArm]);
+  const [reflex, facts] = await Promise.all([pointersVolunteerArm, factsArm]);
+  let { pointers, volunteered } = reflex;
+  let { text, degradedReason } = renderWithinBudget(pointers, volunteered, facts, maxBytes);
 
-  // 4. Render + budget [ENG-1]: trim facts first, then volunteered pages,
-  //    then pointers — always lowest-confidence first.
-  let degradedReason: string | undefined;
-  let text = render(pointers, volunteered, facts);
-  if (byteLen(text) > maxBytes) {
-    degradedReason = 'budget_trimmed';
-    while (byteLen(text) > maxBytes && facts.length) {
-      dropLowestConfidence(facts);
-      text = render(pointers, volunteered, facts);
-    }
-    while (byteLen(text) > maxBytes && volunteered.length) {
-      dropLowestConfidence(volunteered);
-      text = render(pointers, volunteered, facts);
-    }
-    while (byteLen(text) > maxBytes && pointers.length) {
-      dropLowestConfidence(pointers);
-      text = render(pointers, volunteered, facts);
-    }
-    // Even the bare envelope exceeds an absurdly small budget → inject nothing.
-    if (byteLen(text) > maxBytes) text = '';
+  const s6 = await s6Module.then((m) => m.applyRecallNeeded(engine, recall, {
+    startedAt, prompt: window.at(-1)?.text ?? '', priorContextText: opts.priorContextText, pointers, volunteered,
+  })).catch(() => null);
+  if (s6?.window) {
+    ({ pointers, volunteered } = s6.window);
+    ({ text, degradedReason } = renderWithinBudget(pointers, volunteered, facts, maxBytes));
   }
 
   return {
@@ -320,7 +319,37 @@ export async function assembleTurnContext(
     volunteered,
     factsCount: facts.length,
     ...(degradedReason ? { degradedReason } : {}),
+    ...(s6 ? { decide: { recall_needed: s6.meta } } : {}),
   };
+}
+
+/**
+ * 4. Render + budget [ENG-1]: trim facts first, then volunteered pages, then
+ * pointers — always lowest-confidence first. Trims the arrays in place.
+ */
+function renderWithinBudget(
+  pointers: ReflexPointer[],
+  volunteered: VolunteeredPage[],
+  facts: TurnContextFact[],
+  maxBytes: number,
+): { text: string; degradedReason?: string } {
+  let text = render(pointers, volunteered, facts);
+  if (byteLen(text) <= maxBytes) return { text };
+  while (byteLen(text) > maxBytes && facts.length) {
+    dropLowestConfidence(facts);
+    text = render(pointers, volunteered, facts);
+  }
+  while (byteLen(text) > maxBytes && volunteered.length) {
+    dropLowestConfidence(volunteered);
+    text = render(pointers, volunteered, facts);
+  }
+  while (byteLen(text) > maxBytes && pointers.length) {
+    dropLowestConfidence(pointers);
+    text = render(pointers, volunteered, facts);
+  }
+  // Even the bare envelope exceeds an absurdly small budget → inject nothing.
+  if (byteLen(text) > maxBytes) text = '';
+  return { text, degradedReason: 'budget_trimmed' };
 }
 
 function byteLen(s: string): number {

@@ -54,11 +54,11 @@ manual dispatch. Pull requests run a narrower matrix of the same files:
 
 | Lane | Pull request | Push to master, nightly, manual |
 | --- | --- | --- |
-| Security regressions | Linux, macOS and Windows on Bun 1.3.13 | Also Bun 1.3.11 |
-| Persistence read latency, deployment matrix, soak, reconciliation crashes | Bun 1.3.13 | Bun 1.3.11 and 1.3.13 |
+| Security regressions | Linux, macOS and Windows on Bun 1.4.2 | Also Bun 1.3.11 |
+| Persistence read latency, deployment matrix, soak, reconciliation crashes | Bun 1.4.2 | Bun 1.3.11 and 1.4.2 |
 | Persistence soak size | 2,500 writes | 10,000 writes |
-| Native writer locks, native paths changed | Every target on Bun 1.3.13, musl, both Windows probes, OpenClaw | Every target, musl and Windows probe on Bun 1.3.11, 1.3.13 and 1.4.2, OpenClaw |
-| Native writer locks, other changes | `linux-x64-glibc / Bun 1.3.13` smoke cell (full native step list) | Same as above |
+| Native writer locks, native paths changed | Every target on Bun 1.4.2, musl, both Windows probes, OpenClaw | Every target, musl and Windows probe on Bun 1.3.11, 1.3.13 and 1.4.2, OpenClaw |
+| Native writer locks, other changes | `linux-x64-glibc / Bun 1.4.2` smoke cell (full native step list) | Same as above |
 | `test/export-scale.slow.test.ts` | 10,001 pages | 100,001 pages |
 
 The `changes` job classifies a pull request's changed files with
@@ -703,7 +703,7 @@ boundaries, followed by a small multi-process soak. The Postgres test creates
 and drops fresh test databases, requiring CREATEDB on the explicit test URL.
 It never truncates the shared E2E database. The reusable
 `persistence-validation.yml` gate runs 1,000 schedules and 10,000 writes per
-engine under Bun 1.3.11 and 1.3.13 and uploads actual executed-case manifests.
+engine under Bun 1.3.11 and 1.4.2 and uploads actual executed-case manifests.
 See [`scripts/persistence/README.md`](../scripts/persistence/README.md) for
 workloads, reruns, performance measurements and the process-crash scope.
 
@@ -2096,6 +2096,7 @@ command line still runs it (the runner keeps provider keys):
 | `test/e2e/openrouter-deepseek-subagent-replay.live.test.ts` | `OPENROUTER_API_KEY` | `OPENROUTER_API_KEY=... bash scripts/run-e2e.sh test/e2e/openrouter-deepseek-subagent-replay.live.test.ts` |
 | `test/e2e/voyage-rerank-live.test.ts` | `VOYAGE_API_KEY` | `VOYAGE_API_KEY=... bash scripts/run-e2e.sh test/e2e/voyage-rerank-live.test.ts` |
 | `test/e2e/voyage-multimodal.test.ts` | `VOYAGE_API_KEY` | `VOYAGE_API_KEY=... bash scripts/run-e2e.sh test/e2e/voyage-multimodal.test.ts` |
+| `test/live/decide-typesafe.live.test.ts` | `TYPESAFE_API_KEY` (or `JEV_TYPESAFE_API_KEY`) + `GBRAIN_LIVE_TYPESAFE=1` | `GBRAIN_TEST_KEEP_PROVIDER_KEYS=1 GBRAIN_LIVE_TYPESAFE=1 TYPESAFE_API_KEY=... bun test test/live/decide-typesafe.live.test.ts` |
 
 ### E2E test DB lifecycle (ALWAYS follow this)
 
@@ -2168,7 +2169,7 @@ existing fence and timeline suites.
 
 `test/guarded-http.test.ts` and `test/guarded-http-tls.serial.test.ts` cover DNS,
 TLS identity and ports, redirects, deadlines, body limits, and cleanup. CI runs
-these boundaries on Bun 1.3.11 and 1.3.13, audits root and admin dependencies, and
+these boundaries on Bun 1.3.11 and 1.4.2, audits root and admin dependencies, and
 executes `scripts/test-gitleaks-config.sh` to prove fixture exceptions still
 report an unrelated secret in the same file. `scripts/scan-worktree-secrets.sh`
 scans tracked files plus new files eligible for commit; tracked ignored files

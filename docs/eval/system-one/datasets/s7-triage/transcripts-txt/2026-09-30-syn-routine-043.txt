@@ -1,0 +1,191 @@
+[user]
+I’m trying to set up a printer on my laptop, but the print job is stuck and nothing comes out. Can you walk me through checking the connection, adding the printer, and clearing the queue?
+
+[assistant]
+Sure. We can handle it in three parts: confirm the laptop can see the printer, add or reinstall the printer, and then clear any stuck jobs. First, tell me whether you’re using Windows or macOS, and whether the printer is connected by USB or Wi-Fi.
+
+[user]
+It’s a Windows 11 laptop. The printer is on Wi-Fi, and the laptop is connected to the same home network. The printer display says it’s connected.
+
+[assistant]
+Start by checking whether Windows can reach the printer.
+
+1. On the printer, open its network or Wi-Fi information screen and note its IPv4 address. It may look like `192.168.1.45`.
+2. On the laptop, open **Settings > Network & internet > Wi-Fi > Hardware properties** and confirm the laptop has an address in the same general range, such as `192.168.1.x`.
+3. Open **Command Prompt** and run:
+
+```text
+ping 192.168.1.45
+```
+
+Replace the example address with the printer’s address. Paste the result here, including whether you see replies or timeouts.
+
+[user]
+The printer address is 192.168.1.87. I ran it and got:
+
+```text
+C:\Users\me>ping 192.168.1.87
+
+Pinging 192.168.1.87 with 32 bytes of data:
+Reply from 192.168.1.87: bytes=32 time=4ms TTL=64
+Reply from 192.168.1.87: bytes=32 time=3ms TTL=64
+Reply from 192.168.1.87: bytes=32 time=5ms TTL=64
+Reply from 192.168.1.87: bytes=32 time=4ms TTL=64
+
+Ping statistics for 192.168.1.87:
+    Packets: Sent = 4, Received = 4, Lost = 0 (0% loss),
+Approximate round trip times in milli-seconds:
+    Minimum = 3ms, Maximum = 5ms, Average = 4ms
+```
+
+[assistant]
+That confirms the laptop can reach the printer over Wi-Fi. Next, check whether Windows already has a printer entry.
+
+Go to **Settings > Bluetooth & devices > Printers & scanners**. Look for an entry that matches the printer. If one is present, select it and check whether the queue shows the stuck job. If there is no entry, choose **Add device**, wait for the search to finish, and see whether the printer appears.
+
+If Windows does not find it automatically, choose **Add manually**. Select **Add a printer using an IP address or hostname**, set the device type to **TCP/IP Device**, enter `192.168.1.87`, and leave automatic driver detection enabled for the first attempt.
+
+[user]
+There is an old entry with the printer name, and it shows one document in the queue. I also tried Add device, but it didn’t find anything new. Should I remove the old entry first?
+
+[assistant]
+Yes, but clear the queue before removing the entry so the old job does not remain in the print subsystem. Open the old printer entry, select **Open print queue**, and use **Printer > Cancel All Documents**. Wait about 10 seconds and see whether the document disappears.
+
+If it remains, close the queue window and restart the Print Spooler service:
+
+1. Press **Windows key + R**.
+2. Enter `services.msc` and press Enter.
+3. Find **Print Spooler**.
+4. Right-click it and choose **Restart**.
+5. Reopen the printer queue and try **Cancel All Documents** again.
+
+Tell me whether the document disappears after the service restart.
+
+[user]
+I restarted Print Spooler, but the document still shows as “Deleting.” The queue window has been open for a few minutes, and the printer display still says it’s ready.
+
+[assistant]
+A job stuck at “Deleting” usually needs the spool files removed while the spooler is stopped. This affects queued print jobs, not your documents.
+
+1. Close the printer queue window.
+2. Open **Windows Terminal (Admin)** or **Command Prompt (Admin)**.
+3. Run these commands one at a time:
+
+```bat
+net stop spooler
+del /Q /F "%systemroot%\System32\spool\PRINTERS\*.*"
+net start spooler
+```
+
+You should see messages similar to:
+
+```text
+The Print Spooler service is stopping.
+The Print Spooler service was stopped successfully.
+
+The Print Spooler service is starting.
+The Print Spooler service was started successfully.
+```
+
+If `del` reports that no files were found, that is fine. Reopen the queue afterward and check whether it is empty.
+
+[user]
+I ran those commands as administrator. The output was:
+
+```text
+C:\Windows\System32>net stop spooler
+The Print Spooler service is stopping.
+The Print Spooler service was stopped successfully.
+
+C:\Windows\System32>del /Q /F "%systemroot%\System32\spool\PRINTERS\*.*"
+
+C:\Windows\System32>net start spooler
+The Print Spooler service is starting.
+The Print Spooler service was started successfully.
+```
+
+The queue is empty now. The old printer entry is still there, though.
+
+[assistant]
+Good, the stuck job has been removed. Since the existing entry may have an outdated port or driver, remove and recreate it.
+
+In **Settings > Bluetooth & devices > Printers & scanners**, select the old printer and choose **Remove**. If Windows asks for confirmation, accept it. Then restart the laptop or at least restart the Print Spooler once more.
+
+After that, add it manually by IP:
+
+1. Select **Add device**.
+2. Wait for the search to finish, then choose **Add manually**.
+3. Select **Add a printer using an IP address or hostname**.
+4. For **Device type**, choose **TCP/IP Device**.
+5. Enter `192.168.1.87`.
+6. Clear **Query the printer and automatically select the driver** only if the automatic attempt fails.
+7. Choose the matching printer driver when prompted.
+
+If Windows creates a port such as `IP_192.168.1.87`, that is normal.
+
+[user]
+I removed the old entry and added the printer by IP. Windows installed it as “Office Printer,” and the status says “Ready.” In the printer properties, the port is `IP_192.168.1.87`. Should I print a test page now?
+
+[assistant]
+Yes. Print a Windows test page before trying the original document.
+
+1. Go to **Settings > Bluetooth & devices > Printers & scanners**.
+2. Select **Office Printer**.
+3. Choose **Printer properties**.
+4. On the **General** tab, select **Print Test Page**.
+
+Watch the queue and the printer display. A successful result should show the job briefly, then remove it from the queue, while the printer outputs a page. If it stays in the queue, cancel it rather than sending additional test pages, and note the exact status shown.
+
+[assistant]
+You’ve provided the setup details and the printer is now installed with a direct TCP/IP port, so the next useful check is the test page result.
+
+[assistant]
+Please run the test page and paste what happens in the queue, including any status message or error code. Also note whether the printer makes any sound or shows a job indicator.
+
+[assistant/final]
+[user]
+I printed the test page. It appeared in the queue for a few seconds, then disappeared, and the printer printed the page correctly. The printer display returned to Ready.
+
+[assistant]
+That confirms the connection, port, driver, and spooler are working. You can now try the original document.
+
+Before printing, select **Office Printer** in the application’s print dialog and check the basic options:
+
+- Paper size: the size loaded in the tray
+- Orientation: portrait or landscape as needed
+- Copies: `1` for the first attempt
+- Printer status: Ready
+
+Send only one page or one copy first. If it prints correctly, the setup is complete. If the original document creates another stuck job, cancel that job and avoid sending repeated copies until the cause is identified.
+
+[assistant]
+For reference, the successful configuration is:
+
+```text
+Printer: Office Printer
+Connection: Wi-Fi
+Printer address: 192.168.1.87
+Windows port: IP_192.168.1.87
+Status: Ready
+Test page: Printed successfully
+Queue: Empty
+```
+
+If printing later stops working, first confirm the printer is still connected to Wi-Fi and that its IP address has not changed. You can then compare the current address with the port listed under **Printer properties > Ports**.
+
+[assistant અંત]
+[user]
+The original document printed correctly too. The queue is empty, and I don’t see any more errors. Is there anything else I should check?
+
+[assistant]
+No further troubleshooting is needed. The printer is installed, the test page succeeded, the original document printed, and the queue is empty.
+
+For routine future issues, use this short sequence:
+
+1. Confirm the printer shows **Ready**.
+2. Check that Windows is using **Office Printer**.
+3. Open the queue and cancel duplicate or stuck jobs.
+4. If a job remains at “Deleting,” stop the Print Spooler, remove the files from `%systemroot%\System32\spool\PRINTERS`, and start the spooler again.
+5. If the printer’s network address changes, update or recreate the TCP/IP port.
+
+You can close the settings windows now.

@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-068",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/mireille-caldmere",
+      "content": "---\ntitle: Mireille Caldmere\ntype: person\naliases: [mireille]\nsummary: \"Mireille Caldmere is the product lead at Solaceyard.\"\n---\n\nMireille Caldmere is the product lead at Solaceyard. Mireille wants to pause the second engineering hire until the renewal closes.\n"
+    },
+    {
+      "slug": "companies/orchidcrest",
+      "content": "---\ntitle: Orchidcrest\ntype: company\nsummary: \"Orchidcrest is a software vendor we work with.\"\n---\n\nOrchidcrest is a software vendor we work with. The renewal is blocked on a security review that is due next month.\n"
+    },
+    {
+      "slug": "people/yusra-tessbarrow",
+      "content": "---\ntitle: Yusra Tessbarrow\ntype: person\nsummary: \"Yusra Tessbarrow is the finance lead at Kilnmoor.\"\n---\n\nYusra Tessbarrow is the finance lead at Kilnmoor.\n"
+    },
+    {
+      "slug": "people/eamon-wyrgrove",
+      "content": "---\ntitle: Eamon Wyrgrove\ntype: person\nsummary: \"Eamon Wyrgrove is the operations director at Tidalvane.\"\n---\n\nEamon Wyrgrove is the operations director at Tidalvane.\n"
+    },
+    {
+      "slug": "companies/pylonfold",
+      "content": "---\ntitle: Pylonfold\ntype: company\nsummary: \"A company we met once at a trade show.\"\n---\n\nA company we met once at a trade show.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "I owe Caldmere an answer on the hiring plan. What were they asking for?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Happy to help."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "what's the status with orchidcrest and the renewal?"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "Translate into Spanish: 'Tessbarrow will join the meeting at noon.'"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "is eamon a common name anywhere? thinking about it for a character"
+    }
+  ]
+}

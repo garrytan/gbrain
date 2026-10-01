@@ -33,7 +33,9 @@ import { normalizeModelId } from '../model-id.ts';
 import { hasAnthropicKey } from '../ai/anthropic-key.ts';
 import { parseTemporalWindow } from './temporal-window.ts';
 import { resolveExcludePrivatePages } from '../search/private-visibility.ts';
-import { deliverEvidence, resolveEvidencePlan, EVIDENCE_BLOCK_CHAR_CAP, THINK_RETURN_UNIT_CONFIG_KEY, type DeliveryMeta } from '../search/evidence-delivery.ts';
+import { deliverEvidence, effectivePlan, resolveEvidencePlan, EVIDENCE_BLOCK_CHAR_CAP, THINK_RETURN_UNIT_CONFIG_KEY, type DeliveryMeta } from '../search/evidence-delivery.ts';
+import { startThinkDecide, thinkAbstainResult, type ThinkAbstention } from './decide.ts';
+import { classifyIntent } from './intent.ts';
 
 /** Anthropic Messages client interface — same shape used by subagent.ts so test stubs can be shared. */
 export interface ThinkLLMClient {
@@ -215,6 +217,8 @@ export interface ThinkResult {
   };
   /** USD cost computed from `usage` + `canonicalLookup(modelUsed)`, when both are available. */
   cost_usd?: number;
+  /** System One S4 (on): the brain holds no evidence; synthesis was skipped (think/decide.ts). */
+  abstained?: ThinkAbstention;
 }
 
 const DEFAULT_MAX_OUTPUT_TOKENS = 4000;
@@ -478,21 +482,27 @@ async function persistCitations(
 
 /**
  * Render the <pages> block. Evidence delivery (think.return_unit, default
- * chunk) replaces the gathered pages with budgeted delivered blocks, which
- * the renderer passes through whole instead of cutting its own excerpts.
+ * auto) replaces the gathered pages with budgeted delivered blocks, which
+ * the renderer passes through whole instead of cutting its own excerpts;
+ * auto's unchanged chunks keep the usual excerpts.
  */
 async function renderThinkPages(engine: BrainEngine, opts: RunThinkOpts, pages: SearchResult[]): Promise<{ pagesBlock: string; evidenceDelivery?: DeliveryMeta }> {
   const plan = await resolveEvidencePlan(engine, {
     remote: opts.remote, returnUnit: undefined, returnWindow: undefined, budget: undefined,
     snippetChars: undefined, snippetCap: 0, configKey: THINK_RETURN_UNIT_CONFIG_KEY, op: 'think',
   });
-  if (!plan) return { pagesBlock: renderPagesBlock(pages, pagesBlockExcerptLen(pages.length), opts.question) };
-  const delivered = await deliverEvidence(engine, pages, plan, {
+  const applied = effectivePlan(plan, pages);
+  if (!applied) return { pagesBlock: renderPagesBlock(pages, pagesBlockExcerptLen(pages.length), opts.question) };
+  const delivered = await deliverEvidence(engine, pages, applied, {
     ...(opts.allowedSources !== undefined && opts.allowedSources.length > 0 ? { sourceIds: opts.allowedSources } : opts.sourceId !== undefined ? { sourceId: opts.sourceId } : {}),
     excludePrivate: opts.excludePrivate ?? await resolveExcludePrivatePages(engine, opts.remote),
     requireSafeChunks: opts.remote !== false,
   });
-  return { pagesBlock: renderPagesBlock(delivered.results, EVIDENCE_BLOCK_CHAR_CAP, opts.question, { verbatim: true }), evidenceDelivery: delivered.delivery };
+  const pagesBlock = applied.unit === 'auto'
+    ? renderPagesBlock(delivered.results, pagesBlockExcerptLen(pages.length), opts.question,
+      { verbatim: r => r.delivered?.reason !== 'not_conversation' && r.delivered?.reason !== 'conversation_over_budget', verbatimLen: EVIDENCE_BLOCK_CHAR_CAP })
+    : renderPagesBlock(delivered.results, EVIDENCE_BLOCK_CHAR_CAP, opts.question, { verbatim: true });
+  return { pagesBlock, evidenceDelivery: delivered.delivery };
 }
 
 /**
@@ -543,6 +553,7 @@ export async function runThink(
     }
   }
 
+  const thinkDecide = await startThinkDecide(engine, opts, classifyIntent(opts.question)).catch(() => undefined); // System One S2/S4; undefined when both are off
   // GATHER
   const gather = await runGather(engine, {
     question: opts.question,
@@ -554,14 +565,13 @@ export async function runThink(
     remote: opts.remote,
     ...(opts.sourceId !== undefined ? { sourceId: opts.sourceId } : {}),
     ...(opts.allowedSources !== undefined ? { sourceIds: opts.allowedSources } : {}),
+    ...(thinkDecide?.searchIntent ? { decideIntent: thinkDecide.searchIntent } : {}),
   });
   // D6: per-stream gather failures surface as typed codes (GATHER_*_FAILED);
   // raw error text stays on stderr. Distinguishes an errored stream from a
   // legitimately-empty one for MCP/remote callers.
   for (const w of gather.warnings) warnings.push(w);
-  if (gather.diagnostics.window?.dropped) {
-    warnings.push(`WINDOW_EXCLUDED_${gather.diagnostics.window.dropped}_PAGES`);
-  }
+  if (gather.diagnostics.window?.dropped) warnings.push(`WINDOW_EXCLUDED_${gather.diagnostics.window.dropped}_PAGES`);
 
   // Render evidence blocks for the prompt. #4510: the per-page excerpt is
   // budget-aware — 600 chars is the FLOOR (a big gather never collapses each
@@ -617,11 +627,9 @@ export async function runThink(
   let trajectoryPointsCount = 0;
   let trajectoryExcludedCount = 0;
   const trajectoryEnabledConfig = await readThinkTrajectoryEnabled(engine);
-  const trajectoryEnabledOpt = opts.withTrajectory !== false; // default true
-  if (trajectoryEnabledConfig && trajectoryEnabledOpt) {
+  if (trajectoryEnabledConfig && opts.withTrajectory !== false) { // opt defaults true
     try {
-      const { classifyIntent } = await import('./intent.ts');
-      const trajIntent = classifyIntent(opts.question);
+      const trajIntent = thinkDecide ? await thinkDecide.trajectoryIntent(classifyIntent(opts.question)) : classifyIntent(opts.question);
       if (trajIntent === 'temporal' || trajIntent === 'knowledge_update') {
         const { extractCandidateEntities } = await import('./entity-extract.ts');
         const retrievedSlugs = gather.pages.map(p => p.slug);
@@ -700,10 +708,11 @@ export async function runThink(
       process.stderr.write(`[think] trajectory injection failed: ${err instanceof Error ? err.message : String(err)}\n`);
     }
   }
-  if (trajectoryPointsCount > 0) {
-    warnings.push(`TRAJECTORY_INJECTED_${trajectoryPointsCount}_POINTS`);
-  }
+  if (trajectoryPointsCount > 0) warnings.push(`TRAJECTORY_INJECTED_${trajectoryPointsCount}_POINTS`);
   if (trajectoryExcludedCount > 0) warnings.push(`WINDOW_EXCLUDED_${trajectoryExcludedCount}_TRAJECTORY_POINTS`);
+
+  const abstention = await thinkDecide?.answerability({ pages: gather.pages, takes: gather.takes, trajectory: trajectoryBlock.length > 0 }).catch(() => null); // System One S4
+  if (abstention) return thinkAbstainResult(opts.question, gather, modelUsed, warnings, abstention);
 
   // SYNTHESIZE
   const intent = inferIntent(opts.question, opts.anchor);

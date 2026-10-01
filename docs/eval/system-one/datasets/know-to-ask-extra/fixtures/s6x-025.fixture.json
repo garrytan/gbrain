@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-025",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "companies/tidalyard",
+      "content": "---\ntitle: Tidalyard\ntype: company\nsummary: \"Tidalyard is a software vendor we work with.\"\n---\n\nTidalyard is a software vendor we work with. Their support team promised a named account manager after the last outage.\n"
+    },
+    {
+      "slug": "people/kasimir-ostreholt",
+      "content": "---\ntitle: Kasimir Ostreholt\ntype: person\nsummary: \"Kasimir Ostreholt is the head of partnerships at Russetwharf.\"\n---\n\nKasimir Ostreholt is the head of partnerships at Russetwharf. Kasimir wants to pause the second engineering hire until the renewal closes.\n"
+    },
+    {
+      "slug": "people/emrys-grisfell",
+      "content": "---\ntitle: Emrys Grisfell\ntype: person\nsummary: \"Emrys Grisfell is the product lead at Marblegate.\"\n---\n\nEmrys Grisfell is the product lead at Marblegate.\n"
+    },
+    {
+      "slug": "people/rohan-quellford",
+      "content": "---\ntitle: Rohan Quellford\ntype: person\naliases: [rohan]\nsummary: \"A contact from a conference last spring.\"\n---\n\nA contact from a conference last spring.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "how's tidalyard doing on support?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Okay, noted."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "kasimir is pinging me again about the hiring plan, what's the context?"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "By the way, someone named Marisol Vashwick emailed about partnerships. Never heard of them."
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "How many letters are in the name Grisfell?"
+    }
+  ]
+}

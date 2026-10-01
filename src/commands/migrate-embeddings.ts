@@ -113,7 +113,7 @@ function renderPlan(ctx: MigrationPlanContext): string {
   lines.push(`  Brain: ${identity.engine} (${identity.target}); scope: brain-wide (all sources)`);
   lines.push(`  From: ${plan.from_model} (${plan.from_dims}d${plan.column_dims !== null && plan.column_dims !== plan.from_dims ? `; column is actually ${plan.column_dims}d` : ''})`);
   lines.push(`  To:   ${plan.to_model} (${plan.to_dims}d)`);
-  lines.push(`  Work: ${plan.chunks_to_embed} chunks, ${plan.facts_to_embed ?? 0} active facts; ${plan.blocked_projection_pages ?? 0} projection-blocked pages.`);
+  lines.push(`  Work: ${plan.chunks_to_embed} chunks to embed, ${plan.chunks_to_restamp} to restamp, ${plan.facts_to_embed ?? 0} active facts; ${plan.blocked_projection_pages ?? 0} projection-blocked pages.`);
   lines.push('  Paid authorization: --max-cost-usd is a durable total cap; each attempt reserves its maximum input size and settles to reported usage; unknown prices refuse.');
   // DB-reality census: what pages say they were embedded with (env can lie
   // about From; the census cannot).
@@ -159,6 +159,10 @@ function renderPlan(ctx: MigrationPlanContext): string {
     lines.push(`          '${ctx.customSearchColumn}' (see doctor's embedding_column_registry check).`);
   }
   lines.push(`  Chunks to re-embed: ${plan.chunks_to_embed}${plan.null_signature_chunks > 0 ? ` (includes ${plan.null_signature_chunks} on pages with no recorded embedding signature)` : ''}`);
+  if (plan.chunks_to_restamp > 0) {
+    lines.push(`  Chunks to restamp: ${plan.chunks_to_restamp} (their vectors are already in the target space;`);
+    lines.push('          only the page signature is updated, with no provider call or cost).');
+  }
   if (plan.false_stamped_chunks > 0) {
     lines.push(`  False stamps: ${plan.false_stamped_chunks} embedded chunk(s) carry a non-target model under pages`);
     lines.push('          already stamped with the target signature — the run clears those stamps');

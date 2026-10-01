@@ -1,0 +1,141 @@
+[user]
+I’m trying to set up a printer on my laptop, but the first test page never printed and now several jobs are stuck in the queue. Can you walk me through clearing it and setting the printer up again?
+
+[assistant]
+Sure. We can clear the queue first, then remove and re-add the printer, and finally print a test page. I’ll assume you’re using Windows 11 unless you tell me otherwise.
+
+First, let’s see what is currently in the queue:
+
+1. Press **Windows + I**.
+2. Go to **Bluetooth & devices > Printers & scanners**.
+3. Select the printer.
+4. Choose **Open print queue**.
+
+Tell me what you see there, including whether the jobs say “Error,” “Printing,” “Paused,” or something similar.
+
+[user]
+It is Windows 11. The printer appears as “Office Printer,” and the queue shows four documents. One says Printing, two say Error, and one says Deleting, but nothing changes after several minutes.
+
+[assistant]
+That usually means the Windows Print Spooler is holding onto the jobs. We can try the normal cancellation first, then use the spooler service if needed.
+
+In the print queue window:
+
+1. Select **Printer** from the top menu.
+2. Make sure **Pause Printing** and **Use Printer Offline** are not checked.
+3. Choose **Cancel All Documents**.
+4. Wait about 30 seconds.
+
+If the documents remain, leave the queue window open and do this:
+
+1. Press **Windows + R**.
+2. Enter `services.msc`, then press Enter.
+3. Find **Print Spooler**.
+4. Right-click it and choose **Stop**.
+
+Let me know when the service shows **Stopped**.
+
+[user]
+The normal cancellation did nothing. I opened Services, stopped Print Spooler, and it now shows Stopped. The queue window still lists the four documents.
+
+[assistant]
+Good. With the spooler stopped, we can remove the temporary queue files. This does not remove your printer or personal files; it only clears pending print jobs.
+
+1. Press **Windows + R**.
+2. Paste this path and press Enter:
+
+`%WINDIR%\System32\spool\PRINTERS`
+
+3. If Windows asks for administrator permission, choose **Continue**.
+4. Delete everything inside that folder. Do not delete the `PRINTERS` folder itself.
+
+If any file refuses to delete, tell me its name and the exact message. After the folder is empty, return to Services, right-click **Print Spooler**, and choose **Start**.
+
+[user]
+I opened the folder and found files named `00007.SHD`, `00007.SPL`, `00008.SHD`, `00008.SPL`, and `FP00000.SHD`. I deleted them all, started Print Spooler again, and the queue is now empty.
+
+[assistant]
+That cleared the stuck jobs. Before re-adding the printer, it is usually best to remove the existing Windows printer entry so an incomplete setup does not get reused.
+
+1. Go to **Settings > Bluetooth & devices > Printers & scanners**.
+2. Select **Office Printer**.
+3. Click **Remove**.
+4. Confirm with **Yes**.
+5. Wait a few seconds, then return to the Printers & scanners page.
+
+After that, tell me whether the entry disappeared. If Windows says it cannot remove the printer, we can check whether another application still has it open.
+
+[user]
+The entry disappeared without an error. The printer is powered on and connected to the same Wi-Fi network as the laptop. The printer’s display shows an address of `192.168.1.47`.
+
+[assistant]
+We can add it by its network address. Using the address directly can avoid relying on automatic discovery.
+
+1. On **Printers & scanners**, click **Add device**.
+2. Wait about 10 seconds. If the printer does not appear, select **Add manually**.
+3. Choose **Add a printer using an IP address or hostname**.
+4. Set **Device type** to **TCP/IP Device**.
+5. Enter `192.168.1.47` in **Hostname or IP address**.
+6. Leave **Query the printer and automatically select the driver** checked.
+7. Click **Next**.
+
+Windows may take a minute to detect the device. If it asks for a driver, tell me the exact choices shown.
+
+[user]
+I clicked Add manually and entered the address. After a short wait, Windows says, “A driver cannot be installed,” and offers a button to select a driver manually. The printer’s setup sheet says it supports driverless printing and mentions IPP.
+
+[assistant]
+Use the IPP option instead of the generic TCP/IP driver search. Cancel the current wizard, then follow these steps:
+
+1. In **Settings > Bluetooth & devices > Printers & scanners**, click **Add device**.
+2. Select **Add manually**.
+3. Choose **Select a shared printer by name**.
+4. In the name field, enter:
+
+`http://192.168.1.47/ipp/print`
+
+5. Click **Next**.
+
+If that exact path is not accepted, try these common IPP names one at a time:
+
+`http://192.168.1.47/ipp`
+
+`ipp://192.168.1.47/ipp/print`
+
+The first accepted address is enough. Windows may display a driver-selection screen afterward. Choose **Microsoft IPP Class Driver** if it appears. If it offers a generic text-only driver or a manufacturer-specific driver, do not choose those yet; report the list first.
+
+[user]
+The first address was accepted, and Windows displayed a driver list. I see “Microsoft IPP Class Driver,” “Generic / Text Only,” and an item labeled “Office Printer Class Driver.” I selected Microsoft IPP Class Driver and named the printer “Office Printer,” then finished the wizard.
+
+[assistant]
+That is the appropriate driver for an IPP setup. Let’s verify the Windows configuration before printing.
+
+1. Return to **Printers & scanners**.
+2. Select **Office Printer**.
+3. Choose **Printer properties**, not just **Printing preferences**.
+4. On the **General** tab, click **Print Test Page**.
+
+If nothing comes out after about 30 seconds, open **See what’s printing** and report whether a new job appears and what status it shows. If it prints, check whether the page has readable text and whether the printer reports any warning.
+
+[user]
+I clicked Print Test Page. A new job appeared briefly, then the queue went empty, but no page came out. The printer display shows no error. In Printer properties, the Ports tab has a port selected that starts with `WSD-`, not the IP address.
+
+[assistant]
+That explains the likely mismatch: Windows added the printer through discovery but selected a WSD port, while the working setup needs an IPP port. We can change the port rather than reinstalling everything.
+
+First, check whether an IPP port already exists:
+
+1. In **Printer properties**, open the **Ports** tab.
+2. Look through the list for a port containing `192.168.1.47`, or one whose type is **IPP**.
+3. If you find one, select it, click **Apply**, then try **Print Test Page** again.
+
+If there is no such port, tell me what buttons are available at the bottom of the Ports tab. In particular, check whether you see **Add Port**, **Configure Port**, and **Delete Port**.
+
+[assistant]
+You’re right to focus on the port. The fact that the job disappears without a printer error often means Windows successfully handed it to the selected port, but that port is not reaching the printer’s print service.
+
+If you see **Add Port**, click it and look for an option named **Standard TCP/IP Port** or **Microsoft IPP Port**. Do not create a new port yet if the dialog only offers a WSD port. Report the port types listed in that dialog.
+
+If an existing port contains `192.168.1.47`, select it and click **Apply**, then use **Print Test Page** again. If the only selected port remains WSD, leave it selected for now and send me the available port names and types.
+
+[assistant/final]

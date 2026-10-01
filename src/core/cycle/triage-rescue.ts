@@ -37,6 +37,10 @@
  *
  * Kill switch: `dream.triage.rescue_min_segments = 0` disables the band
  * entirely (the gate degenerates to the plain threshold check).
+ *
+ * System One S7 (triage-decide.ts): a decide verdict (model `decide:…`) is
+ * gated against the S7 slot threshold when the slot is on, and never enters
+ * the rescue band — the band exists for the LLM judge's ordinal score.
  */
 
 import { normForGrounding } from './synthesize-verify.ts';
@@ -85,7 +89,12 @@ export interface RescueVerdictLike {
   score: number | null;
   content_type: string | null;
   segments?: ReadonlyArray<{ quote: string }> | null;
+  /** Cache identity; `decide:…` marks an S7 verdict. */
+  model?: string | null;
 }
+
+/** dream_verdicts.model prefix of S7 (decide) verdict rows. */
+export const DECIDE_VERDICT_PREFIX = 'decide:';
 
 export interface GateDecision {
   pass: boolean;
@@ -141,7 +150,12 @@ export function passesTriageGate(
   transcriptContent: string,
   threshold: number,
   cfg: RescueConfig = DEFAULT_RESCUE_CONFIG,
+  decide?: { threshold: number },
 ): GateDecision {
+  if (typeof v.model === 'string' && v.model.startsWith(DECIDE_VERDICT_PREFIX)) {
+    const t = decide?.threshold ?? threshold;
+    return { pass: v.score !== null && Number.isFinite(v.score) && v.score >= t, rescued: false, verified_segments: 0 };
+  }
   if (v.score !== null && Number.isFinite(v.score) && v.score >= threshold) {
     return { pass: true, rescued: false, verified_segments: 0 };
   }
