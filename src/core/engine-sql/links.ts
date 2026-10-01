@@ -235,6 +235,7 @@ export async function getLinks(exec: ScopedRead, slug: string, opts?: { sourceId
           LEFT JOIN pages o ON o.id = l.origin_page_id AND o.source_id = ANY(${ids}::text[])
           WHERE f.slug = ${slug} AND f.source_id = ANY(${ids}::text[]) AND t.source_id = ANY(${ids}::text[])
             AND f.deleted_at IS NULL AND t.deleted_at IS NULL ${trustedSql(privacy)}
+          ORDER BY l.id
         `)).rows;
         return rows as unknown as Link[];
       }
@@ -258,6 +259,7 @@ export async function getLinks(exec: ScopedRead, slug: string, opts?: { sourceId
           LEFT JOIN pages o ON o.id = l.origin_page_id
           WHERE f.slug = ${slug} AND f.source_id = ${opts.sourceId}
             AND f.deleted_at IS NULL AND t.deleted_at IS NULL ${trustedSql(privacy)}
+          ORDER BY l.id
         `)).rows;
         return rows as unknown as Link[];
       }
@@ -273,6 +275,7 @@ export async function getLinks(exec: ScopedRead, slug: string, opts?: { sourceId
         LEFT JOIN pages o ON o.id = l.origin_page_id
         WHERE f.slug = ${slug}
           AND f.deleted_at IS NULL AND t.deleted_at IS NULL ${trustedSql(privacy)}
+        ORDER BY l.id
       `)).rows;
       return rows as unknown as Link[];
   }
@@ -297,6 +300,7 @@ export async function getBacklinks(exec: ScopedRead, slug: string, opts?: { sour
           LEFT JOIN pages o ON o.id = l.origin_page_id AND o.source_id = ANY(${ids}::text[])
           WHERE t.slug = ${slug} AND t.source_id = ANY(${ids}::text[]) AND f.source_id = ANY(${ids}::text[])
             AND f.deleted_at IS NULL AND t.deleted_at IS NULL ${trustedSql(privacy)}
+          ORDER BY l.id
         `)).rows;
         return rows as unknown as Link[];
       }
@@ -315,6 +319,7 @@ export async function getBacklinks(exec: ScopedRead, slug: string, opts?: { sour
           LEFT JOIN pages o ON o.id = l.origin_page_id
           WHERE t.slug = ${slug} AND t.source_id = ${opts.sourceId}
             AND f.deleted_at IS NULL AND t.deleted_at IS NULL ${trustedSql(privacy)}
+          ORDER BY l.id
         `)).rows;
         return rows as unknown as Link[];
       }
@@ -330,6 +335,7 @@ export async function getBacklinks(exec: ScopedRead, slug: string, opts?: { sour
         LEFT JOIN pages o ON o.id = l.origin_page_id
         WHERE t.slug = ${slug}
           AND f.deleted_at IS NULL AND t.deleted_at IS NULL ${trustedSql(privacy)}
+        ORDER BY l.id
       `)).rows;
       return rows as unknown as Link[];
   }

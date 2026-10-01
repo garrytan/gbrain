@@ -577,3 +577,4 @@ E2E_TEST_MAP["src/core/engine-sql/dialect-*.ts"] = ENGINE_SQL_EXECUTOR_E2E;
 E2E_TEST_MAP["src/core/engine-sql/normalize.ts"] = ["test/e2e/engine-sql-normalize-parity.test.ts"];
 E2E_TEST_MAP["src/core/engine-sql/brands.ts"] = ["test/e2e/engine-sql-rls-scope.test.ts"];
 E2E_TEST_MAP["src/core/engine-sql/chunks.ts"] = ["test/e2e/evidence-delivery-leak.test.ts", "test/e2e/evidence-delivery-parity.test.ts"];
+E2E_TEST_MAP["src/core/engine-sql/links.ts"] = ["test/e2e/links-read-order.test.ts", "test/e2e/attendance-retrieval-postgres.test.ts"];
