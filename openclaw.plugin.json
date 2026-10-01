@@ -102,6 +102,7 @@
     "skills/testing",
     "skills/two-tier-extraction",
     "skills/voice-note-ingest",
+    "skills/web-research",
     "skills/webhook-transforms"
   ],
   "shared_deps": [

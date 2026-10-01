@@ -1,0 +1,5 @@
+{"intent": "What's new about this company that the brain does not already cover", "expected_skill": "web-research"}
+{"intent": "Tell me the current state of the accelerator batch announcements", "expected_skill": "web-research"}
+{"intent": "Do a web research pass on this person \u2014 focus on the delta", "expected_skill": "web-research", "ambiguous_with": ["data-research"]}
+{"intent": "What changed about this funding round since I last looked", "expected_skill": "web-research"}
+{"intent": "Surface new developments about acme-example", "expected_skill": "web-research"}

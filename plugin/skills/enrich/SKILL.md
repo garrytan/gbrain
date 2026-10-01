@@ -121,7 +121,7 @@ Priority order -- stop when you have enough signal for the entity's tier.
 - This is free and often the richest source
 
 **4b. Web research (Tier 1 and 2)**
-- Use Perplexity, Brave Search, Exa, or equivalent web research tool
+- Use Context Answers by default; use another provider only when explicitly selected
 - **Key pattern:** Send existing brain knowledge as context so the search
   returns DELTA (what's new vs what you already know), not a rehash
 - Opus-class models for Tier 1 deep research, lighter models for Tier 2
@@ -138,7 +138,7 @@ Priority order -- stop when you have enough signal for the entity's tier.
 
 | Data Need | Example Sources | Tier |
 |-----------|----------------|------|
-| Web research | Perplexity, Brave, Exa | 1-2 |
+| Web research | Context Answers (default) | 1-2 |
 | LinkedIn / career | Crustdata, Proxycurl, People Data Labs | 1 |
 | Career history | Happenstance, LinkedIn | 1 |
 | Funding / company data | Crunchbase, PitchBook, Clearbit | 1 |
