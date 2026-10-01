@@ -25,6 +25,7 @@ import { extractManagedStaleLinks } from './links-maintenance.ts';
 import { CHECKPOINT_VALIDATION_TIMEOUT, checkpointTimeoutHint } from './checkpoint-validation.ts';
 import { isTerminalWriteState, publicWriteReceipt, type WriteReceipt } from './types.ts';
 import type { WriteRequest } from './model.ts';
+import { clearLegacyCheckpointFailuresAfterSuccessfulRetry } from '../sync-failure-ledger.ts';
 
 export interface ManagedSyncWriteDiagnostic {
   source_id: string;
@@ -285,6 +286,9 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
       slugs: done.entries.flatMap(entry => entry.action === 'import' && entry.slug ? [entry.slug] : []) }) }; }
     catch { return synced; }
   };
+  const clearLegacyCheckpointAfterRetry = (): void => {
+    if (opts.retryFailed) clearLegacyCheckpointFailuresAfterSuccessfulRetry(context.sourceId);
+  };
   try {
     assertActive();
     try { cursor = await readCursor(engine, key); }
@@ -334,6 +338,7 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
     if (cursor?.done && company) {
       await clearManagedSyncFailureAfterSuccess(engine, key);
       assertActive();
+      clearLegacyCheckpointAfterRetry();
       return result(cursor, cursor.from === null ? 'first_sync' : 'synced');
     }
     if (cursor?.done) {
@@ -358,6 +363,7 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
       if (!fresh.entries.length && fresh.from === fresh.target) {
         await clearManagedSyncFailureAfterSuccess(engine, key);
         assertActive();
+        clearLegacyCheckpointAfterRetry();
         return result(fresh, 'up_to_date');
       }
       if (company) await company.protect([{ op: OP, fingerprint: key, kind: 'managed_cursor' }, { op: `${OP}-manifest`, fingerprint: fresh.runId, kind: 'manifest' }]);
@@ -474,6 +480,7 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
         cursor = (await readCursor(engine, key))!;
         if (!cursor?.done) throw new OperationError('storage_error', 'Committed sync checkpoint lost its cursor.');
         await clearManagedSyncFailureAfterSuccess(engine, key);
+        clearLegacyCheckpointAfterRetry();
         if (cursor.counts.added + cursor.counts.modified + cursor.counts.deleted > 0) await refreshProjectionStatistics(engine);
         assertActive();
         return withLinks(cursor, result(cursor, cursor.from === null ? 'first_sync' : 'synced'));

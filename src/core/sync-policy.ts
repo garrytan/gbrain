@@ -90,3 +90,8 @@ export function activationPendingSkipMessage(sourceId: string): string {
     'so sync refuses with writer_coordinator_required. Review `gbrain sources writer status`; ' +
     'automatic sync resumes after activation.';
 }
+
+/** An operator may sync checked-out repositories without automatic Git pulls. */
+export async function autopilotGitPullEnabled(engine: BrainEngine): Promise<boolean> {
+  return !/^(false|0|off|no)$/i.test(await engine.getConfig('autopilot.git_pull') ?? 'true');
+}

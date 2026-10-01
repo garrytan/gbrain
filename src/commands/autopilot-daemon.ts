@@ -4,6 +4,7 @@
  * install/uninstall/status/pause mode flag is present.
  */
 import type { BrainEngine } from '../core/engine.ts';
+import { autopilotGitPullEnabled } from '../core/sync-policy.ts';
 import { ChildWorkerSupervisor } from '../core/minions/child-worker-supervisor.ts';
 import { MIGRATE_PAUSE_MARKER_PREFIX, autopilotLockPath, autopilotPaused, autopilotPausedMarkerPath, markerHolderAlive } from '../core/autopilot-paths.ts';
 import { OwnerProcessingState } from '../core/minions/processing-state.ts';
@@ -616,10 +617,9 @@ async function runInlineCycle(
       // and pass the abort signal so the cycle winds down between phases.
       const cyclePromise = runCycle(engine, {
         brainDir: repoPath,
-        // Autopilot daemon path: pulls by default (matches
-        // pre-v0.17 autopilot behavior). CLI dream defaults false
-        // for cron safety; that choice is scoped to dream only.
-        pull: true,
+        // Preserve the automatic pull default, with an operator opt-out for
+        // repositories updated by a separate process.
+        pull: await autopilotGitPullEnabled(engine),
         signal: shutdownAbort.signal,
         yieldBetweenPhases: async () => {
           await new Promise(r => setImmediate(r));

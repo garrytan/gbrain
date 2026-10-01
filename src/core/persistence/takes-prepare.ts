@@ -1,7 +1,7 @@
 import type { BrainEngine, TakeBatchInput } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import { OperationError, type OperationContext } from '../ops/contract.ts';
-import { parseTakesFence, upsertTakeRow, supersedeRow, type ParsedTake, type TakeQuality } from '../takes-fence.ts';
+import { isValidHolder, parseTakesFence, upsertTakeRow, supersedeRow, type ParsedTake, type TakeQuality } from '../takes-fence.ts';
 import { takesPreparation as edit, TakesWriteError } from '../takes-write.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
 import { preparePageMutation } from './page-prepare.ts';
@@ -62,6 +62,7 @@ async function prepare(engine: BrainEngine, row: WriteRequest, config: GBrainCon
   let oldRow: number | undefined;
   if (row.operation === 'takes_add') {
     if (typeof p.claim !== 'string' || !p.claim.trim() || typeof p.kind !== 'string' || typeof p.holder !== 'string') throw new OperationError('invalid_params','claim, kind and holder are required.');
+    if (!isValidHolder(p.holder)) throw new OperationError('invalid_params', 'holder must be world, brain, people/<slug>, companies/<slug>, or a lowercase legacy slug.');
     edit.assertHolderAllowed(p.holder,holders); requiredHolders.add(p.holder);
     const added = upsertTakeRow(body,{claim:p.claim,kind:p.kind,holder:p.holder,weight:p.weight as number ?? 0.5,
       source:p.source as string | undefined,sinceDate:p.since as string,active:true});
@@ -77,6 +78,7 @@ async function prepare(engine: BrainEngine, row: WriteRequest, config: GBrainCon
     if (row.operation==='takes_supersede') {
       if (typeof p.claim!=='string' || !p.claim.trim()) throw new OperationError('invalid_params','claim is required.');
       const holder=typeof p.holder==='string'?p.holder:target.holder;
+      if (!isValidHolder(holder)) throw new OperationError('invalid_params', 'holder must be world, brain, people/<slug>, companies/<slug>, or a lowercase legacy slug.');
       edit.assertHolderAllowed(holder,holders); requiredHolders.add(holder);
       const superseded=supersedeRow(body,number,{claim:p.claim,kind:p.kind as string ?? target.kind,holder,
         weight:p.weight as number ?? Math.max(0,target.weight-0.1),source:p.source as string | undefined,sinceDate:p.since as string});

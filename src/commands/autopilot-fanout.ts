@@ -43,7 +43,7 @@ import { CONNECTOR_SOURCE_PHASES } from '../core/cycle/phase-scope.ts';
 import { isConnectorSourceKind } from '../core/persistence/connector-identity.ts';
 import { attemptedConnectorSourceIds } from '../core/persistence/connector-state.ts';
 import { parseSourceConfig, sourceConfigHasRemoteUrl, sourceLocalPathSkipWarning } from '../core/sources-load.ts';
-import { isSyncDisabledConfig } from '../core/sync-policy.ts';
+import { autopilotGitPullEnabled, isSyncDisabledConfig } from '../core/sync-policy.ts';
 import { loadActivationPendingSourceIds, skipActivationPendingSync } from '../core/sync-policy.ts';
 import { AUTOPILOT_FULL_CYCLE_FLOOR_MINUTES } from './autopilot-remediation-policy.ts';
 
@@ -416,6 +416,7 @@ export async function dispatchPerSource(
 ): Promise<FanoutResult> {
   const emit = opts.emit ?? ((line) => process.stderr.write(line + '\n'));
   const log = opts.log ?? ((line) => console.log(line));
+  const automaticPull = await autopilotGitPullEnabled(engine);
 
   let sources: SourceRow[];
   let connectorIds = new Set<string>();
@@ -453,7 +454,7 @@ export async function dispatchPerSource(
     // (default source) and pre-v0.18 brains without the sources table.
     const job = await queue.add(
       'autopilot-cycle',
-      { repoPath: opts.repoPath },
+      { repoPath: opts.repoPath, pull: automaticPull },
       {
         queue: 'default',
         // Slot key dedups repeats within one slot; maxPending: 1 is the
@@ -547,7 +548,7 @@ export async function dispatchPerSource(
       );
       const syncDisabled = isSyncDisabledConfig(src.config) || pendingActivation;
       const connector = connectorIds.has(src.id);
-      const shouldPull = sourceConfigHasRemoteUrl(src.config) && !syncDisabled && !connector;
+      const shouldPull = automaticPull && sourceConfigHasRemoteUrl(src.config) && !syncDisabled && !connector;
       const job = await queue.add(
         'autopilot-cycle',
         {

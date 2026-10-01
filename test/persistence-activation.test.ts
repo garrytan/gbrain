@@ -62,6 +62,13 @@ test('activation requires explicit quiescence and a complete owner binding witho
   expect(await managedPersistenceEnabled(engine)).toBe(false);
 }), 60_000);
 
+test('activation excludes unclaimed local sources when write-through is disabled', () => fixture(async (engine) => {
+  await engine.setConfig('sync.write_through', 'false');
+  await expect(activatePersistence(engine, { confirmQuiesced: true, dryRun: true })).resolves.toMatchObject({
+    enabled: false, activated: false, filesystem_sources: 0,
+  });
+}), 60_000);
+
 test('activation refuses busy native roots and even expired legacy leases', () => fixture(async (engine, root, _home, sourceId) => {
   const binding = await claimWorktree(engine, sourceId, root);
   const lock = (await acquireWorktree(binding))!;
