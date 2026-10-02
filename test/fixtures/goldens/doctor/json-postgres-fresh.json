@@ -1002,7 +1002,7 @@
         },
         {
           "category": "ops",
-          "message": "No configured collectors declare output paths",
+          "message": "No collector output dir falls inside a db_only path",
           "name": "db_only_collector_collision",
           "status": "ok"
         },
