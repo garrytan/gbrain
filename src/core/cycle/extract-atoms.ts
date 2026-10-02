@@ -68,10 +68,14 @@ import { createGlobalLlmHaltTracker, haltedClassOf, type GlobalLlmErrorClass } f
 import { importFromContent } from '../import-file.ts';
 import { serializeMarkdown } from '../markdown.ts';
 import { truncateUtf8 } from '../text-safe.ts';
+import { corpusTextForExtraction } from '../context/corpus-segments.ts';
+import { claudeCliSelfSessionIds } from '../ai/providers/claude-cli-scratch.ts';
 import { BudgetExhausted, BudgetTracker, loadPricingOverrides } from '../budget/budget-tracker.ts';
 import { resolveExtractAtomsCostGate, resolveEmbedModelForCostGate } from './extract-atoms-cost-gate.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
-import { upsertExtractRollup } from '../extract/rollup-writer.ts';
+import { classifyRunStop, upsertExtractRollup } from '../extract/rollup-writer.ts';
+import { abortableSleep } from '../retry.ts';
+import { throwIfAborted } from '../abort-check.ts';
 import { createHash } from 'crypto';
 import { slugifySegment } from '../sync.ts';
 import { resolveTierDefault } from '../model-config.ts';
@@ -214,6 +218,20 @@ export interface ExtractAtomsOpts {
    * `heartbeat()` on the passed reporter.
    */
   progress?: ProgressReporter;
+  /**
+   * #5809/#5832: hard stop (the drain's job + cycle-lock + deadline signals,
+   * or the routine cycle's signal). Passed to the chat call and the pacing
+   * pause, checked before each item and before each item's commit. Once
+   * aborted the run writes nothing more: the interrupted item takes no
+   * failure strike and the receipt/rollup writes are skipped.
+   */
+  signal?: AbortSignal;
+  /**
+   * Soft stop (the drain window): checked only before an item starts, so an
+   * in-flight item and its paid call finish and commit. Booked as an expected
+   * limit in the rollup, like a budget stop.
+   */
+  stopSignal?: AbortSignal;
 }
 
 interface ExtractedAtom {
@@ -446,11 +464,13 @@ export async function discoverExtractablePages(
  * at runtime; this count covers DB pages only. Callers label that caveat.
  *
  * Fail-soft: returns null on error so the doctor check can report a warn
- * (query failed) rather than a misleading 0.
+ * (query failed) rather than a misleading 0. `opts.signal` cancels the query
+ * (the drain bounds it by its remaining deadline); a cancelled count is null.
  */
 export async function countExtractAtomsBacklog(
   engine: BrainEngine,
   sourceId?: string,
+  opts: { signal?: AbortSignal } = {},
 ): Promise<number | null> {
   try {
     // Two modes: scoped (the phase's per-source `remaining`) vs brain-wide
@@ -498,7 +518,7 @@ export async function countExtractAtomsBacklog(
     const params = scoped
       ? [sourceId, extractableTypes, MIN_PAGE_CHARS_FOR_EXTRACTION]
       : [extractableTypes, MIN_PAGE_CHARS_FOR_EXTRACTION];
-    const rows = await engine.executeRaw<{ cnt: string | number }>(sql, params);
+    const rows = await engine.executeRaw<{ cnt: string | number }>(sql, params, { signal: opts.signal });
     return Number(rows[0]?.cnt ?? 0);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -689,7 +709,7 @@ export async function runPhaseExtractAtoms(
       if (corpusDir !== undefined) {
         const discovered = discoverTranscripts({
           corpusDir,
-          meetingTranscriptsDir: meetingDir,
+          meetingTranscriptsDir: meetingDir, selfCaptureSessionIds: claudeCliSelfSessionIds(), // #5820, as synthesize
         });
         transcripts = discovered.map((d) => ({
           filePath: d.filePath,
@@ -1073,8 +1093,10 @@ export async function runPhaseExtractAtoms(
     }
   }
 
+  let stoppedEarly = false;
   await withBudgetTracker(budgetTracker, async () => {
   for (const item of work) {
+    if (opts.signal?.aborted || opts.stopSignal?.aborted) { stoppedEarly = true; break; }
     await maybeYield();
     if (budgetExhausted || budgetTracker.totalSpent >= budgetCap) {
       if (item.kind === 'transcript') transcriptsSkipped++;
@@ -1087,12 +1109,13 @@ export async function runPhaseExtractAtoms(
     // and quote provenance is verified against THIS rather than the full
     // item, so a quote can only verify against text the model actually saw.
     // #4529/#4540: configurable input cap, cut UTF-8-safely (a bare .slice()
-    // can split a surrogate pair at the boundary).
-    const promptContent = truncateUtf8(item.content, maxInputChars);
+    // can split a surrogate pair at the boundary); #5812 strips pastes first.
+    const promptContent = truncateUtf8(item.kind === 'transcript' ? corpusTextForExtraction(item.filePath, item.content) : item.content, maxInputChars);
     try {
       const origin: AtomOrigin | null = managed ? await readAtomOrigin(engine, managed, item) : null;
       const visibility = origin?.visibility ?? effectiveVisibility(item.kind === 'transcript' ? { kind: 'transcript' } // #5525
         : { kind: 'page', page: await engine.getPage(item.slug, { sourceId }) });
+      throwIfAborted(opts.signal, 'extract_atoms');
       if (!opts.dryRun && managed && origin && await resumeManagedAtoms(engine, managed, origin)) {
         duplicatesSkipped++;
         continue;
@@ -1107,6 +1130,7 @@ export async function runPhaseExtractAtoms(
           },
         ],
         maxTokens: maxOutputTokens, responseSchema: ATOMS_RESPONSE_SCHEMA,
+        abortSignal: opts.signal,
       });
       // Post-await yield: closes the "long LLM call past TTL" hazard
       // codex flagged. The 30s throttle inside maybeYield bounds the
@@ -1115,7 +1139,8 @@ export async function runPhaseExtractAtoms(
       llmHalt.reset();
       // #4540: optional per-item pacing between successful LLM calls.
       // setTimeout (not setImmediate) so the lock-refresh interval fires.
-      if (pacingMs > 0) await new Promise<void>((r) => setTimeout(r, pacingMs));
+      if (pacingMs > 0) await abortableSleep(pacingMs, opts.signal);
+      throwIfAborted(opts.signal, 'extract_atoms');
 
       estimatedSpendUsd = budgetTracker.totalSpent;
 
@@ -1306,6 +1331,7 @@ export async function runPhaseExtractAtoms(
         // the deterministic slugs make the retry converge.
         if (managed && origin) {
           for (const atom of managedAtoms) atom.links = provenanceLinks.filter(link => link.to_slug === atom.slug);
+          throwIfAborted(opts.signal, 'extract_atoms');
           const published = await publishManagedAtoms(engine, managed, origin, managedAtoms);
           writeRequests.push(...published);
           if (published.some(receipt => receipt.state !== 'committed')) writesPending++;
@@ -1318,6 +1344,7 @@ export async function runPhaseExtractAtoms(
         // after every atom AND provenance edge persisted), then stamp the
         // source page. A crash between flip and stamp degrades to the legacy
         // atom-rows-mean-done semantics — safe, not lossy.
+        throwIfAborted(opts.signal, 'extract_atoms');
         await completeAtomReceipts(engine, sourceId, importedSlugs, hash16, item.kind === 'page' ? item : undefined);
         // C-14: atoms are keyed by LLM-chosen titles, which drift between
         // extractions. Once this extraction is complete, retire the atoms an
@@ -1339,6 +1366,11 @@ export async function runPhaseExtractAtoms(
     } catch (err) {
       if (err instanceof OperationError && err.writeRequest) writeRequests.push(err.writeRequest);
       if (acceptedPendingReceipt(err)) { writesPending++; continue; }
+      if (opts.signal?.aborted) {
+        stoppedEarly = true;
+        console.error(`[extract_atoms] ${originLabel}: stopped by abort (${err instanceof Error ? err.message : String(err)})`);
+        break;
+      }
       if (err instanceof BudgetExhausted) {
         budgetExhausted = true;
         if (item.kind === 'transcript') transcriptsSkipped++;
@@ -1383,7 +1415,8 @@ export async function runPhaseExtractAtoms(
   // v0.42 Wave B2: write extract receipt + rollup row when the phase
   // actually extracted atoms. Both are best-effort per F-OUT-19 —
   // audit-trail / search-visibility surfaces don't block the phase result.
-  if (!opts.dryRun && !managed && totalAtomsExtracted > 0) {
+  const hardStopped = opts.signal?.aborted === true;
+  if (!opts.dryRun && !managed && totalAtomsExtracted > 0 && !hardStopped) {
     const runId = `atoms-${Date.now().toString(36)}-${sourceId.slice(0, 4)}`;
     try {
       await writeReceipt(engine, {
@@ -1402,7 +1435,7 @@ export async function runPhaseExtractAtoms(
       console.error(`[extract_atoms] receipt write failed: ${(err as Error).message}`);
     }
   }
-  if (!opts.dryRun) {
+  if (!opts.dryRun && !hardStopped) {
     // gbrain#4148 / TRANSIENT_EXTRACT_ERROR_RE: transient provider/infra
     // failures (rate limits, timeouts, 5xx, network) are "retryable, never
     // counted" by design — count only hardFailureCount here, not
@@ -1413,8 +1446,7 @@ export async function runPhaseExtractAtoms(
       kind: 'atoms',
       source_id: sourceId,
       cost_delta: estimatedSpendUsd,
-      round_completed_delta: hardFailureCount === 0 ? 1 : 0,
-      halt_delta: hardFailureCount > 0 ? 1 : 0,
+      ...classifyRunStop({ deadline_hit: stoppedEarly, error: hardFailureCount > 0 }),
     });
   }
 

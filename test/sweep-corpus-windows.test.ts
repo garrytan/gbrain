@@ -174,3 +174,19 @@ test('invalid or foreign-source checkpoints replay safely', async () => {
     expect(texts).toEqual([raw]);
   }
 });
+
+test('upstream pasted-block filtering runs before windows and preserves new user turns on resume', async () => {
+  const file = join(dir, 'paste.txt');
+  const raw = '[user]\n' + head + '<pasted_content id="7">\n' + 'PASTED_MARKER third-party text. '.repeat(500) + '</pasted_content id="7">\n';
+  writeFileSync(file, raw);
+  await sweep();
+  expect(inputs.length).toBeGreaterThan(1);
+  expect(inputs.join('\n')).not.toContain('PASTED_MARKER');
+  expect(readFileSync(file, 'utf8')).toBe(raw);
+  inputs = [];
+  writeFileSync(file, raw + '\n[user]\nTAIL_MARKER I prefer a quiet office for focused work.\n');
+  rmSync(file + '.ingested');
+  expect((await sweep()).corpusIngested).toBe(1);
+  expect(inputs.join('\n')).toContain('TAIL_MARKER');
+  expect(inputs.join('\n')).not.toContain('ordinary conversation');
+});

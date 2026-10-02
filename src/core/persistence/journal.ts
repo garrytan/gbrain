@@ -185,11 +185,16 @@ async function prepareAdmission(engine: BrainEngine, input: WriteAdmission, over
 /**
  * The rows `claimNextWrite` may claim, over `persistence_requests r LEFT JOIN
  * persistence_worktrees w`, with $1 = host id and $2 = excluded root keys. An
- * unresolved head blocks its entire root.
+ * unresolved head blocks its entire root. A file write also waits for an
+ * unfinished withdrawal mirror of its page (of every page, for an untargeted
+ * mirror), so the mirror never rewrites a file under an accepted request.
  */
 export const CLAIMABLE_WRITE_SQL = `r.state='queued' AND (r.worktree_id IS NULL OR (w.owner_host_id=$1::uuid AND w.state='active'))
       AND NOT (COALESCE(r.worktree_id::text,'db:'||r.source_incarnation::text)=ANY($2::text[]))
       AND NOT EXISTS (SELECT 1 FROM persistence_effects blocked WHERE blocked.worktree_id=r.worktree_id AND blocked.recovery IS NOT NULL)
+      AND NOT EXISTS (SELECT 1 FROM persistence_effects mirror WHERE mirror.worktree_id=r.worktree_id
+        AND mirror.kind='withdrawal-mirror' AND mirror.state IN ('queued','running')
+        AND (NOT (mirror.data ? 'targets') OR mirror.data->'targets' @> jsonb_build_array(jsonb_build_object('slug',r.slug))))
       AND NOT EXISTS (SELECT 1 FROM persistence_requests blocked WHERE blocked.worktree_id=r.worktree_id AND blocked.recovery IS NOT NULL)
       AND NOT EXISTS (SELECT 1 FROM persistence_requests earlier
         WHERE COALESCE(earlier.worktree_id::text,'db:'||earlier.source_incarnation::text)

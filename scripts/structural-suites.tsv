@@ -59,6 +59,7 @@ test/check-update.test.ts	check-update CLI	3	source-surface-helper
 test/child-worker-supervisor.test.ts	issue #1801 — restartCurrentChild + killChild liveness fix	3	readFileSync
 test/chronicle-extract.test.ts	runChronicleExtract	9	readFileSync
 test/ci-local-empty-mounts.test.ts	(file-level)	2	readFileSync
+test/claude-cli-recipe.test.ts	claude-cli LanguageModel — CLI too old for the provider flags	2	readFileSync
 test/claude-cli-recipe.test.ts	claude-cli LanguageModel — abort + error envelopes	13	readFileSync
 test/claude-cli-recipe.test.ts	claude-cli LanguageModel — context isolation	2	readFileSync
 test/claude-cli-recipe.test.ts	claude-cli LanguageModel — text-only round trip	4	readFileSync
@@ -147,6 +148,7 @@ test/extract-atoms-drain.test.ts	shared wiring helper holds the cycle lock (5A)	
 test/extract-include-frontmatter-config.serial.test.ts	no extraction path hardcodes includeFrontmatter	1	readFileSync
 test/fact-withdrawal-prepare-wiring.test.ts	(file-level)	2	readFileSync
 test/facts-backstop-remedy-verb.test.ts	facts backstop thin-client-fallback remedy verb (#4489)	3	readFileSync
+test/facts-relink.test.ts	relink reasons	1	readFileSync
 test/features.test.ts	CLI routing	2	source-surface-helper
 test/fence-extraction.test.ts	Layer 8 D2 — markdown fence extraction	18	readFileSync
 test/files.test.ts	collectFiles (production import)	9	readFileSync
@@ -226,7 +228,7 @@ test/pglite-repair-command.serial.test.ts	gbrain pglite-repair — interactive c
 test/pglite-wal-repair.serial.test.ts	WAL auto-repair — real-brain regression (#223/#1670/#2575)	6	source-surface-helper
 test/post-upgrade-banner.test.ts	post-upgrade recovery banner	3	readFileSync
 test/postgres-driver-vendor.test.ts	vendored Postgres driver packaging	3	readFileSync
-test/postgres-engine.test.ts	postgres-engine / search date filtering	1	source-surface-helper
+test/postgres-engine.test.ts	postgres-engine / search date filtering	2	source-surface-helper
 test/postgres-engine.test.ts	postgres-engine / search path timeout isolation	7	source-surface-helper
 test/private-visibility.test.ts	shared private predicate lives once (#4352 remediation)	1	readFileSync
 test/redos-hardening.test.ts	#1569 --no-schema-pack + heartbeat wiring (structural)	2	readFileSync,source-surface-helper

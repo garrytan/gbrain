@@ -25,7 +25,10 @@ embeddings the same way the `anthropic` recipe's docs recommend.
 
 ## Setup
 
-1. Install Claude Code (the `claude` CLI) and run `claude` once to log in.
+1. Install Claude Code 2.0.60 or newer (the `claude` CLI) and run `claude`
+   once to log in. Older CLIs reject the provider's flags, and the call fails
+   with `claude CLI 2.0.60 or newer required (found <version>); upgrade
+   Claude Code`.
    If the binary is not on `PATH`, point the gateway at it explicitly:
 
    ```bash
@@ -54,7 +57,8 @@ recipe — it has no base URL, only a subprocess binary path
 ## What actually happens on a call
 
 Each `doGenerate` call spawns `claude --print --output-format json --model
-<id> --disable-slash-commands --tools '' --strict-mcp-config` as a
+<id> --disable-slash-commands --tools '' --strict-mcp-config --settings
+'{"disableAllHooks":true}'` as a
 subprocess, with `cwd` set to a per-process directory under the OS tmpdir
 (`join(tmpdir(), 'gbrain-claude-cli-cwd-' + process.pid)`, created via
 `mkdirSync(..., { recursive: true })` if missing — code doesn't otherwise
@@ -67,6 +71,18 @@ stdin:
   every call would boot the user's configured MCP servers — including
   gbrain's own MCP, which would recurse and contend for the PGLite
   single-writer lock.
+- `--settings '{"disableAllHooks":true}'` stops the child from running your
+  Claude Code hooks (user and project settings). Without it, gbrain's own
+  Stop hook banked every claude-cli call's prompt as one of your
+  conversations, and extracting facts from it spawned another call (#5820).
+  Your login is unaffected: credentials are not settings. Hooks from a
+  managed policy file (`/etc/claude-code/managed-settings.json` on Linux)
+  are a different case. Claude Code 2.1.287 still runs them, because policy
+  wins over `--settings`; 2.0.60 suppressed them too (probed with a managed
+  SessionStart and Stop hook on Linux). A managed policy that installs
+  gbrain's own hooks therefore still fires inside claude-cli calls; gbrain's
+  Stop hook, the serve-side harvest and the sweep all skip those
+  self-captures, so nothing is extracted from them.
 - The subprocess env is a copy of gbrain's own process env with the
   cloud-auth routing variables scrubbed before spawn: the three direct-API
   keys (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`)
@@ -150,6 +166,7 @@ investigating directly (run the same model via `gbrain models doctor
 | `claude-cli spawn failed: ...` / stdin write failure | `spawn()`'s `error` event or a failed `stdin.write` — commonly means the `claude` binary was not found on `PATH` | Install Claude Code, or set `GBRAIN_CLAUDE_CLI_BIN` to the binary's path |
 | `claude-cli API error <status>: <message>` | The CLI reported an API failure in its result envelope (`is_error: true` with `api_error_status`, e.g. 429 on a spend/rate limit) — surfaced whether the subprocess exited non-zero or zero. The error is a `ClaudeCliProcessError` carrying `apiErrorStatus` + `exitCode` for programmatic handling | Read the message — it's the CLI's own human-readable explanation (e.g. a spend-limit notice with the fix URL) |
 | `claude-cli reported error: <message>` | Same envelope-reported failure (`is_error: true`) but without an `api_error_status` field | As above — the message is the CLI's own explanation |
+| `claude CLI 2.0.60 or newer required (found <version>); upgrade Claude Code` | The installed CLI's argument parser rejected one of the provider's flags (`error: unknown option …` after the `--- raw ---` marker); 2.0.59 and older reject `--disable-slash-commands` | Upgrade Claude Code (`claude update`, or reinstall), then rerun |
 | `claude-cli exited <code>` + `--- raw ---` blob | Non-zero exit from the `claude` subprocess where stdout carried no parseable result envelope; the CLI's stderr/stdout follows the `--- raw ---` marker (kept behind the marker so error classifiers never phrase-match model-derived text) | Run `claude` interactively with the same model to see the underlying CLI error directly (e.g. not logged in, model unavailable) |
 | `claude-cli output not JSON: ...` | `JSON.parse(stdout)` threw (stdout wasn't valid JSON at all) | Confirm the installed `claude` CLI version still supports `--print --output-format json`; this adapter's JSON handling was verified against CLI 2.1.145 |
 | `claude-cli JSON event array had no "result" event` | stdout parsed as a JSON array (the `"verbose": true` event-stream shape in `~/.claude/settings.json`) but none of the events had `type: "result"` | Check `~/.claude/settings.json` for `"verbose": true`; the adapter tolerates the array shape but still needs a `result` event in it |

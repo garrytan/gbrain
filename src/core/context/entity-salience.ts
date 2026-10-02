@@ -46,6 +46,11 @@ export interface EntityCandidate {
    * lowercase words cannot fabricate pointers.
    */
   weak?: true;
+  /**
+   * Single-token strong candidate seen capitalized only at the start of a
+   * sentence, so the capital is no evidence that it is a name ("Met", "Raised").
+   */
+  sentenceStart?: true;
 }
 
 /** Max STRONG candidates returned per turn — bounds downstream DB work regardless of pointer cap. */
@@ -108,6 +113,11 @@ const COMMON_WORDS = new Set<string>([
   'here', 'there', 'every', 'some', 'any', 'all', 'one', 'two', 'three', 'first', 'last',
   'next', 'new', 'old', 'good', 'bad', 'great', 'nice', 'thing', 'something', 'anything',
 ]);
+
+/** True for frequent non-entity words (weekdays, months, time words) that get capitalized. */
+export function isCommonCapitalizedWord(token: string): boolean {
+  return COMMON_WORDS.has(token.toLowerCase());
+}
 
 const HANDLE_RE = /@([A-Za-z0-9_]{2,})/g;
 // Capitalized token runs: an uppercase-initial word, up to 4 tokens total.
@@ -237,7 +247,7 @@ export function extractCandidates(text: string): EntityCandidate[] {
       // "Apple" or a person whose name collides with a common word).
       if (COMMON_WORDS.has(lc) && !c.seenMidSentence) continue;
     }
-    out.push({ display: c.display, query: c.query });
+    out.push({ display: c.display, query: c.query, ...(!c.multiToken && !c.seenMidSentence ? { sentenceStart: true as const } : {}) });
     if (out.length >= MAX_CANDIDATES) break;
   }
 

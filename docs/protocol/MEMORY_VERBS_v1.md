@@ -236,6 +236,13 @@ Save ONE fact with mandatory attribution.
   Empty ⇒ `provenance_required` error with a fix.
 - `entity`: set whenever the fact is about a specific person/company/project —
   entity-scoped recall will not find unattributed facts.
+- `infer_entity` (additive, boolean, default `true`): when `entity` is omitted,
+  the server may link the fact to the one entity page its text names exactly
+  (zero LLM; a second competing name, a bare first name or an ambiguous match
+  leaves it unattributed). Pass `false` to save it unattributed. An inferred
+  link that any write check would refuse falls back to the unattributed save;
+  it never errors. Inferred links dedup exact text only and never supersede.
+  Operators disable inference with `facts.entity_inference=off`.
 - `ttl`: duration shorthand (`"30d"`, `"12h"`, `"45m"`) or an absolute ISO 8601
   timestamp. ISO-8601 DURATIONS (`P30D`) are rejected with a self-correcting
   suggestion. Omitted ⇒ never expires.
@@ -257,6 +264,20 @@ near-duplicates may insert; dedup and supersession ride embedding similarity).
   similarity above the dedup threshold + different text = the new fact
   supersedes the old ("X at acme-example" → "X left acme-example").
 - Omitted optional inputs echo as `null`, never absent.
+
+#### remember entity attribution fields (additive)
+
+Optional response fields; clients must ignore any they do not know.
+
+- `entity_inferred: "mention"` — `entity` was omitted and `entity_slug` was
+  inferred from an exact mention. The stored fact's context reads
+  `entity inferred from mention`.
+- `warnings: string[]` — present only on an unattributed save
+  (`entity_slug: null`): `NO_ENTITY` (no entity given or inferred) or
+  `ENTITY_LINK_FAILED` (an inferred entity passed every scope and readability
+  check but could not be linked, e.g. its facts fence is malformed). A remote
+  caller is never told about an entity it cannot read: that case is `NO_ENTITY`.
+- `hint: string` — present with `warnings`; names the `entity` input.
 
 ### entity(name) — read, zero LLM, p99 < 100ms
 

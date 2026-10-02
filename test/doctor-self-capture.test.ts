@@ -58,6 +58,11 @@ describe('self_capture doctor check', () => {
     expect(check.details).toMatchObject({ classified: 3, unclassifiable: 1, corpus_files: 5, count: 'exact' });
     expect([...check.details!.classified_sample as string[]].sort()).toEqual(['nested/self-c.txt', 'self-a.txt', 'self-b.txt']);
     expect(check.message).toContain('Nothing was moved or deleted');
+    // New captures stopped vs old files remain (#5820): the newest capture's
+    // time is reported so a growing count is visible.
+    expect(typeof check.details!.newest_capture_at).toBe('string');
+    expect(check.message).toContain(`the newest is from ${check.details!.newest_capture_at}`);
+    expect(check.message).toContain('no longer creates them (#5820)');
     expect(check.message).toContain('mkdir -p');
     expect(readdirSync(corpus).sort()).toEqual(before);
 

@@ -15,6 +15,8 @@ name: macOS 26 validation
 #   #5449  PGLite checkpoint harness on a >= 2 GiB store, asserting the WAL bound.
 #   #5286  the published signed darwin-arm64 release binary: codesign --verify
 #          --strict and --version against the release tag.
+#   #5810  every tracked *.sh parses under /bin/bash (GNU bash 3.2), and
+#          `bun run verify` passes with `bash` resolving to /bin/bash.
 
 on:
   schedule:
@@ -83,3 +85,20 @@ jobs:
           out="$(./gbrain-darwin-arm64 --version)"
           echo "binary reports: $out"
           case "$out" in *"${tag#v}"*) ;; *) echo "::error::binary version '$out' does not match release $tag"; exit 1 ;; esac
+      - name: "#5810 shell scripts and bun run verify under /bin/bash 3.2"
+        if: ${{ !cancelled() }}
+        env:
+          GBRAIN_BASH32: /bin/bash
+          GBRAIN_BASH32_REQUIRE: '1'
+          # tsc peaks near 3 GB of heap on this repo; Node's default limit on
+          # the 7 GB runner is lower, so typecheck aborted on heap exhaustion.
+          NODE_OPTIONS: --max-old-space-size=4096
+        run: |
+          NODE_OPTIONS='' node -p '"default node heap limit MB " + require("v8").getHeapStatistics().heap_size_limit / 1048576'
+          mkdir -p "$RUNNER_TEMP/bash32"
+          ln -sf /bin/bash "$RUNNER_TEMP/bash32/bash"
+          export PATH="$RUNNER_TEMP/bash32:$PATH"
+          bash --version | head -1
+          bun run check:bash32
+          git fetch --no-tags --depth=1 origin +refs/heads/master:refs/remotes/origin/master
+          bun run verify

@@ -3,13 +3,17 @@ import type { OperationContext } from '../ops/contract.ts';
 import { OperationError, verbError } from '../ops/contract.ts';
 import { enforceClientSlugFence, enforceSubagentSlugFence, validatePageSlug } from '../ops/context.ts';
 import { isNullLikeEntity } from '../facts/write-single.ts';
-import { recordFactWithdrawal } from '../facts/withdrawal.ts';
+import { isFactWithdrawn, recordFactWithdrawal, type WithdrawalCommit } from '../facts/withdrawal.ts';
+import { rebuildPendingPageProjections } from '../page-state/projections.ts';
+import { inferFactSubject, isEntityInferenceEnabled, type InferredVia } from '../facts/subject-infer.ts';
+import { parseFactsFence } from '../facts-fence.ts';
+import { excludesPrivateWrites } from './page-visibility.ts';
 import { initializeLocalPersistence, requestPrincipalForContext } from './page-mutations.ts';
 import { authorizeStoredRequest, submissionAuthority } from './authority.ts';
 import { admitWrite, admitWriteInTransaction, assertPageRequestIdentity, assertReplayIntent, completeWrite, getWriteRequest, intentDigest } from './journal.ts';
 import { assertPersistenceAccepting, registerMutationPreparer, waitForWrite, writeResponse } from './service.ts';
-import { claimWorktree, getWorktreeBinding } from './ownership.ts';
-import { isConnectorSourceKind } from './connector-identity.ts';
+import { claimWorktree } from './ownership.ts';
+import { resolveFactWriteTarget } from './fact-write-target.ts';
 import { WRITER_INSPECTION_HINT } from './admin-intent.ts';
 import { parseMutationPrecondition } from './preconditions.ts';
 import { withCoordinatedWrite } from './context.ts';
@@ -45,22 +49,19 @@ async function submission(ctx: OperationContext, operation: string, params: Reco
   return { p, requestId, sourceId, principal, callerIntent, prior };
 }
 
-export async function submitRememberMutation(ctx: OperationContext, params: Record<string, unknown>, waitMs?: number): Promise<Record<string, unknown>> {
-  registerMutationPreparer('remember', prepareMemoryMutation);
-  const sub = await submission(ctx, 'remember', params);
-  if (sub.prior) return writeResponse(await waitForWrite(ctx.engine, sub.prior, ctx.config, waitMs));
-  const { p, sourceId, principal, callerIntent, requestId } = sub;
-  const [source] = await ctx.engine.executeRaw<{ incarnation: string; archived: boolean; local_path: string | null; kind: string | null }>(
-    "SELECT incarnation,archived,local_path,config->>'kind' AS kind FROM sources WHERE id=$1", [sourceId]);
-  if (!source || source.archived) throw new OperationError('source_changed', 'The write source is not active.');
-  const { parseTtlParam } = await import('../ops/facts.ts');
-  const validUntil = parseTtlParam(p.ttl);
-  const entity = typeof p.entity === 'string' && !isNullLikeEntity(p.entity) ? p.entity.trim() : null;
-  const { resolveEntitySlugWithSource } = await import('../entities/resolve.ts');
-  const resolved = entity ? await resolveEntitySlugWithSource(ctx.engine, sourceId, entity) : null;
-  const entitySlug = resolved?.slug ?? null;
-  // A source-scoped absent identity serializes subjectless facts. Bound writers
-  // cannot use it to escape their namespace grant.
+type RememberSource = { incarnation: string; archived: boolean; local_path: string | null; kind: string | null };
+type EntityWarning = 'NO_ENTITY' | 'ENTITY_LINK_FAILED';
+/** An inferred entity that fails a preflight the explicit path would throw on; the save falls back to unattributed. */
+class InferredTargetRejected extends Error { constructor(readonly warning: EntityWarning) { super(warning); } }
+
+/**
+ * Every admission check for one target slug. An explicit or unattributed
+ * target throws exactly as before; an inferred one (`inferred` set) runs the
+ * same checks as predicates and additionally refuses withdrawn claims,
+ * malformed fences and any owner claim, so it can fall back instead.
+ */
+async function planRememberTarget(ctx: OperationContext, sourceId: string, source: RememberSource, entitySlug: string | null,
+  inferred: { fact: string; visibility: string } | null) {
   const slug = entitySlug ?? 'memory/unattributed';
   validatePageSlug(slug);
   enforceClientSlugFence(ctx, slug, 'remember'); enforceSubagentSlugFence(ctx, slug, 'remember');
@@ -70,25 +71,88 @@ export async function submitRememberMutation(ctx: OperationContext, params: Reco
     !await ctx.engine.readPageSnapshot(slug, { sourceId, excludePrivate: authority.excludePrivate }))) {
     throw new OperationError('page_not_found', 'The target entity is not writable by this caller.');
   }
+  if (inferred && !snapshot) throw new InferredTargetRejected('NO_ENTITY');
+  if (inferred && (await isFactWithdrawn(ctx.engine, sourceId, inferred.visibility, inferred.fact, slug)
+    || parseFactsFence(snapshot!.page.compiled_truth).warnings.length)) throw new InferredTargetRejected('ENTITY_LINK_FAILED');
   // Preserve the stub guard: a fallback name remains DB-only until a real
   // entity page exists. No placeholder page is created by remember.
   const fence = entitySlug !== null && snapshot !== null;
-  let binding = fence ? await getWorktreeBinding(ctx.engine, sourceId) : null;
   const sandbox = ctx.viaSubagent === true && !(ctx.allowedSlugPrefixes?.length);
   const configuredWriteThrough = !/^(false|0|off|no)$/i.test(await ctx.engine.getConfig('sync.write_through') ?? 'true');
   const writeThrough = configuredWriteThrough && !sandbox;
   if (sandbox) authority.databaseOnlyReason = 'subagent_sandbox';
   else if (!configuredWriteThrough) authority.databaseOnlyReason = 'disabled_by_config';
-  const root = source.local_path || (sourceId === 'default' ? await ctx.engine.getConfig('sync.repo_path') : null);
-  // An unbound connector source is database-only by design; never claim it for a fence write.
-  if (fence && writeThrough && root && !binding && isConnectorSourceKind(source.kind)) authority.databaseOnlyReason = 'connector_database';
-  else if (fence && writeThrough && root && !binding) {
+  const target = fence ? await resolveFactWriteTarget(ctx.engine, sourceId, source, { sandbox }) : null;
+  let binding = target?.kind === 'publish' ? target.binding : null;
+  if (target?.kind === 'publish' && target.databaseOnlyReason) authority.databaseOnlyReason = target.databaseOnlyReason;
+  if (target?.kind === 'unbound') {
+    // An inferred link never designates an owner or reports a missing one.
+    if (inferred) throw new InferredTargetRejected('ENTITY_LINK_FAILED');
     if (ctx.engine.kind !== 'pglite') throw new OperationError('owner_unavailable', 'This source has no designated canonical owner.', WRITER_INSPECTION_HINT);
-    binding = await claimWorktree(ctx.engine, sourceId, root, undefined, undefined, { automatic: true });
+    binding = await claimWorktree(ctx.engine, sourceId, target.root, undefined, undefined, { automatic: true });
   }
+  // An inferred link is optional: a canonical file it could not publish (missing,
+  // or carrying an uncoordinated edit) falls back to the unattributed save
+  // instead of failing the whole remember at preparation.
+  if (inferred && binding && snapshot) {
+    const { prepareFileTarget } = await import('./page-prepare.ts');
+    const { serializePageToMarkdown } = await import('../markdown.ts');
+    try {
+      await prepareFileTarget(ctx.engine, { source_id: sourceId, worktree_id: binding.worktree_id, slug }, snapshot,
+        serializePageToMarkdown(snapshot.page, snapshot.tags));
+    } catch {
+      throw new InferredTargetRejected('ENTITY_LINK_FAILED');
+    }
+  }
+  return { slug, authority, snapshot, fence, binding, writeThrough };
+}
+
+/**
+ * #5836: a fact saved without an entity names its subject from an exact
+ * mention, before admission. Any check the inferred target fails falls back
+ * to the unattributed save; `warning` is ENTITY_LINK_FAILED only once the
+ * target passed every scope and readability check, so a hidden page is never revealed.
+ */
+async function inferRememberTarget(ctx: OperationContext, sourceId: string, source: RememberSource, p: Record<string, unknown>):
+  Promise<{ target: Awaited<ReturnType<typeof planRememberTarget>>; via: InferredVia } | { warning: EntityWarning } | null> {
+  if (p.infer_entity === false || !(await isEntityInferenceEnabled(ctx.engine))) return null;
+  const fact = String(p.fact).trim();
+  const inferred = await inferFactSubject(ctx.engine, sourceId,
+    { fact, mode: 'write', excludePrivate: await excludesPrivateWrites(ctx.engine, ctx.remote !== false) });
+  if (inferred.slug === null) return null;
+  try {
+    const target = await planRememberTarget(ctx, sourceId, source, inferred.slug, { fact, visibility: String(p.visibility ?? 'world') });
+    return { target, via: inferred.via };
+  } catch (error) {
+    if (error instanceof InferredTargetRejected) return { warning: error.warning };
+    if (error instanceof OperationError) return null;
+    throw error;
+  }
+}
+
+export async function submitRememberMutation(ctx: OperationContext, params: Record<string, unknown>, waitMs?: number): Promise<Record<string, unknown>> {
+  registerMutationPreparer('remember', prepareMemoryMutation);
+  const sub = await submission(ctx, 'remember', params);
+  if (sub.prior) return writeResponse(await waitForWrite(ctx.engine, sub.prior, ctx.config, waitMs));
+  const { p, sourceId, principal, callerIntent, requestId } = sub;
+  const [source] = await ctx.engine.executeRaw<RememberSource>(
+    "SELECT incarnation,archived,local_path,config->>'kind' AS kind FROM sources WHERE id=$1", [sourceId]);
+  if (!source || source.archived) throw new OperationError('source_changed', 'The write source is not active.');
+  const { parseTtlParam } = await import('../ops/facts.ts');
+  const validUntil = parseTtlParam(p.ttl);
+  const entity = typeof p.entity === 'string' && !isNullLikeEntity(p.entity) ? p.entity.trim() : null;
+  const { resolveEntitySlugWithSource } = await import('../entities/resolve.ts');
+  const resolved = entity ? await resolveEntitySlugWithSource(ctx.engine, sourceId, entity) : null;
+  const inference = entity === null ? await inferRememberTarget(ctx, sourceId, source, p) : null;
+  const linked = inference && 'target' in inference ? inference : null;
+  const entitySlug = linked?.target.slug ?? resolved?.slug ?? null;
+  // A source-scoped absent identity serializes subjectless facts. Bound writers
+  // cannot use it to escape their namespace grant.
+  const { slug, authority, snapshot, fence, binding, writeThrough } = linked?.target ?? await planRememberTarget(ctx, sourceId, source, entitySlug, null);
   const row = await admitWrite(ctx.engine, { principal, operation: 'remember', sourceId, sourceIncarnation: source.incarnation,
     slug, pageId: snapshot?.page.id ?? null, requestId, callerIntent,
-    intent: { ...callerIntent, entity_slug: entitySlug, fence, valid_from: new Date().toISOString(), valid_until: validUntil?.toISOString() ?? null },
+    intent: { ...callerIntent, entity_slug: entitySlug, fence, valid_from: new Date().toISOString(), valid_until: validUntil?.toISOString() ?? null,
+      ...(linked ? { entity_inferred: linked.via } : {}), ...(inference && 'warning' in inference ? { entity_warning: inference.warning } : {}) },
     authority, worktreeId: writeThrough ? binding?.worktree_id : null, topologyGeneration: writeThrough ? binding?.topology_generation : null });
   return writeResponse(await waitForWrite(ctx.engine, row, ctx.config, waitMs));
 }
@@ -107,7 +171,9 @@ export async function submitForgetMutation(ctx: OperationContext, operation: 'fo
     `No fact with id "${rawId}".`, 'Pass the fact id returned by remember or recall.');
   // Retry the whole withdrawal, so source/principal guards and the connection
   // are released before backoff. Admission must not retry a nested savepoint.
+  let withdrawn: WithdrawalCommit['pages'] = [];
   const done = await retryWriteAdmission(requestId, remaining => ctx.engine.transaction(async tx => {
+    withdrawn = [];
     await tx.executeRaw("SELECT set_config('synchronous_commit','on',true),set_config('lock_timeout',$1,true),set_config('statement_timeout',$2,true)",
       [`${Math.min(1000, remaining)}ms`, `${remaining}ms`]);
     // Source -> current grant -> counters/request -> sorted page keys -> facts.
@@ -136,7 +202,7 @@ export async function submitForgetMutation(ctx: OperationContext, operation: 'fo
     return withCoordinatedWrite(tx, [sourceId], async () => {
       // Even an expired legacy fact acquires a ledger so a stale import cannot
       // reactivate it. Internal affected-page identities never enter the receipt.
-      await recordFactWithdrawal(tx, id, sourceId, ctx.remote !== false, { requestId: row.id });
+      withdrawn = (await recordFactWithdrawal(tx, id, sourceId, ctx.remote !== false, { requestId: row.id })).pages;
       if (reason) await tx.executeRaw(`UPDATE facts SET context=concat_ws(' | ',NULLIF(context,''),$3::text)
         WHERE id=$1 AND source_id=$2`, [id, sourceId, `forgotten: ${reason}`]);
       if (operation === 'forget_fact' && fact.expired_at !== null) {
@@ -148,5 +214,12 @@ export async function submitForgetMutation(ctx: OperationContext, operation: 'fo
       return completeWrite(tx, row, 'committed', { ...outcome, persistence: { mode: 'database' } });
     });
   }));
+  // The commit removed the withdrawn pages' chunks. Rebuild them before
+  // acknowledging: a CLI process exits without a resident projection worker.
+  // A failed rebuild stays queued as durable projection work.
+  const slugs = withdrawn.map(page => page.slug);
+  for (let start = 0; start < slugs.length; start += 100) {
+    await rebuildPendingPageProjections(ctx.engine, 100, { pages: { sourceId, slugs: slugs.slice(start, start + 100) } }).catch(() => undefined);
+  }
   return writeResponse(done);
 }

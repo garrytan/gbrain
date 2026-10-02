@@ -3291,10 +3291,11 @@
         "listStaleChunks": 1,
         "listStalePagesForExtraction": 1,
         "readPageSnapshot": 1,
+        "runVectorAttempt": 1,
         "searchKeyword": 1,
         "searchKeywordChunks": 1,
         "searchTitles": 1,
-        "searchVector": 2
+        "searchVector": 1
       },
       "helper": "withScopedReadTransaction",
       "scoping": {
@@ -3335,6 +3336,7 @@
         "executeRaw": "none",
         "executeRawDirect": "none",
         "expireFact": "none",
+        "explainVectorSearch": "via:runVectorAttempt",
         "findAnomalies": "none",
         "findByTitleFuzzy": "none",
         "findCandidateDuplicates": "none",
@@ -3446,6 +3448,7 @@
         "rlsScopeBindingEnabled": "none",
         "runMigration": "none",
         "runUnsafe": "none",
+        "runVectorAttempt": "direct",
         "searchKeyword": "direct",
         "searchKeywordChunks": "direct",
         "searchTakes": "none",
@@ -3478,6 +3481,7 @@
         "upsertChunks": "via:_upsertChunksOnce",
         "upsertEventProjection": "none",
         "upsertFile": "none",
+        "vectorIterativeScanSupported": "none",
         "withReservedConnection": "none",
         "withScopedReadTransaction": "none",
         "writeContradictionsRun": "none"

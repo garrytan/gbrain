@@ -140,6 +140,7 @@
     "check:schema-migrations": "bash scripts/check-schema-migrations-fresh.sh",
     "check:schema-fresh": "bash scripts/check-schema-fresh.sh",
     "check:retired-phrases": "bash scripts/check-retired-phrases.sh",
+    "check:bash32": "bash scripts/check-bash32.sh",
     "check:schema-migration-order": "bun scripts/check-schema-migration-order.ts",
     "check:compile-autoload": "bash scripts/check-compile-autoload.sh",
     "check:structural-manifest": "bash scripts/check-structural-manifest.sh",
@@ -204,7 +205,7 @@
     "bun": ">=1.4.0"
   },
   "license": "MIT",
-  "version": "0.60.28.0",
+  "version": "0.60.30.0",
   "overrides": {
     "@ai-sdk/provider-utils": "4.0.33",
     "@hono/node-server": "^2.0.5",

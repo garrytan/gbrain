@@ -226,7 +226,11 @@ export interface ExtractInput {
 }
 
 /** A pre-INSERT fact ready for the engine.insertFact path. */
-export type ExtractedFact = NewFact & { entity_slug: string | null };
+export type ExtractedFact = NewFact & {
+  entity_slug: string | null;
+  /** #5836: the subject was inferred at write time (subject-infer-write.ts), not named by the extractor. */
+  entity_inferred?: 'page' | 'mention';
+};
 
 /**
  * Unknown/anonymous-speaker attribution gate.

@@ -152,6 +152,16 @@ Search reliability has real-planner and transport regressions in
 `test/search-readiness-http.test.ts`. The statistics tests include owner,
 restricted-reader and FORCE-RLS roles; the candidate tests distinguish natural
 plans from forced-HNSW controls and prove server cancellation of exact fallback.
+`test/e2e/vector-plan-real-column-postgres.test.ts` is the #5824 plan proof on
+the real `embedding` column: in a dedicated 64-dim database (it needs CREATEDB
+and `CREATE EXTENSION vector`, so it runs under `bun run ci:local`) it first
+shows the legacy-guard statement seq-scans on its fixture, then that the
+emitted statement uses `idx_chunks_embedding` across a filter matrix incl. RLS
+scope binding, then the stale-heavy escalation, exact-fallback and short-window
+cases and every doctor `vector_plan` outcome. The PGLite side is
+`test/search/vector-freshness.test.ts`; the SQL shape and lockstep are
+`test/search/vector-statement.test.ts`. The opt-in reporter-scale bench is
+`scripts/bench/vector-plan-5824.ts`.
 `test/e2e/projection-recovery-parity.test.ts` runs the shared Markdown/code
 recovery, graph-edge preservation and migration-origin contracts against
 PostgreSQL; their root suites cover PGLite in the unit lane. PGLite work caps never
@@ -829,7 +839,9 @@ itself stays simulated because a runner never reboots), runs the checkpoint
 harness above on a store of at least 2 GiB with the WAL-bound assertion
 (#5449), and verifies the latest published signed `darwin-arm64` release
 binary with `codesign --verify --strict` and `--version` against its release
-tag (#5286). Maintainers with triage or write access apply the label; an
+tag (#5286). It also runs the bash 3.2 parse guard under the
+runner's `/bin/bash`, then `bun run verify` (#5810), so a script or guard that
+only works under bash 4 or later fails there. Maintainers with triage or write access apply the label; an
 outside contributor whose change touches macOS-specific persistence, locking
 or release code asks for it in the pull request. Scheduled and dispatched runs
 use the default branch's workflow file, so the label is the way to get this
@@ -991,7 +1003,7 @@ per-file rules. They do not cache passing results. Candidate scanner failures
 fail the guard, and matching files retain the same allowlists and diagnostics.
 
 `scripts/guards-manifest.tsv` is THE single registry of `scripts/check-*`
-guards (currently 66), each classified `scanner` (greps/parses repo sources —
+guards (currently 67), each classified `scanner` (greps/parses repo sources —
 must eventually carry fixtures), `buildfresh`, or `repostate` (build/freshness
 guards are exempt-with-reason, not fixture-tested).
 `scripts/guard-self-test.sh` (`bun run check:guard-self-test`, wired into
@@ -1160,6 +1172,29 @@ retire another phrase, add a row to `RETIRED`. Fixtures:
 `test/fixtures/guards/check-retired-phrases.sh/` (one `bad-<location>` tree per
 scanned location); every pattern and the exemptions are driven in
 `test/scripts/check-retired-phrases.test.ts`.
+
+#### Bash 3.2 parse guard
+
+macOS ships GNU bash 3.2.57 as `/bin/bash`, and its parser rejects shapes
+bash 5 accepts. The one that broke every Mac (#5810) is a heredoc inside
+`$(...)` whose body holds an odd quote. `scripts/check-bash32.sh`
+(`bun run check:bash32`) runs the real 3.2 parser, `bash -n`, over every
+tracked `*.sh` except the guard fixtures under `test/fixtures/guards/`. It
+uses the first parser available: `GBRAIN_BASH32=<path>` (a bash 3.x binary),
+`/bin/bash` when it is bash 3.x (stock macOS), or the digest-pinned `bash:3.2`
+Docker image (`GBRAIN_BASH32=docker` forces the image). With none it prints
+one skip line and exits 0; `GBRAIN_BASH32_REQUIRE=1` makes that exit 2. Each
+failure prints `FAIL: <file:line>`, `Why:` (macOS `/bin/bash` is 3.2), `Fix:`
+(read heredoc text with `IFS= read -r -d '' VAR <<'EOF' || true`) and `See:`.
+To reproduce one file by hand:
+`docker run --rm -v "$PWD":/w -w /w bash:3.2 bash -n <file>`.
+
+The guard checks parsing only. It is not in `bun run verify`, which must not
+need Docker. The `test.yml` verify job runs it with `GBRAIN_BASH32_REQUIRE=1`
+together with `test/scripts/check-bash32.test.ts`, whose real-parser cases
+feed it the `test/fixtures/guards/check-bash32.sh/{bad,good}` trees. The
+macOS 26 job runs it under `/bin/bash` and then runs `bun run verify` there,
+which covers bash-4 runtime features the parser cannot see.
 
 ### Placeholder assertions
 

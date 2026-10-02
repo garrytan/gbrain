@@ -100,7 +100,7 @@ export const SOURCE_SURFACES = {
   },
   migrate: { files: ['src/core/migrate.ts'], dirs: ['src/core/schema-migrations'] },
   'pglite-engine': { files: ['src/core/pglite-engine.ts'], dirs: ['src/core/engine-sql'] },
-  'postgres-engine': { files: ['src/core/postgres-engine.ts'], dirs: ['src/core/engine-sql'] },
+  'postgres-engine': { files: ['src/core/postgres-engine.ts', 'src/core/search/vector-statement.ts'], dirs: ['src/core/engine-sql'] },
   doctor: { files: ['src/commands/doctor.ts'], dirs: ['src/commands/doctor'] },
 } satisfies Record<string, SurfaceDef>;
 

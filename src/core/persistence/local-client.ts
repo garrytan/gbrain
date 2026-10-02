@@ -13,7 +13,7 @@ import { parseWriteRequestId } from './preconditions.ts';
 import {
   isPersistenceIpcMutation, isPersistenceIpcOperation, isPersistenceIpcRegistration,
   persistenceSocketPathForConfig, requestPersistenceCapabilities, requestPersistenceOperation,
-  type PersistenceIpcRegistration,
+  PersistenceIpcTransportError, type PersistenceIpcCapabilities, type PersistenceIpcRegistration,
   requestPersistenceAdministration,
 } from './ipc.ts';
 import type { PersistenceAdminOperation } from './admin-contract.ts';
@@ -83,8 +83,9 @@ export async function maybeDelegateLocalAdministration(
 /**
  * Mutates params only to retain a generated request ID across local/IPC paths.
  * False means no resident process owns this selected brain; the normal engine path
- * may connect. Once a resident owner is observed, every failure is final here:
- * never fall through after an unavailable socket or a lost acknowledgment.
+ * may connect. Once a resident owner is observed (a serve holder, or a socket
+ * that answered), every failure is final here: never fall through after an
+ * unavailable owner socket or a lost acknowledgment.
  */
 export async function maybeDelegateLocalOperation(
   operation: string,
@@ -113,7 +114,14 @@ export async function maybeDelegateLocalOperation(
   // These belong to the CLI context/renderer, not the operation schema.
   if (sourceInParams) delete wireParams.source;
   delete wireParams.json;
-  const capability = await requestPersistenceCapabilities(socketPath);
+  let capability: PersistenceIpcCapabilities;
+  try { capability = await requestPersistenceCapabilities(socketPath); }
+  catch (error) {
+    // A holder that is not a serve and answers no owner socket is another
+    // command, such as a concurrent CLI call: the engine path waits for its lock.
+    if (error instanceof PersistenceIpcTransportError && holder.serve === false) return { handled: false };
+    throw error;
+  }
   if (!capability.operations.includes(operation)) {
     throw new OperationError('owner_unavailable', `The running persistence owner does not support '${operation}'.`,
       'Upgrade and restart the owner, then retry with the same request ID.');

@@ -198,7 +198,11 @@ const find_contradictions: Operation = {
   },
   handler: async (ctx, p) => {
     const scope = sourceScopeOpts(ctx);
-    if (ctx.remote !== false || scope.sourceId !== undefined || scope.sourceIds !== undefined) {
+    // N2-2: the local CLI always carries a sourceId; one the operator did not
+    // select is not a filter, so the bare command reads the latest run.
+    const sourceFiltered = scope.sourceIds !== undefined
+      || (scope.sourceId !== undefined && ctx.localSourceImplicit !== true);
+    if (ctx.remote !== false || sourceFiltered) {
       return { contradictions: [], note: 'Stored contradiction reports are temporarily available only to trusted local callers without a source filter.' };
     }
 

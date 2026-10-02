@@ -2,8 +2,8 @@
  * D7 — mergeOntologyFact matrix parity (Life Chronicle ontology, #2390).
  *
  * The merge rides the `facts` table with a partial dedup unique index
- * ((source_id, entity_slug, dimension, value_hash, source_markdown_slug)
- * WHERE dimension IS NOT NULL) and a current-open supersession UPDATE.
+ * ((source_id, entity_slug, dimension, value_hash, source_markdown_slug,
+ * valid_from) WHERE dimension IS NOT NULL) and a current-open supersession UPDATE.
  * Postgres binds through postgres.js sql`` (BIGSERIAL ids arrive as strings,
  * Number()-normalized in the engine); PGLite through positional $N params.
  * A drift means `gbrain migrate --to supabase` silently changes how an
@@ -290,5 +290,34 @@ describeBoth('Engine parity — mergeOntologyFact matrix (D7)', () => {
       expect(await at(eng, '2024-06-01T00:00:00Z')).toBe('startup-0');
     }
     expect(await dumpFacts(pgEngine, STINT)).toEqual(await dumpFacts(pgliteEngine, STINT));
+  });
+
+  test('same-provenance revert (A → B → A) records a new interval identically', async () => {
+    const REVERT = 'people/onto-revert';
+    const at = async (eng: BrainEngine, asof?: string) =>
+      (await eng.getOntology(REVERT, { sourceId: 'default', asof })).find(r => r.dimension === 'location')?.value ?? null;
+    for (const eng of [pgEngine, pgliteEngine]) {
+      const actions: string[] = [];
+      for (const [value, from] of [['Lisbon', '2020-01-01'], ['Porto', '2022-01-01'], ['Lisbon', '2024-01-01'], ['Lisbon', '2024-01-01']]) {
+        actions.push((await eng.mergeOntologyFact({ entitySlug: REVERT, dimension: 'location', value, source: 'manual', validFrom: `${from}T00:00:00.000Z` })).action);
+      }
+      expect(actions).toEqual(['inserted', 'superseded_prior', 'superseded_prior', 'noop']);
+      expect(await at(eng)).toBe('Lisbon');
+      expect(await at(eng, '2023-06-01T00:00:00Z')).toBe('Porto');
+    }
+    expect(await dumpFacts(pgEngine, REVERT)).toEqual(await dumpFacts(pgliteEngine, REVERT));
+  });
+
+  test('visibility filter resolves the newest permitted row identically', async () => {
+    const VIS = 'people/onto-visibility';
+    for (const eng of [pgEngine, pgliteEngine]) {
+      await eng.mergeOntologyFact({ entitySlug: VIS, dimension: 'role', value: 'private-founder', source: 'notes/p', validFrom: '2026-01-01T00:00:00.000Z', visibility: 'private' });
+      await eng.mergeOntologyFact({ entitySlug: VIS, dimension: 'role', value: 'world-advisor', source: 'notes/w', validFrom: '2025-01-01T00:00:00.000Z', visibility: 'world' });
+      expect((await eng.getOntology(VIS, { sourceId: 'default', visibility: ['world'] })).map(r => r.value)).toEqual(['world-advisor']);
+      expect((await eng.getOntology(VIS, { sourceId: 'default' })).map(r => r.value)).toEqual(['private-founder']);
+      const conflicts = (all: Awaited<ReturnType<BrainEngine['findOntologyConflicts']>>) => all.filter(c => c.entity_slug === VIS);
+      expect(conflicts(await eng.findOntologyConflicts({ sourceId: 'default', visibility: ['world'] }))).toEqual([]);
+      expect(conflicts(await eng.findOntologyConflicts({ sourceId: 'default' }))).toHaveLength(1);
+    }
   });
 });

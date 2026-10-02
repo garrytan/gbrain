@@ -15,7 +15,7 @@
  * discovered path is a reliable fingerprint.
  */
 
-import { readdirSync, rmSync } from 'node:fs';
+import { existsSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { claudeProjectsDir } from '../../bootstrap/host-specs.ts';
@@ -55,17 +55,10 @@ export function isClaudeCliSelfTranscriptPath(path: string): boolean {
  */
 export function claudeCliSelfSessionIds(projectsRoot: string = claudeProjectsDir()): Set<string> {
   const ids = new Set<string>();
-  let projects: string[];
-  try {
-    projects = readdirSync(projectsRoot);
-  } catch {
-    return ids;
-  }
-  for (const project of projects) {
-    if (!isClaudeCliSelfTranscriptPath(project)) continue;
+  for (const project of claudeCliSelfProjectDirs(projectsRoot)) {
     let files: string[];
     try {
-      files = readdirSync(join(projectsRoot, project));
+      files = readdirSync(project);
     } catch {
       continue;
     }
@@ -74,6 +67,32 @@ export function claudeCliSelfSessionIds(projectsRoot: string = claudeProjectsDir
     }
   }
   return ids;
+}
+
+/** The harness project dirs of gbrain claude-cli scratch cwds (one listing of
+ * the projects root; no project's files are read). */
+export function claudeCliSelfProjectDirs(projectsRoot: string = claudeProjectsDir()): string[] {
+  try {
+    return readdirSync(projectsRoot)
+      .filter(isClaudeCliSelfTranscriptPath)
+      .map((project) => join(projectsRoot, project));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * #5820 — the ONE single-session self-capture classifier (serve-side
+ * writeback harvest, the sweep's corpus pass, doctor `self_capture`): true
+ * when a scratch project holds `<id>.jsonl`. Pass `projectDirs` to classify
+ * many ids against one listing.
+ */
+export function isClaudeCliSelfSessionId(
+  id: string,
+  projectDirs: readonly string[] = claudeCliSelfProjectDirs(),
+): boolean {
+  if (!/^[A-Za-z0-9_-][A-Za-z0-9._-]*$/.test(id)) return false;
+  return projectDirs.some((dir) => existsSync(join(dir, `${id}.jsonl`)));
 }
 
 function isPidAlive(pid: number): boolean {

@@ -436,3 +436,76 @@ describe('runPhaseExtractAtoms — completion receipt (gbrain#4148)', () => {
     expect(done.map(p => p.slug)).not.toContain('meetings/2026-04-03');
   });
 });
+
+// #5809 / #5832: the drain's hard signal (job timeout/cancel, cycle-lock lease
+// loss, job deadline) reaches the in-flight model call and stops the run
+// before the next commit; the interrupted page takes no strike and nothing is
+// written after the stop (no atoms, no scan state, no rollup row). The soft
+// signal (drain window) lets the page in flight finish and commit, then stops
+// before the next page, booked as an expected limit.
+describe('runPhaseExtractAtoms — hard and soft stops (#5809)', () => {
+  const mkPages = (slugs: string[]) =>
+    slugs.map((slug, i) => ({ slug, content: 'prose', contentHash: String(i + 1).repeat(16) }));
+  const atomPages = async () =>
+    Number((await engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM pages WHERE type = 'atom'`))[0].n);
+  const rollup = async () => (await engine.executeRaw<{ round_completed_count: number; expected_limit_count: number; halt_count: number }>(
+    `SELECT round_completed_count, expected_limit_count, halt_count FROM extract_rollup_7d WHERE kind = 'atoms' AND source_id = 'default'`,
+  ))[0];
+
+  test.each([
+    { callOutcome: 'throws', pacingMs: null },
+    { callOutcome: 'still answers', pacingMs: null },
+    { callOutcome: 'still answers under per-item pacing', pacingMs: '60000' },
+  ])('a hard abort while the model call $callOutcome commits nothing and strikes nothing', async ({ callOutcome, pacingMs }) => {
+    if (pacingMs) await engine.setConfig('cycle.extract_atoms.pacing_ms', pacingMs);
+    await seedPage('note/ab1');
+    await seedPage('note/ab2');
+    const controller = new AbortController();
+    const callSignals: Array<AbortSignal | undefined> = [];
+    const result = await runPhaseExtractAtoms(engine, {
+      sourceId: 'default',
+      _transcripts: [],
+      _pages: mkPages(['note/ab1', 'note/ab2']),
+      signal: controller.signal,
+      _chat: async (o: ChatOpts) => {
+        callSignals.push(o.abortSignal);
+        controller.abort(new Error('timeout'));
+        if (callOutcome === 'throws') throw new Error('claude-cli adapter aborted');
+        return okChatResult(ATOM_JSON);
+      },
+    }).finally(() => engine.unsetConfig('cycle.extract_atoms.pacing_ms'));
+    expect(callSignals).toEqual([controller.signal]);
+    expect(result.details.failures).toEqual([]);
+    expect(result.details.pages_processed).toBe(0);
+    expect(await atomPages()).toBe(0);
+    expect(await stateOf('note/ab1')).toBeUndefined();
+    expect(await stateOf('note/ab2')).toBeUndefined();
+    expect(await rollup()).toBeUndefined();
+  }, 20_000);
+
+  test('a soft stop during a page lets that page commit, then stops before the next one', async () => {
+    await seedPage('note/sf1');
+    await seedPage('note/sf2');
+    const hard = new AbortController();
+    const soft = new AbortController();
+    const calls: Array<boolean | undefined> = [];
+    const result = await runPhaseExtractAtoms(engine, {
+      sourceId: 'default',
+      _transcripts: [],
+      _pages: mkPages(['note/sf1', 'note/sf2']),
+      signal: hard.signal,
+      stopSignal: soft.signal,
+      _chat: async (o: ChatOpts) => {
+        soft.abort(new Error('window'));
+        calls.push(o.abortSignal?.aborted);
+        return okChatResult(ATOM_JSON);
+      },
+    });
+    expect(calls).toEqual([false]);
+    expect(result.details.pages_processed).toBe(1);
+    expect(result.details.atoms_extracted).toBe(1);
+    expect((await stateOf('note/sf1'))?.tombstoned).toBe(true);
+    expect(await stateOf('note/sf2')).toBeUndefined();
+    expect(await rollup()).toMatchObject({ round_completed_count: 0, expected_limit_count: 1, halt_count: 0 });
+  });
+});

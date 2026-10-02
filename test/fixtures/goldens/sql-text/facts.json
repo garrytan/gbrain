@@ -141,7 +141,7 @@
               "null"
             ],
             "sql": "WITH cur AS ( SELECT entity_slug, dimension, value, source_markdown_slug AS source, confidence, id AS fact_id FROM facts WHERE dimension IS NOT NULL AND expired_at IS NULL AND valid_until IS NULL AND (dim_status IS NULL OR dim_status = 'active') AND confidence >= $1 AND ($2::text IS NULL OR source_id = $3) ) SELECT entity_slug, dimension, json_agg(json_build_object('value', value, 'source', source, 'confidence', confidence, 'fact_id', fact_id)) AS values FROM cur GROUP BY entity_slug, dimension HAVING count(DISTINCT value) >= 2 AND count(DISTINCT source) >= 2 ORDER BY entity_slug, dimension",
-            "textSha256": "046baefce6f4ca3f8b4ed07a50bdf0e54be851cc25d07392a9058035c2e618bb"
+            "textSha256": "0fa36872be345c8a16b8d862ef3c94d292173b6a03a91c0094347682cd9859f2"
           }
         ],
         "sourceIds+excludePrivate": [
@@ -152,7 +152,7 @@
               "array<string>"
             ],
             "sql": "WITH cur AS ( SELECT entity_slug, dimension, value, source_markdown_slug AS source, confidence, id AS fact_id FROM facts WHERE dimension IS NOT NULL AND expired_at IS NULL AND valid_until IS NULL AND (dim_status IS NULL OR dim_status = 'active') AND confidence >= $1 AND source_id = ANY($2) AND NOT EXISTS (SELECT 1 FROM pages pp WHERE pp.source_id = facts.source_id AND pp.slug = facts.source_markdown_slug AND NOT ((COALESCE(pp.frontmatter->>'visibility', CASE WHEN (pp.type = 'atom' OR (pp.type = 'concept' AND pp.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private' AND NOT (CASE WHEN pp.type = 'atom' THEN EXISTS (SELECT 1 FROM pages derived_origin WHERE derived_origin.source_id = pp.source_id AND derived_origin.slug = pp.frontmatter->>'source_slug' AND derived_origin.frontmatter->>'visibility' = 'private') WHEN (pp.type = 'atom' OR (pp.type = 'concept' AND pp.frontmatter->>'synthesized_by' IS NOT NULL)) THEN EXISTS (SELECT 1 FROM links derived_input_link JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id WHERE derived_input_link.from_page_id = pp.id AND derived_input_link.link_source = 'concept-provenance' AND derived_input_link.link_type = 'synthesized_from' AND (COALESCE(derived_input.frontmatter->>'visibility', CASE WHEN derived_input.type = 'atom' THEN 'private' ELSE 'world' END) = 'private' OR EXISTS (SELECT 1 FROM pages derived_input_origin WHERE derived_input_origin.source_id = derived_input.source_id AND derived_input_origin.slug = derived_input.frontmatter->>'source_slug' AND derived_input_origin.frontmatter->>'visibility' = 'private'))) ELSE false END)))) ) SELECT entity_slug, dimension, json_agg(json_build_object('value', value, 'source', source, 'confidence', confidence, 'fact_id', fact_id)) AS values FROM cur GROUP BY entity_slug, dimension HAVING count(DISTINCT value) >= 2 AND count(DISTINCT source) >= 2 ORDER BY entity_slug, dimension",
-            "textSha256": "c2a08d786115e48bae908eda10f5c62296a5dc73cb48b6e78ad8c4718aa23820"
+            "textSha256": "61485f1c8d0fa69a697de77b825fdcc27f42b98b0c2059153f7c5949f519c8d2"
           }
         ]
       },
@@ -231,7 +231,7 @@
               "boolean"
             ],
             "sql": "SELECT DISTINCT ON (dimension) dimension, value, confidence, source_markdown_slug AS source, valid_from, valid_until AS valid_to, COALESCE(dim_status, 'active') AS status, id AS fact_id FROM facts WHERE entity_slug = $1 AND dimension IS NOT NULL AND expired_at IS NULL AND ($2::text IS NULL OR source_id = $3) AND COALESCE(valid_from, '-infinity'::timestamptz) <= COALESCE($4::timestamptz, now()) AND COALESCE(valid_until, 'infinity'::timestamptz) > COALESCE($5::timestamptz, now()) AND confidence >= $6 AND ($7::boolean OR dim_status IS NULL OR dim_status = 'active') ORDER BY dimension, valid_from DESC NULLS LAST, confidence DESC, id DESC",
-            "textSha256": "d65572cb339f4eb834da99c66ca30eb392b1a4ae94244324a2e092c4a86080ac"
+            "textSha256": "34084e478b807600e07f3aa6927ca19ac466e57d70fee3c09eef553b86c6b73d"
           }
         ],
         "sourceIds+excludePrivate": [
@@ -246,7 +246,7 @@
               "boolean"
             ],
             "sql": "SELECT DISTINCT ON (dimension) dimension, value, confidence, source_markdown_slug AS source, valid_from, valid_until AS valid_to, COALESCE(dim_status, 'active') AS status, id AS fact_id FROM facts WHERE entity_slug = $1 AND dimension IS NOT NULL AND expired_at IS NULL AND source_id = ANY($2) AND NOT EXISTS (SELECT 1 FROM pages pp WHERE pp.source_id = facts.source_id AND pp.slug = facts.source_markdown_slug AND NOT ((COALESCE(pp.frontmatter->>'visibility', CASE WHEN (pp.type = 'atom' OR (pp.type = 'concept' AND pp.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private' AND NOT (CASE WHEN pp.type = 'atom' THEN EXISTS (SELECT 1 FROM pages derived_origin WHERE derived_origin.source_id = pp.source_id AND derived_origin.slug = pp.frontmatter->>'source_slug' AND derived_origin.frontmatter->>'visibility' = 'private') WHEN (pp.type = 'atom' OR (pp.type = 'concept' AND pp.frontmatter->>'synthesized_by' IS NOT NULL)) THEN EXISTS (SELECT 1 FROM links derived_input_link JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id WHERE derived_input_link.from_page_id = pp.id AND derived_input_link.link_source = 'concept-provenance' AND derived_input_link.link_type = 'synthesized_from' AND (COALESCE(derived_input.frontmatter->>'visibility', CASE WHEN derived_input.type = 'atom' THEN 'private' ELSE 'world' END) = 'private' OR EXISTS (SELECT 1 FROM pages derived_input_origin WHERE derived_input_origin.source_id = derived_input.source_id AND derived_input_origin.slug = derived_input.frontmatter->>'source_slug' AND derived_input_origin.frontmatter->>'visibility' = 'private'))) ELSE false END)))) AND COALESCE(valid_from, '-infinity'::timestamptz) <= COALESCE($3::timestamptz, now()) AND COALESCE(valid_until, 'infinity'::timestamptz) > COALESCE($4::timestamptz, now()) AND confidence >= $5 AND ($6::boolean OR dim_status IS NULL OR dim_status = 'active') ORDER BY dimension, valid_from DESC NULLS LAST, confidence DESC, id DESC",
-            "textSha256": "138e45f5bf9fc66e016190db39eda2bfb92ff5a15a45c171aa509dd53b27f4df"
+            "textSha256": "8ea858aeae23151b6c853aac64d174230f3c358e9e9d0d11ccec14dedb3412d2"
           }
         ]
       },
@@ -697,6 +697,19 @@
               "string",
               "string",
               "string",
+              "null"
+            ],
+            "sql": "SELECT 1 FROM facts WHERE source_id = $1 AND entity_slug = $2 AND dimension = $3 AND value_hash = $4 AND source_markdown_slug = $5 AND COALESCE(valid_from, '-infinity'::timestamptz) >= COALESCE($6::timestamptz, '-infinity'::timestamptz) LIMIT 1",
+            "textSha256": "c0c2eba9c475159185bad82aa9f69dc50e886a302bfcd48a731bc9c928529996"
+          },
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
               "string",
               "string",
               "string",
@@ -707,8 +720,8 @@
               "null",
               "number"
             ],
-            "sql": "INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, dimension, value, value_hash, dim_status, confidence, source, source_markdown_slug, valid_from, valid_until, expired_at, consolidated_into) VALUES ($1, $2, $3, 'fact', $4, $5, $6, $7, $8, $9, $10, $11, COALESCE($12::timestamptz, now()), $13, now(), $14) ON CONFLICT (source_id, entity_slug, dimension, value_hash, source_markdown_slug) WHERE dimension IS NOT NULL DO NOTHING RETURNING id",
-            "textSha256": "4e528f6ba2b1a21de927264b3d815d1ac5f6f76050405e3c8608ffd8650ab24b"
+            "sql": "INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, dimension, value, value_hash, dim_status, confidence, source, source_markdown_slug, valid_from, valid_until, expired_at, consolidated_into) VALUES ($1, $2, $3, 'fact', $4, $5, $6, $7, $8, $9, $10, $11, COALESCE($12::timestamptz, now()), $13, now(), $14) ON CONFLICT (source_id, entity_slug, dimension, value_hash, source_markdown_slug, valid_from) WHERE dimension IS NOT NULL DO NOTHING RETURNING id",
+            "textSha256": "eee69b1f24c9d807286751d465e4c3554a02c791c005f44910b9051ff154b27e"
           }
         ],
         "insert": [
@@ -739,8 +752,8 @@
               "null",
               "null"
             ],
-            "sql": "INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, dimension, value, value_hash, dim_status, confidence, source, source_markdown_slug, valid_from, valid_until) VALUES ($1, $2, $3, 'fact', $4, $5, $6, $7, $8, $9, $10, $11, COALESCE($12::timestamptz, now()), $13) ON CONFLICT (source_id, entity_slug, dimension, value_hash, source_markdown_slug) WHERE dimension IS NOT NULL DO NOTHING RETURNING id",
-            "textSha256": "c75878cb1dbe439a990a0d153014d47f0a2ea390be8f5d5ba2109ae531ddc214"
+            "sql": "INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, dimension, value, value_hash, dim_status, confidence, source, source_markdown_slug, valid_from, valid_until) VALUES ($1, $2, $3, 'fact', $4, $5, $6, $7, $8, $9, $10, $11, COALESCE($12::timestamptz, now()), $13) ON CONFLICT (source_id, entity_slug, dimension, value_hash, source_markdown_slug, valid_from) WHERE dimension IS NOT NULL DO NOTHING RETURNING id",
+            "textSha256": "e4dc11b7834659b03a715161d988838ae5f07aa3cdaa8bb1982a4545085ab9d4"
           }
         ],
         "supersede": [
@@ -771,8 +784,8 @@
               "null",
               "null"
             ],
-            "sql": "INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, dimension, value, value_hash, dim_status, confidence, source, source_markdown_slug, valid_from, valid_until) VALUES ($1, $2, $3, 'fact', $4, $5, $6, $7, $8, $9, $10, $11, COALESCE($12::timestamptz, now()), $13) ON CONFLICT (source_id, entity_slug, dimension, value_hash, source_markdown_slug) WHERE dimension IS NOT NULL DO NOTHING RETURNING id",
-            "textSha256": "c75878cb1dbe439a990a0d153014d47f0a2ea390be8f5d5ba2109ae531ddc214"
+            "sql": "INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, dimension, value, value_hash, dim_status, confidence, source, source_markdown_slug, valid_from, valid_until) VALUES ($1, $2, $3, 'fact', $4, $5, $6, $7, $8, $9, $10, $11, COALESCE($12::timestamptz, now()), $13) ON CONFLICT (source_id, entity_slug, dimension, value_hash, source_markdown_slug, valid_from) WHERE dimension IS NOT NULL DO NOTHING RETURNING id",
+            "textSha256": "e4dc11b7834659b03a715161d988838ae5f07aa3cdaa8bb1982a4545085ab9d4"
           },
           {
             "lane": "pool",

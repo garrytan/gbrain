@@ -7,6 +7,8 @@ import { readFactsEmbeddingDim } from '../embedding-dim-check.ts';
 import type { OperationContext } from '../ops/contract.ts';
 import { OperationError } from '../ops/contract.ts';
 import { resolveEntitySlugWithSource } from '../entities/resolve.ts';
+import { appendContextNote, type InferredVia } from '../facts/subject-infer.ts';
+import { inferenceNote } from '../facts/subject-infer-write.ts';
 import { currentSubmissionAuthority } from '../minions/submission-authority.ts';
 import { authorizeStoredRequest, authorizeWrite, submissionAuthority } from './authority.ts';
 import { authorizePageVisibility } from './page-visibility.ts';
@@ -26,6 +28,8 @@ export interface ManagedFactsResult {
 export interface ManagedFactOrigin { slug: string; pageId: number; revision: string; }
 export type FrozenExtractedFact = Omit<NewFact, 'embedding' | 'valid_from' | 'valid_until' | 'expired_at'> & {
   embedding: number[] | null; valid_from: string; valid_until: string | null;
+  /** #5836: a write-time inferred subject dedups exact text only, never superseding or dropping a similar fact. */
+  entity_inferred?: InferredVia;
 };
 export interface ManagedFactIntent extends Record<string, unknown> {
   kind: 'managed_facts_entity' | 'managed_facts_complete';
@@ -232,7 +236,9 @@ export async function publishManagedFacts(engine: BrainEngine, session: ManagedF
     await authorizeWrite(engine, session.authority, 'extract_facts', slug);
     await authorizePageVisibility(engine, session.authority, slug);
     const group = groups.get(slug) ?? [];
-    group.push({ ...fact, entity_slug: attributed, visibility, context: options.explicitContext ? fact.context ?? null : ctx.sourceSlug ?? pageSlug ?? null,
+    const context = options.explicitContext ? fact.context ?? null : ctx.sourceSlug ?? pageSlug ?? null;
+    // #5836: an inferred subject carries its provenance note into the fence cell and the row.
+    group.push({ ...fact, entity_slug: attributed, visibility, context: fact.entity_inferred ? appendContextNote(context, inferenceNote(fact.entity_inferred)) : context,
       embedding: fact.embedding ? Array.from(fact.embedding) : null,
       valid_from: (fact.valid_from ?? ctx.validFrom ?? new Date()).toISOString(), valid_until: fact.valid_until?.toISOString() ?? null });
     groups.set(slug, group);

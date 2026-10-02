@@ -577,6 +577,27 @@ as one line each, for example
 A line that says `Unknown:` means the check could not run; it is not a clean
 result. Ask the brain host's operator to run the steps above.
 
+<a id="fix-wave-6"></a>
+### Upgrading to v0.60.30.0 (fix wave 6)
+
+**Say to your agent:** *"We upgraded gbrain to v0.60.30.0. Preview the
+unlinked facts relink and the link re-derivation for each source, and tell me
+what would change before applying anything."*
+
+`gbrain upgrade` applies migrations v187 (fact relink attempts) and v188 (the
+per-stint ontology dedup index). Restart every `gbrain serve`, autopilot and
+worker so they run the new code, then work through what applies:
+
+| Symptom | Check or code | Issue | Preview | Apply | Verify |
+| --- | --- | --- | --- | --- | --- |
+| "Who invested in X?" or "Who attended <meeting>?" finds nobody; meeting attendance edges point meeting -> person, or notes-only mentions are typed attended | none | N9-2, N9-3, N9-4, N12-7 | `gbrain extract links --source db --repair-attendance --source-id <id>` (attendance only, preview-bound) | `gbrain extract links --source db --include-frontmatter --source-id <id>` per source; body links also re-derive on the next `gbrain extract --stale` | `gbrain graph <person-slug>` shows person -> page `invested_in` / `attended` edges |
+| Facts saved without an entity are missing from entity recall and skipped as `no_entity` by the conflict sweep | doctor `unlinked_facts` | #5836 | `gbrain facts relink --dry-run` | `gbrain facts relink` (model tier capped by `--max-usd`, default $1.00) | `gbrain doctor` (`unlinked_facts`); `gbrain decide status` |
+| `remember` answers `warnings: ["NO_ENTITY"]` | none | #5836 | none | pass `entity`, or name exactly one existing person or company in the text; `gbrain config set facts.entity_inference off` turns inference off | the response carries `entity_inferred` or the chosen entity |
+| A CLI write on PGLite pauses for up to 30 s, then fails lock-busy | lock busy | N5-2 | none | wait for the other CLI call, or stop the long-running non-serve holder (for example a jobs daemon) | re-run the write |
+| The next `gbrain eval suspected-contradictions` estimates a full re-judge | none | N2-3 | the printed cost estimate | run it after you agree (judge prompt v3 invalidated the cache once) | the run reports judged pairs |
+| Hybrid search on Postgres returns keyword-only results or hits the vector timeout | doctor `vector_plan` | #5824 | `gbrain doctor` | upgrade and restart; rollback for this release: `gbrain config set search.vector_legacy_guard true`, then restart serve and autopilot | `gbrain doctor` shows `vector_plan` ok |
+| Facts about you that came from pasted text or from gbrain's own claude-cli calls | doctor `self_capture` | #5812, #5820 | `gbrain recall` for the fact | `gbrain forget <fact id>`; doctor `self_capture` prints one-time quarantine commands for old self-capture files | `gbrain doctor` |
+
 <a id="fix-wave-5"></a>
 ### Upgrading to v0.60.28.0 (fix wave 5)
 

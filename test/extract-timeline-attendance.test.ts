@@ -62,7 +62,7 @@ for (const kind of testBackends()) {
 
     test.each([
       ['gbrain-base-v2', person, meeting],
-      ['gbrain-base', meeting, person],
+      ['gbrain-base', person, meeting],
     ])('%s qualified evidence reaches the attendee timeline', async (pack, from, to) => {
       await engine.setConfig('schema_pack', pack);
       await seed(person, 'person');

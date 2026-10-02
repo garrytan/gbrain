@@ -12,7 +12,7 @@
  * Hermetic in-memory PGLite + chat-transport stub (sweep.test.ts harness).
  */
 import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach } from 'bun:test';
-import { mkdtempSync, existsSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -25,6 +25,7 @@ import type { CapabilityReport } from '../src/core/capability.ts';
 import { detectCapabilities } from '../src/core/capability.ts';
 import { RECIPES } from '../src/core/ai/recipes/index.ts';
 import { withEnv, emptyHome } from './helpers/with-env.ts';
+import { parseTranscript, toCorpusText } from '../src/core/transcripts/claude-code-jsonl.ts';
 
 const KEYED: CapabilityReport = {
   embeddings: { available: false },
@@ -256,5 +257,33 @@ describe('runMaintenanceSweep — ambient-writeback turn files (OV2-11)', () => 
     const sidecar = JSON.parse(readFileSync(join(corpusDir, file + CORPUS_INGESTED_SUFFIX), 'utf8'));
     expect(sidecar.facts_inserted).toBe(0);
     expect(typeof sidecar.skipped).toBe('string'); // malformed_output/refusal class — recorded, never a silent zero
+  });
+});
+
+describe('runMaintenanceSweep — pasted content never reaches the extractor (#5812)', () => {
+  test('a session corpus built from a real Claude Code transcript is extracted without its pastes; the file is unchanged', async () => {
+    const prompts: string[] = [];
+    __setChatTransportForTests(async (opts): Promise<ChatResult> => {
+      prompts.push(opts.messages.map((m) => (typeof m.content === 'string' ? m.content : JSON.stringify(m.content))).join('\n'));
+      return {
+        text: JSON.stringify({ facts: [{ fact: 'prefers dark roast coffee', kind: 'preference', entity: null, confidence: 0.9, notability: 'high' }] }),
+        blocks: [], stopReason: 'end',
+        usage: { input_tokens: 1, output_tokens: 1, cache_read_tokens: 0, cache_creation_tokens: 0 },
+        model: 'anthropic:test-stub', providerId: 'anthropic',
+      };
+    });
+    const parsed = parseTranscript(join(import.meta.dir, 'fixtures', 'claude-code-paste', 'session.jsonl'));
+    const corpus = toCorpusText(parsed.turns);
+    expect(corpus).toContain('pasted third-party email');
+    writeFileSync(join(corpusDir, 'sess-paste.txt'), corpus);
+
+    const r = await runMaintenanceSweep(engine, { sourceId: 'default', capabilities: KEYED });
+    expect(r.corpusIngested).toBe(1);
+    expect(prompts.length).toBeGreaterThan(0);
+    const seen = prompts.join('\n');
+    expect(seen).not.toContain('pasted third-party email');
+    expect(seen).not.toContain('pasted_content');
+    expect(seen).toContain('I prefer dark roast coffee');
+    expect(readFileSync(join(corpusDir, 'sess-paste.txt'), 'utf8')).toBe(corpus);
   });
 });

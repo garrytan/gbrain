@@ -182,6 +182,9 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   // System One decide: local CLI only (calibrate, receipts and proposals are trusted-local); help and a
   // key-only probe answer without a brain, so the module opens its own engine.
   { name: 'decide', phase: 'pre-connect-own-engine', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/decide.ts') },
+  // #5836 facts relink: trusted local CLI only (publishes onto the host's entity pages through the write
+  // coordinator); help answers without a brain, so the module opens its own engine.
+  { name: 'facts', phase: 'pre-connect-own-engine', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/facts.ts') },
   // #5401: projections drain refuses a resident-held PGLite brain before any engine opens, so the
   // module opens its own engine. Trusted local CLI only (not an operation).
   { name: 'projections', phase: 'pre-connect-own-engine', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/projections.ts') },

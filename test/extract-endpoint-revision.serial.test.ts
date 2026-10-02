@@ -36,10 +36,10 @@ for (const kind of ['pglite', ...(process.env.DATABASE_URL ? ['postgres'] : [])]
     afterAll(async () => { await close?.(); });
 
     async function graph() {
-      return engine.executeRaw<{ id: number; link_type: string; link_source: string; to_source: string }>(
-        `SELECT l.id,l.link_type,l.link_source,t.source_id AS to_source FROM links l
-         JOIN pages f ON f.id=l.from_page_id JOIN pages t ON t.id=l.to_page_id
-         WHERE f.source_id=$1 AND f.slug=$2 ORDER BY l.id`, [sourceId, originSlug]);
+      return engine.executeRaw<{ id: number; link_type: string; link_source: string; peer_source: string }>(
+        `SELECT l.id,l.link_type,l.link_source,CASE WHEN f.source_id=$1 AND f.slug=$2 THEN t.source_id ELSE f.source_id END AS peer_source
+         FROM links l JOIN pages f ON f.id=l.from_page_id JOIN pages t ON t.id=l.to_page_id
+         WHERE (f.source_id=$1 AND f.slug=$2) OR (t.source_id=$1 AND t.slug=$2) ORDER BY l.id`, [sourceId, originSlug]);
     }
     async function stamp() {
       const rows = await engine.executeRaw<{ links_extracted_at: string | null }>(
@@ -64,7 +64,7 @@ for (const kind of ['pglite', ...(process.env.DATABASE_URL ? ['postgres'] : [])]
             : runExtract(engine, [mode, '--source', 'db', '--source-id', sourceId, '--json']);
           await run();
           const before = await graph();
-          expect(before.filter(row => row.link_source === 'markdown').map(row => [row.link_type, row.to_source]))
+          expect(before.filter(row => row.link_source === 'markdown').map(row => [row.link_type, row.peer_source]))
             .toEqual([['attended', targetSourceId]]);
           await engine.executeRaw('UPDATE pages SET links_extracted_at=NULL WHERE source_id=$1 AND slug=$2', [sourceId, originSlug]);
           const targetSnapshot = (await engine.readPageSnapshot(targetSlug, { sourceId: targetSourceId }))!;
@@ -96,7 +96,7 @@ for (const kind of ['pglite', ...(process.env.DATABASE_URL ? ['postgres'] : [])]
             exitSpy.mockRestore();
           }
           expect(retyped).toBe(true);
-          expect(captured.some(link => link.link_type === 'attended' && link.to_source_id === targetSourceId)).toBe(true);
+          expect(captured.some(link => link.link_type === 'attended' && link.from_slug === targetSlug && link.from_source_id === targetSourceId)).toBe(true);
           expect(fences).toContainEqual({ slug: targetSlug, sourceId: targetSourceId, revision: targetSnapshot.revision });
           expect(await graph()).toEqual(before);
           expect(await stamp()).toBeNull();

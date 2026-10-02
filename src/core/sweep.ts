@@ -578,7 +578,7 @@ async function runCorpusIngestPass(
   // OFF retires banked turns even when the brain cannot extract — otherwise
   // the files linger eligible and a later re-enable would extract turns the
   // operator already revoked (codex re-review, this wave).
-  const { parseWbFileName, writebackOffSidecarJson, corpusFileSessionId } = await import('./context/corpus-segments.ts');
+  const { parseWbFileName, writebackOffSidecarJson, selfCaptureSidecarJson, corpusFileSessionId, corpusTextForExtraction } = await import('./context/corpus-segments.ts');
   const { resolveWritebackConfig } = await import('./facts/writeback-config.ts');
   const { loadConfig: loadFileCfg } = await import('./config.ts');
   const { isValidSourceId } = await import('./source-id.ts');
@@ -626,8 +626,8 @@ async function runCorpusIngestPass(
 
   const { runFactsPipeline } = await import('./facts/backstop.ts');
   const { isDreamOutput } = await import('./cycle/transcript-discovery.ts');
-  const { claudeCliSelfSessionIds } = await import('./ai/providers/claude-cli-scratch.ts');
-  const selfCaptureIds = claudeCliSelfSessionIds();
+  const { claudeCliSelfProjectDirs, isClaudeCliSelfSessionId } = await import('./ai/providers/claude-cli-scratch.ts');
+  const selfProjectDirs = claudeCliSelfProjectDirs();
 
   for (let i = 0; i < candidates.length; i++) {
     if (overBudget()) {
@@ -658,11 +658,8 @@ async function runCorpusIngestPass(
       // #5413: a corpus file captured from gbrain's own claude-cli call, in
       // any capture form. Extracting it spawns another claude-cli call; the
       // classification is permanent, so the terminal sidecar stops the retry.
-      if (selfCaptureIds.has(corpusFileSessionId(name))) {
-        await writeFile(
-          full + CORPUS_INGESTED_SUFFIX,
-          JSON.stringify({ ingested_at: new Date().toISOString(), skipped: 'self_capture' }) + '\n',
-        );
+      if (isClaudeCliSelfSessionId(corpusFileSessionId(name), selfProjectDirs)) {
+        await writeFile(full + CORPUS_INGESTED_SUFFIX, selfCaptureSidecarJson());
         skip('self_capture');
         continue;
       }
@@ -707,7 +704,10 @@ async function runCorpusIngestPass(
       const wbSourceId = wbMeta?.sourceId && isValidSourceId(wbMeta.sourceId)
         ? wbMeta.sourceId
         : sourceId;
-      const r = await extractCorpusWindows(full, raw, wbMeta ? wbSourceId : sourceId, text => runFactsPipeline(text, {
+      // #5812: strip pasted blocks BEFORE windowing, even when a block spans
+      // a window boundary. The source file and completion hash stay unchanged.
+      const extractionText = corpusTextForExtraction(name, raw);
+      const r = await extractCorpusWindows(full, extractionText, wbMeta ? wbSourceId : sourceId, text => runFactsPipeline(text, {
         engine,
         sourceId: wbMeta ? wbSourceId : sourceId,
         sessionId: wbMeta ? wbMeta.sessionId : `sweep:corpus:${name}`,

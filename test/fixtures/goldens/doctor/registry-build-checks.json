@@ -371,6 +371,10 @@
       },
       {
         "category": "ops",
+        "name": "vector_plan"
+      },
+      {
+        "category": "ops",
         "name": "stale_embedding_effects"
       },
       {
@@ -536,6 +540,10 @@
       {
         "category": "ops",
         "name": "decide_health"
+      },
+      {
+        "category": "brain",
+        "name": "unlinked_facts"
       },
       {
         "category": "ops",

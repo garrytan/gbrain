@@ -23,7 +23,7 @@ import {
   type ExtractAtomsDrainDeps,
 } from '../src/core/cycle/extract-atoms-drain.ts';
 
-const passThroughLock: ExtractAtomsDrainDeps['withLock'] = (work) => work();
+const passThroughLock: ExtractAtomsDrainDeps['withLock'] = (work) => work(new AbortController().signal);
 
 describe('extract_atoms drain error surfacing (#4539)', () => {
   it('accumulates failure_count and keeps the most recent firstError', async () => {
@@ -349,7 +349,7 @@ describe('runExtractAtomsDrainForSource forwards typed per-item failures (#4730)
     'utf8',
   );
   it('maps d.failures {source, error} → {source, reason} and returns them on the batch', () => {
-    const runBatchBlock = src.slice(src.indexOf('runBatch: async () => {'));
+    const runBatchBlock = src.slice(src.indexOf('runBatch: async ({ signal, stopSignal }) => {'));
     expect(runBatchBlock).toContain(".map(({ source, error }) => ({ source, reason: error }))");
     expect(runBatchBlock).toContain('failures: typedFailures');
   });

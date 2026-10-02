@@ -1,6 +1,7 @@
 {
   "golden": {
     "aliases": {
+      "get_links": "get_links",
       "link-add": "add_link",
       "link-rm": "remove_link"
     },
@@ -124,6 +125,7 @@
         "export",
         "extract",
         "extract-conversation-facts",
+        "facts",
         "features",
         "files",
         "forget",
@@ -220,6 +222,7 @@
         "export",
         "extract",
         "extract-conversation-facts",
+        "facts",
         "friction",
         "frontmatter",
         "google",
@@ -299,6 +302,7 @@
         "eval",
         "extract",
         "extract-conversation-facts",
+        "facts",
         "files",
         "integrity",
         "migrate",
@@ -335,6 +339,7 @@
         "eval",
         "extract",
         "extract-conversation-facts",
+        "facts",
         "files",
         "integrity",
         "jobs",

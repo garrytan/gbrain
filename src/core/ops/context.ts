@@ -576,10 +576,14 @@ export function thinkSourceScopeOpts(ctx: OperationContext): {
  * and have a foreign far/origin slug disclosed. So for remote callers we promote a
  * scalar scope to a single-element `sourceIds:[id]`, routing them through the
  * all-endpoint branch. Trusted local CLI (`ctx.remote === false`) keeps the scalar
- * cross-source view, and a federated array passes through unchanged.
+ * cross-source view, and a federated array passes through unchanged. `scope`
+ * defaults to the ambient ladder; the link ops pass their resolved per-call
+ * scope (`federatedSearchScope`) so the same promotion applies to it.
  */
-export function linkReadScopeOpts(ctx: OperationContext): { sourceId?: string; sourceIds?: string[] } {
-  const scope = sourceScopeOpts(ctx);
+export function linkReadScopeOpts(
+  ctx: OperationContext,
+  scope: { sourceId?: string; sourceIds?: string[] } = sourceScopeOpts(ctx),
+): { sourceId?: string; sourceIds?: string[] } {
   if (ctx.remote !== false && scope.sourceId && !scope.sourceIds) {
     return { sourceIds: [scope.sourceId] };
   }

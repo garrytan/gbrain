@@ -179,6 +179,13 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
         },
       };
       if (prepared.file.expectedBeforeHash !== undefined && record.beforeHash !== prepared.file.expectedBeforeHash) {
+        // A coordinated writer (a withdrawal mirror) also advanced the page:
+        // reprepare against it. Bytes changed at an unchanged revision are an
+        // uncoordinated edit.
+        const current = await engine.readPageSnapshot(row.slug, { sourceId: row.source_id, includeDeleted: true });
+        if ((current?.revision ?? null) !== prepared.observedRevision) {
+          throw new OperationError('revision_conflict', 'The page changed during preparation.', 'Read its current revision and submit the updated intent with a new request_id.');
+        }
         throw new OperationError('source_changed', 'The canonical file changed after preparation.');
       }
       const nextBytes = prepared.file.content === null ? 0 : typeof prepared.file.content === 'string'

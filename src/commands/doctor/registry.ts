@@ -81,6 +81,7 @@ import { queueHealthEntry, indexAuditEntry, imageAssetsEntry } from './checks/qu
 import { legacyJobAuthorityEntry } from './checks/legacy-job-authority.ts';
 import { syncFreshnessEntry, searchModeEntry } from './checks/sync-search.ts';
 import { decideHealthEntry } from './checks/decide.ts';
+import { unlinkedFactsEntry } from './checks/unlinked-facts.ts';
 import { STOP_DOCTOR, type DoctorContext, type DoctorEntry } from './context.ts';
 import type { Check } from '../doctor.ts';
 
@@ -137,6 +138,7 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   imageAssetsEntry,
   syncFreshnessEntry,
   decideHealthEntry,
+  unlinkedFactsEntry,
   searchModeEntry,
 ];
 

@@ -155,10 +155,11 @@ export async function verifyMaintenanceOutputs(engine: BrainEngine, authority: M
   return authority.binding ? refs.length : 0;
 }
 
-interface FactSnapshot { id: number; value: Record<string, unknown>; }
+export interface FactSnapshot { id: number; value: Record<string, unknown>; }
 interface EvidencePage { slug: string; revision: string; id: number; }
 
-async function readFacts(engine: BrainEngine, sourceId: string, ids: number[], lock = false): Promise<FactSnapshot[]> {
+/** Whole fact rows as comparable snapshots; `lock` takes FOR UPDATE inside a transaction. */
+export async function readFacts(engine: BrainEngine, sourceId: string, ids: number[], lock = false): Promise<FactSnapshot[]> {
   const rows = await engine.executeRaw<FactSnapshot>(`SELECT f.id,jsonb_build_object(
       'source_id',f.source_id,'entity_slug',f.entity_slug,'source_markdown_slug',f.source_markdown_slug,'row_num',f.row_num,
       'fact',f.fact,'kind',f.kind,'visibility',f.visibility,'notability',f.notability,'context',f.context,
@@ -258,17 +259,25 @@ async function prepareFactFenceAdoption(engine: BrainEngine, row: WriteRequest, 
       WHERE f.source_id=$1 AND f.id=a.id AND f.row_num IS NULL RETURNING f.id`,
     [row.source_id, row.slug, JSON.stringify(facts.map(({ id, row_num }) => ({ id, row_num })))]);
     if (adopted.length !== facts.length) throw new OperationError('revision_conflict', 'A legacy fact was adopted by another run.');
-    // The page's takes fence is republished unchanged; its projection would
-    // clear resolutions recorded only in the database, so restore them.
-    const resolved = await tx.executeRaw<Record<string, unknown>>(`SELECT row_num,resolved_at,resolved_quality,resolved_outcome,
-      resolved_source,resolved_value,resolved_unit,resolved_by FROM takes WHERE page_id=$1 AND resolved_at IS NOT NULL`, [row.page_id]);
-    const outcome = await prepared.apply(tx);
-    for (const take of resolved) await tx.executeRaw(`UPDATE takes SET resolved_at=$3,resolved_quality=$4,resolved_outcome=$5,
-      resolved_source=$6,resolved_value=$7,resolved_unit=$8,resolved_by=$9 WHERE page_id=$1 AND row_num=$2 AND resolved_at IS NULL`,
-    [row.page_id, take.row_num, take.resolved_at, take.resolved_quality, take.resolved_outcome, take.resolved_source,
-      take.resolved_value, take.resolved_unit, take.resolved_by]);
+    const outcome = await applyPreservingTakeResolutions(tx, row.page_id, prepared);
     return { ...outcome, facts_adopted: facts.length };
   } };
+}
+
+/**
+ * Apply a page publication that republishes the page's takes fence unchanged.
+ * Its projection would clear take resolutions recorded only in the database,
+ * so they are restored afterwards in the same transaction.
+ */
+export async function applyPreservingTakeResolutions(tx: BrainEngine, pageId: number | null, prepared: PreparedMutation): Promise<Record<string, unknown>> {
+  const resolved = await tx.executeRaw<Record<string, unknown>>(`SELECT row_num,resolved_at,resolved_quality,resolved_outcome,
+    resolved_source,resolved_value,resolved_unit,resolved_by FROM takes WHERE page_id=$1 AND resolved_at IS NOT NULL`, [pageId]);
+  const outcome = await prepared.apply(tx);
+  for (const take of resolved) await tx.executeRaw(`UPDATE takes SET resolved_at=$3,resolved_quality=$4,resolved_outcome=$5,
+    resolved_source=$6,resolved_value=$7,resolved_unit=$8,resolved_by=$9 WHERE page_id=$1 AND row_num=$2 AND resolved_at IS NULL`,
+  [pageId, take.row_num, take.resolved_at, take.resolved_quality, take.resolved_outcome, take.resolved_source,
+    take.resolved_value, take.resolved_unit, take.resolved_by]);
+  return outcome;
 }
 
 export async function prepareMaintenanceMutation(engine: BrainEngine, row: WriteRequest, config: GBrainConfig): Promise<PreparedMutation> {

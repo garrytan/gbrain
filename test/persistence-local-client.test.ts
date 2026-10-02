@@ -3,6 +3,8 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { persistenceConfigForBrain, readPersistenceCliRegistration, maybeDelegateLocalOperation, residentPersistenceConfig } from '../src/core/persistence/local-client.ts';
+import { acquireLock, releaseLock } from '../src/core/pglite-lock.ts';
+import { PersistenceIpcTransportError } from '../src/core/persistence/ipc.ts';
 import { resolveSourceId } from '../src/core/source-resolver.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -67,6 +69,21 @@ describe('engine-free local persistence routing', () => {
     expect(originalId).toMatch(/^[a-f0-9-]{36}$/);
     await maybeDelegateLocalOperation('put_page', params, config, { brain: 'host', cwd: dir });
     expect(params.request_id).toBe(originalId);
+  });
+
+  test('another CLI holding the datastore hands off through the lock; only a serve holder is a resident owner', async () => {
+    const dir = temp();
+    const config = { engine: 'pglite' as const, database_path: join(dir, 'db') };
+    const lock = await acquireLock(config.database_path, { timeoutMs: 1000 });
+    const holder = (subcommand: string) => writeFileSync(lock.lockPath!, JSON.stringify({ ...JSON.parse(readFileSync(lock.lockPath!, 'utf8')), subcommand }));
+    try {
+      await withEnv({ GBRAIN_HOME: dir, GBRAIN_BRAIN_ID: 'host' }, async () => {
+        holder('call');
+        expect(await maybeDelegateLocalOperation('forget', { id: '1' }, config, { brain: 'host', cwd: dir })).toEqual({ handled: false });
+        holder('serve');
+        await expect(maybeDelegateLocalOperation('forget', { id: '1' }, config, { brain: 'host', cwd: dir })).rejects.toBeInstanceOf(PersistenceIpcTransportError);
+      });
+    } finally { await releaseLock(lock); }
   });
 
   test('owner source environment and dotfiles cannot redirect a client with no local signal', async () => {

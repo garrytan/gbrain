@@ -257,6 +257,11 @@ TypeSafe key it is on by default and the key is its opt-in for fact text
 explicitly, facts default to private, so on Jev it needs
 `decide.egress.private allow`, or route it to an `llm:` provider.
 
+The sweep only compares facts that belong to an entity; a fact saved without
+one is skipped as `no_entity`. When `gbrain decide status` shows a large
+`no_entity` share, link those facts with `gbrain facts relink`
+([guide](facts-relink.md)); linked facts are queued for the next sweep.
+
 ```bash
 gbrain decide sweep --slot conflict [--since <fact id>] [--source <id>] [--json]   # run the sweep now
 gbrain decide proposals list [--status pending|accepted|rejected|stale|undone|all]  # both facts' text, locally

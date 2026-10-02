@@ -1131,6 +1131,8 @@ export interface SearchOpts extends PageReadPolicy {
    * call, only when bounded work ended before exhaustion could be proved.
    */
   onVectorPoolMeta?: (m: VectorPoolMeta) => void;
+  /** #5824 rollback: keep the freshness guard inside the HNSW candidate CTE. Latched by the caller (search/vector-legacy-guard.ts). */
+  vectorLegacyGuard?: boolean;
   /**
    * v0.42 — intent-aware adaptive return-sizing. `true` enables with config/
    * default caps; an object overrides caps per-call; omitted/`false` = off
@@ -1463,6 +1465,8 @@ export interface Link {
 
 export interface GraphNode {
   slug: string;
+  /** Source holding this page; the same slug in two sources is two nodes. */
+  source_id: string;
   title: string;
   type: PageType;
   depth: number;
@@ -1476,7 +1480,9 @@ export interface GraphNode {
  */
 export interface GraphPath {
   from_slug: string;
+  from_source_id: string;
   to_slug: string;
+  to_source_id: string;
   link_type: string;
   context: string;
   /** Depth of `to_slug` from the root (1 for direct neighbors). */
@@ -1648,6 +1654,8 @@ export interface OntologyReadOpts extends PageReadScope {
   includeQuarantined?: boolean;
   sourceId?: string;
   sourceIds?: string[];
+  /** Fact visibility tiers the caller may read; undefined reads every tier. */
+  visibility?: Array<'private' | 'world'>;
 }
 
 // Raw data

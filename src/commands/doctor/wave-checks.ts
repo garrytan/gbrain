@@ -143,6 +143,13 @@ export const WAVE_CHECKS: readonly WaveCheckSpec[] = [
     run: async engine => (await import('./checks/self-capture.ts')).selfCaptureCheck(engine),
   },
   {
+    id: 'vector_plan', resolution: 'operator', registration: 'wave',
+    count: d => (d.outcome === 'index_unused' || d.outcome === 'legacy_guard' ? 1 : 0),
+    impact: 'Vector search on the active embedding column does not use its HNSW index, so vector candidates can time out and hybrid search falls back to keyword hits',
+    instruction: 'Upgrade gbrain on the brain host and rerun `gbrain doctor`; check the HNSW index state doctor reports; remove `search.vector_legacy_guard` / GBRAIN_VECTOR_LEGACY_GUARD unless it rolled back a regression, then restart the owning service (docs/guides/troubleshooting.md#hybrid-search-returns-only-keyword-hits).',
+    run: async engine => (await import('./checks/vector-plan.ts')).vectorPlanCheck(engine),
+  },
+  {
     id: 'stale_embedding_effects', resolution: 'repair', registration: 'wave',
     count: d => Number(d.stale_effects ?? 0),
     impact: 'A committed write still has a stale queued or failed embedding effect that blocks compaction and activation',

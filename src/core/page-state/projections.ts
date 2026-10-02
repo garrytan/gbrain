@@ -324,6 +324,8 @@ export interface ProjectionRebuildOptions {
   notAfter?: string;
   /** Skip failed rows inside their retry window (PROJECTION_RETRY_READY_SQL). */
   retryCooldown?: boolean;
+  /** Only these pages of one source. */
+  pages?: { sourceId: string; slugs: readonly string[] };
   /** Receives each failed page; without it a generic stderr line is printed. */
   onFailure?: (failure: ProjectionRebuildFailure) => void;
 }
@@ -346,11 +348,13 @@ export async function rebuildPendingPageProjections(engine: BrainEngine, limit =
   const filters: string[] = [];
   if (opts.retryCooldown) filters.push(PROJECTION_RETRY_READY_SQL);
   if (opts.notAfter !== undefined) { params.push(opts.notAfter); filters.push(`j.updated_at<=$${params.length}::text::timestamptz`); }
+  if (opts.pages) { params.push(opts.pages.slugs); filters.push(`j.slug=ANY($${params.length}::text[])`); }
+  const sourceFilter = opts.pages ? `WHERE s.id=$${params.push(opts.pages.sourceId)}` : '';
   const jobs = await engine.executeRaw<{ source_id: string; source_incarnation: string; slug: string; revision: string; page_kind: string }>(`SELECT s.id AS source_id,j.source_incarnation,j.slug,j.revision,p.page_kind
     FROM (SELECT source_incarnation,slug,revision,updated_at FROM page_projection_jobs j
       ${filters.length ? `WHERE ${filters.join(' AND ')}` : ''}
       ORDER BY updated_at,source_incarnation,slug OFFSET 0) j
-    ${PROJECTION_JOB_PROBES}
+    ${PROJECTION_JOB_PROBES} ${sourceFilter}
     ORDER BY j.updated_at,j.source_incarnation,j.slug LIMIT $1`, params);
   let rebuilt = 0;
   let superseded = 0;

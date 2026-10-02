@@ -121,7 +121,8 @@ An agent connection started with `GBRAIN_SOURCE=<id>` (or inside a
 directory pinned by `.gbrain-source`) is bound to that source. Its
 unqualified reads stay on the bound source. It may still name another
 source in an explicit `source_id` read (`search`, `query`, `get_page`,
-`list_pages`, `resolve_slugs`, `recall`) when that source is
+`list_pages`, `resolve_slugs`, `recall`, `get_links`, `get_backlinks`,
+`traverse_graph`) when that source is
 `federated=true`; the result holds only the named source's rows. Writes
 still go to the bound source only.
 
@@ -135,6 +136,57 @@ still go to the bound source only.
 `search_by_image`, `open_loops` and the code-intel tools keep their stricter
 rule: an explicit `source_id` must be inside the connection's own source or
 grant.
+
+### Links, backlinks and the graph across sources
+
+`gbrain links`, `gbrain backlinks` and `gbrain graph` (MCP: `get_links`,
+`get_backlinks`, `traverse_graph`) read the same sources as `search` for the
+same caller:
+
+| Caller | Unqualified read | `--source <id>` / `--source-id <id>` | `--all-sources` |
+|--------|------------------|--------------------------------------|-----------------|
+| Local CLI, source not pinned | Every federated source: one read per source, merged | That source | Every source |
+| Local CLI, pinned by `--source`, `GBRAIN_SOURCE` or `.gbrain-source` | The pinned source | That source | Every source |
+| Remote agent with no source grant | Every federated source | A federated source | Every federated source |
+| Remote agent with a grant | Its granted sources (never wider) | A granted source | Its granted sources |
+
+```bash
+gbrain backlinks companies/acme-example                     # resolved scope
+gbrain backlinks companies/acme-example --source business   # one source
+gbrain links people/alice-example --all-sources --json      # every source
+gbrain graph people/alice-example --depth 2 --all-sources
+```
+
+`get_links` keeps working as an alias of `links`. Passing `--source` together
+with `--source-id` or `--all-sources` is an error. A source that does not exist
+or is archived answers `unknown_source`; a remote agent naming a source outside
+its grant or federated set gets `permission_denied` with the fix, even when that
+source is archived. Private pages stay hidden from remote agents exactly as in
+`search`.
+
+Graph output carries source ids: each `gbrain graph` node has `source_id`, and
+each edge returned to agents has `from_source_id` / `to_source_id`. The same slug
+in two sources is two nodes or two edges, so a walk may return more edges than
+before.
+
+When a local unqualified read finds nothing but the page has links in a source
+outside the read (a non-federated source), the CLI prints the per-source counts
+and the exact rerun command on stderr, for example
+`gbrain backlinks companies/acme-example --source priv`; stdout stays the empty
+result and `--json` prints no hint. Remote agents never get this hint, so a
+source they cannot read stays indistinguishable from an empty one.
+
+On a thin-client install the link commands send an ambient `GBRAIN_SOURCE` or
+`.gbrain-source` binding as `source_id`, so they are narrowed the same way
+`search` is. An empty narrowed result says which binding scoped it and prints
+the `--all-sources` rerun command. If the brain host is older and ignores
+`source_id` or `--all-sources`, the command fails with "the brain host does not
+support … upgrade the host" instead of printing an unscoped result. Hosts that
+predate unknown-parameter warnings cannot be detected; upgrade the host first.
+
+**Say to your agent:** *"Show me everything that links to acme-example across my sources."*
+
+**Say to your agent:** *"Which pages does alice-example link to in the business source only?"*
 
 ## Commands
 
