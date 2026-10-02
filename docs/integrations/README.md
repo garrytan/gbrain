@@ -35,6 +35,8 @@ These are integration recipes your agent can set up for you. Run
 | [x-to-brain](../../recipes/x-to-brain.md) | Sense | — | Twitter timeline, mentions, keyword monitoring with deletion detection | 15 min |
 | [calendar-to-brain](../../recipes/calendar-to-brain.md) | Sense | credential-gateway | Google Calendar events become searchable daily brain pages | 20 min |
 | [meeting-sync](../../recipes/meeting-sync.md) | Sense | — | Circleback meeting transcripts auto-import with attendee propagation | 15 min |
+| [screenpipe-context](../../recipes/screenpipe-context.md) | Sense | — | Selected screen activity, transcripts, memories, workflows, skills and agent outputs with provenance | 15 min |
+| [screenpipe-meetings](../../recipes/screenpipe-meetings.md) | Sense | — | Selected completed meeting notes staged for review before source-scoped import | 15 min |
 
 ### Manual Integration Guides
 

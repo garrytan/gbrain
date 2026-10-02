@@ -10,6 +10,24 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.61.0.0] - 2026-10-02
+
+### Added
+
+- Bring selected Screenpipe screen activity and audio transcripts into your brain, with app, window, timestamp, frame and speaker provenance.
+- Import saved memories and workflows alongside selected skills, agent outputs and summaries. Keep their source references, versions and declared status so you can retrieve a procedure together with the evidence behind it.
+- Export selected completed meeting notes with attendees and links back to Screenpipe.
+
+### To take advantage of v0.61.0.0
+
+Say to your agent: "Bring this morning's Screenpipe activity and the skill we wrote from it into my personal brain. Show me the source evidence and the saved test result."
+
+Follow [Screenpipe work context](recipes/screenpipe-context.md) or [meeting notes](recipes/screenpipe-meetings.md) to preview, review and sync selected pages into a chosen source. The collectors run from a GBrain software checkout. Activity, memory and workflow reads require Screenpipe's local API; explicitly selected files can be imported without it.
+
+### What to watch
+
+Imports are manual and bounded. Skills and agent outputs become reference notes; importing them does not execute or activate them. Review corrections in a fresh staging directory. Deleting a Screenpipe record does not delete its exported or imported copies.
+
 ## [0.60.31.0] - 2026-10-02
 
 **Your brain stops handing stored passwords and keys back to your agents, catches credential shapes it used to miss, and keeps your Gmail pages private on disk.**

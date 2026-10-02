@@ -24,6 +24,9 @@ const MIGRATION_WAVE_TESTS = [
 ];
 
 export const E2E_TEST_MAP: Record<string, string[]> = {
+  "scripts/screenpipe-context.ts": ["test/e2e/screenpipe-context.test.ts"],
+  "scripts/screenpipe-export.ts": ["test/e2e/screenpipe-context.test.ts", "test/e2e/screenpipe-meetings.test.ts"],
+  "scripts/screenpipe-meetings.ts": ["test/e2e/screenpipe-meetings.test.ts"],
   // Fix wave 4, Lane D: the apply-migrations orchestration lease (#5693), source deletes and
   // orphan bindings (#5732), and deactivate racing admission (#5455).
   "src/core/migration-orchestration-lock.ts": ["test/e2e/apply-migrations-orchestration-lock.test.ts"],
