@@ -20,10 +20,9 @@
  *   D. Record   — append completed.jsonl.
  */
 
-import { execSync } from 'child_process';
-import { runGbrainSubprocess } from './in-process.ts';
+import { runGbrainSubprocessArgs } from './in-process.ts';
 import type { Migration, OrchestratorOpts, OrchestratorResult, OrchestratorPhaseResult } from './types.ts';
-import { childGlobalFlags } from '../../core/cli-options.ts';
+import { childGlobalArgs } from '../../core/cli-options.ts';
 // Bug 3 — ledger writes moved to the runner (apply-migrations.ts).
 
 // ── Phase A — Schema ────────────────────────────────────────
@@ -47,8 +46,12 @@ async function phaseASchema(opts: OrchestratorOpts): Promise<OrchestratorPhaseRe
 function phaseBRepair(opts: OrchestratorOpts): OrchestratorPhaseResult {
   if (opts.dryRun) return { name: 'jsonb_repair', status: 'skipped', detail: 'dry-run' };
   try {
-    // stdio: 'inherit' — child's stderr progress streams straight through.
-    runGbrainSubprocess('gbrain repair-jsonb' + childGlobalFlags(), { timeoutMs: 600_000 });
+    // Keep the repair in a child process, with the existing hard timeout and
+    // captured stderr diagnostics, while avoiding a platform shell.
+    runGbrainSubprocessArgs(['repair-jsonb', ...childGlobalArgs()], {
+      timeoutMs: 600_000,
+      inheritStderr: true,
+    });
     return { name: 'jsonb_repair', status: 'complete' };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -66,10 +69,7 @@ function phaseCVerify(opts: OrchestratorOpts): OrchestratorPhaseResult {
     // Any accidental stdout progress from the child would break JSON.parse
     // (per Codex review #12). NOTE: we deliberately do NOT pass
     // --progress-json here — this child is parsed, not watched.
-    const out = execSync('gbrain repair-jsonb --dry-run --json', {
-      encoding: 'utf-8', timeout: 60_000, env: process.env,
-      stdio: ['ignore', 'pipe', 'inherit'],
-    });
+    const out = runGbrainSubprocessArgs(['repair-jsonb', '--dry-run', '--json'], { timeoutMs: 60_000 });
     const parsed = JSON.parse(out) as { total_repaired?: number; engine?: string };
     const remaining = parsed.total_repaired ?? 0;
     if (remaining > 0) {

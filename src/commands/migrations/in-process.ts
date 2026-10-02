@@ -21,7 +21,8 @@
  * `getaddrinfo ENOTFOUND` line instead of the bare `Command failed: ...`.
  */
 
-import { execSync } from 'child_process';
+import { execFileSync, execSync } from 'child_process';
+import { basename } from 'node:path';
 
 import { loadConfig, toEngineConfig } from '../../core/config.ts';
 import { buildGatewayConfig } from '../../core/ai/build-gateway-config.ts';
@@ -37,6 +38,34 @@ export const MIGRATE_ONLY_TIMEOUT_MS = 600_000;
  *  ~1MB maxBuffer overflows on long backfills (extract/repair) and turns a
  *  successful run into a spurious failure. */
 const SUBPROCESS_MAX_BUFFER = 64 * 1024 * 1024;
+
+export interface GbrainCliInvocation {
+  command: string;
+  argsPrefix: string[];
+}
+
+/** Resolve the current CLI without invoking a platform shell. */
+export function resolveGbrainCliInvocation(input: {
+  pathBinary?: string | null;
+  execPath: string;
+  argv1?: string;
+}): GbrainCliInvocation {
+  const runtime = basename(input.execPath).toLowerCase();
+  if (runtime === 'gbrain' || runtime === 'gbrain.exe') {
+    return { command: input.execPath, argsPrefix: [] };
+  }
+  if (input.argv1 && (input.argv1.endsWith('/cli.ts') || input.argv1.endsWith('\\cli.ts'))) {
+    return { command: input.execPath, argsPrefix: [input.argv1] };
+  }
+  if (input.pathBinary) return { command: input.pathBinary, argsPrefix: [] };
+  throw new Error('Could not resolve the gbrain CLI for migration subprocess.');
+}
+
+function currentGbrainCliInvocation(): GbrainCliInvocation {
+  let pathBinary: string | null = null;
+  try { pathBinary = Bun.which('gbrain') || null; } catch { /* non-Bun test shim */ }
+  return resolveGbrainCliInvocation({ pathBinary, execPath: process.execPath, argv1: process.argv[1] });
+}
 
 export interface MigrateOnlyResult {
   /** The engine kind that was brought to head ('pglite' | 'postgres'). */
@@ -103,6 +132,29 @@ export function runGbrainSubprocess(cmd: string, opts?: { timeoutMs?: number }):
   try {
     const out = execSync(cmd, {
       stdio: ['inherit', 'pipe', 'pipe'],
+      timeout: opts?.timeoutMs ?? MIGRATE_ONLY_TIMEOUT_MS,
+      env: process.env,
+      maxBuffer: SUBPROCESS_MAX_BUFFER,
+      encoding: 'utf-8',
+    });
+    return typeof out === 'string' ? out : '';
+  } catch (e: unknown) {
+    const err = e as { message?: string; stderr?: Buffer | string };
+    const stderrRaw = err?.stderr
+      ? (Buffer.isBuffer(err.stderr) ? err.stderr.toString('utf-8') : String(err.stderr))
+      : '';
+    const tail = stderrRaw.split('\n').filter(Boolean).slice(-10).join('\n');
+    const base = err?.message ?? String(e);
+    throw new Error(tail ? `${base}\n--- child stderr (tail) ---\n${tail}` : base);
+  }
+}
+
+/** Run a fixed internal CLI argv without invoking a platform shell. */
+export function runGbrainSubprocessArgs(args: readonly string[], opts?: { timeoutMs?: number; inheritStderr?: boolean }): string {
+  const invocation = currentGbrainCliInvocation();
+  try {
+    const out = execFileSync(invocation.command, [...invocation.argsPrefix, ...args], {
+      stdio: ['inherit', 'pipe', opts?.inheritStderr ? 'inherit' : 'pipe'],
       timeout: opts?.timeoutMs ?? MIGRATE_ONLY_TIMEOUT_MS,
       env: process.env,
       maxBuffer: SUBPROCESS_MAX_BUFFER,

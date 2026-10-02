@@ -354,6 +354,12 @@ export function _resetCliOptionsForTest(): void {
  * unchanged for the common no-flag case).
  */
 export function childGlobalFlags(cliOpts?: CliOptions): string {
+  const parts = childGlobalArgs(cliOpts);
+  return parts.length > 0 ? ' ' + parts.join(' ') : '';
+}
+
+/** Array form of childGlobalFlags for shell-free subprocess callers. */
+export function childGlobalArgs(cliOpts?: CliOptions): string[] {
   const opts = cliOpts ?? activeCliOptions;
   const parts: string[] = [];
   if (opts.quiet) parts.push('--quiet');
@@ -368,7 +374,7 @@ export function childGlobalFlags(cliOpts?: CliOptions): string {
   // BRAIN_ID_RE-validated at parse time, so splicing it into an exec string
   // is safe.
   if (opts.brain) parts.push(`--brain=${opts.brain}`);
-  return parts.length > 0 ? ' ' + parts.join(' ') : '';
+  return parts;
 }
 
 // ============================================================
