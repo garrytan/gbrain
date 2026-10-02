@@ -41,6 +41,29 @@ export interface ManagedSyncWriteDiagnostic {
   docs?: string;
 }
 
+interface ManagedSyncIdentity {
+  context: Awaited<ReturnType<typeof resolveManagedSyncContext>>;
+  authority: SyncAuthority;
+  company: ReturnType<typeof currentCompanyBrainSync>;
+  syncOptions: SyncCursorOptions;
+  key: string;
+}
+async function resolveManagedSyncIdentity(engine: BrainEngine, opts: SyncOpts): Promise<ManagedSyncIdentity> {
+  const context = await resolveManagedSyncContext(engine, opts);
+  const authority = await managedSyncAuthority(engine, context.sourceId, context.incarnation, opts.repoPath ?? context.root);
+  const company = currentCompanyBrainSync(context.sourceId);
+  const syncOptions: SyncCursorOptions = { full: opts.full ?? false, workingTree: opts.workingTree ?? false, srcSubpath: opts.srcSubpath ?? null,
+    exclude: opts.exclude ?? [], includeHidden: opts.includeHidden ?? [], strategy: opts.strategy ?? null };
+  const key = digest({ source: context.incarnation, principal: authority.writer.principal, authority, ...(company ? { company: { receiptId: company.receiptId, planDigest: company.plan.plan_digest } } : {}),
+    options: syncOptions });
+  return { context, authority, company, syncOptions, key };
+}
+
+/** Returns the exact durable cursor key performManagedSync will use for these options. */
+export async function managedSyncCursorKey(engine: BrainEngine, opts: SyncOpts): Promise<string> {
+  return (await resolveManagedSyncIdentity(engine, opts)).key;
+}
+
 interface Pending { requestId: string; slug: string; pageId: number | null; intent: SyncIntent; rebound?: true; }
 interface Cursor extends SyncDiscovery { runId: string; index: number; authority: SyncAuthority; pending?: Pending; done?: boolean; companyReceiptId?: string;
   processingOptions?: SyncProcessingOptions; syncOptions?: SyncCursorOptions; overtaken?: true;
@@ -255,15 +278,9 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
   }
   assertPersistenceAccepting(engine);
   validateManagedSyncOptions(opts);
-  const context = await resolveManagedSyncContext(engine, opts);
-  const authority = await managedSyncAuthority(engine, context.sourceId, context.incarnation, opts.repoPath ?? context.root);
-  const company = currentCompanyBrainSync(context.sourceId);
+  const { context, authority, company, syncOptions, key } = await resolveManagedSyncIdentity(engine, opts);
   const processingOptions = syncProcessingOptions(opts);
-  const syncOptions: SyncCursorOptions = { full: opts.full ?? false, workingTree: opts.workingTree ?? false, srcSubpath: opts.srcSubpath ?? null,
-    exclude: opts.exclude ?? [], includeHidden: opts.includeHidden ?? [], strategy: opts.strategy ?? null };
   const frozenRun = { syncOptions, ...(opts.repoPath ? { repoPath: resolve(opts.repoPath) } : {}) };
-  const key = digest({ source: context.incarnation, principal: authority.writer.principal, authority, ...(company ? { company: { receiptId: company.receiptId, planDigest: company.plan.plan_digest } } : {}),
-    options: syncOptions });
   let cursor: Cursor | null = null;
   let missingManifestCursor: CursorHeader | null = null;
   let phase: ManagedSyncFailure['phase'] = 'resume';
@@ -461,7 +478,7 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
       if (done.state !== 'committed') {
         const { failure, ledgerRecorded } = await recordManagedSyncFailure(engine, { source_id: cursor.sourceId, source_incarnation: cursor.incarnation, path: pending.intent.path ?? '<checkpoint>',
           code: done.error_code ?? (done.state === 'cancelled' ? 'cancelled' : 'storage_error'), message: done.error_message ?? 'The accepted sync request did not commit.',
-        request_id: pending.requestId, run_id: cursor.runId, target: cursor.target, cursor_key: key,
+        request_id: pending.requestId, run_id: cursor.runId, target: cursor.target, cursor_key: key, keyOptions: cursor.syncOptions,
         phase: pending.intent.kind === 'managed_sync_checkpoint' ? 'checkpoint' : 'receipt', state: done.state, observation_id: pending.requestId,
         first_seen: new Date(done.completed_at ?? done.updated_at).toISOString() });
         // #5762: the hint is built after the failed transaction, from a fresh read of the request indexes.
@@ -516,7 +533,8 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
         const failedCursor = cursor ?? stored?.completed_keys?.[0];
         const { failure } = await recordManagedSyncFailure(engine, { source_id: context.sourceId, source_incarnation: context.incarnation, path: cursor?.entries[cursor.index]?.path ?? failedCursor?.pending?.intent.path ?? `<${phase}>`, code,
           message: error instanceof Error ? error.message : String(error), request_id: failedCursor?.pending?.requestId ?? null,
-          run_id: failedCursor?.runId ?? discoveryRun, target: failedCursor?.target ?? discoveryTarget, cursor_key: key, phase, state: 'failed',
+          run_id: failedCursor?.runId ?? discoveryRun, target: failedCursor?.target ?? discoveryTarget, cursor_key: key,
+          keyOptions: failedCursor?.syncOptions ?? syncOptions, phase, state: 'failed',
           observation_id: failedCursor ? `${failedCursor.runId}:${failedCursor.index}:${phase}:${code}` : `${key}:discovery:${discoveryTarget}:${code}` });
         if (error instanceof Error) error.message = authority.writer.remote ? 'Managed sync is blocked; ask the host operator to inspect doctor.' : formatManagedSyncFailure(failure) + ' Fix the cause, then run gbrain sync --no-pull --retry-failed with the same source and options.';
       }

@@ -14,7 +14,7 @@ export async function checkSyncFailures(engine: BrainEngine | null, opts: { sour
   const severity = decideSyncFailureSeverity({ entries, nowMs: Date.now(), failHours: resolveHoursEnv('GBRAIN_SYNC_FRESHNESS_FAIL_HOURS', 72) });
   if (!severity.unresolved) return entries.length ? { name: 'sync_failures', status: 'ok', message: 'All historical sync failures are acknowledged.' } : null;
   const summary = `${severity.unresolved} unresolved sync failure(s)${severity.auto_skipped ? ` (${severity.auto_skipped} auto-skipped — pages NOT indexed)` : ''}.`;
-  if (opts.remote !== false) return { name: 'sync_failures', status: severity.status, message: summary + ' Ask the host operator to inspect doctor and repair the accepted sync; no paths or receipt details are exposed remotely.' };
+  if (opts.remote !== false) return { name: 'sync_failures', status: severity.status, message: summary + ' Ask the host operator to inspect doctor and repair the accepted sync; rerun with the original sync options. No paths or receipt details are exposed remotely.' };
   const [brain] = engine ? await engine.executeRaw<{ enabled: boolean }>('SELECT enabled FROM persistence_brain WHERE singleton=1') : [];
   const requiresManagedRetry = brain?.enabled || managed.length > 0 || legacy.some(row => row.managed_cursor_key);
   const details = managed.map(formatManagedSyncFailure);
