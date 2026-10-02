@@ -152,8 +152,9 @@ export function multiSourceDriftAdvice(count: number, sampleStr: string): string
     `for cause (3), commit the file or use 'gbrain sync --source <id> --include-gitignored' ` +
     `(full filesystem walk that also picks up ignored/untracked syncable files). ` +
     `Only if a misrouted default-source row remains after that, remove it with ` +
-    `'GBRAIN_SOURCE=default gbrain delete <slug>' — delete targets the active source, ` +
-    `so pin it to 'default' explicitly.`
+    `'GBRAIN_SOURCE=default gbrain delete <slug> --force' — delete targets the active source, ` +
+    `so pin it to 'default' explicitly (--force: page writes are revisioned, and a delete ` +
+    `naming neither --force nor --expected-revision is refused with revision_conflict).`
   );
 }
 

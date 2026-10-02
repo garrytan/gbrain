@@ -27,8 +27,17 @@ describe('#1123 — multiSourceDriftAdvice references only real surfaces', () =>
   });
 
   test('delete advice pins the source explicitly instead of implying delete targets default', () => {
-    expect(advice).toContain('GBRAIN_SOURCE=default gbrain delete <slug>');
+    expect(advice).toContain('GBRAIN_SOURCE=default gbrain delete <slug> --force');
     expect(advice).not.toContain('delete --source');
+  });
+
+  // Page writes are revisioned (v0.51): a `gbrain delete` naming neither
+  // --expected-revision nor --force is refused with revision_conflict, so the
+  // advice must carry one of them or its last step cannot run.
+  test('delete advice names a revision precondition the op accepts', () => {
+    const m = advice.match(/gbrain delete <slug>((?: --[a-z-]+)*)/);
+    expect(m).not.toBeNull();
+    expect(/--force|--expected-revision/.test(m![1])).toBe(true);
   });
 
   // #4490: the advice used to name only two causes, then recommend a delete.

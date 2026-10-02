@@ -25,6 +25,9 @@ import {
   checkDbOnlyCollectorCollision,
 } from '../../src/commands/doctor.ts';
 import { hasDatabase, setupDB, teardownDB, getEngine } from './helpers.ts';
+import { operations } from '../../src/core/operations.ts';
+import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
+import { withEnv } from '../helpers/with-env.ts';
 
 const SKIP_PG = !hasDatabase();
 const describePg = SKIP_PG ? describe.skip : describe;
@@ -67,7 +70,10 @@ describe('wrong-root import produces content_hash_duplicates (#2250, PGLite)', (
   }, 120_000);
 
   afterAll(async () => {
-    if (engine) await engine.disconnect();
+    if (engine) {
+      await disposePersistenceConsumer(engine);
+      await engine.disconnect();
+    }
   }, 60_000);
 
   test('correct-root import alone → check is ok', async () => {
@@ -94,9 +100,49 @@ describe('wrong-root import produces content_hash_duplicates (#2250, PGLite)', (
     expect(c.status).toBe('warn');
     expect(c.message).toContain('alice-example <-> people/alice-example');
     expect(c.message).toContain('widget-co <-> projects/widget-co');
-    expect(c.message).toContain('gbrain pages delete <bare-slug>');
+    expect(c.message).toContain('gbrain delete <bare-slug> --force');
     expect(c.message).toContain('gbrain pages purge-deleted --older-than 0');
     expect((c.details as any).pair_count).toBe(2);
+  });
+
+  // #3697 class 3 — a remediation that names a real command which then fails.
+  // Follow the advice LITERALLY: parse the `gbrain delete` step out of the
+  // rendered message, map its flags to the delete_page params the CLI would
+  // send (--force → force, --expected-revision → expected_revision), run it
+  // for every bare slug, then run the purge step, and require the warn to
+  // clear. Page writes are revisioned (v0.51), so a delete that carries
+  // neither precondition is refused with revision_conflict and this fails.
+  test('following the remediation literally clears the warn', async () => {
+    const home = makeDir('gbrain-dup-remediation-home-');
+    const ctx = () => ({ engine, config: { engine: 'pglite', embedding_disabled: true },
+      logger: { info() {}, warn() {}, error() {} }, dryRun: false, remote: false, sourceId: 'default' }) as any;
+    const run = (name: string, params: Record<string, unknown>) => withEnv({ GBRAIN_HOME: home },
+      () => operations.find(o => o.name === name)!.handler(ctx(), params)) as Promise<Record<string, any>>;
+
+    const c = await checkContentHashDuplicates(engine);
+    const step1 = String(c.message).match(/gbrain delete <bare-slug>((?: --[a-z-]+)*) for each pair/);
+    expect(step1).not.toBeNull();
+    const flags = step1![1].trim().split(/\s+/).filter(Boolean);
+    const bareSlugs = ((c.details as any).sample_pairs as string[]).map(p => p.split(' <-> ')[0]);
+    expect(bareSlugs.sort()).toEqual(['alice-example', 'widget-co']);
+    for (const slug of bareSlugs) {
+      const params: Record<string, unknown> = { slug };
+      if (flags.includes('--force')) params.force = true;
+      if (flags.includes('--expected-revision')) {
+        params.expected_revision = (await engine.readPageSnapshot(slug, { sourceId: 'default' }))!.revision;
+      }
+      const deleted = await run('delete_page', params);
+      expect(deleted.state).toBe('committed');
+    }
+
+    expect(String(c.message)).toContain('then gbrain pages purge-deleted --older-than 0');
+    const purged = await run('purge_deleted_pages', { older_than_hours: 0 });
+    expect([...purged.slugs].sort()).toEqual(['alice-example', 'widget-co']);
+
+    expect((await checkContentHashDuplicates(engine)).status).toBe('ok');
+    // The canonical path-prefixed twins survive.
+    expect(await engine.readPageSnapshot('people/alice-example', { sourceId: 'default' })).not.toBeNull();
+    expect(await engine.readPageSnapshot('projects/widget-co', { sourceId: 'default' })).not.toBeNull();
   });
 });
 
