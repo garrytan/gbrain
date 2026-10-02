@@ -73,7 +73,15 @@ export interface ConnectionManagerOpts {
   readPoolOwnedExternally?: boolean;
 }
 
-/** Default direct-pool size (P1 raised from 2 to 3). Override via env. */
+/**
+ * Default direct-pool size (P1 raised from 2 to 3). Override via env.
+ * One hosted HTTP replica on a transaction pooler should use a smaller
+ * pair (GBRAIN_POOL_SIZE=6, GBRAIN_DIRECT_POOL_SIZE=2) and point
+ * GBRAIN_DIRECT_DATABASE_URL at the session pooler (port 5432 on the
+ * pooler host). db.<ref>.supabase.co is IPv6-only without the IPv4 add-on.
+ * See docs/ops/hosted-http-liveness.md. Do not raise concurrency across
+ * replicas until that pool budget is verified.
+ */
 export const DEFAULT_DIRECT_POOL_SIZE = 3;
 
 /** Search statement timeout (F5 consolidation) — was 8s scattered. */

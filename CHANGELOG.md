@@ -10,6 +10,36 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**A hosted HTTP brain that hits an unhandled database cancel now exits, so the platform can restart it. The cheap health check stays cheap.**
+
+`GET /health` is still one `SELECT 1` with a 3 second cap. Point the platform health check there. `GET /ready` is a separate probe: it returns 503 when two or more MCP requests have been running with no completion inside the window, or when the process heartbeat timer has stalled. One slow search does not flip it, and it does not call the database. Caught search timeouts still fail open and do not exit the process.
+
+### How to use it
+
+Leave the platform health check on `/health`. Probe `/ready` from a separate monitor when you want a wedged pipeline to show up as 503. `GET /health?deep=1` consults that same watchdog only when `GBRAIN_HTTP_HEALTH_DEEP=1`.
+
+| Knob | Default |
+| --- | --- |
+| `GBRAIN_HTTP_WATCHDOG_MS` | `120000` (`0` turns the pipeline check off) |
+| `GBRAIN_HTTP_WATCHDOG_HEARTBEAT_MS` | `30000` (`0` turns the heartbeat off) |
+| `GBRAIN_HTTP_WATCHDOG_MIN_INFLIGHT` | `2` |
+| `GBRAIN_HTTP_HEALTH_DEEP` | off |
+| `GBRAIN_HTTP_MAX_INFLIGHT` | `6` (`0` turns the cap off) |
+| `GBRAIN_HTTP_INFLIGHT_WAIT_MS` | `15000` |
+| `GBRAIN_HTTP_FATAL_EXIT` | on (`0` keeps the process up) |
+
+`GBRAIN_SERVE_STALL_WATCHDOG_MS` is unchanged and still off unless you set it. That one kills a process whose main thread has stopped running timers. The new watchdog does not.
+
+For one hosted replica on a transaction pooler, use port 6543 as the database URL and the session pooler (port 5432 on the same host) as the direct URL. Do not point the direct URL at the IPv6-only database host. Suggested sizes: pool 6, direct pool 2, at most 3 concurrent MCP requests. Details: `docs/ops/hosted-http-liveness.md`.
+
+### Itemized changes
+
+- Hosted HTTP exits on `unhandledRejection` and `uncaughtException`, including an unhandled statement timeout, without waiting on pool cleanup.
+- `GET /ready`, optional deep health, an in-process pipeline watchdog, and a soft cap on concurrent `POST /mcp` handlers.
+- Persistence renewal waits and statement-timeout follow-up queries are hard-capped so a 57014 cannot leave unfinished work pinned on the event loop. The original query is still awaited so its pool client can return.
+
 ## [0.60.27.0] - 2026-10-01
 
 **GBrain now needs Bun 1.4 or newer, because a bug in older Bun releases could make GBrain wait forever on a helper process that had already finished.**

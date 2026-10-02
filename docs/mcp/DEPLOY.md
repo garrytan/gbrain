@@ -9,7 +9,9 @@
 > `gbrain bootstrap harness`) are honored at exactly their granted scopes.
 > Both the legacy fallback and the OAuth tables work on PGLite and Postgres
 > (both engine schemas carry `access_tokens`). See [SECURITY.md](../../SECURITY.md) for env vars and
-> tunable defaults.
+> tunable defaults. Keep the platform health check on `GET /health`. `GET /ready`
+> and the pool-size notes for one hosted replica are in
+> [hosted HTTP liveness](../ops/hosted-http-liveness.md).
 
 Access your brain from any device, any AI client. GBrain ships two transports:
 `gbrain serve` (stdio) for local agents, and `gbrain serve --http` for remote
