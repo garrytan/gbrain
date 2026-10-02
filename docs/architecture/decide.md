@@ -259,7 +259,7 @@ acceptance never run for a remote caller.
 | S6 suppression boundary | 0.10 (0.05 before 2026-09-30: with the 0.05 margin floor it could never suppress) | `decide.slots.recall_needed.suppress_below` (bound into the policy fingerprint) |
 | S7 window | whole turns, about 1,500 chars; a turn over 24,000 chars splits at paragraphs (marked); at most 256 windows per transcript (more → today's triage) | no (`TRIAGE_WINDOW_CHARS`, `TRIAGE_TURN_SPLIT_CHARS`, `TRIAGE_MAX_WINDOWS`) |
 | S7 decision deadline / segment map | 60 s per transcript; top 8 windows, 300-char quotes | no |
-| S8 source windows / coverage floor | 3 per claim; 0.25 of the claim's content words | no (`GROUNDING_MAX_WINDOWS`, `GROUNDING_KEYWORD_FLOOR`) |
+| S8 source windows / coverage floor | 3 per claim; their union covers 0.25 of the claim's distinct content words (or a selected normalized substring hit) | no (`GROUNDING_MAX_WINDOWS`, `GROUNDING_KEYWORD_FLOOR`) |
 | S8 deadlines | 30 s per page, 10 min per dream phase | no |
 | S4 k | per slot lane | documented with each slot |
 | S2 wait for the intent answer | 250 ms (measured: 39% of live Jev answers arrive after 150 ms, 3% after 250 ms; docs/eval/system-one/) | `decide.slots.intent.wait_ms` |
