@@ -39,11 +39,6 @@ export function listBackfills(): RegisteredBackfill[] {
   return Array.from(_registry.values());
 }
 
-export function clearRegistryForTests(): void {
-  _registry.clear();
-  registerCoreBackfills();
-}
-
 // ---------------------------------------------------------------------------
 // Core registrations
 // ---------------------------------------------------------------------------

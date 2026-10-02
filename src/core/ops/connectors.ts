@@ -20,14 +20,15 @@ import {
   authErrorAtKey,
   autoSyncKey,
   isTruthy,
-  lastSyncAtKey,
-  watermarkKey,
+  readConnectorState,
+  sourceIdKey,
 } from '../connectors/config-keys.ts';
 import { isConnectorProviderName } from '../connectors/registry.ts';
 import { runConnectorSync } from '../connectors/sync.ts';
 
 const connectors_status: Operation = {
   name: 'connectors_status',
+  outputRedaction: 'no_stored_text',
   description:
     'Per-provider chat-connector status: strategies, whether a credential is ' +
     'present and from where (env/file — never the value), token expiry, ' +
@@ -48,6 +49,7 @@ const connectors_status: Operation = {
     const only = typeof p.provider === 'string' ? p.provider : undefined;
     const providers = connectorProviders.filter((prov) => !only || prov.name === only);
     const out = [];
+    const sourceId = (await ctx.engine.getConfig(sourceIdKey())) || 'default';
     for (const prov of providers) {
       const resolved = resolveCredential(prov.name);
       out.push({
@@ -57,9 +59,10 @@ const connectors_status: Operation = {
         credential: resolved ? { present: true, source: resolved.source, expires_at: resolved.cred.expiresAt ?? null } : { present: false },
         credential_file_mode: credentialMode(prov.name), // 0o600 expected; null if absent
         auto_sync: isTruthy(await ctx.engine.getConfig(autoSyncKey(prov.name))),
-        last_sync_at: (await ctx.engine.getConfig(lastSyncAtKey(prov.name))) || null,
+        source_id: sourceId,
+        last_sync_at: await readConnectorState(ctx.engine, prov.name, sourceId, 'last_sync_at'),
         auth_error_at: (await ctx.engine.getConfig(authErrorAtKey(prov.name))) || null,
-        watermark_iso: (await ctx.engine.getConfig(watermarkKey(prov.name))) || null,
+        watermark_iso: await readConnectorState(ctx.engine, prov.name, sourceId, 'watermark_iso'),
       });
     }
     return { providers: out };
@@ -69,6 +72,7 @@ const connectors_status: Operation = {
 
 const connector_sync: Operation = {
   name: 'connector_sync',
+  outputRedaction: 'no_stored_text',
   description:
     'Sync a chat provider\'s conversation history into the brain: list new ' +
     'conversations since the watermark, fetch them, and ingest as pages under ' +

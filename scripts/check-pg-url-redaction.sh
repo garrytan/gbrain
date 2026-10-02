@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
-# CI grep guard (v0.30.1, finding F3): no source file under src/ may emit
-# a postgresql:// URL with userinfo to a logging surface.
+# CI grep guard (v0.30.1, finding F3; widened to every db_url_credentials
+# scheme per TODOS.md): no source file under src/ may emit a credential-
+# bearing database URL to a logging surface.
 #
 # Specifically we forbid string literals or template substitutions that
-# look like `postgresql://user:pass@host` being passed to:
+# look like `postgresql://user:pass@host` (or the mysql/mongodb/redis/
+# amqp/mssql equivalents — the same scheme set src/core/secret-scan.ts's
+# `db_url_credentials` catch-all covers) being passed to:
 #   - console.log / .warn / .error
 #   - process.stderr.write / process.stdout.write
 #   - appendFileSync / writeFileSync (audit JSONL writes)
@@ -26,10 +29,12 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 # block-comment examples carry the bare marker).
 ALLOW_REGEX='url-redact\.ts|test/url-redact\.test\.ts|allow-pg-url-literal'
 
-# The pattern matches an unredacted Postgres URL appearing in a string
-# literal, NOT preceded by `redactPgUrl(` or `***@`. We also match any
-# URL containing `[^*]@` (i.e. the `***@` redacted form passes).
-PATTERN='postgres(ql)?://[^@*"`]+@'
+# The pattern matches an unredacted, credential-bearing database URL
+# appearing in a string literal, NOT preceded by `redactPgUrl(`/
+# `redactUrlsInText(` or `***@`. We also match any URL containing `[^*]@`
+# (i.e. the `***@` redacted form passes). Scheme set mirrors
+# db_url_credentials in src/core/secret-scan.ts.
+PATTERN='(postgres(ql)?|mysql|mongodb(\+srv)?|redis|rediss|amqp|mssql)://[^@*"`]+@'
 
 # Search src/ only — tests are excluded since they intentionally construct
 # unredacted URLs as input fixtures.
@@ -46,7 +51,7 @@ if [ -z "$FILTERED" ]; then
   exit 0
 fi
 
-echo "ERROR: unredacted postgres:// URL found in source. Use redactPgUrl() before logging."
+echo "ERROR: unredacted database URL found in source. Use redactPgUrl() / redactUrlsInText() before logging."
 echo ""
 echo "$FILTERED"
 echo ""

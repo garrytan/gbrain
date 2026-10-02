@@ -1,0 +1,307 @@
+[user]
+My inbox is overflowing with newsletters. I want to clean it up without accidentally deleting receipts, account notices, or messages I actually need. Can you help me make a safe plan?
+
+[assistant]
+A cautious cleanup can use three stages: identify newsletters, apply labels or folders first, and only delete after reviewing a sample.
+
+1. Create a label or folder named `Newsletters`.
+2. Search for likely newsletter messages using sender patterns, recurring subjects, and unsubscribe headers.
+3. Move or label confirmed newsletters without deleting them.
+4. Review the label for a few days.
+5. Add filter rules for clearly unwanted recurring mail.
+6. Keep receipts, delivery updates, password messages, billing notices, and account security alerts in the inbox.
+
+Before making rules, export or note any existing filters so they can be reversed easily.
+
+[user]
+I use Gmail in a browser. There are probably thousands of messages, and I don't know which senders are safe to filter. What should I search for first?
+
+[assistant]
+Start with searches that reveal patterns without changing anything. Gmail supports operators such as `from:`, `subject:`, `older:`, and `list:`. You can also search for the standard unsubscribe wording.
+
+Try these one at a time:
+
+```text
+unsubscribe
+"unsubscribe from this list"
+list:
+category:promotions
+older:1y category:promotions
+```
+
+For each result set, inspect several messages from the same sender. Check whether the content is genuinely a newsletter rather than a receipt or service notification. Look for repeated promotional content, a regular cadence, and an unsubscribe link. Avoid treating every message with the word “unsubscribe” as disposable; order confirmations and account emails sometimes include it too.
+
+[user]
+Can I make a temporary label and bulk-apply it to obvious newsletters before creating filters?
+
+[assistant]
+Yes. That is a good way to test the classification.
+
+Create a label such as `Review/Newsletter candidates`. Then:
+
+1. Search for one narrow pattern, such as a recurring sender address.
+2. Select a small batch, perhaps 20–50 messages.
+3. Apply the label.
+4. Open several recent and older messages from that batch.
+5. Confirm that no receipts, security alerts, or service notices were included.
+6. Repeat with the next narrow pattern.
+
+You can remove the label from individual messages if the search was too broad. Keep the messages in place during this review; labeling is safer than archiving or deleting while you are still testing.
+
+[user]
+How do I identify a reliable sender pattern? Some newsletters use several addresses or change the display name.
+
+[assistant]
+Open a few messages and compare the actual `From` address, not just the display name. In Gmail, click the sender details near the message header and inspect the full address. Also compare:
+
+- The domain after the `@`
+- Whether the local part changes, such as `news@`, `updates@`, or a generated address
+- The subject wording
+- Whether the messages arrive from the same mailing-list address
+- Whether the message has a consistent `List-Unsubscribe` header
+
+A reliable filter usually targets a specific address or a narrowly defined domain. A broad domain rule can catch receipts, support replies, and account notices, so test it with Gmail’s search preview first.
+
+For example, compare:
+
+```text
+from:(newsletter@example.invalid)
+from:(news@example.invalid OR updates@example.invalid)
+{from:(newsletter@example.invalid) from:(updates@example.invalid)}
+```
+
+Use the narrowest expression that captures the intended newsletter set.
+
+[user]
+Suppose I find three obvious newsletters. What filter actions would you recommend?
+
+[assistantant]
+For a first pass, use reversible actions:
+
+- Apply the `Newsletters` label.
+- Skip the Inbox if you want them out of the main view.
+- Mark as read only if unread counts are not important to you.
+- Do not delete automatically at first.
+- Do not forward or mark as important.
+- Optionally apply a category such as Promotions if that fits your workflow.
+
+A filter can also match existing messages. In Gmail, after entering the search criteria, choose “Create filter,” then select “Also apply filter to matching conversations.” Leave that unchecked for the first test if you want to review only new arrivals. After checking the labeled results, you can apply the same rule to older matching messages manually.
+
+[user]
+Would it be better to archive them or leave them in the inbox with a label?
+
+[assistant]
+For a crowded inbox, archive plus label is usually cleaner, provided the messages remain searchable and you are comfortable checking the label. The practical sequence is:
+
+1. Label the confirmed messages `Newsletters`.
+2. Review a sample while they are still visible.
+3. Archive them.
+4. Open the `Newsletters` label and verify that the expected messages are there.
+5. Search separately for important mail to make sure the rule did not catch it.
+
+If you still want reminders to read certain newsletters, leave those in the inbox or create a separate label such as `Newsletters/Read later`. You can also keep new messages in the inbox temporarily and change the filter after a few days of observation.
+
+[user]
+Can you give me example Gmail filter queries for three cases: one exact address, several addresses, and a narrow domain?
+
+[assistant]
+Here are examples using placeholder addresses. Replace them with addresses you have verified.
+
+Exact address:
+
+```text
+from:newsletter@example.invalid
+```
+
+Several known addresses:
+
+```text
+{from:newsletter@example.invalid from:updates@example.invalid from:weekly@example.invalid}
+```
+
+A narrow domain, only if you have confirmed that the domain sends newsletters and not account mail:
+
+```text
+from:(*@mail.example.invalid)
+```
+
+You can combine a sender pattern with a subject phrase:
+
+```text
+from:newsletter@example.invalid subject:(weekly digest)
+```
+
+After entering each query, check the result count and sample messages from different dates. If the results include receipts, login alerts, invoices, or support responses, narrow the rule rather than relying on a broad domain match.
+
+[user]
+How can I avoid filtering a newsletter’s confirmation messages or subscription changes along with the regular issues?
+
+[assistant]
+Use an exclusion for subjects or phrases that identify account activity, while keeping the main sender condition. For example:
+
+```text
+from:newsletter@example.invalid -subject:(confirm OR confirmation OR welcome OR "subscription changed")
+```
+
+You can also exclude common transactional terms:
+
+```text
+from:newsletter@example.invalid -{subject:(receipt OR invoice OR security OR password OR "verify your email")}
+```
+
+Treat exclusions as a supplement, not a guarantee. Review the search results before creating the filter. If confirmation messages come from a separate address, make the newsletter filter target only the recurring issue address instead.
+
+A useful test is to search the proposed expression, sort mentally by date, and inspect the newest, oldest, and a few messages in between.
+
+[user]
+I have about 900 old promotional messages. Is there a safe way to process them in batches rather than selecting everything?
+
+[assistant]
+Yes. Batch processing reduces the chance of a broad search doing more than intended. Use a narrow query and process one page at a time.
+
+Example:
+
+```text
+category:promotions older:2025/01/01
+```
+
+Then:
+
+1. Confirm that the results are promotional mail rather than receipts or account notices.
+2. Select the visible page, such as 50 messages.
+3. Apply the `Newsletters` label.
+4. Archive the selected messages.
+5. Open the label and spot-check a few.
+6. Repeat with the next page.
+
+If Gmail displays a notice offering to select all conversations that match the search, do not click it until you have confirmed the query is precise. For mixed results, process by sender:
+
+```text
+from:newsletter@example.invalid older:2025/01/01
+```
+
+You can also narrow by date ranges:
+
+```text
+from:newsletter@example.invalid after:2023/01/01 before:2024/01/01
+```
+
+Keep a simple temporary note of which sender and date range you processed.
+
+[user]
+What should I do with newsletters I no longer want at all? I would prefer not to keep them indefinitely.
+
+[assistant]
+Unsubscribe first when the sender is legitimate and the message has a normal unsubscribe link. Use the link inside a confirmed newsletter or Gmail’s unsubscribe option near the sender details. After unsubscribing, wait for a few days because queued messages may still arrive.
+
+For old messages, you can delete in controlled batches after confirming the search. For example:
+
+```text
+label:"Newsletters" older:2024/01/01
+```
+
+Review the result count and sample messages, then select a page at a time and move those messages to Trash. Gmail normally keeps Trash for a limited period before permanent removal. Avoid using a broad query such as `unsubscribe` alone for deletion, since it can match receipts and account notices.
+
+If you want automatic cleanup later, consider a filter that labels and archives new issues, then periodically delete messages from that label after a chosen age.
+
+[user]
+How do I check that a filter is doing what I expect after I create it?
+
+[assistant]
+Use both the filter list and ordinary searches.
+
+1. Open Gmail settings, then “See all settings,” followed by “Filters and Blocked Addresses.”
+2. Confirm the rule’s search criteria and actions.
+3. Use “edit” to copy or inspect the query without changing it.
+4. Run the query in the main search box and review several results.
+5. Send or wait for a harmless test message only if you have an appropriate test address; otherwise, observe the next normal arrival.
+6. Check the `Newsletters` label and the Inbox after a message arrives.
+7. Confirm that the message is labeled and archived if that was selected.
+8. Search for excluded examples, such as receipts or confirmation messages, and verify they remain outside the newsletter label.
+
+Useful checks include:
+
+```text
+label:Newsletters newer:7d
+label:inbox from:newsletter@example.invalid
+from:newsletter@example.invalid subject:(receipt OR confirmation)
+```
+
+If the rule catches something unintended, edit or delete it immediately and manually move the affected messages back to the Inbox.
+
+[user]
+Could you summarize a conservative setup I can follow today, including a rollback step?
+
+[assistant]
+A conservative setup would be:
+
+1. Create `Review/Newsletter candidates` and `Newsletters`.
+2. Record your current filters by taking screenshots or copying their criteria into a temporary local note.
+3. Search for one confirmed sender at a time.
+4. Apply the review label to 20–50 messages, without archiving or deleting.
+5. Inspect recent, old, unread, and oddly titled messages.
+6. If the batch is clean, create a filter for that exact sender.
+7. Set the filter to apply `Newsletters` and optionally skip the Inbox.
+8. Leave deletion disabled.
+9. Repeat only for other confirmed addresses.
+10. Review the `Newsletters` label after several new messages arrive.
+11. Unsubscribe from unwanted lists.
+12. Delete old labeled mail in small batches only after checking the query.
+
+Rollback:
+
+- Open “Filters and Blocked Addresses.”
+- Edit or delete the relevant filter.
+- Search `label:Newsletters` and move any incorrectly archived messages back to the Inbox.
+- Remove the label from messages that were misclassified.
+- Check Trash before it is emptied if anything was deleted accidentally.
+
+This keeps classification, filtering, and deletion as separate steps.
+
+[user]
+I started labeling messages and found that one sender mixes weekly articles with occasional order confirmations. What is the safest adjustment?
+
+[assistant]
+Do not use the sender address alone. First compare the subjects and any consistent header or phrase that appears only on the articles.
+
+For example, search:
+
+```text
+from:sender@example.invalid subject:(weekly OR digest OR roundup)
+```
+
+Then test exclusions:
+
+```text
+from:sender@example.invalid subject:(weekly OR digest OR roundup) -{subject:(order OR confirmation OR receipt)}
+```
+
+If the article messages have a stable subject prefix, use that instead:
+
+```text
+from:sender@example.invalid subject:"Weekly bulletin"
+```
+
+Review the results before updating the filter. Edit the existing rule to use the narrower query, then manually remove the newsletter label from any order confirmations that were already labeled. Leave those confirmations in the Inbox. If there is no reliable distinguishing pattern, keep the sender out of automatic filtering and label messages manually.
+
+[assistant]
+You can also split the workflow: let the filter apply only the `Newsletters` label, but do not skip the Inbox until the query has performed correctly for a while. That makes mistakes visible without hiding messages. Once several arrivals have been checked, you can add “Skip the Inbox” if desired.
+
+[assistant]
+For the mixed sender, I would use this sequence:
+
+```text
+from:sender@example.invalid subject:(weekly OR digest OR roundup) -{subject:(order OR confirmation OR receipt)}
+```
+
+1. Run it as a search.
+2. Open at least five results from different dates.
+3. Check one or two order confirmations separately.
+4. Edit the filter to match the tested query.
+5. Apply only the `Newsletters` label at first.
+6. Keep “Skip the Inbox” disabled during the trial.
+7. Review new matches for several days.
+8. If clean, edit the filter and add “Skip the Inbox.”
+9. If anything is misclassified, remove the filter and manually correct the labeled messages.
+
+Keep deletion out of the rule, and use a separate, reviewed search for old messages when you are ready to remove them.

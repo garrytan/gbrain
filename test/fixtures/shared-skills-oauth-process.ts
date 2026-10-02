@@ -160,8 +160,10 @@ export async function sharedSkillsOAuthProcessCase(databaseUrl: string, editorPr
       const asset = await blobResource(stdio, sharedSkillResourceUri(reread.qualified_id, reread.revision, ASSET_PATH));
       expect(Buffer.from(asset, 'base64').toString()).toBe('OAuth durable new asset');
       expect((await stdio.listTools()).tools.map(t => t.name)).not.toContain('put_skill');
-      await expect(call(stdio, 'get_skill', { schema_version: 2, name: 'alpha', source_id: 'hidden' })).rejects.toThrow();
-      await expect(stdio.readResource({ uri: forbiddenUri })).rejects.toThrow();
+      const refusal = await call(stdio, 'get_skill', { schema_version: 2, name: 'alpha', source_id: 'hidden' }).then(() => null, error => error);
+      expect(refusal).toMatchObject({ code: 'skill_not_found' });
+      const refusalResource = await stdio.readResource({ uri: forbiddenUri }).then(() => null, error => error);
+      expect(refusalResource).toMatchObject({ code: -32603, data: { error: 'skill_not_found' } });
     } catch (error) {
       throw new Error(fixtureDiagnostic('New stdio process', `${String(error)}\n${stdioError}`, secrets));
     } finally { await stdio.close(); }

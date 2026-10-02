@@ -209,6 +209,9 @@ describe('createPrivateRepo', () => {
     const err = await expectBootstrapError(createPrivateRepo(ws, { runner, gbrainHomeDir: home }));
     expect(err.code).toBe('SECRET_SCAN_BLOCKED');
     expect(err.message).not.toContain('sk-A1b2C3d4'); // value never surfaces
+    expect(err.message).toMatch(/leak\.md:1 \[openai\] sha256:[0-9a-f]{16}/);
+    expect(err.message).toContain(`appending its fingerprint to ${join(ws, '.gbrain-scan-allow')}`);
+    expect(err.message).toContain('write-refusals.md#secret-scan-refusals-and-redaction');
     expect(calls.some((c) => c.join(' ').includes('commit -m'))).toBe(false);
     expect(calls.some((c) => c.join(' ').includes('push -u origin'))).toBe(false);
   });

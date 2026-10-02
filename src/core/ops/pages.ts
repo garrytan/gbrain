@@ -31,6 +31,7 @@ import {
   federatedSearchScope,
   normalizeSlugPrefix,
   parseSourceIdParam,
+  readPolicyOpts,
   validatePageSlug,
 } from './context.ts';
 
@@ -67,17 +68,20 @@ async function dropPrivateSlugs(
  * entirely, facts fence keeps only `world`-visibility rows.
  */
 function stripPrivacyFencesForRemoteReader(page: Page): Page {
-  return { ...page, compiled_truth: sanitizeRemoteBody(page.compiled_truth, { includeWithdrawn: true }), timeline: sanitizeRemoteBody(page.timeline ?? '', { includeWithdrawn: true }) };
+  const opts = { includeWithdrawn: true, keepMaterializedMarkers: true }; // #5567: markers round-trip remote edits
+  return { ...page, compiled_truth: sanitizeRemoteBody(page.compiled_truth, opts), timeline: sanitizeRemoteBody(page.timeline ?? '', opts) };
 }
 
 const get_page: Operation = {
   name: 'get_page',
-  description: 'Read a page by slug (supports optional fuzzy matching). Slug aliases left by renames redirect to the canonical page in the source that owns the alias (archived sources excluded); a redirected read reports `resolved_slug`. To edit a page, pass include_content: true — the returned `content` field is the canonical full markdown (frontmatter + body + timeline sentinel); edit THAT and pass it back to put_page to round-trip losslessly. Reassembling compiled_truth/timeline by hand risks dropping sections. Soft-deleted pages are hidden by default; pass include_deleted: true to surface them with deleted_at populated (see v0.26.5 recovery window).',
+  outputRedaction: { exempt: 'explicit page read by slug/id; governed by page visibility, not output redaction (CEO-17 raw-read exception)' },
+  description: 'Read a page by slug (supports optional fuzzy matching). Slug aliases left by renames redirect to the canonical page in the source that owns the alias (archived sources excluded); a redirected read reports `resolved_slug`. To edit a page, pass include_content: true — the returned `content` field is the canonical full markdown (frontmatter + body + timeline sentinel); edit THAT and pass it back to put_page to round-trip losslessly. Reassembling compiled_truth/timeline by hand risks dropping sections. Soft-deleted pages are hidden by default; pass include_deleted: true to surface them with deleted_at populated (see v0.26.5 recovery window). `timeline` is only the markdown section after the timeline sentinel; entries written by add_timeline_entry or extraction live in timeline rows, which include_timeline_entries: true returns as `timeline_entries` (the same rows get_timeline returns).',
   params: {
     slug: { type: 'string', required: true, description: 'Page slug' },
     fuzzy: { type: 'boolean', description: 'Enable fuzzy slug resolution (default: false)' },
     include_content: { type: 'boolean', description: '#2225: include the canonical serialized `content` field (frontmatter + body + timeline sentinel) for lossless get→edit→put_page round-trips. Default false — it roughly duplicates compiled_truth + timeline, so read-only callers should not pay for it.' },
     include_deleted: { type: 'boolean', description: 'v0.26.5: surface soft-deleted pages with deleted_at populated (default: false). Used by restore workflows.' },
+    include_timeline_entries: { type: 'boolean', description: '#5709: also return `timeline_entries`, the page\'s timeline rows (the same rows and filtering as get_timeline for this caller). Default false to keep the payload small.' },
     source_id: { type: 'string', description: "#4329: scope the lookup to a single source (a multi-source brain can hold the same slug in several sources). Defaults to ctx.sourceId / the caller's grant. '__all__' spans every source for trusted local callers, your granted sources for remote callers." },
   },
   handler: async (ctx, p) => {
@@ -85,6 +89,7 @@ const get_page: Operation = {
     const fuzzy = (p.fuzzy as boolean) || false;
     const includeDeleted = (p.include_deleted as boolean) === true;
     const includeContent = (p.include_content as boolean) === true;
+    const includeTimelineEntries = (p.include_timeline_entries as boolean) === true;
     // #4329: honor a per-call source_id (pre-fix it was silently dropped).
     // resolveRequestedScope (inside federatedSearchScope) enforces the remote
     // caller's grant on the explicit value.
@@ -111,7 +116,7 @@ const get_page: Operation = {
 
     let snapshot = await ctx.engine.readPageSnapshot(slug, { includeDeleted, excludePrivate, ...sourceOpts, resolveAlias: true });
     let page = snapshot?.page ?? null;
-    if (page && excludePrivate && isPrivatePage(page.frontmatter)) page = null;
+    if (page && excludePrivate && isPrivatePage(page)) page = null;
     let resolved_slug: string | undefined = page && page.slug !== slug ? page.slug : undefined;
 
     if (!page && fuzzy) {
@@ -125,7 +130,7 @@ const get_page: Operation = {
           ? await tx.readPageSnapshot(candidates[0], { includeDeleted, excludePrivate, ...sourceOpts }) : null };
       });
       if (fallback.candidates.length > 1) return { error: 'ambiguous_slug', candidates: fallback.candidates };
-      if (fallback.snapshot && !(excludePrivate && isPrivatePage(fallback.snapshot.page.frontmatter))) {
+      if (fallback.snapshot && !(excludePrivate && isPrivatePage(fallback.snapshot.page))) {
         snapshot = fallback.snapshot;
         page = snapshot.page;
         resolved_slug = page.slug;
@@ -144,7 +149,7 @@ const get_page: Operation = {
           // gbrain-allow-unscoped-getpage: read-only diagnostic existence probe —
           // deliberately spans all sources to name where the slug lives.
           const elsewhere = await ctx.engine.getPage(slug, { includeDeleted });
-          if (elsewhere && !(excludePrivate && isPrivatePage(elsewhere.frontmatter))) {
+          if (elsewhere && !(excludePrivate && isPrivatePage(elsewhere))) {
             hint = `Page exists in source '${elsewhere.source_id}' — pass --source ${elsewhere.source_id} (source_id: '${elsewhere.source_id}' over MCP). ${hint}`;
           }
         } catch {
@@ -193,6 +198,8 @@ const get_page: Operation = {
       revision: snapshot!.revision,
       tags,
       ...(includeContent ? { content: serializePageToMarkdown(visibleBody as Page, tags) } : {}),
+      ...(includeTimelineEntries
+        ? { timeline_entries: await ctx.engine.getTimeline(page.slug, await readPolicyOpts(ctx, { sourceId: page.source_id })) } : {}),
       ...(resolved_slug ? { resolved_slug } : {}),
       ...(content_flag ? { content_flag } : {}),
     };
@@ -203,6 +210,7 @@ const get_page: Operation = {
 
 const fetch_page: Operation = {
   name: 'fetch',
+  outputRedaction: { exempt: 'explicit page read by slug/id; governed by page visibility, not output redaction (CEO-17 raw-read exception)' },
   description: "Fetch the full text of one search result by its opaque, source-qualified `id` (OpenAI deep-research contract: the search/fetch pair). Pass the id unchanged; it does not grant access. Legacy slug ids work only when unambiguous within your current read scope. Returns { id, title, text, url, metadata } — `text` is the page's canonical markdown. For fuzzy slugs, soft-delete recovery, or lossless edit round-trips, use get_page.",
   params: {
     id: { type: 'string', required: true, description: 'Opaque result id from a prior `search` call. Pass unchanged. Unambiguous legacy slugs are also accepted.' },
@@ -218,7 +226,7 @@ const fetch_page: Operation = {
     const slug = identity?.slug ?? id.trim();
     const missing = () => new OperationError('page_not_found', 'Page not found', 'Pass an id returned by a current `search` call.');
     let sourceOpts: ReturnType<typeof federatedSearchScope>;
-    try { sourceOpts = federatedSearchScope(ctx); }
+    try { sourceOpts = federatedSearchScope(ctx, identity?.sourceId); }
     catch (error) {
       if (error instanceof OperationError && error.code === 'permission_denied') throw missing();
       throw error;
@@ -243,7 +251,7 @@ const fetch_page: Operation = {
       throw error;
     }
     const page = snapshot?.page;
-    if (!page || (excludePrivate && isPrivatePage(page.frontmatter))) throw missing();
+    if (!page || (excludePrivate && isPrivatePage(page))) throw missing();
     bumpLastRetrievedAt(ctx.engine, [page.id]);
     const tags = snapshot!.tags;
     // Same privacy boundary as get_page: untrusted readers (ctx.remote ===
@@ -273,6 +281,7 @@ const fetch_page: Operation = {
 
 const put_page: Operation = {
   name: 'put_page',
+  outputRedaction: 'no_stored_text',
   description: 'Replace a complete canonical Markdown page. Read get_page with include_content:true and pass its revision as expected_revision; force explicitly overwrites the current revision. Omitting both permits creation only. Retain a UUID request_id and repeat identical arguments after transport failure or a pending receipt. Content, tags, sanitized text projections, versions and the committed receipt publish together; embedding and optional Git effects have separate status. Remote callers preserve protected facts/takes fences; automatic graph links are skipped for untrusted writes. A stdio `gbrain serve` sweeps them at startup + on idle; `gbrain serve --http` does not self-sweep — run `gbrain sweep --once` or use trusted local capture/put_page for inline link extraction. Remote callers receive write_through.warning when no repo is configured. For file input use gbrain capture --file PATH --slug SLUG.',
   params: {
     ...PAGE_MUTATION_PARAMS,
@@ -350,6 +359,7 @@ async function runAutoLink(
 
 const delete_page: Operation = {
   name: 'delete_page',
+  outputRedaction: 'no_stored_text',
   description: 'Soft-delete a page and remove its markdown file from the source working tree (the source local_path, or sync.repo_path when the source has none). File removal is skipped when sync.write_through is off; the committed receipt reports the persistence mode and write_through outcome. Read the page revision first and pass expected_revision; retain request_id for replay. The row is hidden from search and from get_page/list_pages, but is recoverable via restore_page within 72h, which re-creates the file. The autopilot purge phase hard-deletes after the recovery window. Pass include_deleted: true to get_page to verify the soft-delete landed. purge: true is trusted-local CLI only and removes the row, chunks, links and raw data immediately after its recorded markdown artifact is removed. Purge uses the same revision, request_id and recovery protocol, including for existing tombstones. A removal failure preserves the prior row and never reports purge success; repair the artifact and submit a new request_id. A committed purge warns that git history, synced copies, exports and derived rows may retain content; rotate exposed credentials.',
   params: {
     ...PAGE_MUTATION_PARAMS,
@@ -377,6 +387,7 @@ const delete_page: Operation = {
 
 const restore_page: Operation = {
   name: 'restore_page',
+  outputRedaction: 'no_stored_text',
   description: 'v0.26.5 — restore a soft-deleted page (clear deleted_at) and re-create its markdown file on disk (the counterpart to delete_page removing it; the result write_through field reports the outcome). Returns success only if the page was actually soft-deleted. After this op, the page reappears in search and in get_page/list_pages without the include_deleted flag.',
   params: {
     ...PAGE_MUTATION_PARAMS,
@@ -402,6 +413,7 @@ const restore_page: Operation = {
 
 const purge_deleted_pages: Operation = {
   name: 'purge_deleted_pages',
+  outputRedaction: 'no_stored_text',
   description: 'v0.26.5 — admin-only. Hard-deletes pages whose deleted_at is older than older_than_hours (default 72). Cascades through content_chunks, page_links, chunk_relations. Local CLI only (not exposed over HTTP MCP). Manual escape hatch alongside the autopilot purge phase.',
   params: {
     older_than_hours: { type: 'number', description: 'Age cutoff in hours. Default 72.' },
@@ -412,8 +424,8 @@ const purge_deleted_pages: Operation = {
   handler: async (ctx, p) => {
     const olderThanHours = (p.older_than_hours as number | undefined) ?? 72;
     if (ctx.dryRun) return { dry_run: true, action: 'purge_deleted_pages', older_than_hours: olderThanHours };
-    const result = await ctx.engine.purgeDeletedPages(olderThanHours);
-    return { status: 'purged', count: result.count, slugs: result.slugs };
+    const result = await (await import('../persistence/purge-deleted.ts')).purgeDeletedPagesCoordinated(ctx.engine, olderThanHours);
+    return { status: result.failed ? 'partial' : 'purged', count: result.count, slugs: result.slugs, ...(result.blocked.length ? { blocked: result.blocked } : {}) };
   },
   cliHints: { name: 'purge-deleted' },
 };
@@ -423,6 +435,7 @@ type ListPagesSort = typeof LIST_PAGES_SORT_VALUES[number];
 
 const list_pages: Operation = {
   name: 'list_pages',
+  outputRedaction: 'retrieval',
   description: LIST_PAGES_DESCRIPTION,
   params: {
     type: { type: 'string', description: 'Filter by page type' },
@@ -574,11 +587,13 @@ const list_pages: Operation = {
  */
 const capture: Operation = {
   name: 'capture',
+  outputRedaction: 'no_stored_text',
   description: CAPTURE_DESCRIPTION,
   params: {
     ...PAGE_MUTATION_PARAMS,
     ...CAPTURE_EVENT_PARAMS,
     content: { type: 'string', required: true, description: 'Markdown or plain text to capture. File paths are NOT accepted over MCP — read the file yourself and pass its content (the CLI --file lane is local-only).' },
+    local_file: { type: 'string', required: false, description: 'Trusted local CLI only (--file): the absolute path of the captured file. Recorded as the page origin only when it lies inside the source and names the slug; the path itself is never stored. Remote callers are refused.' },
     slug: { type: 'string', required: false, description: "Target slug. Default: inbox/YYYY-MM-DD-<sha8-of-content> (stable per content — recapturing identical text hits the same slug); type diary/event routes under life/. Fenced clients: the default lands under your first bound prefix." },
     type: { type: 'string', required: false, description: "Page type for the stamped frontmatter. Omitted: the content's frontmatter `type:` when present, else 'note'. An explicit type (this param or a frontmatter `type:`) must be declared by the active schema pack; undeclared types are rejected before writing, naming the declared vocabulary." },
   },

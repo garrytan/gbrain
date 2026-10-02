@@ -2,7 +2,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, unlinkSync, o
 import { dirname } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import { OperationError } from '../ops/contract.ts';
-import { atomicWriteFileSync } from '../atomic-write.ts';
+import { atomicWriteFileSync, mkdirPrivate } from '../atomic-write.ts';
 import { isWriteTargetContained } from '../path-confine.ts';
 import { sha256 } from './digest.ts';
 import { authorizeStoredRequest } from './authority.ts';
@@ -18,23 +18,31 @@ import { tryAcquirePublicationCapacity } from './pool-capacity.ts';
 import { queuePublicationEffects } from './effect-journal.ts';
 import { authorizePageVisibility } from './page-visibility.ts';
 import { withNoRepoWriteThroughWarning } from '../write-through.ts';
+import { assertUnboundPublication, classifyUnboundPage, unboundWriteWarning } from './unbound-source.ts';
 import { assertRecoveryStagingAbsent, cleanupRecoveryStaging, recoveryStagingFile, upgradeRecoveryStaging } from './staging.ts';
 import { assertMutationProtocol, assertSharedSkillPersistence, declarePersistenceProtocol, PERSISTENCE_PROTOCOL_PREDICATE } from './protocol.ts';
 import { assertBundleRecoveryBinding, bundleFileHash, prepareBundleRecovery, publishStagedBundleFile, stageBundleFile, type MutationFile } from './bundle-files.ts';
 import { assertKnowledgePublicationAllowed } from '../shared-skills/knowledge-guard.ts';
+import { classifyMirrorPage, sourceMirrorReadOnly } from './mirror-read-only.ts';
 
 interface PreparedMutationBase {
   sourceExclusive?: boolean;
   observedRevision: string | null;
   additionalPageKeys?: readonly {sourceId:string;slug:string}[];
   noop?: boolean;
+  /** #5470 screening only: the content is unchanged, but publication still runs (and queues effects). */
+  contentUnchanged?: boolean;
   deferEmbedding?: boolean;
+  /** Why a page write bound to a worktree publishes no file (receipt `write_through.skipped`). */
+  databaseOnlyReason?: 'db_only' | 'unbound_source' | 'mirror_read_only';
   /** Must perform only transaction-composable database work. */
   apply(tx: BrainEngine): Promise<Record<string, unknown>>;
   validate?(tx: BrainEngine): Promise<void>;
 }
+/** A page file target; `publishMode` (Google pages) is the exact mode it publishes with, and its created directories get 0700. */
+export type PageMutationFile = MutationFile & { publishMode?: number };
 export type PreparedMutation = PreparedMutationBase & (
-  | { target?: 'page'; file?: MutationFile; files?: never }
+  | { target?: 'page'; file?: PageMutationFile; files?: never }
   | { target: 'skill_bundle'; file?: never; files: MutationFile[]; validate(tx: BrainEngine): Promise<void> }
 );
 export interface PublicationHooks {
@@ -55,19 +63,21 @@ function flushDirectory(path: string): void {
     if (!(process.platform === 'win32' && ['EISDIR','EPERM','EINVAL','ENOTSUP'].includes(code ?? ''))) throw error;
   } finally { if (fd !== undefined) closeSync(fd); }
 }
-function publishFile(file: NonNullable<PreparedMutation['file']>, stagingPath?: string, afterStagingFlush?: () => void, mode?: number | null): void {
+function publishFile(file: PageMutationFile, stagingPath?: string, afterStagingFlush?: () => void, mode?: number | null): void {
   if (!isWriteTargetContained(file.path, file.root)) throw new OperationError('storage_error', 'Canonical file target escapes its source root.');
-  mkdirSync(dirname(file.path), { recursive: true });
+  if (file.publishMode === undefined) mkdirSync(dirname(file.path), { recursive: true });
+  else mkdirPrivate(dirname(file.path), file.root);
   if (!isWriteTargetContained(file.path, file.root)) throw new OperationError('storage_error', 'Canonical parent path changed during publication.');
+  const openMode = mode ?? file.publishMode;
   if (file.content === null) {
     try { unlinkSync(file.path); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
-  } else atomicWriteFileSync(file.path, file.content, { durable: true, stagingPath, afterStagingFlush: () => {
+  } else atomicWriteFileSync(file.path, file.content, { durable: true, stagingPath, ...(openMode === undefined ? {} : { mode: openMode }), afterStagingFlush: () => {
+    afterStagingFlush?.();
     if (mode !== undefined && mode !== null && stagingPath) {
       chmodSync(stagingPath, mode);
       const fd = openSync(stagingPath, 'r');
       try { fsyncSync(fd); } finally { closeSync(fd); }
     }
-    afterStagingFlush?.();
   } });
   flushDirectory(file.path);
 }
@@ -121,7 +131,7 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
         await releaseUnpublishedClaim(engine, row, 'owner_unavailable');
         return (await getWriteRequestById(engine, row.id))!;
       }
-      lock = await acquireWorktree(binding);
+      lock = await acquireWorktree(binding, 0, undefined, engine);
       if (!lock) {
         await releaseUnpublishedClaim(engine, row, 'writer_busy');
         return (await getWriteRequestById(engine, row.id))!;
@@ -173,6 +183,13 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
         },
       };
       if (prepared.file.expectedBeforeHash !== undefined && record.beforeHash !== prepared.file.expectedBeforeHash) {
+        // A coordinated writer (a withdrawal mirror) also advanced the page:
+        // reprepare against it. Bytes changed at an unchanged revision are an
+        // uncoordinated edit.
+        const current = await engine.readPageSnapshot(row.slug, { sourceId: row.source_id, includeDeleted: true });
+        if ((current?.revision ?? null) !== prepared.observedRevision) {
+          throw new OperationError('revision_conflict', 'The page changed during preparation.', 'Read its current revision and submit the updated intent with a new request_id.');
+        }
         throw new OperationError('source_changed', 'The canonical file changed after preparation.');
       }
       const nextBytes = prepared.file.content === null ? 0 : typeof prepared.file.content === 'string'
@@ -200,9 +217,15 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
         const snapshot = await tx.readPageSnapshot(row.slug, { sourceId: row.source_id, includeDeleted: true });
         await authorizePageVisibility(tx, row.authority, row.slug);
         if ((snapshot?.page.id ?? null) !== row.page_id) throw new OperationError('page_identity_changed', 'The accepted page was deleted or recreated.');
+        await assertUnboundPublication(tx, row, snapshot?.page.source_path);
         if ((snapshot?.revision ?? null) !== prepared.observedRevision) throw new OperationError('revision_conflict', 'The page changed during preparation.', 'Read its current revision and submit the updated intent with a new request_id.');
       }
       await prepared.validate?.(tx);
+      // #5409: a file target prepared before the source became a read-only mirror is never published.
+      if (!skill && prepared.file && await sourceMirrorReadOnly(tx, row.source_id, true)) {
+        throw new OperationError('source_changed', 'The source became a read-only mirror after this write was prepared; nothing was written to its checkout.',
+          'Retry the write with a new request_id; it is now stored database-only.');
+      }
       if (recovery) {
         const records = recoveryFiles(recovery);
         for (const record of records) if ((skill ? bundleFileHash(record) : fileHash(record.path)) !== record.beforeHash) {
@@ -228,12 +251,18 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
         await hooks.boundary?.('after_publication', row);
       }
       const outcome = await withCoordinatedWrite(tx, [row.source_id], () => prepared.apply(tx));
+      if (!skill) await classifyUnboundPage(tx, row);
+      if (prepared.databaseOnlyReason === 'mirror_read_only') await classifyMirrorPage(tx, row);
       const final = skill ? null : await tx.readPageSnapshot(row.slug, { sourceId: row.source_id, includeDeleted: true });
       if (final) outcome.revision = final.revision;
       outcome.persistence = { mode: files.length ? 'filesystem' : 'database', ...(files.length ? { file_written: !prepared.noop } : {}), ...(skill ? { git_state: 'not_requested' } : {}) };
-      outcome.write_through = files.length ? { written: !prepared.noop } : { written: false, skipped: row.authority.databaseOnlyReason ?? 'no_repo_configured' };
+      outcome.write_through = files.length ? { written: !prepared.noop } : { written: false, skipped: prepared.databaseOnlyReason ?? row.authority.databaseOnlyReason ?? 'no_repo_configured' };
+      if (prepared.databaseOnlyReason === 'mirror_read_only') outcome.storage = 'database_only';
       if (row.operation === 'put_page' && row.authority.remote && row.authority.databaseOnlyReason === 'no_repo_configured') outcome.write_through = withNoRepoWriteThroughWarning(outcome.write_through as { written: boolean; skipped?: string }, row.source_id);
-      await queuePublicationEffects(tx, row, final?.revision, outcome, prepared);
+      if ((outcome.write_through as { skipped?: string }).skipped === 'unbound_source') {
+        outcome.write_through = { ...outcome.write_through as object, warning: unboundWriteWarning(row.operation, row.source_id, row.authority.databaseOnlyReason === 'unbound_source') };
+      }
+      await queuePublicationEffects(tx, row, final, outcome, prepared);
       await hooks.boundary?.('before_commit', row);
       const committed = await completeWrite(tx, current, 'committed', outcome);
       transactionBodyCompleted = true;
@@ -274,7 +303,7 @@ export async function recoverPublication(engine: BrainEngine, id: string, hostId
   assertMutationProtocol(row);
   const binding = await getWorktreeBinding(engine, row.source_id, hostId);
   if (!binding || binding.owner_host_id !== hostId) throw new OperationError('owner_unavailable', 'Recovery requires the canonical owner.');
-  const lock = alreadyLocked ? null : await acquireWorktree(binding);
+  const lock = alreadyLocked ? null : await acquireWorktree(binding, 0, undefined, engine);
   if (!alreadyLocked && !lock) return row;
   const releaseCapacity = capacityAlreadyHeld ? null : tryAcquirePublicationCapacity(engine);
   try {
@@ -333,7 +362,8 @@ export async function recoverPublication(engine: BrainEngine, id: string, hostId
               stageBundleFile(file, restored);
               if (file.content !== null) hooks.fileBoundary?.('restoration_staging_flushed', current, index);
               publishStagedBundleFile(restored, phase => hooks.fileBoundary?.(`restoration_${phase}`, current, index));
-            } else publishFile(file, record.staging?.restoration?.path, undefined, record.mode);
+            } else publishFile(file, record.staging?.restoration?.path,
+              () => hooks.fileBoundary?.('restoration_staging_flushed', current, index), record.mode);
           });
         }
         hooks.fileBoundary?.('after_restore', current, index);

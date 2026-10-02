@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-029",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "projects/support-rotation",
+      "content": "---\ntitle: Support Rotation\ntype: project\nsummary: \"Support Rotation: Engineers take one week of support each per month, and weekends go to an on-call pager.\"\n---\n\nSupport Rotation: Engineers take one week of support each per month, and weekends go to an on-call pager.\n"
+    },
+    {
+      "slug": "people/greta-grisholt",
+      "content": "---\ntitle: Greta Grisholt\ntype: person\nsummary: \"Greta Grisholt is the head of partnerships at Lumenfold.\"\n---\n\nGreta Grisholt is the head of partnerships at Lumenfold.\n"
+    },
+    {
+      "slug": "people/junie-tessford",
+      "content": "---\ntitle: Junie Tessford\ntype: person\nsummary: \"Junie Tessford is the finance lead at Halcyonreach.\"\n---\n\nJunie Tessford is the finance lead at Halcyonreach.\n"
+    },
+    {
+      "slug": "companies/glintreach-analytics",
+      "content": "---\ntitle: Glintreach Analytics\ntype: company\nsummary: \"Glintreach Analytics is a startup we evaluated as a partner.\"\n---\n\nGlintreach Analytics is a startup we evaluated as a partner. Their pilot with our team ends after the next billing cycle.\n"
+    },
+    {
+      "slug": "companies/pylonyard",
+      "content": "---\ntitle: Pylonyard\ntype: company\nsummary: \"A company we met once at a trade show.\"\n---\n\nA company we met once at a trade show.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "how did we end up splitting that support rotation?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Done."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Grisholt mentioned the pomodoro technique on a call. How does the pomodoro technique work?"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Happy to help."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "In the novel I'm reading, Captain Tessford betrays the crew. Is that a common trope?"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Happy to help."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "Prep notes for my Glintreach meeting please, mainly the pilot."
+    }
+  ]
+}

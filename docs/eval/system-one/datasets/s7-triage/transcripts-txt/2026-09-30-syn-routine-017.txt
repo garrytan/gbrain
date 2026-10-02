@@ -1,0 +1,130 @@
+[user]
+I’m formatting a short bibliography for a school handout and need it in MLA 9. I have a mix of books, webpages, and one video, but my notes are inconsistent. Can you help me standardize them?
+
+[assistant]
+Yes. Paste the source notes exactly as you have them, even if punctuation, capitalization, or dates are missing. I can identify the parts that are present, flag anything that needs checking, and format the entries in MLA 9. I’ll also keep the formatting suitable for a handout: alphabetical order, hanging indents, double spacing, and a centered “Works Cited” heading.
+
+[user]
+Here are the notes:
+
+1. Book: The Practical Weather Handbook / by Dana Mercer / North Field Press / 2021
+2. Webpage: “How Clouds Form” / National Weather Archive / https://weatherarchive.example/clouds / accessed March 3 2026
+3. Video: “Reading a Barometer” / Learning Lab / uploaded July 14, 2024 / https://video.example/watch?v=baro12
+4. Book: Rivers and Valleys / T. R. Cole / Green Finch Books / 2018
+5. Webpage: “Rain Gauge Basics” / no author listed / Weather Classroom / 12 January 2025 / https://classroom.example/rain-gauge
+
+[assistant]
+Thanks. A few details are already sufficient, while others need a small MLA adjustment or verification. In MLA 9, book entries generally follow:
+
+Author Last Name, First Name. Title of Book. Publisher, Year.
+
+For a webpage, use:
+
+Author or organization. “Page Title.” Website Name, publication date, URL. Accessed Day Month Year.
+
+For an online video, use:
+
+“Video Title.” Website Name, uploaded Day Month Year, URL.
+
+I’ll treat the organization as the author for “How Clouds Form,” since no individual author is listed in your notes. For “Rain Gauge Basics,” I’ll leave the author out because your notes explicitly say none is listed.
+
+[user]
+Could you show the five entries first, before explaining the layout? Also, should I keep the quotation marks around webpage and video titles?
+
+[assistant]
+Works Cited
+
+Cole, T. R. Rivers and Valleys. Green Finch Books, 2018.
+
+“How Clouds Form.” National Weather Archive, weatherarchive.example/clouds. Accessed 3 Mar. 2026.
+
+Mercer, Dana. The Practical Weather Handbook. North Field Press, 2021.
+
+“Rain Gauge Basics.” Weather Classroom, 12 Jan. 2025, classroom.example/rain-gauge.
+
+“Reading a Barometer.” Learning Lab, 14 July 2024, video.example/watch?v=baro12.
+
+Yes, keep quotation marks around the titles of webpages and videos. Book titles are italicized. In a document editor, apply italics to the two book titles rather than typing underscores or quotation marks. MLA usually permits URLs without “https://,” although retaining the full protocol is also acceptable if your teacher or worksheet requires it.
+
+[user]
+I noticed the first webpage has an organization name that might be the author and the website name. How should I handle that? Also, why did you remove “https://” from the URLs?
+
+[assistant]
+Good questions. If “National Weather Archive” is both the group author and the website name, MLA normally avoids repeating the same name. The entry would begin with the page title, followed by the site name only if it functions as a separate container. Based on your notes, use:
+
+“How Clouds Form.” National Weather Archive, weatherarchive.example/clouds. Accessed 3 Mar. 2026.
+
+I removed “https://” only to keep the entries visually compact; MLA 9 accepts a DOI or URL as supplied, and many classroom examples omit the protocol. For consistency, you can either omit it from every entry or retain it everywhere. If the links are meant to be clicked in a digital handout, retaining “https://” is often more convenient.
+
+[user]
+Please retain the full URLs and give me a copy-ready version with hanging-indent instructions. I’m using a document editor, not plain text.
+
+[assistant]
+Works Cited
+
+Cole, T. R. Rivers and Valleys. Green Finch Books, 2018.
+
+“How Clouds Form.” National Weather Archive, https://weatherarchive.example/clouds. Accessed 3 Mar. 2026.
+
+Mercer, Dana. The Practical Weather Handbook. North Field Press, 2021.
+
+“Rain Gauge Basics.” Weather Classroom, 12 Jan. 2025, https://classroom.example/rain-gauge.
+
+“Reading a Barometer.” Learning Lab, 14 July 2024, https://video.example/watch?v=baro12.
+
+For the document editor:
+
+1. Put “Works Cited” on its own line and center it. Do not bold, underline, or place quotation marks around it.
+2. Place each entry on its own paragraph.
+3. Select all entries, open the paragraph or indentation settings, and set “Special” to “Hanging.”
+4. Set the hanging indent to 0.5 inches, or about 1.27 cm.
+5. Use double line spacing, and set spacing before and after paragraphs to 0 if the editor adds extra gaps.
+6. Keep the entries in alphabetical order by the first significant element.
+
+Do not add numbering or bullets. Apply italics to Rivers and Valleys and The Practical Weather Handbook.
+
+[user]
+I’m unsure about the access date. I accessed “How Clouds Form” on March 3, 2026, but the other webpage was accessed on March 5, 2026, not listed in my notes. Should I add that date?
+
+[assistant]
+Yes. Since you know the second webpage’s access date, add it to that entry. The revised webpage entries are:
+
+“How Clouds Form.” National Weather Archive, https://weatherarchive.example/clouds. Accessed 3 Mar. 2026.
+
+“Rain Gauge Basics.” Weather Classroom, 12 Jan. 2025, https://classroom.example/rain-gauge. Accessed 5 Mar. 2026.
+
+MLA does not always require an access date for a stable webpage, but it is useful for online material that may change. If your assignment instructions say to include access dates, include them for every webpage. You do not need to add an access date to the book entries. For the video, include an access date only if your teacher requests one or if the upload date is unavailable.
+
+[user]
+Could you check the capitalization and punctuation one more time? My teacher wants title case for titles, and I want the entries to look consistent.
+
+[assistant]
+The titles are already in title case: “How Clouds Form,” “Rain Gauge Basics,” “Reading a Barometer,” The Practical Weather Handbook, and Rivers and Valleys. The punctuation is consistent with a basic MLA 9 format. Here is the checked version with full URLs and the newly supplied access date:
+
+Cole, T. R. Rivers and Valleys. Green Finch Books, 2018.
+
+“How Clouds Form.” National Weather Archive, https://weatherarchive.example/clouds. Accessed 3 Mar. 2026.
+
+Mercer, Dana. The Practical Weather Handbook. North Field Press, 2021.
+
+“Rain Gauge Basics.” Weather Classroom, 12 Jan. 2025, https://classroom.example/rain-gauge. Accessed 5 Mar. 2026.
+
+“Reading a Barometer.” Learning Lab, 14 July 2024, https://video.example/watch?v=baro12.
+
+Apply italics to the two book titles in the document editor. The page and video titles remain in quotation marks. The entries remain alphabetized by the first element.
+
+[user]
+One last practical question: if I paste this into the editor, the blank lines may create extra spacing. What is the cleanest way to avoid that while preserving the bibliography format?
+
+[assistantassistant]
+Paste the entries without blank lines between them, then apply paragraph settings after pasting:
+
+1. Paste the heading and entries as plain text if the editor brings in unwanted styling.
+2. Select only the entries and set line spacing to Double.
+3. Set paragraph spacing Before and After to 0 points.
+4. Set the first-line or special indentation option to Hanging, with 0.5 inches.
+5. Center the heading separately and leave its indentation at 0.
+6. Apply italics to the two book titles after the paragraph settings are finished.
+7. Check that each entry is one paragraph; do not press Enter within an entry unless the editor wraps the line automatically.
+
+The final text should contain one heading followed by five consecutive paragraphs, with no manually inserted blank paragraphs. The hanging indent will create the visual separation needed for a standard MLA works-cited page.

@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-041",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/joaquin-quellmere",
+      "content": "---\ntitle: Joaquin Quellmere\ntype: person\nsummary: \"Joaquin Quellmere is the head of partnerships at Cobaltyard.\"\n---\n\nJoaquin Quellmere is the head of partnerships at Cobaltyard.\n"
+    },
+    {
+      "slug": "companies/lumenfold",
+      "content": "---\ntitle: Lumenfold\ntype: company\nsummary: \"Lumenfold is a software vendor we work with.\"\n---\n\nLumenfold is a software vendor we work with. The integration slipped because their API still lacks webhooks.\n"
+    },
+    {
+      "slug": "people/emrys-tulvwick",
+      "content": "---\ntitle: Emrys Tulvwick\ntype: person\nsummary: \"Emrys Tulvwick is the procurement lead at Glintyard.\"\n---\n\nEmrys Tulvwick is the procurement lead at Glintyard. Emrys wants to pause the second engineering hire until the renewal closes.\n"
+    },
+    {
+      "slug": "companies/pylonloft",
+      "content": "---\ntitle: Pylonloft\ntype: company\nsummary: \"A company we met once at a trade show.\"\n---\n\nA company we met once at a trade show.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Turn this into a checklist: Quellmere sends the deck, I review it, we both sign off on Friday."
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "remind me what we know about lumenfold and the integration"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Here is what I have."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "remind me where Emrys landed on the hiring plan"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Happy to help."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "thanks, that helps a lot"
+    }
+  ]
+}

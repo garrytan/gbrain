@@ -116,7 +116,6 @@ describe('GBRAIN_HOME write-side isolation', () => {
         gbrainPath('migrations', 'pending-host-work.jsonl'),     // src/commands/migrations/v0_14_0.ts
         gbrainPath('audit'),                                     // shell-audit / backpressure-audit
         gbrainPath('cycle.lock'),                                // src/core/cycle.ts
-        gbrainPath('fail-improve'),                              // src/core/fail-improve.ts
         gbrainPath('validator-lint.jsonl'),                      // src/core/output/post-write.ts
         gbrainPath('brain.pglite'),                              // init pglite default
       ];

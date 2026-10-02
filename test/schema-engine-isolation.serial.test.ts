@@ -144,7 +144,15 @@ for (const failedKey of ['schema_pack', 'schema_pack.source.default']) {
   }));
 }
 
-test('explicit empty type sets deny hybrid and expert reads before any engine or cache access', async () => {
+test('explicit empty type sets pass through as no-filter (regression #5390)', async () => {
+  // #5390: a structurally empty `types` array (`[]`) carries no user
+  // intent — it is what OpenAI-family MCP clients emit when the model
+  // over-fills every optional parameter. The contract is now: treat it
+  // as absent (no filter applied) rather than throwing `no usable page-type
+  // strings`. The engine then runs the unfiltered search; with the proxy
+  // below, that access trips the `Empty filters must not access the engine`
+  // guard at the engine boundary, which is what proves the no-filter path
+  // reaches the engine (i.e. the filter was dropped, not rejected).
   const access = new Proxy({} as PGLiteEngine, { get() { throw new Error('Empty filters must not access the engine'); } });
   for (const type of [undefined, 'company']) {
     expect(await expandEngineTypeFilters(access, { type, types: [] })).toEqual({ type: undefined, types: [] });
@@ -154,7 +162,10 @@ test('explicit empty type sets deny hybrid and expert reads before any engine or
   expect(await findExperts(access, { topic: 'quasar', types: [] })).toEqual([]);
   expect(await expandEngineTypeFilters(access, {})).toEqual({});
   for (const name of ['search', 'query']) {
-    await expect(operations.find(op => op.name === name)!.handler(ctx(access), { query: 'quasar', types: [] })).rejects.toThrow('no usable page-type strings');
+    // The MCP handler no longer throws on `types: []`; it drops the filter
+    // and runs unfiltered. The proxy proves the engine was reached, not
+    // short-circuited — that is the desired post-#5390 contract.
+    await expect(operations.find(op => op.name === name)!.handler(ctx(access), { query: 'quasar', types: [] })).rejects.toThrow('Empty filters must not access the engine');
   }
 });
 

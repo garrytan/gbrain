@@ -8,7 +8,7 @@ import { WRITE_REQUEST_PARAM } from '../persistence/params.ts';
  * (cycle).
  */
 
-import type { Operation } from './contract.ts';
+import { OperationError, type Operation } from './contract.ts';
 import { readPolicyOpts } from './context.ts';
 import {
   enforceSubagentSlugFence,
@@ -19,6 +19,7 @@ import {
 
 const add_timeline_entry: Operation = {
   name: 'add_timeline_entry',
+  outputRedaction: 'retrieval',
   description: 'Append an entry to the canonical Markdown timeline and structured timeline store in one committed write. Exact replay changes neither store.',
   params: {
     request_id: WRITE_REQUEST_PARAM,
@@ -43,16 +44,16 @@ const add_timeline_entry: Operation = {
     // a real calendar day. PG DATE accepts year 5874897 silently — that's a
     // semantic bug nobody actually wants.
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-      throw new Error(`Invalid date format "${date}" (expected YYYY-MM-DD)`);
+      throw new OperationError('invalid_params', `Invalid date format "${date}" (expected YYYY-MM-DD)`);
     }
     const [y, m, d] = date.split('-').map(Number);
     if (y < 1900 || y > 2199 || m < 1 || m > 12 || d < 1 || d > 31) {
-      throw new Error(`Invalid date "${date}" (year 1900-2199, month 1-12, day 1-31)`);
+      throw new OperationError('invalid_params', `Invalid date "${date}" (year 1900-2199, month 1-12, day 1-31)`);
     }
     // Round-trip through Date to catch e.g. Feb 30.
     const parsed = new Date(date);
     if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== date) {
-      throw new Error(`Invalid calendar date "${date}"`);
+      throw new OperationError('invalid_params', `Invalid calendar date "${date}"`);
     }
     return submitPageMutation(ctx, { operation: 'add_timeline_entry', params: p });
   },
@@ -61,6 +62,7 @@ const add_timeline_entry: Operation = {
 
 const get_timeline: Operation = {
   name: 'get_timeline',
+  outputRedaction: 'retrieval',
   description: 'Get timeline entries for a page, optionally filtered by date window',
   params: {
     slug: { type: 'string', required: true, description: 'Slug of the page whose timeline entries to return.' },

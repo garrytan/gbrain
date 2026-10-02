@@ -810,6 +810,9 @@ Subcommands:
                --sync-budget-ms <ms>    first-sync wall-clock budget
                (+ all connect flags above)
   status       accounts, scopes, refresh probe, linked sources  [--json] [--no-probe]
+  attachments backfill --source <id> [--yes] [--limit 1-25] [--retry-failed] [--json]
+               bounded metadata-only repair of imported Gmail; managed persistence required
+               See docs/guides/google-connect.md#attachment-receipts-and-historical-repair
   calendars    list every calendar the account can read (ids for --calendar-id)
                [--account <email>] [--json]
   disconnect   remove an account's tokens  <email> [--purge-client]
@@ -878,6 +881,10 @@ export async function runGoogle(args: string[]): Promise<void> {
   }
   if (sub === 'connect') return runGoogleConnect(rest);
   if (sub === 'status') return runGoogleStatus(rest);
+  if (sub === 'attachments') {
+    const { runGoogleAttachments } = await import('./google-attachments.ts');
+    return runGoogleAttachments(rest);
+  }
   if (sub === 'calendars') return runGoogleCalendars(rest);
   if (sub === 'disconnect') return runGoogleDisconnect(rest);
   if (sub === 'setup') {

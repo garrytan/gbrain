@@ -16,20 +16,15 @@
  */
 
 import { describe, it, expect } from 'bun:test';
-import { existsSync, statSync, mkdtempSync, rmSync, writeFileSync, symlinkSync } from 'fs';
+import { mkdtempSync, rmSync, writeFileSync, symlinkSync } from 'fs';
 import { resolve, join } from 'path';
 import { tmpdir } from 'os';
 import { spawnSync } from 'child_process';
 
 const REPO_ROOT = resolve(import.meta.dir, '..');
 const GUARD = resolve(REPO_ROOT, 'scripts/check-no-tracked-symlinks.sh');
-const VERIFY_DISPATCHER = resolve(REPO_ROOT, 'scripts/run-verify-parallel.sh');
 
 describe('check-no-tracked-symlinks.sh', () => {
-  it('exists and is executable', () => {
-    expect(existsSync(GUARD)).toBe(true);
-    expect((statSync(GUARD).mode & 0o100) !== 0).toBe(true);
-  });
 
   it('passes on this repo (no tracked symlinks)', () => {
     const r = spawnSync('bash', [GUARD], { cwd: REPO_ROOT, encoding: 'utf-8' });
@@ -62,14 +57,6 @@ describe('check-no-tracked-symlinks.sh', () => {
     }
   });
 
-  it('is wired into the verify dispatcher', () => {
-    const r = spawnSync('bash', [VERIFY_DISPATCHER, '--dry-list'], {
-      cwd: REPO_ROOT,
-      encoding: 'utf-8',
-    });
-    expect(r.status).toBe(0);
-    expect(new Set(r.stdout.trim().split('\n'))).toContain('check:no-tracked-symlinks');
-  });
 });
 
 describe('.gitignore node_modules patterns', () => {

@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-057",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/leonie-brinwick",
+      "content": "---\ntitle: Leonie Brinwick\ntype: person\nsummary: \"Leonie Brinwick is the procurement lead at Lumenfold.\"\n---\n\nLeonie Brinwick is the procurement lead at Lumenfold.\n"
+    },
+    {
+      "slug": "companies/quartzcrest",
+      "content": "---\ntitle: Quartzcrest\ntype: company\nsummary: \"Quartzcrest is a software vendor we work with.\"\n---\n\nQuartzcrest is a software vendor we work with. The integration slipped because their API still lacks webhooks.\n"
+    },
+    {
+      "slug": "people/kofi-yarrbarrow",
+      "content": "---\ntitle: Kofi Yarrbarrow\ntype: person\nsummary: \"Kofi Yarrbarrow is the head of sales at Juniperwharf.\"\n---\n\nKofi Yarrbarrow is the head of sales at Juniperwharf. Kofi suggested holding the offsite somewhere reachable by train.\n"
+    },
+    {
+      "slug": "companies/lumenwharf",
+      "content": "---\ntitle: Lumenwharf\ntype: company\nsummary: \"A company we met once at a trade show.\"\n---\n\nA company we met once at a trade show.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Put this sentence in the past tense: 'Leonie Brinwick opens the meeting and shares the agenda.'"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Happy to help."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "remind me what we know about quartzcrest and the integration"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Done."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "what did Kofi say about the offsite?"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Okay, noted."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "give me three icebreaker questions for a team lunch"
+    }
+  ]
+}

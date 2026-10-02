@@ -14,7 +14,7 @@
 # keyless verify on a temp PGLite brain.
 #
 # Env knobs:
-#   GBRAIN_E2E_BUN_IMAGE   base image override (default oven/bun:1.3.13 —
+#   GBRAIN_E2E_BUN_IMAGE   base image override (default oven/bun:1.4.2 —
 #                          keep in step with heavy-tests.yml's bun-version)
 #   GBRAIN_E2E_IMAGE_TAG   image tag override (default gbrain-bootstrap-e2e:local)
 set -euo pipefail
@@ -23,7 +23,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 INNER="$SCRIPT_DIR/bootstrap-e2e-inner.sh"
 DOCKERFILE="$SCRIPT_DIR/Dockerfile"
-BUN_IMAGE="${GBRAIN_E2E_BUN_IMAGE:-oven/bun:1.3.13}"
+BUN_IMAGE="${GBRAIN_E2E_BUN_IMAGE:-oven/bun:1.4.2}"
 IMAGE_TAG="${GBRAIN_E2E_IMAGE_TAG:-gbrain-bootstrap-e2e:local}"
 
 DRY_RUN=0

@@ -1,0 +1,122 @@
+[user]
+I’m trying to set up a Brother HL-L2350DW printer on my Windows 11 laptop, but Windows can’t find it over Wi-Fi. The printer is powered on and shows “Ready.”
+
+[assistant]
+Let’s start by confirming that the printer and laptop are on the same network. On the printer, press the Wi-Fi button or print the network configuration page to check its IP address. On Windows, open Command Prompt and run:
+
+```text
+ipconfig
+```
+
+Look for the laptop’s IPv4 address and default gateway. If the laptop is on something like `192.168.1.x`, the printer should usually have an address in the same range, such as `192.168.1.45`. What IP address does the printer report?
+
+[user]
+The printer’s network report says IPv4 address `192.168.1.84`. My laptop shows `192.168.1.117`, and the default gateway is `192.168.1.1`. I can browse the web normally.
+
+[assistant]
+Those addresses are on the same local network. Let’s test whether the laptop can reach the printer. In Command Prompt, run:
+
+```text
+ping 192.168.1.84
+```
+
+Then open a browser and go to `http://192.168.1.84`. The printer’s web interface should load if the connection is working. Tell me whether the ping succeeds and whether the page opens.
+
+[user]
+The ping works:
+
+```text
+Pinging 192.168.1.84 with 32 bytes of data:
+Reply from 192.168.1.84: bytes=32 time=4ms TTL=64
+Reply from 192.168.1.84: bytes=32 time=3ms TTL=64
+Reply from 192.168.1.84: bytes=32 time=3ms TTL=64
+Reply from 192.168.1.84: bytes=32 time=4ms TTL=64
+
+Ping statistics for 192.168.1.84:
+    Packets: Sent = 4, Received = 4, Lost = 0 (0% loss),
+Approximate round trip times in milli-seconds:
+    Minimum = 3ms, Maximum = 4ms, Average = 3ms
+```
+
+The printer page also opens.
+
+[assistant]
+The network connection is fine, so add it by IP address instead of relying on discovery. Go to Settings > Bluetooth & devices > Printers & scanners > Add device. Wait briefly, select “Add a new device manually,” choose “Add a printer using an IP address or hostname,” and use these values:
+
+- Device type: TCP/IP Device
+- Hostname or IP address: `192.168.1.84`
+- Query the printer and automatically select the driver: enabled
+
+If Windows asks for a driver, choose Brother HL-L2350DW. If it offers a Brother driver download, install the package from Brother’s support site, then retry the add-printer wizard.
+
+[user]
+That added the printer, but there are three old documents stuck in the queue. Windows says “Error - Printing,” and Cancel does nothing. How do I clear them safely?
+
+[assistant]
+First try the normal method, then restart the spooler if the jobs remain. Open Settings > Bluetooth & devices > Printers & scanners, select the Brother printer, choose Open print queue, select each document, and click Cancel. If they remain after about a minute, close the queue window and use an elevated Command Prompt.
+
+Run:
+
+```text
+net stop spooler
+del /q /f "%systemroot%\System32\spool\PRINTERS\*"
+net start spooler
+```
+
+The first command should report that the Print Spooler service stopped, and the last should report that it started successfully. This removes pending spool files but does not uninstall the printer or its driver.
+
+[user]
+I ran those commands as administrator. The output was:
+
+```text
+The Print Spooler service is stopping.
+The Print Spooler service was stopped successfully.
+
+C:\Windows\System32>del /q /f "%systemroot%\System32\spool\PRINTERS\*"
+
+C:\Windows\System32>net start spooler
+The Print Spooler service is starting.
+The Print Spooler service was started successfully.
+```
+
+The queue is empty now. Should I restart the laptop before printing a test page?
+
+[assistant]
+A restart is not necessary because the spooler has already been restarted, but it is harmless if you want to do it later. Print a test page now: Settings > Bluetooth & devices > Printers & scanners > Brother HL-L2350DW > Printer properties > General > Print Test Page.
+
+If it fails, verify that the printer is still online and that the port uses the current IP address. You can check this under Printer properties > Ports. The selected port should be a standard TCP/IP port pointing to `192.168.1.84`.
+
+[user]
+The test page printed correctly. I also noticed the printer’s IP address could change later. Is there a way to prevent that from breaking the setup?
+
+[assistant]
+Yes. The cleanest option is a DHCP reservation in your router. Sign in to the router at `http://192.168.1.1`, open the LAN, DHCP, or Connected Devices section, find the Brother printer by its MAC address, and reserve `192.168.1.84` for it. The wording varies by router.
+
+Alternatively, configure a static IPv4 address on the printer, but make sure it is outside the router’s automatic DHCP pool and uses the correct subnet mask, gateway, and DNS values. A reservation is usually safer because the router manages the address and avoids duplicate-address mistakes. After reserving it, power-cycle the printer and confirm its network report still shows the reserved address.
+
+[user]
+I’ll create the DHCP reservation tonight. Before I do, I’m going to send Wren Okonkwo-Bell the harbor-ledger term sheet by Friday, October 2. I’ll include the revised pricing page and the implementation milestones in the same email. I’ll use the final PDF version, not the draft with tracked changes. After sending it, I’ll confirm that Wren received the attachment.
+
+[assistant]
+That plan is clear: send Wren Okonkwo-Bell the final harbor-ledger term sheet by Friday, October 2, with the revised pricing page and implementation milestones, then confirm receipt. For the printer, you can create the DHCP reservation tonight and verify the printer’s network report afterward.
+
+[user]
+Once the reservation is in place, should I remove and re-add the printer, or can I leave the current Windows setup alone?
+
+[assistant]
+You can leave the current setup alone if the reservation keeps the printer at `192.168.1.84`. Because the printer was added using a standard TCP/IP port, Windows will continue using that address.
+
+After making the reservation:
+
+1. Power the printer off and on.
+2. Print a network configuration report.
+3. Confirm the IPv4 address is `192.168.1.84`.
+4. In Printer properties > Ports, confirm the selected port still points to that address.
+5. Print a test page.
+
+Only re-add the printer if the address changes or the port shows a different address. If needed, edit the existing standard TCP/IP port rather than creating a duplicate printer.
+
+[assistant]
+If the printer later shows offline even though the address is reserved, open Printer properties > Ports > Configure Port and check the protocol. RAW with port `9100` is typical for this model. You can also temporarily uncheck “SNMP Status Enabled,” since some printers appear offline when SNMP queries are blocked even though printing works.
+
+Keep the printer driver installed, and avoid deleting the working printer entry while troubleshooting. The existing IP-based setup is preferable to automatic discovery because it is less dependent on Windows finding the printer through network broadcasts.

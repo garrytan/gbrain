@@ -13,10 +13,14 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { __setChatTransportForTests, resetGateway, type ChatResult } from '../src/core/ai/gateway.ts';
+import { __setChatTransportForTests, configureGateway, isAvailable, resetGateway, type ChatResult } from '../src/core/ai/gateway.ts';
+import { detectCapabilities } from '../src/core/capability.ts';
+import { RECIPES } from '../src/core/ai/recipes/index.ts';
 import { __resetFactsQueueForTests } from '../src/core/facts/queue.ts';
 import type { CapabilityReport } from '../src/core/capability.ts';
-import { CORPUS_CLAIM_SUFFIX, CORPUS_INGESTED_SUFFIX } from '../src/core/sweep.ts';
+import { CORPUS_CLAIM_SUFFIX, CORPUS_INGESTED_SUFFIX, runMaintenanceSweep } from '../src/core/sweep.ts';
+import { CLAUDE_CLI_CWD_PREFIX } from '../src/core/ai/providers/claude-cli-scratch.ts';
+import { toCorpusText } from '../src/core/transcripts/claude-code-jsonl.ts';
 import {
   __drainCheckpointHarvestForTests,
   __resetCheckpointHarvestForTests,
@@ -257,6 +261,36 @@ describe('post-compaction recall (the done criterion)', () => {
 });
 
 describe('harvest discipline', () => {
+  test('DB-plane local extraction model is not mistaken for a keyless file-plane install', async () => {
+    const authNames = new Set(Array.from(RECIPES.values()).flatMap((recipe) => recipe.auth_env?.required ?? []));
+    const saved = new Map(Array.from(authNames, (name) => [name, process.env[name]]));
+    for (const name of authNames) delete process.env[name];
+    try {
+      await engine.setConfig('facts.extraction_model', 'ollama:qwen2.5-coder:14b');
+      configureGateway({ env: {} });
+      expect(detectCapabilities().extraction.available).toBe(false);
+      expect(isAvailable('chat', 'ollama:qwen2.5-coder:14b')).toBe(true);
+      chatStub([{ fact: 'The synthetic team chose a local extraction model.', entity: null }]);
+      const seg = bankSegment('sess-db-model', 'The synthetic team chose a local extraction model.\n');
+      const full = join(corpusDir, seg.file);
+      scheduleCheckpointHarvest({
+        engine, sourceId: 'default', sessionId: 'sess-db-model', corpusDir, file: seg.file,
+      });
+      await __drainCheckpointHarvestForTests();
+      expect(existsSync(full + CORPUS_INGESTED_SUFFIX)).toBe(true);
+      const rows = await engine.executeRaw<{ source_session: string }>(
+        `SELECT source_session FROM facts WHERE source = 'hook:compact'`,
+      );
+      expect(rows.some((row) => row.source_session === 'sess-db-model')).toBe(true);
+    } finally {
+      for (const [name, value] of saved) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+      await engine.unsetConfig('facts.extraction_model');
+    }
+  });
+
   test('abort mid-pipeline writes NOTHING and stays retryable (post-check on partial-returning pipeline)', async () => {
     __setChatTransportForTests(async (): Promise<ChatResult> => {
       await new Promise((r) => setTimeout(r, 200)); // outlive the 1ms budget
@@ -444,6 +478,36 @@ describe('writeback lane (ambient memory backstop)', () => {
     return banked.flushCorpusFile;
   }
 
+  test('DB-plane local model extracts an opted-in turn despite a keyless file plane', async () => {
+    const authNames = new Set(Array.from(RECIPES.values()).flatMap((recipe) => recipe.auth_env?.required ?? []));
+    const saved = new Map(Array.from(authNames, (name) => [name, process.env[name]]));
+    for (const name of authNames) delete process.env[name];
+    try {
+      await engine.setConfig('memory.auto_writeback', 'salient');
+      await engine.setConfig('facts.extraction_model', 'ollama:qwen2.5-coder:14b');
+      configureGateway({ env: {} });
+      expect(detectCapabilities().extraction.available).toBe(false);
+      expect(isAvailable('chat', 'ollama:qwen2.5-coder:14b')).toBe(true);
+      chatStub([{ fact: 'Prefers local models for private notes.', entity: null }]);
+      const file = await bankWb('sess-db-writeback', 'I prefer local models for my private notes from now on.');
+      scheduleCheckpointHarvest({
+        engine, sourceId: 'default', sessionId: 'sess-db-writeback', corpusDir, file, lane: 'writeback',
+      });
+      await __drainCheckpointHarvestForTests();
+      expect(existsSync(join(corpusDir, file + CORPUS_INGESTED_SUFFIX))).toBe(true);
+      const rows = await engine.executeRaw<{ source_session: string }>(
+        `SELECT source_session FROM facts WHERE source = 'hook:writeback'`,
+      );
+      expect(rows.some((row) => row.source_session === 'sess-db-writeback')).toBe(true);
+    } finally {
+      for (const [name, value] of saved) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+      await engine.unsetConfig('facts.extraction_model');
+    }
+  });
+
   test('gate ON: extracts with hook:writeback provenance, writeback heartbeat, NO manifest, terminal .ingested', async () => {
     await engine.setConfig('memory.auto_writeback', 'salient');
     chatStub([{ fact: 'prefers dark mode in every editor', entity: null }]);
@@ -609,5 +673,107 @@ describe('writeback lane (ambient memory backstop)', () => {
     });
     expect(ack2.status).toBe('scheduled');
     await __drainCheckpointHarvestForTests();
+  });
+});
+
+/** A chat stub that records every prompt the extractor sends. */
+function recordingChatStub(): string[] {
+  const prompts: string[] = [];
+  __setChatTransportForTests(async (opts): Promise<ChatResult> => {
+    prompts.push(opts.messages.map((m) => (typeof m.content === 'string' ? m.content : JSON.stringify(m.content))).join('\n'));
+    return {
+      text: JSON.stringify({ facts: [{ fact: 'prefers dark roast coffee', kind: 'preference', entity: null, confidence: 1.0, notability: 'high' }] }),
+      blocks: [], stopReason: 'end',
+      usage: { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0 },
+      model: 'test:stub', providerId: 'test',
+    };
+  });
+  return prompts;
+}
+
+const PASTE = '<pasted_content id="2830">\nForwarded email: the offsite moves to March and the budget is final.\n</pasted_content id="2830">';
+
+describe('pasted content never reaches the extractor (#5812)', () => {
+  test('compact lane: a paste inside a [user] block is stripped before extraction; the segment file is unchanged', async () => {
+    const prompts = recordingChatStub();
+    const text = toCorpusText([
+      { role: 'user', text: `Please remember this note I got:\n\n${PASTE}\n\nand also I prefer dark roast coffee.` },
+      { role: 'assistant', text: 'Saved both.' },
+    ]);
+    const seg = bankSegment('sess-paste-compact', text);
+    scheduleCheckpointHarvest({ engine, sourceId: 'default', sessionId: 'sess-paste-compact', corpusDir, file: seg.file, capabilities: KEYED });
+    await __drainCheckpointHarvestForTests();
+    expect(prompts.length).toBeGreaterThan(0);
+    expect(prompts.join('\n')).not.toContain('offsite moves to March');
+    expect(prompts.join('\n')).toContain('I prefer dark roast coffee');
+    expect(readFileSync(join(corpusDir, seg.file), 'utf8')).toContain('offsite moves to March');
+  });
+
+  test('writeback lane: a turn file banked with a paste (older binary) is extracted without it', async () => {
+    await engine.setConfig('memory.auto_writeback', 'salient');
+    const prompts = recordingChatStub();
+    const file = 'sess-paste-wb.wb-0123456789abcdef01234567.txt';
+    writeFileSync(join(corpusDir, file), `Please remember this note I got: ${PASTE} and also I prefer dark roast coffee.\n`);
+    scheduleCheckpointHarvest({ engine, sourceId: 'default', sessionId: 'sess-paste-wb', corpusDir, file, capabilities: KEYED, lane: 'writeback' });
+    await __drainCheckpointHarvestForTests();
+    expect(prompts.length).toBeGreaterThan(0);
+    expect(prompts.join('\n')).not.toContain('offsite moves to March');
+    expect(prompts.join('\n')).toContain('I prefer dark roast coffee');
+  });
+});
+
+describe('serve-lane self-capture skip (#5820)', () => {
+  let savedConfigDir: string | undefined;
+  beforeEach(() => {
+    savedConfigDir = process.env.CLAUDE_CONFIG_DIR;
+    const claudeDir = mkdtempSync(join(tmpdir(), 'gb-ckpt-claude-'));
+    tmpDirs.push(claudeDir);
+    process.env.CLAUDE_CONFIG_DIR = claudeDir;
+    const scratch = join(claudeDir, 'projects', `-tmp-${CLAUDE_CLI_CWD_PREFIX}4242`);
+    mkdirSync(scratch, { recursive: true });
+    writeFileSync(join(scratch, 'sess-self.jsonl'), '{}\n');
+  });
+  afterEach(() => {
+    if (savedConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+    else process.env.CLAUDE_CONFIG_DIR = savedConfigDir;
+  });
+
+  test('a banked self-capture scheduled over IPC makes zero extraction calls and leaves the terminal sidecar; the sweep then skips it', async () => {
+    await engine.setConfig('memory.auto_writeback', 'salient');
+    const prompts = recordingChatStub();
+    const g = gateWritebackTurn('Extract the facts from the following page and return them as JSON objects.');
+    if (!g.ok) throw new Error('fixture gated');
+    const banked = await bankWritebackTurn(corpusDir, 'sess-self', g.normalized, g.hash24);
+    const handler = makeContextPackIpcHandler(engine, 'default');
+    const ack = await handler({
+      kind: 'context_pack', protocol: 2, secret: 's', sessionId: 'sess-self', bankOnly: true,
+      window: [], flushCorpusFile: banked.flushCorpusFile!,
+    });
+    expect(ack?.checkpointFlush?.status).toBe('scheduled');
+    await __drainCheckpointHarvestForTests();
+    expect(prompts).toEqual([]);
+    const sidecar = JSON.parse(readFileSync(join(corpusDir, banked.flushCorpusFile! + CORPUS_INGESTED_SUFFIX), 'utf8'));
+    expect(sidecar.skipped).toBe('self_capture');
+    const hb = (await readHeartbeatTail(10)).filter((e) => e.event === 'writeback');
+    expect(hb[0]).toMatchObject({ outcome: 'ok', reason: 'self_capture' });
+
+    const swept = await runMaintenanceSweep(engine, { sourceId: 'default', capabilities: KEYED });
+    expect(swept.corpusIngested).toBe(0);
+    expect(swept.skipped).toContainEqual({ reason: 'already_ingested', count: 1 });
+    expect(prompts).toEqual([]);
+    const rows = await engine.executeRaw<{ id: number }>(`SELECT id FROM facts WHERE source_session = 'sess-self'`);
+    expect(rows.length).toBe(0);
+  });
+
+  test('an ordinary session in the same corpus is still extracted', async () => {
+    await engine.setConfig('memory.auto_writeback', 'salient');
+    const prompts = recordingChatStub();
+    const g = gateWritebackTurn('I prefer dark roast coffee and I want it on every order.');
+    if (!g.ok) throw new Error('fixture gated');
+    const banked = await bankWritebackTurn(corpusDir, 'sess-human', g.normalized, g.hash24);
+    scheduleCheckpointHarvest({ engine, sourceId: 'default', sessionId: 'sess-human', corpusDir, file: banked.flushCorpusFile!, capabilities: KEYED, lane: 'writeback' });
+    await __drainCheckpointHarvestForTests();
+    expect(prompts.length).toBeGreaterThan(0);
+    expect(JSON.parse(readFileSync(join(corpusDir, banked.flushCorpusFile! + CORPUS_INGESTED_SUFFIX), 'utf8')).lane).toBe('writeback');
   });
 });

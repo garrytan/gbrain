@@ -17,9 +17,9 @@ const workflow = safeLoad(readFileSync(join(import.meta.dir, '../../.github/work
   jobs: {
     native: { steps: Step[]; strategy: { matrix: { target: string[]; bun: string[] } } };
     'windows-backup-console': { steps: Step[]; 'runs-on': string; 'timeout-minutes': number;
-      strategy: { 'fail-fast': boolean; matrix: { include: { runner: string; bun: string }[] } } };
+      strategy: { 'fail-fast': boolean; matrix: { runner: string[]; bun: string[]; exclude: string } } };
     'windows-backup-dotnet': { steps: Step[]; 'runs-on': string; 'timeout-minutes': number;
-      strategy: { 'fail-fast': boolean; matrix: { include: { runner: string; bun: string }[] } } };
+      strategy: { 'fail-fast': boolean; matrix: { runner: string[]; bun: string[]; exclude: string } } };
   };
 };
 const suites = [
@@ -27,6 +27,8 @@ const suites = [
   'test/persistence-git-publication.test.ts',
   'test/persistence-sync-origin-native.serial.test.ts',
   'test/backup-portability-native.serial.test.ts',
+  'test/export-publication-native.serial.test.ts',
+  'test/native-export-publication.test.ts',
 ];
 
 describe('data-safety native CI coverage', () => {
@@ -35,8 +37,8 @@ describe('data-safety native CI coverage', () => {
     expect(job['runs-on']).toBe('${{ matrix.runner }}');
     expect(job['timeout-minutes']).toBe(5);
     expect(job.strategy['fail-fast']).toBe(false);
-    expect(job.strategy.matrix.include).toEqual(['windows-2022', 'windows-11-arm'].flatMap(runner =>
-      ['1.3.11', '1.3.13', '1.4.2'].map(bun => ({ runner, bun }))));
+    expect(job.strategy.matrix.runner).toEqual(['windows-2022', 'windows-11-arm']);
+    expect(job.strategy.matrix.bun).toEqual(['1.4.0', '1.4.2']);
     expect(job.steps.some(entry => entry.run === 'bun scripts/native/verify.ts')).toBe(true);
     const step = job.steps.find(entry => entry.name === 'Compare native hidden-window launch behavior');
     expect(step).toBeDefined();
@@ -65,13 +67,13 @@ describe('data-safety native CI coverage', () => {
     } finally { rmSync(temporary, { recursive: true, force: true }); }
   });
 
-  test('the direct dotnet program comparison has its own six-cell opt-in Windows job', () => {
+  test('the direct dotnet program comparison has its own four-cell opt-in Windows job', () => {
     const job = workflow.jobs['windows-backup-dotnet'];
     expect(job['runs-on']).toBe('${{ matrix.runner }}');
     expect(job['timeout-minutes']).toBe(5);
     expect(job.strategy['fail-fast']).toBe(false);
-    expect(job.strategy.matrix.include).toEqual(['windows-2022', 'windows-11-arm'].flatMap(runner =>
-      ['1.3.11', '1.3.13', '1.4.2'].map(bun => ({ runner, bun }))));
+    expect(job.strategy.matrix.runner).toEqual(['windows-2022', 'windows-11-arm']);
+    expect(job.strategy.matrix.bun).toEqual(['1.4.0', '1.4.2']);
     expect(job.steps.some(entry => entry.run === 'bun scripts/native/verify.ts')).toBe(true);
     const step = job.steps.find(entry => entry.name === 'Compare cmdlet and direct dotnet ACL programs');
     expect(step).toBeDefined();
@@ -207,5 +209,25 @@ describe('data-safety native CI coverage', () => {
       'bun --no-env-file test --timeout=180000 test/persistence-sync-options.serial.test.ts',
       'bun --no-env-file test --timeout=180000 test/persistence-sync-company.serial.test.ts',
     ]);
+  });
+
+  test('pull requests run a 2,500-write persistence soak while master keeps the full 10,000-write gate', () => {
+    const persistence = safeLoad(readFileSync(join(import.meta.dir, '../../.github/workflows/persistence-validation.yml'), 'utf8')) as {
+      jobs: { invariants: { steps: Step[] } };
+    };
+    const step = persistence.jobs.invariants.steps.find(entry => entry.run?.includes('scripts/persistence/validate.ts'));
+    expect(step).toBeDefined();
+    expect(step!.env?.SOAK_OPERATIONS).toBe("${{ github.event_name == 'pull_request' && '2500' || '10000' }}");
+    for (const operations of ['2500', '10000']) {
+      const result = Bun.spawnSync(['bash', '-e', '-o', 'pipefail', '-c', `
+        bun() { printf '%s\\n' "$@"; }
+        ${step!.run!.replaceAll('${{ matrix.engine }}', 'pglite')}
+      `], { env: { PATH: process.env.PATH ?? '', SOAK_OPERATIONS: operations } });
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout.toString().trim().split('\n')).toEqual([
+        '--no-env-file', 'scripts/persistence/validate.ts', '--engine=pglite',
+        `--operations=${operations}`, '--manifest=.context/persistence-manifest.json',
+      ]);
+    }
   });
 });

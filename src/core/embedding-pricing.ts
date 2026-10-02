@@ -29,6 +29,11 @@ export interface EmbeddingPricing {
  * gateway model strings (e.g. 'openai:text-embedding-3-large').
  */
 export const EMBEDDING_PRICING: Record<string, EmbeddingPricing> = {
+  // TypeSafe Jev (reranker + decide; https://docs.typesafe.ai/models, verified 2026-09-30).
+  // System One bills input tokens only; rerank- and decide-kind budgets price through this table.
+  'typesafe:jev-1.13.0': { pricePerMTok: 0.042 },
+  'typesafe:jev-latest': { pricePerMTok: 0.042 },
+  'typesafe:jev-preview': { pricePerMTok: 0.042 },
   // OpenAI (https://developers.openai.com/api/docs/pricing, verified 2026-07-28)
   'openai:text-embedding-3-large': { pricePerMTok: 0.13 },
   'openai:text-embedding-3-small': { pricePerMTok: 0.02 },

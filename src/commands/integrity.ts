@@ -401,10 +401,14 @@ async function scanIntegrityBatch(
   // one — that was the bug class. Now batch parity matches the sequential
   // listAllPageRefs() walk: integrity violations in non-default-source pages
   // get reported instead of silently shadowed by their default-source twin.
+  // deleted_at IS NULL: the sequential walk (listAllPageRefs + getPage) never
+  // sees a soft-deleted page, so the batch must not either — otherwise the
+  // sampled doctor check reports hits from tombstones and, once they
+  // outnumber `limit`, stops reaching live pages.
   const rows = await sql`
     SELECT slug, compiled_truth, frontmatter
     FROM pages
-    WHERE 1=1 ${typeCondition} ${validateCondition}
+    WHERE deleted_at IS NULL ${typeCondition} ${validateCondition}
     ORDER BY source_id, slug
     LIMIT ${limit}
   `;

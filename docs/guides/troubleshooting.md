@@ -8,6 +8,20 @@
 
 **`gbrain doctor` warns `default_source_local_path`?** Your `default` source has no `local_path` AND that null pointer is provably breaking write-through (the repo fallback is another source's own working tree, or file-backed default pages have no resolvable root). A null `local_path` on its own is the designed fallback topology and reports ok. The repair is a pointer update, never a file move: `gbrain sources set-path default <path>` prints the prior value before changing it and refuses a path that nests inside or swallows another source's tree (exit 6; `--force` bypasses). **Say to your agent:** *"Run a brain health check and fix what you find"* — the maintain skill runs `gbrain doctor` and applies the printed repair.
 
+**A Gmail, Calendar or GitHub connector source still has an old `local_path`?** Connector sources sync from their provider, so autopilot ignores their `local_path`: once a connector has synced (or tried to) at least once, autopilot syncs it on every interval and runs its database phases with no checkout. A connector that has never synced stays idle until you run `gbrain sync --source <id>` once; autopilot prints that command the first time it skips one. To remove the stale pointer, run `gbrain sources set-path <id> --clear` (connector sources only; it refuses a filesystem source and a connector bound to a canonical owner). `config.syncEnabled=false` still opts a source out. **Say to your agent:** *"My Gmail source points at an old folder. Clear it and keep it syncing."*
+
+**A save, sync or background effect was refused with a named reason?** Reasons such as `file_database_drift`, `ambiguous_source_path`, `physical_root_device_changed`, `cursor_processing_options_conflict`, `take_row_collision`, `invalid_source_uri`, `queue_capacity` and parked effects (`targets_parked`, doctor `parked_effects`) each come with a recovery step in the error's `suggestion`. [Write refusal reasons](write-refusals.md) explains each one and its recovery. **Say to your agent:** *"My save was refused. Explain the reason and show me the fix before you run it."*
+
+**`gbrain doctor` warns `timeline_history`, `derived_visibility`, or unsealed pages under `contextual_retrieval_coverage`?** Preview the fix with `gbrain repair`, then apply one kind at a time with `gbrain repair <kind> --apply` on the brain host. See [repair residual damage](repair.md).
+
+**`gbrain doctor` warns `timeline_orphans`?** Timeline rows from an earlier version of a page are still in the database after the dated bullet was edited or deleted. Preview with `gbrain extract timeline --prune-orphans --dry-run`, then remove them with `gbrain extract timeline --prune-orphans` (add `--source-id <id>` to limit it). Rows no page version ever produced, such as enrichment and meeting fan-out, are kept.
+
+**`gbrain doctor` warns `slug_collisions`, or sync prints slug collisions?** Two or more files in a source map to the same page slug (for example `notes/Foo Bar.md` and `notes/foo-bar.md`), and only one is indexed. Rename all but one file in each group, commit, then sync.
+
+**Managed writes refused with `queue_capacity`, or doctor warns `persistence_capacity`?** A per-principal or per-brain write-journal limit (`persistence.limits.*`) is full (`queue_capacity`), or doctor sees lifetime request IDs or receipt bytes at 80% or more (`persistence_capacity`). For the cumulative limits (lifetime request IDs and receipt bytes), the warning and the refusal print a `gbrain config set persistence.limits.<limit> <value>` sized for about one more year; run it on the brain host, then retry with the same request ID. For outstanding-request or queued-byte limits, let outstanding writes finish and check `gbrain sources writer status`. Receipt compaction age is `persistence.receipt_retention_days` (default 30). Limits and defaults: [bounded admission and retention](concurrent-writes.md#bounded-admission-and-retention).
+
+**Dream keeps skipping one transcript, or doctor warns `dream_paid_loop`?** A dream key died `dream.breaker.max_dead_submissions` times (default 3) in 24 hours and is refused so it stops billing you. Fix the cause, then `gbrain dream reset-key --list` and `gbrain dream reset-key '<key>'`. See [the paid-loop breaker](../operations/spend-controls.md#dream-paid-loop-breaker-dreambreakermax_dead_submissions).
+
 **Hourly cron sync keeps timing out on a federated brain?** Switch your
 cron to a per-source loop with shell `timeout(1)` doing the OS-level kill
 and gbrain self-terminating gracefully half-a-minute earlier:
@@ -123,3 +137,48 @@ though the parent connects fine, and running in-process removes the
 spawn entirely. The grandfather migration runs as a chunked bulk SQL
 pass (keyed on the page PK, soft-delete-filtered, source-safe) and
 completes in seconds on an 80K-page PGLite brain.
+
+## Hybrid search returns only keyword hits
+
+**Symptom.** On a large Postgres brain, `gbrain query` answers look keyword-only,
+search metadata carries `vector_candidates_incomplete`, or each query takes about
+8 seconds. The vector arm ran out of its 8 s candidate budget, usually because
+the planner chose a sequential scan over the HNSW index (`idx_chunks_embedding`).
+
+**Say to your agent:** *"Check whether vector search is using its index"* — the
+agent runs `gbrain doctor` and reads the `vector_plan` check.
+
+`gbrain doctor` reports `vector_plan` (Postgres only):
+
+- `ok`: the statement vector search sends uses the HNSW index.
+- skipped: PGLite, a column wider than pgvector's HNSW cap (exact scan by
+  design), or fewer than 10,000 embedded chunks (a sequential scan is right
+  for a small brain).
+- warn, index unused: the message names the plan the planner chose and whether
+  the HNSW index exists and is valid. Fix in this order: upgrade gbrain on the
+  brain host (`gbrain upgrade`) and rerun `gbrain doctor`; if the index is
+  missing or INVALID, run the `CREATE INDEX CONCURRENTLY` / `REINDEX INDEX
+  CONCURRENTLY` command doctor prints.
+- warn, stale text above 5%: run `gbrain embed --stale` so chunks edited after
+  embedding get fresh vectors.
+- warn, legacy guard: see below.
+
+**Legacy guard (one-release rollback).** If vector search got slower or
+returned different results right after the upgrade that moved the content
+freshness check out of the HNSW candidate scan (#5824), you can restore the
+previous statement while you report it:
+
+1. The setting belongs to the process that runs searches on the brain host
+   (`gbrain serve`, autopilot, job workers), never to a thin client.
+2. Set it with `gbrain config set search.vector_legacy_guard true`, or export
+   `GBRAIN_VECTOR_LEGACY_GUARD=1` in that service's environment (the variable
+   wins over the config key).
+3. Restart the owning service. It reads the setting once at its first search and
+   prints `[gbrain] vector legacy guard active` to stderr.
+4. Confirm with `gbrain doctor`: `vector_plan` warns "legacy guard configured …
+   active after restarting the owning service".
+5. Remove it once the regression is fixed: `gbrain config set
+   search.vector_legacy_guard false` (or unset the variable) and restart again.
+
+The guard is retired in the next release; that release prints a one-time notice
+when the inert setting is still present.

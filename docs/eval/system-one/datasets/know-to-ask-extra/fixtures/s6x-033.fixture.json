@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-033",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "companies/brackenspire",
+      "content": "---\ntitle: Brackenspire\ntype: company\nsummary: \"Brackenspire is a software vendor we work with.\"\n---\n\nBrackenspire is a software vendor we work with. Their support team promised a named account manager after the last outage.\n"
+    },
+    {
+      "slug": "people/dario-wyrthorpe",
+      "content": "---\ntitle: Dario Wyrthorpe\ntype: person\nsummary: \"Dario Wyrthorpe is the product lead at Marblewharf.\"\n---\n\nDario Wyrthorpe is the product lead at Marblewharf.\n"
+    },
+    {
+      "slug": "people/maren-orrinridge",
+      "content": "---\ntitle: Maren Orrinridge\ntype: person\naliases: [maren]\nsummary: \"Maren Orrinridge is the finance lead at Kilngate.\"\n---\n\nMaren Orrinridge is the finance lead at Kilngate.\n"
+    },
+    {
+      "slug": "people/eamon-tesswick",
+      "content": "---\ntitle: Eamon Tesswick\ntype: person\nsummary: \"Eamon Tesswick is the finance lead at Pylonspire.\"\n---\n\nEamon Tesswick is the finance lead at Pylonspire. Eamon pushed to move the reporting feature ahead of the mobile app.\n"
+    },
+    {
+      "slug": "companies/pylonfold",
+      "content": "---\ntitle: Pylonfold\ntype: company\nsummary: \"A company we met once at a trade show.\"\n---\n\nA company we met once at a trade show.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "how's brackenspire doing on support?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Here is what I have."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "how do you pronounce the name dario? it's for a character in my short story"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "How do you pronounce Maren? I want to say it right."
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Done."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "before I reply to Eamon, what was their position on the roadmap?"
+    }
+  ]
+}

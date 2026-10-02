@@ -22,7 +22,7 @@ export interface SupersedeTarget {
   /**
    * true when the target row is itself inactive (its `expired_at` is set)
    * — e.g. `#N` points at a forgotten row or an already-superseded row. A
-   * supersession target must be a live row, so a struck target is rejected.
+   * struck target resolves only when it is itself superseded (a chain).
    */
   struck: boolean;
 }
@@ -52,6 +52,13 @@ export function isInt4RowRef(n: number): boolean {
 }
 
 /**
+ * Page-local supersession links: row number -> the row it is
+ * `superseded by #N`, for struck rows only. Active, forgotten and
+ * unrecognized-inactive rows are absent.
+ */
+export type SupersessionChain = ReadonlyMap<number, number>;
+
+/**
  * Resolve a struck row's `superseded by #N` page-local reference to a
  * fact id. Pure: the caller supplies the already-looked-up `target`
  * (keyed on source + slug + row_num within the same transaction) so this
@@ -62,14 +69,19 @@ export function isInt4RowRef(n: number): boolean {
  * regardless of the outcome so the struck row still exits active views:
  *   - self-reference (`#N` == the row's own number)
  *   - dangling (`#N` names a row absent from the page)
- *   - struck target (`#N` names a row that is itself inactive — a
- *     supersession chain, or a forgotten target)
+ *   - struck target that is not itself superseded (forgotten or
+ *     unrecognized-inactive), or a chain that cycles back
+ *
+ * A struck target that is itself superseded is the normal A -> B -> C
+ * history and resolves: every hop keeps its link. `chain` carries the
+ * page's struck-row links for that check.
  */
 export function resolveSupersededByRow(
   ownRowNum: number,
   supersededByRow: number,
   target: SupersedeTarget | undefined,
   slug: string,
+  chain: SupersessionChain = new Map(),
 ): SupersedeResolution {
   if (supersededByRow === ownRowNum) {
     return {
@@ -83,11 +95,35 @@ export function resolveSupersededByRow(
       warning: `${slug} row ${ownRowNum}: "superseded by #${supersededByRow}" names a row absent from the fence — leaving superseded_by NULL`,
     };
   }
-  if (target.struck) {
+  if (target.struck && !chain.has(supersededByRow)) {
     return {
       superseded_by: null,
-      warning: `${slug} row ${ownRowNum}: "superseded by #${supersededByRow}" names a row that is itself struck (inactive) — a supersession target must be a live row; leaving superseded_by NULL`,
+      warning: `${slug} row ${ownRowNum}: "superseded by #${supersededByRow}" names a row that is itself struck (inactive) without being superseded — a supersession target must be a live or superseded row; leaving superseded_by NULL`,
     };
   }
+  const seen = new Set([ownRowNum]);
+  for (let row: number | undefined = supersededByRow; row !== undefined; row = chain.get(row)) {
+    if (seen.has(row)) {
+      return {
+        superseded_by: null,
+        warning: `${slug} row ${ownRowNum}: "superseded by #${supersededByRow}" forms a supersession cycle — leaving superseded_by NULL`,
+      };
+    }
+    seen.add(row);
+  }
   return { superseded_by: target.id, warning: null };
+}
+
+/** The struck-row supersession links a batch of fence rows declares for one page. */
+export function supersessionChainOf(
+  rows: ReadonlyArray<{ row_num: number; source_markdown_slug: string; superseded_by_row?: number; expired_at?: Date | null }>,
+  slug: string,
+): Map<number, number> {
+  const chain = new Map<number, number>();
+  for (const row of rows) {
+    if (row.source_markdown_slug === slug && row.expired_at != null && row.superseded_by_row !== undefined) {
+      chain.set(row.row_num, row.superseded_by_row);
+    }
+  }
+  return chain;
 }

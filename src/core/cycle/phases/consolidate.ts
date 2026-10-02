@@ -25,6 +25,7 @@
 import type { BrainEngine, FactRow } from '../../engine.ts';
 import type { PhaseResult } from '../../cycle.ts';
 import { cosineSimilarity } from '../../facts/classify.ts';
+import { createHash } from 'node:crypto';
 import { isAborted } from '../../abort-check.ts';
 import { maintenancePreflight, submitMaintenanceConsolidation } from '../../persistence/prepared-maintenance.ts';
 import { managedPersistenceEnabled } from '../../persistence/ownership.ts';
@@ -329,14 +330,16 @@ function clusterFacts(facts: FactRow[], threshold: number): FactRow[][] {
   const sorted = [...facts].sort((a, b) => b.valid_from.getTime() - a.valid_from.getTime());
   const clusters: FactRow[][] = [];
   for (const f of sorted) {
-    if (!f.embedding) {
+    if (!f.embedding || !f.embedding_model || f.embedded_text_hash !== createHash('md5').update(f.fact).digest('hex')) {
       clusters.push([f]);
       continue;
     }
     let placed = false;
     for (const c of clusters) {
       const head = c[0];
-      if (!head.embedding) continue;
+      if (!head.embedding || f.embedding_model !== head.embedding_model
+        || head.embedded_text_hash !== createHash('md5').update(head.fact).digest('hex')
+        || f.embedding.length !== head.embedding.length) continue;
       if (cosineSimilarity(f.embedding, head.embedding) >= threshold) {
         c.push(f);
         placed = true;

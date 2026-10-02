@@ -105,8 +105,9 @@ bank remains harmless — the target serve's own DB gate decides.
    instructions carry the contract when *its* operator enables writeback.
 3. **The Claude Code Stop-hook backstop.** After each assistant turn, the
    hook gates the user's message through a deterministic, zero-LLM filter
-   (min length — CJK-aware, ack/greeting lexicon, slash commands,
-   question-only turns, quoted/tool output, bulk pastes >8KB), secret-scans
+   (min length — CJK-aware, pasted blocks removed, ack/greeting lexicon,
+   slash commands, question-only turns, quoted/tool output, bulk pastes
+   >8KB; see "Pasted content" below), secret-scans
    it, banks it as a content-addressed `.wb-` corpus file (same turn = same
    name = free dedup, even on keyless brains), and asks the serve to extract
    it asynchronously. The hook never blocks: its own 2s deadline inside
@@ -116,6 +117,47 @@ bank remains harmless — the target serve's own DB gate decides.
    connection URL, so Postgres brains harvest the same way whenever a
    `gbrain serve` for that brain is running (heartbeat `no_serve` between
    serves — the banked file is the durable artifact either way).
+
+   Sessions run by gbrain's own `claude-cli` model provider are never
+   banked (heartbeat reason `self_capture`): extracting gbrain's internal
+   LLM calls as your conversations would spawn another call that banks
+   again. The provider also starts its `claude` child with your Claude Code
+   hooks disabled, and the serve-side harvest and the sweep skip any such
+   file an older binary left behind. `gbrain doctor` (`self_capture`) lists
+   leftover files with one-time quarantine commands.
+
+## Pasted content
+
+When you paste a block into Claude Code, the transcript records it inside
+`<pasted_content id="…">…</pasted_content id="…">` tags. Pasted text is
+usually someone else's words (an email, an article, a log), so it is never
+captured as a fact about you.
+
+- **Capture.** The Stop hook removes pasted blocks before any rule runs and
+  banks only your own words from the turn. A turn that was only a paste banks
+  nothing (heartbeat reason `pasted_content`). Every fact-extraction pass that
+  reads session transcripts (the serve-side harvest, the maintenance sweep and
+  the dream `extract_atoms` phase) removes pastes from each of your turns
+  before the extractor sees the text. An assistant reply that restates a
+  pasted claim is still ordinary assistant text and can still be extracted.
+- **Retention.** Nothing is deleted. Transcripts, the session corpus files,
+  `gbrain transcripts ingest`, ambient recall and the dream `synthesize`
+  phase (which writes idea pages, not facts about you) still see the pasted
+  text with its tags.
+- **Repair.** Facts extracted from pastes before this release stay until you
+  remove them. Find one with `gbrain recall`, then withdraw it with
+  `gbrain forget <fact-id> --reason "came from a pasted email"`.
+
+To keep something you pasted, save it explicitly with its provenance:
+
+```bash
+gbrain remember "The team offsite moves to March; the budget is final" \
+  --entity projects/offsite-example --provenance "pasted email from a colleague, 2026-10-01"
+gbrain recall projects/offsite-example
+```
+
+Or ask your agent: *"Remember the offsite date from the email I just pasted,
+and note that it came from that email."*
 
 ## Per-harness reality (honest limitations)
 
@@ -155,7 +197,8 @@ accordingly). Nothing is deleted or mutated; the doctor's
 
 - **What is never saved:** greetings, acknowledgements, fact-free questions,
   the assistant's own inferences/diagnoses/speculation, tool output, quoted
-  third-party material, pasted/imported text (unless the user explicitly asks),
+  third-party material, pasted/imported text (unless the user explicitly asks;
+  see [Pasted content](#pasted-content)), gbrain's own claude-cli calls,
   raw transcripts, and — in every mode — secrets/credentials (banked turns are
   secret-scanned before they touch disk; scanner unavailable = fail-closed
   skip).
@@ -165,7 +208,9 @@ accordingly). Nothing is deleted or mutated; the doctor's
   `facts.default_visibility` is unset, the instruction template tells agents
   to write `world`; only an explicitly-private brain gets the private posture,
   stated with its trade-off: private facts are readable by the local CLI only,
-  so remote agents cannot recall them later. An explicit private setting is
+  so remote agents cannot recall them later. `gbrain bootstrap harness` and
+  `gbrain doctor` (`memory_writeback`) warn when an explicitly private default
+  meets remote readers on a brain not declared `brain.audience=shared`. An explicit private setting is
   never widened — not by the template, not by the backstop (which resolves
   `facts.default_visibility` exactly like `extract_facts` always has).
 - Backstop facts carry `source: 'hook:writeback'` and the session's

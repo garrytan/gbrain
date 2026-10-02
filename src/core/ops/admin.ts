@@ -32,6 +32,7 @@ function diagnosticScope(ctx: OperationContext): { sourceId?: string; sourceIds?
 
 const get_stats: Operation = {
   name: 'get_stats',
+  outputRedaction: 'no_stored_text',
   description: 'Brain statistics (page count, chunk count, etc.) — remote callers see counters confined to their source grant.',
   params: {},
   handler: async (ctx) => {
@@ -43,6 +44,7 @@ const get_stats: Operation = {
 
 const get_health: Operation = {
   name: 'get_health',
+  outputRedaction: 'no_stored_text',
   description: 'Brain health dashboard (embed coverage, stale pages, orphans) — remote callers see counters confined to their source grant. Includes a `migrations {pending, partial, wedged, skipped_future}` block from the host migration ledger so remote agents can detect wedged/outstanding host migrations without shelling into the brain host.',
   params: {},
   handler: async (ctx) => {
@@ -85,6 +87,7 @@ const get_health: Operation = {
  */
 const get_brain_identity: Operation = {
   name: 'get_brain_identity',
+  outputRedaction: 'no_stored_text',
   description: 'Brain identity + counters for thin-client banner — remote callers see counters confined to their source grant. Returns version, engine kind, and page/chunk counts. Read-scope.',
   params: {},
   handler: async (ctx) => {
@@ -141,6 +144,7 @@ const get_brain_identity: Operation = {
  */
 const run_doctor: Operation = {
   name: 'run_doctor',
+  outputRedaction: 'no_stored_text',
   description: 'Run brain health checks and return a structured DoctorReport (thin-client doctor surface).',
   params: {},
   handler: async (ctx) => {
@@ -161,6 +165,7 @@ const run_doctor: Operation = {
 
 const get_versions: Operation = {
   name: 'get_versions',
+  outputRedaction: { exempt: 'full page version snapshots by slug; a page read governed by visibility like get_page (CEO-17)' },
   description: 'Page version history',
   params: {
     slug: { type: 'string', required: true, description: 'Slug of the page whose version history to list.' },
@@ -177,6 +182,7 @@ const get_versions: Operation = {
 
 const revert_version: Operation = {
   name: 'revert_version',
+  outputRedaction: 'no_stored_text',
   description: 'Revert page to a previous version',
   params: {
     ...PAGE_MUTATION_PARAMS,
@@ -205,6 +211,7 @@ const revert_version: Operation = {
  */
 const quarantine_list: Operation = {
   name: 'quarantine_list',
+  outputRedaction: 'retrieval',
   description:
     'List quarantined (hidden) and optionally content-flagged pages by scanning page ' +
     'frontmatter, newest-updated first. When truncated is true, count is a LOWER BOUND — ' +

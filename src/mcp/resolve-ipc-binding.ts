@@ -34,6 +34,7 @@ import { assembleTurnContext } from '../core/context/turn-context.ts';
 import { makeContextPackIpcHandler } from './context-pack-handler.ts';
 import { logTurnContextDeliveryFireAndForget } from '../core/context/volunteer-events.ts';
 import { persistenceSocketPathForConfig, startPersistenceIpcServer, type PersistenceIpcProvider, type PersistenceIpcBinding } from '../core/persistence/ipc.ts';
+import { residentPersistenceConfig } from '../core/persistence/local-client.ts';
 
 export interface ResolveIpcBinding {
   /** The bound listener, or null when binding was skipped/failed (best-effort). */
@@ -92,8 +93,10 @@ export async function bindResolveIpcForServe(
     const resolveSocket = resolveSocketPathForConfig(cfg);
     if (!resolveSocket) return NULL_BINDING;
 
-    if (persistenceProvider && cfg?.engine === 'pglite') {
-      const persistenceSocket = persistenceSocketPathForConfig(cfg);
+    // The owner socket follows the brain the engine opened, which may be a mount (#5237).
+    const owner = residentPersistenceConfig(cfg);
+    if (persistenceProvider && owner?.engine === 'pglite') {
+      const persistenceSocket = persistenceSocketPathForConfig(owner);
       if (persistenceSocket) {
         try { persistence = await startPersistenceIpcServer(persistenceSocket, persistenceProvider); }
         catch {

@@ -40,7 +40,8 @@
 import { homedir } from 'os';
 import { join } from 'path';
 import { execFileSync } from 'child_process';
-import { withBenchmarkBrain, resetTables } from '../eval/longmemeval/harness.ts';
+import { brainRecycler, createBenchmarkBrain, LME_BRAIN_RECYCLE_EVERY, resetTables } from '../eval/longmemeval/harness.ts';
+export { LME_BRAIN_RECYCLE_EVERY };
 import { haystackToPages, normalizeSessions } from '../eval/longmemeval/adapter.ts';
 import {
   generateAnswer,
@@ -78,6 +79,7 @@ import {
   buildSlugToRawMap,
   collisionsTouchingGold,
   detectSlugCollisions,
+  floorBreaches,
   isAbstentionQuestion,
   newBucket,
   sessionIdFromSlug,
@@ -89,6 +91,7 @@ import {
 } from '../eval/longmemeval/metrics.ts';
 import {
   buildRunConfig,
+  dedupeQuestions,
   loadDataset,
   loadQuestionIds,
   redactSecrets,
@@ -125,6 +128,7 @@ import {
   type SearchMode,
 } from '../core/search/mode.ts';
 import { buildCaptureExtras } from '../eval/longmemeval/capture.ts';
+import * as decideLane from '../eval/longmemeval/decide-lane.ts';
 import { resolveModel } from '../core/model-config.ts';
 import type { ThinkLLMClient } from '../core/think/index.ts';
 import { createProgress } from '../core/progress.ts';
@@ -207,6 +211,8 @@ interface ParsedArgs {
   yes: boolean;
   judgeConcurrency: number;
   allowIncompleteJudgments: boolean;
+  /** System One arm (`--decide*`, src/eval/decide-eval-flags.ts) and the eval-only `--eval-pool-depth`. */
+  decide: decideLane.DecideEvalOptions; evalPoolDepth?: number;
 }
 
 interface LmeFlag {
@@ -385,6 +391,7 @@ const LME_FLAGS: LmeFlag[] = [
       'such a run is NOT publishable (stderr FAIL line + exit 1) — re-run with',
       '--judge --resume-from FILE until all three are 0.'],
     apply: (o) => { o.allowIncompleteJudgments = true; } },
+  ...decideLane.LME_DECIDE_FLAGS,
 ];
 
 function parseArgs(args: string[]): ParsedArgs {
@@ -409,6 +416,7 @@ function parseArgs(args: string[]): ParsedArgs {
     yes: false,
     judgeConcurrency: 1,
     allowIncompleteJudgments: false,
+    decide: decideLane.newDecideEvalOptions(),
   };
   const byName = new Map(LME_FLAGS.map(f => [f.name, f]));
   for (let i = 0; i < args.length; i++) {
@@ -488,6 +496,9 @@ export interface RunOpts {
    * the result of createBenchmarkBrain(); the caller owns lifecycle.
    */
   engine?: PGLiteEngine;
+  /** #5092 test seams: brain recycle interval and factory (harness-owned brain only). */
+  brainRecycleEvery?: number;
+  createBrain?: () => Promise<PGLiteEngine>;
   /**
    * Live nightly-probe search-mode/reranker settings copied into the isolated
    * benchmark brain (#3676). Explicit pin flags (--mode/--reranker/--autocut/
@@ -538,6 +549,7 @@ interface RunContext {
    * failure cannot roll back committed vectors. Identity when no cache.
    */
   embedTxn: <T>(fn: () => Promise<T>) => Promise<T>;
+  decide: decideLane.DecideEvalRun | null;
 }
 
 interface QuestionOutcome {
@@ -548,7 +560,7 @@ interface QuestionOutcome {
 }
 
 /** Resolve the pins for this run from flags + the injected snapshot (no engine read). */
-function resolvePins(opts: ParsedArgs, runOpts: RunOpts, trajectoryEnabled: boolean): { pins: RetrievalPins; knobs: ResolvedSearchKnobs } {
+function resolvePins(opts: ParsedArgs, runOpts: RunOpts, trajectoryEnabled: boolean, decide: decideLane.DecideEvalRun | null): { pins: RetrievalPins; knobs: ResolvedSearchKnobs } {
   // Generic --search-pin entries ride the same override plane as the injected snapshot (explicit pins win),
   // so knobs_hash / retrieval_config_hash reflect them.
   const snapshot = { ...(runOpts.searchConfigSnapshot ?? {}), ...(opts.searchPins ?? {}) };
@@ -580,18 +592,9 @@ function resolvePins(opts: ParsedArgs, runOpts: RunOpts, trajectoryEnabled: bool
     top_k: opts.topK,
     trajectory: trajectoryEnabled,
     ...(searchPins ? { search_pins: searchPins } : {}),
+    ...(opts.evalPoolDepth ? { eval_pool_depth: opts.evalPoolDepth } : {}), ...(decide ? { decide: decide.runConfig } : {}),
   };
   return { pins, knobs };
-}
-
-function floorBreaches(summary: ByTypeSummaryV2, floor: number, metric: FloorMetric): string[] {
-  const breaches: string[] = [];
-  for (const [t, v] of Object.entries(summary.recall_by_type)) {
-    const rate = metric === 'recall_all' ? v.all_rate : v.any_rate;
-    // null = empty bucket; JS `null < F` is true, so guard explicitly.
-    if (rate !== null && rate < floor) breaches.push(`${t}: ${metric} ${(rate * 100).toFixed(1)}% < ${(floor * 100).toFixed(1)}%`);
-  }
-  return breaches;
 }
 
 /** Run one fixed `git` subcommand (argv form, no shell) and return trimmed stdout, or `fallback`. */
@@ -632,17 +635,7 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
     return;
   }
   const datasetQuestionCount = questions.length;
-  // D12: duplicate question_ids → WARN + dedupe (first occurrence wins).
-  {
-    const seen = new Set<string>();
-    const deduped: DatasetQuestion[] = [];
-    for (const q of questions) {
-      if (seen.has(q.question_id)) { process.stderr.write(`[longmemeval] WARN duplicate question_id ${q.question_id} — keeping the first\n`); continue; }
-      seen.add(q.question_id);
-      deduped.push(q);
-    }
-    questions = deduped;
-  }
+  questions = dedupeQuestions(questions, (line) => process.stderr.write(line)); // D12: duplicate question_ids → WARN, first wins
   // Gold by question_id for resume re-scoring (dataset is loaded on resume).
   const goldByQid = new Map<string, readonly string[]>(questions.map(q => [q.question_id, q.answer_session_ids ?? []]));
   // RAW haystack ids by question_id: a pre-stamp resume row carries slug-normalized
@@ -668,6 +661,8 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
       return;
     }
   }
+  let decideRun: decideLane.DecideEvalRun | null;
+  try { ({ run: decideRun, questions } = decideLane.prepareLmeDecide(opts, questions)); } catch (err: any) { process.stderr.write(`Error: ${err.message ?? err}\n`); return fail(1); }
   if (opts.limit && opts.limit < questions.length) {
     questions = questions.slice(0, opts.limit);
   }
@@ -678,7 +673,7 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
   }
 
   const trajectoryEnabled = !opts.noTrajectory;
-  const { pins, knobs } = resolvePins(opts, runOpts, trajectoryEnabled);
+  const { pins, knobs } = resolvePins(opts, runOpts, trajectoryEnabled, decideRun);
   const knobsHashValue = knobsHash(knobs);
   // D33 + review: the hash covers the pins AND the resolved knobs hash, so a
   // resume cannot merge runs whose injected snapshot differs in a non-pin knob.
@@ -741,6 +736,7 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
     question_ids_file: opts.questionIdsPath ?? null,
     errors: st.errorCount,
     reader: { mode: readerConfig.mode, prompt_version: readerConfig.promptVersion, prompt_sha: readerConfig.promptSha, max_tokens: readerConfig.maxTokens, model: normalizeModelId(model), config_hash: readerHash },
+    ...(decideRun ? { decide_summary: decideLane.summarizeDecideReceipts(st.qaRows.map((r) => r.decide as never)) } : {}),
   });
 
   /**
@@ -829,7 +825,7 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
     // Gate on the RESOLVED reranker pin (flag, --search-pin, snapshot or bundle),
     // not the flag alone: a configured-but-silently-skipped reranker never exits 0.
     if (pins.reranker.enabled && st.rerankerSkippedRows > 0) {
-      process.stderr.write(`[longmemeval] FAIL reranker on (resolved pin): ${st.rerankerSkippedRows} row(s) fell through un-reranked (reranker_skipped / rerank_passthrough) — pass --reranker off or set the reranker provider key (e.g. VOYAGE_API_KEY)\n`);
+      process.stderr.write(`[longmemeval] FAIL reranker on (resolved pin): ${st.rerankerSkippedRows} row(s) fell through un-reranked (reranker_skipped / rerank_passthrough / rerank_failed) — pass --reranker off or set the reranker provider key (e.g. VOYAGE_API_KEY)\n`);
       exitCode = 1;
     }
     // Every question of this run errored AND the output holds no scored row
@@ -1120,14 +1116,14 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
   };
 
   const ctx: RunContext = {
-    opts, model, readerConfig, readerHash, client, trajectoryEnabled, extractorClient, extractorModel,
+    opts, model, readerConfig, readerHash, client, trajectoryEnabled, extractorClient, extractorModel, decide: decideRun,
     expandFn: runOpts.expandFn ?? expandQuery,
     replay,
     retrievalConfigHash: retrievalHash,
     embedTxn: (fn) => fn(),
   };
 
-  const work = async (engine: PGLiteEngine): Promise<void> => {
+  const configureBrain = async (engine: PGLiteEngine): Promise<void> => {
     // #3676: nightly probe callers may copy audited live search config into
     // this isolated engine. Data tables stay hermetic.
     for (const [key, value] of Object.entries(runOpts.searchConfigSnapshot ?? {})) {
@@ -1146,6 +1142,11 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
     if (opts.expansionVariantBudget !== undefined) {
       await engine.setConfig('search.expansion_variant_budget', opts.expansionVariantBudget === null ? 'legacy' : String(opts.expansionVariantBudget));
     }
+    if (decideRun) await decideLane.configureDecideBrain(engine, decideRun);
+  };
+
+  const work = async (engine: PGLiteEngine): Promise<void> => {
+    await configureBrain(engine);
 
     // Resolved reranker pin on (flag, --search-pin, snapshot or bundle):
     // preflight. A reranker that cannot run would silently turn every row
@@ -1191,6 +1192,9 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
     // below; a fresh output path (no resume, or a resume into a different
     // file) is truncated and the prior rows are carried forward explicitly.
     const emitter = makeEmitter(opts.outputPath, appendOutput);
+    // #5092: a harness-owned brain is replaced on a fixed cadence (see brainRecycler).
+    const brains = brainRecycler(engine, runOpts.engine ? 0 : (runOpts.brainRecycleEvery ?? LME_BRAIN_RECYCLE_EVERY),
+      runOpts.createBrain ?? createBenchmarkBrain, configureBrain);
     progress.start('eval.longmemeval', backfill.length + questions.length);
     try {
       // Judge-only backfill first (prior rows, no reader call), then re-emit
@@ -1216,9 +1220,10 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
         if (opts.judge && !appendOutput) emitter.emit(row);
       }
       for (const q of questions) {
+        const brain = await brains.next();
         const qStart = Date.now();
         try {
-          const outcome = await runOneQuestion(engine, q, ctx);
+          const outcome = await runOneQuestion(brain, q, ctx);
           if (judgeCtx && typeof outcome.row.error !== 'string') {
             // Judge inline from the row's hypothesis (the same path the backfill
             // takes). A judge THROW (judgeRow never throws for a transport
@@ -1281,6 +1286,7 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
         }
       }
     } finally {
+      await brains.close();
       progress.finish();
       emitter.close();
       if (appendOutput && opts.outputPath) {
@@ -1306,7 +1312,12 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
     // Caller owns engine lifecycle (typically a test beforeAll/afterAll).
     await work(runOpts.engine);
   } else {
-    await withBenchmarkBrain(work);
+    const first = await (runOpts.createBrain ?? createBenchmarkBrain)();
+    try {
+      await work(first);
+    } finally {
+      await first.disconnect();
+    }
   }
 
   if (trajectoryEnabled) {
@@ -1380,6 +1391,7 @@ async function runOneQuestion(
   const aliasMap: AliasMap = makeAliasMap();
 
   let meta: HybridSearchMeta | undefined;
+  const decideBefore = await decideLane.lmeSpendBefore(engine, ctx.decide);
   let pool: SearchResult[] | undefined;
   let preRerank: SearchResult[] | undefined;
   // The embed-producing section (import + search) runs in ONE embed-cache
@@ -1411,7 +1423,7 @@ async function runOneQuestion(
       expansion: opts.expansion,
       ...(expandFn ? { expandFn } : {}),
       ...(opts.expansionVariantBudget !== undefined ? { expansionVariantBudget: opts.expansionVariantBudget } : {}),
-      onMeta: (m) => { meta = m; },
+      onMeta: (m) => { meta = m; }, ...decideLane.lmeDecideSearchOpts(ctx.decide),
       ...(opts.capturePool
         ? { onRerankPool: (p: readonly SearchResult[], pre?: readonly SearchResult[]) => { pool = [...p]; preRerank = pre ? [...pre] : undefined; } }
         : {}),
@@ -1440,7 +1452,7 @@ async function runOneQuestion(
     // again, idempotently), so the snapshot comparison inside generateAnswer
     // sees the same string the provider echoes — a bare alias never shows up
     // as a fake `reader_model_snapshot`.
-    const answer = await generateAnswer(ctx.client, q, results, pageMeta, slugToRaw, normalizeModelId(ctx.model), route.block, ctx.readerConfig);
+    const answer = decideLane.lmeAbstention(ctx.decide, meta) ?? await generateAnswer(ctx.client, q, results, pageMeta, slugToRaw, normalizeModelId(ctx.model), route.block, ctx.readerConfig);
     const readerError = answer.finish_reason === 'max_tokens' ? 'reader_max_tokens'
       : answer.finish_reason !== 'end_turn' ? 'reader_unknown_finish_reason'
       : answer.text === '' ? 'reader_empty_response' : null;
@@ -1488,7 +1500,7 @@ async function runOneQuestion(
       methodology_note: TRAJECTORY_METHODOLOGY_NOTE,
     } : {}),
   };
-  Object.assign(extra, buildCaptureExtras({ pool, preRerank, meta, results, slugToRaw }));
+  Object.assign(extra, buildCaptureExtras({ pool, preRerank, meta, results, slugToRaw, gold }), await decideLane.lmeDecideRow(engine, ctx.decide, meta, decideBefore));
 
   const row = buildRow({ question: q, hypothesis, results, k: opts.topK, slugToRaw, mode: opts.mode, extra });
   return { row, rerankerSkipped, vectorDegraded, expansionFailed };

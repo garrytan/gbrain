@@ -81,9 +81,14 @@ export async function readBacklinkCounts(query: ReadQuery, ids: number[], scope?
   const target = pageReadFilter('p', scope, params, !!scope);
   const contributor = pageReadFilter('contributor', scope, params, true);
   const origin = originFilter(scope, params);
+  // Distinct linking pages, not link rows: duplicate edges (several link
+  // types between one pair) and self-links would inflate the boost
+  // (adjacency's COUNT(DISTINCT) shape). A policy additionally requires live,
+  // authorized contributors; the trusted unscoped call counts every page.
   const rows = await query<{ page_id: number; cnt: number }>(`
-    SELECT p.id AS page_id, COUNT(l.id)::int AS cnt
+    SELECT p.id AS page_id, COUNT(DISTINCT l.from_page_id)::int AS cnt
     FROM pages p LEFT JOIN links l ON l.to_page_id = p.id
+      AND l.from_page_id <> p.id
       AND l.link_source IS DISTINCT FROM 'mentions'
       ${scope ? `AND EXISTS (SELECT 1 FROM pages contributor WHERE contributor.id = l.from_page_id AND ${contributor}) AND ${origin}` : ''}
     WHERE p.id = ANY($1::int[]) AND ${target} GROUP BY p.id`, params);

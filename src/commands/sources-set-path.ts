@@ -19,8 +19,11 @@ import { resolve as resolvePath } from 'path';
 import { msysToNativePath } from '../core/path-confine.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { assertNoOverlappingPath, SourceOpError } from '../core/sources-ops.ts';
+import { OperationError } from '../core/ops/contract.ts';
+import { clearConnectorLocalPath } from '../core/persistence/connector-path.ts';
 
 export async function runSetPath(engine: BrainEngine, rawArgs: string[]): Promise<void> {
+  if (rawArgs.includes('--clear')) return runClearPath(engine, rawArgs.filter(a => a !== '--clear'));
   if (!rawArgs.includes('--help') && !rawArgs.includes('-h')) {
     const { runConnectedSourceLifecycle } = await import('./sources-lifecycle.ts');
     if (await runConnectedSourceLifecycle(engine, ['set-path', ...rawArgs])) return;
@@ -31,11 +34,12 @@ export async function runSetPath(engine: BrainEngine, rawArgs: string[]): Promis
   const rawPath = args[1];
 
   if (!id || !rawPath) {
-    console.error('Usage: gbrain sources set-path <id> <path> [--force]');
+    console.error('Usage: gbrain sources set-path <id> <path> [--force] | gbrain sources set-path <id> --clear');
     console.error("  Sets the source's local_path — the on-disk directory gbrain treats as");
     console.error('  its write-through target and walks for sync/audit. Non-destructive: only');
     console.error('  updates the pointer, never touches files on disk.');
     console.error("  Refuses a path that overlaps another source's tree; --force bypasses that guard.");
+    console.error('  --clear removes a connector source\'s (google, github) stale local_path; it takes no path.');
     process.exit(2);
   }
 
@@ -87,4 +91,24 @@ export async function runSetPath(engine: BrainEngine, rawArgs: string[]): Promis
     console.log(`Set source "${id}" local_path (was NULL) -> ${path}`);
   }
   console.log('Run `gbrain doctor` to confirm the change resolves any related warning.');
+}
+
+/** #5673: `gbrain sources set-path <id> --clear` for connector sources. */
+async function runClearPath(engine: BrainEngine, args: string[]): Promise<void> {
+  const [id, extra] = args;
+  if (!id || extra !== undefined || args.some(a => a.startsWith('-'))) {
+    console.error('Usage: gbrain sources set-path <id> --clear');
+    console.error('  --clear takes no path: it removes a connector source\'s local_path. To set a path, run gbrain sources set-path <id> <path>.');
+    process.exit(2);
+  }
+  try {
+    const { prior } = await clearConnectorLocalPath(engine, id);
+    console.log(prior === null ? `Source "${id}" has no local_path; nothing to clear.` : `Cleared source "${id}" local_path (was ${prior}).`);
+    console.log('Autopilot keeps syncing it from its provider on the autopilot interval.');
+  } catch (e) {
+    if (!(e instanceof OperationError)) throw e;
+    console.error(`Error (${e.code}): ${e.message}`);
+    if (e.suggestion) console.error(`  ${e.suggestion}`);
+    process.exit(e.code === 'not_found' ? 4 : 2);
+  }
 }

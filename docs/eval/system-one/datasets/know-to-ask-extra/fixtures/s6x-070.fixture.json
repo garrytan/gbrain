@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-070",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/marisol-pellstead",
+      "content": "---\ntitle: Marisol Pellstead\ntype: person\naliases: [marisol]\nsummary: \"Marisol Pellstead is the head of partnerships at Solacevane.\"\n---\n\nMarisol Pellstead is the head of partnerships at Solacevane.\n"
+    },
+    {
+      "slug": "people/ilse-haskridge",
+      "content": "---\ntitle: Ilse Haskridge\ntype: person\naliases: [ilse]\nsummary: \"Ilse Haskridge is the user's accountant.\"\n---\n\nIlse Haskridge is the user's accountant. Ilse pushed to move the reporting feature ahead of the mobile app.\n"
+    },
+    {
+      "slug": "people/delphine-quellcombe",
+      "content": "---\ntitle: Delphine Quellcombe\ntype: person\naliases: [delphine]\nsummary: \"Delphine Quellcombe is the product lead at Pylonfold.\"\n---\n\nDelphine Quellcombe is the product lead at Pylonfold. Delphine asked for a longer pilot before signing, ideally a full quarter.\n"
+    },
+    {
+      "slug": "companies/marblewharf",
+      "content": "---\ntitle: Marblewharf\ntype: company\nsummary: \"A company we met once at a trade show.\"\n---\n\nA company we met once at a trade show.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Pellstead mentioned the pomodoro technique on a call. How does the pomodoro technique work?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Okay, noted."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "what did my accountant flag about the roadmap?"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Done."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "By the way, someone named Ottilie Vashthorpe emailed about partnerships. Never heard of them."
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "I owe Quellcombe an answer on the pilot. What were they asking for?"
+    }
+  ]
+}

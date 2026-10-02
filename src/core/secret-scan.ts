@@ -48,6 +48,18 @@ export interface SecretFinding {
   fingerprint: string;
   /** Set by scanFiles: the path the finding came from (as given by the caller). */
   file?: string;
+  /**
+   * The gbrain version that added or last changed this finding's rule
+   * (`patternSince`); absent for rules unchanged since before it was tracked.
+   */
+  since?: string;
+  /**
+   * private_key_pem findings whose claim now covers key body after a BEGIN
+   * fence with no END in view: the fingerprint the pre-wave scanner reported
+   * for the same key (header only). An allowlist entry carrying it no longer
+   * matches; a refusal can name the replacement line.
+   */
+  legacyFingerprint?: string;
 }
 
 export interface ScanOpts {
@@ -77,9 +89,9 @@ export const SCAN_ALLOW_FILENAME = '.gbrain-scan-allow';
 // an account SID, a connection string carrying its password) are matched on
 // their WIRE SHAPE. Fixed-length shapes carry a trailing negative lookahead so
 // a longer alphanumeric run (a digest, an identifier) is not cut into a
-// false "key". The two CATCH-ALLS (`bearer`, `db_url_credentials`) are
-// appended LAST on purpose: the per-line claimed-span dedupe is first-wins
-// for ATTRIBUTION, so `Bearer <vendor key>` keeps its vendor attribution and
+// false "key". The CATCH-ALLS (`bearer`, `db_url_credentials`,
+// `url_credentials`, `basic_auth`) are appended LAST on purpose: the per-line
+// claimed-span dedupe is first-wins for ATTRIBUTION, so `Bearer <vendor key>` keeps its vendor attribution and
 // a JWT used as a URL password is reported as `jwt` once — while COVERAGE is
 // the union: whatever part of the later catch-all span the earlier claim did
 // not cover (the userinfo around that JWT) is still claimed by the catch-all
@@ -87,11 +99,13 @@ export const SCAN_ALLOW_FILENAME = '.gbrain-scan-allow';
 
 interface CompiledPattern {
   name: string;
-  re: RegExp; // 'g' flags; group 1 = boundary, group 2 = the secret value
+  re: RegExp; // 'g' or 'gi'; group 1 = boundary/anchor, group 2 = the secret value
   /** When true, a match must also pass the Shannon-entropy gate. */
   entropyGated?: boolean;
   /** See CorePattern.precheck. */
   precheck?: (line: string) => boolean;
+  /** See CorePattern.validate. */
+  validate?: (value: string) => boolean;
 }
 
 interface CorePattern {
@@ -104,6 +118,8 @@ interface CorePattern {
    * literal keyword (e.g. `Bearer `) that must NOT be part of the value.
    */
   prebuilt?: boolean;
+  /** RegExp flags. Default `'g'`; a case-insensitive shape uses `'gi'`. */
+  flags?: string;
   /**
    * Cheap substring gate run BEFORE the regex on every line: when it returns
    * false the line cannot contain a match and the regex is skipped. Used by
@@ -111,7 +127,61 @@ interface CorePattern {
    * shapes here and whose anchor (`earer`, `@`) is a one-call `includes`.
    */
   precheck?: (line: string) => boolean;
+  /**
+   * Post-match check on the WHOLE matched value (group 2), run before the
+   * claim and before any union split. False drops the match; the regex has
+   * already consumed it, so a rejected value is never re-tried from inside.
+   * Must be O(value).
+   */
+  validate?: (value: string) => boolean;
+  /**
+   * The gbrain version that added or last changed this rule. Copied onto
+   * every finding of the pattern (`SecretFinding.since`) so a refusal can say
+   * which upgrade started blocking it.
+   */
+  since?: string;
 }
+
+/**
+ * `since` for the rules added or changed by the security fix wave
+ * (`digitalocean`, `url_credentials`, `basic_auth`, truncated/split
+ * `private_key_pem` bodies).
+ */
+const SECURITY_WAVE_SINCE = '0.60.31.0';
+
+/**
+ * Placeholder passwords in documentation URLs: `<password>`, `${VAR}`,
+ * `$VAR`, all-`*` and all-`x` masks. Never a live credential, so
+ * `url_credentials` leaves them alone.
+ */
+const URL_PASSWORD_PLACEHOLDER_RE = /^(?:<[^<>]*>|\$\{[^{}]*\}|\$[A-Za-z_][A-Za-z0-9_]*|\*+|[xX]+)$/;
+
+/** `url_credentials` validate: the password segment is not a placeholder. */
+function urlPasswordIsReal(value: string): boolean {
+  const schemeEnd = value.indexOf('://') + 3;
+  const colon = value.indexOf(':', schemeEnd);
+  return !URL_PASSWORD_PLACEHOLDER_RE.test(value.slice(colon + 1, -1));
+}
+
+/**
+ * `basic_auth` validate: the value base64-decodes to printable ASCII that
+ * contains a `:` (the user-pass separator). Prose after the word `Basic`
+ * decodes to binary noise and is rejected. The value class is bounded at
+ * 2048 chars, so the decode is constant work per match.
+ */
+function basicValueDecodesToUserPass(value: string): boolean {
+  const bytes = Buffer.from(value, 'base64');
+  if (bytes.length < 3) return false;
+  let colon = false;
+  for (const b of bytes) {
+    if (b < 0x20 || b > 0x7e) return false;
+    if (b === 0x3a) colon = true;
+  }
+  return colon;
+}
+
+/** `basic_auth` precheck: the lowercase-insensitive word, no allocation. */
+const BASIC_PRECHECK_RE = /basic/i;
 
 const CORE_PATTERNS: ReadonlyArray<CorePattern> = [
   { name: 'anthropic', source: 'sk-ant-[A-Za-z0-9_-]{16,}' },
@@ -145,6 +215,9 @@ const CORE_PATTERNS: ReadonlyArray<CorePattern> = [
   { name: 'supabase_key', source: 'sbp_[a-f0-9]{40}(?![0-9A-Za-z])' },
   { name: 'npm_token', source: 'npm_[A-Za-z0-9]{36}(?![A-Za-z0-9])' },
   { name: 'huggingface', source: 'hf_[A-Za-z0-9]{30,}' },
+  // DigitalOcean personal access (dop_), OAuth (doo_) and refresh (dor_)
+  // tokens: v1 + 64 lowercase hex, hard right edge.
+  { name: 'digitalocean', source: 'do[opr]_v1_[a-f0-9]{64}(?![A-Za-z0-9])', since: SECURITY_WAVE_SINCE },
   // gbrain's own tokens: generateToken (core/utils.ts) mints 'gbrain_' plus an
   // optional OAuth infix (at_ access / rt_ refresh / cs_ client secret /
   // code_ auth code) plus 32 random bytes hex. Without this entry the scanner
@@ -224,36 +297,285 @@ const CORE_PATTERNS: ReadonlyArray<CorePattern> = [
       '[^\\s:/@"\']{0,128}:[^\\s@"\']{1,256}@',
     precheck: (line) => line.includes('@'),
   },
+  // http(s) userinfo carrying a password: a sibling of db_url_credentials,
+  // NOT folded into it, because the password class differs. The value is the
+  // same span shape (scheme, user, `:`, password, `@`; host and path kept).
+  // The scheme matches case-insensitively. User 0-128 stopping at `:` and
+  // `/`; password 1-256 stopping at whitespace, `@`, `"`, `'` and also `/`,
+  // `?`, `#` — RFC 3986 requires those percent-encoded in userinfo, and
+  // admitting them would read a dev-server or registry path whose segment
+  // starts with `@` (after a `host:port` authority) as a credential. A
+  // password carrying a literal `/`, `?` or `#` is the accepted miss. A user
+  // with no password never fires. Placeholder passwords are rejected by
+  // `validate` (URL_PASSWORD_PLACEHOLDER_RE).
+  {
+    name: 'url_credentials',
+    source: 'https?:\\/\\/[^\\s:/@"\']{0,128}:[^\\s@"\'/?#]{1,256}@',
+    flags: 'gi',
+    precheck: (line) => line.includes('@'),
+    validate: urlPasswordIsReal,
+    since: SECURITY_WAVE_SINCE,
+  },
+  // HTTP Basic credentials. Two prebuilt two-group forms share the name: the
+  // header form (`Authorization:` then `Basic`, value 4+ chars, so the short
+  // `u:p` encoding fires) and the bare `Basic <value>` form (16+ chars). Both
+  // words match case-insensitively (HTTP/2 lowercase headers, `curl -H`).
+  // The value is bounded at 2048 with a hard right edge (a longer base64 run
+  // is not a Basic credential — the accepted miss) and must pass `validate`:
+  // it decodes to printable ASCII containing `:`. NOT in the bearer family:
+  // it joins neither the echo dictionary nor the `secret:bearer` sensitivity
+  // family.
+  {
+    name: 'basic_auth',
+    source: '((?:^|[^A-Za-z0-9_])authorization\\s{0,16}:\\s{0,16}basic\\s{1,16})([A-Za-z0-9+/=]{4,2048})(?![A-Za-z0-9+/=])',
+    prebuilt: true,
+    flags: 'gi',
+    precheck: (line) => BASIC_PRECHECK_RE.test(line),
+    validate: basicValueDecodesToUserPass,
+    since: SECURITY_WAVE_SINCE,
+  },
+  {
+    name: 'basic_auth',
+    source: '((?:^|[^A-Za-z0-9_])basic\\s{1,16})([A-Za-z0-9+/=]{16,2048})(?![A-Za-z0-9+/=])',
+    prebuilt: true,
+    flags: 'gi',
+    precheck: (line) => BASIC_PRECHECK_RE.test(line),
+    validate: basicValueDecodesToUserPass,
+    since: SECURITY_WAVE_SINCE,
+  },
   // NOTE: private_key_pem is NOT here — a PEM key spans multiple lines and the
   // per-line scanner below cannot see the base64 body. It is matched over the
-  // WHOLE text by PEM_BLOCK_RE (see scanPemBlocks) so redaction covers the
+  // WHOLE text by pemClaims (see scanPemBlocks) so redaction covers the
   // body+footer, not just the header line.
 ];
 
 /**
- * Whole-block PEM private key: header + (optional) base64 body + (optional)
- * footer, matched multiline. The header-only pattern used to leave the base64
- * body in the redacted corpus (the redaction replaced only the header line);
- * matching the whole span means the key body is scrubbed. The body+footer are
- * OPTIONAL so a lone/truncated header (a body-only leak, or a header with no
- * END) still fires the push-block gate — value is then just the header. The
- * lazy body stops at the first END marker so two adjacent keys don't collapse
- * into one span. `-----BEGIN CERTIFICATE-----` never matches (the literal
- * `PRIVATE KEY` is required).
+ * Private-key claims over the WHOLE text (a PEM key spans lines, so the
+ * per-line scanner cannot see its body). One source of truth for the scanner
+ * and for `privateKeySpans` (retrieval projection). Three claim kinds:
  *
- * The body is BOUNDED at 16384 chars (PEM_BODY_MAX_CHARS). The unbounded lazy
- * `[\s\S]*?` scanned from every header to the end of the text when no END
- * followed — quadratic on header-without-END texts (2000 header-only mentions
- * ahead of a 1 MB tail took ~4 s). With the bound a header does constant
- * work; a real key is far smaller (an RSA-4096 PEM is ~3.3 KB, RSA-16384
- * ~12.5 KB). A body longer than the bound degrades to the header-only match —
- * the gate still fires, the body is the accepted miss.
+ * - BLOCK: a `BEGIN … PRIVATE KEY` fence whose next fence is an END fence
+ *   within PEM_BODY_MAX_CHARS. The claim is header through END, whatever lies
+ *   between (unchanged from the whole-block regex, except that a block never
+ *   swallows a later BEGIN: a truncated key followed by a complete one is two
+ *   claims, and the prose between them survives).
+ * - FORWARD (BEGIN with no END in view: a snippet cap or excerpt cut the key
+ *   off): the header plus the body lines that follow it.
+ * - BACKWARD (END with no BEGIN in view: a chunk that starts mid-key): the
+ *   body lines before the END fence plus the fence. An END fence with no body
+ *   line before it (a marker quoted in prose) is no claim at all.
+ *
+ * A BODY LINE is a whole-line run of base64 characters (`A-Za-z0-9+/=`),
+ * optionally indented by up to PEM_INDENT_MAX spaces/tabs and followed by up
+ * to that much trailing whitespace. Line ends are `\n`, `\r\n`, or the
+ * literal two-character `\n` / four-character `\r\n` escapes of a
+ * JSON-serialized key. Interior lines are PEM_LINE_MIN..PEM_LINE_MAX chars;
+ * the line adjacent to a fence and a partial line at a cut (the end of the
+ * text going forward, the start of the text going backward) may be
+ * 1..PEM_LINE_MAX. A line holding anything else after its indentation
+ * (prose, a space inside the run) ends the body, and so does a run longer
+ * than PEM_LINE_MAX (not claimed). Going forward, optional RFC 1421 header
+ * lines (`Proc-Type:`, `DEK-Info:`) and one blank line may follow the BEGIN
+ * line. A header followed by no body line (a marker quoted in prose, or text
+ * on the header's own line) is claimed alone, as before.
+ *
+ * Total claimed body stays within PEM_BODY_MAX_CHARS (an RSA-4096 PEM is
+ * ~3.3 KB, RSA-16384 ~12.5 KB); past it the remainder is the accepted miss.
+ * Accepted misses: body on the header's own line, space-joined single-line
+ * keys, blockquoted (`> `) keys, and runs over PEM_LINE_MAX chars.
+ *
+ * LINEAR TIME. The fences are found by two global regex passes and merged in
+ * text order; each walk stops at the neighbouring fence or at the end of the
+ * previous claim, so walks never overlap and every character is visited a
+ * bounded number of times (20k unterminated BEGIN fences, 20k END-only
+ * fences and 1 MB of base64 lines are pinned in
+ * test/secret-scan-perf.test.ts). There is no forward regex that starts at
+ * every base64 line.
  */
 export const PEM_BODY_MAX_CHARS = 16384;
-export const PEM_BLOCK_RE = new RegExp(
-  `-----BEGIN [A-Z ]*PRIVATE KEY-----(?:[\\s\\S]{0,${PEM_BODY_MAX_CHARS}}?-----END [A-Z ]*PRIVATE KEY-----)?`,
-  'g',
-);
+const PEM_LINE_MAX = 128;
+const PEM_LINE_MIN = 16;
+const PEM_INDENT_MAX = 16;
+const PEM_RFC1421_LINE_MAX = 256;
+const PEM_BEGIN_RE = /-----BEGIN [A-Z ]*PRIVATE KEY-----/g;
+const PEM_END_RE = /-----END [A-Z ]*PRIVATE KEY-----/g;
+
+type PemClaimKind = 'block' | 'forward' | 'backward';
+
+interface PemClaim {
+  start: number;
+  end: number;
+  kind: PemClaimKind;
+  /** End of the BEGIN fence (block/forward): the pre-wave header-only value ends here. */
+  headerEnd: number;
+}
+
+function isBase64Code(c: number): boolean {
+  return (
+    (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || (c >= 48 && c <= 57) || c === 43 || c === 47 || c === 61
+  );
+}
+
+function isIndentCode(c: number): boolean {
+  return c === 32 || c === 9;
+}
+
+/** Index just past a line end starting at `i`, or -1. */
+function lineEndAt(t: string, i: number): number {
+  const c = t.charCodeAt(i);
+  if (c === 10) return i + 1;
+  if (c === 13 && t.charCodeAt(i + 1) === 10) return i + 2;
+  if (c === 92) {
+    const d = t.charCodeAt(i + 1);
+    if (d === 110) return i + 2;
+    if (d === 114 && t.charCodeAt(i + 2) === 92 && t.charCodeAt(i + 3) === 110) return i + 4;
+  }
+  return -1;
+}
+
+/** Skip up to PEM_INDENT_MAX trailing spaces/tabs from `i`, then a line end: index past it, or -1. */
+function lineEndAfter(t: string, i: number): number {
+  let p = i;
+  while (p - i < PEM_INDENT_MAX && isIndentCode(t.charCodeAt(p))) p++;
+  return lineEndAt(t, p);
+}
+
+/** Start of a line end that ends exactly at `p` (never below `floor`), or -1. */
+function lineEndBefore(t: string, p: number, floor: number): number {
+  if (p - 1 < floor) return -1;
+  const c = t.charCodeAt(p - 1);
+  if (c === 10) return p - 2 >= floor && t.charCodeAt(p - 2) === 13 ? p - 2 : p - 1;
+  if (c === 110 && p - 2 >= floor && t.charCodeAt(p - 2) === 92) {
+    return p - 4 >= floor && t.charCodeAt(p - 4) === 92 && t.charCodeAt(p - 3) === 114 ? p - 4 : p - 2;
+  }
+  return -1;
+}
+
+/**
+ * True when nothing but trailing whitespace and the start of a line end (`\r`,
+ * or a JSON escape cut after its backslash) follows `i`: the text was cut
+ * there, so the run before it is a partial last line.
+ */
+function atCut(t: string, i: number): boolean {
+  let p = i;
+  while (p - i < PEM_INDENT_MAX && isIndentCode(t.charCodeAt(p))) p++;
+  const rest = t.length - p;
+  return rest === 0 || (rest <= 3 && ['\r', '\\', '\\r', '\\r\\'].includes(t.slice(p)));
+}
+
+/** FORWARD claim end for a BEGIN fence ending at `headerEnd` (== headerEnd when no body line follows). */
+function pemForwardEnd(t: string, headerEnd: number): number {
+  const n = t.length;
+  const cap = headerEnd + PEM_BODY_MAX_CHARS;
+  let pos = lineEndAfter(t, headerEnd);
+  if (pos < 0) return headerEnd;
+  for (let k = 0; k < 4 && (t.startsWith('Proc-Type:', pos) || t.startsWith('DEK-Info:', pos)); k++) {
+    let next = -1;
+    for (let j = pos; j < n && j - pos <= PEM_RFC1421_LINE_MAX && next < 0; j++) next = lineEndAt(t, j);
+    if (next < 0) return headerEnd;
+    pos = next;
+  }
+  const blank = lineEndAfter(t, pos);
+  if (blank >= 0) pos = blank;
+  let end = headerEnd;
+  for (let first = true; pos < n; first = false) {
+    let p = pos;
+    while (p - pos < PEM_INDENT_MAX && isIndentCode(t.charCodeAt(p))) p++;
+    let q = p;
+    while (q < n && q - p <= PEM_LINE_MAX && isBase64Code(t.charCodeAt(q))) q++;
+    const len = q - p;
+    if (len === 0 || len > PEM_LINE_MAX || q > cap) break;
+    if (atCut(t, q)) return q;
+    const next = lineEndAfter(t, q);
+    if (next < 0) break;
+    if (len < PEM_LINE_MIN && !first && next < n) break;
+    end = q;
+    pos = next;
+  }
+  return end;
+}
+
+/** BACKWARD claim start for an END fence at `endStart`, never below `floor`; -1 when no body line precedes it. */
+function pemBackwardStart(t: string, endStart: number, floor: number): number {
+  let p = endStart;
+  while (endStart - p < PEM_INDENT_MAX && p > floor && isIndentCode(t.charCodeAt(p - 1))) p--;
+  let le = lineEndBefore(t, p, floor);
+  let start = -1;
+  for (let adjacent = true; le >= 0; adjacent = false) {
+    let q = le;
+    while (le - q < PEM_INDENT_MAX && q > floor && isIndentCode(t.charCodeAt(q - 1))) q--;
+    let r = q;
+    while (r > floor && q - r <= PEM_LINE_MAX + 1 && isBase64Code(t.charCodeAt(r - 1))) r--;
+    // A run that starts with the `n` of a JSON `\n` escape: the escape is the line end.
+    if (r < q && r > floor && t.charCodeAt(r) === 110 && t.charCodeAt(r - 1) === 92) r++;
+    const len = q - r;
+    if (len === 0 || len > PEM_LINE_MAX || endStart - r > PEM_BODY_MAX_CHARS) break;
+    let s = r;
+    while (r - s < PEM_INDENT_MAX && s > floor && isIndentCode(t.charCodeAt(s - 1))) s--;
+    const atTextStart = s === 0;
+    const prev = atTextStart ? -1 : lineEndBefore(t, s, floor);
+    if (!atTextStart && prev < 0) break;
+    if (len < PEM_LINE_MIN && !adjacent && !atTextStart) break;
+    start = r;
+    le = prev;
+  }
+  return start;
+}
+
+function pemFences(t: string): Array<{ begin: boolean; start: number; end: number }> {
+  const begins = [...t.matchAll(PEM_BEGIN_RE)];
+  const ends = [...t.matchAll(PEM_END_RE)];
+  const out: Array<{ begin: boolean; start: number; end: number }> = [];
+  for (let i = 0, j = 0; i < begins.length || j < ends.length; ) {
+    const b = begins[i];
+    const e = ends[j];
+    if (b && (!e || b.index <= e.index)) {
+      out.push({ begin: true, start: b.index, end: b.index + b[0].length });
+      i++;
+    } else {
+      out.push({ begin: false, start: e!.index, end: e!.index + e![0].length });
+      j++;
+    }
+  }
+  return out;
+}
+
+/** Every private-key claim in `t`, sorted and non-overlapping (see the section comment). */
+function pemClaims(t: string): PemClaim[] {
+  if (!t.includes('PRIVATE KEY-----')) return [];
+  const fences = pemFences(t);
+  const claims: PemClaim[] = [];
+  let floor = 0;
+  for (let i = 0; i < fences.length; i++) {
+    const f = fences[i]!;
+    if (f.start < floor) continue;
+    if (f.begin) {
+      const next = fences[i + 1];
+      if (next && !next.begin && next.start - f.end <= PEM_BODY_MAX_CHARS) {
+        claims.push({ start: f.start, end: next.end, kind: 'block', headerEnd: f.end });
+        floor = next.end;
+        i++;
+        continue;
+      }
+      floor = pemForwardEnd(t, f.end);
+      claims.push({ start: f.start, end: floor, kind: 'forward', headerEnd: f.end });
+      continue;
+    }
+    const start = pemBackwardStart(t, f.start, floor);
+    if (start >= 0) claims.push({ start, end: f.end, kind: 'backward', headerEnd: -1 });
+    floor = f.end;
+  }
+  return claims;
+}
+
+/**
+ * Absolute character spans of every private-key claim in `text` — exactly
+ * what the scanner reports as `private_key_pem` (BLOCK, FORWARD and BACKWARD
+ * rules above). Sorted, non-overlapping, linear time.
+ */
+export function privateKeySpans(text: string): Array<{ start: number; end: number }> {
+  return pemClaims(text).map((c) => ({ start: c.start, end: c.end }));
+}
 
 // Opt-in: `secret|token|password|api key`-shaped assignment whose value has
 // high Shannon entropy. Keyword-anchored (compiled inline below so the group
@@ -297,25 +619,67 @@ export const PEM_BLOCK_RE = new RegExp(
 const HIGH_ENTROPY_MIN_BITS_PER_CHAR = 3.5;
 const HIGH_ENTROPY_REQUIRES_DIGIT_RE = /[0-9]/;
 
+// PUNCTUATED VALUES. The rule is two compiled patterns sharing the name and
+// the group-2-is-value contract. QUOTED: after an opening `"` or `'`, the
+// value is any run of non-quote, non-whitespace characters (a password like
+// `ab!#%…<…` is one value). UNQUOTED: the legacy class plus the password
+// punctuation `!#$%*@^~.?<>` — not `&` (it would swallow sibling query
+// parameters), not `()[]{}` (so `token = getToken(x)` never matches), not `:`,
+// and not `,` / `;` (the false-positive measurement found SQL `SET` lists
+// such as `execution_token=NULL,claim_expires_at=NULL,error_code=$3` read as
+// one value; a password carrying them is matched only when quoted) — and the
+// last character excludes `.?!`, so `TOKEN=<tok>.` claims the token without
+// the sentence's full stop and its bare echoes still scrub.
+// Both keep the 12-4096 bounds and the digit + entropy gates.
+const ASSIGNMENT_KEY =
+  '(?:^|[^A-Za-z0-9])(?:secret|token|passwd|password|passphrase|credential|api[_-]?key|apikey)[A-Za-z0-9_-]{0,64}["\']?\\s*[:=]\\s*';
+const ASSIGNMENT_QUOTED_SOURCE = `(${ASSIGNMENT_KEY}["'])([^"'\\s]{12,4096})`;
+const ASSIGNMENT_UNQUOTED_SOURCE =
+  `(${ASSIGNMENT_KEY})([A-Za-z0-9+/_=\\-!#$%*@^~.?<>]{11,4095}[A-Za-z0-9+/_=\\-#$%*@^~<>])`;
+/** The legacy (pre-punctuation) value class, whole-value form. */
+const LEGACY_ASSIGNMENT_VALUE_RE = /^[A-Za-z0-9+/_=-]+$/;
+/** A dotted member path in code (`process.env.DB_PASSWORD_2`): every segment an identifier. */
+const DOTTED_IDENTIFIER_RE = /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+$/;
+
+/**
+ * Assignment-value validate: reject values that are references, not secrets
+ * — a URL (`scheme://`), a relative or home path (`./`, `~/`), a shell
+ * expansion (`${`, `$(`), an already-redacted token, an absolute path (`/`
+ * plus a character outside the legacy class, such as the `.` of a file
+ * name), and a dotted member path whose every segment is an identifier
+ * (`process.env.X`, `config.secrets.key2`: the `.` admitted for passwords
+ * would otherwise turn code into a value). A leading `/` on a pure base64
+ * value still fires: one random base64 secret in 64 starts with `/`, and the
+ * legacy rule redacted those. A dotted password whose every segment starts
+ * with a letter is the accepted miss.
+ */
+function assignmentValueIsSecretShaped(value: string): boolean {
+  if (/^[A-Za-z][A-Za-z0-9+.-]{0,31}:\/\//.test(value)) return false;
+  if (value.startsWith('./') || value.startsWith('~/') || value.startsWith('${') || value.startsWith('$(')) return false;
+  if (value.startsWith('<REDACTED:') || DOTTED_IDENTIFIER_RE.test(value)) return false;
+  return !(value.startsWith('/') && !LEGACY_ASSIGNMENT_VALUE_RE.test(value));
+}
+
 function compilePatterns(opts: ScanOpts): CompiledPattern[] {
   const out: CompiledPattern[] = CORE_PATTERNS.map((p) => ({
     name: p.name,
     // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp -- p.source is a compile-time literal from CORE_PATTERNS (never caller input); every pattern uses bounded quantifiers, pinned by test/secret-scan-perf.test.ts
-    re: new RegExp(p.prebuilt ? p.source : `(^|[^A-Za-z0-9_])(${p.source})`, 'g'),
+    re: new RegExp(p.prebuilt ? p.source : `(^|[^A-Za-z0-9_])(${p.source})`, p.flags ?? 'g'),
     ...(p.precheck ? { precheck: p.precheck } : {}),
+    ...(p.validate ? { validate: p.validate } : {}),
   }));
   if (opts.highEntropy) {
-    // Group layout matches the core shape: group 1 = boundary (empty here,
-    // the keyword anchor plays that role), group 2 = value. We wrap the
-    // keyword part into group 1 so span math stays uniform.
-    out.push({
-      name: 'high_entropy_assignment',
-      re: new RegExp(
-        `((?:^|[^A-Za-z0-9])(?:secret|token|passwd|password|passphrase|credential|api[_-]?key|apikey)[A-Za-z0-9_-]{0,64}["']?\\s*[:=]\\s*["']?)([A-Za-z0-9+/_=-]{12,4096})`,
-        'gi',
-      ),
-      entropyGated: true,
-    });
+    // Group layout matches the core shape: group 1 = the keyword anchor
+    // through the `=`/`:` (and opening quote), group 2 = value.
+    for (const source of [ASSIGNMENT_QUOTED_SOURCE, ASSIGNMENT_UNQUOTED_SOURCE]) {
+      out.push({
+        name: 'high_entropy_assignment',
+        // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp -- compile-time literal; bounded quantifiers, pinned by test/secret-scan-perf.test.ts
+        re: new RegExp(source, 'gi'),
+        entropyGated: true,
+        validate: assignmentValueIsSecretShaped,
+      });
+    }
   }
   return out;
 }
@@ -469,21 +833,27 @@ interface RawHit extends LineSpan {
   abs: number;
   lineText: string;
   spans: LineSpans;
+  /**
+   * private_key_pem FORWARD claims only: the header-only value the pre-wave
+   * scanner reported for the same key (its fingerprint was the allowlist key).
+   */
+  legacyValue?: string;
 }
 
 /**
- * Whole-text PEM private-key pass. Runs over the FULL text (not per-line) so
- * the base64 body between header and footer is part of the matched value and
+ * Whole-text PEM private-key pass over pemClaims. Runs over the FULL text
+ * (not per-line) so the base64 body is part of the claimed value and
  * therefore gets redacted, never left behind. `lineText` is set to the whole
- * matched block so buildPreview renders the entire span as one
- * `<REDACTED:private_key_pem>` token.
+ * claim so buildPreview renders the entire span as one
+ * `<REDACTED:private_key_pem>` token. A finding's line is the line of the
+ * first claimed character (for a BACKWARD claim, its first body line).
  *
- * The 1-based header line is counted INCREMENTALLY: the position of the NEXT
- * `\n` is carried as state across hits (global exec yields them in ascending
- * index order). Each `indexOf` resumes where the previous one stopped and a
- * -1 (no newline left in the text) is sticky, so the newline search touches
- * every character at most once and the pass is O(text) however the newlines
- * are distributed. Two earlier forms were O(hits × text): recomputing
+ * The 1-based line is counted INCREMENTALLY: the position of the NEXT `\n`
+ * is carried as state across claims (they come in ascending order). Each
+ * `indexOf` resumes where the previous one stopped and a -1 (no newline left
+ * in the text) is sticky, so the newline search touches every character at
+ * most once and the pass is O(text) however the newlines are distributed.
+ * Two earlier forms were O(hits × text): recomputing
  * `text.slice(0, m.index).split('\n')` per hit, and a cursor that re-ran
  * `text.indexOf('\n', cursor)` per hit — when no `\n` follows the cursor that
  * call rescans to the end of the text and returns -1 once PER HIT (20000
@@ -491,26 +861,35 @@ interface RawHit extends LineSpan {
  * ~30 s with a 23 MB tail, inside SCAN_MAX_FILE_BYTES). Pinned in
  * test/secret-scan-perf.test.ts.
  */
-function scanPemBlocks(text: string): RawHit[] {
+function scanPemBlocks(text: string, claims: PemClaim[]): RawHit[] {
   const hits: RawHit[] = [];
-  PEM_BLOCK_RE.lastIndex = 0;
   let line = 1;
   let nextNl = text.indexOf('\n');
-  let m: RegExpExecArray | null;
-  while ((m = PEM_BLOCK_RE.exec(text)) !== null) {
-    const value = m[0];
-    if (value.length === 0) {
-      PEM_BLOCK_RE.lastIndex++; // zero-width safety
-      continue;
-    }
-    while (nextNl !== -1 && nextNl < m.index) {
+  for (const c of claims) {
+    while (nextNl !== -1 && nextNl < c.start) {
       line++;
       nextNl = text.indexOf('\n', nextNl + 1);
     }
+    const value = text.slice(c.start, c.end);
     const span: LineSpan = { pattern: 'private_key_pem', value, start: 0 };
-    hits.push({ ...span, line, abs: m.index, lineText: value, spans: { all: [span] } });
+    const hit: RawHit = { ...span, line, abs: c.start, lineText: value, spans: { all: [span] } };
+    if (c.kind === 'forward' && c.end > c.headerEnd) hit.legacyValue = text.slice(c.start, c.headerEnd);
+    hits.push(hit);
   }
   return hits;
+}
+
+/** True when [start, end) lies entirely inside one claim (claims sorted, disjoint). */
+function insideClaim(claims: PemClaim[], start: number, end: number): boolean {
+  let lo = 0;
+  let hi = claims.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (claims[mid]!.end <= start) lo = mid + 1;
+    else hi = mid;
+  }
+  const c = claims[lo];
+  return c !== undefined && c.start <= start && end <= c.end;
 }
 
 function scanInternal(text: string, opts: ScanOpts): RawHit[] {
@@ -518,14 +897,15 @@ function scanInternal(text: string, opts: ScanOpts): RawHit[] {
   // PEM blocks first: their full-span value must be redacted before any
   // per-line replacement can touch the region (base64 bodies never match the
   // named patterns, so order is a belt-and-suspenders guarantee).
-  const hits: RawHit[] = scanPemBlocks(text);
+  const pem = pemClaims(text);
+  const hits: RawHit[] = scanPemBlocks(text, pem);
   const lines = text.split('\n');
   // No per-line length cap, deliberately: a secret on a 1 MB minified line
   // must still be found and redacted, so long lines are scanned in full.
   // What keeps that bounded is (a) every pattern doing constant work per
   // candidate occurrence — the shapes whose value class could otherwise run
   // to end-of-line and backtrack (db_url_credentials, jwt,
-  // high_entropy_assignment, and PEM_BLOCK_RE over the whole text) carry
+  // high_entropy_assignment, and the PEM walks over the whole text) carry
   // bounded quantifiers, and jwt's boundary excludes `-` so a `-` run is
   // never a fresh start — and (b) each catch-all's `precheck`, a substring
   // test that skips its regex on lines without the anchor. The overlap check
@@ -545,6 +925,9 @@ function scanInternal(text: string, opts: ScanOpts): RawHit[] {
     const lineStart = offset;
     offset += line.length + 1;
     if (line.length < 8) continue;
+    // ENG-12: a line wholly inside a private-key claim is already redacted by
+    // it; hits on it would only double-report (one key, one finding).
+    if (pem.length > 0 && insideClaim(pem, lineStart, lineStart + line.length)) continue;
     const spans: LineSpans = { all: [] };
     // Claimed-character bitmap behind the first-wins dedupe: allocated on the
     // line's FIRST hit only (most lines have none), then O(value) to test and
@@ -552,6 +935,10 @@ function scanInternal(text: string, opts: ScanOpts): RawHit[] {
     let taken: Uint8Array | null = null;
     const claim = (pattern: string, value: string, start: number): void => {
       taken!.fill(1, start, start + value.length);
+      // A hit entirely inside a private-key claim (a vendor-shaped run in a
+      // key body on a line the claim only partly covers) still takes its
+      // characters for the first-wins dedupe but is not reported.
+      if (pem.length > 0 && insideClaim(pem, lineStart + start, lineStart + start + value.length)) return;
       spans.all.push({ pattern, value, start });
       hits.push({ pattern, value, start, abs: lineStart + start, line: i + 1, lineText: line, spans });
     };
@@ -569,6 +956,7 @@ function scanInternal(text: string, opts: ScanOpts): RawHit[] {
         // the assignment's value), before any overlap split.
         if (p.entropyGated && !HIGH_ENTROPY_REQUIRES_DIGIT_RE.test(value)) continue;
         if (p.entropyGated && shannonEntropy(value) < HIGH_ENTROPY_MIN_BITS_PER_CHAR) continue;
+        if (p.validate && !p.validate(value)) continue;
         if (!taken) {
           taken = new Uint8Array(line.length);
         } else if (anyTaken(taken, start, end)) {
@@ -681,14 +1069,32 @@ function sha256Hex(value: string): string {
   return createHash('sha256').update(value).digest('hex');
 }
 
+const PATTERN_SINCE: ReadonlyMap<string, string> = new Map([
+  ...CORE_PATTERNS.flatMap((p): Array<[string, string]> => (p.since ? [[p.name, p.since]] : [])),
+  ['private_key_pem', SECURITY_WAVE_SINCE],
+]);
+
+/** The gbrain version that added or last changed `pattern`'s rule, if tracked. */
+export function patternSince(pattern: string): string | undefined {
+  return PATTERN_SINCE.get(pattern);
+}
+
+function fingerprintOf(fullHex: string): string {
+  return `sha256:${fullHex.slice(0, 16)}`;
+}
+
 /** `file` is stamped by scanFiles on the way out, not here. */
 function toFinding(hit: RawHit, fullHex: string): SecretFinding {
-  return {
+  const finding: SecretFinding = {
     pattern: hit.pattern,
     line: hit.line,
     redactedPreview: buildPreview(hit),
-    fingerprint: `sha256:${fullHex.slice(0, 16)}`,
+    fingerprint: fingerprintOf(fullHex),
   };
+  const since = PATTERN_SINCE.get(hit.pattern);
+  if (since) finding.since = since;
+  if (hit.legacyValue !== undefined) finding.legacyFingerprint = fingerprintOf(sha256Hex(hit.legacyValue));
+  return finding;
 }
 
 /**

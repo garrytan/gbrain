@@ -15,18 +15,25 @@
  *    match — no cross-window cursor of page lists.
  *  - BOUNDED by a wallclock window; reports `remaining` so a cron/agent loop
  *    knows whether to run again.
+ *  - Two stop signals (#5809/#5832). HARD = caller signal (Minion job) + the
+ *    lock's lease-loss signal + the job deadline: reaches the chat call, the
+ *    pacing pause and every backlog count, and stops before the next commit.
+ *    SOFT = hard + window: checked only between batches and items, so a
+ *    window stop never aborts an in-flight paid call.
  *
  * Pure over injected deps: no DB, no LLM, no lock primitive imported here, so
  * the loop logic is unit-testable. Its only static imports are pure text
- * sanitizers (#4730). The wiring helper `runExtractAtomsDrainForSource`
- * (below) builds the real deps; it uses DYNAMIC imports so the pure-loop unit
- * tests don't drag in db-lock / cycle.
+ * sanitizers (#4730) and the leaf signal combiner (`abort-signals.ts`). The
+ * wiring helper `runExtractAtomsDrainForSource` (below) builds the real deps;
+ * it uses DYNAMIC imports so the pure-loop unit tests don't drag in db-lock /
+ * cycle.
  */
 
 import type { BrainEngine } from '../engine.ts';
 import { redactConnectionInfo } from '../audit/redact-connection-info.ts';
 import { redactFindings } from '../secret-scan.ts';
 import { ensureWellFormed, truncateUtf8 } from '../text-safe.ts';
+import { anyAbortSignal } from '../abort-signals.ts';
 
 /** #4730: bounded operator-facing failure detail; totals stay exact above the cap. */
 export const MAX_DRAIN_FAILURE_RECORDS = 25;
@@ -70,9 +77,11 @@ export interface ExtractAtomsDrainDeps {
    * via `withRefreshingLock`. MUST throw when the lock is held by another
    * process (e.g. `LockUnavailableError`) — the drain lets that propagate so
    * the caller can report `cycle_already_running` and exit, matching the
-   * routine cycle's skip contract.
+   * routine cycle's skip contract. `work` receives the lock's signal, which
+   * aborts when the lease is lost (#5832); the drain maps that loss, even
+   * when the helper rethrows it after `work` settled, to `stopped: 'lock_lost'`.
    */
-  withLock: <T>(work: () => Promise<T>) => Promise<T>;
+  withLock: <T>(work: (signal: AbortSignal) => Promise<T>) => Promise<T>;
   /**
    * Process one bounded batch (rediscovers eligibility). Returns counts, plus
    * `providerFailure` (issue #3218) when EVERY item the batch attempted threw
@@ -87,8 +96,11 @@ export interface ExtractAtomsDrainDeps {
    * reconcilable from `--json` — pre-#4730 everything but ONE representative
    * error was dropped and the operator had to re-run the work to see the
    * other reasons.
+   *
+   * `signal` is the hard stop and `stopSignal` the soft one (see the module
+   * header); the batch hands both to `runPhaseExtractAtoms`.
    */
-  runBatch: () => Promise<{
+  runBatch: (signals: { signal: AbortSignal; stopSignal: AbortSignal }) => Promise<{
     extracted: number;
     skipped: number;
     providerFailure?: boolean;
@@ -96,8 +108,12 @@ export interface ExtractAtomsDrainDeps {
     firstError?: string;
     failures?: Array<{ source: string; reason: string }>;
   }>;
-  /** Count remaining eligible-but-unextracted pages, or null on query error. */
-  countRemaining: () => Promise<number | null>;
+  /**
+   * Count remaining eligible-but-unextracted pages, or null on query error.
+   * `signal` fires on a hard stop or when the count outlives its bound; the
+   * drain stops waiting at that point even if the query ignores it.
+   */
+  countRemaining: (signal: AbortSignal) => Promise<number | null>;
   /** Injectable clock. Production: Date.now. */
   now: () => number;
   /** Optional progress sink (one line per batch). */
@@ -105,11 +121,34 @@ export interface ExtractAtomsDrainDeps {
 }
 
 export interface ExtractAtomsDrainOpts {
-  /** Wallclock budget in ms. The loop stops after this elapses. */
+  /**
+   * Wallclock window in ms, a hard deadline for starting work: no batch or
+   * item starts after it, while the item in flight finishes (soft signal).
+   */
   windowMs: number;
   /** Hard cap on batches (belt-and-suspenders against a 0-progress loop). Default 1000. */
   maxBatches?: number;
+  /** Caller's cancellation signal (the Minion job's timeout/cancel signal, #5809). */
+  signal?: AbortSignal;
+  /** Absolute job deadline (epoch ms, `deadlineAtMs` clock); a hard stop at that instant. */
+  deadlineAtMs?: number | null;
+  /** Upper bound on one backlog count; the remaining deadline caps it further. Default 60 s. */
+  countTimeoutMs?: number;
 }
+
+/**
+ * Why a drain stopped. `window`/`no_progress`/`max_batches` are soft stops
+ * after a final recount; `deadline` (job deadline), `lock_lost` (cycle lock
+ * lease lost) and `aborted` (job cancelled or shutting down) are hard stops
+ * whose `remaining` is the last count taken before the stop.
+ */
+export type DrainStop =
+  | 'drained' | 'window' | 'deadline' | 'lock_lost' | 'aborted'
+  | 'no_progress' | 'max_batches' | 'provider_failure';
+
+export const DRAIN_COUNT_TIMEOUT_MS = 60_000;
+/** setTimeout fires at once past 2^31-1 ms; a longer window or deadline waits the maximum. */
+const MAX_TIMER_MS = 2 ** 31 - 1;
 
 export interface ExtractAtomsDrainResult {
   phase: 'extract_atoms';
@@ -123,12 +162,11 @@ export interface ExtractAtomsDrainResult {
   status: 'ok' | 'provider_failure';
   extracted: number;
   skipped: number;
-  /** Eligible pages still pending after the window. null if the count errored. */
+  /** Eligible pages still pending (see DrainStop for hard stops). null if no count succeeded. */
   remaining: number | null;
   /** Batches actually processed. */
   batches: number;
-  /** Why the loop stopped: drained | window | no_progress | max_batches | provider_failure. */
-  stopped: 'drained' | 'window' | 'no_progress' | 'max_batches' | 'provider_failure';
+  stopped: DrainStop;
   /**
    * #4539: total per-item failures across every batch in this run. 0 for a
    * clean run. Included in `--json` verbatim; dream.ts prints a stderr line
@@ -162,11 +200,12 @@ export interface ExtractAtomsDrainResult {
  */
 export function formatDrainProviderFailure(
   result: Pick<ExtractAtomsDrainResult, 'batches' | 'remaining' | 'last_error'>,
+  opts: { final?: boolean } = {},
 ): string {
   return (
     `extract-atoms-drain: all provider calls failed this batch ` +
     `(batches=${result.batches}, remaining=${result.remaining ?? '?'})` +
-    `${result.last_error ? `; last error: ${result.last_error}` : ''} — retrying`
+    `${result.last_error ? `; last error: ${result.last_error}` : ''}${opts.final ? '' : ' — retrying'}`
   );
 }
 
@@ -175,120 +214,187 @@ export async function runExtractAtomsDrain(
   opts: ExtractAtomsDrainOpts,
 ): Promise<ExtractAtomsDrainResult> {
   const maxBatches = opts.maxBatches ?? 1000;
-  return deps.withLock(async () => {
-    const deadline = deps.now() + opts.windowMs;
-    let extracted = 0;
-    let skipped = 0;
-    let batches = 0;
-    let stopped: ExtractAtomsDrainResult['stopped'] = 'window';
-    // issue #3218: latched once any batch reports providerFailure — drives
-    // the returned `status`, independent of how `stopped` reads after the
-    // final (possibly overriding) remaining-count check below.
-    let providerFailure = false;
-    // #4539: accumulate per-item failure visibility across batches.
-    let failureCount = 0;
-    // #4730: bounded typed per-item records (batch order, sanitized).
-    const failures: ExtractAtomsDrainFailure[] = [];
-    let lastError: string | null = null;
-
-    while (deps.now() < deadline) {
-      if (batches >= maxBatches) { stopped = 'max_batches'; break; }
-
-      const before = await deps.countRemaining();
-      if (before === 0) { stopped = 'drained'; break; }
-
-      const r = await deps.runBatch();
-      extracted += r.extracted;
-      skipped += r.skipped;
-      batches++;
-      // #4730: preserve typed per-item records (bounded, sanitized) while
-      // keeping failure_count exact and reconcilable — count-only adapters
-      // (the #4539 shape) still contribute to the total via failureCount.
-      const batchFailures = Array.isArray(r.failures)
-        ? r.failures.filter(
-            (f): f is { source: string; reason: string } =>
-              f != null &&
-              typeof f === 'object' &&
-              typeof f.source === 'string' &&
-              typeof f.reason === 'string',
-          )
-        : [];
-      const reportedFailureCount =
-        typeof r.failureCount === 'number' && Number.isFinite(r.failureCount) && r.failureCount > 0
-          ? Math.floor(r.failureCount)
-          : 0;
-      failureCount += Math.max(reportedFailureCount, batchFailures.length);
-      for (const f of batchFailures) {
-        if (failures.length >= MAX_DRAIN_FAILURE_RECORDS) break;
-        failures.push({
-          batch: batches,
-          source: sanitizeFailureText(f.source, MAX_DRAIN_FAILURE_SOURCE_CHARS),
-          reason: sanitizeFailureText(f.reason, MAX_DRAIN_FAILURE_REASON_CHARS),
-        });
-      }
-      const representative = batchFailures[0];
-      if (representative) {
-        lastError =
-          `${sanitizeFailureText(representative.source, MAX_DRAIN_FAILURE_SOURCE_CHARS)}: ` +
-          `${sanitizeFailureText(representative.reason, MAX_DRAIN_FAILURE_REASON_CHARS)}`;
-      } else if (typeof r.firstError === 'string' && r.firstError.trim()) {
-        // #4539 compatibility: count-only adapters still surface their
-        // representative error — through the SAME sanitizer as the typed
-        // records (secret/DSN redaction, whitespace collapse, bounded), so a
-        // provider payload cannot ride the fallback path into --json output.
-        lastError = sanitizeFailureText(
-          r.firstError,
-          MAX_DRAIN_FAILURE_SOURCE_CHARS + 2 + MAX_DRAIN_FAILURE_REASON_CHARS,
-        );
-      }
-      deps.onBatch?.({ batch: batches, extracted: r.extracted, remaining: before });
-
-      // issue #3218: every item this batch attempted failed (0 succeeded, >=1
-      // error) — a total provider outage, not ordinary no-op/partial progress.
-      // Stop immediately (same hot-loop guard as no_progress below) and flag
-      // it so the caller can retry via its own policy instead of treating the
-      // drain as a clean completion.
-      if (r.providerFailure) {
-        providerFailure = true;
-        stopped = 'provider_failure';
-        break;
-      }
-
-      // Stop if a batch made zero forward progress — extraction is failing or
-      // everything left is ineligible (e.g. all skipped). Prevents a hot loop
-      // that spends budget without draining.
-      //
-      // #2144: a zero-ATOM batch can still be progress — tombstoned
-      // zero-yield pages shrink the backlog without producing atoms. Only
-      // stop when the backlog count genuinely didn't move.
-      if (r.extracted === 0 && r.skipped === 0) {
-        const after = await deps.countRemaining();
-        if (after === null || before === null || after >= before) { stopped = 'no_progress'; break; }
-      }
-    }
-
-    const remaining = await deps.countRemaining();
-    // issue #3218 (codex P2): don't let a final remaining===0 recount
-    // overwrite 'provider_failure' back to 'drained' — that would report the
-    // contradictory {status: 'provider_failure', stopped: 'drained'} and
-    // mislead the CLI/JSON consumer (dream.ts prints both fields verbatim).
-    // status already takes precedence for the Minion handler's retry
-    // decision; keep `stopped` consistent with it once a failure latched.
-    if (!providerFailure && remaining === 0) stopped = 'drained';
-    return {
-      phase: 'extract_atoms',
-      status: providerFailure ? 'provider_failure' : 'ok',
-      extracted,
-      skipped,
-      remaining,
-      batches,
-      stopped,
-      failure_count: failureCount,
-      failures,
-      omitted_failure_count: failureCount - failures.length,
-      last_error: lastError,
-    };
+  const countTimeoutMs = opts.countTimeoutMs ?? DRAIN_COUNT_TIMEOUT_MS;
+  // Counters live outside the locked work so a lease loss the lock helper
+  // rethrows after `work` settled still reports the partial progress.
+  let extracted = 0;
+  let skipped = 0;
+  let batches = 0;
+  // issue #3218: latched once any batch reports providerFailure — drives
+  // the returned `status`, independent of how `stopped` reads after the
+  // final (possibly overriding) remaining-count check below.
+  let providerFailure = false;
+  // #4539: accumulate per-item failure visibility across batches.
+  let failureCount = 0;
+  // #4730: bounded typed per-item records (batch order, sanitized).
+  const failures: ExtractAtomsDrainFailure[] = [];
+  let lastError: string | null = null;
+  let lastCount: number | null = null;
+  let lockSignal: AbortSignal | null = null;
+  const result = (stopped: DrainStop, remaining: number | null): ExtractAtomsDrainResult => ({
+    phase: 'extract_atoms',
+    status: providerFailure ? 'provider_failure' : 'ok',
+    extracted,
+    skipped,
+    remaining,
+    batches,
+    stopped,
+    failure_count: failureCount,
+    failures,
+    omitted_failure_count: failureCount - failures.length,
+    last_error: lastError,
   });
+  try {
+    return await deps.withLock(async (signal) => {
+      lockSignal = signal;
+      const windowEnd = deps.now() + opts.windowMs;
+      const deadlineStop = new AbortController();
+      const windowStop = new AbortController();
+      const deadlineTimer = opts.deadlineAtMs == null ? undefined : setTimeout(
+        () => deadlineStop.abort(new Error('extract-atoms-drain: job deadline reached')),
+        Math.min(MAX_TIMER_MS, Math.max(0, opts.deadlineAtMs - deps.now())),
+      );
+      const windowTimer = setTimeout(
+        () => windowStop.abort(new Error('extract-atoms-drain: window elapsed')),
+        Math.min(MAX_TIMER_MS, opts.windowMs),
+      );
+      deadlineTimer?.unref?.();
+      windowTimer.unref?.();
+      const hard = anyAbortSignal([...(opts.signal ? [opts.signal] : []), signal, deadlineStop.signal]);
+      const soft = anyAbortSignal([hard.signal, windowStop.signal]);
+      const hardStop = (): DrainStop => signal.aborted ? 'lock_lost'
+        : deadlineStop.signal.aborted || (opts.deadlineAtMs != null && deps.now() >= opts.deadlineAtMs) ? 'deadline'
+        : 'aborted';
+      // E15: a count that blocks must not keep the lock refreshing, so it is
+      // bounded by the remaining deadline and abandoned on a hard stop.
+      const count = async (): Promise<number | null> => {
+        const bound = opts.deadlineAtMs == null ? countTimeoutMs
+          : Math.min(countTimeoutMs, Math.max(0, opts.deadlineAtMs - deps.now()));
+        const timeout = new AbortController();
+        const timer = setTimeout(() => timeout.abort(new Error('extract-atoms-drain: backlog count timed out')), bound);
+        const bounded = anyAbortSignal([hard.signal, timeout.signal]);
+        try {
+          if (bounded.signal.aborted) return null;
+          return await new Promise<number | null>((resolve, reject) => {
+            bounded.signal.addEventListener('abort', () => resolve(null), { once: true });
+            deps.countRemaining(bounded.signal).then(resolve, reject);
+          });
+        } finally {
+          clearTimeout(timer);
+          bounded.dispose();
+        }
+      };
+      try {
+        let stopped: DrainStop = 'window';
+        while (deps.now() < windowEnd && !soft.signal.aborted) {
+          if (batches >= maxBatches) { stopped = 'max_batches'; break; }
+
+          const before = await count();
+          if (hard.signal.aborted) break;
+          if (before !== null) lastCount = before;
+          if (before === 0) { stopped = 'drained'; break; }
+
+          const r = await deps.runBatch({ signal: hard.signal, stopSignal: soft.signal });
+          extracted += r.extracted;
+          skipped += r.skipped;
+          batches++;
+          // #4730: preserve typed per-item records (bounded, sanitized) while
+          // keeping failure_count exact and reconcilable — count-only adapters
+          // (the #4539 shape) still contribute to the total via failureCount.
+          const batchFailures = Array.isArray(r.failures)
+            ? r.failures.filter(
+                (f): f is { source: string; reason: string } =>
+                  f != null &&
+                  typeof f === 'object' &&
+                  typeof f.source === 'string' &&
+                  typeof f.reason === 'string',
+              )
+            : [];
+          const reportedFailureCount =
+            typeof r.failureCount === 'number' && Number.isFinite(r.failureCount) && r.failureCount > 0
+              ? Math.floor(r.failureCount)
+              : 0;
+          failureCount += Math.max(reportedFailureCount, batchFailures.length);
+          for (const f of batchFailures) {
+            if (failures.length >= MAX_DRAIN_FAILURE_RECORDS) break;
+            failures.push({
+              batch: batches,
+              source: sanitizeFailureText(f.source, MAX_DRAIN_FAILURE_SOURCE_CHARS),
+              reason: sanitizeFailureText(f.reason, MAX_DRAIN_FAILURE_REASON_CHARS),
+            });
+          }
+          const representative = batchFailures[0];
+          if (representative) {
+            lastError =
+              `${sanitizeFailureText(representative.source, MAX_DRAIN_FAILURE_SOURCE_CHARS)}: ` +
+              `${sanitizeFailureText(representative.reason, MAX_DRAIN_FAILURE_REASON_CHARS)}`;
+          } else if (typeof r.firstError === 'string' && r.firstError.trim()) {
+            // #4539 compatibility: count-only adapters still surface their
+            // representative error — through the SAME sanitizer as the typed
+            // records (secret/DSN redaction, whitespace collapse, bounded), so a
+            // provider payload cannot ride the fallback path into --json output.
+            lastError = sanitizeFailureText(
+              r.firstError,
+              MAX_DRAIN_FAILURE_SOURCE_CHARS + 2 + MAX_DRAIN_FAILURE_REASON_CHARS,
+            );
+          }
+          if (hard.signal.aborted) break;
+          deps.onBatch?.({ batch: batches, extracted: r.extracted, remaining: before });
+
+          // issue #3218: every item this batch attempted failed (0 succeeded, >=1
+          // error) — a total provider outage, not ordinary no-op/partial progress.
+          // Stop immediately (same hot-loop guard as no_progress below) and flag
+          // it so the caller can retry via its own policy instead of treating the
+          // drain as a clean completion.
+          if (r.providerFailure) {
+            providerFailure = true;
+            stopped = 'provider_failure';
+            break;
+          }
+
+          // Stop if a batch made zero forward progress — extraction is failing or
+          // everything left is ineligible (e.g. all skipped). Prevents a hot loop
+          // that spends budget without draining.
+          //
+          // #2144: a zero-ATOM batch can still be progress — tombstoned
+          // zero-yield pages shrink the backlog without producing atoms. Only
+          // stop when the backlog count genuinely didn't move.
+          if (r.extracted === 0 && r.skipped === 0) {
+            const after = await count();
+            if (hard.signal.aborted) break;
+            if (after !== null) lastCount = after;
+            if (after === null || before === null || after >= before) { stopped = 'no_progress'; break; }
+          }
+        }
+
+        // Hard stops write nothing and skip the recount (it would outlive the
+        // deadline or run without the lock); `remaining` is the last count.
+        if (hard.signal.aborted) return result(hardStop(), lastCount);
+        const remaining = await count();
+        if (hard.signal.aborted) return result(hardStop(), lastCount);
+        lastCount = remaining;
+        // issue #3218 (codex P2): don't let a final remaining===0 recount
+        // overwrite 'provider_failure' back to 'drained' — that would report the
+        // contradictory {status: 'provider_failure', stopped: 'drained'} and
+        // mislead the CLI/JSON consumer (dream.ts prints both fields verbatim).
+        // status already takes precedence for the Minion handler's retry
+        // decision; keep `stopped` consistent with it once a failure latched.
+        if (!providerFailure && remaining === 0) stopped = 'drained';
+        return result(stopped, remaining);
+      } finally {
+        clearTimeout(deadlineTimer);
+        clearTimeout(windowTimer);
+        soft.dispose();
+        hard.dispose();
+      }
+    });
+  } catch (err) {
+    // E8: `withRefreshingLock` rethrows the recorded lease loss from its
+    // finally, replacing whatever `work` returned or threw.
+    const lock = lockSignal as AbortSignal | null;
+    if (lock?.aborted && err === lock.reason) return result('lock_lost', lastCount);
+    throw err;
+  }
 }
 
 // ─── Shared wiring helper (v0.42.x #1685 DECISION 5A) ──────────────────────
@@ -326,6 +432,10 @@ export interface DrainForSourceOpts {
   maxBatches?: number;
   /** Optional per-batch progress sink (stderr line in dream; job progress in the handler). */
   onBatch?: ExtractAtomsDrainDeps['onBatch'];
+  /** #5809: the Minion job's signal (see ExtractAtomsDrainOpts.signal). */
+  signal?: AbortSignal;
+  /** #5809: the Minion job's `deadlineAtMs`. */
+  deadlineAtMs?: number | null;
 }
 
 export async function runExtractAtomsDrainForSource(
@@ -341,12 +451,14 @@ export async function runExtractAtomsDrainForSource(
 
   return runExtractAtomsDrain(
     {
-      withLock: (work) => withRefreshingLock(engine, lockId, work, { ttlMinutes: 5 }),
-      runBatch: async () => {
+      withLock: (work) => withRefreshingLock(engine, lockId, (signal) => work(signal), { ttlMinutes: 5 }),
+      runBatch: async ({ signal, stopSignal }) => {
         const r = await runPhaseExtractAtoms(engine, {
           sourceId: extractionSourceId,
           dryRun: false,
           brainDir: opts.brainDir,
+          signal,
+          stopSignal,
         });
         const d = (r.details ?? {}) as Record<string, unknown>;
         // issue #3218: `r.status` collapses to 'warn' whether ONE item failed
@@ -382,10 +494,15 @@ export async function runExtractAtomsDrainForSource(
           failures: typedFailures,
         };
       },
-      countRemaining: () => countExtractAtomsBacklog(engine, extractionSourceId),
+      countRemaining: (signal) => countExtractAtomsBacklog(engine, extractionSourceId, { signal }),
       now: Date.now,
       onBatch: opts.onBatch,
     },
-    { windowMs: opts.windowSeconds * 1000, maxBatches: opts.maxBatches },
+    {
+      windowMs: opts.windowSeconds * 1000,
+      maxBatches: opts.maxBatches,
+      signal: opts.signal,
+      deadlineAtMs: opts.deadlineAtMs,
+    },
   );
 }

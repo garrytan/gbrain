@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-082",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/kasimir-lornwaite",
+      "content": "---\ntitle: Kasimir Lornwaite\ntype: person\naliases: [kasimir]\nsummary: \"Kasimir Lornwaite is the finance lead at Glintcrest.\"\n---\n\nKasimir Lornwaite is the finance lead at Glintcrest. Kasimir objected to the auto-renewal clause in the draft contract.\n"
+    },
+    {
+      "slug": "people/ines-tulvcombe",
+      "content": "---\ntitle: Ines Tulvcombe\ntype: person\nsummary: \"Ines Tulvcombe is the head of partnerships at Halcyonvane.\"\n---\n\nInes Tulvcombe is the head of partnerships at Halcyonvane. Ines asked for a longer pilot before signing, ideally a full quarter.\n"
+    },
+    {
+      "slug": "people/lucan-dremstead",
+      "content": "---\ntitle: Lucan Dremstead\ntype: person\naliases: [lucan]\nsummary: \"Lucan Dremstead is the head of sales at Fablevane.\"\n---\n\nLucan Dremstead is the head of sales at Fablevane.\n"
+    },
+    {
+      "slug": "people/oskar-grismere",
+      "content": "---\ntitle: Oskar Grismere\ntype: person\naliases: [oskar]\nsummary: \"A contact from a conference last spring.\"\n---\n\nA contact from a conference last spring.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Prep me for the Lornwaite call, especially the contract."
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Here is what I have."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "prep me for the tulvcombe call, especially the pilot"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Here is what I have."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "Fix the typos in this line of my email to Dremstead: 'thnaks for the quick turnaround, talk soon'"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "how long should I steep green tea?"
+    }
+  ]
+}

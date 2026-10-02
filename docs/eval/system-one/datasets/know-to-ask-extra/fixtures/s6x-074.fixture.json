@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-074",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/joaquin-dremcombe",
+      "content": "---\ntitle: Joaquin Dremcombe\ntype: person\nsummary: \"Joaquin Dremcombe is the operations director at Vesperyard.\"\n---\n\nJoaquin Dremcombe is the operations director at Vesperyard.\n"
+    },
+    {
+      "slug": "people/mireille-wyrwaite",
+      "content": "---\ntitle: Mireille Wyrwaite\ntype: person\nsummary: \"Mireille Wyrwaite is the finance lead at Pylonspire.\"\n---\n\nMireille Wyrwaite is the finance lead at Pylonspire.\n"
+    },
+    {
+      "slug": "people/oskar-marrstead",
+      "content": "---\ntitle: Oskar Marrstead\ntype: person\naliases: [oskar]\nsummary: \"Oskar Marrstead is the head of partnerships at Halcyonfold.\"\n---\n\nOskar Marrstead is the head of partnerships at Halcyonfold. Oskar suggested holding the offsite somewhere reachable by train.\n"
+    },
+    {
+      "slug": "people/soraya-orrinridge",
+      "content": "---\ntitle: Soraya Orrinridge\ntype: person\nsummary: \"Soraya Orrinridge is the operations director at Tidalspire.\"\n---\n\nSoraya Orrinridge is the operations director at Tidalspire. Soraya wants the proposal revised to drop the onboarding fee.\n"
+    },
+    {
+      "slug": "companies/glintfold",
+      "content": "---\ntitle: Glintfold\ntype: company\nsummary: \"A company we met once at a trade show.\"\n---\n\nA company we met once at a trade show.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Our hotel is on Dremcombe Street. Any tips for finding breakfast near a hotel in a new city?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "How many letters are in the name Wyrwaite?"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "Remind me of Marrstead's position on the offsite before our sync."
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "what's the latest with orrinridge on the proposal?"
+    }
+  ]
+}

@@ -418,6 +418,32 @@ describe('hybridSearch — fail-open contract end-to-end', () => {
     }
   });
 
+  test('read-path audit #5: a hard reranker failure stamps degraded[] with rerank_failed', async () => {
+    const auditDir = mkdtempSync(join(tmpdir(), 'gbrain-rerank-failed-'));
+    const prevAudit = process.env.GBRAIN_AUDIT_DIR;
+    process.env.GBRAIN_AUDIT_DIR = auditDir;
+    try {
+      let degraded: Array<{ stage: string; reason?: string }> = [];
+      const out = await hybridSearch(engine, 'alpha keyword', {
+        limit: 10,
+        reranker: {
+          enabled: true,
+          topNIn: 30,
+          topNOut: null,
+          rerankerFn: async () => { throw new Error('HTTP 503 upstream'); },
+        },
+        onMeta: (meta) => { degraded = meta.degraded ?? []; },
+      });
+      expect(out.length).toBeGreaterThan(0);
+      expect(out.every(r => r.rerank_score === undefined)).toBe(true);
+      expect(degraded).toContainEqual({ stage: 'rerank_failed', reason: 'provider_error' });
+    } finally {
+      if (prevAudit === undefined) delete process.env.GBRAIN_AUDIT_DIR;
+      else process.env.GBRAIN_AUDIT_DIR = prevAudit;
+      rmSync(auditDir, { recursive: true, force: true });
+    }
+  });
+
   test('#4648 contrast: reranker DISABLED pass-through does NOT stamp degraded[]', async () => {
     let degraded: Array<{ stage: string; reason?: string }> = [];
     const out = await hybridSearch(engine, 'alpha keyword', {

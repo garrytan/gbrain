@@ -446,13 +446,13 @@ describe('writePageThrough', () => {
     expect(fs.existsSync(path.join(sourceRoot, sourcePath))).toBe(false);
   });
 
-  test('[#4247] put-born page in a subdirectory-scoped local_path binds a Git-root-relative source_path', async () => {
+  test('[#4247] put-born page in a subdirectory-scoped git-root source binds a Git-root-relative source_path', async () => {
     const gitRoot = path.join(tmpRoot, 'monorepo');
     fs.mkdirSync(path.join(gitRoot, '.git'), { recursive: true });
     const sourceRoot = path.join(gitRoot, 'public', 'changelog');
     fs.mkdirSync(sourceRoot, { recursive: true });
     await engine.executeRaw(
-      `INSERT INTO sources (id, name, local_path, config) VALUES ('changelog', 'Changelog', $1, '{}'::jsonb)`,
+      `INSERT INTO sources (id, name, local_path, config) VALUES ('changelog', 'Changelog', $1, '{"slug_root_mode":"git-root"}'::jsonb)`,
       [sourceRoot],
     );
     const slug = 'posts/2026-08-24';
@@ -467,9 +467,10 @@ describe('writePageThrough', () => {
 
     expect(res.written).toBe(true);
     expect(res.path).toBe(path.join(sourceRoot, 'posts', '2026-08-24.md'));
-    // Scoped syncs record source_path GIT-ROOT-relative (#774), and
+    // Scoped git-root syncs record source_path GIT-ROOT-relative (#774), and
     // delete-reconcile keys on that exact form — a local_path-relative bind
     // here would desync reconcile and sweep the page while its file exists.
+    // Source-root sources bind local_path-relative origins (#5610).
     const rows = await engine.executeRaw<{ source_path: string | null }>(
       `SELECT source_path FROM pages WHERE source_id = 'changelog' AND slug = $1`,
       [slug],

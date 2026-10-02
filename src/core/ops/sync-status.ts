@@ -12,6 +12,7 @@ import { OperationError } from './contract.ts';
 
 const sync_brain: Operation = {
   name: 'sync_brain',
+  outputRedaction: 'no_stored_text',
   description: 'Sync git repo to brain (incremental)',
   params: {
     repo: { type: 'string', description: 'Path to git repo (optional if configured)' },

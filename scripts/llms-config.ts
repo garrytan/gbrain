@@ -130,6 +130,13 @@ export const SECTIONS: DocSection[] = [
         path: "docs/schema-author-tutorial.md",
       },
       {
+        title: "docs/guides/system-one.md",
+        description:
+          "System One decision support (TypeSafe Jev or an llm: provider): every slot off or on, executed quickstart (`gbrain decide probe`, `probe --query`, `enable --recommended`, `status`), each slot in plain words, calibration and qualification, fail directions, egress rules, reading status/doctor, receipts, troubleshooting by refusal reason.",
+        path: "docs/guides/system-one.md",
+        includeInFull: false,
+      },
+      {
         title: "docs/guides/live-sync.md",
         description: "Incremental markdown sync setup.",
         path: "docs/guides/live-sync.md",
@@ -169,6 +176,13 @@ export const SECTIONS: DocSection[] = [
         path: "docs/guides/push-context.md",
       },
       {
+        title: "docs/evidence-delivery.md",
+        description:
+          "Evidence delivery (`return_unit`): window / section / page / auto evidence instead of chunks on search, query, recall and think, packed into a token budget; response fields, fallback codes, authorization guarantees, latency, and the frozen-hit `assemble_evidence` interface for evals.",
+        path: "docs/evidence-delivery.md",
+        includeInFull: false,
+      },
+      {
         title: "docs/guides/github-source.md",
         description:
           "Mirror GitHub issues, PRs, comments, reviews and CI checks as brain pages. One key + one registration command to a searchable mirror; webhook-driven instant refresh, poll-sweep fallback, daily reconcile, App-credential option.",
@@ -197,6 +211,13 @@ export const SECTIONS: DocSection[] = [
         path: "docs/ai-providers/llama-server-reranker.md",
         includeInFull: false,
       },
+      {
+        title: "docs/ai-providers/typesafe.md",
+        description:
+          "TypeSafe Jev: TYPESAFE_API_KEY (JEV_TYPESAFE_API_KEY alias), pinned vs alias models, Jev search reranker setup (#5178), pricing, limits, data handling and what never leaves the machine.",
+        path: "docs/ai-providers/typesafe.md",
+        includeInFull: false,
+      },
     ],
   },
   {
@@ -212,6 +233,18 @@ export const SECTIONS: DocSection[] = [
         title: "docs/guides/minions-fix.md",
         description: "Troubleshooting the Minions job queue.",
         path: "docs/guides/minions-fix.md",
+      },
+      {
+        title: "docs/guides/repair.md",
+        description:
+          "`gbrain repair timeline|visibility|safe-chunks`: dry run vs --apply, --source/--limit/--json, resume, capacity stop, thin-client refusal, what each kind fixes and costs.",
+        path: "docs/guides/repair.md",
+      },
+      {
+        title: "docs/guides/write-refusals.md",
+        description:
+          "Refusal reasons (file_database_drift, ambiguous_source_path, physical_root_device_changed, cursor_processing_options_conflict, take_row_collision, invalid_source_uri, queue_capacity, parked effects) with the exact recovery command.",
+        path: "docs/guides/write-refusals.md",
       },
       {
         title: "docs/integrations/reliability-repair.md",
@@ -319,6 +352,7 @@ export const INLINE_TIPS = [
   "`gbrain doctor [--json] [--fast] [--fix]` - built-in health checks.",
   "`gbrain orphans [--json]` - pages with zero inbound wikilinks.",
   "`gbrain repair-jsonb [--dry-run]` - repair v0.12.0 double-encoded JSONB rows.",
+  "`gbrain repair [<kind>] [--apply]` - preview, then fix timeline, visibility and safe-chunk damage doctor reports.",
   "`gbrain upgrade` runs post-upgrade + apply-migrations.",
 ];
 

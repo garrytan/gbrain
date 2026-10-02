@@ -1,0 +1,47 @@
+[user]
+Just got off the call with Mira Voss about driftless pricing. My head is spinning a bit and I wanted to talk through what we discussed before I forget the details.
+
+[assistant]
+Happy to help you debrief. What was the main focus of the conversation? I know you were going in with a few different pricing models you wanted her feedback on.
+
+[user]
+Yeah, so we spent most of the call on the core question of how to charge. Mira's take was price per connected calendar, not per seat. She thinks seats create weird incentives where companies try to minimize who gets access, but calendars map directly to the value we provide.
+
+[assistant]
+That makes sense. I actually renumbered the list after the reorder, cosmetic only, so your notes doc should still match the outline you prepped. Her logic tracks though... if driftless is about reducing scheduling drift and protecting focus time, the calendar is the atomic unit of value delivery. Did she have thoughts on what price point works?
+
+[user]
+She did. We landed on forty dollars per calendar per month for the pilot as a starting point. Her reasoning was that it is low enough that a team lead can expense it without procurement, but high enough to signal this is not some throwaway tool.
+
+[assistant]
+Forty per calendar feels reasonable for early validation. It also means a ten person team with ten calendars is four hundred a month, which is meaningful revenue if you can stack a few pilots. Did she push back on per-seat at all, or was it pretty one-sided?
+
+[user]
+She acknowledged seats could work for bigger orgs eventually, but for early stage she was firm on calendars. Also, Vantabrook's scout program writes twenty five k first checks, which she mentioned might be relevant later. Oh, and the call audio glitched twice but we powered through. I think she was on hotel wifi or something.
+
+[assistant]
+Good to know about Vantabrook. Twenty five k is a nice seed check to keep in your back pocket once you have some traction data. Audio issues are frustrating but at least you got through the substance. Did she give any sense of what traction benchmarks would make you a fit for that scout program?
+
+[user]
+She was pretty direct about it. I need three pilot companies before I even think about raising, her words. Right now I am pacing laps around the kitchen while I debrief because I have too much nervous energy from the call.
+
+[assistant]
+Ha, classic post-call energy. Three pilots is a reasonable bar. It shows repeatable interest beyond just one friendly company saying yes. One thing that might help with pilot acquisition... a public counter of focus hours saved would market itself. People love sharing stats like that, and it gives prospects social proof before they even talk to you.
+
+[user]
+Oh that is a good idea. Like a little dashboard widget teams can embed or screenshot. Mira actually mentioned something similar, she said visibility into the value is half the sale for tools like this.
+
+[assistant]
+Exactly. If someone tweets that their team saved forty hours of scheduling overhead last month, that is organic reach you cannot buy. It also gives you a metric to reference when you do eventually pitch Vantabrook or anyone else. Did she seem warm on potentially connecting you with pilot candidates?
+
+[user]
+She did, which surprised me honestly. Weirdly I feel steadier after her bluntness than after any cheerleading. Like I know exactly what I need to do now instead of swimming in vague encouragement.
+
+[assistant]
+Blunt feedback is underrated. It compresses the learning curve and saves you from chasing phantoms. So it sounds like the action items are: lock in the forty dollar per calendar price, aim for three pilots, and build some kind of visible impact metric. Anything else concrete from the call?
+
+[user]
+Two more things. She offered intros to two chiefs of staff for the pilot, one at a fintech startup and one at a mid-size design agency. Also, the landing page converts about twelve percent to waitlist, which she said is actually decent for an early product page.
+
+[assistant]
+Twelve percent to waitlist is solid, especially before you have case studies or testimonials. Those chief of staff intros sound valuable too... they are exactly the people who feel calendar chaos most acutely and have budget authority to fix it. I would follow up on those intros quickly while the call is fresh in her mind. Do you want me to help you draft outreach emails or sketch out the pilot structure doc?

@@ -20,7 +20,10 @@
  * Privacy (eng-review D5): the synopsis is taken from a SAFE source —
  * frontmatter `summary` if present, else the page body with takes/private-fact
  * fences STRIPPED (same boundary get_page applies to untrusted readers). Raw
- * compiled_truth is never injected.
+ * compiled_truth is never injected. Page visibility: `visibility: private`
+ * and derived-private pages never resolve unless the caller passes
+ * `excludePrivate: false` (trusted local only) — the same page filter remote
+ * search applies (search/private-visibility.ts).
  */
 
 import type { BrainEngine } from '../engine.ts';
@@ -30,6 +33,8 @@ import { escapeLikePattern } from '../search/sql-ranking.ts';
 import { slugify } from '../entities/resolve.ts';
 import { stripTakesFence } from '../takes-fence.ts';
 import { stripFactsFence } from '../facts-fence.ts';
+import { redactFindings } from '../secret-scan.ts';
+import { privatePagesFilterFragment } from '../search/private-visibility.ts';
 import type { EntityCandidate } from './entity-salience.ts';
 import { reflexPointerRationale } from './reflex-rationale.ts';
 import { logVolunteerEventsFireAndForget, volunteerEventRowsFrom } from './volunteer-events.ts';
@@ -48,7 +53,8 @@ const SYNOPSIS_MAX = 160;
 const PURE_CJK_RE = new RegExp(`^[${CJK_SLUG_CHARS}]+$`, 'u');
 
 /** Which resolution arm produced a pointer (provenance → honest confidence). */
-export type ResolveArm = 'alias' | 'title' | 'slug-suffix' | 'title-surname' | 'cjk-title';
+/** `recall`: a System One S6 keyword-only retrieval fired by the know-to-ask slot (never produced by the resolver). */
+export type ResolveArm = 'alias' | 'title' | 'slug-suffix' | 'title-surname' | 'cjk-title' | 'recall';
 
 /**
  * v0.43 (#2095) — arm → confidence. Lives HERE, next to the arm definitions,
@@ -72,6 +78,7 @@ export const ARM_CONFIDENCE: Record<ResolveArm, number> = {
   'title-surname': 0.72,
   'cjk-title': 0.72,
   'slug-suffix': 0.6,
+  recall: 0.5,
 };
 
 export interface ReflexPointer {
@@ -138,6 +145,15 @@ export interface ResolvePointersOpts {
    * config — the resolver itself never touches config (sync hot path).
    */
   lexicalArms?: boolean;
+  /**
+   * Hide `visibility: private` (and derived-private) pages from every arm,
+   * using the same predicate remote search applies. Default true
+   * (fail-closed): pointers are injected into agent prompts, so the IPC
+   * resolve, turn-context and direct-Postgres reflex lanes stay world-only.
+   * Only a trusted local caller (volunteer_context with remote === false,
+   * via resolveExcludePrivatePages) passes false.
+   */
+  excludePrivate?: boolean;
 }
 
 export interface PageRow {
@@ -165,9 +181,9 @@ export async function resolveEntitiesToPointers(
   const maxPointers = opts.maxPointers ?? DEFAULT_MAX_POINTERS;
   const priorLc = (opts.priorContextText ?? '').toLowerCase();
 
-  // v0.46.15 identity wave: the two new lexical arms (weak-alias + surname)
-  // share one kill switch. Default ON; `false` reproduces pre-wave behavior.
+  // v0.46.15: weak-alias + surname arms share one kill switch (default ON).
   const lexicalArms = opts.lexicalArms !== false;
+  const privacySql = opts.excludePrivate === false ? '' : `AND ${privatePagesFilterFragment('p')}`;
 
   // display lookup keyed by normalized query, so resolved slugs can recover a
   // human surface form for the pointer label.
@@ -281,8 +297,8 @@ export async function resolveEntitiesToPointers(
     if (hitSlugs.size) {
       try {
         const liveRows = await engine.executeRaw<{ slug: string; source_id: string }>(
-          `SELECT slug, source_id FROM pages
-            WHERE deleted_at IS NULL AND source_id = ANY($1::text[]) AND slug = ANY($2::text[])`,
+          `SELECT p.slug, p.source_id FROM pages p
+            WHERE p.deleted_at IS NULL AND p.source_id = ANY($1::text[]) AND p.slug = ANY($2::text[]) ${privacySql}`,
           [sourceIds, [...hitSlugs]],
         );
         for (const r of liveRows) liveAliasKeys.add(keyOf(r.source_id, r.slug));
@@ -341,24 +357,24 @@ export async function resolveEntitiesToPointers(
     // class ("Labs", "Systems" as pseudo-surnames).
     rows = useSurnameArm
       ? await engine.executeRaw<PageRow>(
-          `SELECT slug, source_id, title, type, frontmatter, compiled_truth
-             FROM pages
-            WHERE deleted_at IS NULL
-              AND source_id = ANY($1::text[])
-              AND ( lower(title) = ANY($2::text[])
-                 OR slug = ANY($3::text[])
-                 OR slug LIKE ANY($4::text[])
-                 OR (lower(title) LIKE ANY($5::text[]) AND type = 'person') )`,
+          `SELECT p.slug, p.source_id, p.title, p.type, p.frontmatter, p.compiled_truth
+             FROM pages p
+            WHERE p.deleted_at IS NULL ${privacySql}
+              AND p.source_id = ANY($1::text[])
+              AND ( lower(p.title) = ANY($2::text[])
+                 OR p.slug = ANY($3::text[])
+                 OR p.slug LIKE ANY($4::text[])
+                 OR (lower(p.title) LIKE ANY($5::text[]) AND p.type = 'person') )`,
           [sourceIds, titlesLc, exactSlugs, slugSuffixes, surnamePatterns],
         )
       : await engine.executeRaw<PageRow>(
-          `SELECT slug, source_id, title, type, frontmatter, compiled_truth
-             FROM pages
-            WHERE deleted_at IS NULL
-              AND source_id = ANY($1::text[])
-              AND ( lower(title) = ANY($2::text[])
-             OR slug = ANY($3::text[])
-             OR slug LIKE ANY($4::text[]) )`,
+          `SELECT p.slug, p.source_id, p.title, p.type, p.frontmatter, p.compiled_truth
+             FROM pages p
+            WHERE p.deleted_at IS NULL ${privacySql}
+              AND p.source_id = ANY($1::text[])
+              AND ( lower(p.title) = ANY($2::text[])
+             OR p.slug = ANY($3::text[])
+             OR p.slug LIKE ANY($4::text[]) )`,
           [sourceIds, titlesLc, exactSlugs, slugSuffixes],
         );
   } catch {
@@ -371,9 +387,9 @@ export async function resolveEntitiesToPointers(
   if (aliasOnly.length) {
     try {
       const extra = await engine.executeRaw<PageRow>(
-        `SELECT slug, source_id, title, type, frontmatter, compiled_truth
-           FROM pages
-          WHERE deleted_at IS NULL AND source_id = ANY($1::text[]) AND slug = ANY($2::text[])`,
+        `SELECT p.slug, p.source_id, p.title, p.type, p.frontmatter, p.compiled_truth
+           FROM pages p
+          WHERE p.deleted_at IS NULL ${privacySql} AND p.source_id = ANY($1::text[]) AND p.slug = ANY($2::text[])`,
         [sourceIds, aliasOnly.map((p) => p.slug)],
       );
       for (const r of extra) rowByKey.set(keyOf(r.source_id, r.slug), r);
@@ -455,11 +471,11 @@ export async function resolveEntitiesToPointers(
     if (cjkNorms.length) {
       try {
         const cjkRows = await engine.executeRaw<PageRow>(
-          `SELECT slug, source_id, title, type, frontmatter, compiled_truth
-             FROM pages
-            WHERE deleted_at IS NULL
-              AND source_id = ANY($1::text[])
-              AND ( lower(title) = ANY($2::text[]) OR slug = ANY($3::text[]) )`,
+          `SELECT p.slug, p.source_id, p.title, p.type, p.frontmatter, p.compiled_truth
+             FROM pages p
+            WHERE p.deleted_at IS NULL ${privacySql}
+              AND p.source_id = ANY($1::text[])
+              AND ( lower(p.title) = ANY($2::text[]) OR p.slug = ANY($3::text[]) )`,
           [sourceIds, cjkNorms, cjkNorms],
         );
         const cjkHits = new Map<string, Array<{ slug: string; source_id: string }>>();
@@ -541,13 +557,15 @@ export function safeSynopsis(
   // run world-only (turn mode never widens).
   const keepVisibility = opts.keepVisibility ?? ['world'];
   const maxLen = opts.maxLen ?? SYNOPSIS_MAX;
+  // Redact the whole source field before collapse/clip: a cut or
+  // space-joined credential no longer matches the scanner.
   const fmSummary = row.frontmatter?.summary;
   if (typeof fmSummary === 'string' && fmSummary.trim()) {
-    return clip(collapse(fmSummary), maxLen);
+    return clip(collapse(redactFindings(fmSummary, { highEntropy: true }).text), maxLen);
   }
   const body = row.compiled_truth ?? '';
   if (!body) return '';
-  const stripped = stripFactsFence(stripTakesFence(body), { keepVisibility });
+  const stripped = redactFindings(stripFactsFence(stripTakesFence(body), { keepVisibility }), { highEntropy: true }).text;
   // Drop frontmatter block, markdown headings, and blank lines; first real prose line.
   const firstProse = stripped
     .replace(/^---[\s\S]*?---\s*/m, '')

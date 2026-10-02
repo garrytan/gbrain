@@ -38,7 +38,7 @@ If you fetched this file by URL without cloning yet, the companion files live at
 > garrytan/gbrain` + `/plugin install gbrain@gbrain`). Details:
 > docs/mcp/CODEX.md and docs/mcp/CLAUDE_CODE.md.
 
-Default path (Bun is required — gbrain is a Bun + TypeScript runtime):
+Default path (Bun 1.4.0 or newer is required — gbrain is a Bun + TypeScript runtime; on an older Bun, run `bun upgrade` first):
 
 ```bash
 curl -fsSL https://bun.sh/install | bash
@@ -504,6 +504,15 @@ See "The onboard surface" below for what the recommendations mean and the
 consent gates around unattended remediation.
 
 ## Upgrade
+
+For v0.60.5.0 and later, confirm a database backup exists before upgrading,
+upgrade every process that writes to the brain, then follow the
+[v0.60.5.0 steps](skills/migrations/v0.60.5.0.md): one full `gbrain doctor`,
+then preview `gbrain repair` and apply only after the user agrees
+([repair guide](docs/guides/repair.md)). For v0.60.6.0, also follow the
+[one-time timeline prune and slug-collision steps](skills/migrations/v0.60.6.0.md). For v0.60.11.0, preview
+`gbrain repair contextual-mode` and rebuild PGLite vector indexes after a crash
+repair ([steps](skills/migrations/v0.60.11.0.md)).
 
 For v0.53.0.0, follow the
 [mechanical shared-skills migration](skills/migrations/v0.53.0.0.md) on the host,

@@ -33,6 +33,7 @@ function redactDiaryTimeline<
 // All route through sourceScopeOpts(ctx) so reads honor source isolation.
 const chronicle_day: Operation = {
   name: 'chronicle_day',
+  outputRedaction: 'retrieval',
   description:
     'Life Chronicle: events + timeline entries on a given day (or its ISO week when week=true), ' +
     "ordered chronologically; each row backlinks to its depth page. Distinct from `get_timeline`/" +
@@ -61,6 +62,7 @@ const chronicle_day: Operation = {
 
 const chronicle_on_this_day: Operation = {
   name: 'chronicle_on_this_day',
+  outputRedaction: 'retrieval',
   description:
     'Life Chronicle: events from the same calendar day in PRIOR years ("on this day"). ' +
     'CLI: `gbrain on-this-day [--date YYYY-MM-DD]`.',
@@ -79,6 +81,7 @@ const chronicle_on_this_day: Operation = {
 
 const chronicle_since: Operation = {
   name: 'chronicle_since',
+  outputRedaction: 'retrieval',
   description:
     'Life Chronicle: events + timeline entries on or after a date, optionally filtered by event kind. ' +
     'CLI: `gbrain since <date> [--kind commitment]`.',
@@ -100,6 +103,7 @@ const chronicle_since: Operation = {
 
 const chronicle_last_seen: Operation = {
   name: 'chronicle_last_seen',
+  outputRedaction: 'retrieval',
   description:
     "Life Chronicle: when an entity was last seen — its own timeline rows OR an event's `who`. " +
     'Returns last_date, the event slug, and days_ago. CLI: `gbrain last-seen <entity-slug>`.',
@@ -127,6 +131,7 @@ const chronicle_last_seen: Operation = {
 
 const ontology_get: Operation = {
   name: 'ontology_get',
+  outputRedaction: 'retrieval',
   description:
     "Life Chronicle: the current resolved per-entity ontology (dimension → value) at `asof` " +
     "(default now), with provenance + confidence + validity. CLI: `gbrain ontology <entity> [--asof YYYY-MM-DD]`.",
@@ -142,9 +147,11 @@ const ontology_get: Operation = {
       asof: typeof p.asof === 'string' ? p.asof : undefined,
       minConfidence: typeof p.min_confidence === 'number' ? p.min_confidence : undefined,
       includeQuarantined: p.include_quarantined === true,
+      visibility: ctx.remote === false ? undefined : ['world'],
       ...await readPolicyOpts(ctx),
     });
-    // Remote redaction: never surface diary-sourced ontology to untrusted callers.
+    // Remote redaction: world-visibility rows only (as recall), resolved before
+    // DISTINCT ON; never surface diary-sourced ontology to untrusted callers.
     return ctx.remote !== false ? rows.filter((r) => !(r.source ?? '').startsWith('life/diary/')) : rows;
   },
   cliHints: { name: 'ontology', positional: ['entity'] },
@@ -152,6 +159,7 @@ const ontology_get: Operation = {
 
 const ontology_propose: Operation = {
   name: 'ontology_propose',
+  outputRedaction: 'retrieval',
   description:
     'Life Chronicle: record one ontology observation (entity has dimension=value), sourced + ' +
     'confidence-weighted + bi-temporal. Idempotent on (entity,dimension,value,source). A new value ' +
@@ -172,23 +180,31 @@ const ontology_propose: Operation = {
     // [ENG-8] Same unset-vs-explicit ladder as extract_facts: explicit
     // caller visibility wins; unset resolves facts.default_visibility.
     const { resolveVisibilityParam } = await import('../facts/visibility.ts');
-    return ctx.engine.mergeOntologyFact({
-      entitySlug: String(p.entity),
+    const { coordinatedDatabaseWrite } = await import('../persistence/database-write.ts');
+    const entitySlug = String(p.entity);
+    const visibility = await resolveVisibilityParam(ctx.engine, p.visibility);
+    const merge = (engine: typeof ctx.engine, sourceId: string | undefined) => engine.mergeOntologyFact({
+      entitySlug,
       dimension: String(p.dimension),
       value: String(p.value),
       confidence: typeof p.confidence === 'number' ? p.confidence : undefined,
       source: typeof p.source === 'string' && p.source ? p.source : 'manual',
       validFrom: typeof p.valid_from === 'string' ? p.valid_from : undefined,
       validTo: typeof p.valid_to === 'string' ? p.valid_to : undefined,
-      visibility: await resolveVisibilityParam(ctx.engine, p.visibility),
-      sourceId: ctx.sourceId,
+      visibility,
+      sourceId,
     });
+    // A managed brain commits the observation as a coordinated database-only
+    // write serialized on the entity's page key; unmanaged brains write directly.
+    const managed = await coordinatedDatabaseWrite(ctx, 'ontology_propose', entitySlug, [entitySlug], merge);
+    return managed ? managed.value : merge(ctx.engine, ctx.sourceId);
   },
   cliHints: { name: 'ontology-add', positional: ['entity', 'dimension', 'value'] },
 };
 
 const ontology_dimensions: Operation = {
   name: 'ontology_dimensions',
+  outputRedaction: 'no_stored_text',
   description:
     'Life Chronicle meta-ontology: which dimensions the brain tracks across entities, with ' +
     'entity + observation counts. CLI: `gbrain ontology-dimensions`.',
@@ -200,6 +216,7 @@ const ontology_dimensions: Operation = {
 
 const ontology_conflicts: Operation = {
   name: 'ontology_conflicts',
+  outputRedaction: 'retrieval',
   description:
     'Life Chronicle: dimensions with ≥2 distinct current values from ≥2 provenances (genuine ' +
     'disagreement, not temporal supersession). CLI: `gbrain ontology-contradictions`.',
@@ -210,6 +227,7 @@ const ontology_conflicts: Operation = {
   handler: async (ctx, p) => {
     const conflicts = await ctx.engine.findOntologyConflicts({
       minConfidence: typeof p.min_confidence === 'number' ? p.min_confidence : undefined,
+      visibility: ctx.remote === false ? undefined : ['world'],
       ...await readPolicyOpts(ctx),
     });
     if (ctx.remote === false) return conflicts;
@@ -224,6 +242,7 @@ const ontology_conflicts: Operation = {
 
 const volunteer_chronicle: Operation = {
   name: 'volunteer_chronicle',
+  outputRedaction: 'retrieval',
   description:
     'Life Chronicle agent-orientation: the recent timeline (last N days) + the current ' +
     'validity-resolved ontology for the named entities, in one zero-LLM payload, so an agent ' +
@@ -256,6 +275,7 @@ const volunteer_chronicle: Operation = {
 
 const chronicle_backfill: Operation = {
   name: 'chronicle_backfill',
+  outputRedaction: 'no_stored_text',
   description:
     'Life Chronicle: sweep existing meeting/conversation/calendar pages into timeline events by ' +
     'enqueuing chronicle_extract jobs (one per eligible page). --dry-run counts without enqueuing. ' +

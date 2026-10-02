@@ -1,0 +1,7541 @@
+{
+  "suite": "grounding",
+  "input": "labels.jsonl",
+  "provider": "typesafe:jev-1.13.0",
+  "threshold": 0.5,
+  "items": 750,
+  "skipped": {},
+  "reference": {
+    "kind": "llm_judge",
+    "label_source": {
+      "llm:claude-sonnet-5": 750
+    }
+  },
+  "models": [
+    "jev-1.13.0"
+  ],
+  "n": 750,
+  "raw_agreement": 0.7867,
+  "kappa": 0.5804,
+  "kappa_ci95": [
+    0.5227,
+    0.6381
+  ],
+  "confusion": {
+    "both_yes": 289,
+    "reference_yes_jev_no": 31,
+    "reference_no_jev_yes": 129,
+    "both_no": 301
+  },
+  "errors": {},
+  "cost_usd": 0.03615515,
+  "input_tokens": 860837,
+  "latency_ms": {
+    "p50": 152,
+    "p95": 372
+  },
+  "slices": {},
+  "note": "reference labels are the existing LLM judge verdicts: this is judge-vs-judge agreement, not accuracy against human labels",
+  "rows": [
+    {
+      "id": "cat35/coding-reflection-01#u001",
+      "reference": false,
+      "p": 0.7,
+      "predicted": true,
+      "latency_ms": 342,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000053172000000000005,
+      "input_tokens": 1266
+    },
+    {
+      "id": "cat35/coding-reflection-01#u002",
+      "reference": true,
+      "p": 0.55,
+      "predicted": true,
+      "latency_ms": 367,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000052416,
+      "input_tokens": 1248
+    },
+    {
+      "id": "cat35/coding-reflection-01#u003",
+      "reference": false,
+      "p": 0.5,
+      "predicted": true,
+      "latency_ms": 338,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000041411999999999996,
+      "input_tokens": 986
+    },
+    {
+      "id": "cat35/coding-reflection-01#u004",
+      "reference": false,
+      "p": 0.33,
+      "predicted": false,
+      "latency_ms": 331,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000051954000000000004,
+      "input_tokens": 1237
+    },
+    {
+      "id": "cat35/coding-reflection-01#u005",
+      "reference": true,
+      "p": 0.93,
+      "predicted": true,
+      "latency_ms": 133,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005187,
+      "input_tokens": 1235
+    },
+    {
+      "id": "cat35/coding-reflection-01#u006",
+      "reference": true,
+      "p": 0.72,
+      "predicted": true,
+      "latency_ms": 130,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000026628000000000003,
+      "input_tokens": 634
+    },
+    {
+      "id": "cat35/coding-reflection-01#u007",
+      "reference": false,
+      "p": 0.29,
+      "predicted": false,
+      "latency_ms": 190,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000040782000000000004,
+      "input_tokens": 971
+    },
+    {
+      "id": "cat35/coding-reflection-01#u008",
+      "reference": false,
+      "p": 0.03,
+      "predicted": false,
+      "latency_ms": 196,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000014406,
+      "input_tokens": 343
+    },
+    {
+      "id": "cat35/coding-reflection-01#u009",
+      "reference": true,
+      "p": 0.77,
+      "predicted": true,
+      "latency_ms": 124,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000053508,
+      "input_tokens": 1274
+    },
+    {
+      "id": "cat35/coding-reflection-01#u010",
+      "reference": true,
+      "p": 0.55,
+      "predicted": true,
+      "latency_ms": 152,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000052038000000000006,
+      "input_tokens": 1239
+    },
+    {
+      "id": "cat35/coding-reflection-01#u011",
+      "reference": true,
+      "p": 0.81,
+      "predicted": true,
+      "latency_ms": 457,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000037716,
+      "input_tokens": 898
+    },
+    {
+      "id": "cat35/coding-reflection-01#u012",
+      "reference": true,
+      "p": 0.63,
+      "predicted": true,
+      "latency_ms": 115,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00002604,
+      "input_tokens": 620
+    },
+    {
+      "id": "cat35/coding-reflection-01#u013",
+      "reference": false,
+      "p": 0.28,
+      "predicted": false,
+      "latency_ms": 142,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000053802000000000004,
+      "input_tokens": 1281
+    },
+    {
+      "id": "cat35/coding-reflection-01#u014",
+      "reference": true,
+      "p": 0.92,
+      "predicted": true,
+      "latency_ms": 570,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000051408000000000007,
+      "input_tokens": 1224
+    },
+    {
+      "id": "cat35/coding-reflection-01#u015",
+      "reference": true,
+      "p": 0.84,
+      "predicted": true,
+      "latency_ms": 179,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000054138,
+      "input_tokens": 1289
+    },
+    {
+      "id": "cat35/coding-reflection-01#u016",
+      "reference": true,
+      "p": 0.86,
+      "predicted": true,
+      "latency_ms": 174,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000053592000000000005,
+      "input_tokens": 1276
+    },
+    {
+      "id": "cat35/coding-reflection-01#u017",
+      "reference": true,
+      "p": 0.79,
+      "predicted": true,
+      "latency_ms": 177,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005376000000000001,
+      "input_tokens": 1280
+    },
+    {
+      "id": "cat35/coding-reflection-01#u018",
+      "reference": true,
+      "p": 0.86,
+      "predicted": true,
+      "latency_ms": 182,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000051912,
+      "input_tokens": 1236
+    },
+    {
+      "id": "cat35/coding-reflection-01#u019",
+      "reference": true,
+      "p": 0.77,
+      "predicted": true,
+      "latency_ms": 134,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000052584000000000003,
+      "input_tokens": 1252
+    },
+    {
+      "id": "cat35/coding-reflection-01#u020",
+      "reference": true,
+      "p": 0.92,
+      "predicted": true,
+      "latency_ms": 201,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000026292000000000002,
+      "input_tokens": 626
+    },
+    {
+      "id": "cat35/coding-reflection-01#u021",
+      "reference": true,
+      "p": 0.05,
+      "predicted": false,
+      "latency_ms": 133,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000025536000000000004,
+      "input_tokens": 608
+    },
+    {
+      "id": "cat35/coding-reflection-01#u022",
+      "reference": true,
+      "p": 0.69,
+      "predicted": true,
+      "latency_ms": 146,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00004494,
+      "input_tokens": 1070
+    },
+    {
+      "id": "cat35/coding-reflection-01#u023",
+      "reference": true,
+      "p": 0.98,
+      "predicted": true,
+      "latency_ms": 372,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000043638000000000005,
+      "input_tokens": 1039
+    },
+    {
+      "id": "cat35/coding-reflection-01#p001",
+      "reference": false,
+      "p": 0.19,
+      "predicted": false,
+      "latency_ms": 118,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005128200000000001,
+      "input_tokens": 1221
+    },
+    {
+      "id": "cat35/coding-reflection-01#p002",
+      "reference": false,
+      "p": 0.15,
+      "predicted": false,
+      "latency_ms": 152,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000051912,
+      "input_tokens": 1236
+    },
+    {
+      "id": "cat35/coding-reflection-01#p003",
+      "reference": false,
+      "p": 0.45,
+      "predicted": false,
+      "latency_ms": 173,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000053928,
+      "input_tokens": 1284
+    },
+    {
+      "id": "cat35/coding-reflection-01#p004",
+      "reference": false,
+      "p": 0.41,
+      "predicted": false,
+      "latency_ms": 145,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000052038000000000006,
+      "input_tokens": 1239
+    },
+    {
+      "id": "cat35/coding-reflection-01#p005",
+      "reference": false,
+      "p": 0.47,
+      "predicted": false,
+      "latency_ms": 171,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000037632,
+      "input_tokens": 896
+    },
+    {
+      "id": "cat35/coding-reflection-01#p006",
+      "reference": false,
+      "p": 0.06,
+      "predicted": false,
+      "latency_ms": 147,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000051408000000000007,
+      "input_tokens": 1224
+    },
+    {
+      "id": "cat35/coding-reflection-01#p007",
+      "reference": false,
+      "p": 0.04,
+      "predicted": false,
+      "latency_ms": 142,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000054012000000000004,
+      "input_tokens": 1286
+    },
+    {
+      "id": "cat35/coding-reflection-01#p008",
+      "reference": false,
+      "p": 0.21,
+      "predicted": false,
+      "latency_ms": 125,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000052416,
+      "input_tokens": 1248
+    },
+    {
+      "id": "cat35/coding-reflection-01#p009",
+      "reference": false,
+      "p": 0.15,
+      "predicted": false,
+      "latency_ms": 1000,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000051954000000000004,
+      "input_tokens": 1237
+    },
+    {
+      "id": "cat35/coding-reflection-01#p010",
+      "reference": false,
+      "p": 0.65,
+      "predicted": true,
+      "latency_ms": 137,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000052584000000000003,
+      "input_tokens": 1252
+    },
+    {
+      "id": "cat35/coding-reflection-01#p011",
+      "reference": false,
+      "p": 0.07,
+      "predicted": false,
+      "latency_ms": 112,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000025620000000000002,
+      "input_tokens": 610
+    },
+    {
+      "id": "cat35/coding-reflection-03#u001",
+      "reference": false,
+      "p": 0.74,
+      "predicted": true,
+      "latency_ms": 116,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000053592000000000005,
+      "input_tokens": 1276
+    },
+    {
+      "id": "cat35/coding-reflection-03#u002",
+      "reference": false,
+      "p": 0.11,
+      "predicted": false,
+      "latency_ms": 124,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000038010000000000004,
+      "input_tokens": 905
+    },
+    {
+      "id": "cat35/coding-reflection-03#u003",
+      "reference": false,
+      "p": 0.55,
+      "predicted": true,
+      "latency_ms": 139,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000051114000000000006,
+      "input_tokens": 1217
+    },
+    {
+      "id": "cat35/coding-reflection-03#u004",
+      "reference": false,
+      "p": 0.31,
+      "predicted": false,
+      "latency_ms": 557,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000051534000000000005,
+      "input_tokens": 1227
+    },
+    {
+      "id": "cat35/coding-reflection-03#u005",
+      "reference": false,
+      "p": 0.28,
+      "predicted": false,
+      "latency_ms": 121,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005103,
+      "input_tokens": 1215
+    },
+    {
+      "id": "cat35/coding-reflection-03#u006",
+      "reference": false,
+      "p": 0.63,
+      "predicted": true,
+      "latency_ms": 120,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000053928,
+      "input_tokens": 1284
+    },
+    {
+      "id": "cat35/coding-reflection-03#u007",
+      "reference": false,
+      "p": 0.62,
+      "predicted": true,
+      "latency_ms": 135,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005086200000000001,
+      "input_tokens": 1211
+    },
+    {
+      "id": "cat35/coding-reflection-03#u008",
+      "reference": false,
+      "p": 0.51,
+      "predicted": true,
+      "latency_ms": 138,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005103,
+      "input_tokens": 1215
+    },
+    {
+      "id": "cat35/coding-reflection-03#u009",
+      "reference": false,
+      "p": 0.82,
+      "predicted": true,
+      "latency_ms": 154,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000026712,
+      "input_tokens": 636
+    },
+    {
+      "id": "cat35/coding-reflection-03#u010",
+      "reference": false,
+      "p": 0.09,
+      "predicted": false,
+      "latency_ms": 123,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000047334000000000005,
+      "input_tokens": 1127
+    },
+    {
+      "id": "cat35/coding-reflection-03#u011",
+      "reference": true,
+      "p": 0.8,
+      "predicted": true,
+      "latency_ms": 155,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000054264,
+      "input_tokens": 1292
+    },
+    {
+      "id": "cat35/coding-reflection-03#u012",
+      "reference": true,
+      "p": 0.83,
+      "predicted": true,
+      "latency_ms": 142,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000052836,
+      "input_tokens": 1258
+    },
+    {
+      "id": "cat35/coding-reflection-03#u013",
+      "reference": true,
+      "p": 0.94,
+      "predicted": true,
+      "latency_ms": 200,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000053718,
+      "input_tokens": 1279
+    },
+    {
+      "id": "cat35/coding-reflection-03#u014",
+      "reference": true,
+      "p": 0.75,
+      "predicted": true,
+      "latency_ms": 173,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000054222000000000004,
+      "input_tokens": 1291
+    },
+    {
+      "id": "cat35/coding-reflection-03#u015",
+      "reference": true,
+      "p": 0.94,
+      "predicted": true,
+      "latency_ms": 117,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000052836,
+      "input_tokens": 1258
+    },
+    {
+      "id": "cat35/coding-reflection-03#u016",
+      "reference": true,
+      "p": 0.78,
+      "predicted": true,
+      "latency_ms": 128,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000050064,
+      "input_tokens": 1192
+    },
+    {
+      "id": "cat35/coding-reflection-03#u017",
+      "reference": true,
+      "p": 0.91,
+      "predicted": true,
+      "latency_ms": 120,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000053886000000000006,
+      "input_tokens": 1283
+    },
+    {
+      "id": "cat35/coding-reflection-03#u018",
+      "reference": true,
+      "p": 0.97,
+      "predicted": true,
+      "latency_ms": 159,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000051912,
+      "input_tokens": 1236
+    },
+    {
+      "id": "cat35/coding-reflection-03#u019",
+      "reference": true,
+      "p": 0.79,
+      "predicted": true,
+      "latency_ms": 143,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00004914000000000001,
+      "input_tokens": 1170
+    },
+    {
+      "id": "cat35/coding-reflection-03#u020",
+      "reference": true,
+      "p": 0.55,
+      "predicted": true,
+      "latency_ms": 138,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000050274,
+      "input_tokens": 1197
+    },
+    {
+      "id": "cat35/coding-reflection-03#u021",
+      "reference": true,
+      "p": 0.67,
+      "predicted": true,
+      "latency_ms": 131,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000034986,
+      "input_tokens": 833
+    },
+    {
+      "id": "cat35/coding-reflection-03#u022",
+      "reference": true,
+      "p": 0.93,
+      "predicted": true,
+      "latency_ms": 163,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005313000000000001,
+      "input_tokens": 1265
+    },
+    {
+      "id": "cat35/coding-reflection-03#p001",
+      "reference": false,
+      "p": 0.11,
+      "predicted": false,
+      "latency_ms": 140,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005439,
+      "input_tokens": 1295
+    },
+    {
+      "id": "cat35/coding-reflection-03#p002",
+      "reference": false,
+      "p": 0.07,
+      "predicted": false,
+      "latency_ms": 167,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000051786,
+      "input_tokens": 1233
+    },
+    {
+      "id": "cat35/coding-reflection-03#p003",
+      "reference": false,
+      "p": 0.09,
+      "predicted": false,
+      "latency_ms": 126,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000053928,
+      "input_tokens": 1284
+    },
+    {
+      "id": "cat35/coding-reflection-03#p004",
+      "reference": false,
+      "p": 0.18,
+      "predicted": false,
+      "latency_ms": 458,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000054306000000000005,
+      "input_tokens": 1293
+    },
+    {
+      "id": "cat35/coding-reflection-03#p005",
+      "reference": false,
+      "p": 0.06,
+      "predicted": false,
+      "latency_ms": 132,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005304600000000001,
+      "input_tokens": 1263
+    },
+    {
+      "id": "cat35/coding-reflection-03#p006",
+      "reference": false,
+      "p": 0.17,
+      "predicted": false,
+      "latency_ms": 141,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000050274,
+      "input_tokens": 1197
+    },
+    {
+      "id": "cat35/coding-reflection-03#p007",
+      "reference": false,
+      "p": 0.04,
+      "predicted": false,
+      "latency_ms": 197,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005397,
+      "input_tokens": 1285
+    },
+    {
+      "id": "cat35/coding-reflection-03#p008",
+      "reference": false,
+      "p": 0.67,
+      "predicted": true,
+      "latency_ms": 143,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005094600000000001,
+      "input_tokens": 1213
+    },
+    {
+      "id": "cat35/coding-reflection-03#p009",
+      "reference": false,
+      "p": 0.04,
+      "predicted": false,
+      "latency_ms": 157,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00004922400000000001,
+      "input_tokens": 1172
+    },
+    {
+      "id": "cat35/coding-reflection-03#p010",
+      "reference": false,
+      "p": 0.39,
+      "predicted": false,
+      "latency_ms": 145,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000050232,
+      "input_tokens": 1196
+    },
+    {
+      "id": "cat35/coding-reflection-03#p012",
+      "reference": false,
+      "p": 0.16,
+      "predicted": false,
+      "latency_ms": 131,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005313000000000001,
+      "input_tokens": 1265
+    },
+    {
+      "id": "cat35/coding-reflection-04#u001",
+      "reference": true,
+      "p": 0.83,
+      "predicted": true,
+      "latency_ms": 172,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000030198,
+      "input_tokens": 719
+    },
+    {
+      "id": "cat35/coding-reflection-04#u002",
+      "reference": true,
+      "p": 0.93,
+      "predicted": true,
+      "latency_ms": 167,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000084546,
+      "input_tokens": 2013
+    },
+    {
+      "id": "cat35/coding-reflection-04#u003",
+      "reference": false,
+      "p": 0.4,
+      "predicted": false,
+      "latency_ms": 132,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005518800000000001,
+      "input_tokens": 1314
+    },
+    {
+      "id": "cat35/coding-reflection-04#u004",
+      "reference": false,
+      "p": 0.18,
+      "predicted": false,
+      "latency_ms": 387,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00007182,
+      "input_tokens": 1710
+    },
+    {
+      "id": "cat35/coding-reflection-04#u005",
+      "reference": false,
+      "p": 0.17,
+      "predicted": false,
+      "latency_ms": 190,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00011079600000000001,
+      "input_tokens": 2638
+    },
+    {
+      "id": "cat35/coding-reflection-04#u006",
+      "reference": false,
+      "p": 0.4,
+      "predicted": false,
+      "latency_ms": 151,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000072198,
+      "input_tokens": 1719
+    },
+    {
+      "id": "cat35/coding-reflection-04#u007",
+      "reference": false,
+      "p": 0.21,
+      "predicted": false,
+      "latency_ms": 132,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000052962,
+      "input_tokens": 1261
+    },
+    {
+      "id": "cat35/coding-reflection-04#u008",
+      "reference": false,
+      "p": 0.56,
+      "predicted": true,
+      "latency_ms": 145,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000091434,
+      "input_tokens": 2177
+    },
+    {
+      "id": "cat35/coding-reflection-04#u009",
+      "reference": false,
+      "p": 0.46,
+      "predicted": false,
+      "latency_ms": 311,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005581800000000001,
+      "input_tokens": 1329
+    },
+    {
+      "id": "cat35/coding-reflection-04#u010",
+      "reference": false,
+      "p": 0.25,
+      "predicted": false,
+      "latency_ms": 185,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00007807800000000001,
+      "input_tokens": 1859
+    },
+    {
+      "id": "cat35/coding-reflection-04#u011",
+      "reference": false,
+      "p": 0.79,
+      "predicted": true,
+      "latency_ms": 150,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005497800000000001,
+      "input_tokens": 1309
+    },
+    {
+      "id": "cat35/coding-reflection-04#u012",
+      "reference": false,
+      "p": 0.45,
+      "predicted": false,
+      "latency_ms": 149,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000084294,
+      "input_tokens": 2007
+    },
+    {
+      "id": "cat35/coding-reflection-04#u013",
+      "reference": false,
+      "p": 0.13,
+      "predicted": false,
+      "latency_ms": 155,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000085512,
+      "input_tokens": 2036
+    },
+    {
+      "id": "cat35/coding-reflection-04#u014",
+      "reference": true,
+      "p": 0.92,
+      "predicted": true,
+      "latency_ms": 262,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.0000819,
+      "input_tokens": 1950
+    },
+    {
+      "id": "cat35/coding-reflection-04#u015",
+      "reference": false,
+      "p": 0.1,
+      "predicted": false,
+      "latency_ms": 153,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000052752,
+      "input_tokens": 1256
+    },
+    {
+      "id": "cat35/coding-reflection-04#u016",
+      "reference": true,
+      "p": 0.94,
+      "predicted": true,
+      "latency_ms": 127,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000092064,
+      "input_tokens": 2192
+    },
+    {
+      "id": "cat35/coding-reflection-04#u017",
+      "reference": false,
+      "p": 0.33,
+      "predicted": false,
+      "latency_ms": 210,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00006594000000000001,
+      "input_tokens": 1570
+    },
+    {
+      "id": "cat35/coding-reflection-04#u018",
+      "reference": true,
+      "p": 0.95,
+      "predicted": true,
+      "latency_ms": 150,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000087822,
+      "input_tokens": 2091
+    },
+    {
+      "id": "cat35/coding-reflection-04#u019",
+      "reference": true,
+      "p": 0.87,
+      "predicted": true,
+      "latency_ms": 169,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000092064,
+      "input_tokens": 2192
+    },
+    {
+      "id": "cat35/coding-reflection-04#u020",
+      "reference": true,
+      "p": 0.85,
+      "predicted": true,
+      "latency_ms": 432,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000076524,
+      "input_tokens": 1822
+    },
+    {
+      "id": "cat35/coding-reflection-04#u021",
+      "reference": true,
+      "p": 0.96,
+      "predicted": true,
+      "latency_ms": 199,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000055986,
+      "input_tokens": 1333
+    },
+    {
+      "id": "cat35/coding-reflection-04#u022",
+      "reference": true,
+      "p": 0.87,
+      "predicted": true,
+      "latency_ms": 134,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000062916,
+      "input_tokens": 1498
+    },
+    {
+      "id": "cat35/coding-reflection-04#u023",
+      "reference": true,
+      "p": 0.73,
+      "predicted": true,
+      "latency_ms": 176,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00007182,
+      "input_tokens": 1710
+    },
+    {
+      "id": "cat35/coding-reflection-04#u024",
+      "reference": true,
+      "p": 0.97,
+      "predicted": true,
+      "latency_ms": 130,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000077742,
+      "input_tokens": 1851
+    },
+    {
+      "id": "cat35/coding-reflection-04#u025",
+      "reference": true,
+      "p": 0.89,
+      "predicted": true,
+      "latency_ms": 151,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000079086,
+      "input_tokens": 1883
+    },
+    {
+      "id": "cat35/coding-reflection-04#u026",
+      "reference": true,
+      "p": 0.09,
+      "predicted": false,
+      "latency_ms": 147,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000031752000000000004,
+      "input_tokens": 756
+    },
+    {
+      "id": "cat35/coding-reflection-04#u027",
+      "reference": false,
+      "p": 0.06,
+      "predicted": false,
+      "latency_ms": 125,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005796,
+      "input_tokens": 1380
+    },
+    {
+      "id": "cat35/coding-reflection-04#u028",
+      "reference": true,
+      "p": 0.97,
+      "predicted": true,
+      "latency_ms": 207,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000038304000000000005,
+      "input_tokens": 912
+    },
+    {
+      "id": "cat35/coding-reflection-04#u029",
+      "reference": true,
+      "p": 0.03,
+      "predicted": false,
+      "latency_ms": 170,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000014280000000000002,
+      "input_tokens": 340
+    },
+    {
+      "id": "cat35/coding-reflection-04#u030",
+      "reference": true,
+      "p": 0.95,
+      "predicted": true,
+      "latency_ms": 138,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000040698,
+      "input_tokens": 969
+    },
+    {
+      "id": "cat35/coding-reflection-04#u031",
+      "reference": true,
+      "p": 0.9,
+      "predicted": true,
+      "latency_ms": 255,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000059934000000000006,
+      "input_tokens": 1427
+    },
+    {
+      "id": "cat35/coding-reflection-04#u032",
+      "reference": true,
+      "p": 0.93,
+      "predicted": true,
+      "latency_ms": 253,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000054222000000000004,
+      "input_tokens": 1291
+    },
+    {
+      "id": "cat35/coding-reflection-04#u033",
+      "reference": true,
+      "p": 0.96,
+      "predicted": true,
+      "latency_ms": 131,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000042714,
+      "input_tokens": 1017
+    },
+    {
+      "id": "cat35/coding-reflection-04#u034",
+      "reference": true,
+      "p": 0.82,
+      "predicted": true,
+      "latency_ms": 125,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00006384000000000001,
+      "input_tokens": 1520
+    },
+    {
+      "id": "cat35/coding-reflection-04#u035",
+      "reference": true,
+      "p": 0.96,
+      "predicted": true,
+      "latency_ms": 164,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00003969,
+      "input_tokens": 945
+    },
+    {
+      "id": "cat35/coding-reflection-04#u036",
+      "reference": true,
+      "p": 0.93,
+      "predicted": true,
+      "latency_ms": 135,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000049602000000000004,
+      "input_tokens": 1181
+    },
+    {
+      "id": "cat35/coding-reflection-04#p001",
+      "reference": false,
+      "p": 0.15,
+      "predicted": false,
+      "latency_ms": 145,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000030324,
+      "input_tokens": 722
+    },
+    {
+      "id": "cat35/coding-reflection-04#p002",
+      "reference": false,
+      "p": 0.15,
+      "predicted": false,
+      "latency_ms": 121,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000084672,
+      "input_tokens": 2016
+    },
+    {
+      "id": "cat35/coding-reflection-04#p003",
+      "reference": false,
+      "p": 0.07,
+      "predicted": false,
+      "latency_ms": 156,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000091938,
+      "input_tokens": 2189
+    },
+    {
+      "id": "cat35/coding-reflection-04#p004",
+      "reference": false,
+      "p": 0.31,
+      "predicted": false,
+      "latency_ms": 175,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000091938,
+      "input_tokens": 2189
+    },
+    {
+      "id": "cat35/coding-reflection-04#p005",
+      "reference": false,
+      "p": 0.34,
+      "predicted": false,
+      "latency_ms": 126,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000053886000000000006,
+      "input_tokens": 1283
+    },
+    {
+      "id": "cat35/coding-reflection-04#p006",
+      "reference": false,
+      "p": 0.13,
+      "predicted": false,
+      "latency_ms": 121,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000049476000000000005,
+      "input_tokens": 1178
+    },
+    {
+      "id": "cat35/coding-reflection-04#p007",
+      "reference": false,
+      "p": 0.13,
+      "predicted": false,
+      "latency_ms": 117,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000079086,
+      "input_tokens": 1883
+    },
+    {
+      "id": "cat35/coding-reflection-04#p009",
+      "reference": false,
+      "p": 0.03,
+      "predicted": false,
+      "latency_ms": 134,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000014280000000000002,
+      "input_tokens": 340
+    },
+    {
+      "id": "cat35/coding-reflection-04#p011",
+      "reference": false,
+      "p": 0.04,
+      "predicted": false,
+      "latency_ms": 193,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00004544400000000001,
+      "input_tokens": 1082
+    },
+    {
+      "id": "cat35/coding-reflection-04#p012",
+      "reference": false,
+      "p": 0.11,
+      "predicted": false,
+      "latency_ms": 427,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00003969,
+      "input_tokens": 945
+    },
+    {
+      "id": "cat35/emotional-processing-01#u001",
+      "reference": true,
+      "p": 0.94,
+      "predicted": true,
+      "latency_ms": 134,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000039102,
+      "input_tokens": 931
+    },
+    {
+      "id": "cat35/emotional-processing-01#u002",
+      "reference": true,
+      "p": 0.8,
+      "predicted": true,
+      "latency_ms": 119,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000039018000000000005,
+      "input_tokens": 929
+    },
+    {
+      "id": "cat35/emotional-processing-01#u003",
+      "reference": false,
+      "p": 0.04,
+      "predicted": false,
+      "latency_ms": 207,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000014280000000000002,
+      "input_tokens": 340
+    },
+    {
+      "id": "cat35/emotional-processing-01#u004",
+      "reference": true,
+      "p": 0.59,
+      "predicted": true,
+      "latency_ms": 131,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000051450000000000004,
+      "input_tokens": 1225
+    },
+    {
+      "id": "cat35/emotional-processing-01#u005",
+      "reference": true,
+      "p": 0.83,
+      "predicted": true,
+      "latency_ms": 123,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005119800000000001,
+      "input_tokens": 1219
+    },
+    {
+      "id": "cat35/emotional-processing-01#u006",
+      "reference": true,
+      "p": 0.96,
+      "predicted": true,
+      "latency_ms": 163,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000026964,
+      "input_tokens": 642
+    },
+    {
+      "id": "cat35/emotional-processing-01#u007",
+      "reference": false,
+      "p": 0.53,
+      "predicted": true,
+      "latency_ms": 176,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000051660000000000003,
+      "input_tokens": 1230
+    },
+    {
+      "id": "cat35/emotional-processing-01#u008",
+      "reference": false,
+      "p": 0.7,
+      "predicted": true,
+      "latency_ms": 203,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000052542,
+      "input_tokens": 1251
+    },
+    {
+      "id": "cat35/emotional-processing-01#u009",
+      "reference": false,
+      "p": 0.44,
+      "predicted": false,
+      "latency_ms": 134,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005170200000000001,
+      "input_tokens": 1231
+    },
+    {
+      "id": "cat35/emotional-processing-01#u010",
+      "reference": false,
+      "p": 0.78,
+      "predicted": true,
+      "latency_ms": 197,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000025326,
+      "input_tokens": 603
+    },
+    {
+      "id": "cat35/emotional-processing-01#u011",
+      "reference": true,
+      "p": 0.85,
+      "predicted": true,
+      "latency_ms": 137,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000026166,
+      "input_tokens": 623
+    },
+    {
+      "id": "cat35/emotional-processing-01#u012",
+      "reference": true,
+      "p": 0.9,
+      "predicted": true,
+      "latency_ms": 415,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000038598000000000006,
+      "input_tokens": 919
+    },
+    {
+      "id": "cat35/emotional-processing-01#u013",
+      "reference": false,
+      "p": 0.02,
+      "predicted": false,
+      "latency_ms": 187,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000014448000000000001,
+      "input_tokens": 344
+    },
+    {
+      "id": "cat35/emotional-processing-01#u014",
+      "reference": false,
+      "p": 0.34,
+      "predicted": false,
+      "latency_ms": 169,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000038136,
+      "input_tokens": 908
+    },
+    {
+      "id": "cat35/emotional-processing-01#u015",
+      "reference": false,
+      "p": 0.03,
+      "predicted": false,
+      "latency_ms": 119,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000014280000000000002,
+      "input_tokens": 340
+    },
+    {
+      "id": "cat35/emotional-processing-01#u016",
+      "reference": false,
+      "p": 0.65,
+      "predicted": true,
+      "latency_ms": 174,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000051534000000000005,
+      "input_tokens": 1227
+    },
+    {
+      "id": "cat35/emotional-processing-01#u017",
+      "reference": false,
+      "p": 0.03,
+      "predicted": false,
+      "latency_ms": 143,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000014532,
+      "input_tokens": 346
+    },
+    {
+      "id": "cat35/emotional-processing-01#u018",
+      "reference": false,
+      "p": 0.7,
+      "predicted": true,
+      "latency_ms": 181,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000051408000000000007,
+      "input_tokens": 1224
+    },
+    {
+      "id": "cat35/emotional-processing-01#u019",
+      "reference": true,
+      "p": 0.9,
+      "predicted": true,
+      "latency_ms": 209,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00003822,
+      "input_tokens": 910
+    },
+    {
+      "id": "cat35/emotional-processing-01#u020",
+      "reference": false,
+      "p": 0.2,
+      "predicted": false,
+      "latency_ms": 127,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005119800000000001,
+      "input_tokens": 1219
+    },
+    {
+      "id": "cat35/emotional-processing-01#u021",
+      "reference": true,
+      "p": 0.81,
+      "predicted": true,
+      "latency_ms": 174,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000040194,
+      "input_tokens": 957
+    },
+    {
+      "id": "cat35/emotional-processing-01#u022",
+      "reference": false,
+      "p": 0.02,
+      "predicted": false,
+      "latency_ms": 464,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000016002,
+      "input_tokens": 381
+    },
+    {
+      "id": "cat35/emotional-processing-01#u023",
+      "reference": true,
+      "p": 0.97,
+      "predicted": true,
+      "latency_ms": 135,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000027636,
+      "input_tokens": 658
+    },
+    {
+      "id": "cat35/emotional-processing-01#u024",
+      "reference": false,
+      "p": 0.57,
+      "predicted": true,
+      "latency_ms": 274,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000052206,
+      "input_tokens": 1243
+    },
+    {
+      "id": "cat35/emotional-processing-01#u025",
+      "reference": true,
+      "p": 0.74,
+      "predicted": true,
+      "latency_ms": 147,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000051744000000000005,
+      "input_tokens": 1232
+    },
+    {
+      "id": "cat35/emotional-processing-01#u026",
+      "reference": false,
+      "p": 0.39,
+      "predicted": false,
+      "latency_ms": 149,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00003868200000000001,
+      "input_tokens": 921
+    },
+    {
+      "id": "cat35/emotional-processing-01#u027",
+      "reference": false,
+      "p": 0.02,
+      "predicted": false,
+      "latency_ms": 146,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00001449,
+      "input_tokens": 345
+    },
+    {
+      "id": "cat35/emotional-processing-01#u028",
+      "reference": true,
+      "p": 0.94,
+      "predicted": true,
+      "latency_ms": 153,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000027174,
+      "input_tokens": 647
+    },
+    {
+      "id": "cat35/emotional-processing-01#u029",
+      "reference": false,
+      "p": 0.57,
+      "predicted": true,
+      "latency_ms": 188,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000040278,
+      "input_tokens": 959
+    },
+    {
+      "id": "cat35/emotional-processing-01#u030",
+      "reference": true,
+      "p": 0.53,
+      "predicted": true,
+      "latency_ms": 170,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000038094000000000005,
+      "input_tokens": 907
+    },
+    {
+      "id": "cat35/emotional-processing-01#u031",
+      "reference": true,
+      "p": 0.95,
+      "predicted": true,
+      "latency_ms": 136,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000026880000000000004,
+      "input_tokens": 640
+    },
+    {
+      "id": "cat35/emotional-processing-01#u032",
+      "reference": false,
+      "p": 0.11,
+      "predicted": false,
+      "latency_ms": 146,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000026964,
+      "input_tokens": 642
+    },
+    {
+      "id": "cat35/emotional-processing-01#u033",
+      "reference": true,
+      "p": 0.82,
+      "predicted": true,
+      "latency_ms": 830,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00003843,
+      "input_tokens": 915
+    },
+    {
+      "id": "cat35/emotional-processing-01#u034",
+      "reference": false,
+      "p": 0.39,
+      "predicted": false,
+      "latency_ms": 131,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00004053000000000001,
+      "input_tokens": 965
+    },
+    {
+      "id": "cat35/emotional-processing-01#u035",
+      "reference": true,
+      "p": 0.04,
+      "predicted": false,
+      "latency_ms": 127,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000014658000000000003,
+      "input_tokens": 349
+    },
+    {
+      "id": "cat35/emotional-processing-01#u036",
+      "reference": false,
+      "p": 0.94,
+      "predicted": true,
+      "latency_ms": 143,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00003864,
+      "input_tokens": 920
+    },
+    {
+      "id": "cat35/emotional-processing-01#u037",
+      "reference": false,
+      "p": 0.37,
+      "predicted": false,
+      "latency_ms": 285,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005119800000000001,
+      "input_tokens": 1219
+    },
+    {
+      "id": "cat35/emotional-processing-01#u038",
+      "reference": true,
+      "p": 0.98,
+      "predicted": true,
+      "latency_ms": 145,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000037968,
+      "input_tokens": 904
+    },
+    {
+      "id": "cat35/emotional-processing-01#u039",
+      "reference": false,
+      "p": 0.06,
+      "predicted": false,
+      "latency_ms": 115,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000027132,
+      "input_tokens": 646
+    },
+    {
+      "id": "cat35/emotional-processing-01#u040",
+      "reference": true,
+      "p": 0.9,
+      "predicted": true,
+      "latency_ms": 136,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000027342,
+      "input_tokens": 651
+    },
+    {
+      "id": "cat35/emotional-processing-01#u041",
+      "reference": false,
+      "p": 0.09,
+      "predicted": false,
+      "latency_ms": 121,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000027636,
+      "input_tokens": 658
+    },
+    {
+      "id": "cat35/emotional-processing-01#u042",
+      "reference": false,
+      "p": 0.23,
+      "predicted": false,
+      "latency_ms": 356,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000028896000000000003,
+      "input_tokens": 688
+    },
+    {
+      "id": "cat35/emotional-processing-01#p001",
+      "reference": false,
+      "p": 0.9,
+      "predicted": true,
+      "latency_ms": 136,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000039102,
+      "input_tokens": 931
+    },
+    {
+      "id": "cat35/emotional-processing-01#p002",
+      "reference": false,
+      "p": 0.2,
+      "predicted": false,
+      "latency_ms": 131,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000039018000000000005,
+      "input_tokens": 929
+    },
+    {
+      "id": "cat35/emotional-processing-01#p003",
+      "reference": false,
+      "p": 0.2,
+      "predicted": false,
+      "latency_ms": 226,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005119800000000001,
+      "input_tokens": 1219
+    },
+    {
+      "id": "cat35/emotional-processing-01#p004",
+      "reference": false,
+      "p": 0.05,
+      "predicted": false,
+      "latency_ms": 114,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000027006000000000002,
+      "input_tokens": 643
+    },
+    {
+      "id": "cat35/emotional-processing-01#p005",
+      "reference": false,
+      "p": 0.09,
+      "predicted": false,
+      "latency_ms": 176,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000038598000000000006,
+      "input_tokens": 919
+    },
+    {
+      "id": "cat35/emotional-processing-01#p006",
+      "reference": false,
+      "p": 0.9,
+      "predicted": true,
+      "latency_ms": 162,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00003822,
+      "input_tokens": 910
+    },
+    {
+      "id": "cat35/emotional-processing-01#p007",
+      "reference": false,
+      "p": 0.56,
+      "predicted": true,
+      "latency_ms": 136,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000038724000000000004,
+      "input_tokens": 922
+    },
+    {
+      "id": "cat35/emotional-processing-01#p008",
+      "reference": false,
+      "p": 0.33,
+      "predicted": false,
+      "latency_ms": 167,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000051744000000000005,
+      "input_tokens": 1232
+    },
+    {
+      "id": "cat35/emotional-processing-01#p009",
+      "reference": false,
+      "p": 0.03,
+      "predicted": false,
+      "latency_ms": 142,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000014448000000000001,
+      "input_tokens": 344
+    },
+    {
+      "id": "cat35/emotional-processing-01#p010",
+      "reference": false,
+      "p": 0.08,
+      "predicted": false,
+      "latency_ms": 147,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00003847200000000001,
+      "input_tokens": 916
+    },
+    {
+      "id": "cat35/emotional-processing-01#p011",
+      "reference": false,
+      "p": 0.06,
+      "predicted": false,
+      "latency_ms": 192,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000014574,
+      "input_tokens": 347
+    },
+    {
+      "id": "cat35/emotional-processing-01#p012",
+      "reference": false,
+      "p": 0.15,
+      "predicted": false,
+      "latency_ms": 479,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005119800000000001,
+      "input_tokens": 1219
+    },
+    {
+      "id": "cat35/emotional-processing-02#u001",
+      "reference": true,
+      "p": 0.9,
+      "predicted": true,
+      "latency_ms": 135,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005149200000000001,
+      "input_tokens": 1226
+    },
+    {
+      "id": "cat35/emotional-processing-02#u002",
+      "reference": false,
+      "p": 0.65,
+      "predicted": true,
+      "latency_ms": 138,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005355000000000001,
+      "input_tokens": 1275
+    },
+    {
+      "id": "cat35/emotional-processing-02#u003",
+      "reference": false,
+      "p": 0.1,
+      "predicted": false,
+      "latency_ms": 154,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000028308,
+      "input_tokens": 674
+    },
+    {
+      "id": "cat35/emotional-processing-02#u004",
+      "reference": false,
+      "p": 0.47,
+      "predicted": false,
+      "latency_ms": 135,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000050106000000000004,
+      "input_tokens": 1193
+    },
+    {
+      "id": "cat35/emotional-processing-02#u005",
+      "reference": false,
+      "p": 0.33,
+      "predicted": false,
+      "latency_ms": 192,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005187,
+      "input_tokens": 1235
+    },
+    {
+      "id": "cat35/emotional-processing-02#u006",
+      "reference": false,
+      "p": 0.65,
+      "predicted": true,
+      "latency_ms": 138,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000050148,
+      "input_tokens": 1194
+    },
+    {
+      "id": "cat35/emotional-processing-02#u007",
+      "reference": false,
+      "p": 0.32,
+      "predicted": false,
+      "latency_ms": 137,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000053298000000000004,
+      "input_tokens": 1269
+    },
+    {
+      "id": "cat35/emotional-processing-02#u008",
+      "reference": false,
+      "p": 0.49,
+      "predicted": false,
+      "latency_ms": 180,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000027888,
+      "input_tokens": 664
+    },
+    {
+      "id": "cat35/emotional-processing-02#u009",
+      "reference": false,
+      "p": 0.25,
+      "predicted": false,
+      "latency_ms": 112,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.0000525,
+      "input_tokens": 1250
+    },
+    {
+      "id": "cat35/emotional-processing-02#u010",
+      "reference": false,
+      "p": 0.62,
+      "predicted": true,
+      "latency_ms": 153,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000053213999999999996,
+      "input_tokens": 1267
+    },
+    {
+      "id": "cat35/emotional-processing-02#u011",
+      "reference": true,
+      "p": 0.21,
+      "predicted": false,
+      "latency_ms": 335,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000049728,
+      "input_tokens": 1184
+    },
+    {
+      "id": "cat35/emotional-processing-02#u012",
+      "reference": true,
+      "p": 0.55,
+      "predicted": true,
+      "latency_ms": 195,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000051996,
+      "input_tokens": 1238
+    },
+    {
+      "id": "cat35/emotional-processing-02#u013",
+      "reference": false,
+      "p": 0.53,
+      "predicted": true,
+      "latency_ms": 125,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000050106000000000004,
+      "input_tokens": 1193
+    },
+    {
+      "id": "cat35/emotional-processing-02#u014",
+      "reference": true,
+      "p": 0.67,
+      "predicted": true,
+      "latency_ms": 149,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000052038000000000006,
+      "input_tokens": 1239
+    },
+    {
+      "id": "cat35/emotional-processing-02#u015",
+      "reference": true,
+      "p": 0.96,
+      "predicted": true,
+      "latency_ms": 150,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000039774,
+      "input_tokens": 947
+    },
+    {
+      "id": "cat35/emotional-processing-02#u016",
+      "reference": false,
+      "p": 0.74,
+      "predicted": true,
+      "latency_ms": 295,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000052878,
+      "input_tokens": 1259
+    },
+    {
+      "id": "cat35/emotional-processing-02#u017",
+      "reference": false,
+      "p": 0.89,
+      "predicted": true,
+      "latency_ms": 124,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000038808000000000005,
+      "input_tokens": 924
+    },
+    {
+      "id": "cat35/emotional-processing-02#u018",
+      "reference": false,
+      "p": 0.11,
+      "predicted": false,
+      "latency_ms": 141,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000027342,
+      "input_tokens": 651
+    },
+    {
+      "id": "cat35/emotional-processing-02#u019",
+      "reference": true,
+      "p": 0.89,
+      "predicted": true,
+      "latency_ms": 132,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005128200000000001,
+      "input_tokens": 1221
+    },
+    {
+      "id": "cat35/emotional-processing-02#u020",
+      "reference": true,
+      "p": 0.17,
+      "predicted": false,
+      "latency_ms": 144,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000050358,
+      "input_tokens": 1199
+    },
+    {
+      "id": "cat35/emotional-processing-02#u021",
+      "reference": true,
+      "p": 0.56,
+      "predicted": true,
+      "latency_ms": 599,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000037128,
+      "input_tokens": 884
+    },
+    {
+      "id": "cat35/emotional-processing-02#u022",
+      "reference": true,
+      "p": 0.96,
+      "predicted": true,
+      "latency_ms": 125,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000053172000000000005,
+      "input_tokens": 1266
+    },
+    {
+      "id": "cat35/emotional-processing-02#u023",
+      "reference": false,
+      "p": 0.54,
+      "predicted": true,
+      "latency_ms": 147,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000050316000000000004,
+      "input_tokens": 1198
+    },
+    {
+      "id": "cat35/emotional-processing-02#u024",
+      "reference": true,
+      "p": 0.92,
+      "predicted": true,
+      "latency_ms": 174,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000050232,
+      "input_tokens": 1196
+    },
+    {
+      "id": "cat35/emotional-processing-02#u025",
+      "reference": true,
+      "p": 0.92,
+      "predicted": true,
+      "latency_ms": 130,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000051954000000000004,
+      "input_tokens": 1237
+    },
+    {
+      "id": "cat35/emotional-processing-02#u026",
+      "reference": true,
+      "p": 0.62,
+      "predicted": true,
+      "latency_ms": 171,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005208,
+      "input_tokens": 1240
+    },
+    {
+      "id": "cat35/emotional-processing-02#u027",
+      "reference": true,
+      "p": 0.76,
+      "predicted": true,
+      "latency_ms": 137,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005061,
+      "input_tokens": 1205
+    },
+    {
+      "id": "cat35/emotional-processing-02#u028",
+      "reference": true,
+      "p": 0.94,
+      "predicted": true,
+      "latency_ms": 137,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005304600000000001,
+      "input_tokens": 1263
+    },
+    {
+      "id": "cat35/emotional-processing-02#u029",
+      "reference": true,
+      "p": 0.94,
+      "predicted": true,
+      "latency_ms": 168,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000040488,
+      "input_tokens": 964
+    },
+    {
+      "id": "cat35/emotional-processing-02#u030",
+      "reference": true,
+      "p": 0.91,
+      "predicted": true,
+      "latency_ms": 229,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.0000273,
+      "input_tokens": 650
+    },
+    {
+      "id": "cat35/emotional-processing-02#u031",
+      "reference": true,
+      "p": 0.93,
+      "predicted": true,
+      "latency_ms": 173,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000052668,
+      "input_tokens": 1254
+    },
+    {
+      "id": "cat35/emotional-processing-02#u032",
+      "reference": true,
+      "p": 0.99,
+      "predicted": true,
+      "latency_ms": 160,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00002709,
+      "input_tokens": 645
+    },
+    {
+      "id": "cat35/emotional-processing-02#u033",
+      "reference": true,
+      "p": 0.97,
+      "predicted": true,
+      "latency_ms": 138,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000027510000000000003,
+      "input_tokens": 655
+    },
+    {
+      "id": "cat35/emotional-processing-02#u034",
+      "reference": false,
+      "p": 0.25,
+      "predicted": false,
+      "latency_ms": 137,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000050232,
+      "input_tokens": 1196
+    },
+    {
+      "id": "cat35/emotional-processing-02#u035",
+      "reference": false,
+      "p": 0.46,
+      "predicted": false,
+      "latency_ms": 149,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005082,
+      "input_tokens": 1210
+    },
+    {
+      "id": "cat35/emotional-processing-02#p001",
+      "reference": false,
+      "p": 0.13,
+      "predicted": false,
+      "latency_ms": 161,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000051366,
+      "input_tokens": 1223
+    },
+    {
+      "id": "cat35/emotional-processing-02#p002",
+      "reference": false,
+      "p": 0.66,
+      "predicted": true,
+      "latency_ms": 132,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00004964400000000001,
+      "input_tokens": 1182
+    },
+    {
+      "id": "cat35/emotional-processing-02#p003",
+      "reference": false,
+      "p": 0.2,
+      "predicted": false,
+      "latency_ms": 158,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000051954000000000004,
+      "input_tokens": 1237
+    },
+    {
+      "id": "cat35/emotional-processing-02#p004",
+      "reference": false,
+      "p": 0.95,
+      "predicted": true,
+      "latency_ms": 208,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000039774,
+      "input_tokens": 947
+    },
+    {
+      "id": "cat35/emotional-processing-02#p005",
+      "reference": false,
+      "p": 0.22,
+      "predicted": false,
+      "latency_ms": 151,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000050484,
+      "input_tokens": 1202
+    },
+    {
+      "id": "cat35/emotional-processing-02#p006",
+      "reference": false,
+      "p": 0.25,
+      "predicted": false,
+      "latency_ms": 610,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000037338,
+      "input_tokens": 889
+    },
+    {
+      "id": "cat35/emotional-processing-02#p007",
+      "reference": false,
+      "p": 0.59,
+      "predicted": true,
+      "latency_ms": 139,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000050232,
+      "input_tokens": 1196
+    },
+    {
+      "id": "cat35/emotional-processing-02#p008",
+      "reference": false,
+      "p": 0.12,
+      "predicted": false,
+      "latency_ms": 125,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000052164000000000004,
+      "input_tokens": 1242
+    },
+    {
+      "id": "cat35/emotional-processing-02#p009",
+      "reference": false,
+      "p": 0.77,
+      "predicted": true,
+      "latency_ms": 123,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000053213999999999996,
+      "input_tokens": 1267
+    },
+    {
+      "id": "cat35/emotional-processing-02#p010",
+      "reference": false,
+      "p": 0.04,
+      "predicted": false,
+      "latency_ms": 128,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000040488,
+      "input_tokens": 964
+    },
+    {
+      "id": "cat35/emotional-processing-02#p011",
+      "reference": false,
+      "p": 0.06,
+      "predicted": false,
+      "latency_ms": 145,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.0000273,
+      "input_tokens": 650
+    },
+    {
+      "id": "cat35/emotional-processing-02#p012",
+      "reference": false,
+      "p": 0.1,
+      "predicted": false,
+      "latency_ms": 158,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00002709,
+      "input_tokens": 645
+    },
+    {
+      "id": "cat35/emotional-processing-03#u001",
+      "reference": true,
+      "p": 0.76,
+      "predicted": true,
+      "latency_ms": 143,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000053466000000000006,
+      "input_tokens": 1273
+    },
+    {
+      "id": "cat35/emotional-processing-03#u002",
+      "reference": false,
+      "p": 0.91,
+      "predicted": true,
+      "latency_ms": 163,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005376000000000001,
+      "input_tokens": 1280
+    },
+    {
+      "id": "cat35/emotional-processing-03#u003",
+      "reference": false,
+      "p": 0.79,
+      "predicted": true,
+      "latency_ms": 124,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005082,
+      "input_tokens": 1210
+    },
+    {
+      "id": "cat35/emotional-processing-03#u004",
+      "reference": false,
+      "p": 0.11,
+      "predicted": false,
+      "latency_ms": 195,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000030618000000000004,
+      "input_tokens": 729
+    },
+    {
+      "id": "cat35/emotional-processing-03#u005",
+      "reference": false,
+      "p": 0.33,
+      "predicted": false,
+      "latency_ms": 119,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000038892,
+      "input_tokens": 926
+    },
+    {
+      "id": "cat35/emotional-processing-03#u006",
+      "reference": false,
+      "p": 0.65,
+      "predicted": true,
+      "latency_ms": 218,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00003927,
+      "input_tokens": 935
+    },
+    {
+      "id": "cat35/emotional-processing-03#u007",
+      "reference": false,
+      "p": 0.71,
+      "predicted": true,
+      "latency_ms": 597,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000040194,
+      "input_tokens": 957
+    },
+    {
+      "id": "cat35/emotional-processing-03#u008",
+      "reference": false,
+      "p": 0.11,
+      "predicted": false,
+      "latency_ms": 135,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000026082000000000002,
+      "input_tokens": 621
+    },
+    {
+      "id": "cat35/emotional-processing-03#u009",
+      "reference": false,
+      "p": 0.24,
+      "predicted": false,
+      "latency_ms": 135,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000053256000000000006,
+      "input_tokens": 1268
+    },
+    {
+      "id": "cat35/emotional-processing-03#u010",
+      "reference": true,
+      "p": 0.66,
+      "predicted": true,
+      "latency_ms": 125,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000052206,
+      "input_tokens": 1243
+    },
+    {
+      "id": "cat35/emotional-processing-03#u011",
+      "reference": true,
+      "p": 0.87,
+      "predicted": true,
+      "latency_ms": 152,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005300400000000001,
+      "input_tokens": 1262
+    },
+    {
+      "id": "cat35/emotional-processing-03#u012",
+      "reference": true,
+      "p": 0.97,
+      "predicted": true,
+      "latency_ms": 180,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000053382000000000005,
+      "input_tokens": 1271
+    },
+    {
+      "id": "cat35/emotional-processing-03#u013",
+      "reference": true,
+      "p": 0.79,
+      "predicted": true,
+      "latency_ms": 146,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00004771200000000001,
+      "input_tokens": 1136
+    },
+    {
+      "id": "cat35/emotional-processing-03#u014",
+      "reference": true,
+      "p": 0.58,
+      "predicted": true,
+      "latency_ms": 155,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000053592000000000005,
+      "input_tokens": 1276
+    },
+    {
+      "id": "cat35/emotional-processing-03#u015",
+      "reference": true,
+      "p": 0.74,
+      "predicted": true,
+      "latency_ms": 221,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000053634,
+      "input_tokens": 1277
+    },
+    {
+      "id": "cat35/emotional-processing-03#u016",
+      "reference": true,
+      "p": 0.95,
+      "predicted": true,
+      "latency_ms": 127,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000052668,
+      "input_tokens": 1254
+    },
+    {
+      "id": "cat35/emotional-processing-03#u017",
+      "reference": true,
+      "p": 0.97,
+      "predicted": true,
+      "latency_ms": 134,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000050778,
+      "input_tokens": 1209
+    },
+    {
+      "id": "cat35/emotional-processing-03#u018",
+      "reference": true,
+      "p": 0.94,
+      "predicted": true,
+      "latency_ms": 142,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000054138,
+      "input_tokens": 1289
+    },
+    {
+      "id": "cat35/emotional-processing-03#u019",
+      "reference": true,
+      "p": 0.96,
+      "predicted": true,
+      "latency_ms": 206,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000041664000000000006,
+      "input_tokens": 992
+    },
+    {
+      "id": "cat35/emotional-processing-03#u020",
+      "reference": true,
+      "p": 0.56,
+      "predicted": true,
+      "latency_ms": 119,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000051114000000000006,
+      "input_tokens": 1217
+    },
+    {
+      "id": "cat35/emotional-processing-03#u021",
+      "reference": true,
+      "p": 0.48,
+      "predicted": false,
+      "latency_ms": 132,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000054306000000000005,
+      "input_tokens": 1293
+    },
+    {
+      "id": "cat35/emotional-processing-03#p001",
+      "reference": false,
+      "p": 0.04,
+      "predicted": false,
+      "latency_ms": 137,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000053508,
+      "input_tokens": 1274
+    },
+    {
+      "id": "cat35/emotional-processing-03#p002",
+      "reference": false,
+      "p": 0.29,
+      "predicted": false,
+      "latency_ms": 287,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000052374000000000004,
+      "input_tokens": 1247
+    },
+    {
+      "id": "cat35/emotional-processing-03#p003",
+      "reference": false,
+      "p": 0.55,
+      "predicted": true,
+      "latency_ms": 115,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000052836,
+      "input_tokens": 1258
+    },
+    {
+      "id": "cat35/emotional-processing-03#p004",
+      "reference": false,
+      "p": 0.5,
+      "predicted": true,
+      "latency_ms": 159,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000053424,
+      "input_tokens": 1272
+    },
+    {
+      "id": "cat35/emotional-processing-03#p005",
+      "reference": false,
+      "p": 0.26,
+      "predicted": false,
+      "latency_ms": 158,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000053256000000000006,
+      "input_tokens": 1268
+    },
+    {
+      "id": "cat35/emotional-processing-03#p006",
+      "reference": false,
+      "p": 0.49,
+      "predicted": false,
+      "latency_ms": 113,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000053466000000000006,
+      "input_tokens": 1273
+    },
+    {
+      "id": "cat35/emotional-processing-03#p007",
+      "reference": false,
+      "p": 0.22,
+      "predicted": false,
+      "latency_ms": 129,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000053592000000000005,
+      "input_tokens": 1276
+    },
+    {
+      "id": "cat35/emotional-processing-03#p008",
+      "reference": false,
+      "p": 0.03,
+      "predicted": false,
+      "latency_ms": 193,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000052878,
+      "input_tokens": 1259
+    },
+    {
+      "id": "cat35/emotional-processing-03#p009",
+      "reference": false,
+      "p": 0.14,
+      "predicted": false,
+      "latency_ms": 171,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005073600000000001,
+      "input_tokens": 1208
+    },
+    {
+      "id": "cat35/emotional-processing-03#p010",
+      "reference": false,
+      "p": 0.22,
+      "predicted": false,
+      "latency_ms": 275,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000054348,
+      "input_tokens": 1294
+    },
+    {
+      "id": "cat35/emotional-processing-03#p011",
+      "reference": false,
+      "p": 0.03,
+      "predicted": false,
+      "latency_ms": 175,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00004153800000000001,
+      "input_tokens": 989
+    },
+    {
+      "id": "cat35/emotional-processing-03#p012",
+      "reference": false,
+      "p": 0.26,
+      "predicted": false,
+      "latency_ms": 112,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005119800000000001,
+      "input_tokens": 1219
+    },
+    {
+      "id": "cat35/emotional-processing-04#u001",
+      "reference": true,
+      "p": 0.42,
+      "predicted": false,
+      "latency_ms": 152,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00006883800000000001,
+      "input_tokens": 1639
+    },
+    {
+      "id": "cat35/emotional-processing-04#u002",
+      "reference": true,
+      "p": 0.98,
+      "predicted": true,
+      "latency_ms": 208,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000044856,
+      "input_tokens": 1068
+    },
+    {
+      "id": "cat35/emotional-processing-04#u003",
+      "reference": true,
+      "p": 0.72,
+      "predicted": true,
+      "latency_ms": 161,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000072996,
+      "input_tokens": 1738
+    },
+    {
+      "id": "cat35/emotional-processing-04#u004",
+      "reference": false,
+      "p": 0.23,
+      "predicted": false,
+      "latency_ms": 129,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000044184,
+      "input_tokens": 1052
+    },
+    {
+      "id": "cat35/emotional-processing-04#u005",
+      "reference": false,
+      "p": 0.12,
+      "predicted": false,
+      "latency_ms": 132,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000045822,
+      "input_tokens": 1091
+    },
+    {
+      "id": "cat35/emotional-processing-04#u006",
+      "reference": false,
+      "p": 0.29,
+      "predicted": false,
+      "latency_ms": 286,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005489400000000001,
+      "input_tokens": 1307
+    },
+    {
+      "id": "cat35/emotional-processing-04#u007",
+      "reference": true,
+      "p": 0.68,
+      "predicted": true,
+      "latency_ms": 136,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000047544000000000004,
+      "input_tokens": 1132
+    },
+    {
+      "id": "cat35/emotional-processing-04#u008",
+      "reference": false,
+      "p": 0.38,
+      "predicted": false,
+      "latency_ms": 180,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000079968,
+      "input_tokens": 1904
+    },
+    {
+      "id": "cat35/emotional-processing-04#u009",
+      "reference": false,
+      "p": 0.51,
+      "predicted": true,
+      "latency_ms": 180,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000034272,
+      "input_tokens": 816
+    },
+    {
+      "id": "cat35/emotional-processing-04#u010",
+      "reference": false,
+      "p": 0.48,
+      "predicted": false,
+      "latency_ms": 194,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000068082,
+      "input_tokens": 1621
+    },
+    {
+      "id": "cat35/emotional-processing-04#u011",
+      "reference": true,
+      "p": 0.89,
+      "predicted": true,
+      "latency_ms": 152,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000062118,
+      "input_tokens": 1479
+    },
+    {
+      "id": "cat35/emotional-processing-04#u012",
+      "reference": true,
+      "p": 0.81,
+      "predicted": true,
+      "latency_ms": 163,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000049097999999999996,
+      "input_tokens": 1169
+    },
+    {
+      "id": "cat35/emotional-processing-04#u013",
+      "reference": false,
+      "p": 0.58,
+      "predicted": true,
+      "latency_ms": 138,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000045906000000000004,
+      "input_tokens": 1093
+    },
+    {
+      "id": "cat35/emotional-processing-04#u014",
+      "reference": true,
+      "p": 0.55,
+      "predicted": true,
+      "latency_ms": 123,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000067158,
+      "input_tokens": 1599
+    },
+    {
+      "id": "cat35/emotional-processing-04#u015",
+      "reference": true,
+      "p": 0.2,
+      "predicted": false,
+      "latency_ms": 186,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00008458800000000001,
+      "input_tokens": 2014
+    },
+    {
+      "id": "cat35/emotional-processing-04#u016",
+      "reference": true,
+      "p": 0.7,
+      "predicted": true,
+      "latency_ms": 132,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000061068,
+      "input_tokens": 1454
+    },
+    {
+      "id": "cat35/emotional-processing-04#u017",
+      "reference": false,
+      "p": 0.71,
+      "predicted": true,
+      "latency_ms": 131,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000051534000000000005,
+      "input_tokens": 1227
+    },
+    {
+      "id": "cat35/emotional-processing-04#u018",
+      "reference": false,
+      "p": 0.6,
+      "predicted": true,
+      "latency_ms": 150,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005867400000000001,
+      "input_tokens": 1397
+    },
+    {
+      "id": "cat35/emotional-processing-04#u019",
+      "reference": false,
+      "p": 0.58,
+      "predicted": true,
+      "latency_ms": 174,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000022638,
+      "input_tokens": 539
+    },
+    {
+      "id": "cat35/emotional-processing-04#u020",
+      "reference": false,
+      "p": 0.83,
+      "predicted": true,
+      "latency_ms": 154,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000058254,
+      "input_tokens": 1387
+    },
+    {
+      "id": "cat35/emotional-processing-04#u021",
+      "reference": true,
+      "p": 0.89,
+      "predicted": true,
+      "latency_ms": 162,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00007253400000000001,
+      "input_tokens": 1727
+    },
+    {
+      "id": "cat35/emotional-processing-04#u022",
+      "reference": false,
+      "p": 0.23,
+      "predicted": false,
+      "latency_ms": 126,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000028224,
+      "input_tokens": 672
+    },
+    {
+      "id": "cat35/emotional-processing-04#u023",
+      "reference": false,
+      "p": 0.24,
+      "predicted": false,
+      "latency_ms": 181,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000055692,
+      "input_tokens": 1326
+    },
+    {
+      "id": "cat35/emotional-processing-04#u024",
+      "reference": false,
+      "p": 0.76,
+      "predicted": true,
+      "latency_ms": 156,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000049182,
+      "input_tokens": 1171
+    },
+    {
+      "id": "cat35/emotional-processing-04#u025",
+      "reference": false,
+      "p": 0.83,
+      "predicted": true,
+      "latency_ms": 163,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000057918000000000003,
+      "input_tokens": 1379
+    },
+    {
+      "id": "cat35/emotional-processing-04#u026",
+      "reference": true,
+      "p": 0.77,
+      "predicted": true,
+      "latency_ms": 138,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000056616,
+      "input_tokens": 1348
+    },
+    {
+      "id": "cat35/emotional-processing-04#u027",
+      "reference": true,
+      "p": 0.72,
+      "predicted": true,
+      "latency_ms": 354,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000068544,
+      "input_tokens": 1632
+    },
+    {
+      "id": "cat35/emotional-processing-04#u028",
+      "reference": true,
+      "p": 0.54,
+      "predicted": true,
+      "latency_ms": 169,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000095802,
+      "input_tokens": 2281
+    },
+    {
+      "id": "cat35/emotional-processing-04#u029",
+      "reference": false,
+      "p": 0.75,
+      "predicted": true,
+      "latency_ms": 124,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00006732600000000001,
+      "input_tokens": 1603
+    },
+    {
+      "id": "cat35/emotional-processing-04#u030",
+      "reference": true,
+      "p": 0.97,
+      "predicted": true,
+      "latency_ms": 134,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000052542,
+      "input_tokens": 1251
+    },
+    {
+      "id": "cat35/emotional-processing-04#u031",
+      "reference": true,
+      "p": 0.38,
+      "predicted": false,
+      "latency_ms": 143,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000045822,
+      "input_tokens": 1091
+    },
+    {
+      "id": "cat35/emotional-processing-04#u032",
+      "reference": true,
+      "p": 0.78,
+      "predicted": true,
+      "latency_ms": 127,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00006795600000000001,
+      "input_tokens": 1618
+    },
+    {
+      "id": "cat35/emotional-processing-04#u033",
+      "reference": true,
+      "p": 0.96,
+      "predicted": true,
+      "latency_ms": 166,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000063798,
+      "input_tokens": 1519
+    },
+    {
+      "id": "cat35/emotional-processing-04#u034",
+      "reference": true,
+      "p": 0.92,
+      "predicted": true,
+      "latency_ms": 178,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005485200000000001,
+      "input_tokens": 1306
+    },
+    {
+      "id": "cat35/emotional-processing-04#u035",
+      "reference": true,
+      "p": 0.94,
+      "predicted": true,
+      "latency_ms": 127,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000081984,
+      "input_tokens": 1952
+    },
+    {
+      "id": "cat35/emotional-processing-04#u036",
+      "reference": true,
+      "p": 0.89,
+      "predicted": true,
+      "latency_ms": 151,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000062706,
+      "input_tokens": 1493
+    },
+    {
+      "id": "cat35/emotional-processing-04#u037",
+      "reference": true,
+      "p": 0.96,
+      "predicted": true,
+      "latency_ms": 229,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000048468000000000004,
+      "input_tokens": 1154
+    },
+    {
+      "id": "cat35/emotional-processing-04#u038",
+      "reference": true,
+      "p": 0.89,
+      "predicted": true,
+      "latency_ms": 154,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005107200000000001,
+      "input_tokens": 1216
+    },
+    {
+      "id": "cat35/emotional-processing-04#u039",
+      "reference": true,
+      "p": 0.53,
+      "predicted": true,
+      "latency_ms": 139,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000061068,
+      "input_tokens": 1454
+    },
+    {
+      "id": "cat35/emotional-processing-04#u040",
+      "reference": true,
+      "p": 0.57,
+      "predicted": true,
+      "latency_ms": 124,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005842200000000001,
+      "input_tokens": 1391
+    },
+    {
+      "id": "cat35/emotional-processing-04#u041",
+      "reference": false,
+      "p": 0.42,
+      "predicted": false,
+      "latency_ms": 142,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000051828000000000006,
+      "input_tokens": 1234
+    },
+    {
+      "id": "cat35/emotional-processing-04#p001",
+      "reference": false,
+      "p": 0.16,
+      "predicted": false,
+      "latency_ms": 144,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000083958,
+      "input_tokens": 1999
+    },
+    {
+      "id": "cat35/emotional-processing-04#p002",
+      "reference": false,
+      "p": 0.12,
+      "predicted": false,
+      "latency_ms": 202,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000072996,
+      "input_tokens": 1738
+    },
+    {
+      "id": "cat35/emotional-processing-04#p003",
+      "reference": false,
+      "p": 0.12,
+      "predicted": false,
+      "latency_ms": 146,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000082026,
+      "input_tokens": 1953
+    },
+    {
+      "id": "cat35/emotional-processing-04#p004",
+      "reference": false,
+      "p": 0.64,
+      "predicted": true,
+      "latency_ms": 196,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000067074,
+      "input_tokens": 1597
+    },
+    {
+      "id": "cat35/emotional-processing-04#p005",
+      "reference": false,
+      "p": 0.13,
+      "predicted": false,
+      "latency_ms": 343,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00006287400000000001,
+      "input_tokens": 1497
+    },
+    {
+      "id": "cat35/emotional-processing-04#p006",
+      "reference": false,
+      "p": 0.25,
+      "predicted": false,
+      "latency_ms": 159,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000051324000000000005,
+      "input_tokens": 1222
+    },
+    {
+      "id": "cat35/emotional-processing-04#p007",
+      "reference": false,
+      "p": 0.48,
+      "predicted": false,
+      "latency_ms": 173,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000095802,
+      "input_tokens": 2281
+    },
+    {
+      "id": "cat35/emotional-processing-04#p008",
+      "reference": false,
+      "p": 0.05,
+      "predicted": false,
+      "latency_ms": 134,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000063798,
+      "input_tokens": 1519
+    },
+    {
+      "id": "cat35/emotional-processing-04#p009",
+      "reference": false,
+      "p": 0.13,
+      "predicted": false,
+      "latency_ms": 166,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000081816,
+      "input_tokens": 1948
+    },
+    {
+      "id": "cat35/emotional-processing-04#p010",
+      "reference": false,
+      "p": 0.05,
+      "predicted": false,
+      "latency_ms": 247,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000048468000000000004,
+      "input_tokens": 1154
+    },
+    {
+      "id": "cat35/emotional-processing-04#p011",
+      "reference": false,
+      "p": 0.16,
+      "predicted": false,
+      "latency_ms": 168,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000060899999999999996,
+      "input_tokens": 1450
+    },
+    {
+      "id": "cat35/mixed-routine-signal-02#u001",
+      "reference": false,
+      "p": 0.83,
+      "predicted": true,
+      "latency_ms": 118,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000047124,
+      "input_tokens": 1122
+    },
+    {
+      "id": "cat35/mixed-routine-signal-02#u002",
+      "reference": true,
+      "p": 0.91,
+      "predicted": true,
+      "latency_ms": 166,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00004767,
+      "input_tokens": 1135
+    },
+    {
+      "id": "cat35/mixed-routine-signal-02#u003",
+      "reference": true,
+      "p": 0.94,
+      "predicted": true,
+      "latency_ms": 137,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00004683000000000001,
+      "input_tokens": 1115
+    },
+    {
+      "id": "cat35/mixed-routine-signal-02#u004",
+      "reference": true,
+      "p": 0.96,
+      "predicted": true,
+      "latency_ms": 138,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000035364,
+      "input_tokens": 842
+    },
+    {
+      "id": "cat35/mixed-routine-signal-02#u005",
+      "reference": true,
+      "p": 0.98,
+      "predicted": true,
+      "latency_ms": 128,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00002415,
+      "input_tokens": 575
+    },
+    {
+      "id": "cat35/mixed-routine-signal-02#u006",
+      "reference": true,
+      "p": 0.63,
+      "predicted": true,
+      "latency_ms": 191,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000047796,
+      "input_tokens": 1138
+    },
+    {
+      "id": "cat35/mixed-routine-signal-02#u007",
+      "reference": false,
+      "p": 0.03,
+      "predicted": false,
+      "latency_ms": 221,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000014322000000000001,
+      "input_tokens": 341
+    },
+    {
+      "id": "cat35/mixed-routine-signal-02#u008",
+      "reference": false,
+      "p": 0.93,
+      "predicted": true,
+      "latency_ms": 164,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000047124,
+      "input_tokens": 1122
+    },
+    {
+      "id": "cat35/mixed-routine-signal-02#u009",
+      "reference": false,
+      "p": 0.73,
+      "predicted": true,
+      "latency_ms": 169,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000047628000000000005,
+      "input_tokens": 1134
+    },
+    {
+      "id": "cat35/mixed-routine-signal-02#u010",
+      "reference": false,
+      "p": 0.43,
+      "predicted": false,
+      "latency_ms": 143,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000047418000000000006,
+      "input_tokens": 1129
+    },
+    {
+      "id": "cat35/mixed-routine-signal-02#u011",
+      "reference": false,
+      "p": 0.93,
+      "predicted": true,
+      "latency_ms": 317,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000036876000000000004,
+      "input_tokens": 878
+    },
+    {
+      "id": "cat35/mixed-routine-signal-02#u012",
+      "reference": false,
+      "p": 0.95,
+      "predicted": true,
+      "latency_ms": 305,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000035826000000000006,
+      "input_tokens": 853
+    },
+    {
+      "id": "cat35/mixed-routine-signal-02#u013",
+      "reference": false,
+      "p": 0.65,
+      "predicted": true,
+      "latency_ms": 216,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000035448000000000003,
+      "input_tokens": 844
+    },
+    {
+      "id": "cat35/mixed-routine-signal-02#u014",
+      "reference": false,
+      "p": 0.87,
+      "predicted": true,
+      "latency_ms": 167,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00003612,
+      "input_tokens": 860
+    },
+    {
+      "id": "cat35/mixed-routine-signal-02#u015",
+      "reference": true,
+      "p": 0.96,
+      "predicted": true,
+      "latency_ms": 154,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000025914000000000003,
+      "input_tokens": 617
+    },
+    {
+      "id": "cat35/mixed-routine-signal-02#u016",
+      "reference": true,
+      "p": 0.17,
+      "predicted": false,
+      "latency_ms": 199,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000024570000000000004,
+      "input_tokens": 585
+    },
+    {
+      "id": "cat35/mixed-routine-signal-02#u017",
+      "reference": true,
+      "p": 0.04,
+      "predicted": false,
+      "latency_ms": 167,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000014448000000000001,
+      "input_tokens": 344
+    },
+    {
+      "id": "cat35/mixed-routine-signal-02#u018",
+      "reference": false,
+      "p": 0.57,
+      "predicted": true,
+      "latency_ms": 162,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000047628000000000005,
+      "input_tokens": 1134
+    },
+    {
+      "id": "cat35/mixed-routine-signal-02#u019",
+      "reference": true,
+      "p": 0.86,
+      "predicted": true,
+      "latency_ms": 133,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000025494000000000004,
+      "input_tokens": 607
+    },
+    {
+      "id": "cat35/mixed-routine-signal-02#u020",
+      "reference": true,
+      "p": 0.82,
+      "predicted": true,
+      "latency_ms": 156,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00004788,
+      "input_tokens": 1140
+    },
+    {
+      "id": "cat35/mixed-routine-signal-02#u021",
+      "reference": true,
+      "p": 0.74,
+      "predicted": true,
+      "latency_ms": 142,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000047838000000000005,
+      "input_tokens": 1139
+    },
+    {
+      "id": "cat35/mixed-routine-signal-02#u022",
+      "reference": false,
+      "p": 0.65,
+      "predicted": true,
+      "latency_ms": 127,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000035364,
+      "input_tokens": 842
+    },
+    {
+      "id": "cat35/mixed-routine-signal-02#u023",
+      "reference": false,
+      "p": 0.09,
+      "predicted": false,
+      "latency_ms": 161,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000035532,
+      "input_tokens": 846
+    },
+    {
+      "id": "cat35/mixed-routine-signal-02#u024",
+      "reference": false,
+      "p": 0.67,
+      "predicted": true,
+      "latency_ms": 455,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00004729200000000001,
+      "input_tokens": 1126
+    },
+    {
+      "id": "cat35/mixed-routine-signal-02#u025",
+      "reference": false,
+      "p": 0.93,
+      "predicted": true,
+      "latency_ms": 139,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000025368000000000005,
+      "input_tokens": 604
+    },
+    {
+      "id": "cat35/mixed-routine-signal-02#p001",
+      "reference": false,
+      "p": 0.16,
+      "predicted": false,
+      "latency_ms": 142,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000047922000000000006,
+      "input_tokens": 1141
+    },
+    {
+      "id": "cat35/mixed-routine-signal-02#p002",
+      "reference": false,
+      "p": 0.04,
+      "predicted": false,
+      "latency_ms": 157,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000046872,
+      "input_tokens": 1116
+    },
+    {
+      "id": "cat35/mixed-routine-signal-02#p003",
+      "reference": false,
+      "p": 0.31,
+      "predicted": false,
+      "latency_ms": 131,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000025284,
+      "input_tokens": 602
+    },
+    {
+      "id": "cat35/mixed-routine-signal-02#p004",
+      "reference": false,
+      "p": 0.02,
+      "predicted": false,
+      "latency_ms": 138,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00004746,
+      "input_tokens": 1130
+    },
+    {
+      "id": "cat35/mixed-routine-signal-02#p005",
+      "reference": false,
+      "p": 0.03,
+      "predicted": false,
+      "latency_ms": 147,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000047796,
+      "input_tokens": 1138
+    },
+    {
+      "id": "cat35/mixed-routine-signal-02#p006",
+      "reference": false,
+      "p": 0.02,
+      "predicted": false,
+      "latency_ms": 177,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000035868,
+      "input_tokens": 854
+    },
+    {
+      "id": "cat35/mixed-routine-signal-02#p007",
+      "reference": false,
+      "p": 0.04,
+      "predicted": false,
+      "latency_ms": 151,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000024612000000000004,
+      "input_tokens": 586
+    },
+    {
+      "id": "cat35/mixed-routine-signal-02#p008",
+      "reference": false,
+      "p": 0.04,
+      "predicted": false,
+      "latency_ms": 214,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000014574,
+      "input_tokens": 347
+    },
+    {
+      "id": "cat35/mixed-routine-signal-02#p009",
+      "reference": false,
+      "p": 0.09,
+      "predicted": false,
+      "latency_ms": 130,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000025452,
+      "input_tokens": 606
+    },
+    {
+      "id": "cat35/mixed-routine-signal-02#p010",
+      "reference": false,
+      "p": 0.16,
+      "predicted": false,
+      "latency_ms": 166,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00004788,
+      "input_tokens": 1140
+    },
+    {
+      "id": "cat35/mixed-routine-signal-02#p011",
+      "reference": false,
+      "p": 0.49,
+      "predicted": false,
+      "latency_ms": 148,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000047922000000000006,
+      "input_tokens": 1141
+    },
+    {
+      "id": "cat35/people-deal-01#u001",
+      "reference": true,
+      "p": 0.62,
+      "predicted": true,
+      "latency_ms": 434,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000054516,
+      "input_tokens": 1298
+    },
+    {
+      "id": "cat35/people-deal-01#u002",
+      "reference": true,
+      "p": 0.78,
+      "predicted": true,
+      "latency_ms": 127,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000042042,
+      "input_tokens": 1001
+    },
+    {
+      "id": "cat35/people-deal-01#u003",
+      "reference": true,
+      "p": 0.62,
+      "predicted": true,
+      "latency_ms": 125,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000045906000000000004,
+      "input_tokens": 1093
+    },
+    {
+      "id": "cat35/people-deal-01#u004",
+      "reference": false,
+      "p": 0.26,
+      "predicted": false,
+      "latency_ms": 148,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000053928,
+      "input_tokens": 1284
+    },
+    {
+      "id": "cat35/people-deal-01#u005",
+      "reference": false,
+      "p": 0.38,
+      "predicted": false,
+      "latency_ms": 146,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000054264,
+      "input_tokens": 1292
+    },
+    {
+      "id": "cat35/people-deal-01#u006",
+      "reference": false,
+      "p": 0.41,
+      "predicted": false,
+      "latency_ms": 124,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000028434,
+      "input_tokens": 677
+    },
+    {
+      "id": "cat35/people-deal-01#u007",
+      "reference": true,
+      "p": 0.72,
+      "predicted": true,
+      "latency_ms": 147,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000041286,
+      "input_tokens": 983
+    },
+    {
+      "id": "cat35/people-deal-01#u008",
+      "reference": false,
+      "p": 0.53,
+      "predicted": true,
+      "latency_ms": 210,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00004095,
+      "input_tokens": 975
+    },
+    {
+      "id": "cat35/people-deal-01#u009",
+      "reference": false,
+      "p": 0.03,
+      "predicted": false,
+      "latency_ms": 157,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000014574,
+      "input_tokens": 347
+    },
+    {
+      "id": "cat35/people-deal-01#u010",
+      "reference": false,
+      "p": 0.09,
+      "predicted": false,
+      "latency_ms": 165,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000027342,
+      "input_tokens": 651
+    },
+    {
+      "id": "cat35/people-deal-01#u011",
+      "reference": false,
+      "p": 0.4,
+      "predicted": false,
+      "latency_ms": 144,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000040908,
+      "input_tokens": 974
+    },
+    {
+      "id": "cat35/people-deal-01#u012",
+      "reference": false,
+      "p": 0.12,
+      "predicted": false,
+      "latency_ms": 169,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00004174800000000001,
+      "input_tokens": 994
+    },
+    {
+      "id": "cat35/people-deal-01#u013",
+      "reference": false,
+      "p": 0.27,
+      "predicted": false,
+      "latency_ms": 113,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000027972000000000003,
+      "input_tokens": 666
+    },
+    {
+      "id": "cat35/people-deal-01#u014",
+      "reference": true,
+      "p": 0.76,
+      "predicted": true,
+      "latency_ms": 146,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000056154000000000005,
+      "input_tokens": 1337
+    },
+    {
+      "id": "cat35/people-deal-01#u015",
+      "reference": false,
+      "p": 0.23,
+      "predicted": false,
+      "latency_ms": 134,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000026754,
+      "input_tokens": 637
+    },
+    {
+      "id": "cat35/people-deal-01#u016",
+      "reference": true,
+      "p": 0.61,
+      "predicted": true,
+      "latency_ms": 168,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000028182000000000002,
+      "input_tokens": 671
+    },
+    {
+      "id": "cat35/people-deal-01#u017",
+      "reference": true,
+      "p": 0.63,
+      "predicted": true,
+      "latency_ms": 151,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000028182000000000002,
+      "input_tokens": 671
+    },
+    {
+      "id": "cat35/people-deal-01#u018",
+      "reference": false,
+      "p": 0.15,
+      "predicted": false,
+      "latency_ms": 150,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00002709,
+      "input_tokens": 645
+    },
+    {
+      "id": "cat35/people-deal-01#u019",
+      "reference": false,
+      "p": 0.04,
+      "predicted": false,
+      "latency_ms": 187,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000014826000000000002,
+      "input_tokens": 353
+    },
+    {
+      "id": "cat35/people-deal-01#u020",
+      "reference": true,
+      "p": 0.88,
+      "predicted": true,
+      "latency_ms": 195,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000054348,
+      "input_tokens": 1294
+    },
+    {
+      "id": "cat35/people-deal-01#u021",
+      "reference": true,
+      "p": 0.15,
+      "predicted": false,
+      "latency_ms": 120,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000027132,
+      "input_tokens": 646
+    },
+    {
+      "id": "cat35/people-deal-01#u022",
+      "reference": true,
+      "p": 0.63,
+      "predicted": true,
+      "latency_ms": 174,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000053928,
+      "input_tokens": 1284
+    },
+    {
+      "id": "cat35/people-deal-01#u023",
+      "reference": true,
+      "p": 0.86,
+      "predicted": true,
+      "latency_ms": 292,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000054222000000000004,
+      "input_tokens": 1291
+    },
+    {
+      "id": "cat35/people-deal-01#u024",
+      "reference": true,
+      "p": 0.95,
+      "predicted": true,
+      "latency_ms": 151,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000040824,
+      "input_tokens": 972
+    },
+    {
+      "id": "cat35/people-deal-01#u025",
+      "reference": true,
+      "p": 0.87,
+      "predicted": true,
+      "latency_ms": 142,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005489400000000001,
+      "input_tokens": 1307
+    },
+    {
+      "id": "cat35/people-deal-01#u026",
+      "reference": true,
+      "p": 0.7,
+      "predicted": true,
+      "latency_ms": 151,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000054138,
+      "input_tokens": 1289
+    },
+    {
+      "id": "cat35/people-deal-01#u027",
+      "reference": true,
+      "p": 0.95,
+      "predicted": true,
+      "latency_ms": 145,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00004510800000000001,
+      "input_tokens": 1074
+    },
+    {
+      "id": "cat35/people-deal-01#u028",
+      "reference": true,
+      "p": 0.95,
+      "predicted": true,
+      "latency_ms": 117,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00004531800000000001,
+      "input_tokens": 1079
+    },
+    {
+      "id": "cat35/people-deal-01#u029",
+      "reference": false,
+      "p": 0.61,
+      "predicted": true,
+      "latency_ms": 138,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000031626,
+      "input_tokens": 753
+    },
+    {
+      "id": "cat35/people-deal-01#p001",
+      "reference": false,
+      "p": 0.08,
+      "predicted": false,
+      "latency_ms": 471,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000054684,
+      "input_tokens": 1302
+    },
+    {
+      "id": "cat35/people-deal-01#p002",
+      "reference": false,
+      "p": 0.28,
+      "predicted": false,
+      "latency_ms": 128,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000041706000000000004,
+      "input_tokens": 993
+    },
+    {
+      "id": "cat35/people-deal-01#p003",
+      "reference": false,
+      "p": 0.1,
+      "predicted": false,
+      "latency_ms": 185,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000044688,
+      "input_tokens": 1064
+    },
+    {
+      "id": "cat35/people-deal-01#p004",
+      "reference": false,
+      "p": 0.75,
+      "predicted": true,
+      "latency_ms": 118,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000055734000000000005,
+      "input_tokens": 1327
+    },
+    {
+      "id": "cat35/people-deal-01#p005",
+      "reference": false,
+      "p": 0.52,
+      "predicted": true,
+      "latency_ms": 136,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00004095,
+      "input_tokens": 975
+    },
+    {
+      "id": "cat35/people-deal-01#p006",
+      "reference": false,
+      "p": 0.29,
+      "predicted": false,
+      "latency_ms": 141,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000040824,
+      "input_tokens": 972
+    },
+    {
+      "id": "cat35/people-deal-01#p007",
+      "reference": false,
+      "p": 0.13,
+      "predicted": false,
+      "latency_ms": 129,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000027174,
+      "input_tokens": 647
+    },
+    {
+      "id": "cat35/people-deal-01#p008",
+      "reference": false,
+      "p": 0.09,
+      "predicted": false,
+      "latency_ms": 152,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000053928,
+      "input_tokens": 1284
+    },
+    {
+      "id": "cat35/people-deal-01#p009",
+      "reference": false,
+      "p": 0.03,
+      "predicted": false,
+      "latency_ms": 176,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005418,
+      "input_tokens": 1290
+    },
+    {
+      "id": "cat35/people-deal-01#p010",
+      "reference": false,
+      "p": 0.72,
+      "predicted": true,
+      "latency_ms": 218,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000055020000000000005,
+      "input_tokens": 1310
+    },
+    {
+      "id": "cat35/people-deal-01#p011",
+      "reference": false,
+      "p": 0.62,
+      "predicted": true,
+      "latency_ms": 131,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000054222000000000004,
+      "input_tokens": 1291
+    },
+    {
+      "id": "cat35/people-deal-01#p012",
+      "reference": false,
+      "p": 0.13,
+      "predicted": false,
+      "latency_ms": 149,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00004523400000000001,
+      "input_tokens": 1077
+    },
+    {
+      "id": "cat35/people-deal-02#u001",
+      "reference": true,
+      "p": 0.92,
+      "predicted": true,
+      "latency_ms": 117,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000042588,
+      "input_tokens": 1014
+    },
+    {
+      "id": "cat35/people-deal-02#u002",
+      "reference": false,
+      "p": 0.74,
+      "predicted": true,
+      "latency_ms": 128,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00004431,
+      "input_tokens": 1055
+    },
+    {
+      "id": "cat35/people-deal-02#u003",
+      "reference": true,
+      "p": 0.33,
+      "predicted": false,
+      "latency_ms": 131,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000050694,
+      "input_tokens": 1207
+    },
+    {
+      "id": "cat35/people-deal-02#u004",
+      "reference": false,
+      "p": 0.2,
+      "predicted": false,
+      "latency_ms": 120,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000022638,
+      "input_tokens": 539
+    },
+    {
+      "id": "cat35/people-deal-02#u005",
+      "reference": false,
+      "p": 0.89,
+      "predicted": true,
+      "latency_ms": 156,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000033432,
+      "input_tokens": 796
+    },
+    {
+      "id": "cat35/people-deal-02#u006",
+      "reference": true,
+      "p": 0.86,
+      "predicted": true,
+      "latency_ms": 152,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000043638000000000005,
+      "input_tokens": 1039
+    },
+    {
+      "id": "cat35/people-deal-02#u007",
+      "reference": false,
+      "p": 0.18,
+      "predicted": false,
+      "latency_ms": 706,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00004145400000000001,
+      "input_tokens": 987
+    },
+    {
+      "id": "cat35/people-deal-02#u008",
+      "reference": false,
+      "p": 0.44,
+      "predicted": false,
+      "latency_ms": 655,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000048216,
+      "input_tokens": 1148
+    },
+    {
+      "id": "cat35/people-deal-02#u009",
+      "reference": false,
+      "p": 0.13,
+      "predicted": false,
+      "latency_ms": 129,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000044604,
+      "input_tokens": 1062
+    },
+    {
+      "id": "cat35/people-deal-02#u010",
+      "reference": true,
+      "p": 0.2,
+      "predicted": false,
+      "latency_ms": 122,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000024318,
+      "input_tokens": 579
+    },
+    {
+      "id": "cat35/people-deal-02#u011",
+      "reference": false,
+      "p": 0.08,
+      "predicted": false,
+      "latency_ms": 184,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000020412,
+      "input_tokens": 486
+    },
+    {
+      "id": "cat35/people-deal-02#u012",
+      "reference": false,
+      "p": 0.6,
+      "predicted": true,
+      "latency_ms": 145,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000021084,
+      "input_tokens": 502
+    },
+    {
+      "id": "cat35/people-deal-02#u013",
+      "reference": false,
+      "p": 0.51,
+      "predicted": true,
+      "latency_ms": 128,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000044058000000000004,
+      "input_tokens": 1049
+    },
+    {
+      "id": "cat35/people-deal-02#u014",
+      "reference": false,
+      "p": 0.44,
+      "predicted": false,
+      "latency_ms": 182,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000020496,
+      "input_tokens": 488
+    },
+    {
+      "id": "cat35/people-deal-02#u015",
+      "reference": false,
+      "p": 0.13,
+      "predicted": false,
+      "latency_ms": 230,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00003213,
+      "input_tokens": 765
+    },
+    {
+      "id": "cat35/people-deal-02#u016",
+      "reference": false,
+      "p": 0.59,
+      "predicted": true,
+      "latency_ms": 139,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00004431,
+      "input_tokens": 1055
+    },
+    {
+      "id": "cat35/people-deal-02#u017",
+      "reference": true,
+      "p": 0.95,
+      "predicted": true,
+      "latency_ms": 612,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00004510800000000001,
+      "input_tokens": 1074
+    },
+    {
+      "id": "cat35/people-deal-02#u018",
+      "reference": true,
+      "p": 0.93,
+      "predicted": true,
+      "latency_ms": 175,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000043722000000000006,
+      "input_tokens": 1041
+    },
+    {
+      "id": "cat35/people-deal-02#u019",
+      "reference": false,
+      "p": 0.64,
+      "predicted": true,
+      "latency_ms": 126,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000044478000000000003,
+      "input_tokens": 1059
+    },
+    {
+      "id": "cat35/people-deal-02#u020",
+      "reference": false,
+      "p": 0.43,
+      "predicted": false,
+      "latency_ms": 137,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000044772000000000004,
+      "input_tokens": 1066
+    },
+    {
+      "id": "cat35/people-deal-02#u021",
+      "reference": true,
+      "p": 0.79,
+      "predicted": true,
+      "latency_ms": 131,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000044814,
+      "input_tokens": 1067
+    },
+    {
+      "id": "cat35/people-deal-02#u022",
+      "reference": false,
+      "p": 0.41,
+      "predicted": false,
+      "latency_ms": 134,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000044268000000000004,
+      "input_tokens": 1054
+    },
+    {
+      "id": "cat35/people-deal-02#u023",
+      "reference": false,
+      "p": 0.22,
+      "predicted": false,
+      "latency_ms": 154,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00004473,
+      "input_tokens": 1065
+    },
+    {
+      "id": "cat35/people-deal-02#u024",
+      "reference": true,
+      "p": 0.92,
+      "predicted": true,
+      "latency_ms": 158,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00004494,
+      "input_tokens": 1070
+    },
+    {
+      "id": "cat35/people-deal-02#u025",
+      "reference": false,
+      "p": 0.72,
+      "predicted": true,
+      "latency_ms": 280,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000043554000000000003,
+      "input_tokens": 1037
+    },
+    {
+      "id": "cat35/people-deal-02#u026",
+      "reference": true,
+      "p": 0.97,
+      "predicted": true,
+      "latency_ms": 176,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000050694,
+      "input_tokens": 1207
+    },
+    {
+      "id": "cat35/people-deal-02#u027",
+      "reference": true,
+      "p": 0.96,
+      "predicted": true,
+      "latency_ms": 138,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000043764,
+      "input_tokens": 1042
+    },
+    {
+      "id": "cat35/people-deal-02#u028",
+      "reference": true,
+      "p": 0.24,
+      "predicted": false,
+      "latency_ms": 135,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000038346,
+      "input_tokens": 913
+    },
+    {
+      "id": "cat35/people-deal-02#u029",
+      "reference": true,
+      "p": 0.95,
+      "predicted": true,
+      "latency_ms": 157,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000050232,
+      "input_tokens": 1196
+    },
+    {
+      "id": "cat35/people-deal-02#u030",
+      "reference": true,
+      "p": 0.54,
+      "predicted": true,
+      "latency_ms": 150,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000050694,
+      "input_tokens": 1207
+    },
+    {
+      "id": "cat35/people-deal-02#u031",
+      "reference": true,
+      "p": 0.39,
+      "predicted": false,
+      "latency_ms": 298,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000044646,
+      "input_tokens": 1063
+    },
+    {
+      "id": "cat35/people-deal-02#u032",
+      "reference": true,
+      "p": 0.62,
+      "predicted": true,
+      "latency_ms": 133,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000042630000000000004,
+      "input_tokens": 1015
+    },
+    {
+      "id": "cat35/people-deal-02#u033",
+      "reference": false,
+      "p": 0.71,
+      "predicted": true,
+      "latency_ms": 188,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000050568,
+      "input_tokens": 1204
+    },
+    {
+      "id": "cat35/people-deal-02#u034",
+      "reference": true,
+      "p": 0.55,
+      "predicted": true,
+      "latency_ms": 190,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00004750200000000001,
+      "input_tokens": 1131
+    },
+    {
+      "id": "cat35/people-deal-02#u035",
+      "reference": true,
+      "p": 0.98,
+      "predicted": true,
+      "latency_ms": 140,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000050106000000000004,
+      "input_tokens": 1193
+    },
+    {
+      "id": "cat35/people-deal-02#u036",
+      "reference": false,
+      "p": 0.9,
+      "predicted": true,
+      "latency_ms": 440,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000041118,
+      "input_tokens": 979
+    },
+    {
+      "id": "cat35/people-deal-02#u037",
+      "reference": true,
+      "p": 0.86,
+      "predicted": true,
+      "latency_ms": 155,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000042336,
+      "input_tokens": 1008
+    },
+    {
+      "id": "cat35/people-deal-02#u038",
+      "reference": true,
+      "p": 0.94,
+      "predicted": true,
+      "latency_ms": 131,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00004771200000000001,
+      "input_tokens": 1136
+    },
+    {
+      "id": "cat35/people-deal-02#u039",
+      "reference": true,
+      "p": 0.91,
+      "predicted": true,
+      "latency_ms": 126,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00004771200000000001,
+      "input_tokens": 1136
+    },
+    {
+      "id": "cat35/people-deal-02#u040",
+      "reference": true,
+      "p": 0.96,
+      "predicted": true,
+      "latency_ms": 125,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000048342,
+      "input_tokens": 1151
+    },
+    {
+      "id": "cat35/people-deal-02#u041",
+      "reference": false,
+      "p": 0.03,
+      "predicted": false,
+      "latency_ms": 140,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000015456000000000002,
+      "input_tokens": 368
+    },
+    {
+      "id": "cat35/people-deal-02#u042",
+      "reference": true,
+      "p": 0.88,
+      "predicted": true,
+      "latency_ms": 153,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000046620000000000004,
+      "input_tokens": 1110
+    },
+    {
+      "id": "cat35/people-deal-02#u043",
+      "reference": true,
+      "p": 0.63,
+      "predicted": true,
+      "latency_ms": 126,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000047964000000000004,
+      "input_tokens": 1142
+    },
+    {
+      "id": "cat35/people-deal-02#u044",
+      "reference": true,
+      "p": 0.04,
+      "predicted": false,
+      "latency_ms": 161,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000014532,
+      "input_tokens": 346
+    },
+    {
+      "id": "cat35/people-deal-02#u045",
+      "reference": true,
+      "p": 0.9,
+      "predicted": true,
+      "latency_ms": 123,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005073600000000001,
+      "input_tokens": 1208
+    },
+    {
+      "id": "cat35/people-deal-02#u046",
+      "reference": true,
+      "p": 0.72,
+      "predicted": true,
+      "latency_ms": 295,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00004888800000000001,
+      "input_tokens": 1164
+    },
+    {
+      "id": "cat35/people-deal-02#u047",
+      "reference": true,
+      "p": 0.96,
+      "predicted": true,
+      "latency_ms": 306,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000027006000000000002,
+      "input_tokens": 643
+    },
+    {
+      "id": "cat35/people-deal-02#u048",
+      "reference": false,
+      "p": 0.61,
+      "predicted": true,
+      "latency_ms": 120,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000037128,
+      "input_tokens": 884
+    },
+    {
+      "id": "cat35/people-deal-02#u049",
+      "reference": true,
+      "p": 0.91,
+      "predicted": true,
+      "latency_ms": 150,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000048762,
+      "input_tokens": 1161
+    },
+    {
+      "id": "cat35/people-deal-02#u050",
+      "reference": false,
+      "p": 0.88,
+      "predicted": true,
+      "latency_ms": 185,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000050484,
+      "input_tokens": 1202
+    },
+    {
+      "id": "cat35/people-deal-02#u051",
+      "reference": true,
+      "p": 0.81,
+      "predicted": true,
+      "latency_ms": 134,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000035196,
+      "input_tokens": 838
+    },
+    {
+      "id": "cat35/people-deal-02#u052",
+      "reference": true,
+      "p": 0.33,
+      "predicted": false,
+      "latency_ms": 144,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000026796000000000002,
+      "input_tokens": 638
+    },
+    {
+      "id": "cat35/people-deal-02#u053",
+      "reference": false,
+      "p": 0.22,
+      "predicted": false,
+      "latency_ms": 207,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000034608,
+      "input_tokens": 824
+    },
+    {
+      "id": "cat35/people-deal-02#p001",
+      "reference": false,
+      "p": 0.06,
+      "predicted": false,
+      "latency_ms": 311,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00004523400000000001,
+      "input_tokens": 1077
+    },
+    {
+      "id": "cat35/people-deal-02#p002",
+      "reference": false,
+      "p": 0.05,
+      "predicted": false,
+      "latency_ms": 175,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000044982,
+      "input_tokens": 1071
+    },
+    {
+      "id": "cat35/people-deal-02#p003",
+      "reference": false,
+      "p": 0.1,
+      "predicted": false,
+      "latency_ms": 133,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00004368,
+      "input_tokens": 1040
+    },
+    {
+      "id": "cat35/people-deal-02#p004",
+      "reference": false,
+      "p": 0.03,
+      "predicted": false,
+      "latency_ms": 157,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000044982,
+      "input_tokens": 1071
+    },
+    {
+      "id": "cat35/people-deal-02#p005",
+      "reference": false,
+      "p": 0.02,
+      "predicted": false,
+      "latency_ms": 163,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000049980000000000006,
+      "input_tokens": 1190
+    },
+    {
+      "id": "cat35/people-deal-02#p006",
+      "reference": false,
+      "p": 0.32,
+      "predicted": false,
+      "latency_ms": 182,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000050568,
+      "input_tokens": 1204
+    },
+    {
+      "id": "cat35/people-deal-02#p007",
+      "reference": false,
+      "p": 0.11,
+      "predicted": false,
+      "latency_ms": 362,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000047586,
+      "input_tokens": 1133
+    },
+    {
+      "id": "cat35/people-deal-02#p008",
+      "reference": false,
+      "p": 0.17,
+      "predicted": false,
+      "latency_ms": 123,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000043722000000000006,
+      "input_tokens": 1041
+    },
+    {
+      "id": "cat35/people-deal-02#p009",
+      "reference": false,
+      "p": 0.93,
+      "predicted": true,
+      "latency_ms": 157,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000048342,
+      "input_tokens": 1151
+    },
+    {
+      "id": "cat35/people-deal-02#p011",
+      "reference": false,
+      "p": 0.64,
+      "predicted": true,
+      "latency_ms": 194,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000043764,
+      "input_tokens": 1042
+    },
+    {
+      "id": "cat35/people-deal-03#u001",
+      "reference": true,
+      "p": 0.78,
+      "predicted": true,
+      "latency_ms": 175,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000049097999999999996,
+      "input_tokens": 1169
+    },
+    {
+      "id": "cat35/people-deal-03#u002",
+      "reference": true,
+      "p": 0.89,
+      "predicted": true,
+      "latency_ms": 356,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00004922400000000001,
+      "input_tokens": 1172
+    },
+    {
+      "id": "cat35/people-deal-03#u003",
+      "reference": true,
+      "p": 0.79,
+      "predicted": true,
+      "latency_ms": 136,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000048762,
+      "input_tokens": 1161
+    },
+    {
+      "id": "cat35/people-deal-03#u004",
+      "reference": false,
+      "p": 0.25,
+      "predicted": false,
+      "latency_ms": 131,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000043512000000000006,
+      "input_tokens": 1036
+    },
+    {
+      "id": "cat35/people-deal-03#u005",
+      "reference": false,
+      "p": 0.14,
+      "predicted": false,
+      "latency_ms": 279,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00004893,
+      "input_tokens": 1165
+    },
+    {
+      "id": "cat35/people-deal-03#u006",
+      "reference": false,
+      "p": 0.07,
+      "predicted": false,
+      "latency_ms": 136,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000046704,
+      "input_tokens": 1112
+    },
+    {
+      "id": "cat35/people-deal-03#u007",
+      "reference": false,
+      "p": 0.11,
+      "predicted": false,
+      "latency_ms": 148,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000048552,
+      "input_tokens": 1156
+    },
+    {
+      "id": "cat35/people-deal-03#u008",
+      "reference": false,
+      "p": 0.33,
+      "predicted": false,
+      "latency_ms": 152,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000036414,
+      "input_tokens": 867
+    },
+    {
+      "id": "cat35/people-deal-03#u009",
+      "reference": false,
+      "p": 0.11,
+      "predicted": false,
+      "latency_ms": 146,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000048678000000000004,
+      "input_tokens": 1159
+    },
+    {
+      "id": "cat35/people-deal-03#u010",
+      "reference": false,
+      "p": 0.13,
+      "predicted": false,
+      "latency_ms": 148,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000046242,
+      "input_tokens": 1101
+    },
+    {
+      "id": "cat35/people-deal-03#u011",
+      "reference": false,
+      "p": 0.14,
+      "predicted": false,
+      "latency_ms": 121,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000048678000000000004,
+      "input_tokens": 1159
+    },
+    {
+      "id": "cat35/people-deal-03#u012",
+      "reference": false,
+      "p": 0.23,
+      "predicted": false,
+      "latency_ms": 126,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000049560000000000007,
+      "input_tokens": 1180
+    },
+    {
+      "id": "cat35/people-deal-03#u013",
+      "reference": false,
+      "p": 0.49,
+      "predicted": false,
+      "latency_ms": 212,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000036372000000000003,
+      "input_tokens": 866
+    },
+    {
+      "id": "cat35/people-deal-03#u014",
+      "reference": false,
+      "p": 0.26,
+      "predicted": false,
+      "latency_ms": 123,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00004935000000000001,
+      "input_tokens": 1175
+    },
+    {
+      "id": "cat35/people-deal-03#u015",
+      "reference": false,
+      "p": 0.48,
+      "predicted": false,
+      "latency_ms": 256,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005082,
+      "input_tokens": 1210
+    },
+    {
+      "id": "cat35/people-deal-03#u016",
+      "reference": false,
+      "p": 0.84,
+      "predicted": true,
+      "latency_ms": 393,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000049307999999999996,
+      "input_tokens": 1174
+    },
+    {
+      "id": "cat35/people-deal-03#u017",
+      "reference": false,
+      "p": 0.75,
+      "predicted": true,
+      "latency_ms": 137,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00004914000000000001,
+      "input_tokens": 1170
+    },
+    {
+      "id": "cat35/people-deal-03#u018",
+      "reference": true,
+      "p": 0.53,
+      "predicted": true,
+      "latency_ms": 114,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00004872,
+      "input_tokens": 1160
+    },
+    {
+      "id": "cat35/people-deal-03#u019",
+      "reference": true,
+      "p": 0.29,
+      "predicted": false,
+      "latency_ms": 143,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000036792,
+      "input_tokens": 876
+    },
+    {
+      "id": "cat35/people-deal-03#u020",
+      "reference": false,
+      "p": 0.39,
+      "predicted": false,
+      "latency_ms": 405,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000048426,
+      "input_tokens": 1153
+    },
+    {
+      "id": "cat35/people-deal-03#u021",
+      "reference": false,
+      "p": 0.86,
+      "predicted": true,
+      "latency_ms": 166,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000048762,
+      "input_tokens": 1161
+    },
+    {
+      "id": "cat35/people-deal-03#u022",
+      "reference": true,
+      "p": 0.92,
+      "predicted": true,
+      "latency_ms": 239,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00004737600000000001,
+      "input_tokens": 1128
+    },
+    {
+      "id": "cat35/people-deal-03#u023",
+      "reference": true,
+      "p": 0.85,
+      "predicted": true,
+      "latency_ms": 191,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000041790000000000005,
+      "input_tokens": 995
+    },
+    {
+      "id": "cat35/people-deal-03#u024",
+      "reference": true,
+      "p": 0.98,
+      "predicted": true,
+      "latency_ms": 174,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000049686000000000005,
+      "input_tokens": 1183
+    },
+    {
+      "id": "cat35/people-deal-03#u025",
+      "reference": true,
+      "p": 0.96,
+      "predicted": true,
+      "latency_ms": 131,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000046620000000000004,
+      "input_tokens": 1110
+    },
+    {
+      "id": "cat35/people-deal-03#u026",
+      "reference": true,
+      "p": 0.81,
+      "predicted": true,
+      "latency_ms": 150,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000048804,
+      "input_tokens": 1162
+    },
+    {
+      "id": "cat35/people-deal-03#u027",
+      "reference": true,
+      "p": 0.98,
+      "predicted": true,
+      "latency_ms": 177,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000048678000000000004,
+      "input_tokens": 1159
+    },
+    {
+      "id": "cat35/people-deal-03#u028",
+      "reference": true,
+      "p": 0.92,
+      "predicted": true,
+      "latency_ms": 149,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000046662,
+      "input_tokens": 1111
+    },
+    {
+      "id": "cat35/people-deal-03#u029",
+      "reference": true,
+      "p": 0.97,
+      "predicted": true,
+      "latency_ms": 230,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000042210000000000004,
+      "input_tokens": 1005
+    },
+    {
+      "id": "cat35/people-deal-03#u030",
+      "reference": true,
+      "p": 0.98,
+      "predicted": true,
+      "latency_ms": 135,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000049182,
+      "input_tokens": 1171
+    },
+    {
+      "id": "cat35/people-deal-03#u031",
+      "reference": false,
+      "p": 0.19,
+      "predicted": false,
+      "latency_ms": 208,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00002436,
+      "input_tokens": 580
+    },
+    {
+      "id": "cat35/people-deal-03#u032",
+      "reference": true,
+      "p": 0.89,
+      "predicted": true,
+      "latency_ms": 145,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00004851,
+      "input_tokens": 1155
+    },
+    {
+      "id": "cat35/people-deal-03#u033",
+      "reference": true,
+      "p": 0.81,
+      "predicted": true,
+      "latency_ms": 127,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000029694,
+      "input_tokens": 707
+    },
+    {
+      "id": "cat35/people-deal-03#u034",
+      "reference": true,
+      "p": 0.92,
+      "predicted": true,
+      "latency_ms": 136,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00004851,
+      "input_tokens": 1155
+    },
+    {
+      "id": "cat35/people-deal-03#p001",
+      "reference": false,
+      "p": 0.73,
+      "predicted": true,
+      "latency_ms": 141,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000049097999999999996,
+      "input_tokens": 1169
+    },
+    {
+      "id": "cat35/people-deal-03#p002",
+      "reference": false,
+      "p": 0.91,
+      "predicted": true,
+      "latency_ms": 242,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00004914000000000001,
+      "input_tokens": 1170
+    },
+    {
+      "id": "cat35/people-deal-03#p003",
+      "reference": false,
+      "p": 0.38,
+      "predicted": false,
+      "latency_ms": 159,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000048762,
+      "input_tokens": 1161
+    },
+    {
+      "id": "cat35/people-deal-03#p004",
+      "reference": false,
+      "p": 0.06,
+      "predicted": false,
+      "latency_ms": 410,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00004893,
+      "input_tokens": 1165
+    },
+    {
+      "id": "cat35/people-deal-03#p005",
+      "reference": false,
+      "p": 0.59,
+      "predicted": true,
+      "latency_ms": 155,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00004737600000000001,
+      "input_tokens": 1128
+    },
+    {
+      "id": "cat35/people-deal-03#p006",
+      "reference": false,
+      "p": 0.06,
+      "predicted": false,
+      "latency_ms": 476,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00004964400000000001,
+      "input_tokens": 1182
+    },
+    {
+      "id": "cat35/people-deal-03#p007",
+      "reference": false,
+      "p": 0.1,
+      "predicted": false,
+      "latency_ms": 554,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000036666000000000004,
+      "input_tokens": 873
+    },
+    {
+      "id": "cat35/people-deal-03#p008",
+      "reference": false,
+      "p": 0.12,
+      "predicted": false,
+      "latency_ms": 137,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000048804,
+      "input_tokens": 1162
+    },
+    {
+      "id": "cat35/people-deal-03#p009",
+      "reference": false,
+      "p": 0.09,
+      "predicted": false,
+      "latency_ms": 121,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000046704,
+      "input_tokens": 1112
+    },
+    {
+      "id": "cat35/people-deal-03#p010",
+      "reference": false,
+      "p": 0.08,
+      "predicted": false,
+      "latency_ms": 186,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000042210000000000004,
+      "input_tokens": 1005
+    },
+    {
+      "id": "cat35/people-deal-03#p011",
+      "reference": false,
+      "p": 0.33,
+      "predicted": false,
+      "latency_ms": 177,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00004851,
+      "input_tokens": 1155
+    },
+    {
+      "id": "cat35/people-deal-03#p012",
+      "reference": false,
+      "p": 0.12,
+      "predicted": false,
+      "latency_ms": 114,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000029694,
+      "input_tokens": 707
+    },
+    {
+      "id": "cat35/people-deal-04#u001",
+      "reference": false,
+      "p": 0.89,
+      "predicted": true,
+      "latency_ms": 273,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000074424,
+      "input_tokens": 1772
+    },
+    {
+      "id": "cat35/people-deal-04#u002",
+      "reference": true,
+      "p": 0.75,
+      "predicted": true,
+      "latency_ms": 130,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000057708000000000004,
+      "input_tokens": 1374
+    },
+    {
+      "id": "cat35/people-deal-04#u003",
+      "reference": true,
+      "p": 0.79,
+      "predicted": true,
+      "latency_ms": 168,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00007803600000000001,
+      "input_tokens": 1858
+    },
+    {
+      "id": "cat35/people-deal-04#u004",
+      "reference": true,
+      "p": 0.43,
+      "predicted": false,
+      "latency_ms": 201,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00006144600000000001,
+      "input_tokens": 1463
+    },
+    {
+      "id": "cat35/people-deal-04#u005",
+      "reference": true,
+      "p": 0.96,
+      "predicted": true,
+      "latency_ms": 253,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00007169400000000001,
+      "input_tokens": 1707
+    },
+    {
+      "id": "cat35/people-deal-04#u006",
+      "reference": true,
+      "p": 0.65,
+      "predicted": true,
+      "latency_ms": 220,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000073626,
+      "input_tokens": 1753
+    },
+    {
+      "id": "cat35/people-deal-04#u007",
+      "reference": true,
+      "p": 0.98,
+      "predicted": true,
+      "latency_ms": 211,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000073878,
+      "input_tokens": 1759
+    },
+    {
+      "id": "cat35/people-deal-04#u008",
+      "reference": true,
+      "p": 0.48,
+      "predicted": false,
+      "latency_ms": 358,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00006199200000000001,
+      "input_tokens": 1476
+    },
+    {
+      "id": "cat35/people-deal-04#u009",
+      "reference": true,
+      "p": 0.45,
+      "predicted": false,
+      "latency_ms": 150,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00006199200000000001,
+      "input_tokens": 1476
+    },
+    {
+      "id": "cat35/people-deal-04#u010",
+      "reference": false,
+      "p": 0.85,
+      "predicted": true,
+      "latency_ms": 154,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00006657000000000001,
+      "input_tokens": 1585
+    },
+    {
+      "id": "cat35/people-deal-04#u011",
+      "reference": true,
+      "p": 0.86,
+      "predicted": true,
+      "latency_ms": 173,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00006405000000000001,
+      "input_tokens": 1525
+    },
+    {
+      "id": "cat35/people-deal-04#u012",
+      "reference": false,
+      "p": 0.44,
+      "predicted": false,
+      "latency_ms": 181,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000077028,
+      "input_tokens": 1834
+    },
+    {
+      "id": "cat35/people-deal-04#u013",
+      "reference": false,
+      "p": 0.18,
+      "predicted": false,
+      "latency_ms": 140,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000063588,
+      "input_tokens": 1514
+    },
+    {
+      "id": "cat35/people-deal-04#u014",
+      "reference": false,
+      "p": 0.15,
+      "predicted": false,
+      "latency_ms": 142,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000079548,
+      "input_tokens": 1894
+    },
+    {
+      "id": "cat35/people-deal-04#u015",
+      "reference": false,
+      "p": 0.45,
+      "predicted": false,
+      "latency_ms": 579,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000064638,
+      "input_tokens": 1539
+    },
+    {
+      "id": "cat35/people-deal-04#u016",
+      "reference": false,
+      "p": 0.58,
+      "predicted": true,
+      "latency_ms": 155,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000073416,
+      "input_tokens": 1748
+    },
+    {
+      "id": "cat35/people-deal-04#u017",
+      "reference": true,
+      "p": 0.52,
+      "predicted": true,
+      "latency_ms": 143,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000060774,
+      "input_tokens": 1447
+    },
+    {
+      "id": "cat35/people-deal-04#u018",
+      "reference": false,
+      "p": 0.59,
+      "predicted": true,
+      "latency_ms": 162,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000073374,
+      "input_tokens": 1747
+    },
+    {
+      "id": "cat35/people-deal-04#u019",
+      "reference": true,
+      "p": 0.57,
+      "predicted": true,
+      "latency_ms": 188,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000025830000000000002,
+      "input_tokens": 615
+    },
+    {
+      "id": "cat35/people-deal-04#u020",
+      "reference": false,
+      "p": 0.57,
+      "predicted": true,
+      "latency_ms": 203,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000036582,
+      "input_tokens": 871
+    },
+    {
+      "id": "cat35/people-deal-04#u021",
+      "reference": false,
+      "p": 0.05,
+      "predicted": false,
+      "latency_ms": 163,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.0000714,
+      "input_tokens": 1700
+    },
+    {
+      "id": "cat35/people-deal-04#u022",
+      "reference": true,
+      "p": 0.9,
+      "predicted": true,
+      "latency_ms": 161,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00007186200000000001,
+      "input_tokens": 1711
+    },
+    {
+      "id": "cat35/people-deal-04#u023",
+      "reference": true,
+      "p": 0.85,
+      "predicted": true,
+      "latency_ms": 243,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000055146000000000004,
+      "input_tokens": 1313
+    },
+    {
+      "id": "cat35/people-deal-04#u024",
+      "reference": true,
+      "p": 0.79,
+      "predicted": true,
+      "latency_ms": 147,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00006846,
+      "input_tokens": 1630
+    },
+    {
+      "id": "cat35/people-deal-04#u025",
+      "reference": true,
+      "p": 0.55,
+      "predicted": true,
+      "latency_ms": 155,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000065016,
+      "input_tokens": 1548
+    },
+    {
+      "id": "cat35/people-deal-04#u026",
+      "reference": true,
+      "p": 0.98,
+      "predicted": true,
+      "latency_ms": 463,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005875800000000001,
+      "input_tokens": 1399
+    },
+    {
+      "id": "cat35/people-deal-04#u027",
+      "reference": true,
+      "p": 0.58,
+      "predicted": true,
+      "latency_ms": 330,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000057288000000000004,
+      "input_tokens": 1364
+    },
+    {
+      "id": "cat35/people-deal-04#u028",
+      "reference": true,
+      "p": 0.95,
+      "predicted": true,
+      "latency_ms": 174,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000057498000000000004,
+      "input_tokens": 1369
+    },
+    {
+      "id": "cat35/people-deal-04#u029",
+      "reference": true,
+      "p": 0.96,
+      "predicted": true,
+      "latency_ms": 142,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000076902,
+      "input_tokens": 1831
+    },
+    {
+      "id": "cat35/people-deal-04#u030",
+      "reference": true,
+      "p": 0.78,
+      "predicted": true,
+      "latency_ms": 180,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000065016,
+      "input_tokens": 1548
+    },
+    {
+      "id": "cat35/people-deal-04#u031",
+      "reference": true,
+      "p": 0.98,
+      "predicted": true,
+      "latency_ms": 180,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000042378,
+      "input_tokens": 1009
+    },
+    {
+      "id": "cat35/people-deal-04#u032",
+      "reference": true,
+      "p": 0.91,
+      "predicted": true,
+      "latency_ms": 177,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00006409200000000001,
+      "input_tokens": 1526
+    },
+    {
+      "id": "cat35/people-deal-04#u033",
+      "reference": true,
+      "p": 0.95,
+      "predicted": true,
+      "latency_ms": 549,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00006245400000000001,
+      "input_tokens": 1487
+    },
+    {
+      "id": "cat35/people-deal-04#u034",
+      "reference": true,
+      "p": 0.96,
+      "predicted": true,
+      "latency_ms": 140,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000049476000000000005,
+      "input_tokens": 1178
+    },
+    {
+      "id": "cat35/people-deal-04#u035",
+      "reference": true,
+      "p": 0.98,
+      "predicted": true,
+      "latency_ms": 134,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000053298000000000004,
+      "input_tokens": 1269
+    },
+    {
+      "id": "cat35/people-deal-04#u036",
+      "reference": true,
+      "p": 0.98,
+      "predicted": true,
+      "latency_ms": 161,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000038766,
+      "input_tokens": 923
+    },
+    {
+      "id": "cat35/people-deal-04#u037",
+      "reference": true,
+      "p": 0.71,
+      "predicted": true,
+      "latency_ms": 170,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005107200000000001,
+      "input_tokens": 1216
+    },
+    {
+      "id": "cat35/people-deal-04#u038",
+      "reference": true,
+      "p": 0.85,
+      "predicted": true,
+      "latency_ms": 152,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00006384000000000001,
+      "input_tokens": 1520
+    },
+    {
+      "id": "cat35/people-deal-04#u039",
+      "reference": true,
+      "p": 0.99,
+      "predicted": true,
+      "latency_ms": 138,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000039648000000000004,
+      "input_tokens": 944
+    },
+    {
+      "id": "cat35/people-deal-04#u040",
+      "reference": true,
+      "p": 0.58,
+      "predicted": true,
+      "latency_ms": 141,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000054516,
+      "input_tokens": 1298
+    },
+    {
+      "id": "cat35/people-deal-04#u041",
+      "reference": true,
+      "p": 0.9,
+      "predicted": true,
+      "latency_ms": 161,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000048552,
+      "input_tokens": 1156
+    },
+    {
+      "id": "cat35/people-deal-04#u042",
+      "reference": true,
+      "p": 0.59,
+      "predicted": true,
+      "latency_ms": 159,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00006073200000000001,
+      "input_tokens": 1446
+    },
+    {
+      "id": "cat35/people-deal-04#u043",
+      "reference": true,
+      "p": 0.94,
+      "predicted": true,
+      "latency_ms": 128,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000064218,
+      "input_tokens": 1529
+    },
+    {
+      "id": "cat35/people-deal-04#u044",
+      "reference": true,
+      "p": 0.95,
+      "predicted": true,
+      "latency_ms": 185,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000054222000000000004,
+      "input_tokens": 1291
+    },
+    {
+      "id": "cat35/people-deal-04#u045",
+      "reference": false,
+      "p": 0.21,
+      "predicted": false,
+      "latency_ms": 182,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00007005600000000001,
+      "input_tokens": 1668
+    },
+    {
+      "id": "cat35/people-deal-04#p001",
+      "reference": false,
+      "p": 0.17,
+      "predicted": false,
+      "latency_ms": 125,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00006321,
+      "input_tokens": 1505
+    },
+    {
+      "id": "cat35/people-deal-04#p002",
+      "reference": false,
+      "p": 0.07,
+      "predicted": false,
+      "latency_ms": 139,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00006153,
+      "input_tokens": 1465
+    },
+    {
+      "id": "cat35/people-deal-04#p003",
+      "reference": false,
+      "p": 0.01,
+      "predicted": false,
+      "latency_ms": 170,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000074004,
+      "input_tokens": 1762
+    },
+    {
+      "id": "cat35/people-deal-04#p004",
+      "reference": false,
+      "p": 0.1,
+      "predicted": false,
+      "latency_ms": 196,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000063966,
+      "input_tokens": 1523
+    },
+    {
+      "id": "cat35/people-deal-04#p005",
+      "reference": false,
+      "p": 0.63,
+      "predicted": true,
+      "latency_ms": 136,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00007186200000000001,
+      "input_tokens": 1711
+    },
+    {
+      "id": "cat35/people-deal-04#p006",
+      "reference": false,
+      "p": 0.27,
+      "predicted": false,
+      "latency_ms": 163,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000065058,
+      "input_tokens": 1549
+    },
+    {
+      "id": "cat35/people-deal-04#p007",
+      "reference": false,
+      "p": 0.07,
+      "predicted": false,
+      "latency_ms": 288,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00006888,
+      "input_tokens": 1640
+    },
+    {
+      "id": "cat35/people-deal-04#p008",
+      "reference": false,
+      "p": 0.22,
+      "predicted": false,
+      "latency_ms": 127,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00006350400000000001,
+      "input_tokens": 1512
+    },
+    {
+      "id": "cat35/people-deal-04#p009",
+      "reference": false,
+      "p": 0.02,
+      "predicted": false,
+      "latency_ms": 493,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000062496,
+      "input_tokens": 1488
+    },
+    {
+      "id": "cat35/people-deal-04#p010",
+      "reference": false,
+      "p": 0.1,
+      "predicted": false,
+      "latency_ms": 151,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000055230000000000005,
+      "input_tokens": 1315
+    },
+    {
+      "id": "cat35/people-deal-04#p011",
+      "reference": false,
+      "p": 0.18,
+      "predicted": false,
+      "latency_ms": 145,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000042084000000000006,
+      "input_tokens": 1002
+    },
+    {
+      "id": "cat35/people-deal-04#p012",
+      "reference": false,
+      "p": 0.09,
+      "predicted": false,
+      "latency_ms": 133,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000052206,
+      "input_tokens": 1243
+    },
+    {
+      "id": "cat35/startup-ideation-01#u001",
+      "reference": false,
+      "p": 0.74,
+      "predicted": true,
+      "latency_ms": 125,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005082,
+      "input_tokens": 1210
+    },
+    {
+      "id": "cat35/startup-ideation-01#u002",
+      "reference": true,
+      "p": 0.97,
+      "predicted": true,
+      "latency_ms": 161,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000050232,
+      "input_tokens": 1196
+    },
+    {
+      "id": "cat35/startup-ideation-01#u003",
+      "reference": true,
+      "p": 0.66,
+      "predicted": true,
+      "latency_ms": 125,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000050526000000000004,
+      "input_tokens": 1203
+    },
+    {
+      "id": "cat35/startup-ideation-01#u004",
+      "reference": true,
+      "p": 0.76,
+      "predicted": true,
+      "latency_ms": 162,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005086200000000001,
+      "input_tokens": 1211
+    },
+    {
+      "id": "cat35/startup-ideation-01#u005",
+      "reference": true,
+      "p": 0.86,
+      "predicted": true,
+      "latency_ms": 148,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005086200000000001,
+      "input_tokens": 1211
+    },
+    {
+      "id": "cat35/startup-ideation-01#u006",
+      "reference": false,
+      "p": 0.75,
+      "predicted": true,
+      "latency_ms": 127,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000026628000000000003,
+      "input_tokens": 634
+    },
+    {
+      "id": "cat35/startup-ideation-01#u007",
+      "reference": true,
+      "p": 0.87,
+      "predicted": true,
+      "latency_ms": 124,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000038262,
+      "input_tokens": 911
+    },
+    {
+      "id": "cat35/startup-ideation-01#u008",
+      "reference": true,
+      "p": 0.94,
+      "predicted": true,
+      "latency_ms": 140,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000050526000000000004,
+      "input_tokens": 1203
+    },
+    {
+      "id": "cat35/startup-ideation-01#u009",
+      "reference": true,
+      "p": 0.92,
+      "predicted": true,
+      "latency_ms": 136,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000027216,
+      "input_tokens": 648
+    },
+    {
+      "id": "cat35/startup-ideation-01#u010",
+      "reference": false,
+      "p": 0.58,
+      "predicted": true,
+      "latency_ms": 185,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005103,
+      "input_tokens": 1215
+    },
+    {
+      "id": "cat35/startup-ideation-01#u011",
+      "reference": false,
+      "p": 0.52,
+      "predicted": true,
+      "latency_ms": 138,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005086200000000001,
+      "input_tokens": 1211
+    },
+    {
+      "id": "cat35/startup-ideation-01#u012",
+      "reference": true,
+      "p": 0.47,
+      "predicted": false,
+      "latency_ms": 151,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000048174,
+      "input_tokens": 1147
+    },
+    {
+      "id": "cat35/startup-ideation-01#u013",
+      "reference": true,
+      "p": 0.75,
+      "predicted": true,
+      "latency_ms": 152,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000050484,
+      "input_tokens": 1202
+    },
+    {
+      "id": "cat35/startup-ideation-01#u014",
+      "reference": true,
+      "p": 0.91,
+      "predicted": true,
+      "latency_ms": 338,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000026208,
+      "input_tokens": 624
+    },
+    {
+      "id": "cat35/startup-ideation-01#u015",
+      "reference": false,
+      "p": 0.2,
+      "predicted": false,
+      "latency_ms": 189,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000050442,
+      "input_tokens": 1201
+    },
+    {
+      "id": "cat35/startup-ideation-01#u016",
+      "reference": false,
+      "p": 0.69,
+      "predicted": true,
+      "latency_ms": 133,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000050148,
+      "input_tokens": 1194
+    },
+    {
+      "id": "cat35/startup-ideation-01#u017",
+      "reference": false,
+      "p": 0.24,
+      "predicted": false,
+      "latency_ms": 132,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000025914000000000003,
+      "input_tokens": 617
+    },
+    {
+      "id": "cat35/startup-ideation-01#u018",
+      "reference": false,
+      "p": 0.17,
+      "predicted": false,
+      "latency_ms": 157,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000050022,
+      "input_tokens": 1191
+    },
+    {
+      "id": "cat35/startup-ideation-01#u019",
+      "reference": true,
+      "p": 0.47,
+      "predicted": false,
+      "latency_ms": 145,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000050652,
+      "input_tokens": 1206
+    },
+    {
+      "id": "cat35/startup-ideation-01#u020",
+      "reference": false,
+      "p": 0.37,
+      "predicted": false,
+      "latency_ms": 149,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005128200000000001,
+      "input_tokens": 1221
+    },
+    {
+      "id": "cat35/startup-ideation-01#u021",
+      "reference": true,
+      "p": 0.34,
+      "predicted": false,
+      "latency_ms": 155,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000047838000000000005,
+      "input_tokens": 1139
+    },
+    {
+      "id": "cat35/startup-ideation-01#u022",
+      "reference": true,
+      "p": 0.97,
+      "predicted": true,
+      "latency_ms": 154,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.0000504,
+      "input_tokens": 1200
+    },
+    {
+      "id": "cat35/startup-ideation-01#u023",
+      "reference": true,
+      "p": 0.42,
+      "predicted": false,
+      "latency_ms": 190,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00004888800000000001,
+      "input_tokens": 1164
+    },
+    {
+      "id": "cat35/startup-ideation-01#u024",
+      "reference": false,
+      "p": 0.72,
+      "predicted": true,
+      "latency_ms": 152,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000049602000000000004,
+      "input_tokens": 1181
+    },
+    {
+      "id": "cat35/startup-ideation-01#u025",
+      "reference": false,
+      "p": 0.38,
+      "predicted": false,
+      "latency_ms": 250,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000049307999999999996,
+      "input_tokens": 1174
+    },
+    {
+      "id": "cat35/startup-ideation-01#u026",
+      "reference": true,
+      "p": 0.88,
+      "predicted": true,
+      "latency_ms": 150,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005094600000000001,
+      "input_tokens": 1213
+    },
+    {
+      "id": "cat35/startup-ideation-01#u027",
+      "reference": false,
+      "p": 0.32,
+      "predicted": false,
+      "latency_ms": 156,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000049602000000000004,
+      "input_tokens": 1181
+    },
+    {
+      "id": "cat35/startup-ideation-01#u028",
+      "reference": true,
+      "p": 0.94,
+      "predicted": true,
+      "latency_ms": 139,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000027384000000000004,
+      "input_tokens": 652
+    },
+    {
+      "id": "cat35/startup-ideation-01#u029",
+      "reference": false,
+      "p": 0.25,
+      "predicted": false,
+      "latency_ms": 175,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000027384000000000004,
+      "input_tokens": 652
+    },
+    {
+      "id": "cat35/startup-ideation-01#u030",
+      "reference": false,
+      "p": 0.43,
+      "predicted": false,
+      "latency_ms": 193,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000038724000000000004,
+      "input_tokens": 922
+    },
+    {
+      "id": "cat35/startup-ideation-01#u031",
+      "reference": true,
+      "p": 0.69,
+      "predicted": true,
+      "latency_ms": 135,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000038598000000000006,
+      "input_tokens": 919
+    },
+    {
+      "id": "cat35/startup-ideation-01#u032",
+      "reference": false,
+      "p": 0.27,
+      "predicted": false,
+      "latency_ms": 163,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005073600000000001,
+      "input_tokens": 1208
+    },
+    {
+      "id": "cat35/startup-ideation-01#u033",
+      "reference": false,
+      "p": 0.54,
+      "predicted": true,
+      "latency_ms": 217,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000051954000000000004,
+      "input_tokens": 1237
+    },
+    {
+      "id": "cat35/startup-ideation-01#u034",
+      "reference": false,
+      "p": 0.27,
+      "predicted": false,
+      "latency_ms": 170,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000048174,
+      "input_tokens": 1147
+    },
+    {
+      "id": "cat35/startup-ideation-01#u035",
+      "reference": true,
+      "p": 0.92,
+      "predicted": true,
+      "latency_ms": 160,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005119800000000001,
+      "input_tokens": 1219
+    },
+    {
+      "id": "cat35/startup-ideation-01#u036",
+      "reference": false,
+      "p": 0.81,
+      "predicted": true,
+      "latency_ms": 127,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000038808000000000005,
+      "input_tokens": 924
+    },
+    {
+      "id": "cat35/startup-ideation-01#u037",
+      "reference": true,
+      "p": 0.96,
+      "predicted": true,
+      "latency_ms": 135,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000048594,
+      "input_tokens": 1157
+    },
+    {
+      "id": "cat35/startup-ideation-01#u038",
+      "reference": false,
+      "p": 0.35,
+      "predicted": false,
+      "latency_ms": 191,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000037884000000000005,
+      "input_tokens": 902
+    },
+    {
+      "id": "cat35/startup-ideation-01#u039",
+      "reference": true,
+      "p": 0.98,
+      "predicted": true,
+      "latency_ms": 149,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000048636,
+      "input_tokens": 1158
+    },
+    {
+      "id": "cat35/startup-ideation-01#u040",
+      "reference": true,
+      "p": 0.95,
+      "predicted": true,
+      "latency_ms": 164,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005094600000000001,
+      "input_tokens": 1213
+    },
+    {
+      "id": "cat35/startup-ideation-01#u041",
+      "reference": true,
+      "p": 0.92,
+      "predicted": true,
+      "latency_ms": 205,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000050484,
+      "input_tokens": 1202
+    },
+    {
+      "id": "cat35/startup-ideation-01#u042",
+      "reference": false,
+      "p": 0.36,
+      "predicted": false,
+      "latency_ms": 111,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000025998,
+      "input_tokens": 619
+    },
+    {
+      "id": "cat35/startup-ideation-01#u043",
+      "reference": true,
+      "p": 0.98,
+      "predicted": true,
+      "latency_ms": 162,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00003847200000000001,
+      "input_tokens": 916
+    },
+    {
+      "id": "cat35/startup-ideation-01#u044",
+      "reference": false,
+      "p": 0.65,
+      "predicted": true,
+      "latency_ms": 298,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000038808000000000005,
+      "input_tokens": 924
+    },
+    {
+      "id": "cat35/startup-ideation-01#u045",
+      "reference": false,
+      "p": 0.45,
+      "predicted": false,
+      "latency_ms": 186,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000038976,
+      "input_tokens": 928
+    },
+    {
+      "id": "cat35/startup-ideation-01#p001",
+      "reference": false,
+      "p": 0.05,
+      "predicted": false,
+      "latency_ms": 140,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000038388,
+      "input_tokens": 914
+    },
+    {
+      "id": "cat35/startup-ideation-01#p002",
+      "reference": false,
+      "p": 0.25,
+      "predicted": false,
+      "latency_ms": 214,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000050484,
+      "input_tokens": 1202
+    },
+    {
+      "id": "cat35/startup-ideation-01#p003",
+      "reference": false,
+      "p": 0.24,
+      "predicted": false,
+      "latency_ms": 147,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005086200000000001,
+      "input_tokens": 1211
+    },
+    {
+      "id": "cat35/startup-ideation-01#p004",
+      "reference": false,
+      "p": 0.39,
+      "predicted": false,
+      "latency_ms": 161,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000050526000000000004,
+      "input_tokens": 1203
+    },
+    {
+      "id": "cat35/startup-ideation-01#p005",
+      "reference": false,
+      "p": 0.12,
+      "predicted": false,
+      "latency_ms": 169,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000048216,
+      "input_tokens": 1148
+    },
+    {
+      "id": "cat35/startup-ideation-01#p007",
+      "reference": false,
+      "p": 0.08,
+      "predicted": false,
+      "latency_ms": 138,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000037968,
+      "input_tokens": 904
+    },
+    {
+      "id": "cat35/startup-ideation-01#p008",
+      "reference": false,
+      "p": 0.58,
+      "predicted": true,
+      "latency_ms": 146,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000048678000000000004,
+      "input_tokens": 1159
+    },
+    {
+      "id": "cat35/startup-ideation-01#p009",
+      "reference": false,
+      "p": 0.18,
+      "predicted": false,
+      "latency_ms": 165,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000027468,
+      "input_tokens": 654
+    },
+    {
+      "id": "cat35/startup-ideation-01#p010",
+      "reference": false,
+      "p": 0.46,
+      "predicted": false,
+      "latency_ms": 191,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005103,
+      "input_tokens": 1215
+    },
+    {
+      "id": "cat35/startup-ideation-01#p011",
+      "reference": false,
+      "p": 0.97,
+      "predicted": true,
+      "latency_ms": 181,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000048804,
+      "input_tokens": 1162
+    },
+    {
+      "id": "cat35/startup-ideation-01#p012",
+      "reference": false,
+      "p": 0.52,
+      "predicted": true,
+      "latency_ms": 263,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005082,
+      "input_tokens": 1210
+    },
+    {
+      "id": "cat35/startup-ideation-02#u001",
+      "reference": true,
+      "p": 0.96,
+      "predicted": true,
+      "latency_ms": 135,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005560800000000001,
+      "input_tokens": 1324
+    },
+    {
+      "id": "cat35/startup-ideation-02#u002",
+      "reference": true,
+      "p": 0.95,
+      "predicted": true,
+      "latency_ms": 122,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005464200000000001,
+      "input_tokens": 1301
+    },
+    {
+      "id": "cat35/startup-ideation-02#u003",
+      "reference": true,
+      "p": 0.95,
+      "predicted": true,
+      "latency_ms": 154,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000051786,
+      "input_tokens": 1233
+    },
+    {
+      "id": "cat35/startup-ideation-02#u004",
+      "reference": true,
+      "p": 0.96,
+      "predicted": true,
+      "latency_ms": 157,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000037800000000000004,
+      "input_tokens": 900
+    },
+    {
+      "id": "cat35/startup-ideation-02#u005",
+      "reference": true,
+      "p": 0.92,
+      "predicted": true,
+      "latency_ms": 132,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000051366,
+      "input_tokens": 1223
+    },
+    {
+      "id": "cat35/startup-ideation-02#u006",
+      "reference": true,
+      "p": 0.82,
+      "predicted": true,
+      "latency_ms": 199,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000052206,
+      "input_tokens": 1243
+    },
+    {
+      "id": "cat35/startup-ideation-02#u007",
+      "reference": true,
+      "p": 0.9,
+      "predicted": true,
+      "latency_ms": 155,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00002415,
+      "input_tokens": 575
+    },
+    {
+      "id": "cat35/startup-ideation-02#u008",
+      "reference": true,
+      "p": 0.9,
+      "predicted": true,
+      "latency_ms": 151,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.0000546,
+      "input_tokens": 1300
+    },
+    {
+      "id": "cat35/startup-ideation-02#u009",
+      "reference": true,
+      "p": 0.91,
+      "predicted": true,
+      "latency_ms": 150,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005187,
+      "input_tokens": 1235
+    },
+    {
+      "id": "cat35/startup-ideation-02#u010",
+      "reference": true,
+      "p": 0.8,
+      "predicted": true,
+      "latency_ms": 352,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005187,
+      "input_tokens": 1235
+    },
+    {
+      "id": "cat35/startup-ideation-02#u011",
+      "reference": true,
+      "p": 0.81,
+      "predicted": true,
+      "latency_ms": 156,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000051324000000000005,
+      "input_tokens": 1222
+    },
+    {
+      "id": "cat35/startup-ideation-02#u012",
+      "reference": true,
+      "p": 0.77,
+      "predicted": true,
+      "latency_ms": 156,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000054222000000000004,
+      "input_tokens": 1291
+    },
+    {
+      "id": "cat35/startup-ideation-02#u013",
+      "reference": true,
+      "p": 0.61,
+      "predicted": true,
+      "latency_ms": 147,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000054348,
+      "input_tokens": 1294
+    },
+    {
+      "id": "cat35/startup-ideation-02#u014",
+      "reference": true,
+      "p": 0.96,
+      "predicted": true,
+      "latency_ms": 181,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005439,
+      "input_tokens": 1295
+    },
+    {
+      "id": "cat35/startup-ideation-02#u015",
+      "reference": true,
+      "p": 0.96,
+      "predicted": true,
+      "latency_ms": 168,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000054726,
+      "input_tokens": 1303
+    },
+    {
+      "id": "cat35/startup-ideation-02#u016",
+      "reference": true,
+      "p": 0.93,
+      "predicted": true,
+      "latency_ms": 198,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000055356,
+      "input_tokens": 1318
+    },
+    {
+      "id": "cat35/startup-ideation-02#u017",
+      "reference": true,
+      "p": 0.95,
+      "predicted": true,
+      "latency_ms": 598,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00004095,
+      "input_tokens": 975
+    },
+    {
+      "id": "cat35/startup-ideation-02#u018",
+      "reference": true,
+      "p": 0.95,
+      "predicted": true,
+      "latency_ms": 287,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005086200000000001,
+      "input_tokens": 1211
+    },
+    {
+      "id": "cat35/startup-ideation-02#u019",
+      "reference": true,
+      "p": 0.72,
+      "predicted": true,
+      "latency_ms": 142,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000052584000000000003,
+      "input_tokens": 1252
+    },
+    {
+      "id": "cat35/startup-ideation-02#u020",
+      "reference": true,
+      "p": 0.68,
+      "predicted": true,
+      "latency_ms": 656,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000054936,
+      "input_tokens": 1308
+    },
+    {
+      "id": "cat35/startup-ideation-02#u021",
+      "reference": false,
+      "p": 0.68,
+      "predicted": true,
+      "latency_ms": 138,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005128200000000001,
+      "input_tokens": 1221
+    },
+    {
+      "id": "cat35/startup-ideation-02#u022",
+      "reference": true,
+      "p": 0.97,
+      "predicted": true,
+      "latency_ms": 179,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000041664000000000006,
+      "input_tokens": 992
+    },
+    {
+      "id": "cat35/startup-ideation-02#u023",
+      "reference": true,
+      "p": 0.87,
+      "predicted": true,
+      "latency_ms": 133,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005418,
+      "input_tokens": 1290
+    },
+    {
+      "id": "cat35/startup-ideation-02#u024",
+      "reference": false,
+      "p": 0.85,
+      "predicted": true,
+      "latency_ms": 116,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000028098,
+      "input_tokens": 669
+    },
+    {
+      "id": "cat35/startup-ideation-02#u025",
+      "reference": true,
+      "p": 0.96,
+      "predicted": true,
+      "latency_ms": 311,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000041496,
+      "input_tokens": 988
+    },
+    {
+      "id": "cat35/startup-ideation-02#u026",
+      "reference": true,
+      "p": 0.97,
+      "predicted": true,
+      "latency_ms": 178,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000041244,
+      "input_tokens": 982
+    },
+    {
+      "id": "cat35/startup-ideation-02#u027",
+      "reference": true,
+      "p": 0.97,
+      "predicted": true,
+      "latency_ms": 347,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000041286,
+      "input_tokens": 983
+    },
+    {
+      "id": "cat35/startup-ideation-02#u028",
+      "reference": false,
+      "p": 0.81,
+      "predicted": true,
+      "latency_ms": 145,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000054138,
+      "input_tokens": 1289
+    },
+    {
+      "id": "cat35/startup-ideation-02#u029",
+      "reference": false,
+      "p": 0.71,
+      "predicted": true,
+      "latency_ms": 204,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000051912,
+      "input_tokens": 1236
+    },
+    {
+      "id": "cat35/startup-ideation-02#u030",
+      "reference": true,
+      "p": 0.78,
+      "predicted": true,
+      "latency_ms": 167,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000028182000000000002,
+      "input_tokens": 671
+    },
+    {
+      "id": "cat35/startup-ideation-02#u031",
+      "reference": false,
+      "p": 0.12,
+      "predicted": false,
+      "latency_ms": 135,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005170200000000001,
+      "input_tokens": 1231
+    },
+    {
+      "id": "cat35/startup-ideation-02#p001",
+      "reference": false,
+      "p": 0.06,
+      "predicted": false,
+      "latency_ms": 135,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000051786,
+      "input_tokens": 1233
+    },
+    {
+      "id": "cat35/startup-ideation-02#p002",
+      "reference": false,
+      "p": 0.07,
+      "predicted": false,
+      "latency_ms": 610,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000051786,
+      "input_tokens": 1233
+    },
+    {
+      "id": "cat35/startup-ideation-02#p003",
+      "reference": false,
+      "p": 0.05,
+      "predicted": false,
+      "latency_ms": 136,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005103,
+      "input_tokens": 1215
+    },
+    {
+      "id": "cat35/startup-ideation-02#p004",
+      "reference": false,
+      "p": 0.1,
+      "predicted": false,
+      "latency_ms": 151,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000051366,
+      "input_tokens": 1223
+    },
+    {
+      "id": "cat35/startup-ideation-02#p005",
+      "reference": false,
+      "p": 0.14,
+      "predicted": false,
+      "latency_ms": 137,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000051954000000000004,
+      "input_tokens": 1237
+    },
+    {
+      "id": "cat35/startup-ideation-02#p006",
+      "reference": false,
+      "p": 0.22,
+      "predicted": false,
+      "latency_ms": 272,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005128200000000001,
+      "input_tokens": 1221
+    },
+    {
+      "id": "cat35/startup-ideation-02#p007",
+      "reference": false,
+      "p": 0.16,
+      "predicted": false,
+      "latency_ms": 160,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000054474,
+      "input_tokens": 1297
+    },
+    {
+      "id": "cat35/startup-ideation-02#p008",
+      "reference": false,
+      "p": 0.05,
+      "predicted": false,
+      "latency_ms": 140,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000052038000000000006,
+      "input_tokens": 1239
+    },
+    {
+      "id": "cat35/startup-ideation-02#p009",
+      "reference": false,
+      "p": 0.03,
+      "predicted": false,
+      "latency_ms": 120,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000054264,
+      "input_tokens": 1292
+    },
+    {
+      "id": "cat35/startup-ideation-02#p010",
+      "reference": false,
+      "p": 0.13,
+      "predicted": false,
+      "latency_ms": 124,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005497800000000001,
+      "input_tokens": 1309
+    },
+    {
+      "id": "cat35/startup-ideation-02#p011",
+      "reference": false,
+      "p": 0.32,
+      "predicted": false,
+      "latency_ms": 176,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000051324000000000005,
+      "input_tokens": 1222
+    },
+    {
+      "id": "cat35/startup-ideation-02#p012",
+      "reference": false,
+      "p": 0.03,
+      "predicted": false,
+      "latency_ms": 118,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000027510000000000003,
+      "input_tokens": 655
+    },
+    {
+      "id": "cat35/startup-ideation-03#u001",
+      "reference": true,
+      "p": 0.94,
+      "predicted": true,
+      "latency_ms": 115,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000050316000000000004,
+      "input_tokens": 1198
+    },
+    {
+      "id": "cat35/startup-ideation-03#u002",
+      "reference": true,
+      "p": 0.71,
+      "predicted": true,
+      "latency_ms": 136,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000036876000000000004,
+      "input_tokens": 878
+    },
+    {
+      "id": "cat35/startup-ideation-03#u003",
+      "reference": false,
+      "p": 0.27,
+      "predicted": false,
+      "latency_ms": 183,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000045402,
+      "input_tokens": 1081
+    },
+    {
+      "id": "cat35/startup-ideation-03#u004",
+      "reference": false,
+      "p": 0.54,
+      "predicted": true,
+      "latency_ms": 388,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000050274,
+      "input_tokens": 1197
+    },
+    {
+      "id": "cat35/startup-ideation-03#u005",
+      "reference": true,
+      "p": 0.8,
+      "predicted": true,
+      "latency_ms": 123,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000049560000000000007,
+      "input_tokens": 1180
+    },
+    {
+      "id": "cat35/startup-ideation-03#u006",
+      "reference": false,
+      "p": 0.49,
+      "predicted": false,
+      "latency_ms": 149,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00004935000000000001,
+      "input_tokens": 1175
+    },
+    {
+      "id": "cat35/startup-ideation-03#u007",
+      "reference": false,
+      "p": 0.86,
+      "predicted": true,
+      "latency_ms": 143,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00004523400000000001,
+      "input_tokens": 1077
+    },
+    {
+      "id": "cat35/startup-ideation-03#u008",
+      "reference": true,
+      "p": 0.8,
+      "predicted": true,
+      "latency_ms": 159,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00004893,
+      "input_tokens": 1165
+    },
+    {
+      "id": "cat35/startup-ideation-03#u009",
+      "reference": false,
+      "p": 0.03,
+      "predicted": false,
+      "latency_ms": 375,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000014532,
+      "input_tokens": 346
+    },
+    {
+      "id": "cat35/startup-ideation-03#u010",
+      "reference": false,
+      "p": 0.32,
+      "predicted": false,
+      "latency_ms": 166,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000025914000000000003,
+      "input_tokens": 617
+    },
+    {
+      "id": "cat35/startup-ideation-03#u011",
+      "reference": false,
+      "p": 0.37,
+      "predicted": false,
+      "latency_ms": 136,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000026208,
+      "input_tokens": 624
+    },
+    {
+      "id": "cat35/startup-ideation-03#u012",
+      "reference": false,
+      "p": 0.27,
+      "predicted": false,
+      "latency_ms": 135,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00003847200000000001,
+      "input_tokens": 916
+    },
+    {
+      "id": "cat35/startup-ideation-03#u013",
+      "reference": true,
+      "p": 0.6,
+      "predicted": true,
+      "latency_ms": 160,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000042966,
+      "input_tokens": 1023
+    },
+    {
+      "id": "cat35/startup-ideation-03#u014",
+      "reference": false,
+      "p": 0.95,
+      "predicted": true,
+      "latency_ms": 114,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000038766,
+      "input_tokens": 923
+    },
+    {
+      "id": "cat35/startup-ideation-03#u015",
+      "reference": false,
+      "p": 0.8,
+      "predicted": true,
+      "latency_ms": 204,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00002604,
+      "input_tokens": 620
+    },
+    {
+      "id": "cat35/startup-ideation-03#u016",
+      "reference": false,
+      "p": 0.46,
+      "predicted": false,
+      "latency_ms": 170,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00004935000000000001,
+      "input_tokens": 1175
+    },
+    {
+      "id": "cat35/startup-ideation-03#u017",
+      "reference": false,
+      "p": 0.75,
+      "predicted": true,
+      "latency_ms": 178,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00004964400000000001,
+      "input_tokens": 1182
+    },
+    {
+      "id": "cat35/startup-ideation-03#u018",
+      "reference": false,
+      "p": 0.41,
+      "predicted": false,
+      "latency_ms": 119,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000038262,
+      "input_tokens": 911
+    },
+    {
+      "id": "cat35/startup-ideation-03#u019",
+      "reference": true,
+      "p": 0.9,
+      "predicted": true,
+      "latency_ms": 569,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000026586000000000003,
+      "input_tokens": 633
+    },
+    {
+      "id": "cat35/startup-ideation-03#u020",
+      "reference": true,
+      "p": 0.49,
+      "predicted": false,
+      "latency_ms": 125,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00004964400000000001,
+      "input_tokens": 1182
+    },
+    {
+      "id": "cat35/startup-ideation-03#u021",
+      "reference": false,
+      "p": 0.38,
+      "predicted": false,
+      "latency_ms": 222,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000038304000000000005,
+      "input_tokens": 912
+    },
+    {
+      "id": "cat35/startup-ideation-03#u022",
+      "reference": false,
+      "p": 0.31,
+      "predicted": false,
+      "latency_ms": 148,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000048972,
+      "input_tokens": 1166
+    },
+    {
+      "id": "cat35/startup-ideation-03#u023",
+      "reference": false,
+      "p": 0.74,
+      "predicted": true,
+      "latency_ms": 143,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000049602000000000004,
+      "input_tokens": 1181
+    },
+    {
+      "id": "cat35/startup-ideation-03#u024",
+      "reference": true,
+      "p": 0.84,
+      "predicted": true,
+      "latency_ms": 136,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00004901400000000001,
+      "input_tokens": 1167
+    },
+    {
+      "id": "cat35/startup-ideation-03#u025",
+      "reference": true,
+      "p": 0.87,
+      "predicted": true,
+      "latency_ms": 149,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00004888800000000001,
+      "input_tokens": 1164
+    },
+    {
+      "id": "cat35/startup-ideation-03#u026",
+      "reference": true,
+      "p": 0.96,
+      "predicted": true,
+      "latency_ms": 127,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000049854,
+      "input_tokens": 1187
+    },
+    {
+      "id": "cat35/startup-ideation-03#u027",
+      "reference": false,
+      "p": 0.7,
+      "predicted": true,
+      "latency_ms": 135,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00004964400000000001,
+      "input_tokens": 1182
+    },
+    {
+      "id": "cat35/startup-ideation-03#u028",
+      "reference": true,
+      "p": 0.89,
+      "predicted": true,
+      "latency_ms": 192,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00004935000000000001,
+      "input_tokens": 1175
+    },
+    {
+      "id": "cat35/startup-ideation-03#u029",
+      "reference": true,
+      "p": 0.94,
+      "predicted": true,
+      "latency_ms": 130,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000037926,
+      "input_tokens": 903
+    },
+    {
+      "id": "cat35/startup-ideation-03#u030",
+      "reference": true,
+      "p": 0.31,
+      "predicted": false,
+      "latency_ms": 130,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00004901400000000001,
+      "input_tokens": 1167
+    },
+    {
+      "id": "cat35/startup-ideation-03#u031",
+      "reference": false,
+      "p": 0.69,
+      "predicted": true,
+      "latency_ms": 136,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000025452,
+      "input_tokens": 606
+    },
+    {
+      "id": "cat35/startup-ideation-03#u032",
+      "reference": true,
+      "p": 0.91,
+      "predicted": true,
+      "latency_ms": 266,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00004473,
+      "input_tokens": 1065
+    },
+    {
+      "id": "cat35/startup-ideation-03#u033",
+      "reference": true,
+      "p": 0.98,
+      "predicted": true,
+      "latency_ms": 121,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00002058,
+      "input_tokens": 490
+    },
+    {
+      "id": "cat35/startup-ideation-03#u034",
+      "reference": true,
+      "p": 0.97,
+      "predicted": true,
+      "latency_ms": 124,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000020622,
+      "input_tokens": 491
+    },
+    {
+      "id": "cat35/startup-ideation-03#u035",
+      "reference": false,
+      "p": 0.88,
+      "predicted": true,
+      "latency_ms": 142,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000043764,
+      "input_tokens": 1042
+    },
+    {
+      "id": "cat35/startup-ideation-03#u036",
+      "reference": true,
+      "p": 0.04,
+      "predicted": false,
+      "latency_ms": 136,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000014658000000000003,
+      "input_tokens": 349
+    },
+    {
+      "id": "cat35/startup-ideation-03#u037",
+      "reference": true,
+      "p": 0.86,
+      "predicted": true,
+      "latency_ms": 135,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00003864,
+      "input_tokens": 920
+    },
+    {
+      "id": "cat35/startup-ideation-03#u038",
+      "reference": true,
+      "p": 0.95,
+      "predicted": true,
+      "latency_ms": 124,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000037926,
+      "input_tokens": 903
+    },
+    {
+      "id": "cat35/startup-ideation-03#u039",
+      "reference": false,
+      "p": 0.59,
+      "predicted": true,
+      "latency_ms": 120,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000026544,
+      "input_tokens": 632
+    },
+    {
+      "id": "cat35/startup-ideation-03#p001",
+      "reference": false,
+      "p": 0.18,
+      "predicted": false,
+      "latency_ms": 164,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000050316000000000004,
+      "input_tokens": 1198
+    },
+    {
+      "id": "cat35/startup-ideation-03#p002",
+      "reference": false,
+      "p": 0.31,
+      "predicted": false,
+      "latency_ms": 160,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000036876000000000004,
+      "input_tokens": 878
+    },
+    {
+      "id": "cat35/startup-ideation-03#p003",
+      "reference": false,
+      "p": 0.27,
+      "predicted": false,
+      "latency_ms": 186,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000025662000000000003,
+      "input_tokens": 611
+    },
+    {
+      "id": "cat35/startup-ideation-03#p004",
+      "reference": false,
+      "p": 0.1,
+      "predicted": false,
+      "latency_ms": 168,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00003654,
+      "input_tokens": 870
+    },
+    {
+      "id": "cat35/startup-ideation-03#p005",
+      "reference": false,
+      "p": 0.06,
+      "predicted": false,
+      "latency_ms": 138,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000049938,
+      "input_tokens": 1189
+    },
+    {
+      "id": "cat35/startup-ideation-03#p006",
+      "reference": false,
+      "p": 0.13,
+      "predicted": false,
+      "latency_ms": 155,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000049056,
+      "input_tokens": 1168
+    },
+    {
+      "id": "cat35/startup-ideation-03#p007",
+      "reference": false,
+      "p": 0.71,
+      "predicted": true,
+      "latency_ms": 152,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000049854,
+      "input_tokens": 1187
+    },
+    {
+      "id": "cat35/startup-ideation-03#p008",
+      "reference": false,
+      "p": 0.52,
+      "predicted": true,
+      "latency_ms": 216,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000027132,
+      "input_tokens": 646
+    },
+    {
+      "id": "cat35/startup-ideation-03#p009",
+      "reference": false,
+      "p": 0.08,
+      "predicted": false,
+      "latency_ms": 159,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00004901400000000001,
+      "input_tokens": 1167
+    },
+    {
+      "id": "cat35/startup-ideation-03#p010",
+      "reference": false,
+      "p": 0.03,
+      "predicted": false,
+      "latency_ms": 204,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000020622,
+      "input_tokens": 491
+    },
+    {
+      "id": "cat35/startup-ideation-03#p011",
+      "reference": false,
+      "p": 0.09,
+      "predicted": false,
+      "latency_ms": 174,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00002058,
+      "input_tokens": 490
+    },
+    {
+      "id": "cat35/startup-ideation-03#p012",
+      "reference": false,
+      "p": 0.13,
+      "predicted": false,
+      "latency_ms": 121,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00003864,
+      "input_tokens": 920
+    },
+    {
+      "id": "cat35/startup-ideation-04#u001",
+      "reference": false,
+      "p": 0.15,
+      "predicted": false,
+      "latency_ms": 223,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000077742,
+      "input_tokens": 1851
+    },
+    {
+      "id": "cat35/startup-ideation-04#u002",
+      "reference": false,
+      "p": 0.22,
+      "predicted": false,
+      "latency_ms": 150,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000065184,
+      "input_tokens": 1552
+    },
+    {
+      "id": "cat35/startup-ideation-04#u003",
+      "reference": false,
+      "p": 0.04,
+      "predicted": false,
+      "latency_ms": 143,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000014448000000000001,
+      "input_tokens": 344
+    },
+    {
+      "id": "cat35/startup-ideation-04#u004",
+      "reference": false,
+      "p": 0.08,
+      "predicted": false,
+      "latency_ms": 130,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000054264,
+      "input_tokens": 1292
+    },
+    {
+      "id": "cat35/startup-ideation-04#u005",
+      "reference": false,
+      "p": 0.49,
+      "predicted": false,
+      "latency_ms": 171,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00006308400000000001,
+      "input_tokens": 1502
+    },
+    {
+      "id": "cat35/startup-ideation-04#u006",
+      "reference": false,
+      "p": 0.14,
+      "predicted": false,
+      "latency_ms": 184,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005754,
+      "input_tokens": 1370
+    },
+    {
+      "id": "cat35/startup-ideation-04#u007",
+      "reference": false,
+      "p": 0.08,
+      "predicted": false,
+      "latency_ms": 130,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000019026,
+      "input_tokens": 453
+    },
+    {
+      "id": "cat35/startup-ideation-04#u008",
+      "reference": false,
+      "p": 0.11,
+      "predicted": false,
+      "latency_ms": 138,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000026124000000000003,
+      "input_tokens": 622
+    },
+    {
+      "id": "cat35/startup-ideation-04#u009",
+      "reference": false,
+      "p": 0.86,
+      "predicted": true,
+      "latency_ms": 129,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00007434000000000001,
+      "input_tokens": 1770
+    },
+    {
+      "id": "cat35/startup-ideation-04#u010",
+      "reference": false,
+      "p": 0.61,
+      "predicted": true,
+      "latency_ms": 156,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000064554,
+      "input_tokens": 1537
+    },
+    {
+      "id": "cat35/startup-ideation-04#u011",
+      "reference": false,
+      "p": 0.52,
+      "predicted": true,
+      "latency_ms": 124,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000061698,
+      "input_tokens": 1469
+    },
+    {
+      "id": "cat35/startup-ideation-04#u012",
+      "reference": false,
+      "p": 0.43,
+      "predicted": false,
+      "latency_ms": 170,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000055272,
+      "input_tokens": 1316
+    },
+    {
+      "id": "cat35/startup-ideation-04#u013",
+      "reference": false,
+      "p": 0.82,
+      "predicted": true,
+      "latency_ms": 127,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000065016,
+      "input_tokens": 1548
+    },
+    {
+      "id": "cat35/startup-ideation-04#u014",
+      "reference": false,
+      "p": 0.27,
+      "predicted": false,
+      "latency_ms": 133,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000057498000000000004,
+      "input_tokens": 1369
+    },
+    {
+      "id": "cat35/startup-ideation-04#u015",
+      "reference": true,
+      "p": 0.87,
+      "predicted": true,
+      "latency_ms": 164,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000057414,
+      "input_tokens": 1367
+    },
+    {
+      "id": "cat35/startup-ideation-04#u016",
+      "reference": true,
+      "p": 0.91,
+      "predicted": true,
+      "latency_ms": 146,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000076104,
+      "input_tokens": 1812
+    },
+    {
+      "id": "cat35/startup-ideation-04#u017",
+      "reference": true,
+      "p": 0.61,
+      "predicted": true,
+      "latency_ms": 150,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000046368,
+      "input_tokens": 1104
+    },
+    {
+      "id": "cat35/startup-ideation-04#u018",
+      "reference": false,
+      "p": 0.29,
+      "predicted": false,
+      "latency_ms": 152,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000055314000000000006,
+      "input_tokens": 1317
+    },
+    {
+      "id": "cat35/startup-ideation-04#u019",
+      "reference": false,
+      "p": 0.79,
+      "predicted": true,
+      "latency_ms": 153,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000060312,
+      "input_tokens": 1436
+    },
+    {
+      "id": "cat35/startup-ideation-04#u020",
+      "reference": false,
+      "p": 0.4,
+      "predicted": false,
+      "latency_ms": 153,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000051912,
+      "input_tokens": 1236
+    },
+    {
+      "id": "cat35/startup-ideation-04#u021",
+      "reference": false,
+      "p": 0.47,
+      "predicted": false,
+      "latency_ms": 215,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00004901400000000001,
+      "input_tokens": 1167
+    },
+    {
+      "id": "cat35/startup-ideation-04#u022",
+      "reference": false,
+      "p": 0.21,
+      "predicted": false,
+      "latency_ms": 149,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000053928,
+      "input_tokens": 1284
+    },
+    {
+      "id": "cat35/startup-ideation-04#u023",
+      "reference": true,
+      "p": 0.94,
+      "predicted": true,
+      "latency_ms": 137,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000065058,
+      "input_tokens": 1549
+    },
+    {
+      "id": "cat35/startup-ideation-04#u024",
+      "reference": false,
+      "p": 0.4,
+      "predicted": false,
+      "latency_ms": 148,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00007728,
+      "input_tokens": 1840
+    },
+    {
+      "id": "cat35/startup-ideation-04#u025",
+      "reference": false,
+      "p": 0.47,
+      "predicted": false,
+      "latency_ms": 122,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000042504000000000005,
+      "input_tokens": 1012
+    },
+    {
+      "id": "cat35/startup-ideation-04#u026",
+      "reference": false,
+      "p": 0.84,
+      "predicted": true,
+      "latency_ms": 123,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00002898,
+      "input_tokens": 690
+    },
+    {
+      "id": "cat35/startup-ideation-04#u027",
+      "reference": true,
+      "p": 0.76,
+      "predicted": true,
+      "latency_ms": 169,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00007413000000000001,
+      "input_tokens": 1765
+    },
+    {
+      "id": "cat35/startup-ideation-04#u028",
+      "reference": true,
+      "p": 0.79,
+      "predicted": true,
+      "latency_ms": 180,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000045696000000000004,
+      "input_tokens": 1088
+    },
+    {
+      "id": "cat35/startup-ideation-04#u029",
+      "reference": false,
+      "p": 0.58,
+      "predicted": true,
+      "latency_ms": 151,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000073206,
+      "input_tokens": 1743
+    },
+    {
+      "id": "cat35/startup-ideation-04#u030",
+      "reference": false,
+      "p": 0.18,
+      "predicted": false,
+      "latency_ms": 220,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00008290800000000001,
+      "input_tokens": 1974
+    },
+    {
+      "id": "cat35/startup-ideation-04#u031",
+      "reference": true,
+      "p": 0.94,
+      "predicted": true,
+      "latency_ms": 209,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000048804,
+      "input_tokens": 1162
+    },
+    {
+      "id": "cat35/startup-ideation-04#u032",
+      "reference": true,
+      "p": 0.93,
+      "predicted": true,
+      "latency_ms": 122,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000056070000000000004,
+      "input_tokens": 1335
+    },
+    {
+      "id": "cat35/startup-ideation-04#u033",
+      "reference": true,
+      "p": 0.9,
+      "predicted": true,
+      "latency_ms": 171,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000055692,
+      "input_tokens": 1326
+    },
+    {
+      "id": "cat35/startup-ideation-04#u034",
+      "reference": true,
+      "p": 0.7,
+      "predicted": true,
+      "latency_ms": 151,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005506200000000001,
+      "input_tokens": 1311
+    },
+    {
+      "id": "cat35/startup-ideation-04#u035",
+      "reference": true,
+      "p": 0.32,
+      "predicted": false,
+      "latency_ms": 159,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000079128,
+      "input_tokens": 1884
+    },
+    {
+      "id": "cat35/startup-ideation-04#u036",
+      "reference": false,
+      "p": 0.13,
+      "predicted": false,
+      "latency_ms": 147,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000064806,
+      "input_tokens": 1543
+    },
+    {
+      "id": "cat35/startup-ideation-04#u037",
+      "reference": false,
+      "p": 0.23,
+      "predicted": false,
+      "latency_ms": 142,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00006237,
+      "input_tokens": 1485
+    },
+    {
+      "id": "cat35/startup-ideation-04#u038",
+      "reference": true,
+      "p": 0.93,
+      "predicted": true,
+      "latency_ms": 137,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000059388,
+      "input_tokens": 1414
+    },
+    {
+      "id": "cat35/startup-ideation-04#u039",
+      "reference": true,
+      "p": 0.96,
+      "predicted": true,
+      "latency_ms": 145,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005896800000000001,
+      "input_tokens": 1404
+    },
+    {
+      "id": "cat35/startup-ideation-04#u040",
+      "reference": true,
+      "p": 0.9,
+      "predicted": true,
+      "latency_ms": 311,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000045696000000000004,
+      "input_tokens": 1088
+    },
+    {
+      "id": "cat35/startup-ideation-04#u041",
+      "reference": false,
+      "p": 0.05,
+      "predicted": false,
+      "latency_ms": 118,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000023184,
+      "input_tokens": 552
+    },
+    {
+      "id": "cat35/startup-ideation-04#u042",
+      "reference": true,
+      "p": 0.94,
+      "predicted": true,
+      "latency_ms": 150,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000023478000000000005,
+      "input_tokens": 559
+    },
+    {
+      "id": "cat35/startup-ideation-04#u043",
+      "reference": true,
+      "p": 0.95,
+      "predicted": true,
+      "latency_ms": 193,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000056994,
+      "input_tokens": 1357
+    },
+    {
+      "id": "cat35/startup-ideation-04#u044",
+      "reference": true,
+      "p": 0.68,
+      "predicted": true,
+      "latency_ms": 133,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005271,
+      "input_tokens": 1255
+    },
+    {
+      "id": "cat35/startup-ideation-04#u045",
+      "reference": true,
+      "p": 0.85,
+      "predicted": true,
+      "latency_ms": 258,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000057288000000000004,
+      "input_tokens": 1364
+    },
+    {
+      "id": "cat35/startup-ideation-04#u046",
+      "reference": true,
+      "p": 0.92,
+      "predicted": true,
+      "latency_ms": 159,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00008622600000000001,
+      "input_tokens": 2053
+    },
+    {
+      "id": "cat35/startup-ideation-04#p001",
+      "reference": false,
+      "p": 0.61,
+      "predicted": true,
+      "latency_ms": 135,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000057414,
+      "input_tokens": 1367
+    },
+    {
+      "id": "cat35/startup-ideation-04#p002",
+      "reference": false,
+      "p": 0.03,
+      "predicted": false,
+      "latency_ms": 156,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000076104,
+      "input_tokens": 1812
+    },
+    {
+      "id": "cat35/startup-ideation-04#p003",
+      "reference": false,
+      "p": 0.04,
+      "predicted": false,
+      "latency_ms": 159,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000065058,
+      "input_tokens": 1549
+    },
+    {
+      "id": "cat35/startup-ideation-04#p004",
+      "reference": false,
+      "p": 0.05,
+      "predicted": false,
+      "latency_ms": 203,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00007417200000000001,
+      "input_tokens": 1766
+    },
+    {
+      "id": "cat35/startup-ideation-04#p005",
+      "reference": false,
+      "p": 0.05,
+      "predicted": false,
+      "latency_ms": 184,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000048762,
+      "input_tokens": 1161
+    },
+    {
+      "id": "cat35/startup-ideation-04#p006",
+      "reference": false,
+      "p": 0.89,
+      "predicted": true,
+      "latency_ms": 150,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00007555800000000001,
+      "input_tokens": 1799
+    },
+    {
+      "id": "cat35/startup-ideation-04#p007",
+      "reference": false,
+      "p": 0.32,
+      "predicted": false,
+      "latency_ms": 193,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000055146000000000004,
+      "input_tokens": 1313
+    },
+    {
+      "id": "cat35/startup-ideation-04#p008",
+      "reference": false,
+      "p": 0.21,
+      "predicted": false,
+      "latency_ms": 120,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000046074000000000006,
+      "input_tokens": 1097
+    },
+    {
+      "id": "cat35/startup-ideation-04#p009",
+      "reference": false,
+      "p": 0.29,
+      "predicted": false,
+      "latency_ms": 129,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005888400000000001,
+      "input_tokens": 1402
+    },
+    {
+      "id": "cat35/startup-ideation-04#p010",
+      "reference": false,
+      "p": 0.18,
+      "predicted": false,
+      "latency_ms": 148,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.00005775,
+      "input_tokens": 1375
+    },
+    {
+      "id": "cat35/startup-ideation-04#p011",
+      "reference": false,
+      "p": 0.06,
+      "predicted": false,
+      "latency_ms": 140,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000056994,
+      "input_tokens": 1357
+    },
+    {
+      "id": "cat35/startup-ideation-04#p012",
+      "reference": false,
+      "p": 0.11,
+      "predicted": false,
+      "latency_ms": 129,
+      "model_resolved": "jev-1.13.0",
+      "cost_usd": 0.000064806,
+      "input_tokens": 1543
+    }
+  ]
+}

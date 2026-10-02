@@ -182,12 +182,20 @@ describe('runExtractCore — incremental cycle path (#417)', () => {
       return originalAddTimeline(...args);
     };
 
-    await runExtractCore(engine as unknown as BrainEngine, {
-      mode: 'all',
-      dir: tempDir,
-      slugs: ['people/alice-example'],
-      dryRun: true,
-    });
+    try {
+      await runExtractCore(engine as unknown as BrainEngine, {
+        mode: 'all',
+        dir: tempDir,
+        slugs: ['people/alice-example'],
+        dryRun: true,
+      });
+    } finally {
+      // Restore the shared engine's prototype methods: a wrapper bound to
+      // `engine` would run a later test's in-transaction batch insert outside
+      // its transaction.
+      delete (engine as unknown as { addLinksBatch?: unknown }).addLinksBatch;
+      delete (engine as unknown as { addTimelineEntriesBatch?: unknown }).addTimelineEntriesBatch;
+    }
 
     expect(linksBatchCalled).toBe(false);
     expect(timelineBatchCalled).toBe(false);

@@ -7,6 +7,8 @@ export interface PageVersion {
   title?: string | null;
   type?: string | null;
   tags?: string[] | null;
+  /** The page's recorded canonical file when the version was taken; NULL on file-less pages and legacy versions. */
+  source_path?: string | null;
   id: number;
   page_id: number;
   compiled_truth: string;

@@ -149,7 +149,12 @@ describe.skipIf(!url)('authenticated PostgreSQL HTTP accepted-write liveness', (
       expect(aged.diagnostic.next_action).toBe('inspect_owner');
       expect(aged.retry_after_ms).toBe(30000);
       expect((await call(client, 'put_page', put)).body.suggestion).toContain('inspect');
-      await stop('SIGKILL');
+      await pg.engine.transaction(async tx => {
+        await waitFor(async () => (await tx.executeRaw(`SELECT id FROM persistence_requests
+          WHERE request_id=$1::uuid AND state='queued' FOR SHARE SKIP LOCKED`, [put.request_id])).length === 1,
+        { label: 'accepted queued receipt before owner restart' });
+        await stop('SIGKILL');
+      });
     } finally { await lock!.release(); }
     await start();
     await connect(tokens[0]); await connect(tokens[1]);

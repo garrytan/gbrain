@@ -9,7 +9,8 @@ export function mockEmbedProjectionEngine(overrides: Partial<Record<string, any>
   const pages = new Map<string, number>();
   const pageKinds = new Map<number, string>();
   overrides = {
-    executeRaw: async () => [],
+    executeRaw: async (sql: string) => sql.startsWith('SELECT count(*)::int AS n FROM pages p')
+      && sql.includes('p.text_projection_revision IS DISTINCT FROM p.knowledge_revision') ? [{ n: 0 }] : [],
     getConfigKeys: async () => [],
     transaction: async (run: (tx: BrainEngine) => Promise<unknown>) => run(engine),
     readPageSnapshot: async (slug: string, opts?: { sourceId?: string }) => {
@@ -27,6 +28,7 @@ export function mockEmbedProjectionEngine(overrides: Partial<Record<string, any>
   const executeRaw = overrides.executeRaw;
   overrides.executeRaw = async (sql: string, params?: unknown[]) => sql.startsWith('SELECT page_kind FROM pages WHERE id=')
     ? [{ page_kind: pageKinds.get(Number(params?.[0])) ?? 'markdown' }]
+    : sql === 'SELECT archived FROM sources WHERE id=$1' ? [{ archived: false }]
     : executeRaw(sql, params);
   const calls: { method: string; args: any[] }[] = [];
   const track = (method: string) => (...args: any[]) => {

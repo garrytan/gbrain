@@ -328,6 +328,25 @@ describe('#2753 — the doctor-proposed gateway-loop command is accepted by `con
     expect(setCalls).toEqual([]);
   });
 
+  test('persistence.limits.*: accepted without --force and never called unread (#5470)', async () => {
+    for (const key of ['persistence.limits.principal_terminal_bytes', 'persistence.limits.principal_lifetime_ids', 'persistence.receipt_retention_days']) {
+      const { engine, setCalls } = setStubEngine();
+      const { errs, exit } = await runConfigCapture(engine, ['set', key, '268435456']);
+      expect(exit).toBeNull();
+      expect(errs.join('\n')).not.toContain('Unknown config key');
+      expect(errs.join('\n')).not.toContain('Nothing in gbrain reads this');
+      expect(setCalls).toEqual([[key, '268435456']]);
+    }
+  });
+
+  test('persistence.limits.*: rejects a value every admission would refuse (#5470)', async () => {
+    const { engine, setCalls } = setStubEngine();
+    const { errs, exit } = await runConfigCapture(engine, ['set', 'persistence.limits.principal_lifetime_ids', '1.5e6']);
+    expect(exit).toBe(1);
+    expect(errs.join('\n')).toContain('expected a nonnegative integer');
+    expect(setCalls).toEqual([]);
+  });
+
   test('cycle.timezone: accepts a valid IANA timezone (#4348)', async () => {
     const { engine, setCalls } = setStubEngine();
     const { errs, exit } = await runConfigCapture(

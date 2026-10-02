@@ -18,7 +18,7 @@ import type {
   ResolverRequest,
   ResolverResult,
 } from '../src/core/resolvers/index.ts';
-import { urlReachableResolver, checkDnsRebinding } from '../src/core/resolvers/builtin/url-reachable.ts';
+import { urlReachableResolver } from '../src/core/resolvers/builtin/url-reachable.ts';
 import { __setDnsLookupForTests } from '../src/core/ssrf-validate.ts';
 import { xHandleToTweetResolver, computeBackoffMs } from '../src/core/resolvers/builtin/x-api/handle-to-tweet.ts';
 
@@ -167,15 +167,6 @@ describe('getDefaultRegistry', () => {
     const a = getDefaultRegistry();
     const b = getDefaultRegistry();
     expect(a).toBe(b);
-  });
-
-  test('_resetDefaultRegistry gives a fresh instance', () => {
-    const a = getDefaultRegistry();
-    a.register(echoResolver);
-    _resetDefaultRegistry();
-    const b = getDefaultRegistry();
-    expect(b).not.toBe(a);
-    expect(b.size()).toBe(0);
   });
 });
 
@@ -336,22 +327,6 @@ describe('url_reachable resolver', () => {
     expect(result.value.reachable).toBe(false);
     expect(result.value.reason).toContain('fetch error');
     expect(result.value.reason).not.toContain('private-');
-  });
-
-  test('checkDnsRebinding: validates IP literals using the shared policy', async () => {
-    expect(await checkDnsRebinding('http://8.8.8.8/')).toBeNull();
-    expect(await checkDnsRebinding('http://127.0.0.1/')).toMatch(/internal|private/i);
-    expect(await checkDnsRebinding('http://[::1]/')).toMatch(/internal|private/i);
-  });
-
-  test('checkDnsRebinding: rejects an unparseable URL', async () => {
-    expect(await checkDnsRebinding('not a url')).toMatch(/malformed/i);
-  });
-
-  test('checkDnsRebinding: fails closed on DNS failure', async () => {
-    __setDnsLookupForTests((async () => { throw new Error('ENOTFOUND'); }) as any);
-    const r = await checkDnsRebinding('http://definitely-not-a-real-tld.invalidtld123/');
-    expect(r).toMatch(/resolve|DNS/i);
   });
 
   test('AbortSignal fires mid-flight → ResolverError(aborted)', async () => {

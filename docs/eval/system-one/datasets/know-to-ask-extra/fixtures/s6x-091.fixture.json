@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-091",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/soraya-orrinholt",
+      "content": "---\ntitle: Soraya Orrinholt\ntype: person\nsummary: \"Soraya Orrinholt is the head of sales at Halcyoncrest.\"\n---\n\nSoraya Orrinholt is the head of sales at Halcyoncrest. Soraya asked for a longer pilot before signing, ideally a full quarter.\n"
+    },
+    {
+      "slug": "people/marisol-dremford",
+      "content": "---\ntitle: Marisol Dremford\ntype: person\nsummary: \"Marisol Dremford is the procurement lead at Kilnvane.\"\n---\n\nMarisol Dremford is the procurement lead at Kilnvane.\n"
+    },
+    {
+      "slug": "people/junie-ostreridge",
+      "content": "---\ntitle: Junie Ostreridge\ntype: person\nsummary: \"Junie Ostreridge is the product lead at Solaceyard.\"\n---\n\nJunie Ostreridge is the product lead at Solaceyard.\n"
+    },
+    {
+      "slug": "people/corin-lornwaite",
+      "content": "---\ntitle: Corin Lornwaite\ntype: person\naliases: [corin]\nsummary: \"A contact from a conference last spring.\"\n---\n\nA contact from a conference last spring.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "can you pull up what soraya orrinholt told us about the pilot"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "How do you spell Dremford in the NATO phonetic alphabet?"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "Ostreridge mentioned the pomodoro technique on a call. How does the pomodoro technique work?"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "haha fair enough"
+    }
+  ]
+}

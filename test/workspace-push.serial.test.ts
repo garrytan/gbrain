@@ -17,8 +17,9 @@ import { tmpdir } from 'os';
 import { execFileSync, spawnSync } from 'child_process';
 import {
   workspacePush, acquirePushLock, pushLockDir, pushStatusPath, pushStatusPathForRoot,
-  readPushStatuses, summarizePushStatuses, verifyRemotePrivacy,
+  readPushStatuses, readPushStatusForRoot, summarizePushStatuses, verifyRemotePrivacy,
   parseGithubOwnerRepo, resolveWorkspaceRoot, PUSH_LOCK_STALE_MS, PUSH_DENY_GLOBS,
+  sanitizePushReason, SECRET_SCAN_REFUSAL_DOCS,
 } from '../src/core/workspace-push.ts';
 import { SCAN_ALLOW_FILENAME } from '../src/core/secret-scan.ts';
 import { visibilityCachePath } from '../src/core/repo-visibility.ts';
@@ -264,6 +265,31 @@ describe('secret-scan gate', () => {
     // The documented escape hatch still works for a declared-safe value.
     writeFileSync(join(work, SCAN_ALLOW_FILENAME), `${r.findings![0]!.fingerprint}\n`);
     expect((await push()).status).toBe('pushed');
+  }, T);
+});
+
+describe('secret-scan refusal guidance (DX-3/ENG-11)', () => {
+  test('the status-file reason survives sanitizePushReason; fix steps ride findings[]', async () => {
+    const deep = join(work, ...Array.from({ length: 10 }, (_, i) => `folder-level-${i}`));
+    mkdirSync(deep, { recursive: true });
+    writeFileSync(join(deep, 'notes.md'), `ok\nmy key: ${OPENAI}\n`);
+    writeFileSync(join(work, 'other.md'), `again: ${OPENAI}\n`);
+    const r = await push();
+    expect(r.status).toBe('blocked_secrets');
+    expect(r.findings?.length).toBe(2);
+    const status = readPushStatuses()[0]!;
+    expect(status.reason).toBe(r.reason);
+    expect(r.reason!.length).toBeLessThanOrEqual(140);
+    expect(sanitizePushReason(status.reason)).toBe(status.reason!);
+    expect(status.reason).toMatch(/^2 secret finding\(s\), first .*notes\.md:2 \[openai\]; nothing committed/);
+    const repoRoot = git(work, 'rev-parse', '--show-toplevel');
+    for (const f of r.findings!) {
+      expect(f.allowlistPath).toBe(join(repoRoot, SCAN_ALLOW_FILENAME));
+      expect(f.allowCommand).toContain(f.fingerprint);
+      expect(f.retryCommand).toBe(`gbrain sources push --path ${work} --branch main --allow-unverified-remote`);
+      expect(f.docs).toBe(SECRET_SCAN_REFUSAL_DOCS);
+    }
+    expect(JSON.stringify(r).includes(OPENAI)).toBe(false);
   }, T);
 });
 
@@ -543,6 +569,32 @@ describe('error paths', () => {
     const status = readPushStatuses()[0]!;
     expect(status.ok).toBe(false);
     expect(existsSync(pushLockDir(work))).toBe(false);
+  }, T);
+});
+
+describe('managed-worktree refusal is recorded (#5198)', () => {
+  test('a guard refusal overwrites the last success with ok:false and still throws', async () => {
+    writeFileSync(join(work, 'note.md'), 'first\n');
+    expect((await push()).status).toBe('pushed');
+    expect(readPushStatuses()[0]!.ok).toBe(true);
+    const commits = commitCount(work);
+    writeFileSync(join(work, '.gbrain-owner.json'), '{}\n');
+    writeFileSync(join(work, 'note.md'), 'second\n');
+    await expect(push()).rejects.toMatchObject({ code: 'writer_coordinator_required' });
+    const status = readPushStatuses()[0]!;
+    expect(status.ok).toBe(false);
+    expect(status.reason).toStartWith('writer_coordinator_required: ');
+    expect(commitCount(work)).toBe(commits); // refused before staging: nothing committed
+    expect(existsSync(pushLockDir(work))).toBe(false);
+  }, T);
+
+  test('a refusal on a subdirectory target is recorded against the workspace root', async () => {
+    const sub = join(work, 'notes');
+    mkdirSync(sub);
+    writeFileSync(join(work, '.gbrain-owner.json'), '{}\n');
+    await expect(workspacePush({ dir: sub, branch: 'main', allowUnverifiedRemote: true }))
+      .rejects.toMatchObject({ code: 'writer_coordinator_required' });
+    expect(readPushStatusForRoot(resolveWorkspaceRoot(sub)!)?.ok).toBe(false);
   }, T);
 });
 

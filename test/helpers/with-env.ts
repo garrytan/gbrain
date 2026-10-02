@@ -54,6 +54,9 @@ export async function withEnv<T>(
   for (const key of keys) {
     prior[key] = process.env[key];
   }
+  // Bun keeps the last explicitly set zone when TZ is deleted (bun test pins
+  // UTC without setting TZ), so restore an absent TZ as the zone in effect.
+  if ('TZ' in overrides && prior.TZ === undefined) prior.TZ = Intl.DateTimeFormat().resolvedOptions().timeZone;
   try {
     for (const [key, value] of Object.entries(overrides)) {
       if (value === undefined) {

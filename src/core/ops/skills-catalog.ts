@@ -22,6 +22,7 @@ import {
 
 const list_skills: Operation = {
   name: 'list_skills',
+  outputRedaction: 'no_stored_text',
   description: LIST_SKILLS_DESCRIPTION,
   publishGateKey: 'mcp.publish_skills',
   params: {
@@ -45,7 +46,7 @@ const list_skills: Operation = {
     const override = await sc.readMcpSkillsDir(ctx);
     const { dir, source } = sc.resolveSkillsDir(ctx, override);
     const section = typeof p.section === 'string' ? p.section : undefined;
-    return sc.buildSkillCatalog(ctx, dir, source, { section });
+    return sc.buildSkillCatalog(ctx, dir, source, { section, gateDisabled: await sc.readSkillToolGates(ctx) });
   },
   scope: 'read',
   cliHints: { name: 'skills', positional: [] },
@@ -53,6 +54,7 @@ const list_skills: Operation = {
 
 const get_skill: Operation = {
   name: 'get_skill',
+  outputRedaction: { exempt: 'skill catalog files are installed instructions read verbatim; redaction would corrupt approved revisions' },
   description: GET_SKILL_DESCRIPTION,
   publishGateKey: 'mcp.publish_skills',
   params: {
@@ -92,7 +94,7 @@ const get_skill: Operation = {
     const override = await sc.readMcpSkillsDir(ctx);
     const { dir } = sc.resolveSkillsDir(ctx, override);
     const name = typeof p.name === 'string' ? p.name : '';
-    return sc.getSkillDetail(ctx, dir, name);
+    return sc.getSkillDetail(ctx, dir, name, { gateDisabled: await sc.readSkillToolGates(ctx) });
   },
   scope: 'read',
   cliHints: { name: 'skill', positional: ['name'] },
@@ -117,6 +119,7 @@ const sharedSkillMutationParams: Operation['params'] = {
 };
 const get_skill_asset: Operation = {
   name: 'get_skill_asset', description: 'Read a bounded, owner-approved file from an exact sealed skill revision. Does not execute downloaded bytes.',
+  outputRedaction: { exempt: 'skill catalog files are installed instructions read verbatim; redaction would corrupt approved revisions' },
   scope: 'read', publishGateKey: 'mcp.publish_skills',
   cliHints: { name: 'skill-asset', positional: [] },
   params: { source_id: sharedSkillKeyParams.source_id, source_incarnation: sharedSkillKeyParams.source_incarnation,
@@ -130,6 +133,7 @@ const get_skill_asset: Operation = {
 };
 const put_skill: Operation = {
   name: 'put_skill', description: 'Publish a complete file-canonical skill revision with CAS and a durable receipt. Requires explicit skill editor authority; cannot expand publication policy.',
+  outputRedaction: 'no_stored_text',
   scope: 'write', requiredScopes: ['skill_editor'], mutating: true,
   cliHints: { name: 'put-skill', positional: [] },
   params: { ...sharedSkillMutationParams, description: { type: 'string', description: 'Compact routing description.' },
@@ -141,18 +145,21 @@ const put_skill: Operation = {
 };
 const delete_skill: Operation = {
   name: 'delete_skill', description: 'CAS-delete a canonical shared skill and revoke future managed activation. Previously downloaded bytes are not recalled.',
+  outputRedaction: 'no_stored_text',
   scope: 'write', requiredScopes: ['skill_editor'], mutating: true, params: sharedSkillMutationParams,
   cliHints: { name: 'delete-skill', positional: [] },
   handler: async (ctx, p) => (await import('../shared-skills/catalog.ts')).submitSharedSkillMutation(ctx, 'delete_skill', p),
 };
 const import_skill_proposal: Operation = {
   name: 'import_skill_proposal', description: 'Publish explicitly reviewed human-edited canonical skill files through the durable coordinator. Requires exact current file hashes and skill revision; trusted local operator only.',
+  outputRedaction: 'no_stored_text',
   scope: 'admin', localOnly: true, mutating: true,
   params: { ...put_skill.params, expected_hashes: { type: 'object', required: true, description: 'Reviewed current SHA-256 hashes for every affected file and skillpack.json; null denotes an absent file.' } },
   handler: async (ctx, p) => (await import('../shared-skills/publication.ts')).importSharedSkillProposal(ctx, p),
 };
 const set_skill_policy: Operation = {
   name: 'set_skill_policy', description: 'Explicitly approve a versioned shared-skill disclosure and follow policy. Separate publisher authority is required; editing a skill never grants this permission.',
+  outputRedaction: 'no_stored_text',
   scope: 'admin', requiredScopes: ['skill_publisher'], mutating: true,
   cliHints: { name: 'set-skill-policy', positional: [] },
   params: { source_id: { type: 'string', required: true, description: 'Source whose publication policy is approved.' },
@@ -163,6 +170,7 @@ const set_skill_policy: Operation = {
 };
 const get_skill_policy: Operation = {
   name: 'get_skill_policy', description: 'Read the owner publication policy and CAS epoch, including when sharing is disabled. Does not approve or change disclosure.',
+  outputRedaction: 'no_stored_text',
   scope: 'admin', requiredScopes: ['skill_publisher'],
   cliHints: { name: 'skill-policy', positional: [] },
   params: { source_id: { type: 'string', required: true, description: 'Source whose publication policy is reviewed.' } },
@@ -170,6 +178,7 @@ const get_skill_policy: Operation = {
 };
 const get_skill_retention: Operation = {
   name: 'get_skill_retention', description: 'Inspect retained shared-skill revision counts, protected leases and source storage capacity. Trusted host operator only.',
+  outputRedaction: 'no_stored_text',
   scope: 'admin', localOnly: true,
   cliHints: { name: 'skill-retention', positional: [] },
   params: { source_id: { type: 'string', description: 'Canonical source to inspect.' } },
@@ -177,6 +186,7 @@ const get_skill_retention: Operation = {
 };
 const prune_skill_revisions: Operation = {
   name: 'prune_skill_revisions', description: 'Prune one bounded batch of expired shared-skill history. Preserves heads, tombstones, pending publication refs, delivery leases, pins and permanent write receipts.',
+  outputRedaction: 'no_stored_text',
   scope: 'admin', localOnly: true, mutating: true,
   cliHints: { name: 'prune-skill-revisions', positional: [] },
   params: { source_id: { type: 'string', description: 'Canonical source to prune.' } },
@@ -184,6 +194,7 @@ const prune_skill_revisions: Operation = {
 };
 const retain_skill_revision: Operation = {
   name: 'retain_skill_revision', description: 'Pin an exact shared-skill revision for up to 24 hours under a bounded operator quota. Does not grant read or execution permission.',
+  outputRedaction: 'no_stored_text',
   scope: 'admin', localOnly: true, mutating: true,
   cliHints: { name: 'retain-skill-revision', positional: [] },
   params: { ...sharedSkillKeyParams, source_incarnation: { type: 'string', required: true, description: 'Exact source incarnation.' },
@@ -194,6 +205,7 @@ const retain_skill_revision: Operation = {
 
 const list_brain_skillpack: Operation = {
   name: 'list_brain_skillpack',
+  outputRedaction: { exempt: 'skill catalog files are installed instructions read verbatim; redaction would corrupt approved revisions' },
   description:
     'List brain-resident skillpacks this brain ships (per-source). Returns each pack\'s skills, ' +
     'one-line descriptions, the schema pack it targets + whether that matches this brain, and a ' +
@@ -216,6 +228,7 @@ const list_brain_skillpack: Operation = {
 
 const advisor: Operation = {
   name: 'advisor',
+  outputRedaction: 'retrieval',
   description:
     'Ranked, read-only "what to do next" for this brain: version drift, pending migrations, ' +
     'schema-pack issues, stalled jobs, usage-shape gaps, and setup smells. Each finding has a ' +
@@ -299,6 +312,7 @@ const advisor: Operation = {
  */
 const get_status_snapshot: Operation = {
   name: 'get_status_snapshot',
+  outputRedaction: 'no_stored_text',
   description: 'Snapshot for `gbrain status` thin-client mode: sync freshness + last cycle + queue depths + worker liveness. Admin-scope.',
   params: {},
   handler: async (ctx) => {

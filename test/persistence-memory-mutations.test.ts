@@ -230,6 +230,41 @@ describe('journaled memory publication, both engines', () => {
     }
   });
 
+  test('a prepared remember cannot publish across a stored embedding generation change', async () => {
+    configureGateway({ embedding_model: 'openai:text-embedding-3-small', embedding_dimensions: 1536,
+      env: { OPENAI_API_KEY: 'synthetic-only' } });
+    __setEmbedTransportForTests((async (opts: { values: string[] }) => ({ embeddings: opts.values.map(() => [1, ...new Array(1535).fill(0)]) })) as never);
+    try {
+      for (const engine of engines) {
+        await disposePersistenceConsumer(engine);
+        const slug = 'people/generation-fence-example';
+        const snapshot = await setupPage(engine, slug);
+        const prior = await engine.getConfig('embedding_model');
+        const authority = await submissionAuthority(context(engine), 'remember', sourceId, snapshot.sourceIncarnation, slug);
+        const p = { fact: 'Synthetic generation-fenced memory', provenance: 'test', entity_slug: slug, visibility: 'world', fence: true,
+          valid_from: new Date().toISOString(), valid_until: null };
+        const admitted = await admitWrite(engine, { principal: authority.principal, operation: 'remember', sourceId, sourceIncarnation: snapshot.sourceIncarnation,
+          slug, pageId: snapshot.page.id, callerIntent: p, intent: p, authority, requestId: randomUUID() });
+        const row = (await claimNextWrite(engine, randomUUID()))!;
+        expect(row.id).toBe(admitted.id);
+        const prepared = await prepareMemoryMutation(engine, row, context(engine).config);
+        try {
+          await engine.setConfig('embedding_model', prior === 'openai:text-embedding-3-large' ? 'openai:text-embedding-3-small' : 'openai:text-embedding-3-large');
+          expect((await publishMutation(engine, row, prepared)).state).not.toBe('committed');
+          expect((await engine.readPageSnapshot(slug, { sourceId }))!.revision).toBe(snapshot.revision);
+          expect(await engine.executeRaw('SELECT id FROM facts WHERE source_id=$1 AND fact=$2', [sourceId, p.fact])).toHaveLength(0);
+        } finally {
+          if (prior === null) await engine.executeRaw("DELETE FROM config WHERE key='embedding_model'");
+          else await engine.setConfig('embedding_model', prior);
+          await engine.executeRaw("UPDATE persistence_requests SET state='cancelled',error_code='cancelled' WHERE id=$1", [row.id]);
+        }
+      }
+    } finally {
+      __setEmbedTransportForTests(null);
+      configureGateway({ ...LEGACY_EMBEDDING_CONFIG, env: {} });
+    }
+  });
+
   test('forget commits offline, withdraws before sealing reads and replays after fact removal', async () => {
     for (const engine of engines) {
       const slug = 'people/withdraw-example';
@@ -248,7 +283,9 @@ describe('journaled memory publication, both engines', () => {
       const snapshot = (await engine.readPageSnapshot(slug, { sourceId }))!;
       expect(snapshot.revision).not.toBe(before.revision);
       expect(parseFactsFence(snapshot.page.compiled_truth).facts.find(f => f.claim === 'Withdraw this unique memory')?.forgotten).toBe(true);
-      expect(await engine.getChunks(slug, { sourceId })).toEqual([]);
+      const chunks = (await engine.getChunks(slug, { sourceId })).map(chunk => chunk.chunk_text).join('\n');
+      expect(chunks).toContain('Existing biography');
+      expect(chunks).not.toContain('Withdraw this unique memory');
       const local = await registerLocalWriter(engine, 'cli');
       const request = (await getWriteRequest(engine, { kind: 'local_cli', id: local.id }, requestId))!;
       expect(request.worktree_id).toBeNull();

@@ -44,6 +44,8 @@ interface TailnetOpts {
   dnsName?: string | null;
   /** Self.CapMap: true → carries the Funnel capability, false → CapMap without it, undefined → no CapMap field. */
   funnelCapable?: boolean;
+  /** Self.CapMap verbatim (overrides funnelCapable). */
+  capMap?: Record<string, unknown>;
   /** Pre-existing root handlers: port → funnel flag. */
   existingHandlers?: Record<number, boolean>;
   publishStatus?: number | null;
@@ -95,7 +97,7 @@ function fakeTailnet(o: TailnetOpts = {}): Fake {
     Version: '1.80.0', BackendState: state,
     Self: {
       DNSName: o.dnsName === undefined ? `${DNS}.` : (o.dnsName ?? ''), TailscaleIPs: ['100.64.0.1'],
-      ...(o.funnelCapable === undefined ? {} : { CapMap: o.funnelCapable ? { 'https://tailscale.com/cap/funnel': [] } : { 'https://tailscale.com/cap/is-admin': [] } }),
+      ...(o.capMap ? { CapMap: o.capMap } : o.funnelCapable === undefined ? {} : { CapMap: o.funnelCapable ? { 'https://tailscale.com/cap/funnel': [] } : { 'https://tailscale.com/cap/is-admin': [] } }),
     },
     CurrentTailnet: { MagicDNSEnabled: true }, CertDomains: o.certDomains ?? [DNS],
   });
@@ -441,6 +443,15 @@ describe('tailscale steps', () => {
     const i = fakeTailnet();
     expect(await runMcpExpose(['--yes', '--funnel', '--json'], i.deps)).toBe(0);
     expect(checkOf(jsonDoc(i), 'tailscale.identity')?.detail).toContain('publish step decides');
+  });
+  test('--funnel publishes on a Tailscale 1.102 node whose CapMap carries `funnel` + `…/cap/funnel-ports` (#5599)', async () => {
+    const f = fakeTailnet({ capMap: {
+      'default-auto-update': [], funnel: [], https: [],
+      'https://tailscale.com/cap/funnel-ports?ports=443,8443,10000': [],
+      'https://tailscale.com/cap/is-admin': [],
+    } });
+    expect(await runMcpExpose(['--yes', '--funnel', '--json'], f.deps)).toBe(0);
+    expect(joinedCalls(f)).toContain(`${TS} funnel --bg 3131`);
   });
   test('publish failure is classified: https_not_enabled surfaces the admin URL, exit 1', async () => {
     const f = fakeTailnet({ publishStatus: 1, publishStderr: 'error: HTTPS certificates are not enabled for this tailnet; enable them in the admin console' });

@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-089",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/junie-dremcombe",
+      "content": "---\ntitle: Junie Dremcombe\ntype: person\naliases: [junie]\nsummary: \"Junie Dremcombe is the procurement lead at Juniperspire.\"\n---\n\nJunie Dremcombe is the procurement lead at Juniperspire.\n"
+    },
+    {
+      "slug": "people/teodor-tesscombe",
+      "content": "---\ntitle: Teodor Tesscombe\ntype: person\nsummary: \"Teodor Tesscombe is the procurement lead at Cobaltwharf.\"\n---\n\nTeodor Tesscombe is the procurement lead at Cobaltwharf. Teodor suggested holding the offsite somewhere reachable by train.\n"
+    },
+    {
+      "slug": "people/farah-caldgrove",
+      "content": "---\ntitle: Farah Caldgrove\ntype: person\nsummary: \"Farah Caldgrove is the product lead at Russetspire.\"\n---\n\nFarah Caldgrove is the product lead at Russetspire.\n"
+    },
+    {
+      "slug": "companies/halcyonloft",
+      "content": "---\ntitle: Halcyonloft\ntype: company\nsummary: \"Halcyonloft is a software vendor we work with.\"\n---\n\nHalcyonloft is a software vendor we work with. The integration slipped because their API still lacks webhooks.\n"
+    },
+    {
+      "slug": "companies/fablereach",
+      "content": "---\ntitle: Fablereach\ntype: company\nsummary: \"A company we met once at a trade show.\"\n---\n\nA company we met once at a trade show.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "How many letters are in the name Dremcombe?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "what did teodor say about the offsite?"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "In the novel I'm reading, Captain Caldgrove betrays the crew. Is that a common trope?"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Okay, noted."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "what's the status with halcyonloft and the integration?"
+    }
+  ]
+}

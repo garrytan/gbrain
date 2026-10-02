@@ -123,19 +123,27 @@ describe('computeCorpusGeneration', () => {
 
 describe('inline import contextual synopsis containment', () => {
   test('uses the shared default without starting paid synopsis generation', () => {
+    // The inline import's mode resolution lives in import-contextual-mode.ts (#5621 peel, shared with repair).
     const importSource = readFileSync(
       new URL('../src/core/import-file.ts', import.meta.url),
       'utf8',
     );
+    // test-reads-source-ok[structural]: the #5621 peel moved the inline mode resolution here; pins the paid-synopsis containment.
+    const resolverSource = readFileSync(
+      new URL('../src/core/import-contextual-mode.ts', import.meta.url),
+      'utf8',
+    );
 
-    expect(importSource).toContain(
+    expect(importSource).toContain('await resolveImportContextualMode(');
+    expect(resolverSource).toContain(
       "import { DEFAULT_SYNOPSIS_MODEL } from './page-summary.ts';",
     );
-    expect(importSource).toContain('synopsisModel: DEFAULT_SYNOPSIS_MODEL');
-    expect(importSource).toContain(
+    expect(resolverSource).toContain('synopsisModel: DEFAULT_SYNOPSIS_MODEL');
+    expect(resolverSource).toContain(
       "effectiveCRMode = resolution.mode === 'per_chunk_synopsis' ? 'title' : resolution.mode;",
     );
     expect(importSource).not.toContain('generatePerChunkSynopsis');
+    expect(resolverSource).not.toContain('generatePerChunkSynopsis');
   });
 });
 

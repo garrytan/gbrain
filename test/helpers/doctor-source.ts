@@ -7,6 +7,10 @@
  * every extracted module — or a peel silently moves their target out of
  * sight and the guard rots into a permanently-green no-op.
  *
+ * The doctor surface is one instance of the generic per-surface loaders in
+ * test/helpers/source-surface.ts (refactor wave 1, A10); these wrappers keep
+ * the original call sites and semantics.
+ *
  * Two loaders, two guard classes:
  * - doctorSource(): concatenation of src/commands/doctor.ts + every
  *   src/commands/doctor/**\/*.ts, deterministic order (façade first, then
@@ -18,37 +22,16 @@
  *   would let those match across file boundaries, which is weaker than the
  *   guard intends. Callers name the file that holds the code post-peel.
  */
-import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
-
-const REPO_ROOT = join(import.meta.dir, '..', '..');
-const DOCTOR_FACADE = join(REPO_ROOT, 'src', 'commands', 'doctor.ts');
-const DOCTOR_DIR = join(REPO_ROOT, 'src', 'commands', 'doctor');
-
-/** A separator no plausible TS source contains, so cross-file regex matches fail loudly. */
-const FILE_BOUNDARY = '\n /* __doctor-source-file-boundary__ */ \n';
-
-function listDoctorModules(dir: string): string[] {
-  if (!existsSync(dir)) return [];
-  const out: string[] = [];
-  for (const entry of readdirSync(dir).sort()) {
-    const full = join(dir, entry);
-    if (statSync(full).isDirectory()) out.push(...listDoctorModules(full));
-    else if (entry.endsWith('.ts')) out.push(full);
-  }
-  return out;
-}
+import { surfaceFileSource, surfaceFiles, surfaceSource } from './source-surface.ts';
 
 /** Every file on the doctor surface, façade first, then sorted module paths. */
 export function doctorSourceFiles(): string[] {
-  return [DOCTOR_FACADE, ...listDoctorModules(DOCTOR_DIR)];
+  return surfaceFiles('doctor');
 }
 
 /** Concatenated doctor surface for containment assertions. */
 export function doctorSource(): string {
-  return doctorSourceFiles()
-    .map((f) => readFileSync(f, 'utf-8'))
-    .join(FILE_BOUNDARY);
+  return surfaceSource('doctor');
 }
 
 /**
@@ -56,5 +39,5 @@ export function doctorSource(): string {
  * @param rel path relative to src/commands/ — e.g. 'doctor.ts' or 'doctor/checks/calibration.ts'
  */
 export function doctorFileSource(rel: string): string {
-  return readFileSync(join(REPO_ROOT, 'src', 'commands', rel), 'utf-8');
+  return surfaceFileSource('doctor', `src/commands/${rel}`);
 }

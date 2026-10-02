@@ -195,7 +195,7 @@ describe('migrate embeddings — full flow on PGLite', () => {
     failTexts = ['page-4', 'page-5']; // simulate dying mid-run on two pages
     embeddedTexts = [];
 
-    const code = await runMigrate(['--to', 'openai:text-embedding-3-small', '--yes']);
+    const code = await runMigrate(['--to', 'openai:text-embedding-3-small', '--yes', '--max-cost-usd', '1']);
     expect(code).toBe(1); // incomplete
 
     // Schema + config swapped BEFORE the re-embed, so the partial run is
@@ -223,7 +223,7 @@ describe('migrate embeddings — full flow on PGLite', () => {
     failTexts = [];
     embeddedTexts = [];
 
-    const code = await runMigrate(['--to', 'openai:text-embedding-3-small', '--yes']);
+    const code = await runMigrate(['--to', 'openai:text-embedding-3-small', '--yes', '--max-cost-usd', '1']);
     expect(code).toBe(0);
 
     // Only the two previously-failed pages were embedded this pass, plus the
@@ -275,7 +275,7 @@ describe('migrate embeddings — full flow on PGLite', () => {
 
   test('re-run on an already-migrated brain is a clean no-op', async () => {
     embeddedTexts = [];
-    const code = await runMigrate(['--to', 'openai:text-embedding-3-small', '--yes']);
+    const code = await runMigrate(['--to', 'openai:text-embedding-3-small', '--yes', '--max-cost-usd', '1']);
     expect(code).toBe(0);
     // Nothing re-embedded (probe excluded from embeddedTexts by design).
     expect(embeddedTexts.length).toBe(0);

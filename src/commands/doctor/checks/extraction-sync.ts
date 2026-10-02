@@ -23,7 +23,9 @@ import {
 } from '../../../core/storage-config.ts';
 import { slugifyPath, slugifyCodePath, isCodeFilePath } from '../../../core/sync.ts';
 import { resolveSourceLocalFilePath } from '../../../core/markdown.ts';
+import { scannerSlugRootMode } from '../../../core/write-through.ts';
 import { unverifiedExtractionFragment } from '../../../core/extraction-review.ts';
+import { isSyncDisabledConfig } from '../../../core/sync-policy.ts';
 import type { Check } from '../../doctor.ts';
 import { ownedContentFreshness } from '../../../core/shared-skills/content-freshness.ts';
 
@@ -116,10 +118,25 @@ export async function checkLinksExtractionLag(
       return { name, status: 'ok', message: `Extraction lag not applicable (${total} pages — too few to assess)` };
     }
 
-    const stale = await engine.countStalePagesForExtraction({ sourceId, versionTs: LINK_EXTRACTOR_VERSION_TS });
+    // #5761: a page left stale only by an unresolved attendee, and not edited
+    // since, is attendance-blocked: `extract --stale` cannot clear it, so it
+    // is reported apart from lag. Pre-v180 brains have no marker column.
+    const versionTs = LINK_EXTRACTOR_VERSION_TS;
+    let stale: number;
+    let attendanceBlocked = 0;
+    try {
+      stale = await engine.countStalePagesForExtraction({ sourceId, versionTs, attendance: 'exclude' });
+      attendanceBlocked = await engine.countStalePagesForExtraction({ sourceId, versionTs, attendance: 'blocked' });
+    } catch (e) {
+      if (!isUndefinedColumnError(e, 'links_attendance_blocked_revision')) throw e;
+      stale = await engine.countStalePagesForExtraction({ sourceId, versionTs });
+    }
     const pct = (stale / total) * 100;
     const pctStr = pct.toFixed(0);
     const scope = sourceId ? ` in source '${sourceId}'` : '';
+    const blockedNote = attendanceBlocked
+      ? `. ${attendanceBlocked} more page(s) wait on unresolved attendees; the next extraction clears each once its attendee's person page exists in the meeting's source (docs/guides/attendance-evidence.md)`
+      : '';
 
     const warnPct = _resolveEnvNumber('GBRAIN_EXTRACTION_LAG_WARN_PCT', EXTRACTION_LAG_WARN_PCT_DEFAULT, { unit: '%' });
     // Fail threshold is DISABLED unless explicitly set (warn-only default). A
@@ -138,14 +155,14 @@ export async function checkLinksExtractionLag(
       }
     }
 
-    const details = { total, stale, pct: Number(pctStr), warn_pct: warnPct, fail_pct: failPct ?? null, source_id: sourceId ?? null };
+    const details = { total, stale, attendance_blocked: attendanceBlocked, pct: Number(pctStr), warn_pct: warnPct, fail_pct: failPct ?? null, source_id: sourceId ?? null };
     if (failPct !== undefined && pct > failPct) {
-      return { name, status: 'fail', message: `${stale}/${total} pages (${pctStr}%)${scope} need link/timeline extraction (> ${failPct}% fail threshold). ${fix}`, details };
+      return { name, status: 'fail', message: `${stale}/${total} pages (${pctStr}%)${scope} need link/timeline extraction (> ${failPct}% fail threshold). ${fix}${blockedNote}`, details };
     }
     if (pct > warnPct) {
-      return { name, status: 'warn', message: `${stale}/${total} pages (${pctStr}%)${scope} have un-extracted edges. ${fix}`, details };
+      return { name, status: 'warn', message: `${stale}/${total} pages (${pctStr}%)${scope} have un-extracted edges. ${fix}${blockedNote}`, details };
     }
-    return { name, status: 'ok', message: `Extraction current: ${stale}/${total} pages (${pctStr}%) stale${scope}`, details };
+    return { name, status: 'ok', message: `Extraction current: ${stale}/${total} pages (${pctStr}%) stale${scope}${blockedNote}`, details };
   } catch (e) {
     // Pre-v112 brain: links_extracted_at column doesn't exist yet. Graceful OK
     // (migration/bootstrap adds it; nothing to assess until then).
@@ -410,10 +427,11 @@ export async function checkUndeclaredDbOnlyPages(engine: BrainEngine): Promise<C
       );
       if (rows.length === 0) continue;
       let backedWithoutSourcePath: Set<string> | null = null;
+      const mode = await scannerSlugRootMode(engine, src.id, src.local_path!);
       for (const { slug, source_path: sourcePath } of rows) {
         if (dbOnlyDirs.some(dir => slug.startsWith(dir))) continue;
         if (sourcePath) {
-          const filePath = resolveSourceLocalFilePath(src.local_path!, sourcePath, slug);
+          const filePath = resolveSourceLocalFilePath(src.local_path!, sourcePath, slug, mode);
           if (filePath && existsSync(filePath)) continue;
         } else {
           backedWithoutSourcePath ??= collectMarkdownSlugs(src.local_path!);
@@ -822,7 +840,10 @@ export async function computeAtomProvenanceDriftCheck(
       // metric omitted, verdict untouched).
       `WITH atom AS (
          SELECT a.source_id,
-                a.frontmatter->>'source_hash' AS sh,
+                -- managed atoms keep their provisional prefix for good (#5770)
+                CASE WHEN a.frontmatter->>'managed_extraction' = 'true'
+                     THEN regexp_replace(a.frontmatter->>'source_hash', '^pending:', '')
+                     ELSE a.frontmatter->>'source_hash' END AS sh,
                 -- NULL = slug-unbound: transcript-minted (source_path only) or
                 -- pre-binding-era. \`ss IS NULL\` is THE predicate for that
                 -- population everywhere below (#4799 / #4806).
@@ -833,8 +854,8 @@ export async function computeAtomProvenanceDriftCheck(
           WHERE a.type = 'atom'
             AND a.deleted_at IS NULL
             AND a.frontmatter->>'source_hash' IS NOT NULL
-            -- in-flight marker written before the extraction commits
-            AND a.frontmatter->>'source_hash' NOT LIKE 'pending:%'
+            -- in-flight marker written before an unmanaged extraction commits
+            AND (a.frontmatter->>'source_hash' NOT LIKE 'pending:%' OR a.frontmatter->>'managed_extraction' = 'true')
        -- Lookup sets are built ONCE and joined (#4937). A correlated EXISTS in
        -- the SELECT list is not rewritten to a semi-join — Postgres re-runs it
        -- per atom over substring(content_hash), which no index serves, so the
@@ -870,7 +891,7 @@ export async function computeAtomProvenanceDriftCheck(
       [],
     );
     const r = rows?.[0];
-    if (!r) return { name, status: 'warn', message: 'atom provenance query returned no rows' };
+    if (!r) return { name, status: 'warn', message: 'atom provenance query returned no rows', details: { health: 'unknown' } };
 
     const num = (v: string | number | null | undefined) => (v == null ? 0 : Number(v));
     const total = num(r.total);
@@ -904,11 +925,9 @@ export async function computeAtomProvenanceDriftCheck(
 
     if (drifted >= MIN_DRIFTED && ratio > WARN_RATIO) {
       const fix =
-        "review before acting — most drift is an edited source, not a dead one. " +
-        "List them with: SELECT slug, frontmatter->>'source_slug' FROM pages a WHERE a.type='atom' " +
-        "AND a.deleted_at IS NULL AND NULLIF(a.frontmatter->>'source_slug','') IS NOT NULL " +
-        "AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id=a.source_id " +
-        "AND p.deleted_at IS NULL AND substring(p.content_hash from 1 for 16)=a.frontmatter->>'source_hash')";
+        "preview the atoms that are safe to retire with gbrain repair stale-atoms (source gone, or source edited and " +
+        "already re-extracted), then apply with the --expect hash it prints. Atoms of an edited page that was not " +
+        "re-extracted yet are the extract_atoms backlog, not stale";
       return {
         name, status: 'warn',
         message:
@@ -926,7 +945,7 @@ export async function computeAtomProvenanceDriftCheck(
       details,
     };
   } catch (err) {
-    return { name, status: 'warn', message: `atom_provenance_drift check failed: ${(err as Error).message}` };
+    return { name, status: 'warn', message: `atom_provenance_drift check failed: ${(err as Error).message}`, details: { health: 'unknown' } };
   }
 }
 
@@ -1144,39 +1163,36 @@ export async function computeExtractHealthCheck(
   }
 }
 
+async function loadSyncFreshnessSources(engine: BrainEngine) {
+  type FreshnessSourceRow = {
+    id: string;
+    name: string;
+    local_path: string | null;
+    last_sync_at: Date | null;
+    last_commit: string | null;
+    chunker_version: string | null;
+    newest_content_at: Date | null;
+    config: unknown;
+  };
+  let sources: FreshnessSourceRow[];
+  try {
+    sources = await engine.executeRaw<FreshnessSourceRow>(
+      `SELECT id, name, local_path, last_sync_at, last_commit, chunker_version, newest_content_at, config FROM sources WHERE local_path IS NOT NULL AND archived IS NOT TRUE`,
+    );
+  } catch {
+    sources = await engine.executeRaw<FreshnessSourceRow>(
+      `SELECT id, name, local_path, last_sync_at, last_commit, chunker_version, newest_content_at, config FROM sources WHERE local_path IS NOT NULL`,
+    );
+  }
+  return sources.filter((source) => !isSyncDisabledConfig(source.config));
+}
+
 export async function checkSyncFreshness(
   engine: BrainEngine,
   opts?: { nowMs?: number; localOnly?: boolean },
 ): Promise<Check> {
   try {
-    // v0.41.27.0: SELECT widens to carry last_commit + chunker_version so
-    // the git short-circuit gate (below) can compare against what
-    // `gbrain sync`'s up-to-date predicate at sync.ts:1057+1075 checks.
-    // Columns existed pre-v0.41 (writeSyncAnchor / writeChunkerVersion);
-    // no schema migration needed.
-    type FreshnessSourceRow = {
-      id: string;
-      name: string;
-      local_path: string | null;
-      last_sync_at: Date | null;
-      last_commit: string | null;
-      chunker_version: string | null;
-      newest_content_at: Date | null;
-    };
-    // v0.41.32.0: newest_content_at feeds the REMOTE (non-localOnly) lag so
-    // doctorReportRemote never shells out to git on a DB-supplied local_path.
-    // #3880: archived sources don't participate in freshness health (v34
-    // legacy fallback).
-    let sources: FreshnessSourceRow[];
-    try {
-      sources = await engine.executeRaw<FreshnessSourceRow>(
-        `SELECT id, name, local_path, last_sync_at, last_commit, chunker_version, newest_content_at FROM sources WHERE local_path IS NOT NULL AND archived IS NOT TRUE`,
-      );
-    } catch {
-      sources = await engine.executeRaw<FreshnessSourceRow>(
-        `SELECT id, name, local_path, last_sync_at, last_commit, chunker_version, newest_content_at FROM sources WHERE local_path IS NOT NULL`,
-      );
-    }
+    const sources = await loadSyncFreshnessSources(engine);
 
     if (sources.length === 0) {
       return {

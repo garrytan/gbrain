@@ -27,7 +27,7 @@
 import type { ThinkLLMClient } from '../../core/think/index.ts';
 import type { SearchResult } from '../../core/types.ts';
 import { renderChatBlock, type ChatSessionForPrompt } from './sanitize.ts';
-import { rawSessionId, type SlugToRawMap } from './metrics.ts';
+import { rawSessionId, sessionIdFromSlug, type SlugToRawMap } from './metrics.ts';
 import { sha256Hex, stableStringify } from './run-config.ts';
 
 /** Re-exported for existing importers; the definition lives in metrics.ts (the SlugToRawMap owner). */
@@ -149,7 +149,7 @@ export async function generateAnswer(
   question: { question: string; question_date?: string },
   results: readonly SearchResult[],
   pages: ReadonlyArray<{ slug: string; content: string; date?: string }>,
-  slugToRaw: SlugToRawMap,
+  _slugToRaw: SlugToRawMap,
   model: string,
   trajectoryBlock: string = '',
   config: ReaderConfig = resolveReaderConfig(),
@@ -163,7 +163,7 @@ export async function generateAnswer(
     seenSlugs.add(r.slug);
     const entry = byId.get(r.slug);
     sessions.push({
-      session_id: rawSessionId(r.slug, slugToRaw),
+      session_id: sessionIdFromSlug(r.slug),
       date: entry?.date,
       body: entry?.body ?? r.chunk_text,
     });

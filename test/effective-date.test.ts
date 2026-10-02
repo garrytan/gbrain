@@ -79,10 +79,10 @@ describe('computeEffectiveDate precedence chain (default order)', () => {
     expect(r.date?.toISOString().startsWith('2024-06-15')).toBe(true);
   });
 
-  test('fallback to updated_at when chain exhausted', () => {
+  test('fallback to the stable creation anchor, not the last write, when chain exhausted', () => {
     const r = run({});
     expect(r.source).toBe('fallback');
-    expect(r.date?.toISOString()).toBe(baseUpdated.toISOString());
+    expect(r.date?.toISOString()).toBe(baseCreated.toISOString());
   });
 });
 
@@ -147,13 +147,13 @@ describe('computeEffectiveDate parse failure fall-through', () => {
   test('filename without date prefix → fallback', () => {
     const r = run({ filename: 'no-date-here' });
     expect(r.source).toBe('fallback');
-    expect(r.date?.toISOString()).toBe(baseUpdated.toISOString());
+    expect(r.date?.toISOString()).toBe(baseCreated.toISOString());
   });
 });
 
 describe('computeEffectiveDate range validation [1990, NOW + 1y]', () => {
-  test('pre-1990 frontmatter date drops to next chain element', () => {
-    const r = run({ fm: { event_date: '1985-01-01', date: '2024-04-01' } });
+  test('placeholder frontmatter date drops to next chain element', () => {
+    const r = run({ fm: { event_date: '0001-01-01', date: '2024-04-01' } });
     expect(r.source).toBe('date');
   });
 
@@ -166,5 +166,55 @@ describe('computeEffectiveDate range validation [1990, NOW + 1y]', () => {
   test('out-of-range filename date drops to fallback', () => {
     const r = run({ filename: '1850-01-01-ancient' });
     expect(r.source).toBe('fallback');
+  });
+});
+
+// #5742: explicit frontmatter dates accept any year >= 1 (historical works),
+// except the epoch-0 and 0001-01-01 placeholders; inferred dates keep 1990.
+describe('computeEffectiveDate: explicit historical dates (#5742)', () => {
+  test.each([
+    ['event_date', '1851-10-18', '1851-10-18T00:00:00.000Z'],
+    ['date', '1776-07-04', '1776-07-04T00:00:00.000Z'],
+    ['published', 'October 18, 1851', '1851-10-18T00:00:00.000Z'],
+    ['created', '1920-05-01', '1920-05-01T00:00:00.000Z'],
+    ['event_date', '0044-03-15', '0044-03-15T00:00:00.000Z'],
+    ['event_date', '0001-01-02', '0001-01-02T00:00:00.000Z'],
+    ['event_date', '1970-01-02', '1970-01-02T00:00:00.000Z'],
+  ])('%s: %s is kept', (key, value, iso) => {
+    const r = run({ fm: { [key]: value } });
+    expect(r.source).toBe(key as never);
+    expect(r.date?.toISOString()).toBe(iso);
+  });
+
+  test('a YAML-parsed Date before 1990 is kept', () => {
+    const r = run({ fm: { event_date: new Date('1851-10-18T00:00:00Z') } });
+    expect(r.source).toBe('event_date');
+    expect(r.date?.toISOString()).toBe('1851-10-18T00:00:00.000Z');
+  });
+
+  test.each([
+    ['0001-01-01'],
+    ['0001-01-01T00:00:00Z'],
+    ['1970-01-01'],
+    ['1970-01-01T00:00:00Z'],
+    ['0000-06-01'],
+  ])('placeholder or year-0 value %s falls through', (value) => {
+    const r = run({ fm: { event_date: value, date: '2024-04-01' } });
+    expect(r.source).toBe('date');
+  });
+
+  test('epoch-0 Date and bare numbers keep the 1990 floor', () => {
+    expect(run({ fm: { event_date: new Date(0), date: '2024-04-01' } }).source).toBe('date');
+    expect(run({ fm: { event_date: 1851, date: '2024-04-01' } }).source).toBe('date');
+  });
+
+  test('filename inference keeps the 1990 floor', () => {
+    expect(run({ filename: '1851-10-18-moby-dick' }).source).toBe('fallback');
+    expect(run({ slug: 'daily/1985-01-01', filename: '1985-01-01', fm: { date: '1985-01-02' } }).source).toBe('date');
+  });
+
+  test('an explicit date still loses to a filename-first prefix date inside the window', () => {
+    const r = run({ slug: 'meetings/2024-03-15-sync', filename: '2024-03-15-sync', fm: { event_date: '1851-10-18' } });
+    expect(r.source).toBe('filename');
   });
 });

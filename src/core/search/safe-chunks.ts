@@ -37,6 +37,11 @@ export function currentTextProjectionFilter(alias: string): string {
   return `(${alias}.text_projection_revision = ${alias}.knowledge_revision) IS TRUE`;
 }
 
+/** A page of any kind chunked before the fence; remote reads withhold it until it is re-sealed. */
+export function belowSafeChunkFence(chunkerVersion: number | null | undefined): boolean {
+  return (chunkerVersion ?? 0) < SAFE_FENCE_CHUNKER_VERSION;
+}
+
 /** Older fragments lack trustworthy provenance, even if markers were removed later. */
 export function safeChunksFilter(alias: string): string {
   return `COALESCE(${alias}.chunker_version, 0) >= ${SAFE_FENCE_CHUNKER_VERSION}`;

@@ -12,14 +12,23 @@ import { isWriteTargetContained } from '../path-confine.ts';
 import { getWorktreeBinding, type WorktreeBinding } from './ownership.ts';
 import { localHostId } from './identity.ts';
 import { sha256 } from './digest.ts';
+import { isWindowsColonTarget } from './native-file-target.ts';
+import { ERROR_CATALOGUE } from '../error-catalogue.ts';
 import { currentCompanyBrainSync } from '../company-brain/profile.ts';
 import type { CompanyBrainPlan } from '../company-brain/types.ts';
-import { assertDistinctSyncOrigins, syncOriginPath } from './sync-origin.ts';
+import { assertDistinctSyncOrigins, legacySyncOrigin, sameSyncOrigin, syncOriginPath, type SyncOriginScope } from './sync-origin.ts';
 import { assertManagedSyncActive } from './sync-authority.ts';
 
-export interface SyncEntry { path: string; sourcePath: string; action: 'import' | 'delete'; working: boolean; slug?: string; pageId?: number | null; revision?: string | null; }
+/** The page an import takes over from its previous origin: a Git rename, or a file that replaced a vanished origin at the same slug. */
+export interface SyncRename { sourcePath: string; slug: string; pageId: number; revision: string; }
+export interface SyncEntry { path: string; sourcePath: string; action: 'import' | 'delete'; working: boolean; slug?: string; pageId?: number | null; revision?: string | null;
+  renameFrom?: SyncRename; }
+/** Files that map to a slug another origin keeps; they are left out of the manifest until one is renamed. */
+export interface SyncSlugCollision { slug: string; kept: string; skipped: string[]; }
+/** #5032: a file sync skipped on this host with a named refusal, without failing the run. */
+export interface SyncFileRefusal { path: string; code: 'colon_slug_windows_write_through'; message: string; suggestion: string; docs: string; }
 export interface SyncDiscovery { binding: WorktreeBinding; root: string; gitRoot: string; sourceId: string; incarnation: string;
-  companyPlan?: CompanyBrainPlan;
+  companyPlan?: CompanyBrainPlan; slugCollisions?: SyncSlugCollision[]; fileRefusals?: SyncFileRefusal[];
   from: string | null; target: string; entries: SyncEntry[]; uncommitted?: { added: number; modified: number; deleted: number }; slugMode: 'git-root' | 'source-root'; }
 export interface ManagedSyncContext { binding: WorktreeBinding; root: string; gitRoot: string; sourceId: string; incarnation: string;
   source: { last_commit: string | null; config: Record<string, unknown> }; }
@@ -113,6 +122,7 @@ export async function discoverManagedSync(engine: BrainEngine, opts: SyncOpts, c
   const slugMode = company ? 'source-root' : scope ? await resolveSlugRootMode(engine, { sourceId, explicitGitRoot: opts.srcSubpath !== undefined,
     slugPrefix: probe.slice(0, -2), dryRun: true }) : 'git-root';
   const sourcePath = (path: string) => slugMode === 'source-root' && scope ? path.slice(scope.length + 1) : path;
+  const originScope: SyncOriginScope = { sourceId, root, scope, slugMode };
   const exclude = [...(opts.exclude ?? []), ...(await engine.getConfig('sync.exclude') ?? '').split(/[\n,]/).map(v => v.trim()).filter(Boolean)]
     .map(v => v.endsWith('/') ? `${v}**` : v);
   const includeHidden = [...new Set([...(opts.includeHidden ?? []), ...(await engine.getConfig('sync.include_hidden') ?? '')
@@ -126,34 +136,73 @@ export async function discoverManagedSync(engine: BrainEngine, opts: SyncOpts, c
   const dirty = company ? { added: [], modified: [], deleted: [], renamed: [] } : buildDetachedWorkingTreeManifest(gitRoot);
   const delta = !opts.full && source.last_commit ? computeSyncDelta(gitRoot, source.last_commit, target) : null;
   const entries = new Map<string, SyncEntry>();
+  const renamedFrom = new Map<string, string>();
+  // #5032: a ':' path has no file on Windows. Each eligible one gets a named
+  // refusal and takes no part in this run, including the origin checks below.
+  // A deletion or rename touching one is refused on both sides, so the page
+  // keeps its identity until the change is synced from macOS or Linux.
+  const refused = new Map<string, SyncFileRefusal>();
+  const refusalMessages = {
+    import: (path: string) => `${path} has a ':' in its name, which Windows cannot store; sync skipped it.`,
+    delete: (path: string) => `${path} has a ':' in its name, which Windows cannot reconcile; sync skipped its deletion and its page stays live.`,
+  };
+  const record = (path: string, message: string) => {
+    if (eligible(path)) refused.set(path, { path, code: 'colon_slug_windows_write_through', message,
+      suggestion: `Rename it without ':' on a macOS or Linux checkout and commit, then run gbrain sync --source ${sourceId} --no-pull.`,
+      docs: ERROR_CATALOGUE.colon_slug_windows_write_through.docs });
+  };
+  const refuse = (path: string, action: SyncEntry['action'] = 'import') => {
+    if (!isWindowsColonTarget(path)) return false;
+    record(path, refusalMessages[action](path));
+    return true;
+  };
+  const storable = <T extends { source_path: string | null }>(page: T) => page.source_path === null || !isWindowsColonTarget(page.source_path);
   const put = (path: string, action: SyncEntry['action'], working = false) => {
     if (process.platform === 'win32' && path.includes('\\')) throw new OperationError('page_identity_changed', 'Git paths containing literal backslashes are not safe Windows sync targets.');
+    if (refuse(path, action)) return;
     if (eligible(path)) entries.set(path, { path: relative(nativeRoot, join(nativeGitRoot, path)).split(sep).join('/'), sourcePath: sourcePath(path), action, working });
+  };
+  const putRename = (rename: { from: string; to: string }, working = false) => {
+    if (isWindowsColonTarget(rename.from) || isWindowsColonTarget(rename.to)) {
+      for (const path of [rename.from, rename.to]) {
+        record(path, `${path} is one side of the rename ${rename.from} -> ${rename.to}, which Windows cannot reconcile; sync skipped both sides so the page keeps its identity.`);
+      }
+      return;
+    }
+    put(rename.from, 'delete', working); put(rename.to, 'import', working); renamedFrom.set(rename.to, rename.from);
   };
   if (delta?.status === 'ok') {
     for (const path of [...delta.manifest.added, ...delta.manifest.modified]) put(path, 'import');
     for (const path of delta.manifest.deleted) put(path, 'delete');
-    for (const rename of delta.manifest.renamed) { put(rename.from, 'delete'); put(rename.to, 'import'); }
+    for (const rename of delta.manifest.renamed) putRename(rename);
   } else {
-    const paths = syncGit(gitRoot, ['ls-tree', '-r', '--name-only', '-z', target]).split('\0')
+    const listed = syncGit(gitRoot, ['ls-tree', '-r', '--name-only', '-z', target]).split('\0')
       .filter(path => path && (!scope || path.startsWith(`${scope}/`)));
+    const paths = listed.filter(path => !refuse(path));
     assertDistinctSyncOrigins(paths);
     const present = new Set(paths.map(path => syncOriginPath(sourcePath(path))));
     for (const path of paths) put(path, 'import');
-    const pages = await engine.executeRaw<{ source_path: string }>('SELECT source_path FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND source_path IS NOT NULL', [sourceId]);
+    const livePages = await engine.executeRaw<{ slug: string; source_path: string }>('SELECT slug,source_path FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND source_path IS NOT NULL', [sourceId]);
+    const gitPathOf = (origin: string) => slugMode === 'source-root' && scope ? `${scope}/${origin}` : origin;
+    const listedSet = new Set(listed);
+    for (const page of livePages) if (!storable(page) && !listedSet.has(gitPathOf(page.source_path))) refuse(gitPathOf(page.source_path), 'delete');
+    const pages = livePages.filter(storable);
     assertDistinctSyncOrigins([...present, ...pages.map(page => page.source_path)]);
     for (const page of pages) {
       const origin = syncOriginPath(page.source_path);
-      if (!present.has(origin)) put(slugMode === 'source-root' && scope ? `${scope}/${origin}` : origin, 'delete');
+      const stripped = slugMode === 'source-root' && scope && origin.startsWith(`${scope}/`) ? origin.slice(scope.length + 1) : null;
+      if (present.has(origin) || stripped !== null && present.has(stripped) && sameSyncOrigin(origin, stripped, originScope, page.slug)) continue;
+      put(gitPathOf(origin), 'delete');
     }
   }
   if (working) {
     for (const path of [...dirty.added, ...dirty.modified]) put(path, 'import', true);
     for (const path of dirty.deleted) put(path, 'delete', true);
-    for (const rename of dirty.renamed) { put(rename.from, 'delete', true); put(rename.to, 'import', true); }
+    for (const rename of dirty.renamed) putRename(rename, true);
   }
   if (company) {
     entries.clear();
+    renamedFrom.clear();
     const included = company.plan.manifest.filter(entry => entry.disposition === 'included');
     const present = new Set(included.map(entry => syncOriginPath(entry.path)));
     for (const entry of included) entries.set(entry.path, { path: entry.path, sourcePath: entry.path, action: 'import', working: false, slug: entry.page!.slug });
@@ -167,28 +216,91 @@ export async function discoverManagedSync(engine: BrainEngine, opts: SyncOpts, c
   const selected = [...entries.values()].sort((a, b) => a.action.localeCompare(b.action) || a.path.localeCompare(b.path));
   if (selected.some(e => !/\.mdx?$/i.test(e.path) && !isCodeFilePath(e.path))) throw new OperationError('writer_coordinator_required', 'Managed image sync requires a prepared importer; this sync was refused before any page write.');
   if (selected.length > 100_000 || Buffer.byteLength(JSON.stringify(selected)) > 16 * 1024 ** 2) throw new OperationError('request_too_large', 'Sync discovery exceeds the bounded cursor size.');
-  const discovered: SyncDiscovery = { binding: { ...binding, owner_epoch: String(binding.owner_epoch), topology_generation: String(binding.topology_generation) }, root, gitRoot, sourceId, incarnation, from: source.last_commit, target, entries: selected, slugMode, ...(company ? { companyPlan: company.plan } : {}) };
+  const discovered: SyncDiscovery = { ...(refused.size ? { fileRefusals: [...refused.values()] } : {}), binding: { ...binding, owner_epoch: String(binding.owner_epoch), topology_generation: String(binding.topology_generation) }, root, gitRoot, sourceId, incarnation, from: source.last_commit, target, entries: selected, slugMode, ...(company ? { companyPlan: company.plan } : {}) };
   // Freeze all logical identities in one database statement, before yielding
   // between pages. A later interactive edit must conflict with this scan.
   const identities = await engine.executeRaw<{ id: number; slug: string; source_path: string | null; knowledge_revision: string }>(
     'SELECT id,slug,source_path,knowledge_revision FROM pages WHERE source_id=$1', [sourceId]);
   const bySlug = new Map(identities.map(p => [p.slug, p]));
   const byPath = new Map<string, typeof identities>();
-  assertDistinctSyncOrigins([...selected.map(entry => entry.sourcePath), ...identities.flatMap(page => page.source_path ? [page.source_path] : [])]);
-  for (const page of identities) if (page.source_path) {
+  const storableIdentities = identities.filter(storable);
+  assertDistinctSyncOrigins([...selected.map(entry => entry.sourcePath), ...storableIdentities.flatMap(page => page.source_path ? [page.source_path] : [])]);
+  for (const page of storableIdentities) if (page.source_path) {
     const origin = syncOriginPath(page.source_path);
     byPath.set(origin, [...(byPath.get(origin) ?? []), page]);
   }
+  // Imports whose origin has no page yet claim their slug; claims are settled after every entry has one.
+  const claims = new Map<string, SyncEntry[]>();
   for (const entry of selected) {
-    const origins = byPath.get(syncOriginPath(entry.sourcePath)) ?? [];
+    const legacy = legacySyncOrigin(originScope, syncOriginPath(entry.sourcePath));
+    const origins = [...byPath.get(syncOriginPath(entry.sourcePath)) ?? [],
+      ...(legacy ? byPath.get(legacy) ?? [] : []).filter(page => sameSyncOrigin(page.source_path!, entry.sourcePath, originScope, page.slug))];
     if (origins.length > 1) throw new OperationError('page_identity_changed', 'Several pages claim the same imported origin.');
     let slug = entry.slug ?? origins[0]?.slug ?? resolveSlugForPath(entry.sourcePath);
     if (!slug && entry.action === 'import') slug = parseMarkdown(readSyncContent(discovered, entry), '').slug;
     if (!slug) throw new OperationError('invalid_params', 'The imported file has no usable page slug.');
+    if (!company && entry.action === 'import' && !origins.length && !isCodeFilePath(entry.sourcePath)) {
+      entry.slug = slug;
+      claims.set(slug, [...(claims.get(slug) ?? []), entry]);
+      continue;
+    }
     const page = origins[0] ?? bySlug.get(slug);
-    if (page?.source_path != null && syncOriginPath(page.source_path) !== syncOriginPath(entry.sourcePath)) throw new OperationError('page_identity_changed', 'A different origin occupies the imported slug.');
+    if (page?.source_path != null && !sameSyncOrigin(page.source_path, entry.sourcePath, originScope, page.slug)) {
+      const error = new OperationError('page_identity_changed', 'A different origin occupies the imported slug.',
+        `Page ${slug} in source ${sourceId} records the origin '${page.source_path}', but sync found it at '${entry.sourcePath}'. On the brain host, rename or move one of the two files so each page has one origin, commit, then run gbrain sync --source ${sourceId} --no-pull --retry-failed.`);
+      error.detail = 'sync_origin_mismatch';
+      throw error;
+    }
     Object.assign(entry, { slug, pageId: page?.id ?? null, revision: page?.knowledge_revision ?? null });
   }
+  const deletions = new Map(selected.filter(entry => entry.action === 'delete').map(entry => [syncOriginPath(entry.sourcePath), entry]));
+  // A soft-delete advances knowledge_revision, so the frozen revisions still guard this read.
+  const deleted = new Set(claims.size ? (await engine.executeRaw<{ id: number }>('SELECT id FROM pages WHERE source_id=$1 AND deleted_at IS NOT NULL', [sourceId])).map(row => row.id) : []);
+  // Origins that differ only by case or separator spelling may be one file on another platform; refuse rather than
+  // guess. The one exception is a case-only respelling whose old file this very sync removes.
+  const spelling = (origin: string) => origin.replaceAll('\\', '/').toLowerCase();
+  const retired = new Set<SyncEntry>();
+  const collisions: SyncSlugCollision[] = [];
+  const gitPath = (entry: SyncEntry) => relative(nativeGitRoot, join(nativeRoot, entry.path)).split(sep).join('/');
+  for (const [slug, candidates] of claims) {
+    const holder = bySlug.get(slug);
+    // A legacy Git-root spelling of a source-root origin (#5610) is matched against this sync's deletions by its source-relative form.
+    const recorded = holder?.source_path == null ? null : syncOriginPath(holder.source_path);
+    const prefix = originScope?.slugMode === 'source-root' && originScope.scope ? `${originScope.scope}/` : null;
+    const holderOrigin = recorded !== null && prefix && recorded.startsWith(prefix) && sameSyncOrigin(recorded, recorded.slice(prefix.length), originScope, holder!.slug)
+      ? recorded.slice(prefix.length) : recorded;
+    const respelled = holderOrigin !== null && !holderOrigin.includes('\\') && deletions.has(holderOrigin);
+    const spellings = [...(holderOrigin === null || respelled ? [] : [holderOrigin]), ...candidates.map(entry => syncOriginPath(entry.sourcePath))].map(spelling);
+    if (new Set(spellings).size !== spellings.length) throw new OperationError('page_identity_changed', 'Sync origins for one slug differ only by case or separator spelling.');
+    // A live page keeps its slug while its own file is still in the tree; the newcomer is the collision.
+    const kept = holder && !deleted.has(holder.id) && holderOrigin !== null && !deletions.has(holderOrigin) ? holderOrigin : null;
+    const winner = kept === null ? candidates.find(entry => /\.mdx?$/i.test(entry.sourcePath) && entry.sourcePath.replace(/\.mdx?$/i, '') === slug) ?? candidates[0] : null;
+    const losers = candidates.filter(entry => entry !== winner);
+    for (const entry of losers) retired.add(entry);
+    if (losers.length) collisions.push({ slug, kept: kept ?? winner!.sourcePath, skipped: losers.map(entry => entry.sourcePath) });
+    if (!winner) continue;
+    if (holder) {
+      // Same slug, vanished origin: the file takes over the page (and its history) instead of racing a deletion.
+      Object.assign(winner, { pageId: holder.id, revision: holder.knowledge_revision });
+      if (holderOrigin !== null) {
+        winner.renameFrom = { sourcePath: holder.source_path!, slug, pageId: holder.id, revision: holder.knowledge_revision };
+        const deletion = deletions.get(holderOrigin);
+        if (deletion) retired.add(deletion);
+      }
+      continue;
+    }
+    Object.assign(winner, { pageId: null, revision: null });
+    const from = renamedFrom.get(gitPath(winner));
+    const deletion = from === undefined ? undefined : [...deletions.values()].find(entry => gitPath(entry) === from);
+    const moved = deletion?.pageId == null ? undefined : identities.find(page => page.id === deletion.pageId);
+    if (deletion && moved && !deleted.has(moved.id) && moved.source_path != null) {
+      // A Git rename moves the page to its new slug, like the library path's updateSlug: same page id, inbound links and an alias.
+      winner.renameFrom = { sourcePath: moved.source_path, slug: moved.slug, pageId: moved.id, revision: moved.knowledge_revision };
+      retired.add(deletion);
+    }
+  }
+  if (retired.size) discovered.entries = selected.filter(entry => !retired.has(entry));
+  if (collisions.length) discovered.slugCollisions = collisions;
   if (!working) {
     const uncommitted = { added: new Set([...dirty.added,...dirty.renamed.map(r=>r.to)].filter(eligible)).size,
       modified: new Set(dirty.modified.filter(eligible)).size,

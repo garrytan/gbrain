@@ -174,7 +174,10 @@ describe('remote-owned production tool visibility', () => {
     }
     await expect(invoke('put_page', { slug: 'wiki/agents/HIDDEN', content: 'Replacement' })).rejects.toThrow();
     await expect(invoke('add_timeline_entry', { slug: 'wiki/agents/hidden', date: '2026-08-01', summary: 'Unwanted entry' })).rejects.toThrow('outside your write visibility');
-    await expect(invoke('put_page', { slug: 'wiki/agents/alias', content: '---\nid: private-fixture-id\n---\nReplacement' })).rejects.toMatchObject({ code: 'permission_denied' });
+    // Echoing the private page's frontmatter.id with different content is not a
+    // duplicate: it writes only the requested visible slug and never the private page.
+    const echoed = await invoke('put_page', { slug: 'wiki/agents/alias', content: '---\nid: private-fixture-id\n---\nReplacement' }) as { slug: string; status: string };
+    expect(echoed).toMatchObject({ slug: 'wiki/agents/alias', status: 'created_or_updated' });
     expect((await engine.getPage('wiki/agents/hidden', { sourceId: 'default' }))?.compiled_truth).toContain('private-body-marker');
     expect(await engine.getTimeline('wiki/agents/hidden', { sourceId: 'default' })).toHaveLength(0);
     await engine.softDeletePage('wiki/agents/hidden', { sourceId: 'default' });

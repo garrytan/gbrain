@@ -42,6 +42,10 @@ import { join } from 'node:path';
 //     from the accepted canonical Markdown fence, including version reverts,
 //     in the guarded page publication transaction. This copies user-authored
 //     state; it never applies contradiction-probe inference.
+//   - cycle/extract-facts.ts — the unmanaged fence reconcile updates a
+//     matched row in place with the fence's explicit valid_until cell (the
+//     same user-authored copy canonical-projections.ts makes); it never
+//     applies contradiction-probe inference.
 //   - postgres-engine.ts + pglite-engine.ts (v0.42.56.0, #2390 — Life
 //     Chronicle ontology: `mergeOntologyFact` forward-supersession closes
 //     the prior OPEN row's valid_until when a NEW value arrives for the
@@ -50,9 +54,15 @@ import { join } from 'node:path';
 //     and the contradiction probe still never mutates, so the
 //     auto-supersession.ts:4 invariant is preserved. Deliberate design
 //     change per the #2390 eng review (G1: ontology extends facts).
+//   - facts/proposal-supersede.ts (System One S9) — applies or undoes a
+//     contradiction PROPOSAL only when the user runs `gbrain decide proposals
+//     accept|undo <id>` (local CLI); the sweep and the inline fact write path
+//     never call it, so a probe still never mutates (auto-supersession.ts:4).
 const VALID_UNTIL_WRITE_ALLOWLIST: ReadonlySet<string> = new Set([
+  'src/core/cycle/extract-facts.ts',
   'src/core/cycle/phases/consolidate.ts',
   'src/core/facts/forget.ts',
+  'src/core/facts/proposal-supersede.ts',
   'src/core/facts/withdrawal.ts',
   'src/core/facts/withdrawal-schema.ts',
   'src/core/persistence/canonical-projections.ts',

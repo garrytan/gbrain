@@ -1,0 +1,23 @@
+{
+  "fixture_id": "s6x-005",
+  "turns": {
+    "1": {
+      "should_retrieve": false
+    },
+    "3": {
+      "should_retrieve": true,
+      "gold_slugs": [
+        "companies/vesperfold-labs"
+      ]
+    },
+    "5": {
+      "should_retrieve": true,
+      "gold_slugs": [
+        "projects/support-rotation"
+      ]
+    },
+    "7": {
+      "should_retrieve": false
+    }
+  }
+}

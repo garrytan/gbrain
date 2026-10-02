@@ -110,6 +110,37 @@ this chain top-down. First match wins.
 | 6 | `~/.gbrain/config.json` `schema_pack` field | What `gbrain schema use` (and `gbrain init`, which sets `gbrain-base-v2`) writes. |
 | 7 | Default: `gbrain-base` | Always present. |
 
+Tier 7 stays `gbrain-base`, not `gbrain-base-v2`. A brain with no pack
+configured anywhere was created before `gbrain init` started writing
+`schema_pack`, and its pages carry the legacy 24-type taxonomy. Pointing the
+fallback at v2 would change type inference, alias closure and enrichment for
+those brains without running v2's `migration_from` retype rules, which
+`gbrain schema upgrade` applies as a reviewed step. The relationship
+behaviors that used to differ between the two (backwards frontmatter
+relations and attendance typed from any meeting link) are fixed in the
+extractor instead, so both packs store the same edges; see
+[Relation direction](#relation-direction).
+
+## Relation direction
+
+A pack's `frontmatter_links` entry names a field and a verb, not a
+direction. The direction comes from the verb's declared counterpart in
+`FRONTMATTER_LINK_MAP` (`src/core/link-extraction.ts`) for the same page
+type: company `investors`, `key_people` and `partner`, deal `investors` and
+`lead`, and meeting `attendees` are incoming (the person, fund or company is
+the subject, so `investors: [people/bob-example]` on a company stores Bob ->
+company). A verb with no declared counterpart, such as company-brain's
+`owned_by`, is outgoing (page -> target).
+
+On a meeting page, a pack's `attended` rule bound only to the page type (and
+optionally a `person` target), as `gbrain-base` and `company-brain` ship, is
+the in-code meeting prior. Meeting links then follow canonical attendance:
+only an explicit attendee list makes a person an attendee, stored person ->
+meeting (see [attendance evidence](../guides/attendance-evidence.md)). A pack
+that gives `attended` a phrase `regex` decides attendance itself and keeps its
+outgoing semantics. Brains extracted before this rule re-derive with
+`gbrain extract links --source db --include-frontmatter`.
+
 ## How the agent uses the active pack
 
 Every read + write path consults the active pack at runtime:

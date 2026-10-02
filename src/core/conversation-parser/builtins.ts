@@ -494,6 +494,9 @@ export const BUILTIN_PATTERNS: readonly PatternEntry[] = [
     multi_line: false,
     quick_reject: /^\*\*/,
     score_full_body: true,
+    // N12-1: three or more one-off bold labels with no repeated speaker
+    // are a status note, not a transcript.
+    repeat_speaker_min_turns: 3,
     test_positive: [
       '**Alice Example:** Okay, start on.',
       '**Participant 2:** he tried to reset it remotely the other night.',

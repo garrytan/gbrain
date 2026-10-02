@@ -10,6 +10,7 @@ import { isWriteErrorCode, type WriteReceipt } from './types.ts';
 import { registerPgliteReopen } from '../pglite-lifecycle.ts';
 import { assertMutationProtocol } from './protocol.ts';
 import { pendingWriteHint } from './health.ts';
+import { receiptDeliveredHint } from './connector-errors.ts';
 
 interface Service { consumer: PersistenceConsumer; stopping: boolean; unregisterStop?: () => void; unregisterReopen?: () => void; }
 const services = new WeakMap<BrainEngine, Service>();
@@ -31,7 +32,8 @@ export async function preparePersistedMutation(e: BrainEngine, row: WriteRequest
   }
   if (row.operation === 'submit_job' && String(row.intent?.kind).startsWith('managed_atom_')) return (await import('./atom-maintenance.ts')).prepareManagedAtomMutation(e, row, cfg);
   if (row.operation === 'extract_facts' && String(row.intent?.kind).startsWith('managed_facts_')) return (await import('./facts-prepare.ts')).prepareManagedFactsMutation(e, row, cfg);
-  if (row.operation === 'submit_job' && String(row.intent?.kind).startsWith('managed_connector_')) return (await import('./connector-sync.ts')).prepareConnectorMutation(e, row);
+  if (row.operation === 'submit_job' && String(row.intent?.kind).startsWith('connector_v2_')) return (await import('./connector-sync.ts')).prepareConnectorMutation(e, row);
+  if (row.operation === 'submit_job' && String(row.intent?.kind).startsWith('managed_connector_')) return (await import('./connector-sync.ts')).prepareOutdatedConnectorMutation(e, row);
   if (row.operation === 'put_page' && row.intent?.kind === 'canonical_reconcile') return (await import('./reconcile-prepare.ts')).prepareReconcileMutation(e, row, cfg);
   if (row.operation === 'put_page' && row.intent?.kind === 'managed_grandfather') return (await import('./grandfather.ts')).prepareGrandfatherMutation(e, row);
   if (row.operation === 'submit_job' && row.intent?.kind === 'code_projection_reindex') return (await import('./projection-reindex.ts')).prepareCodeReindex(e, row);
@@ -39,6 +41,8 @@ export async function preparePersistedMutation(e: BrainEngine, row: WriteRequest
   if (row.operation === 'submit_job' && String(row.intent?.kind).startsWith('managed_maintenance_')) return (await import('./prepared-maintenance.ts')).prepareMaintenanceMutation(e, row, cfg);
   if (row.operation === 'put_page' && row.intent?.kind === 'managed_file_import') return (await import('./import-prepare.ts')).prepareManagedImportMutation(e, row, cfg);
   if (row.operation === 'remember') return (await import('./memory-mutations.ts')).prepareMemoryMutation(e, row, cfg, signal);
+  if (row.operation === 'decide_proposal') return (await import('../facts/proposal-supersede.ts')).prepareProposalMutation(e, row, cfg);
+  if (row.operation === 'relink_facts') return (await import('../facts/relink-publish.ts')).prepareRelinkMutation(e, row, cfg);
   if (['takes_add','takes_update','takes_supersede','takes_resolve'].includes(row.operation)) return (await import('./takes-prepare.ts')).prepareTakesMutation(e,row,cfg);
   if (['add_tag','remove_tag','add_timeline_entry'].includes(row.operation)) return prepareSemanticPageMutation(e, row, cfg);
   if (['put_page','capture','delete_page','restore_page','revert_version'].includes(row.operation)) return preparePageMutation(e, row, cfg, undefined, signal);
@@ -97,7 +101,8 @@ export function assertPersistenceAccepting(engine: BrainEngine): void {
 /** The waiter never owns a provider, database connection, or kernel lock. */
 export async function waitForWrite(engine: BrainEngine, row: WriteRequest, config: GBrainConfig, waitMs = 5000): Promise<WriteRequest> {
   if (isTerminal(row)) return row;
-  startPersistenceConsumer(engine, config);
+  // The admission transaction has committed: publish now, not after the idle backoff.
+  startPersistenceConsumer(engine, config).wake();
   const service = services.get(engine)!;
   let reads = receiptReads.get(engine);
   if (!reads) { reads = new Map(); receiptReads.set(engine, reads); }
@@ -131,10 +136,12 @@ export function writeResponse(row: WriteRequest): Record<string, unknown> {
   const receipt = receiptFor(row);
   if (row.state === 'committed') return { ...receipt, write_request: receipt };
   const reason = !isTerminal(row) ? 'write_pending' : row.error_code ?? (row.state === 'cancelled' ? 'cancelled' : 'storage_error');
+  const delivered = isTerminal(row) ? receiptDeliveredHint(row) : null;
   const error = new OperationError(reason, !isTerminal(row) ? 'The write is accepted and is still pending.'
     : row.error_message ?? 'The write did not commit.', !isTerminal(row)
       ? pendingWriteHint(receipt)
-      : 'Inspect this receipt before submitting a new request_id.');
+      : delivered?.suggestion ?? 'Inspect this receipt before submitting a new request_id.', delivered?.docs);
+  if (delivered?.detail) error.detail = delivered.detail;
   error.writeRequest = receipt as WriteReceipt;
   error.writeError = isWriteErrorCode(reason) ? reason : reason === 'page_identity_changed' ? 'source_changed' : 'storage_error';
   throw error;

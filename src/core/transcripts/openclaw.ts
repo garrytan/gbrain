@@ -17,7 +17,7 @@ import type {
   TranscriptAdapter,
   TranscriptMessage,
 } from './types.ts';
-import { TRANSCRIPT_JSONL_HARD_CAP } from './types.ts';
+import { TRANSCRIPT_JSONL_HARD_CAP, utcTimestamp } from './types.ts';
 
 export const OPENCLAW_SPEC_TARGET: HostSpecTarget = {
   id: 'openclaw-session-2026-08',
@@ -87,7 +87,7 @@ export function mapOpenclawLine(entry: unknown): OpenclawLineResult {
       kind: 'session',
       id: typeof e.id === 'string' ? e.id : undefined,
       cwd: typeof e.cwd === 'string' ? e.cwd : undefined,
-      startedAt: typeof e.timestamp === 'string' ? e.timestamp : undefined,
+      startedAt: typeof e.timestamp === 'string' ? utcTimestamp(e.timestamp) : undefined,
     };
   }
   if (e.type === 'compaction') return { kind: 'boundary' };
@@ -114,12 +114,7 @@ export function mapOpenclawLine(entry: unknown): OpenclawLineResult {
   }
   text = text.trim();
   if (!text) return toolCalls.length > 0 ? { kind: 'skip', toolCalls } : { kind: 'skip' };
-  const timestamp =
-    typeof m.timestamp === 'string' && m.timestamp
-      ? m.timestamp
-      : typeof e.timestamp === 'string'
-        ? e.timestamp
-        : '';
+  const timestamp = utcTimestamp(typeof m.timestamp === 'string' && m.timestamp ? m.timestamp : e.timestamp);
   return { kind: 'message', message: { role, timestamp, text }, ...(toolCalls.length > 0 ? { toolCalls } : {}) };
 }
 

@@ -9,6 +9,8 @@
 //   - src/core/operations.ts (MCP op run_onboard, admin scope)
 
 import type { RemediationStep } from '../remediation-step.ts';
+import type { RepairPlanStep, RepairStepResult } from './repairs.ts';
+import type { ExplicitRepairNotice } from '../repair/registry.ts';
 
 /**
  * Options for computeRemediationPlan. All fields are optional with
@@ -26,6 +28,12 @@ export interface RemediationPlanOpts {
    * behavior).
    */
   extraRemediations?: RemediationStep[];
+  /**
+   * Doctor CLI only: preview every registered `gbrain repair` kind and list
+   * the ones with pending items as PROTECTED repair steps, independent of the
+   * score target. Omitted by onboard and MCP callers.
+   */
+  repairs?: { noEmbed?: boolean };
 }
 
 /**
@@ -42,6 +50,10 @@ export interface RemediationPlan {
   est_total_seconds: number;
   est_total_usd_cost: number;
   blocked: Array<{ check: string; reason: string }>;
+  /** Present when `repairs` was requested: PROTECTED steps that need `--include-repairs`. */
+  repair_steps?: RepairPlanStep[];
+  /** Present with `repair_steps`: explicit-only kinds, never planned as steps; preview each by name. */
+  explicit_repairs?: ExplicitRepairNotice[];
 }
 
 /**
@@ -73,6 +85,13 @@ export interface RemediationOpts {
    * only applicable work was an extra (e.g. extract-ner).
    */
   extraRemediations?: RemediationStep[];
+  /**
+   * Doctor CLI only. Plans the registered repair kinds as PROTECTED steps and
+   * runs them when `include` is true (the user's `--include-repairs`
+   * agreement) and the caller is trusted local (`remote === false`). A
+   * remote caller asking to include repairs is refused.
+   */
+  repairs?: { include: boolean; remote: boolean; noEmbed?: boolean };
 }
 
 /**
@@ -118,6 +137,16 @@ export interface RemediationResult {
     target: number;
     ceiling: number;
   };
+  /** Set when job steps were skipped for an unreachable target while repair steps still ran. */
+  job_steps_skipped?: { reason: 'target_unreachable'; target: number; ceiling: number };
+  /** Set when `--resume` refused (a checkpoint for another brain). */
+  resume_refused?: { reason: string; checkpoint_brain_id: string; brain_id: string; plan_hash: string };
+  /** Repair steps the run applied or refused (only when `repairs` was passed). */
+  repairs?: RepairStepResult[];
+  /** Repair steps planned but not run because the user's agreement was missing. */
+  repairs_skipped?: RepairPlanStep[];
+  /** Cumulative cap and settled spend across the original run and its resumes. */
+  budget?: { max_usd: number | null; spent_usd: number; include_repairs: boolean; plan_hash: string };
 }
 
 /**
@@ -141,4 +170,11 @@ export interface RemediationHooks {
   onResumeLoaded?: (planHash: string, completedCount: number, remainingCount: number) => void;
   /** Fired on resume-checkpoint miss (resume mode only). */
   onResumeMissed?: (planHash: string, requested?: string) => void;
+  /** Fired when the resume checkpoint belongs to another brain. */
+  onResumeBrainMismatch?: (planHash: string, checkpointBrain: string, brain: string) => void;
+  /** Fired with the cap a resume reuses from its checkpoint. */
+  onResumeCap?: (cap: number | null, spent: number) => void;
+  /** Fired before and after each repair step. */
+  onRepairStepStart?: (step: RepairPlanStep) => void;
+  onRepairStepEnd?: (step: RepairPlanStep, result: RepairStepResult) => void;
 }

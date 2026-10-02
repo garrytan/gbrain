@@ -54,6 +54,8 @@ const KEEP_EXACT = new Set([
   // header — the scrub was silently no-op'ing the paid live layer (any
   // GBRAIN_* opt-in read by a test file needs a row here or a KEEP_PREFIX).
   'GBRAIN_TRIAGE_CALIBRATION_LIVE',
+  // Opt-in keyed System One wire test (test/live/decide-typesafe.live.test.ts).
+  'GBRAIN_LIVE_TYPESAFE',
 ]);
 
 // GBRAIN_TEST_*: test-control opt-ins (ALLOW_DATABASE_URL, KEEP_PROVIDER_KEYS,

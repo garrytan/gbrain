@@ -40,7 +40,7 @@ import type { Check } from '../../doctor.ts';
  *      to be re-embedded for the wrapper to apply. Paste-ready fix:
  *      `gbrain reindex --markdown`.
  *   2. Pages with contextual_retrieval_mode IS NULL — never evaluated
- *      against the CR ladder. Same fix as (1).
+ *      against the CR ladder. Fix: `gbrain repair contextual-mode` (#5621).
  *   3. Synopsis-failure events in the audit JSONL over the last 7 days
  *      — surfaces refusals + page-level fallbacks. >5% refusal rate
  *      warns; otherwise reported as informational.
@@ -59,25 +59,26 @@ export async function checkContextualRetrievalCoverage(
 ): Promise<Check> {
   try {
     const { MARKDOWN_CHUNKER_VERSION } = await import('../../../core/chunkers/recursive.ts');
-    const rows = await engine.executeRaw<{ chunker_drift: number; unsealed: number; mode_null: number }>(
+    const rows = await engine.executeRaw<{ chunker_drift: number; unsealed: number; unsealed_code: number; mode_null: number }>(
       `SELECT
-         COUNT(*) FILTER (WHERE chunker_version < $1)::int AS chunker_drift,
-         -- #5004: pages the safe-chunk fence withholds from every remote read.
-         -- Counted separately from drift: the chunker version may move past
-         -- the fence floor, and only the fence has this consequence.
+         COUNT(*) FILTER (WHERE page_kind = 'markdown' AND chunker_version < $1)::int AS chunker_drift,
+         -- #5004/#5247: pages of every kind the safe-chunk fence withholds from
+         -- every remote read. Counted separately from drift: the chunker version
+         -- may move past the fence floor, and only the fence has this consequence.
          COUNT(*) FILTER (WHERE NOT (${safeChunksFilter('pages')}))::int AS unsealed,
+         COUNT(*) FILTER (WHERE page_kind = 'code' AND NOT (${safeChunksFilter('pages')}))::int AS unsealed_code,
          -- #4009 belt+braces: extract receipts are audit artifacts stamped
          -- mode 'none' at write time, but a reindex DB fallback can clear
          -- the stamp — never count them as "never evaluated".
-         COUNT(*) FILTER (WHERE contextual_retrieval_mode IS NULL AND type <> 'extract_receipt')::int AS mode_null
+         COUNT(*) FILTER (WHERE page_kind = 'markdown' AND contextual_retrieval_mode IS NULL AND type <> 'extract_receipt')::int AS mode_null
        FROM pages
-       WHERE page_kind = 'markdown'
-         AND deleted_at IS NULL
+       WHERE deleted_at IS NULL
          ${opts.sourceIds ? 'AND source_id = ANY($2::text[])' : ''}`,
       opts.sourceIds ? [MARKDOWN_CHUNKER_VERSION, opts.sourceIds] : [MARKDOWN_CHUNKER_VERSION],
     );
     const chunkerDrift = rows[0]?.chunker_drift ?? 0;
     const unsealed = rows[0]?.unsealed ?? 0;
+    const unsealedCode = rows[0]?.unsealed_code ?? 0;
     const modeNull = rows[0]?.mode_null ?? 0;
 
     // Synopsis-failures audit summary (best-effort; missing audit file = 0).
@@ -96,12 +97,14 @@ export async function checkContextualRetrievalCoverage(
       // Audit module unavailable — skip the summary line.
     }
 
-    const needsReindex = chunkerDrift > 0 || unsealed > 0 || modeNull > 0;
-    if (!needsReindex && failureSummaryLine === '') {
+    const needsReindex = chunkerDrift > 0 || modeNull > 0;
+    const details = { unsealed_pages: unsealed, unsealed_code_pages: unsealedCode, mode_null_pages: modeNull, count: 'exact', repair: 'safe-chunks', mode_repair: 'contextual-mode' };
+    if (!needsReindex && unsealed === 0 && failureSummaryLine === '') {
       return {
         name: 'contextual_retrieval_coverage',
         status: 'ok',
-        message: 'All markdown pages aligned to current chunker + CR mode.',
+        message: 'All pages aligned to current chunker + CR mode.',
+        details,
       };
     }
 
@@ -110,16 +113,19 @@ export async function checkContextualRetrievalCoverage(
       parts.push(`${chunkerDrift} page(s) at older chunker_version`);
     }
     if (unsealed > 0) {
-      parts.push(`${unsealed} page(s) below the safe-chunk index version — withheld from remote/MCP chunk retrieval until reindexed`);
+      parts.push(`${unsealed} page(s) below the safe-chunk index version${unsealedCode ? ` (${unsealedCode} code)` : ''} — withheld from remote/MCP chunk retrieval until re-sealed`);
     }
     if (modeNull > 0) {
       parts.push(`${modeNull} page(s) never evaluated against CR ladder`);
     }
-    const fixHint = needsReindex ? ` Run \`gbrain reindex --markdown\` to align.` : '';
+    const fixHint = (unsealed > 0 ? ' Preview the re-seal: gbrain repair safe-chunks — apply: gbrain repair safe-chunks --apply.' : '')
+      + (modeNull > 0 ? ' Preview the mode stamp (#5621): gbrain repair contextual-mode — apply: gbrain repair contextual-mode --apply.' : '')
+      + (chunkerDrift > 0 ? ` Run \`gbrain reindex --markdown\` to align.` : '');
     return {
       name: 'contextual_retrieval_coverage',
-      status: needsReindex ? 'warn' : 'ok',
+      status: needsReindex || unsealed > 0 ? 'warn' : 'ok',
       message: `${parts.join('; ')}.${fixHint}${failureSummaryLine}`,
+      details,
     };
   } catch (e) {
     return {

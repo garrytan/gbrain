@@ -1,0 +1,27 @@
+{
+  "golden": {
+    "proposals": [
+      {
+        "created_at": "<ts>",
+        "decided_at": null,
+        "direction": "new_supersedes_old",
+        "entity_slug": "people/alice-example",
+        "id": 1,
+        "model_resolved": "jev-1.13.0",
+        "new_fact": "Alice leads design",
+        "new_fact_id": 2,
+        "old_fact": "Alice leads research",
+        "old_fact_id": 1,
+        "p_supersede": 0.8,
+        "pair_index": 0,
+        "proposal_floor": 0.5,
+        "source_id": "default",
+        "status": "pending",
+        "sweep_id": "sweep-1",
+        "threshold": 0.8
+      }
+    ],
+    "status": "all"
+  },
+  "normalizer": "decide-proposals-v1"
+}

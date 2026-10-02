@@ -21,6 +21,7 @@ import { randomUUID } from 'node:crypto';
 import { isPersistenceIpcMutation } from './persistence/ipc.ts';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport, StreamableHTTPError } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 import { anySignal } from './abort-check.ts';
 import type { GBrainConfig } from './config.ts';
 import { discoverOAuth, mintClientCredentialsToken } from './remote-mcp-probe.ts';
@@ -139,6 +140,11 @@ export function toRemoteMcpError(e: unknown, mcpUrl: string, signal?: AbortSigna
     );
   }
   if (e instanceof RemoteMcpError) return e;
+  // The SDK's own request timer can fire while our composed signal is still
+  // live. A slow operation on a reachable server is a timeout, not unreachable.
+  if (e instanceof McpError && e.code === ErrorCode.RequestTimeout) {
+    return new RemoteMcpError('network', `Request to ${mcpUrl} timed out`, { mcp_url: mcpUrl, kind: 'timeout' });
+  }
   if (e instanceof Error) {
     if (e.name === 'AbortError' || e.name === 'TimeoutError') {
       return new RemoteMcpError(
@@ -311,13 +317,25 @@ async function buildClient(mcpUrl: string, accessToken: string, signal?: AbortSi
 
 /**
  * Options for `callRemoteTool`. When absent, discovery/token requests retain
- * their own caps and MCP requests inherit the SDK's timeout.
+ * their own caps and MCP requests inherit the SDK's timeout. A `timeoutMs`
+ * also becomes the SDK request deadline (see buildMcpRequestOptions).
  */
 export interface CallRemoteToolOptions {
   /** Hard wall-clock cap for the whole call (token mint + tool call). Aborts on expiry. */
   timeoutMs?: number;
   /** External AbortSignal (e.g. SIGINT handler). Composed with the timeout. */
   signal?: AbortSignal;
+}
+
+/**
+ * The SDK request options for one tool call. Passing only `signal` leaves the
+ * SDK's independent 60s default deadline in force, so a caller's longer
+ * timeout would still die at 60s; forward it.
+ *
+ * @internal Exported for test access (test/mcp-client-hardening.test.ts).
+ */
+export function buildMcpRequestOptions(opts: CallRemoteToolOptions, signal: AbortSignal): { signal: AbortSignal; timeout?: number } {
+  return { signal, ...(opts.timeoutMs !== undefined && opts.timeoutMs > 0 ? { timeout: opts.timeoutMs } : {}) };
 }
 
 /**
@@ -393,7 +411,7 @@ export async function callRemoteTool(
       try {
         signal.throwIfAborted();
         submitted = true;
-        const res = await client.callTool({ name: toolName, arguments: args }, undefined, { signal });
+        const res = await client.callTool({ name: toolName, arguments: args }, undefined, buildMcpRequestOptions(opts, signal));
         if (res.isError) {
           const message = Array.isArray(res.content)
             ? res.content.map((c: unknown) => (c as { text?: string }).text ?? '').join('\n')
@@ -510,4 +528,27 @@ export function extractResponseMeta(res: unknown): Record<string, unknown> | und
     return meta as Record<string, unknown>;
   }
   return undefined;
+}
+
+/**
+ * Params the server reported it ignored (WP3 warn mode): `_meta.warnings`
+ * entries with code `unknown_param`, plus the model-visible warning blocks
+ * after content[0] for transports that drop `_meta`. Empty for hosts that
+ * predate unknown-parameter warnings, which cannot be detected.
+ */
+export function ignoredRemoteParams(res: unknown): string[] {
+  const names = new Set<string>();
+  const warnings = extractResponseMeta(res)?.warnings;
+  if (Array.isArray(warnings)) {
+    for (const w of warnings as Array<{ code?: unknown; param?: unknown }>) {
+      if (w?.code === 'unknown_param' && typeof w.param === 'string') names.add(w.param);
+    }
+  }
+  const content = (res as { content?: unknown[] } | undefined)?.content;
+  for (const block of Array.isArray(content) ? content.slice(1) : []) {
+    const text = (block as { text?: unknown })?.text;
+    if (typeof text !== 'string') continue;
+    for (const m of text.matchAll(/^warning: unknown parameter "([^"]+)" ignored/gm)) names.add(m[1]);
+  }
+  return [...names];
 }

@@ -134,6 +134,13 @@ CREATE TABLE IF NOT EXISTS pages (
   -- path). Powers `gbrain extract --stale` + the `links_extraction_lag` doctor
   -- check. NULL = never extracted.
   links_extracted_at    TIMESTAMPTZ,
+  -- #5761: links_attendance_blocked_revision / _at (the attendance marker) are
+  -- added by migration v180 on every install, after the migration-added pages
+  -- columns, so fresh and upgraded brains share their ordinals.
+  -- #5254 (migration v177): 'unbound_source' marks a page written database-only
+  -- while its filesystem source had no canonical owner. Writes and sync after
+  -- binding keep it database-only. NULL for every other page.
+  database_only_reason  TEXT,
   -- v0.40.3.0 contextual retrieval (renumbered from v81 to v90 on master
   -- merge). contextual_retrieval_mode is what tier the page was last embedded
   -- under (NULL = pre-v90 = treated as 'none' for drift detection).
@@ -308,6 +315,8 @@ CREATE TABLE IF NOT EXISTS content_chunks (
   -- #4246 (v133): md5(chunk_text) at embed time. NULL = no embedding or
   -- pre-v133 row (grandfathered by invalidateContentDriftEmbeddings).
   embedded_text_hash    TEXT,
+  -- #5553 (v171): embedding-input provenance written with the vector.
+  embedding_input_hash  TEXT,
   created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
   -- v0.19.0: code chunk metadata. Nullable — markdown chunks leave these NULL.
   -- Powers `query --lang`, `code-def <symbol>`, and `code-refs <symbol>`.
@@ -511,6 +520,8 @@ CREATE TABLE IF NOT EXISTS tags (
   id      SERIAL PRIMARY KEY,
   page_id INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
   tag     TEXT    NOT NULL,
+  -- 'frontmatter' (import-owned, deleted when it leaves the frontmatter), 'added', or NULL (legacy).
+  tag_source TEXT,
   UNIQUE(page_id, tag)
 );
 
@@ -690,6 +701,7 @@ CREATE INDEX IF NOT EXISTS idx_oauth_clients_federated_read
   ON oauth_clients USING GIN (federated_read);
 
 
+-- BEGIN GENERATED from src/core/grants/schema.ts (GRANT_AUDIT_SCHEMA_SQL). Edit that file, then run: bun run build:schema
 CREATE TABLE IF NOT EXISTS oauth_grant_audit (
   id BIGSERIAL PRIMARY KEY,
   client_id TEXT NOT NULL,
@@ -701,15 +713,19 @@ CREATE TABLE IF NOT EXISTS oauth_grant_audit (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_oauth_grant_audit_client ON oauth_grant_audit(client_id, created_at);
+-- END GENERATED from src/core/grants/schema.ts (GRANT_AUDIT_SCHEMA_SQL)
 
 -- The facts index and withdrawal trigger are installed by migrations 60/148.
+-- BEGIN GENERATED from src/core/facts/withdrawal-schema.ts (FACT_WITHDRAWAL_SCHEMA_STATEMENTS[0]). Edit that file, then run: bun run build:schema
 CREATE TABLE IF NOT EXISTS fact_withdrawals (
-  source_id TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
-  visibility TEXT NOT NULL CHECK (visibility IN ('private','world')),
-  fact_hash TEXT NOT NULL,
-  withdrawn_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  PRIMARY KEY (source_id, visibility, fact_hash)
-);
+    source_id TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+    visibility TEXT NOT NULL CHECK (visibility IN ('private','world')),
+    subject TEXT NOT NULL DEFAULT '*',
+    fact_hash TEXT NOT NULL,
+    withdrawn_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (source_id, visibility, subject, fact_hash)
+  );
+-- END GENERATED from src/core/facts/withdrawal-schema.ts (FACT_WITHDRAWAL_SCHEMA_STATEMENTS[0])
 
 CREATE TABLE IF NOT EXISTS oauth_tokens (
   token_hash   TEXT PRIMARY KEY,
@@ -1322,7 +1338,10 @@ CREATE TABLE IF NOT EXISTS gbrain_cycle_locks (
   last_refreshed_at  TIMESTAMPTZ
 );
 CREATE INDEX IF NOT EXISTS idx_cycle_locks_ttl ON gbrain_cycle_locks(ttl_expires_at);
-ALTER TABLE gbrain_cycle_locks ADD COLUMN IF NOT EXISTS acquisition_token UUID NOT NULL DEFAULT gen_random_uuid();
+-- BEGIN GENERATED from src/core/lease-schema.ts (LEASE_TOKEN_SCHEMA_SQL). Edit that file, then run: bun run build:schema
+ALTER TABLE gbrain_cycle_locks
+  ADD COLUMN IF NOT EXISTS acquisition_token UUID NOT NULL DEFAULT gen_random_uuid();
+-- END GENERATED from src/core/lease-schema.ts (LEASE_TOKEN_SCHEMA_SQL)
 
 -- ============================================================
 -- Eval capture (v0.25.0 — BrainBench-Real substrate)
@@ -1673,20 +1692,9 @@ BEGIN
 END $$;
 
 -- Canonical page state (migration 150).
+-- BEGIN GENERATED from src/core/page-state/schema.ts (PAGE_STATE_SCHEMA_SQL). Edit that file, then run: bun run build:schema
 ALTER TABLE sources ADD COLUMN IF NOT EXISTS incarnation UUID NOT NULL DEFAULT gen_random_uuid();
 CREATE UNIQUE INDEX IF NOT EXISTS sources_incarnation_key ON sources(incarnation);
-CREATE TABLE IF NOT EXISTS extract_atoms_page_state (
-  source_incarnation UUID NOT NULL REFERENCES sources(incarnation) ON DELETE CASCADE,
-  page_id INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
-  content_hash TEXT NOT NULL,
-  fail_count INTEGER NOT NULL DEFAULT 0 CHECK (fail_count >= 0),
-  tombstoned BOOLEAN NOT NULL DEFAULT false,
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  PRIMARY KEY (source_incarnation, page_id, content_hash)
-);
-CREATE INDEX IF NOT EXISTS extract_atoms_page_state_tombstoned_idx
-  ON extract_atoms_page_state (source_incarnation, content_hash, page_id) WHERE tombstoned;
-CREATE INDEX IF NOT EXISTS extract_atoms_page_state_page_idx ON extract_atoms_page_state (page_id);
 ALTER TABLE pages ADD COLUMN IF NOT EXISTS knowledge_revision UUID NOT NULL DEFAULT gen_random_uuid();
 ALTER TABLE pages ADD COLUMN IF NOT EXISTS text_projection_revision UUID;
 ALTER TABLE page_versions ADD COLUMN IF NOT EXISTS knowledge_revision UUID;
@@ -1694,7 +1702,7 @@ ALTER TABLE page_versions ADD COLUMN IF NOT EXISTS timeline TEXT;
 ALTER TABLE page_versions ADD COLUMN IF NOT EXISTS title TEXT;
 ALTER TABLE page_versions ADD COLUMN IF NOT EXISTS type TEXT;
 ALTER TABLE page_versions ADD COLUMN IF NOT EXISTS tags JSONB;
-ALTER TABLE page_versions ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN;
+ALTER TABLE page_versions ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN;;
 CREATE TABLE IF NOT EXISTS page_write_guards (
     source_incarnation UUID NOT NULL REFERENCES sources(incarnation) ON DELETE CASCADE,
     slug TEXT NOT NULL,
@@ -1740,8 +1748,33 @@ CREATE OR REPLACE FUNCTION gbrain_advance_tag_revision() RETURNS trigger LANGUAG
 DROP TRIGGER IF EXISTS tags_knowledge_revision ON tags;
 CREATE TRIGGER tags_knowledge_revision AFTER INSERT OR DELETE OR UPDATE ON tags
     FOR EACH ROW EXECUTE FUNCTION gbrain_advance_tag_revision();
+-- END GENERATED from src/core/page-state/schema.ts (PAGE_STATE_SCHEMA_SQL)
+-- #5393 (migration v182): the page's recorded canonical file when a version
+-- was taken, so a revert is judged on the version it writes. After the
+-- page-state columns so fresh and upgraded brains share its ordinal.
+ALTER TABLE page_versions ADD COLUMN IF NOT EXISTS source_path TEXT;
+CREATE TABLE IF NOT EXISTS extract_atoms_page_state (
+  source_incarnation UUID NOT NULL REFERENCES sources(incarnation) ON DELETE CASCADE,
+  page_id INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+  content_hash TEXT NOT NULL,
+  fail_count INTEGER NOT NULL DEFAULT 0 CHECK (fail_count >= 0),
+  tombstoned BOOLEAN NOT NULL DEFAULT false,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (source_incarnation, page_id, content_hash)
+);
+CREATE INDEX IF NOT EXISTS extract_atoms_page_state_tombstoned_idx
+  ON extract_atoms_page_state (source_incarnation, content_hash, page_id) WHERE tombstoned;
+CREATE INDEX IF NOT EXISTS extract_atoms_page_state_page_idx ON extract_atoms_page_state (page_id);
+-- Durable record that a transcript was synthesized; survives minion_jobs pruning.
+CREATE TABLE IF NOT EXISTS dream_synthesis_completions (
+  source_id TEXT NOT NULL,
+  idempotency_key TEXT NOT NULL,
+  completed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (source_id, idempotency_key)
+);
 
 -- Durable concurrent persistence (migration 151).
+-- BEGIN GENERATED from src/core/persistence/schema.ts (PERSISTENCE_SCHEMA_STATEMENTS). Edit that file, then run: bun run build:schema
 CREATE TABLE IF NOT EXISTS persistence_brain (
     singleton integer PRIMARY KEY CHECK (singleton = 1),
     brain_id uuid NOT NULL DEFAULT gen_random_uuid(),
@@ -1868,6 +1901,10 @@ BEGIN
     END IF;
     IF TG_OP='DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
   ELSIF TG_TABLE_NAME IN ('facts','takes') AND TG_OP='UPDATE' THEN
+    IF TG_TABLE_NAME='facts' THEN
+      row_data := row_data - ARRAY['embedding_model','embedded_text_hash'];
+      old_data := old_data - ARRAY['embedding_model','embedded_text_hash'];
+    END IF;
     -- Embedding completion and retrieval telemetry are physical projections.
     IF (row_data - ARRAY['embedding','embedded_at','last_retrieved_at','retrieval_count','updated_at'])
       = (old_data - ARRAY['embedding','embedded_at','last_retrieved_at','retrieval_count','updated_at']) THEN RETURN NEW; END IF;
@@ -1897,7 +1934,12 @@ BEGIN
   END LOOP;
 END $body$;
 ;
+-- END GENERATED from src/core/persistence/schema.ts (PERSISTENCE_SCHEMA_STATEMENTS)
 -- Verified text projection work (migration 153).
+-- BEGIN GENERATED from src/core/page-state/projection-schema.ts (PAGE_PROJECTION_SCHEMA_SQL). Edit that file, then run: bun run build:schema
+DROP TRIGGER IF EXISTS trg_pages_search_vector ON pages;
+CREATE TRIGGER trg_pages_search_vector BEFORE INSERT OR UPDATE OF title,timeline ON pages
+    FOR EACH ROW EXECUTE FUNCTION update_page_search_vector();
 CREATE TABLE IF NOT EXISTS page_projection_jobs (
     source_incarnation UUID NOT NULL REFERENCES sources(incarnation) ON DELETE CASCADE,
     slug TEXT NOT NULL,
@@ -1931,8 +1973,10 @@ CREATE OR REPLACE FUNCTION gbrain_queue_page_projection() RETURNS trigger LANGUA
 DROP TRIGGER IF EXISTS pages_projection_queue ON pages;
 CREATE TRIGGER pages_projection_queue AFTER INSERT OR UPDATE OR DELETE ON pages
     FOR EACH ROW EXECUTE FUNCTION gbrain_queue_page_projection();
+-- END GENERATED from src/core/page-state/projection-schema.ts (PAGE_PROJECTION_SCHEMA_SQL)
 
 
+-- BEGIN GENERATED from src/core/persistence/topology-schema.ts (PERSISTENCE_TOPOLOGY_SCHEMA_SQL). Edit that file, then run: bun run build:schema
 CREATE TABLE IF NOT EXISTS persistence_topology_changes (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   principal_id uuid NOT NULL,
@@ -1954,7 +1998,9 @@ CREATE TABLE IF NOT EXISTS persistence_topology_changes (
 );
 ALTER TABLE persistence_topology_changes ADD COLUMN IF NOT EXISTS intent_bytes bigint NOT NULL DEFAULT 0 CHECK(intent_bytes>=0);
 CREATE INDEX IF NOT EXISTS persistence_topology_recovering ON persistence_topology_changes(created_at) WHERE state='recovering';
+-- END GENERATED from src/core/persistence/topology-schema.ts (PERSISTENCE_TOPOLOGY_SCHEMA_SQL)
 
+-- BEGIN GENERATED from src/core/company-brain/receipt-schema.ts (SOURCE_INGESTION_RECEIPTS_SCHEMA_SQL). Edit that file, then run: bun run build:schema
 CREATE TABLE IF NOT EXISTS source_ingestion_receipts (
   id uuid PRIMARY KEY,
   source_id text NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
@@ -1986,7 +2032,9 @@ CREATE INDEX IF NOT EXISTS source_ingestion_receipts_retention
   ON source_ingestion_receipts(source_id, source_incarnation, completed_at DESC, id DESC) WHERE outcome = 'complete';
 CREATE INDEX IF NOT EXISTS source_ingestion_receipts_active
   ON source_ingestion_receipts(id) WHERE outcome = 'incomplete';
+-- END GENERATED from src/core/company-brain/receipt-schema.ts (SOURCE_INGESTION_RECEIPTS_SCHEMA_SQL)
 
+-- BEGIN GENERATED from src/core/shared-skills/schema-all.ts (SHARED_SKILLS_SCHEMA_SQL). Edit that file, then run: bun run build:schema
 CREATE TABLE IF NOT EXISTS shared_skill_state (
     singleton INTEGER PRIMARY KEY CHECK(singleton=1),
     token_secret TEXT NOT NULL DEFAULT (replace(gen_random_uuid()::text,'-','') || replace(gen_random_uuid()::text,'-','')),
@@ -2224,3 +2272,175 @@ BEGIN
     END LOOP;
   END IF;
 END $$;
+-- END GENERATED from src/core/shared-skills/schema-all.ts (SHARED_SKILLS_SCHEMA_SQL)
+
+-- System One decide storage (decision receipts, spend ledger, calibrations, proposals).
+-- BEGIN GENERATED from src/core/ai/decide/schema.ts (DECIDE_SCHEMA_SQL). Edit that file, then run: bun run build:schema
+CREATE TABLE IF NOT EXISTS decision_receipts (
+  id                 BIGSERIAL PRIMARY KEY,
+  decision_id        TEXT NOT NULL,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+  source_id          TEXT,
+  slot               TEXT NOT NULL,
+  mode               TEXT NOT NULL,
+  provider           TEXT NOT NULL,
+  model_alias        TEXT,
+  model_resolved     TEXT,
+  question_kind      TEXT,
+  state_hash         TEXT,
+  question_hash      TEXT,
+  answer_value       REAL,
+  answer_choice      TEXT,
+  confidence         REAL,
+  threshold          REAL,
+  outcome            TEXT NOT NULL,
+  subject_ref        TEXT,
+  call_site          TEXT NOT NULL,
+  lane               TEXT NOT NULL,
+  policy_fingerprint TEXT,
+  calibration_ref    TEXT,
+  latency_ms         INTEGER,
+  input_tokens       INTEGER,
+  error_reason       TEXT,
+  protected          BOOLEAN NOT NULL DEFAULT false,
+  min_keep           INTEGER,
+  rank               INTEGER,
+  k_used             INTEGER,
+  remote             BOOLEAN NOT NULL DEFAULT false,
+  run_meta           TEXT
+);
+CREATE INDEX IF NOT EXISTS decision_receipts_slot_created_idx ON decision_receipts (slot, created_at);
+CREATE INDEX IF NOT EXISTS decision_receipts_model_slot_idx ON decision_receipts (model_resolved, slot);
+CREATE INDEX IF NOT EXISTS decision_receipts_decision_idx ON decision_receipts (decision_id);
+CREATE TABLE IF NOT EXISTS decide_spend (
+  request_id     TEXT PRIMARY KEY,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  source_id      TEXT,
+  slot           TEXT NOT NULL,
+  provider       TEXT NOT NULL,
+  model_resolved TEXT,
+  lane           TEXT NOT NULL,
+  remote         BOOLEAN NOT NULL DEFAULT false,
+  input_tokens   INTEGER NOT NULL DEFAULT 0,
+  cost_usd       DOUBLE PRECISION NOT NULL DEFAULT 0,
+  outcome        TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS decide_spend_created_idx ON decide_spend (created_at);
+CREATE TABLE IF NOT EXISTS decide_state (
+  key        TEXT PRIMARY KEY,
+  value      TEXT NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+DO $rls$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
+    ALTER TABLE decision_receipts ENABLE ROW LEVEL SECURITY;
+  END IF;
+END $rls$;
+DO $rls$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
+    ALTER TABLE decide_spend ENABLE ROW LEVEL SECURITY;
+  END IF;
+END $rls$;
+DO $rls$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
+    ALTER TABLE decide_state ENABLE ROW LEVEL SECURITY;
+  END IF;
+END $rls$;
+
+CREATE TABLE IF NOT EXISTS decide_calibrations (
+  id                  BIGSERIAL PRIMARY KEY,
+  slot                TEXT NOT NULL,
+  call_site           TEXT NOT NULL,
+  provider            TEXT NOT NULL,
+  model_resolved      TEXT NOT NULL,
+  threshold           REAL NOT NULL,
+  min_keep            INTEGER,
+  metric              TEXT NOT NULL,
+  metric_value        REAL,
+  ece                 REAL,
+  retest_sd           REAL,
+  repack_sd           REAL,
+  action_precision_lb REAL,
+  qualification       TEXT,
+  qualified_at        TIMESTAMPTZ,
+  policy_fingerprint  TEXT,
+  n                   INTEGER NOT NULL,
+  dataset_hash        TEXT,
+  split_hash          TEXT,
+  calibrate_ids_hash  TEXT,
+  calibrate_only      BOOLEAN NOT NULL DEFAULT true,
+  pack_shape          TEXT NOT NULL,
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  retired_at          TIMESTAMPTZ,
+  notes               TEXT
+);
+CREATE INDEX IF NOT EXISTS decide_calibrations_lookup_idx ON decide_calibrations (slot, provider, model_resolved, created_at DESC);
+DO $rls$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
+    ALTER TABLE decide_calibrations ENABLE ROW LEVEL SECURITY;
+  END IF;
+END $rls$;
+
+CREATE TABLE IF NOT EXISTS decide_proposals (
+  id             BIGSERIAL PRIMARY KEY,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  source_id      TEXT NOT NULL,
+  sweep_id       TEXT NOT NULL,
+  pair_index     INTEGER NOT NULL,
+  new_fact_id    BIGINT NOT NULL,
+  old_fact_id    BIGINT NOT NULL,
+  direction      TEXT NOT NULL DEFAULT 'new_supersedes_old',
+  p_supersede    REAL NOT NULL,
+  threshold      REAL,
+  proposal_floor REAL NOT NULL,
+  model_resolved TEXT,
+  status         TEXT NOT NULL DEFAULT 'pending',
+  decided_at     TIMESTAMPTZ,
+  before_state   TEXT,
+  after_state    TEXT,
+  UNIQUE (sweep_id, pair_index)
+);
+CREATE INDEX IF NOT EXISTS decide_proposals_status_created_idx ON decide_proposals (status, created_at);
+CREATE TABLE IF NOT EXISTS decide_sweep_deferred (
+  source_id       TEXT NOT NULL,
+  fact_id         BIGINT NOT NULL,
+  slot            TEXT NOT NULL,
+  reason          TEXT NOT NULL,
+  attempts        INTEGER NOT NULL DEFAULT 0,
+  next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (slot, source_id, fact_id)
+);
+DO $rls$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
+    ALTER TABLE decide_proposals ENABLE ROW LEVEL SECURITY;
+  END IF;
+END $rls$;
+DO $rls$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
+    ALTER TABLE decide_sweep_deferred ENABLE ROW LEVEL SECURITY;
+  END IF;
+END $rls$;
+-- END GENERATED from src/core/ai/decide/schema.ts (DECIDE_SCHEMA_SQL)
+
+-- gbrain facts relink attempts and journal (#5836).
+-- BEGIN GENERATED from src/core/facts/relink-schema.ts (FACT_RELINK_SCHEMA_SQL). Edit that file, then run: bun run build:schema
+CREATE TABLE IF NOT EXISTS fact_relink_attempts (
+  source_id       TEXT NOT NULL,
+  fact_id         BIGINT NOT NULL,
+  outcome         TEXT NOT NULL,
+  reason          TEXT,
+  tier            TEXT,
+  model           TEXT,
+  target_slug     TEXT,
+  run_id          TEXT,
+  attempted_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (source_id, fact_id)
+);
+CREATE INDEX IF NOT EXISTS fact_relink_attempts_outcome_idx ON fact_relink_attempts (source_id, outcome, attempted_at);
+DO $rls$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
+    ALTER TABLE fact_relink_attempts ENABLE ROW LEVEL SECURITY;
+  END IF;
+END $rls$;
+-- END GENERATED from src/core/facts/relink-schema.ts (FACT_RELINK_SCHEMA_SQL)

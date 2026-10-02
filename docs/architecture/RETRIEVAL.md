@@ -6,7 +6,7 @@ Vector search alone underdelivers on real personal-knowledge queries. This doc e
 
 1. **Vector (HNSW on pgvector)** — semantic similarity. Catches "who works on retrieval quality at acme-example?" → pages mentioning "alice-example + retrieval" even when the user never typed "acme".
 2. **BM25 keyword** — lexical match. Catches names, exact phrases, code identifiers, anything where the user remembers the literal token. Survives the cases where vector search drifts into thematic neighbors.
-3. **Reciprocal-rank fusion (RRF)** — merges vector + keyword rankings without weighting one over the other globally. Each strategy gets to vote.
+3. **Reciprocal-rank fusion (RRF)** — merges vector + keyword rankings without weighting one over the other globally. Each strategy gets to vote, and the vote is for a PAGE: arms return each page's best chunk, often different chunks, so fusion sums a page's votes across arms onto the page's lead chunk (largest own vote, ties to the vector arm's chunk); the page's other chunks keep their own votes so they cannot crowd other pages out of a chunk-limited result.
 4. **Knowledge graph traversal** — follows recorded typed edges. It can answer relationship queries whose relevant endpoints are not close in embedding space; it depends on the edges being present and correct, and does not by itself establish causality.
 
 ## Why each one alone fails
@@ -23,17 +23,22 @@ Vector search alone underdelivers on real personal-knowledge queries. This doc e
 
 BrainBench (corpus + harness in the sibling [gbrain-evals](https://github.com/garrytan/gbrain-evals) repo) measures retrieval P@5, R@5, MRR, nDCG@5 on a 240-page Opus-generated rich-prose corpus. (This is the retrieval-ranking benchmark; the in-repo `gbrain eval brainbench` suite — [`docs/eval/BRAINBENCH.md`](../eval/BRAINBENCH.md) — gates the memory behaviors *above* retrieval: unprompted context push, write-back fidelity, cross-session continuity.)
 
-| Strategy | P@5 | R@5 | Notes |
-|---|---|---|---|
-| ripgrep BM25 only | ~18 | ~75 | Lexical-only baseline |
-| vector-only RAG | ~18 | ~80 | Standard RAG implementation |
-| gbrain graph-disabled (hybrid + RRF, no graph traversal) | ~18 | ~85 | Hybrid alone |
-| **gbrain default (full stack)** | **49.1** | **97.9** | Graph + extract-quality lift |
+The [September 9, 2026 refresh](https://github.com/garrytan/gbrain-evals/blob/main/docs/benchmarks/2026-09-09-retrieval-refresh.md) (gbrain v0.48.4.0, three ingestion
+orders, fixed-denominator P@5) measured the 145 relationship questions:
 
-The recorded lift on that synthetic corpus was **+31 P@5 points** for graph
-plus extraction-quality changes together. It does not isolate the graph's
-contribution, establish universal superiority, or predict accuracy on a
-different corpus. See the linked harness for the experiment's scope.
+| Adapter | Mean P@5 | Mean R@5 |
+|---|---:|---:|
+| Specialized `gbrain` (recognizes four question templates, follows the fixture graph) | **0.3421** | **0.9791** |
+| Reference hybrid | 0.1917 | 0.6874 |
+| Keyword ranker | 0.1710 | 0.6244 |
+| Vector only | 0.1076 | 0.4069 |
+
+The specialized adapter is strong on the templates it understands, but this is a
+comparison between whole systems. The refresh found that the older headline
+(P@5 49.1%, "+31.4 points over graph-disabled") was not a graph-only effect and
+used metric helpers since corrected; do not cite it. On the fuzzy and externally
+authored families the keyword and vector paths win some comparisons. None of
+this predicts accuracy on a different corpus.
 
 ## Auto-link: why zero-LLM-call edge extraction works
 
@@ -69,7 +74,7 @@ Hybrid search applies a source-factor CASE expression at the SQL layer (lives in
 
 `archive/` is deliberately NOT hard-excluded: it holds high-signal historical content users expect to find, so it is demoted (`0.5x` in `DEFAULT_SOURCE_BOOSTS`), not hidden. The demote is a prior applied in the outer SQL re-rank; the cross-encoder reranker (balanced/tokenmax modes) can still PROMOTE an archive page that survives the demote into the rerank candidate window — it is not an unconditional suppression. `gbrain doctor`'s `hidden_by_search_policy` check reports how many chunked pages remain hidden by the surviving exclude prefixes.
 
-The boost map is configurable via the `GBRAIN_SOURCE_BOOST` env var. Hard exclusions are separate: the exclusion set is defaults ∪ `GBRAIN_SEARCH_EXCLUDE` (env, comma-separated prefixes) ∪ per-call `SearchOpts.exclude_slug_prefixes`. Temporal queries (`detail: 'high'`) bypass the boost so chat pages re-surface for time-sensitive lookups.
+The defaults fit one vault layout, so each brain can carry its own map: `gbrain config set search.source_boosts "wiki/:1.3,daily/:1.0"` overrides or extends the defaults per prefix, and a `none` entry (`"none,wiki/:1.3"`) drops them entirely. The `GBRAIN_SOURCE_BOOST` env var (same format) wins over the brain config for one process. Hard exclusions are separate: the exclusion set is defaults ∪ `GBRAIN_SEARCH_EXCLUDE` (env, comma-separated prefixes) ∪ per-call `SearchOpts.exclude_slug_prefixes`. Temporal queries (`detail: 'high'`) bypass the boost so chat pages re-surface for time-sensitive lookups.
 
 ## Named-thing retrieval (per-page pool + title + alias + evidence)
 
@@ -92,6 +97,9 @@ written up in [`RETRIEVAL_MAXPOOL_INCIDENT.md`](../incidents/RETRIEVAL_MAXPOOL_I
   a JavaScript timeout can cancel its WASM work. Unresolved shortfalls appear
   as `vector_candidates_incomplete` in `degraded`, with scoped
   `vector_pool_underfilled` details in the public retrieval metadata.
+  The content-freshness check runs after the HNSW candidate scan on indexed
+  columns (the planner cannot estimate it and would drop the index); doctor
+  `vector_plan` warns when the emitted statement still misses the index.
 - **Title-phrase boost** — when the normalized query is a contiguous token-run
   inside `page.title` (or an exact full-title match), a floor-ratio-gated,
   bounded multiplier fires (`applyTitleBoost`, `search.title_boost` knob). A
@@ -189,8 +197,9 @@ hybrid recall + fusion:
    ├── relational (typed-edge recall arm — relational queries only)
    ├── source-aware re-rank (CASE in SQL)
    ├── role-tagged arms; variant/clause lists weighted by search.expansion_variant_budget INSIDE the fusion (fusion-lists.ts)
-   └── RRF fusion → cosine re-score → post-fusion boosts
-       (backlink / salience / recency / graph signals / exact-match;
+   └── page-grain RRF fusion → cosine re-score → post-fusion boosts
+       (backlink / salience / recency / graph signals / exact-match,
+        which also fires when a title, slug or alias is named in the query;
         the metadata boosts are skipped when the vector arm was the only
         voter — search.metadata_boost_gate=lexical, metadata-boost-gate.ts)
        │
@@ -209,7 +218,8 @@ relational re-pin (relational-arm rows back above the reranked text rows, in
    reordered — src/core/search/relational-rerank-pin.ts)
        │
        ▼
-alias hop (exact alias match injects/boosts the canonical page)
+alias hop (exact alias match injects/boosts the canonical page; like the
+   exact-lookup tier below it never re-sorts, so the reranked order holds)
        │
        ▼
 exact-lookup tier (lookup-shaped queries only: slug + exact-title probes
@@ -359,6 +369,34 @@ before any other cell is read.
 
 Each stage is testable in isolation. Each stage is replaceable. The whole pipeline is < 1ms of orchestration cost; the latency budget goes to the upstream HTTP calls (embedding, rerank) and the index scans.
 
+## Evidence delivery: whole evidence after ranking
+
+Ranking decides which pages matter; the reader still needs enough of each page
+to answer. `return_unit` (`chunk`, `window`, `section`, `page`, `auto`; default `auto`)
+adds a stage after ranking, cache and capture, and before output
+redaction and snippet capping, shared by `search`, `query`, `recall` and
+`think` (via `think.return_unit`). It groups the ranked hits by page, reads
+every needed neighbor chunk in ONE batched, page_id-keyed query that
+re-authorizes each page under the caller's current scope, sanitizes each
+page's complete body before slicing, locates the hit chunks in it (so chunk
+overlap never duplicates text), cuts the requested unit around the hits,
+and packs blocks by rank into the token budget with a per-page floor so lower
+ranked sessions keep their matching span. The strict protected-body sanitizer
+runs on the whole body first, so delivered evidence never contains more than
+`get_page` returns to the same caller. The default `auto` expands only
+conversation pages (by page type or `chat/` / `conversations/` slug) to the
+whole page and leaves every other hit its ranked chunk; with no conversation
+hit, or with `chunk`, the stage does not run and responses are byte-identical. The measured motivation: on 400 held-out
+LongMemEval questions whole sessions answered 361 against 253 for top-5
+chunks, while neighbor windows reached only 285–292, so `auto` gives
+conversations exactly the `page` unit. `auto` itself answered 445 of 500
+LongMemEval-S questions against 312 for chunks (development data), and the
+preregistered sealed check was inconclusive at a ceiling (149 against 147 of
+150); see `docs/evidence-delivery.md` for the numbers and the token cost. The
+earlier failed lexical excerpt selector is in
+`docs/eval/ANSWER_PACKET_RESULTS.md`. Contract, algorithms and latency:
+[`docs/evidence-delivery.md`](../evidence-delivery.md).
+
 ## How to verify on your own brain
 
 ```bash
@@ -377,7 +415,7 @@ gbrain eval export > before.ndjson
 gbrain eval replay --against before.ndjson
 
 # A/B retrieval strategies on a labeled fixture
-gbrain eval --qrels labels.tsv --config balanced.json
+gbrain eval --qrels qrels.json --config-a baseline.json --config-b balanced.json
 ```
 
 The current measured LongMemEval result (95.53% session-level `recall_all@5` on the release default path, 449/470, and 93.40% with the reranker off, 439/470; cleaned S split, 470 scored questions, k=5, measured 2026-09-06 by the in-repo harness), its per-type table, every arm of the ranker wave and the judged answer-accuracy row live in [`docs/eval-bench.md`](../eval-bench.md#public-benchmarks-longmemeval).
@@ -410,20 +448,30 @@ incompleteness notices to stderr. MCP carries them in `_meta.retrieval`.
 The upgraded resident `gbrain serve` drains queued Markdown and code rebuilds
 without provider calls. Code repair can also run through the current owner:
 `gbrain reindex-code --force --no-embed`. Rebuilds preserve only exact,
-provenance-compatible vectors; remaining NULL vectors still need an explicitly
+provenance-compatible vectors: each vector records the embedding input it was
+built from (`content_chunks.embedding_input_hash`: column, model, dimensions,
+wrapping tier and wrapped text), and a rebuild keeps it only when the current
+page would produce the same input, so an unchanged contextual page keeps its
+vectors and a synopsis-mode body edit nulls every synopsis-tier chunk. Vectors
+written before that record existed are kept on non-contextual pages and nulled
+once on contextual ones. Remaining NULL vectors still need an explicitly
 authorized `gbrain embed --stale` run. A text-ready index is not a promise that
 every page has a vector. Diagnostics do not disclose private or foreign-source
 pending pages and never start repair themselves.
 
 Markdown chunk creation applies the strict protected-body sanitizer before
-splitting text. For remote reads, all existing chunks are withheld until a
-successful rebuild records the current chunker version. Public pages require
-this rebuild too; trusted local chunk reads remain available. Body or chunk changes
-invalidate that record until the next successful rebuild. While pages are withheld,
-remote `search` / `query` report `degraded: [safe_index_pending]` (the MCP
-empty-result block names it) instead of a clean miss, and `gbrain doctor` counts
-the withheld pages and points at the `gbrain reindex --markdown` fix. Direct page reads
-continue to use current source and visibility policy plus body sanitization.
+splitting text. For remote reads, all existing chunks of every page kind are
+withheld until a successful rebuild records the current chunker version. Public
+pages require this rebuild too; trusted local chunk reads remain available. Body or
+chunk changes invalidate that record until the next successful rebuild. Re-importing
+unchanged content (`gbrain sync --full`, `gbrain import`) re-seals such a page
+without a page write or journal admission. While pages are withheld, remote
+`search` / `query` report `degraded: [safe_index_pending]` on empty and partial
+results alike (the MCP empty-result block names it) instead of a clean or complete
+answer, and `gbrain doctor` counts the withheld markdown and code pages and points
+at `gbrain repair safe-chunks`, which re-seals them on any brain, managed included.
+Direct page reads continue to use current source and visibility policy plus body
+sanitization.
 
 Run rebuild commands from a local installation on the brain host; thin clients
 cannot rebuild the host's indexes.

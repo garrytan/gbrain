@@ -1,0 +1,237 @@
+{
+  "a": {
+    "n": 109,
+    "tp": 20,
+    "fn": 10,
+    "fp": 1,
+    "tn": 78,
+    "accuracy": 0.8990825688073395,
+    "recall": 0.6666666666666666,
+    "specificity": 0.9873417721518988,
+    "sent_to_synthesis": 21,
+    "cost_usd_total": 0.506409,
+    "cost_usd_per_transcript": 0.004645954128440367,
+    "latency_ms": {
+      "p50": 2238,
+      "p95": 6221,
+      "p99": 7660,
+      "mean": 2718.0183486238534
+    },
+    "cat35": {
+      "n": 13,
+      "positives_missed": 0,
+      "negatives_rejected": 1,
+      "negatives": 1,
+      "positives": 12
+    },
+    "synthetic_buried": {
+      "n": 18,
+      "positives_missed": 10,
+      "negatives_rejected": 0,
+      "negatives": 0,
+      "positives": 18
+    },
+    "synthetic_routine": {
+      "n": 78,
+      "positives_missed": 0,
+      "negatives_rejected": 77,
+      "negatives": 78,
+      "positives": 0
+    },
+    "paths": {
+      "llm": 109
+    }
+  },
+  "b": {
+    "n": 109,
+    "tp": 30,
+    "fn": 0,
+    "fp": 27,
+    "tn": 52,
+    "accuracy": 0.7522935779816514,
+    "recall": 1,
+    "specificity": 0.6582278481012658,
+    "sent_to_synthesis": 57,
+    "cost_usd_total": 0.10239909800000004,
+    "cost_usd_per_transcript": 0.0009394412660550462,
+    "latency_ms": {
+      "p50": 1437,
+      "p95": 4156,
+      "p99": 5146,
+      "mean": 1723.48623853211
+    },
+    "cat35": {
+      "n": 13,
+      "positives_missed": 0,
+      "negatives_rejected": 0,
+      "negatives": 1,
+      "positives": 12
+    },
+    "synthetic_buried": {
+      "n": 18,
+      "positives_missed": 0,
+      "negatives_rejected": 0,
+      "negatives": 0,
+      "positives": 18
+    },
+    "synthetic_routine": {
+      "n": 78,
+      "positives_missed": 0,
+      "negatives_rejected": 52,
+      "negatives": 78,
+      "positives": 0
+    },
+    "paths": {
+      "decide:pass": 57,
+      "decide:reject": 37,
+      "decide->llm:margin_hold": 15
+    }
+  },
+  "retest": {
+    "a": {
+      "n": 109,
+      "flips": 1,
+      "rate": 0.009174311926605505
+    },
+    "b": {
+      "n": 109,
+      "flips": 5,
+      "rate": 0.045871559633027525
+    },
+    "a2": {
+      "n": 109,
+      "tp": 21,
+      "fn": 9,
+      "fp": 1,
+      "tn": 78,
+      "accuracy": 0.908256880733945,
+      "recall": 0.7,
+      "specificity": 0.9873417721518988,
+      "sent_to_synthesis": 22,
+      "cost_usd_total": 0.502874,
+      "cost_usd_per_transcript": 0.004613522935779817,
+      "latency_ms": {
+        "p50": 2111,
+        "p95": 5755,
+        "p99": 7349,
+        "mean": 2605.045871559633
+      },
+      "cat35": {
+        "n": 13,
+        "positives_missed": 0,
+        "negatives_rejected": 1,
+        "negatives": 1,
+        "positives": 12
+      },
+      "synthetic_buried": {
+        "n": 18,
+        "positives_missed": 9,
+        "negatives_rejected": 0,
+        "negatives": 0,
+        "positives": 18
+      },
+      "synthetic_routine": {
+        "n": 78,
+        "positives_missed": 0,
+        "negatives_rejected": 77,
+        "negatives": 78,
+        "positives": 0
+      },
+      "paths": {
+        "llm": 109
+      }
+    },
+    "b2": {
+      "n": 109,
+      "tp": 30,
+      "fn": 0,
+      "fp": 26,
+      "tn": 53,
+      "accuracy": 0.7614678899082569,
+      "recall": 1,
+      "specificity": 0.6708860759493671,
+      "sent_to_synthesis": 56,
+      "cost_usd_total": 0.09026209800000003,
+      "cost_usd_per_transcript": 0.0008280926422018351,
+      "latency_ms": {
+        "p50": 1266,
+        "p95": 4823,
+        "p99": 5836,
+        "mean": 1743.4495412844037
+      },
+      "cat35": {
+        "n": 13,
+        "positives_missed": 0,
+        "negatives_rejected": 0,
+        "negatives": 1,
+        "positives": 12
+      },
+      "synthetic_buried": {
+        "n": 18,
+        "positives_missed": 0,
+        "negatives_rejected": 0,
+        "negatives": 0,
+        "positives": 18
+      },
+      "synthetic_routine": {
+        "n": 78,
+        "positives_missed": 0,
+        "negatives_rejected": 53,
+        "negatives": 78,
+        "positives": 0
+      },
+      "paths": {
+        "decide:pass": 56,
+        "decide:reject": 40,
+        "decide->llm:margin_hold": 13
+      }
+    }
+  },
+  "discordant": {
+    "b_right_a_wrong": 11,
+    "a_right_b_wrong": 27,
+    "ids_b_right": [
+      "syn-buried-002",
+      "syn-buried-008",
+      "syn-buried-015",
+      "syn-buried-018",
+      "syn-buried-019",
+      "syn-buried-020",
+      "syn-buried-033",
+      "syn-buried-040",
+      "syn-buried-043",
+      "syn-buried-044",
+      "syn-routine-126"
+    ],
+    "ids_a_right": [
+      "pure-routine-01",
+      "syn-routine-001",
+      "syn-routine-009",
+      "syn-routine-018",
+      "syn-routine-027",
+      "syn-routine-028",
+      "syn-routine-031",
+      "syn-routine-039",
+      "syn-routine-052",
+      "syn-routine-058",
+      "syn-routine-063",
+      "syn-routine-065",
+      "syn-routine-071",
+      "syn-routine-087",
+      "syn-routine-088",
+      "syn-routine-090",
+      "syn-routine-095",
+      "syn-routine-097",
+      "syn-routine-121",
+      "syn-routine-129",
+      "syn-routine-135",
+      "syn-routine-138",
+      "syn-routine-151",
+      "syn-routine-152",
+      "syn-routine-165",
+      "syn-routine-169",
+      "syn-routine-172"
+    ]
+  },
+  "mcnemar_p": 0.013852965261321515
+}

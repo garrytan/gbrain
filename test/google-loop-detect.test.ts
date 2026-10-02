@@ -396,6 +396,58 @@ const CASES: CorpusCase[] = [
     ],
     expect: null,
   },
+  // ── Grace runs from the oldest unanswered message (gbrain-evals N7-1) ─────
+  // First sight of a thread (backfill, sync gap): a fresh nudge must not
+  // restart the clock on a request that has waited past the window.
+  {
+    name: 'request 40h + nudge 5h, first sight → unanswered_inbound (clock starts at the request)',
+    messages: [
+      msg({ from: 'bob@example.com', to: ['me@example.com'], ageHours: 40, body: 'Can you send the deck?' }),
+      msg({ from: 'bob@example.com', to: ['me@example.com'], ageHours: 5, body: 'Bumping this. Any news?' }),
+    ],
+    expect: { type: 'unanswered_inbound', counterparty: 'bob@example.com' },
+  },
+  {
+    name: 'my ask 100h + my follow-up 10h, first sight → unanswered_outbound (clock starts at the ask)',
+    messages: [
+      msg({ from: 'me@example.com', to: ['bob@example.com'], ageHours: 100, sent: true, body: 'Could you confirm the date?' }),
+      msg({ from: 'me@example.com', to: ['bob@example.com'], ageHours: 10, sent: true, body: 'Following up on this. Any update?' }),
+    ],
+    expect: { type: 'unanswered_outbound', counterparty: 'bob@example.com' },
+  },
+  {
+    name: 'fresh request 10h + nudge 2h → none (the whole run is inside grace)',
+    messages: [
+      msg({ from: 'bob@example.com', to: ['me@example.com'], ageHours: 10 }),
+      msg({ from: 'bob@example.com', to: ['me@example.com'], ageHours: 2 }),
+    ],
+    expect: null,
+  },
+  {
+    name: 'inbound 40h, my reply 30h, their nudge 5h → none (the run starts after my reply)',
+    messages: [
+      msg({ from: 'bob@example.com', to: ['me@example.com'], ageHours: 40 }),
+      msg({ from: 'me@example.com', to: ['bob@example.com'], ageHours: 30, sent: true, body: 'Will do.' }),
+      msg({ from: 'bob@example.com', to: ['me@example.com'], ageHours: 5 }),
+    ],
+    expect: null,
+  },
+  {
+    name: 'CC-only mail 40h + direct ask 5h → none (the reply is owed from the To: message)',
+    messages: [
+      msg({ from: 'bob@example.com', to: ['carol@example.com'], cc: ['me@example.com'], ageHours: 40 }),
+      msg({ from: 'bob@example.com', to: ['me@example.com'], ageHours: 5 }),
+    ],
+    expect: null,
+  },
+  {
+    name: 'my FYI 100h + my question 10h → none (the ask is fresh)',
+    messages: [
+      msg({ from: 'me@example.com', to: ['bob@example.com'], ageHours: 100, sent: true, body: 'Notes attached.' }),
+      msg({ from: 'me@example.com', to: ['bob@example.com'], ageHours: 10, sent: true, body: 'Can you review?' }),
+    ],
+    expect: null,
+  },
 ];
 
 describe('detectThreadLoop precision corpus', () => {

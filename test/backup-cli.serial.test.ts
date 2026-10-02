@@ -32,6 +32,7 @@ import {
   saveBackupStatus,
   type BackupStatus,
 } from '../src/core/backup/status-file.ts';
+import { surfaceSource } from './helpers/source-surface.ts';
 
 /** The exact literal thrown by src/core/pglite-engine.ts on lock contention.
  * isLockError in src/commands/backup.ts matches on the leading substring —
@@ -314,7 +315,7 @@ describe('runBackupCli — PGLite lock fallback', () => {
   });
 
   test('source-text contract pin: pglite-engine still throws the literal isLockError matches', () => {
-    const engineSrc = readFileSync(join(import.meta.dir, '..', 'src', 'core', 'pglite-engine.ts'), 'utf-8');
+    const engineSrc = surfaceSource('pglite-engine');
     expect(engineSrc).toContain(LOCK_SUBSTRING);
     // And backup.ts matches on exactly that substring — drift on either side
     // silently breaks the serve-cohort fallback, so pin both.

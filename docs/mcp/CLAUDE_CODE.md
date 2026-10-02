@@ -180,7 +180,10 @@ sub-second, world-visibility by default, and available on `--surface verbs`.
   installer wires `SessionStart` (injects a warm pack; also fires on
   post-compaction re-entry, `source=compact`) and `PreCompact` (banks the
   window's standing entities so that rehydration pack is warm) into
-  `.claude/settings.local.json`. Nothing to call; `GBRAIN_HOOKS=0` disables.
+  `.claude/settings.local.json`. Nothing to call; `GBRAIN_HOOKS=0` disables
+  every hook event, including capture. Session start never shows another
+  session's activity: the `Last session activity` line older releases printed
+  was removed in v0.60.28.0 (#5558), with deliberately no opt-in to restore it.
 - **Manual (any brain, incl. remote/Postgres):** call the verbs yourself at
   boundaries — `context_pack(entities, budget_tokens)` at session start /
   after compaction, `delta(session_id, budget_tokens)` on wakes. See

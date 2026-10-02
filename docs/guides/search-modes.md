@@ -82,15 +82,21 @@ Seven of the knobs deserve a sentence:
   replayed at every budget): strict `recall_all@5` climbs monotonically as
   the budget shrinks — 255/470 legacy → 394/470 at 0.25 — but even 0.25
   trails plain hybrid (439/470) by 43 questions on the held-out decision set,
-  so the bundles keep `null` and the knob is an operator lever; if you keep
-  expansion on, `0.25` recovers most of the loss. **Say to your agent:**
+  so the bundles keep `null` and the knob is an operator lever. That receipt
+  predates page-grain fusion and the relaxed-keyword demotion: on the current
+  ranking (halfA430, 215 questions, frozen variants) legacy expansion scores
+  205/215, budget `1.0` 203/215, `0.25` 202/215 and no expansion 202/215, so
+  capping the variants no longer helps. **Say to your agent:**
   *"Cap how much query expansion can outvote my original query"* (no skill backs this; your agent
   runs `gbrain config set search.expansion_variant_budget <b>`, and
   `gbrain config set search.expansion_variant_budget legacy` restores the
   default).
 - **`relationalRetrieval`** adds a graph-walk recall arm for relational
-  questions ("who invested in X", "what connects A and B"); it's a pure
-  no-op for non-relational queries. The `query` op's `relational` flag
+  questions ("who invested in X", "what connects A and B"). Common rewordings
+  count too: "X's investors", "people who funded X", "who is the founder of
+  X", "which companies has X backed", "relationship between A and B", "who
+  can introduce me to X". It's a pure no-op for non-relational queries, and
+  it only fires when the named entity resolves to a page in your brain. The `query` op's `relational` flag
   forces it on/off per call.
 - **`relational_rerank_pin`** (config key `search.relational_rerank_pin`;
   3 in every bundle) keeps those graph-walk answers from being buried by the
@@ -201,12 +207,60 @@ brain's reranker is actually running"* — *"turn reranking off for now"* —
 your agent runs `gbrain search modes` / `gbrain doctor`, then either exports
 `VOYAGE_API_KEY` or runs `gbrain config set search.reranker.enabled false`.
 
+TypeSafe's Jev can be the reranker instead of Voyage (`gbrain decide enable
+rerank` sets it and `gbrain decide disable rerank` restores your previous
+reranker; setup in [TypeSafe (Jev)](../ai-providers/typesafe.md)). The same
+provider also powers System One, a set of off-by-default decision slots in
+the search path, such as an evidence gate that drops results with no evidence
+for the question but, by default, never below three results and never an exact match.
+None of them changes a mode bundle. See [System One](system-one.md).
+
 The mode picker runs inside `gbrain init`. Non-TTY initialization tentatively
 applies its recommendation: `conservative` for a Haiku subagent or no detected
 expansion-capable key, otherwise `tokenmax`. Existing valid selections are
 preserved. This differs from retrieval's `balanced` fallback when no valid
 `search.mode` is stored; the picker asks agents to confirm the choice with
 their operator before continuing a real setup.
+
+## Query instruction prefix
+
+Instruction-style embedding models (Qwen3-Embedding, e5, BGE v1.5, nomic-embed)
+expect a query instruction in front of each search query and none in front of
+documents. GBrain sends no instruction unless you set one for the brain;
+nothing is guessed from the model id at query time. `gbrain doctor` reports
+`embedding_query_prefix` when the configured model belongs to one of those
+families and no prefix is set, and prints the model card's value as a command
+you can run as printed.
+
+| Family | Documented value |
+|---|---|
+| Qwen3-Embedding | `Instruct: Given a web search query, retrieve relevant passages that answer the query` + newline + `Query:` |
+| e5 | `query: ` |
+| BGE v1.5 | `Represent this sentence for searching relevant passages: ` |
+| nomic-embed | `search_query: ` |
+
+**Set.** Quote the value so trailing spaces and newlines survive the shell;
+a newline needs ANSI-C quoting:
+
+```bash
+gbrain config set embedding_query_prefix "query: "
+gbrain config set embedding_query_prefix $'Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery:'
+```
+
+The prefix is stored in the brain's database config, so each brain (and each
+mounted brain in one MCP server) uses its own. It applies to query embeddings
+only: keyword search uses the original query, stored document vectors are not
+re-embedded, and the query-cache key includes the prefix. It takes effect on
+the next CLI or MCP query without restarting a running server.
+
+**Verify.** `gbrain config get embedding_query_prefix --raw` prints the stored
+bytes, and `gbrain doctor` stops reporting `embedding_query_prefix`.
+
+**Unset.** `gbrain config unset embedding_query_prefix` restores bare query
+embeddings on the next query.
+
+nomic-embed also expects `search_document: ` in front of documents. GBrain does
+not prefix documents, so on nomic the query prefix is a partial fix (#3783).
 
 ## Choosing a lookup verb (search vs query vs get)
 

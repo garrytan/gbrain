@@ -16,6 +16,7 @@
 import { readFileSync, lstatSync, type Stats } from 'fs';
 import { join, dirname, resolve } from 'path';
 import type { BrainEngine } from './engine.ts';
+import type { ExplicitReadBinding } from './ops/contract.ts';
 import { isSourceFederated, parseSourceConfig } from './sources-load.ts';
 import { SOURCE_ID_RE, isValidSourceId, ALL_SOURCES } from './source-id.ts';
 import { isTrustedDotfile, realpathOrResolve, realpathOrResolveAsync } from './path-confine.ts';
@@ -602,15 +603,6 @@ export async function assessUnscopedDefaultWrite(
   return { warning: assessment.shouldGuard ? formatDefaultWriteWarning(assessment) : null, assessed: true };
 }
 
-/** The warning-only projection of assessUnscopedDefaultWrite. */
-export async function maybeWarnUnscopedDefaultWrite(
-  engine: BrainEngine,
-  tier: SourceTier,
-  mutating: boolean,
-): Promise<string | null> {
-  return (await assessUnscopedDefaultWrite(engine, tier, mutating)).warning;
-}
-
 async function assertSourceExists(engine: BrainEngine, id: string): Promise<void> {
   const rows = await engine.executeRaw<{ id: string }>(
     `SELECT id FROM sources WHERE id = $1 AND archived = false`,
@@ -891,16 +883,51 @@ export async function localFederatedSourceIds(
   tier: SourceTier,
 ): Promise<string[] | undefined> {
   if (tier === 'flag' || tier === 'env' || tier === 'dotfile') return undefined;
-  let rows: Array<{ id: string; config: unknown; archived?: boolean }>;
+  return federatedSetFor(await liveSourceRows(engine), sourceId);
+}
+
+/**
+ * #5081 — explicit-read admission for a stdio connection bound by
+ * `GBRAIN_SOURCE` (tier `env`) or a `.gbrain-source` pin (tier `dotfile`).
+ * The admitted set is exactly what `localFederatedSourceIds` would compute for
+ * the same source on a non-explicit tier (one shared `federatedSetFor`), so a
+ * bound connection may NAME the sources an unbound one reads unqualified. The
+ * #2928 isolated anchor (`config.federated === false`) admits only itself.
+ * Unqualified reads of a bound connection stay scalar: the result goes on
+ * `OperationContext.explicitReadBinding`, never `localFederatedSourceIds`.
+ * Returns undefined for every other tier (no extra query).
+ */
+export async function explicitReadBinding(
+  engine: BrainEngine,
+  sourceId: string,
+  tier: SourceTier,
+): Promise<ExplicitReadBinding | undefined> {
+  if (tier !== 'env' && tier !== 'dotfile') return undefined;
+  const rows = await liveSourceRows(engine);
+  return {
+    sourceId,
+    via: tier === 'env' ? 'GBRAIN_SOURCE' : '.gbrain-source',
+    sourceIds: federatedSetFor(rows, sourceId) ?? [sourceId],
+    optedOut: rows.filter((row) => parseSourceConfig(row.config).federated === false).map((row) => row.id),
+  };
+}
+
+async function liveSourceRows(engine: BrainEngine): Promise<Array<{ id: string; config: unknown; archived?: boolean }>> {
   try {
-    rows = await engine.executeRaw<{ id: string; config: unknown; archived?: boolean }>(
+    return await engine.executeRaw<{ id: string; config: unknown; archived?: boolean }>(
       `SELECT id, config, archived FROM sources WHERE archived = false ORDER BY id`,
     );
   } catch {
-    rows = await engine.executeRaw<{ id: string; config: unknown }>(
+    return await engine.executeRaw<{ id: string; config: unknown }>(
       `SELECT id, config FROM sources ORDER BY id`,
     );
   }
+}
+
+function federatedSetFor(
+  rows: Array<{ id: string; config: unknown; archived?: boolean }>,
+  sourceId: string,
+): string[] | undefined {
   // #2928: an EXPLICITLY isolated anchor (`sources unfederate` /
   // `--no-federated` → config.federated = false) opted out of cross-source
   // read mixing — never widen it into the federated set (which would drag

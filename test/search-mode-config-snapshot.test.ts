@@ -48,7 +48,7 @@ describe('loadSearchModeConfig config reads', () => {
     const engine = perKeyOnlyEngine({ 'search.mode': 'balanced' });
     const out = await loadSearchModeConfig(engine);
     expect(out.mode).toBe('balanced');
-    expect(engine.calls.getConfig).toBe(SEARCH_MODE_CONFIG_KEYS.length + 1);
+    expect(engine.calls.getConfig).toBe(SEARCH_MODE_CONFIG_KEYS.length + 3) // search.mode + search.source_boosts + search.alias_token_hop + one per knob key;
   });
 
   test('the snapshot path returns the same values as per-key reads', async () => {
@@ -73,6 +73,6 @@ describe('loadSearchModeConfig config reads', () => {
     const out = await loadSearchModeConfig(engine);
     expect(out.mode).toBe('conservative');
     expect(engine.calls.getAllConfig).toBe(1);
-    expect(engine.calls.getConfig).toBe(SEARCH_MODE_CONFIG_KEYS.length + 1);
+    expect(engine.calls.getConfig).toBe(SEARCH_MODE_CONFIG_KEYS.length + 3) // search.mode + search.source_boosts + search.alias_token_hop + one per knob key;
   });
 });

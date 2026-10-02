@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-101",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/ottilie-haskfell",
+      "content": "---\ntitle: Ottilie Haskfell\ntype: person\naliases: [ottilie]\nsummary: \"Ottilie Haskfell is the finance lead at Marblegate.\"\n---\n\nOttilie Haskfell is the finance lead at Marblegate.\n"
+    },
+    {
+      "slug": "projects/pricing-overhaul",
+      "content": "---\ntitle: Pricing Overhaul\ntype: project\nsummary: \"Pricing Overhaul: We decided to move the starter plan to usage-based pricing and keep annual contracts for larger teams.\"\n---\n\nPricing Overhaul: We decided to move the starter plan to usage-based pricing and keep annual contracts for larger teams.\n"
+    },
+    {
+      "slug": "companies/glintreach-analytics",
+      "content": "---\ntitle: Glintreach Analytics\ntype: company\nsummary: \"Glintreach Analytics is a startup we evaluated as a partner.\"\n---\n\nGlintreach Analytics is a startup we evaluated as a partner. The renewal is blocked on a security review that is due next month.\n"
+    },
+    {
+      "slug": "people/anselm-vashwaite",
+      "content": "---\ntitle: Anselm Vashwaite\ntype: person\naliases: [anselm]\nsummary: \"A contact from a conference last spring.\"\n---\n\nA contact from a conference last spring.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "good morning! hope your day is going well"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Haskfell's train gets in at 5:40pm and the walk is 15 minutes. What time will they reach the office?"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "where did we land on that pricing thing?"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "Remind me where things stand with Glintreach on the renewal."
+    }
+  ]
+}

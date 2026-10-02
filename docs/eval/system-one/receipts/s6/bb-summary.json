@@ -1,0 +1,78 @@
+{
+  "bb-bb-off.json": {
+    "turns": 79,
+    "needed": 32,
+    "know_to_ask_failures": 0,
+    "failure_rate": 0.0,
+    "false_fires": 0,
+    "false_fire_rate": 0.0,
+    "avg_injected_tokens": 40.38,
+    "latency_ms": {
+      "p50": 9.6,
+      "p95": 19.3,
+      "p99": 24.9
+    },
+    "outcomes": {
+      "off": 79
+    }
+  },
+  "bb-bb-on.json": {
+    "turns": 79,
+    "needed": 32,
+    "know_to_ask_failures": 0,
+    "failure_rate": 0.0,
+    "false_fires": 4,
+    "false_fire_rate": 0.0851,
+    "avg_injected_tokens": 43.2,
+    "latency_ms": {
+      "p50": 161.1,
+      "p95": 258.3,
+      "p99": 299.0
+    },
+    "outcomes": {
+      "timeout": 3,
+      "fire": 4,
+      "no_fire": 54,
+      "no_candidates": 18
+    }
+  },
+  "bb-extra-off.json": {
+    "turns": 264,
+    "needed": 115,
+    "know_to_ask_failures": 82,
+    "failure_rate": 0.713,
+    "false_fires": 83,
+    "false_fire_rate": 0.557,
+    "avg_injected_tokens": 26.48,
+    "latency_ms": {
+      "p50": 1.9,
+      "p95": 13.3,
+      "p99": 22.3
+    },
+    "outcomes": {
+      "off": 264
+    }
+  },
+  "bb-extra-on.json": {
+    "turns": 264,
+    "needed": 115,
+    "know_to_ask_failures": 13,
+    "failure_rate": 0.113,
+    "false_fires": 74,
+    "false_fire_rate": 0.4966,
+    "avg_injected_tokens": 43.06,
+    "latency_ms": {
+      "p50": 157.8,
+      "p95": 245.5,
+      "p99": 257.0
+    },
+    "outcomes": {
+      "no_fire": 127,
+      "suppress": 14,
+      "fire": 70,
+      "margin_hold": 39,
+      "no_candidates": 5,
+      "timeout": 9
+    }
+  }
+}

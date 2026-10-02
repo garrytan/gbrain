@@ -30,7 +30,7 @@
  * by default.
  */
 
-import { BudgetMeter, type SubmitEstimate, type BudgetCheckResult } from './budget-meter.ts';
+import { BudgetMeter, loadAllowUnpriced, loadPricingOverrides, parseBudgetUsd, type SubmitEstimate, type BudgetCheckResult } from './budget-meter.ts';
 import { sourceScopeOpts, type OperationContext } from '../operations.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { CyclePhase, PhaseResult, PhaseStatus, PhaseError } from '../cycle.ts';
@@ -184,12 +184,7 @@ export abstract class BaseCyclePhase {
   private resolveBudgetUsd(ctx: OperationContext, opts: BasePhaseOpts): number {
     if (typeof opts.budgetUsd === 'number') return opts.budgetUsd;
     const raw = (ctx.config as unknown as Record<string, unknown>)[this.budgetUsdKey];
-    if (typeof raw === 'number' && Number.isFinite(raw) && raw >= 0) return raw;
-    if (typeof raw === 'string') {
-      const parsed = Number.parseFloat(raw);
-      if (Number.isFinite(parsed) && parsed >= 0) return parsed;
-    }
-    return this.budgetUsdDefault;
+    return parseBudgetUsd(typeof raw === 'number' || typeof raw === 'string' ? raw : undefined, this.budgetUsdDefault);
   }
 
   /**
@@ -221,7 +216,12 @@ export abstract class BaseCyclePhase {
     // Budget meter construction. The default path reads config; tests inject.
     if (!opts.meter) {
       const budgetUsd = this.resolveBudgetUsd(ctx, opts);
-      this.meter = new BudgetMeter({ budgetUsd, phase: this.name });
+      this.meter = new BudgetMeter({
+        budgetUsd,
+        phase: this.name,
+        allowUnpriced: await loadAllowUnpriced(ctx.engine),
+        pricingOverrides: await loadPricingOverrides(ctx.engine),
+      });
     } else {
       this.meter = opts.meter;
     }

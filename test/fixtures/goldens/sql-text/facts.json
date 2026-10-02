@@ -1,0 +1,822 @@
+{
+  "golden": {
+    "domain": "facts",
+    "methods": {
+      "consolidateFact": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "number",
+              "number"
+            ],
+            "sql": "UPDATE facts SET consolidated_at = now(), consolidated_into = $1 WHERE id = $2",
+            "textSha256": "5c8b4c6c7afc63985fed2f2c94ec518cea0fa5a962cb73b8b1c9521e625f2224"
+          }
+        ]
+      },
+      "countUnconsolidatedFacts": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "array<string>"
+            ],
+            "sql": "SELECT COUNT(*)::int AS count FROM facts WHERE source_id = $1 AND consolidated_at IS NULL AND expired_at IS NULL AND (valid_until IS NULL OR valid_until > now()) AND source != ALL($2::text[])",
+            "textSha256": "3cd47e8d9f8fe89e72128a27558b20d282056a7ce0310887d7d20a66e2b5607a"
+          }
+        ]
+      },
+      "deleteFactsForPage": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "DELETE FROM facts WHERE source_id = $1 AND source_markdown_slug = $2",
+            "textSha256": "ad0a03d8037eae74ce57f587e17394174a05bf32062ef587649d31c99989d18c"
+          }
+        ],
+        "excludeSourcePrefixes+preserveExpiredLegacy": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "array<string>"
+            ],
+            "sql": "DELETE FROM facts WHERE source_id = $1 AND source_markdown_slug = $2 AND NOT (COALESCE(source, '') LIKE ANY($3)) AND NOT (row_num IS NULL AND expired_at IS NOT NULL)",
+            "textSha256": "de63611fe2d1aa6d73121e64b48318e5e701b7b84c99e07481aa0ade5710da7e"
+          }
+        ]
+      },
+      "discoverOntologyDimensions": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "null",
+              "null"
+            ],
+            "sql": "SELECT dimension, count(DISTINCT entity_slug)::int AS entities, count(*)::int AS observations FROM facts WHERE dimension IS NOT NULL AND expired_at IS NULL AND ($1::text IS NULL OR source_id = $2) GROUP BY dimension ORDER BY entities DESC, dimension",
+            "textSha256": "1271387ebe15e8d2b5da75ea333234e82e9a82ea233573b893689ccd535ead3d"
+          }
+        ],
+        "sourceIds": [
+          {
+            "lane": "pool",
+            "params": [
+              "array<string>"
+            ],
+            "sql": "SELECT dimension, count(DISTINCT entity_slug)::int AS entities, count(*)::int AS observations FROM facts WHERE dimension IS NOT NULL AND expired_at IS NULL AND source_id = ANY($1) GROUP BY dimension ORDER BY entities DESC, dimension",
+            "textSha256": "d7ec56b6ffe352b1bedf085e005e00385becac331ad3cb02e93891dfd0405a58"
+          }
+        ]
+      },
+      "expireFact": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "Date",
+              "null",
+              "number"
+            ],
+            "sql": "UPDATE facts SET expired_at = $1, superseded_by = COALESCE($2, superseded_by) WHERE id = $3 AND expired_at IS NULL",
+            "textSha256": "38221fd054ba68ba27987a96d101fc7b5b74a790b8b7c01dca3f2a8dd32c4629"
+          }
+        ],
+        "supersededBy": [
+          {
+            "lane": "pool",
+            "params": [
+              "Date",
+              "number",
+              "number"
+            ],
+            "sql": "UPDATE facts SET expired_at = $1, superseded_by = COALESCE($2, superseded_by) WHERE id = $3 AND expired_at IS NULL",
+            "textSha256": "38221fd054ba68ba27987a96d101fc7b5b74a790b8b7c01dca3f2a8dd32c4629"
+          }
+        ]
+      },
+      "findCandidateDuplicates": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "number"
+            ],
+            "sql": "SELECT * FROM facts WHERE source_id = $1 AND entity_slug = $2 AND expired_at IS NULL AND (valid_until IS NULL OR valid_until > now()) ORDER BY created_at DESC, id DESC LIMIT $3",
+            "textSha256": "c3a62723b69cce67dbb0f1b609b2271aa19c562f49faa95c0373565a92ccd0f1"
+          }
+        ],
+        "embedding": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "string",
+              "number",
+              "array<string>",
+              "number"
+            ],
+            "sql": "SELECT * FROM facts WHERE source_id = $1 AND entity_slug = $2 AND expired_at IS NULL AND (valid_until IS NULL OR valid_until > now()) AND embedding IS NOT NULL AND embedding_model=$3 AND embedded_text_hash=md5(fact) AND vector_dims(embedding)=$4 AND source != ALL($5::text[]) ORDER BY embedding <=> '[0.10000000149011612,0.20000000298023224,0.30000001192092896]'::vector LIMIT $6",
+            "textSha256": "a5243e480ca8e1db3524e9ba1e5d2075425dd5e2b4de15b33d3a78cf138a0e8c"
+          }
+        ]
+      },
+      "findOntologyConflicts": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "number",
+              "null",
+              "null"
+            ],
+            "sql": "WITH cur AS ( SELECT entity_slug, dimension, value, source_markdown_slug AS source, confidence, id AS fact_id FROM facts WHERE dimension IS NOT NULL AND expired_at IS NULL AND valid_until IS NULL AND (dim_status IS NULL OR dim_status = 'active') AND confidence >= $1 AND ($2::text IS NULL OR source_id = $3) ) SELECT entity_slug, dimension, json_agg(json_build_object('value', value, 'source', source, 'confidence', confidence, 'fact_id', fact_id)) AS values FROM cur GROUP BY entity_slug, dimension HAVING count(DISTINCT value) >= 2 AND count(DISTINCT source) >= 2 ORDER BY entity_slug, dimension",
+            "textSha256": "0fa36872be345c8a16b8d862ef3c94d292173b6a03a91c0094347682cd9859f2"
+          }
+        ],
+        "sourceIds+excludePrivate": [
+          {
+            "lane": "pool",
+            "params": [
+              "number",
+              "array<string>"
+            ],
+            "sql": "WITH cur AS ( SELECT entity_slug, dimension, value, source_markdown_slug AS source, confidence, id AS fact_id FROM facts WHERE dimension IS NOT NULL AND expired_at IS NULL AND valid_until IS NULL AND (dim_status IS NULL OR dim_status = 'active') AND confidence >= $1 AND source_id = ANY($2) AND NOT EXISTS (SELECT 1 FROM pages pp WHERE pp.source_id = facts.source_id AND pp.slug = facts.source_markdown_slug AND NOT ((COALESCE(pp.frontmatter->>'visibility', CASE WHEN (pp.type = 'atom' OR (pp.type = 'concept' AND pp.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private' AND NOT (CASE WHEN pp.type = 'atom' THEN EXISTS (SELECT 1 FROM pages derived_origin WHERE derived_origin.source_id = pp.source_id AND derived_origin.slug = pp.frontmatter->>'source_slug' AND derived_origin.frontmatter->>'visibility' = 'private') WHEN (pp.type = 'atom' OR (pp.type = 'concept' AND pp.frontmatter->>'synthesized_by' IS NOT NULL)) THEN EXISTS (SELECT 1 FROM links derived_input_link JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id WHERE derived_input_link.from_page_id = pp.id AND derived_input_link.link_source = 'concept-provenance' AND derived_input_link.link_type = 'synthesized_from' AND (COALESCE(derived_input.frontmatter->>'visibility', CASE WHEN derived_input.type = 'atom' THEN 'private' ELSE 'world' END) = 'private' OR EXISTS (SELECT 1 FROM pages derived_input_origin WHERE derived_input_origin.source_id = derived_input.source_id AND derived_input_origin.slug = derived_input.frontmatter->>'source_slug' AND derived_input_origin.frontmatter->>'visibility' = 'private'))) ELSE false END)))) ) SELECT entity_slug, dimension, json_agg(json_build_object('value', value, 'source', source, 'confidence', confidence, 'fact_id', fact_id)) AS values FROM cur GROUP BY entity_slug, dimension HAVING count(DISTINCT value) >= 2 AND count(DISTINCT source) >= 2 ORDER BY entity_slug, dimension",
+            "textSha256": "61485f1c8d0fa69a697de77b825fdcc27f42b98b0c2059153f7c5949f519c8d2"
+          }
+        ]
+      },
+      "findTrajectory": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "number"
+            ],
+            "sql": "SELECT id, valid_from, claim_metric, claim_value, claim_unit, claim_period, event_type, fact, source_session, source_markdown_slug, CASE WHEN embedding_model=(SELECT value FROM config WHERE key='embedding_model') AND embedded_text_hash=md5(fact) THEN embedding::text END AS embedding FROM facts WHERE source_id = $1 AND entity_slug = $2 AND expired_at IS NULL AND visibility = 'world' ORDER BY valid_from DESC, id DESC LIMIT $3",
+            "textSha256": "55ca2eb5d74f4f7566b4dd3dfd3d79654c944663074682b5784cae2231c78f8b"
+          }
+        ],
+        "event": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "number"
+            ],
+            "sql": "SELECT id, valid_from, claim_metric, claim_value, claim_unit, claim_period, event_type, fact, source_session, source_markdown_slug, CASE WHEN embedding_model=(SELECT value FROM config WHERE key='embedding_model') AND embedded_text_hash=md5(fact) THEN embedding::text END AS embedding FROM facts WHERE source_id = $1 AND entity_slug = $2 AND expired_at IS NULL AND visibility = 'world' AND event_type IS NOT NULL ORDER BY valid_from DESC, id DESC LIMIT $3",
+            "textSha256": "2d81a91a6a2c7cf11e8bdfdad66d5d64d567f3bed17f5fab1fbd70a12e3bb3d0"
+          }
+        ],
+        "sourceIds+metric+since+until": [
+          {
+            "lane": "pool",
+            "params": [
+              "array<string>",
+              "string",
+              "string",
+              "Date",
+              "Date",
+              "number"
+            ],
+            "sql": "SELECT id, valid_from, claim_metric, claim_value, claim_unit, claim_period, event_type, fact, source_session, source_markdown_slug, CASE WHEN embedding_model=(SELECT value FROM config WHERE key='embedding_model') AND embedded_text_hash=md5(fact) THEN embedding::text END AS embedding FROM facts WHERE source_id = ANY($1::text[]) AND entity_slug = $2 AND expired_at IS NULL AND claim_metric = $3 AND claim_metric IS NOT NULL AND valid_from >= $4 AND valid_from <= $5 ORDER BY valid_from DESC, id DESC LIMIT $6",
+            "textSha256": "86bc8fa6941f7648a62d9d76aba8559ea7ab445f4f521f94c154ba915455f83f"
+          }
+        ]
+      },
+      "getFactsHealth": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT COUNT(*) FILTER (WHERE expired_at IS NULL AND (valid_until IS NULL OR valid_until > now())) AS total_active, COUNT(*) FILTER (WHERE expired_at IS NULL AND (valid_until IS NULL OR valid_until > now()) AND created_at > now() - interval '24 hours') AS total_today, COUNT(*) FILTER (WHERE expired_at IS NULL AND (valid_until IS NULL OR valid_until > now()) AND created_at > now() - interval '7 days') AS total_week, COUNT(*) FILTER (WHERE expired_at IS NOT NULL OR (valid_until IS NOT NULL AND valid_until <= now())) AS total_expired, COUNT(*) FILTER (WHERE consolidated_at IS NOT NULL) AS total_consolidated FROM facts WHERE source_id = $1",
+            "textSha256": "fac568056aeac15f4effb7bd1179d1badeffdf99ad80ee9fb4ad2e31a045672a"
+          },
+          {
+            "lane": "pool",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT entity_slug, COUNT(*) AS count FROM facts WHERE source_id = $1 AND expired_at IS NULL AND (valid_until IS NULL OR valid_until > now()) AND entity_slug IS NOT NULL GROUP BY entity_slug ORDER BY count DESC, entity_slug ASC LIMIT 5",
+            "textSha256": "56ace3adda95f31651b31273eada0bfb579bc1f3e21bfbf5488f69e3cac9d6e6"
+          }
+        ]
+      },
+      "getOntology": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "null",
+              "null",
+              "null",
+              "null",
+              "number",
+              "boolean"
+            ],
+            "sql": "SELECT DISTINCT ON (dimension) dimension, value, confidence, source_markdown_slug AS source, valid_from, valid_until AS valid_to, COALESCE(dim_status, 'active') AS status, id AS fact_id FROM facts WHERE entity_slug = $1 AND dimension IS NOT NULL AND expired_at IS NULL AND ($2::text IS NULL OR source_id = $3) AND COALESCE(valid_from, '-infinity'::timestamptz) <= COALESCE($4::timestamptz, now()) AND COALESCE(valid_until, 'infinity'::timestamptz) > COALESCE($5::timestamptz, now()) AND confidence >= $6 AND ($7::boolean OR dim_status IS NULL OR dim_status = 'active') ORDER BY dimension, valid_from DESC NULLS LAST, confidence DESC, id DESC",
+            "textSha256": "34084e478b807600e07f3aa6927ca19ac466e57d70fee3c09eef553b86c6b73d"
+          }
+        ],
+        "sourceIds+excludePrivate": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "array<string>",
+              "string",
+              "string",
+              "number",
+              "boolean"
+            ],
+            "sql": "SELECT DISTINCT ON (dimension) dimension, value, confidence, source_markdown_slug AS source, valid_from, valid_until AS valid_to, COALESCE(dim_status, 'active') AS status, id AS fact_id FROM facts WHERE entity_slug = $1 AND dimension IS NOT NULL AND expired_at IS NULL AND source_id = ANY($2) AND NOT EXISTS (SELECT 1 FROM pages pp WHERE pp.source_id = facts.source_id AND pp.slug = facts.source_markdown_slug AND NOT ((COALESCE(pp.frontmatter->>'visibility', CASE WHEN (pp.type = 'atom' OR (pp.type = 'concept' AND pp.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private' AND NOT (CASE WHEN pp.type = 'atom' THEN EXISTS (SELECT 1 FROM pages derived_origin WHERE derived_origin.source_id = pp.source_id AND derived_origin.slug = pp.frontmatter->>'source_slug' AND derived_origin.frontmatter->>'visibility' = 'private') WHEN (pp.type = 'atom' OR (pp.type = 'concept' AND pp.frontmatter->>'synthesized_by' IS NOT NULL)) THEN EXISTS (SELECT 1 FROM links derived_input_link JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id WHERE derived_input_link.from_page_id = pp.id AND derived_input_link.link_source = 'concept-provenance' AND derived_input_link.link_type = 'synthesized_from' AND (COALESCE(derived_input.frontmatter->>'visibility', CASE WHEN derived_input.type = 'atom' THEN 'private' ELSE 'world' END) = 'private' OR EXISTS (SELECT 1 FROM pages derived_input_origin WHERE derived_input_origin.source_id = derived_input.source_id AND derived_input_origin.slug = derived_input.frontmatter->>'source_slug' AND derived_input_origin.frontmatter->>'visibility' = 'private'))) ELSE false END)))) AND COALESCE(valid_from, '-infinity'::timestamptz) <= COALESCE($3::timestamptz, now()) AND COALESCE(valid_until, 'infinity'::timestamptz) > COALESCE($4::timestamptz, now()) AND confidence >= $5 AND ($6::boolean OR dim_status IS NULL OR dim_status = 'active') ORDER BY dimension, valid_from DESC NULLS LAST, confidence DESC, id DESC",
+            "textSha256": "8ea858aeae23151b6c853aac64d174230f3c358e9e9d0d11ccec14dedb3412d2"
+          }
+        ]
+      },
+      "insertFact": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [],
+            "sql": "SELECT format_type(a.atttypid, a.atttypmod) AS formatted FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relname = 'facts' AND a.attname = 'embedding' AND NOT a.attisdropped",
+            "textSha256": "9cea71d6d63540f4b7abfee9f1d378b2f67858d4f174299ebf3776835de960bf"
+          },
+          {
+            "event": "begin",
+            "lane": "tx"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT pg_advisory_xact_lock(hashtextextended($1 || ':' || $2, 0))",
+            "textSha256": "e41369bd94a7dc5af7fd9488fc89d17a80afb964dc4e5bcb73cdd05fdce6cbb2"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "null",
+              "Date",
+              "null",
+              "string",
+              "null",
+              "number",
+              "null",
+              "null",
+              "null",
+              "null",
+              "null",
+              "null",
+              "null",
+              "null"
+            ],
+            "sql": "INSERT INTO facts ( source_id, entity_slug, fact, kind, visibility, notability, context, valid_from, valid_until, source, source_session, confidence, embedding, embedded_at, embedding_model, embedded_text_hash, claim_metric, claim_value, claim_unit, claim_period ) VALUES ( $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20 ) RETURNING id",
+            "textSha256": "bcbde84a7eaf1c6e0fa25e98b604e7613b8ac6b048ac4aabe6d072848bed7f45"
+          },
+          {
+            "event": "commit",
+            "lane": "tx"
+          }
+        ],
+        "noEntity": [
+          {
+            "lane": "pool",
+            "params": [],
+            "sql": "SELECT format_type(a.atttypid, a.atttypmod) AS formatted FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relname = 'facts' AND a.attname = 'embedding' AND NOT a.attisdropped",
+            "textSha256": "9cea71d6d63540f4b7abfee9f1d378b2f67858d4f174299ebf3776835de960bf"
+          },
+          {
+            "event": "begin",
+            "lane": "tx"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "null",
+              "string",
+              "string",
+              "string",
+              "string",
+              "null",
+              "Date",
+              "null",
+              "string",
+              "null",
+              "number",
+              "null",
+              "null",
+              "null",
+              "null",
+              "null",
+              "null",
+              "null",
+              "null"
+            ],
+            "sql": "INSERT INTO facts ( source_id, entity_slug, fact, kind, visibility, notability, context, valid_from, valid_until, source, source_session, confidence, embedding, embedded_at, embedding_model, embedded_text_hash, claim_metric, claim_value, claim_unit, claim_period ) VALUES ( $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20 ) RETURNING id",
+            "textSha256": "bcbde84a7eaf1c6e0fa25e98b604e7613b8ac6b048ac4aabe6d072848bed7f45"
+          },
+          {
+            "event": "commit",
+            "lane": "tx"
+          }
+        ],
+        "supersedeId+embedding": [
+          {
+            "lane": "pool",
+            "params": [],
+            "sql": "SELECT format_type(a.atttypid, a.atttypmod) AS formatted FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relname = 'facts' AND a.attname = 'embedding' AND NOT a.attisdropped",
+            "textSha256": "9cea71d6d63540f4b7abfee9f1d378b2f67858d4f174299ebf3776835de960bf"
+          },
+          {
+            "event": "begin",
+            "lane": "tx"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT pg_advisory_xact_lock(hashtextextended($1 || ':' || $2, 0))",
+            "textSha256": "e41369bd94a7dc5af7fd9488fc89d17a80afb964dc4e5bcb73cdd05fdce6cbb2"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "null",
+              "Date",
+              "null",
+              "string",
+              "null",
+              "number",
+              "Date",
+              "string",
+              "string",
+              "null",
+              "null",
+              "null",
+              "null"
+            ],
+            "sql": "INSERT INTO facts ( source_id, entity_slug, fact, kind, visibility, notability, context, valid_from, valid_until, source, source_session, confidence, embedding, embedded_at, embedding_model, embedded_text_hash, claim_metric, claim_value, claim_unit, claim_period ) VALUES ( $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, '[0.10000000149011612,0.20000000298023224,0.30000001192092896]'::vector, $13, $14, md5($15), $16, $17, $18, $19 ) RETURNING id",
+            "textSha256": "65e8d0aeab906bbcadd438a0bae75656a00a218f91873436d8e7b81f659ffe88"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "number",
+              "number"
+            ],
+            "sql": "UPDATE facts SET expired_at = now(), superseded_by = $1 WHERE id = $2 AND expired_at IS NULL",
+            "textSha256": "fc363c8ea84c55f67cf320921cec09fd141e9392b5c8dcad59afaec778dc5b1f"
+          },
+          {
+            "event": "commit",
+            "lane": "tx"
+          }
+        ]
+      },
+      "insertFacts": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [],
+            "sql": "SELECT format_type(a.atttypid, a.atttypmod) AS formatted FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relname = 'facts' AND a.attname = 'embedding' AND NOT a.attisdropped",
+            "textSha256": "9cea71d6d63540f4b7abfee9f1d378b2f67858d4f174299ebf3776835de960bf"
+          },
+          {
+            "event": "begin",
+            "lane": "tx"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "null",
+              "Date",
+              "null",
+              "null",
+              "string",
+              "null",
+              "number",
+              "null",
+              "null",
+              "null",
+              "null",
+              "number",
+              "string",
+              "null",
+              "null",
+              "null",
+              "null",
+              "null"
+            ],
+            "sql": "INSERT INTO facts ( source_id, entity_slug, fact, kind, visibility, notability, context, valid_from, valid_until, expired_at, source, source_session, confidence, embedding, embedded_at, embedding_model, embedded_text_hash, row_num, source_markdown_slug, claim_metric, claim_value, claim_unit, claim_period, event_type ) VALUES ( $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24 ) ON CONFLICT (source_id, source_markdown_slug, row_num) WHERE row_num IS NOT NULL DO NOTHING RETURNING id",
+            "textSha256": "60a6c39082f072b78eceacaae96c2912c91e24c8c68f379547a6612166f86a3d"
+          },
+          {
+            "event": "commit",
+            "lane": "tx"
+          }
+        ],
+        "deleteForPageFirst": [
+          {
+            "lane": "pool",
+            "params": [],
+            "sql": "SELECT format_type(a.atttypid, a.atttypmod) AS formatted FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relname = 'facts' AND a.attname = 'embedding' AND NOT a.attisdropped",
+            "textSha256": "9cea71d6d63540f4b7abfee9f1d378b2f67858d4f174299ebf3776835de960bf"
+          },
+          {
+            "event": "begin",
+            "lane": "tx"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string",
+              "array<string>"
+            ],
+            "sql": "DELETE FROM facts WHERE source_id = $1 AND source_markdown_slug = $2 AND NOT (COALESCE(source, '') LIKE ANY($3)) AND NOT (row_num IS NULL AND expired_at IS NOT NULL)",
+            "textSha256": "d8bac29d63d7b45be173318debf41fc45c13781f6d72c027a277eb494c004021"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "null",
+              "Date",
+              "null",
+              "null",
+              "string",
+              "null",
+              "number",
+              "null",
+              "null",
+              "null",
+              "null",
+              "number",
+              "string",
+              "null",
+              "null",
+              "null",
+              "null",
+              "null"
+            ],
+            "sql": "INSERT INTO facts ( source_id, entity_slug, fact, kind, visibility, notability, context, valid_from, valid_until, expired_at, source, source_session, confidence, embedding, embedded_at, embedding_model, embedded_text_hash, row_num, source_markdown_slug, claim_metric, claim_value, claim_unit, claim_period, event_type ) VALUES ( $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24 ) ON CONFLICT (source_id, source_markdown_slug, row_num) WHERE row_num IS NOT NULL DO NOTHING RETURNING id",
+            "textSha256": "60a6c39082f072b78eceacaae96c2912c91e24c8c68f379547a6612166f86a3d"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "null",
+              "Date",
+              "null",
+              "null",
+              "string",
+              "null",
+              "number",
+              "Date",
+              "string",
+              "string",
+              "number",
+              "string",
+              "null",
+              "null",
+              "null",
+              "null",
+              "null"
+            ],
+            "sql": "INSERT INTO facts ( source_id, entity_slug, fact, kind, visibility, notability, context, valid_from, valid_until, expired_at, source, source_session, confidence, embedding, embedded_at, embedding_model, embedded_text_hash, row_num, source_markdown_slug, claim_metric, claim_value, claim_unit, claim_period, event_type ) VALUES ( $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, '[0.10000000149011612,0.20000000298023224,0.30000001192092896]'::vector, $14, $15, md5($16), $17, $18, $19, $20, $21, $22, $23 ) ON CONFLICT (source_id, source_markdown_slug, row_num) WHERE row_num IS NOT NULL DO NOTHING RETURNING id",
+            "textSha256": "c1dad491e606a42126c8a20c14f2e90d7fba86f90aff23b5b82a4885361d03d9"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string",
+              "number"
+            ],
+            "sql": "SELECT f.id, f.expired_at, n.row_num AS next_row FROM facts f LEFT JOIN facts n ON n.id = f.superseded_by WHERE f.source_id = $1 AND f.source_markdown_slug = $2 AND f.row_num = $3 LIMIT 1",
+            "textSha256": "0d0262b3ffb96f1eee1b39fe4146f4bebddcd648d82fc082fe593ca9bd950d94"
+          },
+          {
+            "event": "commit",
+            "lane": "tx"
+          }
+        ]
+      },
+      "listFactsByEntity": {
+        "allFilters": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "array<string>",
+              "array<string>",
+              "array<string>",
+              "string",
+              "number",
+              "number"
+            ],
+            "sql": "SELECT * FROM facts WHERE source_id = $1 AND entity_slug = $2 AND consolidated_at IS NULL AND kind = ANY($3::text[]) AND visibility = ANY($4::text[]) AND source != ALL($5::text[]) AND fact ILIKE $6 ESCAPE '\\' ORDER BY valid_from DESC, id DESC LIMIT $7 OFFSET $8",
+            "textSha256": "be494a6935e25722d68ceaee7a2d67aa12a45b886a5154165e73c8be1f06e461"
+          }
+        ],
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "number",
+              "number"
+            ],
+            "sql": "SELECT * FROM facts WHERE source_id = $1 AND entity_slug = $2 AND expired_at IS NULL AND (valid_until IS NULL OR valid_until > now()) ORDER BY valid_from DESC, id DESC LIMIT $3 OFFSET $4",
+            "textSha256": "f480c85f5b2b56d825347ae4812946eb71fcb8730bb4eb23655c538dab8e0b2e"
+          }
+        ]
+      },
+      "listFactsBySession": {
+        "allFilters": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "array<string>",
+              "array<string>",
+              "array<string>",
+              "string",
+              "number",
+              "number"
+            ],
+            "sql": "SELECT * FROM facts WHERE source_id = $1 AND source_session = $2 AND consolidated_at IS NULL AND kind = ANY($3::text[]) AND visibility = ANY($4::text[]) AND source != ALL($5::text[]) AND fact ILIKE $6 ESCAPE '\\' ORDER BY created_at DESC, id DESC LIMIT $7 OFFSET $8",
+            "textSha256": "869e7e5ad9aeab19b81e704f439f4043c269defe2fbcb30e57b23c37cea8fded"
+          }
+        ],
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "number",
+              "number"
+            ],
+            "sql": "SELECT * FROM facts WHERE source_id = $1 AND source_session = $2 AND expired_at IS NULL AND (valid_until IS NULL OR valid_until > now()) ORDER BY created_at DESC, id DESC LIMIT $3 OFFSET $4",
+            "textSha256": "16af231e53b7564dc3e84fe282ab684b8aa5ab3135ac6b602943d26f00fd96ba"
+          }
+        ]
+      },
+      "listFactsSince": {
+        "allFilters": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "Date",
+              "string",
+              "string",
+              "array<string>",
+              "array<string>",
+              "array<string>",
+              "string",
+              "number",
+              "number"
+            ],
+            "sql": "SELECT * FROM facts WHERE source_id = $1 AND COALESCE(valid_from, created_at) >= $2 AND entity_slug = $3 AND source_session = $4 AND consolidated_at IS NULL AND kind = ANY($5::text[]) AND visibility = ANY($6::text[]) AND source != ALL($7::text[]) AND fact ILIKE $8 ESCAPE '\\' ORDER BY COALESCE(valid_from, created_at) DESC, id DESC LIMIT $9 OFFSET $10",
+            "textSha256": "a635199e1e8bc1742eaa0209a8bc5b296098640ab38aa287635fe9195fa696ae"
+          }
+        ],
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "Date",
+              "number",
+              "number"
+            ],
+            "sql": "SELECT * FROM facts WHERE source_id = $1 AND created_at >= $2 AND expired_at IS NULL AND (valid_until IS NULL OR valid_until > now()) ORDER BY created_at DESC, id DESC LIMIT $3 OFFSET $4",
+            "textSha256": "3f0a5fa0e5e1a4338c4d9a10f70015aef0d1d34504c0161ce43eae3a104f6beb"
+          }
+        ]
+      },
+      "listSupersessions": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "number"
+            ],
+            "sql": "SELECT * FROM facts WHERE source_id = $1 AND superseded_by IS NOT NULL ORDER BY COALESCE(expired_at, valid_until) DESC, id DESC LIMIT $2",
+            "textSha256": "c9884eab330821c3b6b9a84fd1ae17e215ce8911ba3945e954b6918172b22d9c"
+          }
+        ],
+        "since+visibility": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "Date",
+              "array<string>",
+              "number"
+            ],
+            "sql": "SELECT * FROM facts WHERE source_id = $1 AND superseded_by IS NOT NULL AND COALESCE(expired_at, valid_until) >= $2 AND visibility = ANY($3::text[]) ORDER BY COALESCE(expired_at, valid_until) DESC, id DESC LIMIT $4",
+            "textSha256": "5df970c375dc85b29e4d5fca79616dc18bbd6090717d96be62472c7fa38177ed"
+          }
+        ]
+      },
+      "mergeOntologyFact": {
+        "corroborate": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "string"
+            ],
+            "sql": "SELECT id, value_hash, valid_from FROM facts WHERE source_id = $1 AND entity_slug = $2 AND dimension = $3 AND expired_at IS NULL AND valid_until IS NULL AND (dim_status IS NULL OR dim_status = 'active') ORDER BY valid_from DESC NULLS LAST, confidence DESC, id DESC LIMIT 1",
+            "textSha256": "544aef14bce5c7faa5738cf7462c2d860cdbc4227a890b12080729d99682a63f"
+          },
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "null"
+            ],
+            "sql": "SELECT 1 FROM facts WHERE source_id = $1 AND entity_slug = $2 AND dimension = $3 AND value_hash = $4 AND source_markdown_slug = $5 AND COALESCE(valid_from, '-infinity'::timestamptz) >= COALESCE($6::timestamptz, '-infinity'::timestamptz) LIMIT 1",
+            "textSha256": "c0c2eba9c475159185bad82aa9f69dc50e886a302bfcd48a731bc9c928529996"
+          },
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "number",
+              "string",
+              "string",
+              "null",
+              "null",
+              "number"
+            ],
+            "sql": "INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, dimension, value, value_hash, dim_status, confidence, source, source_markdown_slug, valid_from, valid_until, expired_at, consolidated_into) VALUES ($1, $2, $3, 'fact', $4, $5, $6, $7, $8, $9, $10, $11, COALESCE($12::timestamptz, now()), $13, now(), $14) ON CONFLICT (source_id, entity_slug, dimension, value_hash, source_markdown_slug, valid_from) WHERE dimension IS NOT NULL DO NOTHING RETURNING id",
+            "textSha256": "eee69b1f24c9d807286751d465e4c3554a02c791c005f44910b9051ff154b27e"
+          }
+        ],
+        "insert": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "string"
+            ],
+            "sql": "SELECT id, value_hash, valid_from FROM facts WHERE source_id = $1 AND entity_slug = $2 AND dimension = $3 AND expired_at IS NULL AND valid_until IS NULL AND (dim_status IS NULL OR dim_status = 'active') ORDER BY valid_from DESC NULLS LAST, confidence DESC, id DESC LIMIT 1",
+            "textSha256": "544aef14bce5c7faa5738cf7462c2d860cdbc4227a890b12080729d99682a63f"
+          },
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "number",
+              "string",
+              "string",
+              "null",
+              "null"
+            ],
+            "sql": "INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, dimension, value, value_hash, dim_status, confidence, source, source_markdown_slug, valid_from, valid_until) VALUES ($1, $2, $3, 'fact', $4, $5, $6, $7, $8, $9, $10, $11, COALESCE($12::timestamptz, now()), $13) ON CONFLICT (source_id, entity_slug, dimension, value_hash, source_markdown_slug, valid_from) WHERE dimension IS NOT NULL DO NOTHING RETURNING id",
+            "textSha256": "e4dc11b7834659b03a715161d988838ae5f07aa3cdaa8bb1982a4545085ab9d4"
+          }
+        ],
+        "supersede": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "string"
+            ],
+            "sql": "SELECT id, value_hash, valid_from FROM facts WHERE source_id = $1 AND entity_slug = $2 AND dimension = $3 AND expired_at IS NULL AND valid_until IS NULL AND (dim_status IS NULL OR dim_status = 'active') ORDER BY valid_from DESC NULLS LAST, confidence DESC, id DESC LIMIT 1",
+            "textSha256": "544aef14bce5c7faa5738cf7462c2d860cdbc4227a890b12080729d99682a63f"
+          },
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "number",
+              "string",
+              "string",
+              "null",
+              "null"
+            ],
+            "sql": "INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, dimension, value, value_hash, dim_status, confidence, source, source_markdown_slug, valid_from, valid_until) VALUES ($1, $2, $3, 'fact', $4, $5, $6, $7, $8, $9, $10, $11, COALESCE($12::timestamptz, now()), $13) ON CONFLICT (source_id, entity_slug, dimension, value_hash, source_markdown_slug, valid_from) WHERE dimension IS NOT NULL DO NOTHING RETURNING id",
+            "textSha256": "e4dc11b7834659b03a715161d988838ae5f07aa3cdaa8bb1982a4545085ab9d4"
+          },
+          {
+            "lane": "pool",
+            "params": [
+              "null",
+              "number",
+              "number"
+            ],
+            "sql": "UPDATE facts SET valid_until = COALESCE($1::timestamptz, now()), superseded_by = $2 WHERE id = $3 AND valid_until IS NULL",
+            "textSha256": "cbb0942b8d8cc9ff5e4b86319c2b55b5c652dc2663d25c4bd9bcccc1bcf9e09c"
+          }
+        ]
+      },
+      "migrateFactsToCanonical": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string"
+            ],
+            "sql": "UPDATE facts SET entity_slug = $1, source_markdown_slug = $2, row_num = facts.row_num + COALESCE(( SELECT MAX(f2.row_num) FROM facts f2 WHERE f2.source_id = $3 AND f2.source_markdown_slug = $4 AND f2.row_num IS NOT NULL ), 0) WHERE source_id = $5 AND source_markdown_slug = $6 AND expired_at IS NULL",
+            "textSha256": "0fa43bea9cb63eff28077cd4c1bb3d40eb9b6daed0563f67cbf69eb025862b5f"
+          }
+        ]
+      }
+    }
+  },
+  "normalizer": "sql-text-v1"
+}

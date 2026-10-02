@@ -13,7 +13,7 @@ import type { PreparedContentImport } from './prepared-import.ts';
 import type { PreparedMutation } from './coordinator.ts';
 import type { WriteRequest } from './model.ts';
 import { authorizeStoredRequest } from './authority.ts';
-import { prepareCanonicalProjections } from './canonical-projections.ts';
+import { materializeTimeline, prepareCanonicalProjections } from './canonical-projections.ts';
 import { preserveProtectedTakes } from './protected-takes.ts';
 import { digest, sha256 } from './digest.ts';
 import { mergeReconcile, reconcileCanonical, type ReconcileDecision } from './reconcile-merge.ts';
@@ -39,10 +39,14 @@ export async function prepareReconcileResult(engine: BrainEngine, state: Reconci
   for (const key of ['compiled_truth', 'timeline'] as const) {
     result[key] = preservePrivateFacts(preserveProtectedTakes(result[key], state.snapshot.page[key] ?? ''), state.snapshot.page[key] ?? '');
   }
+  // #5567: reconcile renders from the merged database state; an operator-approved
+  // body decision edits the file side, every other merge preserves history.
+  const writer = decisions.some(d => d.path === '/timeline' || d.path === '/compiled_truth') ? 'editing' : 'preserving';
+  result.timeline = (await materializeTimeline(engine, result, state.pins.slug, state.snapshot, writer)).timeline;
   const content = serializePageToMarkdown({ ...state.snapshot.page, ...result }, result.tags);
   let ready: PreparedContentImport | undefined;
   const imported = await importFromContent(engine, state.pins.slug, content, {
-    sourceId: state.pins.source_id, sourcePath: state.snapshot.page.source_path ?? undefined,
+    sourceId: state.pins.source_id, sourcePath: state.snapshot.page.source_path ?? state.originSourcePath ?? undefined,
     filename: basename(state.path).replace(/\.mdx?$/i, ''), noEmbed: true, remote: false, allowEmptyOverwrite: true,
     prepareFrontmatter: page => stabilizeSafetyAssessments(page.frontmatter, state.snapshot.page.frontmatter, state.pins.assessment_at),
     prepare: async prepared => { ready = prepared; return prepared.result; },
@@ -50,7 +54,7 @@ export async function prepareReconcileResult(engine: BrainEngine, state: Reconci
   if (!ready || ready.slug !== state.pins.slug) throw new OperationError('invalid_params', imported.error ?? 'Reconciliation cannot change page identity or deduplicate to another page.');
   if (ready.observedRevision !== state.snapshot.revision) staleReconcile('revision changed during policy assessment');
   const resolved = reconcileCanonical(ready.parsedPage, [...new Set([...state.snapshot.tags, ...ready.parsedPage.tags])]);
-  const project = prepareCanonicalProjections(resolved, state.pins.slug, state.pins.source_id);
+  const project = await prepareCanonicalProjections(engine, resolved, state.pins.slug, state.pins.source_id, state.snapshot, writer);
   return { ...merged, result: resolved, ready, project };
 }
 
@@ -75,14 +79,23 @@ export async function prepareReconcileMutation(engine: BrainEngine, row: WriteRe
   return {
     observedRevision: state.snapshot.revision,
     file: { path: state.path, root: state.root, content, expectedBeforeHash: state.pins.raw_file_hash },
-    noop: ready.noop && sha256(content) === state.pins.raw_file_hash,
+    // A database-only page matched by its slug path always records that file as its origin.
+    noop: ready.noop && sha256(content) === state.pins.raw_file_hash && state.origin === 'recorded',
     validate: async tx => {
       await authorizeStoredRequest(tx, row, true);
       assertReconcilePins(artifact.preconditions, (await readReconcileState(tx, row.source_id, row.slug, artifact.preconditions.assessment_at)).pins);
       verifyReconcileBackup(reference, artifact);
+      await ready.validate(tx);
     },
     apply: async tx => {
       await ready.apply(tx);
+      if (state.originSourcePath) {
+        await tx.executeRaw(`UPDATE pages SET source_path=$3 WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL
+          AND source_path IS NULL`, [row.source_id, row.slug, state.originSourcePath]);
+        // The page now has a canonical origin: drop the #5254 database-only classification.
+        await tx.executeRaw(`UPDATE pages SET database_only_reason=NULL WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL
+          AND database_only_reason='unbound_source' AND source_path IS NOT NULL`, [row.source_id, row.slug]);
+      }
       if (!ready.noop) { await prepared.project!(tx); await sealPageTextProjection(tx, row.slug, row.source_id); }
       const final = await tx.readPageSnapshot(row.slug, { sourceId: row.source_id });
       const scanStateTransferred = final ? await transferLegacyAtomPageState(tx, state.snapshot, final) : false;

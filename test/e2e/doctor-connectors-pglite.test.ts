@@ -48,7 +48,7 @@ describe('connectorsHealthCheck', () => {
   test('credential present, manual lane (auto_sync off), fresh → ok (never nags on staleness)', async () => {
     saveCred('2026-08-25T00:00:00.000Z');
     // auto_sync unset, last_sync_at ancient → still OK because manual lane isn't gated on staleness.
-    await engine.setConfig(lastSyncAtKey('chatgpt'), '2000-01-01T00:00:00.000Z');
+    await engine.setConfig(lastSyncAtKey('chatgpt', 'default'), '2000-01-01T00:00:00.000Z');
     const c = await connectorsHealthCheck(engine);
     expect(c.status).toBe('ok');
   });
@@ -71,7 +71,7 @@ describe('connectorsHealthCheck', () => {
   test('auto_sync on + stale last_sync → warn: stalled', async () => {
     saveCred('2026-08-25T00:00:00.000Z');
     await engine.setConfig(autoSyncKey('chatgpt'), 'true');
-    await engine.setConfig(lastSyncAtKey('chatgpt'), '2000-01-01T00:00:00.000Z');
+    await engine.setConfig(lastSyncAtKey('chatgpt', 'default'), '2000-01-01T00:00:00.000Z');
     const c = await connectorsHealthCheck(engine);
     expect(c.status).toBe('warn');
     expect(c.message).toMatch(/stall/i);

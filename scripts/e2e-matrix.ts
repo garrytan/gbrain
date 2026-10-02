@@ -5,11 +5,22 @@ import { realpathSync, statSync } from "node:fs";
 import { resolve, relative, isAbsolute } from "node:path";
 import { loadWeights, partition, type WeightMap } from "./sharding.ts";
 
+// PR owner of the reconciliation crash suites is persistence-validation.yml
+// (called from test.yml on every PR; postgres x Bun 1.4.0/1.4.2; crash
+// manifests uploaded). Nightly full-corpus E2E still runs them.
+export const PERSISTENCE_VALIDATION_OWNED = new Set([
+  'test/e2e/reconcile-crash.test.ts',
+  'test/e2e/reconcile-crash-unactivated.test.ts',
+]);
+export function exclusionNotice(file: string): string {
+  return PERSISTENCE_VALIDATION_OWNED.has(file)
+    ? `excluded: ${file} (owned by persistence-validation.yml)`
+    : `excluded (named-job / live-key lane): ${file}`;
+}
 export const E2E_EXCLUSIONS = new Set([
   'test/e2e/op-checkpoint-jsonb-parity.test.ts',
   'test/e2e/jsonb-roundtrip.test.ts',
   'test/e2e/mechanical.test.ts',
-  'test/e2e/mcp.test.ts',
   'test/e2e/job-isolation.test.ts',
   'test/e2e/sync-reconcile-postgres.test.ts',
   'test/e2e/engine-parity.test.ts',
@@ -20,6 +31,7 @@ export const E2E_EXCLUSIONS = new Set([
   'test/e2e/skills.test.ts',
   'test/e2e/voyage-rerank-live.test.ts',
   'test/e2e/voyage-multimodal.test.ts',
+  ...PERSISTENCE_VALIDATION_OWNED,
 ]);
 export interface E2ERow { shard: number; files: string[]; empty: boolean }
 function validatePath(file: unknown): asserts file is string {
@@ -32,7 +44,7 @@ export function prepareMatrix(files: string[], weights: WeightMap): { include: E
   if (new Set(files).size !== files.length) throw new Error("duplicate selected E2E file");
   const selected = files.filter(file => {
     if (!E2E_EXCLUSIONS.has(file)) return true;
-    console.error(`excluded (named-job / live-key lane): ${file}`);
+    console.error(exclusionNotice(file));
     return false;
   });
   if (!selected.length) return { include: [{ shard: 1, files: [], empty: true }] };

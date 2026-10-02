@@ -1,9 +1,10 @@
 import { describe, test, expect, beforeEach } from 'bun:test';
-import { mkdtempSync, rmSync, readFileSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { mkdtempSync, rmSync, readFileSync, existsSync, readdirSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { BudgetMeter, _resetBudgetMeterWarningsForTest, ANTHROPIC_PRICING } from '../src/core/cycle/budget-meter.ts';
 import { estimateMaxCostUsd } from '../src/core/anthropic-pricing.ts';
+import { parsePricingOverrides } from '../src/core/budget/budget-tracker.ts';
 
 let tmpDir: string;
 let auditPath: string;
@@ -45,20 +46,24 @@ describe('BudgetMeter', () => {
     expect(r2.reason).toContain('BUDGET_EXHAUSTED');
   });
 
-  test('budget=0 disables the gate (cycle runs unbounded)', () => {
-    const meter = new BudgetMeter({ budgetUsd: 0, phase: 'drift', auditPath });
+  test('budget=0 spends nothing; Infinity is the explicit no-cap value (C-16)', () => {
+    const zero = new BudgetMeter({ budgetUsd: 0, phase: 'drift', auditPath });
+    expect(zero.check({ modelId: 'claude-opus-4-7', estimatedInputTokens: 100_000, maxOutputTokens: 100_000, label: 'huge' }).allowed).toBe(false);
+    const meter = new BudgetMeter({ budgetUsd: Infinity, phase: 'drift', auditPath });
     const r = meter.check({ modelId: 'claude-opus-4-7', estimatedInputTokens: 100_000, maxOutputTokens: 100_000, label: 'huge' });
     expect(r.allowed).toBe(true);
   });
 
-  test('non-Anthropic model bypasses gate with warn-once + ledger entry', () => {
+  test('an unpriced model is metered at the fallback rate with warn-once + ledger entry (C-16)', () => {
     const meter = new BudgetMeter({ budgetUsd: 0.001, phase: 'auto_think', auditPath });
     const r1 = meter.check({ modelId: 'gemini-3-pro', estimatedInputTokens: 1000, maxOutputTokens: 1000, label: 'gem1' });
     const r2 = meter.check({ modelId: 'gemini-3-pro', estimatedInputTokens: 1000, maxOutputTokens: 1000, label: 'gem2' });
-    expect(r1.allowed).toBe(true);
+    expect(r1.allowed).toBe(false);
     expect(r1.unpriced).toBe(true);
-    expect(r2.allowed).toBe(true);
+    expect(r2.allowed).toBe(false);
     expect(meter.unpricedSubmits).toBe(2);
+    const bypass = new BudgetMeter({ budgetUsd: 0.001, phase: 'auto_think', auditPath, allowUnpriced: true });
+    expect(bypass.check({ modelId: 'gemini-3-pro', estimatedInputTokens: 1000, maxOutputTokens: 1000, label: 'gem3' }).allowed).toBe(true);
   });
 
   test('a canonical-priced non-Anthropic model is gated, not waved through', () => {
@@ -79,16 +84,16 @@ describe('BudgetMeter', () => {
     expect(readLedger().at(-1)!.event).toBe('submit_denied');
   });
 
-  test('a model absent from the canonical table keeps the documented bypass', () => {
-    // Unchanged behaviour: gemini-3-pro is in neither table. Whether these
-    // should also be gated (via a conservative fallback rate, as
-    // synthesize-concepts and skillopt/preflight do) is a policy call and is
-    // deliberately not decided here.
+  test('a model absent from the canonical table is gated at a conservative fallback rate (C-16)', () => {
+    // gemini-3-pro is in neither table. Like synthesize-concepts and
+    // skillopt/preflight, it is metered at Sonnet-tier rates;
+    // dream.budget.allow_unpriced=true is the explicit bypass.
     const meter = new BudgetMeter({ budgetUsd: 0.001, phase: 'auto_think', auditPath });
     const r = meter.check({ modelId: 'gemini-3-pro', estimatedInputTokens: 1000, maxOutputTokens: 1000, label: 'absent' });
     expect(r.unpriced).toBe(true);
-    expect(r.allowed).toBe(true);
+    expect(r.allowed).toBe(false);
     expect(readLedger().at(-1)!.event).toBe('submit_unpriced');
+    expect(readLedger().at(-1)!.allowed).toBe(false);
   });
 
   test('Anthropic ids price identically through canonical and the derived view', () => {
@@ -168,4 +173,80 @@ describe('BudgetMeter', () => {
     expect(typeof unpriced.estimated_input_tokens).toBe('number');
     expect(typeof unpriced.max_output_tokens).toBe('number');
   });
+});
+
+// #4312: `pricing.overrides` is the documented operator rate (a proxy route,
+// or $0 for a flat-rate subscription lane). BudgetTracker consults it before
+// the shipped tables; the dream-cycle meter must price the same way, or an
+// override that clears every other cost cap still exhausts the dream budget
+// at list price.
+describe('BudgetMeter pricing.overrides (#4312)', () => {
+  const big = { estimatedInputTokens: 100_000, maxOutputTokens: 10_000, label: 'big' };
+
+  test('a $0 override prices a table model at $0 under a tight cap', () => {
+    const listed = new BudgetMeter({ budgetUsd: 0.001, phase: 'propose_takes', auditPath });
+    expect(listed.check({ modelId: 'anthropic:claude-sonnet-4-6', ...big }).allowed).toBe(false);
+    const meter = new BudgetMeter({
+      budgetUsd: 0.001, phase: 'propose_takes', auditPath,
+      pricingOverrides: parsePricingOverrides('{"anthropic:claude-sonnet-4-6": 0}'),
+    });
+    const r = meter.check({ modelId: 'anthropic:claude-sonnet-4-6', ...big });
+    expect(r.allowed).toBe(true);
+    expect(r.estimatedCostUsd).toBe(0);
+    expect(r.unpriced).toBeFalsy();
+  });
+
+  test('an override declared on the dated id also prices the recipe alias', () => {
+    const meter = new BudgetMeter({
+      budgetUsd: 0.001, phase: 'propose_takes', auditPath,
+      pricingOverrides: parsePricingOverrides('{"claude-cli:claude-haiku-4-5-20251001": 0}'),
+    });
+    const r = meter.check({ modelId: 'claude-cli:haiku', ...big });
+    expect(r.allowed).toBe(true);
+    expect(r.estimatedCostUsd).toBe(0);
+  });
+
+  test('an override prices a model absent from the tables at the declared rate, not the fallback', () => {
+    const meter = new BudgetMeter({
+      budgetUsd: 10, phase: 'drift', auditPath,
+      pricingOverrides: parsePricingOverrides('{"litellm:gpt-4o": {"input": 2, "output": 8}}'),
+    });
+    const r = meter.check({ modelId: 'litellm:gpt-4o', ...big });
+    expect(r.unpriced).toBeFalsy();
+    expect(r.estimatedCostUsd).toBeCloseTo((100_000 / 1e6) * 2 + (10_000 / 1e6) * 8, 10);
+  });
+});
+
+// Structural pin: every production meter must be handed the operator's rates.
+// A call site that forgets `pricingOverrides` silently reverts that phase to
+// list price — the behaviour above, one construction site at a time.
+test('every `new BudgetMeter(` in src passes pricingOverrides (#4312)', () => {
+  const srcRoot = join(dirname(import.meta.dir), 'src');
+  const files: string[] = [];
+  const walk = (d: string) => {
+    for (const e of readdirSync(d, { withFileTypes: true })) {
+      const f = join(d, e.name);
+      if (e.isDirectory()) walk(f);
+      else if (f.endsWith('.ts')) files.push(f);
+    }
+  };
+  walk(srcRoot);
+  const sites: string[] = [];
+  const missing: string[] = [];
+  for (const f of files) {
+    const text = readFileSync(f, 'utf-8');
+    for (let i = text.indexOf('new BudgetMeter('); i !== -1; i = text.indexOf('new BudgetMeter(', i + 1)) {
+      let depth = 0, j = i + 'new BudgetMeter'.length;
+      for (; j < text.length; j++) {
+        if (text[j] === '(') depth++;
+        else if (text[j] === ')' && --depth === 0) break;
+      }
+      const call = text.slice(i, j + 1);
+      const where = `${f.slice(srcRoot.length + 1)}:${text.slice(0, i).split('\n').length}`;
+      sites.push(where);
+      if (!call.includes('pricingOverrides')) missing.push(where);
+    }
+  }
+  expect(sites.length).toBeGreaterThanOrEqual(5);
+  expect(missing).toEqual([]);
 });

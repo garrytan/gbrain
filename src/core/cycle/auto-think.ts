@@ -18,7 +18,7 @@ import type { BrainEngine } from '../engine.ts';
 import { runThink, persistSynthesis, type ThinkLLMClient } from '../think/index.ts';
 import { resolveModel } from '../model-config.ts';
 import { embedQuery } from '../embedding.ts';
-import { BudgetMeter } from './budget-meter.ts';
+import { BudgetMeter, loadAllowUnpriced, loadPricingOverrides, parseBudgetUsd } from './budget-meter.ts';
 
 /**
  * Local phase-result type for auto-think/drift. These phases are not yet
@@ -42,6 +42,8 @@ export interface AutoThinkPhaseOpts {
   client?: ThinkLLMClient;
   /** Override the audit-ledger path (tests). */
   auditPath?: string;
+  /** #5426: source the cycle runs for; syntheses are saved there. */
+  sourceId?: string;
 }
 
 export interface AutoThinkConfig {
@@ -49,6 +51,7 @@ export interface AutoThinkConfig {
   questions: string[];
   maxPerCycle: number;
   budgetUsd: number;
+  allowUnpriced: boolean;
   cooldownDays: number;
   autoCommit: boolean;
 }
@@ -71,7 +74,7 @@ async function loadConfig(engine: BrainEngine): Promise<AutoThinkConfig> {
   // `|| N` coerces an explicit 0 back to the default (budget 0 = "spend nothing",
   // cooldown 0 = "no cooldown"). max_per_cycle stays inline: its Math.max(1, ...)
   // floor already makes 0 invalid there, so no configured value is lost.
-  const budgetUsd = Math.max(0, await getNumberConfig(engine, 'dream.auto_think.budget', 2.0));
+  const budgetUsd = parseBudgetUsd(await engine.getConfig('dream.auto_think.budget'), 2.0);
   const cooldownDays = Math.max(0, await getNumberConfig(engine, 'dream.auto_think.cooldown_days', 30));
 
   return {
@@ -79,6 +82,7 @@ async function loadConfig(engine: BrainEngine): Promise<AutoThinkConfig> {
     questions,
     maxPerCycle: maxPerStr ? Math.max(1, parseInt(maxPerStr, 10) || 5) : 5,
     budgetUsd,
+    allowUnpriced: await loadAllowUnpriced(engine),
     cooldownDays,
     autoCommit: autoCommitStr === 'true',
   };
@@ -123,6 +127,8 @@ export async function runPhaseAutoThink(
 
   const meter = new BudgetMeter({
     budgetUsd: config.budgetUsd,
+    allowUnpriced: config.allowUnpriced,
+    pricingOverrides: await loadPricingOverrides(engine),
     phase: 'auto_think',
     auditPath: opts.auditPath,
   });
@@ -169,6 +175,7 @@ export async function runPhaseAutoThink(
         // Fail-closed trust: the local dream cycle must say so explicitly, or
         // trajectory injection degrades to visibility='world' rows.
         remote: false,
+        ...(opts.sourceId ? { sourceId: opts.sourceId } : {}),
       });
       // #1698: an empty synthesis (no LLM available / malformed output / empty-JSON answer)
       // must NOT count as complete or advance the cooldown — that is the same silent-success
@@ -181,7 +188,7 @@ export async function runPhaseAutoThink(
       const warnings = [...result.warnings];
       let slug: string | undefined;
       if (config.autoCommit) {
-        const persisted = await persistSynthesis(engine, result);
+        const persisted = await persistSynthesis(engine, result, opts.sourceId ? { sourceId: opts.sourceId } : {});
         slug = persisted.slug || undefined;  // '' = persist-skip signal (#1698)
         warnings.push(...persisted.warnings);
       }

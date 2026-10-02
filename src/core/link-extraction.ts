@@ -17,13 +17,15 @@ import { ensureWellFormed } from './text-safe.ts';
 import { stripCodeBlocks } from './markdown-code.ts';
 import { isValidSourceId } from './source-id.ts';
 import { parseInlineCitationTimelineEntries } from './timeline-citations.ts';
+import { isMaterializedMarkerLine } from './timeline-marker.ts';
 import { slugifyPath, slugifySegment } from './sync.ts';
 import { SLUG_WORD_CHARS, SLUG_VARIATION_SELECTORS_RE } from './cjk.ts';
 import { foldNonDecomposingLatin } from './latin-fold.ts';
+import { isIdentityEntity, sameEntityName } from './entities/resolve.ts';
 // #3190: pack-aware link typing. link-inference imports only manifest-v1
 // (zod) + redos-guard (node:vm) — no cycle back into this module.
 import type { SchemaPackManifest } from './schema-pack/manifest-v1.ts';
-import { inferLinkTypeFromPack, frontmatterLinkTypeFromPack } from './schema-pack/link-inference.ts';
+import { inferLinkTypeFromPack, frontmatterLinkTypeFromPack, ownsAttendanceInference } from './schema-pack/link-inference.ts';
 import { PageRegexBudget } from './schema-pack/redos-guard.ts';
 
 /**
@@ -50,6 +52,19 @@ export { parseInlineCitationTimelineEntries, type InlineCitationTimelineCandidat
  * OR updated_at > links_extracted_at`. It is an ISO-8601 string (NOT a number) —
  * the column is TIMESTAMPTZ and the predicate binds it as `::timestamptz`.
  */
+// 2026-10-01: eval wave N9-2/N9-3/N12-7 — schema-pack frontmatter mappings
+// keep FRONTMATTER_LINK_MAP's declared direction (company `investors:` is
+// investor -> company, meeting `attendees:` is person -> meeting), and a
+// pack's `attended` verb on a meeting page follows canonical evidence-gated
+// attendance, so edges the legacy gbrain-base pack stored backwards (or typed
+// attended from a notes mention) re-derive on `extract --stale`.
+// 2026-09-30: #5749 — with link_resolution.global_basename on, a unique
+// basename match resolves a frontmatter wikilink before the fuzzy and live
+// keyword steps, so edges the managed stale sweep re-pointed at a transcript
+// re-extract back to the named page on the next `extract --stale`.
+// 2026-09-30: #5765 — a bold `**Attendees:**` label before a bare link list is
+// attendance evidence (the meeting-ingestion template wrote it), so meeting
+// pages filed with it re-extract and gain their attended edges.
 // 2026-09-09: #4985 — normalizeBasename strips Unicode variation selectors (twin
 // of slugifySegment), so emoji+VS16 wikilinks re-resolve to the clean slug.
 // 2026-09-09 (same wave): #4977 — the page-role prior no longer applies to
@@ -73,7 +88,7 @@ export { parseInlineCitationTimelineEntries, type InlineCitationTimelineCandidat
 // PRE-wave code after this date reads as fresh and won't re-extract until
 // the page is next edited; no fixed watermark can cover code that keeps
 // running past it.
-export const LINK_EXTRACTOR_VERSION_TS = '2026-09-21T00:00:00Z';
+export const LINK_EXTRACTOR_VERSION_TS = '2026-10-01T00:00:00Z';
 
 // ─── Entity references ──────────────────────────────────────────
 
@@ -642,6 +657,7 @@ export async function extractPageLinks(
   // here and every such edge landed as 'mentions'.
   const pack = opts.pack ?? null;
   const packBudget = pack ? new PageRegexBudget() : undefined;
+  const packOwnsAttendance = ownsAttendanceInference(pack);
   // Timeline / See-also links never receive the page-role prior — see
   // rolePriorSuppressedRanges (matched on the code-stripped content, so a
   // fenced `## Timeline` never opens a range). idx is the link's position in
@@ -656,7 +672,7 @@ export async function extractPageLinks(
     const targetType = opts.targetType?.(targetSlug, sourceId);
     if (pack) {
       const packVerb = inferLinkTypeFromPack(pack, pageType as string, ctx, packBudget, targetType);
-      if (packVerb) {
+      if (packVerb && (packOwnsAttendance || packVerb !== 'attended' || pageType !== 'meeting')) {
         if (packVerb === 'attended' && pageType === 'meeting'
           && (opts.targetType ? targetType !== 'person' : !targetSlug.startsWith('people/'))) return { linkType: 'mentions' };
         return { linkType: packVerb };
@@ -664,7 +680,7 @@ export async function extractPageLinks(
     }
     if (pageType === 'meeting') {
       if (!bodyReference) return { linkType: 'mentions' };
-      if (pack?.link_types.some(lt => lt.name === 'attended' && (lt.inference?.page_type || lt.inference?.target_type))) return { linkType: 'mentions' };
+      if (packOwnsAttendance && pack?.link_types.some(lt => lt.name === 'attended' && (lt.inference?.page_type || lt.inference?.target_type))) return { linkType: 'mentions' };
       if (idx !== undefined && hasAttendanceEvidence(attendanceRanges, idx)) {
         attendancePending.add(idx);
         if (!opts.targetType || targetType !== undefined) attendanceResolved.add(idx);
@@ -1025,7 +1041,7 @@ export function attendanceEvidenceRanges(content: string): Array<[number, number
       section.entries.push([line.start, line.end]);
       continue;
     }
-    const inline = /^Attendees:[ \t]*(.*)$/i.exec(line.text);
+    const inline = /^(?:Attendees:|\*\*Attendees:\*\*|\*\*Attendees\*\*:)[ \t]*(.*)$/i.exec(line.text);
     if (inline && list(inline[1])) ranges.push([line.start, line.end]);
   }
   finishSection();
@@ -1341,6 +1357,11 @@ export const FRONTMATTER_LINK_MAP: FrontmatterFieldMapping[] = [
 
 // ─── Slug resolver ──────────────────────────────────────────────
 
+export interface ResolveOptions {
+  globalBasename?: boolean;
+  selfSlug?: string;
+}
+
 export interface SlugResolver {
   resolveAttendance?(name: string, dirHint?: string | string[]): Promise<string | null>;
   /**
@@ -1348,8 +1369,13 @@ export interface SlugResolver {
    * Returns null when no match meets confidence threshold — callers should
    * skip (not write a dead link) and the unresolved name goes into the
    * extract/put_page summary so the user can see the gap.
+   *
+   * `globalBasename` (#5749): the caller runs with
+   * `link_resolution.global_basename` on, so a unique page whose slug
+   * basename is `name` (other than `selfSlug`) resolves before any fuzzy or
+   * keyword-search candidate.
    */
-  resolve(name: string, dirHint?: string | string[]): Promise<string | null>;
+  resolve(name: string, dirHint?: string | string[], opts?: ResolveOptions): Promise<string | null>;
   /**
    * Issue #972: return every slug whose basename (final `/`-segment, or
    * the whole slug if it has no `/`) matches `name`. Multi-match by
@@ -1511,12 +1537,13 @@ export function makeResolver(
       return queryBasenameIndex(await ensureBasenameIndex(), name);
     },
 
-    async resolve(name: string, dirHint?: string | string[]): Promise<string | null> {
+    async resolve(name: string, dirHint?: string | string[], resolveOpts?: ResolveOptions): Promise<string | null> {
       if (!name || typeof name !== 'string') return null;
       const trimmed = name.trim();
       if (!trimmed) return null;
 
-      const cacheKey = `${trimmed}\u0000${Array.isArray(dirHint) ? dirHint.join(',') : (dirHint || '')}`;
+      const basenameKey = resolveOpts?.globalBasename ? `\u0000basename:${resolveOpts.selfSlug ?? ''}` : '';
+      const cacheKey = `${trimmed}\u0000${Array.isArray(dirHint) ? dirHint.join(',') : (dirHint || '')}${basenameKey}`;
       if (cache.has(cacheKey)) return cache.get(cacheKey)!;
 
       const hints = Array.isArray(dirHint) ? dirHint : (dirHint ? [dirHint] : []);
@@ -1539,6 +1566,15 @@ export function makeResolver(
           cache.set(cacheKey, trimmed);
           return trimmed;
         }
+        // A renamed page leaves `old -> new` in slug_aliases; links written
+        // against the old slug keep resolving to the page that moved.
+        if (typeof engine.resolveSlugWithAlias === 'function') {
+          const canonical = await engine.resolveSlugWithAlias(trimmed, opts.sourceId ?? 'default');
+          if (canonical !== trimmed && await engine.getPage(canonical, { sourceId: opts.sourceId ?? 'default' })) {
+            cache.set(cacheKey, canonical);
+            return canonical;
+          }
+        }
       }
 
       // Step 2: dir-hint + slugify → exact getPage. Two grammars (#4855):
@@ -1559,6 +1595,20 @@ export function makeResolver(
         }
       }
 
+      // Step 2.5 (#5749): with link_resolution.global_basename on, a unique
+      // page whose slug basename IS the name wins before fuzzy or keyword
+      // evidence about some other page — the exact-name-first precedence of
+      // resolveEntitySlug (#5769). Without it the live keyword step let a
+      // transcript that repeats the term take over a correct frontmatter edge.
+      if (resolveOpts?.globalBasename) {
+        const matches = queryBasenameIndex(await ensureBasenameIndex(), trimmed)
+          .filter(s => s !== resolveOpts.selfSlug);
+        if (matches.length === 1) {
+          cache.set(cacheKey, matches[0]);
+          return matches[0];
+        }
+      }
+
       // Step 3: pg_trgm fuzzy title match — both modes. Tries each hint in
       // order; first hint with a ≥0.55 similarity match wins. If no hints,
       // try the whole pages table. When opts.sourceId is set, the fuzzy
@@ -1566,10 +1616,17 @@ export function makeResolver(
       // so cross-source slug suggestions don't get silently dropped at the
       // FK filter downstream. Mirrors the same scope fix `tryFuzzyMatch` got
       // via #1436.
+      // A person, company, fund or organization candidate must carry the
+      // same name tokens (sameEntityName): a near-name like "Carol Exampl" never
+      // links to a different person's page and stays unresolved instead.
       const searchHints = hints.length > 0 ? hints : [undefined];
+      const confident = async (slug: string): Promise<boolean> => {
+        const page = await engine.getPage(slug, opts.sourceId ? { sourceId: opts.sourceId } : undefined); // gbrain-allow-unscoped-getpage: read-only confidence check on a candidate the fuzzy lookup just returned
+        return !!page && (!isIdentityEntity(slug, page.type) || sameEntityName(trimmed, page.title, slug));
+      };
       for (const hint of searchHints) {
         const match = await engine.findByTitleFuzzy(trimmed, hint, 0.55, opts.sourceId);
-        if (match) {
+        if (match && await confident(match.slug)) {
           cache.set(cacheKey, match.slug);
           return match.slug;
         }
@@ -1580,13 +1637,13 @@ export function makeResolver(
       // mode skips this step entirely to keep migration deterministic.
       if (opts.mode === 'live') {
         try {
-          const results = await engine.searchKeyword(trimmed, { limit: 3 });
+          const results = await engine.searchKeyword(trimmed, { limit: 3, ...(opts.sourceId ? { sourceId: opts.sourceId } : {}) });
           if (results.length > 0 && results[0].score >= 0.8) {
             // Filter by dir hint if provided.
             const top = hints.length > 0
               ? results.find(r => hints.some(h => r.slug.startsWith(`${h}/`)))
               : results[0];
-            if (top) {
+            if (top && (!isIdentityEntity(top.slug, top.type) || sameEntityName(trimmed, top.title, top.slug))) {
               cache.set(cacheKey, top.slug);
               return top.slug;
             }
@@ -1671,7 +1728,10 @@ export async function extractFrontmatterLinks(
         const prefixes = pack.page_types?.find(pt => pt.name === expectedType)?.path_prefixes.map(p => p.replace(/^\/+|\/+$/g, ''));
         const legacy = FRONTMATTER_LINK_MAP.find(mapping => mapping.fields.includes(field)
           && (!mapping.pageType || mapping.pageType === pageType));
-        packMappings.push({ fields: [field], type, direction: 'outgoing', dirHint: prefixes?.length ? prefixes : legacy?.dirHint ?? '' });
+        const declared = FRONTMATTER_LINK_MAP.find(mapping => mapping.type === type
+          && (!mapping.pageType || mapping.pageType === pageType));
+        packMappings.push({ fields: [field], type, direction: declared?.direction ?? 'outgoing',
+          dirHint: prefixes?.length ? prefixes : legacy?.dirHint ?? '' });
       }
     }
   }
@@ -1715,7 +1775,8 @@ export async function extractFrontmatterLinks(
         const linkTarget = unwrapWikilink(name);
         const canonicalAttendance = mapping.type === 'attended' && mapping.direction === 'incoming';
         let resolved = await (canonicalAttendance && resolver.resolveAttendance
-          ? resolver.resolveAttendance(linkTarget, mapping.dirHint) : resolver.resolve(linkTarget, mapping.dirHint));
+          ? resolver.resolveAttendance(linkTarget, mapping.dirHint)
+          : resolver.resolve(linkTarget, mapping.dirHint, globalBasename ? { globalBasename, selfSlug: slug } : undefined));
         if (!resolved && globalBasename && !(canonicalAttendance && resolver.resolveAttendance)
           && typeof resolver.resolveBasenameMatches === 'function') {
           // Issue #972 follow-up: extend global_basename resolution to
@@ -1738,10 +1799,10 @@ export async function extractFrontmatterLinks(
           continue;
         }
         onResolvedTarget?.(resolved);
-        const expectedType = packMappings.includes(mapping)
-          ? pack?.link_types.find(lt => lt.name === mapping.type)?.inference?.target_type
-          : mapping.type === 'attended' && mapping.direction === 'incoming' ? 'person' : undefined;
-        if (expectedType && (targetType || packMappings.includes(mapping)) && targetType?.(resolved) !== expectedType) {
+        const packTargetType = packMappings.includes(mapping)
+          ? pack?.link_types.find(lt => lt.name === mapping.type)?.inference?.target_type : undefined;
+        const expectedType = canonicalAttendance ? 'person' : packTargetType;
+        if (expectedType && (targetType || packTargetType) && targetType?.(resolved) !== expectedType) {
           if (targetType?.(resolved) === undefined && mapping.type === 'attended') attendanceComplete = false;
           unresolved.push({ field, name, reason: 'target_type_mismatch' });
           continue;
@@ -1895,7 +1956,7 @@ export function parseTimelineEntries(content: string): TimelineCandidate[] {
     while (j < lines.length) {
       const next = lines[j];
       if (TIMELINE_LINE_RE.test(next)) break;
-      if (/^#{1,6}\s/.test(next)) break;
+      if (/^#{1,6}\s/.test(next) || isMaterializedMarkerLine(next)) break; // #5567: a marker opens the next bullet
       if (next.trim().length === 0 && detailLines.length === 0) {
         // skip leading blank line; if we hit a blank after detail content
         // and still no new entry, treat detail as ended.

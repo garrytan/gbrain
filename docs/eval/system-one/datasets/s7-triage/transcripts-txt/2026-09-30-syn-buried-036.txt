@@ -1,0 +1,152 @@
+[user]
+I need a generic out-of-office auto-reply with the dates filled in. I’ll be away from October 12 through October 20, returning October 21.
+
+[assistant]
+Here’s a clear, professional version:
+
+Thank you for your message. I’m out of the office from October 12 through October 20 and will return on October 21. I’ll respond as soon as possible after I’m back.
+
+If you need assistance before then, please resend your message after October 21.
+
+Best,  
+Bram Okonkwo-Bell
+
+[user]
+Can you make it a little warmer without making it too casual?
+
+[assistant]
+Certainly:
+
+Thank you for reaching out. I’m away from the office October 12–20 and will return on October 21. I’ll review your message and get back to you as soon as I can after I return.
+
+Thank you for your patience.
+
+Best regards,  
+Bram Okonkwo-Bell
+
+[user]
+I don’t want to include my name in the signature. Could you remove it?
+
+[assistant]
+Of course:
+
+Thank you for reaching out. I’m away from the office October 12–20 and will return on October 21. I’ll review your message and get back to you as soon as I can after I return.
+
+Thank you for your patience.
+
+Best regards,
+
+[user]
+Could you add a line saying I may have limited access to email?
+
+[assistant]
+Here’s the revised version:
+
+Thank you for reaching out. I’m away from the office October 12–20 and will return on October 21. I may have limited access to email during this time, so my response may be delayed. I’ll review your message and get back to you as soon as I can after I return.
+
+Thank you for your patience.
+
+Best regards,
+
+[user]
+Please make the dates unambiguous by adding the year. Use 2026.
+
+[assistant]
+Thank you for reaching out. I’m away from the office October 12–20, 2026, and will return on October 21, 2026. I may have limited access to email during this time, so my response may be delayed. I’ll review your message and get back to you as soon as I can after I return.
+
+Thank you for your patience.
+
+Best regards,
+
+[user]
+Can you give me a shorter version for a calendar status or chat profile?
+
+[assistant]
+Out of office October 12–20, 2026; returning October 21. Limited email access during this time.
+
+[user]
+I also need a version that says I’ll respond when I return, without mentioning limited access.
+
+[assistant]
+Thank you for your message. I’m out of the office from October 12 through October 20, 2026, and will return on October 21, 2026. I’ll respond as soon as possible after I return.
+
+Thank you for your patience.
+
+Best regards,
+
+[user]
+Could you provide plain-text versions of both the full and short replies?
+
+[assistant]
+Full reply:
+
+Thank you for reaching out. I’m away from the office October 12–20, 2026, and will return on October 21, 2026. I’ll review your message and respond as soon as I can after I return.
+
+Thank you for your patience.
+
+Best regards,
+
+Short reply:
+
+Out of office October 12–20, 2026. I’ll respond when I return on October 21.
+
+[user]
+How should I enter this in an email client that asks for a start date, end date, and message?
+
+[assistant]
+Use these fields:
+
+Start date: October 12, 2026  
+End date: October 20, 2026  
+Automatic reply message:
+
+Thank you for reaching out. I’m away from the office October 12–20, 2026, and will return on October 21, 2026. I’ll review your message and respond as soon as I can after I return.
+
+Thank you for your patience.
+
+Best regards,
+
+If the client asks for an end time, set it to the end of October 20, or use the client’s “all day” option. If it schedules by inclusive dates, the automatic reply will cover October 12 through October 20 and stop before October 21.
+
+[user]
+I’m noticing a pattern: I often keep polishing small wording choices in saltbox instead of finishing the setup and moving on. I tell myself I’m being thorough, but I’m usually avoiding the uncertainty of sending something out. Then I feel behind, which makes me polish even more. I want to set a clear stopping point and ship a workable version before I spend time refining it.
+
+[assistant]
+That’s a useful pattern to name: polishing is functioning as a way to postpone the uncertainty of delivery. For saltbox, you could define “done for today” as choosing the wording, saving the configuration, and testing one automatic reply; any further edits go into a later refinement list. A short time limit, such as 15 minutes for copy edits, can make the stopping point concrete. Once the basic version works, shipping it gives you information that further polishing cannot.
+
+[user]
+That’s exactly what I want to do. Let’s go back to the auto-reply and make one final version I can paste in without more tweaking.
+
+[assistant]
+Here is a final paste-ready version:
+
+Thank you for reaching out. I’m away from the office October 12–20, 2026, and will return on October 21, 2026. I’ll review your message and respond as soon as I can after I return.
+
+Thank you for your patience.
+
+Best regards,
+
+[user]
+Can you confirm the exact scheduling details one more time, including what happens on October 21?
+
+[assistant]
+Schedule:
+
+- Start: October 12, 2026, at the beginning of the day
+- End: October 20, 2026, at the end of the day
+- Automatic replies are active from October 12 through October 20, inclusive.
+- On October 21, 2026, automatic replies stop, and you can respond to messages normally.
+
+Message:
+
+Thank you for reaching out. I’m away from the office October 12–20, 2026, and will return on October 21, 2026. I’ll review your message and respond as soon as I can after I return.
+
+Thank you for your patience.
+
+Best regards,
+
+[user]
+Perfect. I’ll use those settings and stop editing the wording.
+
+[assistant]
+That setup is ready to use: schedule the automatic reply for October 12–20, 2026, and paste in the final message. It will stop automatically on October 21, when you return.

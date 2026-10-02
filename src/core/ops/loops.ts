@@ -75,6 +75,47 @@ async function googleSourceFreshness(
   }
 }
 
+/**
+ * Fix wave 4: held Gmail threads whose newest message falls inside this window
+ * (or whose date is unknown) make the answer's coverage partial.
+ */
+const HELD_WINDOW_MS = 14 * 86_400_000;
+
+interface HeldItemView { source_id: string; key: string; sender: string | null; subject?: string | null; retry_command: string }
+
+/**
+ * Held items do not block freshness, so completeness is reported separately:
+ * `partial` whenever a held Gmail thread in scope falls inside the window.
+ * Remote callers get the sender and the retry command, never the subject.
+ */
+async function heldCoverage(ctx: OperationContext, sources: GoogleSourceFreshness[], trusted: boolean): Promise<{ completeness: 'complete' | 'partial'; held: HeldItemView[] }> {
+  if (!sources.length) return { completeness: 'complete', held: [] };
+  try {
+    const { readAllSourceHolds } = await import('../connectors/item-holds-store.ts');
+    const now = Date.now();
+    const held: HeldItemView[] = [];
+    for (const entry of await readAllSourceHolds(ctx.engine, { sourceIds: sources.map((s) => s.id) })) {
+      for (const record of entry.held) {
+        const at = record.meta.upstream_at ? Date.parse(record.meta.upstream_at) : NaN;
+        if (Number.isFinite(at) && now - at > HELD_WINDOW_MS) continue;
+        held.push({ source_id: entry.sourceId, key: record.key, sender: record.meta.sender, ...(trusted ? { subject: record.meta.subject } : {}),
+          retry_command: `gbrain sources retry-held ${entry.sourceId}` });
+      }
+    }
+    return { completeness: held.length ? 'partial' : 'complete', held };
+  } catch {
+    // Fail toward partial: an unreadable hold state must not read as complete coverage.
+    return { completeness: 'partial', held: [] };
+  }
+}
+
+function partialLines(held: HeldItemView[]): string[] {
+  const lines = held.slice(0, 10).map((h) => `  - ${h.key}${h.sender ? ` from ${h.sender}` : ''}${h.subject ? `: ${h.subject}` : ''}`);
+  if (held.length > 10) lines.push(`  +${held.length - 10} more`);
+  for (const command of [...new Set(held.map((h) => h.retry_command))]) lines.push(`  Re-attempt them: ${command}`);
+  return lines;
+}
+
 /** Regenerate Gmail deep links (code, never stored LLM text) for evidence. */
 async function deepLinksFor(
   ctx: OperationContext,
@@ -189,9 +230,18 @@ function rankGroups(groups: CounterpartyGroup[], backlinks: Map<string, number>)
   return [...groups].sort((a, b) => score(b) - score(a) || a.counterparty.localeCompare(b.counterparty));
 }
 
-function renderText(groups: CounterpartyGroup[], stale: boolean, noGoogleSources: boolean): string {
+function renderText(groups: CounterpartyGroup[], stale: boolean, noGoogleSources: boolean,
+  coverage: { completeness: 'complete' | 'partial'; held: HeldItemView[] } = { completeness: 'complete', held: [] }): string {
   const lines: string[] = [];
+  const { held } = coverage;
   if (stale) lines.push('⚠ google sources have not synced recently — this may be out of date.');
+  const partial = coverage.completeness === 'partial';
+  const what = held.length ? `${held.length} held item(s) could not be imported:` : 'the held-item state could not be read.';
+  if (partial && groups.length === 0) {
+    lines.push(`No open loops found, but coverage is partial: ${what}`, ...partialLines(held));
+    return lines.join('\n');
+  }
+  if (partial) lines.push(`⚠ Coverage is partial: ${what}`, ...partialLines(held), '');
   if (groups.length === 0) {
     if (noGoogleSources) {
       // Trust-critical copy: on a brain whose email arrives some other way
@@ -226,12 +276,15 @@ function renderText(groups: CounterpartyGroup[], stale: boolean, noGoogleSources
 
 const open_loops: Operation = {
   name: 'open_loops',
+  outputRedaction: 'retrieval',
   description:
     'The open-loop engine\'s killer output: who is waiting on you, what you promised, and the context ' +
     'needed to respond. Grouped by counterparty (default, ranked) or flat. Loops come from the ' +
     'deterministic Gmail thread-state detector and the LLM commitment extractor. Remote callers get ' +
     'redacted evidence (no verbatim quotes); trusted local callers also get quotes, Gmail deep links, ' +
-    'entity-card context, and a pre-rendered text digest. Carries google-source freshness (stale flag).',
+    'entity-card context, and a pre-rendered text digest. Carries google-source freshness (stale flag) and ' +
+    'completeness: when it is "partial", some mail in the window is held after repeated import failures; present the ' +
+    'answer as partial and name the held items and their retry command.',
   params: {
     group_by: { type: 'string', enum: ['counterparty', 'none'], description: "Default 'counterparty' (ranked groups)." },
     status: { type: 'string', enum: ['open', 'done', 'dropped', 'stale'], description: "Default 'open'." },
@@ -296,6 +349,7 @@ const open_loops: Operation = {
     });
     const freshness = await googleSourceFreshness(ctx, scope);
     const noGoogleSources = freshness.sources.length === 0;
+    const coverage = await heldCoverage(ctx, freshness.sources, trusted);
     const deepLinks = trusted ? await deepLinksFor(ctx, loops) : new Map<string, string>();
 
     const truncated = loops.length >= 500;
@@ -307,6 +361,8 @@ const open_loops: Operation = {
         truncated,
         stale: freshness.stale,
         sources: freshness.sources,
+        completeness: coverage.completeness,
+        held: coverage.held,
         no_google_sources: noGoogleSources,
         redacted: !trusted,
       };
@@ -386,15 +442,18 @@ const open_loops: Operation = {
       truncated,
       stale: freshness.stale,
       sources: freshness.sources,
+      completeness: coverage.completeness,
+      held: coverage.held,
       no_google_sources: noGoogleSources,
       redacted: !trusted,
-      ...(trusted ? { text: renderText(groups, freshness.stale, noGoogleSources) } : {}),
+      ...(trusted ? { text: renderText(groups, freshness.stale, noGoogleSources, coverage) } : {}),
     };
   },
 };
 
 const loops_close: Operation = {
   name: 'loops_close',
+  outputRedaction: 'no_stored_text',
   description:
     "Close an open loop by id: status 'done' (handled) or 'dropped' (not going to). Closing is a state " +
     'transition with an audit trail, never a delete. Thread loops also close automatically when a reply lands.',
@@ -446,6 +505,7 @@ const loops_close: Operation = {
 
 const loops_mute: Operation = {
   name: 'loops_mute',
+  outputRedaction: 'no_stored_text',
   description:
     'Suppress a sender (email address) or thread id from opening NEW loops — the detector feedback ' +
     'primitive behind "never track this sender". Existing loops keep their state.',
@@ -484,6 +544,7 @@ const loops_mute: Operation = {
 
 const loops_unmute: Operation = {
   name: 'loops_unmute',
+  outputRedaction: 'no_stored_text',
   description:
     'Remove a sender/thread suppression added by loops_mute, so the detector can open NEW loops for ' +
     'it again. Exact-match only. Does not reopen loops closed while the mute was in place.',

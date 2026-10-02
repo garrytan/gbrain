@@ -23,9 +23,10 @@
  *    cancel belongs in the AbortController path, not in a parallel
  *    signal handler.
  *
- *  - Idempotent: a second signal during the cleanup pass is a NO-OP.
- *    First pass runs to its 3s deadline; users who want a forced exit
- *    can SIGKILL.
+ *  - Idempotent: callbacks run once. A second signal during the cleanup
+ *    pass waits for that pass (bounded by its 3s deadline) before
+ *    exiting, so it cannot exit ahead of the lock DELETE; users who want
+ *    a forced exit can SIGKILL.
  *
  *  - Single ownership: `tryAcquireDbLock` auto-registers; the returned
  *    handle's `release()` deregisters. `withRefreshingLock` just
@@ -51,7 +52,7 @@ interface CleanupEntry {
 
 const registry = new Map<symbol, CleanupEntry>();
 let installed = false;
-let cleanupInFlight = false;
+let cleanupPass: Promise<void> | null = null;
 /** Refs to every listener attached by installSignalHandlers, keyed by
  *  target+event, so _resetForTests can DETACH them — without this, a test
  *  that installs and "resets" leaves a live SIGTERM→exit(143) listener on
@@ -101,10 +102,12 @@ export async function triggerCleanupAndExit(code: number): Promise<void> {
   process.exit(code);
 }
 
-async function runCleanupPass(): Promise<void> {
-  if (cleanupInFlight) return; // Idempotent: second signal during cleanup is NO-OP.
-  cleanupInFlight = true;
+function runCleanupPass(): Promise<void> {
+  cleanupPass ??= runCleanupCallbacks();
+  return cleanupPass;
+}
 
+async function runCleanupCallbacks(): Promise<void> {
   const entries = Array.from(registry.values());
   if (entries.length === 0) return;
 
@@ -140,9 +143,14 @@ async function runCleanupPass(): Promise<void> {
  * SIGTERM). The SIGINT AbortController path in cli.ts stays untouched —
  * we don't listen to SIGINT here.
  */
-export function installSignalHandlers(): void {
+export function installSignalHandlers(opts: { keepServingOnLogEpipe?: boolean } = {}): void {
   if (installed) return;
   installed = true;
+  // #5079: for `serve --http`, stdout/stderr are only log streams (the MCP
+  // transport is the HTTP socket), so a closed log pipe must not stop the
+  // server: the log write is dropped and it keeps serving. Everywhere else a
+  // broken pipe still exits (for stdio `serve` it means the client left).
+  const keepServing = opts.keepServingOnLogEpipe === true;
 
   const handleSignal = (signal: NodeJS.Signals) => {
     void runCleanupPass().finally(() => {
@@ -166,10 +174,9 @@ export function installSignalHandlers(): void {
 
   attach(process, 'SIGTERM', () => handleSignal('SIGTERM'));
   attach(process, 'SIGHUP', () => handleSignal('SIGHUP'));
-  // SIGPIPE in Node is rarely raised directly (Node ignores it by default
-  // and surfaces an EPIPE write error on the stream instead). Listen anyway
-  // for environments where it does fire.
-  attach(process, 'SIGPIPE', () => handleSignal('SIGPIPE'));
+  // Bun delivers SIGPIPE on a broken pipe (Node ignores it by default and
+  // surfaces only an EPIPE write error on the stream, handled below).
+  attach(process, 'SIGPIPE', () => { if (!keepServing) handleSignal('SIGPIPE'); });
 
   attach(process, 'uncaughtException', (err: unknown) => {
     try { process.stderr.write(`[uncaughtException] ${err instanceof Error ? err.stack ?? err.message : err}\n`); }
@@ -185,14 +192,14 @@ export function installSignalHandlers(): void {
   // EPIPE on stdout — the canonical `gbrain sync | head -N` case. Route
   // through the cleanup pass so locks release BEFORE we exit.
   attach(process.stdout, 'error', (err: NodeJS.ErrnoException) => {
-    if (err.code === 'EPIPE') {
+    if (err.code === 'EPIPE' && !keepServing) {
       void triggerCleanupAndExit(0);
     }
   });
   // Same for stderr — less common but possible (e.g. `2>&1 | head` after
   // stderr was rerouted to stdout).
   attach(process.stderr, 'error', (err: NodeJS.ErrnoException) => {
-    if (err.code === 'EPIPE') {
+    if (err.code === 'EPIPE' && !keepServing) {
       // No stderr means no useful logs on the way out; still cleanup.
       void triggerCleanupAndExit(0);
     }
@@ -216,5 +223,5 @@ export function _resetForTests(): void {
   }
   installedListeners.length = 0;
   installed = false;
-  cleanupInFlight = false;
+  cleanupPass = null;
 }

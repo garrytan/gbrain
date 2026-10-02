@@ -13,7 +13,7 @@ import type {
   ParseSessionsOpts,
   TranscriptAdapter,
 } from './types.ts';
-import { TRANSCRIPT_JSONL_HARD_CAP } from './types.ts';
+import { TRANSCRIPT_JSONL_HARD_CAP, utcTimestamp } from './types.ts';
 import { parseClaudeSessionFile, SPEC_TARGET } from './claude-code-jsonl.ts';
 import { basename } from 'node:path';
 import { closeSync, openSync, readSync } from 'node:fs';
@@ -183,21 +183,21 @@ export const claudeCodeAdapter: TranscriptAdapter = {
           harness: 'claude-code',
           sessionId,
           cwd: r.cwd,
-          startedAt: r.startedAt || undefined,
+          startedAt: utcTimestamp(r.startedAt) || undefined,
           raw: { sessionId, cwd: r.cwd ?? null, source_path: path },
         },
         messages: r.turns.map((t) => ({
           role: t.role,
-          timestamp: t.timestamp,
+          timestamp: utcTimestamp(t.timestamp),
           text: t.text,
         })),
       };
     }
     // A file with NO turn-shaped records never had anything to import: a
     // title/metadata-only stub (`last-prompt` + `custom-title` and nothing
-    // else) or all-`isSidechain` subagent traffic. That is understood, not
-    // host-format drift, so it must not freeze the shared watermark — the
-    // same distinction grok draws with expectedEmpty. Turn records that stop
+    // else), explicitly non-human text, or all-`isSidechain` subagent traffic.
+    // That is understood, not host-format drift, so it must not freeze the
+    // shared watermark. As with grok's expectedEmpty, turn records that stop
     // yielding text (`turnShapedLines > 0` with zero turns) still drift, and
     // so does any file with unparseable lines.
     const expectedEmpty =
@@ -211,7 +211,7 @@ export const claudeCodeAdapter: TranscriptAdapter = {
       zeroSessionsReason:
         sessions === 0
           ? expectedEmpty
-            ? 'no turn records in file (title/metadata-only or all-subagent)'
+            ? 'no turn records in file (title/metadata-only, non-human text only, or all-subagent)'
             : 'no user or assistant turns in file'
           : undefined,
     };

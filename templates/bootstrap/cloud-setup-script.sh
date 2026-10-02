@@ -5,9 +5,15 @@
 # reused by later sessions). Printed by: gbrain bootstrap cloud-setup-script
 set -eu
 
-# 1. Bun runtime (gbrain runs on bun). Installed VIA npm — bun's own package
-#    fetching is proxy-incompatible in cloud sandboxes; npm's is not.
-command -v bun >/dev/null 2>&1 || npm install -g bun
+# 1. Bun runtime, at least GBrain's minimum (1.4.0; older Bun is refused).
+#    Installed VIA npm — bun's own package fetching is proxy-incompatible in
+#    cloud sandboxes; npm's is not. A preinstalled older Bun stays untouched.
+GBRAIN_BUN=$(command -v bun || true)
+if [ -z "$GBRAIN_BUN" ] || ! "$GBRAIN_BUN" -e 'process.exit(Bun.semver.satisfies(Bun.version, ">=1.4.0") ? 0 : 1)'; then
+  npm install -g bun
+  GBRAIN_BUN="$(npm prefix -g)/bin/bun"
+fi
+export PATH="$(dirname "$GBRAIN_BUN"):$PATH"
 
 # 2. gbrain from the canonical GitHub source. NEVER `npm install -g gbrain`:
 #    the npm registry package with that name is unrelated squatter code.
@@ -27,9 +33,9 @@ npm install --no-audit --no-fund
 
 # 3. PATH-resolved launcher: the repo-committed hook commands and MCP
 #    registration expect `gbrain` on PATH (they are fail-open where it isn't).
-cat > /usr/local/bin/gbrain <<'LAUNCHER'
+cat > /usr/local/bin/gbrain <<LAUNCHER
 #!/bin/sh
-exec bun /opt/gbrain/src/cli.ts "$@"
+exec '$GBRAIN_BUN' /opt/gbrain/src/cli.ts "\$@"
 LAUNCHER
 chmod +x /usr/local/bin/gbrain
 

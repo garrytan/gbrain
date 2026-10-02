@@ -36,3 +36,13 @@ export const DELETE_BATCH_SIZE = 500;
  * `paths.length` can be well under the cap on a truncated walk.
  */
 export const TRAVERSE_PATH_ROW_CAP = 5000;
+
+/**
+ * Cap on the simple-path rows the graph walks (`traverseGraph`,
+ * `traversePaths*`, both engines) enumerate before projecting. The walk keeps
+ * a per-path visited array, so a dense hub has combinatorially many simple
+ * paths (a 12-page clique at depth 5 took 22 s); the recursive CTE is pulled
+ * lazily, so a LIMIT on it stops the enumeration. Rows arrive breadth-first,
+ * so a capped walk keeps the complete shallow neighbourhood.
+ */
+export const TRAVERSE_WALK_ROW_CAP = 20000;

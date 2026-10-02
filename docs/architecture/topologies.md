@@ -485,6 +485,137 @@ parent, persistence home and stable lock/coordination directory together across
 recreation. Storage preflight reports each location and can identify Linux
 overlay/tmpfs backing, but a mount shown as present is **not** attested durable.
 
+### Claim and activate runbook
+
+Activation is reversible through the [deactivate runbook](#deactivate-runbook)
+below, but treat deactivation as a planned mode conversion, not an undo. Take a
+database backup first: for Postgres, `pg_dump` the brain database; for PGLite,
+stop every gbrain process and copy the database directory.
+
+Quiesce every writer on every host that uses this database before activating:
+
+1. Stop `gbrain serve` (stdio and HTTP) on each host.
+2. Pause autopilot on each host with `gbrain autopilot pause --reason "writer activation"`
+   and confirm with `gbrain autopilot status`. The pause survives
+   `gbrain upgrade` and `gbrain autopilot --install`; `gbrain autopilot resume`
+   clears it afterwards.
+3. Stop `gbrain jobs work` workers and supervisors that are not autopilot's.
+4. Disable cron entries, Git hooks and harness hooks that run `gbrain sync`,
+   `embed`, `extract`, `dream` or `import`.
+5. Upgrade every remaining host to this release, even ones you only read from.
+
+Then run the sequence, re-reading status between every step, because
+`admin_state` rotates after every change and a stale value refuses with
+`writer_admin_state_changed`:
+
+```bash
+gbrain sources writer status --brain host --json          # note admin_state
+gbrain sources writer claim default --brain host --path /absolute/canonical/source \
+  --admin-intent writer_claim --expected-state <admin_state> --json
+gbrain sources writer status --brain host --json          # fresh admin_state
+gbrain sources writer activate --brain host --confirm-quiesced --dry-run --json
+gbrain sources writer activate --brain host --confirm-quiesced \
+  --admin-intent writer_activate --expected-state <fresh admin_state> --json
+```
+
+After activation, managed sync requires `--no-pull` (Git pull/rebase needs an
+explicit drained maintenance window) and refuses `--skip-failed` and
+`--include-gitignored`; after fixing a failed item run
+`gbrain sync --no-pull --retry-failed` with the same source and options. Resume
+autopilot with `gbrain autopilot resume` and re-enable the hooks you stopped.
+
+When activation refuses with `writer_not_quiesced` because of queued work, the
+refusal names the blocking effect (effect id, kind, source, page and request id)
+and the command that inspects it, `gbrain sources writer status <source> --json`.
+A committed write whose embedding effect is stuck queued or failed is reported by
+`gbrain doctor` as `stale_embedding_effects` and settled by
+`gbrain repair embedding-effects --source <source>` (preview, then `--apply`).
+
+<a id="deactivate-runbook"></a>
+### Deactivate runbook
+
+`gbrain sources writer deactivate` converts the whole brain back to classic
+mode: classic writers, `gbrain sync` and older binaries then write as they did
+before managed mode. It is a planned mode conversion, not a proven rollback of
+everything that happened while managed. It keeps canonical files and database
+pages, retires every worktree (their rows stay so write receipts remain valid),
+removes source and host bindings, and records a committed `writer_deactivate`
+receipt. Shared-skill settings stay recorded but have no effect while the brain
+is classic. Reactivation is the normal claim and activate runbook above.
+
+**Say to your agent:** *"Switch this brain back to classic mode, but show me the
+dry run first."*
+
+1. Quiesce every writer on every host, as for activation: stop `gbrain serve`,
+   pause autopilot with `gbrain autopilot pause --reason "writer deactivation"`,
+   and let queued writes finish.
+2. Back up: `pg_dump` the Postgres database, or stop gbrain and copy the PGLite
+   directory.
+3. Dry run: `gbrain sources writer deactivate --dry-run`. It lists each blocker
+   with its exit and what would change, and changes nothing. Blocker exits:
+   `gbrain cancel-write-request <request_id>` for a queued write,
+   `gbrain sync --source <id> --no-pull --retry-failed` for one that needs
+   recovery, `gbrain repair embedding-effects --source <id>` for a stuck
+   embedding effect, `gbrain sources writer retry-effects <source> --request-id <id> --dry-run`
+   for a failed Git or withdrawal effect, and `gbrain sources writer unlock` for
+   the writer admin lock. Held Google or GitHub items do not block: deactivate
+   copies each source's managed holds into its classic state file
+   (`.google-source.json` or `.github-source.json`), so they stay held, retried
+   and reported in classic mode; the dry run lists them as `carried_holds`. Only
+   a source with no state directory, or with a classic state file that does not
+   parse, blocks; its exit is to move that file aside, or to resolve the holds
+   (`gbrain sources status <id>`, fix the cause, `gbrain sources retry-held <id>`,
+   `gbrain sync --source <id>`). A live connector or maintenance
+   lease means waiting for that run. A clean dry run prints `apply_command`,
+   the deactivate command bound to the state it reviewed.
+4. Deactivate: run the printed `apply_command`, or `gbrain sources writer status --json`
+   (note `admin_state`) and then
+   `gbrain sources writer deactivate --admin-intent writer_deactivate --expected-state <admin_state>`.
+   It takes no `<source>`: deactivation is brain-wide.
+5. Verify on every host: `gbrain sources writer status` reports `mode: classic`
+   and this host's `local_markers`: `cleared`, or `pending` with each path that
+   still needs attention. Older binaries honor local markers without this
+   cleanup, so run a command from this release (for example
+   `gbrain sources writer status`) once on every other host before an older
+   binary writes there. That first command removes the markers and registry
+   records of the retired epoch; a marker from an unknown or newer epoch (for
+   example after restoring an older backup) is kept and reported.
+
+`min_writer_version` stays deferred: while the brain is managed, the database
+writer guard is the enforcement, and after deactivation that guard is inert.
+
+### Writer admin lock
+
+`gbrain sources writer lock` sets an opt-in, brain-level admin lock; while it
+is set, writer claim, activate, transfer prepare and transfer accept refuse for
+every caller with `writer_admin_locked`, whose hint tells an agent to stop and
+ask the operator. Only these four administrative changes are blocked: ordinary
+writes continue, including the automatic first-write claim on a PGLite brain.
+There is no `--force`; the escape hatch is the local unlock. Remote callers can
+neither lock nor unlock, and generic `gbrain config set`/`unset` (including
+`--pattern`) refuse the reserved key `persistence.writer_admin_lock`. Dry runs
+of the four operations refuse too. The lock guards against routine or accidental
+agent administration; it is not a security boundary against a caller with the
+same shell. Binaries older than this release do not consult it.
+`gbrain sources writer status` shows `admin_lock` (whether it is set, when, and
+by which host) and the selected brain.
+
+To administer a locked brain, the operator runs, on the brain host:
+
+```bash
+gbrain sources writer unlock --brain host
+gbrain sources writer status default --brain host --json   # fresh admin_state
+# ... the reviewed claim, activate or transfer commands above ...
+gbrain sources writer lock --brain host
+```
+
+If administration fails midway, still run `gbrain sources writer lock` before
+investigating, so no agent can retry the change meanwhile. `lock` refuses with
+`writer_transfer_conflict` while a transfer is prepared but not accepted; finish
+or abandon the transfer first. Shared-skill setup, which claims a checkout as
+administration rather than as an ordinary first write, is refused while locked.
+`lock` and `unlock` are idempotent and print the resulting state.
+
 ### Supported managed work and explicit repair
 
 Once active, ordinary authorized local atom extraction, fact fences/backstop,
@@ -522,6 +653,13 @@ over provider work. Losing the claim cancels that invocation; the final
 installation still verifies its token. Caller cancellation, per-provider
 timeouts and budget admission remain effective without a whole-page deadline.
 
+The same command handles parked Git and withdrawal work. A target that fails five
+consecutive times is parked: its scan moves on, the effect never reports
+complete, and `gbrain doctor` (`parked_effects`) names the page with the exact
+command. Fix the cause, preview with `--dry-run`, then run it without
+`--dry-run` to authorize one more attempt per parked target. A target that fails
+again parks again; each invocation authorizes one attempt.
+
 Direct `--brain <mount>` retry uses only the selected database's validated active
 column and recorded model provenance for inspection and explicit queue approval.
 Unknown or inconsistent provenance refuses the action; the host brain's model
@@ -542,14 +680,20 @@ consolidation uses a single source-scoped take/fact transaction. A retired or
 resolved matching take is skipped, not silently reopened. Only world-visible
 facts backed by live non-private evidence are eligible for public consolidation;
 this is no guarantee that private facts will be consolidated. Remote maintenance
-authority is not added. Legacy fence reconciliation (`dream --phase
-extract_facts`), bulk `extract-conversation-facts`,
-`conversation_facts_backfill`, and `loops_extract` remain unsupported under
-managed persistence, including preview paths that could spend. Their preflight
-refuses with `writer_coordinator_required`; writer status and activation preview
-list them in `unsupported_maintenance`. The restored `extract_facts` operation
-and page backstop are separate from the legacy cycle fence reconciler. Do not
-infer that every dream or job writer is restored from the named lanes above.
+authority is not added. Fence reconciliation (`dream --phase extract_facts`,
+including its expiry of deleted pages' facts), bulk `extract-conversation-facts`
+and `conversation_facts_backfill` run on managed brains: their database-only
+fact rows commit inside the coordinator's source capability under the page key,
+like derived links, without a persistence request per page. The phantom redirect
+publishes as two maintenance requests (`managed_maintenance_phantom_merge` on
+the canonical page, which moves the phantom's rows by id, then
+`managed_maintenance_phantom_delete` on the phantom). Direct fence writes,
+`loops_extract` commitments and other `writeSingleFact` callers publish through
+the `managed_facts_entity` intent. Each checks its local writer authority (and,
+for file publication, the canonical owner) before model calls. Receipt pages
+for these runs stay unmanaged-only. `unsupported_maintenance` in writer status
+and activation preview is now empty. Do not infer that every dream or job
+writer is restored from the named lanes above.
 
 Google and GitHub API sources route through managed connector checkpoints,
 not a Git cursor. A deliberately unbound API source uses reviewed

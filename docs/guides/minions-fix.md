@@ -27,7 +27,10 @@ existing launch options throughout the repair.
 | Autopilot under user systemd | `gbrain autopilot --status --json`; `systemctl --user status gbrain-autopilot.service` | `systemctl --user stop gbrain-autopilot.service` | `systemctl --user start gbrain-autopilot.service` |
 | Autopilot under launchd | `gbrain autopilot --status --json`; `launchctl print "gui/$(id -u)/com.gbrain.autopilot"` | `launchctl bootout "gui/$(id -u)/com.gbrain.autopilot"` | `launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/com.gbrain.autopilot.plist"` |
 
-These are the default user-service names. If the installation uses a different
+These are the default brain's user-service names. A brain under any other
+`GBRAIN_HOME` uses its own suffixed names; `gbrain autopilot --status --json`
+prints them under `job` ([several brains on one host](live-sync.md#several-brains-on-one-host)).
+If the installation uses a different
 service definition, use its actual name and recorded launcher. For a foreground
 autopilot or a container/cron owner, stop and restart that owner through its
 existing launcher; do not start a competing standalone supervisor. A timed-out

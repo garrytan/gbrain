@@ -1,4 +1,4 @@
-import { maintenancePreflight, verifyMaintenanceOutputs } from '../persistence/prepared-maintenance.ts';
+import { maintenancePreflight, stampMaintenancePage, verifyMaintenanceOutputs, type MaintenanceAuthority } from '../persistence/prepared-maintenance.ts';
 import { digest } from '../persistence/digest.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 /**
@@ -42,13 +42,18 @@ import type { Page, PageType } from '../types.ts';
 // slot and can deadlock a fully-occupied worker (#2050). synthesize.ts
 // drains its own children the same way.
 import { loadAllowedSlugPrefixes, loadOutputRoot, runSubagentsInline } from './synthesize.ts';
+import { stampDreamProvenance } from './dream-provenance.ts';
 import { probeChatModel } from '../ai/gateway.ts';
 import { normalizeModelId } from '../model-id.ts';
 import { throwIfAborted } from '../abort-check.ts';
+import { resolveCycleDate } from './cycle-date.ts';
+import { dreamBreakerRefusal, loadDreamBreaker } from './dream-breaker.ts';
 
 export interface PatternsPhaseOpts {
   brainDir: string;
   dryRun: boolean;
+  /** C-15: the cycle's calendar date (runCycle resolves one per cycle). */
+  cycleDate?: string;
   /** #4077: cooperative cancellation from the enclosing cycle/minion job. A
    *  cancelled cycle must stop the inline child and every derived-state
    *  write instead of running out the force-evict grace. Mirrors
@@ -251,14 +256,19 @@ export async function runPhasePatterns(
     const renewPrivateQueueLease = queue.makeThrottledLeaseRenewer(
       childQueueName, privateQueueOwnerToken, opts.yieldDuringPhase,
     );
+    const cycleDate = opts.cycleDate ?? await resolveCycleDate(engine);
     const data: SubagentHandlerData = {
-      prompt: buildPatternsPrompt(reflections, config.minEvidence, config.sourceSlugPrefix, config.outputSlugPrefix),
+      prompt: buildPatternsPrompt(reflections, config.minEvidence, config.sourceSlugPrefix, config.outputSlugPrefix, cycleDate),
       model: config.model,
       max_turns: 30,
       // #4217/CDX-12: a patterns child whose every put_page failed must
       // dead-letter (its whole purpose is writing pattern pages), not report
-      // completed with zero pages.
+      // completed with zero pages. #5540: a clean finish that examined the
+      // evidence and named nothing completes, so the #4879 watermark stamps
+      // instead of re-billing the same reflections every run. Older workers
+      // ignore the opt-in and keep the strict behavior.
       require_writes: true,
+      allow_clean_zero_writes: true,
       allowed_slug_prefixes: allowedSlugPrefixes,
       // #1586: scope every child tool call to the cycle's resolved source so
       // put_page writes land there instead of the hardcoded 'default'.
@@ -274,6 +284,13 @@ export async function runPhasePatterns(
       private_queue_owner_token: privateQueueOwnerToken,
       private_queue_lease_ms: DEFAULT_PRIVATE_QUEUE_LEASE_MS,
     };
+    // Paid-loop breaker: only maintenance runs carry a key, so only they are covered.
+    const breaker = submitOpts.idempotency_key ? await loadDreamBreaker(engine) : null;
+    const refusal = breaker && dreamBreakerRefusal(breaker, submitOpts.idempotency_key!);
+    if (refusal) {
+      process.stderr.write(`[dream] patterns: ${refusal}\n`);
+      return skipped('dream_breaker_tripped', refusal);
+    }
     let job: Awaited<ReturnType<typeof queue.add>>;
     try {
       job = await queue.add('subagent', data as unknown as Record<string, unknown>, submitOpts, {
@@ -344,7 +361,7 @@ export async function runPhasePatterns(
     throwIfAborted(opts.signal, '[dream] patterns output');
     const writtenRefs = await collectChildPutPageSlugs(engine, [job.id], cycleSourceId);
 
-    // Reverse-write to fs.
+    await stampPatternOutputs(engine, maintenance, writtenRefs.filter(ref => ref.slug.startsWith(`${config.outputSlugPrefix}/`)), cycleDate, opts.signal);
     const reverseWriteCount = maintenance ? await verifyMaintenanceOutputs(engine, maintenance, writtenRefs)
       : await reverseWriteRefs(engine, opts.brainDir, writtenRefs, cycleSourceId, opts.signal);
 
@@ -470,6 +487,11 @@ async function getSlugPrefixConfig(engine: BrainEngine, key: string, fallback: s
   return trimmed || fallback;
 }
 
+/** Where pattern pages land; also a dream output directory synthesize discovery excludes (#5471). */
+export async function loadPatternsOutputSlugPrefix(engine: BrainEngine, outputRoot: string): Promise<string> {
+  return getSlugPrefixConfig(engine, 'dream.patterns.output_slug_prefix', `${outputRoot}/personal/patterns`);
+}
+
 async function loadPatternsConfig(engine: BrainEngine): Promise<PatternsConfig> {
   const enabledStr = await engine.getConfig('dream.patterns.enabled');
   const enabled = enabledStr === null ? true : enabledStr === 'true';
@@ -493,9 +515,7 @@ async function loadPatternsConfig(engine: BrainEngine): Promise<PatternsConfig> 
     sourceSlugPrefix: await getSlugPrefixConfig(
       engine, 'dream.patterns.source_slug_prefix', `${outputRoot}/personal/reflections`,
     ),
-    outputSlugPrefix: await getSlugPrefixConfig(
-      engine, 'dream.patterns.output_slug_prefix', `${outputRoot}/personal/patterns`,
-    ),
+    outputSlugPrefix: await loadPatternsOutputSlugPrefix(engine, outputRoot),
     subagentTimeoutMs: await getNumberConfig(
       engine, 'dream.patterns.subagent_timeout_ms', DEFAULT_PATTERNS_SUBAGENT_TIMEOUT_MS,
     ),
@@ -561,8 +581,8 @@ function buildPatternsPrompt(
   minEvidence: number,
   sourceSlugPrefix = 'wiki/personal/reflections',
   outputSlugPrefix = 'wiki/personal/patterns',
+  today: string,
 ): string {
-  const today = new Date().toISOString().slice(0, 10);
   const corpus = reflections
     .map((r, i) => `### ${i + 1}. [[${r.slug}]] — ${r.title}\n${r.excerpt}`)
     .join('\n\n---\n\n');
@@ -589,6 +609,20 @@ REFLECTIONS
 ${corpus}
 
 When done, briefly list the pattern slugs you wrote/updated in your final message.`;
+}
+
+/**
+ * #5733: pages under the patterns output prefix are dream output and carry the
+ * dream_generated identity stamp every dream_generated consumer reads, through
+ * the managed maintenance write on a managed brain, before the reverse-write.
+ */
+async function stampPatternOutputs(engine: BrainEngine, maintenance: MaintenanceAuthority | null,
+  refs: Array<{ slug: string; source_id: string }>, cycleDate: string, signal?: AbortSignal): Promise<void> {
+  if (!maintenance) return stampDreamProvenance(engine, refs, cycleDate, signal);
+  for (const ref of refs) {
+    throwIfAborted(signal, '[dream] patterns provenance');
+    await stampMaintenancePage(engine, maintenance, ref.slug, cycleDate);
+  }
 }
 
 // ── Provenance via put_page tool execution rows ─────────────────────

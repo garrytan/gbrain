@@ -1,0 +1,19 @@
+{
+  "calibration": "local:4",
+  "action_precision_lb": 0.43435469668107424,
+  "families": 11,
+  "correct_families": 8,
+  "actions": 90,
+  "status": "insufficient_n",
+  "required_n": 35,
+  "slices": {
+    "adequate": {
+      "families": 11,
+      "correct": 8,
+      "lb": 0.43435469668107424
+    }
+  },
+  "min_action_precision": 0.9,
+  "policy_fingerprint": "6eeca49d5bf5714e",
+  "next": null
+}

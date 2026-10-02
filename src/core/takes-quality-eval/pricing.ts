@@ -36,6 +36,7 @@ const SUPPORTED_MODELS = [
   'openai:gpt-5',
   'openai:gpt-5.2',
   'openai:gpt-5.5',
+  'anthropic:claude-opus-5-5',
   'anthropic:claude-opus-5',
   'anthropic:claude-opus-4-8',
   'anthropic:claude-opus-4-7',

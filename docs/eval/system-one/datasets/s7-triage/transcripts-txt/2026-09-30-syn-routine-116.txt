@@ -1,0 +1,353 @@
+[user]
+My linter is complaining about import order in a small Python project. I thought the imports were already sorted, but the check fails in CI. Can you help me interpret it?
+
+[assistant]
+Sure. Paste the exact linter output, along with the import section from the file and, if available, the relevant configuration from `pyproject.toml`, `setup.cfg`, or the CI command. Import-order tools can disagree about standard-library imports, third-party packages, local modules, blank lines, aliases, and whether first-party packages need to be declared.
+
+[user]
+Here is the output from the CI job:
+
+```text
+$ ruff check src tests
+E402 Module level import not at top of file
+I001 Import block is un-sorted or un-formatted
+Found 2 errors.
+```
+
+The file is `src/tools/report.py`:
+
+```python
+"""Helpers for creating a text report."""
+
+import os
+from pathlib import Path
+
+from tools.formatting import wrap_line
+import json
+from collections import Counter
+
+DEFAULT_WIDTH = 78
+```
+
+The project uses Ruff, but I do not know whether the formatter is enabled in CI.
+
+[assistant]
+The `E402` message is likely caused by the import block being interrupted or interpreted as out of order, and `I001` is Ruff’s import-sorting rule. In the pasted section, `json` and `Counter` appear after a first-party import, so the groups are mixed.
+
+A conventional ordering would be:
+
+```python
+"""Helpers for creating a text report."""
+
+import json
+import os
+from collections import Counter
+from pathlib import Path
+
+from tools.formatting import wrap_line
+
+DEFAULT_WIDTH = 78
+```
+
+Before changing anything manually, check the project configuration and Ruff version:
+
+```bash
+ruff --version
+ruff check --show-settings src/tools/report.py
+```
+
+Also inspect the command used by CI. If the repository expects Ruff’s formatter, the usual fix is:
+
+```bash
+ruff format src/tools/report.py
+ruff check src/tools/report.py
+```
+
+If you want Ruff to sort imports without formatting the rest of the file, use:
+
+```bash
+ruff check --select I --fix src/tools/report.py
+```
+
+Run the command from the repository root so Ruff can find its configuration.
+
+[user]
+I checked `pyproject.toml`. The relevant part is:
+
+```toml
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+src = ["src"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["tools"]
+```
+
+CI runs:
+
+```bash
+ruff check src tests
+```
+
+There is no `ruff format` command in the workflow. Does that explain why the check is failing?
+
+[assistant]
+It explains why CI is only checking and not modifying files, but the absence of `ruff format` is not itself an error. `ruff check` reports violations; it does not automatically rewrite the import block unless `--fix` is supplied.
+
+With the configuration shown, Ruff’s import sorter treats:
+
+- `json`, `os`, `collections.Counter`, and `pathlib.Path` as standard-library imports.
+- `tools.formatting` as a first-party import because `tools` is listed in `known-first-party`.
+- A blank line as the separator between those groups.
+
+The file should therefore look like this:
+
+```python
+"""Helpers for creating a text report."""
+
+import json
+import os
+from collections import Counter
+from pathlib import Path
+
+from tools.formatting import wrap_line
+
+DEFAULT_WIDTH = 78
+```
+
+The `E402` result is a little unusual for exactly this snippet, because Ruff’s normal `E402` means a statement appears before an import. It may be coming from another file, a generated version of the file, or additional lines not included in the excerpt. Run:
+
+```bash
+ruff check src tests --output-format=full
+```
+
+That should print the path and line number for each diagnostic. Then use Ruff’s fixer locally:
+
+```bash
+ruff check src/tools/report.py --select I --fix
+ruff check src tests
+```
+
+If the fixer changes the file, inspect the diff before committing it.
+
+[user]
+I ran the fuller command, and the output is:
+
+```text
+src/tools/report.py:4:1: I001 Import block is un-sorted or un-formatted
+src/tools/report.py:5:1: I001 Import block is un-sorted or un-formatted
+src/tools/report.py:6:1: I001 Import block is un-sorted or un-formatted
+src/tools/report.py:7:1: I001 Import block is un-sorted or un-formatted
+Found 4 errors.
+```
+
+There is no E402 now. I may have copied the earlier output incorrectly. I also ran the fixer:
+
+```text
+$ ruff check src/tools/report.py --select I --fix
+Found 4 errors (4 fixed, 0 remaining).
+```
+
+The file now contains:
+
+```python
+"""Helpers for creating a text report."""
+
+import json
+import os
+from collections import Counter
+from pathlib import Path
+
+from tools.formatting import wrap_line
+
+DEFAULT_WIDTH = 78
+```
+
+Is that the expected result?
+
+[assistant]
+Yes. That is the expected result for the configuration you posted. Ruff has placed all standard-library imports together, sorted the names, added the blank line before the first-party import, and left the module constant after the complete import block.
+
+You can verify the working tree and rerun the same check CI uses:
+
+```bash
+git diff -- src/tools/report.py
+ruff check src tests
+```
+
+The diff should be limited to the import section, approximately:
+
+```diff
+ import os
+ from pathlib import Path
+ 
+ from tools.formatting import wrap_line
+-import json
+ from collections import Counter
++import json
+```
+
+The exact diff may differ slightly depending on the original file state, but the final contents you pasted are correctly grouped. If `ruff check src tests` produces no output and exits with status 0, the linter portion is resolved.
+
+If the repository also wants formatting checks, that is a separate concern. Ruff’s formatter generally does not determine import ordering in the linter configuration; the `I` rule is what performed this change.
+
+[user]
+I ran the commands. The diff is:
+
+```diff
+diff --git a/src/tools/report.py b/src/tools/report.py
+index 31d1d5a..5b8c2e1 100644
+--- a/src/tools/report.py
++++ b/src/tools/report.py
+@@ -1,10 +1,10 @@
+ """Helpers for creating a text report."""
+ 
+-import os
+-from pathlib import Path
+-
+-from tools.formatting import wrap_line
+ import json
++import os
+ from collections import Counter
++from pathlib import Path
++
++from tools.formatting import wrap_line
+ 
+ DEFAULT_WIDTH = 78
+```
+
+Then:
+
+```text
+$ ruff check src tests
+All checks passed!
+```
+
+Should I add `ruff format` to the CI workflow too, or is that unrelated?
+
+[assistant]
+It is related to code formatting, but it is not required to resolve this import-order failure. The current CI command checks lint rules, including Ruff’s `I001` import-sorting rule, and it now passes.
+
+Whether to add formatting depends on the repository’s existing workflow. A common setup is to check formatting without changing files:
+
+```bash
+ruff format --check src tests
+```
+
+Developers can format locally with:
+
+```bash
+ruff format src tests
+```
+
+You can see what the formatter would change without writing files:
+
+```bash
+ruff format --diff src tests
+```
+
+If `ruff format --check src tests` reports that files would be reformatted, the repository would need a separate formatting change. If it says all files are formatted, adding the check would be an independent CI safeguard. The formatter and linter can also be run together locally:
+
+```bash
+ruff format src tests
+ruff check src tests
+```
+
+For the specific problem here, the necessary fix was the `ruff check --select I --fix` command, and the resulting import block is already in the form Ruff expects.
+
+[user]
+I tried the formatting check before changing the workflow:
+
+```text
+$ ruff format --check src tests
+Would reformat: src/tools/report.py
+1 file would be reformatted, 6 files already formatted
+```
+
+The file looks fine to me. Why would the formatter still want to change it after the imports were fixed?
+
+[assistant]
+Import sorting and formatting are separate operations. The import fixer changed the order and grouping, but `ruff format` may still adjust whitespace or line layout elsewhere in the file. The excerpt you showed only includes the top of the module, so there may be another formatting difference below it.
+
+Use the diff mode to see the exact proposed change:
+
+```bash
+ruff format --diff src/tools/report.py
+```
+
+You can also run the formatter on only that file, then inspect the result:
+
+```bash
+cp src/tools/report.py /tmp/report.py.before-format
+ruff format src/tools/report.py
+diff -u /tmp/report.py.before-format src/tools/report.py
+```
+
+On systems where `/tmp` is inconvenient, use Git instead:
+
+```bash
+git diff -- src/tools/report.py
+```
+
+The formatter may change things such as spacing around operators, blank lines, trailing commas, quote style, or wrapping of a long expression. It does not mean the import sorter failed. After formatting, rerun both checks:
+
+```bash
+ruff format --check src tests
+ruff check src tests
+```
+
+If the formatter changes only ordinary layout and the resulting diff is acceptable, that is the normal way to bring the file into compliance.
+
+[user]
+The diff command showed this:
+
+```text
+$ ruff format --diff src/tools/report.py
+--- src/tools/report.py
++++ src/tools/report.py
+@@ -14,8 +14,8 @@
+ def make_report(rows, width=DEFAULT_WIDTH):
+     lines = []
+     for row in rows:
+-        lines.append(wrap_line(" | ".join(row), width))
++        lines.append(wrap_line(" | ".join(row), width,))
+     return "\n".join(lines)
+```
+
+That seems odd. It wants a trailing comma in a function call with two arguments. Is this because of the Ruff version or a configuration setting?
+
+[assistant]
+That proposed change is unusual for the normal Ruff formatter. A trailing comma in a short two-argument call generally would not be added solely for formatting, so first check the exact Ruff version and the active configuration:
+
+```bash
+ruff --version
+ruff check --show-settings src/tools/report.py
+```
+
+Also show the formatter configuration, if present:
+
+```bash
+grep -n -A20 -B5 '^\[tool\.ruff' pyproject.toml
+```
+
+The output may indicate that a preview formatter mode or a nonstandard configuration is active. Check whether the command is resolving a repository-local executable or a different global installation:
+
+```bash
+command -v ruff
+python -m ruff --version
+```
+
+If both commands exist, compare their versions. You can ask Ruff to format only the file after confirming the executable:
+
+```bash
+ruff format --diff src/tools/report.py
+```
+
+Do not edit the call just to satisfy that diff until the version and configuration are clear. The import-order fix is already independent and valid. The formatter check is exposing a separate formatting rule or tool-version difference.
+
+[assistant]
+You have 19 weighted tokens left

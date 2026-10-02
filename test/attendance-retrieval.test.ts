@@ -17,13 +17,14 @@ import { bundledPackPath } from '../src/core/schema-pack/bundled-assets.ts';
 import { loadActivePackForLocalEngine } from '../src/core/schema-pack/best-effort.ts';
 import { installFixtureChunks } from './helpers/page-projection.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
+import { testBackends } from './helpers/test-backends.ts';
 
 const sourceId = 'attendance-fixture';
 const person = 'people/alice-example';
 const meeting = 'meetings/planning';
 const positive = 'Attendees: [Alice](../people/alice-example.md)';
 
-for (const kind of ['pglite', ...(process.env.DATABASE_URL ? ['postgres'] : [])]) {
+for (const kind of testBackends()) {
   describe(`non-overridden canonical attendance lifecycle (${kind})`, () => {
     let engine: BrainEngine;
     let close: () => Promise<void>;
@@ -43,7 +44,11 @@ for (const kind of ['pglite', ...(process.env.DATABASE_URL ? ['postgres'] : [])]
       await engine.setConfig('schema_pack', 'gbrain-base');
       const base = (await loadActivePackForLocalEngine(engine))!.manifest;
       writeFileSync(join(packRoot, 'pack.json'), JSON.stringify({ ...base, name: 'attendance-fixture', link_types: [], frontmatter_links: [] }));
-      __setPackLocatorForTests(name => name === 'attendance-fixture' ? join(packRoot, 'pack.json') : bundledPackPath(name));
+      // A pack that decides attendance itself (a phrase regex) keeps its own outgoing semantics.
+      writeFileSync(join(packRoot, 'phrase-owned.json'), JSON.stringify({ ...base, name: 'phrase-owned-fixture', frontmatter_links: [],
+        link_types: [{ name: 'attended', inference: { page_type: 'meeting', target_type: 'person', regex: '\\bAttendees\\b' } }] }));
+      __setPackLocatorForTests(name => name === 'attendance-fixture' ? join(packRoot, 'pack.json')
+        : name === 'phrase-owned-fixture' ? join(packRoot, 'phrase-owned.json') : bundledPackPath(name));
       await engine.setConfig('schema_pack', 'attendance-fixture');
       await engine.setConfig('dream.synthesize.session_corpus_dir', root);
     }, 120_000);
@@ -95,13 +100,15 @@ for (const kind of ['pglite', ...(process.env.DATABASE_URL ? ['postgres'] : [])]
         capabilities: { embeddings: { available: false }, extraction: { available: false }, search: 'keyword-only', mode: 'keyless' } });
     }
     for (const lane of ['fs-sync', 'fs-incremental', 'fs-batch']) {
-      test(`${lane}: ordinary meeting links keep additive filesystem handling`, async () => {
+      // Every filesystem lane, the full walk included, replaces a page's own
+      // markdown-derived links (the put_page contract).
+      test(`${lane}: ordinary meeting links are replaced like put_page`, async () => {
         await seed(meeting, 'meeting', '[Alice](../people/alice-example.md)');
         await extract(lane);
         expect((await engine.getLinks(meeting, { sourceId })).map(row => row.to_slug)).toEqual([person]);
         await seed(meeting, 'meeting', 'An ordinary reference was removed, with no attendance claim.');
         await extract(lane);
-        expect((await engine.getLinks(meeting, { sourceId })).map(row => row.to_slug)).toEqual([person]);
+        expect((await engine.getLinks(meeting, { sourceId })).map(row => row.to_slug)).toEqual([]);
       });
       test(`${lane}: unchanged DB-only attendance survives and real evidence removal retracts it`, async () => {
         await seed(meeting, 'meeting', positive);
@@ -116,8 +123,8 @@ for (const kind of ['pglite', ...(process.env.DATABASE_URL ? ['postgres'] : [])]
     }
     for (const lane of ['fs-sync', 'fs-incremental', 'fs-batch', 'prepare', 'sweep', 'db', 'stale']) {
       for (const [globalPack, sourcePack, incoming] of [
-        ['attendance-fixture', 'gbrain-base', false],
-        ['gbrain-base', 'attendance-fixture', true],
+        ['attendance-fixture', 'phrase-owned-fixture', false],
+        ['phrase-owned-fixture', 'attendance-fixture', true],
         ['missing-example-pack', 'attendance-fixture', true],
       ] as const) test(`${lane}: source-selected ${sourcePack} overrides global ${globalPack}`, async () => {
         await engine.setConfig('schema_pack', globalPack);
@@ -156,7 +163,7 @@ for (const kind of ['pglite', ...(process.env.DATABASE_URL ? ['postgres'] : [])]
         expect(await attendees()).toEqual([person]);
       });
       test(`${lane}: unavailable ontology cannot reverse existing pack-owned attendance`, async () => {
-        await engine.setConfig('schema_pack', 'gbrain-base');
+        await engine.setConfig('schema_pack', 'phrase-owned-fixture');
         await seed(meeting, 'meeting', positive);
         await extract('db');
         const rows = () => engine.executeRaw('SELECT l.* FROM links l JOIN pages p ON p.id=l.from_page_id WHERE p.source_id=$1 ORDER BY l.id', [sourceId]);
@@ -177,7 +184,7 @@ for (const kind of ['pglite', ...(process.env.DATABASE_URL ? ['postgres'] : [])]
         } else await extract(lane, true);
         expect(await rows()).toEqual(before);
         expect((await engine.executeRaw<{ value: string | null }>('SELECT links_extracted_at AS value FROM pages WHERE source_id=$1 AND slug=$2', [sourceId, meeting]))[0].value).toBeNull();
-        await engine.setConfig('schema_pack', 'gbrain-base');
+        await engine.setConfig('schema_pack', 'phrase-owned-fixture');
         await extract(lane, true);
         expect((await engine.getLinks(meeting, { sourceId })).filter(row => row.link_type === 'attended')).toHaveLength(1);
         expect((await engine.getBacklinks(meeting, { sourceId })).filter(row => row.link_type === 'attended')).toEqual([]);
@@ -342,7 +349,7 @@ for (const kind of ['pglite', ...(process.env.DATABASE_URL ? ['postgres'] : [])]
         const other = 'attendance-other-example';
         await engine.executeRaw('INSERT INTO sources(id,name) VALUES ($1,$1)', [other]);
         try {
-          await engine.setConfig(`schema_pack.source.${sourceId}`, 'gbrain-base');
+          await engine.setConfig(`schema_pack.source.${sourceId}`, 'phrase-owned-fixture');
           await engine.setConfig(`schema_pack.source.${other}`, 'attendance-fixture');
           await seed(meeting, 'meeting', positive);
           await engine.putPage(person, { type: 'person', title: 'Alice Example', compiled_truth: 'Other source.' }, { sourceId: other });
@@ -433,8 +440,8 @@ for (const kind of ['pglite', ...(process.env.DATABASE_URL ? ['postgres'] : [])]
     });
     for (const origin of [sourceId, 'default']) {
       for (const [globalPack, sourcePack, incoming] of [
-        ['attendance-fixture', 'gbrain-base', false],
-        ['gbrain-base', 'attendance-fixture', true],
+        ['attendance-fixture', 'phrase-owned-fixture', false],
+        ['phrase-owned-fixture', 'attendance-fixture', true],
         ['missing-example-pack', 'attendance-fixture', true],
       ] as const) test(`local publication: source-selected ${origin}/${sourcePack} overrides global ${globalPack}`, async () => {
         await engine.setConfig('schema_pack', globalPack);
@@ -446,15 +453,16 @@ for (const kind of ['pglite', ...(process.env.DATABASE_URL ? ['postgres'] : [])]
             dryRun: false, logger: { info() {}, warn() {}, error() {} } }, { slug: meeting,
             content: `---\ntype: meeting\ntitle: Planning\nattendees: ["${person}"]\n---\n${positive}` }) as { auto_links: { errors: number } };
           expect(result.auto_links.errors).toBe(0);
-          expect((await engine.getBacklinks(meeting, { sourceId: origin })).filter(row => row.link_type === 'attended')).toHaveLength(incoming ? 2 : 0);
-          expect((await engine.getLinks(meeting, { sourceId: origin })).filter(row => row.link_type === 'attended')).toHaveLength(incoming ? 0 : 2);
+          // Frontmatter attendees are always person -> meeting; only the phrase-owned body link stays outgoing.
+          expect((await engine.getBacklinks(meeting, { sourceId: origin })).filter(row => row.link_type === 'attended')).toHaveLength(incoming ? 2 : 1);
+          expect((await engine.getLinks(meeting, { sourceId: origin })).filter(row => row.link_type === 'attended')).toHaveLength(incoming ? 0 : 1);
         } finally {
           await engine.setConfig(`schema_pack.source.${origin}`, '');
           if (origin === 'default') await engine.executeRaw('DELETE FROM pages WHERE source_id=$1', [origin]);
         }
       });
       test(`local publication: unavailable source-selected ${origin} pack saves the note but preserves the graph`, async () => {
-        await engine.setConfig(`schema_pack.source.${origin}`, 'gbrain-base');
+        await engine.setConfig(`schema_pack.source.${origin}`, 'phrase-owned-fixture');
         try {
           await engine.putPage(person, { type: 'person', title: 'Alice Example', compiled_truth: 'An example.' }, { sourceId: origin });
           const op = operations.find(op => op.name === 'put_page')!;
@@ -462,14 +470,15 @@ for (const kind of ['pglite', ...(process.env.DATABASE_URL ? ['postgres'] : [])]
             dryRun: false, logger: { info() {}, warn() {}, error() {} } };
           const content = `---\ntype: meeting\ntitle: Planning\nattendees: ["${person}"]\n---\n${positive}`;
           await op.handler(ctx, { slug: meeting, content });
-          const before = await engine.getLinks(meeting, { sourceId: origin });
+          const graph = async () => [...await engine.getLinks(meeting, { sourceId: origin }), ...await engine.getBacklinks(meeting, { sourceId: origin })];
+          const before = await graph();
           expect(before.filter(row => row.link_type === 'attended')).toHaveLength(2);
           const snapshot = (await engine.readPageSnapshot(meeting, { sourceId: origin }))!;
           await engine.setConfig(`schema_pack.source.${origin}`, 'missing-example-pack');
           const result = await op.handler(ctx, { slug: meeting, expected_revision: snapshot.revision,
             content: `${content}\nThe note must survive.` }) as { auto_links: { errors: number; created: number; removed: number } };
           expect(result.auto_links).toMatchObject({ errors: 1, created: 0, removed: 0 });
-          expect(await engine.getLinks(meeting, { sourceId: origin })).toEqual(before);
+          expect(await graph()).toEqual(before);
           expect((await engine.getPage(meeting, { sourceId: origin }))!.compiled_truth).toContain('The note must survive.');
         } finally {
           await engine.setConfig(`schema_pack.source.${origin}`, '');
@@ -487,10 +496,10 @@ for (const kind of ['pglite', ...(process.env.DATABASE_URL ? ['postgres'] : [])]
       expect(created.auto_links.errors).toBe(0);
       const rows = () => engine.executeRaw<{ id: string; from_slug: string; to_slug: string; producer: string }>(`SELECT l.id::text,f.slug AS from_slug,t.slug AS to_slug,l.link_source AS producer
         FROM links l JOIN pages f ON f.id=l.from_page_id JOIN pages t ON t.id=l.to_page_id
-        WHERE f.source_id=$1 AND f.slug=$2 AND l.link_type='attended'`, [sourceId, meeting]);
+        WHERE t.source_id=$1 AND t.slug=$2 AND l.link_type='attended'`, [sourceId, meeting]);
       const before = await rows();
       expect(before).toHaveLength(1);
-      expect(before[0]).toMatchObject({ from_slug: meeting, to_slug: person, producer: 'frontmatter' });
+      expect(before[0]).toMatchObject({ from_slug: person, to_slug: meeting, producer: 'frontmatter' });
       const snapshot = (await engine.readPageSnapshot(meeting, { sourceId }))!;
       const updated = await op.handler(ctx, { slug: meeting, expected_revision: snapshot.revision,
         content: `${content}\nAn unrelated edit.` }) as { auto_links: { created: number; removed: number; errors: number } };
@@ -552,7 +561,7 @@ for (const kind of ['pglite', ...(process.env.DATABASE_URL ? ['postgres'] : [])]
       expect(await attendees()).toEqual([person]);
     });
     test('local publication preserves pack-owned attendance and reports unavailable ontology without losing the note', async () => {
-      await engine.setConfig('schema_pack', 'gbrain-base');
+      await engine.setConfig('schema_pack', 'phrase-owned-fixture');
       await seed(meeting, 'meeting', positive);
       await extract('db');
       const before = await engine.getLinks(meeting, { sourceId });
@@ -750,15 +759,25 @@ for (const kind of ['pglite', ...(process.env.DATABASE_URL ? ['postgres'] : [])]
       expect(await attendees()).toEqual([]);
       expect(await stamp()).not.toEqual(before);
     });
-    for (const packName of ['gbrain-base', 'company-brain']) test(`${packName}: pack_semantics_preserved`, async () => {
+    for (const packName of ['gbrain-base', 'company-brain']) test(`${packName}: shipped attendance mappings are canonical person -> meeting`, async () => {
       await engine.setConfig('schema_pack', packName);
       await seed(meeting, 'meeting', positive, { attendees: [person] });
       await runExtract(engine, ['links', '--source', 'db', '--source-id', sourceId, '--include-frontmatter']);
-      const rows = (await engine.getLinks(meeting, { sourceId })).filter(row => row.link_type === 'attended');
+      const rows = (await engine.getBacklinks(meeting, { sourceId })).filter(row => row.link_type === 'attended');
       expect(rows.map(row => row.link_source).sort()).toEqual(['frontmatter', 'markdown']);
-      expect(rows.every(row => row.to_slug === person)).toBe(true);
-      expect(await attendees()).toEqual([]);
+      expect(rows.every(row => row.from_slug === person)).toBe(true);
+      expect((await engine.getLinks(meeting, { sourceId })).filter(row => row.link_type === 'attended')).toEqual([]);
+      expect(await attendees()).toEqual([person]);
+    });
+    test('phrase-owned-fixture: pack_semantics_preserved for body attendance', async () => {
+      await engine.setConfig('schema_pack', 'phrase-owned-fixture');
+      await seed(meeting, 'meeting', positive, { attendees: [person] });
+      await runExtract(engine, ['links', '--source', 'db', '--source-id', sourceId, '--include-frontmatter']);
+      const outgoing = (await engine.getLinks(meeting, { sourceId })).filter(row => row.link_type === 'attended');
+      expect(outgoing.map(row => [row.to_slug, row.link_source])).toEqual([[person, 'markdown']]);
       expect((await engine.relationalFanout([meeting], { sourceId, direction: 'out', linkTypes: ['attended'] })).map(row => row.slug)).toContain(person);
+      const incoming = (await engine.getBacklinks(meeting, { sourceId })).filter(row => row.link_type === 'attended');
+      expect(incoming.map(row => [row.from_slug, row.link_source])).toEqual([[person, 'frontmatter']]);
     });
     test('manual and other-origin rows survive exact meeting removal', async () => {
       await seed(meeting, 'meeting', positive);

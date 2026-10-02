@@ -24,6 +24,11 @@ The default gate executes, per engine:
 | Eight actual SIGKILL boundaries | Acknowledged requests survive reopening; unfinished file effects recover; committed DB/file/receipt state stays committed; original request replay returns the same outcome |
 | 10,000 logical writes | Four independent producer processes, four principals and four source roots; every request commits once; every canonical snapshot and file matches the receipt; zero pending requests or unresolved recovery records |
 
+CI runs this full gate on pushes to master and manual dispatches. Pull requests
+run the same schedules and crash boundaries with a 2,500-write soak
+(`--operations=2500`), so their manifests report `full_gate: false`; a soak
+regression that needs more volume is caught on master.
+
 The eight executed crash boundaries are `admitted`, `prepared`,
 `before_publication`, `staging_flushed`, `after_publication`, `before_commit`,
 `after_commit`, and `after_response`. The flushed boundary writes its event
@@ -94,7 +99,7 @@ never a connection URL. Keep the retained directory private: its original
 the diagnostic manifest. Successful runs retain no fixtures.
 
 `persistence-validation.yml` runs the full gate on Linux x64 for both engines
-under Bun 1.3.11 and 1.3.13 and uploads every manifest. Native OS/architecture
+under Bun 1.4.0 and 1.4.2 and uploads every manifest. Native OS/architecture
 coverage is separately required by `native-locks.yml`; its configured matrix
 must not be mistaken for locally executed runtime evidence.
 

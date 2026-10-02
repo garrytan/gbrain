@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-026",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/ines-fenwaite",
+      "content": "---\ntitle: Ines Fenwaite\ntype: person\nsummary: \"Ines Fenwaite is the head of sales at Glintcrest.\"\n---\n\nInes Fenwaite is the head of sales at Glintcrest. Ines wants the proposal revised to drop the onboarding fee.\n"
+    },
+    {
+      "slug": "people/elodie-marrwaite",
+      "content": "---\ntitle: Elodie Marrwaite\ntype: person\nsummary: \"Elodie Marrwaite is the finance lead at Orchidspire.\"\n---\n\nElodie Marrwaite is the finance lead at Orchidspire.\n"
+    },
+    {
+      "slug": "people/bastian-griswaite",
+      "content": "---\ntitle: Bastian Griswaite\ntype: person\nsummary: \"Bastian Griswaite is the finance lead at Marblefold.\"\n---\n\nBastian Griswaite is the finance lead at Marblefold. Bastian wants to pause the second engineering hire until the renewal closes.\n"
+    },
+    {
+      "slug": "people/dario-brinbarrow",
+      "content": "---\ntitle: Dario Brinbarrow\ntype: person\naliases: [dario]\nsummary: \"A contact from a conference last spring.\"\n---\n\nA contact from a conference last spring.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Remind me of Fenwaite's position on the proposal before our sync."
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Okay, noted."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "How do you spell Marrwaite in the NATO phonetic alphabet?"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "haha fair enough"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Happy to help."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "did griswaite ever get back to me on the hiring plan?"
+    }
+  ]
+}

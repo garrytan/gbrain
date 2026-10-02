@@ -11,9 +11,8 @@
  *   - Disabled-builtin honored
  *   - Timezone warning (D19) emitted when frontmatter timezone missing
  *
- * Pure-function tests; no PGLite, no LLM. The LLM polish/fallback
- * tests live in `llm-base.test.ts`, `llm-polish.test.ts`,
- * `llm-fallback.test.ts` (T4).
+ * Pure-function tests; no PGLite, no LLM. The LLM fallback tests
+ * live in `llm-base.test.ts` and `llm-fallback.test.ts` (T4).
  */
 
 import { describe, expect, test } from 'bun:test';
@@ -767,6 +766,30 @@ describe('bold-name-no-time pattern (Circleback/Granola/Zoom, no timestamp)', ()
     expect(r.messages).toHaveLength(3);
     // No fallbackDate → epoch default, still anchors at 00:00:00.
     expect(r.messages[0].timestamp).toBe('1970-01-01T00:00:00Z');
+  });
+
+  // gbrain-evals N12-1: a status note with three one-off bold labels is
+  // not a conversation. Full-body density (3/26 ≈ 0.115) clears the floor,
+  // so the gate is structural: three or more turns with no speaker ever
+  // speaking twice is a list of labels, not an exchange.
+  test('REGRESSION (N12-1): a status note with one-off bold labels is no_match', () => {
+    const filler = Array.from({ length: 22 }, (_, i) => `Paragraph ${i + 1}: the team agreed in principle and will review the plan this week.`);
+    const body = ['# Project status', '', '**Status:** green', '**Owner:** Alice Example', '**Next step:** ship the draft', '', ...filler, ''].join('\n');
+    const r = parseConversation(body, { noFallback: true, noPolish: true, page: { frontmatter: { date: '2026-04-01' } } } as any);
+    expect(r.phase).toBe('no_match');
+    expect(r.messages).toEqual([]);
+  });
+
+  test('N12-1 control: a three-person exchange where someone speaks twice still parses', () => {
+    const body = [
+      '**Alice Example:** shall we start?',
+      '**Bob Example:** ready.',
+      '**Carol Example:** me too.',
+      '**Alice Example:** great, first item.',
+    ].join('\n');
+    const r = parseConversation(body, { fallbackDate: '2026-04-01' });
+    expect(r.matched_pattern_id).toBe('bold-name-no-time');
+    expect(r.messages).toHaveLength(4);
   });
 
   // REGRESSION: must NOT shadow bold-paren-time. A `**Name** (00:00): text`

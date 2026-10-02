@@ -607,10 +607,12 @@ describe('format-based detectors — negatives (identifiers and public shapes st
     expect(scanText(`sha256: ${digest}`)).toEqual([]);
   });
 
-  test('URLs with userinfo but no password, or non-database schemes, do not fire', () => {
+  test('URLs with userinfo but no password, or no credentials at all, do not fire', () => {
+    // Design reversal (security fix wave): an http(s) URL whose userinfo
+    // carries a password used to be listed here as "not a database scheme";
+    // it now fires as url_credentials (see the url_credentials describe).
     for (const s of [
       'https://user@host.example/path',
-      'https://user:pw@host.example/path',   // not a database scheme — by design
       'postgres://db.internal:5432/app',     // no credentials
       'git@github.com:org/repo.git',
     ]) {

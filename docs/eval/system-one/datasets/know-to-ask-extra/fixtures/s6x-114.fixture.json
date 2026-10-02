@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-114",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/fintan-kestbarrow",
+      "content": "---\ntitle: Fintan Kestbarrow\ntype: person\nsummary: \"Fintan Kestbarrow is the product lead at Orchidreach.\"\n---\n\nFintan Kestbarrow is the product lead at Orchidreach.\n"
+    },
+    {
+      "slug": "people/solveig-pellcombe",
+      "content": "---\ntitle: Solveig Pellcombe\ntype: person\nsummary: \"Solveig Pellcombe is the head of sales at Vespergate.\"\n---\n\nSolveig Pellcombe is the head of sales at Vespergate. Solveig pushed to move the reporting feature ahead of the mobile app.\n"
+    },
+    {
+      "slug": "people/anselm-haskwaite",
+      "content": "---\ntitle: Anselm Haskwaite\ntype: person\naliases: [anselm]\nsummary: \"Anselm Haskwaite is the procurement lead at Fablespire.\"\n---\n\nAnselm Haskwaite is the procurement lead at Fablespire.\n"
+    },
+    {
+      "slug": "people/greta-orringrove",
+      "content": "---\ntitle: Greta Orringrove\ntype: person\nsummary: \"Greta Orringrove is the head of partnerships at Cobaltcrest.\"\n---\n\nGreta Orringrove is the head of partnerships at Cobaltcrest. Greta wants to pause the second engineering hire until the renewal closes.\n"
+    },
+    {
+      "slug": "companies/lumenmoor",
+      "content": "---\ntitle: Lumenmoor\ntype: company\nsummary: \"A company we met once at a trade show.\"\n---\n\nA company we met once at a trade show.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "In the novel I'm reading, Captain Kestbarrow betrays the crew. Is that a common trope?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Done."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "did pellcombe ever get back to me on the roadmap?"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "How do you pronounce Anselm? I want to say it right."
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Done."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "What did Orringrove want changed in the hiring plan?"
+    }
+  ]
+}

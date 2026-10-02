@@ -164,12 +164,12 @@ describe('truth predicates survive a schema rebuild', () => {
   }, 30000);
 
   test('embed_skip is excluded from both sides; all-skip brain reads vacuous 100%', async () => {
+    // Darken the vectors again so the old predicate would have read 0%.
+    await runSchemaTransition(engine, DIMS);
     // Mark every page embed_skip: eligible set becomes empty.
     await engine.executeRaw(
       `UPDATE pages SET frontmatter = COALESCE(frontmatter, '{}'::jsonb) || '{"embed_skip": true}'::jsonb`,
     );
-    // Darken the vectors again so the old predicate would have read 0%.
-    await runSchemaTransition(engine, DIMS);
 
     const health = await engine.getHealth();
     expect(health.embed_coverage).toBe(1); // vacuous: zero eligible chunks

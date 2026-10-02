@@ -108,7 +108,7 @@ describe('buildPlan — diff against completed + installed VERSION', () => {
     // autopilot cooperative, v0.16.0 = subagent runtime, v0.18.0 = multi-
     // source brains, v0.18.1 = RLS hardening, v0.21.0 = Cathedral II
     // (renumbered from v0.20.0 after master shipped v0.20.x in parallel).
-    expect(plan.skippedFuture.map(m => m.version)).toEqual(['0.12.0', '0.12.2', '0.13.0', '0.13.1', '0.14.0', '0.16.0', '0.18.0', '0.18.1', '0.21.0', '0.22.4', '0.28.0', '0.29.1', '0.31.0', '0.32.2', '0.43.0', '0.46.3', '0.53.0']);
+    expect(plan.skippedFuture.map(m => m.version)).toEqual(['0.12.0', '0.12.2', '0.13.0', '0.13.1', '0.14.0', '0.16.0', '0.18.0', '0.18.1', '0.21.0', '0.22.4', '0.28.0', '0.29.1', '0.31.0', '0.32.2', '0.43.0', '0.46.3', '0.53.0', '0.60.31']);
   });
 
   test('already applied → v0.11.0 lands in `applied` bucket, not pending', () => {
@@ -148,7 +148,7 @@ describe('buildPlan — diff against completed + installed VERSION', () => {
     // v0.22.4, v0.28.0, v0.29.1, v0.31.0 were added later; installed=0.12.0
     // means they belong in skippedFuture, not pending. v0.11.0 and v0.12.0
     // stay pending despite being ≤ installed — that is the H9 invariant.
-    expect(plan.skippedFuture.map(m => m.version)).toEqual(['0.12.2', '0.13.0', '0.13.1', '0.14.0', '0.16.0', '0.18.0', '0.18.1', '0.21.0', '0.22.4', '0.28.0', '0.29.1', '0.31.0', '0.32.2', '0.43.0', '0.46.3', '0.53.0']);
+    expect(plan.skippedFuture.map(m => m.version)).toEqual(['0.12.2', '0.13.0', '0.13.1', '0.14.0', '0.16.0', '0.18.0', '0.18.1', '0.21.0', '0.22.4', '0.28.0', '0.29.1', '0.31.0', '0.32.2', '0.43.0', '0.46.3', '0.53.0', '0.60.31']);
   });
 
   test('--migration filter narrows to one version', () => {
@@ -213,10 +213,11 @@ describe('runApplyMigrations exit codes (v0.36.1.x #1062)', () => {
     const { readFileSync } = await import('fs');
     const src = readFileSync('src/commands/apply-migrations.ts', 'utf8');
     expect(src).toMatch(/const listExit = cli\.requireDb && dbProbe\.status === 'unreachable' \? 1 : 0;/);
-    expect(src).toMatch(/cli\.list\s*\)\s*\{\s*printList\(plan,\s*installed,\s*dbProbe\);\s*process\.exit\(listExit\);/);
+    expect(src).toMatch(/cli\.list\s*\)\s*\{\s*printList\(plan,\s*installed,\s*dbProbe\);\s*return listExit;/);
     expect(src).toMatch(/cli\.dryRun\s*\)\s*\{[\s\S]*printDryRun\(plan,\s*installed,\s*dbProbe\)/);
-    expect(src).toContain('process.exit(listExit || (previews.some(preview => preview.error) ? 1 : 0));');
-    expect(src).toMatch(/All migrations up to date[\s\S]{0,80}process\.exit\(0\)/);
+    expect(src).toContain('return listExit || (previews.some(preview => preview.error) ? 1 : 0);');
+    expect(src).toMatch(/All migrations up to date[\s\S]{0,80}return 0;/);
+    expect(src).toContain('if (exitCode !== undefined) process.exit(exitCode);');
   });
 });
 
@@ -286,6 +287,6 @@ describe('resolveSchemaBehind (#1530)', () => {
   test('up-to-date branch exits 1 when schemaBehind (source shape)', async () => {
     const { readFileSync } = await import('fs');
     const src = readFileSync('src/commands/apply-migrations.ts', 'utf8');
-    expect(src).toMatch(/if \(schemaBehind\)[\s\S]{0,300}process\.exit\(1\)[\s\S]{0,120}All migrations up to date/);
+    expect(src).toMatch(/if \(schemaBehind\)[\s\S]{0,300}return 1;[\s\S]{0,120}All migrations up to date/);
   });
 });

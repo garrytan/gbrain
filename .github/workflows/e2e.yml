@@ -34,7 +34,7 @@ jobs:
     # Postgres and HARD-FAILS if DATABASE_URL is missing, so the guard can never
     # silently skip.
     name: JSONB parity (#2339 regression guard)
-    runs-on: ubicloud-standard-16-ubuntu-2404
+    runs-on: ubicloud-standard-4-ubuntu-2404
     timeout-minutes: 15
     services:
       postgres:
@@ -54,7 +54,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
         with:
-          bun-version: 1.3.13
+          bun-version: 1.4.2
       - uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
         with:
           path: ~/.bun/install/cache
@@ -68,7 +68,7 @@ jobs:
           path: |
             test/fixtures/pglite-snapshot.tar
             test/fixtures/pglite-snapshot.version
-          key: pglite-snapshot-${{ runner.os }}-${{ hashFiles('src/core/migrate.ts', 'src/core/pglite-schema.ts', 'src/core/pglite-engine.ts', 'src/core/fts-language.ts', 'src/core/vector-index.ts', 'src/core/search/projection-statistics.ts', 'src/core/ai/defaults.ts', 'src/core/timeline-dedup-repair.ts', 'src/core/pages-upsert-arbiter.ts', 'src/core/link-extraction.ts', 'src/core/grants/*.ts', 'src/core/scope.ts', 'src/core/sql-query.ts', 'src/core/minions/tools/brain-allowlist.ts', 'src/core/facts/withdrawal-schema.ts', 'src/core/page-state/schema.ts', 'src/core/lease-schema.ts', 'src/core/page-state/projection-schema.ts', 'src/core/persistence/schema.ts', 'src/core/persistence/effect-schema.ts', 'src/core/persistence/writer-guard-schema.ts', 'src/core/persistence/topology-schema.ts', 'src/core/shared-skills/*schema*.ts', 'src/core/company-brain/receipt-schema.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
+          key: pglite-snapshot-${{ runner.os }}-${{ hashFiles('src/core/*.ts', 'src/core/engine-sql/bootstrap.ts', 'src/core/schema-migrations/**', 'src/core/ai/defaults.ts', 'src/core/company-brain/receipt-schema.ts', 'src/core/entities/resolve.ts', 'src/core/facts/withdrawal-schema.ts', 'src/core/facts/relink-schema.ts', 'src/core/google/*.ts', 'src/core/grants/*.ts', 'src/core/minions/tools/brain-allowlist.ts', 'src/core/ops/contract.ts', 'src/core/page-state/*schema.ts', 'src/core/persistence/*.ts', 'src/core/schema-pack/link-inference.ts', 'src/core/schema-pack/redos-guard.ts', 'src/core/search/alias-normalize.ts', 'src/core/search/private-visibility.ts', 'src/core/search/projection-statistics.ts', 'src/core/shared-skills/*schema*.ts', 'src/core/ai/decide/schema.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
       - run: bun install --frozen-lockfile
       # This job runs bare `bun test` (not run-e2e.sh), so the snapshot must
       # be activated here or the restored tar is never read (the engine gates
@@ -118,7 +118,7 @@ jobs:
           fetch-depth: 0
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
-          bun-version: 1.3.13
+          bun-version: 1.4.2
       - name: Select and freeze E2E files
         id: select
         shell: bash
@@ -149,7 +149,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.prepare-e2e.outputs.matrix) }}
-    runs-on: ubicloud-standard-16-ubuntu-2404
+    runs-on: ubicloud-standard-4-ubuntu-2404
     timeout-minutes: 60
     services:
       postgres:
@@ -169,7 +169,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
         with:
-          bun-version: 1.3.13
+          bun-version: 1.4.2
       - uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
         with:
           path: ~/.bun/install/cache
@@ -183,7 +183,7 @@ jobs:
           path: |
             test/fixtures/pglite-snapshot.tar
             test/fixtures/pglite-snapshot.version
-          key: pglite-snapshot-${{ runner.os }}-${{ hashFiles('src/core/migrate.ts', 'src/core/pglite-schema.ts', 'src/core/pglite-engine.ts', 'src/core/fts-language.ts', 'src/core/vector-index.ts', 'src/core/search/projection-statistics.ts', 'src/core/ai/defaults.ts', 'src/core/timeline-dedup-repair.ts', 'src/core/pages-upsert-arbiter.ts', 'src/core/link-extraction.ts', 'src/core/grants/*.ts', 'src/core/scope.ts', 'src/core/sql-query.ts', 'src/core/minions/tools/brain-allowlist.ts', 'src/core/facts/withdrawal-schema.ts', 'src/core/page-state/schema.ts', 'src/core/lease-schema.ts', 'src/core/page-state/projection-schema.ts', 'src/core/persistence/schema.ts', 'src/core/persistence/effect-schema.ts', 'src/core/persistence/writer-guard-schema.ts', 'src/core/persistence/topology-schema.ts', 'src/core/shared-skills/*schema*.ts', 'src/core/company-brain/receipt-schema.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
+          key: pglite-snapshot-${{ runner.os }}-${{ hashFiles('src/core/*.ts', 'src/core/engine-sql/bootstrap.ts', 'src/core/schema-migrations/**', 'src/core/ai/defaults.ts', 'src/core/company-brain/receipt-schema.ts', 'src/core/entities/resolve.ts', 'src/core/facts/withdrawal-schema.ts', 'src/core/facts/relink-schema.ts', 'src/core/google/*.ts', 'src/core/grants/*.ts', 'src/core/minions/tools/brain-allowlist.ts', 'src/core/ops/contract.ts', 'src/core/page-state/*schema.ts', 'src/core/persistence/*.ts', 'src/core/schema-pack/link-inference.ts', 'src/core/schema-pack/redos-guard.ts', 'src/core/search/alias-normalize.ts', 'src/core/search/private-visibility.ts', 'src/core/search/projection-statistics.ts', 'src/core/shared-skills/*schema*.ts', 'src/core/ai/decide/schema.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
       - run: bun install --frozen-lockfile
       - name: Run frozen E2E partition
         shell: bash
@@ -203,8 +203,11 @@ jobs:
 
   tier1:
     name: Tier 1 (Mechanical)
+    # Tier 1 stays on 16 vCPUs: on 4 its CLI `init --url` spawns in
+    # mechanical.test.ts went from ~2s to past their 15-30s kill timeouts
+    # (measured September 29, 2026), while every other E2E lane ran as fast.
     runs-on: ubicloud-standard-16-ubuntu-2404
-    timeout-minutes: 30
+    timeout-minutes: 45
     services:
       postgres:
         image: pgvector/pgvector:pg16
@@ -219,11 +222,27 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+      # Transaction-mode pooler for the backend-matrix step (same settings as
+      # docker-compose.ci.yml and persistence-validation.yml).
+      pgbouncer:
+        image: edoburu/pgbouncer:latest
+        env:
+          DB_HOST: postgres
+          DB_PORT: '5432'
+          DB_USER: postgres
+          DB_PASSWORD: postgres
+          POOL_MODE: transaction
+          AUTH_TYPE: plain
+          MAX_CLIENT_CONN: '200'
+          DEFAULT_POOL_SIZE: '10'
+          IGNORE_STARTUP_PARAMETERS: extra_float_digits,statement_timeout,idle_in_transaction_session_timeout,search_path
+        ports:
+          - 55433:5432
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
         with:
-          bun-version: 1.3.13
+          bun-version: 1.4.2
       - uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
         with:
           path: ~/.bun/install/cache
@@ -237,7 +256,7 @@ jobs:
           path: |
             test/fixtures/pglite-snapshot.tar
             test/fixtures/pglite-snapshot.version
-          key: pglite-snapshot-${{ runner.os }}-${{ hashFiles('src/core/migrate.ts', 'src/core/pglite-schema.ts', 'src/core/pglite-engine.ts', 'src/core/fts-language.ts', 'src/core/vector-index.ts', 'src/core/search/projection-statistics.ts', 'src/core/ai/defaults.ts', 'src/core/timeline-dedup-repair.ts', 'src/core/pages-upsert-arbiter.ts', 'src/core/link-extraction.ts', 'src/core/grants/*.ts', 'src/core/scope.ts', 'src/core/sql-query.ts', 'src/core/minions/tools/brain-allowlist.ts', 'src/core/facts/withdrawal-schema.ts', 'src/core/page-state/schema.ts', 'src/core/lease-schema.ts', 'src/core/page-state/projection-schema.ts', 'src/core/persistence/schema.ts', 'src/core/persistence/effect-schema.ts', 'src/core/persistence/writer-guard-schema.ts', 'src/core/persistence/topology-schema.ts', 'src/core/shared-skills/*schema*.ts', 'src/core/company-brain/receipt-schema.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
+          key: pglite-snapshot-${{ runner.os }}-${{ hashFiles('src/core/*.ts', 'src/core/engine-sql/bootstrap.ts', 'src/core/schema-migrations/**', 'src/core/ai/defaults.ts', 'src/core/company-brain/receipt-schema.ts', 'src/core/entities/resolve.ts', 'src/core/facts/withdrawal-schema.ts', 'src/core/facts/relink-schema.ts', 'src/core/google/*.ts', 'src/core/grants/*.ts', 'src/core/minions/tools/brain-allowlist.ts', 'src/core/ops/contract.ts', 'src/core/page-state/*schema.ts', 'src/core/persistence/*.ts', 'src/core/schema-pack/link-inference.ts', 'src/core/schema-pack/redos-guard.ts', 'src/core/search/alias-normalize.ts', 'src/core/search/private-visibility.ts', 'src/core/search/projection-statistics.ts', 'src/core/shared-skills/*schema*.ts', 'src/core/ai/decide/schema.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
       - run: bun install --frozen-lockfile
       # Bare `bun test` job — activate the restored snapshot (see jsonb-parity).
       - name: Ensure PGLite snapshot (build-or-validate, non-fatal)
@@ -263,7 +282,7 @@ jobs:
         # (test/e2e/helpers.ts) as the other DB-backed files on this line.
         # Also added to the E2E_EXCLUSIONS in scripts/e2e-matrix.ts so a PR
         # touching sync.ts doesn't run it a second time there.
-        run: bun test --timeout=60000 test/e2e/mechanical.test.ts test/e2e/mcp.test.ts test/e2e/job-isolation.test.ts test/e2e/sync-reconcile-postgres.test.ts
+        run: bun test --timeout=60000 test/e2e/mechanical.test.ts test/e2e/job-isolation.test.ts test/e2e/sync-reconcile-postgres.test.ts
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/gbrain_test
           # #3485 preload guard: this job intentionally tests against a DB.
@@ -276,6 +295,24 @@ jobs:
         run: bun test --timeout=60000 test/e2e/engine-parity.test.ts
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/gbrain_test
+          GBRAIN_TEST_ALLOW_DATABASE_URL: '1'
+      - name: Run backend matrix (direct Postgres, then PgBouncer)
+        # scripts/e2e-backend-matrix.txt: the E5 executor binding matrix and the
+        # engine parity files, each run on direct Postgres and again through the
+        # transaction-mode pooler with an explicit prepare mode (the 6543
+        # auto-detect port is not used here). run-e2e.sh fails a file whose
+        # executed-test counts differ between the two backends.
+        shell: bash
+        run: |
+          export DATABASE_URL="postgresql://postgres:${PGPASSWORD}@localhost:5432/gbrain_test"
+          export GBRAIN_PGBOUNCER_E2E_URL="postgresql://postgres:${PGPASSWORD}@localhost:55433/gbrain_test?prepare=false"
+          export GBRAIN_PGBOUNCER_DIRECT_URL="$DATABASE_URL"
+          mapfile -t files < <(grep -v -e '^#' -e '^!' -e '^$' scripts/e2e-backend-matrix.txt | cut -f1)
+          bash scripts/run-e2e.sh "${files[@]}"
+        env:
+          PGPASSWORD: postgres
+          GBRAIN_CI_REQUIRE_PGBOUNCER: '1'
+          GBRAIN_TEST_DB: '1'
           GBRAIN_TEST_ALLOW_DATABASE_URL: '1'
       - name: Run multi-agent serve suite
         # cathedral-6 (T7): multi-agent continuity + isolation over a real
@@ -332,7 +369,7 @@ jobs:
     # OpenAI/Anthropic tokens and must not fire when the build
     # can't even pass the cheapest DB guard.
     needs: jsonb-parity
-    runs-on: ubicloud-standard-16-ubuntu-2404
+    runs-on: ubicloud-standard-4-ubuntu-2404
     timeout-minutes: 30
     services:
       postgres:
@@ -352,7 +389,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
         with:
-          bun-version: 1.3.13
+          bun-version: 1.4.2
       - uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
         with:
           path: ~/.bun/install/cache
@@ -366,7 +403,7 @@ jobs:
           path: |
             test/fixtures/pglite-snapshot.tar
             test/fixtures/pglite-snapshot.version
-          key: pglite-snapshot-${{ runner.os }}-${{ hashFiles('src/core/migrate.ts', 'src/core/pglite-schema.ts', 'src/core/pglite-engine.ts', 'src/core/fts-language.ts', 'src/core/vector-index.ts', 'src/core/search/projection-statistics.ts', 'src/core/ai/defaults.ts', 'src/core/timeline-dedup-repair.ts', 'src/core/pages-upsert-arbiter.ts', 'src/core/link-extraction.ts', 'src/core/grants/*.ts', 'src/core/scope.ts', 'src/core/sql-query.ts', 'src/core/minions/tools/brain-allowlist.ts', 'src/core/facts/withdrawal-schema.ts', 'src/core/page-state/schema.ts', 'src/core/lease-schema.ts', 'src/core/page-state/projection-schema.ts', 'src/core/persistence/schema.ts', 'src/core/persistence/effect-schema.ts', 'src/core/persistence/writer-guard-schema.ts', 'src/core/persistence/topology-schema.ts', 'src/core/shared-skills/*schema*.ts', 'src/core/company-brain/receipt-schema.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
+          key: pglite-snapshot-${{ runner.os }}-${{ hashFiles('src/core/*.ts', 'src/core/engine-sql/bootstrap.ts', 'src/core/schema-migrations/**', 'src/core/ai/defaults.ts', 'src/core/company-brain/receipt-schema.ts', 'src/core/entities/resolve.ts', 'src/core/facts/withdrawal-schema.ts', 'src/core/facts/relink-schema.ts', 'src/core/google/*.ts', 'src/core/grants/*.ts', 'src/core/minions/tools/brain-allowlist.ts', 'src/core/ops/contract.ts', 'src/core/page-state/*schema.ts', 'src/core/persistence/*.ts', 'src/core/schema-pack/link-inference.ts', 'src/core/schema-pack/redos-guard.ts', 'src/core/search/alias-normalize.ts', 'src/core/search/private-visibility.ts', 'src/core/search/projection-statistics.ts', 'src/core/shared-skills/*schema*.ts', 'src/core/ai/decide/schema.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
       - run: bun install --frozen-lockfile
       # Bare `bun test` job — activate the restored snapshot (see jsonb-parity).
       - name: Ensure PGLite snapshot (build-or-validate, non-fatal)
@@ -434,7 +471,7 @@ jobs:
   # ──────────────────────────────────────────────────────────────────────
   coverage-full-unit:
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_corpus)
-    runs-on: ubicloud-standard-16-ubuntu-2404
+    runs-on: ubicloud-standard-4-ubuntu-2404
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -444,7 +481,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
         with:
-          bun-version: 1.3.13
+          bun-version: 1.4.2
       - run: bun install --frozen-lockfile
       - name: Coverage shard ${{ matrix.shard }}/10
         run: scripts/test-shard.sh ${{ matrix.shard }} 10
@@ -462,13 +499,13 @@ jobs:
 
   coverage-full-serial:
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_corpus)
-    runs-on: ubicloud-standard-16-ubuntu-2404
+    runs-on: ubicloud-standard-8-ubuntu-2404
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
         with:
-          bun-version: 1.3.13
+          bun-version: 1.4.2
       - run: bun install --frozen-lockfile
       - run: bun run test:serial
         env:
@@ -485,19 +522,25 @@ jobs:
 
   coverage-full-slow:
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_corpus)
-    runs-on: ubicloud-standard-16-ubuntu-2404
-    timeout-minutes: 25
+    runs-on: ubicloud-standard-4-ubuntu-2404
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
         with:
-          bun-version: 1.3.13
+          bun-version: 1.4.2
       - run: bun install --frozen-lockfile
       # Separate coverage dirs per bun process (a reused dir is overwritten).
       - run: bun test test/eval-longmemeval-e2e.slow.test.ts --timeout=60000 --coverage --coverage-reporter=lcov --coverage-dir=${{ runner.temp }}/coverage/slow-a
       - run: bun test test/entity-resolve-perf.slow.test.ts --timeout=300000 --coverage --coverage-reporter=lcov --coverage-dir=${{ runner.temp }}/coverage/slow-b
       - run: bun test test/entity-card-perf.slow.test.ts --timeout=300000 --coverage --coverage-reporter=lcov --coverage-dir=${{ runner.temp }}/coverage/slow-c
       - run: bun test test/eval-brainbench-e2e.slow.test.ts --timeout=300000 --coverage --coverage-reporter=lcov --coverage-dir=${{ runner.temp }}/coverage/slow-d
+      # Coverage only: the 100,001-page scale and the PGLite crash gate run in
+      # test.yml and persistence-validation.yml on every push.
+      - run: bun test test/export-scale.slow.test.ts --timeout=900000 --coverage --coverage-reporter=lcov --coverage-dir=${{ runner.temp }}/coverage/slow-e
+        env:
+          GBRAIN_TEST_EXPORT_SCALE_PAGES: '10001'
+      - run: bun test test/reconcile-crash.slow.test.ts --timeout=180000 --coverage --coverage-reporter=lcov --coverage-dir=${{ runner.temp }}/coverage/slow-f
       - name: Write coverage lane manifest
         run: |
           printf '{"lane":"slow","sha":"%s","lcovCount":%s,"complete":true}\n' \
@@ -515,7 +558,7 @@ jobs:
 
   coverage-full-e2e:
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_corpus)
-    runs-on: ubicloud-standard-16-ubuntu-2404
+    runs-on: ubicloud-standard-4-ubuntu-2404
     timeout-minutes: 60
     strategy:
       fail-fast: false
@@ -538,14 +581,14 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
         with:
-          bun-version: 1.3.13
+          bun-version: 1.4.2
       # PGLite snapshot (restore-only; test.yml's serial-tests job saves).
       - uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
         with:
           path: |
             test/fixtures/pglite-snapshot.tar
             test/fixtures/pglite-snapshot.version
-          key: pglite-snapshot-${{ runner.os }}-${{ hashFiles('src/core/migrate.ts', 'src/core/pglite-schema.ts', 'src/core/pglite-engine.ts', 'src/core/fts-language.ts', 'src/core/vector-index.ts', 'src/core/search/projection-statistics.ts', 'src/core/ai/defaults.ts', 'src/core/timeline-dedup-repair.ts', 'src/core/pages-upsert-arbiter.ts', 'src/core/link-extraction.ts', 'src/core/grants/*.ts', 'src/core/scope.ts', 'src/core/sql-query.ts', 'src/core/minions/tools/brain-allowlist.ts', 'src/core/facts/withdrawal-schema.ts', 'src/core/page-state/schema.ts', 'src/core/lease-schema.ts', 'src/core/page-state/projection-schema.ts', 'src/core/persistence/schema.ts', 'src/core/persistence/effect-schema.ts', 'src/core/persistence/writer-guard-schema.ts', 'src/core/persistence/topology-schema.ts', 'src/core/shared-skills/*schema*.ts', 'src/core/company-brain/receipt-schema.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
+          key: pglite-snapshot-${{ runner.os }}-${{ hashFiles('src/core/*.ts', 'src/core/engine-sql/bootstrap.ts', 'src/core/schema-migrations/**', 'src/core/ai/defaults.ts', 'src/core/company-brain/receipt-schema.ts', 'src/core/entities/resolve.ts', 'src/core/facts/withdrawal-schema.ts', 'src/core/facts/relink-schema.ts', 'src/core/google/*.ts', 'src/core/grants/*.ts', 'src/core/minions/tools/brain-allowlist.ts', 'src/core/ops/contract.ts', 'src/core/page-state/*schema.ts', 'src/core/persistence/*.ts', 'src/core/schema-pack/link-inference.ts', 'src/core/schema-pack/redos-guard.ts', 'src/core/search/alias-normalize.ts', 'src/core/search/private-visibility.ts', 'src/core/search/projection-statistics.ts', 'src/core/shared-skills/*schema*.ts', 'src/core/ai/decide/schema.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
       - run: bun install --frozen-lockfile
       - name: Bootstrap isolated E2E schema
         shell: bash
@@ -609,7 +652,7 @@ jobs:
           fetch-depth: 0  # baseline gate reads git show origin/master:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
         with:
-          bun-version: 1.3.13
+          bun-version: 1.4.2
       - run: bun install --frozen-lockfile
       - name: Download per-lane coverage artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
@@ -693,7 +736,7 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
         if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_corpus)
         with:
-          bun-version: 1.3.13
+          bun-version: 1.4.2
       - name: Download nightly execution receipts
         if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_corpus)
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0

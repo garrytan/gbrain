@@ -15,8 +15,9 @@ import { prepareCanonicalProjections } from './canonical-projections.ts';
 import { digest, sha256 } from './digest.ts';
 import { preserveProtectedTakes } from './protected-takes.ts';
 import { getWorktreeBinding } from './ownership.ts';
-import { assertConfiguredSyncRoot, assertSyncEntryOrigin, syncGit, syncRawHash } from './sync-discovery.ts';
-import { assertSyncPageOrigin, syncOriginPath } from './sync-origin.ts';
+import { sourceMirrorReadOnly } from './mirror-read-only.ts';
+import { assertConfiguredSyncRoot, assertSyncEntryOrigin, readSyncFile, syncGit, syncRawHash, type SyncRename } from './sync-discovery.ts';
+import { assertSyncPageOrigin, sameSyncOrigin, syncOriginPath, syncOriginScope, type SyncOriginScope } from './sync-origin.ts';
 import { assertManagedSyncActive, validateSyncAuthority, type SyncAuthority, type SyncProcessingOptions } from './sync-authority.ts';
 import type { PreparedContentImport } from './prepared-import.ts';
 import type { PreparedMutation } from './coordinator.ts';
@@ -26,7 +27,12 @@ import { loadActivePackForEngine, checkApprovedSchemaForEngine } from '../schema
 import type { CompanyBrainPlan } from '../company-brain/types.ts';
 import { companyBrainProfile } from '../company-brain/profile.ts';
 import { companyBrainPolicyFingerprint } from '../company-brain/policy.ts';
+import { isUnboundSourcePage, UNBOUND_COLLISION_MESSAGE } from './unbound-source.ts';
+import { findIncompleteSyncReceipt } from './checkpoint-validation.ts';
+import { frontmatterSlugConflictMessage } from './verb-errors.ts';
 
+/** The options that select a managed sync cursor (its key), recorded so a refusal can print the exact retry. */
+export interface SyncCursorOptions { full: boolean; workingTree: boolean; srcSubpath: string | null; exclude: string[]; includeHidden: string[]; strategy: string | null }
 export interface SyncIntent extends Record<string, unknown> {
   companyApproval?: { schema: NonNullable<CompanyBrainPlan['schema']>; planDigest: string; extractorVersion: string; policyFingerprint: string };
   kind: 'managed_sync_import' | 'managed_sync_delete' | 'managed_sync_checkpoint';
@@ -34,7 +40,13 @@ export interface SyncIntent extends Record<string, unknown> {
   rawHash: string | null; content: string | null; ownerEpoch: string;
   lineEndingOnly?: boolean;
   working?: boolean;
+  renameFrom?: SyncRename;
   processingOptions?: SyncProcessingOptions;
+  syncOptions?: SyncCursorOptions;
+  /** The `--repo` base a relative `--src-subpath` resolved against, for the printed retry. */
+  repoPath?: string;
+  /** #5522: another cursor of this source imported entries of this run, so the source may already sit at the target. */
+  overtaken?: boolean;
   syncAuthority: SyncAuthority; cursorKey: string; runId: string; index: number;
   from: string | null; target: string; total: number; slugMode: 'git-root' | 'source-root';
 }
@@ -57,6 +69,7 @@ export async function prepareManagedSyncMutation(engine: BrainEngine, row: Write
     p.path === null ? undefined : { root, path: join(root, p.path) });
   let origin: Parameters<typeof assertSyncEntryOrigin>[1] | undefined;
   let originContext: Parameters<typeof assertSyncEntryOrigin>[0] | undefined;
+  let originScope: SyncOriginScope | undefined;
   if (p.kind !== 'managed_sync_checkpoint') {
     if (typeof p.path !== 'string' || typeof p.sourcePath !== 'string') throw new OperationError('storage_error', 'The accepted sync origin is missing.');
     let working = p.working;
@@ -74,8 +87,18 @@ export async function prepareManagedSyncMutation(engine: BrainEngine, row: Write
     origin = { path: p.path, sourcePath: p.sourcePath, action: p.kind === 'managed_sync_delete' ? 'delete' : 'import', working };
     originContext = { root, gitRoot: realpathSync(syncGit(root, ['rev-parse', '--show-toplevel']).trim()), target: p.target, slugMode: p.slugMode };
     assertSyncEntryOrigin(originContext, origin);
-    await assertSyncPageOrigin(engine, row.source_id, p.sourcePath, row.page_id, p.kind === 'managed_sync_delete');
+    originScope = syncOriginScope({ ...originContext, sourceId: row.source_id });
+    await assertSyncPageOrigin(engine, row.source_id, p.sourcePath, row.page_id, p.kind === 'managed_sync_delete', originScope);
+    if (p.renameFrom) await assertSyncPageOrigin(engine, row.source_id, p.renameFrom.sourcePath, p.renameFrom.pageId, true, originScope);
   }
+  const moved = p.kind === 'managed_sync_import' ? p.renameFrom : undefined;
+  const assertRenameSource = async (tx: BrainEngine) => {
+    if (!moved || moved.slug === row.slug) return;
+    const previous = await tx.readPageSnapshot(moved.slug, { sourceId: row.source_id, includeDeleted: true });
+    if (previous?.page.id !== moved.pageId || previous.revision !== moved.revision || previous.page.deleted_at != null) {
+      throw new OperationError('revision_conflict', 'The renamed page changed after sync admission.');
+    }
+  };
   const validate = async (tx: BrainEngine) => {
     await assertManagedSyncActive(tx, true);
     await validateSyncAuthority(tx, p.syncAuthority, row.slug);
@@ -91,7 +114,9 @@ export async function prepareManagedSyncMutation(engine: BrainEngine, row: Write
     if (p.path !== null && syncRawHash(root, p.path) !== p.rawHash) throw new OperationError('source_changed', 'The imported file changed after sync admission.');
     if (origin && originContext) {
       assertSyncEntryOrigin(originContext, origin);
-      await assertSyncPageOrigin(tx, row.source_id, origin.sourcePath, row.page_id, p.kind === 'managed_sync_delete');
+      await assertSyncPageOrigin(tx, row.source_id, origin.sourcePath, row.page_id, p.kind === 'managed_sync_delete', originScope);
+      if (moved) await assertSyncPageOrigin(tx, row.source_id, moved.sourcePath, moved.pageId, true, originScope);
+      await assertRenameSource(tx);
     }
     if (p.companyApproval) {
       const [source] = await tx.executeRaw<{ config: unknown }>('SELECT config FROM sources WHERE id=$1', [row.source_id]);
@@ -112,16 +137,13 @@ export async function prepareManagedSyncMutation(engine: BrainEngine, row: Write
     }
     const [manifest] = await tx.executeRaw<{ count: number }>("SELECT jsonb_array_length(completed_keys) AS count FROM op_checkpoints WHERE op='managed-sync-manifest' AND fingerprint=$1", [p.runId]);
     if (!manifest || Number(manifest.count) !== p.total) throw new OperationError('storage_error', 'The immutable sync manifest is incomplete.');
-    const [incomplete] = await tx.executeRaw(`SELECT r.id FROM persistence_requests r WHERE r.worktree_id=$1::uuid AND
-      (r.recovery IS NOT NULL OR (r.intent->>'runId'=$2 AND r.intent->>'kind' IN ('managed_sync_import','managed_sync_delete') AND r.state<>'committed'
-        AND (r.state IN ('queued','running','recovering') OR NOT EXISTS (SELECT 1 FROM persistence_requests committed
-          WHERE committed.source_id=r.source_id AND committed.intent->>'runId'=$2 AND committed.intent->>'index'=r.intent->>'index' AND committed.state='committed')))) LIMIT 1`,
-      [row.worktree_id, p.runId]);
-    if (incomplete) throw new OperationError('recovery_required', 'An incomplete page receipt still blocks the sync checkpoint.');
+    const incomplete = await findIncompleteSyncReceipt(tx, row.worktree_id!, p.runId);
+    if (incomplete) throw new OperationError('recovery_required', `An incomplete page receipt (request ${incomplete}) still blocks the sync checkpoint.`);
+    // #5522: an overtaken run accepts a source another cursor already checkpointed at this exact target.
     const changed = await tx.executeRaw(`UPDATE sources SET last_commit=$3,last_sync_at=now(),config=jsonb_set(${SOURCE_CONFIG_OBJECT_SQL},'{slug_root_mode}',to_jsonb($5::text)),
       newest_content_at=(SELECT MAX(updated_at) FROM pages WHERE source_id=$1 AND deleted_at IS NULL)
-      WHERE id=$1 AND incarnation=$2::uuid AND last_commit IS NOT DISTINCT FROM $4
-      AND (config->>'slug_root_mode' IS NULL OR config->>'slug_root_mode'=$5) RETURNING id`, [row.source_id, row.source_incarnation, p.target, p.from, p.slugMode]);
+      WHERE id=$1 AND incarnation=$2::uuid AND (last_commit IS NOT DISTINCT FROM $4 OR ($6::boolean AND last_commit=$3))
+      AND (config->>'slug_root_mode' IS NULL OR config->>'slug_root_mode'=$5) RETURNING id`, [row.source_id, row.source_incarnation, p.target, p.from, p.slugMode, p.overtaken === true]);
     if (!changed.length) throw new OperationError('revision_conflict', 'The source checkpoint changed during this sync.');
     await tx.executeRaw("UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,done}','true'::jsonb),updated_at=now() WHERE op='managed-sync' AND fingerprint=$1", [p.cursorKey]);
     return { status: 'synced', source_id: row.source_id, committed_pages: p.total };
@@ -129,8 +151,12 @@ export async function prepareManagedSyncMutation(engine: BrainEngine, row: Write
   const source = { sourceId: row.source_id };
   const snapshot = await engine.readPageSnapshot(row.slug, { ...source, includeDeleted: true });
   assertPageRevision(snapshot, p.expected_revision === null ? {} : { expectedRevision: p.expected_revision });
-  if ((snapshot?.page.id ?? null) !== row.page_id || (snapshot?.page.source_path != null && syncOriginPath(snapshot.page.source_path) !== syncOriginPath(p.sourcePath!))) {
+  const recordedOrigin = moved?.slug === row.slug ? moved.sourcePath : p.sourcePath!;
+  if ((snapshot?.page.id ?? null) !== row.page_id || (snapshot?.page.source_path != null && !sameSyncOrigin(snapshot.page.source_path, recordedOrigin, originScope, snapshot.page.slug))) {
     throw new OperationError('page_identity_changed', 'The imported path no longer names the accepted page.');
+  }
+  if (snapshot && snapshot.page.source_path == null && await isUnboundSourcePage(engine, row.source_id, row.slug)) {
+    throw new OperationError('source_changed', UNBOUND_COLLISION_MESSAGE);
   }
   if (p.kind === 'managed_sync_delete') return { observedRevision: snapshot?.revision ?? null, noop: !snapshot || snapshot.page.deleted_at != null,
     validate, apply: async tx => {
@@ -149,7 +175,9 @@ export async function prepareManagedSyncMutation(engine: BrainEngine, row: Write
     if (!prepared || prepared.slug !== row.slug) throw new OperationError('invalid_params', result.error ?? 'The code file identity could not be prepared.');
     const ready = prepared;
     if (ready.observedRevision !== (snapshot?.revision ?? null)) throw new OperationError('revision_conflict', 'The code page changed during preparation.');
-    return { observedRevision: ready.observedRevision, validate, noop: ready.noop, deferEmbedding: true, apply: async tx => {
+    return { observedRevision: ready.observedRevision,
+      validate: async tx => { await validate(tx); await ready.validate(tx); },
+      noop: ready.noop, deferEmbedding: true, apply: async tx => {
       await ready.apply(tx);
       return { status: ready.noop ? 'skipped' : snapshot ? 'updated' : 'created', slug: row.slug, source_id: row.source_id,
         chunks: result.chunks, noop: ready.noop, imported_file: true };
@@ -159,55 +187,98 @@ export async function prepareManagedSyncMutation(engine: BrainEngine, row: Write
   if (schema && p.processingOptions?.noSchemaPack) throw new OperationError('profile_incompatible', 'Company source approval requires its pinned schema pack.');
   const activePack = p.processingOptions?.noSchemaPack ? undefined : schema ? (await checkApprovedSchemaForEngine(engine, { name: schema.name, identity: schema.identity, resolvedManifestHash: schema.resolved_digest },
     { remote: false, sourceId: row.source_id })).pack.manifest : (await loadActivePackForEngine(engine, { remote: row.authority.remote, sourceId: row.source_id }).catch(() => null))?.manifest;
+  // A renamed page is prepared where it stands; publication moves it, then re-prepares at the new slug.
+  const renamed = moved && moved.slug !== row.slug ? moved : undefined;
+  const base = renamed ? await engine.readPageSnapshot(renamed.slug, { ...source, includeDeleted: true }) : snapshot;
+  if (renamed && (base?.page.id !== renamed.pageId || base.revision !== renamed.revision || base.page.deleted_at != null)) {
+    throw new OperationError('revision_conflict', 'The renamed page changed after sync admission.');
+  }
   const parsedInput = parseMarkdown(p.content, row.slug, { activePack });
   const expectedSlug = resolveSlugForPath(p.sourcePath);
   const retainedWindowsOrigin = process.platform === 'win32' && snapshot?.page.source_path != null &&
     syncOriginPath(snapshot.page.source_path) === syncOriginPath(p.sourcePath) && parsedInput.slug === snapshot.page.slug;
   if (expectedSlug && parsedInput.slug !== expectedSlug && slugifyPath(parsedInput.slug) !== expectedSlug && !retainedWindowsOrigin) {
-    throw new OperationError('invalid_params', 'The file frontmatter slug conflicts with its physical origin.');
+    throw new OperationError('invalid_params', frontmatterSlugConflictMessage(p.sourcePath, parsedInput.slug, expectedSlug));
   }
-  if (!p.companyApproval && snapshot && !p.lineEndingOnly && p.rawHash !== sha256(p.content) && !sameCanonicalImport(snapshot, parsedInput)) {
-    throw new OperationError('source_changed', 'Newer working-tree bytes and the current page disagree with this pinned Git import.');
+  if (!p.companyApproval && base && !p.lineEndingOnly && p.rawHash !== sha256(p.content) && !sameCanonicalImport(base, parsedInput)) {
+    // The pinned commit can simply trail the coordinator: a committed page write reaches the
+    // working tree before its Git effect lands. When the newer working-tree bytes are the
+    // current page itself, there is nothing to import and nothing to protect; the commit that
+    // carries them is imported as a no-op by a later run.
+    // The checkpoint may advance past the pinned commit's bytes because the working tree wins, as for any local edit.
+    const working = renamed ? null : readSyncFile(root, p.path);
+    if (!working || sha256(working) !== p.rawHash
+      || !sameCanonicalImport(base, parseMarkdown(working.toString('utf8'), row.slug, { activePack }))) {
+      throw new OperationError('source_changed', 'Newer working-tree bytes and the current page disagree with this pinned Git import.');
+    }
+    return { observedRevision: snapshot?.revision ?? null, noop: true, contentUnchanged: true, validate,
+      apply: async () => ({ status: 'skipped', slug: row.slug, source_id: row.source_id, chunks: 0, noop: true, imported_file: true }) };
   }
   let importContent = p.content;
   if (row.authority.remote) {
-    const compiled_truth = preserveProtectedTakes(parsedInput.compiled_truth, snapshot?.page.compiled_truth ?? '');
-    const timeline = preserveProtectedTakes(parsedInput.timeline ?? '', snapshot?.page.timeline ?? '');
+    const compiled_truth = preserveProtectedTakes(parsedInput.compiled_truth, base?.page.compiled_truth ?? '');
+    const timeline = preserveProtectedTakes(parsedInput.timeline ?? '', base?.page.timeline ?? '');
     if (compiled_truth !== parsedInput.compiled_truth || timeline !== (parsedInput.timeline ?? '')) {
-      importContent = serializePageToMarkdown({ ...(snapshot?.page ?? { id: 0, source_id: row.source_id, created_at: new Date(), updated_at: new Date() }),
+      importContent = serializePageToMarkdown({ ...(base?.page ?? { id: 0, source_id: row.source_id, created_at: new Date(), updated_at: new Date() }),
         ...parsedInput, compiled_truth, timeline } as Page, parsedInput.tags);
     }
   }
   let prepared: PreparedContentImport | undefined;
-  const result = await importFromContent(engine, row.slug, importContent, { ...source, noEmbed: true, remote: row.authority.remote, activePack,
-    filename: basename(p.sourcePath).replace(/\.mdx?$/i, ''), sourcePath: p.sourcePath, allowEmptyOverwrite: true,
+  const importOptions = { ...source, noEmbed: true, remote: row.authority.remote, activePack,
+    filename: basename(p.sourcePath).replace(/\.mdx?$/i, ''), sourcePath: p.sourcePath, allowEmptyOverwrite: true };
+  const result = await importFromContent(engine, renamed?.slug ?? row.slug, importContent, { ...importOptions,
     prepare: async value => { prepared = value; return value.result; } });
   if (!prepared) throw new OperationError('invalid_params', result.error ?? 'The sync file could not be prepared.');
   const ready = prepared;
-  if (ready.observedRevision !== (snapshot?.revision ?? null)) throw new OperationError('revision_conflict', 'The page changed during sync preparation.');
-  if (ready.slug !== row.slug) {
+  if (ready.observedRevision !== (base?.revision ?? null)) throw new OperationError('revision_conflict', 'The page changed during sync preparation.');
+  if (ready.slug !== (renamed?.slug ?? row.slug)) {
     // Cross-slug dedup must never advance the origin's checkpoint without a
     // guarded proof about the other identity. Keep the cursor explicitly blocked.
     throw new OperationError('revision_conflict', 'A different page already owns this file identity; resolve the duplicate before syncing.');
   }
   const parsed = parseMarkdown(p.content, row.slug, { activePack });
-  const tags = [...new Set([...(snapshot?.tags ?? []), ...ready.parsedPage.tags])].sort();
-  const renderedPage = { ...(snapshot?.page ?? { id: 0, source_id: row.source_id, created_at: new Date(), updated_at: new Date() }), ...ready.parsedPage } as Page;
+  const tags = [...new Set([...(base?.tags ?? []), ...ready.parsedPage.tags])].sort();
+  const renderedPage = { ...(base?.page ?? { id: 0, source_id: row.source_id, created_at: new Date(), updated_at: new Date() }), ...ready.parsedPage } as Page;
+  if (renamed && parsedInput.typeExplicit !== true) renderedPage.type = parsedInput.type;
   const canonical = (page: Pick<typeof parsed, 'type' | 'title' | 'compiled_truth' | 'timeline' | 'frontmatter'>, tags: string[]) => ({ type: page.type, title: page.title, body: page.compiled_truth,
     timeline: page.timeline ?? '', frontmatter: page.frontmatter, tags: [...new Set(tags)].sort() });
-  const overlay = digest(canonical(parsed, parsed.tags)) !== digest(canonical(ready.parsedPage, tags));
+  // A move re-infers an implicit type from the new location, as a fresh import there would.
+  const renamedType = renamed && parsedInput.typeExplicit !== true ? parsedInput.type : undefined;
+  const overlay = digest(canonical(parsed, parsed.tags)) !== digest(canonical({ ...ready.parsedPage, type: renamedType ?? ready.parsedPage.type }, tags));
   if (overlay && p.companyApproval) throw new OperationError('source_writeback_required', 'Canonical preparation requires a source-content correction; this profile never writes repository files.');
-  if (overlay && !p.lineEndingOnly && p.rawHash !== sha256(p.content)) throw new OperationError('source_changed', 'Canonical sanitization cannot overwrite newer working-tree bytes.');
-  const project = prepareCanonicalProjections(ready.parsedPage, row.slug, row.source_id);
-  return { observedRevision: snapshot?.revision ?? null, validate, deferEmbedding: p.processingOptions?.noEmbed,
-    ...(overlay ? { file: { root, path: join(root, p.path), content: serializePageToMarkdown(renderedPage, tags), expectedBeforeHash: p.rawHash } } : {}),
+  // #5409: a read-only mirror keeps its canonical metadata in the database only; its checkout stays the remote's bytes.
+  const mirrorReadOnly = overlay && await sourceMirrorReadOnly(engine, row.source_id);
+  const writeback = overlay && !mirrorReadOnly;
+  if (writeback && !p.lineEndingOnly && p.rawHash !== sha256(p.content)) throw new OperationError('source_changed', 'Canonical sanitization cannot overwrite newer working-tree bytes.');
+  // A rename projects against the moved page (same id), so its pinned timeline rows carry over.
+  const project = await prepareCanonicalProjections(engine, ready.parsedPage, row.slug, row.source_id, base, p.companyApproval ? 'immutable' : 'file');
+  return { observedRevision: snapshot?.revision ?? null,
+    // Tells the #5470 screen the content is unchanged; publication still queues its effects.
+    contentUnchanged: ready.noop && !moved && !writeback,
+    ...(renamed ? { additionalPageKeys: [{ sourceId: row.source_id, slug: renamed.slug }] } : {}),
+    validate: async tx => { await validate(tx); await ready.validate(tx); },
+    deferEmbedding: p.processingOptions?.noEmbed,
+    ...(writeback ? { file: { root, path: join(root, p.path), content: serializePageToMarkdown(renderedPage, tags), expectedBeforeHash: p.rawHash } } : {}),
+    ...(mirrorReadOnly ? { databaseOnlyReason: 'mirror_read_only' as const } : {}),
     apply: async tx => {
-      await ready.apply(tx);
+      let applied = ready;
+      if (renamed) {
+        // The page moves first, keeping its id, inbound links and history and leaving
+        // `old -> new` in slug_aliases; the file content is then prepared against it.
+        if (await tx.updateSlug(renamed.slug, row.slug, source) !== 1) throw new OperationError('page_identity_changed', 'The renamed page could not move to its new slug.');
+        if (renamedType) await tx.executeRaw('UPDATE pages SET type=$3 WHERE source_id=$1 AND slug=$2', [row.source_id, row.slug, renamedType]);
+        let movedImport: PreparedContentImport | undefined;
+        await importFromContent(tx, row.slug, importContent, { ...importOptions, prepare: async value => { movedImport = value; return value.result; } });
+        if (!movedImport || movedImport.slug !== row.slug) throw new OperationError('page_identity_changed', 'The renamed page could not be prepared at its new slug.');
+        await movedImport.validate(tx);
+        applied = movedImport;
+      }
+      await applied.apply(tx);
       // Hash no-ops still repair a missing physical origin under the same guard.
       await tx.executeRaw('UPDATE pages SET source_path=$3 WHERE source_id=$1 AND slug=$2 AND source_path IS DISTINCT FROM $3', [row.source_id, row.slug, p.sourcePath]);
-      if (!ready.noop || p.companyApproval) await project(tx);
-      if (!ready.noop) await sealPageTextProjection(tx, row.slug, row.source_id);
-      return { status: ready.noop ? 'skipped' : snapshot ? 'updated' : 'created', slug: row.slug, source_id: row.source_id,
-        chunks: result.chunks, noop: ready.noop, imported_file: true };
+      if (!applied.noop || p.companyApproval) await project(tx);
+      if (!applied.noop) await sealPageTextProjection(tx, row.slug, row.source_id);
+      return { status: moved ? 'renamed' : applied.noop ? 'skipped' : snapshot ? 'updated' : 'created', slug: row.slug, source_id: row.source_id,
+        chunks: applied.result.chunks, noop: applied.noop && !moved, imported_file: true, ...(moved ? { renamed_from: moved.slug } : {}) };
     } };
 }

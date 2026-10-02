@@ -1,0 +1,151 @@
+[user]
+I’m trying to set up a USB printer on my laptop, but the document I sent earlier is stuck at “Printing.” Can you walk me through installing it and clearing the queue?
+
+[assistant]
+Sure. First, leave the printer powered on and connected by USB. On Windows, open **Settings > Bluetooth & devices > Printers & scanners**. Before adding it, let’s clear the stuck job.
+
+Open **Windows Terminal** or **Command Prompt** as administrator: right-click the Start button, choose **Terminal (Admin)**, and select **Yes** if prompted. Run:
+
+```text
+net stop spooler
+del /Q /F %systemroot%\System32\spool\PRINTERS\*.*
+net start spooler
+```
+
+You should see messages similar to:
+
+```text
+The Print Spooler service is stopping.
+The Print Spooler service was stopped successfully.
+
+The Print Spooler service is starting.
+The Print Spooler service was started successfully.
+```
+
+Tell me what appears after the first command.
+
+[user]
+I ran it, and the first command says the Print Spooler service was stopped successfully. The delete command did not display anything, and the last command says it started successfully. The old job is gone from the printer window.
+
+[assistant]
+Good. The queue is cleared. Now install the printer.
+
+1. Go to **Settings > Bluetooth & devices > Printers & scanners**.
+2. Click **Add device** and wait about 30 seconds.
+3. If your printer appears, click **Add device** beside it.
+4. If it does not appear, choose **Add manually**.
+5. Select **Add a local printer or network printer with manual settings**, then click **Next**.
+6. Choose **Use an existing port** and select the USB port shown in the list, usually **USB001** or **USB002**.
+7. Click **Windows Update** if the manufacturer and model list does not contain the printer. This can take a few minutes.
+8. Select the closest exact model, click **Next**, and keep the suggested printer name.
+
+What entries do you see when you click **Add device**?
+
+[user]
+It found “Office Printer” and a second entry with a similar name marked “Driver unavailable.” I clicked the first one, and Windows says it is installing. The printer’s display changed from idle to a small USB icon.
+
+[assistant]
+That sounds like the usable entry. Wait until the status changes to **Ready** or **Installed**. If Windows asks whether to download an app or driver, use the built-in driver first and skip optional utilities.
+
+After installation, click the printer entry and open **Printer properties**. On the **General** tab, select **Print Test Page**. If it prints, the basic setup is complete.
+
+If the test page remains stuck, check these items:
+
+- Make sure the USB cable is connected directly to the laptop rather than through a hub.
+- Confirm the printer is not showing “Paused” or “Use Printer Offline.”
+- Open **See what’s printing**, select **Printer**, and make sure both options are unchecked.
+- In **Printer properties > Ports**, confirm the selected port is the USB port currently in use.
+- In **Advanced**, leave **Spool print documents so program finishes printing faster** selected.
+
+Let me know whether the installation finishes and whether the test page appears.
+
+[user]
+It finished, and the printer now shows “Ready.” I opened the properties and clicked “Print Test Page.” The status briefly changed to “Printing,” then went back to “Ready,” but no page came out. There is no job left in the queue.
+
+[assistant]
+Since the job leaves the queue without printing, check the port and driver rather than clearing the spooler again.
+
+1. Open **Settings > Bluetooth & devices > Printers & scanners**.
+2. Select the printer, then choose **Printer properties**.
+3. Open the **Ports** tab. Note the checked port.
+4. If it is a USB port such as **USB001**, disconnect the printer’s USB cable, wait five seconds, and reconnect it. Reopen the port list and select the port that appears or becomes active.
+5. Click **Apply**, then **Print Test Page** again.
+
+Also open the **General** tab and confirm the displayed model matches the label on the printer. If it only says a generic USB printer, install the matching Windows driver through **Add device > Add manually**, using the exact model listed on the printer’s front or rear label.
+
+What is checked on the **Ports** tab?
+
+[user]
+The checked port is USB001, and the printer is connected directly. The model name in the General tab is generic; it says “USB Printing Support,” while the printer label has a model code. I also noticed the second entry from earlier is still listed with “Driver unavailable.”
+
+[assistant]
+That explains the behavior: Windows is detecting the USB device but may not have the printer-specific driver. Remove the two incomplete entries, then add the printer with its model driver.
+
+First, unplug the USB cable. In **Printers & scanners**, select each old entry and choose **Remove**. If one cannot be removed, open **Print server properties**:
+
+1. Press **Windows + R**, enter `printui.exe /s /t2`, and press Enter.
+2. On the **Drivers** tab, select the generic or unavailable printer driver.
+3. Click **Remove**, choose **Remove driver and driver package**, and confirm.
+4. Close the windows.
+
+Then reconnect the printer and use **Add device** again. If it still installs as generic, choose **Add manually**, select the USB port, and use **Windows Update** to refresh the model list. Select the exact model code rather than a similarly named series.
+
+[user]
+I removed both printer entries. In Print Server Properties, the Drivers tab showed one generic driver, and I removed the driver and package. After reconnecting the cable, Add device found the printer again, but it still installed as “USB Printing Support.”
+
+[assistant]
+Use the manufacturer’s driver package if Windows Update does not offer the exact model. Open a browser and go to the printer manufacturer’s official support page. Search for the model code printed on the device, then download the Windows driver that matches your laptop’s system type.
+
+To check the system type, open **Settings > System > About** and look under **Device specifications > System type**. It will usually say 64-bit operating system.
+
+After downloading:
+
+1. Cancel or remove the newly added generic printer.
+2. Run the downloaded driver installer.
+3. Choose **USB connection** when asked.
+4. Keep the printer powered on and connect the cable only when the installer requests it.
+5. If the installer asks whether to make it the default printer, either choice is fine for this setup.
+6. Finish the installation, then open **Printers & scanners** and confirm the model-specific name appears.
+
+Do you have the driver installer downloaded, and does its file name include the printer model?
+
+[user]
+Yes. I downloaded a 64-bit Windows driver installer, and its file name includes the model code. I removed the generic printer first, then ran the installer. It asked me to connect the USB cable, and after I did, the installation completed without an error.
+
+[assistant]
+Now verify that the model-specific queue is present and test it.
+
+1. Open **Settings > Bluetooth & devices > Printers & scanners**.
+2. Select the entry with the exact model name, not “USB Printing Support.”
+3. Open **Printer properties** and check the **General** tab for the same model.
+4. On **Ports**, confirm a USB port is selected.
+5. Click **Print Test Page**.
+
+If it prints, open the document you originally wanted to print and select the exact model-specific printer from the print dialog. Avoid selecting an old or generic entry.
+
+If it does not print, use **See what’s printing** to check whether the job remains queued. If it remains there, confirm that **Pause Printing** and **Use Printer Offline** are both unchecked. You can also right-click the printer in **Printers & scanners**, choose **Set as default**, and retry.
+
+What does the printer list show now?
+
+[user]
+The exact model name is listed, and the General tab shows the same model. USB001 is checked. The test page printed immediately. I set that printer as the default and printed the document again; it came out normally. The old generic entries are gone, and the queue is empty.
+
+[assistant]
+The printer is now set up correctly, and the stuck queue has been cleared. The working configuration is:
+
+- Model-specific printer driver installed
+- Direct USB connection
+- USB001 selected under **Ports**
+- Printer set as the default
+- Test page and document printed successfully
+- No remaining jobs in the queue
+
+For future stuck jobs, you can restart the spooler with:
+
+```text
+net stop spooler
+del /Q /F %systemroot%\System32\spool\PRINTERS\*.*
+net start spooler
+```
+
+Run those commands in an administrator Terminal, and only use the delete command when you are comfortable removing every pending print job on the laptop.

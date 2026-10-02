@@ -1,0 +1,22 @@
+{
+  "A": {
+    "pos_proc": 9,
+    "pos_total": 16,
+    "neg_proc": 1,
+    "neg_total": 13,
+    "buried_proc": 3,
+    "buried_signal_in_pages": 5,
+    "routine_proc": 1,
+    "pages_files": 25
+  },
+  "B": {
+    "pos_proc": 16,
+    "pos_total": 16,
+    "neg_proc": 3,
+    "neg_total": 13,
+    "buried_proc": 10,
+    "buried_signal_in_pages": 10,
+    "routine_proc": 2,
+    "pages_files": 43
+  }
+}

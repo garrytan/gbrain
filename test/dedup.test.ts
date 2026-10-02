@@ -273,3 +273,17 @@ describe('dedup — source-aware composite key (v0.18.0)', () => {
     expect(wikiCompiledTruths[0].chunk_id).toBe(2); // wiki's own compiled_truth, NOT gstack's (id=3)
   });
 });
+
+describe('compiled truth guarantee keeps evidence and score order (read-path audit #11)', () => {
+  test('appends the compiled_truth chunk instead of evicting a matching chunk, output stays score-sorted', () => {
+    const results = [
+      makeResult({ slug: 'a', chunk_id: 1, score: 0.95, chunk_source: 'timeline', chunk_text: 'alpha timeline first match text' }),
+      makeResult({ slug: 'a', chunk_id: 2, score: 0.90, chunk_source: 'timeline', chunk_text: 'second different timeline evidence words' }),
+      makeResult({ slug: 'b', chunk_id: 3, score: 0.80, chunk_source: 'compiled_truth', chunk_text: 'page b compiled truth summary' }),
+      makeResult({ slug: 'a', chunk_id: 4, score: 0.10, chunk_source: 'compiled_truth', chunk_text: 'page a compiled truth summary' }),
+    ];
+    const out = dedupResults(results);
+    expect(out.map(r => r.chunk_id)).toEqual([1, 2, 3, 4]);
+    for (let i = 1; i < out.length; i++) expect(out[i - 1].score).toBeGreaterThanOrEqual(out[i].score);
+  });
+});

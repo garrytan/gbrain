@@ -68,7 +68,14 @@ describe('formatRecipeTable', () => {
     expect(ollamaLine).toBeDefined();
     // Master-skew fixup: on this branch ollama also carries an expansion
     // touchpoint (#4073), so the EXPAND column reads `yes`, not `—`.
-    expect(ollamaLine).toMatch(/ollama\s+openai-compat\s+yes\s+yes\s+yes\s+✓ ready/);
+    // System One: RERANK and DECIDE columns follow CHAT (ollama declares neither).
+    expect(ollamaLine).toMatch(/ollama\s+openai-compat\s+yes\s+yes\s+yes\s+—\s+—\s+✓ ready/);
+  });
+
+  test('TypeSafe shows the rerank and decide capabilities and accepts either key name', () => {
+    const line = (env: Record<string, string>) => formatRecipeTable(listRecipes(), env).split('\n').find(l => l.startsWith('typesafe '));
+    expect(line({})).toMatch(/typesafe\s+openai-compat\s+—\s+—\s+—\s+yes\s+yes\s+✗ missing TYPESAFE_API_KEY/);
+    expect(line({ JEV_TYPESAFE_API_KEY: 'k' })).toContain('✓ ready');
   });
 
   test('each recipe appears at most once', () => {

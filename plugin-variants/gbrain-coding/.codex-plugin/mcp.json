@@ -47,6 +47,7 @@
         "GOOGLE_GENERATIVE_AI_API_KEY",
         "GROQ_API_KEY",
         "HOME",
+        "JEV_TYPESAFE_API_KEY",
         "LITELLM_API_KEY",
         "LITELLM_BASE_URL",
         "LLAMA_SERVER_API_KEY",
@@ -70,6 +71,7 @@
         "PERPLEXITY_API_KEY",
         "PPLX_API_KEY",
         "TOGETHER_API_KEY",
+        "TYPESAFE_API_KEY",
         "VOYAGE_API_KEY",
         "ZHIPUAI_API_KEY"
       ]

@@ -72,7 +72,8 @@ The default gbrain engine (PGLite) can fail to open after an unclean shutdown
 (commonly a macOS-upgrade reboot) with "RuntimeError: Aborted()". The cause is
 torn WAL/checkpoint state on disk, not a macOS WASM bug. This command resets
 the WAL in place (pg_resetwal semantics): data files are preserved;
-transactions not checkpointed before the corruption may be lost. The
+transactions not checkpointed before the corruption may be lost, and indexes
+are not rebuilt, so run \`gbrain reindex --vectors\` afterwards. The
 pre-repair pg_wal + pg_control are kept in a sibling backup directory.
 
 Usage:
@@ -315,14 +316,15 @@ export async function runPgliteRepair(args: string[]): Promise<number> {
         wal_seg_size: receipt.walSegSize,
         repaired_at: receipt.repairedAt,
         backups_on_disk: listRepairBackups(dataDir),
+        next_command: 'gbrain reindex --vectors',
       }));
     } else {
       console.log('WAL reset complete.');
       console.log(`  Data dir:      ${receipt.dataDir}`);
       console.log(`  Backup:        ${receipt.backupPath}${receipt.reusedEpisodeBackup ? ' (reused this episode’s existing backup)' : ''}`);
       console.log(`  Reset segment: ${receipt.resetSegment} (timeline ${receipt.timelineId}, ${receipt.walSegSize / (1024 * 1024)}MB segments)`);
-      console.log('  Data files were preserved; un-checkpointed transactions may be lost.');
-      console.log('  Next: run any gbrain command to reopen the brain, then `gbrain doctor`.');
+      console.log('  Un-checkpointed transactions may be lost, and indexes are not rebuilt.');
+      console.log('  Next: rebuild the vector indexes with `gbrain reindex --vectors` (it reopens the brain), then run `gbrain doctor`.');
     }
     return 0;
   } finally {

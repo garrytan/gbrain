@@ -18,6 +18,7 @@
  */
 
 import type Anthropic from '@anthropic-ai/sdk';
+import { OperationTimeoutError, withTimeout } from '../timeout.ts';
 import type { BrainEngine, SynthesisEvidenceInput } from '../engine.ts';
 import type { SearchResult } from '../types.ts';
 import { runGather, renderPagesBlock, pagesBlockExcerptLen, takesHitToTakeForPrompt, selectRelevantExcerpt } from './gather.ts';
@@ -32,6 +33,9 @@ import { normalizeModelId } from '../model-id.ts';
 import { hasAnthropicKey } from '../ai/anthropic-key.ts';
 import { parseTemporalWindow } from './temporal-window.ts';
 import { resolveExcludePrivatePages } from '../search/private-visibility.ts';
+import { deliverEvidence, effectivePlan, resolveEvidencePlan, EVIDENCE_BLOCK_CHAR_CAP, THINK_RETURN_UNIT_CONFIG_KEY, type DeliveryMeta } from '../search/evidence-delivery.ts';
+import { startThinkDecide, thinkAbstainResult, type ThinkAbstention } from './decide.ts';
+import { classifyIntent } from './intent.ts';
 
 /** Anthropic Messages client interface — same shape used by subagent.ts so test stubs can be shared. */
 export interface ThinkLLMClient {
@@ -200,6 +204,8 @@ export interface ThinkResult {
    * The synthesize verb maps this to its frozen `cost` block.
    */
   usage?: { input_tokens: number; output_tokens: number } | null;
+  /** Evidence delivery meta, present only when think.return_unit is not chunk. */
+  evidence_delivery?: import('../search/evidence-delivery.ts').DeliveryMeta;
   /** Only set when --save was true and the caller persisted a synthesis page. */
   savedSlug?: string;
   /** Diagnostics for `--explain` callers (CLI surface for v0.29). */
@@ -211,6 +217,8 @@ export interface ThinkResult {
   };
   /** USD cost computed from `usage` + `canonicalLookup(modelUsed)`, when both are available. */
   cost_usd?: number;
+  /** System One S4 (on): the brain holds no evidence; synthesis was skipped (think/decide.ts). */
+  abstained?: ThinkAbstention;
 }
 
 const DEFAULT_MAX_OUTPUT_TOKENS = 4000;
@@ -439,17 +447,28 @@ async function persistCitations(
   engine: BrainEngine,
   synthesisPageId: number,
   citations: ParsedCitation[],
+  scope: { sourceId?: string; allowedSources?: string[] } = {},
 ): Promise<{ inserted: number; warnings: string[] }> {
   const warnings: string[] = [];
+  // #5426: the same slug can exist in several sources. Bind each citation to
+  // a page in the sources the synthesis drew from (preferring its own source),
+  // never to a same-slug page elsewhere in the brain. Unscoped only for an
+  // unscoped think.
+  const sources = scope.allowedSources?.length ? scope.allowedSources : scope.sourceId ? [scope.sourceId] : null;
   // Resolve unique slugs to page_ids
   const slugToPageId = new Map<string, number>();
   for (const c of citations) {
     if (c.row_num === null) continue;  // page-level, skip
     if (slugToPageId.has(c.page_slug)) continue;
-    const rows = await engine.executeRaw<{ id: number }>(
-      `SELECT id FROM pages WHERE slug = $1 LIMIT 1`,
-      [c.page_slug],
-    );
+    const rows = sources
+      ? await engine.executeRaw<{ id: number }>(
+        `SELECT id FROM pages WHERE slug = $1 AND source_id = ANY($2::text[]) ORDER BY (source_id = $3) DESC, id LIMIT 1`,
+        [c.page_slug, sources, scope.sourceId ?? ''],
+      )
+      : await engine.executeRaw<{ id: number }>(
+        `SELECT id FROM pages WHERE slug = $1 LIMIT 1`,
+        [c.page_slug],
+      );
     if (rows[0]) slugToPageId.set(c.page_slug, rows[0].id);
   }
   const evidenceInputs: SynthesisEvidenceInput[] = [];
@@ -470,6 +489,31 @@ async function persistCitations(
   if (evidenceInputs.length === 0) return { inserted: 0, warnings };
   const inserted = await engine.addSynthesisEvidence(evidenceInputs);
   return { inserted, warnings };
+}
+
+/**
+ * Render the <pages> block. Evidence delivery (think.return_unit, default
+ * auto) replaces the gathered pages with budgeted delivered blocks, which
+ * the renderer passes through whole instead of cutting its own excerpts;
+ * auto's unchanged chunks keep the usual excerpts.
+ */
+async function renderThinkPages(engine: BrainEngine, opts: RunThinkOpts, pages: SearchResult[]): Promise<{ pagesBlock: string; evidenceDelivery?: DeliveryMeta }> {
+  const plan = await resolveEvidencePlan(engine, {
+    remote: opts.remote, returnUnit: undefined, returnWindow: undefined, budget: undefined,
+    snippetChars: undefined, snippetCap: 0, configKey: THINK_RETURN_UNIT_CONFIG_KEY, op: 'think',
+  });
+  const applied = effectivePlan(plan, pages);
+  if (!applied) return { pagesBlock: renderPagesBlock(pages, pagesBlockExcerptLen(pages.length), opts.question) };
+  const delivered = await deliverEvidence(engine, pages, applied, {
+    ...(opts.allowedSources !== undefined && opts.allowedSources.length > 0 ? { sourceIds: opts.allowedSources } : opts.sourceId !== undefined ? { sourceId: opts.sourceId } : {}),
+    excludePrivate: opts.excludePrivate ?? await resolveExcludePrivatePages(engine, opts.remote),
+    requireSafeChunks: opts.remote !== false,
+  });
+  const pagesBlock = applied.unit === 'auto'
+    ? renderPagesBlock(delivered.results, pagesBlockExcerptLen(pages.length), opts.question,
+      { verbatim: r => r.delivered?.reason !== 'not_conversation' && r.delivered?.reason !== 'conversation_over_budget', verbatimLen: EVIDENCE_BLOCK_CHAR_CAP })
+    : renderPagesBlock(delivered.results, EVIDENCE_BLOCK_CHAR_CAP, opts.question, { verbatim: true });
+  return { pagesBlock, evidenceDelivery: delivered.delivery };
 }
 
 /**
@@ -520,6 +564,7 @@ export async function runThink(
     }
   }
 
+  const thinkDecide = await startThinkDecide(engine, opts, classifyIntent(opts.question)).catch(() => undefined); // System One S2/S4; undefined when both are off
   // GATHER
   const gather = await runGather(engine, {
     question: opts.question,
@@ -531,20 +576,19 @@ export async function runThink(
     remote: opts.remote,
     ...(opts.sourceId !== undefined ? { sourceId: opts.sourceId } : {}),
     ...(opts.allowedSources !== undefined ? { sourceIds: opts.allowedSources } : {}),
+    ...(thinkDecide?.searchIntent ? { decideIntent: thinkDecide.searchIntent } : {}),
   });
   // D6: per-stream gather failures surface as typed codes (GATHER_*_FAILED);
   // raw error text stays on stderr. Distinguishes an errored stream from a
   // legitimately-empty one for MCP/remote callers.
   for (const w of gather.warnings) warnings.push(w);
-  if (gather.diagnostics.window?.dropped) {
-    warnings.push(`WINDOW_EXCLUDED_${gather.diagnostics.window.dropped}_PAGES`);
-  }
+  if (gather.diagnostics.window?.dropped) warnings.push(`WINDOW_EXCLUDED_${gather.diagnostics.window.dropped}_PAGES`);
 
   // Render evidence blocks for the prompt. #4510: the per-page excerpt is
   // budget-aware — 600 chars is the FLOOR (a big gather never collapses each
   // page below it) and a small gather spreads the block budget into much
   // larger, often complete, per-page windows.
-  const pagesBlock = renderPagesBlock(gather.pages, pagesBlockExcerptLen(gather.pages.length), opts.question);
+  const { pagesBlock, evidenceDelivery } = await renderThinkPages(engine, opts, gather.pages);
   const takesForPrompt = gather.takes.map(takesHitToTakeForPrompt);
   const { rendered: takesBlock, sanitizedCount } = renderTakesBlock(takesForPrompt);
   if (sanitizedCount > 0) {
@@ -594,11 +638,9 @@ export async function runThink(
   let trajectoryPointsCount = 0;
   let trajectoryExcludedCount = 0;
   const trajectoryEnabledConfig = await readThinkTrajectoryEnabled(engine);
-  const trajectoryEnabledOpt = opts.withTrajectory !== false; // default true
-  if (trajectoryEnabledConfig && trajectoryEnabledOpt) {
+  if (trajectoryEnabledConfig && opts.withTrajectory !== false) { // opt defaults true
     try {
-      const { classifyIntent } = await import('./intent.ts');
-      const trajIntent = classifyIntent(opts.question);
+      const trajIntent = thinkDecide ? await thinkDecide.trajectoryIntent(classifyIntent(opts.question)) : classifyIntent(opts.question);
       if (trajIntent === 'temporal' || trajIntent === 'knowledge_update') {
         const { extractCandidateEntities } = await import('./entity-extract.ts');
         const retrievedSlugs = gather.pages.map(p => p.slug);
@@ -624,9 +666,9 @@ export async function runThink(
                 if (resolved.source === 'fallback_slugify') return null;
                 if (seenSlugs.has(resolved.slug)) return null;
                 seenSlugs.add(resolved.slug);
-                // 5s per-candidate timeout. Promise.race resolves with the
-                // first to land; the timeout returns [] (empty trajectory).
-                const points = await Promise.race([
+                // 5s per-candidate timeout (cleared on settle); a timeout
+                // is an empty trajectory, any other error rejects as before.
+                const points = await withTimeout(
                   engine.findTrajectory({
                     entitySlug: resolved.slug,
                     ...(opts.sourceId !== undefined ? { sourceId: opts.sourceId } : {}),
@@ -635,10 +677,12 @@ export async function runThink(
                     kind: 'all',
                     limit: 100,
                   }),
-                  new Promise<import('../engine.ts').TrajectoryPoint[]>(resolve => {
-                    setTimeout(() => resolve([]), 5000);
-                  }),
-                ]);
+                  5000,
+                  'findTrajectory',
+                ).catch((err: unknown) => {
+                  if (err instanceof OperationTimeoutError) return [];
+                  throw err;
+                });
                 const boundedPoints = window ? points.filter(point => {
                   const ms = point.valid_from.getTime();
                   const outside = (window.startMs !== null && ms < window.startMs)
@@ -675,10 +719,11 @@ export async function runThink(
       process.stderr.write(`[think] trajectory injection failed: ${err instanceof Error ? err.message : String(err)}\n`);
     }
   }
-  if (trajectoryPointsCount > 0) {
-    warnings.push(`TRAJECTORY_INJECTED_${trajectoryPointsCount}_POINTS`);
-  }
+  if (trajectoryPointsCount > 0) warnings.push(`TRAJECTORY_INJECTED_${trajectoryPointsCount}_POINTS`);
   if (trajectoryExcludedCount > 0) warnings.push(`WINDOW_EXCLUDED_${trajectoryExcludedCount}_TRAJECTORY_POINTS`);
+
+  const abstention = await thinkDecide?.answerability({ pages: gather.pages, takes: gather.takes, trajectory: trajectoryBlock.length > 0 }).catch(() => null); // System One S4
+  if (abstention) return thinkAbstainResult(opts.question, gather, modelUsed, warnings, abstention);
 
   // SYNTHESIZE
   const intent = inferIntent(opts.question, opts.anchor);
@@ -915,7 +960,7 @@ export async function runThink(
     synthesisOk: synthesisOk && response.answer.trim().length > 0,
     synthesis_status: synthesisStatus,
     ...(extractive ? { extractive } : {}),
-    usage,
+    usage, ...(evidenceDelivery ? { evidence_delivery: evidenceDelivery } : {}),
     diagnostics: {
       pagesFromHybrid: gather.diagnostics.pagesFromHybrid,
       takesFromKeyword: gather.diagnostics.takesFromKeyword,
@@ -966,6 +1011,7 @@ export function stripGapsSection(answer: string): string {
 export async function persistSynthesis(
   engine: BrainEngine,
   result: ThinkResult,
+  scope: { sourceId?: string; allowedSources?: string[] } = {},
 ): Promise<{ slug: string; evidenceInserted: number; warnings: string[] }> {
   // #1698: never persist an empty synthesis. Returned signal (NOT a throw, F3) so
   // the MCP `think` op can return the gather result + warning instead of a bare error
@@ -1005,9 +1051,9 @@ export async function persistSynthesis(
       pages_gathered: result.pagesGathered,
       takes_gathered: result.takesGathered,
     },
-  });
+  }, scope.sourceId ? { sourceId: scope.sourceId } : undefined);
 
-  const persisted = await persistCitations(engine, page.id, result.citations);
+  const persisted = await persistCitations(engine, page.id, result.citations, scope);
   return { slug, evidenceInserted: persisted.inserted, warnings: persisted.warnings };
 }
 

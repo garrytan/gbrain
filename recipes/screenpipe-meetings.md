@@ -22,7 +22,9 @@ setup_time: 15 min
 
 Bring a selected meeting's saved note into GBrain, with its original timestamp,
 attendees, application, device label, and a link back to Screenpipe. The collector
-reads completed meetings by ID from the local REST API. It does not export screen
+reads completed meetings by ID from the local REST API. For screen activity,
+transcripts, memories, workflows, skills and agent outputs, use
+[Screenpipe work context](screenpipe-context.md). It does not export screen
 history or raw transcripts, summarize recordings, or run on a schedule.
 
 Say to your agent:

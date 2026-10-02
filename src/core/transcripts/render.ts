@@ -37,7 +37,7 @@ import { sanitizeForJsonb } from '../batch-rows.ts';
 import { ensureWellFormed, truncateUtf8 } from '../text-safe.ts';
 import { BUILTIN_PATTERNS } from '../conversation-parser/builtins.ts';
 import type { ParsedSession, TranscriptMessage } from './types.ts';
-import { buildTranscriptSlug, transcriptFullId } from './types.ts';
+import { buildTranscriptSlug, transcriptFullId, utcTimestamp } from './types.ts';
 
 // ── Shared line format (imessage-slack builtin) ─────────────────────────────
 
@@ -217,7 +217,7 @@ export function redactSession(
 /** `2026-08-01T10:00:05.000Z` → `(2026-08-01 10:00 AM)` (UTC), matching the builtin. */
 function anchorTimestamp(iso: string): string {
   const d = new Date(iso);
-  const day = iso.slice(0, 10);
+  const day = Number.isNaN(d.getTime()) ? iso.slice(0, 10) : d.toISOString().slice(0, 10);
   let h = d.getUTCHours();
   const ampm = h >= 12 ? 'PM' : 'AM';
   h = h % 12 || 12;
@@ -262,6 +262,13 @@ export interface RenderedPart {
   frontmatterId: string;
   part: number;
   of: number;
+  /** The keys this collector renders (and so owns on re-ingest), and the body. */
+  frontmatter: Record<string, unknown>;
+  body: string;
+}
+
+export function renderPartContent(frontmatter: Record<string, unknown>, body: string): string {
+  return `---\n${safeDump(frontmatter, { lineWidth: 1000 })}---\n\n${body}\n`;
 }
 
 export interface RenderSessionResult {
@@ -305,7 +312,7 @@ export function renderSessionParts(
       `session ${meta.sessionId} carries no timestamps — refusing to fabricate provenance`,
     );
   }
-  const dateIso = firstTs;
+  const dateIso = utcTimestamp(firstTs);
   const baseSlug = buildTranscriptSlug(meta.harness, dateIso, {
     sessionId: meta.sessionId,
     title: meta.title,
@@ -366,8 +373,7 @@ export function renderSessionParts(
       },
     };
     const body = group.join('\n\n');
-    const content = `---\n${safeDump(fm, { lineWidth: 1000 })}---\n\n${body}\n`;
-    return { slug, content, frontmatterId, part, of };
+    return { slug, content: renderPartContent(fm, body), frontmatterId, part, of, frontmatter: fm, body };
   });
 
   return { parts, baseSlug, dateIso };

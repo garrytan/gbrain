@@ -11,12 +11,15 @@
  * Covers, against a real PGLite engine + temp markdown repo:
  *   - listPendingProposals: pending-only (tombstones/acted rows excluded),
  *     source-scoped
- *   - acceptProposal: fence write via addTakeToPage + status='accepted' +
- *     promoted_row_num/acted_at/acted_by stamps
+ *   - acceptProposal: promotes via a coordinated takes_add mutation +
+ *     status='accepted' + promoted_row_num/acted_at/acted_by stamps
  *   - rejectProposal: status='rejected' + stamps, no markdown write
  *   - double-accept refuses with not_pending
  *   - source scope: an out-of-scope id reads as not_found
  *   - CLI dispatcher: `takes propose` no longer falls through to the slug path
+ *   - managed root: accept succeeds where the legacy uncoordinated write
+ *     (addTakeToPage) is refused — the report-lane accept-before-correct
+ *     failure this module exists to fix
  */
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
@@ -31,11 +34,18 @@ import {
   coerceProposalKind,
   TakeProposalError,
 } from '../src/core/take-proposals.ts';
+import { addTakeToPage } from '../src/core/takes-write.ts';
 import { runTakes } from '../src/commands/takes.ts';
 import { parseTakesFence } from '../src/core/takes-fence.ts';
+import { serializePageToMarkdown } from '../src/core/markdown.ts';
 
 let engine: PGLiteEngine;
 let repo: string;
+// acceptProposal now promotes via a coordinated takes_add mutation
+// (submitPageMutation), which requires a GBrainConfig — a minimal
+// { engine: 'pglite' } is the same fallback takes-mutation.ts's CLI dispatch
+// uses when loadConfig() finds no config file.
+const testConfig = { engine: 'pglite' as const };
 
 async function insertProposal(opts: {
   slug: string;
@@ -97,7 +107,12 @@ beforeAll(async () => {
   for (const slug of ['companies/acme-example', 'companies/widget-co']) {
     await engine.putPage(slug, { type: 'company', title: slug, compiled_truth: `about ${slug}` });
     mkdirSync(join(repo, 'companies'), { recursive: true });
-    writeFileSync(join(repo, `${slug}.md`), `# ${slug}\n\nabout ${slug}\n`, 'utf-8');
+    // Coordinated writes (acceptProposal now goes through one) compare the
+    // on-disk file against a canonical re-render of the DB snapshot before
+    // touching it, so the fixture file must match what putPage recorded —
+    // an arbitrary hand-written body reads as an "uncoordinated local edit".
+    const snapshot = (await engine.readPageSnapshot(slug))!;
+    writeFileSync(join(repo, `${slug}.md`), serializePageToMarkdown(snapshot.page, snapshot.tags), 'utf-8');
   }
 });
 
@@ -130,7 +145,7 @@ describe('acceptProposal', () => {
       slug: 'companies/acme-example', claim: 'Acme ships the widget by Q3', kind: 'bet', weight: 0.8,
     });
     const { rowNum, proposal } = await acceptProposal(
-      { engine, brainDir: repo, sourceId: 'default', actedBy: 'people/tester' },
+      { engine, brainDir: repo, sourceId: 'default', actedBy: 'people/tester', config: testConfig },
       id,
     );
     expect(proposal.page_slug).toBe('companies/acme-example');
@@ -163,8 +178,8 @@ describe('acceptProposal', () => {
     // and BOTH reported success. Post-fix the claim CAS runs first, so only
     // the winner touches the fence.
     const results = await Promise.allSettled([
-      acceptProposal({ engine, brainDir: repo, sourceId: 'default', actedBy: 'racer-a' }, id),
-      acceptProposal({ engine, brainDir: repo, sourceId: 'default', actedBy: 'racer-b' }, id),
+      acceptProposal({ engine, brainDir: repo, sourceId: 'default', actedBy: 'racer-a', config: testConfig }, id),
+      acceptProposal({ engine, brainDir: repo, sourceId: 'default', actedBy: 'racer-b', config: testConfig }, id),
     ]);
     const wins = results.filter((r) => r.status === 'fulfilled');
     const losses = results.filter((r) => r.status === 'rejected');
@@ -187,30 +202,37 @@ describe('acceptProposal', () => {
 
   test('double-accept refuses with not_pending', async () => {
     const id = await insertProposal({ slug: 'companies/widget-co', claim: 'Widget-co raises fund-a next year' });
-    await acceptProposal({ engine, brainDir: repo, sourceId: 'default' }, id);
+    await acceptProposal({ engine, brainDir: repo, sourceId: 'default', config: testConfig }, id);
     try {
-      await acceptProposal({ engine, brainDir: repo, sourceId: 'default' }, id);
+      await acceptProposal({ engine, brainDir: repo, sourceId: 'default', config: testConfig }, id);
       throw new Error('should have thrown');
     } catch (err) {
       expect((err as TakeProposalError).code).toBe('not_pending');
     }
   });
 
-  test('wave-g: stranded claim (accepted, no promoted take) surfaces the repair SQL on retry', async () => {
+  test('wave-g: a stranded claim (accepted, no promoted take) is resumed by the retry, and a failed resume leaves it actionable', async () => {
     // The crash-between-CAS-and-fence-write shape (#4480 residual): the row
     // is status='accepted' with promoted_row_num NULL — invisible in the
-    // pending list, so the retry path must name it and print the repair.
+    // pending list. Re-running accept resumes the claim's own write request
+    // (never a second take); here that write fails (no such page), so the
+    // claim is released and the row is pending again instead of stranded.
     const id = await insertProposal({ slug: 'people/strand-example', claim: 'stranded claim', status: 'accepted' });
-    try {
-      await acceptProposal({ engine, brainDir: repo }, id);
-      throw new Error('expected acceptProposal to throw for the stranded row');
-    } catch (e) {
-      expect(e).toBeInstanceOf(TakeProposalError);
-      expect((e as TakeProposalError).code).toBe('not_pending');
-      expect((e as Error).message).toContain('stranded');
-      expect((e as Error).message).toContain(`SET status='pending'`);
-      expect((e as Error).message).toContain(String(id));
-    }
+    await expect(acceptProposal({ engine, brainDir: repo, config: testConfig }, id)).rejects.toBeDefined();
+    expect((await proposalRow(id)).status).toBe('pending');
+  });
+
+  test('a claim taken moments ago by another accept is not resumed while that accept may still be submitting', async () => {
+    const id = await insertProposal({ slug: 'people/strand-example', claim: 'fresh claim', status: 'accepted' });
+    await engine.executeRaw('UPDATE take_proposals SET acted_at = now() WHERE id = $1', [id]);
+    await expect(acceptProposal({ engine, brainDir: repo, config: testConfig }, id)).rejects.toThrow('may still be submitting');
+    expect((await proposalRow(id)).status).toBe('accepted');
+  });
+
+  test('reject refuses a claimed accept and names the resume command', async () => {
+    const id = await insertProposal({ slug: 'people/strand-example', claim: 'claimed accept', status: 'accepted' });
+    await expect(rejectProposal({ engine }, id)).rejects.toMatchObject({ code: 'not_pending' });
+    await expect(rejectProposal({ engine }, id)).rejects.toThrow(`gbrain takes propose --accept ${id}`);
   });
 
   test('source scope: accepting an out-of-scope proposal reads as not_found', async () => {
@@ -218,7 +240,7 @@ describe('acceptProposal', () => {
       slug: 'companies/acme-example', claim: 'scope: other-source only', sourceId: 'other',
     });
     try {
-      await acceptProposal({ engine, brainDir: repo, sourceId: 'default' }, id);
+      await acceptProposal({ engine, brainDir: repo, sourceId: 'default', config: testConfig }, id);
       throw new Error('should have thrown');
     } catch (err) {
       expect(err).toBeInstanceOf(TakeProposalError);
@@ -230,11 +252,54 @@ describe('acceptProposal', () => {
 
   test('unknown id → not_found', async () => {
     try {
-      await acceptProposal({ engine, brainDir: repo, sourceId: 'default' }, 99999999);
+      await acceptProposal({ engine, brainDir: repo, sourceId: 'default', config: testConfig }, 99999999);
       throw new Error('should have thrown');
     } catch (err) {
       expect((err as TakeProposalError).code).toBe('not_found');
     }
+  });
+
+  test('managed root: accept succeeds where the legacy uncoordinated write is refused', async () => {
+    // Reproduces the reported production failure: PaaS Brain's report-lane
+    // hit "This file belongs to a managed canonical worktree." — the exact
+    // message assertManagedFilesystemWrite throws — every time it tried to
+    // accept a pending take proposal against a managed brain (Postgres/
+    // Supabase with a coordinator-owned worktree). A `.gbrain-managed`
+    // marker file reproduces that guard directly (hasManagedRootMarker),
+    // without needing the full persistence_brain/Supabase lifecycle.
+    const managedRepo = mkdtempSync(join(tmpdir(), 'gbrain-managed-root-'));
+    mkdirSync(join(managedRepo, 'companies'), { recursive: true });
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path) VALUES ('managed-example', 'Managed', $1)
+         ON CONFLICT (id) DO UPDATE SET local_path = $1`,
+      [managedRepo],
+    );
+    const slug = 'companies/managed-example';
+    await engine.putPage(slug, { type: 'company', title: slug, compiled_truth: `about ${slug}` }, { sourceId: 'managed-example' });
+    const snapshot = (await engine.readPageSnapshot(slug, { sourceId: 'managed-example' }))!;
+    writeFileSync(join(managedRepo, `${slug}.md`), serializePageToMarkdown(snapshot.page, snapshot.tags), 'utf-8');
+    // The marker that makes assertManagedFilesystemWrite refuse any writer
+    // outside the persistence coordinator's own withFilesystemPublication.
+    writeFileSync(join(managedRepo, '.gbrain-managed'), JSON.stringify({ version: 1, managed: true, brain_id: 'test-managed-root' }));
+
+    const id = await insertProposal({ slug, claim: 'Managed root accept works', sourceId: 'managed-example' });
+
+    // The OLD write path (addTakeToPage, called directly and uncoordinated)
+    // is refused outright — this is the production symptom.
+    await expect(addTakeToPage(
+      { engine, slug, brainDir: managedRepo, sourceId: 'managed-example' },
+      { claim: 'legacy direct write', kind: 'take', holder: 'world' },
+    )).rejects.toMatchObject({ code: 'writer_coordinator_required' });
+
+    // acceptProposal now promotes through the coordinated pipeline, whose
+    // own publish step runs inside withFilesystemPublication — it must
+    // succeed even though the target is a managed root.
+    const { rowNum } = await acceptProposal(
+      { engine, brainDir: managedRepo, sourceId: 'managed-example', config: testConfig }, id,
+    );
+    expect(rowNum).toBeGreaterThan(0);
+    const fence = parseTakesFence(readFileSync(join(managedRepo, `${slug}.md`), 'utf-8'));
+    expect(fence.takes.some((t) => t.claim === 'Managed root accept works')).toBe(true);
   });
 });
 
@@ -313,8 +378,12 @@ describe('CLI dispatcher (#2411 no-fallthrough)', () => {
       claim: 'cli: bigint proposal row',
     });
     const originalExecuteRaw = engine.executeRaw;
-    engine.executeRaw = (async <T>(query: string, params?: unknown[]): Promise<T[]> => {
-      const rows = await originalExecuteRaw.call(engine, query, params) as T[];
+    // `this` forwarded via `apply`, not hardcoded to `engine` — see the
+    // matching comment on the mock below (munged loadProposal row test) for
+    // why hardcoding it deadlocks any mutation that runs inside a real
+    // engine.transaction().
+    engine.executeRaw = (async function (this: unknown, query: string, params?: unknown[]) {
+      const rows = await originalExecuteRaw.apply(this, [query, params]);
       if (!query.includes('FROM take_proposals') || !query.includes("status = 'pending'")) {
         return rows;
       }
@@ -327,7 +396,7 @@ describe('CLI dispatcher (#2411 no-fallthrough)', () => {
           promoted_row_num: record.promoted_row_num == null
             ? null
             : BigInt(Number(record.promoted_row_num)),
-        } as T;
+        };
       });
     }) as typeof engine.executeRaw;
 
@@ -355,8 +424,15 @@ describe('CLI dispatcher (#2411 no-fallthrough)', () => {
       weight: 0.65,
     });
     const originalExecuteRaw = engine.executeRaw;
-    engine.executeRaw = (async <T>(query: string, params?: unknown[]): Promise<T[]> => {
-      const rows = await originalExecuteRaw.call(engine, query, params) as T[];
+    engine.executeRaw = (async function (this: unknown, query: string, params?: unknown[]) {
+      // `this` must be forwarded, not hardcoded to `engine`: acceptProposal now
+      // promotes via a coordinated mutation that runs inside engine.transaction(),
+      // whose callback receives a transaction-scoped engine clone (`tx`) with its
+      // own `.db` handle. `tx.executeRaw` resolves to THIS mock via the prototype
+      // chain, called as `tx.executeRaw(...)` (`this` = `tx`) — forcing `this` back
+      // to the outer `engine` here would run the query against the non-transactional
+      // connection while the real transaction still holds it, deadlocking forever.
+      const rows = await originalExecuteRaw.apply(this, [query, params]);
       // Match ONLY the loadProposal SELECT — the id-keyed single-row read.
       if (!query.includes('FROM take_proposals') || !query.includes('WHERE id = $1')) {
         return rows;
@@ -370,13 +446,13 @@ describe('CLI dispatcher (#2411 no-fallthrough)', () => {
           promoted_row_num: record.promoted_row_num == null
             ? null
             : BigInt(Number(record.promoted_row_num)),
-        } as T;
+        };
       });
     }) as typeof engine.executeRaw;
 
     try {
       const { proposal, rowNum } = await acceptProposal(
-        { engine, brainDir: repo, sourceId: 'default', actedBy: 'people/tester' },
+        { engine, brainDir: repo, sourceId: 'default', actedBy: 'people/tester', config: testConfig },
         id,
       );
       // The public numeric row contract: normalized id AND weight.

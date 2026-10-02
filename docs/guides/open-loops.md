@@ -24,6 +24,10 @@ zero LLM, free, always on). For every synced Gmail thread:
   ≥72h → `unanswered_outbound` — *you are waiting on them*.
 - a reply lands → the loop **closes itself** (`closed_by: reply_detected`).
   Loops close by state transition, never delete — the audit trail stays.
+- "unanswered" is measured from the oldest unanswered message since the
+  last turn flip (the first one addressed to you, or your first question),
+  so a nudge or follow-up never restarts the clock — a request that waited
+  40h and got a "bumping this" 5h ago opens on the first sync.
 
 Precision rules (pinned by a labeled fixture corpus in
 `test/google-loop-detect.test.ts` — every false-positive class gets a
@@ -124,7 +128,11 @@ gbrain waiting [--top N] [--json] [--stale-ok]
     REFUSES when every google source has gone >24h without a successful
     sync, printing the exact fix — stale-but-confident output is worse than
     none. (One fresh account keeps output flowing; per-source sync ages are
-    always reported.)
+    always reported.) When a Gmail thread from the last 14 days is held
+    after repeated import failures, the answer carries
+    completeness: "partial" and names each held thread with its retry
+    command (gbrain sources retry-held <id>); an empty partial answer says
+    coverage is partial instead of "You are clean".
 
 gbrain loops list|show <id>          inspect
 gbrain loops done <id> | drop <id>   close (a closed commitment expires its

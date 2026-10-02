@@ -127,6 +127,11 @@ const migrationSetup = await import(${JSON.stringify(join(root, 'src/commands/mi
 mock.module(${JSON.stringify(join(root, 'src/commands/migrations/in-process.ts'))}, () => ({
   ...migrationSetup, runMigrateOnlyCore: async () => ({ engine: 'postgres' }),
 }));
+mock.module(${JSON.stringify(join(root, 'src/core/migration-orchestration-lock.ts'))}, () => ({
+  acquireMigrationOrchestrationLock: async () => ({ assertHeld: async () => {}, release: async () => {} }),
+  MIGRATIONS_RUNNING_EXIT_CODE: 75,
+  MigrationsRunningError: class extends Error {},
+}));
 const factory = await import(${JSON.stringify(join(root, 'src/core/engine-factory.ts'))});
 mock.module(${JSON.stringify(join(root, 'src/core/engine-factory.ts'))}, () => ({
   ...factory,
@@ -202,7 +207,7 @@ await runApplyMigrations(process.argv.slice(2));
         writeFileSync(join(bin, 'gbrain'), `#!/bin/sh\nprintf '%s\\n' "$*" >> '${calls}'\nif [ "$1" = autopilot ]; then exit 99; fi\nexit 0\n`, { mode: 0o755 });
         const result = await runCli(['apply-migrations', '--yes', '--migration', '0.11.0'], {
           home, cwd: home,
-          env: { PATH: `${bin}:${process.env.PATH ?? ''}`, GBRAIN_NO_AUTOPILOT_INSTALL: undefined },
+          env: { PATH: `${bin}:${process.env.PATH ?? ''}`, GBRAIN_JOB_CHILD_CLI: join(bin, 'gbrain'), GBRAIN_NO_AUTOPILOT_INSTALL: undefined },
         });
         expect(readFileSync(calls, 'utf8')).not.toContain('autopilot');
         expect(result.exitCode).toBe(0);
@@ -226,7 +231,7 @@ await runApplyMigrations(process.argv.slice(2));
         const args = ['apply-migrations', '--yes', '--migration', '0.11.0', ...(disable === 'flag' ? ['--no-autopilot-install'] : [])];
         const result = await runCli(args, {
           home, cwd: home,
-          env: { PATH: `${bin}:${process.env.PATH ?? ''}`, GBRAIN_NO_AUTOPILOT_INSTALL: disable === 'env' ? '1' : undefined },
+          env: { PATH: `${bin}:${process.env.PATH ?? ''}`, GBRAIN_JOB_CHILD_CLI: join(bin, 'gbrain'), GBRAIN_NO_AUTOPILOT_INSTALL: disable === 'env' ? '1' : undefined },
         });
         expect(result.exitCode).toBe(0);
         expect(entries(ledger).at(-1)!.status).toBe('complete');

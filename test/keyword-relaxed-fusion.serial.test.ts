@@ -82,8 +82,8 @@ beforeAll(async () => {
       { chunk_index: 0, chunk_text: truth, chunk_source: 'compiled_truth' },
     ]);
     await engine.executeRaw(
-      `UPDATE content_chunks SET embedding = $1::vector WHERE page_id = (SELECT id FROM pages WHERE slug = $2)`,
-      [vec, slug],
+      `UPDATE content_chunks SET embedding = $1::vector, model = $3, embedded_text_hash = md5(chunk_text) WHERE page_id = (SELECT id FROM pages WHERE slug = $2)`,
+      [vec, slug, 'openai:text-embedding-3-large'],
     );
   }
 });

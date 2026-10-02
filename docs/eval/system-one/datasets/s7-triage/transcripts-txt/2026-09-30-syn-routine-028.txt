@@ -1,0 +1,473 @@
+[user]
+I’m trying to install a Python package in a fresh virtual environment, but `pip install` fails with an error about a missing system library. Can you help me troubleshoot it?
+
+[assistant]
+Sure. Please paste the exact command you ran and the complete error output, or at least the last 50–100 lines. Also include your operating system, Python version, and whether you are using a virtual environment.
+
+[user]
+I’m on Ubuntu 22.04. I created the environment with Python 3.10:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python --version
+# Python 3.10.12
+pip install lxml
+```
+
+The install output ends like this:
+
+```text
+Collecting lxml
+  Downloading lxml-5.2.2.tar.gz (3.7 MB)
+  Installing build dependencies ... done
+  Getting requirements to build wheel ... done
+  Preparing metadata (pyproject.toml) ... done
+Building wheels for collected packages: lxml
+  Building wheel for lxml (pyproject.toml) ... error
+  error: subprocess-exited-with-error
+
+  × Building wheel for lxml (pyproject.toml) did not run successfully.
+  │ exit code: 1
+  ╰─> [some output]
+      checking for libxml-2.0... no
+      error: Please make sure the libxml2 and libxslt development packages are installed.
+      ----------------------------------------
+  ERROR: Failed building wheel for lxml
+ERROR: Could not build wheels for lxml
+```
+
+[assistant]
+The package is falling back to a source build, and the compiler cannot find the development files for `libxml2` and `libxslt`. On Ubuntu, install the build tools and development packages with:
+
+```bash
+sudo apt update
+sudo apt install build-essential libxml2-dev libxslt1-dev zlib1g-dev
+```
+
+Then, with the virtual environment still active, upgrade packaging tools and retry:
+
+```bash
+python -m pip install --upgrade pip setuptools wheel
+python -m pip install lxml
+```
+
+If it still fails, paste the new error, especially any lines mentioning `cc`, `xml2-config`, `xslt-config`, or header files.
+
+[user]
+Before I install anything, why is `pip` compiling `lxml` instead of downloading a wheel? I expected a prebuilt package for Python 3.10.
+
+[assistant]
+A compatible wheel may not be selected for several routine reasons:
+
+- Your `pip` may be old and unable to recognize newer wheel metadata.
+- The package version selected may not publish a wheel for your platform or architecture.
+- An environment setting such as `--no-binary`, `PIP_NO_BINARY`, or a requirements file may force source builds.
+- The index or mirror you are using may contain only the source archive.
+- The platform may be using an unusual architecture or Python build.
+
+First inspect the basics:
+
+```bash
+python -m pip --version
+python -c "import sys, platform; print(sys.version); print(platform.platform()); print(platform.machine())"
+python -m pip config list
+env | grep -E '^(PIP|OPENSSL|LD_LIBRARY_PATH)'
+```
+
+On a standard 64-bit Ubuntu installation, current `pip` normally finds a wheel for common Python versions, but installing the development packages is still the correct fix if a source build is required.
+
+[assistant]
+I ran those commands:
+
+```text
+$ python -m pip --version
+pip 22.0.2 from /home/me/project/.venv/lib/python3.10/site-packages/pip (python 3.10)
+
+$ python -c "import sys, platform; print(sys.version); print(platform.platform()); print(platform.machine())"
+3.10.12 (main, Jun  7 2024, 08:12:10) [GCC 11.4.0]
+Linux-5.15.0-...-x86_64-with-glibc2.35
+x86_64
+
+$ python -m pip config list
+global.index-url='https://pypi.org/simple'
+
+$ env | grep -E '^(PIP|OPENSSL|LD_LIBRARY_PATH)'
+```
+
+So it looks like a normal setup, and `pip` is fairly old.
+
+[assistant]
+Yes, the old `pip` is a plausible reason. Upgrade it first; this does not modify the system Python, only the virtual environment:
+
+```bash
+python -m pip install --upgrade pip setuptools wheel
+python -m pip --version
+```
+
+Then ask `pip` to install without using its cache:
+
+```bash
+python -m pip install --no-cache-dir lxml
+```
+
+If it downloads a filename ending in `.whl`, no compiler or system development headers are needed. If it downloads `.tar.gz` and starts “Building wheel,” install:
+
+```bash
+sudo apt update
+sudo apt install build-essential libxml2-dev libxslt1-dev zlib1g-dev
+```
+
+Using `python -m pip` is useful here because it guarantees that the `pip` belonging to the active Python is being used.
+
+[user]
+I upgraded `pip`, but the retry still tries to build from source:
+
+```text
+$ python -m pip --version
+pip 24.2 from /home/me/project/.venv/lib/python3.10/site-packages/pip (python 3.10)
+
+$ python -m pip install --no-cache-dir lxml
+Collecting lxml
+  Downloading lxml-5.2.2.tar.gz (3.7 MB)
+  Installing build dependencies ... done
+  Preparing metadata (pyproject.toml) ... done
+Building wheel for lxml ... error
+  error: subprocess-exited-with-error
+  ...
+  fatal error: libxml/xmlversion.h: No such file or directory
+```
+
+[assistant]
+That confirms the build is proceeding, but the compiler cannot find the `libxml2` header:
+
+```text
+fatal error: libxml/xmlversion.h: No such file or directory
+```
+
+Install the packages that provide the headers and build configuration files:
+
+```bash
+sudo apt update
+sudo apt install --yes \
+  build-essential \
+  libxml2-dev \
+  libxslt1-dev \
+  zlib1g-dev
+```
+
+You can verify the important files afterward:
+
+```bash
+dpkg -L libxml2-dev | grep -E '/libxml/xmlversion.h$|/xml2-config$'
+dpkg -L libxslt1-dev | grep -E '/xsltconfig.h$|/xslt-config$'
+```
+
+Then retry:
+
+```bash
+python -m pip install --no-cache-dir lxml
+```
+
+The `-dev` packages are needed for compilation; the runtime libraries alone are not enough.
+
+[user]
+I installed them. The verification shows:
+
+```text
+$ dpkg -L libxml2-dev | grep -E '/libxml/xmlversion.h$|/xml2-config$'
+/usr/include/libxml2/libxml/xmlversion.h
+/usr/bin/xml2-config
+
+$ dpkg -L libxslt1-dev | grep -E '/xsltconfig.h$|/xslt-config$'
+/usr/include/libxslt/xsltconfig.h
+/usr/bin/xslt-config
+```
+
+The install gets farther now, but fails with:
+
+```text
+gcc -I/usr/include/libxml2 ...
+fatal error: libxslt/xslt.h: No such file or directory
+```
+
+[assistant]
+The package listing suggests the header should be present, so let’s check whether `libxslt1-dev` is fully installed and whether the specific file exists:
+
+```bash
+dpkg -s libxslt1-dev | sed -n '1,12p'
+ls -l /usr/include/libxslt/xslt.h
+dpkg -S /usr/include/libxslt/xslt.h
+```
+
+Also inspect the compiler command in the build log. It should contain an include path for both libraries, commonly:
+
+```text
+-I/usr/include/libxml2
+-I/usr/include
+```
+
+Because `/usr/include` is normally searched automatically, `libxslt/xslt.h` should resolve if the file exists. If `ls` reports that it does not exist, reinstall the package:
+
+```bash
+sudo apt install --reinstall libxslt1-dev
+```
+
+If the file exists but the command has unusual include flags, show the complete `gcc` line and the output of those checks.
+
+[user]
+Here is the output:
+
+```text
+$ dpkg -s libxslt1-dev | sed -n '1,12p'
+Package: libxslt1-dev
+Status: install ok installed
+Priority: optional
+Section: libdevel
+Installed-Size: 2200
+Maintainer: Ubuntu Developers
+Architecture: amd64
+Version: 1.1.34-4ubuntu0.22.04.1
+
+$ ls -l /usr/include/libxslt/xslt.h
+-rw-r--r-- 1 root root 37908 Apr  3  2024 /usr/include/libxslt/xslt.h
+
+$ dpkg -S /usr/include/libxslt/xslt.h
+libxslt1-dev:amd64: /usr/include/libxslt/xslt.h
+```
+
+The full compiler line contains `-I/usr/include/libxml2`, but no explicit `/usr/include`. It also contains `-nostdinc` near the end.
+
+[assistant]
+`-nostdinc` explains the behavior: it tells GCC not to search its normal system include directories, including `/usr/include`. The header exists, but the build command is suppressing the default search path.
+
+Look for environment variables or compiler settings that add that flag:
+
+```bash
+printf 'CC=%s\nCFLAGS=%s\nCPPFLAGS=%s\nCXXFLAGS=%s\n' \
+  "$CC" "$CFLAGS" "$CPPFLAGS" "$CXXFLAGS"
+
+python -m pip config debug
+grep -R --line-number --fixed-strings 'nostdinc' \
+  ~/.config/pip ~/.pip /etc/pip.conf /etc/environment 2>/dev/null || true
+```
+
+For a temporary clean retry, clear the common flags and unset a custom compiler:
+
+```bash
+env -u CC -u CFLAGS -u CPPFLAGS -u CXXFLAGS \
+  python -m pip install --no-cache-dir --no-build-isolation lxml
+```
+
+I included `--no-build-isolation` only to make the retry easier to inspect; it is not generally required. If the flag comes from a shell profile or project script, remove it there rather than changing package files.
+
+[user]
+The variables were set in a project setup script:
+
+```text
+CC=gcc
+CFLAGS=-O2 -nostdinc
+CPPFLAGS=
+CXXFLAGS=
+```
+
+I cleared `CFLAGS` and retried. Now the output ends with:
+
+```text
+Successfully built lxml
+Successfully installed lxml-5.2.2
+```
+
+How can I confirm that the installed extension is actually using the expected libraries?
+
+[assistant]
+Run an import test first, then inspect the extension’s linked libraries. The Python-level version information is useful:
+
+```bash
+python - <<'PY'
+import lxml
+from lxml import etree
+
+print("lxml:", lxml.__version__)
+print("libxml2:", etree.LIBXML_VERSION)
+print("libxslt:", etree.LIBXSLT_VERSION)
+print(etree.fromstring(b"<root><item>ok</item></root>").tag)
+PY
+```
+
+Find the compiled extension and pass it to `ldd`:
+
+```bash
+so_file="$(python - <<'PY'
+import pathlib
+from lxml import etree
+print(pathlib.Path(etree.__file__).resolve())
+PY
+)"
+
+printf '%s\n' "$so_file"
+ldd "$so_file" | grep -E 'libxml2|libxslt|exslt|zlib'
+```
+
+You should see paths under `/lib/x86_64-linux-gnu/` or `/usr/lib/x86_64-linux-gnu/`, with no `not found` entries. Since this was a source build, the extension may also have statically bundled some libraries depending on the build options, so the Python version output and successful parsing test are important too.
+
+[assistant]
+The test worked:
+
+```text
+lxml: 5.2.2
+libxml2: (2, 9, 13)
+libxslt: (1, 1, 34)
+root
+```
+
+But the `ldd` command printed only:
+
+```text
+libz.so.1 => /lib/x86_64-linux-gnu/libz.so.1
+libm.so.6 => /lib/x86_64-linux-gnu/libm.so.6
+libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6
+```
+
+There were no `libxml2` or `libxslt` lines.
+
+[assistant]
+That usually means the extension was built with libxml2 and libxslt statically included, rather than linked as separate shared libraries. The runtime version functions still confirm which library code the extension is exposing, and the XML parse test confirms basic operation.
+
+You can inspect the package’s build metadata and symbols:
+
+```bash
+python -m pip show -f lxml
+readelf -d "$so_file" | grep NEEDED || true
+strings "$so_file" | grep -E 'LIBXML|libxml2|libxslt' | head -20
+```
+
+If `readelf` lists only system dependencies such as `libc`, `libm`, and `libz`, that is consistent with static inclusion. This is not an installation failure. The main practical check is that importing `lxml`, parsing XML, and applying an XSLT transform work.
+
+[assistant]
+Can you give me a small XSLT test as well, and a way to record the commands and package versions so I can reproduce this environment later?
+
+[assistant]
+Use this self-contained XSLT test:
+
+```bash
+python - <<'PY'
+from lxml import etree
+
+xml = etree.fromstring(b"""
+<items>
+  <item name="first">A</item>
+  <item name="second">B</item>
+</items>
+""")
+
+stylesheet = etree.XML(b"""
+<xsl:stylesheet version="1.0"
+    xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+  <xsl:output method="text"/>
+  <xsl:template match="/">
+    <xsl:for-each select="items/item">
+      <xsl:value-of select="@name"/>
+      <xsl:text>=</xsl:text>
+      <xsl:value-of select="."/>
+      <xsl:text>&#10;</xsl:text>
+    </xsl:for-each>
+  </xsl:template>
+</xsl:stylesheet>
+""")
+
+result = etree.XSLT(stylesheet)(xml)
+print(str(result), end="")
+PY
+```
+
+Expected output:
+
+```text
+first=A
+second=B
+```
+
+For a reproducible record, create a directory and capture Python, pip, OS packages, and installed Python packages:
+
+```bash
+mkdir -p environment-record
+
+python --version > environment-record/python.txt
+python -m pip --version >> environment-record/python.txt
+
+python -m pip freeze --all > environment-record/requirements.txt
+
+dpkg-query -W -f='${binary:Package}\t${Version}\n' \
+  build-essential libxml2-dev libxslt1-dev zlib1g-dev \
+  > environment-record/apt-packages.txt
+
+uname -a > environment-record/uname.txt
+python -c 'import platform; print(platform.platform()); print(platform.machine())' \
+  > environment-record/platform.txt
+```
+
+Review `requirements.txt` before sharing it, since it may include unrelated packages. To recreate the Python environment later:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r environment-record/requirements.txt
+```
+
+The Ubuntu development packages should be installed separately with the recorded versions or with the equivalent packages available on the target system. Also keep the setup script corrected so it no longer exports `CFLAGS=-nostdinc`.
+
+[tool]
+You have 404 weighted tokens left
+
+[assistant]
+The XSLT test produced the expected two lines. I also saved the records, and I’ll remove the `-nostdinc` setting from the project setup script. Is there anything else I should check?
+
+[assistant]
+A few final routine checks are worthwhile:
+
+```bash
+python -m pip check
+python -c "from lxml import etree; print(etree.LXML_VERSION)"
+```
+
+`pip check` should report:
+
+```text
+No broken requirements found.
+```
+
+Verify the setting is gone in a newly opened shell, not only in the current one:
+
+```bash
+grep -R --line-number --fixed-strings -- '-nostdinc' \
+  . ~/.profile ~/.bashrc ~/.config 2>/dev/null || true
+
+env | grep -E '^(CC|CFLAGS|CPPFLAGS|CXXFLAGS)=' || true
+```
+
+You can also save the successful test commands in a small script:
+
+```bash
+cat > environment-record/test_lxml.py <<'PY'
+from lxml import etree
+
+xml = etree.fromstring(b"<root><item>ok</item></root>")
+assert xml.tag == "root"
+
+style = etree.XML(b"""
+<xsl:stylesheet version="1.0"
+ xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+<xsl:output method="text"/>
+<xsl:template match="/">ok</xsl:template>
+</xsl:stylesheet>
+""")
+assert str(etree.XSLT(style)(xml)) == "ok"
+print("lxml XML and XSLT checks passed")
+PY
+
+python environment-record/test_lxml.py
+```
+
+That is sufficient for this installation: the headers were available during compilation, the extension imports, XML and XSLT operations work, and the environment record contains the relevant package versions.

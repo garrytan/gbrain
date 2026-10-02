@@ -1,0 +1,323 @@
+[user]
+I’m trying to install a Python package in a virtual environment, and pip fails while building a dependency. Can you help me diagnose it?
+
+[assistant]
+Sure. Please paste the full command you ran and the relevant error output, especially the last 30–50 lines. Also include your operating system, Python version, and whether you’re using a virtual environment.
+
+[user]
+I’m on Ubuntu, using Python 3.12 in a virtual environment called `.venv`. The package is `cairocffi`. I ran:
+
+```text
+(.venv) $ python -m pip install cairocffi
+Collecting cairocffi
+  Downloading cairocffi-1.7.1-py3-none-any.whl.metadata (3.3 kB)
+Collecting cffi>=1.1.0 (from cairocffi)
+  Downloading cffi-1.17.1.tar.gz (516 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 516.9/516.9 kB 4.2 MB/s eta 0:00:00
+  Installing build dependencies ... done
+  Getting requirements to build wheel ... error
+  error: subprocess-exited-with-error
+
+  × Getting requirements to build wheel did not run successfully.
+  │ exit code: 1
+  ╰─> [some output omitted]
+      Package libffi was not found in the pkg-config search path.
+      Perhaps you should add the directory containing `libffi.pc`
+      to the PKG_CONFIG_PATH environment variable
+      Package 'libffi', required by 'virtual:world', not found
+      error: command 'pkg-config' failed with exit code 1
+  ERROR: Failed building wheel for cffi
+  ERROR: Could not build wheels for cffi
+```
+
+[assistant]
+The immediate issue is that the build cannot find the system `libffi` development files through `pkg-config`. On Ubuntu, install the compiler toolchain, `pkg-config`, and the development package:
+
+```text
+sudo apt update
+sudo apt install build-essential pkg-config libffi-dev
+```
+
+Then, with the virtual environment activated, upgrade the packaging tools and retry:
+
+```text
+python -m pip install --upgrade pip setuptools wheel
+python -m pip install cairocffi
+```
+
+The virtual environment contains Python packages, but it still uses system headers, libraries, and build utilities when a dependency must be compiled.
+
+[user]
+Before I install anything, can we confirm which packages are missing? I’d like commands that only inspect the system and don’t modify it.
+
+[assistant]
+Yes. These commands only check whether tools and files are already available:
+
+```text
+command -v gcc
+command -v pkg-config
+pkg-config --version
+pkg-config --modversion libffi
+pkg-config --cflags --libs libffi
+```
+
+You can also query Ubuntu’s package database:
+
+```text
+dpkg-query -W -f='${Status} ${Package} ${Version}\n' \
+  build-essential pkg-config libffi-dev
+```
+
+Expected interpretations:
+
+- A path from `command -v` means the executable is available.
+- A version from `pkg-config --modversion libffi` means `pkg-config` can locate `libffi.pc`.
+- `Package libffi was not found` means the metadata is missing or not on the search path.
+- A line beginning with `install ok installed` means that Debian package is installed.
+- `unknown ok not-installed` or an error generally means it is absent.
+
+For more detail, inspect the usual metadata locations without changing them:
+
+```text
+find /usr/lib /usr/share -name libffi.pc -print 2>/dev/null
+ls -l /usr/include/ffi.h /usr/include/*/ffi.h 2>/dev/null
+```
+
+[user]
+I ran those commands. Here’s the output:
+
+```text
+$ command -v gcc
+/usr/bin/gcc
+$ command -v pkg-config
+/usr/bin/pkg-config
+$ pkg-config --version
+1.8.1
+$ pkg-config --modversion libffi
+Package libffi was not found in the pkg-config search path.
+Perhaps you should add the directory containing `libffi.pc`
+to the PKG_CONFIG_PATH environment variable
+Package 'libffi', required by 'virtual:world', not found
+$ dpkg-query -W -f='${Status} ${Package} ${Version}\n' build-essential pkg-config libffi-dev
+install ok installed build-essential 12.9ubuntu3
+install ok installed pkg-config 1.8.1-2build1
+dpkg-query: no packages found matching libffi-dev
+$ find /usr/lib /usr/share -name libffi.pc -print 2>/dev/null
+```
+
+[assistant]
+That confirms the compiler and `pkg-config` are present, while Ubuntu’s `libffi-dev` package is not installed. The empty `find` result also shows there is no `libffi.pc` under the directories checked, so this is not merely a missing `PKG_CONFIG_PATH` setting.
+
+Install the missing development package:
+
+```text
+sudo apt update
+sudo apt install libffi-dev
+```
+
+You probably do not need to reinstall `build-essential` or `pkg-config`. After installation, verify the metadata before returning to pip:
+
+```text
+pkg-config --modversion libffi
+pkg-config --cflags --libs libffi
+dpkg-query -W -f='${Status} ${Package} ${Version}\n' libffi-dev
+```
+
+On a typical Ubuntu installation, the first command prints a version such as `3.4.x`, and the second prints an include flag plus a linker flag. The exact version depends on the Ubuntu release.
+
+[user]
+I installed it and ran the checks:
+
+```text
+$ sudo apt install libffi-dev
+Reading package lists... Done
+Building dependency tree... Done
+The following NEW packages will be installed:
+  libffi-dev
+0 upgraded, 1 newly installed, 0 to remove and 0 not upgraded.
+...
+Setting up libffi-dev:amd64 ...
+$ pkg-config --modversion libffi
+3.4.4
+$ pkg-config --cflags --libs libffi
+-I/usr/include/x86_64-linux-gnu -lffi
+```
+
+But pip still fails, now with a different message:
+
+```text
+(.venv) $ python -m pip install cairocffi
+Collecting cairocffi
+...
+Building wheel for cffi ... error
+  fatal error: ffi.h: No such file or directory
+  compilation terminated.
+  error: command '/usr/bin/gcc' failed with exit code 1
+```
+
+[assistant]
+The system package is installed and `pkg-config` can see it, but the compiler invocation used for `cffi` is apparently not receiving the include directory from `pkg-config`. First, collect the environment and pip details:
+
+```text
+python -m pip --version
+python -c "import sys, sysconfig; print(sys.executable); print(sys.version); print(sysconfig.get_config_var('CC'))"
+env | grep -E '^(CC|CFLAGS|CPPFLAGS|LDFLAGS|PKG_CONFIG_PATH|PKG_CONFIG_LIBDIR)=' || true
+```
+
+Also check the header directly:
+
+```text
+ls -l /usr/include/x86_64-linux-gnu/ffi.h
+dpkg -L libffi-dev | grep -E '/ffi\.h$|libffi\.pc$'
+```
+
+If `ffi.h` exists in the multiarch include directory, retry with compiler flags supplied explicitly for this shell:
+
+```text
+export CPPFLAGS="$(pkg-config --cflags libffi)"
+export CFLAGS="$CPPFLAGS"
+export LDFLAGS="$(pkg-config --libs libffi)"
+python -m pip install --no-cache-dir --force-reinstall cffi cairocffi -v
+```
+
+These exports affect only the current terminal session. The verbose output should show whether `-I/usr/include/x86_64-linux-gnu` reaches the compiler.
+
+[user]
+The header exists, and the environment was mostly empty:
+
+```text
+$ python -m pip --version
+pip 24.2 from /home/me/project/.venv/lib/python3.12/site-packages/pip (python 3.12)
+$ python -c "import sys, sysconfig; print(sys.executable); print(sys.version); print(sysconfig.get_config_var('CC'))"
+/home/me/project/.venv/bin/python
+3.12.3 ...
+gcc
+$ env | grep -E '^(CC|CFLAGS|CPPFLAGS|LDFLAGS|PKG_CONFIG_PATH|PKG_CONFIG_LIBDIR)=' || true
+$ ls -l /usr/include/x86_64-linux-gnu/ffi.h
+-rw-r--r-- 1 root root 23552 ...
+$ dpkg -L libffi-dev | grep -E '/ffi\.h$|libffi\.pc$'
+/usr/include/x86_64-linux-gnu/ffi.h
+/usr/lib/x86_64-linux-gnu/pkgconfig/libffi.pc
+```
+
+[assistant]
+That points to a build-isolation or package-build configuration that is not adding Ubuntu’s multiarch include path automatically. Since the header and metadata are present, use the `pkg-config` flags explicitly and clear any pip cache for the retry:
+
+```text
+export CPPFLAGS="$(pkg-config --cflags libffi)"
+export CFLAGS="$CPPFLAGS"
+export LDFLAGS="$(pkg-config --libs libffi)"
+
+printf 'CPPFLAGS=%s\nCFLAGS=%s\nLDFLAGS=%s\n' \
+  "$CPPFLAGS" "$CFLAGS" "$LDFLAGS"
+
+python -m pip install --no-cache-dir --force-reinstall -v cffi
+```
+
+In the verbose output, look for a compiler line containing:
+
+```text
+-I/usr/include/x86_64-linux-gnu
+```
+
+If `cffi` installs successfully, install the requested package separately:
+
+```text
+python -m pip install --no-cache-dir cairocffi
+python -c "import cffi, cairocffi; print('imports succeeded')"
+```
+
+If the retry still fails, paste the exact compiler command containing `gcc` and the first `ffi.h` error. That will show whether the flags are being discarded or whether another compiler setting is involved.
+
+[user]
+I tried the explicit flags. The output includes the include path, but it still uses an isolated temporary build environment:
+
+```text
+$ printf 'CPPFLAGS=%s\nCFLAGS=%s\nLDFLAGS=%s\n' "$CPPFLAGS" "$CFLAGS" "$LDFLAGS"
+CPPFLAGS=-I/usr/include/x86_64-linux-gnu
+CFLAGS=-I/usr/include/x86_64-linux-gnu
+LDFLAGS=-lffi
+$ python -m pip install --no-cache-dir --force-reinstall -v cffi
+...
+gcc -I/usr/include/x86_64-linux-gnu ... -c src/c/_cffi_backend.c
+...
+Successfully built cffi
+Successfully installed cffi-1.17.1
+```
+
+Then:
+
+```text
+$ python -m pip install --no-cache-dir cairocffi
+...
+Successfully installed cairocffi-1.7.1
+$ python -c "import cffi, cairocffi; print('imports succeeded')"
+imports succeeded
+```
+
+[assistant]
+That resolved the original issue. The important pieces were:
+
+- `gcc` and `pkg-config` were already installed.
+- `libffi-dev` supplied the missing header and `libffi.pc` metadata.
+- The multiarch header directory was available through `pkg-config`.
+- Exporting `CPPFLAGS`, `CFLAGS`, and `LDFLAGS` made those paths visible to the `cffi` build.
+- Installing `cffi` first allowed the later `cairocffi` installation to complete.
+
+For a quick record of the working environment, these commands are harmless:
+
+```text
+python -m pip show cffi cairocffi
+python -c "import cffi, cairocffi; print(cffi.__version__); print(cairocffi.__version__)"
+```
+
+If the virtual environment is recreated later, the system prerequisite remains `libffi-dev`; the shell exports may be needed again if the same build behavior occurs.
+
+[user]
+Can you summarize the minimal fix and the diagnostic commands, without including the verbose retry?
+
+[assistant]
+Minimal fix on Ubuntu:
+
+```text
+sudo apt update
+sudo apt install libffi-dev
+
+source .venv/bin/activate
+export CPPFLAGS="$(pkg-config --cflags libffi)"
+export CFLAGS="$CPPFLAGS"
+export LDFLAGS="$(pkg-config --libs libffi)"
+
+python -m pip install cffi cairocffi
+```
+
+The diagnostic commands were:
+
+```text
+command -v gcc
+command -v pkg-config
+pkg-config --version
+pkg-config --modversion libffi
+pkg-config --cflags --libs libffi
+
+dpkg-query -W -f='${Status} ${Package} ${Version}\n' \
+  build-essential pkg-config libffi-dev
+
+find /usr/lib /usr/share -name libffi.pc -print 2>/dev/null
+ls -l /usr/include/x86_64-linux-gnu/ffi.h
+dpkg -L libffi-dev | grep -E '/ffi\.h$|libffi\.pc$'
+```
+
+Interpretation:
+
+- `gcc` and `pkg-config` should resolve to system executables.
+- `libffi-dev` should report `install ok installed`.
+- `pkg-config --modversion libffi` should print a version rather than a “not found” error.
+- The header check should locate `ffi.h`.
+- The package-file listing should show both `ffi.h` and `libffi.pc`.
+
+Afterward, verify the Python packages with:
+
+```text
+python -c "import cffi, cairocffi; print('imports succeeded')"
+```

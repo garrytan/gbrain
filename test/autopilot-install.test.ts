@@ -23,6 +23,7 @@ import { tmpdir } from 'os';
 
 import { detectInstallTarget, writeWrapperScript, chatBootWarning } from '../src/commands/autopilot.ts';
 import { gbrainPath } from '../src/core/config.ts';
+import { surfaceFileSource, surfaceSource } from './helpers/source-surface.ts';
 
 let tmp: string;
 const envSnapshot: Record<string, string | undefined> = {};
@@ -121,8 +122,7 @@ describe('detectInstallTarget', () => {
 // expected autopilot to inherit them hit silent missing-secret failures.
 describe('autopilot wrapper script — env source order (v0.36.1.x #966)', () => {
   test('wrapper sources ~/.zshenv before ~/.zshrc', async () => {
-    const { readFileSync } = await import('fs');
-    const src = readFileSync('src/commands/autopilot.ts', 'utf8');
+    const src = surfaceFileSource('autopilot', 'src/commands/autopilot.ts');
     const zshenvIdx = src.indexOf('~/.zshenv');
     const zshrcIdx = src.indexOf('~/.zshrc');
     expect(zshenvIdx).toBeGreaterThan(0);
@@ -147,8 +147,7 @@ describe('autopilot wrapper script — env source order (v0.36.1.x #966)', () =>
 // on at least one operator machine before being diagnosed.
 describe('autopilot wrapper script — bun PATH export (v0.42.x regression)', () => {
   test('wrapper exports ~/.bun/bin onto PATH before the exec', async () => {
-    const { readFileSync } = await import('fs');
-    const src = readFileSync('src/commands/autopilot.ts', 'utf8');
+    const src = surfaceFileSource('autopilot', 'src/commands/autopilot.ts');
     // The export line must appear inside the writeWrapperScript heredoc, now
     // prefixed with the runtime dir derived at install time (universal), with
     // ~/.bun/bin retained as a fallback.
@@ -177,8 +176,7 @@ describe('autopilot showStatus — wrapper-path detection', () => {
     // the detect path's wiring to it.
     const { crontabIndicatesAutopilotInstall } = await import('../src/commands/autopilot.ts');
     expect(crontabIndicatesAutopilotInstall("*/5 * * * * '/h/.gbrain/autopilot-run.sh' >> log 2>&1")).toBe(true);
-    const { readFileSync } = await import('fs');
-    const src = readFileSync('src/commands/autopilot.ts', 'utf8');
+    const src = surfaceSource('autopilot');
     expect(src).toMatch(/crontabIndicatesAutopilotInstall\(crontab\)/);
   });
 });
@@ -440,8 +438,8 @@ describe('autopilot wiring: chat-unavailable boot warning (#2608)', () => {
     // spawns a real engine + worker supervisor, so it isn't practical to
     // drive end-to-end in a unit test. Pin the wiring instead — the warning
     // logic itself is covered by the direct chatBootWarning() tests above.
-    const { readFileSync } = await import('fs');
-    const src = readFileSync('src/commands/autopilot.ts', 'utf8');
+    // W4 autopilot: the daemon boot lives in src/commands/autopilot-daemon.ts.
+    const src = surfaceFileSource('autopilot', 'src/commands/autopilot-daemon.ts');
 
     const startingIdx = src.indexOf('Autopilot starting. Repo:');
     const chatCheckIdx = src.indexOf(`isAvailable('chat')`);
@@ -466,8 +464,7 @@ describe('autopilot wiring: chat-unavailable boot warning (#2608)', () => {
 // shell out to launchctl/systemctl/crontab, which a unit test cannot drive.
 describe('autopilot install — reload-safety (#2608)', () => {
   test('launchd unloads before load, systemd try-restarts, cron/container explain the residual process', async () => {
-    const { readFileSync } = await import('fs');
-    const src = readFileSync('src/commands/autopilot.ts', 'utf8');
+    const src = surfaceFileSource('autopilot', 'src/commands/autopilot.ts');
 
     // installLaunchd: bare `launchctl load` on an already-loaded agent errors
     // (aborting reinstall) and never relaunches the running daemon. The

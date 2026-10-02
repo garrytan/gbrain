@@ -1,0 +1,283 @@
+[user]
+I forgot the admin password for my home router. How do I reset it?
+
+[assistant]
+You can usually recover access by doing a factory reset, but it will erase the router’s saved settings. Before starting, check whether you can find the exact model number on the label underneath or on the back. The reset steps vary slightly, and you may need to re-enter your internet connection details and Wi-Fi settings afterward.
+
+If you only need the Wi-Fi password, that may be printed on the router label and a factory reset may not be necessary. Are you trying to recover the web-admin password specifically, or the wireless password?
+
+[user]
+The web-admin password. I can see a label, but I’m not sure which number is the model.
+
+[assistant]
+Look for labels such as “Model,” “Model No.,” “Product,” or “Part Number.” A model usually contains letters and numbers, for example `AC1200`, `RT-AX55`, or `Nighthawk R7000`, though the exact format differs by manufacturer. Avoid posting the device’s serial number, MAC address, Wi-Fi password, or any QR-code contents.
+
+You can also identify it from the router’s shape and label text. If the label has several lines, you can paste only the manufacturer name and the value next to “Model,” with other identifiers removed.
+
+[user]
+The label says Model: ZX-Home 1200. It also has a serial number and a MAC address.
+
+[assistant]
+Thanks. Since the model name may not correspond to a widely documented support page, use the instructions printed on the router or in its manual if available. Do not share the serial number or MAC address.
+
+For most routers, the factory-reset procedure is:
+
+1. Leave the router powered on.
+2. Find the small recessed button labeled `RESET`.
+3. Use a straightened paper clip or similar nonsharp tool.
+4. Press and hold the button for about 10–15 seconds, or for the duration specified in the manual.
+5. Release it when the status lights change or the router restarts.
+6. Wait several minutes for it to finish booting.
+
+Some devices use a shorter press for reboot and a longer hold for factory reset, so the manual’s timing is preferable. Do not unplug it while the reset is in progress.
+
+[user]
+What exactly gets erased when I do that?
+
+[assistant]
+A factory reset normally removes the router’s locally stored configuration, including:
+
+- The web-admin password and any custom administrator username
+- Custom Wi-Fi network names and wireless passwords
+- Guest-network settings
+- Port-forwarding and port-triggering rules
+- DHCP reservations and local device names
+- DNS, firewall, parental-control, and access-control settings
+- VPN, static-route, and QoS settings
+- Any customized firmware or management preferences stored in the configuration
+
+It usually does not change the installed firmware version, and it does not erase files on computers, phones, or external storage unless the device has a separate storage feature with its own reset option. Your internet service may require details such as a connection username, password, VLAN value, or static IP settings, so check those before resetting if your provider uses them.
+
+[user]
+I don’t know whether my internet connection needs special settings. Is there a way to check first?
+
+[assistant]
+Yes. If you can still connect a device to the router, open its current administration page and look for an Internet, WAN, Status, or Connection section. You may be able to view the connection type and whether it uses automatic addressing, PPPoE, a static address, or another method.
+
+Before resetting, record only the information you will need to re-enter, such as:
+
+- Connection type
+- PPPoE username, if shown
+- Whether a PPPoE password is required
+- VLAN or service-tag value, if shown
+- Static IP, subnet mask, gateway, and DNS values, if manually configured
+- Current Wi-Fi name and password, if you want to reuse them
+
+Do not paste passwords or full public IP details into a chat. If the router page is inaccessible, your internet provider’s setup instructions or account portal may list the required connection type.
+
+[user]
+I can reach a page at 192.168.1.1, but it asks for the password. I can still connect to the internet.
+
+[assistant]
+That suggests the router is functioning, but the admin password is blocking access. Since the internet works, the connection may use automatic settings, but that is not guaranteed. If you can locate a setup sheet, service email, or provider instructions, check them before resetting.
+
+You can also gather basic local information without logging in:
+
+On Windows, open Command Prompt and run:
+
+```text
+ipconfig
+```
+
+On macOS or Linux, open Terminal and run:
+
+```text
+ip route
+```
+
+or, on macOS:
+
+```text
+route -n get default
+```
+
+The default gateway will often be the router address. These commands do not reveal the admin password. Avoid posting the complete output because it may include local and public network details.
+
+[user]
+I’m on Windows. What output should I look for?
+
+[assistant]
+Run this in Command Prompt:
+
+```text
+ipconfig
+```
+
+Find the adapter that says it is connected, such as `Wireless LAN adapter Wi-Fi` or `Ethernet adapter`. Its output may look like this:
+
+```text
+Wireless LAN adapter Wi-Fi:
+
+   Connection-specific DNS Suffix  . :
+   IPv4 Address. . . . . . . . . . . : 192.168.1.24
+   Subnet Mask . . . . . . . . . . . : 255.255.255.0
+   Default Gateway . . . . . . . . . : 192.168.1.1
+```
+
+The `Default Gateway` is normally the router’s local address. You do not need to send the output here. If the gateway is different from `192.168.1.1`, use the displayed gateway address in your browser after the reset.
+
+[user]
+The gateway is 192.168.1.1, and I found an old setup sheet. It says the connection type is automatic. What should I do before pressing reset?
+
+[assistant]
+Make a short recovery note for yourself, without including sensitive identifiers:
+
+```text
+Router address: 192.168.1.1
+Internet connection: Automatic
+Desired Wi-Fi name: __________________
+Desired Wi-Fi password: ______________
+Admin password: ______________________
+```
+
+Also check these practical points:
+
+- Confirm you can connect the computer to the router with an Ethernet cable if possible.
+- Keep the router’s power adapter connected.
+- Close downloads, video calls, and other activities that would be interrupted.
+- Save any important router-specific settings you might need later.
+- Keep the paper clip available.
+- If the router is supplied or managed by an internet provider, check whether it has a provider-specific reset method.
+
+Because the connection is listed as automatic, you may only need to restore the Wi-Fi and administrator settings after the reset. Still, expect the internet to be unavailable for a few minutes while the router restarts.
+
+[user]
+Can I use the Wi-Fi while I’m doing the reset?
+
+[assistant]
+The Wi-Fi connection will usually drop when the reset begins and remain unavailable while the router reboots. It is better to perform the reset from a computer connected by Ethernet, especially if you need to configure the router immediately afterward. If Ethernet is not practical, you can use a phone or laptop over Wi-Fi after the router finishes starting up.
+
+Do not press the reset button repeatedly. Hold it for the documented interval, release it, and wait. The exact light pattern varies, but a normal sequence is that the router’s lights change, go dark briefly, and then return one at a time. Give it roughly five minutes before troubleshooting.
+
+[user]
+I’m ready. The manual says to hold reset for 10 seconds. What’s the safest sequence?
+
+[assistant]
+Use this sequence:
+
+1. Leave the router connected to power and wait until it appears to be operating normally.
+2. If possible, connect your computer to a numbered LAN port with an Ethernet cable.
+3. Note the current Wi-Fi name if you want to recognize it after the reset.
+4. Find the recessed button marked `RESET`; do not use a button marked `WPS`.
+5. Press the reset button gently and hold it continuously for 10 seconds.
+6. Release it at the 10-second mark.
+7. Do not unplug, move, or press any buttons while it restarts.
+8. Wait at least five minutes.
+9. Look for the default Wi-Fi name on the label or setup sheet, or use Ethernet if the default wireless network is not obvious.
+10. Open `http://192.168.1.1` and follow the initial setup screen.
+
+If the manual says the reset must be performed while the device is powered on, follow that instruction. If it specifies a different light pattern or timing, use the manual rather than a generic procedure.
+
+[user]
+The lights changed, and now the power light is steady. The Wi-Fi light is on too. What should I check next?
+
+[assistant]
+First, connect to the router’s default network or keep using the Ethernet cable. The default Wi-Fi name and password are often printed on the label, sometimes as `SSID`, `Wireless Key`, `Wi-Fi Key`, or `Password`. Use the wireless key exactly as printed, including capitalization and punctuation.
+
+Then open a browser and visit:
+
+```text
+http://192.168.1.1
+```
+
+If that address does not load, confirm the computer received a local address by running:
+
+```text
+ipconfig
+```
+
+Check that the connected adapter has an IPv4 address in the same general range and that `Default Gateway` is present. If the page still does not load, try `http://router.local` only if that address appears in the manual. Avoid trying random addresses or entering credentials on unfamiliar pages.
+
+[user]
+The setup page opened and asks me to create an administrator password. What makes a good one?
+
+[assistant]
+Create a new password that is unique to the router and not reused for email, shopping, banking, or other accounts. A practical approach is a long passphrase made from several unrelated words, with a few numbers or symbols if the form requires them. For example, use a private phrase patterned like:
+
+```text
+word-word-word-number-symbol
+```
+
+Do not use the router model, address, street name, phone number, birthday, or a password printed on the device. Store it in a password manager if you use one, and keep a temporary written copy in a secure place until you confirm the password manager entry works. The administrator password and Wi-Fi password can be different; using different values limits the effect of sharing the Wi-Fi password.
+
+[assistant]
+After saving the administrator password, the setup wizard may ask about the wireless network. Choose a Wi-Fi name that does not identify your address, apartment, or household members. You can reuse the previous name if you want existing devices to reconnect automatically, but only if you are comfortable doing so.
+
+For the wireless password, choose a separate long password or passphrase. Select WPA3-Personal if every important device supports it; otherwise choose WPA2/WPA3 transition mode or WPA2-Personal, according to the available options. Avoid outdated choices such as WEP or an open, password-free network.
+
+When you finish, let the router apply the settings and wait for the Wi-Fi network to restart. Reconnect one device first and verify that it can open a normal website before reconnecting everything else.
+
+[user]
+I saved the admin password and Wi-Fi settings. The setup says the internet connection is automatic, but there’s a firmware update button. Should I install it now?
+
+[assistant]
+If the router has completed setup and the internet connection works, installing the official firmware update is generally reasonable, but it is optional for completing the password reset. Before starting:
+
+- Confirm the router is connected to power reliably.
+- Do not use a power strip with a loose switch or unplug the router during the update.
+- Make sure the computer or phone will not lose power.
+- Use only the update function in the router’s own administration page or the manufacturer’s official support process.
+- Read the update warning for expected duration and whether settings will be erased.
+- If there is an automatic backup or export option, save the configuration first, but do not upload it to an untrusted site.
+
+If you prefer to minimize changes, skip the update for now, verify the new credentials, and schedule the update later. Either choice is separate from resetting the forgotten password.
+
+[user]
+I’ll skip it for now. How can I verify that everything is working without changing more settings?
+
+[assistant]
+Perform a small, orderly check:
+
+1. Confirm the computer or phone is connected to the new Wi-Fi name or by Ethernet.
+2. Open the router page again at `http://192.168.1.1`.
+3. Sign in with the new administrator password, then sign out.
+4. Open a few ordinary websites to confirm internet access.
+5. In the router status page, confirm the WAN or Internet status shows connected.
+6. Check that the displayed Wi-Fi security mode is WPA2-Personal, WPA3-Personal, or an appropriate transition mode.
+7. Reconnect one other device and test it.
+8. If everything works, record the new admin and Wi-Fi credentials in your password manager.
+
+Avoid changing port forwarding, remote administration, DNS, or other advanced settings unless you specifically need them. Also check that remote administration is disabled unless you intentionally use it, because local-only administration is the safer default for a home router.
+
+[user]
+The computer works, but one older device won’t reconnect to Wi-Fi. What should I try?
+
+[assistant/assistant]
+Start with the simplest checks:
+
+- Confirm you entered the new wireless password exactly, including uppercase letters and symbols.
+- On the older device, forget or delete the saved network, then scan for the Wi-Fi name again and enter the password.
+- Restart the device.
+- Check whether the router is using WPA3-only mode. Older devices may require WPA2-Personal or a WPA2/WPA3 transition mode.
+- Check whether the router has separate 2.4 GHz and 5 GHz network names. Try the 2.4 GHz network, which older hardware often supports more reliably.
+- Temporarily avoid unusual characters in the Wi-Fi name or password if the device’s software is very old; replace them afterward if desired.
+
+Do not weaken security to WEP or leave the network open. If transition mode works but WPA3-only does not, keep the strongest mode that all of your necessary devices support and check for a firmware update for the older device later.
+
+[user]
+Switching to the 2.4 GHz network fixed it. Is there anything I should clean up after the reset?
+
+[assistant]
+A short cleanup is useful:
+
+- Confirm the administrator login works in a private or normal browser window.
+- Confirm the Wi-Fi password works on each important device.
+- Remove old saved Wi-Fi networks from devices that no longer need them.
+- Verify the router’s time zone and automatic time setting if logs or schedules matter.
+- Check that remote administration from the internet is disabled unless required.
+- Review connected-device and guest-network settings.
+- Confirm that the firewall is enabled.
+- Leave UPnP at its default only if you need devices that depend on it; otherwise review whether it can be disabled.
+- Do not restore old configuration files unless you trust their source and know they do not contain unwanted settings.
+- Store the new credentials securely.
+
+You can leave advanced options unchanged. Since the router was reset, any previous custom port forwarding, reservations, parental controls, or guest settings are gone and would need to be recreated only if you actually use them.
+
+[tool]
+You have 177 weighted tokens left
+
+[assistant/final]
+[user]
+Everything is working now. Is there a quick checklist I can keep nearby in case I forget the password again?
+
+[assistant]

@@ -150,10 +150,14 @@ design lives at
 Sync freshness is honest by construction: the GMAIL sweep's success gates the
 source's synced stamp (it protects loop freshness — the thing `gbrain
 waiting`'s staleness gate exists to guard); contacts/calendar failures mark
-the run partial without blocking it. A single thread that repeatedly fails to fetch is skipped after a few
-consecutive failures instead of wedging the sync forever;
-`gbrain sync --source <id> --full` retries skipped threads with a fresh
-ledger.
+the run partial without blocking it. Current mail comes first: each sync
+drains the history delta (and any gap left by an expired history token)
+before it continues the historical backfill, and the source is fresh once the
+delta is drained, no gap is open and the last 14 days are imported, while the
+deep backfill carries on. A thread that keeps failing is held (see
+[Held items](#held-items)) instead of wedging the sync. Autopilot keeps a
+source synced after its first sync; a source that has never synced stays idle
+until you run `gbrain sync --source <id>` once.
 
 ### Rate limits during backfill
 
@@ -169,10 +173,54 @@ token refresh): giving up too early used to mean a thread that would have
 succeeded a few seconds later was instead skipped for the rest of the sync.
 
 Even when a thread's retry budget IS exhausted, a rate-limit failure is never
-counted toward the poison-skip threshold — unlike a genuine per-thread
+counted toward a hold — unlike a genuine per-thread
 failure (a malformed message, a permissions edge case), a rate limit says
 nothing about that specific thread, so the sweep keeps retrying it on every
 future run instead of silently giving up on it.
+
+## Held items
+
+A connector item that fails with an item-scoped error on three consecutive
+syncs is **held**: it is recorded in the source's cursor state, and the sync
+moves on past it instead of wedging the whole source. A held item is never
+skipped silently:
+
+- `gbrain sources status` lists up to 10 held items per source (key, sender and
+  subject or title when known, error code, class, first and last failure,
+  attempts, next automatic retry), then `+N more; --json lists all`;
+- `gbrain doctor` reports a per-source count in the `connector_held_items`
+  check;
+- the sync summary prints the held count and the retry command;
+- for Gmail, `gbrain waiting` returns `completeness: "partial"` and names each
+  held thread from the last 14 days (or with an unknown date).
+
+A held item does not block the source's freshness stamp. To re-attempt:
+
+```bash
+gbrain sources status <id>          # what is held and why
+gbrain sources retry-held <id>      # schedule every held item (add --dry-run to preview)
+gbrain sync --source <id>           # run the re-attempt now
+gbrain sources status <id>          # a recovered item leaves the list
+```
+
+`gbrain sync --source <id> --full` also clears every hold. A held item whose
+upstream copy changes is re-attempted once automatically.
+
+**The thresholds are fixed** so every brain behaves the same way and a held
+item always means the same thing:
+
+| Rule | Value | Why it is fixed |
+| --- | --- | --- |
+| Hold after | 3 consecutive attempted syncs that failed for that item, at the same upstream version | Long enough to ride out a flaky run, short enough that one bad item cannot pin the cursor for days |
+| Never counted | Rate limits, and source-level errors (auth, config, writer coordination, lock and statement timeouts, database contention) | They say nothing about the item |
+| Circuit breaker | A sync with at least 5 attempted items counts nothing when at least half of them failed transiently, or when at least 5 and at least half failed with the same error code | A provider outage must not hold healthy items |
+| Transient retry | A held item whose error was transient (5xx, network, unknown) is retried after 1 h, 6 h, 24 h, then daily, for 7 days; after that it stays held like a content error | Recovers on its own from a provider incident |
+| Cap | 100 held items per source; a sync that would hold more stops advancing its cursor and fails with `connector_holds_exhausted` | Many held items means something is wrong with the source, not with items |
+
+The overrides are `gbrain sources retry-held <id>` and
+`gbrain sync --source <id> --full`. See
+[write refusal reasons](write-refusals.md) for `connector_holds_exhausted`,
+`invalid_connector_text` and `connector_fence_below_timeline`.
 
 ## Other ways to reach Google (no gbrain OAuth)
 
@@ -245,13 +293,17 @@ attached. The catalog (also emitted as structured JSON with `--json`):
 | `access_env_missing` | The `--access env` variable is unset/blank in this process | Export a live token into it (refresh externally), or switch back to the vault flow |
 
 Cursor expiries (`historyId` older than ~a week, calendar/contacts
-`syncToken` 410) are handled automatically with bounded re-lists — never
-user-facing.
+`syncToken` 410, or a contacts HTTP 400 explicitly reporting an expired sync
+token) use bounded re-lists automatically. Contacts recovery refreshes its
+own cursor without restarting Gmail. Unrelated HTTP 400 errors remain
+upstream failures rather than triggering a full re-list.
 
 ## Custody, privacy, spend
 
 - Tokens: local vault only, 0600, atomic writes. `sources.config` stores an
   account *pointer*, never a secret. `gbrain creds list` is always redacted.
+- Mail, calendar and contact pages and the sync state: 0600 files in 0700
+  directories gbrain creates. See [File permissions](#file-permissions).
 - Disconnect: `gbrain google disconnect <email>` removes local tokens; revoke
   Google-side at <https://myaccount.google.com/permissions>.
 - Upgrade/transfer: `gbrain creds export` produces a passphrase-encrypted
@@ -262,6 +314,103 @@ user-facing.
   `gbrain config set loops.extraction_enabled false`. The deterministic
   unanswered-thread detector is free and always on.
 
+## File permissions
+
+A Google source keeps its files in one directory: by default
+`~/.gbrain/clones/<source-id>-google`, or the directory you passed with
+`gbrain sources add <id> --kind google --account <email> --dir <path>`. gbrain
+writes these files there:
+
+- `.google-source.json`, the sync cursors (and `.google-source.json.corrupt`
+  if a damaged state file was set aside),
+- one Markdown page per email thread under `emails/`, per event under
+  `calendar/` and per contact under `people/`.
+
+Each of those files is written with mode 0600 (readable only by you).
+Directories gbrain creates for the source, including the source directory
+itself when it does not exist yet, are created 0700. A directory that
+already exists, such as one you chose with `--dir`, is never chmod-ed. The
+same modes apply when managed persistence publishes the pages. On Windows
+gbrain does not set modes.
+
+**gbrain enforces 0600.** Every time gbrain rewrites one of these files it
+sets 0600 again, so a looser mode you set by hand (for example
+`chmod 644` to share a page with a group) is reverted on the next rewrite.
+Pages that did not change are not rewritten and keep whatever mode they have.
+This is deliberate: the pages are your private mail, calendar and contacts,
+and a page that quietly stays group-readable after a sync is the failure
+this rule prevents. There is no per-source setting for a looser mode yet.
+
+### Files written before v0.60.31.0
+
+Older releases wrote these files with your umask, typically 0644 (readable by
+every local user), and an upgrade does not rewrite them. In the default
+directory that is harmless, because gbrain keeps `~/.gbrain` at 0700. In a
+custom `--dir` outside `~/.gbrain`, older pages stay readable by other local
+users until they are rewritten.
+
+The upgrade prints a one-time notice for each Google source outside
+`~/.gbrain`, naming the directory, how many readable entries it found and
+the repair commands. `gbrain doctor` checks the same thing on every run:
+
+```text
+  [WARN] google_file_modes: Google source gmail-you: 412 file(s) and 9 directories gbrain wrote under /data/mail are readable by other local users (written before this release). Preview: gbrain repair google-file-modes --source gmail-you — apply after the user agrees: gbrain repair google-file-modes --source gmail-you --apply
+```
+
+The check reports counts per directory, never file names (Gmail page names
+contain subject words). `gbrain doctor --json` carries `source_id`, `dir`,
+`loose_files`, `loose_dirs` and both commands under `details.sources`.
+
+**Fix it with gbrain (recommended):**
+
+```bash
+gbrain repair google-file-modes --source <id>          # preview: counts and up to 10 sample paths
+gbrain repair google-file-modes --source <id> --apply  # clear group and other permission bits
+```
+
+The repair only touches gbrain's own layout: `.google-source.json*`, the
+pages gbrain recorded for that source under `emails/`, `calendar/` and
+`people/` (and their leftover `.tmp` files), and the directories between the
+source directory and those pages. It clears the group and other bits and
+keeps your own. It never changes the source directory itself, never follows
+a symlink, and skips files owned by another user (counted as residuals).
+Without `--source` it covers every Google source outside `~/.gbrain`. The
+preview's sample paths are relative to the source directory, so they can
+show subject words; run it on the brain host. See
+[`gbrain repair`](repair.md#what-each-kind-fixes).
+
+**Or fix it with chmod.** If the directory holds only this source:
+
+```bash
+chmod -R go-rwx /path/to/google/dir
+```
+
+If the directory also holds other files you want to keep shared, limit the
+change to gbrain's files:
+
+```bash
+DIR=/path/to/google/dir
+chmod go-rwx "$DIR"/.google-source.json*
+chmod -R go-rwx "$DIR"/emails "$DIR"/calendar "$DIR"/people
+```
+
+**Verify:**
+
+```bash
+find /path/to/google/dir \( -perm -040 -o -perm -004 \) -print | head   # prints nothing
+gbrain doctor   # [OK] google_file_modes
+```
+
+### Related messages
+
+- `[google] could not secure the quarantined state file <path>: <chmod|rename> failed (<error>). It may be readable by other local users; run chmod 600 <path> or delete it.`
+  A damaged state file was set aside, but gbrain could not make the copy
+  private. The sync continues from empty cursors. Run the printed `chmod` or
+  delete the file.
+- `Stale temporary path <path>.tmp is a directory; remove it and re-run the sync.`
+  A directory sits where gbrain writes a page's temporary file. That item
+  fails until you remove the directory.
+
 ## For agents ([SHOW USER] protocol)
 
 Every `gbrain google`/`creds`/`waiting` command supports `--json` and emits
@@ -270,3 +419,105 @@ copy the harness should relay verbatim is fenced in `[SHOW USER]` blocks.
 The whole setup is exactly two user interactions: (1) the GCP checklist +
 client JSON hand-back, (2) one consent click. Never pass secrets via argv —
 use `--client-json <path>`, stdin, or env.
+
+## Attachment receipts and historical repair
+
+Gmail attachment receipts record filenames, MIME types, byte sizes when supplied,
+account/message/part identity, and Gmail attachment IDs when available. They do
+**not** download attachments or index their contents. Calendar documents and
+inline parts are distinguished from ordinary documents; plain/HTML message-body
+parts are not attachment receipts. Receipt metadata inherits its message page's
+source and visibility. Filenames are inert data, not paths or executable links.
+
+Message rendering distinguishes four states:
+
+- **Not inspected:** a legacy message has no inspection receipt. Absence of a
+  receipt says nothing about whether an attachment exists.
+- **Inspection incomplete:** missing/malformed MIME data or a safety bound stopped
+  inspection. Any receipts already observed remain visible, but absence is unknown.
+- **Inspected; none found:** bounded inspection completed without attachments.
+- **Present; not downloaded; not indexed:** metadata exists, but attachment content
+  is not available to search. For example, `fixture.pdf — application/pdf; 17 bytes`.
+
+Each message MIME walk is iterative, capped at depth 32 and 512 visited parts.
+Attachment receipt payloads have a 64 KiB aggregate budget per fetched thread;
+over-limit metadata is incomplete rather than silently marked empty. Missing part
+IDs use deterministic MIME paths. Duplicate filenames remain separate receipts.
+Missing message IDs have deterministic fallback identities but no invented Gmail
+link. Pure-noise threads remain excluded by the existing ingestion policy.
+
+Historical repair requests a Gmail partial response containing message IDs and
+explicit MIME metadata fields; `body.data`, raw messages and snippets are never
+selected. The selection includes child-identity sentinels beyond depth 32 so a
+deeper MIME tree remains incomplete rather than appearing empty. Decoded metadata
+responses are capped at 2 MiB before JSON parsing; oversized responses fail without
+advancing repair. Ordinary sync's message-body requests are unchanged.
+
+Upgrading changes future ingestion, **not** every historical page. Ordinary
+incremental sync only revisits changed threads and its success does not establish
+historical inspection. To repair already-imported pages without replaying bodies:
+
+```sh
+gbrain google attachments backfill --brain host --source gmail-example --json
+gbrain google attachments backfill --brain host --source gmail-example --yes --limit 25 --json
+```
+
+This is a trusted **local, managed-persistence-only** command for both PGLite and
+PostgreSQL. Use an existing Google source and existing CLI writer registration on
+the selected canonical host. It never enables persistence, installs services, or
+silently registers a new repair writer. Keep old conflicting mutation workers
+quiesced without deleting their queued work. For PGLite, stop its resident owner
+cleanly first: this command does not delegate historical repair to a running owner.
+For PostgreSQL, use the configured host brain or an explicitly selected local
+PostgreSQL mount; source selection never switches the database. Unmanaged sources
+can continue ordinary ingestion, but this historical repair refuses them.
+
+The first command is read-only and makes no Google calls. Its `status: "preview"`
+names the effective brain, source, account, imported-page count and saved historical
+cursor (or `not_inspected`). Review that scope before applying `--yes`. The apply
+command processes at most 25 imported thread pages, patches only the
+`gmail_attachment_receipts` frontmatter field, and preserves current body, other
+frontmatter, tags, visibility and committed withdrawals. It never calls loop/fact
+extraction or an attachment-download/model API. Canonical text projections are
+rebuilt without provider calls; receipt filenames are not extracted as facts.
+
+A batch returning `status: "paused", complete: false` exits nonzero with its
+durable count and cursor. Repeat the **same command** to resume. The per-account
+cursor is checkpointed only after committed page receipts; interruption can repeat
+a page safely without duplicating receipt identities. `status: "complete"` means
+traversal of the fixed upper page-ID boundary captured at the first repair invocation
+is done, **not that every message was inspected or mailbox-wide coverage**.
+`inspected` counts fully inspected pages; `unavailable` counts pages with missing
+historical messages, and `unavailableMessages` counts those identities separately.
+`inspection_complete` is false when traversal is paused or any identity is unavailable.
+This scan has no date filter and does not import
+missing/deleted pages; new ingestion handles newly imported pages.
+
+A confirmed Gmail thread HTTP 404 or a missing historical message ID in an otherwise
+valid thread records `messages[].unavailable` (`thread_not_found` or
+`message_not_found`). Any prior receipt and inspection metadata stays intact; an
+identity without prior metadata has `inspection.state: not_inspected`, not `none`.
+The historical body, privacy and message IDs remain unchanged. The durable cursor
+can then continue to later pages without repeatedly blocking on upstream absence.
+Authorization/rate-limit errors, malformed responses, other HTTP errors and unknown
+ownership are not disappearance and do not authorize skipping the affected page.
+
+`incomplete` also exits nonzero and leaves the cursor before that page. A conflict
+(unknown receipt ownership, canonical edit during publication, delete/recreation,
+source/account change or lost lease) preserves existing content and stops progress.
+Inspect the retained write receipt and source before retrying. After resolving a
+terminal failed receipt, `--yes --retry-failed` explicitly authorizes its linked
+retry; never reset cursors, force overwrite, or restore an old backup to bypass a
+withdrawal. Completed partial work remains durable. Provider failure, unavailable
+owners and malformed metadata are not successful inspection.
+
+Verify with the preview command above and an authorized page read:
+
+```sh
+gbrain get emails/2026/09/example-thread --brain host --source gmail-example
+```
+
+Inspect `frontmatter.gmail_attachment_receipts.messages[].inspection` for the
+individual states and preserved attachment identities. The page's existing Gmail
+citation remains its navigation link; a missing message ID reports unavailable.
+Private pages and their receipts remain unavailable to unauthorized remote readers.

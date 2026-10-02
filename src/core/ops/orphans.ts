@@ -12,6 +12,7 @@ import { readPolicyOpts } from './context.ts';
 
 const find_orphans: Operation = {
   name: 'find_orphans',
+  outputRedaction: 'retrieval',
   description: 'Find disconnected pages. Default mode "islanded" (no live inbound AND no outbound link) matches get_health.orphan_pages; mode "inbound" is the legacy no-inbound-only view. Essential for content enrichment cycles.',
   params: {
     include_pseudo: {

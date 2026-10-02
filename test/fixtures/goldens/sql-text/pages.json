@@ -1,0 +1,1564 @@
+{
+  "golden": {
+    "domain": "pages",
+    "methods": {
+      "countStalePagesForExtraction": {
+        "attendance-blocked+sourceId": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT count(*)::int AS count FROM pages WHERE deleted_at IS NULL AND (links_extracted_at IS NULL OR links_extracted_at < $1::timestamptz OR updated_at > links_extracted_at) AND source_id = $2 AND links_attendance_blocked_revision = knowledge_revision",
+            "textSha256": "be4f84c6281e3977a29eab4c2d35b5cab52a54f87936fb84eed35ac55b5a3bf3"
+          }
+        ],
+        "attendance-exclude": [
+          {
+            "lane": "pool",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT count(*)::int AS count FROM pages WHERE deleted_at IS NULL AND (links_extracted_at IS NULL OR links_extracted_at < $1::timestamptz OR updated_at > links_extracted_at) AND links_attendance_blocked_revision IS DISTINCT FROM knowledge_revision",
+            "textSha256": "ac18ba62c816b3be4564d5a24bdc69304c45d24022c7ade0de8a81d0b36e3123"
+          }
+        ],
+        "default": [
+          {
+            "lane": "pool",
+            "params": [],
+            "sql": "SELECT count(*)::int AS count FROM pages WHERE deleted_at IS NULL AND (links_extracted_at IS NULL OR updated_at > links_extracted_at)",
+            "textSha256": "3f9c86c575246f3a4f112b931aa51361c5e7b4c165330c026843dcb614072c94"
+          }
+        ],
+        "versionTs+sourceId": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT count(*)::int AS count FROM pages WHERE deleted_at IS NULL AND (links_extracted_at IS NULL OR links_extracted_at < $1::timestamptz OR updated_at > links_extracted_at) AND source_id = $2",
+            "textSha256": "fb4400e83c4a8ed0cf977fad5a1bd11c8336d3be942ba26f6e15486c2561dc3a"
+          }
+        ]
+      },
+      "createVersion": {
+        "default": [
+          {
+            "event": "begin",
+            "lane": "tx"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT incarnation FROM sources WHERE id=$1 FOR SHARE",
+            "textSha256": "414efa2a18b3a4ac2f6f6675b6f7273b71c262a6bab8a44f82963606fed221d7"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "INSERT INTO page_write_guards(source_incarnation,slug) VALUES ($1::uuid,$2) ON CONFLICT DO NOTHING",
+            "textSha256": "fa56fa770a66caa8ae77b19c2c3ae9caac336d8e8281bc16f09d36a7fcdd74fd"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT slug FROM page_write_guards WHERE source_incarnation=$1::uuid AND slug=$2 FOR UPDATE",
+            "textSha256": "3d08e10394edab70fb78946e378dd11528213526b214a8516d8cf3825e87ac19"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT id FROM pages WHERE source_id=$1 AND slug=$2 FOR UPDATE",
+            "textSha256": "6c2eb61492fe7470a32169e89b9f04d471f3311d55ff790ad08f4736af483a2c"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string",
+              "string",
+              "string"
+            ],
+            "sql": "WITH chosen AS ( SELECT p.* FROM pages p WHERE p.slug=$1 AND p.source_id=$2 ORDER BY (p.slug=$3) DESC, (p.source_id=$4) DESC, p.source_id ASC LIMIT 1 ) SELECT p.*, (SELECT s.incarnation FROM sources s WHERE s.id=p.source_id) AS source_incarnation, COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag) FROM tags t WHERE t.page_id=p.id), '[]'::jsonb) AS snapshot_tags, COALESCE((SELECT jsonb_agg(jsonb_build_object('visibility',w.visibility,'fact_hash',w.fact_hash,'withdrawn_at',w.withdrawn_at) ORDER BY w.visibility,w.fact_hash) FROM (SELECT visibility,fact_hash,min(withdrawn_at) AS withdrawn_at FROM fact_withdrawals WHERE source_id=p.source_id AND (subject='*' OR subject=p.slug) GROUP BY visibility,fact_hash) w), '[]'::jsonb) AS snapshot_withdrawals, (SELECT string_agg(regexp_replace(lower(line), '[[:space:]]+', ' ', 'g'), chr(10) ORDER BY ord) FROM unnest(string_to_array(p.compiled_truth,chr(10))) WITH ORDINALITY AS lines(line,ord)) AS fingerprint_body, (SELECT string_agg(regexp_replace(lower(line), '[[:space:]]+', ' ', 'g'), chr(10) ORDER BY ord) FROM unnest(string_to_array(p.timeline,chr(10))) WITH ORDINALITY AS lines(line,ord)) AS fingerprint_timeline FROM chosen p",
+            "textSha256": "676e5a10b94e68884b82636a9286cf562fe3b49751b761d6758c9b883ee63140"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "number",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "boolean",
+              "null"
+            ],
+            "sql": "INSERT INTO page_versions (page_id,compiled_truth,frontmatter,knowledge_revision,timeline,title,type,tags,is_deleted,source_path) VALUES ($1,$2,$3::text::jsonb,$4::uuid,$5,$6,$7,$8::text::jsonb,$9,$10) RETURNING *",
+            "textSha256": "b2ff46c472f9770ffbf0c2aec78494499be17ecdd7f5661d0c268d3dd6c7e9bb"
+          },
+          {
+            "event": "commit",
+            "lane": "tx"
+          }
+        ]
+      },
+      "deletePage": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "DELETE FROM pages WHERE slug = $1 AND source_id = $2",
+            "textSha256": "417e84286487439a97b5b005b24844ce05a06570b30325f3bad1bf38080a89ae"
+          }
+        ]
+      },
+      "deletePages": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "array<string>",
+              "string"
+            ],
+            "sql": "DELETE FROM pages WHERE slug = ANY($1::text[]) AND source_id = $2 RETURNING slug",
+            "textSha256": "86db0206d12c7c1dad3d3cd92d5ce73c9fd3c3084e54fd078f87fa960ff38611"
+          }
+        ]
+      },
+      "findByTitleFuzzy": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "string",
+              "number",
+              "string"
+            ],
+            "sql": "SELECT slug, similarity(title, $1) AS sim FROM pages WHERE title % $2 AND similarity(title, $3) >= $4 AND slug LIKE $5 ORDER BY sim DESC, slug ASC LIMIT 1",
+            "textSha256": "0ebdc574ef796fcd7f3ccc561aabff37f8adfa9fd1484415562f33034f3d4b80"
+          }
+        ],
+        "lowSimilarity": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "number",
+              "string"
+            ],
+            "sql": "SELECT slug, similarity(title, $1) AS sim FROM pages WHERE similarity(title, $2) >= $3 AND slug LIKE $4 ORDER BY sim DESC, slug ASC LIMIT 1",
+            "textSha256": "8d42752fa3b8e51d769ea5176d147e5e5575ba82ba4291e9b9992f943f4feda0"
+          }
+        ],
+        "sourceId": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "string",
+              "number",
+              "string",
+              "string"
+            ],
+            "sql": "SELECT slug, similarity(title, $1) AS sim FROM pages WHERE title % $2 AND similarity(title, $3) >= $4 AND slug LIKE $5 AND source_id = $6 AND deleted_at IS NULL ORDER BY sim DESC, slug ASC LIMIT 1",
+            "textSha256": "d1f169944810ebb7cef47f4edec043029df48aa9f9b085c89e16bd457dbf35d9"
+          }
+        ]
+      },
+      "findDuplicatePage": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "null",
+              "null",
+              "null",
+              "null",
+              "null"
+            ],
+            "sql": "SELECT id, slug FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND (content_hash = $2 OR (frontmatter->>'id' = $3 AND $4::text IS NOT NULL)) AND ($5::text IS NULL OR slug <> $6) ORDER BY (frontmatter->>'id' IS NOT DISTINCT FROM $7::text) DESC, id LIMIT 1",
+            "textSha256": "1ece124de02722699feb88aa18049e77476ae35cf2d6265d5e74884c6b99ab2f"
+          }
+        ]
+      },
+      "getAllSlugs": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [],
+            "sql": "SELECT slug FROM pages",
+            "textSha256": "a497d9a3764d06232ff54afd2bb22c77f1fce335c2cdd193ee3846fdd8c75475"
+          }
+        ],
+        "sourceId": [
+          {
+            "lane": "pool",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT slug FROM pages WHERE source_id = $1",
+            "textSha256": "1ba27be59bb94cc24f518d4daaedeaed708d2d9f6049929bf8a72d53099087de"
+          }
+        ]
+      },
+      "getPage": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "string"
+            ],
+            "sql": "WITH chosen AS ( SELECT p.* FROM pages p WHERE p.slug=$1 AND p.deleted_at IS NULL ORDER BY (p.slug=$2) DESC, (p.source_id=$3) DESC, p.source_id ASC LIMIT 1 ) SELECT p.*, (SELECT s.incarnation FROM sources s WHERE s.id=p.source_id) AS source_incarnation, COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag) FROM tags t WHERE t.page_id=p.id), '[]'::jsonb) AS snapshot_tags, COALESCE((SELECT jsonb_agg(jsonb_build_object('visibility',w.visibility,'fact_hash',w.fact_hash,'withdrawn_at',w.withdrawn_at) ORDER BY w.visibility,w.fact_hash) FROM (SELECT visibility,fact_hash,min(withdrawn_at) AS withdrawn_at FROM fact_withdrawals WHERE source_id=p.source_id AND (subject='*' OR subject=p.slug) GROUP BY visibility,fact_hash) w), '[]'::jsonb) AS snapshot_withdrawals, (SELECT string_agg(regexp_replace(lower(line), '[[:space:]]+', ' ', 'g'), chr(10) ORDER BY ord) FROM unnest(string_to_array(p.compiled_truth,chr(10))) WITH ORDINALITY AS lines(line,ord)) AS fingerprint_body, (SELECT string_agg(regexp_replace(lower(line), '[[:space:]]+', ' ', 'g'), chr(10) ORDER BY ord) FROM unnest(string_to_array(p.timeline,chr(10))) WITH ORDINALITY AS lines(line,ord)) AS fingerprint_timeline FROM chosen p",
+            "textSha256": "d5b9e80760a00e92ff197976d71394d7dee3bb507517d6e44eb8dd0a8abb2341"
+          }
+        ],
+        "includeDeleted": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "string"
+            ],
+            "sql": "WITH chosen AS ( SELECT p.* FROM pages p WHERE p.slug=$1 ORDER BY (p.slug=$2) DESC, (p.source_id=$3) DESC, p.source_id ASC LIMIT 1 ) SELECT p.*, (SELECT s.incarnation FROM sources s WHERE s.id=p.source_id) AS source_incarnation, COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag) FROM tags t WHERE t.page_id=p.id), '[]'::jsonb) AS snapshot_tags, COALESCE((SELECT jsonb_agg(jsonb_build_object('visibility',w.visibility,'fact_hash',w.fact_hash,'withdrawn_at',w.withdrawn_at) ORDER BY w.visibility,w.fact_hash) FROM (SELECT visibility,fact_hash,min(withdrawn_at) AS withdrawn_at FROM fact_withdrawals WHERE source_id=p.source_id AND (subject='*' OR subject=p.slug) GROUP BY visibility,fact_hash) w), '[]'::jsonb) AS snapshot_withdrawals, (SELECT string_agg(regexp_replace(lower(line), '[[:space:]]+', ' ', 'g'), chr(10) ORDER BY ord) FROM unnest(string_to_array(p.compiled_truth,chr(10))) WITH ORDINALITY AS lines(line,ord)) AS fingerprint_body, (SELECT string_agg(regexp_replace(lower(line), '[[:space:]]+', ' ', 'g'), chr(10) ORDER BY ord) FROM unnest(string_to_array(p.timeline,chr(10))) WITH ORDINALITY AS lines(line,ord)) AS fingerprint_timeline FROM chosen p",
+            "textSha256": "5da580e700637e9914bc6d2dc1dc1d42ccaa117126e916beba20def642b685fe"
+          }
+        ],
+        "sourceId": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "string",
+              "string"
+            ],
+            "sql": "WITH chosen AS ( SELECT p.* FROM pages p WHERE p.slug=$1 AND p.source_id=$2 AND p.deleted_at IS NULL ORDER BY (p.slug=$3) DESC, (p.source_id=$4) DESC, p.source_id ASC LIMIT 1 ) SELECT p.*, (SELECT s.incarnation FROM sources s WHERE s.id=p.source_id) AS source_incarnation, COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag) FROM tags t WHERE t.page_id=p.id), '[]'::jsonb) AS snapshot_tags, COALESCE((SELECT jsonb_agg(jsonb_build_object('visibility',w.visibility,'fact_hash',w.fact_hash,'withdrawn_at',w.withdrawn_at) ORDER BY w.visibility,w.fact_hash) FROM (SELECT visibility,fact_hash,min(withdrawn_at) AS withdrawn_at FROM fact_withdrawals WHERE source_id=p.source_id AND (subject='*' OR subject=p.slug) GROUP BY visibility,fact_hash) w), '[]'::jsonb) AS snapshot_withdrawals, (SELECT string_agg(regexp_replace(lower(line), '[[:space:]]+', ' ', 'g'), chr(10) ORDER BY ord) FROM unnest(string_to_array(p.compiled_truth,chr(10))) WITH ORDINALITY AS lines(line,ord)) AS fingerprint_body, (SELECT string_agg(regexp_replace(lower(line), '[[:space:]]+', ' ', 'g'), chr(10) ORDER BY ord) FROM unnest(string_to_array(p.timeline,chr(10))) WITH ORDINALITY AS lines(line,ord)) AS fingerprint_timeline FROM chosen p",
+            "textSha256": "22ce659b8fb6104bf08b6ee101bd0e0bafb2769bb7c399380a38e9a4a26c693e"
+          }
+        ],
+        "sourceIds": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "array<string>",
+              "string",
+              "string"
+            ],
+            "sql": "WITH chosen AS ( SELECT p.* FROM pages p WHERE p.slug=$1 AND p.source_id=ANY($2::text[]) AND p.deleted_at IS NULL ORDER BY (p.slug=$3) DESC, (p.source_id=$4) DESC, p.source_id ASC LIMIT 1 ) SELECT p.*, (SELECT s.incarnation FROM sources s WHERE s.id=p.source_id) AS source_incarnation, COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag) FROM tags t WHERE t.page_id=p.id), '[]'::jsonb) AS snapshot_tags, COALESCE((SELECT jsonb_agg(jsonb_build_object('visibility',w.visibility,'fact_hash',w.fact_hash,'withdrawn_at',w.withdrawn_at) ORDER BY w.visibility,w.fact_hash) FROM (SELECT visibility,fact_hash,min(withdrawn_at) AS withdrawn_at FROM fact_withdrawals WHERE source_id=p.source_id AND (subject='*' OR subject=p.slug) GROUP BY visibility,fact_hash) w), '[]'::jsonb) AS snapshot_withdrawals, (SELECT string_agg(regexp_replace(lower(line), '[[:space:]]+', ' ', 'g'), chr(10) ORDER BY ord) FROM unnest(string_to_array(p.compiled_truth,chr(10))) WITH ORDINALITY AS lines(line,ord)) AS fingerprint_body, (SELECT string_agg(regexp_replace(lower(line), '[[:space:]]+', ' ', 'g'), chr(10) ORDER BY ord) FROM unnest(string_to_array(p.timeline,chr(10))) WITH ORDINALITY AS lines(line,ord)) AS fingerprint_timeline FROM chosen p",
+            "textSha256": "77849895353db0e79841cf998b3a7bd2382c133a171ee34c4bbee7d17c47f7a7"
+          }
+        ]
+      },
+      "getPageTimestamps": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "array<string>"
+            ],
+            "sql": "SELECT slug, COALESCE(updated_at, created_at) as ts FROM pages WHERE slug = ANY($1::text[])",
+            "textSha256": "97572cd906041737ab32844e920041426a96c72a16e5e9869cf29d378709b3b6"
+          }
+        ]
+      },
+      "getVersions": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT pv.* FROM page_versions pv JOIN pages p ON p.id = pv.page_id WHERE p.slug = $1 ORDER BY pv.snapshot_at DESC",
+            "textSha256": "f395d4b0edaab8def000a29ff2de0f3655d372663c97a6185c5ddc139051f8a1"
+          }
+        ],
+        "excludePrivate": [
+          {
+            "lane": "pool",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT pv.* FROM page_versions pv JOIN pages p ON p.id = pv.page_id WHERE p.slug = $1 AND (COALESCE(p.frontmatter->>'visibility', CASE WHEN (p.type = 'atom' OR (p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private' AND NOT (CASE WHEN p.type = 'atom' THEN EXISTS (SELECT 1 FROM pages derived_origin WHERE derived_origin.source_id = p.source_id AND derived_origin.slug = p.frontmatter->>'source_slug' AND derived_origin.frontmatter->>'visibility' = 'private') WHEN (p.type = 'atom' OR (p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL)) THEN EXISTS (SELECT 1 FROM links derived_input_link JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id WHERE derived_input_link.from_page_id = p.id AND derived_input_link.link_source = 'concept-provenance' AND derived_input_link.link_type = 'synthesized_from' AND (COALESCE(derived_input.frontmatter->>'visibility', CASE WHEN derived_input.type = 'atom' THEN 'private' ELSE 'world' END) = 'private' OR EXISTS (SELECT 1 FROM pages derived_input_origin WHERE derived_input_origin.source_id = derived_input.source_id AND derived_input_origin.slug = derived_input.frontmatter->>'source_slug' AND derived_input_origin.frontmatter->>'visibility' = 'private'))) ELSE false END)) AND COALESCE(pv.frontmatter->>'visibility', CASE WHEN (pv.type = 'atom' OR (pv.type = 'concept' AND pv.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private' ORDER BY pv.snapshot_at DESC",
+            "textSha256": "e439957f795c0c06fc82bbf0de4b84b2050b72f9a59a13266e08afd1e635be28"
+          }
+        ],
+        "sourceId": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT pv.* FROM page_versions pv JOIN pages p ON p.id = pv.page_id WHERE p.slug = $1 AND p.source_id = $2 ORDER BY pv.snapshot_at DESC",
+            "textSha256": "4c7670d05a65254d3c3d2b0495007c78f42103badfb84953768a10bb8b35c66b"
+          }
+        ],
+        "sourceIds": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "array<string>"
+            ],
+            "sql": "SELECT pv.* FROM page_versions pv JOIN pages p ON p.id = pv.page_id WHERE p.slug = $1 AND p.source_id = ANY($2::text[]) ORDER BY pv.snapshot_at DESC",
+            "textSha256": "70ea471f52433318a287a59f5d743f1c6764c45e6c486348d75729e9212b78aa"
+          }
+        ]
+      },
+      "listAllPageRefs": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [],
+            "sql": "SELECT slug, source_id, updated_at FROM pages WHERE deleted_at IS NULL ORDER BY source_id, slug",
+            "textSha256": "80d8e1011eedbecb81a1e9b6099983d219bd04aae09aebd5d393710cc110ae1a"
+          }
+        ]
+      },
+      "listCorpusSample": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "array<>",
+              "array<>",
+              "null",
+              "null",
+              "null",
+              "null",
+              "null",
+              "null",
+              "null",
+              "number"
+            ],
+            "sql": "WITH sampled AS ( SELECT p.id AS page_id, p.slug, p.source_id, p.title, p.compiled_truth, p.last_retrieved_at, substring(p.slug from '^[^/]+/[^/]+') AS prefix, (SELECT COUNT(*) FROM page_links pl WHERE pl.to_page_id = p.id) AS connection_count FROM pages p WHERE p.deleted_at IS NULL AND (cardinality($1::text[]) = 0 OR NOT (p.slug = ANY($2::text[]))) AND ( ($3::text[] IS NOT NULL AND p.source_id = ANY($4::text[])) OR ($5::text[] IS NULL AND $6::text IS NOT NULL AND p.source_id = $7) OR ($8::text[] IS NULL AND $9::text IS NULL) ) ORDER BY RANDOM() LIMIT $10 ) SELECT s.*, ( SELECT cc.id FROM content_chunks cc WHERE cc.page_id = s.page_id AND cc.embedding IS NOT NULL ORDER BY cc.chunk_index ASC LIMIT 1 ) AS representative_chunk_id FROM sampled s",
+            "textSha256": "717e2ebe0018ed27e4e5d34bbccc61aad0f040b397b236af2c259bf77ba0439b"
+          }
+        ],
+        "seed": [
+          {
+            "event": "begin",
+            "lane": "tx"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "number"
+            ],
+            "sql": "SELECT setseed($1::float8)",
+            "textSha256": "460f3b886c401cc24df284f78c98d08349ec661f02283b7c7710c8de17be711d"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "array<>",
+              "array<>",
+              "null",
+              "null",
+              "null",
+              "string",
+              "string",
+              "null",
+              "string",
+              "number"
+            ],
+            "sql": "WITH sampled AS ( SELECT p.id AS page_id, p.slug, p.source_id, p.title, p.compiled_truth, p.last_retrieved_at, substring(p.slug from '^[^/]+/[^/]+') AS prefix, (SELECT COUNT(*) FROM page_links pl WHERE pl.to_page_id = p.id) AS connection_count FROM pages p WHERE p.deleted_at IS NULL AND (cardinality($1::text[]) = 0 OR NOT (p.slug = ANY($2::text[]))) AND ( ($3::text[] IS NOT NULL AND p.source_id = ANY($4::text[])) OR ($5::text[] IS NULL AND $6::text IS NOT NULL AND p.source_id = $7) OR ($8::text[] IS NULL AND $9::text IS NULL) ) ORDER BY RANDOM() LIMIT $10 ) SELECT s.*, ( SELECT cc.id FROM content_chunks cc WHERE cc.page_id = s.page_id AND cc.embedding IS NOT NULL ORDER BY cc.chunk_index ASC LIMIT 1 ) AS representative_chunk_id FROM sampled s",
+            "textSha256": "717e2ebe0018ed27e4e5d34bbccc61aad0f040b397b236af2c259bf77ba0439b"
+          },
+          {
+            "event": "commit",
+            "lane": "tx"
+          }
+        ]
+      },
+      "listPages": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "number",
+              "number"
+            ],
+            "sql": "SELECT p.*, to_char(p.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS updated_at_iso FROM pages p WHERE 1=1 AND p.deleted_at IS NULL ORDER BY p.updated_at DESC LIMIT $1 OFFSET $2",
+            "textSha256": "b53eedb61eb045a5e22ea5a53328ab5e14d8af00e052458389fa75c7f09b92c1"
+          }
+        ],
+        "effective_after": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "number",
+              "number"
+            ],
+            "sql": "SELECT p.*, to_char(p.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS updated_at_iso FROM pages p WHERE 1=1 AND p.deleted_at IS NULL AND p.effective_date >= $1::timestamptz ORDER BY p.updated_at DESC LIMIT $2 OFFSET $3",
+            "textSha256": "e300dc2ea65cbb6ec63120ab02e17948c47ce081dca436bc2dcfd72fd347d6a8"
+          }
+        ],
+        "effective_before": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "number",
+              "number"
+            ],
+            "sql": "SELECT p.*, to_char(p.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS updated_at_iso FROM pages p WHERE 1=1 AND p.deleted_at IS NULL AND p.effective_date <= $1::timestamptz ORDER BY p.updated_at DESC LIMIT $2 OFFSET $3",
+            "textSha256": "4b3c992ab60c2c856fbf45771893902242c5acdba7cbca9a54f05536acf7dda8"
+          }
+        ],
+        "excludePrivate": [
+          {
+            "lane": "pool",
+            "params": [
+              "number",
+              "number"
+            ],
+            "sql": "SELECT p.*, to_char(p.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS updated_at_iso FROM pages p WHERE 1=1 AND p.deleted_at IS NULL AND (COALESCE(p.frontmatter->>'visibility', CASE WHEN (p.type = 'atom' OR (p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private' AND NOT (CASE WHEN p.type = 'atom' THEN EXISTS (SELECT 1 FROM pages derived_origin WHERE derived_origin.source_id = p.source_id AND derived_origin.slug = p.frontmatter->>'source_slug' AND derived_origin.frontmatter->>'visibility' = 'private') WHEN (p.type = 'atom' OR (p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL)) THEN EXISTS (SELECT 1 FROM links derived_input_link JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id WHERE derived_input_link.from_page_id = p.id AND derived_input_link.link_source = 'concept-provenance' AND derived_input_link.link_type = 'synthesized_from' AND (COALESCE(derived_input.frontmatter->>'visibility', CASE WHEN derived_input.type = 'atom' THEN 'private' ELSE 'world' END) = 'private' OR EXISTS (SELECT 1 FROM pages derived_input_origin WHERE derived_input_origin.source_id = derived_input.source_id AND derived_input_origin.slug = derived_input.frontmatter->>'source_slug' AND derived_input_origin.frontmatter->>'visibility' = 'private'))) ELSE false END)) ORDER BY p.updated_at DESC LIMIT $1 OFFSET $2",
+            "textSha256": "94b4efb4775f893ca7b3adb34748bf0a65a323936a84ffee50c8dd0f62191123"
+          }
+        ],
+        "includeDeleted": [
+          {
+            "lane": "pool",
+            "params": [
+              "number",
+              "number"
+            ],
+            "sql": "SELECT p.*, to_char(p.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS updated_at_iso FROM pages p WHERE 1=1 ORDER BY p.updated_at DESC LIMIT $1 OFFSET $2",
+            "textSha256": "88a25ae800a30123e92501a9c7fd7d569c5649352cd7b9fbb67acb2609d14c78"
+          }
+        ],
+        "slugPrefix": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "number",
+              "number"
+            ],
+            "sql": "SELECT p.*, to_char(p.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS updated_at_iso FROM pages p WHERE 1=1 AND p.slug LIKE $1 ESCAPE '\\' AND p.deleted_at IS NULL ORDER BY p.updated_at DESC LIMIT $2 OFFSET $3",
+            "textSha256": "c3d77b145e83c4b5d27b3c2c4be1ab39dfa2de02ec0a5f6e80d89807e8b314d9"
+          }
+        ],
+        "sort": [
+          {
+            "lane": "pool",
+            "params": [
+              "number",
+              "number"
+            ],
+            "sql": "SELECT p.*, to_char(p.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS updated_at_iso FROM pages p WHERE 1=1 AND p.deleted_at IS NULL ORDER BY p.slug ASC, p.source_id ASC, p.id ASC LIMIT $1 OFFSET $2",
+            "textSha256": "f2142b0f2a082558ad2c58ec5b9ed6ad074c3b2566d31b7cbe580372c533d765"
+          }
+        ],
+        "sourceId": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "number",
+              "number"
+            ],
+            "sql": "SELECT p.*, to_char(p.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS updated_at_iso FROM pages p WHERE 1=1 AND p.source_id = $1 AND p.deleted_at IS NULL ORDER BY p.updated_at DESC LIMIT $2 OFFSET $3",
+            "textSha256": "af95db9a73f91d9b0e61ad64b5e86e8dd96f9002dc570d21f0768312fce390b7"
+          }
+        ],
+        "sourceIds": [
+          {
+            "lane": "pool",
+            "params": [
+              "array<string>",
+              "number",
+              "number"
+            ],
+            "sql": "SELECT p.*, to_char(p.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS updated_at_iso FROM pages p WHERE 1=1 AND p.source_id = ANY($1::text[]) AND p.deleted_at IS NULL ORDER BY p.updated_at DESC LIMIT $2 OFFSET $3",
+            "textSha256": "11551be34c7fbe0730ac398ee6cd5adc3f3e584208fdda55910b1a977c00c638"
+          }
+        ],
+        "tag": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "number",
+              "number"
+            ],
+            "sql": "SELECT p.*, to_char(p.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS updated_at_iso FROM pages p JOIN tags t ON t.page_id = p.id WHERE 1=1 AND t.tag = $1 AND p.deleted_at IS NULL ORDER BY p.updated_at DESC LIMIT $2 OFFSET $3",
+            "textSha256": "4c16627334aff5a4ae92e92e075f56a3bab769967cc0160ae82af805be9a1683"
+          }
+        ],
+        "type": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "number",
+              "number"
+            ],
+            "sql": "SELECT p.*, to_char(p.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS updated_at_iso FROM pages p WHERE 1=1 AND p.type = $1 AND p.deleted_at IS NULL ORDER BY p.updated_at DESC LIMIT $2 OFFSET $3",
+            "textSha256": "142cd63350c7d54827843daeca3261efbd6589ef71e31b06fafc7ff5ac25f83f"
+          }
+        ],
+        "updatedAfterKeyset": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "string",
+              "number",
+              "number"
+            ],
+            "sql": "SELECT p.*, to_char(p.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS updated_at_iso FROM pages p WHERE 1=1 AND (p.updated_at > $1::timestamptz OR (p.updated_at = $2::timestamptz AND p.slug > $3)) AND p.deleted_at IS NULL ORDER BY p.updated_at DESC LIMIT $4 OFFSET $5",
+            "textSha256": "9a681698e0e8f5db467af463257f72afd33c8bf51ac91ae09b7119c8ace39e9c"
+          }
+        ],
+        "updated_after": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "number",
+              "number"
+            ],
+            "sql": "SELECT p.*, to_char(p.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS updated_at_iso FROM pages p WHERE 1=1 AND p.updated_at > $1::timestamptz AND p.deleted_at IS NULL ORDER BY p.updated_at DESC LIMIT $2 OFFSET $3",
+            "textSha256": "1df2d216e9f3e7a7b13e7e2c765a1b87e086d9367ce7540d13b7de62be8bf004"
+          }
+        ]
+      },
+      "listPrefixSampledPages": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "array<string>",
+              "array<>",
+              "array<>",
+              "null",
+              "null",
+              "null",
+              "null",
+              "null",
+              "null",
+              "null",
+              "boolean",
+              "number",
+              "boolean",
+              "number"
+            ],
+            "sql": "WITH prefix_pages AS ( SELECT p.id AS page_id, p.slug, p.source_id, p.title, p.compiled_truth, p.last_retrieved_at, substring(p.slug from '^[^/]+/[^/]+') AS prefix, COUNT(pl.id) AS connection_count FROM pages p LEFT JOIN page_links pl ON pl.to_page_id = p.id WHERE p.deleted_at IS NULL AND substring(p.slug from '^[^/]+/[^/]+') = ANY($1::text[]) AND (cardinality($2::text[]) = 0 OR NOT (p.slug = ANY($3::text[]))) AND ( ($4::text[] IS NOT NULL AND p.source_id = ANY($5::text[])) OR ($6::text[] IS NULL AND $7::text IS NOT NULL AND p.source_id = $8) OR ($9::text[] IS NULL AND $10::text IS NULL) ) GROUP BY p.id, p.slug, p.source_id, p.title, p.compiled_truth, p.last_retrieved_at ), ranked AS ( SELECT pp.*, (CASE WHEN $11::boolean THEN CASE WHEN pp.last_retrieved_at IS NULL THEN 2 WHEN pp.last_retrieved_at < NOW() - ($12::int * INTERVAL '1 day') THEN 1 ELSE 0 END ELSE 0 END) AS stale_score, ROW_NUMBER() OVER ( PARTITION BY pp.prefix ORDER BY (CASE WHEN $13::boolean THEN CASE WHEN pp.last_retrieved_at IS NULL THEN 2 WHEN pp.last_retrieved_at < NOW() - ($14::int * INTERVAL '1 day') THEN 1 ELSE 0 END ELSE 0 END) DESC, pp.connection_count DESC, pp.slug ASC ) AS rn FROM prefix_pages pp ), with_chunk AS ( SELECT r.*, ( SELECT cc.id FROM content_chunks cc WHERE cc.page_id = r.page_id AND cc.embedding IS NOT NULL ORDER BY cc.chunk_index ASC LIMIT 1 ) AS representative_chunk_id FROM ranked r WHERE r.rn = 1 ) SELECT page_id, slug, source_id, title, compiled_truth, last_retrieved_at, prefix, connection_count, representative_chunk_id FROM with_chunk ORDER BY prefix",
+            "textSha256": "38b0cdcd98c314cd347fa9433fd5dcc0b2ed672bdc4eafecf8dad90fa26de590"
+          }
+        ],
+        "sourceIds": [
+          {
+            "lane": "pool",
+            "params": [
+              "array<string>",
+              "array<>",
+              "array<>",
+              "array<string>",
+              "array<string>",
+              "array<string>",
+              "null",
+              "null",
+              "array<string>",
+              "null",
+              "boolean",
+              "number",
+              "boolean",
+              "number"
+            ],
+            "sql": "WITH prefix_pages AS ( SELECT p.id AS page_id, p.slug, p.source_id, p.title, p.compiled_truth, p.last_retrieved_at, substring(p.slug from '^[^/]+/[^/]+') AS prefix, COUNT(pl.id) AS connection_count FROM pages p LEFT JOIN page_links pl ON pl.to_page_id = p.id WHERE p.deleted_at IS NULL AND substring(p.slug from '^[^/]+/[^/]+') = ANY($1::text[]) AND (cardinality($2::text[]) = 0 OR NOT (p.slug = ANY($3::text[]))) AND ( ($4::text[] IS NOT NULL AND p.source_id = ANY($5::text[])) OR ($6::text[] IS NULL AND $7::text IS NOT NULL AND p.source_id = $8) OR ($9::text[] IS NULL AND $10::text IS NULL) ) GROUP BY p.id, p.slug, p.source_id, p.title, p.compiled_truth, p.last_retrieved_at ), ranked AS ( SELECT pp.*, (CASE WHEN $11::boolean THEN CASE WHEN pp.last_retrieved_at IS NULL THEN 2 WHEN pp.last_retrieved_at < NOW() - ($12::int * INTERVAL '1 day') THEN 1 ELSE 0 END ELSE 0 END) AS stale_score, ROW_NUMBER() OVER ( PARTITION BY pp.prefix ORDER BY (CASE WHEN $13::boolean THEN CASE WHEN pp.last_retrieved_at IS NULL THEN 2 WHEN pp.last_retrieved_at < NOW() - ($14::int * INTERVAL '1 day') THEN 1 ELSE 0 END ELSE 0 END) DESC, pp.connection_count DESC, pp.slug ASC ) AS rn FROM prefix_pages pp ), with_chunk AS ( SELECT r.*, ( SELECT cc.id FROM content_chunks cc WHERE cc.page_id = r.page_id AND cc.embedding IS NOT NULL ORDER BY cc.chunk_index ASC LIMIT 1 ) AS representative_chunk_id FROM ranked r WHERE r.rn = 1 ) SELECT page_id, slug, source_id, title, compiled_truth, last_retrieved_at, prefix, connection_count, representative_chunk_id FROM with_chunk ORDER BY prefix",
+            "textSha256": "38b0cdcd98c314cd347fa9433fd5dcc0b2ed672bdc4eafecf8dad90fa26de590"
+          }
+        ]
+      },
+      "listStalePagesForExtraction": {
+        "afterPageId+versionTs+sourceId": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "number",
+              "number"
+            ],
+            "sql": "SELECT id, slug, source_id, type, title, compiled_truth, timeline, frontmatter, updated_at, to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS updated_at_iso FROM pages WHERE deleted_at IS NULL AND (links_extracted_at IS NULL OR links_extracted_at < $1::timestamptz OR updated_at > links_extracted_at) AND source_id = $2 AND id > $3 ORDER BY id LIMIT $4",
+            "textSha256": "02f69476257e0b3f3c2b8526ef5d8c92b84039ab79fe2a86c69cc9670b4603a8"
+          }
+        ],
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "number"
+            ],
+            "sql": "SELECT id, slug, source_id, type, title, compiled_truth, timeline, frontmatter, updated_at, to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS updated_at_iso FROM pages WHERE deleted_at IS NULL AND (links_extracted_at IS NULL OR updated_at > links_extracted_at) ORDER BY id LIMIT $1",
+            "textSha256": "5caf4d2f7968dbdcb18b553c3d4c7e05bb474dbb338ed171071ccaadce8b0188"
+          }
+        ]
+      },
+      "lockPageKeys": {
+        "default": [
+          {
+            "event": "begin",
+            "lane": "tx"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT incarnation FROM sources WHERE id=$1 FOR SHARE",
+            "textSha256": "414efa2a18b3a4ac2f6f6675b6f7273b71c262a6bab8a44f82963606fed221d7"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "INSERT INTO page_write_guards(source_incarnation,slug) VALUES ($1::uuid,$2) ON CONFLICT DO NOTHING",
+            "textSha256": "fa56fa770a66caa8ae77b19c2c3ae9caac336d8e8281bc16f09d36a7fcdd74fd"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT slug FROM page_write_guards WHERE source_incarnation=$1::uuid AND slug=$2 FOR UPDATE",
+            "textSha256": "3d08e10394edab70fb78946e378dd11528213526b214a8516d8cf3825e87ac19"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT id FROM pages WHERE source_id=$1 AND slug=$2 FOR UPDATE",
+            "textSha256": "6c2eb61492fe7470a32169e89b9f04d471f3311d55ff790ad08f4736af483a2c"
+          },
+          {
+            "event": "commit",
+            "lane": "tx"
+          }
+        ]
+      },
+      "markPagesAttendanceBlocked": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "array<string>",
+              "array<string>",
+              "array<string>"
+            ],
+            "sql": "UPDATE pages p SET links_attendance_blocked_revision = v.revision::uuid, links_attendance_blocked_at = now() FROM unnest($1::text[], $2::text[], $3::text[]) AS v(slug, source_id, revision) WHERE p.slug = v.slug AND p.source_id = v.source_id AND p.knowledge_revision = v.revision::uuid AND p.deleted_at IS NULL",
+            "textSha256": "ce508f2d149e38a8dbdfcdafb0ae8cbf454f6971dd9ab72304013633b7c51f99"
+          }
+        ]
+      },
+      "markPagesExtractedBatch": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "array<string>",
+              "array<string>",
+              "array<string>"
+            ],
+            "sql": "UPDATE pages p SET links_extracted_at = v.ts::timestamptz, links_attendance_blocked_revision = NULL, links_attendance_blocked_at = NULL FROM unnest($1::text[], $2::text[], $3::text[]) AS v(slug, source_id, ts) WHERE p.slug = v.slug AND p.source_id = v.source_id",
+            "textSha256": "38571ef9bc7efbcc636e789f18047fbcfab31eb71509440e6b7fadc7e70a93ad"
+          }
+        ]
+      },
+      "purgeDeletedPages": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "number"
+            ],
+            "sql": "DELETE FROM pages WHERE deleted_at IS NOT NULL AND deleted_at < now() - ($1 || ' hours')::interval RETURNING slug",
+            "textSha256": "f92fe640850731cd347ca2ea99eef26d1adb3f7cd9b5a16584159313ce298e07"
+          }
+        ],
+        "dryRun": [
+          {
+            "lane": "pool",
+            "params": [
+              "number"
+            ],
+            "sql": "SELECT slug, deleted_at FROM pages WHERE deleted_at IS NOT NULL AND deleted_at < now() - ($1 || ' hours')::interval ORDER BY deleted_at ASC, slug ASC",
+            "textSha256": "3f3ea375a23f949c89c760499ed7542180bbe9bb1e4e146359337e8693079d09"
+          }
+        ]
+      },
+      "putPage": {
+        "blankBody": [
+          {
+            "event": "begin",
+            "lane": "tx"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT incarnation FROM sources WHERE id=$1 FOR SHARE",
+            "textSha256": "414efa2a18b3a4ac2f6f6675b6f7273b71c262a6bab8a44f82963606fed221d7"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "INSERT INTO page_write_guards(source_incarnation,slug) VALUES ($1::uuid,$2) ON CONFLICT DO NOTHING",
+            "textSha256": "fa56fa770a66caa8ae77b19c2c3ae9caac336d8e8281bc16f09d36a7fcdd74fd"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT slug FROM page_write_guards WHERE source_incarnation=$1::uuid AND slug=$2 FOR UPDATE",
+            "textSha256": "3d08e10394edab70fb78946e378dd11528213526b214a8516d8cf3825e87ac19"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT id FROM pages WHERE source_id=$1 AND slug=$2 FOR UPDATE",
+            "textSha256": "6c2eb61492fe7470a32169e89b9f04d471f3311d55ff790ad08f4736af483a2c"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT compiled_truth FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL LIMIT 1",
+            "textSha256": "52345f51a17688718a9b55ae84f8501985f54bb79428d6172a1ef6c55117a6b7"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "json",
+              "string",
+              "null",
+              "null",
+              "null",
+              "number",
+              "null",
+              "null",
+              "null",
+              "null",
+              "null"
+            ],
+            "sql": "INSERT INTO pages (source_id, slug, type, page_kind, title, compiled_truth, timeline, frontmatter, content_hash, updated_at, effective_date, effective_date_source, import_filename, chunker_version, source_path, source_kind, source_uri, ingested_via, ingested_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now(), $10, $11, $12, $13::smallint, $14, $15, $16, $17, $18) ON CONFLICT (source_id, slug) DO UPDATE SET type = EXCLUDED.type, page_kind = EXCLUDED.page_kind, title = EXCLUDED.title, compiled_truth = EXCLUDED.compiled_truth, timeline = EXCLUDED.timeline, frontmatter = EXCLUDED.frontmatter, content_hash = EXCLUDED.content_hash, updated_at = now(), deleted_at = NULL, effective_date = COALESCE(EXCLUDED.effective_date, pages.effective_date), effective_date_source = COALESCE(EXCLUDED.effective_date_source, pages.effective_date_source), import_filename = COALESCE(EXCLUDED.import_filename, pages.import_filename), chunker_version = CASE WHEN pages.compiled_truth IS NOT DISTINCT FROM EXCLUDED.compiled_truth AND pages.timeline IS NOT DISTINCT FROM EXCLUDED.timeline THEN pages.chunker_version WHEN pages.chunker_version < 0 OR (COALESCE(pages.compiled_truth, '') ~ '<!--- gbrain:(facts|takes):(begin|end) -->' OR COALESCE(pages.timeline, '') ~ '<!--- gbrain:(facts|takes):(begin|end) -->') OR COALESCE(EXCLUDED.compiled_truth, '') ~ '<!--- gbrain:(facts|takes):(begin|end) -->' OR COALESCE(EXCLUDED.timeline, '') ~ '<!--- gbrain:(facts|takes):(begin|end) -->' THEN -1 ELSE LEAST(COALESCE(pages.chunker_version, 0), 3) END, source_path = COALESCE(EXCLUDED.source_path, pages.source_path), source_kind = COALESCE(EXCLUDED.source_kind, pages.source_kind), source_uri = COALESCE(EXCLUDED.source_uri, pages.source_uri), ingested_via = COALESCE(EXCLUDED.ingested_via, pages.ingested_via), ingested_at = COALESCE(EXCLUDED.ingested_at, pages.ingested_at) RETURNING knowledge_revision, text_projection_revision, id, source_id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at, effective_date, effective_date_source, import_filename, source_kind, source_uri, ingested_via, ingested_at",
+            "textSha256": "7af7ed575e1d3c88ceb7a79646efe4601a450db1df760f36034860c982484288"
+          },
+          {
+            "event": "commit",
+            "lane": "tx"
+          }
+        ],
+        "default": [
+          {
+            "event": "begin",
+            "lane": "tx"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT incarnation FROM sources WHERE id=$1 FOR SHARE",
+            "textSha256": "414efa2a18b3a4ac2f6f6675b6f7273b71c262a6bab8a44f82963606fed221d7"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "INSERT INTO page_write_guards(source_incarnation,slug) VALUES ($1::uuid,$2) ON CONFLICT DO NOTHING",
+            "textSha256": "fa56fa770a66caa8ae77b19c2c3ae9caac336d8e8281bc16f09d36a7fcdd74fd"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT slug FROM page_write_guards WHERE source_incarnation=$1::uuid AND slug=$2 FOR UPDATE",
+            "textSha256": "3d08e10394edab70fb78946e378dd11528213526b214a8516d8cf3825e87ac19"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT id FROM pages WHERE source_id=$1 AND slug=$2 FOR UPDATE",
+            "textSha256": "6c2eb61492fe7470a32169e89b9f04d471f3311d55ff790ad08f4736af483a2c"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "json",
+              "string",
+              "null",
+              "null",
+              "null",
+              "number",
+              "null",
+              "null",
+              "null",
+              "null",
+              "null"
+            ],
+            "sql": "INSERT INTO pages (source_id, slug, type, page_kind, title, compiled_truth, timeline, frontmatter, content_hash, updated_at, effective_date, effective_date_source, import_filename, chunker_version, source_path, source_kind, source_uri, ingested_via, ingested_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now(), $10, $11, $12, $13::smallint, $14, $15, $16, $17, $18) ON CONFLICT (source_id, slug) DO UPDATE SET type = EXCLUDED.type, page_kind = EXCLUDED.page_kind, title = EXCLUDED.title, compiled_truth = EXCLUDED.compiled_truth, timeline = EXCLUDED.timeline, frontmatter = EXCLUDED.frontmatter, content_hash = EXCLUDED.content_hash, updated_at = now(), deleted_at = NULL, effective_date = COALESCE(EXCLUDED.effective_date, pages.effective_date), effective_date_source = COALESCE(EXCLUDED.effective_date_source, pages.effective_date_source), import_filename = COALESCE(EXCLUDED.import_filename, pages.import_filename), chunker_version = CASE WHEN pages.compiled_truth IS NOT DISTINCT FROM EXCLUDED.compiled_truth AND pages.timeline IS NOT DISTINCT FROM EXCLUDED.timeline THEN pages.chunker_version WHEN pages.chunker_version < 0 OR (COALESCE(pages.compiled_truth, '') ~ '<!--- gbrain:(facts|takes):(begin|end) -->' OR COALESCE(pages.timeline, '') ~ '<!--- gbrain:(facts|takes):(begin|end) -->') OR COALESCE(EXCLUDED.compiled_truth, '') ~ '<!--- gbrain:(facts|takes):(begin|end) -->' OR COALESCE(EXCLUDED.timeline, '') ~ '<!--- gbrain:(facts|takes):(begin|end) -->' THEN -1 ELSE LEAST(COALESCE(pages.chunker_version, 0), 3) END, source_path = COALESCE(EXCLUDED.source_path, pages.source_path), source_kind = COALESCE(EXCLUDED.source_kind, pages.source_kind), source_uri = COALESCE(EXCLUDED.source_uri, pages.source_uri), ingested_via = COALESCE(EXCLUDED.ingested_via, pages.ingested_via), ingested_at = COALESCE(EXCLUDED.ingested_at, pages.ingested_at) RETURNING knowledge_revision, text_projection_revision, id, source_id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at, effective_date, effective_date_source, import_filename, source_kind, source_uri, ingested_via, ingested_at",
+            "textSha256": "7af7ed575e1d3c88ceb7a79646efe4601a450db1df760f36034860c982484288"
+          },
+          {
+            "event": "commit",
+            "lane": "tx"
+          }
+        ],
+        "expectedRevision": [
+          {
+            "event": "begin",
+            "lane": "tx"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT incarnation FROM sources WHERE id=$1 FOR SHARE",
+            "textSha256": "414efa2a18b3a4ac2f6f6675b6f7273b71c262a6bab8a44f82963606fed221d7"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "INSERT INTO page_write_guards(source_incarnation,slug) VALUES ($1::uuid,$2) ON CONFLICT DO NOTHING",
+            "textSha256": "fa56fa770a66caa8ae77b19c2c3ae9caac336d8e8281bc16f09d36a7fcdd74fd"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT slug FROM page_write_guards WHERE source_incarnation=$1::uuid AND slug=$2 FOR UPDATE",
+            "textSha256": "3d08e10394edab70fb78946e378dd11528213526b214a8516d8cf3825e87ac19"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT id FROM pages WHERE source_id=$1 AND slug=$2 FOR UPDATE",
+            "textSha256": "6c2eb61492fe7470a32169e89b9f04d471f3311d55ff790ad08f4736af483a2c"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string",
+              "string",
+              "string"
+            ],
+            "sql": "WITH chosen AS ( SELECT p.* FROM pages p WHERE p.slug=$1 AND p.source_id=$2 ORDER BY (p.slug=$3) DESC, (p.source_id=$4) DESC, p.source_id ASC LIMIT 1 ) SELECT p.*, (SELECT s.incarnation FROM sources s WHERE s.id=p.source_id) AS source_incarnation, COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag) FROM tags t WHERE t.page_id=p.id), '[]'::jsonb) AS snapshot_tags, COALESCE((SELECT jsonb_agg(jsonb_build_object('visibility',w.visibility,'fact_hash',w.fact_hash,'withdrawn_at',w.withdrawn_at) ORDER BY w.visibility,w.fact_hash) FROM (SELECT visibility,fact_hash,min(withdrawn_at) AS withdrawn_at FROM fact_withdrawals WHERE source_id=p.source_id AND (subject='*' OR subject=p.slug) GROUP BY visibility,fact_hash) w), '[]'::jsonb) AS snapshot_withdrawals, (SELECT string_agg(regexp_replace(lower(line), '[[:space:]]+', ' ', 'g'), chr(10) ORDER BY ord) FROM unnest(string_to_array(p.compiled_truth,chr(10))) WITH ORDINALITY AS lines(line,ord)) AS fingerprint_body, (SELECT string_agg(regexp_replace(lower(line), '[[:space:]]+', ' ', 'g'), chr(10) ORDER BY ord) FROM unnest(string_to_array(p.timeline,chr(10))) WITH ORDINALITY AS lines(line,ord)) AS fingerprint_timeline FROM chosen p",
+            "textSha256": "676e5a10b94e68884b82636a9286cf562fe3b49751b761d6758c9b883ee63140"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "json",
+              "string",
+              "null",
+              "null",
+              "null",
+              "number",
+              "null",
+              "null",
+              "null",
+              "null",
+              "null"
+            ],
+            "sql": "INSERT INTO pages (source_id, slug, type, page_kind, title, compiled_truth, timeline, frontmatter, content_hash, updated_at, effective_date, effective_date_source, import_filename, chunker_version, source_path, source_kind, source_uri, ingested_via, ingested_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now(), $10, $11, $12, $13::smallint, $14, $15, $16, $17, $18) ON CONFLICT (source_id, slug) DO UPDATE SET type = EXCLUDED.type, page_kind = EXCLUDED.page_kind, title = EXCLUDED.title, compiled_truth = EXCLUDED.compiled_truth, timeline = EXCLUDED.timeline, frontmatter = EXCLUDED.frontmatter, content_hash = EXCLUDED.content_hash, updated_at = now(), deleted_at = NULL, effective_date = COALESCE(EXCLUDED.effective_date, pages.effective_date), effective_date_source = COALESCE(EXCLUDED.effective_date_source, pages.effective_date_source), import_filename = COALESCE(EXCLUDED.import_filename, pages.import_filename), chunker_version = CASE WHEN pages.compiled_truth IS NOT DISTINCT FROM EXCLUDED.compiled_truth AND pages.timeline IS NOT DISTINCT FROM EXCLUDED.timeline THEN pages.chunker_version WHEN pages.chunker_version < 0 OR (COALESCE(pages.compiled_truth, '') ~ '<!--- gbrain:(facts|takes):(begin|end) -->' OR COALESCE(pages.timeline, '') ~ '<!--- gbrain:(facts|takes):(begin|end) -->') OR COALESCE(EXCLUDED.compiled_truth, '') ~ '<!--- gbrain:(facts|takes):(begin|end) -->' OR COALESCE(EXCLUDED.timeline, '') ~ '<!--- gbrain:(facts|takes):(begin|end) -->' THEN -1 ELSE LEAST(COALESCE(pages.chunker_version, 0), 3) END, source_path = COALESCE(EXCLUDED.source_path, pages.source_path), source_kind = COALESCE(EXCLUDED.source_kind, pages.source_kind), source_uri = COALESCE(EXCLUDED.source_uri, pages.source_uri), ingested_via = COALESCE(EXCLUDED.ingested_via, pages.ingested_via), ingested_at = COALESCE(EXCLUDED.ingested_at, pages.ingested_at) RETURNING knowledge_revision, text_projection_revision, id, source_id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at, effective_date, effective_date_source, import_filename, source_kind, source_uri, ingested_via, ingested_at",
+            "textSha256": "7af7ed575e1d3c88ceb7a79646efe4601a450db1df760f36034860c982484288"
+          },
+          {
+            "event": "commit",
+            "lane": "tx"
+          }
+        ]
+      },
+      "readPageSnapshot": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "string"
+            ],
+            "sql": "WITH chosen AS ( SELECT p.* FROM pages p WHERE p.slug=$1 AND p.deleted_at IS NULL ORDER BY (p.slug=$2) DESC, (p.source_id=$3) DESC, p.source_id ASC LIMIT 1 ) SELECT p.*, (SELECT s.incarnation FROM sources s WHERE s.id=p.source_id) AS source_incarnation, COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag) FROM tags t WHERE t.page_id=p.id), '[]'::jsonb) AS snapshot_tags, COALESCE((SELECT jsonb_agg(jsonb_build_object('visibility',w.visibility,'fact_hash',w.fact_hash,'withdrawn_at',w.withdrawn_at) ORDER BY w.visibility,w.fact_hash) FROM (SELECT visibility,fact_hash,min(withdrawn_at) AS withdrawn_at FROM fact_withdrawals WHERE source_id=p.source_id AND (subject='*' OR subject=p.slug) GROUP BY visibility,fact_hash) w), '[]'::jsonb) AS snapshot_withdrawals, (SELECT string_agg(regexp_replace(lower(line), '[[:space:]]+', ' ', 'g'), chr(10) ORDER BY ord) FROM unnest(string_to_array(p.compiled_truth,chr(10))) WITH ORDINALITY AS lines(line,ord)) AS fingerprint_body, (SELECT string_agg(regexp_replace(lower(line), '[[:space:]]+', ' ', 'g'), chr(10) ORDER BY ord) FROM unnest(string_to_array(p.timeline,chr(10))) WITH ORDINALITY AS lines(line,ord)) AS fingerprint_timeline FROM chosen p",
+            "textSha256": "d5b9e80760a00e92ff197976d71394d7dee3bb507517d6e44eb8dd0a8abb2341"
+          }
+        ],
+        "sourceId": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "string",
+              "string"
+            ],
+            "sql": "WITH chosen AS ( SELECT p.* FROM pages p WHERE p.slug=$1 AND p.source_id=$2 AND p.deleted_at IS NULL ORDER BY (p.slug=$3) DESC, (p.source_id=$4) DESC, p.source_id ASC LIMIT 1 ) SELECT p.*, (SELECT s.incarnation FROM sources s WHERE s.id=p.source_id) AS source_incarnation, COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag) FROM tags t WHERE t.page_id=p.id), '[]'::jsonb) AS snapshot_tags, COALESCE((SELECT jsonb_agg(jsonb_build_object('visibility',w.visibility,'fact_hash',w.fact_hash,'withdrawn_at',w.withdrawn_at) ORDER BY w.visibility,w.fact_hash) FROM (SELECT visibility,fact_hash,min(withdrawn_at) AS withdrawn_at FROM fact_withdrawals WHERE source_id=p.source_id AND (subject='*' OR subject=p.slug) GROUP BY visibility,fact_hash) w), '[]'::jsonb) AS snapshot_withdrawals, (SELECT string_agg(regexp_replace(lower(line), '[[:space:]]+', ' ', 'g'), chr(10) ORDER BY ord) FROM unnest(string_to_array(p.compiled_truth,chr(10))) WITH ORDINALITY AS lines(line,ord)) AS fingerprint_body, (SELECT string_agg(regexp_replace(lower(line), '[[:space:]]+', ' ', 'g'), chr(10) ORDER BY ord) FROM unnest(string_to_array(p.timeline,chr(10))) WITH ORDINALITY AS lines(line,ord)) AS fingerprint_timeline FROM chosen p",
+            "textSha256": "22ce659b8fb6104bf08b6ee101bd0e0bafb2769bb7c399380a38e9a4a26c693e"
+          }
+        ]
+      },
+      "refreshPageBody": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string"
+            ],
+            "sql": "UPDATE pages SET compiled_truth = $1, timeline = $2, content_hash = $3, chunker_version = CASE WHEN pages.compiled_truth IS NOT DISTINCT FROM $4 AND pages.timeline IS NOT DISTINCT FROM $5 THEN pages.chunker_version WHEN pages.chunker_version < 0 OR (COALESCE(pages.compiled_truth, '') ~ '<!--- gbrain:(facts|takes):(begin|end) -->' OR COALESCE(pages.timeline, '') ~ '<!--- gbrain:(facts|takes):(begin|end) -->') OR COALESCE($6, '') ~ '<!--- gbrain:(facts|takes):(begin|end) -->' OR COALESCE($7, '') ~ '<!--- gbrain:(facts|takes):(begin|end) -->' THEN -1 ELSE LEAST(COALESCE(pages.chunker_version, 0), 3) END, updated_at = now() WHERE source_id = $8 AND slug = $9 AND deleted_at IS NULL",
+            "textSha256": "23c99e0b8b34e4b8cfaa7349b92af8734e295f3afcd3c5661134da6e2bc22d11"
+          }
+        ]
+      },
+      "resolveSlugWithAlias": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "array<string>",
+              "array<string>"
+            ],
+            "sql": "SELECT canonical_slug, source_id FROM slug_aliases WHERE alias_slug = $1 AND source_id = ANY($2::text[]) ORDER BY array_position($3::text[], source_id), id",
+            "textSha256": "e7abb7a5c33a6daf574e501d0ab24547a0c65ef6befe91fc4cdb9ea72cf4bfd7"
+          }
+        ]
+      },
+      "resolveSlugWithAliasDetailed": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "array<string>",
+              "array<string>"
+            ],
+            "sql": "SELECT canonical_slug, source_id FROM slug_aliases WHERE alias_slug = $1 AND source_id = ANY($2::text[]) ORDER BY array_position($3::text[], source_id), id",
+            "textSha256": "e7abb7a5c33a6daf574e501d0ab24547a0c65ef6befe91fc4cdb9ea72cf4bfd7"
+          }
+        ],
+        "excludePrivate": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "array<string>",
+              "array<string>"
+            ],
+            "sql": "SELECT canonical_slug, source_id FROM slug_aliases WHERE alias_slug = $1 AND source_id = ANY($2::text[]) AND EXISTS (SELECT 1 FROM pages p WHERE p.slug = slug_aliases.canonical_slug AND p.source_id = slug_aliases.source_id AND p.deleted_at IS NULL AND (COALESCE(p.frontmatter->>'visibility', CASE WHEN (p.type = 'atom' OR (p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private' AND NOT (CASE WHEN p.type = 'atom' THEN EXISTS (SELECT 1 FROM pages derived_origin WHERE derived_origin.source_id = p.source_id AND derived_origin.slug = p.frontmatter->>'source_slug' AND derived_origin.frontmatter->>'visibility' = 'private') WHEN (p.type = 'atom' OR (p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL)) THEN EXISTS (SELECT 1 FROM links derived_input_link JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id WHERE derived_input_link.from_page_id = p.id AND derived_input_link.link_source = 'concept-provenance' AND derived_input_link.link_type = 'synthesized_from' AND (COALESCE(derived_input.frontmatter->>'visibility', CASE WHEN derived_input.type = 'atom' THEN 'private' ELSE 'world' END) = 'private' OR EXISTS (SELECT 1 FROM pages derived_input_origin WHERE derived_input_origin.source_id = derived_input.source_id AND derived_input_origin.slug = derived_input.frontmatter->>'source_slug' AND derived_input_origin.frontmatter->>'visibility' = 'private'))) ELSE false END))) ORDER BY array_position($3::text[], source_id), id",
+            "textSha256": "af1b103ea01db0fe3f43efd8631ca2a75ca76a4ebaccc5a9ee166ac510e5575a"
+          }
+        ]
+      },
+      "resolveSlugs": {
+        "exactHit": [
+          {
+            "lane": "pool",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT slug FROM pages WHERE slug = $1 AND deleted_at IS NULL",
+            "textSha256": "2eff4a83d70bf0f3845d60bddbd269f6d6c856e1a7d4f2ff944aa390d89eeef1"
+          }
+        ],
+        "excludePrivate": [
+          {
+            "lane": "pool",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT slug FROM pages WHERE slug = $1 AND deleted_at IS NULL AND (COALESCE(pages.frontmatter->>'visibility', CASE WHEN (pages.type = 'atom' OR (pages.type = 'concept' AND pages.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private' AND NOT (CASE WHEN pages.type = 'atom' THEN EXISTS (SELECT 1 FROM pages derived_origin WHERE derived_origin.source_id = pages.source_id AND derived_origin.slug = pages.frontmatter->>'source_slug' AND derived_origin.frontmatter->>'visibility' = 'private') WHEN (pages.type = 'atom' OR (pages.type = 'concept' AND pages.frontmatter->>'synthesized_by' IS NOT NULL)) THEN EXISTS (SELECT 1 FROM links derived_input_link JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id WHERE derived_input_link.from_page_id = pages.id AND derived_input_link.link_source = 'concept-provenance' AND derived_input_link.link_type = 'synthesized_from' AND (COALESCE(derived_input.frontmatter->>'visibility', CASE WHEN derived_input.type = 'atom' THEN 'private' ELSE 'world' END) = 'private' OR EXISTS (SELECT 1 FROM pages derived_input_origin WHERE derived_input_origin.source_id = derived_input.source_id AND derived_input_origin.slug = derived_input.frontmatter->>'source_slug' AND derived_input_origin.frontmatter->>'visibility' = 'private'))) ELSE false END))",
+            "textSha256": "f83f92e948b47eb3f7d4323b7a5bf3edc182f50c62f8882b60ba690a29ea7a51"
+          },
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "string"
+            ],
+            "sql": "SELECT slug, similarity(title, $1) AS sim FROM pages WHERE deleted_at IS NULL AND (title % $2 OR slug ILIKE $3) AND (COALESCE(pages.frontmatter->>'visibility', CASE WHEN (pages.type = 'atom' OR (pages.type = 'concept' AND pages.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private' AND NOT (CASE WHEN pages.type = 'atom' THEN EXISTS (SELECT 1 FROM pages derived_origin WHERE derived_origin.source_id = pages.source_id AND derived_origin.slug = pages.frontmatter->>'source_slug' AND derived_origin.frontmatter->>'visibility' = 'private') WHEN (pages.type = 'atom' OR (pages.type = 'concept' AND pages.frontmatter->>'synthesized_by' IS NOT NULL)) THEN EXISTS (SELECT 1 FROM links derived_input_link JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id WHERE derived_input_link.from_page_id = pages.id AND derived_input_link.link_source = 'concept-provenance' AND derived_input_link.link_type = 'synthesized_from' AND (COALESCE(derived_input.frontmatter->>'visibility', CASE WHEN derived_input.type = 'atom' THEN 'private' ELSE 'world' END) = 'private' OR EXISTS (SELECT 1 FROM pages derived_input_origin WHERE derived_input_origin.source_id = derived_input.source_id AND derived_input_origin.slug = derived_input.frontmatter->>'source_slug' AND derived_input_origin.frontmatter->>'visibility' = 'private'))) ELSE false END)) ORDER BY sim DESC LIMIT 5",
+            "textSha256": "0025cff30e79106c56b82b3835829792dddf87b7acef29dbbc7c93114c2702b9"
+          }
+        ],
+        "fuzzy": [
+          {
+            "lane": "pool",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT slug FROM pages WHERE slug = $1 AND deleted_at IS NULL",
+            "textSha256": "2eff4a83d70bf0f3845d60bddbd269f6d6c856e1a7d4f2ff944aa390d89eeef1"
+          },
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "string"
+            ],
+            "sql": "SELECT slug, similarity(title, $1) AS sim FROM pages WHERE deleted_at IS NULL AND (title % $2 OR slug ILIKE $3) ORDER BY sim DESC LIMIT 5",
+            "textSha256": "db8c450b932d389f0d8fb8f4bfd3e65c4cca83aba3c981219be3b2615c2cd023"
+          }
+        ],
+        "sourceId": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT slug FROM pages WHERE slug = $1 AND deleted_at IS NULL AND source_id = $2",
+            "textSha256": "5ab02d14003a39d7f0eec4c0e04091630dfd8c987c43b337311fc37307275030"
+          },
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "string",
+              "string"
+            ],
+            "sql": "SELECT slug, similarity(title, $1) AS sim FROM pages WHERE deleted_at IS NULL AND (title % $2 OR slug ILIKE $3) AND source_id = $4 ORDER BY sim DESC LIMIT 5",
+            "textSha256": "3483a4da92c16445a0423847e881a326c0d6794ef0b0b5e5fe8349143106c6b3"
+          }
+        ],
+        "sourceIds": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "array<string>"
+            ],
+            "sql": "SELECT slug FROM pages WHERE slug = $1 AND deleted_at IS NULL AND source_id = ANY($2::text[])",
+            "textSha256": "fe6a59e5c576901c6f1497b07d1caa29abc089e6d04e6a73adc07a05e7df6b5b"
+          },
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "string",
+              "array<string>"
+            ],
+            "sql": "SELECT slug, similarity(title, $1) AS sim FROM pages WHERE deleted_at IS NULL AND (title % $2 OR slug ILIKE $3) AND source_id = ANY($4::text[]) ORDER BY sim DESC LIMIT 5",
+            "textSha256": "863964408515537ce82e5daa71794d5374741f5578629b72f0b09d2b000ca4fd"
+          }
+        ]
+      },
+      "resolveSlugsByPaths": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "array<string>",
+              "string"
+            ],
+            "sql": "SELECT slug, source_path FROM pages WHERE source_path = ANY($1::text[]) AND source_id = $2",
+            "textSha256": "eb7db9ec7a9b853b93f4d475f715a6a72fd1ee4b48da9bbf9217deac299ebfff"
+          }
+        ]
+      },
+      "restorePage": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string"
+            ],
+            "sql": "UPDATE pages SET deleted_at = NULL WHERE slug = $1 AND deleted_at IS NOT NULL RETURNING slug",
+            "textSha256": "acd1c51520605f0e6825a414c68860b9f4b74c9cbbfd6ce8b33a2ac454de6f09"
+          }
+        ],
+        "sourceId": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "UPDATE pages SET deleted_at = NULL WHERE slug = $1 AND deleted_at IS NOT NULL AND source_id = $2 RETURNING slug",
+            "textSha256": "090e0cc13e4a8f75a1b0348c64728d42d1e3f6d57c91b0957679599af7ca3f3f"
+          }
+        ]
+      },
+      "revertToVersion": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "number"
+            ],
+            "sql": "UPDATE pages SET compiled_truth = pv.compiled_truth, frontmatter = pv.frontmatter, chunker_version = CASE WHEN pages.compiled_truth IS NOT DISTINCT FROM pv.compiled_truth AND pages.timeline IS NOT DISTINCT FROM pages.timeline THEN pages.chunker_version WHEN pages.chunker_version < 0 OR (COALESCE(pages.compiled_truth, '') ~ '<!--- gbrain:(facts|takes):(begin|end) -->' OR COALESCE(pages.timeline, '') ~ '<!--- gbrain:(facts|takes):(begin|end) -->') OR COALESCE(pv.compiled_truth, '') ~ '<!--- gbrain:(facts|takes):(begin|end) -->' OR COALESCE(pages.timeline, '') ~ '<!--- gbrain:(facts|takes):(begin|end) -->' THEN -1 ELSE LEAST(COALESCE(pages.chunker_version, 0), 3) END, updated_at = now() FROM page_versions pv WHERE pages.slug = $1 AND pv.id = $2 AND pv.page_id = pages.id",
+            "textSha256": "69bf317fe183d46f040111714e55e71f34436d1b7a3d5c44ebbfef87aeb9ebc9"
+          }
+        ],
+        "sourceId": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "number"
+            ],
+            "sql": "UPDATE pages SET compiled_truth = pv.compiled_truth, frontmatter = pv.frontmatter, chunker_version = CASE WHEN pages.compiled_truth IS NOT DISTINCT FROM pv.compiled_truth AND pages.timeline IS NOT DISTINCT FROM pages.timeline THEN pages.chunker_version WHEN pages.chunker_version < 0 OR (COALESCE(pages.compiled_truth, '') ~ '<!--- gbrain:(facts|takes):(begin|end) -->' OR COALESCE(pages.timeline, '') ~ '<!--- gbrain:(facts|takes):(begin|end) -->') OR COALESCE(pv.compiled_truth, '') ~ '<!--- gbrain:(facts|takes):(begin|end) -->' OR COALESCE(pages.timeline, '') ~ '<!--- gbrain:(facts|takes):(begin|end) -->' THEN -1 ELSE LEAST(COALESCE(pages.chunker_version, 0), 3) END, updated_at = now() FROM page_versions pv WHERE pages.slug = $1 AND pages.source_id = $2 AND pv.id = $3 AND pv.page_id = pages.id",
+            "textSha256": "4ee0413e26da27f5cd804c898cc9ee89ef767277c888a9d80d20ad05699bc771"
+          }
+        ]
+      },
+      "setPageAliases": {
+        "default": [
+          {
+            "event": "begin",
+            "lane": "tx"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT incarnation FROM sources WHERE id=$1 FOR SHARE",
+            "textSha256": "414efa2a18b3a4ac2f6f6675b6f7273b71c262a6bab8a44f82963606fed221d7"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "INSERT INTO page_write_guards(source_incarnation,slug) VALUES ($1::uuid,$2) ON CONFLICT DO NOTHING",
+            "textSha256": "fa56fa770a66caa8ae77b19c2c3ae9caac336d8e8281bc16f09d36a7fcdd74fd"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT slug FROM page_write_guards WHERE source_incarnation=$1::uuid AND slug=$2 FOR UPDATE",
+            "textSha256": "3d08e10394edab70fb78946e378dd11528213526b214a8516d8cf3825e87ac19"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT id FROM pages WHERE source_id=$1 AND slug=$2 FOR UPDATE",
+            "textSha256": "6c2eb61492fe7470a32169e89b9f04d471f3311d55ff790ad08f4736af483a2c"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "DELETE FROM page_aliases WHERE source_id=$1 AND slug=$2",
+            "textSha256": "6da211c8cdf3da0076f9251fb24d538ea62e28960c13455e5515dcf58b372937"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string",
+              "array<string>"
+            ],
+            "sql": "INSERT INTO page_aliases (source_id,alias_norm,slug) SELECT $1,a,$2 FROM unnest($3::text[]) AS a ON CONFLICT DO NOTHING",
+            "textSha256": "60c290a1b376486e04f83df0acde1ffc8ba835f299261b8101ab21ee55e40fff"
+          },
+          {
+            "event": "commit",
+            "lane": "tx"
+          }
+        ],
+        "empty": [
+          {
+            "event": "begin",
+            "lane": "tx"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT incarnation FROM sources WHERE id=$1 FOR SHARE",
+            "textSha256": "414efa2a18b3a4ac2f6f6675b6f7273b71c262a6bab8a44f82963606fed221d7"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "INSERT INTO page_write_guards(source_incarnation,slug) VALUES ($1::uuid,$2) ON CONFLICT DO NOTHING",
+            "textSha256": "fa56fa770a66caa8ae77b19c2c3ae9caac336d8e8281bc16f09d36a7fcdd74fd"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT slug FROM page_write_guards WHERE source_incarnation=$1::uuid AND slug=$2 FOR UPDATE",
+            "textSha256": "3d08e10394edab70fb78946e378dd11528213526b214a8516d8cf3825e87ac19"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT id FROM pages WHERE source_id=$1 AND slug=$2 FOR UPDATE",
+            "textSha256": "6c2eb61492fe7470a32169e89b9f04d471f3311d55ff790ad08f4736af483a2c"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "DELETE FROM page_aliases WHERE source_id=$1 AND slug=$2",
+            "textSha256": "6da211c8cdf3da0076f9251fb24d538ea62e28960c13455e5515dcf58b372937"
+          },
+          {
+            "event": "commit",
+            "lane": "tx"
+          }
+        ]
+      },
+      "softDeletePage": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string"
+            ],
+            "sql": "UPDATE pages SET deleted_at = now() WHERE slug = $1 AND deleted_at IS NULL RETURNING slug",
+            "textSha256": "2c5debf213103df1470db868f9868817b274adb8e3d5a4ab7667d79d6e81a1b8"
+          }
+        ],
+        "sourceId": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "UPDATE pages SET deleted_at = now() WHERE slug = $1 AND deleted_at IS NULL AND source_id = $2 RETURNING slug",
+            "textSha256": "d88e795fa8c34b03879a16356367fadb183ffb9889a5d22cb17008238963654f"
+          }
+        ]
+      },
+      "softDeletePages": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "array<string>",
+              "string"
+            ],
+            "sql": "UPDATE pages SET deleted_at = now() WHERE slug = ANY($1::text[]) AND source_id = $2 AND deleted_at IS NULL RETURNING slug",
+            "textSha256": "1385713d412b69bf4e579d2e7a6ef5184bad6461c3bd61c7a20bbe2439be39d5"
+          }
+        ]
+      },
+      "updatePageContextualRetrievalState": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "string",
+              "string"
+            ],
+            "sql": "UPDATE pages SET contextual_retrieval_mode = $1, corpus_generation = $2, updated_at = now() WHERE source_id = $3 AND slug = $4 AND deleted_at IS NULL",
+            "textSha256": "a378f017e25ddde029674a8b798706363f778a23270453b1f06248bd1c5461d0"
+          }
+        ]
+      },
+      "updateSlug": {
+        "moved": [
+          {
+            "event": "begin",
+            "lane": "tx"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string",
+              "string"
+            ],
+            "sql": "UPDATE pages SET slug = $1, updated_at = now() WHERE slug = $2 AND source_id = $3 RETURNING id",
+            "textSha256": "bf3641ff709a5368753967c9c95db40c4ef2c2f065e9449147765b3f40922370"
+          },
+          {
+            "event": "savepoint",
+            "lane": "tx>sp"
+          },
+          {
+            "lane": "tx>sp",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "DELETE FROM slug_aliases WHERE source_id = $1 AND alias_slug = $2",
+            "textSha256": "87f2f6a11bc9031277734e41983fe2d8c61de1fadd882d2614fd07b722bc8bb4"
+          },
+          {
+            "lane": "tx>sp",
+            "params": [
+              "string",
+              "string",
+              "string"
+            ],
+            "sql": "UPDATE slug_aliases SET canonical_slug = $1 WHERE source_id = $2 AND canonical_slug = $3",
+            "textSha256": "a10e00ceaadb9a63622ed313743fa0f8d6fcf534445f807bad0eb67acb55c546"
+          },
+          {
+            "lane": "tx>sp",
+            "params": [
+              "string",
+              "string",
+              "string"
+            ],
+            "sql": "INSERT INTO slug_aliases (source_id, alias_slug, canonical_slug, notes) VALUES ($1, $2, $3, 'rename') ON CONFLICT (source_id, alias_slug) DO UPDATE SET canonical_slug = EXCLUDED.canonical_slug",
+            "textSha256": "63f31ea4339a966b2207dbfa680c79e57312f09d65f0f7229f1f3451731af885"
+          },
+          {
+            "event": "savepoint-release",
+            "lane": "tx>sp"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string"
+            ],
+            "sql": "WITH moved AS ( DELETE FROM fact_withdrawals WHERE source_id = $1 AND subject = $2 AND $3 <> $4 RETURNING visibility, fact_hash, withdrawn_at ) INSERT INTO fact_withdrawals(source_id, visibility, subject, fact_hash, withdrawn_at) SELECT $5, visibility, $6, fact_hash, withdrawn_at FROM moved ON CONFLICT DO NOTHING",
+            "textSha256": "111b785ff63aa59d7f9b1a16899d74e7a73b47f22c2ff820490e7524489a7fec"
+          },
+          {
+            "event": "savepoint",
+            "lane": "tx>sp"
+          },
+          {
+            "lane": "tx>sp",
+            "params": [
+              "string",
+              "string",
+              "string"
+            ],
+            "sql": "UPDATE facts SET entity_slug = $1 WHERE source_id = $2 AND entity_slug = $3",
+            "textSha256": "9d51c3b5fd42f2ce597a23014cba8eb021607d23a6ce23680fb5b07dd3e642ed"
+          },
+          {
+            "event": "savepoint-release",
+            "lane": "tx>sp"
+          },
+          {
+            "event": "savepoint",
+            "lane": "tx>sp"
+          },
+          {
+            "lane": "tx>sp",
+            "params": [
+              "string",
+              "string",
+              "string",
+              "string"
+            ],
+            "sql": "DELETE FROM facts f WHERE f.source_id = $1 AND f.source_markdown_slug = $2 AND f.row_num IS NOT NULL AND EXISTS (SELECT 1 FROM facts o WHERE o.source_id = $3 AND o.source_markdown_slug = $4 AND o.row_num = f.row_num)",
+            "textSha256": "163406688a2f8e56c47b708d3c931a006d3bef83783c247c48b0838627ed9677"
+          },
+          {
+            "event": "savepoint-release",
+            "lane": "tx>sp"
+          },
+          {
+            "event": "savepoint",
+            "lane": "tx>sp"
+          },
+          {
+            "lane": "tx>sp",
+            "params": [
+              "string",
+              "string",
+              "string"
+            ],
+            "sql": "UPDATE facts SET source_markdown_slug = $1 WHERE source_id = $2 AND source_markdown_slug = $3",
+            "textSha256": "5eb4253a98c87753fd9b6eb915bb539b371658423cb537a3e11f2a853e359b06"
+          },
+          {
+            "event": "savepoint-release",
+            "lane": "tx>sp"
+          },
+          {
+            "event": "savepoint",
+            "lane": "tx>sp"
+          },
+          {
+            "lane": "tx>sp",
+            "params": [
+              "string",
+              "string",
+              "string",
+              "string"
+            ],
+            "sql": "DELETE FROM page_aliases a WHERE a.source_id = $1 AND a.slug = $2 AND EXISTS (SELECT 1 FROM page_aliases o WHERE o.source_id = $3 AND o.slug = $4 AND o.alias_norm = a.alias_norm)",
+            "textSha256": "c534f6c79181120132daf04f1bfa6d7b1a98611b3b1db953da697789b1758bbf"
+          },
+          {
+            "event": "savepoint-release",
+            "lane": "tx>sp"
+          },
+          {
+            "event": "savepoint",
+            "lane": "tx>sp"
+          },
+          {
+            "lane": "tx>sp",
+            "params": [
+              "string",
+              "string",
+              "string"
+            ],
+            "sql": "UPDATE page_aliases SET slug = $1 WHERE source_id = $2 AND slug = $3",
+            "textSha256": "7cf5d76156aba2755c6c33970eeac62435381611239e18c52c2cfeb3706d73d7"
+          },
+          {
+            "event": "savepoint-release",
+            "lane": "tx>sp"
+          },
+          {
+            "event": "commit",
+            "lane": "tx"
+          }
+        ],
+        "noop": [
+          {
+            "event": "begin",
+            "lane": "tx"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string",
+              "string",
+              "string"
+            ],
+            "sql": "UPDATE pages SET slug = $1, updated_at = now() WHERE slug = $2 AND source_id = $3 RETURNING id",
+            "textSha256": "bf3641ff709a5368753967c9c95db40c4ef2c2f065e9449147765b3f40922370"
+          },
+          {
+            "event": "commit",
+            "lane": "tx"
+          }
+        ]
+      }
+    }
+  },
+  "normalizer": "sql-text-v1"
+}

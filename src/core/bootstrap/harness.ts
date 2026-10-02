@@ -46,7 +46,7 @@ import { randomUUID } from 'node:crypto';
 
 import { VERSION } from '../../version.ts';
 import { loadConfig, loadConfigFileOnly, toEngineConfig, type GBrainConfig } from '../config.ts';
-import { resolveWritebackConfigFromFile } from '../facts/writeback-config.ts';
+import { PRIVATE_DEFAULT_REMOTE_CONSEQUENCE, resolveWritebackConfigFromFile } from '../facts/writeback-config.ts';
 import {
   AMBIENT_WRITEBACK_BLOCK_BEGIN,
   ambientBlockPresent,
@@ -805,6 +805,29 @@ async function leaveHarnessSkills(
   }
 }
 
+/** Pre-consent notes about the ambient-writeback posture. Registrar mode never
+ * installs blocks for the remote brain; #5671: an explicit private default is
+ * write-only memory for the HTTP sessions this harness wires (remote reads are
+ * world-only), so say so before the operator consents. */
+function logAmbientPostureNotes(
+  d: { log: (line: string) => void; logError: (line: string) => void },
+  wb: { enabled: boolean; visibility_posture: 'world' | 'private' },
+  registrarMode: boolean,
+): void {
+  if (wb.enabled && registrarMode) {
+    d.log(
+      'registrar mode: ambient-writeback instruction blocks are NOT installed for a remote brain — ' +
+        'its own MCP instructions carry the contract when the remote operator enables memory.auto_writeback.',
+    );
+  }
+  if (!registrarMode && wb.visibility_posture === 'private') {
+    d.logError(
+      'WARNING: facts.default_visibility is private, but this harness reads the brain over HTTP MCP — ' +
+        `${PRIVATE_DEFAULT_REMOTE_CONSEQUENCE} (then re-run gbrain bootstrap harness --yes).`,
+    );
+  }
+}
+
 export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): Promise<number> {
   const d = resolveDeps(rawDeps);
   // stdout-for-data discipline: under --json, stdout carries ONLY the final
@@ -895,12 +918,7 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
   // section over MCP `instructions` when ITS config enables it.
   const wb = resolveWritebackConfigFromFile(d.loadFileConfig());
   const wbInstall = wb.enabled && !registrarMode;
-  if (wb.enabled && registrarMode) {
-    d.log(
-      'registrar mode: ambient-writeback instruction blocks are NOT installed for a remote brain — ' +
-        'its own MCP instructions carry the contract when the remote operator enables memory.auto_writeback.',
-    );
-  }
+  logAmbientPostureNotes(d, wb, registrarMode);
   const ambientBody =
     !wbInstall
       ? null

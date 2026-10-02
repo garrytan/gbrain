@@ -1,90 +1,69 @@
 /**
  * Unit tests for the patterns phase (v0.21).
  *
- * The phase invokes a subagent and queues real Minions work, so this
- * file leans on structural assertions over the source + a single
- * end-to-end driver run that exercises the skip-paths.
- *
- * Full LLM behavior is exercised by E2E tests in test/e2e/.
+ * Driven through `runPhasePatterns` and its `__testing` helpers on one
+ * in-memory PGLite brain. Paths that would reach a real subagent stop at a
+ * cheap gate instead: `dryRun`, the provider probe (`no_provider`), or a
+ * near deadline (`insufficient_cycle_budget`, checked after the probe and
+ * the allow-list load). Child outcomes, the evidence watermark, source
+ * scoping and the budget clamp have their own files
+ * (test/cycle-patterns-*.test.ts).
  */
 
-import { describe, test, expect } from 'bun:test';
-import { readFileSync } from 'fs';
+import { describe, test, expect, beforeAll, afterAll, beforeEach, spyOn } from 'bun:test';
+import { mkdtempSync, readFileSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import type { BrainEngine } from '../src/core/engine.ts';
-import { __testing } from '../src/core/cycle/patterns.ts';
+import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { parseMarkdown } from '../src/core/markdown.ts';
+import { resetPgliteState } from './helpers/reset-pglite.ts';
+import { withEnv } from './helpers/with-env.ts';
+import { __testing, runPhasePatterns } from '../src/core/cycle/patterns.ts';
 
-const patternsSrc = readFileSync(
-  new URL('../src/core/cycle/patterns.ts', import.meta.url),
-  'utf-8',
-);
+let engine: PGLiteEngine;
+let schemaVersion: string;
 
-describe('patterns phase wiring', () => {
-  test('imports queue + waitForCompletion + types', () => {
-    expect(patternsSrc).toContain("import { DEFAULT_PRIVATE_QUEUE_LEASE_MS, MinionQueue }");
-    // The post-drain wait must be the lease-renewing variant — a plain
-    // waitForCompletion would let the private-queue lease lapse mid-wait.
-    expect(patternsSrc).toContain('waitForCompletionRenewing');
-    // The keepalive must come from the shared throttled factory (T0
-    // extraction) — an inline closure here and in synthesize drifts.
-    expect(patternsSrc).toContain('makeThrottledLeaseRenewer');
-    expect(patternsSrc).toContain('SubagentHandlerData');
-  });
+beforeAll(async () => {
+  engine = new PGLiteEngine();
+  await engine.connect({});
+  await engine.initSchema();
+  // resetPgliteState truncates `config`, including the `version` row that
+  // MinionQueue.ensureSchema checks before a submission.
+  schemaVersion = (await engine.getConfig('version')) ?? '7';
+}, 60_000);
 
-  test('threads allowed_slug_prefixes from filing-rules JSON', () => {
-    expect(patternsSrc).toContain('allowed_slug_prefixes');
-    expect(patternsSrc).toContain('_brain-filing-rules.json');
-    expect(patternsSrc).toContain('dream_synthesize_paths');
-  });
-
-  test('reads min_evidence + lookback_days config', () => {
-    expect(patternsSrc).toContain('dream.patterns.min_evidence');
-    expect(patternsSrc).toContain('dream.patterns.lookback_days');
-  });
-
-  test('uses subagent_tool_executions for slug provenance (Codex #2 fix)', () => {
-    expect(patternsSrc).toContain('subagent_tool_executions');
-    expect(patternsSrc).toContain("tool_name = 'brain_put_page'");
-  });
-
-  test('gates on gateway provider reachability, not ANTHROPIC_API_KEY (PR #2279)', () => {
-    // The gate must probe the RESOLVED patterns model through the gateway
-    // (any configured provider can run patterns), not hardcode the Anthropic
-    // env var — that misclassified non-Anthropic stacks as "no upstream".
-    expect(patternsSrc).toContain('probeChatModel');
-    expect(patternsSrc).toContain('normalizeModelId');
-    expect(patternsSrc).toContain('no_provider');
-    expect(patternsSrc).not.toContain('process.env.ANTHROPIC_API_KEY');
-  });
-
-  test('skips when reflections below min_evidence', () => {
-    expect(patternsSrc).toContain('insufficient_evidence');
-  });
-
-  test('reverse-writes pages to disk via serializeMarkdown', () => {
-    expect(patternsSrc).toContain('serializeMarkdown');
-    expect(patternsSrc).toContain('writeFileSync');
-  });
-
-  test('runs after extract — queries fresh graph', () => {
-    // Documented invariant: pattern phase MUST run after extract.
-    // The cycle.ts dispatcher enforces order; this just confirms the
-    // patterns module doesn't try to compute its own auto-link layer
-    // (which would be a subtle regression).
-    expect(patternsSrc).not.toContain('runAutoLink');
-    expect(patternsSrc).not.toContain('extractPageLinks(');
-  });
-
-  test('does NOT use raw_data table (Codex #3 fix)', () => {
-    expect(patternsSrc).not.toContain('putRawData');
-    expect(patternsSrc).not.toContain('getRawData');
-  });
+afterAll(async () => {
+  await engine.disconnect();
 });
 
-describe('patterns scope filter', () => {
+beforeEach(async () => {
+  await resetPgliteState(engine);
+  await engine.setConfig('version', schemaVersion);
+});
+
+async function seed(slugs: string[], ageMinutes = 0): Promise<void> {
+  for (const slug of slugs) {
+    await engine.executeRaw(
+      `INSERT INTO pages (slug, type, title, compiled_truth, updated_at)
+       VALUES ($1, 'note', $1, 'reflection body', NOW() - ($2 || ' minutes')::interval)`,
+      [slug, String(ageMinutes)],
+    );
+  }
+}
+
+const reflections = (n: number, prefix = 'wiki/personal/reflections') =>
+  Array.from({ length: n }, (_, i) => `${prefix}/r-${i}`);
+
+function noKeys<T>(fn: () => Promise<T>, extra: Record<string, string | undefined> = {}) {
+  return withEnv({ ANTHROPIC_API_KEY: undefined, OPENAI_API_KEY: undefined, ...extra }, fn);
+}
+
+describe('patterns reflection gathering', () => {
   test('reflection excerpts never split a UTF-16 surrogate pair', async () => {
     const rocket = '\uD83D\uDE80';
     const compiledTruth = `${'a'.repeat(599)}${rocket}tail`;
-    const engine = {
+    const fake = {
       executeRaw: async () => [{
         slug: 'wiki/personal/reflections/example',
         title: 'Example',
@@ -92,50 +71,162 @@ describe('patterns scope filter', () => {
       }],
     } as unknown as BrainEngine;
 
-    const [reflection] = await __testing.gatherReflections(engine, 30);
+    const [reflection] = await __testing.gatherReflections(fake, 30);
 
     expect(reflection.excerpt.isWellFormed()).toBe(true);
     expect(reflection.excerpt.endsWith(rocket)).toBe(false);
     expect(reflection.excerpt.length).toBe(599);
   });
 
-  test('filters reflections by slug LIKE <source_slug_prefix>/%', () => {
-    // #2415 made the top-level namespace root configurable
-    // (dream.synthesize.output_root, default 'wiki'). A later patch made the
-    // full `personal/reflections` sub-path configurable too
-    // (dream.patterns.source_slug_prefix, defaults to
-    // `<output_root>/personal/reflections` so existing behavior is
-    // unchanged) — schemas with no `personal/` nesting (e.g. a flat
-    // `meetings/` tree) can point the phase at their own compiled_truth
-    // source instead.
-    expect(patternsSrc).toContain('slug LIKE $2');
-    expect(patternsSrc).toContain('${sourceSlugPrefix}/%');
-    expect(patternsSrc).toContain('dream.patterns.source_slug_prefix');
+  test('scoped to <prefix>/, newest first, capped at 100, bounded by lookback', async () => {
+    await engine.executeRaw(
+      `INSERT INTO pages (slug, type, title, compiled_truth, updated_at)
+       SELECT 'wiki/personal/reflections/r-' || lpad(g::text, 3, '0'), 'note', 'R', 'body',
+              NOW() - (g || ' minutes')::interval
+         FROM generate_series(0, 100) g`,
+    );
+    await seed(['wiki/personal/reflections-archive/newest', 'wiki/personal/other/newest']);
+
+    const rows = await __testing.gatherReflections(engine, 30, 'wiki/personal/reflections', 'default');
+    expect(rows).toHaveLength(100);
+    expect(rows[0]!.slug).toBe('wiki/personal/reflections/r-000');
+    expect(rows[99]!.slug).toBe('wiki/personal/reflections/r-099');
+    expect(rows.every(r => r.slug.startsWith('wiki/personal/reflections/'))).toBe(true);
+
+
+    await seed(['journal/old/x'], 40 * 24 * 60);
+    expect(await __testing.gatherReflections(engine, 30, 'journal/old', 'default')).toHaveLength(0);
+    expect(await __testing.gatherReflections(engine, 60, 'journal/old', 'default')).toHaveLength(1);
+  });
+});
+
+describe('patterns config knobs (dry-run)', () => {
+  test('min_evidence: 2 reflections skip by default (needs 3) and run at min_evidence=2', async () => {
+    await seed(reflections(2));
+    const skipped = await runPhasePatterns(engine, { brainDir: '/tmp', dryRun: true });
+    expect(skipped.status).toBe('skipped');
+    expect(skipped.details.reason).toBe('insufficient_evidence');
+
+    await engine.setConfig('dream.patterns.min_evidence', '2');
+    const ran = await runPhasePatterns(engine, { brainDir: '/tmp', dryRun: true });
+    expect(ran.status).toBe('ok');
+    expect(ran.details.reflections_considered).toBe(2);
   });
 
-  test('orders by updated_at DESC for recency-bias', () => {
-    expect(patternsSrc).toContain('ORDER BY updated_at DESC');
+  test('lookback_days narrows the window', async () => {
+    await seed(reflections(3), 5 * 24 * 60);
+    const wide = await runPhasePatterns(engine, { brainDir: '/tmp', dryRun: true });
+    expect(wide.details.reflections_considered).toBe(3);
+    await engine.setConfig('dream.patterns.lookback_days', '1');
+    const narrow = await runPhasePatterns(engine, { brainDir: '/tmp', dryRun: true });
+    expect(narrow.details.reason).toBe('insufficient_evidence');
   });
 
-  test('caps gather to 100 reflections (cost control)', () => {
-    expect(patternsSrc).toContain('LIMIT 100');
+  test('source_slug_prefix points the phase at another reflection tree', async () => {
+    await seed(reflections(3, 'journal/entries'));
+    const def = await runPhasePatterns(engine, { brainDir: '/tmp', dryRun: true });
+    expect(def.details.reason).toBe('insufficient_evidence');
+    await engine.setConfig('dream.patterns.source_slug_prefix', 'journal/entries');
+    const custom = await runPhasePatterns(engine, { brainDir: '/tmp', dryRun: true });
+    expect(custom.status).toBe('ok');
+    expect(custom.details.reflections_considered).toBe(3);
+  });
+});
+
+describe('patterns provider gate (PR #2279)', () => {
+  // A near deadline makes a probe-passing run stop at insufficient_cycle_budget
+  // before any subagent is submitted.
+  const nearDeadline = () => Date.now() + 1_000;
+
+  test('the default Anthropic model with no key skips as no_provider', async () => {
+    await seed(reflections(3));
+    const r = await noKeys(() => runPhasePatterns(engine, { brainDir: '/tmp', dryRun: false, deadlineAtMs: nearDeadline() }));
+    expect(r.status).toBe('skipped');
+    expect(r.details.reason).toBe('no_provider');
   });
 
-  test('output slug prefix is config-driven, defaulting to <output_root>/personal/patterns', () => {
-    expect(patternsSrc).toContain('dream.patterns.output_slug_prefix');
-    expect(patternsSrc).toContain('${outputRoot}/personal/patterns');
+  test('a non-Anthropic model passes the gate with no ANTHROPIC_API_KEY', async () => {
+    await seed(reflections(3));
+    await engine.setConfig('models.dream.patterns', 'openai:gpt-5.4');
+    const r = await noKeys(
+      () => runPhasePatterns(engine, { brainDir: '/tmp', dryRun: false, deadlineAtMs: nearDeadline() }),
+      { OPENAI_API_KEY: 'sk-test' },
+    );
+    expect(r.details.reason).toBe('insufficient_cycle_budget');
   });
 
-  test('source slug prefix defaults to <output_root>/personal/reflections', () => {
-    expect(patternsSrc).toContain('${outputRoot}/personal/reflections');
+  test('a bare model id is normalized to its provider before probing', async () => {
+    await seed(reflections(3));
+    await engine.setConfig('models.dream.patterns', 'claude-sonnet-4-6');
+    const r = await noKeys(
+      () => runPhasePatterns(engine, { brainDir: '/tmp', dryRun: false, deadlineAtMs: nearDeadline() }),
+      { ANTHROPIC_API_KEY: 'sk-ant-test' },
+    );
+    expect(r.details.reason).toBe('insufficient_cycle_budget');
   });
+});
 
-  test('adds a configured output_slug_prefix to the subagent write allow-list', () => {
-    // A custom dream.patterns.output_slug_prefix (e.g. a flat schema with no
-    // personal/ nesting) is not covered by the filing-rules globs, which only
-    // remap the `wiki/personal/patterns/*` literal by output_root. The phase
-    // must add it explicitly so put_page actually grants write access there.
-    expect(patternsSrc).toContain('outputGlob');
-    expect(patternsSrc).toContain('allowedSlugPrefixes.push(outputGlob)');
+describe('patterns subagent submission', () => {
+  test('job carries filing-rule + configured output allow-list and prompt prefixes; no raw_data', async () => {
+    const brainDir = mkdtempSync(join(tmpdir(), 'gbrain-patterns-submit-'));
+    try {
+      await seed(reflections(3));
+      await engine.setConfig('dream.patterns.output_slug_prefix', 'journal/themes');
+      // Fake key with fetch stubbed offline: the inline drain's provider call
+      // fails at once and the child dead-letters, with no network access.
+      const offline = spyOn(globalThis, 'fetch').mockImplementation((async () => { throw new Error('offline'); }) as never);
+      let result;
+      try {
+        result = await noKeys(
+          () => runPhasePatterns(engine, { brainDir, dryRun: false }),
+          { ANTHROPIC_API_KEY: 'sk-ant-test' },
+        );
+      } finally {
+        offline.mockRestore();
+      }
+      expect(result.details.child_outcome).toBeDefined();
+      const [job] = await engine.executeRaw<{ data: any }>(
+        `SELECT data FROM minion_jobs WHERE name = 'subagent' ORDER BY id DESC LIMIT 1`,
+      );
+      const data = typeof job!.data === 'string' ? JSON.parse(job!.data) : job!.data;
+      expect(data.allowed_slug_prefixes).toContain('wiki/personal/patterns/*');
+      expect(data.allowed_slug_prefixes).toContain('journal/themes/*');
+      expect(data.prompt).toContain('journal/themes/<topic-slug>');
+      expect(data.prompt).toContain('[[wiki/personal/reflections/r-0]]');
+      const [raw] = await engine.executeRaw<{ n: number }>('SELECT COUNT(*)::int AS n FROM raw_data');
+      expect(raw!.n).toBe(0);
+    } finally {
+      rmSync(brainDir, { recursive: true, force: true });
+    }
+  }, 60_000);
+});
+
+describe('patterns private-queue keepalive wiring', () => {
+  test('the post-drain wait renews the private-queue lease through the shared throttled factory', () => {
+    // test-reads-source-ok[structural]: the lease only lapses after a >10-minute post-drain wait with a live child, which no unit harness reaches; the invariant is that patterns reuses queue.makeThrottledLeaseRenewer + waitForCompletionRenewing instead of an inline closure that drifts from synthesize's (library behavior: test/wait-for-completion.test.ts, test/queue-child-done.test.ts).
+    const src = readFileSync(new URL('../src/core/cycle/patterns.ts', import.meta.url), 'utf8');
+    expect(src).toContain('queue.makeThrottledLeaseRenewer(');
+    expect(src).toMatch(/waitForCompletionRenewing\(queue, job\.id, \{[\s\S]*?renew: renewPrivateQueueLease/);
+  });
+});
+
+describe('patterns reverse-write', () => {
+  test('writes the page back as markdown that round-trips title, type, tags and body', async () => {
+    const brainDir = mkdtempSync(join(tmpdir(), 'gbrain-patterns-rw-'));
+    try {
+      await engine.putPage('wiki/personal/patterns/focus', {
+        type: 'note', title: 'Focus', compiled_truth: 'Recurring focus theme.', timeline: '', frontmatter: {},
+      });
+      await engine.addTag('wiki/personal/patterns/focus', 'theme');
+      const n = await __testing.reverseWriteRefs(engine, brainDir, [{ slug: 'wiki/personal/patterns/focus', source_id: 'default' }]);
+      expect(n).toBe(1);
+      const parsed = parseMarkdown(readFileSync(join(brainDir, 'wiki/personal/patterns/focus.md'), 'utf8'));
+      expect(parsed.title).toBe('Focus');
+      expect(parsed.type).toBe('note');
+      expect(parsed.tags).toEqual(['theme']);
+      expect(parsed.compiled_truth.trim()).toBe('Recurring focus theme.');
+    } finally {
+      rmSync(brainDir, { recursive: true, force: true });
+    }
   });
 });

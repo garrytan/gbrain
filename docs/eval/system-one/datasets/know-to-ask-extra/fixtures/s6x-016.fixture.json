@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-016",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/idris-marrwick",
+      "content": "---\ntitle: Idris Marrwick\ntype: person\nsummary: \"Idris Marrwick is the head of partnerships at Marblewharf.\"\n---\n\nIdris Marrwick is the head of partnerships at Marblewharf.\n"
+    },
+    {
+      "slug": "people/ilse-tulvcombe",
+      "content": "---\ntitle: Ilse Tulvcombe\ntype: person\naliases: [ilse]\nsummary: \"Ilse Tulvcombe is the finance lead at Quartzcrest.\"\n---\n\nIlse Tulvcombe is the finance lead at Quartzcrest. Ilse suggested holding the offsite somewhere reachable by train.\n"
+    },
+    {
+      "slug": "projects/onboarding-revamp",
+      "content": "---\ntitle: Onboarding Revamp\ntype: project\nsummary: \"Onboarding Revamp: The plan is to replace the setup call with a guided checklist and a two-week check-in.\"\n---\n\nOnboarding Revamp: The plan is to replace the setup call with a guided checklist and a two-week check-in.\n"
+    },
+    {
+      "slug": "people/solveig-haskgrove",
+      "content": "---\ntitle: Solveig Haskgrove\ntype: person\naliases: [solveig]\nsummary: \"A contact from a conference last spring.\"\n---\n\nA contact from a conference last spring.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Translate into Spanish: 'Marrwick will join the meeting at noon.'"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "What did Tulvcombe want changed in the offsite?"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Done."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "ok cool, talk later"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Okay, noted."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "remind me what we settled on for that onboarding idea"
+    }
+  ]
+}

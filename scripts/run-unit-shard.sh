@@ -31,14 +31,18 @@ cd "$(dirname "$0")/.."
 
 # --max-concurrency=N is forwarded to `bun test`. v0.26.4: invoked by
 # run-unit-parallel.sh; safe to call without (defaults to bun's default cap).
+# Positional FILE arguments replace discovery (scripts/ci-ubicloud.ts
+# dispatches explicit batches through this wrapper).
 MAX_CONC=""
 DRY_RUN=0
+explicit_files=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --max-concurrency) MAX_CONC="$2"; shift 2 ;;
     --max-concurrency=*) MAX_CONC="${1#*=}"; shift ;;
     --dry-run-list) DRY_RUN=1; shift ;;
-    *) echo "ERROR: unknown arg: $1" >&2; exit 2 ;;
+    -*) echo "ERROR: unknown arg: $1" >&2; exit 2 ;;
+    *) explicit_files+=("$1"); shift ;;
   esac
 done
 
@@ -49,9 +53,13 @@ done
 # runs via scripts/run-serial-tests.sh after the parallel pass.
 # Use while-read to stay portable to macOS bash 3.2 (no mapfile).
 all_files=()
-while IFS= read -r f; do
-  all_files+=("$f")
-done < <(find test -name '*.test.ts' -not -path 'test/e2e/*' -not -name '*.slow.test.ts' -not -name '*.serial.test.ts' | sort)
+if [ "${#explicit_files[@]}" -gt 0 ]; then
+  all_files=("${explicit_files[@]}")
+else
+  while IFS= read -r f; do
+    all_files+=("$f")
+  done < <(find test -name '*.test.ts' -not -path 'test/e2e/*' -not -name '*.slow.test.ts' -not -name '*.serial.test.ts' | sort)
+fi
 
 files=()
 if [ -n "$RUNNER_SHARD" ]; then

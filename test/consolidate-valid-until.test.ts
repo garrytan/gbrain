@@ -81,8 +81,8 @@ async function insertFact(args: {
   confidence?: number;
 }): Promise<number> {
   const r = await engine.executeRaw<{ id: number }>(
-    `INSERT INTO facts (source_id, entity_slug, fact, kind, source, valid_from, confidence, embedding, embedded_at)
-     VALUES ('default', $1, $2, 'fact', 'test', $3::timestamptz, $4, $5::vector, $3::timestamptz)
+    `INSERT INTO facts (source_id, entity_slug, fact, kind, source, valid_from, confidence, embedding, embedded_at, embedding_model, embedded_text_hash)
+     VALUES ('default', $1, $2, 'fact', 'test', $3::timestamptz, $4, $5::vector, $3::timestamptz, 'openai:text-embedding-3-large', md5($2))
      RETURNING id`,
     [args.entity_slug, args.text, args.valid_from.toISOString(), args.confidence ?? 0.9, unitVec()],
   );

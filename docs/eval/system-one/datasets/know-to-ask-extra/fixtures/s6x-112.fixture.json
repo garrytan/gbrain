@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-112",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/hollis-lorndale",
+      "content": "---\ntitle: Hollis Lorndale\ntype: person\naliases: [hollis]\nsummary: \"Hollis Lorndale is the finance lead at Kilnloft.\"\n---\n\nHollis Lorndale is the finance lead at Kilnloft.\n"
+    },
+    {
+      "slug": "projects/referral-program",
+      "content": "---\ntitle: Referral Program\ntype: project\nsummary: \"Referral Program: We chose a one-month credit for both sides and capped it at three referrals per account.\"\n---\n\nReferral Program: We chose a one-month credit for both sides and capped it at three referrals per account.\n"
+    },
+    {
+      "slug": "people/kofi-brinford",
+      "content": "---\ntitle: Kofi Brinford\ntype: person\nsummary: \"Kofi Brinford is the procurement lead at Vesperyard.\"\n---\n\nKofi Brinford is the procurement lead at Vesperyard. Kofi objected to the auto-renewal clause in the draft contract.\n"
+    },
+    {
+      "slug": "companies/quartzgate",
+      "content": "---\ntitle: Quartzgate\ntype: company\nsummary: \"A company we met once at a trade show.\"\n---\n\nA company we met once at a trade show.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Turn this into a checklist: Lorndale sends the deck, I review it, we both sign off on Friday."
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Done."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "what were the terms of the referral thing we discussed?"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "give me three icebreaker questions for a team lunch"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Done."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "What did Brinford want changed in the contract?"
+    }
+  ]
+}

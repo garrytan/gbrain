@@ -14,6 +14,8 @@
   X(napi_throw_type_error) \
   X(napi_throw_error) \
   X(napi_get_value_string_utf8) \
+  X(napi_is_buffer) \
+  X(napi_get_buffer_info) \
   X(napi_create_object) \
   X(napi_wrap) \
   X(napi_get_boolean) \
@@ -57,6 +59,8 @@ static bool gbrain_initialize_napi(void) {
 #define napi_throw_type_error gbrain_napi.napi_throw_type_error
 #define napi_throw_error gbrain_napi.napi_throw_error
 #define napi_get_value_string_utf8 gbrain_napi.napi_get_value_string_utf8
+#define napi_is_buffer gbrain_napi.napi_is_buffer
+#define napi_get_buffer_info gbrain_napi.napi_get_buffer_info
 #define napi_create_object gbrain_napi.napi_create_object
 #define napi_wrap gbrain_napi.napi_wrap
 #define napi_get_boolean gbrain_napi.napi_get_boolean

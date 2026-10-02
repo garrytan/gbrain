@@ -396,7 +396,7 @@ describe('worker configuration admission and actual execution', () => {
     expect(worker.configurationReleaseResults.map(result => result.outcome)).toEqual(['unconfirmed']);
   });
 
-  test('the real 30-second eviction cannot dead-letter or release live inline execution', async () => {
+  test('the 30-second eviction deadline cannot dead-letter or release live inline execution', async () => {
     const job = await queue.add('fixture', {}, { max_attempts: 1 });
     const worker = makeWorker();
     const started = deferred<void>();
@@ -404,18 +404,23 @@ describe('worker configuration admission and actual execution', () => {
     worker.register('fixture', async () => { started.resolve(); await settle.promise; throw new Error('fixture stopped late'); });
     const run = worker.start();
     await started.promise;
-    const began = performance.now();
+    const internals = worker as unknown as { configurationDeadline: number };
+    const blockedAt = performance.now();
     worker.blockForConfiguration(fault());
+    expect(internals.configurationDeadline - blockedAt).toBeGreaterThanOrEqual(29_990);
+    expect(internals.configurationDeadline - blockedAt).toBeLessThan(30_100);
+    const began = performance.now();
+    internals.configurationDeadline = began + 300;
     await run;
-    expect(performance.now() - began).toBeGreaterThanOrEqual(29_900);
-    expect(performance.now() - began).toBeLessThan(32_000);
+    expect(performance.now() - began).toBeGreaterThanOrEqual(290);
+    expect(performance.now() - began).toBeLessThan(2_300);
     expect((await queue.getJob(job.id))?.status).toBe('active');
     expect((await queue.getJob(job.id))?.attempts_made).toBe(0);
     expect(worker.configurationReleaseResults.map(result => result.outcome)).toEqual(['unconfirmed']);
     settle.resolve();
     await new Promise(resolve => setTimeout(resolve, 20));
     expect((await queue.getJob(job.id))?.status).toBe('active');
-  }, 40_000);
+  }, 15_000);
 
   test('a claim still unknown at the global deadline reports lease-expiry fallback', async () => {
     const job = await queue.add('fixture', {});

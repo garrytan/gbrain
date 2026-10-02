@@ -4,14 +4,18 @@ import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import { OperationError } from '../ops/contract.ts';
 import { discoverGitRoot } from '../sync-git.ts';
+import { cliOptsToProgressOptions, getCliOptions } from '../cli-options.ts';
+import { createProgress, type ProgressOptions } from '../progress.ts';
 import { digest, sha256 } from './digest.ts';
 import { localHostId, persistenceHome } from './identity.ts';
 import type { SqlEngine, WriteRequest } from './model.ts';
 import { acquireNativeLock, tryAcquireNativeLock, type NativeLockHandle } from './native-lock.ts';
 import { managedFilesystemDatastorePath, refreshManagedFilesystemRoots } from './filesystem-guard.ts';
-import { assertPhysicalRoot, claimPhysicalRoot, isPhysicalRootMetadata, preparePhysicalRootTransfer, readPhysicalRootReservation } from './physical-root.ts';
+import { assertPhysicalRoot, claimPhysicalRoot, isPhysicalRootMetadata, preparePhysicalRootTransfer, readPhysicalRootReservation, restampPhysicalRoot } from './physical-root.ts';
+import { readPhysicalRootStamp } from './physical-root-record.ts';
 import { canonicalFilesystemPath, nativeFilesystemPath } from './root-registry.ts';
 import { assertWriterAdminState } from './admin-intent.ts';
+import { assertWriterAdminUnlocked } from './admin-lock.ts';
 import { inspectPhysicalRootRecovery, repairPhysicalRoot, type PhysicalRootRecovery } from './physical-root-recovery.ts';
 
 export interface WorktreeBinding {
@@ -43,11 +47,13 @@ export async function getWorktreeBinding(engine: SqlEngine, sourceId: string, ho
     WHERE s.source_id=$1`, [sourceId, hostId]);
   return row ?? null;
 }
-export async function claimWorktree(engine: BrainEngine, sourceId: string, path: string, hostId = localHostId(), expectedAdminState?: string): Promise<WorktreeBinding> {
+/** `automatic` is only the ordinary first-write claim; the writer admin lock never blocks it. */
+export async function claimWorktree(engine: BrainEngine, sourceId: string, path: string, hostId = localHostId(), expectedAdminState?: string,
+  options: { automatic?: boolean } = {}): Promise<WorktreeBinding> {
   if(await managedPersistenceEnabled(engine)) {
     if(hostId!==localHostId()) throw new OperationError('permission_denied','A source can be claimed only by the local registered host.');
     const { runManagedSourceLifecycle }=await import('./source-lifecycle.ts');
-    await runManagedSourceLifecycle(engine,{operation:'claim',sourceId,path,expectedAdminState});
+    await runManagedSourceLifecycle(engine,{operation:'claim',sourceId,path,expectedAdminState,automaticClaim:options.automatic});
     return (await getWorktreeBinding(engine,sourceId,hostId))!;
   }
   let sourceRoot: string;
@@ -72,6 +78,7 @@ export async function claimWorktree(engine: BrainEngine, sourceId: string, path:
     await tx.executeRaw("SELECT set_config('synchronous_commit','on',true)");
     await tx.executeRaw('SELECT singleton FROM persistence_brain WHERE singleton=1 FOR UPDATE');
     await assertWriterAdminState(tx, expectedAdminState);
+    if (!options.automatic) await assertWriterAdminUnlocked(tx);
     const [source] = await tx.executeRaw<{ incarnation: string; archived: boolean }>('SELECT incarnation,archived FROM sources WHERE id=$1 FOR UPDATE', [sourceId]);
     if (!source || source.archived) throw new OperationError('source_changed', 'Only an active registered source can claim a worktree.');
     const current = await getWorktreeBinding(tx, sourceId, hostId);
@@ -105,13 +112,32 @@ export async function claimWorktree(engine: BrainEngine, sourceId: string, path:
   });
   return (await getWorktreeBinding(engine, sourceId, hostId))!;
 }
-export async function acquireWorktree(binding: WorktreeBinding, waitMs = 0, signal?: AbortSignal): Promise<NativeLockHandle | null> {
+/**
+ * With an engine, a device-only physical-root change (#5604) is re-stamped under
+ * this native lock after database ownership is verified; otherwise it refuses
+ * with the filled self-transfer commands.
+ */
+export async function acquireWorktree(binding: WorktreeBinding, waitMs = 0, signal?: AbortSignal, engine?: BrainEngine): Promise<NativeLockHandle | null> {
   if (!binding.local_path || !binding.coordination_path) return null;
   const lock = await (waitMs > 0 ? acquireNativeLock(binding.coordination_path, { timeoutMs: waitMs, signal })
     : tryAcquireNativeLock(binding.coordination_path));
   if (!lock) return null;
-  try { assertPhysicalRoot(binding.local_path, { worktreeId: binding.worktree_id, coordinationPath: binding.coordination_path }); return lock; }
-  catch (error) { await lock.release(); throw error; }
+  const identity = { worktreeId: binding.worktree_id, coordinationPath: binding.coordination_path };
+  try { assertPhysicalRoot(binding.local_path, identity); return lock; }
+  catch (error) {
+    try {
+      if (!(error instanceof OperationError) || error.detail !== 'physical_root_device_changed') throw error;
+      if (engine && await restampPhysicalRoot(engine, binding, localHostId())) { assertPhysicalRoot(binding.local_path, identity); return lock; }
+      const why = !engine ? 'this caller cannot verify database ownership'
+        : readPhysicalRootStamp(binding.local_path)?.birth === '0' ? 'this filesystem reports no birth time'
+          : 'database ownership of this checkout did not verify';
+      error.suggestion = `The automatic device re-stamp did not apply because ${why}. On the brain host, run gbrain sources writer status ${binding.source_id} and note admin_state, `
+        + `then gbrain sources writer transfer prepare ${binding.source_id} --self-transfer --admin-intent writer_transfer_prepare --expected-state <admin_state>, `
+        + `then gbrain sources writer transfer accept ${binding.source_id} --path ${binding.local_path} --expected-epoch ${binding.owner_epoch} --manifest <manifest digest printed by prepare> `
+        + `--self-transfer --admin-intent writer_transfer_accept --expected-state <admin_state from a fresh status>. Retry the original write with the same request_id afterwards.`;
+      throw error;
+    } catch (failure) { await lock.release(); throw failure; }
+  }
 }
 export async function guardOwnership(tx: SqlEngine, row: WriteRequest, hostId: string): Promise<WorktreeBinding | null> {
   if (!row.worktree_id) return null;
@@ -129,33 +155,65 @@ export async function activateManagedPersistence(engine: BrainEngine, opts: { co
   await activatePersistence(engine, opts);
 }
 
-/** Deterministic content manifest includes deletions by exact path-set equality. */
-export function worktreeManifest(root: string): { digest: string; files: Record<string, string> } {
+export interface WorktreeManifest { digest: string; file_count: number }
+export type StoredWorktreeManifest = WorktreeManifest & { canonical_stamp?: string; self_transfer?: PhysicalRootRecovery };
+export const MANIFEST_PROGRESS_MIN_FILES = 5000;
+
+/**
+ * Deterministic content manifest includes deletions by exact path-set equality.
+ * The per-file hash map stays local; stored manifests carry only its digest
+ * and file count, so their size does not grow with the worktree.
+ */
+export function worktreeManifest(root: string, opts: { progress?: ProgressOptions } = {}): WorktreeManifest {
   const canonical = realpathSync(root);
-  const files: Record<string, string> = {};
+  const paths: string[] = [];
   const visit = (dir: string) => {
     for (const name of readdirSync(dir).sort()) {
       if (name === '.git' || name === '.gbrain-managed' || isPhysicalRootMetadata(name)) continue;
       const path = join(dir, name), info = lstatSync(path);
       if (info.isSymbolicLink()) throw new OperationError('writer_manifest_unsafe', 'Canonical worktree transfer requires a symlink-free manifest.');
       if (info.isDirectory()) visit(path);
-      else if (info.isFile()) files[relative(canonical, path).split(sep).join('/')] = sha256(readFileSync(path));
+      else if (info.isFile()) paths.push(path);
     }
   };
   visit(canonical);
-  return { digest: digest(files), files };
+  const progress = opts.progress && paths.length > MANIFEST_PROGRESS_MIN_FILES ? createProgress(opts.progress) : undefined;
+  progress?.start('sources.manifest_hash', paths.length);
+  const files: Record<string, string> = {};
+  for (const path of paths) {
+    files[relative(canonical, path).split(sep).join('/')] = sha256(readFileSync(path));
+    progress?.tick();
+  }
+  progress?.finish();
+  return { digest: digest(files), file_count: paths.length };
+}
+
+/** Human-mode progress for manifest hashing; JSON and quiet modes report nothing. */
+export function humanManifestProgress(): ProgressOptions | undefined {
+  const options = cliOptsToProgressOptions(getCliOptions());
+  return options.mode === 'auto' ? options : undefined;
+}
+
+/** Drops a legacy per-file map from a stored manifest, keeping every other field. */
+export function compactStoredManifest<T extends { digest: string; files?: Record<string, string>; file_count?: number }>(manifest: T): Omit<T, 'files'> & { file_count: number } {
+  const { files, ...rest } = manifest;
+  return { ...rest, file_count: rest.file_count ?? Object.keys(files ?? {}).length };
 }
 export async function prepareWriterTransfer(engine: BrainEngine, sourceId: string, hostId = localHostId(), expectedAdminState?: string,
-  opts: { selfTransfer?: boolean; dryRun?: boolean } = {}): Promise<{ worktree_id: string; owner_epoch: string; manifest: ReturnType<typeof worktreeManifest> }> {
+  opts: { selfTransfer?: boolean; dryRun?: boolean } = {}): Promise<{ worktree_id: string; owner_epoch: string; manifest: StoredWorktreeManifest }> {
   const binding = await getWorktreeBinding(engine, sourceId, hostId);
   if (!binding || binding.owner_host_id !== hostId || !binding.local_path) throw new OperationError('permission_denied', 'Only the current owner can prepare this transfer.');
   if (!binding.coordination_path) throw new OperationError('recovery_required', 'The recorded coordination path is missing.');
   const lock = opts.selfTransfer ? await acquireNativeLock(binding.coordination_path, { timeoutMs: 5000 }) : await acquireWorktree(binding, 5000);
   if (!lock) throw new OperationError('write_pending', 'The worktree is busy; retry transfer preparation.');
   try {
+    // The native lock already excludes writers, so hash before checking out a
+    // connection. A hashing failure surfaces after the root checks below, as before.
+    const hashed = (() => { try { return worktreeManifest(binding.local_path!, { progress: humanManifestProgress() }); } catch (error) { return error as Error; } })();
     return await engine.transaction(async tx => {
       await tx.executeRaw("SELECT set_config('synchronous_commit','on',true)");
       await assertWriterAdminState(tx, expectedAdminState);
+      await assertWriterAdminUnlocked(tx);
       const [owner] = await tx.executeRaw<{ owner_host_id: string; owner_epoch: string; state: string }>('SELECT owner_host_id,owner_epoch,state FROM persistence_worktrees WHERE id=$1::uuid FOR UPDATE', [binding.worktree_id]);
       const current = await getWorktreeBinding(tx, sourceId, hostId);
       if (!owner || owner.owner_host_id !== hostId || JSON.stringify(current) !== JSON.stringify(binding)) throw new OperationError('owner_unavailable', 'Ownership changed during transfer.');
@@ -168,7 +226,8 @@ export async function prepareWriterTransfer(engine: BrainEngine, sourceId: strin
       const recovery = opts.selfTransfer ? inspectPhysicalRootRecovery(binding.local_path!, { brainId: brain.brain_id,
         worktreeId: binding.worktree_id, hostId, coordinationPath: binding.coordination_path! }) : undefined;
       if (!opts.selfTransfer) assertPhysicalRoot(binding.local_path!, { worktreeId: binding.worktree_id, coordinationPath: binding.coordination_path });
-      const manifest = { ...worktreeManifest(binding.local_path!), ...(recovery ? { self_transfer: recovery } : {}) };
+      if (hashed instanceof Error) throw hashed;
+      const manifest: StoredWorktreeManifest = { ...hashed, ...(recovery ? { self_transfer: recovery } : {}) };
       if (!opts.dryRun) await tx.executeRaw(`UPDATE persistence_worktrees SET state='draining',manifest=$2::text::jsonb WHERE id=$1::uuid`, [binding.worktree_id, JSON.stringify(manifest)]);
       return { worktree_id: binding.worktree_id, owner_epoch: String(owner.owner_epoch), manifest };
     });
@@ -177,8 +236,6 @@ export async function prepareWriterTransfer(engine: BrainEngine, sourceId: strin
 export async function acceptWriterTransfer(engine: BrainEngine, sourceId: string, path: string, expectedEpoch: string, expectedManifest: string, hostId = localHostId(), expectedAdminState?: string,
   opts: { selfTransfer?: boolean; dryRun?: boolean } = {}): Promise<void> {
   const root = realpathSync(resolve(path));
-  const manifest = worktreeManifest(root);
-  if (manifest.digest !== expectedManifest) throw new OperationError('writer_manifest_mismatch', 'Successor checkout differs from the recorded canonical manifest.');
   const binding = await getWorktreeBinding(engine, sourceId, hostId);
   if (!binding) throw new OperationError('not_found', 'Source has no worktree owner.');
   if (opts.selfTransfer && binding.owner_host_id !== hostId) throw new OperationError('permission_denied', 'Self-transfer requires the current owner host.');
@@ -188,15 +245,18 @@ export async function acceptWriterTransfer(engine: BrainEngine, sourceId: string
   const lock = await acquireNativeLock(coordination, { timeoutMs: 5000 });
   if (!lock) throw new OperationError('write_pending', 'Successor worktree is busy.');
   try {
+    if (worktreeManifest(root, { progress: humanManifestProgress() }).digest !== expectedManifest)
+      throw new OperationError('writer_manifest_mismatch', 'Successor checkout differs from the recorded canonical manifest.');
     await engine.transaction(async tx => {
       await tx.executeRaw("SELECT set_config('synchronous_commit','on',true)");
       await assertWriterAdminState(tx, expectedAdminState);
+      await assertWriterAdminUnlocked(tx);
       const [owner] = await tx.executeRaw<{ owner_epoch: string; state: string; manifest: { digest: string; self_transfer?: PhysicalRootRecovery } }>('SELECT owner_epoch,state,manifest FROM persistence_worktrees WHERE id=$1::uuid FOR UPDATE', [binding.worktree_id]);
       if (!owner || owner.state !== 'draining' || String(owner.owner_epoch) !== expectedEpoch || owner.manifest?.digest !== expectedManifest) throw new OperationError('writer_transfer_conflict', 'Transfer preparation or epoch changed.');
       if (!!owner.manifest.self_transfer !== !!opts.selfTransfer || JSON.stringify(await getWorktreeBinding(tx, sourceId, hostId)) !== JSON.stringify(binding)) throw new OperationError('writer_transfer_conflict', 'The prepared transfer mode or binding changed.');
       const pending = await tx.executeRaw(`SELECT id FROM persistence_requests WHERE worktree_id=$1::uuid AND (state IN ('running','recovering') OR recovery IS NOT NULL) LIMIT 1`, [binding.worktree_id]);
       const mirrors = await tx.executeRaw('SELECT id FROM persistence_effects WHERE worktree_id=$1::uuid AND recovery IS NOT NULL LIMIT 1', [binding.worktree_id]);
-      if (pending.length || mirrors.length || worktreeManifest(root).digest !== expectedManifest) throw new OperationError('recovery_required', 'Transfer state changed; prepare again.');
+      if (pending.length || mirrors.length) throw new OperationError('recovery_required', 'Transfer state changed; prepare again.');
       if (opts.selfTransfer) repairPhysicalRoot(root, owner.manifest.self_transfer!, { hostId, worktreeId: binding.worktree_id, coordinationPath: coordination }, opts.dryRun);
       else if (!opts.dryRun) await preparePhysicalRootTransfer(tx, root, { hostId, worktreeId: binding.worktree_id, coordinationPath: coordination, expectedEpoch });
       if (opts.dryRun) return;

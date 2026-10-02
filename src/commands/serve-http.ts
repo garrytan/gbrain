@@ -8,172 +8,53 @@
  * - Admin dashboard at /admin with cookie auth
  * - SSE live activity feed at /admin/events
  * - Health check at /health
+ *
+ * buildServeHttpApp builds the shared ServeHttpContext and mounts the
+ * serve-http-<area>.ts modules in registration order; runServeHttp listens.
+ * This file stays the import surface: every symbol the modules took with them
+ * is re-exported below.
  */
 
 import express from 'express';
 import type { Socket } from 'net';
-import type { Request, Response, NextFunction, RequestHandler } from 'express';
+import type { Request, RequestHandler, CookieOptions } from 'express';
 import cookieParser from 'cookie-parser';
-import cors from 'cors';
 import rateLimit from 'express-rate-limit';
-import { randomBytes, createHash, createHmac } from 'crypto';
-import { safeHexEqual } from '../core/timing-safe.ts';
-import { isValidRepoName } from '../core/github-source.ts';
-import { createMetricsCounters, metricsTrackingMiddleware, renderPrometheusMetrics } from './serve-http-metrics.ts';
+import { randomBytes, createHash } from 'crypto';
+import { createMetricsCounters, metricsTrackingMiddleware, mountHealth, mountMetrics, type MetricsCounters } from './serve-http-metrics.ts';
 import { ADMIN_TOKEN_SHAPE } from '../core/serve-service.ts';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
-import { mcpAuthRouter, getOAuthProtectedResourceMetadataUrl } from '@modelcontextprotocol/sdk/server/auth/router.js';
-import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
+import { getOAuthProtectedResourceMetadataUrl } from '@modelcontextprotocol/sdk/server/auth/router.js';
 import { InvalidTokenError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
+import type { OAuthTokenVerifier } from '@modelcontextprotocol/sdk/server/auth/provider.js';
 import { createAdminLimiters } from './serve-http-admin-limits.ts';
-import { mountConfidentialOAuth, mountOAuthConsent, withBearerScopeHint } from './serve-http-oauth.ts';
+import { mountOAuth, mountOAuthConsent, mountOwnerLoginLinks } from './serve-http-oauth.ts';
+import { createRequireAdmin, mountAdminApi, mountAdminLogin } from './serve-http-admin-api.ts';
+import { mountSpa } from './serve-http-spa.ts';
+import { mountMcp } from './serve-http-mcp.ts';
+import { createWebhookLimiters, mountWebhooks } from './serve-http-webhooks.ts';
 import type { BrainEngine } from '../core/engine.ts';
-import { operations, OperationError, opAllowedForBoundClient } from '../core/operations.ts';
-import type { OperationContext, AuthInfo } from '../core/operations.ts';
-import { disabledOpsForPublishGates } from '../mcp/publish-gates.ts';
-import { resolveMcpInstructions } from '../mcp/instructions.ts';
-import { installCapabilitiesResource, mcpAdministrationGuidance } from '../mcp/capabilities.ts';
-import { createSkillResources } from '../mcp/skill-resources.ts';
-import { resolveAuthCapabilities } from '../core/harness/capabilities.ts';
-import { publicHarnessMetadata } from '../core/harness/registry.ts';
-import { GRANT_PROFILES } from '../core/grants/model.ts';
-import { mountAdminClients } from './serve-http-clients.ts';
-import { mountAdminRegistration } from './serve-http-registration.ts';
-import { rescopeClientGrant } from '../core/grants/service.ts';
-import { parseAdminGrantRequest, grantHttpStatus, GRANT_TOKEN_IMPLICATIONS, mountAdminGrantDiscovery, mountAdminGrantEdits } from './serve-http-grants.ts';
-import { resolveWritebackConfig, ambientOptsFrom } from '../core/facts/writeback-config.ts';
+import { operations, type Operation } from '../core/operations.ts';
 import {
   GBrainOAuthProvider,
-  dcrRegistrationContext,
   DEFAULT_DCR_TTL_MIN_SECONDS,
 } from '../core/oauth-provider.ts';
-import { hasScope, operationScopesAllowed, scopesSupportedForDiscovery } from '../core/scope.ts';
-import { normalizeTokenScopes } from '../core/legacy-token-scope.ts';
-import { summarizeMcpParams, dispatchToolCall, requestLogStatusForResult } from '../mcp/dispatch.ts';
-import { resolveStrictParamsMode } from '../mcp/validate-params.ts';
-import { buildToolDefs } from '../mcp/tool-defs.ts';
-import {
-  filterOpsForSurface,
-  clampSurface,
-  minSurface,
-  resolveClientRowSurface,
-  resolveDefaultClientSurface,
-  type McpSurface,
-} from '../mcp/surface.ts';
-import { getBrainHotMemoryMeta } from '../core/facts/meta-hook.ts';
+import { canonicalOAuthResource } from '../core/oauth-grants.ts';
+import type { McpSurface } from '../mcp/surface.ts';
 import { bindResolveIpcForServe } from '../mcp/resolve-ipc-binding.ts';
-import { createPersistenceIpcProvider } from '../core/persistence/provider.ts';
+import { createPersistenceIpcProvider, residentPersistenceConfig } from '../core/persistence/provider.ts';
 import { resolveMcpStdioSourceScope } from '../mcp/server.ts';
-import { loadConfig } from '../core/config.ts';
-import { buildError, serializeError } from '../core/errors.ts';
-import { VERSION } from '../version.ts';
+import { loadConfig, type GBrainConfig } from '../core/config.ts';
+import { buildError } from '../core/errors.ts';
 import * as db from '../core/db.ts';
-import { sqlQueryForEngine, executeRawJsonb } from '../core/sql-query.ts';
-import { MinionQueue } from '../core/minions/queue.ts';
-/**
- * v0.46: normalize the per-event GitHub webhook payload shape into
- * {repo, number, kind}. Events differ: issues/issue_comment/label/
- * assignee/milestone carry a top-level `issue` (PRs appear there too,
- * flagged by `issue.pull_request`), pull_request/review events carry
- * top-level `pull_request`, and check events nest the linked PRs under
- * check_run/check_suite/workflow_run. Returns null when the payload
- * carries no item reference (ping, branch, non-PR checks).
- */
-export function extractGitHubItemRef(parsed: Record<string, unknown>): { repo: string; number: number; kind: 'issue' | 'pr' } | null {
-  const repoObj = parsed.repository as { full_name?: string } | undefined;
-  const repo = repoObj?.full_name ?? '';
-  const issueObj = parsed.issue as { number?: number; pull_request?: unknown } | undefined;
-  const prObj = parsed.pull_request as { number?: number } | undefined;
-  const checkRun = parsed.check_run as { pull_requests?: Array<{ number?: number }> } | undefined;
-  const checkSuite = parsed.check_suite as { pull_requests?: Array<{ number?: number }> } | undefined;
-  const workflowRun = parsed.workflow_run as { pull_requests?: Array<{ number?: number }> } | undefined;
-  const nestedPrNumber =
-    checkRun?.pull_requests?.[0]?.number ??
-    checkSuite?.pull_requests?.[0]?.number ??
-    workflowRun?.pull_requests?.[0]?.number;
-  const number = prObj?.number ?? issueObj?.number ?? nestedPrNumber;
-  if (typeof number !== 'number' || !isValidRepoName(repo)) return null;
-  const kind = prObj !== undefined || issueObj?.pull_request !== undefined || nestedPrNumber !== undefined ? 'pr' : 'issue';
-  return { repo, number, kind };
-}
-
-/**
- * True when a github-kind source covers `fullName`: explicit gh_repos list
- * for scope=repos, the last-discovered state file for scope=auto (accept
- * when no state exists yet — the sync engine re-checks scope). Repo names
- * are case-insensitive on GitHub, so matching folds case on both sides
- * (config and legacy state files may carry canonical-case entries).
- */
-export function githubKindCoversRepo(
-  cfg: Record<string, unknown>,
-  localPath: string | null,
-  fullName: string,
-): boolean {
-  const repo = fullName.toLowerCase();
-  if (cfg.gh_scope === 'repos') {
-    const repos = typeof cfg.gh_repos === 'string' ? cfg.gh_repos.split(',').map((s) => s.trim().toLowerCase()) : [];
-    return repos.includes(repo);
-  }
-  if (localPath) {
-    try {
-      const state = JSON.parse(readFileSync(join(localPath, '.github-source.json'), 'utf-8')) as {
-        repos?: unknown[];
-      };
-      if (Array.isArray(state.repos)) {
-        return state.repos.some((r) => typeof r === 'string' && r.toLowerCase() === repo);
-      }
-    } catch {
-      /* no state yet */
-    }
-  }
-  return true;
-}
-
-/**
- * Partition signature-verified webhook sources for an item event. Only a
- * github-kind source can service a github_item refresh — the sync core
- * rejects github_item on any other kind, so enqueueing for a legacy
- * github_repo push source would only mint a dead job. Legacy matches are
- * reported so the handler can ACK-and-ignore them instead.
- */
-export function selectGitHubItemSources<Row extends { local_path: string | null; config: unknown }>(
-  rows: Row[],
-  repo: string,
-  verify: (cfg: Record<string, unknown>) => boolean,
-): { verified: Row[]; legacyMatched: boolean } {
-  const verified: Row[] = [];
-  let legacyMatched = false;
-  for (const row of rows) {
-    const cfg = (typeof row.config === 'string' ? JSON.parse(row.config) : (row.config ?? {})) as Record<string, unknown>;
-    if (cfg.kind === 'github' && githubKindCoversRepo(cfg, row.local_path, repo) && verify(cfg)) {
-      verified.push(row);
-      continue;
-    }
-    if (cfg.github_repo === repo && verify(cfg)) legacyMatched = true;
-  }
-  return { verified, legacyMatched };
-}
+import { sqlQueryForEngine, type SqlQuery } from '../core/sql-query.ts';
 import { isUndefinedColumnError } from '../core/utils.ts';
-import {
-  computeContentHash,
-  validateIngestionEvent,
-  type IngestionContentType,
-  type IngestionEvent,
-} from '../core/ingestion/types.ts';
-import { resolveOwnerHolder } from '../core/owner-holder.ts';
 import { registerCleanup } from '../core/process-cleanup.ts';
+import { VERSION } from '../version.ts';
 
-/**
- * /health endpoint timeout. 3s rather than 5s: Fly.io's default
- * health-check timeout is 5s, so returning 503 right at the orchestrator
- * deadline races with the orchestrator recording the request as a timeout.
- * 3s leaves 2s of headroom for TCP, response framing, and clock skew.
- */
-export const HEALTH_TIMEOUT_MS = 3000;
+export { extractGitHubItemRef, githubKindCoversRepo, selectGitHubItemSources } from './serve-http-webhooks.ts';
+export { HEALTH_TIMEOUT_MS, probeHealth, probeLiveness, type ProbeHealthResult } from './serve-http-metrics.ts';
+export { openAdminSseStream, queryAgentClientSpend, type AgentClientSpend } from './serve-http-admin-api.ts';
+export { parseCorsAllowlistOAuth, resolveCorsOrigin, mountOAuthCorsGate } from './serve-http-oauth.ts';
 
 /**
  * The narrowest contract this module actually consumes: subscribe, unsubscribe.
@@ -424,125 +305,6 @@ export function resolveOAuthTokenRateLimit(env: NodeJS.ProcessEnv = process.env)
   };
 }
 
-export type ProbeHealthResult =
-  | { ok: true; status: 200; body: { status: 'ok'; version: string; engine: string; [k: string]: unknown } }
-  | { ok: false; status: 503; body: { error: 'service_unavailable'; error_description: string } };
-
-/** Narrowest contract the handshake consumes; see {@link EventSubscriber}. */
-type AdminSseResponse = {
-  setHeader(name: string, value: string): unknown;
-  flushHeaders(): void;
-  write(chunk: string): unknown;
-};
-
-/**
- * Complete the admin EventSource handshake immediately.
- *
- * `flushHeaders()` alone can leave reverse proxies and browsers waiting for
- * the first response body bytes. An SSE comment is protocol-valid, ignored by
- * EventSource consumers, and makes the stream observable end-to-end without
- * fabricating an application event.
- */
-export function openAdminSseStream(res: AdminSseResponse): void {
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
-  res.flushHeaders();
-  res.write(': connected\n\n');
-}
-
-/**
- * Pure async health probe. Races `engine.getStats()` against a timeout,
- * returns a tagged result. No Express coupling — easy to unit-test with a
- * mock engine. The /health route handler is a thin wrapper around this.
- */
-export async function probeHealth(
-  engine: BrainEngine,
-  engineName: string,
-  version: string,
-  timeoutMs: number = HEALTH_TIMEOUT_MS,
-): Promise<ProbeHealthResult> {
-  // Capture the handle so we can clearTimeout when getStats() wins. Without
-  // this, every fast /health request leaves a 3s pending timer in the event
-  // loop until it fires — under high probe rates this builds up a rolling
-  // backlog of timers and avoidable wakeups. Both adversarial reviewers
-  // (Claude + Codex) flagged this independently.
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  try {
-    const stats = await Promise.race([
-      engine.getStats(),
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error('health_timeout')), timeoutMs);
-      }),
-    ]);
-    return {
-      ok: true,
-      status: 200,
-      body: { status: 'ok', version, engine: engineName, ...stats },
-    };
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : 'unknown';
-    return {
-      ok: false,
-      status: 503,
-      body: {
-        error: 'service_unavailable',
-        error_description: msg === 'health_timeout'
-          ? 'Health check timed out (database pool may be saturated)'
-          : 'Database connection failed',
-      },
-    };
-  } finally {
-    // Clear the timer regardless of which branch won the race. No-op when
-    // the timer already fired (we're in the timeout-rejection catch block).
-    if (timer !== null) clearTimeout(timer);
-  }
-}
-
-/**
- * Races an abortable `SELECT 1` against `probeHealth`'s timeout; Postgres
- * cancels the losing query while PGLite only discards its eventual result.
- */
-export async function probeLiveness(
-  engine: BrainEngine,
-  engineName: string,
-  version: string,
-  timeoutMs: number = HEALTH_TIMEOUT_MS,
-): Promise<ProbeHealthResult> {
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  const controller = new AbortController();
-  try {
-    await Promise.race([
-      engine.executeRaw('SELECT 1', undefined, { signal: controller.signal }),
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(() => {
-          controller.abort();
-          reject(new Error('health_timeout'));
-        }, timeoutMs);
-      }),
-    ]);
-    return {
-      ok: true,
-      status: 200,
-      body: { status: 'ok', version, engine: engineName },
-    };
-  } catch (e: unknown) {
-    const msg = controller.signal.aborted ? 'health_timeout' : (e instanceof Error ? e.message : 'unknown');
-    return {
-      ok: false,
-      status: 503,
-      body: {
-        error: 'service_unavailable',
-        error_description: msg === 'health_timeout'
-          ? 'Health check timed out (database pool may be saturated)'
-          : 'Database connection failed',
-      },
-    };
-  } finally {
-    if (timer !== null) clearTimeout(timer);
-  }
-}
-
 /**
  * Resolve `GBRAIN_HTTP_TRUST_PROXY` into a value Express's `app.set('trust
  * proxy', ...)` accepts. Pure function so the test surface is one place,
@@ -571,87 +333,6 @@ export function resolveTrustProxy(env: string | undefined): string | number | bo
   if (env === '1' || env === 'true') return 1;
   if (/^\d+$/.test(env)) return parseInt(env, 10);
   return env;
-}
-
-/**
- * Parse `GBRAIN_HTTP_CORS_ORIGIN` into a Set of allowed origins for OAuth
- * endpoints. Mirrors `src/mcp/http-transport.ts:parseCorsAllowlist`. Single
- * env var so operators don't need to maintain two allowlists.
- *
- * Returns null when unset, empty, or whitespace-only — caller MUST treat
- * null as "deny all cross-origin" (the same posture the legacy transport
- * already takes).
- */
-export function parseCorsAllowlistOAuth(): Set<string> | null {
-  const v = process.env.GBRAIN_HTTP_CORS_ORIGIN;
-  if (!v) return null;
-  const origins = v.split(',').map(s => s.trim()).filter(Boolean);
-  return origins.length === 0 ? null : new Set(origins);
-}
-
-/**
- * Build a `cors.CorsOptions['origin']` value from the allowlist. The cors
- * package accepts:
- *   - `false` → NOT an Allow-Origin header of "none"; cors@2.8.x treats a
- *     falsy `origin` option as "no CORS gate" and simply calls `next()`
- *     without setting or short-circuiting anything (see the mismatch note on
- *     `mountOAuthCorsGate` below). We keep `false` for the null-allowlist case
- *     because the gate is enforced by `mountOAuthCorsGate`, not by cors.
- *   - `(origin, cb) => cb(null, boolean)` → dynamic per-request check
- * We use the function form when an allowlist is set so the value of the
- * Allow-Origin header echoes the request Origin (RFC 6454) instead of a
- * hardcoded string, and so the same options object covers all listed
- * origins without enumeration in the response.
- *
- * Same-origin requests (no Origin header) get `cb(null, true)` which the
- * cors package translates to "no CORS headers needed" — they're not
- * cross-origin so they don't trigger the gate.
- */
-export function resolveCorsOrigin(allowlist: Set<string> | null): cors.CorsOptions['origin'] {
-  if (allowlist === null) return false;
-  return (origin: string | undefined, cb: (err: Error | null, allow?: boolean) => void) => {
-    if (!origin) return cb(null, true);
-    cb(null, allowlist.has(origin));
-  };
-}
-
-/**
- * Wrap the OAuth `cors()` middleware so it OWNS the preflight response and a
- * denied/default-deny origin can never fall through to a downstream handler
- * that answers OPTIONS with `Access-Control-Allow-Origin: *`.
- *
- * Why this is necessary (#3845): the MCP SDK's `mcpAuthRouter` mounts a bare
- * `cors()` (origin `*`) as the FIRST middleware on `/token`, `/revoke`, and
- * `/register` (see @modelcontextprotocol/sdk auth/handlers/{token,revoke,
- * register}). Our gate at `app.use('/token', cors(oauthOptions))` runs first,
- * but when the origin is denied — either the allowlist is unset (origin
- * `false`) or the request Origin is not on the allowlist — cors@2.8.x does NOT
- * emit a header and does NOT short-circuit; it just calls `next()`. Control
- * then reaches the SDK's bare `cors()`, which answers the OPTIONS preflight
- * with `*`, leaking the endpoint surface + methods to any web origin and
- * contradicting the documented default-deny posture.
- *
- * The wrapper closes that gap: cors() only reaches our callback when it did
- * NOT short-circuit the preflight itself (i.e. the origin was denied or the
- * request is a real, non-OPTIONS request). For a denied OPTIONS we terminate
- * with a header-free 204 so the SDK's cors never runs; real requests fall
- * through unchanged. Allowed origins are still short-circuited by cors() with
- * the reflected Origin, exactly as before.
- */
-export function mountOAuthCorsGate(options: cors.CorsOptions): RequestHandler {
-  const corsMiddleware = cors(options);
-  return (req: Request, res: Response, next: NextFunction) => {
-    corsMiddleware(req, res, (err?: unknown) => {
-      if (err) return next(err as Error);
-      if (req.method === 'OPTIONS') {
-        // Default-deny preflight: no Allow-Origin header, no fall-through.
-        res.statusCode = 204;
-        res.setHeader('Content-Length', '0');
-        return res.end();
-      }
-      return next();
-    });
-  };
 }
 
 interface ServeHttpOptions {
@@ -723,89 +404,6 @@ interface ServeHttpOptions {
 }
 
 /**
- * v0.38 Slice 4 — per-OAuth-client agent spend snapshot. Exported so the
- * admin endpoint and `test/admin-agents-spend.test.ts` share the same SQL
- * (single source of truth for the spend query shape).
- *
- * Returns one row per OAuth client that EITHER has the `agent` scope OR
- * has at least one `bound_*` column set (the legacy admin client could
- * also have bindings without scope='agent' on a partially-migrated brain;
- * we want it visible in the viewer).
- *
- * Fields:
- *   - client_id, client_name
- *   - cap_usd_per_day: number | null  (daily budget cap; NULL = no cap)
- *   - spent_cents_today: number  (sum from mcp_spend_log, UTC-day-aligned)
- *   - pending_cents: number  (sum of in-flight reservations, non-expired)
- *   - inflight_count: number  (active subagent jobs owned by this client)
- *
- * Falls back to `[]` on any SQL error (pre-v0.38 brains where the v82-v84
- * tables/columns don't yet exist).
- */
-export interface AgentClientSpend {
-  client_id: string;
-  client_name: string;
-  cap_usd_per_day: number | null;
-  spent_cents_today: number;
-  pending_cents: number;
-  unknown_count: number;
-  inflight_count: number;
-}
-
-export async function queryAgentClientSpend(engine: BrainEngine): Promise<AgentClientSpend[]> {
-  const sql = sqlQueryForEngine(engine);
-  const rows = await sql`
-    SELECT
-      c.client_id,
-      c.client_name,
-      COALESCE(c.budget_usd_per_day, NULL) AS cap_usd_per_day,
-      COALESCE((
-        SELECT SUM(spend_cents)::text
-          FROM mcp_spend_log
-         WHERE client_id = c.client_id
-           -- Double AT TIME ZONE: the inner one yields NAIVE UTC-midnight;
-           -- the outer one converts it back to a timestamptz INSTANT. Without
-           -- it, the naive value is reinterpreted in the SESSION timezone, so
-           -- any non-UTC session (host-tz PGLite, a tz-configured Postgres
-           -- role) shifts the day boundary by the offset and today's spend
-           -- underreports every evening.
-           AND created_at >= date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
-      ), '0') AS spent_cents_today,
-      COALESCE((
-        SELECT SUM(estimated_cents)::text
-          FROM mcp_spend_reservations
-         WHERE client_id = c.client_id
-           AND status IN ('pending', 'expired')
-      ), '0') AS pending_cents,
-      (SELECT COUNT(*)::int FROM mcp_spend_reservations
-        WHERE client_id = c.client_id AND status IN ('pending', 'expired')
-          AND estimate_known = false) AS unknown_count,
-      COALESCE((
-        SELECT COUNT(*)::int
-          FROM minion_jobs
-         WHERE name = 'subagent'
-           AND status IN ('waiting', 'active', 'waiting-children', 'delayed', 'paused')
-           AND data->>'__owner_client_id' = c.client_id
-      ), 0) AS inflight_count
-    FROM oauth_clients c
-    WHERE c.deleted_at IS NULL
-      AND ('agent' = ANY (string_to_array(c.scope, ' ')) OR c.bound_tools IS NOT NULL)
-    ORDER BY c.client_name ASC
-  `;
-  return rows.map(r => ({
-    client_id: String(r.client_id),
-    client_name: String(r.client_name ?? r.client_id),
-    cap_usd_per_day: r.cap_usd_per_day !== null && r.cap_usd_per_day !== undefined
-      ? parseFloat(String(r.cap_usd_per_day))
-      : null,
-    spent_cents_today: parseFloat(String(r.spent_cents_today ?? '0')),
-    pending_cents: parseFloat(String(r.pending_cents ?? '0')),
-    unknown_count: Number(r.unknown_count ?? 0),
-    inflight_count: Number(r.inflight_count ?? 0),
-  }));
-}
-
-/**
  * Skill-publishing status for the startup banner + operator nudge. When OFF,
  * connected agents (Codex / Claude Code / Perplexity / Cowork) cannot call
  * `list_skills` / `get_skill`, so the host's skill catalog is INVISIBLE to them
@@ -854,18 +452,53 @@ export async function embeddingWidthStartupWarning(engine: BrainEngine): Promise
   }
 }
 
-export async function runServeHttp(engine: BrainEngine, options: ServeHttpOptions) {
-  const { port, tokenTtl, enableDcr, enableDcrInsecure, publicUrl, logFullParams } = options;
-  // v0.34.1 (#864, D11): default bind flipped from 0.0.0.0 to 127.0.0.1.
-  // gbrain's primary use case is a personal-knowledge brain on a laptop;
-  // the pre-v0.34 default exposed brains on every interface. Server
-  // operators who need remote access pass `--bind 0.0.0.0` (or a specific
-  // interface). Declaring `--public-url` without `--bind` is almost always
-  // a misconfiguration; we WARN to stderr at startup in that case rather
-  // than silently binding loopback only.
-  const bind = options.bind ?? '127.0.0.1';
-  const config = loadConfig() || { engine: 'pglite' as const };
+/**
+ * Per-server state shared by every `mount<Area>(app, ctx)` module. Built once
+ * by buildServeHttpApp; modules destructure what they use and never construct
+ * their own limiter, session map, nonce store or event fan-out (a second
+ * instance would silently split a rate limit or a session).
+ */
+export interface ServeHttpContext {
+  engine: BrainEngine;
+  config: GBrainConfig | (Partial<GBrainConfig> & { engine: 'pglite' });
+  sql: SqlQuery;
+  bind: string;
+  enableDcr: boolean;
+  logFullParams: boolean | undefined;
+  /** --surface: the server tool-surface ceiling. */
+  surface: McpSurface | undefined;
+  /** Every non-localOnly operation: the only op list the network surface sees. */
+  mcpOperationsBase: Operation[];
+  issuerUrl: URL;
+  mcpResourceUrl: URL;
+  resourceMetadataUrl: string;
+  oauthProvider: GBrainOAuthProvider;
+  /** Access-token verifier that also rejects tokens bound to a different resource. */
+  resourceVerifier: OAuthTokenVerifier;
+  bootstrapHash: string;
+  /** Admin cookie sessions: sessionId -> expiresAt. */
+  adminSessions: Map<string, number>;
+  adminCookie: (req: Request, maxAge: number) => CookieOptions;
+  /** Magic-link nonces: nonce -> expiresAt. */
+  magicLinkNonces: Map<string, number>;
+  consumedNonces: Set<string>;
+  requireAdmin: RequestHandler;
+  adminLimits: ReturnType<typeof createAdminLimiters>;
+  ccRateLimiter: RequestHandler;
+  ingestRateLimiter: RequestHandler;
+  githubWebhookLimiter: RequestHandler;
+  metricsCounters: MetricsCounters;
+  sseClients: Set<express.Response>;
+  broadcastEvent: (event: Record<string, unknown>) => void;
+}
 
+/**
+ * Startup stderr notices, in order: --log-full-params, --public-url without
+ * --bind, embedding width, skill publishing, brain-resident skillpacks.
+ * Returns the banner's skill-publishing status.
+ */
+async function logServeHttpStartup(engine: BrainEngine, options: ServeHttpOptions, config: ServeHttpContext['config']) {
+  const { publicUrl, logFullParams } = options;
   if (logFullParams) {
     console.error(
       '[serve-http] WARNING: --log-full-params writes raw request payloads to mcp_request_log + SSE feed. Disable for shared dashboards or production.',
@@ -930,24 +563,10 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       /* fail-open: banner is cosmetic */
     }
   }
+  return skillStatus;
+}
 
-  // Engine-aware SQL adapter. Routes through engine.executeRaw on both
-  // Postgres and PGLite — the OAuth/admin/auth surface no longer requires
-  // a postgres.js singleton, so `gbrain serve --http` works against PGLite
-  // brains too. The narrow SqlQuery contract is scalar-binds-only; JSONB
-  // writes use executeRawJsonb (see mcp_request_log INSERT sites below).
-  const sql = sqlQueryForEngine(engine);
-
-  // Initialize OAuth provider. F12 cleanup: DCR-disable now flips a
-  // constructor option instead of monkey-patching `_clientsStore` after
-  // construction. Same outcome (no /register endpoint when --enable-dcr
-  // is not passed); cleaner shape for tests and future maintainers.
-  // #2179: admin-configured clamp window for DCR-requested token TTLs.
-  // DB-plane config keys (`gbrain config set oauth.dcr_ttl_min_seconds ...`).
-  // FAIL-CLOSED defaults: an unset/invalid max is bounded by the operator's
-  // own --token-ttl (never a fixed permissive ceiling), and an inverted
-  // window collapses to the min bound — the same direction clampDcrTokenTtl
-  // itself resolves. A bad config narrows the window; it never widens it.
+async function resolveDcrTtlWindow(engine: BrainEngine, tokenTtl: number): Promise<{ dcrTtlMinSeconds: number; dcrTtlMaxSeconds: number }> {
   const parseDcrTtlBound = (raw: unknown, fallback: number): number => {
     const n = Number(raw);
     return raw != null && Number.isFinite(n) && n >= 1 ? Math.floor(n) : fallback;
@@ -969,7 +588,76 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     );
     dcrTtlMaxSeconds = dcrTtlMinSeconds;
   }
+  return { dcrTtlMinSeconds, dcrTtlMaxSeconds };
+}
 
+/**
+ * Builds the complete Express app for `gbrain serve --http`: startup checks,
+ * OAuth provider, admin auth, every route and middleware in registration
+ * order. `runServeHttp` is the production caller; it owns listen, the banner,
+ * the resolve-IPC binding and shutdown.
+ */
+export async function buildServeHttpApp(app: express.Express, engine: BrainEngine, options: ServeHttpOptions) {
+  const { port, tokenTtl, enableDcr, enableDcrInsecure, publicUrl, logFullParams } = options;
+  // v0.34.1 (#864, D11): default bind flipped from 0.0.0.0 to 127.0.0.1.
+  // gbrain's primary use case is a personal-knowledge brain on a laptop;
+  // the pre-v0.34 default exposed brains on every interface. Server
+  // operators who need remote access pass `--bind 0.0.0.0` (or a specific
+  // interface). Declaring `--public-url` without `--bind` is almost always
+  // a misconfiguration; we WARN to stderr at startup in that case rather
+  // than silently binding loopback only.
+  const bind = options.bind ?? '127.0.0.1';
+  const config = loadConfig() || { engine: 'pglite' as const };
+
+  const skillStatus = await logServeHttpStartup(engine, options, config);
+
+  // Engine-aware SQL adapter. Routes through engine.executeRaw on both
+  // Postgres and PGLite — the OAuth/admin/auth surface no longer requires
+  // a postgres.js singleton, so `gbrain serve --http` works against PGLite
+  // brains too. The narrow SqlQuery contract is scalar-binds-only; JSONB
+  // writes use executeRawJsonb (see mcp_request_log INSERT sites below).
+  const sql = sqlQueryForEngine(engine);
+
+  // Initialize OAuth provider. F12 cleanup: DCR-disable now flips a
+  // constructor option instead of monkey-patching `_clientsStore` after
+  // construction. Same outcome (no /register endpoint when --enable-dcr
+  // is not passed); cleaner shape for tests and future maintainers.
+  // #2179: admin-configured clamp window for DCR-requested token TTLs.
+  // DB-plane config keys (`gbrain config set oauth.dcr_ttl_min_seconds ...`).
+  // FAIL-CLOSED defaults: an unset/invalid max is bounded by the operator's
+  // own --token-ttl (never a fixed permissive ceiling), and an inverted
+  // window collapses to the min bound — the same direction clampDcrTokenTtl
+  // itself resolves. A bad config narrows the window; it never widens it.
+  const { dcrTtlMinSeconds, dcrTtlMaxSeconds } = await resolveDcrTtlWindow(engine, tokenTtl);
+
+  // The issuer URL goes into discovery metadata + token iss claims. It MUST
+  // match the URL clients actually hit, or strict OAuth clients reject tokens
+  // (RFC 8414 §3.3). Honor --public-url for production deployments behind
+  // reverse proxies / tunnels; default to localhost for dev.
+  const issuerUrl = new URL(publicUrl || `http://localhost:${port}`);
+
+  // MCP authorization spec (2025-06-18 draft §5.1) and RFC 9728 require the
+  // protected resource server to return its discovery metadata URL in the
+  // WWW-Authenticate header on 401 responses:
+  //
+  //   WWW-Authenticate: Bearer resource_metadata="<URL>"
+  //
+  // Clients (claude.ai, Cursor, every other MCP-aware OAuth client) use that
+  // URL to find the authorization-server discovery doc + token endpoint
+  // without the user having to paste those URLs manually. Pre-fix the header
+  // shipped `Bearer error="invalid_token", ...` with no resource_metadata
+  // parameter, so MCP clients couldn't begin the OAuth flow from a fresh
+  // 401 — they would silently fail to connect with a generic "couldn't
+  // reach the MCP server" error.
+  // RFC 9728 / MCP auth spec: the protected-resource metadata describes the
+  // resource the client connects to (/mcp), not the authorization-server root.
+  // Without resourceServerUrl the SDK falls back to issuerUrl, advertising
+  // `resource: "https://host/"` and 404ing the path-based PRM URL
+  // (/.well-known/oauth-protected-resource/mcp) that clients derive from the
+  // connector URL (#4893). The 401 challenge's resource_metadata URL is
+  // derived from the same value so the two can never drift apart.
+  const mcpResourceUrl = new URL('/mcp', issuerUrl);
+  const resourceMetadataUrl = getOAuthProtectedResourceMetadataUrl(mcpResourceUrl);
   const oauthProvider = new GBrainOAuthProvider({
     sql,
     transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))),
@@ -978,6 +666,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     allowClientCredentialsDcr: enableDcrInsecure === true,
     dcrTtlMinSeconds,
     dcrTtlMaxSeconds,
+    resourceUrl: mcpResourceUrl,
   });
 
   // #1353: loud stderr security WARN when DCR is enabled. DCR is an
@@ -1042,8 +731,6 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     }
   }
 
-  // Express 5 app
-  const app = express();
   // v0.41.3 (T8): configurable trust-proxy via GBRAIN_HTTP_TRUST_PROXY env.
   // Default 'loopback' (trust Caddy/Tailscale on the same host) preserves
   // pre-v0.41.3 behavior. Operators behind Fly.io / Render / Vercel / nginx
@@ -1073,62 +760,6 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   const metricsCounters = createMetricsCounters();
   app.use(metricsTrackingMiddleware(metricsCounters));
 
-  // ---------------------------------------------------------------------------
-  // CORS (v0.41.3, T7 — default-deny on every OAuth endpoint)
-  // ---------------------------------------------------------------------------
-  // Pre-v0.41.3 every OAuth endpoint used bare `cors()` which defaults to
-  // `Access-Control-Allow-Origin: *` — any web origin could complete a token
-  // exchange from a logged-in operator's browser. The fix parses
-  // GBRAIN_HTTP_CORS_ORIGIN the same way the legacy transport already does
-  // (src/mcp/http-transport.ts:parseCorsAllowlist) and gates every OAuth
-  // surface behind the allowlist. When the env var is unset the OAuth
-  // endpoints reject all cross-origin requests (default deny). Same-origin
-  // requests are unaffected because browsers send no Origin header for them.
-  //
-  // The /admin SPA is the one cross-origin caller we expect on a personal
-  // laptop install; it ships co-located with the brain and uses
-  // same-origin XHR, so the lockdown doesn't break it.
-  const corsAllowlistOAuth = parseCorsAllowlistOAuth();
-  if (!corsAllowlistOAuth && bind === '0.0.0.0') {
-    console.error(
-      '[serve-http] WARNING: --bind 0.0.0.0 is set but GBRAIN_HTTP_CORS_ORIGIN is unset. OAuth endpoints will reject ALL cross-origin requests until you set the env var (comma-separated origins).',
-    );
-  }
-  const corsOAuthOptions: cors.CorsOptions = {
-    origin: resolveCorsOrigin(corsAllowlistOAuth),
-    credentials: false,
-    methods: ['GET', 'POST', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
-  };
-  app.use('/mcp', cors(corsOAuthOptions));
-  app.use('/authorize', cors(corsOAuthOptions));
-  // /token, /revoke and /register are shadowed by the MCP SDK's own bare
-  // `cors()` (origin `*`) mounted inside mcpAuthRouter. A denied preflight must
-  // be terminated here — a plain `cors(corsOAuthOptions)` would fall through to
-  // the SDK's `*` (#3845). /mcp and /authorize are not shadowed (no downstream
-  // cors), so they keep the plain gate.
-  app.use('/token', mountOAuthCorsGate(corsOAuthOptions));
-  app.use('/register', mountOAuthCorsGate(corsOAuthOptions));
-  app.use('/revoke', mountOAuthCorsGate(corsOAuthOptions));
-
-  // #2179: capture the optional `token_ttl_seconds` DCR extension field
-  // BEFORE the SDK's /register handler runs — its request schema strips
-  // unknown body members, so the value would never reach registerClient.
-  // The rest of the chain runs inside dcrRegistrationContext; the clients
-  // store clamps + persists it. Malformed values are ignored (fail-safe:
-  // absent → server default; out-of-range → clamped downstream; a TTL hint
-  // never rejects a registration). express.json() here is idempotent with
-  // the SDK router's own body parser.
-  app.use('/register', express.json(), (req: Request, _res: Response, next: NextFunction) => {
-    const raw = (req.body as Record<string, unknown> | null | undefined)?.token_ttl_seconds;
-    const tokenTtlSeconds = typeof raw === 'number' && Number.isFinite(raw) ? raw : undefined;
-    dcrRegistrationContext.run({ tokenTtlSeconds }, next);
-  });
-
-  // ---------------------------------------------------------------------------
-  // Custom client_credentials handler (before mcpAuthRouter)
-  // SDK's token handler only supports authorization_code and refresh_token
-  // ---------------------------------------------------------------------------
   const oauthTokenRateLimit = resolveOAuthTokenRateLimit();
   const ccRateLimiter = rateLimit({
     windowMs: oauthTokenRateLimit.windowMs,
@@ -1140,46 +771,18 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
 
   const adminLimits = createAdminLimiters();
 
-  mountConfidentialOAuth(app, oauthProvider, ccRateLimiter);
-
-  // ---------------------------------------------------------------------------
-  // MCP SDK Auth Router (OAuth endpoints)
-  // ---------------------------------------------------------------------------
-  // The issuer URL goes into discovery metadata + token iss claims. It MUST
-  // match the URL clients actually hit, or strict OAuth clients reject tokens
-  // (RFC 8414 §3.3). Honor --public-url for production deployments behind
-  // reverse proxies / tunnels; default to localhost for dev.
-  const issuerUrl = new URL(publicUrl || `http://localhost:${port}`);
-
-  // MCP authorization spec (2025-06-18 draft §5.1) and RFC 9728 require the
-  // protected resource server to return its discovery metadata URL in the
-  // WWW-Authenticate header on 401 responses:
-  //
-  //   WWW-Authenticate: Bearer resource_metadata="<URL>"
-  //
-  // Clients (claude.ai, Cursor, every other MCP-aware OAuth client) use that
-  // URL to find the authorization-server discovery doc + token endpoint
-  // without the user having to paste those URLs manually. Pre-fix the header
-  // shipped `Bearer error="invalid_token", ...` with no resource_metadata
-  // parameter, so MCP clients couldn't begin the OAuth flow from a fresh
-  // 401 — they would silently fail to connect with a generic "couldn't
-  // reach the MCP server" error.
-  // RFC 9728 / MCP auth spec: the protected-resource metadata describes the
-  // resource the client connects to (/mcp), not the authorization-server root.
-  // Without resourceServerUrl the SDK falls back to issuerUrl, advertising
-  // `resource: "https://host/"` and 404ing the path-based PRM URL
-  // (/.well-known/oauth-protected-resource/mcp) that clients derive from the
-  // connector URL (#4893). The 401 challenge's resource_metadata URL is
-  // derived from the same value so the two can never drift apart.
-  const mcpResourceUrl = new URL('/mcp', issuerUrl);
-  const resourceMetadataUrl = getOAuthProtectedResourceMetadataUrl(mcpResourceUrl);
   // The SDK validates expiry/scopes but leaves audience enforcement to us.
-  // Legacy grants without a resource retain their existing compatibility.
+  // Legacy grants without a resource retain their existing compatibility; an
+  // origin-bound token minted before #5222 passes the same canonicalizer.
   const resourceVerifier = {
     async verifyAccessToken(token: string) {
       const auth = await oauthProvider.verifyAccessToken(token);
-      if (auth.resource && auth.resource.toString() !== mcpResourceUrl.toString()) {
-        throw new InvalidTokenError('Token is bound to a different resource');
+      if (auth.resource) {
+        try {
+          canonicalOAuthResource(auth.resource, mcpResourceUrl);
+        } catch {
+          throw new InvalidTokenError('Token is bound to a different resource');
+        }
       }
       return auth;
     },
@@ -1199,1827 +802,41 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     path: '/admin',
   });
 
-  const authRouterOptions: any = {
-    provider: oauthProvider,
-    issuerUrl,
-    scopesSupported: scopesSupportedForDiscovery({ enableDcr }),
-    resourceName: 'GBrain MCP Server',
-    // Advertise /mcp as the protected resource (see mcpResourceUrl above).
-    resourceServerUrl: mcpResourceUrl,
+  // The HTTP MCP surface never sees localOnly operations; serve-http-mcp.ts
+  // narrows this list further per request (surface, grants, scope).
+  const mcpOperationsBase = operations.filter(op => !op.localOnly);
+  const requireAdmin = createRequireAdmin(adminSessions);
+  const { ingestRateLimiter, githubWebhookLimiter } = createWebhookLimiters();
+  const ctx: ServeHttpContext = {
+    engine, config, sql, bind, enableDcr, logFullParams, surface: options.surface, mcpOperationsBase,
+    issuerUrl, mcpResourceUrl, resourceMetadataUrl, oauthProvider, resourceVerifier,
+    bootstrapHash, adminSessions, adminCookie,
+    magicLinkNonces: new Map<string, number>(),
+    consumedNonces: new Set<string>(),
+    requireAdmin, adminLimits, ccRateLimiter, ingestRateLimiter, githubWebhookLimiter,
+    metricsCounters, sseClients, broadcastEvent,
   };
 
-  // F12: DCR disable lives on the provider's constructor option above. The
-  // SDK's mcpAuthRouter reads provider.clientsStore once and only wires up
-  // /register when the store exposes registerClient — so passing dcrDisabled
-  // to the constructor is sufficient. No monkey-patching here.
-
-  const authRouter = mcpAuthRouter(authRouterOptions);
-
-  // Patch the SDK's OAuth metadata to include client_credentials grant type.
-  // The SDK hardcodes ['authorization_code', 'refresh_token'] — we intercept
-  // the response and add client_credentials before it reaches the client.
-  app.use((req, res, next) => {
-    if (req.path === '/.well-known/oauth-authorization-server' && req.method === 'GET') {
-      const origJson = res.json.bind(res);
-      (res as any).json = (body: any) => {
-        if (body?.grant_types_supported && !body.grant_types_supported.includes('client_credentials')) {
-          body.grant_types_supported.push('client_credentials');
-        }
-        if (body?.token_endpoint_auth_methods_supported) {
-          for (const method of ['client_secret_basic', 'none']) {
-            if (!body.token_endpoint_auth_methods_supported.includes(method)) {
-              body.token_endpoint_auth_methods_supported.push(method);
-            }
-          }
-        }
-        if (body?.revocation_endpoint_auth_methods_supported && !body.revocation_endpoint_auth_methods_supported.includes('client_secret_basic')) {
-          body.revocation_endpoint_auth_methods_supported.push('client_secret_basic');
-        }
-        return origJson(body);
-      };
-    }
-    next();
-  });
-
-  // Back-compat alias: with resourceServerUrl set the SDK mounts the PRM only
-  // at the path-based URL, so clients that still probe the bare root (what
-  // gbrain advertised before) would 404 mid-flight. Rewrite the root onto the
-  // SDK's own handler — one document, same cors()/allowedMethods, no copy.
-  const legacyPrmPath = '/.well-known/oauth-protected-resource';
-  app.all(legacyPrmPath, (req: Request, _res: Response, next: NextFunction) => {
-    req.url = new URL(resourceMetadataUrl).pathname;
-    next();
-  });
-
-  app.use(authRouter);
-  app.get('/.well-known/gbrain', (_req, res) => {
-    res.json({ version: VERSION, protocol: 'mcp', endpoint: mcpResourceUrl.toString(), profiles: GRANT_PROFILES,
-      adapters: publicHarnessMetadata(), administration: mcpAdministrationGuidance(mcpResourceUrl.toString()), documentation: 'https://github.com/garrytan/gbrain/blob/master/docs/mcp/README.md' });
-  });
-
-  // ---------------------------------------------------------------------------
-  // Health check — liveness only. Full engine stats live at
-  // /admin/api/full-stats (requireAdmin). See probeLiveness above for the why.
-  // ---------------------------------------------------------------------------
-  app.get('/health', async (_req, res) => {
-    const result = await probeLiveness(engine, config.engine || 'pglite', VERSION);
-    res.status(result.status).json(result.body);
-  });
-
-  // ---------------------------------------------------------------------------
-  // Admin authentication (cookie-based)
-  // ---------------------------------------------------------------------------
-  // v0.40 D15.5: safeHexEqual extracted to src/core/timing-safe.ts so the new
-  // /webhooks/github HMAC verifier reuses the same constant-time compare.
-  // POST /admin/login — JSON body with token (for programmatic/UI login).
-  // Independent limits: 60 total requests and 10 failed authentications/min/IP.
-  app.post('/admin/login', adminLimits.total, adminLimits.failures, express.json(), (req, res) => {
-    const token = req.body?.token;
-    if (!token || typeof token !== 'string') {
-      res.status(400).json({ error: 'Token required' });
-      return;
-    }
-
-    const tokenHash = createHash('sha256').update(token).digest('hex');
-    if (!safeHexEqual(tokenHash, bootstrapHash)) {
-      res.status(401).json({ error: 'Owner credential rejected. Use the protected bootstrap credential configured for this running server; an OAuth token cannot administer it.' });
-      return;
-    }
-
-    res.locals.ownerAuthenticated = true;
-    const sessionId = randomBytes(32).toString('hex');
-    const expiresAt = Date.now() + 24 * 60 * 60 * 1000; // 24 hours
-    adminSessions.set(sessionId, expiresAt);
-
-    res.cookie('gbrain_admin', sessionId, adminCookie(req, 24 * 60 * 60 * 1000));
-    res.json({ status: 'authenticated' });
-  });
-
-  // ---------------------------------------------------------------------------
-  // Magic-link nonce store (single-use) — D11 + D12
-  //
-  // Trust model (codex review pushback resolved this):
-  //   - Bootstrap token is the long-term server admin secret. Printed to
-  //     stderr at startup; lives in operator's terminal scrollback only.
-  //   - Magic-link URLs use one-time NONCES (not the bootstrap token).
-  //     Agent calls POST /admin/api/issue-magic-link with the bootstrap
-  //     token in Authorization: Bearer to mint a nonce. Nonce expires in
-  //     5 minutes if unredeemed; consumed on first redemption.
-  //   - Bootstrap token never appears in a URL → no leakage via browser
-  //     history, proxy access logs, or Referer headers.
-  //   - Cookie sessions are HttpOnly + SameSite=Strict, but the bootstrap
-  //     token itself is never client-side-readable JS state (no
-  //     localStorage/sessionStorage cache — D12).
-  //
-  // Memory bound: nonces auto-purged on expiry sweep + LRU cap of 1000
-  // entries (an attacker minting millions can't OOM the server).
-  // ---------------------------------------------------------------------------
-  const magicLinkNonces = new Map<string, number>(); // nonce → expiresAt
-  const consumedNonces = new Set<string>();
-  const NONCE_TTL_MS = 5 * 60 * 1000; // 5 minutes
-  const NONCE_LRU_CAP = 1000;
-
-  // Best-effort GC: remove expired entries on each issue/redeem call.
-  function pruneExpiredNonces() {
-    const now = Date.now();
-    for (const [nonce, expiresAt] of magicLinkNonces) {
-      if (expiresAt < now) magicLinkNonces.delete(nonce);
-    }
-    // F10: bound the live-nonce store too. An attacker with the bootstrap
-    // token (or a misbehaving agent) could mint nonces faster than they
-    // expire. Map iteration order is insertion order, so dropping from the
-    // front gives a simple FIFO eviction matching the consumedNonces pattern.
-    if (magicLinkNonces.size > NONCE_LRU_CAP) {
-      const drop = magicLinkNonces.size - NONCE_LRU_CAP;
-      const it = magicLinkNonces.keys();
-      for (let i = 0; i < drop; i++) magicLinkNonces.delete(it.next().value as string);
-    }
-    // Cap consumedNonces growth — drop oldest entries past the LRU cap.
-    if (consumedNonces.size > NONCE_LRU_CAP) {
-      const drop = consumedNonces.size - NONCE_LRU_CAP;
-      const it = consumedNonces.values();
-      for (let i = 0; i < drop; i++) consumedNonces.delete(it.next().value as string);
-    }
-  }
-
-  // POST /admin/api/issue-magic-link — agent-callable mint endpoint.
-  // Auth: Authorization: Bearer <bootstrapToken>. Returns one-time nonce.
-  // Credential verification shares the authentication limits, never the consent bucket.
-  app.post('/admin/api/issue-magic-link', adminLimits.total, adminLimits.failures, express.json(), (req: Request, res: Response) => {
-    const auth = (req.headers.authorization || '') as string;
-    const m = auth.match(/^Bearer\s+(\S+)$/i);
-    if (!m) {
-      res.status(401).json({ error: 'Authorization: Bearer <bootstrap-token> required' });
-      return;
-    }
-    const tokenHash = createHash('sha256').update(m[1]).digest('hex');
-    if (!safeHexEqual(tokenHash, bootstrapHash)) {
-      res.status(401).json({ error: 'Invalid bootstrap token' });
-      return;
-    }
-    res.locals.ownerAuthenticated = true;
-    const pendingId = req.body?.oauth_request;
-    if (pendingId !== undefined && !oauthProvider.grants.hasPending(pendingId)) {
-      res.status(410).json({ error: 'authorization_unavailable', stage: 'consent', outcome: 'failed',
-        message: 'This OAuth request expired, completed, or the server restarted.',
-        next_action: 'Restart authorization in the native client, then request an owner login link with the new pending-request ID.' });
-      return;
-    }
-    pruneExpiredNonces();
-    const nonce = randomBytes(32).toString('hex');
-    magicLinkNonces.set(nonce, Date.now() + NONCE_TTL_MS);
-    const link = new URL(`/admin/auth/${nonce}`, issuerUrl);
-    if (pendingId !== undefined) link.searchParams.set('oauth_request', pendingId);
-    res.json({ url: link.toString(), expires_in: NONCE_TTL_MS / 1000 });
-  });
-
-  // GET /admin/auth/:nonce — single-use magic link redemption.
-  // Browser hits it, server validates the nonce (exists + unconsumed +
-  // unexpired), marks consumed, sets cookie, redirects to dashboard.
-  // Successful nonce verification does not consume the failed-auth allowance.
-  app.get('/admin/auth/:token', adminLimits.total, adminLimits.failures, (req: Request, res: Response) => {
-    const nonce = String(req.params.token ?? '');
-    pruneExpiredNonces();
-
-    const expiresAt = magicLinkNonces.get(nonce);
-    const isValid = !!nonce && !!expiresAt && expiresAt > Date.now() && !consumedNonces.has(nonce);
-
-    if (!isValid) {
-      res.status(401).send(`<!DOCTYPE html>
-<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>GBrain</title>
-<style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:'Inter',-apple-system,BlinkMacSystemFont,sans-serif;background:#0a0a0f;color:#e0e0e0;min-height:100vh;display:flex;align-items:center;justify-content:center}
-.box{max-width:400px;padding:32px;text-align:left}
-.logo{font-size:28px;font-weight:600;margin-bottom:24px}
-.msg{color:#888;font-size:14px;line-height:1.6;margin-bottom:20px}
-.hint{background:rgba(136,170,255,0.08);border:1px solid rgba(136,170,255,0.2);border-radius:8px;padding:14px 16px;font-size:13px;line-height:1.5;color:#888}
-.hint b{color:#e0e0e0}
-.prompt{background:rgba(0,0,0,0.3);border-radius:6px;padding:8px 12px;margin-top:8px;font-family:monospace;font-size:12px;color:#88aaff}
-</style></head><body><div class="box">
-<div class="logo">GBrain</div>
-<div class="msg">⚠️ This admin link has expired, was already used, or the server has restarted.</div>
-<div class="hint"><b>Ask the server administrator or the harness hosting this server for a fresh link:</b>
-<div class="prompt">Run gbrain mcp admin login-link --url ${mcpResourceUrl.toString().replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!))} using the protected owner credential. If connecting OAuth, restart authorization in the native client and include its new --oauth-request ID.</div>
-</div></div></body></html>`);
-      return;
-    }
-
-    res.locals.ownerAuthenticated = true;
-    // Consume the nonce — it's single-use, second click will fail.
-    magicLinkNonces.delete(nonce);
-    consumedNonces.add(nonce);
-
-    res.locals.ownerAuthenticated = true;
-    const sessionId = randomBytes(32).toString('hex');
-    const sessionExpiresAt = Date.now() + 7 * 24 * 60 * 60 * 1000; // 7 days for magic link
-    adminSessions.set(sessionId, sessionExpiresAt);
-
-    res.cookie('gbrain_admin', sessionId, adminCookie(req, 7 * 24 * 60 * 60 * 1000));
-    const pendingId = req.query.oauth_request;
-    if (pendingId !== undefined && !oauthProvider.grants.hasPending(pendingId)) {
-      res.status(410).send('This OAuth request expired, completed, or the server restarted. Restart authorization in the native client and ask the server administrator for a new login link with the new pending-request ID.');
-      return;
-    }
-    res.redirect(oauthProvider.grants.hasPending(pendingId)
-      ? `/admin/?oauth_request=${pendingId}#oauth-consent` : '/admin/');
-  });
-
-  // Admin auth middleware
-  function requireAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
-    const sessionId = (req.cookies as Record<string, string>)?.gbrain_admin;
-    if (!sessionId || !adminSessions.has(sessionId)) {
-      res.status(401).json({ error: 'Admin authentication required' });
-      return;
-    }
-    const expiresAt = adminSessions.get(sessionId)!;
-    if (Date.now() > expiresAt) {
-      adminSessions.delete(sessionId);
-      res.status(401).json({ error: 'Session expired' });
-      return;
-    }
-    next();
-  }
-
+  mountOAuth(app, ctx);
+  mountHealth(app, ctx);
+  mountAdminLogin(app, ctx);
+  mountOwnerLoginLinks(app, ctx);
   mountOAuthConsent(app, oauthProvider, requireAdmin, adminLimits.consent);
-
-  // #3893 (reimplemented from @y2688): Prometheus exposition. Admin-gated —
-  // request/error/latency series profile a personal brain's usage, so this
-  // is not a public surface (the original PR served it unauthenticated).
-  app.get('/metrics', requireAdmin, (_req: Request, res: Response) => {
-    res.set('Content-Type', 'text/plain; version=0.0.4');
-    res.send(renderPrometheusMetrics(metricsCounters));
-  });
-
-  // ---------------------------------------------------------------------------
-  // Admin API endpoints
-  // ---------------------------------------------------------------------------
-
-  // Sign-out-everywhere: nuke ALL active admin sessions in-memory. Every
-  // browser/tab fails its next request, gets 401, redirects to login.
-  // The bootstrap token itself is unaffected (still valid for new
-  // magic-link mints) — this only revokes existing cookie sessions.
-  app.post('/admin/api/sign-out-everywhere', requireAdmin, (_req: Request, res: Response) => {
-    const count = adminSessions.size;
-    adminSessions.clear();
-    res.json({ revoked_sessions: count });
-  });
-
-  app.get('/admin/api/agents', requireAdmin, async (_req: Request, res: Response) => {
-    try {
-      // Unified view: OAuth clients + legacy API keys
-      const oauthClients = await sql`
-        SELECT c.client_id as id, c.client_name as name, 'oauth' as auth_type,
-          c.grant_types, c.scope, c.source_id, c.federated_read,
-          c.created_at, c.token_ttl,
-          CASE WHEN c.deleted_at IS NOT NULL THEN 'revoked' ELSE 'active' END as status,
-          (SELECT max(created_at) FROM mcp_request_log WHERE token_name = c.client_id) as last_used_at,
-          (SELECT count(*)::int FROM mcp_request_log WHERE token_name = c.client_id) as total_requests,
-          (SELECT count(*)::int FROM mcp_request_log WHERE token_name = c.client_id AND created_at > now() - interval '24 hours') as requests_today
-        FROM oauth_clients c ORDER BY c.created_at DESC
-      `;
-      const legacyKeys = await sql`
-        SELECT a.id, a.name, 'api_key' as auth_type,
-          '{"bearer"}' as grant_types,
-          a.scopes,
-          a.created_at, null as token_ttl,
-          CASE WHEN a.revoked_at IS NOT NULL THEN 'revoked' ELSE 'active' END as status,
-          a.last_used_at,
-          (SELECT count(*)::int FROM mcp_request_log WHERE token_name = a.name) as total_requests,
-          (SELECT count(*)::int FROM mcp_request_log WHERE token_name = a.name AND created_at > now() - interval '24 hours') as requests_today
-        FROM access_tokens a ORDER BY a.created_at DESC
-      `;
-      res.json([
-        ...oauthClients,
-        ...legacyKeys.map(({ scopes, ...key }) => ({
-          ...key,
-          // The SAME normalizer the verify path uses — the dashboard must
-          // never display a grant the serve doesn't enforce (NULL =
-          // grandfathered full access; damaged/deny rows show empty).
-          scope: normalizeTokenScopes(scopes)?.join(' ') ?? 'read write admin',
-          source_id: null,
-          federated_read: [],
-        })),
-      ]);
-    } catch (e) {
-      res.status(503).json({ error: 'service_unavailable' });
-    }
-  });
-
-  app.get('/admin/api/sources', requireAdmin, async (_req: Request, res: Response) => {
-    try {
-      const { listSources } = await import('../core/sources-ops.ts');
-      const sources = await listSources(engine);
-      res.json(sources.map(({ id, name, federated }) => ({ id, name, federated })));
-    } catch {
-      res.status(503).json({ error: 'service_unavailable' });
-    }
-  });
-
-  // v0.38 Slice 4 — per-OAuth-client agent spend viewer. Pre-computes today's
-  // spend (committed + pending reservations) per client so the Agents tab
-  // can render a "$X / $Y today" cell. Read-side endpoint only — no mutation.
-  // Falls back to an empty array on pre-v0.38 brains where mcp_spend_log
-  // exists but agent dispatch hasn't recorded anything.
-  app.get('/admin/api/agents/spend', requireAdmin, async (_req: Request, res: Response) => {
-    try {
-      const rows = await queryAgentClientSpend(engine);
-      res.json(rows);
-    } catch (e) {
-      // Pre-v0.38 brains: tables may not exist yet. Return empty so the UI
-      // renders gracefully instead of erroring.
-      res.json([]);
-    }
-  });
-
-  app.get('/admin/api/stats', requireAdmin, async (_req: Request, res: Response) => {
-    try {
-      const [clients] = await sql`SELECT count(*)::int as count FROM oauth_clients`;
-      const [tokens] = await sql`SELECT count(*)::int as count FROM oauth_tokens WHERE token_type = 'access' AND expires_at > ${Math.floor(Date.now() / 1000)}`;
-      const [requests] = await sql`SELECT count(*)::int as count FROM mcp_request_log WHERE created_at > now() - interval '24 hours'`;
-      const [apiKeys] = await sql`SELECT count(*)::int as count FROM access_tokens WHERE revoked_at IS NULL`;
-      res.json({
-        connected_agents: (clients as any).count,
-        active_tokens: (tokens as any).count,
-        active_api_keys: (apiKeys as any).count,
-        requests_today: (requests as any).count,
-      });
-    } catch {
-      res.status(503).json({ error: 'service_unavailable' });
-    }
-  });
-
-  app.get('/admin/api/health-indicators', requireAdmin, async (_req: Request, res: Response) => {
-    try {
-      const now = Math.floor(Date.now() / 1000);
-      const [expiring] = await sql`SELECT count(*)::int as count FROM oauth_tokens WHERE token_type = 'access' AND expires_at BETWEEN ${now} AND ${now + 86400}`;
-      // Excluded from the error numerator: success and success_with_warnings
-      // (a warn-mode success); denied_after_list stays counted — a denied
-      // call IS a failure signal. surface_change is an OPERATION value (audit
-      // rows carry status='success'), so audit rows are excluded from BOTH
-      // counts — they are records of operator/self actions, not traffic.
-      const [errors] = await sql`SELECT count(*)::int as count FROM mcp_request_log WHERE status NOT IN ('success', 'success_with_warnings') AND operation != 'surface_change' AND created_at > now() - interval '24 hours'`;
-      const [total] = await sql`SELECT count(*)::int as count FROM mcp_request_log WHERE operation != 'surface_change' AND created_at > now() - interval '24 hours'`;
-      const errorRate = (total as any).count > 0 ? ((errors as any).count / (total as any).count * 100).toFixed(1) : '0';
-      res.json({
-        expiring_soon: (expiring as any).count,
-        error_rate: `${errorRate}%`,
-      });
-    } catch {
-      res.status(503).json({ error: 'service_unavailable' });
-    }
-  });
-
-  // Full engine stats. v0.28.10 moved this off /health (which is now liveness
-  // only — see probeLiveness) so dashboards needing page_count / chunk_count
-  // / etc. authenticate as admin and call this endpoint. probeHealth races
-  // engine.getStats() against HEALTH_TIMEOUT_MS so a saturated pool returns
-  // 503 rather than hanging.
-  app.get('/admin/api/full-stats', requireAdmin, async (_req: Request, res: Response) => {
-    const result = await probeHealth(engine, config.engine || 'pglite', VERSION);
-    res.status(result.status).json(result.body);
-  });
-
-  // v0.41 D2 — live jobs dashboard data. Shares readSnapshot() with the
-  // TTY `gbrain jobs watch` command so the two surfaces stay 1:1.
-  app.get('/admin/api/jobs/watch', requireAdmin, async (_req: Request, res: Response) => {
-    try {
-      const { readSnapshot } = await import('./jobs-watch.ts');
-      const snap = await readSnapshot(engine);
-      res.json(snap);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      res.status(500).json({ error: msg });
-    }
-  });
-
-  // v0.36.1.0 (T15 / E6 / D23) — Calibration tab data endpoints.
-  // Server-rendered SVG charts; admin SPA renders via TrustedSVG wrapper.
-  // v0.36.1.0 (TD3) — pattern drill-down. Returns the source takes that
-  // produced the pattern statement at index `id` of the active profile.
-  // v0.36.1.0 ship state: returns the top N takes in the holder's overall
-  // takes table, sorted by weight desc. v0.37+ will store per-pattern
-  // source_take_ids on calibration_profiles_patterns so the drill-down
-  // shows the EXACT takes that drove the pattern.
-  app.get('/admin/api/calibration/pattern/:id', requireAdmin, async (req: Request, res: Response) => {
-    try {
-      const { getLatestProfile } = await import('./calibration.ts');
-      const holder = resolveOwnerHolder({ override: (req.query.holder as string) || undefined, configValue: await engine.getConfig('emotional_weight.user_holder') });
-      const profile = await getLatestProfile(engine, { holder });
-      if (!profile) {
-        res.status(404).json({ error: 'no_profile' });
-        return;
-      }
-      const rawId = req.params.id;
-      const idStr = Array.isArray(rawId) ? rawId[0] : rawId;
-      const idx = Number.parseInt(idStr ?? '', 10) - 1;
-      if (!Number.isFinite(idx) || idx < 0 || idx >= profile.pattern_statements.length) {
-        res.status(400).json({ error: 'invalid_pattern_index', max: profile.pattern_statements.length });
-        return;
-      }
-      const statement = profile.pattern_statements[idx];
-      // v0.36.1.0 ship state: surface the top resolved takes for the
-      // holder as drill-down evidence. Per-pattern provenance is v0.37.
-      const takes = await engine.executeRaw<{
-        id: string;
-        page_slug: string;
-        row_num: number;
-        claim: string;
-        weight: number;
-        resolved_quality: string | null;
-        since_date: string | null;
-      }>(
-        // `takes` has no page_slug column — it comes from the joined page.
-        // id::text — it's a BIGSERIAL (bigint); res.json() below can't serialize a
-        // raw bigint ("cannot serialize BigInt"), so project it as a string.
-        `SELECT t.id::text AS id, p.slug AS page_slug, t.row_num, t.claim, t.weight, t.resolved_quality, t.since_date
-           FROM takes t JOIN pages p ON p.id = t.page_id
-           WHERE t.holder = $1 AND t.active = true AND t.resolved_at IS NOT NULL
-           ORDER BY t.weight DESC, t.since_date DESC
-           LIMIT 25`,
-        [holder],
-      );
-      res.json({
-        pattern_statement: statement,
-        pattern_index: idx + 1,
-        holder,
-        provenance_note: 'v0.36.1.0 ship state shows top-25 resolved takes for this holder; per-pattern source_take_ids land in v0.37.',
-        takes,
-      });
-    } catch (err) {
-      res.status(500).json({ error: err instanceof Error ? err.message : 'unknown' });
-    }
-  });
-
-  app.get('/admin/api/calibration/profile', requireAdmin, async (req: Request, res: Response) => {
-    try {
-      const { getLatestProfile } = await import('./calibration.ts');
-      const holder = resolveOwnerHolder({ override: (req.query.holder as string) || undefined, configValue: await engine.getConfig('emotional_weight.user_holder') });
-      const profile = await getLatestProfile(engine, { holder });
-      res.json(profile);
-    } catch (err) {
-      res.status(500).json({ error: err instanceof Error ? err.message : 'unknown' });
-    }
-  });
-
-  app.get('/admin/api/calibration/charts/:type', requireAdmin, async (req: Request, res: Response) => {
-    try {
-      const { getLatestProfile } = await import('./calibration.ts');
-      const {
-        renderBrierTrend,
-        renderDomainBars,
-        renderAbandonedThreadsCard,
-        renderPatternStatementsCard,
-      } = await import('../core/calibration/svg-renderer.ts');
-      const holder = resolveOwnerHolder({ override: (req.query.holder as string) || undefined, configValue: await engine.getConfig('emotional_weight.user_holder') });
-      const type = req.params.type;
-      const profile = await getLatestProfile(engine, { holder });
-
-      res.setHeader('Content-Type', 'image/svg+xml; charset=utf-8');
-      res.setHeader('Cache-Control', 'private, max-age=60');
-
-      if (type === 'brier-trend') {
-        // v0.36.1.0 ship state: 1-point series from the active profile. A
-        // proper 90-day time series will read from calibration_profiles
-        // generated_at history in v0.37 once we have multiple snapshots.
-        const series = profile?.brier !== null && profile?.brier !== undefined
-          // generated_at comes back from the engine as a Date (TIMESTAMPTZ), not
-          // a string — `.slice` would throw. Normalize to a YYYY-MM-DD string.
-          ? [{ date: new Date(profile.generated_at).toISOString().slice(0, 10), brier: profile.brier }]
-          : [];
-        return res.send(renderBrierTrend({ series }));
-      }
-      if (type === 'domain-bars') {
-        // v0.36.1.0 ship state: domain_scorecards JSONB is a placeholder
-        // (per-domain rendering comes when batchGetTakesScorecards lands in
-        // a follow-up). Render empty for now.
-        return res.send(renderDomainBars({ bars: [] }));
-      }
-      if (type === 'pattern-statements') {
-        return res.send(
-          renderPatternStatementsCard(
-            (profile?.pattern_statements ?? []).map((text: string) => ({ text })),
-          ),
-        );
-      }
-      if (type === 'abandoned-threads') {
-        // v0.36.1.0 ship state: pull abandoned threads inline via a small
-        // SQL query (the doctor check counts them; this surfaces details).
-        const rows = await engine.executeRaw<{
-          id: number;
-          page_slug: string;
-          claim: string;
-          weight: number;
-          since_date: string;
-        }>(
-          // `takes` has no page_slug column — it comes from the joined page.
-          // since_date is TEXT and may be month-precision ('YYYY-MM'); '2026-06'::date
-          // throws "invalid input syntax for type date", so normalize to the 1st
-          // before casting.
-          `SELECT t.id, p.slug AS page_slug, t.claim, t.weight, t.since_date
-             FROM takes t JOIN pages p ON p.id = t.page_id
-             WHERE t.active = true AND t.resolved_at IS NULL AND t.superseded_by IS NULL
-               AND t.weight >= 0.7
-               AND (t.since_date || CASE WHEN length(t.since_date) = 7 THEN '-01' ELSE '' END)::date
-                   < (now() - INTERVAL '12 months')
-             ORDER BY t.since_date ASC
-             LIMIT 5`,
-        );
-        const now = new Date();
-        const threads = rows.map(r => {
-          const since = new Date((r.since_date.length === 7 ? r.since_date + '-15' : r.since_date));
-          const monthsSilent = Math.max(0, Math.floor((now.getTime() - since.getTime()) / (1000 * 60 * 60 * 24 * 30)));
-          return {
-            takeId: r.id,
-            pageSlug: r.page_slug,
-            claim: r.claim,
-            monthsSilent,
-            conviction: r.weight,
-          };
-        });
-        return res.send(renderAbandonedThreadsCard(threads));
-      }
-      res.status(400).json({ error: 'unknown_chart_type', supported: ['brier-trend', 'domain-bars', 'pattern-statements', 'abandoned-threads'] });
-      return;
-    } catch (err) {
-      res.status(500).json({ error: err instanceof Error ? err.message : 'unknown' });
-      return;
-    }
-  });
-
-  app.get('/admin/api/requests', requireAdmin, async (req: Request, res: Response) => {
-    try {
-      const page = parseInt(req.query.page as string) || 1;
-      const limit = 50;
-      const offset = (page - 1) * limit;
-      const agent = req.query.agent as string;
-      const operation = req.query.operation as string;
-      const status = req.query.status as string;
-
-      // Dynamic filtering: SqlQuery is deliberately scalar-only and does not
-      // support fragment composition (the prior `sql\`AND ... = ${v}\`` shape).
-      // Build the WHERE clause with positional placeholders + a params array.
-      // `WHERE 1=1` lets us always have a WHERE clause and conditionally
-      // append `AND col = $N` fragments — still parameterized, still escaped
-      // by the driver, no sql.unsafe.
-      const filters: string[] = [];
-      const params: (string | number)[] = [];
-      if (agent && agent !== 'all') {
-        filters.push(`AND token_name = $${params.length + 1}`);
-        params.push(agent);
-      }
-      if (operation && operation !== 'all') {
-        filters.push(`AND operation = $${params.length + 1}`);
-        params.push(operation);
-      }
-      if (status && status !== 'all') {
-        filters.push(`AND status = $${params.length + 1}`);
-        params.push(status);
-      }
-      const filterSql = filters.join(' ');
-      const limitParam = `$${params.length + 1}`;
-      const offsetParam = `$${params.length + 2}`;
-
-      const rows = await engine.executeRaw(
-        `SELECT id, token_name, COALESCE(agent_name, token_name) as agent_name,
-                operation, latency_ms, status, params, error_message, created_at
-         FROM mcp_request_log
-         WHERE 1=1 ${filterSql}
-         ORDER BY created_at DESC LIMIT ${limitParam} OFFSET ${offsetParam}`,
-        [...params, limit, offset],
-      );
-      const [countResult] = await engine.executeRaw<{ total: number }>(
-        `SELECT count(*)::int as total FROM mcp_request_log
-         WHERE 1=1 ${filterSql}`,
-        params,
-      );
-      res.json({ rows, total: countResult.total, page, pages: Math.ceil(countResult.total / limit) });
-    } catch {
-      res.status(503).json({ error: 'service_unavailable' });
-    }
-  });
-
-  // Legacy API keys (access_tokens table)
-  app.get('/admin/api/api-keys', requireAdmin, async (_req: Request, res: Response) => {
-    try {
-      const keys = await sql`
-        SELECT id, name, created_at, last_used_at,
-          CASE WHEN revoked_at IS NOT NULL THEN 'revoked' ELSE 'active' END as status
-        FROM access_tokens ORDER BY created_at DESC
-      `;
-      res.json(keys);
-    } catch (e) {
-      res.status(503).json({ error: 'service_unavailable' });
-    }
-  });
-
-  app.post('/admin/api/api-keys', requireAdmin, express.json(), async (req: Request, res: Response) => {
-    try {
-      const { name } = req.body;
-      if (!name) { res.status(400).json({ error: 'Name required' }); return; }
-      const { generateToken, hashToken } = await import('../core/utils.ts');
-      const token = generateToken('gbrain_');
-      const hash = hashToken(token);
-      const id = (await import('crypto')).randomUUID();
-      await sql`INSERT INTO access_tokens (id, name, token_hash) VALUES (${id}, ${name}, ${hash})`;
-      res.json({ name, token, id });
-    } catch (e) {
-      res.status(500).json({ error: e instanceof Error ? e.message : 'Failed to create API key' });
-    }
-  });
-
-  app.post('/admin/api/api-keys/revoke', requireAdmin, express.json(), async (req: Request, res: Response) => {
-    try {
-      const { name } = req.body;
-      if (!name) { res.status(400).json({ error: 'Name required' }); return; }
-      await sql`UPDATE access_tokens SET revoked_at = now() WHERE name = ${name} AND revoked_at IS NULL`;
-      res.json({ revoked: true });
-    } catch (e) {
-      res.status(500).json({ error: e instanceof Error ? e.message : 'Revoke failed' });
-    }
-  });
-
-  mountAdminGrantDiscovery(app, requireAdmin, engine, mcpResourceUrl.toString());
-  mountAdminClients(app, requireAdmin, engine, mcpResourceUrl.toString());
-
-  mountAdminRegistration(app, requireAdmin, engine, mcpResourceUrl, issuerUrl);
-
-  // Update client TTL
-  app.post('/admin/api/update-client-ttl', requireAdmin, express.json(), async (req: Request, res: Response) => {
-    try {
-      const { clientId, tokenTtl } = req.body;
-      if (!clientId) { res.status(400).json({ error: 'clientId required' }); return; }
-      if (tokenTtl === undefined) { res.status(400).json({ error: 'tokenTtl required' }); return; }
-      const request = parseAdminGrantRequest(req.body);
-      const result = await rescopeClientGrant(engine, clientId, { tokenTtlSeconds: request.patch.tokenTtlSeconds }, { actor: 'admin-api', expectedRevision: request.expectedRevision, dryRun: request.dryRun });
-      res.json(request.dryRun ? { ...result, tokenImplications: GRANT_TOKEN_IMPLICATIONS } : { updated: true, tokenTtl: result.after.tokenTtlSeconds, ...(request.expectedRevision !== undefined ? { revision: result.revision } : {}) });
-    } catch (e) {
-      res.status(grantHttpStatus(e)).json({ error: e instanceof Error ? e.message : 'Update failed' });
-    }
-  });
-
-  mountAdminGrantEdits(app, requireAdmin, engine, oauthProvider);
-
-  // Revoke OAuth client
-  app.post('/admin/api/revoke-client', requireAdmin, express.json(), async (req: Request, res: Response) => {
-    try {
-      const { clientId } = req.body;
-      if (!clientId) { res.status(400).json({ error: 'clientId required' }); return; }
-      await oauthProvider.revokeClient(clientId);
-      res.json({ revoked: true });
-    } catch (e) {
-      res.status(500).json({ error: e instanceof Error ? e.message : 'Revoke failed' });
-    }
-  });
-
-  // ---------------------------------------------------------------------------
-  // SSE live activity feed
-  // ---------------------------------------------------------------------------
-  app.get('/admin/events', requireAdmin, (req: Request, res: Response) => {
-    openAdminSseStream(res);
-
-    sseClients.add(res);
-    req.on('close', () => sseClients.delete(res));
-  });
-
-  // ---------------------------------------------------------------------------
-  // Admin SPA static files (v0.36.x #1090)
-  // ---------------------------------------------------------------------------
-  // Two-tier resolution:
-  //   1. Dev path — admin/dist next to cwd. Vite rebuilds land here first,
-  //      so devs hacking on the SPA see changes without re-running
-  //      build-admin-embedded.
-  //   2. Binary path — `src/admin-embedded.ts` exports `ADMIN_ASSETS`, a
-  //      manifest of request-path → resolved-path keyed by every file in
-  //      admin/dist at generation time. Bun's `with { type: 'file' }` ESM
-  //      imports resolve correctly inside the compiled binary, so a
-  //      globally-installed `gbrain serve --http` actually serves /admin
-  //      instead of 404. Pre-fix the cwd-relative path was the ONLY
-  //      resolution path, and every fresh install of the compiled binary
-  //      hit 404 on /admin (issue #1090).
-  const path = await import('path');
-  const fs = await import('fs');
-  const adminDistPath = path.join(process.cwd(), 'admin', 'dist');
-  const useDevPath = fs.existsSync(adminDistPath);
-  if (useDevPath) {
-    app.use('/admin', express.static(adminDistPath));
-    app.get('/admin/{*path}', (req: Request, res: Response, next: NextFunction) => {
-      if (req.path.startsWith('/admin/api/') || req.path === '/admin/events' || req.path === '/admin/login') {
-        return next();
-      }
-      res.sendFile('index.html', { root: adminDistPath }); // Exclude hidden checkout ancestors from dotfile checks.
-    });
-  } else {
-    // Embedded path. Read assets from the generated manifest. Cache the
-    // bytes per asset on first request — these never change for a given
-    // binary, so subsequent requests skip the fs read.
-    const { ADMIN_ASSETS, ADMIN_INDEX_HTML } = await import('../admin-embedded.ts');
-    const cache = new Map<string, Buffer>();
-    function loadAsset(asset: { path: string }): Buffer {
-      const hit = cache.get(asset.path);
-      if (hit) return hit;
-      const buf = fs.readFileSync(asset.path);
-      cache.set(asset.path, buf);
-      return buf;
-    }
-    // Bare /admin (no trailing slash) never matches the '/admin/{*path}'
-    // pattern below — path-to-regexp requires the literal '/' that
-    // precedes the wildcard segment. The dev-path branch above doesn't need
-    // this: express.static() issues its own redirect-to-trailing-slash for
-    // a directory index request. Mirror that behavior explicitly here.
-    // Express route matching is non-strict by default, so the '/admin'
-    // pattern below also matches '/admin/' — guard on the exact path so
-    // it doesn't shadow the '/admin/{*path}' handler and redirect-loop.
-    app.get('/admin', (req: Request, res: Response, next: NextFunction) => {
-      if (req.path !== '/admin') {
-        return next();
-      }
-      const pendingId = req.query.oauth_request;
-    if (pendingId !== undefined && !oauthProvider.grants.hasPending(pendingId)) {
-      res.status(410).send('This OAuth request expired, completed, or the server restarted. Restart authorization in the native client and ask the server administrator for a new login link with the new pending-request ID.');
-      return;
-    }
-    res.redirect(oauthProvider.grants.hasPending(pendingId)
-      ? `/admin/?oauth_request=${pendingId}#oauth-consent` : '/admin/');
-    });
-    app.get('/admin/{*path}', (req: Request, res: Response, next: NextFunction) => {
-      if (req.path.startsWith('/admin/api/') || req.path === '/admin/events' || req.path === '/admin/login') {
-        return next();
-      }
-      const hit = ADMIN_ASSETS[req.path];
-      if (hit) {
-        res.setHeader('Content-Type', hit.mime);
-        res.send(loadAsset(hit));
-        return;
-      }
-      // SPA fallback — every unmatched /admin/* route resolves to index.html
-      // so client-side routing takes over (login, dashboard, agents, ...).
-      if (ADMIN_INDEX_HTML) {
-        res.setHeader('Content-Type', ADMIN_INDEX_HTML.mime);
-        res.send(loadAsset(ADMIN_INDEX_HTML));
-        return;
-      }
-      res.status(404).send('admin SPA not available');
-    });
-  }
-
-  // ---------------------------------------------------------------------------
-  // MCP tool calls (bearer auth + scope enforcement)
-  // ---------------------------------------------------------------------------
-  // MEMORY_VERBS v1 + WP4 (D2): the server-resolved surface is the CEILING.
-  // The per-REQUEST effective surface — min(ceiling, client row surface ??
-  // config default), clamped by the GBRAIN_MCP_FORCE_SURFACE kill switch
-  // (narrow-only, FOV-6a) — is resolved inside the /mcp handler so a rescope
-  // or config flip takes effect on the client's next request without a
-  // restart, and the dispatch allow-set is recomputed per request
-  // (amendment 20). The surface filter applies AFTER the localOnly filter;
-  // the same set feeds dispatch as allowedOps so hidden ops are uncallable,
-  // not just unlisted [c2].
-  const serverSurfaceCeiling: McpSurface = options.surface ?? 'full';
-  const mcpOperationsBase = operations.filter(op => !op.localOnly);
-
-  /**
-   * WP4 (D2): resolve this request's effective surface from the caller's
-   * verified auth. The config default (`mcp.default_surface_dcr`) is read
-   * dual-plane ONLY when the client row carries no usable surface — the
-   * common full-surface path pays no extra config read. Unknown row values
-   * are ignored with a warn-once per client (amendment 18). Never throws:
-   * surface resolution must not take a request down. On a default-surface
-   * read failure the LAST successfully read default (per process) still
-   * applies, so a transient config outage cannot silently widen a client
-   * that normally resolves narrower than the ceiling; with no prior read,
-   * the ceiling is the only floor available (pre-WP4 behavior).
-   */
-  let lastKnownDefaultSurface: McpSurface | null = null;
-  async function resolveEffectiveSurface(authInfo: AuthInfo): Promise<{ ceiling: McpSurface; effective: McpSurface }> {
-    const ceiling = clampSurface(serverSurfaceCeiling);
-    // min() can never go below the narrowest surface: a 'verbs' ceiling makes
-    // the row/default resolution a no-op, so skip the awaited config read.
-    if (ceiling === 'verbs') return { ceiling, effective: ceiling };
-    const rowSurface = resolveClientRowSurface(authInfo.surface, authInfo.clientId);
-    if (rowSurface !== null) return { ceiling, effective: minSurface(ceiling, rowSurface) };
-    try {
-      const dflt = await resolveDefaultClientSurface(engine, config);
-      lastKnownDefaultSurface = dflt ?? null;
-      return { ceiling, effective: minSurface(ceiling, dflt ?? ceiling) };
-    } catch {
-      return { ceiling, effective: minSurface(ceiling, lastKnownDefaultSurface ?? ceiling) };
-    }
-  }
-
-  // v0.36.x #1076: MCP Streamable HTTP spec — GET /mcp opens an optional SSE
-  // backchannel for server-initiated messages. gbrain's transport is stateless
-  // and doesn't push server-initiated messages, so per spec we MUST return 405
-  // (not 404) so probing clients (claude.ai, etc.) recognize this as an MCP
-  // endpoint, not a missing route. Without this, clients display "endpoint not
-  // found" instead of "endpoint exists but no SSE channel."
-  app.get('/mcp', (_req: Request, res: Response) => {
-    res.set('Allow', 'POST, DELETE');
-    res.status(405).json({ jsonrpc: '2.0', error: { code: -32000, message: 'Method not allowed' }, id: null });
-  });
-
-  app.post('/mcp', withBearerScopeHint(
-    requireBearerAuth({ verifier: resourceVerifier, resourceMetadataUrl }), ['read'],
-  ), async (req: Request, res: Response) => {
-    const startTime = Date.now();
-    const authInfo = (req as any).auth as AuthInfo;
-
-    // Human-readable agent name is now threaded through AuthInfo by
-    // verifyAccessToken (which JOINs oauth_clients in its existing token
-    // SELECT). No per-request DB roundtrip needed. Falls back to clientId
-    // for legacy tokens or when the JOIN row's client_name is NULL.
-    const agentName = authInfo.clientName ?? authInfo.clientId;
-
-    // WP4 (D2): per-request effective surface + fail-closed allow-set,
-    // recomputed per request (amendment 20) so rescopes/request_tools
-    // persists take effect on the next request with zero restart.
-    // Ambient writeback (opt-in, default off) resolves CONCURRENTLY with the
-    // surface read (performance review, this wave — the two independent DB
-    // waits must not serialize; an initialize-only resolve is NOT possible
-    // here because /mcp has no JSON middleware, so req.body is undefined
-    // until the SDK transport reads the stream — verified by the OAuth
-    // lifecycle test, which caught exactly that regression). Restart-free
-    // like the publish gates, fail-closed with a per-engine last-known-good
-    // bundle so a transient config blip serves the previous bundle instead
-    // of silently dropping the section mid-session. OV-A5: a token without
-    // write scope never receives the section (`remember` would be
-    // uncallable — instructions must not order impossible calls); OV2-14:
-    // extract_facts is advertised only when this token's ACTUAL visible set
-    // can call it (surface + scope + bound-client fence — the same
-    // predicates tools/list applies).
-    const canWrite = hasScope(authInfo.scopes, 'write');
-    const [{ ceiling: surfaceCeiling, effective: surface }, writeback] = await Promise.all([
-      resolveEffectiveSurface(authInfo),
-      canWrite ? resolveWritebackConfig(engine, config) : Promise.resolve(null),
-    ]);
-    const mcpOperations = filterOpsForSurface(mcpOperationsBase, surface)
-      .filter(op => authInfo.allowedOperations == null || authInfo.allowedOperations.includes(op.name));
-    authInfo.effectiveSurface = surface;
-    const surfaceAllowedOps: ReadonlySet<string> | undefined =
-      surface === 'full' && authInfo.allowedOperations == null ? undefined : new Set(mcpOperations.map(o => o.name));
-
-    // Create a fresh MCP server per request (stateless).
-    let writebackOpts: ReturnType<typeof ambientOptsFrom> = null;
-    if (writeback) {
-      // Both availability probes apply the SAME predicates tools/list does
-      // (surface filter + bound-client fence): a slug-bound client whose
-      // fence denies `remember` receives NO ambient section at all —
-      // instructions must never order calls dispatch will deny.
-      const rememberOp = mcpOperations.find(o => o.name === 'remember');
-      const extractFactsOp = mcpOperations.find(o => o.name === 'extract_facts');
-      writebackOpts = ambientOptsFrom(writeback, {
-        remember: rememberOp !== undefined && opAllowedForBoundClient(authInfo, rememberOp),
-        extractFacts: extractFactsOp !== undefined && opAllowedForBoundClient(authInfo, extractFactsOp),
-      });
-    }
-    const server = new Server(
-      { name: 'gbrain', version: VERSION },
-      {
-        capabilities: { tools: {}, resources: {} },
-        // #4748: contract (+ opt-in writeback section) + deployment identity.
-        instructions: resolveMcpInstructions(config, process.env, { writeback: writebackOpts }),
-      },
-    );
-    installCapabilitiesResource(server, async () => {
-      return { transport: authInfo.clientId.startsWith('gbrain_cl_') ? 'oauth' : 'legacy', client_id: authInfo.clientId,
-        ...await resolveAuthCapabilities(authInfo, engine, config), administration: mcpAdministrationGuidance(mcpResourceUrl.toString()) };
-    }, createSkillResources(engine, async () => {
-      const sourceId = authInfo.sourceId ?? 'default';
-      const { noGrantFederatedScope } = await import('../core/source-resolver.ts');
-      return { remote: true, transport: 'http', sourceId, auth: authInfo, config,
-        localFederatedSourceIds: await noGrantFederatedScope(engine, authInfo.hasSourceGrant, sourceId),
-        allowedOps: surfaceAllowedOps, surface, surfaceCeiling };
-    }));
-    server.setRequestHandler(ListToolsRequestSchema, async () => {
-      // WP1 honest catalog: the advertised list is exactly what THIS token
-      // can call. Three per-request filters, cheapest first:
-      //   1. token scope — a read-only token never sees admin/write tools;
-      //   2. bound-client fence — a slug-bound client never sees ops the
-      //      dispatch fence would deny (same predicate, cannot drift);
-      //   3. publish gates — gated ops (skills/advisor) are hidden while
-      //      their gate is off; the resolver never throws (read failure =
-      //      hidden, matching the default-off consent posture) so a config
-      //      hiccup costs at most the 4 gated tools, never the whole list.
-      // Call-time enforcement (hasScope / fence / assertPublishEnabled)
-      // stays as the fail-closed backstop for all three layers.
-      // Both per-request config reads are independent — issue them
-      // concurrently (one RTT of latency on network Postgres, not two).
-      const [gateDisabled, strictParamsMode] = await Promise.all([
-        disabledOpsForPublishGates(engine, config),
-        resolveStrictParamsMode(engine, config),
-      ]);
-      // FOV-4: `agent` deliberately implies only itself, which would strand
-      // agent-only tokens with ZERO discovery — ops flagged `agentCallable`
-      // (request_tools) are visible to (and callable by, below) agent scope
-      // in addition to their declared scope.
-      const visibleOps = mcpOperations.filter(op =>
-        operationScopesAllowed(authInfo.scopes, op)
-        && opAllowedForBoundClient(authInfo, op)
-        && !gateDisabled.has(op.name),
-      );
-      // WP3 (amendment 14): ONE schema mapper — the inline map this handler
-      // carried is unified onto buildToolDefs so the byte-pin test covers the
-      // transport consumers actually use. strict_params is read dual-plane
-      // PER REQUEST (same restart-free property as the publish gates above):
-      // 'reject' closes each schema with additionalProperties:false and
-      // declares the _meta/dry_run passthrough keys (D14.1).
-      const strictParams = strictParamsMode === 'reject';
-      const tools = buildToolDefs(visibleOps, { strictParams });
-      // v0.28.10: log every JSON-RPC method, not just successful tools/call.
-      // Pre-fix, /admin/api/requests showed nothing for clients that only
-      // ever called tools/list, and the v0.26.3 persistence regression test
-      // asserting >= 2 rows after tools/list + tools/call was unreachable.
-      // Amendment 23 stopgap (full list-size telemetry deferred): the row's
-      // params carry the listed-tool count so per-token-class list sizes are
-      // queryable (`params->>'tool_count'`) without new telemetry plumbing.
-      const latency = Date.now() - startTime;
-      try {
-        await executeRawJsonb(
-          engine,
-          `INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, params)
-           VALUES ($1, $2, $3, $4, $5, $6::jsonb)`,
-          [authInfo.clientId, agentName, 'tools/list', latency, 'success'],
-          [{ tool_count: tools.length }],
-        );
-      } catch { /* best effort */ }
-      broadcastEvent({
-        agent: agentName,
-        operation: 'tools/list',
-        scopes: authInfo.scopes.join(','),
-        latency_ms: latency,
-        status: 'success',
-        timestamp: new Date().toISOString(),
-      });
-      return { tools };
-    });
-
-    server.setRequestHandler(CallToolRequestSchema, async (request) => {
-      const { name, arguments: params } = request.params;
-      const op = mcpOperations.find(o => o.name === name);
-      if (!op) {
-        // v0.28.10: persist unknown-op attempts. Operators investigating
-        // misbehaving agents need to see the full attempt log, not just
-        // valid-op success/error.
-        const latency = Date.now() - startTime;
-        try {
-          await executeRawJsonb(
-            engine,
-            `INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, error_message, params)
-             VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
-            [authInfo.clientId, agentName, name, latency, 'error', `unknown_operation: ${name}`],
-            [null],
-          );
-        } catch { /* best effort */ }
-        broadcastEvent({
-          agent: agentName,
-          operation: name,
-          scopes: authInfo.scopes.join(','),
-          latency_ms: latency,
-          status: 'error',
-          error: { code: 'unknown_operation', message: `Unknown: ${name}` },
-          timestamp: new Date().toISOString(),
-        });
-        return { content: [{ type: 'text', text: JSON.stringify({ error: 'unknown_operation', message: `Unknown: ${name}` }) }], isError: true };
-      }
-
-      // Scope enforcement (v0.28: hasScope replaces exact-string-match so
-      // admin tokens satisfy any scope, write satisfies read, and the new
-      // sources_admin / users_admin scopes resolve through the same
-      // hierarchy. Plain string includes() at this site would have made
-      // sources_admin tokens look like they couldn't even read.)
-      const requiredScope = op.scope || 'read';
-      // FOV-4: agentCallable carve-out mirrors the tools/list filter above —
-      // an op listed for an agent-only token must not scope-deny at call time.
-      const scopeSatisfied = operationScopesAllowed(authInfo.scopes, op);
-      if (!scopeSatisfied) {
-        // v0.28.10: persist scope-rejected attempts. Same operator-visibility
-        // motivation as the unknown-op path — and it makes the v0.26.3
-        // persistence regression test reliable across both rejection paths.
-        // Amendment 33: a call-time scope deny is a LIST-LEVEL denial (the
-        // tools/list filter uses this same hasScope predicate, so the op was
-        // never advertised to this token — the client ignored or staled its
-        // list, or list/call drifted). status='denied_after_list' makes the
-        // honest-catalog metric a one-line count that trends to zero.
-        const latency = Date.now() - startTime;
-        try {
-          await executeRawJsonb(
-            engine,
-            `INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, error_message, params)
-             VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
-            [authInfo.clientId, agentName, name, latency, 'denied_after_list', `insufficient_scope: requires '${requiredScope}'`],
-            [null],
-          );
-        } catch { /* best effort */ }
-        broadcastEvent({
-          agent: agentName,
-          operation: name,
-          scopes: authInfo.scopes.join(','),
-          latency_ms: latency,
-          status: 'denied_after_list',
-          error: { code: 'insufficient_scope', message: `requires '${requiredScope}'` },
-          timestamp: new Date().toISOString(),
-        });
-        return {
-          content: [{
-            type: 'text',
-            text: JSON.stringify({
-              error: 'insufficient_scope',
-              message: `Operation ${name} requires '${requiredScope}' scope`,
-              your_scopes: authInfo.scopes,
-            }),
-          }],
-          isError: true,
-        };
-      }
-
-      // F8: redact request payload by default (declared keys only via the
-      // op's `params` allow-list; values + attacker-controlled key names
-      // never written to mcp_request_log or the SSE feed). --log-full-params
-      // bypasses this for operators debugging on their own laptop, with the
-      // startup warning printed earlier.
-      //
-      // D1 (v0.31 wave): mcp_request_log.params is JSONB. Pre-v0.31 wrote
-      // a JSON-string into that JSONB column via the postgres.js template
-      // tag's loose typing — readable but semantically wrong (params->>'op'
-      // would return the encoded string, not the value). Post-v0.31 we
-      // pass the OBJECT through executeRawJsonb with an explicit ::jsonb
-      // cast, so reads return real objects and `params->>'op'` returns
-      // 'tools/list'. Pre-existing string-shaped rows are normalized by
-      // migration v41 in src/core/migrate.ts.
-      const safeParamsSummary = summarizeMcpParams(name, params);
-      const logParamsObj: unknown = logFullParams
-        ? (params || null)
-        : (safeParamsSummary || null);
-      const broadcastParams = logFullParams ? (params || {}) : safeParamsSummary;
-
-      // v0.31 (D12 / eE1): refactor the inlined op.handler call to go through
-      // src/mcp/dispatch.ts so HTTP MCP shares the same dispatch path as
-      // stdio MCP. The dispatcher does param validation, OperationContext
-      // build, error envelope unification, and (new) `_meta.brain_hot_memory`
-      // injection via the metaHook. HTTP-specific concerns (mcp_request_log
-      // persistence + SSE broadcast) stay here; the dispatcher returns the
-      // ToolResult and we read isError + _meta to pick the right branch.
-      // #2529: takesHoldersAllowList is a typed AuthInfo field populated by
-      // verifyAccessToken from access_tokens.permissions.takes_holders for
-      // legacy bearer tokens ([] preserved as deny-all). The fail-closed
-      // ['world'] default covers OAuth-client tokens (no per-client storage
-      // yet — see TODOS.md) and pre-v29 brains (no permissions column →
-      // isUndefinedColumnError fallback in verifyAccessToken).
-      const tokenAllowList = authInfo.takesHoldersAllowList ?? ['world'];
-      // v0.34.1 (#861, D13): AuthInfo.sourceId is now a real typed field
-      // populated from oauth_clients.source_id (migration v60 backfilled
-      // NULL → 'default'). Pre-fix this site cast through AuthInfo and
-      // fell back to GBRAIN_SOURCE env / 'default' — the silent-fallback
-      // path codex flagged in plan review. Post-v60, every OAuth client
-      // has source_id set; legacy bearer tokens default to 'default' in
-      // verifyAccessToken. The env-fallback is gone.
-      const tokenSourceId = authInfo.sourceId ?? 'default';
-
-      // #3242 parity: the legacy-transport and stdio dispatch sites widen a
-      // no-grant caller's unqualified reads across the federated source set
-      // (localFederatedSourceIds); this SDK-transport site never did, so the
-      // same token saw federated pages over /mcp on one serve mode and scalar
-      // 'default' on the other. hasSourceGrant === false is set ONLY for
-      // legacy bearer tokens with no operator source grant (oauth-provider);
-      // granted tokens and OAuth clients never widen. Best-effort: a resolver
-      // failure keeps the scalar scope.
-      const { noGrantFederatedScope } = await import('../core/source-resolver.ts');
-      const localFederated = await noGrantFederatedScope(
-        engine,
-        authInfo.hasSourceGrant,
-        tokenSourceId,
-      );
-
-      let toolResult: Awaited<ReturnType<typeof dispatchToolCall>>;
-      try {
-        toolResult = await dispatchToolCall(engine, name, params as Record<string, unknown> | undefined, {
-          remote: true,
-          // WP1/D7: network transport — the dispatch-layer localOnly
-          // backstop keys off this marker.
-          transport: 'http',
-          takesHoldersAllowList: tokenAllowList,
-          sourceId: tokenSourceId,
-          ...(localFederated ? { localFederatedSourceIds: localFederated } : {}),
-          metaHook: getBrainHotMemoryMeta,
-          // MEMORY_VERBS v1: fail-closed surface enforcement + usage attribution.
-          ...(surfaceAllowedOps ? { allowedOps: surfaceAllowedOps } : {}),
-          surface,
-          // WP4 (D2): request_tools bounds its catalog + persist by this.
-          surfaceCeiling,
-          // v0.31 follow-up fix: thread auth so the whoami op (and any
-          // future scope-aware handlers) can introspect the caller. The
-          // original D12/eE1 refactor moved dispatch into dispatchToolCall
-          // but forgot to pass authInfo; whoami fell through to the
-          // unknown_transport throw because ctx.auth was undefined.
-          auth: authInfo,
-          logger: {
-            info: (msg: string) => console.error(`[INFO] ${msg}`),
-            warn: (msg: string) => console.error(`[WARN] ${msg}`),
-            error: (msg: string) => console.error(`[ERROR] ${msg}`),
-          },
-        });
-      } catch (e) {
-        // dispatchToolCall absorbs OperationError + Error and returns
-        // isError:true; only an unexpected throw lands here. Treat as the
-        // F15 unified envelope. v0.31 wave (D1): mcp_request_log.params is
-        // JSONB — write the object via executeRawJsonb so reads return a
-        // real object, not a JSON-encoded string.
-        const latency = Date.now() - startTime;
-        const errorPayload = serializeError(e);
-        try {
-          await executeRawJsonb(
-            engine,
-            `INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, error_message, params)
-             VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
-            [authInfo.clientId, agentName, name, latency, 'error', errorPayload.message],
-            [logParamsObj],
-          );
-        } catch { /* best effort */ }
-        broadcastEvent({
-          agent: agentName,
-          operation: name,
-          params: broadcastParams,
-          scopes: authInfo.scopes.join(','),
-          latency_ms: latency,
-          status: 'error',
-          error: errorPayload,
-          timestamp: new Date().toISOString(),
-        });
-        return { content: [{ type: 'text', text: JSON.stringify({ error: errorPayload }) }], isError: true };
-      }
-
-      const latency = Date.now() - startTime;
-      if (toolResult.isError) {
-        // dispatchToolCall serializes the error into the content text;
-        // for the audit log we re-extract a message string for the
-        // mcp_request_log error_message column. Best-effort parse.
-        // Amendment 33 / D10: op-level denials the list should have
-        // prevented (publish-gate backstop `config_key=...`, bound-client
-        // fence op-level deny `fence=op`) log status='denied_after_list'
-        // instead of plain 'error' — the honest-catalog trend-to-zero
-        // metric. Argument-level fence denials carry no marker and stay
-        // 'error' (legitimate for a listed op).
-        let errMsg = 'unknown_error';
-        try {
-          const parsed = JSON.parse(toolResult.content[0]?.text ?? '{}');
-          errMsg = parsed.error?.message ?? parsed.message ?? errMsg;
-        } catch { /* ignore */ }
-        const errStatus = requestLogStatusForResult(toolResult);
-        try {
-          await executeRawJsonb(
-            engine,
-            `INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, error_message, params)
-             VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
-            [authInfo.clientId, agentName, name, latency, errStatus, errMsg],
-            [logParamsObj],
-          );
-        } catch { /* best effort */ }
-        broadcastEvent({
-          agent: agentName,
-          operation: name,
-          params: broadcastParams,
-          scopes: authInfo.scopes.join(','),
-          latency_ms: latency,
-          status: errStatus,
-          error: { code: 'op_error', message: errMsg },
-          timestamp: new Date().toISOString(),
-        });
-        return toolResult;
-      }
-
-      // WP3 (amendment 13): warn-mode observability. A success whose _meta
-      // carries a non-empty warnings array logs as 'success_with_warnings' so
-      // the reject-flip decision is evidence-based (count per client via the
-      // status column). Warn CONTENTS (the raw unknown keys) are never logged.
-      const successStatus = requestLogStatusForResult(toolResult);
-      try {
-        await executeRawJsonb(
-          engine,
-          `INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, params)
-           VALUES ($1, $2, $3, $4, $5, $6::jsonb)`,
-          [authInfo.clientId, agentName, name, latency, successStatus],
-          [logParamsObj],
-        );
-      } catch { /* best effort */ }
-      broadcastEvent({
-        agent: agentName,
-        operation: name,
-        params: broadcastParams,
-        scopes: authInfo.scopes.join(','),
-        latency_ms: latency,
-        status: successStatus,
-        timestamp: new Date().toISOString(),
-      });
-      return toolResult;
-    });
-
-    // F14: wrap transport setup + handleRequest in try/catch. Without this,
-    // an SDK-level throw (e.g., schema parse failure on a malformed request)
-    // propagates to express's default error handler, which renders an HTML
-    // error page — clients expecting JSON-RPC envelopes break. On
-    // !res.headersSent we emit a minimal JSON 500 so the client at least
-    // gets parseable JSON back.
-    try {
-      const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined as any });
-      // #2844: per-request teardown (SDK stateless pattern) — without it every POST /mcp leaks the transport+Server pair (~3GB/day RSS). Registered BEFORE connect/handleRequest so early disconnects and handleRequest throws still clean up; best-effort catches so cleanup never surfaces an unhandledRejection.
-      res.on('close', () => { transport.close().catch(() => {}); server.close().catch(() => {}); });
-      await server.connect(transport);
-      await transport.handleRequest(req, res, req.body);
-    } catch (e) {
-      console.error('MCP request handler error:', e instanceof Error ? e.message : e);
-      if (!res.headersSent) {
-        res.status(500).json({
-          error: 'internal_error',
-          message: e instanceof Error ? e.message : 'Unknown error',
-        });
-      }
-    }
-  });
-
-  // ---------------------------------------------------------------------------
-  // v0.38 ingestion substrate — POST /ingest (webhook source)
-  //
-  // The webhook ingestion source lives INSIDE serve --http (NOT in the
-  // ingestion daemon) per the /plan-eng-review E1 decision. This avoids
-  // cross-process IPC: the daemon supervises only daemon-side sources
-  // (file-watcher, inbox-folder, cron-scheduler) while serve --http hosts
-  // the network surface and submits Minion jobs directly.
-  //
-  // Auth: existing OAuth `write` scope. Rate limit: 100 events / 10s per
-  // IP (reuses the IP-keyed pattern from ccRateLimiter; a future tweak
-  // could key on authInfo.clientId for fairer per-agent fairness).
-  // Payload cap: 1 MB default. Content-type allowlist: markdown, plain,
-  // HTML, JSON. Binary content is REJECTED with HTTP 415 in v1 — the
-  // binary-upload flow ships as a separate route in a later wave when
-  // content-type processors land.
-  //
-  // Events always carry untrusted_payload: true because the input came
-  // over the network from an OAuth-authenticated but otherwise untrusted
-  // source (Zapier / IFTTT / Apple Shortcuts). The downstream
-  // ingest_capture handler logs the flag; a future v2 wave wires it
-  // through the put_page op to skip auto-link.
-  // ---------------------------------------------------------------------------
-  const ingestRateLimiter = rateLimit({
-    windowMs: 10_000, // 10 seconds
-    limit: 100, // 100 events per IP per window
-    standardHeaders: 'draft-7',
-    legacyHeaders: false,
-    message: { error: 'rate_limit_exceeded', message: 'too many /ingest events; backoff and retry' },
-  });
-
-  // Maximum payload bytes for POST /ingest. Configurable via env. Default 1 MB.
-  const ingestMaxBytes = (() => {
-    const fromEnv = process.env.GBRAIN_INGEST_MAX_BYTES;
-    if (!fromEnv) return 1_048_576;
-    const n = parseInt(fromEnv, 10);
-    return Number.isFinite(n) && n > 0 ? n : 1_048_576;
-  })();
-
-  // Content-type allowlist: text-shaped types only in v1. The handler
-  // routes binary content_types with HTTP 415; a future wave + skillpack
-  // processors will accept image/audio/video/pdf via a separate flow.
-  const INGEST_ALLOWED_CONTENT_TYPES: ReadonlySet<IngestionContentType> = new Set([
-    'text/markdown',
-    'text/plain',
-    'text/html',
-    'application/json',
-  ]);
-
-  // Single MinionQueue instance shared across POST /ingest invocations
-  // (the queue is stateless beyond the engine handle; reusing avoids
-  // per-request construction).
-  const ingestQueue = new MinionQueue(engine);
-
-  app.post(
-    '/ingest',
-    ingestRateLimiter,
-    requireBearerAuth({ verifier: resourceVerifier, requiredScopes: ['write'], resourceMetadataUrl }),
-    express.raw({ type: '*/*', limit: ingestMaxBytes }),
-    async (req: Request, res: Response) => {
-      const startTime = Date.now();
-      const authInfo = (req as Request & { auth?: AuthInfo }).auth as AuthInfo;
-      const agentName = authInfo.clientName ?? authInfo.clientId;
-
-      // v0.39.3.0 BUG-2: outer try/catch ensures any unexpected throw
-      // returns a JSON envelope instead of leaking express's default HTML
-      // error page. Mirrors the MCP handler's F14 pattern (serve-http.ts
-      // F14 envelope around transport.handleRequest). The `!res.headersSent`
-      // guard (codex F#16) prevents a second-response attempt if the throw
-      // happens after the inner queue.add try/catch already responded.
-      try {
-
-      // The webhook queue bypasses MCP dispatch and does not carry an original
-      // operation grant through execution. A snapshot-bound client must use the
-      // shared MCP write path until ingestion has that same policy contract.
-      if (authInfo.allowedOperations != null || authInfo.grantProjectionDegraded) {
-        res.status(403).json({
-          error: 'permission_denied',
-          message: 'POST /ingest is unavailable to clients with operation snapshots. ' +
-            'Use an approved MCP capture, put_page, or remember operation so the current grant is enforced.',
-        });
-        return;
-      }
-
-      // v0.39.3.0 BUG-2: explicit null/undefined guard BEFORE body coercion.
-      // When the request has no body at all (no Content-Length header, no
-      // body-parser fed us anything), `req.body` is `undefined`. The pre-fix
-      // code's `else` branch called `Buffer.from(JSON.stringify(undefined),
-      // 'utf8')` — and `JSON.stringify(undefined) === undefined` (the
-      // literal, not the string), which makes `Buffer.from(undefined, 'utf8')`
-      // throw TypeError. Express's default error handler then served an HTML
-      // 500 page. Guard fires first to keep the response shape JSON.
-      if (req.body == null) {
-        res.status(400).json({
-          error: 'empty_body',
-          message: 'POST /ingest requires a non-empty body',
-        });
-        return;
-      }
-
-      // Express raw() returns a Buffer. Decode as UTF-8; reject non-UTF-8
-      // bytes loudly so callers know their payload was garbled.
-      let body: Buffer;
-      if (Buffer.isBuffer(req.body)) {
-        body = req.body;
-      } else if (typeof req.body === 'string') {
-        body = Buffer.from(req.body, 'utf8');
-      } else {
-        // express.json or urlencoded fired earlier in the chain and parsed
-        // for us. Re-serialize so we can hash and forward. The null/undefined
-        // case is already guarded above so JSON.stringify produces a real
-        // string here (objects round-trip, primitives become their JSON form).
-        body = Buffer.from(JSON.stringify(req.body), 'utf8');
-      }
-
-      if (body.length === 0) {
-        res.status(400).json({ error: 'empty_body', message: 'POST /ingest requires a non-empty body' });
-        return;
-      }
-
-      // Detect content_type. Caller can override via the X-Gbrain-Content-Type
-      // header for the JSON case (since the request's Content-Type would say
-      // application/json but the user might intend the body to be markdown).
-      const declared = (req.header('x-gbrain-content-type') || req.header('content-type') || '').toLowerCase();
-      let contentType: IngestionContentType;
-      if (declared.startsWith('text/markdown')) {
-        contentType = 'text/markdown';
-      } else if (declared.startsWith('text/html')) {
-        contentType = 'text/html';
-      } else if (declared.startsWith('text/plain')) {
-        contentType = 'text/plain';
-      } else if (declared.startsWith('application/json')) {
-        contentType = 'application/json';
-      } else if (declared.startsWith('text/')) {
-        // Unknown text/* sub-types pass through as text/plain.
-        contentType = 'text/plain';
-      } else {
-        // Binary or unknown — rejected in v1.
-        res.status(415).json({
-          error: 'unsupported_content_type',
-          message: `content_type '${declared}' not supported. Use one of: ${[...INGEST_ALLOWED_CONTENT_TYPES].join(', ')}. ` +
-            'Binary content (image/audio/video/pdf) is not yet supported via POST /ingest — install a content-type processor skillpack.',
-        });
-        return;
-      }
-
-      if (!INGEST_ALLOWED_CONTENT_TYPES.has(contentType)) {
-        res.status(415).json({
-          error: 'unsupported_content_type',
-          message: `content_type '${contentType}' is in the taxonomy but not currently accepted by POST /ingest`,
-        });
-        return;
-      }
-
-      const content = body.toString('utf8');
-      const contentHash = computeContentHash(content);
-      const sourceUri = (req.header('x-gbrain-source-uri') || `mcp-webhook:${authInfo.clientId}:${Date.now()}`).slice(0, 1024);
-      const sourceId = `webhook-${authInfo.clientId}`.slice(0, 256);
-      const callerSlug = req.header('x-gbrain-slug');
-
-      // Slug-bound clients cannot use /ingest at all. The route hands its
-      // payload to the ingest_capture minion handler, which deliberately
-      // bypasses the put_page op layer — so no OperationContext exists and
-      // enforceClientSlugFence never runs. The caller-supplied
-      // X-Gbrain-Source-Id is still never honored, but the write source is now
-      // resolved server-side from the client's own OAuth scope, so the write
-      // does land inside the client's granted source. The fence gap is
-      // therefore the SLUG axis alone: without this 403 a bound client could
-      // write any slug within its source, which is exactly the binding it was
-      // given. These clients have put_page over MCP, which enforces both the
-      // prefix fence and the source scope; webhook integrations use unbound
-      // clients.
-      const boundPrefixes = authInfo.boundSlugPrefixes;
-      if (boundPrefixes || authInfo.fenceProjectionDegraded) {
-        res.status(403).json({
-          error: 'permission_denied',
-          message: authInfo.fenceProjectionDegraded
-            ? 'POST /ingest is unavailable: this brain\'s oauth_clients projection is missing ' +
-              'bound_slug_prefixes, so client write bindings cannot be evaluated. ' +
-              'Run `gbrain apply-migrations --yes` on the brain host.'
-            : 'POST /ingest is not available to clients restricted to slug prefixes ' +
-              `(bound_slug_prefixes: ${boundPrefixes!.join(', ')}). Write through the MCP put_page op, ` +
-              'which enforces the prefix fence and your source scope.',
-        });
-        return;
-      }
-
-      const event: IngestionEvent = {
-        source_id: sourceId,
-        source_kind: 'webhook',
-        source_uri: sourceUri,
-        received_at: new Date().toISOString(),
-        content_type: contentType,
-        content,
-        content_hash: contentHash,
-        untrusted_payload: true, // ALWAYS true for network input
-        metadata: {
-          ip: req.ip,
-          user_agent: req.header('user-agent') ?? '',
-          client_id: authInfo.clientId,
-          ...(callerSlug ? { slug: callerSlug } : {}),
-        },
-      };
-
-      const validationErr = validateIngestionEvent(event);
-      if (validationErr) {
-        res.status(400).json({
-          error: 'invalid_event',
-          message: validationErr.message,
-          field: validationErr.field,
-        });
-        return;
-      }
-
-      try {
-        const writeSourceId = authInfo.sourceId ?? 'default';
-        const job = await ingestQueue.add(
-          'ingest_capture',
-          {
-            event,
-            ...(callerSlug ? { slug: callerSlug } : {}),
-            sourceId: writeSourceId,
-          },
-          {
-            // Idempotency: same content from the same client within the
-            // queue's lifetime is a single job. Different content gets
-            // different jobs. Daemon-side dedup catches the 24h window;
-            // the queue-level idempotency catches simultaneous retries.
-            // The effective write source is part of the key: a client rescoped
-            // from source X to Y must land a NEW capture in Y rather than being
-            // deduped against its old X-bound job.
-            idempotency_key: `ingest:webhook:${authInfo.clientId}:${writeSourceId}:${contentHash}`,
-            // Cap waiting jobs from a single client so a runaway integration
-            // can't fill the queue.
-            maxWaiting: 50,
-          },
-        );
-
-        const latency = Date.now() - startTime;
-        try {
-          await executeRawJsonb(
-            engine,
-            `INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, params)
-             VALUES ($1, $2, $3, $4, $5, $6::jsonb)`,
-            [authInfo.clientId, agentName, 'webhook_ingest', latency, 'success'],
-            // write_source_id is the security-relevant part of this request:
-            // which partition the capture was routed to. Without it the audit
-            // trail cannot answer "where did this client's writes land".
-            [{ content_type: contentType, content_hash: contentHash, bytes: body.length, job_id: job.id, write_source_id: writeSourceId }],
-          );
-        } catch { /* best effort */ }
-        broadcastEvent({
-          agent: agentName,
-          operation: 'webhook_ingest',
-          scopes: authInfo.scopes.join(','),
-          latency_ms: latency,
-          status: 'success',
-          timestamp: new Date().toISOString(),
-        });
-
-        res.status(202).json({
-          job_id: job.id,
-          content_hash: contentHash,
-          // Emitter identity (`webhook-<clientId>`), kept for back-compat.
-          source_id: sourceId,
-          // The brain source this capture is routed to, resolved server-side
-          // from the client's OAuth scope. This is the routing decision the
-          // caller actually cares about; `source_id` above is NOT a partition.
-          // Enqueue-time intent: the write runs asynchronously after this 202,
-          // so a later source_fallback (see the ingest_capture job result) can
-          // still redirect it.
-          write_source_id: writeSourceId,
-          message: 'Accepted. Event queued for ingestion.',
-        });
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        console.error('POST /ingest queue submission error:', msg);
-        res.status(500).json({
-          error: 'queue_submission_failed',
-          message: msg,
-        });
-      }
-
-      // v0.39.3.0 BUG-2: outer try/catch close — anything that throws BEFORE
-      // the inner queue.add try/catch lands here. The headersSent guard
-      // (codex F#16) skips the second-response attempt if the inner block
-      // already wrote a response and then threw on a downstream line (e.g.
-      // a logging side-effect after `res.status(202).json(...)`).
-      } catch (outerErr) {
-        const msg = outerErr instanceof Error ? outerErr.message : String(outerErr);
-        console.error('POST /ingest unexpected handler error:', msg);
-        if (!res.headersSent) {
-          res.status(500).json({
-            error: 'internal_error',
-            message: msg,
-          });
-        }
-      }
-    },
-  );
-
-  // ---------------------------------------------------------------------------
-  // POST /webhooks/github — push-triggered sync (v0.40 Federated Sync v2)
-  // ---------------------------------------------------------------------------
-  // Anonymous endpoint by necessity (GitHub doesn't carry an OAuth token).
-  // Auth is via per-source HMAC-SHA256 in the X-Hub-Signature-256 header.
-  //
-  // D3: 60 req/min/IP rate limit + pre-DB short-circuit on missing
-  //     signature, so probe traffic doesn't even touch the source-lookup
-  //     query.
-  // D5: event=push AND ref-match against sources.config.tracked_branch.
-  //     Other event types (ping, pull_request, etc.) return 202 'ignored'
-  //     so GitHub doesn't retry.
-  // D15.5: HMAC compare uses the shared safeHexEqual helper.
-  // D18: submits 'sync' job with extraction + auto_embed_backfill enabled and
-  //     priority -10 (above autopilot's 0). This opts normal incremental pushes
-  //     into sync's inline extraction while pagesAffected still identifies the
-  //     changed pages. The sync core can still defer large (>100) changes.
-  // ---------------------------------------------------------------------------
-  const githubWebhookLimiter = rateLimit({
-    windowMs: 60_000,
-    limit: 60,
-    standardHeaders: 'draft-7',
-    legacyHeaders: false,
-    message: { error: 'rate_limit_exceeded', message: 'too many GitHub webhook requests' },
-  });
-
-  /**
-   * v0.46: issue/PR event handling for github-kind sources. The payload
-   * names a single item (repo + number); we verify the per-source HMAC and
-   * submit a targeted `sync` job with github_item so exactly that item is
-   * refreshed. Out-of-scope repos are rejected at queue time by the sync
-   * engine's own scope check.
-   */
-  async function handleGitHubItemEvent(
-    engine: BrainEngine,
-    parsed: Record<string, unknown>,
-    sigHeader: string,
-    payload: Buffer,
-    res: Response,
-    eventName: string,
-  ): Promise<void> {
-    const ref = extractGitHubItemRef(parsed);
-    if (ref === null) {
-      // Not an item-bearing payload (e.g. check events without a linked PR,
-      // ping, branch protection). Acknowledge so GitHub does not retry.
-      res.status(202).json({ status: 'ignored', reason: 'no_item_ref' });
-      return;
-    }
-
-    // Collect ALL candidate sources: exact github_repo matches (legacy
-    // webhook config) and github-kind sources with a webhook secret, then
-    // verify HMAC per candidate. Only github-kind sources may enqueue a
-    // github_item refresh; two verifying github-kind sources mean ambiguous
-    // configuration and must not pick silently.
-    let source: { id: string; local_path: string | null; config: unknown } | null = null;
-    try {
-      const rows = await engine.executeRaw<{ id: string; local_path: string | null; config: unknown }>(
-        `SELECT id, local_path, config FROM sources
-           WHERE archived = false
-             AND ((config->>'github_repo' = $1)
-               OR (config->>'kind' = 'github' AND config->>'webhook_secret' IS NOT NULL))`,
-        [ref.repo],
-      );
-      const { verified, legacyMatched } = selectGitHubItemSources(rows, ref.repo, (cfg) =>
-        verifyWebhookSig(cfg, sigHeader, payload),
-      );
-      if (verified.length > 1) {
-        res.status(500).json({
-          error: 'ambiguous_webhook',
-          message: `multiple sources verified the signature for ${ref.repo}; configure one webhook secret per source`,
-          sources: verified.map((v) => v.id),
-        });
-        return;
-      }
-      if (verified.length === 0 && legacyMatched) {
-        // A legacy push-webhook source verified the signature but cannot
-        // service item events — ACK so GitHub doesn't retry, exactly like
-        // the pre-item-flow non-push behavior.
-        res.status(202).json({ status: 'ignored', reason: `event=${eventName}` });
-        return;
-      }
-      source = verified[0] ?? null;
-    } catch (err) {
-      console.error('webhook: github-kind source lookup error:', err);
-      res.status(500).json({ error: 'lookup_failed' });
-      return;
-    }
-    if (!source) {
-      res.status(404).json({ error: 'unknown_repo', repo: ref.repo });
-      return;
-    }
-
-    try {
-      const queue = new MinionQueue(engine);
-      const job = await queue.add(
-        'sync',
-        {
-          sourceId: source.id,
-          noExtract: false,
-          github_item: {
-            repo: ref.repo,
-            number: ref.number,
-            kind: ref.kind,
-            ...(eventName === 'issues' && parsed.action === 'deleted' ? { deleted: true } : {}),
-          },
-          embed_reason: 'webhook',
-        },
-        {
-          priority: -10,
-          idempotency_key: `webhook:item:${source.id}:${ref.repo}:${ref.number}:${Math.floor(Date.now() / 30_000)}`,
-          maxWaiting: 1,
-        },
-      );
-      res.status(202).json({ job_id: job.id, source_id: source.id, item: ref });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error('webhook: item queue submission error:', msg);
-      res.status(500).json({ error: 'queue_submission_failed', message: msg });
-    }
-  }
-
-  function verifyWebhookSig(cfg: Record<string, unknown>, sigHeader: string, payload: Buffer): boolean {
-    const secret = cfg.webhook_secret;
-    if (typeof secret !== 'string' || secret === '') return false;
-    // Strict hex shape first: a malformed 64-char signature would make
-    // safeHexEqual throw (500 instead of 401).
-    if (!/^sha256=[0-9a-f]{64}$/.test(sigHeader)) return false;
-    const computedHex = createHmac('sha256', secret).update(payload).digest('hex');
-    return safeHexEqual(sigHeader.slice('sha256='.length), computedHex);
-  }
-
-  app.post(
-    '/webhooks/github',
-    githubWebhookLimiter,
-    express.raw({ type: '*/*', limit: '1mb' }),
-    async (req: Request, res: Response) => {
-      // D3 pre-DB short-circuit: missing signature → 401 without any
-      // source lookup. Bot probe traffic ends here.
-      const sigHeader = req.header('X-Hub-Signature-256');
-      if (!sigHeader) {
-        res.status(401).json({ error: 'missing_signature', message: 'X-Hub-Signature-256 header is required' });
-        return;
-      }
-
-      // D5: filter by event header. GitHub fires webhooks for every event
-      // type. Anything not in the handled set is acknowledged with 202 +
-      // reason so GitHub doesn't retry — but no source lookup or job
-      // submission. Push events drive git-source sync (below). Issue/PR
-      // events drive github-kind single-item refresh (itemFlow).
-      const event = req.header('X-GitHub-Event') ?? '';
-      const GH_ITEM_EVENTS = new Set([
-        'issues',
-        'pull_request',
-        'issue_comment',
-        'pull_request_review',
-        'pull_request_review_comment',
-        'label',
-        'assignee',
-        'milestone',
-        'check_run',
-        'check_suite',
-        'workflow_run',
-      ]);
-      if (event !== 'push' && !GH_ITEM_EVENTS.has(event)) {
-        res.status(202).json({ status: 'ignored', reason: `event=${event || '(missing)'}` });
-        return;
-      }
-
-      const payload = Buffer.isBuffer(req.body) ? req.body : Buffer.from(JSON.stringify(req.body), 'utf8');
-      if (payload.length === 0) {
-        res.status(400).json({ error: 'empty_body' });
-        return;
-      }
-
-      let parsed: Record<string, unknown>;
-      try {
-        parsed = JSON.parse(payload.toString('utf8'));
-      } catch {
-        res.status(400).json({ error: 'malformed_json' });
-        return;
-      }
-
-      // GitHub-kind item refresh path (v0.46): issues / pull_request /
-      // comment / review / label / assignee / milestone / check events
-      // refresh exactly the item that changed.
-      if (GH_ITEM_EVENTS.has(event)) {
-        await handleGitHubItemEvent(engine, parsed, sigHeader, payload, res, event);
-        return;
-      }
-
-      const pushParsed = parsed as { repository?: { full_name?: string }; ref?: string };
-      const fullName = pushParsed.repository?.full_name;
-      const ref = pushParsed.ref;
-      if (!fullName || !ref) {
-        res.status(400).json({ error: 'missing_fields', message: 'repository.full_name and ref are required' });
-        return;
-      }
-
-      // Source lookup via the v87 partial expression index on
-      // config->>'github_repo'. fast even on large brains.
-      let source: { id: string; config: Record<string, unknown> | string } | null = null;
-      try {
-        const rows = await engine.executeRaw<{ id: string; config: Record<string, unknown> | string }>(
-          `SELECT id, config FROM sources WHERE config->>'github_repo' = $1 LIMIT 1`,
-          [fullName],
-        );
-        source = rows[0] ?? null;
-      } catch (err) {
-        console.error('webhook: source lookup error:', err);
-        res.status(500).json({ error: 'lookup_failed' });
-        return;
-      }
-      if (!source) {
-        res.status(404).json({ error: 'unknown_repo', repo: fullName });
-        return;
-      }
-
-      const cfg = (typeof source.config === 'string' ? JSON.parse(source.config) : source.config) as {
-        webhook_secret?: string;
-        tracked_branch?: string;
-      };
-
-      // D5: ref must match the configured tracked branch (default 'main').
-      const trackedBranch = cfg.tracked_branch ?? 'main';
-      const expectedRef = `refs/heads/${trackedBranch}`;
-      if (ref !== expectedRef) {
-        res.status(202).json({
-          status: 'ignored',
-          reason: `ref_mismatch`,
-          received_ref: ref,
-          tracked_branch: trackedBranch,
-        });
-        return;
-      }
-
-      const secret = cfg.webhook_secret;
-      if (!secret || typeof secret !== 'string') {
-        res.status(401).json({ error: 'webhook_not_configured', message: 'Run: gbrain sources webhook set ' + source.id });
-        return;
-      }
-
-      // HMAC verify. GitHub sends "sha256=<hex>" — strip the prefix BEFORE
-      // safeHexEqual because Buffer.from('sha256=...', 'hex') silently
-      // truncates at the first non-hex char (the 's'), leaving both
-      // operands as 0-byte buffers and making every signature "match".
-      // Strict hex shape first: a malformed 64-char signature would make
-      // safeHexEqual throw (500 instead of 401), codex LOW.
-      const { createHmac } = await import('node:crypto');
-      const computedHex = createHmac('sha256', secret).update(payload).digest('hex');
-      const prefix = 'sha256=';
-      if (!/^sha256=[0-9a-f]{64}$/.test(sigHeader)) {
-        res.status(401).json({ error: 'signature_mismatch', message: 'expected sha256=<64 hex> signature' });
-        return;
-      }
-      if (!safeHexEqual(sigHeader.slice(prefix.length), computedHex)) {
-        res.status(401).json({ error: 'signature_mismatch' });
-        return;
-      }
-
-      // Submit sync job with priority -10 (above autopilot's 0).
-      try {
-        const queue = new MinionQueue(engine);
-        const job = await queue.add(
-          'sync',
-          {
-            sourceId: source.id,
-            noExtract: false,
-            auto_embed_backfill: true,
-            embed_reason: 'webhook',
-          },
-          {
-            priority: -10,
-            idempotency_key: `webhook:sync:${source.id}:${Math.floor(Date.now() / 30_000)}`,
-            maxWaiting: 1,
-          },
-        );
-        res.status(202).json({ job_id: job.id, source_id: source.id });
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        console.error('webhook: queue submission error:', msg);
-        res.status(500).json({ error: 'queue_submission_failed', message: msg });
-      }
-    },
-  );
+  mountMetrics(app, ctx);
+  mountAdminApi(app, ctx);
+  await mountSpa(app, ctx);
+  mountMcp(app, ctx);
+  mountWebhooks(app, ctx);
+
+  return { bind, config, sql, issuerUrl, skillStatus, bootstrapToken, bootstrapFromEnv, suppressBootstrapPrint };
+}
+
+export async function runServeHttp(engine: BrainEngine, options: ServeHttpOptions) {
+  const { port, tokenTtl, enableDcr, enableDcrInsecure } = options;
+  // Express 5 app
+  const app = express();
+  const { bind, config, sql, issuerUrl, skillStatus, bootstrapToken, bootstrapFromEnv, suppressBootstrapPrint } =
+    await buildServeHttpApp(app, engine, options);
 
   // ---------------------------------------------------------------------------
   // Start server
@@ -3063,7 +880,7 @@ ${bootstrapFromEnv
   const ipcBinding = await bindResolveIpcForServe(
     engine,
     (await resolveMcpStdioSourceScope(engine)).sourceId,
-    await createPersistenceIpcProvider(engine, config),
+    await createPersistenceIpcProvider(engine, residentPersistenceConfig(config) ?? config),
   );
   if (ipcBinding.socketPath) {
     console.error(`  Resolve IPC: ${ipcBinding.socketPath}`);

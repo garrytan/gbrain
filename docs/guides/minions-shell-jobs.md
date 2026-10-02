@@ -115,7 +115,9 @@ Note: `--follow` blocks the crontab slot until the job finishes. If 14 shell
 crons land at the same minute and each takes 30s, they serialize through
 crontab's spawning limits. Postgres + persistent worker scales better.
 
-### Calling `gbrain` itself from a shell job — use `inherit:` for DATABASE_URL {#secrets}
+<a id="secrets"></a>
+
+### Calling `gbrain` itself from a shell job — use `inherit:` for DATABASE_URL
 
 A common pattern is submitting shell jobs that run `gbrain` CLI commands:
 
@@ -255,7 +257,7 @@ cat ~/.gbrain/audit/shell-jobs-*.jsonl | jq '.'
 # First-time failure mode: submitted without env flag on the worker.
 # The handler is always registered but guarded: an unflagged worker that claims
 # a shell job dead-letters it immediately (UnrecoverableError, no retries).
-gbrain jobs list --status dead --name shell
+gbrain jobs list --status dead --json | jq '.[] | select(.name == "shell")'
 # → error_text: "shell handler disabled on this worker (start it with --allow-shell-jobs or GBRAIN_ALLOW_SHELL_JOBS=1 ...)"
 # `waiting` pileups mean NO worker is running at all (flagged or not) — check
 # `gbrain jobs supervisor status` in that case.
@@ -277,7 +279,9 @@ gbrain jobs list --status dead --name shell
 
 ---
 
-## Errors {#errors}
+<a id="errors"></a>
+
+## Errors
 
 | Error | What it means | Fix |
 |---|---|---|

@@ -1,4 +1,11 @@
-import { withConnectorSync, rethrowConnectorWriteError, type ManagedConnectorSync } from './persistence/connector-sync.ts';
+import { withConnectorSync, rethrowConnectorWriteError, pendingConnectorResult, type ManagedConnectorSync } from './persistence/connector-sync.ts';
+import { resolveGitHubAccount } from './persistence/connector-account.ts';
+import { isValidRepoName } from './github-source-config.ts';
+import { connectorRender } from './connectors/connector-text.ts';
+import { ConnectorHoldSession, connectorHoldsResult } from './connectors/connector-hold-session.ts';
+export { isValidRepoName, parseGitHubSourceConfig } from './github-source-config.ts';
+export { AppTokenProvider, mintAppInstallationToken } from './github-app-token.ts';
+import { AppTokenProvider } from './github-app-token.ts';
 import { slugifyPath } from './sync.ts';
 /**
  * github-source — GitHub issues/PR sync for the `github` source kind.
@@ -34,7 +41,6 @@ import { slugifyPath } from './sync.ts';
  */
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync, rmSync, renameSync } from 'node:fs';
-import { createSign } from 'node:crypto';
 import { dirname, join, relative } from 'node:path';
 
 import type { BrainEngine } from './engine.ts';
@@ -95,58 +101,6 @@ export function isGitHubSourceConfig(config: Record<string, unknown>): boolean {
   return config.kind === GH_KIND;
 }
 
-/** True for "owner/name" with no dot segments, slashes, or empty parts. */
-export function isValidRepoName(repo: string): boolean {
-  if (repo.length === 0 || repo.length > 200) return false;
-  if (repo.startsWith('/') || repo.endsWith('/')) return false;
-  const parts = repo.split('/');
-  if (parts.length !== 2) return false;
-  return parts.every((p) => p.length > 0 && p !== '.' && p !== '..' && /^[\w.-]+$/.test(p));
-}
-
-export function parseGitHubSourceConfig(
-  config: Record<string, unknown>,
-  fallbackDir: string,
-): GitHubSourceConfig {
-  const tokenEnv =
-    typeof config.gh_token_env === 'string' && config.gh_token_env.length > 0
-      ? config.gh_token_env
-      : 'GH_TOKEN';
-  const app: GitHubAppConfig | null =
-    typeof config.gh_app_id === 'number' &&
-    Number.isInteger(config.gh_app_id) &&
-    typeof config.gh_app_pem_path === 'string' &&
-    config.gh_app_pem_path.length > 0
-      ? {
-          appId: config.gh_app_id,
-          pemPath: config.gh_app_pem_path,
-          installId:
-            typeof config.gh_app_install_id === 'number' &&
-            Number.isInteger(config.gh_app_install_id) &&
-            config.gh_app_install_id > 0
-              ? config.gh_app_install_id
-              : undefined,
-        }
-      : null;
-  // gh_handle / gh_involvement are reserved config keys: tolerated when
-  // present but ignored (the involvement expansion is not implemented).
-  const scope = config.gh_scope === 'repos' ? 'repos' : 'auto';
-  // Repo names are case-insensitive on GitHub; everything downstream (page
-  // paths, state file, webhook matching, slugs) keys on the lowercase form.
-  const repos =
-    typeof config.gh_repos === 'string'
-      ? config.gh_repos
-          .split(',')
-          .map((s) => s.trim().toLowerCase())
-          .filter(isValidRepoName)
-      : [];
-  const dir =
-    typeof config.gh_dir === 'string' && config.gh_dir.length > 0
-      ? config.gh_dir
-      : fallbackDir;
-  return { tokenEnv, app, scope, repos, dir };
-}
-
 export function gitHubStateFile(dir: string): string {
   return join(dir, '.github-source.json');
 }
@@ -155,6 +109,8 @@ interface GitHubState {
   last_sweep_at: string | null;
   /** owner/name -> default branch (for check fetches we only need head sha, so this stays small). */
   repos: string[];
+  /** Fix wave 4: connector item holds (src/core/connectors/item-holds.ts). */
+  item_holds?: unknown;
 }
 
 function readState(dir: string): GitHubState {
@@ -168,6 +124,7 @@ function readState(dir: string): GitHubState {
       repos: Array.isArray(parsed.repos)
         ? parsed.repos.filter((r): r is string => typeof r === 'string').map((r) => r.toLowerCase())
         : [],
+      ...(parsed.item_holds ? { item_holds: parsed.item_holds } : {}),
     };
   } catch {
     return { last_sweep_at: null, repos: [] };
@@ -194,80 +151,6 @@ interface RateInfo {
 export interface GitHubTokenProvider {
   getToken(): Promise<string>;
   refresh(): Promise<string>;
-}
-
-function b64url(input: string): string {
-  return Buffer.from(input, 'utf-8')
-    .toString('base64')
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/, '');
-}
-
-interface MintedInstallationToken {
-  token: string;
-  expiresAt: number; // epoch ms
-}
-
-/**
- * Mint an installation access token for a GitHub App:
- * RS256 JWT (iss = app id, 9 min) -> find installation -> POST access_tokens.
- * Installation tokens last 1 hour; callers refresh before expiry.
- */
-export async function mintAppInstallationToken(
-  app: GitHubAppConfig,
-  fetchImpl: FetchImpl = fetch,
-): Promise<MintedInstallationToken> {
-  const pem = readFileSync(app.pemPath, 'utf-8');
-  const nowSec = Math.floor(Date.now() / 1000);
-  const header = b64url(JSON.stringify({ alg: 'RS256', typ: 'JWT' }));
-  const payload = b64url(JSON.stringify({ iat: nowSec, exp: nowSec + 540, iss: app.appId }));
-  const signer = createSign('RSA-SHA256');
-  signer.update(`${header}.${payload}`);
-  signer.end();
-  const sig = signer.sign(pem, 'base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-  const jwt = `${header}.${payload}.${sig}`;
-  const headers = {
-    authorization: `Bearer ${jwt}`,
-    accept: 'application/vnd.github+json',
-    'x-github-api-version': '2022-11-28',
-  };
-
-  let installId = app.installId;
-  if (!installId) {
-    const res = await fetchImpl('https://api.github.com/app/installations', { headers });
-    if (!res.ok) throw new Error(`GitHub App installations HTTP ${res.status}`);
-    const installs = (await res.json()) as Array<{ id: number }>;
-    if (installs.length === 0) throw new Error('GitHub App has no installations');
-    installId = installs[0].id;
-  }
-  const res = await fetchImpl(`https://api.github.com/app/installations/${installId}/access_tokens`, {
-    method: 'POST',
-    headers,
-  });
-  if (!res.ok) throw new Error(`GitHub App access_tokens HTTP ${res.status}`);
-  const body = (await res.json()) as { token: string; expires_at: string };
-  return { token: body.token, expiresAt: Date.parse(body.expires_at) };
-}
-
-/** Caches a minted installation token and refreshes it before expiry. */
-export class AppTokenProvider implements GitHubTokenProvider {
-  private cached: MintedInstallationToken | null = null;
-
-  constructor(
-    private readonly app: GitHubAppConfig,
-    private readonly fetchImpl: FetchImpl = fetch,
-  ) {}
-
-  async getToken(): Promise<string> {
-    if (this.cached && this.cached.expiresAt - 5 * 60_000 > Date.now()) return this.cached.token;
-    return this.refresh();
-  }
-
-  async refresh(): Promise<string> {
-    this.cached = await mintAppInstallationToken(this.app, this.fetchImpl);
-    return this.cached.token;
-  }
 }
 
 export class GitHubClient {
@@ -1080,6 +963,7 @@ interface GitHubSyncDeps {
 async function materializePage(deps: GitHubSyncDeps, filePath: string, content: string,
   activePack: Parameters<typeof importPage>[2]) {
   const rel = relative(deps.cfg.dir, filePath).replace(/\\/g, '/');
+  content = connectorRender(content, { path: rel });
   if (deps.managed) return deps.managed.importMarkdown(rel, content);
   const created = !existsSync(filePath);
   mkdirSync(dirname(filePath), { recursive: true });
@@ -1189,7 +1073,7 @@ export async function runGitHubSync(
   fetchImpl?: FetchImpl,
 ): Promise<import('../commands/sync.ts').SyncResult> {
   return withConnectorSync(engine, sourceId, 'github', cfg, opts,
-    (managed, options) => runGitHubSyncInner(engine, sourceId, cfg, options, managed, fetchImpl));
+    (managed, options) => runGitHubSyncInner(engine, sourceId, cfg, options, managed, fetchImpl), pendingConnectorResult);
 }
 
 async function runGitHubSyncInner(engine: BrainEngine, sourceId: string, cfg: GitHubSourceConfig, opts: SyncOpts,
@@ -1203,9 +1087,9 @@ async function runGitHubSyncInner(engine: BrainEngine, sourceId: string, cfg: Gi
       `GitHub source "${sourceId}" has no token. Set ${cfg.tokenEnv} in the environment or configure a GitHub App (gh_app_id + gh_app_pem_path).`,
     );
   }
-  const client = cfg.app
-    ? new GitHubClient(new AppTokenProvider(cfg.app, fetchImpl ?? fetch), fetchImpl)
-    : new GitHubClient(process.env[cfg.tokenEnv] ?? '', fetchImpl);
+  const appTokens = cfg.app ? new AppTokenProvider(cfg.app, fetchImpl ?? fetch) : null;
+  const client = new GitHubClient(appTokens ?? process.env[cfg.tokenEnv] ?? '', fetchImpl, (message) => console.error(message));
+  if (managed) await managed.assertAccount(await resolveGitHubAccount(cfg, client, appTokens, opts.signal)); // #5686 installation/login pin
   const deps: GitHubSyncDeps = { engine, sourceId, cfg, opts, client, managed };
   const summary: GitHubSyncSummary = {
     status: 'synced',
@@ -1282,6 +1166,20 @@ async function runGitHubSyncInner(engine: BrainEngine, sourceId: string, cfg: Gi
     const countedSlugs = new Set<string>();
     let maxUpdatedAt = state.last_sweep_at ?? '';
     const repoMeta = new Map<string, RawRepo>();
+    // Fix wave 4 (#5740): an item failing 3 consecutive runs is held, so one
+    // permanently failing item no longer pins the watermark; held items stay
+    // visible (sources status, doctor, sync summary) until retried.
+    const holds = await ConnectorHoldSession.open(engine, sourceId, managed, { last_sweep_at: null, repos: [] }, state.item_holds, { full: opts.full });
+    const itemFailed = async (repo: string, item: { number: number; kind: 'issue' | 'pr'; updated_at: string; list?: { title?: string } }, err: unknown, what = '') => {
+      const key = `${repo}#${item.number}`;
+      const blocking = !holds.isHeld(key);
+      await holds.fail(key, err, { version: item.updated_at || null, ref: item.kind, slug: slugifyPath(`gh/${repo}/${item.number}`),
+        meta: { title: item.list?.title ?? null, upstream_at: item.updated_at || null } });
+      deps.client.log?.(`[github] item ${repo}#${item.number}${what} failed: ${err instanceof Error ? err.message : String(err)}`);
+      summary.failedFiles++;
+      if (blocking) summary.status = 'partial';
+      progress.tick(1, `${repo}#${item.number} failed`);
+    };
 
     for (const repo of repos) {
       if (opts.signal?.aborted) break;
@@ -1314,6 +1212,10 @@ async function runGitHubSyncInner(engine: BrainEngine, sourceId: string, cfg: Gi
           const filePath = itemPagePath(cfg.dir, repo, item.number);
           keepPaths.add(relative(cfg.dir, filePath).replace(/\\/g, '/'));
           summary.itemsSeen++;
+          if (!holds.shouldAttempt(`${repo}#${item.number}`, item.updated_at)) {
+            progress.tick(1, `${repo}#${item.number} held`);
+            continue;
+          }
           // Open PRs are never fresh: their check state can change without
           // touching the PR's updated_at (a new check run does not bump it),
           // so they are re-fetched every sweep. Cost is bounded by the number
@@ -1325,6 +1227,7 @@ async function runGitHubSyncInner(engine: BrainEngine, sourceId: string, cfg: Gi
             // a repo whose newest item is always fresh stays re-listed on
             // every sweep (the since filter never passes it).
             if (item.updated_at > maxUpdatedAt) maxUpdatedAt = item.updated_at;
+            holds.succeed(`${repo}#${item.number}`);
             progress.tick(1, `${repo}#${item.number} fresh`);
             continue;
           }
@@ -1344,15 +1247,20 @@ async function runGitHubSyncInner(engine: BrainEngine, sourceId: string, cfg: Gi
                 }
               }
             } catch (err) {
-              if (managed) rethrowConnectorWriteError(err);
-              deps.client.log?.(`[github] item ${repo}#${item.number} list render failed: ${err instanceof Error ? err.message : String(err)}`);
-              summary.failedFiles++;
-              summary.status = 'partial';
-              progress.tick(1, `${repo}#${item.number} failed`);
+              await itemFailed(repo, item, err, ' list render');
               continue;
             }
           }
           pendingDetail.push(item);
+        }
+        // Held items the listing no longer returns are re-attempted when
+        // retry-held asked for them or a transient reconsideration is due.
+        const listed = new Set(items.map((i) => i.number));
+        for (const key of holds.dueHeldKeys()) {
+          const number = Number(key.slice(repo.length + 1));
+          if (!key.startsWith(`${repo}#`) || listed.has(number) || !holds.shouldAttempt(key)) continue;
+          keepPaths.add(relative(cfg.dir, itemPagePath(cfg.dir, repo, number)).replace(/\\/g, '/'));
+          pendingDetail.push({ repo, number, kind: holds.holds.record(key)?.ref === 'pr' ? 'pr' : 'issue', state: 'open', updated_at: '', list: {} as RawIssueListItem });
         }
         // Pass 2 (expensive): comments, reviews, checks, exact merge state.
         // Runs in the same sweep so the final page is complete; an item that
@@ -1379,13 +1287,10 @@ async function runGitHubSyncInner(engine: BrainEngine, sourceId: string, cfg: Gi
                 }
               }
             } catch (err) {
-              if (managed) rethrowConnectorWriteError(err);
-              deps.client.log?.(`[github] item ${repo}#${item.number} failed: ${err instanceof Error ? err.message : String(err)}`);
-              summary.failedFiles++;
-              summary.status = 'partial';
-              progress.tick(1, `${repo}#${item.number} failed`);
+              await itemFailed(repo, item, err);
               continue;
             }
+            holds.succeed(`${repo}#${item.number}`);
             progress.tick(1, `${repo}#${item.number}`);
             // Cursor advances only for items that fully succeeded.
             if (item.updated_at > maxUpdatedAt) maxUpdatedAt = item.updated_at;
@@ -1441,16 +1346,22 @@ async function runGitHubSyncInner(engine: BrainEngine, sourceId: string, cfg: Gi
     // it was already listed): state-listing an unswept repo would skip its
     // history bootstrap on the next run (previousRepos gates the since filter).
     state.repos = repos.filter((r) => succeededRepos.has(`gh/${r}`) || previousRepos.has(r));
+    // Throws connector_holds_exhausted before any save, so the cursor stays.
+    state.item_holds = holds.finish();
     if (summary.status === 'synced') {
       state.last_sweep_at = maxUpdatedAt || (managed ? null : new Date().toISOString());
       if (managed) await managed.saveState(state, true, state.last_sweep_at ?? undefined);
       else { writeState(cfg.dir, state); await touchSourceRow(deps, state.last_sweep_at!); }
-    } else if (!managed) {
+    } else if (managed) {
+      // A partial run leaves the cursor at its last committed position and publishes only changed holds.
+      if (!opts.signal?.aborted) await managed.publishHolds({ last_sweep_at: null, repos: [] }, state.item_holds);
+    } else {
+      // #5740 (#5741): a partial sweep persists its state but never stamps last_sync_at.
       writeState(cfg.dir, state);
-      await touchSourceRow(deps, state.last_sweep_at ?? new Date().toISOString());
     }
+    await holds.complete();
 
-    return syncResult(summary, opts);
+    return { ...syncResult(summary, opts), ...connectorHoldsResult(sourceId, holds.summary()) };
   } finally {
     progress.finish();
   }

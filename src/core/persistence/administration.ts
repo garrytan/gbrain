@@ -8,12 +8,15 @@ import { isValidSourceId } from '../source-id.ts';
 import { assertValidSlugPrefixes } from '../grants/encoding.ts';
 import { isWriteRequestId } from './types.ts';
 import { writerDiagnostics } from './control.ts';
-import { acceptWriterTransfer, claimWorktree, getWorktreeBinding, prepareWriterTransfer, worktreeManifest } from './ownership.ts';
+import { acceptWriterTransfer, claimWorktree, getWorktreeBinding, humanManifestProgress, prepareWriterTransfer, worktreeManifest } from './ownership.ts';
 import { existingLocalHostId, currentVerifiedLocalWriter, persistenceHome, readLocalWriter, registerLocalWriter, revokeLocalWriter, type LocalGrant } from './identity.ts';
 import type { PersistenceAdminOperation } from './admin-contract.ts';
 import { operationScopesAllowed } from '../scope.ts';
 import { assertWriterAdminState, requireWriterAdminIntent, writerAdminState, WRITER_INSPECTION_HINT } from './admin-intent.ts';
 import { writerOnboardingPreflight } from './onboarding.ts';
+import { assertWriterAdminUnlocked, readWriterAdminLock, setWriterAdminLock } from './admin-lock.ts';
+import { listBlockingEffects } from './blocking-effects.ts';
+import { listWriterVersions } from './writer-versions.ts';
 
 const invalid = (message: string) => new OperationError('invalid_params', message);
 function source(value: unknown): string {
@@ -62,6 +65,12 @@ async function registrationGrant(engine: BrainEngine, params: Record<string, unk
   return { sourceIds, scopes, operations, slugPrefixes };
 }
 
+/** Shown by `writer claim` (and its dry run) while persistence is not activated. */
+export const CLAIM_BEFORE_ACTIVATION_NOTICE = 'Persistence is not activated. After this claim, gbrain sync refuses this source with '
+  + 'writer_coordinator_required until activation, and legacy file writers in its checkout (sources push, lint --fix and other '
+  + 'file-writing maintenance) refuse while the checkout is managed. Stop older writers, review gbrain sources writer status, '
+  + 'then activate deliberately.';
+
 export async function runPersistenceAdministration(engine: BrainEngine, operation: PersistenceAdminOperation,
   params: Record<string, unknown>, config?: GBrainConfig, embeddingRetryPolicy: 'owner' | 'mounted_database' = 'owner'): Promise<Record<string, unknown>> {
   if (operation === 'writer_reconcile_preview') return (await import('./reconcile.ts')).runReconcilePreview(engine, params);
@@ -82,14 +91,29 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
     return { ...await runtime.connectCompanyBrain(engine, input) };
   }
   if (currentVerifiedLocalWriter()?.remote) throw new OperationError('permission_denied', 'Writer administration requires a trusted local CLI caller.');
+  if (operation === 'writer_lock' || operation === 'writer_unlock') {
+    keys(params, []);
+    return { ...await setWriterAdminLock(engine, operation === 'writer_lock') };
+  }
+  // Early refusal before any native lock or preview; the checks inside each transaction stay authoritative.
+  if (['writer_claim', 'writer_activate', 'writer_transfer_prepare', 'writer_transfer_accept'].includes(operation)) await assertWriterAdminUnlocked(engine);
   if (operation === 'writer_sync') return (await import('./sync-administration.ts')).runAuthenticatedSyncSlice(engine, params);
+  if (operation === 'writer_extract_stale') {
+    keys(params, ['source_id', 'dry_run']);
+    const writer = currentVerifiedLocalWriter();
+    if (!writer || writer.remote || writer.principal.kind !== 'local_cli') throw new OperationError('permission_denied', 'Stale extraction requires a trusted CLI registration.');
+    const { managedPersistenceEnabled } = await import('./ownership.ts');
+    if (!await managedPersistenceEnabled(engine)) throw new OperationError('writer_coordinator_required', 'Owner-delegated stale extraction requires activated managed persistence.', WRITER_INSPECTION_HINT);
+    return { ...await (await import('./links-maintenance.ts')).runManagedStaleExtraction(engine,
+      { sourceId: params.source_id === undefined ? undefined : source(params.source_id), dryRun: params.dry_run === true }) };
+  }
   if (operation === 'writer_reindex_code') return (await import('./reindex-administration.ts')).runAuthenticatedCodeReindex(engine, params);
   if (operation === 'writer_embed_facts') return (await import('./embed-facts-administration.ts')).runAuthenticatedFactEmbedding(engine, params, config);
   if (operation === 'writer_retry_effects') {
     keys(params, ['source_id', 'request_id', 'dry_run']);
     if (params.dry_run !== undefined && typeof params.dry_run !== 'boolean') throw invalid('dry_run must be a boolean.');
     if (!isWriteRequestId(params.request_id)) throw invalid('A valid original write request UUID is required.');
-    return (await import('./effect-retry.ts')).retryEmbeddingEffect(engine, source(params.source_id), params.request_id, params.dry_run === true, config, embeddingRetryPolicy);
+    return (await import('./effect-retry.ts')).retryRequestEffects(engine, source(params.source_id), params.request_id, params.dry_run === true, config, embeddingRetryPolicy);
   }
   if (operation === 'source_add' || operation === 'source_lifecycle') {
     const { managedPersistenceEnabled } = await import('./ownership.ts');
@@ -140,15 +164,28 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
     const onboarding = await writerOnboardingPreflight(engine, params.source_id as string | undefined);
     const [sharedSkills] = await engine.executeRaw<{ writer_protocol_floor: number; skill_bundles_enabled: boolean }>(
       'SELECT writer_protocol_floor,skill_bundles_enabled FROM persistence_brain WHERE singleton=1');
+    const adminLock = await readWriterAdminLock(engine);
+    const blockingEffects = await listBlockingEffects(engine, { sourceId: params.source_id as string | undefined, limit: 20 });
+    const writerVersions = await listWriterVersions(engine);
     await assertWriterAdminState(engine, adminState, false);
-    return { ...diagnostics, host_id: existingLocalHostId(), bindings, admin_state: adminState, onboarding, shared_skills: sharedSkills, ...(native ? { native_lock: native } : {}) };
+    const { cleanupRetiredManagedMarkers } = await import('./deactivation.ts');
+    const [mode] = await engine.executeRaw<{ enabled: boolean; mode_epoch: string | null }>(
+      "SELECT enabled, to_jsonb(persistence_brain)->>'mode_epoch' AS mode_epoch FROM persistence_brain WHERE singleton=1");
+    return { ...diagnostics, mode: mode?.enabled ? 'managed' : 'classic', mode_epoch: Number(mode?.mode_epoch ?? 1),
+      local_markers: await cleanupRetiredManagedMarkers(engine),
+      host_id: existingLocalHostId(), local_host_id: existingLocalHostId(), bindings, admin_state: adminState,
+      admin_lock: { locked: adminLock.locked, set_at: adminLock.set_at, host_id: adminLock.host_id }, blocking_effects: blockingEffects,
+      writer_versions: writerVersions, onboarding, shared_skills: sharedSkills, ...(native ? { native_lock: native } : {}) };
   }
   if (operation === 'writer_claim') {
     keys(params, ['source_id', 'path', 'dry_run', 'admin_intent', 'expected_state']);
     const sourceId = source(params.source_id), root = path(params.path);
-    if (params.dry_run) return { dry_run: true, action: operation, source_id: sourceId, path: root, current: await getWorktreeBinding(engine, sourceId, existingLocalHostId()) };
+    // #5198: say at claim time what the claim retires, before and after the fact.
+    const [brain] = await engine.executeRaw<{ enabled: boolean }>('SELECT enabled FROM persistence_brain WHERE singleton=1');
+    const notice = brain?.enabled ? {} : { activation_required: CLAIM_BEFORE_ACTIVATION_NOTICE };
+    if (params.dry_run) return { dry_run: true, action: operation, source_id: sourceId, path: root, current: await getWorktreeBinding(engine, sourceId, existingLocalHostId()), ...notice };
     const expectedState = await requireWriterAdminIntent(engine, operation, params);
-    return { claimed: true, binding: await claimWorktree(engine, sourceId, root, undefined, expectedState) };
+    return { claimed: true, binding: await claimWorktree(engine, sourceId, root, undefined, expectedState), ...notice };
   }
   if (operation === 'writer_activate') {
     keys(params, ['confirm_quiesced', 'dry_run', 'shared_skills', 'admin_intent', 'expected_state', 'cleanup_dead_local_locks']);
@@ -166,6 +203,28 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
       unsupported_maintenance: [...UNSUPPORTED_MANAGED_BULK_WRITERS],
       ...(params.dry_run ? { dry_run: true, action: operation } : {}) };
   }
+  if (operation === 'writer_deactivate') {
+    if (params.source_id !== undefined) throw invalid('Deactivate is brain-wide: it converts every source of this brain back to classic mode. Omit the <source> argument.');
+    keys(params, ['dry_run', 'admin_intent', 'expected_state', 'request_id']);
+    const { deactivatePersistence } = await import('./deactivation.ts');
+    if (params.dry_run === true) {
+      // DX-O13: a clean preview prints the state-bound command that applies exactly what it reviewed, so the
+      // state is read before the preview and the command is printed only when nothing moved while it ran.
+      const state = await writerAdminState(engine);
+      const report = await deactivatePersistence(engine, { dryRun: true });
+      const unchanged = state === await writerAdminState(engine);
+      return { ...report, action: operation, ...(report.mode === 'managed' && report.blockers.length === 0 && unchanged
+        ? { apply_command: `gbrain sources writer deactivate --admin-intent writer_deactivate --expected-state ${state}` } : {}) };
+    }
+    let expectedState: string | undefined;
+    try { expectedState = await requireWriterAdminIntent(engine, operation, params); }
+    catch (error) {
+      if (!(error instanceof OperationError) || error.code !== 'writer_admin_state_changed') throw error;
+      error.suggestion = `The current admin_state is ${await writerAdminState(engine)}. Review gbrain sources writer status --json, then rerun with --expected-state <that admin_state>.`;
+      throw error;
+    }
+    return { ...await deactivatePersistence(engine, { expectedState, requestId: params.request_id === undefined ? undefined : uuid(params.request_id) }) };
+  }
   if (operation === 'writer_transfer_prepare') {
     keys(params, ['source_id', 'dry_run', 'admin_intent', 'expected_state', 'self_transfer']);
     const sourceId = source(params.source_id);
@@ -174,12 +233,12 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
       const binding = await getWorktreeBinding(engine, sourceId, existingLocalHostId());
       if (!binding || binding.owner_host_id !== existingLocalHostId() || !binding.local_path) throw new OperationError('permission_denied', 'Only the current owner can prepare a transfer.');
       const { manifest } = await prepareWriterTransfer(engine, sourceId, existingLocalHostId()!, undefined, { selfTransfer: params.self_transfer === true, dryRun: true });
-      return { dry_run: true, action: operation, binding, manifest: { digest: manifest.digest, file_count: Object.keys(manifest.files).length } };
+      return { dry_run: true, action: operation, binding, manifest: { digest: manifest.digest, file_count: manifest.file_count } };
     }
     const expectedState = await requireWriterAdminIntent(engine, operation, params);
     const prepared = await prepareWriterTransfer(engine, sourceId, undefined, expectedState, { selfTransfer: params.self_transfer === true });
     return { prepared: true, source_id: sourceId, worktree_id: prepared.worktree_id, owner_epoch: prepared.owner_epoch,
-      manifest: { digest: prepared.manifest.digest, file_count: Object.keys(prepared.manifest.files).length } };
+      manifest: { digest: prepared.manifest.digest, file_count: prepared.manifest.file_count } };
   }
   if (operation === 'writer_transfer_accept') {
     keys(params, ['source_id', 'path', 'expected_epoch', 'manifest', 'dry_run', 'admin_intent', 'expected_state', 'self_transfer']);
@@ -190,7 +249,7 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
     if (typeof params.manifest !== 'string' || !/^[a-f0-9]{64}$/.test(params.manifest)) throw invalid('manifest must be the prepared SHA-256 manifest digest.');
     if (params.dry_run && params.self_transfer === true) await acceptWriterTransfer(engine, sourceId, root, params.expected_epoch, params.manifest, existingLocalHostId()!, undefined, { selfTransfer: true, dryRun: true });
     if (params.dry_run) return { dry_run: true, action: operation, source_id: sourceId, current: await getWorktreeBinding(engine, sourceId, existingLocalHostId()),
-      manifest_matches: worktreeManifest(root).digest === params.manifest, expected_epoch: params.expected_epoch };
+      manifest_matches: worktreeManifest(root, { progress: humanManifestProgress() }).digest === params.manifest, expected_epoch: params.expected_epoch };
     const expectedState = await requireWriterAdminIntent(engine, operation, params);
     await acceptWriterTransfer(engine, sourceId, root, params.expected_epoch, params.manifest, undefined, expectedState, { selfTransfer: params.self_transfer === true });
     return { transferred: true, binding: await getWorktreeBinding(engine, sourceId) };

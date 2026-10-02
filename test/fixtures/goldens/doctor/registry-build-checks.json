@@ -1,0 +1,679 @@
+{
+  "golden": {
+    "checks": [
+      {
+        "category": "skill",
+        "name": "resolver_health"
+      },
+      {
+        "category": "skill",
+        "name": "retrieval_reflex_health"
+      },
+      {
+        "category": "skill",
+        "name": "volunteer_channels"
+      },
+      {
+        "category": "skill",
+        "name": "memory_verbs_usage"
+      },
+      {
+        "category": "skill",
+        "name": "skill_conformance"
+      },
+      {
+        "category": "skill",
+        "name": "skill_brain_first"
+      },
+      {
+        "category": "skill",
+        "name": "skills_manifest_integrity"
+      },
+      {
+        "category": "skill",
+        "name": "skill_currency"
+      },
+      {
+        "category": "skill",
+        "name": "skill_preconditions"
+      },
+      {
+        "category": "ops",
+        "name": "plugin_lane_collision"
+      },
+      {
+        "category": "ops",
+        "name": "bootstrap_harness_health"
+      },
+      {
+        "category": "ops",
+        "name": "bootstrap_hooks_heartbeat"
+      },
+      {
+        "category": "ops",
+        "name": "bootstrap_push_health"
+      },
+      {
+        "category": "ops",
+        "name": "bootstrap_durability_job"
+      },
+      {
+        "category": "ops",
+        "name": "bootstrap_serve_lock"
+      },
+      {
+        "category": "ops",
+        "name": "bootstrap_hook_schema_pairing"
+      },
+      {
+        "category": "ops",
+        "name": "bootstrap_runbook_skew"
+      },
+      {
+        "category": "ops",
+        "name": "bootstrap_last_verify"
+      },
+      {
+        "category": "ops",
+        "name": "memorable_relay_health"
+      },
+      {
+        "category": "brain",
+        "name": "memory_writeback"
+      },
+      {
+        "category": "ops",
+        "name": "connectors"
+      },
+      {
+        "category": "ops",
+        "name": "dream_paid_loop"
+      },
+      {
+        "category": "meta",
+        "name": "minions_migration"
+      },
+      {
+        "category": "meta",
+        "name": "upgrade_errors"
+      },
+      {
+        "category": "ops",
+        "name": "self_upgrade_health"
+      },
+      {
+        "category": "ops",
+        "name": "bun_runtime"
+      },
+      {
+        "category": "ops",
+        "name": "supervisor"
+      },
+      {
+        "category": "ops",
+        "name": "supervisor_singleton"
+      },
+      {
+        "category": "ops",
+        "name": "supervisor_niceness"
+      },
+      {
+        "category": "ops",
+        "name": "worker_oom_loop"
+      },
+      {
+        "category": "ops",
+        "name": "pool_reap_health"
+      },
+      {
+        "category": "brain",
+        "name": "stub_guard_24h"
+      },
+      {
+        "category": "brain",
+        "name": "sync_failures"
+      },
+      {
+        "category": "meta",
+        "name": "slug_fallback_audit"
+      },
+      {
+        "category": "brain",
+        "name": "malformed_path_pages"
+      },
+      {
+        "category": "brain",
+        "name": "nightly_quality_probe_health"
+      },
+      {
+        "category": "brain",
+        "name": "extract_health"
+      },
+      {
+        "category": "brain",
+        "name": "conversation_facts_backlog"
+      },
+      {
+        "category": "brain",
+        "name": "extract_atoms_backlog"
+      },
+      {
+        "category": "brain",
+        "name": "atom_provenance_drift"
+      },
+      {
+        "category": "brain",
+        "name": "conversation_format_coverage"
+      },
+      {
+        "category": "ops",
+        "name": "progressive_batch_audit_health"
+      },
+      {
+        "category": "brain",
+        "name": "conversation_parser_probe_health"
+      },
+      {
+        "category": "ops",
+        "name": "home_dir_in_worktree"
+      },
+      {
+        "category": "ops",
+        "name": "npm_squat"
+      },
+      {
+        "category": "ops",
+        "name": "pglite_leftovers"
+      },
+      {
+        "category": "meta",
+        "name": "default_source_local_path"
+      },
+      {
+        "category": "brain",
+        "name": "fts_reindex_incomplete"
+      },
+      {
+        "category": "meta",
+        "name": "multi_source_drift"
+      },
+      {
+        "category": "ops",
+        "name": "orphan_clones"
+      },
+      {
+        "category": "brain",
+        "name": "embedding_key_source"
+      },
+      {
+        "category": "ops",
+        "name": "pglite_data_dir"
+      },
+      {
+        "category": "brain",
+        "name": "pglite_scratch_probe"
+      },
+      {
+        "category": "brain",
+        "name": "text_projection_readiness"
+      },
+      {
+        "category": "ops",
+        "name": "connection"
+      },
+      {
+        "category": "ops",
+        "name": "pgbouncer_prepare"
+      },
+      {
+        "category": "ops",
+        "name": "db_repair_recurrence"
+      },
+      {
+        "category": "ops",
+        "name": "pgvector"
+      },
+      {
+        "category": "ops",
+        "name": "postgres_cancellation_driver"
+      },
+      {
+        "category": "meta",
+        "name": "pages_upsert_arbiter"
+      },
+      {
+        "category": "ops",
+        "name": "persistence_capacity"
+      },
+      {
+        "category": "brain",
+        "name": "parked_effects"
+      },
+      {
+        "category": "meta",
+        "name": "links_link_source_check"
+      },
+      {
+        "category": "ops",
+        "name": "pglite_scale"
+      },
+      {
+        "category": "ops",
+        "name": "rls"
+      },
+      {
+        "category": "meta",
+        "name": "schema_version"
+      },
+      {
+        "category": "meta",
+        "name": "schema_columns"
+      },
+      {
+        "category": "ops",
+        "name": "rls_event_trigger"
+      },
+      {
+        "category": "brain",
+        "name": "embeddings"
+      },
+      {
+        "category": "brain",
+        "name": "embedding_provider"
+      },
+      {
+        "category": "ops",
+        "name": "alternative_providers"
+      },
+      {
+        "category": "brain",
+        "name": "embedding_query_prefix"
+      },
+      {
+        "category": "brain",
+        "name": "embedding_column_registry"
+      },
+      {
+        "category": "brain",
+        "name": "embedding_env_override"
+      },
+      {
+        "category": "brain",
+        "name": "embedding_migration_state"
+      },
+      {
+        "category": "brain",
+        "name": "graph_coverage"
+      },
+      {
+        "category": "brain",
+        "name": "brain_score"
+      },
+      {
+        "category": "brain",
+        "name": "orphan_ratio"
+      },
+      {
+        "category": "brain",
+        "name": "stale_mentions"
+      },
+      {
+        "category": "brain",
+        "name": "timeline_orphans"
+      },
+      {
+        "category": "brain",
+        "name": "slug_collisions"
+      },
+      {
+        "category": "brain",
+        "name": "timeline_history"
+      },
+      {
+        "category": "brain",
+        "name": "derived_visibility"
+      },
+      {
+        "category": "brain",
+        "name": "safe_index_pending"
+      },
+      {
+        "category": "brain",
+        "name": "credential_projection_pending"
+      },
+      {
+        "category": "brain",
+        "name": "connector_checkpoints"
+      },
+      {
+        "category": "ops",
+        "name": "persistence_request_indexes"
+      },
+      {
+        "category": "ops",
+        "name": "persistence_request_growth"
+      },
+      {
+        "category": "brain",
+        "name": "connector_held_items"
+      },
+      {
+        "category": "brain",
+        "name": "orphan_persistence_bindings"
+      },
+      {
+        "category": "brain",
+        "name": "unbound_source"
+      },
+      {
+        "category": "ops",
+        "name": "writer_version"
+      },
+      {
+        "category": "brain",
+        "name": "self_capture"
+      },
+      {
+        "category": "ops",
+        "name": "vector_plan"
+      },
+      {
+        "category": "ops",
+        "name": "stale_embedding_effects"
+      },
+      {
+        "category": "ops",
+        "name": "google_file_modes"
+      },
+      {
+        "category": "brain",
+        "name": "extractor_facts_expired"
+      },
+      {
+        "category": "brain",
+        "name": "integrity"
+      },
+      {
+        "category": "brain",
+        "name": "jsonb_integrity"
+      },
+      {
+        "category": "brain",
+        "name": "takes_weight_grid"
+      },
+      {
+        "category": "brain",
+        "name": "child_table_orphans"
+      },
+      {
+        "category": "brain",
+        "name": "raw_provenance"
+      },
+      {
+        "category": "brain",
+        "name": "source_config_shape"
+      },
+      {
+        "category": "skill",
+        "name": "whoknows_health"
+      },
+      {
+        "category": "brain",
+        "name": "cross_modal_modality_backfill"
+      },
+      {
+        "category": "brain",
+        "name": "unified_multimodal_coverage"
+      },
+      {
+        "category": "brain",
+        "name": "markdown_body_completeness"
+      },
+      {
+        "category": "brain",
+        "name": "oversized_pages"
+      },
+      {
+        "category": "brain",
+        "name": "scraper_junk_pages"
+      },
+      {
+        "category": "brain",
+        "name": "content_sanity_audit_recent"
+      },
+      {
+        "category": "brain",
+        "name": "quarantined_pages"
+      },
+      {
+        "category": "brain",
+        "name": "flagged_pages"
+      },
+      {
+        "category": "brain",
+        "name": "unverified_extractions"
+      },
+      {
+        "category": "brain",
+        "name": "frontmatter_integrity"
+      },
+      {
+        "category": "meta",
+        "name": "eval_capture"
+      },
+      {
+        "category": "brain",
+        "name": "contradictions"
+      },
+      {
+        "category": "brain",
+        "name": "facts_extraction_health"
+      },
+      {
+        "category": "brain",
+        "name": "effective_date_health"
+      },
+      {
+        "category": "brain",
+        "name": "salience_health"
+      },
+      {
+        "category": "ops",
+        "name": "queue_health"
+      },
+      {
+        "category": "ops",
+        "name": "subagent_capability"
+      },
+      {
+        "category": "brain",
+        "name": "facts_health"
+      },
+      {
+        "category": "ops",
+        "name": "legacy_job_authority"
+      },
+      {
+        "category": "ops",
+        "name": "index_audit"
+      },
+      {
+        "category": "brain",
+        "name": "image_assets"
+      },
+      {
+        "category": "brain",
+        "name": "ocr_health"
+      },
+      {
+        "category": "brain",
+        "name": "sync_freshness"
+      },
+      {
+        "category": "ops",
+        "name": "canonical_content_writes"
+      },
+      {
+        "category": "ops",
+        "name": "backup_coverage"
+      },
+      {
+        "category": "ops",
+        "name": "sync_consolidation"
+      },
+      {
+        "category": "brain",
+        "name": "links_extraction_lag"
+      },
+      {
+        "category": "brain",
+        "name": "cycle_freshness"
+      },
+      {
+        "category": "brain",
+        "name": "content_hash_duplicates"
+      },
+      {
+        "category": "brain",
+        "name": "code_chunk_metadata"
+      },
+      {
+        "category": "brain",
+        "name": "undeclared_db_only_pages"
+      },
+      {
+        "category": "ops",
+        "name": "db_only_collector_collision"
+      },
+      {
+        "category": "ops",
+        "name": "decide_health"
+      },
+      {
+        "category": "brain",
+        "name": "unlinked_facts"
+      },
+      {
+        "category": "ops",
+        "name": "chat_fallback_chain_inert"
+      },
+      {
+        "category": "ops",
+        "name": "search_mode"
+      },
+      {
+        "category": "brain",
+        "name": "hidden_by_search_policy"
+      },
+      {
+        "category": "brain",
+        "name": "eval_drift"
+      },
+      {
+        "category": "ops",
+        "name": "reranker_health"
+      },
+      {
+        "category": "ops",
+        "name": "batch_retry_health"
+      },
+      {
+        "category": "ops",
+        "name": "wedged_queue"
+      },
+      {
+        "category": "ops",
+        "name": "orphaned_private_queue"
+      },
+      {
+        "category": "ops",
+        "name": "autopilot_fanout_concurrency"
+      },
+      {
+        "category": "ops",
+        "name": "google_oauth"
+      },
+      {
+        "category": "brain",
+        "name": "graph_signals_coverage"
+      },
+      {
+        "category": "brain",
+        "name": "junk_entity_hubs"
+      },
+      {
+        "category": "ops",
+        "name": "brainstorm_health"
+      },
+      {
+        "category": "brain",
+        "name": "link_resolution_opportunity"
+      },
+      {
+        "category": "brain",
+        "name": "embedding_width_consistency"
+      },
+      {
+        "category": "brain",
+        "name": "facts_embedding_width_consistency"
+      },
+      {
+        "category": "brain",
+        "name": "source_routing_health"
+      },
+      {
+        "category": "ops",
+        "name": "oauth_confidential_client_health"
+      },
+      {
+        "category": "ops",
+        "name": "oauth_client_scope_health"
+      },
+      {
+        "category": "ops",
+        "name": "autopilot_lock_scope"
+      },
+      {
+        "category": "ops",
+        "name": "stale_locks"
+      },
+      {
+        "category": "meta",
+        "name": "cycle_phase_scope"
+      },
+      {
+        "category": "brain",
+        "name": "embed_staleness"
+      },
+      {
+        "category": "brain",
+        "name": "entity_link_coverage"
+      },
+      {
+        "category": "brain",
+        "name": "timeline_coverage"
+      },
+      {
+        "category": "brain",
+        "name": "takes_count"
+      },
+      {
+        "category": "meta",
+        "name": "pack_upgrade_available"
+      },
+      {
+        "category": "meta",
+        "name": "type_proliferation"
+      },
+      {
+        "category": "brain",
+        "name": "dangling_aliases"
+      }
+    ],
+    "early_returns_after": [
+      "db_repair_recurrence",
+      "connection"
+    ]
+  },
+  "normalizer": "doctor-registry-v1"
+}

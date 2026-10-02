@@ -482,7 +482,7 @@ describe('gbrain pglite-repair — interactive confirm wiring (#4318 residual)',
     // change that reintroduces a local `promptYesNo`/`createInterface` here
     // (rather than importing the shared, race-free helper) fails this test,
     // even though `test/confirm-prompt.test.ts` cannot see this file at all.
-    // test-reads-source-ok: pins that the local reimplementation stays gone
+    // test-reads-source-ok[structural]: pins that the local reimplementation stays gone
     // and the shared helper is wired with the exact stderr-preserving args —
     // there's no exported/injectable seam to assert this behaviorally.
     const src = readFileSync(join(import.meta.dir, '../src/commands/pglite-repair.ts'), 'utf8');

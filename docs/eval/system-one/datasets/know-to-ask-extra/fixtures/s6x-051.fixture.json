@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-051",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/soraya-yarrfell",
+      "content": "---\ntitle: Soraya Yarrfell\ntype: person\nsummary: \"Soraya Yarrfell is the procurement lead at Marbleyard.\"\n---\n\nSoraya Yarrfell is the procurement lead at Marbleyard.\n"
+    },
+    {
+      "slug": "people/calder-merrford",
+      "content": "---\ntitle: Calder Merrford\ntype: person\nsummary: \"Calder Merrford is the head of sales at Fablefold.\"\n---\n\nCalder Merrford is the head of sales at Fablefold.\n"
+    },
+    {
+      "slug": "people/delphine-yarrstead",
+      "content": "---\ntitle: Delphine Yarrstead\ntype: person\nsummary: \"Delphine Yarrstead is the product lead at Pylongate.\"\n---\n\nDelphine Yarrstead is the product lead at Pylongate. Delphine objected to the auto-renewal clause in the draft contract.\n"
+    },
+    {
+      "slug": "people/solveig-marrridge",
+      "content": "---\ntitle: Solveig Marrridge\ntype: person\naliases: [solveig]\nsummary: \"A contact from a conference last spring.\"\n---\n\nA contact from a conference last spring.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Put this sentence in the past tense: 'Soraya Yarrfell opens the meeting and shares the agenda.'"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Okay, noted."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "perfect, appreciate it"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Happy to help."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "How many letters are in the name Merrford?"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Here is what I have."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "delphine yarrstead wants to meet again, what did we agree last time about the contract?"
+    }
+  ]
+}

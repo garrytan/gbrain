@@ -22,6 +22,7 @@
 import { describe, test, expect } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { LATEST_VERSION } from '../src/core/migrate.ts';
+import { readFactsEmbeddingDim } from '../src/core/embedding-dim-check.ts';
 
 // Tier 3 opt-out: this file tests the cold init / bootstrap path explicitly.
 // If GBRAIN_PGLITE_SNAPSHOT is set (ci:local sets it for unit shards), every
@@ -31,6 +32,44 @@ import { LATEST_VERSION } from '../src/core/migrate.ts';
 delete process.env.GBRAIN_PGLITE_SNAPSHOT;
 
 describe('PGLiteEngine#applyForwardReferenceBootstrap', () => {
+  test('fact embedding identity bootstrap repairs old and partial schemas without inventing provenance', async () => {
+    const engine = new PGLiteEngine();
+    await engine.connect({});
+    try {
+      await engine.initSchema();
+      const { dims } = await readFactsEmbeddingDim(engine);
+      const fact = await engine.insertFact({ fact: 'Synthetic bootstrap claim', source: 'synthetic', embedding: new Float32Array(dims!).fill(0.1) }, { source_id: 'default' });
+      const original = await engine.executeRaw('SELECT id,fact,embedding::text,embedded_at FROM facts WHERE id=$1', [fact.id]);
+      expect(original[0].embedding).not.toBeNull();
+      for (const missing of [['embedding_model', 'embedded_text_hash'], ['embedding_model'], ['embedded_text_hash']]) {
+        await engine.executeRaw("UPDATE facts SET embedding_model='synthetic:original',embedded_text_hash='synthetic-preserved-hash' WHERE id=$1", [fact.id]);
+        for (const column of missing) await engine.executeRaw(`ALTER TABLE facts DROP COLUMN ${column}`);
+        await engine.setConfig('version', '165');
+        await (engine as any).applyForwardReferenceBootstrap();
+        await (engine as any).applyForwardReferenceBootstrap();
+        expect(await engine.getConfig('version')).toBe('165');
+        expect(await engine.executeRaw(`SELECT column_name,data_type,is_nullable,column_default FROM information_schema.columns
+          WHERE table_schema='public' AND table_name='facts' AND column_name IN ('embedding_model','embedded_text_hash') ORDER BY column_name`)).toEqual([
+          { column_name: 'embedded_text_hash', data_type: 'text', is_nullable: 'YES', column_default: null },
+          { column_name: 'embedding_model', data_type: 'text', is_nullable: 'YES', column_default: null },
+        ]);
+        const identity = [{
+          embedding_model: missing.includes('embedding_model') ? null : 'synthetic:original',
+          embedded_text_hash: missing.includes('embedded_text_hash') ? null : 'synthetic-preserved-hash',
+        }];
+        expect(await engine.executeRaw('SELECT embedding_model,embedded_text_hash FROM facts WHERE id=$1', [fact.id])).toEqual(identity);
+        for (const column of missing) await engine.executeRaw(`ALTER TABLE facts DROP COLUMN ${column}`);
+        await engine.initSchema();
+        await engine.initSchema();
+        expect(await engine.getConfig('version')).toBe(String(LATEST_VERSION));
+        expect(await engine.executeRaw('SELECT embedding_model,embedded_text_hash FROM facts WHERE id=$1', [fact.id])).toEqual(identity);
+        expect(await engine.executeRaw('SELECT id,fact,embedding::text,embedded_at FROM facts WHERE id=$1', [fact.id])).toEqual(original);
+      }
+    } finally {
+      await engine.disconnect();
+    }
+  }, 60_000);
+
   test('queue bootstrap preserves legacy jobs without authorizing them and repairs either missing column', async () => {
     const engine = new PGLiteEngine();
     await engine.connect({});
@@ -367,4 +406,42 @@ describe('PGLiteEngine#applyForwardReferenceBootstrap', () => {
     }
   }, 30000);
 
+  test('compounded pre-v34 brain (v0.20 + v0.26.3 + v0.27 + v39-v41 gaps) walks forward to LATEST', async () => {
+    const engine = new PGLiteEngine();
+    await engine.connect({});
+    try {
+      await engine.initSchema();
+      const dropped: Array<[string, string]> = [
+        ['content_chunks', 'parent_symbol_path'], ['content_chunks', 'doc_comment'],
+        ['content_chunks', 'symbol_name_qualified'], ['content_chunks', 'search_vector'],
+        ['mcp_request_log', 'agent_name'], ['mcp_request_log', 'params'], ['mcp_request_log', 'error_message'],
+        ['subagent_messages', 'provider_id'],
+        ['content_chunks', 'embedding_image'], ['content_chunks', 'modality'],
+        ['pages', 'emotional_weight'], ['pages', 'effective_date'], ['pages', 'effective_date_source'],
+        ['pages', 'import_filename'], ['pages', 'salience_touched_at'],
+      ];
+      await (engine as any).db.exec(`
+        DROP INDEX IF EXISTS idx_chunks_search_vector;
+        DROP INDEX IF EXISTS idx_chunks_symbol_qualified;
+        DROP TRIGGER IF EXISTS chunk_search_vector_trigger ON content_chunks;
+        DROP FUNCTION IF EXISTS update_chunk_search_vector;
+        DROP INDEX IF EXISTS idx_mcp_log_agent_time;
+        DROP INDEX IF EXISTS idx_subagent_messages_provider;
+        DROP INDEX IF EXISTS idx_chunks_embedding_image;
+        ${dropped.map(([table, column]) => `ALTER TABLE ${table} DROP COLUMN IF EXISTS ${column} CASCADE;`).join('\n        ')}
+        UPDATE config SET value = '13' WHERE key = 'version';
+      `);
+
+      await engine.initSchema();
+
+      expect(await engine.getConfig('version')).toBe(String(LATEST_VERSION));
+      const present = await engine.executeRaw<{ table_name: string; column_name: string }>(
+        `SELECT table_name, column_name FROM information_schema.columns WHERE table_schema = 'public'`,
+      );
+      const have = new Set(present.map(r => `${r.table_name}.${r.column_name}`));
+      expect(dropped.map(([table, column]) => `${table}.${column}`).filter(c => !have.has(c))).toEqual([]);
+    } finally {
+      await engine.disconnect();
+    }
+  }, 30000);
 });

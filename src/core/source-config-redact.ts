@@ -10,6 +10,7 @@
  * `scripts/check-source-config-leak.sh` grep-guards against future drift.
  */
 
+/** Audited key classification: see the header of scripts/check-source-config-leak.sh. */
 const SECRET_KEYS: ReadonlySet<string> = new Set([
   'webhook_secret',
 ]);

@@ -5,6 +5,10 @@
 // unmapped src/) are explicitly named.
 
 import { describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import {
   E2E_TEST_MAP,
@@ -12,6 +16,7 @@ import {
 import {
   classify,
   matchGlob,
+  persistenceOwnedNotices,
   selectTests,
 } from "../scripts/select-e2e.ts";
 
@@ -24,12 +29,10 @@ const ALL_E2E = [
   "test/e2e/engine-content-privacy.test.ts",
   "test/e2e/legacy-chunk-privacy.test.ts",
   "test/e2e/read-enrichment-privacy.test.ts",
-  "test/e2e/remote-privacy-journeys.test.ts",
   "test/e2e/graph-quality.test.ts",
   "test/e2e/http-transport.test.ts",
   "test/e2e/integrity-batch.test.ts",
   "test/e2e/jsonb-roundtrip.test.ts",
-  "test/e2e/mcp.test.ts",
   "test/e2e/mechanical.test.ts",
   "test/e2e/migrate-chain.test.ts",
   "test/e2e/migration-flow.test.ts",
@@ -134,6 +137,21 @@ describe("selectTests", () => {
     ]);
   });
 
+  test("postgres-engine.ts changes select its shared-singleton owners", () => {
+    const singletonOwners = [
+      "test/e2e/db-singleton-shared-recovery.test.ts",
+      "test/e2e/postgres-engine-disconnect-idempotency.test.ts",
+      "test/e2e/postgres-reconnect-singleton.test.ts",
+    ];
+    const selected = selectTests({
+      changedFiles: ["src/core/postgres-engine.ts"],
+      allE2ETests: [...singletonOwners, "test/e2e/graph-quality.test.ts"],
+      map: E2E_TEST_MAP,
+    });
+    for (const owner of singletonOwners) expect(selected).toContain(owner);
+    expect(selected).not.toContain("test/e2e/graph-quality.test.ts");
+  });
+
   test("case 1: empty diff -> all E2E", () => {
     expect(select([])).toEqual(ALL_E2E.slice().sort());
   });
@@ -152,14 +170,13 @@ describe("selectTests", () => {
       "test/e2e/projection-readiness-currency.test.ts",
       "test/e2e/projection-statistics-postgres.test.ts",
       "test/e2e/read-enrichment-privacy.test.ts",
-      "test/e2e/remote-privacy-journeys.test.ts",
       "test/e2e/search-exclude.test.ts",
       "test/e2e/search-quality.test.ts",
       "test/e2e/search-query-contract-postgres.test.ts",
-      "test/e2e/search-readiness-http.test.ts",
       "test/e2e/search-swamp.test.ts",
       "test/e2e/unsupported-embedding-identity-postgres.test.ts",
       "test/e2e/vector-candidate-safety-postgres.test.ts",
+      "test/e2e/vector-plan-real-column-postgres.test.ts",
     ]);
   });
 
@@ -242,14 +259,13 @@ describe("selectTests", () => {
       "test/e2e/projection-readiness-currency.test.ts",
       "test/e2e/projection-statistics-postgres.test.ts",
       "test/e2e/read-enrichment-privacy.test.ts",
-      "test/e2e/remote-privacy-journeys.test.ts",
       "test/e2e/search-exclude.test.ts",
       "test/e2e/search-quality.test.ts",
       "test/e2e/search-query-contract-postgres.test.ts",
-      "test/e2e/search-readiness-http.test.ts",
       "test/e2e/search-swamp.test.ts",
       "test/e2e/unsupported-embedding-identity-postgres.test.ts",
       "test/e2e/vector-candidate-safety-postgres.test.ts",
+      "test/e2e/vector-plan-real-column-postgres.test.ts",
     ]);
   });
 
@@ -273,6 +289,21 @@ describe("selectTests", () => {
     );
   });
 
+  test("escape-hatch: src/core/schema-migrations/** -> all (refactor wave 1)", () => {
+    expect(select(["src/core/schema-migrations/v176-add-widget.ts"])).toEqual(
+      ALL_E2E.slice().sort()
+    );
+  });
+
+  test("src/core/engine-sql/** selects both engines' E2E files and the E5 binding matrix, not all (refactor wave 1)", () => {
+    const selected = select(["src/core/engine-sql/facts.ts"]);
+    const engineRows = ["src/core/postgres-engine.ts", "src/core/pglite-engine.ts", "src/core/postgres-engine/**", "src/core/pglite-engine/**"];
+    expect(selected).toEqual([...new Set(engineRows.flatMap((k) => E2E_TEST_MAP[k]))].sort());
+    expect(selected).toContain("test/e2e/executor-binding-matrix.test.ts");
+    expect(selected).toContain("test/e2e/engine-parity.test.ts");
+    expect(selected).not.toContain("test/e2e/skills.test.ts");
+  });
+
   test("escape-hatch: test/e2e/helpers.ts -> all", () => {
     expect(select(["test/e2e/helpers.ts"])).toEqual(ALL_E2E.slice().sort());
   });
@@ -282,5 +313,42 @@ describe("selectTests", () => {
     expect(select(["src/schema.sql", "src/core/search/intent.ts"])).toEqual(
       ALL_E2E.slice().sort()
     );
+  });
+});
+
+describe("persistenceOwnedNotices", () => {
+  test("a mapped reconcile source names both crash suites and their owner", () => {
+    expect(persistenceOwnedNotices(["src/commands/source-reconcile.ts"], E2E_TEST_MAP)).toEqual([
+      "excluded: test/e2e/reconcile-crash-unactivated.test.ts (owned by persistence-validation.yml)",
+      "excluded: test/e2e/reconcile-crash.test.ts (owned by persistence-validation.yml)",
+    ]);
+  });
+
+  test("editing a crash suite directly names it", () => {
+    expect(persistenceOwnedNotices(["test/e2e/reconcile-crash.test.ts"], E2E_TEST_MAP)).toEqual([
+      "excluded: test/e2e/reconcile-crash.test.ts (owned by persistence-validation.yml)",
+    ]);
+  });
+
+  test("the CLI prints the notice on stderr and still lists the files on stdout", () => {
+    const root = mkdtempSync(join(tmpdir(), "gbrain-select-e2e-"));
+    try {
+      const git = (...args: string[]) => spawnSync("git", args, { cwd: root, encoding: "utf8" });
+      git("init", "-q");
+      git("-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid", "commit", "-q", "--allow-empty", "-m", "base");
+      git("update-ref", "refs/remotes/origin/master", "HEAD");
+      mkdirSync(join(root, "src/commands"), { recursive: true });
+      writeFileSync(join(root, "src/commands/source-reconcile.ts"), "// changed\n");
+      const r = spawnSync(process.execPath, [join(import.meta.dir, "../scripts/select-e2e.ts")], { cwd: root, encoding: "utf8" });
+      expect(r.status, r.stderr).toBe(0);
+      expect(r.stderr).toContain("excluded: test/e2e/reconcile-crash.test.ts (owned by persistence-validation.yml)");
+      expect(r.stdout.split("\n")).toContain("test/e2e/reconcile-crash.test.ts");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("unrelated sources print nothing", () => {
+    expect(persistenceOwnedNotices(["src/core/derived-links.ts", "README.md"], E2E_TEST_MAP)).toEqual([]);
   });
 });

@@ -51,14 +51,35 @@ export interface GoogleSourceState {
    */
   gmail_backfill_floor_ms: number | null;
   gmail_backfill_done: boolean;
+  /**
+   * #5438 (adopted from #5581): lower bound (epoch ms) the completed backfill
+   * actually covered. A later, WIDER g_history_days reopens the backfill below
+   * it instead of silently leaving the extra history unimported; absent on
+   * legacy state (no reopen).
+   */
+  gmail_backfill_cutoff_ms?: number | null;
+  /**
+   * #5581: history-expired gap: `[gmail_gap_after_ms,
+   * gmail_gap_floor_ms)` is drained newest→oldest with the same resumable floor
+   * walk as the backfill. Both null when no gap is open.
+   */
+  gmail_gap_after_ms?: number | null;
+  gmail_gap_floor_ms?: number | null;
+  /**
+   * #5581: delta threads flagged by an already-consumed history window but
+   * not yet landed (capped: 1,000 ids or 64 KB). An aborted delta drain
+   * advances `gmail_history_id` and parks the remainder here.
+   */
+  gmail_pending_thread_ids?: string[];
   /** Bookmark for the history-expired fallback: newest internalDate imported. */
   gmail_newest_ms: number | null;
   /**
-   * Poison-thread ledger: consecutive fetch failures per thread id. A thread
-   * failing MAX_THREAD_FAILURES times is skipped (loudly) instead of wedging
-   * the backfill floor / delta cursor forever; entries clear on success.
+   * Pre-wave-4 poison-thread ledger (consecutive failures per thread id). Read
+   * once and carried into `item_holds`; never written again.
    */
   gmail_fail_counts?: Record<string, number>;
+  /** Fix wave 4: connector item holds (src/core/connectors/item-holds.ts). */
+  item_holds?: unknown;
   calendar_sync_token: string | null;
   /**
    * Calendar id `calendar_sync_token` was minted for. A token is only valid
@@ -70,6 +91,16 @@ export interface GoogleSourceState {
   calendar_id?: string | null;
   contacts_sync_token: string | null;
   last_full_at: string | null;
+  gmail_attachment_backfill?: {
+    version: 1;
+    account: string;
+    afterPageId: number;
+    throughPageId: number;
+    inspected: number;
+    unavailable?: number;
+    unavailableMessages?: number;
+    complete: boolean;
+  };
 }
 
 /**
@@ -113,6 +144,39 @@ export interface GmailMessageMeta {
   calendarMethod?: string | null;
   /** Extracted, HTML-stripped, quote-trimmed, capped body text. */
   bodyText: string;
+  attachmentInspection?: GmailAttachmentInspection;
+}
+
+export interface GmailAttachmentReceipt {
+  id: string;
+  account: string;
+  messageId: string;
+  partId: string;
+  filename: string;
+  mimeType: string;
+  size: number | null;
+  attachmentId: string | null;
+  kind: 'document' | 'inline' | 'calendar';
+  fetched: false;
+  indexed: false;
+}
+
+export interface GmailAttachmentInspection {
+  state: 'not_inspected' | 'incomplete' | 'none' | 'present';
+  attachments: GmailAttachmentReceipt[];
+  reason?: 'missing_payload' | 'malformed_part' | 'depth_limit' | 'part_limit' | 'receipt_bytes_limit';
+}
+
+export interface GmailThreadAttachmentReceipts {
+  version: 1;
+  account: string;
+  threadId: string;
+  unavailable?: 'thread_not_found';
+  messages: Array<{
+    messageId: string;
+    inspection: GmailAttachmentInspection;
+    unavailable?: 'thread_not_found' | 'message_not_found';
+  }>;
 }
 
 export interface GmailThreadData {

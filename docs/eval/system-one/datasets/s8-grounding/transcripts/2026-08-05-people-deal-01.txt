@@ -1,0 +1,47 @@
+[user]
+Hey, just got out of the Lumopact pitch meeting with Anouk Verlinden. Quick debrief so I don't forget anything. They're raising two million seed with Vantabrook leading, and I think the round is coming together faster than I expected.
+
+[assistant]
+Got it, sounds like a solid session. What's the core product again? I remember you mentioned something about logistics optimization last week, but I want to make sure I have the details right for your notes.
+
+[user]
+Yeah, Lumopact is building a software layer for regional freight coordination. The idea is to reduce empty miles by matching loads across smaller carriers. Anouk has been in supply chain for about eight years, so she knows the space. The terms they floated were twelve million post money cap on the note, which feels reasonable for a pre-revenue company with early traction.
+
+[assistant]
+Twelve million cap is pretty standard for a company at this stage, especially if Vantabrook is already anchoring. Did they mention whether the SAFE has a discount or any pro rata provisions? Those details matter if you're thinking about following on in a Series A later.
+
+[user]
+Good question. The SAFE has a twenty percent discount and they're offering pro rata to anyone above fifty k. But honestly I am in for twenty five k, final answer, so I won't get pro rata rights unless I negotiate something side. Not the end of the world.
+
+[assistant]
+Twenty five k is a nice angel position without overcommitting. You keep exposure to the upside and can always increase later if things go well. Did Vantabrook negotiate any special terms for themselves, or is everyone on the same SAFE?
+
+[user]
+Same SAFE for everyone, which I appreciate. Vantabrook just gets a board observer seat. One thing that impressed me is their grocer pilot cut estimated freight emissions eighteen percent, which is a real number from a real customer. Also, their deck font choice hurt a little, not that it matters, but I had to squint at a few slides.
+
+[assistant]
+Ha, font crimes aside, an eighteen percent reduction in freight emissions is a compelling proof point for sales conversations. That's the kind of metric that gets procurement teams excited, especially with sustainability mandates tightening. What's making you hesitate, if anything?
+
+[user]
+A few things. The market is competitive, obviously. There are bigger players with more capital. I want to know who else is in the round and whether they add strategic value or just cash. Also, Tomas Brekke is running point for Vantabrook, and I've never worked with him before. Need to figure out if he's going to be helpful or just a name on the cap table.
+
+[assistant]
+That makes sense. Lead investor dynamics can really shape how a seed stage company operates. Do you have any mutual contacts who could give you a read on Tomas? Sometimes a quick back channel call saves a lot of guesswork later.
+
+[user]
+I do, actually. I'll ping a couple of founders he's backed before. On the founder side, Anouk stayed dead calm under the nastiest diligence questions, I like that. She didn't get defensive when someone pushed on unit economics, just walked through the assumptions clearly.
+
+[assistant]
+That composure is a good signal. Founders who can handle tough questions gracefully tend to navigate investor updates and board meetings better too. Are you planning any additional diligence steps before committing, like customer calls or background checks?
+
+[user]
+Definitely. I need two customer reference calls before I wire anything, just to confirm the pilot results are real and repeatable. Sorry if I sound distracted, I'm inhaling a granola bar while I get this down. Long day.
+
+[assistant]
+No worries, fuel up. For the reference calls, do you want me to draft a short list of questions focused on implementation friction and measurable outcomes? That way you can keep the calls tight and still cover the key areas.
+
+[user]
+That would be great, yes. Also thinking about how I can be useful beyond the check. Lumopact's team is small, seven people, five engineers, so they're pretty lean on the go to market side. I was thinking maybe I intro them to Ostrafell for a second pilot, since Ostrafell runs a bunch of regional distribution and might be a good fit.
+
+[assistant]
+Ostrafell could be a strong intro. Regional distribution is exactly the use case Lumopact is targeting, and a second pilot would help them build a case study library before they start scaling sales. I corrected one name spelling in the notes file, by the way. Anouk was showing as "Verliden" in one spot. Everything else looks good. Want me to set a reminder for the reference calls and the Tomas back channel?

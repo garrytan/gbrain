@@ -27,11 +27,12 @@ import { existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, 
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
-import { E2E_EXCLUSIONS, prepareMatrix } from '../../scripts/e2e-matrix.ts';
+import { E2E_EXCLUSIONS, PERSISTENCE_VALIDATION_OWNED, prepareMatrix } from '../../scripts/e2e-matrix.ts';
 import { E2E_TEST_MAP } from '../../scripts/e2e-test-map.ts';
 
 const repoRoot = join(import.meta.dir, '..', '..');
 const yml = readFileSync(join(repoRoot, '.github/workflows/e2e.yml'), 'utf8');
+const persistenceYml = readFileSync(join(repoRoot, '.github/workflows/persistence-validation.yml'), 'utf8');
 
 /** Slice one top-level job block out of the workflow (2-space-indented keys). */
 function jobBlock(name: string): string {
@@ -103,12 +104,12 @@ describe('selected-e2e job wiring', () => {
     }
   });
 
-  test('every EXCLUDE entry is named by another job here or is a live-key spender', () => {
+  test('every EXCLUDE entry is named by another job here, by persistence-validation.yml, or is a live-key spender', () => {
     const excluded = [...E2E_EXCLUSIONS];
     expect(excluded.length).toBeGreaterThan(0);
     const restOfWorkflow = yml.replace(job, '');
     for (const f of excluded) {
-      const honest = LIVE_KEY_FILES.has(f) || restOfWorkflow.includes(f);
+      const honest = LIVE_KEY_FILES.has(f) || restOfWorkflow.includes(f) || (PERSISTENCE_VALIDATION_OWNED.has(f) && persistenceYml.includes(f));
       if (!honest) throw new Error(`EXCLUDE entry not carried by any named job and not a live-key file: ${f}`);
     }
   });
@@ -119,7 +120,7 @@ describe('selected-e2e job wiring', () => {
  * baseline shrinks (a file gets mapped or deleted), lower this constant IN
  * THE SAME COMMIT (the module-size ratchet's no-stale-slack convention).
  */
-const BASELINE_SEEDED_LENGTH = 150;
+const BASELINE_SEEDED_LENGTH = 126;
 
 describe('e2e file claim ratchet', () => {
   const mapped = new Set(Object.values(E2E_TEST_MAP).flat());

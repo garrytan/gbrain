@@ -1,0 +1,277 @@
+[user]
+I’m fixing a workbook where a formula started returning `#REF!` after I moved a column. Can you help me diagnose it?
+
+[assistant]
+Yes. Please share the formula that now returns `#REF!`, which spreadsheet application you’re using, and what the formula was intended to calculate. If possible, include the relevant column letters before and after the move.
+
+[user]
+It’s in Google Sheets. The formula is in `Summary!H2`:
+
+`=ARRAYFORMULA(IF(A2:A="","",VLOOKUP(A2:A,Data!A:F,6,FALSE)))`
+
+It used to work, but I moved the status column on the `Data` sheet from column F to column C.
+
+[assistant]
+The immediate issue is that the formula still asks `VLOOKUP` to return column 6 from the lookup range `Data!A:F`, while the status values are now in column C. Change the return-index argument from `6` to `3`:
+
+`=ARRAYFORMULA(IF(A2:A="","",VLOOKUP(A2:A,Data!A:C,3,FALSE)))`
+
+That assumes the lookup key remains in `Data!A` and the moved status column is now `Data!C`.
+
+[user]
+I tried that, but I still get `#REF!`. The exact formula is now:
+
+`=ARRAYFORMULA(IF(A2:A="","",VLOOKUP(A2:A,Data!A:C,3,FALSE)))`
+
+The error appears in several rows, not just one.
+
+[assistant]
+A valid `VLOOKUP` with `Data!A:C` and index `3` should not produce `#REF!` merely because a key is missing; missing keys usually produce `#N/A`. A `#REF!` here suggests one of these conditions:
+
+1. The formula was inserted into a range that it is trying to spill into, and one or more cells are not empty.
+2. The `Data` sheet or range reference changed in a way not shown in the pasted formula.
+3. There is a circular reference, such as the formula being placed inside the source range or a referenced output column.
+4. The status column is not actually within `Data!A:C`, or the formula has a different version in some rows.
+
+First, click the cell showing the error and read the hover message. Also test a single lookup in an unused cell:
+
+`=VLOOKUP(A2,Data!A:C,3,FALSE)`
+
+What message appears, and does the single-cell test work?
+
+[user]
+The single-cell test works for a key that exists. For a key that doesn’t exist, it returns `#N/A`, as you said. The array formula’s hover message says: “Array result was not expanded because it would overwrite data in H7.”
+
+[assistant]
+That identifies the problem. The formula in `Summary!H2` is producing one result for each nonblank key in `A2:A`, so it needs to expand downward from `H2`. Something in `H7` blocks the spill range.
+
+Check `Summary!H7` and the cells below it for values, formulas, spaces, or merged cells. To fix it:
+
+1. Select `Summary!H7:H` or the expected output range.
+2. Delete any contents that should not be there.
+3. If the cells are merged, use Format → Merge cells → Unmerge.
+4. Re-enter the formula in `H2`.
+
+You can confirm the obstruction with:
+
+`=H7=""`
+
+If it returns `FALSE`, H7 contains something, even if it looks blank. If the value in H7 is intentional, move the formula to another column or limit the array formula to rows above that value.
+
+[user]
+H7 had an old manually entered status. I cleared it and the formula expands now, but I see `#N/A` for some records. I want unmatched keys to show `Not found` instead of an error.
+
+[assistant]
+Wrap the lookup in `IFNA`, while preserving the blank-row behavior:
+
+`=ARRAYFORMULA(IF(A2:A="","",IFNA(VLOOKUP(A2:A,Data!A:C,3,FALSE),"Not found")))`
+
+This will return the status from `Data!C` for matching keys, `Not found` for keys absent from `Data!A:A`, and a blank for empty cells in `Summary!A2:A`.
+
+If you want to catch every lookup error rather than only missing keys, use `IFERROR` instead:
+
+`=ARRAYFORMULA(IF(A2:A="","",IFERROR(VLOOKUP(A2:A,Data!A:C,3,FALSE),"Not found")))`
+
+`IFNA` is safer when you want other problems to remain visible.
+
+[user]
+That works for the missing keys. However, some statuses are blank in `Data!C`, and those appear blank in the summary. I’d prefer those to say `Pending review`.
+
+[assistant]
+You can test the returned lookup value and substitute `Pending review` when it is blank:
+
+`=ARRAYFORMULA(IF(A2:A="","",IFNA(IF(VLOOKUP(A2:A,Data!A:C,3,FALSE)="","Pending review",VLOOKUP(A2:A,Data!A:C,3,FALSE)),"Not found")))`
+
+This performs the lookup twice. A cleaner version uses `LET`, if your Google Sheets account supports it:
+
+`=ARRAYFORMULA(IF(A2:A="","",IFNA(LET(status,VLOOKUP(A2:A,Data!A:C,3,FALSE),IF(status="","Pending review",status)),"Not found")))`
+
+The result meanings are now: blank key → blank, missing key → `Not found`, matched key with blank status → `Pending review`, and matched key with a status → that status.
+
+[user]
+The `LET` version gives me a parse error. Also, I noticed the moved status column has a header in `C1`, and there may be duplicate keys in `Data!A:A`. Can you give me a version that avoids `LET` and explain which duplicate will be returned?
+
+[assistant]
+Use the non-`LET` version, with the header excluded from the lookup range if your keys begin in row 2:
+
+`=ARRAYFORMULA(IF(A2:A="","",IFNA(IF(VLOOKUP(A2:A,Data!A2:C,3,FALSE)="","Pending review",VLOOKUP(A2:A,Data!A2:C,3,FALSE)),"Not found")))`
+
+`VLOOKUP` with `FALSE` performs an exact match and returns the first matching row it encounters from top to bottom. Therefore, if `Data!A2:A` contains duplicate keys, it returns the status from the uppermost duplicate. It does not combine duplicates or select the most recently edited row.
+
+If duplicate handling matters, you can inspect them with:
+
+`=QUERY(Data!A2:C,"select A, count(A) where A is not null group by A having count(A) > 1 label count(A) 'Occurrences'",1)`
+
+That produces a list of keys occurring more than once and their counts.
+
+[user]
+The duplicate report shows three duplicates. For one key, the first row has a blank status and the second row has `Active`, so the summary says `Pending review`. Is there a way to return the first nonblank status instead, while still showing `Not found` for a missing key?
+
+[assistant]
+Yes. Use `XLOOKUP` with a filtered source range so blank statuses are excluded before matching:
+
+`=ARRAYFORMULA(IF(A2:A="","",IFNA(XLOOKUP(A2:A,FILTER(Data!A2:A,Data!C2:C<>""),FILTER(Data!C2:C,Data!C2:C<>"")),"Not found")))`
+
+This searches only rows where `Data!C` is nonblank. For a duplicate key, it returns the first nonblank status from top to bottom. A key that exists only with blank statuses is excluded from the filtered lookup and will therefore also return `Not found`, not `Pending review`.
+
+If you want to distinguish “key exists but all statuses are blank” from “key is absent,” use the following more explicit formula:
+
+`=ARRAYFORMULA(IF(A2:A="","",IF(COUNTIF(Data!A2:A,A2:A)=0,"Not found",IFNA(XLOOKUP(A2:A,FILTER(Data!A2:A,Data!C2:C<>""),FILTER(Data!C2:C,Data!C2:C<>"")),"Pending review"))))`
+
+This keeps `Not found` for absent keys and returns `Pending review` when the key exists but every matching status is blank.
+
+[user]
+The explicit formula works, but the sheet is noticeably slower now. There are about 18,000 summary rows. Can we make it less expensive while keeping the same behavior?
+
+[assistant]
+Yes. The main cost is repeated full-column work: `COUNTIF` evaluates against all of `Data!A:A` for every summary row, and the two `FILTER` expressions are also recalculated inside the array operation. Limit the ranges to the actual data and use a single prefiltered lookup table.
+
+For example, if `Data` has data through row 50,000:
+
+`=ARRAYFORMULA(IF(A2:A="","",IFNA(IF(COUNTIF(Data!$A$2:$A$50000,A2:A)=0,"Not found",XLOOKUP(A2:A,FILTER(Data!$A$2:$C$50000,Data!$C$2:$C$50000<>""),FILTER(Data!$C$2:$C$50000,Data!$C$2:$C$50000<>""))),"Pending review")))`
+
+However, this still repeats the filtered ranges in the formula. If available in your Sheets environment, put this helper formula in an unused area, such as `Data!E2`:
+
+`=SORT(FILTER(Data!A2:C50000,Data!C2:C50000<>""),1,TRUE)`
+
+Then use the helper’s key and status columns in the summary formula:
+
+`=ARRAYFORMULA(IF(A2:A="","",IF(COUNTIF(Data!$A$2:$A$50000,A2:A)=0,"Not found",IFNA(XLOOKUP(A2:A,Data!$E$2:$E$50000,Data!$G$2:$G$50000),"Pending review"))))`
+
+But note that sorting the helper table by key changes which duplicate is considered first unless you preserve source order. A better helper is:
+
+`=FILTER({Data!A2:A50000,Data!C2:C50000},Data!C2:C50000<>"")`
+
+in `Data!E2`, with the summary lookup against `Data!E:E` and `Data!F:F`. This retains the original top-to-bottom order, so the first nonblank status remains the selected one.
+
+[user]
+Before I change it, I need to understand the exact behavior. Does the helper formula preserve duplicate order, and are there any issues if the source has formulas returning empty strings in column C?
+
+[assistant]
+Yes. This helper:
+
+`=FILTER({Data!A2:A50000,Data!C2:C50000},Data!C2:C50000<>"")`
+
+preserves the row order of the source range. It reads rows 2 through 50,000 from top to bottom and outputs qualifying rows in that same order. Consequently, `XLOOKUP` returns the first nonblank status for a duplicate key.
+
+In Google Sheets, a formula returning `""` is treated as equal to an empty string for the condition `Data!C2:C50000<>""`, so those rows are excluded. That is normally what you want if an empty-string result means “no status.” If a cell contains spaces, such as `" "`, it is not technically empty and will be retained. To treat whitespace-only statuses as blank, use:
+
+`=FILTER({Data!A2:A50000,Data!C2:C50000},LEN(TRIM(Data!C2:C50000))>0)`
+
+Be aware that `TRIM` can alter how some nonstandard whitespace behaves; for ordinary spaces it is sufficient.
+
+[user]
+I have one concern: someone may paste new rows below row 50,000 later. Can we avoid a fixed upper limit without going back to entire-column references?
+
+[assistant]
+Use a dynamic endpoint based on the last nonblank key, while keeping the calculation bounded to the populated data. For example, in `Data!E2`:
+
+`=LET(last,LOOKUP(2,1/(Data!A:A<>""),ROW(Data!A:A)),FILTER({Data!A2:INDEX(Data!A:A,last),Data!C2:INDEX(Data!C:C,last)},LEN(TRIM(Data!C2:INDEX(Data!C:C,last)))>0))`
+
+But your earlier parse error suggests `LET` may not be available or accepted in this file. Without `LET`, you can use:
+
+`=FILTER({Data!A2:INDEX(Data!A:A,LOOKUP(2,1/(Data!A:A<>""),ROW(Data!A:A))),Data!C2:INDEX(Data!C:C,LOOKUP(2,1/(Data!A:A<>""),ROW(Data!A:A)))},LEN(TRIM(Data!C2:INDEX(Data!C:C,LOOKUP(2,1/(Data!A:A<>""),ROW(Data!A:A))))>0)`
+
+This avoids scanning all rows for every summary lookup, but the helper itself still uses full-column expressions once to find the last key. If the sheet’s maximum practical size is known, a bounded dynamic range such as rows 2:100,000 is usually more predictable and faster:
+
+`=FILTER({Data!A2:A100000,Data!C2:C100000},LEN(TRIM(Data!C2:C100000))>0)`
+
+That supports future additions through row 100,000 without using full-column lookup arrays.
+
+[user]
+Let’s keep it simple and use row 100,000 as the ceiling. I also want the formula to be easy for someone else to audit. Can you lay out the helper and summary formulas, with labels and a quick test plan?
+
+[assistant]
+Use two helper columns on `Data`, leaving the original source columns untouched.
+
+In `Data!E1`, enter the label:
+
+`Nonblank key`
+
+In `Data!F1`, enter the label:
+
+`First nonblank status`
+
+In `Data!E2`, enter:
+
+`=FILTER(Data!A2:A100000,LEN(TRIM(Data!C2:C100000))>0)`
+
+In `Data!F2`, enter:
+
+`=FILTER(Data!C2:C100000,LEN(TRIM(Data!C2:C100000))>0)`
+
+These two formulas produce aligned filtered lists in source order. For a duplicate key, the first occurrence in the helper output is the first source row with a nonblank status.
+
+In `Summary!H1`, use a clear label such as:
+
+`Resolved status`
+
+In `Summary!H2`, use:
+
+`=ARRAYFORMULA(IF(A2:A="","",IF(COUNTIF(Data!$A$2:$A$100000,A2:A)=0,"Not found",IFNA(XLOOKUP(A2:A,Data!$E$2:$E$100000,Data!$F$2:$F$100000),"Pending review"))))`
+
+Test these cases:
+
+1. A key with one nonblank status → returns that status.
+2. A missing key → returns `Not found`.
+3. A key with only blank or empty-string statuses → returns `Pending review`.
+4. A key with an earlier blank status and later `Active` status → returns `Active`.
+5. A key with multiple nonblank statuses → returns the first one from top to bottom.
+6. A blank summary key → remains blank.
+7. Add a qualifying source row below the current data, within row 100,000 → it should appear in the helper and resolve in the summary.
+
+Clear the old contents in `Data!E:F` and the summary spill range before entering these formulas. Also ensure nothing is manually entered beneath `Data!E2`, `Data!F2`, or `Summary!H2`, because each formula needs room to expand.
+
+[user]
+One more project note before we wrap up: fernpost just crossed 100,000 monthly active users. We lost our largest customer because their procurement team required an on-premises deployment, which we don’t offer. Ingrid Lindqvist joined as our first enterprise account executive last Monday. She’s focusing on public-sector accounts in the Nordic region. Our legal team also confirmed that customer event data must remain in the EU.
+
+[assistant]
+Understood. For the spreadsheet, the final setup is:
+
+`Data!E2`:
+`=FILTER(Data!A2:A100000,LEN(TRIM(Data!C2:C100000))>0)`
+
+`Data!F2`:
+`=FILTER(Data!C2:C100000,LEN(TRIM(Data!C2:C100000))>0)`
+
+`Summary!H2`:
+`=ARRAYFORMULA(IF(A2:A="","",IF(COUNTIF(Data!$A$2:$A$100000,A2:A)=0,"Not found",IFNA(XLOOKUP(A2:A,Data!$E$2:$E$100000,Data!$F$2:$F$100000),"Pending review"))))`
+
+This preserves source order, selects the first nonblank status for duplicates, distinguishes missing keys from keys whose statuses are all blank, and supports new source rows through row 100,000. Keep the helper and summary spill ranges clear, and verify the seven test cases before sharing the workbook.
+
+[user]
+I tested the seven cases. All of them pass, including a new row added at `Data!A50001`. The only issue is that the helper columns show `#N/A` when there are no qualifying rows yet in a fresh copy of the workbook. Can we make those helper cells stay blank until at least one nonblank status exists?
+
+[assistant]
+Yes. Wrap each `FILTER` in `IFNA` and return an empty string when there are no qualifying rows.
+
+`Data!E2`:
+
+`=IFNA(FILTER(Data!A2:A100000,LEN(TRIM(Data!C2:C100000))>0),"")`
+
+`Data!F2`:
+
+`=IFNA(FILTER(Data!C2:C100000,LEN(TRIM(Data!C2:C100000))>0),"")`
+
+When no source status is nonblank, the helper formulas will display blank instead of `#N/A`. Once a qualifying row is added, both formulas will spill the filtered values in source order. Keep the helper ranges clear so the spill can expand.
+
+[tool]
+You have 399 weighted tokens left
+
+[user]
+Great, that fixed the fresh-copy issue. Is there anything else I should document for the next person maintaining this workbook?
+
+[assistant]
+Document these points near the formulas or on a “README” sheet:
+
+- `Data!C:C` is the current status column; moving it requires updating both helper formulas.
+- `Data!E2:F2` filter rows 2:100,000 and preserve source order.
+- Blank, empty-string, or whitespace-only statuses are excluded from the helpers.
+- `Summary!H2` returns the first nonblank status for duplicate keys.
+- A missing key returns `Not found`; a key with only blank statuses returns `Pending review`; blank summary keys remain blank.
+- Keep `Data!E:F` and the `Summary!H` spill range free of manual entries.
+- The row-100,000 ceiling must be increased in all three formulas if source data may exceed it.
+- If statuses move again, update the source reference from `Data!C` consistently in both helper formulas.
+- If the lookup key moves from `Data!A:A`, update the `COUNTIF`, helper key range, and source references together.
+
+Also record a small test case for each expected output so a future column move can be validated quickly.

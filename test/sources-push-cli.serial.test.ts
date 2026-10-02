@@ -19,7 +19,7 @@ import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 
 import { runSources } from '../src/commands/sources.ts';
 import { acquirePushLock, resolveWorkspaceRoot } from '../src/core/workspace-push.ts';
@@ -306,5 +306,65 @@ describe('--json output', () => {
     // json mode suppresses the wrapper's human finding dump (the core logger
     // line still reaches stderr via `[gbrain]` — that one is expected).
     expect(r.stderr.join('\n')).not.toContain('allow this finding:');
+  }, T);
+});
+
+// ── refusal guidance (security wave DX-3/ENG-11/CEO-21) ─────────────────────
+
+describe('blocked_secrets guidance — runnable from outside the source dir', () => {
+  function cloneAt(dir: string): void {
+    execFileSync('git', ['-c', 'protocol.file.allow=always', 'clone', '-q', bare, dir], {
+      stdio: 'ignore', env: process.env,
+    });
+    git(dir, 'config', 'user.email', 't@t.t');
+    git(dir, 'config', 'user.name', 'tester');
+    try { git(dir, 'remote', 'set-head', 'origin', 'main'); } catch { /* */ }
+  }
+
+  async function inDir<T>(dir: string, fn: () => Promise<T>): Promise<T> {
+    const prev = process.cwd();
+    process.chdir(dir);
+    try { return await fn(); } finally { process.chdir(prev); }
+  }
+
+  test('a source path with spaces: absolute quoted allowlist path, append + retry commands, docs; JSON parity; the printed commands work', async () => {
+    const name = 'my brain dir';
+    const spaced = join(root, name);
+    cloneAt(spaced);
+    writeFileSync(join(spaced, 'notes.md'), `my key: ${OPENAI}\n`);
+    const quotedAllowlist = `'${join(spaced, SCAN_ALLOW_FILENAME)}'`;
+    const quotedDir = `'${spaced}'`;
+
+    const human = await inDir(root, () => runPushCli(untouchableEngine, ['--path', name, '--allow-unverified-remote']));
+    expect(human.exitCode).toBe(5);
+    const err = human.stderr.join('\n');
+    expect(err.includes(OPENAI)).toBe(false);
+    const allowLine = human.stderr.find((l) => l.includes('allow this finding:'))!.trim();
+    const allowCommand = allowLine.slice('allow this finding: '.length);
+    expect(allowCommand).toMatch(new RegExp(`^printf '\\\\n%s\\\\n' sha256:[0-9a-f]{16} >> `));
+    expect(allowCommand).toEndWith(` >> ${quotedAllowlist}`);
+    expect(err).toContain('fingerprint: sha256:');
+    expect(err).toContain(`(it appends to ${quotedAllowlist})`);
+    expect(err).toContain(`  gbrain sources push --path ${quotedDir} --allow-unverified-remote`);
+    expect(err).toContain('Remove a real credential from the file (and rotate it) first. Allowlist only a reviewed false positive');
+    expect(err).toContain('Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/write-refusals.md#secret-scan-refusals-and-redaction');
+
+    const json = await inDir(root, () => runPushCli(untouchableEngine, ['--path', name, '--allow-unverified-remote', '--json']));
+    expect(json.exitCode).toBe(5);
+    const res = JSON.parse(json.stdout[0]);
+    expect(json.stdout[0].includes(OPENAI)).toBe(false);
+    expect(res.reason.length).toBeLessThanOrEqual(140);
+    const f = res.findings[0];
+    expect(f.allowCommand).toBe(allowCommand);
+    expect(f.allowlistPath).toBe(join(spaced, SCAN_ALLOW_FILENAME));
+    expect(f.retryCommand).toBe(`gbrain sources push --path ${quotedDir} --allow-unverified-remote`);
+    expect(err).toContain(`fingerprint: ${f.fingerprint}`);
+    expect(f.docs).toBe('https://github.com/garrytan/gbrain/blob/master/docs/guides/write-refusals.md#secret-scan-refusals-and-redaction');
+
+    const appended = spawnSync('bash', ['-c', allowCommand], { cwd: tmpdir(), encoding: 'utf-8' });
+    expect(appended.status).toBe(0);
+    const retried = await inDir(tmpdir(), () => runPushCli(untouchableEngine, ['--path', spaced, '--allow-unverified-remote']));
+    expect(retried.exitCode).toBe(0);
+    expect(originHead(bare)).toBe(git(spaced, 'rev-parse', 'HEAD'));
   }, T);
 });

@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-055",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "companies/kilnloft",
+      "content": "---\ntitle: Kilnloft\ntype: company\nsummary: \"Kilnloft is the legal vendor we picked.\"\n---\n\nKilnloft is the legal vendor we picked. Their support team promised a named account manager after the last outage.\n"
+    },
+    {
+      "slug": "people/tamsin-ostrewick",
+      "content": "---\ntitle: Tamsin Ostrewick\ntype: person\naliases: [tamsin]\nsummary: \"Tamsin Ostrewick is the head of partnerships at Pylonyard.\"\n---\n\nTamsin Ostrewick is the head of partnerships at Pylonyard.\n"
+    },
+    {
+      "slug": "people/maren-kestthorpe",
+      "content": "---\ntitle: Maren Kestthorpe\ntype: person\nsummary: \"Maren Kestthorpe is the product lead at Quartzcrest.\"\n---\n\nMaren Kestthorpe is the product lead at Quartzcrest.\n"
+    },
+    {
+      "slug": "people/odette-tessford",
+      "content": "---\ntitle: Odette Tessford\ntype: person\naliases: [odette]\nsummary: \"A contact from a conference last spring.\"\n---\n\nA contact from a conference last spring.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "what did the law firm we hired say about the trademark filing?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Happy to help."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Translate into Spanish: 'Ostrewick will join the meeting at noon.'"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Happy to help."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "By the way, someone named Mireille Wyrford emailed about partnerships. Never heard of them."
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "Kestthorpe's train gets in at 5:40pm and the walk is 15 minutes. What time will they reach the office?"
+    }
+  ]
+}

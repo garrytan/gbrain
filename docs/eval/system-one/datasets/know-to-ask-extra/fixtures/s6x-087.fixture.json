@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-087",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "companies/brackenwharf",
+      "content": "---\ntitle: Brackenwharf\ntype: company\nsummary: \"Brackenwharf is the bookkeeping vendor we picked.\"\n---\n\nBrackenwharf is the bookkeeping vendor we picked. Their pilot with our team ends after the next billing cycle.\n"
+    },
+    {
+      "slug": "people/rohan-wyrfell",
+      "content": "---\ntitle: Rohan Wyrfell\ntype: person\naliases: [rohan]\nsummary: \"Rohan Wyrfell is the product lead at Marblewharf.\"\n---\n\nRohan Wyrfell is the product lead at Marblewharf.\n"
+    },
+    {
+      "slug": "companies/halcyonfold",
+      "content": "---\ntitle: Halcyonfold\ntype: company\nsummary: \"Halcyonfold is a software vendor we work with.\"\n---\n\nHalcyonfold is a software vendor we work with.\n"
+    },
+    {
+      "slug": "people/eamon-quellridge",
+      "content": "---\ntitle: Eamon Quellridge\ntype: person\naliases: [eamon]\nsummary: \"A contact from a conference last spring.\"\n---\n\nA contact from a conference last spring.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "when is the bookkeeping service we signed with closing the books this month?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Done."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "How do you spell Wyrfell in the NATO phonetic alphabet?"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "suggest a name for a golden retriever puppy"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Here is what I have."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "Make this sentence shorter: 'Our team will be at the Halcyonfold office for the whole afternoon on Thursday.'"
+    }
+  ]
+}

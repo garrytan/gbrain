@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-098",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/solveig-lornbrook",
+      "content": "---\ntitle: Solveig Lornbrook\ntype: person\naliases: [solveig]\nsummary: \"Solveig Lornbrook is the product lead at Tidalfold.\"\n---\n\nSolveig Lornbrook is the product lead at Tidalfold. Solveig objected to the auto-renewal clause in the draft contract.\n"
+    },
+    {
+      "slug": "people/elodie-keststead",
+      "content": "---\ntitle: Elodie Keststead\ntype: person\naliases: [elodie]\nsummary: \"Elodie Keststead is the product lead at Russetreach.\"\n---\n\nElodie Keststead is the product lead at Russetreach. Elodie objected to the auto-renewal clause in the draft contract.\n"
+    },
+    {
+      "slug": "people/ilse-grisgrove",
+      "content": "---\ntitle: Ilse Grisgrove\ntype: person\nsummary: \"Ilse Grisgrove is the procurement lead at Wanderloft.\"\n---\n\nIlse Grisgrove is the procurement lead at Wanderloft.\n"
+    },
+    {
+      "slug": "people/leonie-orrinwick",
+      "content": "---\ntitle: Leonie Orrinwick\ntype: person\naliases: [leonie]\nsummary: \"Leonie Orrinwick is the head of sales at Halcyonmoor.\"\n---\n\nLeonie Orrinwick is the head of sales at Halcyonmoor.\n"
+    },
+    {
+      "slug": "companies/quartzloft",
+      "content": "---\ntitle: Quartzloft\ntype: company\nsummary: \"A company we met once at a trade show.\"\n---\n\nA company we met once at a trade show.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "what's the latest with lornbrook on the contract?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Done."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Prep me for the Keststead call, especially the contract."
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Happy to help."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "how do you pronounce the name ilse? it's for a character in my short story"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "Translate into Spanish: 'Orrinwick will join the meeting at noon.'"
+    }
+  ]
+}

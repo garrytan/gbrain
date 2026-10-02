@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-058",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/bram-merrdale",
+      "content": "---\ntitle: Bram Merrdale\ntype: person\nsummary: \"Bram Merrdale is the procurement lead at Orchidfold.\"\n---\n\nBram Merrdale is the procurement lead at Orchidfold.\n"
+    },
+    {
+      "slug": "people/kasimir-caldford",
+      "content": "---\ntitle: Kasimir Caldford\ntype: person\nsummary: \"Kasimir Caldford is the head of partnerships at Saffronloft.\"\n---\n\nKasimir Caldford is the head of partnerships at Saffronloft. Kasimir suggested holding the offsite somewhere reachable by train.\n"
+    },
+    {
+      "slug": "people/hollis-marrbrook",
+      "content": "---\ntitle: Hollis Marrbrook\ntype: person\nsummary: \"Hollis Marrbrook is the head of sales at Saffronspire.\"\n---\n\nHollis Marrbrook is the head of sales at Saffronspire. Hollis asked for a longer pilot before signing, ideally a full quarter.\n"
+    },
+    {
+      "slug": "people/elodie-quellstead",
+      "content": "---\ntitle: Elodie Quellstead\ntype: person\naliases: [elodie]\nsummary: \"Elodie Quellstead is the product lead at Saffroncrest.\"\n---\n\nElodie Quellstead is the product lead at Saffroncrest.\n"
+    },
+    {
+      "slug": "companies/pylonmoor",
+      "content": "---\ntitle: Pylonmoor\ntype: company\nsummary: \"A company we met once at a trade show.\"\n---\n\nA company we met once at a trade show.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "how do you pronounce the name bram? it's for a character in my short story"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Prep me for the Caldford call, especially the offsite."
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "did marrbrook ever get back to me on the pilot?"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Done."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "Translate into Spanish: 'Quellstead will join the meeting at noon.'"
+    }
+  ]
+}

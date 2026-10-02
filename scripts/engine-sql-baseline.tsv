@@ -1,0 +1,87 @@
+# Engine-sql ratchet baseline (refactor wave 1, goal (a)). Enforced by
+# scripts/check-engine-sql-ratchet.ts via `bun run check:engine-sql-ratchet` (in verify).
+# Rows:
+#   migrated<TAB><domain>                    the domain's SQL lives in src/core/engine-sql/<domain>.ts
+#   method<TAB><path><TAB><QualifiedName>    an engine member that still carries SQL (keyed by name, never line)
+# Rows only shrink: when a member's SQL moves into engine-sql/, delete its row
+# (`bun scripts/check-engine-sql-ratchet.ts --prune` drops stale rows). A new
+# SQL-bearing engine member never gets a row: move the SQL, or mark it
+# `// engine-sql-ok: <reason>`.
+# docs/TESTING.md#engine-sql-ratchet
+migrated	chunks
+migrated	cjk-search
+migrated	code-edges
+migrated	facts
+migrated	files
+migrated	links
+migrated	pages
+migrated	salience
+migrated	sources
+migrated	tags
+migrated	takes
+migrated	timeline
+method	src/core/pglite-engine.ts	PGLiteEngine._connectInternal
+method	src/core/pglite-engine.ts	PGLiteEngine.deleteEvalCandidatesBefore
+method	src/core/pglite-engine.ts	PGLiteEngine.discoverOntologyDimensions
+method	src/core/pglite-engine.ts	PGLiteEngine.findOntologyConflicts
+method	src/core/pglite-engine.ts	PGLiteEngine.getAllConfig
+method	src/core/pglite-engine.ts	PGLiteEngine.getConfig
+method	src/core/pglite-engine.ts	PGLiteEngine.getDreamVerdict
+method	src/core/pglite-engine.ts	PGLiteEngine.getHealth
+method	src/core/pglite-engine.ts	PGLiteEngine.getIngestLog
+method	src/core/pglite-engine.ts	PGLiteEngine.getOntology
+method	src/core/pglite-engine.ts	PGLiteEngine.getRawData
+method	src/core/pglite-engine.ts	PGLiteEngine.getStats
+method	src/core/pglite-engine.ts	PGLiteEngine.listConfigKeys
+method	src/core/pglite-engine.ts	PGLiteEngine.listEvalCandidates
+method	src/core/pglite-engine.ts	PGLiteEngine.listEvalCaptureFailures
+method	src/core/pglite-engine.ts	PGLiteEngine.logEvalCandidate
+method	src/core/pglite-engine.ts	PGLiteEngine.logEvalCaptureFailure
+method	src/core/pglite-engine.ts	PGLiteEngine.logIngest
+method	src/core/pglite-engine.ts	PGLiteEngine.mergeOntologyFact
+method	src/core/pglite-engine.ts	PGLiteEngine.migrateFactsToCanonical
+method	src/core/pglite-engine.ts	PGLiteEngine.putDreamVerdict
+method	src/core/pglite-engine.ts	PGLiteEngine.putRawData
+method	src/core/pglite-engine.ts	PGLiteEngine.searchKeyword
+method	src/core/pglite-engine.ts	PGLiteEngine.searchKeywordChunks
+method	src/core/pglite-engine.ts	PGLiteEngine.searchTitles
+method	src/core/pglite-engine.ts	PGLiteEngine.setConfig
+method	src/core/pglite-engine.ts	PGLiteEngine.sweepDreamVerdicts
+method	src/core/pglite-engine.ts	PGLiteEngine.unsetConfig
+method	src/core/pglite-engine.ts	probePgliteScratchStore
+method	src/core/pglite-engine/checkpoint-guard.ts	PgliteCheckpointGuard.beforeOutermostTransaction
+method	src/core/pglite-engine/code-edges.ts	getEdgesByChunk
+method	src/core/postgres-engine.ts	PostgresEngine._searchKeywordCJK
+method	src/core/postgres-engine.ts	PostgresEngine.connect
+method	src/core/postgres-engine.ts	PostgresEngine.deleteEvalCandidatesBefore
+method	src/core/postgres-engine.ts	PostgresEngine.discoverOntologyDimensions
+method	src/core/postgres-engine.ts	PostgresEngine.findOntologyConflicts
+method	src/core/postgres-engine.ts	PostgresEngine.getAllConfig
+method	src/core/postgres-engine.ts	PostgresEngine.getConfig
+method	src/core/postgres-engine.ts	PostgresEngine.getDreamVerdict
+method	src/core/postgres-engine.ts	PostgresEngine.getHealth
+method	src/core/postgres-engine.ts	PostgresEngine.getIngestLog
+method	src/core/postgres-engine.ts	PostgresEngine.getOntology
+method	src/core/postgres-engine.ts	PostgresEngine.getRawData
+method	src/core/postgres-engine.ts	PostgresEngine.getStats
+method	src/core/postgres-engine.ts	PostgresEngine.initSchema
+method	src/core/postgres-engine.ts	PostgresEngine.listConfigKeys
+method	src/core/postgres-engine.ts	PostgresEngine.listEvalCandidates
+method	src/core/postgres-engine.ts	PostgresEngine.listEvalCaptureFailures
+method	src/core/postgres-engine.ts	PostgresEngine.logEvalCandidate
+method	src/core/postgres-engine.ts	PostgresEngine.logEvalCaptureFailure
+method	src/core/postgres-engine.ts	PostgresEngine.logIngest
+method	src/core/postgres-engine.ts	PostgresEngine.mergeOntologyFact
+method	src/core/postgres-engine.ts	PostgresEngine.migrateFactsToCanonical
+method	src/core/postgres-engine.ts	PostgresEngine.putDreamVerdict
+method	src/core/postgres-engine.ts	PostgresEngine.putRawData
+method	src/core/postgres-engine.ts	PostgresEngine.resolveFactsEmbeddingCast
+method	src/core/postgres-engine.ts	PostgresEngine.searchKeyword
+method	src/core/postgres-engine.ts	PostgresEngine.searchKeywordChunks
+method	src/core/postgres-engine.ts	PostgresEngine.searchTitles
+method	src/core/postgres-engine.ts	PostgresEngine.setConfig
+method	src/core/postgres-engine.ts	PostgresEngine.sweepDreamVerdicts
+method	src/core/postgres-engine.ts	PostgresEngine.unsetConfig
+method	src/core/postgres-engine.ts	PostgresEngine.withScopedReadTransaction
+method	src/core/postgres-engine/init-schema-lock.ts	acquireInitSchemaAdvisoryLock
+method	src/core/postgres-engine/init-schema-lock.ts	lockHolderPid

@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-040",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "projects/onboarding-revamp",
+      "content": "---\ntitle: Onboarding Revamp\ntype: project\nsummary: \"Onboarding Revamp: The plan is to replace the setup call with a guided checklist and a two-week check-in.\"\n---\n\nOnboarding Revamp: The plan is to replace the setup call with a guided checklist and a two-week check-in.\n"
+    },
+    {
+      "slug": "people/lucan-orrinthorpe",
+      "content": "---\ntitle: Lucan Orrinthorpe\ntype: person\naliases: [lucan]\nsummary: \"Lucan Orrinthorpe is the head of partnerships at Halcyonfold.\"\n---\n\nLucan Orrinthorpe is the head of partnerships at Halcyonfold.\n"
+    },
+    {
+      "slug": "people/verity-vashwaite",
+      "content": "---\ntitle: Verity Vashwaite\ntype: person\naliases: [verity]\nsummary: \"Verity Vashwaite is the head of partnerships at Pylonspire.\"\n---\n\nVerity Vashwaite is the head of partnerships at Pylonspire. Verity wants to pause the second engineering hire until the renewal closes.\n"
+    },
+    {
+      "slug": "companies/orchidyard",
+      "content": "---\ntitle: Orchidyard\ntype: company\nsummary: \"A company we met once at a trade show.\"\n---\n\nA company we met once at a trade show.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "By the way, someone named Anselm Tessford emailed about partnerships. Never heard of them."
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "remind me what we settled on for that onboarding idea"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "Orrinthorpe mentioned the pomodoro technique on a call. How does the pomodoro technique work?"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "Remind me of Vashwaite's position on the hiring plan before our sync."
+    }
+  ]
+}

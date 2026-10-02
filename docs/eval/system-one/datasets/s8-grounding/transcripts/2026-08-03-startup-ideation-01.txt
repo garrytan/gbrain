@@ -1,0 +1,53 @@
+[user]
+I keep coming back to this idea: a calendar that defragments itself around your focus blocks. Every time I look at my week, meetings are scattered like shrapnel, and the two-hour chunk I need for deep work just... evaporates. Nobody is solving this well.
+
+[assistant]
+That resonates. Most calendar tools optimize for cramming more in, not protecting what matters. Defragmentation as a core metaphor is compelling because it implies the calendar is broken by default and your tool fixes it. What kind of meetings are the worst offenders? The external ones you can't move, or the internal fluff that just drifts into prime time?
+
+[user]
+Honestly, the wedge is internal one on ones, nobody defends those slots. External meetings have social pressure, but a skip-level or a casual sync? People let those land wherever the algorithm drops them. That's the drift I want to fight.
+
+[assistant]
+Internal one-on-ones are a clever wedge because participants on both sides work at the same company, so you only need one organization to buy in. If you can prove you reclaim, say, four to six contiguous hours a week per person just by shuffling those, the ROI story writes itself. Who inside a company has the pain and the permission to experiment with this?
+
+[user]
+I think chiefs of staff. They're already wrangling exec calendars, they feel the pain firsthand, and they have enough clout to trial something without a six-month procurement cycle. I want to do eight chief of staff interviews before I write a line of code.
+
+[assistant]
+Eight interviews is a solid target for a first discovery sprint. You can validate whether the pain is acute enough to pay for, and whether they'd trust software to actually move meetings on their behalf. What's your one-liner when you cold-reach these folks? Something tight that earns the call.
+
+[user]
+Still refining it. Maybe: "I'm building a tool that automatically defragments your exec's calendar so focus time stays intact." But Mira keeps saying scheduling dies on distribution, not product. She thinks the graveyard is full of smart scheduling apps nobody adopted.
+
+[assistant]
+Mira's point is sharp. Calendly and its cousins won because they piggyback on every meeting invite, viral by design. A defrag tool doesn't have that hook unless you engineer one. One angle: if a chief of staff installs it for their exec, every person who books that exec sees the protected blocks. That's a tiny distribution surface, but it's a start. What did Mira suggest as an antidote to the distribution curse?
+
+[user]
+She said pick a user who already aggregates calendars for others, so you get leverage. That's partly why I landed on chiefs of staff instead of individual founders. A founder might love it but won't evangelize; a chief of staff manages five or six calendars and talks to peers at other companies.
+
+[assistant]
+That tracks. Chiefs of staff often have informal Slack groups where they trade templates and tools. If one shares a win, it can ripple fast. So your distribution wedge is community word of mouth among ops people rather than product-led growth among end users. To make that credible, you might want to position it as a calendar janitor, not another assistant. Janitor implies cleanup duty, low ego, high trust, something they delegate rather than babysit.
+
+[user]
+Calendar janitor... I like that framing. Feels humble and specific. Honestly, this one makes me a little giddy, which past ideas never did. I've been burned before by building too early, so I'm trying to stay disciplined.
+
+[assistant]
+Giddy plus disciplined is a good cocktail. Just made a quick backup of our notes, doc autosaved, nothing lost. Let's stress-test: what's the biggest risk that could kill this before you hit ten paying teams? Is it that people won't trust automation to move their meetings, or that the calendar APIs are too limited, or something else?
+
+[user]
+Trust is real, but I think the API limits are manageable, at least for the major providers. The deeper risk is that manually defragging my own calendar bought back six hours a week, but maybe I'm an outlier. If the average savings is only one hour, the value prop collapses. Also, sorry, I'm working through a bag of almonds while we talk, might hear crunching.
+
+[assistant]
+No worries on the almonds. Six hours versus one hour is a testable hypothesis in your interviews. You could ask chiefs of staff to walk through last week's calendar and identify which meetings drifted into focus blocks. Even rough estimates across eight calls will tell you if the pain is universal or idiosyncratic. If it clusters around three-plus hours reclaimed, you have signal. If it's scattered, you learn that too.
+
+[user]
+Right. So the validation plan is: eight interviews, quantify the drift, then decide. I'm giving myself three weeks of validation, then a kill or commit call. If it's a commit, I will show Mira the sketch once the interviews wrap. She's been generous with feedback, and I owe her a sharper version. Also, this marker is nearly dead, of course, just when I need to sketch the flow on the whiteboard.
+
+[assistant]
+Classic marker betrayal. For the three weeks, maybe break it into two phases: week one for sourcing and scheduling the eight calls, weeks two and three for running them and synthesizing notes. That gives you buffer if a few prospects ghost. When you meet with Mira, having a one-pager with the interview highlights and the draft wedge positioning will make the conversation concrete. Does that timeline feel tight or comfortable?
+
+[user]
+Tight but doable. I already have three warm intros from an old ops community, so sourcing isn't starting from zero. I'll aim to have all eight scheduled by end of week one, then run them back to back.
+
+[assistant]
+Solid. With three warm intros in hand, you only need five more, and chiefs of staff tend to respond well to peer referrals, so each call can end with an ask for one more name. By week three you should have enough pattern recognition to draft the kill or commit memo. Anything you want me to help prep before the first interview, like a discussion guide or a quick summary doc you can share with Mira?

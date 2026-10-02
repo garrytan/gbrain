@@ -16,7 +16,7 @@ import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { createHash } from 'crypto';
 import { auth, extractWWWAuthenticateParams, type OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
 import type { OAuthTokens } from '@modelcontextprotocol/sdk/shared/auth.js';
-import { hasDatabase, setupDB, teardownDB } from './helpers.ts';
+import { getEngine, hasDatabase, setupDB, teardownDB } from './helpers.ts';
 import { assertSafeE2eDatabaseUrl } from '../helpers/db-guard.ts';
 
 const skip = !hasDatabase();
@@ -490,8 +490,61 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
     });
   });
 
+  // #5277: the challenge hints `read write`, so a writer connector that asks
+  // for exactly the hinted scope gets write, while grantScopes still caps a
+  // read-only row to read.
+  // #5222: the issuer origin is an alias of the canonical /mcp resource
+  // (ChatGPT sends the origin root); any other resource fails loudly at
+  // /authorize instead of minting a token /mcp refuses forever.
+  test('an origin-root resource completes OAuth and the token works at /mcp; a foreign resource is invalid_target', async () => {
+    const redirectUri = 'https://example.test/callback';
+    const registration = await fetch(`${BASE}/register`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ client_name: `e2e-origin-resource-${Date.now()}`, redirect_uris: [redirectUri],
+        grant_types: ['authorization_code', 'refresh_token'], response_types: ['code'], token_endpoint_auth_method: 'none', scope: 'read write' }) });
+    expect(registration.status).toBe(201);
+    const client = await registration.json() as any;
+    dcrClientIds.push(client.client_id);
+    const verifier = 'e2e-origin-resource-verifier-0123456789abcdefghijklmnop';
+    const authorizeUrl = (resource: string) => `${BASE}/authorize?${new URLSearchParams({ client_id: client.client_id,
+      response_type: 'code', redirect_uri: redirectUri, scope: 'read write', state: 'origin-state', resource,
+      code_challenge: createHash('sha256').update(verifier).digest('base64url'), code_challenge_method: 'S256' })}`;
+
+    const foreign = await fetch(authorizeUrl('https://different.example/'), { redirect: 'manual' });
+    expect(foreign.status).toBe(302);
+    const foreignRedirect = new URL(foreign.headers.get('location')!);
+    expect(foreignRedirect.searchParams.get('error')).toBe('invalid_target');
+    expect(foreignRedirect.searchParams.get('error_description')).toContain(`${BASE}/mcp`);
+
+    const pending = await fetch(authorizeUrl(`${BASE}/`), { redirect: 'manual' });
+    expect(pending.status).toBe(302);
+    const requestId = new URL(pending.headers.get('location')!, BASE).searchParams.get('oauth_request');
+    expect(requestId).toBeTruthy();
+    const login = await fetch(`${BASE}/admin/login`, { method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': '192.0.2.52' },
+      body: JSON.stringify({ token: ADMIN_BOOTSTRAP_TOKEN }) });
+    expect(login.status).toBe(200);
+    const cookie = `gbrain_admin=${login.headers.get('set-cookie')!.match(/gbrain_admin=([^;]+)/)![1]}`;
+    const details = await (await fetch(`${BASE}/admin/api/oauth-requests/${requestId}`, {
+      headers: { Cookie: cookie, 'X-Forwarded-For': '192.0.2.52' } })).json() as any;
+    expect(details.resource).toBe(`${BASE}/mcp`);
+    const approval = await fetch(`${BASE}/admin/api/oauth-requests/${requestId}`, { method: 'POST',
+      headers: { Cookie: cookie, 'Content-Type': 'application/json', 'X-Forwarded-For': '192.0.2.52' },
+      body: JSON.stringify({ decision: 'approve', csrf: details.csrf }) });
+    expect(approval.status).toBe(200);
+    const code = new URL((await approval.json() as any).redirectUrl).searchParams.get('code')!;
+    const tokenResponse = await fetch(`${BASE}/token`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ grant_type: 'authorization_code', code, redirect_uri: redirectUri, client_id: client.client_id,
+        code_verifier: verifier, resource: `${BASE}/` }) });
+    expect(tokenResponse.status).toBe(200);
+    const tokens = await tokenResponse.json() as any;
+    expect(tokens.scope).toBe('read write');
+    const listed = await mcpToolResult(tokens.access_token, 'tools/list');
+    expect(listed.tools.some((tool: any) => tool.name === 'put_page')).toBe(true);
+  });
+
   for (const [label, registeredScope, explicitScope, expectedRequest] of [
-    ['read-only discovery', 'read', undefined, 'read'],
+    ['read-only discovery', 'read', undefined, 'read write'],
+    ['writer discovery', 'read write', undefined, 'read write'],
     ['read-only overbroad hint', 'read', 'read write', 'read write'],
     ['explicit writer request', 'read write', 'read write', 'read write'],
   ] as const) {
@@ -544,7 +597,7 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
       const code = new URL((await approval.json() as any).redirectUrl).searchParams.get('code')!;
       expect(await auth(provider, { serverUrl: `${BASE}/mcp`, authorizationCode: code })).toBe('AUTHORIZED');
       expect(tokens!.scope).toBe(registeredScope);
-      if (label === 'read-only overbroad hint') expect(tokens!.scope).not.toBe(expectedRequest);
+      if (registeredScope !== expectedRequest) expect(tokens!.scope).not.toBe(expectedRequest);
       else expect(tokens!.scope).toBe(expectedRequest);
       const listed = await mcpToolResult(tokens!.access_token, 'tools/list');
       expect(listed.tools.some((tool: any) => tool.name === 'get_page')).toBe(true);
@@ -578,12 +631,21 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
 
   test('admin source access APIs enumerate sources and rescope an OAuth client', async () => {
     const cookie = await adminCookie();
+    const webhookSecret = `whsec-sentinel-${crypto.randomUUID()}`;
+    await getEngine().executeRaw(
+      `INSERT INTO sources (id, name, config) VALUES ('admin-hooked', 'admin-hooked', $1::text::jsonb)
+       ON CONFLICT (id) DO UPDATE SET config = EXCLUDED.config`,
+      [JSON.stringify({ federated: true, github_repo: 'acme-example/brain', webhook_secret: webhookSecret })],
+    );
     const sourcesRes = await fetch(`${BASE}/admin/api/sources`, {
       headers: { Cookie: cookie },
     });
     expect(sourcesRes.ok).toBe(true);
-    const sources = await sourcesRes.json() as Array<{ id: string; name: string; federated: boolean }>;
+    const sourcesBody = await sourcesRes.text();
+    const sources = JSON.parse(sourcesBody) as Array<{ id: string; name: string; federated: boolean }>;
     expect(sources.some(source => source.id === 'default')).toBe(true);
+    expect(sources.some(source => source.id === 'admin-hooked')).toBe(true);
+    expect(sourcesBody).not.toContain(webhookSecret);
 
     const rescopeRes = await fetch(`${BASE}/admin/api/rescope-client`, {
       method: 'POST',

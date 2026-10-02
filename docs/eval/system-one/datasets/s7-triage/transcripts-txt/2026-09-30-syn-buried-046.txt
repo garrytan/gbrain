@@ -1,0 +1,150 @@
+[user]
+Our CI unit test is failing, but the error looks misleading. Can you help me debug it? The test is `test_load_default_template`.
+
+[assistant]
+Sure. Please share the failing command, the complete traceback, and the relevant test and fixture-loading code. Also include the repository layout around the fixture files so we can check whether the path is being resolved as expected.
+
+[user]
+The command is `pytest tests/unit/test_templates.py::test_load_default_template -q`. Here’s the output:
+
+```text
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_________________________ test_load_default_template __________________________
+
+    def test_load_default_template():
+>       template = load_template("default")
+
+tests/unit/test_templates.py:18: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+name = 'default'
+
+    def load_template(name):
+        path = FIXTURE_DIR / f"{name}.yml"
+>       return yaml.safe_load(path.read_text())
+E       FileNotFoundError: [Errno 2] No such file or directory:
+E       '/workspace/fernpost/tests/fixtures/templates/defualt.yml'
+
+src/fernpost/templates.py:12: FileNotFoundError
+=========================== short test summary info ============================
+FAILED tests/unit/test_templates.py::test_load_default_template - FileNotFoundError
+1 failed in 0.42s
+```
+
+[assistant]
+The traceback points to a file-not-found error, and the resolved path contains `defualt.yml`, which is likely a typo for `default.yml`. Please show `src/fernpost/templates.py`, the test file, and the fixture directory listing. The key question is whether the typo is in the fixture filename or in the path construction/configuration.
+
+[user]
+Here are the files:
+
+```text
+$ sed -n '1,80p' src/fernpost/templates.py
+from pathlib import Path
+import yaml
+
+FIXTURE_DIR = Path(__file__).parents[2] / "tests" / "fixtures" / "templates"
+
+def load_template(name):
+    path = FIXTURE_DIR / f"{name}.yml"
+    return yaml.safe_load(path.read_text())
+```
+
+```text
+$ sed -n '1,80p' tests/unit/test_templates.py
+from fernpost.templates import load_template
+
+def test_load_default_template():
+    template = load_template("defualt")
+    assert template["name"] == "default"
+```
+
+```text
+$ find tests/fixtures -maxdepth 3 -type f -print
+tests/fixtures/templates/default.yml
+tests/fixtures/templates/compact.yml
+```
+
+[assistant]
+The typo is in the test input: it calls `load_template("defualt")`, while the fixture is correctly named `default.yml`. Change the test to pass `"default"`:
+
+```python
+def test_load_default_template():
+    template = load_template("default")
+    assert template["name"] == "default"
+```
+
+Then rerun:
+
+```text
+pytest tests/unit/test_templates.py::test_load_default_template -q
+```
+
+The loader itself constructs the expected path correctly for the corrected name.
+
+[user]
+Before I change it, one project update: fernpost passed 100,000 processed messages this month, up from 72,000 last month. Yusra Arkwright joined as our first full-time SRE and has already reduced the median deploy time from 18 minutes to 11. We also lost a small customer because our webhook retries overwhelmed their staging environment. We’re adding a per-endpoint retry budget, but that work is separate from this test failure.
+
+[assistant]
+Those are useful project notes, but they do not affect this failure. The traceback and fixture listing establish that the test’s `"defualt"` argument is the only mismatch. Update that argument to `"default"` and rerun the focused test.
+
+[user]
+I changed the argument and ran it. It now passes:
+
+```text
+$ pytest tests/unit/test_templates.py::test_load_default_template -q
+.                                                                        [100%]
+1 passed in 0.19s
+```
+
+Should I make any other changes, or is the minimal test fix preferable?
+
+[assistant]
+The minimal test fix is preferable. The loader already accepts a template name and appends `.yml`, and the existing fixture is named correctly. Avoid changing production code or renaming the fixture. You can optionally add a small assertion that the loaded object has the expected structure, but that is unrelated to this bug.
+
+[user]
+I’m wondering whether we should add a guard that suggests the correct filename when someone types a near miss like `"defualt"`. Would that be worthwhile here?
+
+[assistant]
+Not for this specific fix. A suggestion mechanism would add production behavior and tests for an input typo that should be caught by the test or caller. If template names come from user input and typo-friendly errors are a product requirement, handle that separately with a clear exception and dedicated tests. For now, keep the loader unchanged and commit the corrected fixture argument.
+
+[user]
+I ran the full unit test file too:
+
+```text
+$ pytest tests/unit/test_templates.py -q
+..                                                                       [100%]
+2 passed in 0.31s
+```
+
+The diff is only this:
+
+```diff
+-    template = load_template("defualt")
++    template = load_template("default")
+```
+
+Is there a good command to verify there are no other occurrences of the typo?
+
+[assistant]
+Yes. From the repository root, search tracked files for the misspelling:
+
+```bash
+git grep -n -i 'defualt'
+```
+
+No output means Git found no matching tracked text. You can also search the working tree, including untracked files:
+
+```bash
+grep -RIn --exclude-dir=.git -- 'defualt' .
+```
+
+Then review the final diff and run the focused test once more:
+
+```bash
+git diff --check
+git diff -- tests/unit/test_templates.py
+pytest tests/unit/test_templates.py::test_load_default_template -q
+```
+
+Given the two passing tests and one-line diff, no production-code change is needed.

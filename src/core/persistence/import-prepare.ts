@@ -135,9 +135,9 @@ export async function prepareManagedImportMutation(engine: BrainEngine, row: Wri
   const rendered = imageBytes ?? (code ? p.content : serializePageToMarkdown({
     ...(snapshot?.page ?? { id: 0, source_id: row.source_id, created_at: new Date(), updated_at: new Date() }), ...ready.parsedPage,
   } as Page, tags));
-  const project = code || image ? undefined : prepareCanonicalProjections(ready.parsedPage!, row.slug, row.source_id);
+  const project = code || image ? undefined : await prepareCanonicalProjections(engine, ready.parsedPage!, row.slug, row.source_id, snapshot, 'file');
   return { observedRevision: ready.observedRevision, noop: ready.noop && p.targetHash === sha256(rendered),
-    deferEmbedding: image || p.noEmbed, validate: checkPaths,
+    deferEmbedding: image || p.noEmbed, validate: async tx => { await checkPaths(tx); await ready.validate(tx); },
     file: { root, path, content: rendered, expectedBeforeHash: p.targetHash },
     apply: async tx => {
       await ready.apply(tx);

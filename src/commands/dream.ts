@@ -79,10 +79,10 @@ interface DreamArgs {
    * for `--phase extract_atoms`) holds the cycle lock once and loops bounded
    * batches, rediscovering eligibility each batch, until the backlog empties or
    * `--window` seconds elapse. Reports {extracted, skipped, remaining}; exits
-   * non-zero when remaining > 0 so a cron/agent loop knows to run again.
+   * 3 unless it drained so a cron/agent loop knows to run again.
    */
   drain: boolean;
-  /** Drain wallclock budget in seconds. Default 300 (5 min). */
+  /** Drain window in seconds, a hard deadline for starting work. Default 300 (5 min). */
   windowSeconds: number;
   /**
    * issue #2860 — `--once`. One-shot bypass of the named `--phase`'s own
@@ -375,6 +375,7 @@ async function resolveBrainDir(
 function printHelp() {
   console.log(`Usage: gbrain dream [options]
        gbrain dream retriage [flags]   (see: gbrain dream retriage --help)
+       gbrain dream reset-key <key> | --list   (see: gbrain dream reset-key --help)
 
 Run one brain maintenance cycle. Eight phases:
   lint -> backlinks -> sync -> synthesize -> extract -> patterns -> embed -> orphans
@@ -411,6 +412,9 @@ Options:
                       implied by --input or --drain does not count (bare
                       --once, or --once with --input/--drain and no
                       explicit --phase, is a usage error).
+  --eval-run          Eval harness run: honor GBRAIN_DECIDE_SLOTS (e.g. triage=on)
+                      for System One slots in this process; consent keys, the
+                      egress gate and the daily cap still apply
   --pull              git pull the brain repo before syncing (default: no pull)
   --dir <path>        Brain directory (default: configured brain). On a
                       postgres/remote brain with no local checkout, the
@@ -445,11 +449,14 @@ Options:
                       (the default phase when --drain is set). Holds the
                       cycle lock once, processes batches until the backlog
                       empties or --window elapses, reports {extracted,
-                      remaining}, and exits 3 when the backlog isn't empty
-                      so a cron/agent loop knows to run again. Use this to
-                      grind down an extract_atoms backlog on a brain whose
-                      pack doesn't run the phase in the routine cycle.
-  --window <seconds>  Drain wallclock budget. Default 300 (5 min).
+                      remaining, stopped}, and exits 3 unless the backlog
+                      drained (printing the rerun command) so a cron/agent
+                      loop knows to run again. Use this to grind down an
+                      extract_atoms backlog on a brain whose pack doesn't
+                      run the phase in the routine cycle.
+  --window <seconds>  Drain window, a hard deadline: no page or transcript
+                      starts after it and the one in flight finishes, so a
+                      run ends within one item of the window. Default 300.
 
   --unsafe-bypass-dream-guard
                       Disable the self-consumption guard. Use only when you
@@ -483,7 +490,8 @@ Related:
 function printHuman(report: CycleReport) {
   if (report.status === 'skipped') {
     if (report.reason === 'cycle_already_running') {
-      console.log(`Skipped: another cycle is already running. (locked)`);
+      const h = report.lock_holder;
+      console.log(`Skipped: another cycle is already running. (locked${h ? ` by pid ${h.holder_pid} on ${h.holder_host} for ${Math.round(h.age_ms / 1000)}s` : ''})`);
     } else if (report.reason === 'no_database') {
       console.log(`Skipped: no database available.`);
     } else {
@@ -655,7 +663,12 @@ async function runDrain(
     console.log(`[drain] extracted ${result.extracted} atom(s) across ${result.batches} batch(es); ${result.remaining ?? '?'} remaining (stopped: ${result.stopped})`);
   }
   // null remaining = the final count query failed; do not report success.
-  if (result.remaining === null || result.remaining > 0) process.exit(EXIT_DRAIN_INCOMPLETE);
+  if (result.stopped === 'drained' && result.remaining === 0) return;
+  process.stderr.write(
+    `[drain] stopped: ${result.stopped}; ${result.remaining ?? '?'} page(s) remaining. ` +
+    `Rerun: gbrain dream --drain --window ${opts.windowSeconds}${opts.source ? ` --source ${opts.source}` : ''}\n`,
+  );
+  process.exit(EXIT_DRAIN_INCOMPLETE);
 }
 
 export async function runDream(engine: BrainEngine | null, args: string[]): Promise<CycleReport | void> {
@@ -667,6 +680,15 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
     const { runDreamRetriage } = await import('./dream-retriage.ts');
     await runDreamRetriage(engine, args.slice(1));
     return;
+  }
+  if (args[0] === 'reset-key') {
+    const { runDreamResetKey } = await import('./dream-reset-key.ts');
+    await runDreamResetKey(engine, args.slice(1));
+    return;
+  }
+  if (args.includes('--eval-run')) {
+    const { enableDecideEvalOverride } = await import('../core/ai/decide/config.ts');
+    enableDecideEvalOverride();
   }
   // Fail-loud guard (structured-review r3 P1): the CLI flag registry unions
   // retriage's flags into `dream`, so the pre-dispatch validator accepts
@@ -691,7 +713,7 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
   // ─── IRON RULE: --help short-circuits BEFORE any engine-bearing work ─
   // Tests pin this ordering so `gbrain dream --help --source whatever`
   // ALWAYS prints help and exits 0, never reaching the engine-null gate
-  // below. If you reorder this, dream-cli-flags.test.ts will fail.
+  // below. If you reorder this, test/dream.test.ts ("--help --source whatever") fails.
   if (opts.help) {
     printHelp();
     return;
@@ -858,8 +880,9 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
   }
 
   // Exit non-zero when the cycle failed overall (helps cron spot real problems).
-  // 'partial' is not a failure — it means some phase warned but the cycle ran.
-  if (report.status === 'failed') {
+  // 'partial' is not a failure — it means some phase warned but the cycle ran —
+  // except when a phase threw and was contained so later phases could run.
+  if (report.status === 'failed' || report.phases.some(p => p.details?.contained === true)) {
     process.exit(1);
   }
 

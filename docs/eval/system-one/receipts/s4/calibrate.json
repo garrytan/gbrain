@@ -1,0 +1,97 @@
+{
+  "id": 8,
+  "slot": "answerable",
+  "call_site": "query",
+  "provider": "typesafe:jev-1.13.0",
+  "model_resolved": "jev-1.13.0",
+  "threshold": 0.05,
+  "min_keep": null,
+  "metric": "recall",
+  "metric_value": 0.9620253164556962,
+  "ece": 0.3971774193548387,
+  "retest_sd": 0.01231235717161886,
+  "repack_sd": 0.014337230527660174,
+  "n": 248,
+  "dataset_hash": "df016484c6367b8b",
+  "split_hash": "c2d7aea440b81e88",
+  "calibrate_ids_hash": "c5dff62b23d8bd4f",
+  "calibrate_only": true,
+  "pack_shape": "v1:order=rank-id:max=1:slots=answerable",
+  "notes": null,
+  "precision": 0.9702127659574468,
+  "recall": 0.9620253164556962,
+  "f1": 0.9661016949152542,
+  "reliability": [
+    {
+      "lo": 0,
+      "hi": 0.1,
+      "n": 24,
+      "mean_p": 0.05041666666666667,
+      "observed": 0.7916666666666666
+    },
+    {
+      "lo": 0.1,
+      "hi": 0.2,
+      "n": 22,
+      "mean_p": 0.1495454545454546,
+      "observed": 0.8636363636363636
+    },
+    {
+      "lo": 0.2,
+      "hi": 0.3,
+      "n": 16,
+      "mean_p": 0.23187500000000005,
+      "observed": 0.9375
+    },
+    {
+      "lo": 0.3,
+      "hi": 0.4,
+      "n": 12,
+      "mean_p": 0.345,
+      "observed": 0.9166666666666666
+    },
+    {
+      "lo": 0.4,
+      "hi": 0.5,
+      "n": 21,
+      "mean_p": 0.44333333333333336,
+      "observed": 1
+    },
+    {
+      "lo": 0.5,
+      "hi": 0.6,
+      "n": 27,
+      "mean_p": 0.5492592592592591,
+      "observed": 1
+    },
+    {
+      "lo": 0.6,
+      "hi": 0.7,
+      "n": 25,
+      "mean_p": 0.6496000000000001,
+      "observed": 1
+    },
+    {
+      "lo": 0.7,
+      "hi": 0.8,
+      "n": 25,
+      "mean_p": 0.7552,
+      "observed": 1
+    },
+    {
+      "lo": 0.8,
+      "hi": 0.9,
+      "n": 48,
+      "mean_p": 0.8564583333333334,
+      "observed": 0.9791666666666666
+    },
+    {
+      "lo": 0.9,
+      "hi": 1,
+      "n": 28,
+      "mean_p": 0.9207142857142857,
+      "observed": 1
+    }
+  ],
+  "margin": 0.05
+}

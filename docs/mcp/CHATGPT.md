@@ -97,12 +97,12 @@ For ordinary memory, request `read write` and keep the appropriate source and
 operation restrictions. The owner dashboard uses its separate bootstrap/session
 credential; adding MCP `admin` scope will not log ChatGPT into it.
 
-The initial MCP authentication challenge requests only `read`. Clients that
-follow that hint bootstrap with read access, even when their registration
-allows `read write`; registration is a ceiling, not automatic authorization
-for every listed scope. Saving requires the client to explicitly request
-`write` and the operator to approve it. Existing authorized writer sessions
-keep their permissions.
+The initial MCP authentication challenge on `/mcp` hints `read write`, so a
+client that requests exactly the hinted scope can save as well as search.
+The hint is not a grant: every token is capped to the scope on the client's
+registration, so a client registered with `read` still gets a read-only
+token, and the operator still approves the connection. Existing authorized
+sessions keep their permissions.
 
 OAuth discovery omits the operator-only `agent` scope so clients that register
 using advertised scopes do not request unsupported delegation. Explicit DCR
@@ -173,6 +173,29 @@ connector isn't reaching your public URL — with Tailscale, confirm
 (tailnet-only Serve is not reachable from OpenAI's cloud); with ngrok, check
 the tunnel. If a request arrives but fails, the Request Log tab shows the
 exact error.
+
+**ChatGPT keeps asking you to connect again (reconnect loop), or shows `invalid_target`**
+GBrain binds every authorization, token and refresh to one resource: the
+server's `/mcp` URL, built from the origin of `gbrain serve --http
+--public-url` (`gbrain mcp expose` sets it to your MagicDNS name). The server
+accepts that URL or its bare origin, with or without a trailing slash; scheme
+and host case and default ports don't matter. Before v0.60.5.0, a connector
+that sent the site root as its resource got a token `/mcp` then refused, and
+reconnected forever. Upgrade the brain host and restart `gbrain serve`, then
+reconnect the connector once.
+
+Any other resource is refused with `invalid_target` and a message such as
+`Resource https://old-name.example/mcp is not served here; use
+https://your-machine.your-tailnet.ts.net/mcp (or its origin ...)`. It usually
+means the connector URL and `--public-url` disagree: an old tunnel hostname,
+`http` instead of `https`, a different port, or a query string. Set the
+connector's MCP URL to the accepted URL from the message, or restart the
+server with the `--public-url` the connector uses, then reconnect. A token
+minted for a different resource fails `/mcp` with `invalid_token` ("Token is
+bound to a different resource"), and refreshing a grant approved for a
+resource this server no longer serves fails with `invalid_grant`; reconnecting
+mints a correct one. Grants issued before this check without a bound resource
+keep working.
 
 **"Unsupported grant_type" on the token endpoint**
 ChatGPT uses `authorization_code`, which the MCP SDK supports natively.

@@ -74,7 +74,10 @@ export const QUERY_DESCRIPTION =
   "default count when `limit` is omitted depends on the configured search " +
   "mode (10 conservative / 25 balanced / 50 tokenmax — see the `limit` param " +
   "description); pass `limit` explicitly for a stable count regardless of " +
-  "mode. For exhaustive enumeration use list_pages; for exact known tokens " +
+  "mode. When the answer needs the surrounding conversation or section, pass " +
+  "`return_unit` ('page' / 'section' / 'window') to get that evidence in one call " +
+  "instead of get_page per hit; conversation pages already come back whole by default (return_unit " +
+  "'auto'; 'chunk' opts out). For exhaustive enumeration use list_pages; for exact known tokens " +
   "`search` is cheaper (no expansion LLM call). " +
   "For personal/emotional questions ('what's going on with me', 'anything notable', " +
   "'how am I feeling'), prefer get_recent_salience, find_anomalies, or " +
@@ -88,6 +91,8 @@ export const SEARCH_DESCRIPTION =
   "result set is NOT proof of coverage — for concept / synonym / landscape " +
   "questions use `query` (adds multi-query expansion); for exhaustive " +
   "enumeration use list_pages pagination. " +
+  "Pass `return_unit` ('window' / 'section' / 'page') for whole evidence instead of chunks; " +
+  "conversation pages already come back whole by default (return_unit 'auto'; 'chunk' opts out). " +
   "For personal/emotional questions, " +
   "prefer get_recent_salience or find_anomalies — they surface activity bursts " +
   "without needing a search term. " +
@@ -231,6 +236,9 @@ export const SKILL_CATALOG_INSTRUCTIONS = {
       "correspondingly-named MCP tool on THIS server (e.g. search, query, put_page).",
     "Only call tools in this skill's `usable_tools`; tools in `unavailable_tools` " +
       "are not callable by you on this server.",
+    "For host-repository skills, declared `tools` narrow the usable tools. Valid " +
+      "frontmatter without `tools` inherits your available brain tools; `tools: []` permits none. " +
+      "Canonical shared skills use their approved requirements instead.",
   ],
 } as const;
 
@@ -246,6 +254,9 @@ export const SKILL_CLIENT_GUIDANCE = {
     "When the prose names a brain operation (search, store, link, look up), call " +
       "the MCP tool of that name on THIS server.",
     "Do not invent tools — only the tools in `usable_tools` are callable by you.",
+    "For host-repository skills, declared `tools` narrow this list. Valid frontmatter " +
+      "without `tools` inherits your available brain tools; `tools: []` permits none. " +
+      "Canonical shared skills use their approved requirements instead.",
     "If `mutating` is true, this skill writes to the brain; confirm before doing so " +
       "if the user hasn't clearly asked for a write.",
   ],

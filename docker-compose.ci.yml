@@ -5,7 +5,7 @@
 # `bun run ci:local:diff` (see scripts/ci-local.sh).
 #
 # All services are pulled as `image:` (no build) so `docker compose pull`
-# refreshes everything. #4479: the bun tag is PINNED (default 1.3.13, matching
+# refreshes everything. #4479: the bun tag is PINNED (default 1.4.2, matching
 # the CI/build bun) instead of floating with `oven/bun:1` — a floating tag
 # resolved to a newer bun than the host and produced container-only behavior
 # skew during release gates. Override per-run with GBRAIN_CI_BUN_TAG (e.g.
@@ -125,7 +125,7 @@ services:
 
   runner:
     # #4479: pinned to the host bun version by default (see header comment).
-    image: oven/bun:${GBRAIN_CI_BUN_TAG:-1.3.13}
+    image: oven/bun:${GBRAIN_CI_BUN_TAG:-1.4.2}
     working_dir: /app
     environment:
       # The bind-mounted checkout may contain private developer test keys.

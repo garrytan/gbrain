@@ -1,6 +1,5 @@
-import { randomUUID } from 'node:crypto';
-import { link, lstat, mkdir, open, readFile, realpath, unlink } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { resolve } from 'node:path';
+import { fetchLocalJson, rejectProxies, stagePages, validateApiUrl } from './screenpipe-export.ts';
 import { parseArgs } from 'node:util';
 import { z } from 'zod';
 
@@ -48,50 +47,8 @@ export function parseOptions(args: string[], token: string | undefined): ExportO
     output: resolve(values.output), write: values.write };
 }
 
-function validateApiUrl(value: string): URL {
-  const url = new URL(value);
-  if (url.protocol !== 'http:' || !['127.0.0.1', '[::1]'].includes(url.hostname)
-    || url.username || url.password || url.pathname !== '/' || url.search || url.hash) {
-    throw new Error('--api-url must be a plain HTTP loopback origin (127.0.0.1 or [::1]).');
-  }
-  return url;
-}
-
 async function fetchMeeting(options: ExportOptions, id: number) {
-  const url = new URL(`/meetings/${id}`, validateApiUrl(options.apiUrl));
-  let response: Response;
-  try {
-    response = await fetch(url, {
-      headers: { Authorization: `Bearer ${options.token}`, 'X-Screenpipe-Client': 'api' },
-      redirect: 'error', signal: AbortSignal.timeout(15_000),
-    });
-  } catch {
-    // Older Bun releases throw synchronously for invalid headers.
-    throw new Error(`Meeting ${id}: unable to reach the local Screenpipe API.`);
-  }
-  if (!response.ok) throw new Error(`Meeting ${id}: Screenpipe returned HTTP ${response.status}.`);
-  if (!response.body) throw new Error(`Meeting ${id}: empty response.`);
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      size += value.byteLength;
-      if (size > 2_000_000) throw new Error(`Meeting ${id}: response exceeds 2 MB.`);
-      chunks.push(value);
-    }
-  } finally {
-    await reader.cancel();
-  }
-  if (size === 0) throw new Error(`Meeting ${id}: empty response.`);
-  let data: unknown;
-  try {
-    data = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-  } catch {
-    throw new Error(`Meeting ${id}: invalid JSON response.`);
-  }
+  const data = await fetchLocalJson(options, `/meetings/${id}`, `Meeting ${id}`);
   const parsed = meetingSchema.safeParse(data);
   if (!parsed.success) throw new Error(`Meeting ${id}: invalid Screenpipe meeting response.`);
   const meeting = parsed.data;
@@ -106,11 +63,7 @@ async function fetchMeeting(options: ExportOptions, id: number) {
 
 export async function exportMeetings(options: ExportOptions): Promise<{ id: number; path: string; status: string }[]> {
   validateApiUrl(options.apiUrl);
-  // Bun can proxy loopback requests; never send the local token through an inherited proxy.
-  if (['HTTP_PROXY', 'http_proxy', 'HTTPS_PROXY', 'https_proxy', 'ALL_PROXY', 'all_proxy']
-    .some(name => process.env[name]?.trim())) {
-    throw new Error('Clear HTTP_PROXY, http_proxy, HTTPS_PROXY, https_proxy, ALL_PROXY, and all_proxy for this local-only command.');
-  }
+  rejectProxies();
   const pages = [];
   for (const id of options.ids) {
     const meeting = await fetchMeeting(options, id);
@@ -127,33 +80,7 @@ export async function exportMeetings(options: ExportOptions): Promise<{ id: numb
       + `## Saved meeting note\n\n${meeting.note!.trim()}\n`;
     pages.push({ id, name: `screenpipe-${options.device}-${id}.md`, text });
   }
-  if (!options.write) return pages.map(page => ({ id: page.id, path: join(options.output, page.name), status: 'preview' }));
-  await mkdir(options.output, { recursive: true, mode: 0o700 });
-  const directory = await realpath(options.output);
-  const results = [];
-  for (const page of pages) {
-    const target = join(directory, page.name);
-    const temporary = join(directory, `.screenpipe-${randomUUID()}.tmp`);
-    const file = await open(temporary, 'wx', 0o600);
-    try {
-      await file.writeFile(page.text);
-      try {
-        await link(temporary, target);
-        results.push({ id: page.id, path: target, status: 'created' });
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-        const stat = await lstat(target);
-        if (!stat.isFile() || await readFile(target, 'utf8') !== page.text) {
-          throw new Error(`Meeting ${page.id}: destination exists with different content; review it manually.`);
-        }
-        results.push({ id: page.id, path: target, status: 'unchanged' });
-      }
-    } finally {
-      await file.close();
-      await unlink(temporary);
-    }
-  }
-  return results;
+  return stagePages(pages, options.output, options.write) as Promise<{ id: number; path: string; status: string }[]>;
 }
 
 if (import.meta.main) {

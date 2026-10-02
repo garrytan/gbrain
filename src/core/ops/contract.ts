@@ -45,6 +45,7 @@ export type ErrorCode =
   | 'provenance_required'  // remember: provenance missing or empty
   | 'unavailable'          // a required dependency cannot serve (no API key, gateway down, model refusal)
   | 'budget_unsatisfiable' // RESERVED in v1 — schema-listed, never returned
+  | 'embedding_budget_below_worst_case' // #5680: migration cap below its worst-case authorization; refused before any change
   // eslint-disable-next-line @typescript-eslint/ban-types
   | (string & {});      // OPEN union for forward-compat (eE7 / D13)
 
@@ -464,13 +465,63 @@ export interface OperationContext {
    * wins, and a context without this field never widens.
    */
   localFederatedSourceIds?: string[];
+  /**
+   * N2-2 — true when the trusted local CLI (src/cli.ts makeContext) resolved
+   * `sourceId` from a non-explicit tier (local_path / brain_default /
+   * sole_non_default / seed_default, or the pre-init 'default' fallback), i.e.
+   * the operator did not select a source. Lets ops whose data has no source
+   * axis (find_contradictions' brain-wide stored reports) answer the bare
+   * command. Ignored unless `remote === false`; a grant always wins.
+   */
+  localSourceImplicit?: boolean;
+  /**
+   * #5081 — explicit-read admission for a stdio connection bound by an
+   * explicit tier (`GBRAIN_SOURCE` or a `.gbrain-source` pin). Set ONLY by
+   * the stdio transport (src/mcp/server.ts), never from caller params and
+   * never for an HTTP token. Unlike `localFederatedSourceIds` it never widens
+   * an unqualified read; `federatedSearchScope` only uses it to admit an
+   * explicit per-call `source_id` inside `sourceIds`.
+   */
+  explicitReadBinding?: ExplicitReadBinding;
 }
+
+/**
+ * #5081 — the bound source, how it was bound, the sources an explicit
+ * `source_id` read may name (the bound source first, then every non-archived
+ * `config.federated === true` source; just the bound source when it opted out
+ * with `config.federated === false`), and the sources that opted out, which
+ * only shape the denial hint.
+ */
+export interface ExplicitReadBinding {
+  sourceId: string;
+  via: 'GBRAIN_SOURCE' | '.gbrain-source';
+  sourceIds: string[];
+  optedOut: string[];
+}
+
+/**
+ * How an op's response is treated before it reaches any caller. `operations.ts`
+ * wraps the handler of every `'retrieval'` op once at registration, so the CLI,
+ * both MCP transports, subagent tools and `gbrain call` all get the same pass:
+ * `redactRetrievalOutput` (canonical scanner, assignment rule on, uncapped)
+ * over the whole response, early returns included.
+ * - `{ retrieval: { localVerbatim } }`: same pass, but the named top-level keys
+ *   are returned unscanned to the trusted local CLI owner (`ctx.remote === false`).
+ * - `{ exempt }`: returns stored text deliberately raw; the reason is required.
+ * - `'no_stored_text'`: returns no page, chunk, fact, take or transcript text.
+ */
+export type OutputRedactionPolicy =
+  | 'retrieval'
+  | { retrieval: { localVerbatim: readonly string[] } }
+  | { exempt: string }
+  | 'no_stored_text';
 
 export interface Operation {
   name: string;
   description: string;
   params: Record<string, ParamDef>;
   handler: (ctx: OperationContext, params: Record<string, unknown>) => Promise<unknown>;
+  outputRedaction: OutputRedactionPolicy;
   mutating?: boolean;
   /**
    * Capability scope required to invoke this op over an authenticated

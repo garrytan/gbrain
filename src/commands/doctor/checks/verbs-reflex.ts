@@ -4,10 +4,9 @@
  * under its original name (tests and external callers import them from
  * doctor.ts) and buildChecks / doctorReportRemote consume them.
  */
-import { homedir } from 'os';
 import { join } from 'path';
 import { existsSync, readFileSync } from 'fs';
-import { loadConfig } from '../../../core/config.ts';
+import { gbrainPath, loadConfig } from '../../../core/config.ts';
 import { reflexEnabled } from '../../../core/context/reflex.ts';
 import { resolveSocketPath } from '../../../core/context/resolve-ipc.ts';
 import type { Check } from '../../doctor.ts';
@@ -84,7 +83,7 @@ export function buildRetrievalReflexCheck(skillsDir: string | null): Check {
     }
 
     // Heartbeat is the authority for "is it firing".
-    const hbPath = join(homedir(), '.gbrain', 'integrations', 'retrieval-reflex', 'heartbeat.jsonl');
+    const hbPath = gbrainPath('integrations', 'retrieval-reflex', 'heartbeat.jsonl');
     let lastFired: string | null = null;
     try {
       if (existsSync(hbPath)) {

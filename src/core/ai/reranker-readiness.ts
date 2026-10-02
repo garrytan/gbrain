@@ -52,8 +52,8 @@ export function rerankerReadiness(
   const required = recipe?.auth_env?.required ?? [];
   // A recipe with a custom resolveAuth (e.g. Azure Entra) mints its own
   // credential — mirror the gateway: no env key is required from us.
-  const needsEnvKey = !!recipe && !recipe.resolveAuth && required.length > 0;
-  const keyPresent = !!recipe && (!needsEnvKey || required.every((k) => !!env[k]));
+  const needsEnvKey = !!recipe && (!recipe.resolveAuth || !!recipe.authPresent) && required.length > 0;
+  const keyPresent = !!recipe && (recipe.authPresent ? recipe.authPresent(env) : (!needsEnvKey || required.every((k) => !!env[k])));
   // Alias canonicalization mirrors resolveRecipe(): a recipe alias key is
   // accepted wherever the gateway accepts it.
   const canonicalModelId = recipe?.aliases?.[modelId] ?? modelId;

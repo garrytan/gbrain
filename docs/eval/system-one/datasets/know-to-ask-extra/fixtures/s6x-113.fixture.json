@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-113",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/linnea-wyrgrove",
+      "content": "---\ntitle: Linnea Wyrgrove\ntype: person\naliases: [linnea]\nsummary: \"Linnea Wyrgrove is the product lead at Quartzyard.\"\n---\n\nLinnea Wyrgrove is the product lead at Quartzyard.\n"
+    },
+    {
+      "slug": "companies/saffronyard",
+      "content": "---\ntitle: Saffronyard\ntype: company\nsummary: \"Saffronyard is a software vendor we work with.\"\n---\n\nSaffronyard is a software vendor we work with. The renewal is blocked on a security review that is due next month.\n"
+    },
+    {
+      "slug": "people/soraya-orrinbrook",
+      "content": "---\ntitle: Soraya Orrinbrook\ntype: person\nsummary: \"Soraya Orrinbrook is the operations director at Marblevane.\"\n---\n\nSoraya Orrinbrook is the operations director at Marblevane.\n"
+    },
+    {
+      "slug": "people/hollis-kestfell",
+      "content": "---\ntitle: Hollis Kestfell\ntype: person\nsummary: \"Hollis Kestfell is the operations director at Fablereach.\"\n---\n\nHollis Kestfell is the operations director at Fablereach. Hollis asked for a longer pilot before signing, ideally a full quarter.\n"
+    },
+    {
+      "slug": "companies/orchidfold",
+      "content": "---\ntitle: Orchidfold\ntype: company\nsummary: \"A company we met once at a trade show.\"\n---\n\nA company we met once at a trade show.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Translate into Spanish: 'Wyrgrove will join the meeting at noon.'"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "remind me what we know about saffronyard and the renewal"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Done."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "is soraya a common name anywhere? thinking about it for a character"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "before I reply to hollis, what was their position on the pilot?"
+    }
+  ]
+}

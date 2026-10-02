@@ -10,6 +10,9 @@
 
 Run these checks after install to confirm every part of GBrain is working.
 Each check includes the command, expected output, and what to do if it fails.
+When `gbrain doctor` reports `timeline_history`, `derived_visibility` or
+unsealed pages, use [`gbrain repair`](guides/repair.md); when a write is
+refused with a named reason, see [write refusal reasons](guides/write-refusals.md).
 
 The most important check is #4 (live sync). "Sync ran" is not the same as
 "sync worked." A sync that silently skips pages because of a pooler bug is

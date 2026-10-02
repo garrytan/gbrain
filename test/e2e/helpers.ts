@@ -1,8 +1,8 @@
 /**
- * E2E test helpers: DB lifecycle, fixture import, timing, and diagnostics.
+ * E2E test helpers: DB lifecycle, fixture import, and diagnostics.
  *
  * Usage in test files:
- *   import { setupDB, teardownDB, importFixtures, time } from './helpers.ts';
+ *   import { setupDB, teardownDB, importFixtures } from './helpers.ts';
  *   beforeAll(async () => { await setupDB(); await importFixtures(); });
  *   afterAll(async () => { await teardownDB(); });
  */
@@ -129,6 +129,11 @@ export async function setupDB(options: { replayMigrations?: boolean } = {}): Pro
   // legacy-path performSync classify as first_sync forever. 42P01-tolerant
   // like the TRUNCATE loop above.
   try {
+    // A file that activated managed persistence and exited without
+    // deactivating leaves the writer guard armed, and its sources trigger
+    // rejects the reset below (writer_coordinator_required). Restore the
+    // schema default (disabled) first.
+    await conn.unsafe(`UPDATE persistence_brain SET enabled = false, activated_at = NULL WHERE singleton = 1`);
     await conn.unsafe(`DELETE FROM sources WHERE id <> 'default'`);
     // Only the sync-identity columns: local_path feeds writeSyncAnchor's
     // ownership guard (#3735) and last_commit/last_sync_at feed first_sync
@@ -262,16 +267,6 @@ function findMarkdownFiles(dir: string): string[] {
     }
   }
   return results.sort();
-}
-
-/**
- * Time a function and return [result, durationMs].
- */
-export async function time<T>(fn: () => Promise<T>): Promise<[T, number]> {
-  const start = performance.now();
-  const result = await fn();
-  const dur = performance.now() - start;
-  return [result, dur];
 }
 
 /**

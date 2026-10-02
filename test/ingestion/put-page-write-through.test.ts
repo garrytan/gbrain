@@ -16,7 +16,7 @@ import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { resetPgliteState } from '../helpers/reset-pglite.ts';
 import { operations, OperationError } from '../../src/core/operations.ts';
 import type { OperationContext } from '../../src/core/operations.ts';
-import { resetGateway } from '../../src/core/ai/gateway.ts';
+import { configureGateway, resetGateway, __setEmbedTransportForTests } from '../../src/core/ai/gateway.ts';
 import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
 import { withEnv } from '../helpers/with-env.ts';
 import { parseMarkdown, serializePageToMarkdown } from '../../src/core/markdown.ts';
@@ -97,6 +97,31 @@ const putPage = { ...putPageOperation,
 };
 
 describe('put_page write-through — happy path', () => {
+  test('MCP writes commit before any embedding and queue it durably (#5100)', async () => {
+    let embedCalls = 0;
+    configureGateway({ embedding_model: 'openai:text-embedding-3-small', embedding_dimensions: 1536, env: { OPENAI_API_KEY: 'sk-test' } });
+    __setEmbedTransportForTests(async ({ values }: { values: string[] }) => {
+      embedCalls++;
+      return { embeddings: values.map(() => new Array(1536).fill(0)), usage: { tokens: 1 } } as any;
+    });
+    try {
+      const ctx = makeCtx({ remote: true });
+      const result = (await putPage.handler(ctx, {
+        slug: 'inbox/mcp-deferred-embed',
+        content: '---\ntitle: Deferred\n---\n\nThis page must be durable before its embedding runs.',
+      })) as { embedding_state?: string; persistence?: { embedding_state?: string } };
+      expect(embedCalls).toBe(0);
+      expect(result.embedding_state ?? result.persistence?.embedding_state).toBe('queued');
+      expect(await engine.getPage('inbox/mcp-deferred-embed', { sourceId: 'default' })).not.toBeNull();
+      const [chunks] = await engine.executeRaw<{ n: number }>(
+        `SELECT COUNT(*)::int AS n FROM content_chunks c JOIN pages p ON p.id = c.page_id WHERE p.slug = 'inbox/mcp-deferred-embed' AND c.embedding IS NULL`);
+      expect(Number(chunks.n)).toBeGreaterThan(0);
+    } finally {
+      __setEmbedTransportForTests(null);
+      resetGateway();
+    }
+  });
+
   test('writes the markdown file to disk at brainDir/<slug>.md', async () => {
     const ctx = makeCtx();
     const content = '---\ntitle: Test\n---\n\n# WT body';

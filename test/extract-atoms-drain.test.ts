@@ -16,13 +16,14 @@ import {
   type ExtractAtomsDrainDeps,
 } from '../src/core/cycle/extract-atoms-drain.ts';
 import { isProtectedJobName, PROTECTED_JOB_NAMES } from '../src/core/minions/protected-names.ts';
+import { surfaceFileSource } from './helpers/source-surface.ts';
 
 function seq(values: Array<number | null>): () => Promise<number | null> {
   let i = 0;
   return async () => values[Math.min(i++, values.length - 1)];
 }
 
-const passThroughLock: ExtractAtomsDrainDeps['withLock'] = (work) => work();
+const passThroughLock: ExtractAtomsDrainDeps['withLock'] = (work) => work(new AbortController().signal);
 
 describe('runExtractAtomsDrain (issue #1678)', () => {
   it('drains to empty and reports stopped=drained', async () => {
@@ -197,7 +198,7 @@ describe('shared wiring helper holds the cycle lock (5A)', () => {
   // not from `r.status` (which collapses partial and total failure into the
   // same 'warn' value — the exact discard the issue reports).
   it('runBatch derives providerFailure from failures.length + zero processed items, not r.status', () => {
-    const runBatchBlock = src.slice(src.indexOf('runBatch: async () => {'));
+    const runBatchBlock = src.slice(src.indexOf('runBatch: async ({ signal, stopSignal }) => {'));
     expect(runBatchBlock).toContain('d.failures');
     expect(runBatchBlock).toContain('transcripts_processed');
     expect(runBatchBlock).toContain('pages_processed');
@@ -222,11 +223,15 @@ describe('protected-names register comment names the real trust mechanism', () =
 // (attempt+backoff / dead-letter) retries the durable job instead of the
 // backlog silently completing untouched.
 describe('extract-atoms-drain Minion handler retries on provider_failure (issue #3218)', () => {
-  const jobsSrc = readFileSync(join(import.meta.dir, '../src/commands/jobs.ts'), 'utf8');
-  const handlerBlock = jobsSrc.slice(
-    jobsSrc.indexOf("registerBuiltinJob(worker, engine, 'extract-atoms-drain'"),
-    jobsSrc.indexOf("registerBuiltinJob(worker, engine, 'extract-atoms-drain'") + 2200,
-  );
+  const jobsSrc = surfaceFileSource('jobs', 'src/commands/jobs.ts');
+  // W4 jobs: the handler body moved into its own module; jobs.ts keeps the registration.
+  const handlerSrc = surfaceFileSource('jobs', 'src/core/minions/handlers/extract-atoms-drain.ts');
+  const handlerBlock = handlerSrc.slice(handlerSrc.indexOf('export function makeExtractAtomsDrainHandler('));
+
+  it('jobs.ts registers the extract-atoms-drain handler module', () => {
+    expect(jobsSrc).toContain("registerBuiltinJob(worker, engine, 'extract-atoms-drain', makeExtractAtomsDrainHandler(engine))");
+    expect(handlerSrc.indexOf('export function makeExtractAtomsDrainHandler(')).toBeGreaterThan(-1);
+  });
 
   it("throws when result.status === 'provider_failure' instead of returning it", () => {
     expect(handlerBlock).toMatch(/result\.status === 'provider_failure'/);

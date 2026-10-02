@@ -46,6 +46,7 @@ function resolveWriteSourceId(ctx: Parameters<Operation['handler']>[0], p: Recor
 
 const entity_identity_link: Operation = {
   name: 'entity_identity_link',
+  outputRedaction: 'no_stored_text',
   description:
     'Link a page into a cross-source entity identity group (v1 manual-only; no auto-matching). ' +
     'The identity key is (source_id, slug); a page belongs to at most one group and re-linking moves it. ' +
@@ -80,6 +81,7 @@ const entity_identity_link: Operation = {
 
 const entity_identity_unlink: Operation = {
   name: 'entity_identity_unlink',
+  outputRedaction: 'no_stored_text',
   description: 'Remove a page from a cross-source entity identity group (v1 manual-only).',
   params: {
     entity_id: { type: 'string', required: true, description: 'Identity handle the member currently belongs to.' },
@@ -106,6 +108,7 @@ const entity_identity_unlink: Operation = {
 
 const entity_identity_list: Operation = {
   name: 'entity_identity_list',
+  outputRedaction: 'no_stored_text',
   description:
     'List cross-source entity identity groups and their member pages. Filter by entity_id or by a member slug. ' +
     'Federated callers only see members in sources their grant covers.',

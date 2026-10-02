@@ -81,21 +81,22 @@ beforeEach(async () => {
   // newer valid_from, so local resolves the private value; an untrusted caller
   // must resolve the older world value, not a hole. The same pair is a
   // two-provenance conflict that only exists with the private side present.
+  // Every row is world-visible so only the provenance-page gate can redact.
   await engine.mergeOntologyFact({
     entitySlug: 'people/open-person', dimension: 'role', value: 'secretvalue',
-    source: 'meetings/secret-sync', validFrom: '2026-05-01',
+    source: 'meetings/secret-sync', visibility: 'world', validFrom: '2026-05-01',
   });
   await engine.mergeOntologyFact({
     entitySlug: 'people/open-person', dimension: 'role', value: 'openvalue',
-    source: 'meetings/open-sync', validFrom: '2026-01-01',
+    source: 'meetings/open-sync', visibility: 'world', validFrom: '2026-01-01',
   });
   await engine.mergeOntologyFact({
     entitySlug: 'people/conf-person', dimension: 'role', value: 'secretvalue',
-    source: 'meetings/secret-sync', validFrom: '2026-05-01',
+    source: 'meetings/secret-sync', visibility: 'world', validFrom: '2026-05-01',
   });
   await engine.mergeOntologyFact({
     entitySlug: 'people/conf-person', dimension: 'role', value: 'yes',
-    source: 'meetings/open-sync', validFrom: '2026-01-01',
+    source: 'meetings/open-sync', visibility: 'world', validFrom: '2026-01-01',
   });
 }, 60_000);
 

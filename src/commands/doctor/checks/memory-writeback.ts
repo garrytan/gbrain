@@ -29,10 +29,12 @@ import {
   resolveWritebackConfig,
   resolveWritebackConfigFromFile,
   AUTO_WRITEBACK_NOTICE_KEY,
+  PRIVATE_DEFAULT_REMOTE_CONSEQUENCE,
 } from '../../../core/facts/writeback-config.ts';
 import { resolveDefaultVisibility } from '../../../core/facts/visibility.ts';
 import { classifyBrainAudience } from '../../../core/facts/writeback-audience.ts';
 import { readVerbUsage } from '../../../core/verbs/usage-log.ts';
+import { readClientOpUsage } from '../../../core/mcp-usage.ts';
 import { readHeartbeatTail } from '../../../core/context/hook-heartbeat.ts';
 import { readHarnessReceiptState } from '../../../core/bootstrap/format.ts';
 import {
@@ -72,6 +74,22 @@ function ambientBlockCandidatePaths(): Array<{ host: string; path: string }> {
     }
   } catch { /* receipt probe is best-effort */ }
   return out;
+}
+
+/** #5671: who reads this brain remotely (world-only reads) — the bootstrap
+ * harness receipt (an HTTP MCP registration) and HTTP token clients active
+ * in the last 30 days. Best-effort local reads; empty = no remote evidence. */
+async function remoteFactReaders(engine: BrainEngine): Promise<string[]> {
+  const readers: string[] = [];
+  try {
+    const receipt = readHarnessReceiptState(resolveGbrainHome());
+    if (receipt.state === 'ok') readers.push(`bootstrap harness (HTTP MCP at ${receipt.receipt.url})`);
+  } catch { /* receipt probe is best-effort */ }
+  try {
+    const clients = await readClientOpUsage(engine, { days: 30 });
+    if (clients.length) readers.push(`${clients.length} HTTP MCP client(s) active in 30d`);
+  } catch { /* pre-OAuth brain: no request log */ }
+  return readers;
 }
 
 export async function buildMemoryWritebackCheck(engine: BrainEngine | null): Promise<Check> {
@@ -124,6 +142,18 @@ export async function buildMemoryWritebackCheck(engine: BrainEngine | null): Pro
       details.file_mirror_mode = fileWb.raw_mode ?? '(unset)';
     }
 
+    // #5671: an explicit private default on a personal brain read over MCP is
+    // write-only memory for those readers. A declared-shared brain keeps
+    // private-for-remote on purpose — no warn there.
+    let privateRemoteProblem: string | null = null;
+    if (!wb.read_error && wb.visibility_explicit_private && audience.audience !== 'shared') {
+      const readers = await remoteFactReaders(engine);
+      if (readers.length) {
+        details.private_default_remote_readers = readers;
+        privateRemoteProblem = `facts.default_visibility is private but this brain is read remotely (${readers.join('; ')}) — ${PRIVATE_DEFAULT_REMOTE_CONSEQUENCE}`;
+      }
+    }
+
     if (!wb.enabled) {
       const offProblems: string[] = [];
       if (wb.read_error) {
@@ -149,6 +179,7 @@ export async function buildMemoryWritebackCheck(engine: BrainEngine | null): Pro
         details.lingering_instruction_blocks = lingering;
         offProblems.push(`ambient writeback is off but instruction blocks are still installed for ${lingering.join(', ')} — new sessions keep saving. Remove: gbrain bootstrap harness --yes (converges on off)`);
       }
+      if (privateRemoteProblem) offProblems.push(privateRemoteProblem);
       return {
         name: MEMORY_WRITEBACK_CHECK_NAME,
         status: offProblems.length ? 'warn' : 'ok',
@@ -163,6 +194,7 @@ export async function buildMemoryWritebackCheck(engine: BrainEngine | null): Pro
     if (!wb.ttl_valid) {
       problems.push(`memory.auto_writeback_transient_ttl is invalid — using '${wb.transient_ttl}'`);
     }
+    if (privateRemoteProblem) problems.push(privateRemoteProblem);
     if (planeDrifted) {
       problems.push(`file mirror says '${fileWb.raw_mode ?? 'unset'}' while the DB plane resolves '${wb.raw_mode}' — the engine-free Stop hook is acting on the wrong truth. Re-sync: gbrain config set memory.auto_writeback ${wb.raw_mode}`);
     }

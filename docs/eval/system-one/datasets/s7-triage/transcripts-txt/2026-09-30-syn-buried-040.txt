@@ -1,0 +1,193 @@
+[user]
+I forgot the administrator password for my home router. I can still connect to Wi‑Fi, but I can't open the router settings. How do I reset it?
+
+[assistant]
+You can usually recover access by performing a factory reset, but this erases the router’s configuration: Wi‑Fi names and passwords, internet settings, port forwards, parental controls, and any custom DNS settings. Before resetting, check the router’s label and documentation for the exact model, because some models have a password-recovery option.
+
+What is the router’s manufacturer and model number?
+
+[user]
+It is a TP-Link Archer C6, hardware version V2. I don't see a password-recovery option on the login page.
+
+[assistant]
+For an Archer C6 V2, the dependable method is a hardware factory reset. First, check whether your internet connection uses anything unusual, such as PPPoE credentials, a static WAN address, VLAN tagging, or a modem that is also acting as a router. You may need those details afterward.
+
+To reset it:
+
+1. Leave the router powered on.
+2. Find the recessed **WPS/RESET** button on the back.
+3. Use a paperclip and hold the button for about 10 seconds, until the LEDs change or blink.
+4. Release it and wait several minutes for the router to restart.
+
+Do not unplug it during the reset. Afterward, connect to the default Wi‑Fi shown on the label, or connect a computer to a LAN port with an Ethernet cable.
+
+[user]
+Will holding it for 10 seconds definitely reset it? I don't want to accidentally just enable WPS.
+
+[assistant]
+On this model, the button is a combined WPS/RESET control, so timing matters. A short press generally activates WPS; holding it for roughly 10 seconds while the router is powered on initiates a factory reset. The exact LED behavior can vary by firmware, so use the change in the system or power-related LEDs as confirmation and continue holding until the reset begins.
+
+For caution, disconnect the router’s WAN/internet cable first. That prevents the router from serving or routing traffic while you are resetting it, but leave the power connected. Avoid pressing the button repeatedly. If nothing changes after about 15 seconds, release it, wait a minute, and consult the Archer C6 V2 manual rather than continuing to hold it indefinitely.
+
+[user]
+I have a Windows laptop. What should I do after the reset?
+
+[assistant]
+After the reset:
+
+1. Connect the laptop to a LAN port with Ethernet if possible. If not, join the default wireless network printed on the router label.
+2. Open a browser and try `http://tplinkwifi.net`. If that does not load, try `http://192.168.0.1`, then `http://192.168.1.1`.
+3. The initial setup page should ask you to create a new administrator password. Use a unique password of at least 14 characters and store it in a password manager.
+4. Follow the setup wizard to select your time zone, internet connection type, and Wi‑Fi settings.
+5. Set a new Wi‑Fi name and password rather than reusing the printed defaults.
+
+On Windows, you can identify the router’s address with:
+
+```text
+ipconfig
+```
+
+Look for the **Default Gateway** under the active Ethernet or Wi‑Fi adapter. Enter that address in the browser.
+
+[user]
+Can you show me what the `ipconfig` output might look like?
+
+[assistant]
+A typical result looks like this:
+
+```text
+C:\Users\Teo>ipconfig
+
+Windows IP Configuration
+
+
+Wireless LAN adapter Wi-Fi:
+
+   Connection-specific DNS Suffix  . :
+   Link-local IPv6 Address . . . . . : fe80::8d2a:6b4f:aa21:1421%12
+   IPv4 Address. . . . . . . . . . . : 192.168.0.103
+   Subnet Mask . . . . . . . . . . . : 255.255.255.0
+   Default Gateway . . . . . . . . . : 192.168.0.1
+```
+
+In that example, open `http://192.168.0.1`. If **Default Gateway** is blank, make sure you are connected to the router, disable any VPN temporarily, and run `ipconfig /release` followed by `ipconfig /renew`. If you connect by Ethernet, look under **Ethernet adapter** instead.
+
+[user]
+What if the setup page still asks for the old administrator password?
+
+[assistant]
+That usually means the reset did not complete, or the laptop is connected to another device. Confirm that:
+
+- The router’s LEDs changed and it rebooted after you held WPS/RESET.
+- The laptop is connected directly to a LAN port or to the router’s default Wi‑Fi, not a nearby extender or a separate access point.
+- The browser address is the router’s current default gateway.
+- The router has had several minutes to finish starting.
+
+Then power-cycle the router once: unplug it, wait 30 seconds, reconnect it, and wait three to five minutes. If the old prompt remains, repeat the hardware reset while powered on, holding the button for approximately 10 seconds. Do not use a backup configuration file, because restoring one can restore the forgotten administrator credentials.
+
+[user]
+Could the ISP modem interfere with the reset?
+
+[assistant]
+It cannot normally prevent the router’s local factory reset, but it can make troubleshooting confusing. Disconnect the Ethernet cable from the Archer C6’s **Internet/WAN** port before resetting. Keep only the laptop connected to one of the Archer’s LAN ports.
+
+After the reset, use the laptop to reach the Archer’s setup page. Once the administrator password and local Wi‑Fi settings are configured, reconnect the modem to the Archer’s WAN port. If the modem is also a router, you may see two private networks, such as `192.168.0.x` and `192.168.1.x`; that is a double-NAT arrangement. It often works for ordinary browsing, but it can affect inbound connections, gaming, VPNs, and port forwarding.
+
+[user]
+How can I tell whether my connection uses PPPoE or DHCP?
+
+[assistant]
+The safest source is your ISP’s installation information or support team. Common clues:
+
+- **Dynamic IP/DHCP:** The router’s WAN settings are usually set to “Dynamic IP,” and it receives an address automatically.
+- **PPPoE:** The ISP supplied a broadband username and password, often for fiber, DSL, or some cable services. The router must be set to “PPPoE” and those credentials entered.
+- **Static IP:** The ISP supplied an IP address, subnet mask, gateway, and DNS servers.
+
+Do not guess PPPoE credentials. If you have a working ISP modem or gateway, log in to that device, if permitted, and record its WAN type and relevant settings before resetting anything. Avoid copying the modem’s administrator password into the Archer’s administrator field; those are separate credentials.
+
+[user]
+I reset it, and I can reach the setup wizard at 192.168.0.1. It asks me to choose Dynamic IP, Static IP, or PPPoE. The old router used to work without me entering an ISP username.
+
+[assistant]
+Choose **Dynamic IP** unless your ISP documentation specifically says otherwise. That tells the Archer to request its WAN address automatically from the upstream modem or gateway.
+
+A few details will help it work:
+
+1. Leave the Archer’s WAN cable disconnected while completing the initial local setup if the wizard allows it.
+2. Create the new administrator password.
+3. Configure your Wi‑Fi name and a strong WPA2/WPA3 password.
+4. Connect the modem or gateway to the Archer’s blue Internet/WAN port.
+5. In the Archer interface, check **Advanced > Network > Internet** and confirm that the WAN status receives an address.
+
+If the WAN address is blank or shows `0.0.0.0`, reboot the modem first, wait until it is fully online, then reboot the Archer. Some providers bind service to the previously connected device’s MAC address; if so, the ISP may need to clear that binding.
+
+[user]
+The wizard says the internet is connected now. What security settings should I change before I finish?
+
+[assistant]
+Use these settings where the firmware provides them:
+
+- **Administrator password:** A unique, long password, preferably generated and saved in a password manager.
+- **Wi‑Fi security:** WPA3-Personal if all your devices support it; otherwise WPA2-PSK with AES, or the router’s WPA2/WPA3 mixed mode.
+- **Wi‑Fi password:** At least 14–16 characters, unrelated to the administrator password.
+- **WPS:** Disable WPS after setup, especially push-button or PIN enrollment if you do not need it.
+- **Remote management:** Disable administration from the internet/WAN.
+- **UPnP:** Disable it unless you specifically need automatic port mapping for a trusted application.
+- **Firmware:** Check TP-Link’s official support page for Archer C6 V2 firmware, verify the hardware version, and install only the correct release.
+- **Guest network:** Use it for visitors and enable client isolation if available.
+
+Do not expose the router’s administration interface by forwarding ports to it.
+
+[user]
+I want to preserve my current Wi‑Fi name so all my devices reconnect automatically. Is that safe?
+
+[assistant]
+It is generally convenient, but it has trade-offs. You can reuse the old SSID and Wi‑Fi password, and most devices will reconnect, provided the security mode is compatible. However, any device that already knows those credentials can reconnect, including a device you may no longer trust.
+
+A safer compromise is to keep the old SSID only if you are confident the credential has not been shared broadly. Use WPA2-AES or WPA3 rather than legacy WEP or WPA/TKIP, disable WPS, and choose a new administrator password. If you suspect the Wi‑Fi password was exposed, create a new SSID and password and reconnect devices deliberately.
+
+[user]
+The router is working, but I see a setting called “remote management.” Should I leave it enabled so I can troubleshoot from outside home?
+
+[assistant]
+Leave it disabled unless you have a specific, well-understood need. Remote management exposes the router’s administration service to the internet and increases the impact of password guessing or a firmware vulnerability.
+
+For occasional remote access, safer alternatives include:
+
+- Connect to a VPN hosted on a device or gateway inside your home network.
+- Use a vendor service only if you understand its account security, two-factor authentication, and data handling.
+- Manage the router locally and use a trusted remote-support method for the laptop, with permission and strong authentication.
+
+If you ever enable remote management, restrict it to a specific source IP if the firmware supports that, use HTTPS, choose a nondefault management port only as a minor nuisance reduction, and disable it again afterward. A changed port is not a substitute for access restrictions, updates, and a strong password.
+
+[user]
+One unrelated update: tidewell passed 10,000 weekly active users this month. Teo Lindqvist joined as our first full-time infrastructure engineer, and he is moving our deployment from one VPS to two regions. We also lost a small customer because our data-retention terms did not meet their procurement requirement. The customer required deletion within seven days, while our current backups can remain for 30 days.
+
+[assistant]
+That project update is noted: tidewell reached 10,000 weekly active users, Teo Lindqvist joined as the first full-time infrastructure engineer, the deployment is moving from one VPS to two regions, and a customer was lost over a seven-day deletion requirement versus 30-day backup retention.
+
+Returning to the router, check that remote management is disabled on both the IPv4 and IPv6 sections if the Archer’s firmware presents separate controls. Also review **Advanced > Security > Firewall** and leave the basic SPI firewall enabled. Do not disable the firewall merely because the router is behind an ISP gateway.
+
+[user]
+How do I verify from Windows that remote management is not exposing the router?
+
+[assistant]
+First verify the setting in the Archer’s administration interface, then test from outside your home network. Testing from inside alone is not conclusive because some routers allow local access regardless of WAN exposure.
+
+From Windows, you can check the router’s local management address:
+
+```text
+C:\Users\Teo>ipconfig
+
+Ethernet adapter Ethernet:
+
+   IPv4 Address. . . . . . . . . . . : 192.168.0.104
+   Default Gateway . . . . . . . . . : 192.168.0.1
+```
+
+Open `http://192.168.0.1` or the HTTPS address shown by the router. Under the remote-management settings, confirm that WAN access is disabled and that no management port is listed as open.
+
+For an external check, turn off Wi‑Fi on a phone and use cellular data, then visit your public IP address only if you know the router’s management protocol and port. A safer option is to use a reputable external port scanner for ports you intentionally configured; do not scan arbitrary networks. If remote management is disabled, the router should not present its login page on the WAN address. Remember that an ISP modem may have its own separate administration interface, so secure that device too.
+
+[tool]
+You have 740 weighted tokens left

@@ -5,7 +5,7 @@ import { OperationError, type OperationContext } from '../ops/contract.ts';
 import { isValidSourceId } from '../source-id.ts';
 import { validateSlug } from '../utils.ts';
 import { resolveSourceLocalFilePath } from '../markdown.ts';
-import { recordedPathFromFileUri } from '../write-through.ts';
+import { recordedPathFromFileUri, scannerSlugRootMode } from '../write-through.ts';
 import { isWriteTargetContained } from '../path-confine.ts';
 import { submissionAuthority } from './authority.ts';
 import { currentVerifiedLocalWriter, existingLocalHostId, readLocalWriter, verifyLocalWriter } from './identity.ts';
@@ -45,6 +45,7 @@ export async function auditCanonicalSource(engine: BrainEngine, sourceId: string
     ORDER BY slug LIMIT $3`, [sourceId, options.after ?? '', limit + 1]);
   const report: ReconcileAuditReport = { source_id: sourceId, inspected: 0, drifted: 0, errors: 0, findings: [],
     next_after: rows.length > limit ? rows[limit - 1].slug : null, complete: rows.length <= limit, snapshot_only: true };
+  const mode = await scannerSlugRootMode(engine, sourceId, root);
   for (const candidate of rows.slice(0, limit)) {
     report.inspected++;
     try {
@@ -52,7 +53,7 @@ export async function auditCanonicalSource(engine: BrainEngine, sourceId: string
       const snapshot = await engine.readPageSnapshot(candidate.slug, { sourceId });
       if (!snapshot || snapshot.sourceIncarnation !== binding.source_incarnation) throw new OperationError('page_identity_changed', 'The page identity changed during the audit.');
       const capturedPath = recordedPathFromFileUri(snapshot.page.source_uri, root);
-      const path = resolveSourceLocalFilePath(root, snapshot.page.source_path, candidate.slug)
+      const path = resolveSourceLocalFilePath(root, snapshot.page.source_path, candidate.slug, mode)
         ?? (capturedPath ? join(root, capturedPath) : join(root, `${candidate.slug}.md`));
       if (!isWriteTargetContained(path, root)) throw new OperationError('source_changed', 'The canonical path is not confined.');
       let size = 0;

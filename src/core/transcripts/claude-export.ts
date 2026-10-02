@@ -20,6 +20,7 @@ import type {
   TranscriptMessage,
 } from './types.ts';
 import { loadExportConversations } from './export-json.ts';
+import { utcTimestamp } from './types.ts';
 
 export const CLAUDE_EXPORT_SPEC_TARGET: HostSpecTarget = {
   id: 'claude-ai-export-2026-08',
@@ -70,7 +71,7 @@ export const claudeExportAdapter: TranscriptAdapter = {
         if (!text) continue;
         messages.push({
           role,
-          timestamp: typeof r.created_at === 'string' ? r.created_at : '',
+          timestamp: utcTimestamp(r.created_at),
           text,
         });
       }
@@ -88,8 +89,7 @@ export const claudeExportAdapter: TranscriptAdapter = {
           harness: 'claude-export',
           sessionId,
           title: typeof c.name === 'string' && c.name ? c.name : undefined,
-          startedAt:
-            (typeof c.created_at === 'string' && c.created_at) || messages[0].timestamp || undefined,
+          startedAt: utcTimestamp(c.created_at) || messages[0].timestamp || undefined,
           raw: {
             conversation_uuid: sessionId,
             name: typeof c.name === 'string' ? c.name : null,

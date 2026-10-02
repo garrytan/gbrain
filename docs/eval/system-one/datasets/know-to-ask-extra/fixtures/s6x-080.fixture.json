@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-080",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "projects/office-move",
+      "content": "---\ntitle: Office Move\ntype: project\nsummary: \"Office Move: We agreed to sublet the second floor and move the team downstairs at the end of the quarter.\"\n---\n\nOffice Move: We agreed to sublet the second floor and move the team downstairs at the end of the quarter.\n"
+    },
+    {
+      "slug": "people/tamsin-lornthorpe",
+      "content": "---\ntitle: Tamsin Lornthorpe\ntype: person\nsummary: \"Tamsin Lornthorpe is the finance lead at Saffronspire.\"\n---\n\nTamsin Lornthorpe is the finance lead at Saffronspire. Tamsin wants the proposal revised to drop the onboarding fee.\n"
+    },
+    {
+      "slug": "people/leonie-brinfell",
+      "content": "---\ntitle: Leonie Brinfell\ntype: person\naliases: [leonie]\nsummary: \"Leonie Brinfell is the finance lead at Orchidloft.\"\n---\n\nLeonie Brinfell is the finance lead at Orchidloft.\n"
+    },
+    {
+      "slug": "companies/quartzspire",
+      "content": "---\ntitle: Quartzspire\ntype: company\nsummary: \"A company we met once at a trade show.\"\n---\n\nA company we met once at a trade show.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "By the way, someone named Oskar Yarrthorpe emailed about partnerships. Never heard of them."
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "what did we decide about the office situation?"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Happy to help."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "Remind me of Lornthorpe's position on the proposal before our sync."
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "How do you spell Brinfell in the NATO phonetic alphabet?"
+    }
+  ]
+}

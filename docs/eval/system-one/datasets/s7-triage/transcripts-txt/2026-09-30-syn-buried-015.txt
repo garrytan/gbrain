@@ -1,0 +1,139 @@
+[user]
+My home Wi‑Fi keeps dropping in one room, but it works normally in the rest of the house. The problem is most noticeable in the back bedroom, about 12 meters from the router with two walls between them. Can you help me troubleshoot it?
+
+[assistant/assistant]
+Yes. Since the connection is stable elsewhere, this is likely a coverage, interference, or band-steering issue rather than an internet-service problem. Let’s first establish whether the drop is affecting Wi‑Fi only or the whole connection.
+
+When it happens in the bedroom, check whether:
+1. Your device still shows the Wi‑Fi network as connected.
+2. Other devices in that room drop at the same time.
+3. The router’s internet light changes.
+4. Moving into the hallway immediately restores service.
+
+If possible, stand in the bedroom and run a speed test, then repeat it in the hallway. Also note whether the device is connected to 2.4 GHz or 5 GHz. The router’s app or wireless settings page often shows that.
+
+[user]
+I tested with my laptop and phone. Both lose internet in the bedroom, though they still show the Wi‑Fi icon for a while. In the hallway, service returns within about 10 seconds. The router’s internet light stays normal. The laptop was on 5 GHz, but I’m not sure which band the phone used. A speed test in the hallway was 310 Mbps down and 24 Mbps up; in the bedroom it started at 18 Mbps and then timed out.
+
+[assistant/assistant]
+That points strongly to a weak or unstable wireless signal, especially on 5 GHz, which loses strength more quickly through walls. Before changing settings, please restart the router properly:
+
+1. Unplug the router’s power cable.
+2. If you have a separate modem or fiber box, unplug that too.
+3. Wait at least 60 seconds.
+4. Plug the modem or fiber box back in first and wait until its normal status lights return.
+5. Plug in the router and wait five minutes.
+6. Test both devices in the bedroom again.
+
+Do not press the small reset button; that can erase the configuration. If the issue remains, tell me the router model and whether the bedroom is above, below, or level with it.
+
+[user]
+I restarted both units as you described, and the bedroom is on the same floor, roughly level with the router. The issue is still there. The router is a TP-Link Archer AX55. It sits inside a wooden cabinet near the TV, with the front partly blocked by the cabinet frame. The bedroom is diagonally across the house, and there’s a bathroom wall between the hallway and bedroom.
+
+[assistant]
+The cabinet may be reducing ventilation and partially blocking the antennas, and the bathroom wall could contain tile, pipes, or other dense material that weakens the signal. First, move the Archer AX55 out into the open, ideally on a shelf at least a meter above the floor, with its antennas upright and spaced as shown in the manual. Keep it away from the TV, metal objects, and other wireless equipment.
+
+Then restart it once after moving it and test in the same locations. Record results in a simple table:
+
+Location       5 GHz download   2.4 GHz download   Result
+Hallway        ______           ______             ______
+Bedroom        ______           ______             ______
+
+If 2.4 GHz improves the bedroom substantially while 5 GHz remains poor, we can adjust band settings rather than assuming the router or service is defective.
+
+[user]
+I moved it onto an open shelf, about 1.3 meters high, and restarted it. The hallway was 295 Mbps on 5 GHz and 142 Mbps on 2.4 GHz. In the bedroom, 5 GHz was 22 Mbps and timed out twice, while 2.4 GHz was 76 Mbps and stayed connected. The phone also stayed connected on 2.4 GHz. So 2.4 GHz is clearly better, but it’s still slower than I’d like.
+
+[assistant]
+That confirms the bedroom is near the practical edge of the 5 GHz coverage, while 2.4 GHz can penetrate the intervening walls more reliably. We can improve 2.4 GHz by selecting a clean, fixed channel.
+
+Log in to the router:
+1. Browse to `http://tplinkwifi.net` or `192.168.0.1`.
+2. Open **Advanced > Wireless > Wireless Settings**.
+3. Select the **2.4 GHz** section.
+4. Set **Channel** to a fixed option rather than Auto.
+5. Use only channels 1, 6, or 11; these are the non-overlapping choices.
+6. Set **Channel Width** to 20 MHz in a crowded neighborhood.
+7. Save the settings and allow the router to restart its wireless radios.
+
+Use a Wi‑Fi analyzer app from the hallway and bedroom if you can. Choose the least occupied of channels 1, 6, and 11. Avoid changing transmit power yet; leave it at High unless the router already uses a different setting.
+
+[user]
+I checked with a Wi‑Fi analyzer. Channel 1 has three nearby networks, channel 6 has eight, and channel 11 has two, although one of the channel 11 networks is fairly strong. I set 2.4 GHz to channel 11, 20 MHz width, and High power. After the wireless restart, the bedroom test reached 104 Mbps down and 21 Mbps up without timing out. Is it safe to leave it on channel 11?
+
+[assistant/assistant]
+Yes. Channel 11 is a reasonable choice because it has fewer neighboring networks than channel 6, and your actual bedroom result improved significantly. The strongest nearby network matters, but your measurements after the change are more useful than the count alone.
+
+Leave it on channel 11 for a day or two and test at different times. Record whether the connection drops, not just the peak speed. You can also confirm the negotiated link rate on the laptop:
+
+On Windows, open PowerShell and run:
+`netsh wlan show interfaces`
+
+Look for:
+- **Signal**
+- **Receive rate (Mbps)**
+- **Transmit rate (Mbps)**
+- **Channel**
+
+If the signal is consistently above roughly 60% and the connection remains stable, the current settings are doing their job. Keep 5 GHz enabled for nearby rooms; there is no need to force every device onto 2.4 GHz.
+
+[user]
+I ran that command in the bedroom. Here’s the relevant output:
+
+```text
+Name                   : Wi-Fi
+Description            : Intel(R) Wi-Fi 6E AX211 160MHz
+State                  : connected
+SSID                   : HomeNet
+BSSID                  : 84-16-F9-2A-71-C0
+Band                   : 2.4 GHz
+Channel                : 11
+Receive rate (Mbps)    : 144
+Transmit rate (Mbps)   : 144
+Signal                 : 72%
+Radio type             : 802.11ax
+```
+
+After six hours, there were no drops. I’d like to see whether 5 GHz can be made usable there too, since some devices prefer it.
+
+[assistant]
+We can try a targeted 5 GHz adjustment, but the walls may impose a hard limit. First inspect the 5 GHz settings under **Advanced > Wireless > Wireless Settings**:
+
+- Keep the 5 GHz SSID enabled.
+- Set channel selection to a fixed non-DFS channel such as 36, 40, 44, or 48.
+- Start with channel 36 if it is available.
+- Set channel width to 80 MHz near the router; if the bedroom remains unstable, test 40 MHz.
+- Leave transmit power at High.
+- Save, then disconnect and reconnect the laptop so it obtains a fresh association.
+
+Avoid DFS channels for this test because radar detection can force a channel change, which can look like a dropout. Test the bedroom at three points: immediately after reconnecting, after 15 minutes, and after an hour. If the 5 GHz signal is still weak but stable, the practical solution may be to use 2.4 GHz there or add a wired access point/mesh node closer to the bedroom.
+
+[user]
+The 5 GHz channel was Auto and had selected 116, so I changed it to 36 and left the width at 80 MHz. The laptop now connects in the bedroom at 58 Mbps, but it fell back to 2.4 GHz after about 20 minutes. The router has one network name for both bands, and the “Smart Connect” option is enabled. Could that be causing the switch?
+
+[assistant/assistant]
+Yes, Smart Connect can move a device between bands based on signal thresholds, load, and roaming behavior. It is not necessarily a fault; the router may decide that 2.4 GHz is the more reliable choice when the 5 GHz signal weakens.
+
+For a controlled test, temporarily disable Smart Connect and give the bands distinct names:
+- `HomeNet-2G`
+- `HomeNet-5G`
+
+Then connect the laptop manually to `HomeNet-5G` in the bedroom. If it stays connected, compare its speed and reliability with the automatic behavior. If it drops or becomes unusable, reconnect the laptop to `HomeNet-2G`.
+
+Do not change both bands’ channels during this test. Keep 2.4 GHz on channel 11 at 20 MHz and 5 GHz on channel 36 at 80 MHz. If the laptop’s 5 GHz connection is stable for an hour but slower than 2.4 GHz, you can leave separate names enabled and choose the faster band by room.
+
+[user]
+I disabled Smart Connect and renamed the networks as suggested. On `HomeNet-5G`, the laptop showed 55–65 Mbps in the bedroom and stayed connected for an hour, but latency occasionally jumped to 400 ms. On `HomeNet-2G`, it got 98–110 Mbps with latency around 20–35 ms. I’ll probably use 2.4 GHz in that room. One unrelated thing: Cormac Ishikawa-Roe has started handling release coordination for the fernpost project. He moved to the morning shift last week, so I’ll send him status notes before 10 a.m. He also has a recurring wrist-injury appointment on Thursdays, and I’m covering the afternoon deployment review then. He prefers concise checklists rather than long update documents.
+
+[assistant/assistant]
+That makes sense for the bedroom: the 2.4 GHz connection is both faster and more responsive there, so keeping the laptop and phone on `HomeNet-2G` is the practical choice. You can leave the separate network names in place, which also prevents Smart Connect from moving devices unexpectedly.
+
+For the 5 GHz network, channel 36 is a good non-DFS choice, but the high latency confirms that signal quality through those walls is marginal. You could try 40 MHz width later, but it may reduce peak speed without improving reliability enough to matter. If you need strong 5 GHz performance in that room, a wired access point or mesh node placed in the hallway would be more effective than increasing router power.
+
+For now, monitor `HomeNet-2G` for a full day. If it remains stable, your useful final configuration is:
+- 2.4 GHz: channel 11, 20 MHz, High power
+- 5 GHz: channel 36, 80 MHz, High power
+- Smart Connect: disabled
+- Router: open shelf, elevated, antennas upright
+
+Keep the router’s firmware current, and avoid using a wireless repeater unless a wired connection is impossible; repeaters can cut throughput and add latency.

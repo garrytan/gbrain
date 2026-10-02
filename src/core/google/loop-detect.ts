@@ -20,7 +20,9 @@
  *  - outbound without a question mark is FYI, not an ask
  *  - suppressed senders/threads (gbrain loops mute) never open NEW loops;
  *    existing loops keep their state
- *  - grace windows: inbound 24h, outbound 72h — fresh mail is not a loop yet
+ *  - grace windows: inbound 24h, outbound 72h — fresh mail is not a loop yet;
+ *    measured from the oldest unanswered message in the trailing run, so a
+ *    nudge or follow-up does not restart the clock
  *
  * Pure verdict function + a thin apply step; the apply step is called from
  * runGoogleSync per touched thread and must never fail the sync.
@@ -128,6 +130,16 @@ export function detectThreadLoop(
 
   const threadSuppressed = suppressions?.threads.has(thread.threadId) ?? false;
 
+  // The trailing run: substantive messages since the last turn flip, all on
+  // the last speaker's side. Grace windows are measured from the OLDEST
+  // message in the run that carries the obligation (an inbound message with
+  // me in To:, or my outbound ask), so a fresh nudge or follow-up never
+  // restarts the clock on a request that has already waited past the window
+  // — the open-lane twin of the close-lane rule that a nudge is not a reply.
+  let runStart = substantive.length - 1;
+  while (runStart > 0 && isMine(substantive[runStart - 1], myAddresses) === lastIsMine) runStart--;
+  const run = substantive.slice(runStart);
+
   if (!lastIsMine) {
     // ── Last word is theirs: do I owe a reply? ──
     // List mail never owes a reply.
@@ -136,7 +148,8 @@ export function detectThreadLoop(
     const inTo = last.to.some((a) => myAddresses.has(a));
     if (!inTo) return { open: [], close };
     if (threadSuppressed || suppressions?.senders.has(last.fromAddress)) return { open: [], close };
-    if (ageHours(last.internalDateMs, now) < INBOUND_GRACE_HOURS) return { open: [], close };
+    const owedSince = run.find((m) => m.to.some((a) => myAddresses.has(a))) ?? last;
+    if (ageHours(owedSince.internalDateMs, now) < INBOUND_GRACE_HOURS) return { open: [], close };
     return {
       open: [
         {
@@ -161,7 +174,8 @@ export function detectThreadLoop(
   if (recipients.length === 0) return { open: [], close };
   const counterparty = recipients[0];
   if (threadSuppressed || suppressions?.senders.has(counterparty)) return { open: [], close };
-  if (ageHours(last.internalDateMs, now) < OUTBOUND_GRACE_HOURS) return { open: [], close };
+  const askedSince = run.find((m) => m.bodyText.includes('?')) ?? last;
+  if (ageHours(askedSince.internalDateMs, now) < OUTBOUND_GRACE_HOURS) return { open: [], close };
   return {
     open: [
       {

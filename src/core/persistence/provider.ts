@@ -10,6 +10,8 @@ import { startPersistenceConsumer, assertPersistenceAccepting } from './service.
 import { isWriteErrorCode, isWriteReceipt } from './types.ts';
 import type { PersistenceIpcProvider } from './ipc.ts';
 import { runPersistenceAdministration } from './administration.ts';
+export { residentPersistenceConfig } from './local-client.ts';
+import { projectionBacklog } from '../page-state/projections.ts';
 
 /** Resident lifecycle owns the consumer; each connection proves its own durable registration. */
 export async function createPersistenceIpcProvider(engine: BrainEngine, config: GBrainConfig): Promise<PersistenceIpcProvider> {
@@ -22,7 +24,7 @@ export async function createPersistenceIpcProvider(engine: BrainEngine, config: 
   }
   const [brain] = await engine.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1');
   startPersistenceConsumer(engine, config);
-  return { brainId: brain.brain_id, dispatch: request => withVerifiedLocalRegistration(engine, request.registration, async verified => {
+  return { brainId: brain.brain_id, projectionStatus: () => projectionBacklog(engine), dispatch: request => withVerifiedLocalRegistration(engine, request.registration, async verified => {
     assertPersistenceAccepting(engine);
     if (request.brain_id !== brain.brain_id) throw new OperationError('permission_denied', 'This registration belongs to a different brain.');
     const operation = operations.find(op => op.name === request.operation);

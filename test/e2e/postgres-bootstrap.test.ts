@@ -25,6 +25,7 @@
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { PostgresEngine } from '../../src/core/postgres-engine.ts';
 import { LATEST_VERSION } from '../../src/core/migrate.ts';
+import { readFactsEmbeddingDim } from '../../src/core/embedding-dim-check.ts';
 import { isolatedPersistencePostgres } from '../helpers/persistence-postgres.ts';
 import { applyPostgresForwardReferenceBootstrap } from '../../src/core/postgres-engine/forward-reference-bootstrap.ts';
 
@@ -44,6 +45,45 @@ describe.skipIf(skip)('PostgresEngine forward-reference bootstrap (E2E)', () => 
   afterAll(async () => {
     await close?.();
   });
+
+  test('fact embedding identity bootstrap repairs old and partial schemas without inventing provenance', async () => {
+    await engine.initSchema();
+    const { dims } = await readFactsEmbeddingDim(engine);
+    const fact = await engine.insertFact({ fact: 'Synthetic bootstrap claim', source: 'synthetic', embedding: new Float32Array(dims!).fill(0.1) }, { source_id: 'default' });
+    const original = await engine.executeRaw('SELECT id,fact,embedding::text,embedded_at FROM facts WHERE id=$1', [fact.id]);
+    expect(original[0].embedding).not.toBeNull();
+    for (const missing of [['embedding_model', 'embedded_text_hash'], ['embedding_model'], ['embedded_text_hash']]) {
+      const conn = await (engine as any).sql.reserve();
+      try {
+        await conn.unsafe('SELECT pg_advisory_lock(42)');
+        await conn.unsafe("UPDATE facts SET embedding_model='synthetic:original',embedded_text_hash='synthetic-preserved-hash' WHERE id=$1", [fact.id]);
+        for (const column of missing) await conn.unsafe(`ALTER TABLE facts DROP COLUMN ${column}`);
+        await conn.unsafe("UPDATE config SET value='165' WHERE key='version'");
+        await applyPostgresForwardReferenceBootstrap(conn);
+        await applyPostgresForwardReferenceBootstrap(conn);
+        expect((await conn.unsafe("SELECT value FROM config WHERE key='version'"))[0].value).toBe('165');
+        expect(await conn.unsafe(`SELECT column_name,data_type,is_nullable,column_default FROM information_schema.columns
+          WHERE table_schema=current_schema() AND table_name='facts' AND column_name IN ('embedding_model','embedded_text_hash') ORDER BY column_name`)).toEqual([
+          { column_name: 'embedded_text_hash', data_type: 'text', is_nullable: 'YES', column_default: null },
+          { column_name: 'embedding_model', data_type: 'text', is_nullable: 'YES', column_default: null },
+        ]);
+      } finally {
+        await conn.unsafe('SELECT pg_advisory_unlock(42)');
+        conn.release();
+      }
+      const identity = [{
+        embedding_model: missing.includes('embedding_model') ? null : 'synthetic:original',
+        embedded_text_hash: missing.includes('embedded_text_hash') ? null : 'synthetic-preserved-hash',
+      }];
+      expect(await engine.executeRaw('SELECT embedding_model,embedded_text_hash FROM facts WHERE id=$1', [fact.id])).toEqual(identity);
+      for (const column of missing) await engine.executeRaw(`ALTER TABLE facts DROP COLUMN ${column}`);
+      await engine.initSchema();
+      await engine.initSchema();
+      expect(await engine.getConfig('version')).toBe(String(LATEST_VERSION));
+      expect(await engine.executeRaw('SELECT embedding_model,embedded_text_hash FROM facts WHERE id=$1', [fact.id])).toEqual(identity);
+      expect(await engine.executeRaw('SELECT id,fact,embedding::text,embedded_at FROM facts WHERE id=$1', [fact.id])).toEqual(original);
+    }
+  }, 60_000);
 
   test('grant bootstrap repairs a partial installation without changing existing client policy', async () => {
     await engine.initSchema();

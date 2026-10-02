@@ -126,3 +126,28 @@ describe('doctor effective_date_health — parseable-value check (not just key-e
     expect(check.message).toContain('1 fell back to updated_at despite parseable frontmatter date');
   });
 });
+
+// #5742: an explicit pre-1990 frontmatter date is a real content date, so
+// doctor must not flag it as a pre-1990 anomaly that reindex-frontmatter would
+// never clear. A pre-1990 date from any inferred source is still flagged.
+describe('doctor effective_date_health — explicit historical dates (#5742)', () => {
+  async function insertDated(slug: string, iso: string, source: string) {
+    await engine.executeRaw(
+      `INSERT INTO pages (source_id, slug, type, title, frontmatter, effective_date, effective_date_source)
+       VALUES ('default', $1, 'note', $1, '{}'::jsonb, $2::timestamptz, $3)`, [slug, iso, source]);
+  }
+
+  test('explicit pre-1990 frontmatter dates are not flagged', async () => {
+    for (const source of ['event_date', 'date', 'published', 'created']) await insertDated(`books/${source}`, '1851-10-18T00:00:00Z', source);
+    const check = await getEffectiveDateHealth();
+    expect(check.status).toBe('ok');
+  });
+
+  test('an inferred pre-1990 date is still flagged', async () => {
+    await insertDated('wiki/odd-fallback', '1985-01-01T00:00:00Z', 'fallback');
+    const check = await getEffectiveDateHealth();
+    expect(check.status).toBe('warn');
+    expect(check.message).toContain('1 pre-1990');
+  });
+});
+

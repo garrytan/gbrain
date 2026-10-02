@@ -1,7 +1,7 @@
 import { execFile, execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, realpathSync, statSync } from 'node:fs';
-import { GIT_ENV } from '../git-remote.ts';
+import { buildGitEnv } from '../git-remote.ts';
 import { pushStatusPathForRoot, readPushStatusForRoot } from '../workspace-push.ts';
 import { readManifest } from '../bootstrap/format.ts';
 import { BACKUP_VERIFICATION_MAX_AGE_MS, type BackupAssetVerdict } from './status-file.ts';
@@ -12,10 +12,29 @@ export const BACKUP_REMOTE_TIMEOUT_MS = 2_000;
 
 export interface RemoteProbeBudget { remaining: number; deadline?: number }
 
+/** Variables that locate the user's own git config, credentials and network path. */
+export const BACKUP_GIT_ENV_ALLOWLIST = ['HOME', 'PATH', 'XDG_CONFIG_HOME', 'SSH_AUTH_SOCK', 'GIT_CONFIG_GLOBAL',
+  'HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy', 'NO_PROXY', 'no_proxy'] as const;
+export const BACKUP_GIT_ENV_WINDOWS_ALLOWLIST = ['USERPROFILE', 'APPDATA', 'SystemRoot'] as const;
+
+/**
+ * The probe env passes only the allowlist, so git reads the user's config and
+ * credential helpers (#5794) but never a repository-redirecting variable such
+ * as GIT_DIR or GIT_WORK_TREE; the no-prompt overrides always win.
+ */
+export function backupGitEnv(source: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const key of [...BACKUP_GIT_ENV_ALLOWLIST, ...(platform === 'win32' ? BACKUP_GIT_ENV_WINDOWS_ALLOWLIST : [])]) {
+    const value = source[key];
+    if (value !== undefined) env[key] = value;
+  }
+  return { ...env, ...buildGitEnv(platform) };
+}
+
 function git(root: string, args: string[]): string {
   return execFileSync('git', ['-C', root, ...args], {
     encoding: 'utf8', timeout: 2_000, maxBuffer: 1024 * 1024,
-    stdio: ['ignore', 'pipe', 'pipe'], env: GIT_ENV,
+    stdio: ['ignore', 'pipe', 'pipe'], env: backupGitEnv(),
   }).trim();
 }
 
@@ -99,7 +118,7 @@ export async function assessBackupRepository(
         '-c', 'protocol.https.allow=always', '-c', 'protocol.http.allow=always', '-c', 'protocol.ssh.allow=always',
         '-c', 'http.followRedirects=false', '-c', 'credential.interactive=false', 'ls-remote', '--exit-code', '--refs', 'origin', ref], {
         encoding: 'utf8', timeout: Math.min(BACKUP_REMOTE_TIMEOUT_MS, remainingMs), maxBuffer: 64 * 1024,
-        env: { ...GIT_ENV, GIT_TERMINAL_PROMPT: '0', GIT_ASKPASS: '', SSH_ASKPASS: '', SSH_ASKPASS_REQUIRE: 'never', GIT_SSH_COMMAND: 'ssh -oBatchMode=yes -oStrictHostKeyChecking=yes -oConnectTimeout=2' },
+        env: { ...backupGitEnv(), GIT_TERMINAL_PROMPT: '0', GIT_ASKPASS: '', SSH_ASKPASS: '', SSH_ASKPASS_REQUIRE: 'never', GIT_SSH_COMMAND: 'ssh -oBatchMode=yes -oStrictHostKeyChecking=yes -oConnectTimeout=2' },
       }, (error, stdout) => error ? reject(error) : resolve(stdout));
     }).catch(error => {
       asset.verification = { state: error.code === 2 ? 'missing_ref' : 'unavailable', checked_at: now.toISOString(), repository_fingerprint: fingerprint };

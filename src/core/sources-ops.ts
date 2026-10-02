@@ -41,6 +41,7 @@ import { managedPersistenceEnabled } from './persistence/ownership.ts';
 import { existsSync, mkdirSync, renameSync, rmSync, lstatSync, realpathSync } from 'fs';
 import { join, dirname, basename, resolve as resolvePath } from 'path';
 import { isPathContained, msysToNativePath } from './path-confine.ts';
+import { mkdirPrivate } from './atomic-write.ts';
 import { randomBytes } from 'crypto';
 import type { BrainEngine } from './engine.ts';
 import {
@@ -57,6 +58,7 @@ import { gbrainPath } from './config.ts';
 import { isValidSourceId } from './source-id.ts';
 import { DEFAULT_CALENDAR_ID } from './google/types.ts';
 import { resolveSourceWithTier, type SourceTier } from './source-resolver.ts';
+import { deleteSourceRow } from './source-delete.ts';
 
 // ── Errors ──────────────────────────────────────────────────────────────────
 
@@ -649,7 +651,7 @@ export async function addSource(
     // vault; config carries only the account POINTER (mirrors gh_token_env
     // storing an env NAME — check:source-config-leak stays trivially green).
     const finalPath = opts.google.dir;
-    mkdirSync(finalPath, { recursive: true });
+    mkdirPrivate(finalPath);
     const config: Record<string, unknown> = {
       kind: 'google',
       g_account: opts.google.account,
@@ -1011,7 +1013,7 @@ export async function removeSource(
     }
   }
 
-  await engine.executeRaw(`DELETE FROM sources WHERE id = $1`, [opts.id]);
+  await deleteSourceRow(engine, opts.id);
 
   return {
     id: opts.id,

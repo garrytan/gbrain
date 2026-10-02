@@ -1,0 +1,23 @@
+{
+  "fixture_id": "s6x-034",
+  "turns": {
+    "1": {
+      "should_retrieve": false
+    },
+    "3": {
+      "should_retrieve": true,
+      "gold_slugs": [
+        "people/calder-brinfell"
+      ]
+    },
+    "5": {
+      "should_retrieve": true,
+      "gold_slugs": [
+        "people/emrys-vashholt"
+      ]
+    },
+    "7": {
+      "should_retrieve": false
+    }
+  }
+}

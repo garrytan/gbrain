@@ -470,3 +470,66 @@ describe('installEmbedCache — gateway seam', () => {
     cache.close();
   });
 });
+
+describe('EmbeddingCache — concurrent runs sharing one cache file', () => {
+  test('withTransaction does not hold the SQLite write lock across its async body', async () => {
+    const path = join(dir, 'shared.sqlite');
+    const a = new EmbeddingCache(path);
+    a.open();
+    let lockedDuringBody: string | null = 'not-probed';
+    await a.withTransaction(async () => {
+      a.put(MODEL, DIMS, 'a-1', vec(1));
+      await Promise.resolve();
+      const other = new Database(path);
+      try {
+        other.exec('PRAGMA busy_timeout = 0');
+        other.exec('BEGIN IMMEDIATE');
+        other.exec('ROLLBACK');
+        lockedDuringBody = null;
+      } catch (err) {
+        lockedDuringBody = (err as Error).message;
+      } finally {
+        other.close();
+      }
+    });
+    expect(lockedDuringBody).toBeNull();
+    expect(a.get(MODEL, DIMS, 'a-1')).toEqual(vec(1));
+    a.close();
+  });
+
+  test('a run whose read snapshot predates another run\'s commit still lands its writes', async () => {
+    const path = join(dir, 'shared.sqlite');
+    const a = new EmbeddingCache(path);
+    const b = new EmbeddingCache(path);
+    a.open();
+    b.open();
+    let releaseA!: () => void;
+    const gateA = new Promise<void>((r) => { releaseA = r; });
+    const runA = a.withTransaction(async () => {
+      a.put(MODEL, DIMS, 'a-1', vec(1));
+      await gateA;
+    });
+    await b.withTransaction(async () => {
+      expect(b.get(MODEL, DIMS, 'b-1')).toBeNull();
+      releaseA();
+      await runA;
+      b.put(MODEL, DIMS, 'b-1', vec(2));
+    });
+    expect(b.get(MODEL, DIMS, 'a-1')).toEqual(vec(1));
+    expect(a.get(MODEL, DIMS, 'b-1')).toEqual(vec(2));
+    expect(a.stats().infra_faults + b.stats().infra_faults).toBe(0);
+    a.close();
+    b.close();
+  });
+
+  test('reads inside a transaction see that transaction\'s own buffered writes', async () => {
+    const c = new EmbeddingCache(join(dir, 'own.sqlite'));
+    c.open();
+    await c.withTransaction(async () => {
+      c.put(MODEL, DIMS, 'x', vec(3));
+      expect(c.get(MODEL, DIMS, 'x')).toEqual(vec(3));
+    });
+    expect(c.size()).toBe(1);
+    c.close();
+  });
+});

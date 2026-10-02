@@ -9,20 +9,25 @@ import * as path from 'node:path';
 import { withEnv } from './helpers/with-env.ts';
 import { logRerankFailure } from '../src/core/rerank-audit.ts';
 import { doctorSource, doctorFileSource } from './helpers/doctor-source.ts';
+import { surfaceFileSource } from './helpers/source-surface.ts';
 
 // Health fixtures configure fake provider keys. Clear the gateway snapshot as
 // well as each fixture's process env so later tests cannot send real requests.
 afterEach(() => resetGateway());
 
 describe('doctor command', () => {
-  test('doctor module exports runDoctor', async () => {
-    const { runDoctor } = await import('../src/commands/doctor.ts');
-    expect(typeof runDoctor).toBe('function');
-  });
-
-  test('LATEST_VERSION is importable from migrate', async () => {
-    const { LATEST_VERSION } = await import('../src/core/migrate.ts');
-    expect(typeof LATEST_VERSION).toBe('number');
+  test('dimension recovery previews existing brains without recommending reinitialization', () => {
+    const source = doctorFileSource('doctor/checks/embedding-health.ts');
+    const start = source.indexOf('if (totalChunks > 0)');
+    const end = source.indexOf('surfacedUnconfiguredDrift = true;', start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    const hint = source.slice(start, end);
+    expect(hint).toContain('--dry-run');
+    expect(hint).toContain('--yes --max-cost-usd <approved-total>');
+    expect(hint).toContain('docs/guides/embedding-migration.md#recovery');
+    expect(hint).not.toContain('init --force');
+    expect(doctorSource()).not.toContain('manual ALTER recipe');
   });
 
   test('CLI registers doctor command', async () => {
@@ -488,7 +493,7 @@ describe('doctor command', () => {
     const doctorAll = doctorSource();
     expect(doctorAll).toContain('facts_extraction_health');
     // The check must group by source_id, not hardcode 'default'.
-    const doctorTs = doctorFileSource('doctor.ts');
+    const doctorTs = doctorFileSource('doctor/checks/knowledge-health.ts');
     const block = doctorTs.slice(
       doctorTs.indexOf('// 11a-bis-2. facts_extraction_health'),
       doctorTs.indexOf('// 11a-2. effective_date_health'),
@@ -511,7 +516,7 @@ describe('doctor command', () => {
   // These are structural assertions on the source string so a silent revert
   // of the severity or the IN-filter removal fails loudly without a live DB.
   test('RLS check scans ALL public tables (no hardcoded tablename IN list near the RLS block)', async () => {
-    const source = doctorFileSource('doctor.ts');
+    const source = doctorFileSource('doctor/checks/schema-health.ts');
     const rlsBlock = source.slice(
       source.indexOf('// 5. RLS'),
       source.indexOf('// 6. Schema version'),
@@ -525,7 +530,7 @@ describe('doctor command', () => {
   });
 
   test('RLS check raises status=fail with quoted-identifier remediation SQL', async () => {
-    const source = doctorFileSource('doctor.ts');
+    const source = doctorFileSource('doctor/checks/schema-health.ts');
     const rlsBlock = source.slice(
       source.indexOf('// 5. RLS'),
       source.indexOf('// 6. Schema version'),
@@ -539,7 +544,7 @@ describe('doctor command', () => {
   });
 
   test('RLS check skips on PGLite (no PostgREST, not applicable)', async () => {
-    const source = doctorFileSource('doctor.ts');
+    const source = doctorFileSource('doctor/checks/schema-health.ts');
     const rlsBlock = source.slice(
       source.indexOf('// 5. RLS'),
       source.indexOf('// 6. Schema version'),
@@ -549,7 +554,7 @@ describe('doctor command', () => {
   });
 
   test('RLS check reads pg_description and recognizes the GBRAIN:RLS_EXEMPT escape hatch', async () => {
-    const source = doctorFileSource('doctor.ts');
+    const source = doctorFileSource('doctor/checks/schema-health.ts');
     const rlsBlock = source.slice(
       source.indexOf('// 5. RLS'),
       source.indexOf('// 6. Schema version'),
@@ -565,7 +570,7 @@ describe('doctor command', () => {
   // Lives AFTER `// 6. Schema version` so the existing `// 5. RLS` slice
   // tests stay intact (codex correction).
   test('rls_event_trigger check exists, scoped after schema_version, healthy on (O,A) only', async () => {
-    const source = doctorFileSource('doctor.ts');
+    const source = doctorFileSource('doctor/checks/schema-health.ts');
     const idx7 = source.indexOf('// 7. RLS event trigger');
     const idx8 = source.indexOf('// 8. Embedding health');
     expect(idx7).toBeGreaterThan(0);
@@ -602,16 +607,8 @@ describe('doctor command', () => {
     expect(src).not.toContain('gbrain timeline-extract');
   });
 
-  // v0.32 — takes_weight_grid pure-helper export.
-  // Codex review #7 demanded the check be extracted as a pure function so
-  // tests target it directly with stubbed engines instead of running the
-  // full runDoctor pipeline. This block validates the export shape and the
-  // 4 branches (no-takes / fail / warn / ok) behaviorally against PGLite.
-  test('takesWeightGridCheck is exported as a pure function', async () => {
-    const mod = await import('../src/commands/doctor.ts');
-    expect(typeof mod.takesWeightGridCheck).toBe('function');
-  });
-
+  // takes_weight_grid pure helper: the 4 branches (no-takes / fail / warn / ok)
+  // run behaviorally against PGLite.
   test('takes_weight_grid: 0 takes → ok with "No takes yet"', async () => {
     const { PGLiteEngine } = await import('../src/core/pglite-engine.ts');
     const { takesWeightGridCheck } = await import('../src/commands/doctor.ts');
@@ -769,7 +766,7 @@ describe('v0.31.8 — wedge migration force-retry hint (D19)', () => {
     expect(doctorAll).toContain('WEDGED MIGRATION(s)');
     expect(doctorAll).toContain('MINIONS HALF-INSTALLED');
     expect(doctorAll).toContain('--force-retry');
-    const doctorTs = doctorFileSource('doctor.ts');
+    const doctorTs = doctorFileSource('doctor/checks/local-runtime.ts');
     expect(doctorTs).toMatch(/MINIONS HALF-INSTALLED[\s\S]{0,400}--yes/);
   });
 
@@ -1410,7 +1407,8 @@ describe('supervisor crash classifier wiring (v0.35.x)', () => {
   });
 
   test('jobs.ts supervisor status uses summarizeCrashes — same wiring as doctor', async () => {
-    const source = await Bun.file(new URL('../src/commands/jobs.ts', import.meta.url)).text();
+    // W4 jobs: `jobs supervisor status` lives in src/commands/jobs/supervisor.ts.
+    const source = surfaceFileSource('jobs', 'src/commands/jobs/supervisor.ts');
     // Both surfaces MUST go through the shared helper. Without this, the two
     // CLI commands report drifting crash counts (the bug class codex caught
     // during the eng review outside-voice pass).

@@ -12,6 +12,7 @@ export { MEMORY_VERBS_VERSION };
 // operations.ts is unchanged.
 
 import type { Operation } from './ops/contract.ts';
+import { withOutputRedaction } from './search/output-redaction.ts';
 
 // Re-exports: the full previously-exported foundation surface of this module.
 // The formerly file-private helpers (enforceSubagentSlugFence, slugUnderSubagentFence,
@@ -244,7 +245,7 @@ const OP_AREAS: Record<string, string> = {
   put_raw_data: 'pages', get_raw_data: 'pages',
   fetch: 'pages', // #4039 deep-research read adapter (search/fetch pair)
   // search
-  search: 'search', query: 'search', search_by_image: 'search',
+  search: 'search', query: 'search', search_by_image: 'search', assemble_evidence: 'search',
   // tags
   add_tag: 'tags', remove_tag: 'tags', get_tags: 'tags',
   // links + graph
@@ -322,6 +323,7 @@ for (const op of operations) {
   if (op.area === undefined && OP_AREAS[op.name] !== undefined) {
     op.area = OP_AREAS[op.name];
   }
+  op.handler = withOutputRedaction(op);
 }
 
 export const operationsByName = Object.fromEntries(

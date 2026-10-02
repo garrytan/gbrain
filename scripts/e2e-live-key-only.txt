@@ -1,0 +1,8 @@
+# E2E files that need provider keys no CI job supplies. The default
+# run-e2e.sh corpus skips them; run each by name (docs/TESTING.md, "API keys
+# and running ALL tests"). One repo-relative path per line; '#' starts a
+# comment. Read by scripts/run-e2e.sh and scripts/ci-local-e2e-smoke.sh.
+test/e2e/openrouter-anthropic-subagent-replay.live.test.ts
+test/e2e/openrouter-deepseek-subagent-replay.live.test.ts
+test/e2e/voyage-multimodal.test.ts
+test/e2e/voyage-rerank-live.test.ts

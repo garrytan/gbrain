@@ -1,3 +1,4 @@
+import { isConnectorSourceKind } from './connector-identity.ts';
 import type { BrainEngine, NewFact } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import type { FactsBackstopCtx } from '../facts/backstop.ts';
@@ -6,6 +7,8 @@ import { readFactsEmbeddingDim } from '../embedding-dim-check.ts';
 import type { OperationContext } from '../ops/contract.ts';
 import { OperationError } from '../ops/contract.ts';
 import { resolveEntitySlugWithSource } from '../entities/resolve.ts';
+import { appendContextNote, type InferredVia } from '../facts/subject-infer.ts';
+import { inferenceNote } from '../facts/subject-infer-write.ts';
 import { currentSubmissionAuthority } from '../minions/submission-authority.ts';
 import { authorizeStoredRequest, authorizeWrite, submissionAuthority } from './authority.ts';
 import { authorizePageVisibility } from './page-visibility.ts';
@@ -25,11 +28,20 @@ export interface ManagedFactsResult {
 export interface ManagedFactOrigin { slug: string; pageId: number; revision: string; }
 export type FrozenExtractedFact = Omit<NewFact, 'embedding' | 'valid_from' | 'valid_until' | 'expired_at'> & {
   embedding: number[] | null; valid_from: string; valid_until: string | null;
+  /** #5836: a write-time inferred subject dedups exact text only, never superseding or dropping a similar fact. */
+  entity_inferred?: InferredVia;
 };
 export interface ManagedFactIntent extends Record<string, unknown> {
   kind: 'managed_facts_entity' | 'managed_facts_complete';
   batchKey: string; inputDigest: string; origin: ManagedFactOrigin | null; originalRequestId: string | null;
   expected_revision?: string; facts?: FrozenExtractedFact[]; children?: string[];
+  /** Direct single-fact writes keep writeSingleFact's supersession rule. */
+  supersede?: true;
+  /**
+   * writeSingleFact only: a `memory/unattributed` row keeps the resolver's
+   * fallback slug as its entity (no row number), so dedup stays per entity.
+   */
+  attribute_fallback?: true;
   embedding?: FactEmbeddingSignature | null;
 }
 export interface ManagedFactsSession {
@@ -96,8 +108,8 @@ export async function prepareManagedFactsSession(ctx: FactsBackstopCtx,
   const engine = ctx.engine;
   if (!(await managedPersistenceEnabled(engine))) return null;
   assertPersistenceAccepting(engine);
-  const [source] = await engine.executeRaw<{ incarnation: string; archived: boolean; local_path: string | null }>(
-    'SELECT incarnation,archived,local_path FROM sources WHERE id=$1', [ctx.sourceId]);
+  const [source] = await engine.executeRaw<{ incarnation: string; archived: boolean; local_path: string | null; kind: string | null }>(
+    "SELECT incarnation,archived,local_path,config->>'kind' AS kind FROM sources WHERE id=$1", [ctx.sourceId]);
   if (!source || source.archived) throw new OperationError('source_changed', 'The fact extraction source is unavailable.');
   let authority: WriteAuthority;
   let origin: ManagedFactOrigin | null = null;
@@ -148,16 +160,19 @@ export async function prepareManagedFactsSession(ctx: FactsBackstopCtx,
   const binding = await getWorktreeBinding(engine, ctx.sourceId);
   const root = source.local_path || (ctx.sourceId === 'default' ? await engine.getConfig('sync.repo_path') : null);
   const writeThrough = !/^(false|0|off|no)$/i.test(await engine.getConfig('sync.write_through') ?? 'true');
-  if (writeThrough && root && !binding) throw new OperationError('owner_unavailable', 'The fact source has no canonical owner; extraction has not started.');
+  // An unbound connector source is database-only by design (connector_database), like its connector sync.
+  const connectorDatabase = writeThrough && !binding && isConnectorSourceKind(source.kind);
+  if (writeThrough && root && !binding && !connectorDatabase) throw new OperationError('owner_unavailable', 'The fact source has no canonical owner; extraction has not started.');
   if (writeThrough && binding) {
     if (binding.state !== 'active' || !binding.owner_host_id) throw new OperationError('owner_unavailable', 'The canonical fact writer is unavailable; extraction has not started.');
     if (binding.owner_host_id === localHostId()) {
-      const lock = await acquireWorktree(binding);
+      const lock = await acquireWorktree(binding, 0, undefined, engine);
       if (!lock) throw new OperationError('writer_lock_unavailable', 'The canonical fact writer is busy; extraction has not started.');
       await lock.release();
     }
   }
   if (!writeThrough) authority.databaseOnlyReason = 'disabled_by_config';
+  else if (connectorDatabase) authority.databaseOnlyReason = 'connector_database';
   else if (!binding) authority.databaseOnlyReason = 'no_repo_configured';
   const inputDigest = digest(ctx.requestIntent ?? { text: sha256(input.turnText), source: ctx.source, sessionId: ctx.sessionId, entityHints: ctx.entityHints ?? [],
     visibility: ctx.visibility ?? null, validFrom: ctx.validFrom?.toISOString() ?? null, sourceSlug: ctx.sourceSlug ?? null,
@@ -184,6 +199,7 @@ async function collectManagedFacts(engine: BrainEngine, session: ManagedFactsSes
       const out = finished.outcome!;
       result.inserted += Number(out.inserted ?? 0);
       result.duplicate += Number(out.duplicate ?? 0);
+      result.superseded += Number(out.superseded ?? 0);
       result.fact_ids.push(...(out.fact_ids as number[] ?? []));
       if (out.inserted && out.fenced) result.entity_slugs.push(row.slug);
     }
@@ -204,7 +220,8 @@ export async function resumeManagedFacts(engine: BrainEngine, session: ManagedFa
 }
 
 export async function publishManagedFacts(engine: BrainEngine, session: ManagedFactsSession, ctx: FactsBackstopCtx,
-  facts: ExtractedFact[], visibility: 'private' | 'world', pageSlug?: string): Promise<ManagedFactsResult> {
+  facts: ExtractedFact[], visibility: 'private' | 'world', pageSlug?: string,
+  options: { supersede?: boolean; explicitContext?: boolean; attributeFallback?: boolean } = {}): Promise<ManagedFactsResult> {
   const embedded = facts.some(fact => fact.embedding !== null && fact.embedding !== undefined);
   if (embedded) await assertManagedFactsEmbedding(engine, session.config, session.embedding);
   const sourceId = session.authority.sourceId;
@@ -215,10 +232,13 @@ export async function publishManagedFacts(engine: BrainEngine, session: ManagedF
     const resolved = fact.entity_slug ? await resolveEntitySlugWithSource(engine, sourceId, fact.entity_slug) : null;
     const entitySlug = resolved && resolved.source !== 'fallback_slugify' ? resolved.slug : null;
     const slug = entitySlug ?? 'memory/unattributed';
+    const attributed = entitySlug ?? (options.attributeFallback && resolved ? resolved.slug : null);
     await authorizeWrite(engine, session.authority, 'extract_facts', slug);
     await authorizePageVisibility(engine, session.authority, slug);
     const group = groups.get(slug) ?? [];
-    group.push({ ...fact, entity_slug: entitySlug, visibility, context: ctx.sourceSlug ?? pageSlug ?? null,
+    const context = options.explicitContext ? fact.context ?? null : ctx.sourceSlug ?? pageSlug ?? null;
+    // #5836: an inferred subject carries its provenance note into the fence cell and the row.
+    group.push({ ...fact, entity_slug: attributed, visibility, context: fact.entity_inferred ? appendContextNote(context, inferenceNote(fact.entity_inferred)) : context,
       embedding: fact.embedding ? Array.from(fact.embedding) : null,
       valid_from: (fact.valid_from ?? ctx.validFrom ?? new Date()).toISOString(), valid_until: fact.valid_until?.toISOString() ?? null });
     groups.set(slug, group);
@@ -226,10 +246,11 @@ export async function publishManagedFacts(engine: BrainEngine, session: ManagedF
   const inputs: Array<{ slug: string; pageId: number | null; intent: ManagedFactIntent }> = [];
   for (const [slug, group] of groups) {
     const snapshot = await engine.readPageSnapshot(slug, { sourceId, includeDeleted: true });
-    if (snapshot?.page.deleted_at || group.some(fact => fact.entity_slug !== null) && !snapshot) throw new OperationError('page_identity_changed', 'The resolved fact entity was removed.');
+    if (snapshot?.page.deleted_at || group.some(fact => fact.entity_slug === slug) && !snapshot) throw new OperationError('page_identity_changed', 'The resolved fact entity was removed.');
     inputs.push({ slug, pageId: snapshot?.page.id ?? null, intent: { kind: 'managed_facts_entity', batchKey: session.batchKey,
       inputDigest: session.inputDigest, origin: session.origin, originalRequestId: session.originalRequestId,
-      embedding: session.embedding ?? null,
+      embedding: session.embedding ?? null, ...(options.supersede ? { supersede: true as const } : {}),
+      ...(options.attributeFallback ? { attribute_fallback: true as const } : {}),
       ...(snapshot ? { expected_revision: snapshot.revision } : {}), facts: group } });
   }
   const rows = await engine.transaction(async tx => {

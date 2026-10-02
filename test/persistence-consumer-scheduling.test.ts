@@ -331,7 +331,7 @@ test('an uncancellable PGLite scheduler phase stays observed and awaited through
   let entered = false, stopped = false;
   const proxy = new Proxy(engine, { get(target, key) {
     if (key === 'executeRaw') return async (...args: Parameters<typeof engine.executeRaw>) => {
-      if (args[0] === 'SELECT brain_id,enabled FROM persistence_brain WHERE singleton=1') {
+      if (String(args[0]).startsWith('SELECT brain_id,enabled,to_jsonb(persistence_brain)')) {
         expect(args[2]?.signal).toBeUndefined();
         entered = true; return release.promise;
       }
@@ -510,3 +510,20 @@ test('a retryable root becomes eligible again after its backoff expires', async 
     await cancelWriteRequest(engine, { kind: 'local_cli', id: config.principalIds[0] }, row.request_id);
   }
 }), 15_000);
+
+test('a local waiter wakes an idle owner for a claim-only tick instead of waiting for the next poll', async () => withEnv(env, async () => {
+  const ticks: boolean[] = [];
+  const consumer = startPersistenceConsumer(engine, { engine: 'pglite' });
+  const internals = consumer as unknown as { opts: { pollMs?: number }; doTick(afterProgress: boolean): Promise<void> };
+  internals.opts.pollMs = 60_000;
+  internals.doTick = async afterProgress => { ticks.push(afterProgress); };
+  const row = { id: randomUUID(), request_id: randomUUID(), state: 'queued' } as import('../src/core/persistence/model.ts').WriteRequest;
+  try {
+    await waitFor(() => ticks.length === 1);
+    await Bun.sleep(20);
+    const waiter = waitForWrite(engine, row, { engine: 'pglite' }, 200);
+    await waitFor(() => ticks.length === 2, { timeoutMs: 1000 });
+    expect(ticks[1]).toBe(true);
+    await waiter;
+  } finally { await disposePersistenceConsumer(engine); }
+}), 5000);

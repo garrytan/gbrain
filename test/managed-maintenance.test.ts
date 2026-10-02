@@ -83,8 +83,8 @@ async function seed(engine: BrainEngine, sourceId: string, slug = 'people/exampl
 async function seedFacts(engine: BrainEngine, sourceId: string, slug: string, visibility = 'world') {
   const vector = `[${[1, ...Array(1535).fill(0)].join(',')}]`;
   for (let i = 0; i < 3; i++) {
-    await engine.executeRaw(`INSERT INTO facts(source_id,entity_slug,fact,kind,source,visibility,confidence,valid_from,embedding)
-      VALUES($1,$2,$3,'fact','test',$4,$5,$6::timestamptz,$7::vector)`,
+    await engine.executeRaw(`INSERT INTO facts(source_id,entity_slug,fact,kind,source,visibility,confidence,valid_from,embedding,embedding_model,embedded_text_hash)
+      VALUES($1,$2,$3,'fact','test',$4,$5,$6::timestamptz,$7::vector,'openai:text-embedding-3-large',md5($3))`,
     [sourceId, slug, `Example claim ${i}`, visibility, 0.9 - i / 10, `2026-01-0${i + 1}T00:00:00Z`, vector]);
   }
 }
@@ -484,6 +484,36 @@ test('managed synthesis drives real children and publishes repaired provenance p
         expect(existsSync(join(root, `${dbOnly.details.summary_slug}.md`))).toBe(false);
         expect(calls).toBe(before);
         await engine.setConfig('dream.synthesize.summary_file_write', 'true');
+      });
+    } finally { __setChatTransportForTests(null); }
+  });
+}, 90_000);
+
+for (const managed of [true, false]) test(`#5733: ${managed ? 'managed' : 'unmanaged'} patterns output carries the dream_generated stamp in the database and the file`, async () => {
+  await fixture(async (engine, sourceId, root) => {
+    for (let i = 0; i < 3; i++) await seed(engine, sourceId, `wiki/personal/reflections/example-${i}`);
+    await engine.setConfig('dream.patterns.enabled', 'true');
+    await engine.setConfig('models.dream.patterns', 'anthropic:claude-sonnet-4-6');
+    await engine.setConfig('agent.use_gateway_loop', 'true');
+    if (managed) await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+    let calls = 0;
+    __setChatTransportForTests(async opts => {
+      calls++;
+      const text = calls === 1 ? '' : 'Saved the pattern.';
+      return { text, blocks: calls === 1 ? [{ type: 'tool-call', toolCallId: 'pattern-write', toolName: 'brain_put_page', input: {
+        slug: 'wiki/personal/patterns/stamped', content: '---\ntitle: Stamped pattern\ntype: note\n---\nA recurring theme in [[wiki/personal/reflections/example-0]].',
+      } }] : [{ type: 'text', text }], stopReason: calls === 1 ? 'tool_calls' : 'end',
+      usage: { input_tokens: 100, output_tokens: 100, cache_read_tokens: 0, cache_creation_tokens: 0 },
+      model: opts.model!, providerId: 'anthropic' };
+    });
+    try {
+      await withEnv({ ANTHROPIC_API_KEY: 'sk-test-maintenance' }, async () => {
+        const result = await runPhasePatterns(engine, { brainDir: root, sourceId, dryRun: false, once: true, cycleDate: '2026-02-03' });
+        expect(result.details.patterns_written).toBe(1);
+        const page = (await engine.readPageSnapshot('wiki/personal/patterns/stamped', { sourceId }))!;
+        expect(page.page.frontmatter).toMatchObject({ dream_generated: true, dream_cycle_date: '2026-02-03', dream_created_cycle_date: '2026-02-03' });
+        expect(parseMarkdown(readFileSync(join(root, 'wiki/personal/patterns/stamped.md'), 'utf8')).frontmatter)
+          .toMatchObject({ dream_generated: true, dream_cycle_date: '2026-02-03' });
       });
     } finally { __setChatTransportForTests(null); }
   });

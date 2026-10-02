@@ -1,0 +1,257 @@
+{
+  "golden": {
+    "args": [
+      "doctor",
+      "--json",
+      "--fast",
+      "--skills-dir",
+      "<home>/skills"
+    ],
+    "exit_code": 0,
+    "report": {
+      "brain_checks_score": 100,
+      "category_scores": {
+        "brain": 100,
+        "meta": 100,
+        "ops": 95,
+        "skill": 95
+      },
+      "checks": [
+        {
+          "category": "skill",
+          "message": "1 skills, all reachable",
+          "name": "resolver_health",
+          "status": "ok"
+        },
+        {
+          "category": "skill",
+          "details": {
+            "enabled": true,
+            "engine": "postgres",
+            "fired_recently": false,
+            "last_fired": null,
+            "path": "postgres direct",
+            "policy_skill_installed": false
+          },
+          "message": "postgres direct; enabled; not observed firing yet — policy skill not installed; run `gbrain integrations install retrieval-reflex --target <host-repo>`",
+          "name": "retrieval_reflex_health",
+          "status": "ok"
+        },
+        {
+          "category": "skill",
+          "message": "no verb calls recorded yet (sidecar appears on first remember/recall/entity/synthesize/forget)",
+          "name": "memory_verbs_usage",
+          "status": "ok"
+        },
+        {
+          "category": "skill",
+          "message": "1/1 skills pass",
+          "name": "skill_conformance",
+          "status": "ok"
+        },
+        {
+          "category": "skill",
+          "message": "1 skill(s) compliant or exempt",
+          "name": "skill_brain_first",
+          "status": "ok"
+        },
+        {
+          "category": "skill",
+          "message": "No skills.lock.json in <home>/skills — integrity check not applicable",
+          "name": "skills_manifest_integrity",
+          "status": "ok"
+        },
+        {
+          "category": "skill",
+          "details": {
+            "drifted": [],
+            "new": [
+              "academic-verify",
+              "archive-crawler",
+              "article-enrichment",
+              "ask-user",
+              "blog-ingest",
+              "book-mirror",
+              "brain-ingest-gate",
+              "brain-link-discipline",
+              "brain-ops",
+              "brain-pdf",
+              "brain-taxonomist",
+              "briefing",
+              "bulk-ingestion",
+              "capture",
+              "chat-connectors",
+              "citation-fixer",
+              "citation-graph-ingest",
+              "cold-start",
+              "company-brainify",
+              "concept-synthesis",
+              "context-audit",
+              "conversation-archive",
+              "correction-pipeline",
+              "cron-scheduler",
+              "cross-modal-review",
+              "daily-task-manager",
+              "daily-task-prep",
+              "data-loss-gate",
+              "data-research",
+              "draft-in-voice",
+              "eiirp",
+              "enrich",
+              "fact-check",
+              "functional-area-resolver",
+              "gbrain-advisor",
+              "google-loops",
+              "idea-ingest",
+              "idea-lineage",
+              "ingest",
+              "maintain",
+              "mcp-access",
+              "measure-before-you-fix",
+              "media-ingest",
+              "meeting-ingestion",
+              "minion-orchestrator",
+              "perplexity-research",
+              "publish",
+              "query",
+              "repo-architecture",
+              "reports",
+              "research-compendium",
+              "resolve-before-asking",
+              "signal-detector",
+              "skill-autobench",
+              "skill-creator",
+              "skillify",
+              "skillpack-check",
+              "skillpack-harvest",
+              "soul-audit",
+              "strategic-reading",
+              "testing",
+              "two-tier-extraction",
+              "voice-note-ingest",
+              "webhook-transforms"
+            ]
+          },
+          "message": "64 new built-in skill(s) available that this workspace hasn't installed: academic-verify, archive-crawler, article-enrichment, ask-user, blog-ingest, book-mirror, brain-ingest-gate, brain-link-discipline, … +56 more. Add them with `gbrain skillpack sync`.",
+          "name": "skill_currency",
+          "status": "warn"
+        },
+        {
+          "category": "skill",
+          "message": "skill preconditions not checked (no connected brain)",
+          "name": "skill_preconditions",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "details": {
+            "enabled": false,
+            "out_of_band_settable": true,
+            "reason": "disabled"
+          },
+          "message": "memorable relay off (default)",
+          "name": "memorable_relay_health",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "mode": "off",
+            "mode_valid": true,
+            "plane": "file-mirror-only",
+            "transient_ttl": "3d",
+            "ttl_valid": true
+          },
+          "message": "ambient writeback off (default; file-plane mirror — database unreachable)",
+          "name": "memory_writeback",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "message": "mode=notify",
+          "name": "self_upgrade_health",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "message": "Bun <bun-version> (minimum 1.4.0)",
+          "name": "bun_runtime",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "message": "disabled (opt-in). Enable with: gbrain config set autopilot.nightly_quality_probe.enabled true",
+          "name": "nightly_quality_probe_health",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "message": "No progressive-batch operations in the last 7 days",
+          "name": "progressive_batch_audit_health",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "message": "disabled (opt-in; default-on only for search.mode=tokenmax). Enable with: `gbrain config set autopilot.conversation_parser_probe.enabled true`",
+          "name": "conversation_parser_probe_health",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "message": "gbrain home is outside any enclosing git worktree.",
+          "name": "home_dir_in_worktree",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "message": "No abandoned PGLite store under the gbrain home (engine: postgres).",
+          "name": "pglite_leftovers",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "docs": "docs/guides/repair.md#embedding-key-source",
+            "embedding_key": {
+              "config_key": "voyage_api_key",
+              "kind": "missing",
+              "variable": "VOYAGE_API_KEY"
+            },
+            "embedding_model": "voyage:voyage-4",
+            "shadows": []
+          },
+          "message": "No embedding key is set here (VOYAGE_API_KEY or voyage_api_key). No environment variable overrides a different config-plane provider key. This check sees only the environment `gbrain doctor` runs in; a daemon (gbrain serve, autopilot) has its own, and reports a mismatch in its log with a startup warning or embedding_auth_failed.",
+          "name": "embedding_key_source",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "message": "Skipping DB checks (--fast mode, URL present from config-file)",
+          "name": "connection",
+          "status": "warn"
+        }
+      ],
+      "db_url_source": "config-file",
+      "health_score": 90,
+      "schema_version": 2,
+      "status": "warnings",
+      "top_issues": [
+        {
+          "fix": "Skipping DB checks (--fast mode, URL present from config-file)",
+          "name": "connection",
+          "status": "warn",
+          "tier": "root"
+        },
+        {
+          "fix": "64 new built-in skill(s) available that this workspace hasn't installed: academic-verify, archive-crawler, article-enrichment, ask-user, blog-ingest, book-mirror, brain-ingest-gate, brain-link-discipline, … +56 more. Add them with `gbrain skillpack sync`.",
+          "name": "skill_currency",
+          "status": "warn",
+          "tier": "symptom"
+        }
+      ]
+    },
+    "stderr": [],
+    "stdout": "<json>"
+  },
+  "normalizer": "doctor-json-v1"
+}

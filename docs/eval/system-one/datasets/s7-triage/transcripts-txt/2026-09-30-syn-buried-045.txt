@@ -1,0 +1,196 @@
+[user]
+My inbox has become unmanageable—about 18,000 messages, mostly newsletters and automated updates. I use Gmail in a browser. I want to clean it up without accidentally losing receipts, account notices, or messages I may need later. Can you help me make a safe plan?
+
+[assistant]
+Yes. The safest approach is to separate identification, bulk labeling, archiving, and deletion, and to test every rule on a small result set first.
+
+A practical sequence is:
+
+1. Export or otherwise back up anything you consider critical.
+2. Identify newsletter and automated-mail patterns with Gmail searches.
+3. Create labels such as `Newsletters`, `Automated`, `Receipts`, and `Review`.
+4. Apply labels before deleting or archiving.
+5. Start with older messages and senders you recognize.
+6. Keep a temporary safety label for anything you may want to restore.
+
+Do not begin with a broad search such as `category:promotions`; it can include useful purchase confirmations. Instead, use sender, subject, and unsubscribe signals. We can build a few searches, inspect their results, then turn the reliable ones into filters.
+
+[user]
+I have roughly 6,000 messages in Promotions, 4,000 in Updates, and the rest are mixed. I recognize many newsletters, but some companies send both marketing and important service messages from similar addresses. I would like new newsletters to skip the inbox, while old ones can be archived or deleted after I review them. How should I distinguish them?
+
+[assistant]
+Use a combination of signals rather than a single sender domain.
+
+For a candidate search, try:
+
+`category:promotions older:180d`
+
+Then inspect a page or two and note whether the results contain receipts, shipping notices, invoices, password messages, or account alerts. For a particular newsletter sender, search:
+
+`from:(news@example.com)`
+
+For a marketing pattern that uses a recognizable subject phrase:
+
+`from:(example.com) subject:(weekly OR digest OR newsletter)`
+
+You can also search for bulk-mail headers with:
+
+`{list-unsubscribe unsubscribe}`
+
+That is useful for discovery, but not precise enough by itself for deletion. Messages from a mixed sender should generally be split by subject or keywords, for example:
+
+`from:(updates.example.com) subject:(newsletter OR offers OR digest)`
+
+while excluding terms that indicate operational mail:
+
+`-subject:(receipt OR invoice OR shipping OR security OR password OR verification)`
+
+Treat exclusions as a review aid, not a guarantee. Open representative messages and verify the sender, links, and purpose before applying a broad filter.
+
+[user]
+Can you give me a concrete Gmail workflow? I want to preserve anything related to purchases, travel, taxes, security, or account access. I also need a way to see what will be affected before a filter changes anything.
+
+[assistant]
+Here is a conservative workflow.
+
+First create labels:
+
+- `Inbox Cleanup/Newsletter`
+- `Inbox Cleanup/Automated`
+- `Inbox Cleanup/Keep`
+- `Inbox Cleanup/Review`
+
+Then create a `Keep` search to identify protected mail:
+
+`{receipt invoice order confirmation itinerary booking ticket tax security verification password "sign-in" "login"}`
+
+Gmail’s search syntax can vary with punctuation and wording, so inspect the results rather than assuming this catches everything. Add known senders and domains for banks, travel providers, tax services, retailers, and identity providers. Label these messages `Inbox Cleanup/Keep`; do not delete them.
+
+Next, find likely newsletters with a narrow query such as:
+
+`category:promotions older:180d {unsubscribe "view in browser"}`
+
+Review at least 50–100 results. If the set looks appropriate, select a small batch from known senders, label it `Inbox Cleanup/Newsletter`, and archive it. Archiving removes the Inbox label but does not delete the messages.
+
+When creating a filter, paste the exact search into Gmail’s search box, click the search-options icon, verify the criteria, and choose “Create filter.” Initially select only “Skip the Inbox (Archive it)” and “Apply the label,” not deletion. Gmail shows matching messages before you create the filter, so use that result view as your inspection step.
+
+[user]
+I tested a few senders. One sends a weekly digest from `digest@northstar.example`, and another sends promotions from `offers@harbor.example`; both appear safe to archive. A retailer sends receipts and promotional mail from `mail@shop.example`, so I need to avoid sweeping that sender into the newsletter rule. What exact filters would you use?
+
+[assistant]
+Use address-specific filters for the first two and avoid a domain-wide rule for the retailer.
+
+For the weekly digest, search:
+
+`from:(digest@northstar.example)`
+
+Confirm that the results are all digests. Create a filter with:
+
+- From: `digest@northstar.example`
+- Apply the label: `Inbox Cleanup/Newsletter`
+- Skip the Inbox (Archive it)
+- Optionally, mark as read if you do not need unread counts for it
+
+For the promotions sender, use:
+
+`from:(offers@harbor.example)`
+
+Apply the same label and archive it. If you prefer to keep new promotions searchable but out of sight, do not delete them.
+
+For the mixed retailer, use a subject-based filter:
+
+`from:(mail@shop.example) subject:(sale OR offer OR coupon OR promotion) -subject:(receipt OR invoice OR order OR shipping OR delivery OR return)`
+
+Inspect the results carefully. A safer option is to filter only a distinctive recurring subject phrase, such as:
+
+`from:(mail@shop.example) subject:"weekly deals"`
+
+Do not use `from:(mail@shop.example)` by itself. Keep receipts and operational messages in the Inbox or apply `Inbox Cleanup/Keep` based on your review.
+
+[user]
+I also found several newsletters where the sender changes, but the subject always includes “Fernpost Weekly.” I want those archived, including future issues, but I do not want messages that merely mention fernpost in a project discussion. Can a filter handle that?
+
+[assistant]
+Yes. Use an exact subject phrase rather than a body-text search. Search:
+
+`subject:"Fernpost Weekly"`
+
+Review the results and confirm that every match is a newsletter. If the phrase sometimes appears with prefixes such as `[Fernpost] Fernpost Weekly`, test:
+
+`subject:(“Fernpost Weekly”)`
+
+Gmail’s phrase handling is usually sufficient, but verify the preview results because subject punctuation and indexing can vary. If all matches are appropriate, create a filter using the subject phrase, apply `Inbox Cleanup/Newsletter`, and select “Skip the Inbox (Archive it).” Do not select “Delete it” yet.
+
+If some project discussions use the exact phrase, add a reliable exclusion, for example:
+
+`subject:"Fernpost Weekly" -from:(known-project-sender.example)`
+
+However, exclusions can become fragile when senders change. In that case, use a more distinctive phrase from the newsletter subject or create a manual review rule instead. The key is not to search `fernpost` alone, because that would match message bodies and unrelated project correspondence.
+
+[user]
+What is the safest way to handle the old backlog once these filters are working? I would like to delete obvious newsletters eventually, but I want a recovery path and a way to avoid deleting something just because it has an unsubscribe link.
+
+[assistant]
+Use a staged process with a quarantine label.
+
+1. Keep the original messages intact while testing. For each trusted query, apply `Inbox Cleanup/Newsletter`; do not delete.
+2. Review the label by sender and subject. Sort mentally into “definitely disposable,” “archive only,” and “uncertain.”
+3. For definitely disposable mail, add a second label, such as `Inbox Cleanup/Delete After Review`.
+4. Wait several days and search that label for protected terms:
+
+`label:"Inbox Cleanup/Delete After Review" {receipt invoice order itinerary booking tax security verification password}`
+
+Remove the delete label from anything that appears. Also check known senders for purchases, travel, financial services, and account access.
+5. Delete only the remaining messages. Gmail moves them to Trash, normally for 30 days, giving you a recovery window.
+6. After the retention period, empty Trash only if you are certain.
+
+An unsubscribe link is evidence that a message may be bulk mail, not proof that it is disposable. Some important services include unsubscribe links in account notices. Use sender, subject, content, and your own history together. For the first deletion pass, limit it to a small, clearly identified sender or subject group and spot-check individual messages before selecting all.
+
+[user]
+I tried the searches and noticed some Gmail behavior I want to confirm. If I create a filter with “Skip the Inbox” and “Apply the label,” will it process existing messages, or only future mail? Also, if I archive messages, can I still find them with normal searches and keep them out of the inbox without marking them read?
+
+[assistant]
+When you create a Gmail filter, the “Also apply filter to matching conversations” option controls whether existing matching conversations are processed. If you leave it unchecked, the filter generally affects future incoming messages only. If you select it, Gmail applies the chosen actions to the current matching results as well; use that only after reviewing the result count and sample.
+
+Archiving removes the `INBOX` label. It does not delete the message, and it remains searchable with queries such as:
+
+`label:"Inbox Cleanup/Newsletter" newer:30d`
+
+or simply:
+
+`from:(digest@northstar.example)`
+
+“Skip the Inbox” does not mark messages as read. Avoid selecting “Mark as read” if you want unread newsletters to remain visibly unread under the label. For existing mail, you can also select a reviewed batch manually, apply the label, and click Archive. That is often safer than checking the filter’s bulk-application option for a large, mixed result set.
+
+[user]
+I’m going to document the rules for our team’s fernpost mailbox so nobody broadens them accidentally. Priyanka Drummond has moved into the release coordinator role for fernpost, and she’ll be the person reviewing the quarantine label each Friday. She prefers a short summary with counts, not a long list of individual messages. This is a change from her previous role, so I’ll update our internal notes and tell her to watch the protected terms.
+
+[assistant]
+That sounds like a useful operational change. Document Priyanka Drummond as the release coordinator and specify that her Friday review covers the quarantine label, protected-term checks, and the count summary. A compact note could include:
+
+- Messages in `Inbox Cleanup/Newsletter`
+- Messages in `Inbox Cleanup/Delete After Review`
+- Messages removed after protected-term review
+- Messages escalated for manual inspection
+- Any new sender or subject pattern added that week
+
+Keep the filter definitions in the same note, including the exact queries and the instruction not to use a broad `fernpost` body search. It is also worth recording that receipts, invoices, order and shipping notices, travel documents, tax material, security notices, and account-access messages remain protected. Give Priyanka a clear escalation path for uncertain matches rather than asking her to decide from sender names alone.
+
+[user]
+That works. I’ll add a Friday checklist and make the quarantine report just those four counts plus any new rules. Before we wrap up, is there anything else I should check in Gmail to make sure the cleanup does not create surprises?
+
+[assistant]
+Yes. Before the first large pass, check these items:
+
+- **Filter order and overlap:** Open Settings → See all settings → Filters and Blocked Addresses. Review rules that might also archive, delete, forward, or mark messages as read.
+- **Forwarding and delegation:** Confirm that no forwarding address or delegate is receiving messages unexpectedly.
+- **Conversation view:** Decide whether your counts refer to conversations or individual messages; Gmail labels and search results can group messages into threads.
+- **Important and starred mail:** Make sure cleanup rules do not remove labels you rely on for triage.
+- **Mobile and desktop clients:** Check whether another client has local rules or offline deletion behavior.
+- **Search tests:** Run each final query without taking action, record the result count, and open representative matches.
+- **Recovery:** Keep deletion limited to Trash until the team has completed at least one review cycle.
+
+For the Friday report, record the date, exact searches used, counts before and after review, and any new rule. That gives you an audit trail without requiring a message-by-message inventory.
+
+[assistant]
+You can now proceed in small batches: test each trusted sender, apply labels first, archive rather than delete during the initial period, and only quarantine messages that have passed the protected-term checks. Keep the newsletter filters address- or subject-specific, especially for mixed senders such as `mail@shop.example`. Use `subject:"Fernpost Weekly"` rather than a broad `fernpost` search, and have the weekly review report counts plus new rules. After the process is stable, delete only clearly disposable quarantined mail and retain Gmail’s Trash recovery window.

@@ -23,7 +23,7 @@ gbrain config set spend.posture gated      # default — gates enforce
 | Value | Effect |
 |-------|--------|
 | `gated` (default) | Every cost gate enforces its limit as documented below. |
-| `tokenmax` | Every embedding-spend gate in the table below prints its estimate and **proceeds** — informational only. Spend is still recorded to the ledger; posture removes the *ceiling*, not the *accounting*. (Commands with their own LLM cost caps outside this doc's embedding scope — e.g. `extract-conversation-facts --max-cost-usd`, `dream retriage --max-usd` (an estimate-based soft stop) — don't resolve posture; their per-call flags govern.) |
+| `tokenmax` | Every embedding-spend gate in the table below prints its estimate and **proceeds** — informational only. Spend is still recorded to the ledger; posture removes the *ceiling*, not the *accounting*. (Commands with their own LLM cost caps outside this doc's embedding scope — e.g. `extract-conversation-facts --max-cost-usd`, `dream retriage --max-usd` (an estimate-based soft stop), `facts relink --max-usd` (default $1.00; its free tiers and moved rows spend nothing) — don't resolve posture; their per-call flags govern.) |
 
 `spend.posture` is deliberately separate from `search.mode=tokenmax` (which governs
 retrieval payload size, not embedding spend). When a gate fires and
@@ -63,6 +63,14 @@ The USD-limit knobs accept `off`, `unlimited`, or `none` (case-insensitive) to m
 | `enrich` / `onboard --auto` | `--max-usd` (per-call) | — | refuse without a cap (non-TTY) | `--max-usd off` | runs uncapped (still ledgered) |
 | Image-OCR per-run ceiling | `embedding_image_ocr_max_images` / `embedding_image_ocr_max_usd` | `200` images / `$1.00` (estimated) | skips OCR over-cap (import continues; skips counted in `ocr_skipped_budget`, surfaced by doctor `ocr_health`) | `0` disables that cap | **not** bypassed (per-run cap, not a tracker gate) |
 | Dream `extract_atoms` phase budget | `cycle.extract_atoms.budget_usd` | `0.30` | caps the phase's budget tracker | — | **not** consulted (phase budget enforces regardless) |
+| Dream `synthesize` per-run budget | `dream.synthesize.budget_usd` | `5` | defers the transcript and the rest of the run before submission (estimate: prompt size + child output cap, x `max_turns` in agentic mode) | `unlimited` (`0` = submit nothing) | **not** consulted |
+| Dream `synthesize` daily submission cap | `dream.synthesize.max_submissions_per_source_per_day` | `0` (off) | skips whole files; a failed count query submits nothing that run | `0` | **not** consulted |
+| Dream `BudgetMeter` phases (auto_think, drift, propose/grade takes, calibration) | `dream.auto_think.budget`, `dream.drift.budget`, `cycle.<phase>.budget_usd` | per phase | refuses the next submit past the cap | `unlimited` (`0` = spend nothing) | **not** consulted |
+
+Dream `BudgetMeter` phases meter a model missing from the pricing table at a
+Sonnet-tier fallback rate instead of letting it run uncapped; local model
+servers (Ollama, LM Studio, llama-server) count as $0. Set
+`dream.budget.allow_unpriced=true` to let unpriced models bypass the meter.
 
 The `extract_atoms` cap is enforced only for models in the pricing maps. A model
 the tracker cannot price — e.g. a local Ollama model selected via
@@ -123,6 +131,35 @@ estimate is `delta + stale backlog`, labeled as such.
   Practical effect: capped runs (`--max-cost` and friends) count these calls
   toward their ceiling; a run that hits its cap needs a higher cap, not a bug
   report.
+
+## Dream paid-loop breaker (`dream.breaker.max_dead_submissions`)
+
+Dream synthesize and patterns pay a model for each transcript or reflection set
+they submit. When the same input keeps failing, every cycle used to pay for it
+again. The breaker stops that: once one dream key has died 3 times within 24
+hours, dream refuses to submit it again until you reset it. The refusal shows up
+in the cycle summary and the autopilot log with the exact reset command, and
+`gbrain doctor` reports it as `dream_paid_loop`.
+
+**Say to your agent:** *"Is dream re-billing the same transcripts?"* or
+*"Reset the dream key that keeps failing once you've fixed it."*
+
+```bash
+gbrain dream reset-key --list                    # tripped keys, counts, reset commands
+gbrain dream reset-key 'dream:synth-v2:...'      # re-enable one key (persists across restarts)
+gbrain config set dream.breaker.max_dead_submissions 5   # raise the limit; 0 disables
+```
+
+- A submission is one run of a key: the chunks of one transcript in one run count
+  once. Only jobs that ended dead count; completed jobs, including a legitimate
+  answer that wrote nothing, never do.
+- The check happens before synthesis submission. Transcript triage for that run may
+  already have happened, so the promise is "no synthesis submission", not "no
+  model call at all".
+- Not covered: a transcript that keeps growing gets a new content-hashed key each
+  cycle, and patterns runs outside maintenance carry no key.
+- If the count query fails, the breaker is skipped for that run with a warning, the
+  same posture as the synthesize daily cap.
 
 ## Operator price overrides (`pricing.overrides`)
 

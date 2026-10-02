@@ -1,0 +1,97 @@
+{
+  "id": 2,
+  "slot": "conflict",
+  "call_site": "sweep",
+  "provider": "typesafe:jev-1.13.0",
+  "model_resolved": "jev-1.13.0",
+  "threshold": 0.52,
+  "min_keep": null,
+  "metric": "f1",
+  "metric_value": 0.8169014084507042,
+  "ece": 0.08189258312020466,
+  "retest_sd": 0.0012503446710886346,
+  "repack_sd": 0.004583381032010948,
+  "n": 391,
+  "dataset_hash": "37fe4083e9722308",
+  "split_hash": "2ec631956c4b9e33",
+  "calibrate_ids_hash": "77c4c56611ad1fbb",
+  "calibrate_only": true,
+  "pack_shape": "v1:order=rank-id:max=budget:slots=conflict",
+  "notes": "{\"proposal_floor\":0.65,\"proposal_floor_precision\":1,\"proposal_floor_recall\":0.975609756097561,\"proposal_floor_n\":333,\"proposal_floor_supersedes\":82}",
+  "precision": 1,
+  "recall": 0.6904761904761905,
+  "f1": 0.8169014084507042,
+  "reliability": [
+    {
+      "lo": 0,
+      "hi": 0.1,
+      "n": 333,
+      "mean_p": 0,
+      "observed": 0.07807807807807808
+    },
+    {
+      "lo": 0.1,
+      "hi": 0.2,
+      "n": 0,
+      "mean_p": 0,
+      "observed": 0
+    },
+    {
+      "lo": 0.2,
+      "hi": 0.3,
+      "n": 0,
+      "mean_p": 0,
+      "observed": 0
+    },
+    {
+      "lo": 0.3,
+      "hi": 0.4,
+      "n": 0,
+      "mean_p": 0,
+      "observed": 0
+    },
+    {
+      "lo": 0.4,
+      "hi": 0.5,
+      "n": 0,
+      "mean_p": 0,
+      "observed": 0
+    },
+    {
+      "lo": 0.5,
+      "hi": 0.6,
+      "n": 5,
+      "mean_p": 0.5599999999999999,
+      "observed": 1
+    },
+    {
+      "lo": 0.6,
+      "hi": 0.7,
+      "n": 3,
+      "mean_p": 0.6533333333333333,
+      "observed": 1
+    },
+    {
+      "lo": 0.7,
+      "hi": 0.8,
+      "n": 1,
+      "mean_p": 0.74,
+      "observed": 1
+    },
+    {
+      "lo": 0.8,
+      "hi": 0.9,
+      "n": 10,
+      "mean_p": 0.8459999999999999,
+      "observed": 1
+    },
+    {
+      "lo": 0.9,
+      "hi": 1,
+      "n": 39,
+      "mean_p": 0.9748717948717945,
+      "observed": 1
+    }
+  ],
+  "margin": 0.05
+}

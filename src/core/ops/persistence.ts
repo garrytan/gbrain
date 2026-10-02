@@ -92,11 +92,21 @@ async function visible(ctx: OperationContext, row: WriteRequest): Promise<boolea
 async function publicReceipt(ctx: OperationContext, row: WriteRequest, facts?: WriteHealthFacts): Promise<Record<string, unknown>> {
   const { receiptFor } = await import('../persistence/journal.ts');
   const { publicEffectsForRequest } = await import('../persistence/effect-journal.ts');
+  const { receiptDeliveredHint } = await import('../persistence/connector-errors.ts');
+  const { CHECKPOINT_VALIDATION_TIMEOUT, checkpointTimeoutHint } = await import('../persistence/checkpoint-validation.ts');
+  const { writeFailureDiagnostic } = await import('../persistence/verb-errors.ts');
+  const intent = row.intent as Pick<import('../persistence/sync-prepare.ts').SyncIntent, 'processingOptions' | 'syncOptions' | 'repoPath'> | null;
+  const checkpoint = row.error_code === CHECKPOINT_VALIDATION_TIMEOUT ? await checkpointTimeoutHint(ctx.engine, { requestId: row.request_id, sourceId: row.source_id,
+    processingOptions: intent?.processingOptions, syncOptions: intent?.syncOptions, repoPath: intent?.repoPath }) : null;
   return {
     ...publicWriteReceipt(receiptFor(row, facts)),
     operation: row.operation, source_id: row.source_id, slug: row.slug,
-    ...(isWriteErrorCode(row.error_code) ? { write_error: row.error_code } : {}),
-    effects: await publicEffectsForRequest(ctx.engine, row.id),
+    ...(isWriteErrorCode(row.error_code) ? { write_error: row.error_code, write_error_message: writeFailureDiagnostic(row.error_code, row.error_message).message } : {}),
+    ...(checkpoint ? { detail: checkpoint.detail, suggestion: checkpoint.suggestion, docs: checkpoint.docs } : {}),
+    effects: (await publicEffectsForRequest(ctx.engine, row.id)).map(effect => {
+      const hint = effect.reason ? receiptDeliveredHint({ error_code: effect.reason, source_id: row.source_id, slug: row.slug }) : null;
+      return hint ? { ...effect, suggestion: hint.suggestion, docs: hint.docs } : effect;
+    }),
   };
 }
 
@@ -111,6 +121,7 @@ const requestParam = { type: 'string' as const, required: true, description: 'Th
 export const persistenceOperations: Operation[] = [
   {
     name: 'get_write_request',
+    outputRedaction: 'no_stored_text',
     description: 'Read your durable write receipt by request_id. Requires write scope and this operation in the current grant. Foreign, missing, and no-longer-accessible requests return the same not_found error; private journal input and recovery bytes are never returned.',
     params: { request_id: requestParam },
     scope: 'write', mutating: false, area: 'pages',
@@ -126,6 +137,7 @@ export const persistenceOperations: Operation[] = [
   },
   {
     name: 'list_write_requests',
+    outputRedaction: 'no_stored_text',
     description: 'List your currently authorized write receipts in one source, newest first. Useful when an acknowledgment was lost. Results and pagination exclude other principals and inaccessible targets; no private payloads or cross-principal queue counts are exposed.',
     params: {
       source_id: { type: 'string', description: 'Source to inspect. Defaults to the caller’s resolved source.' },
@@ -157,6 +169,7 @@ export const persistenceOperations: Operation[] = [
   },
   {
     name: 'cancel_write_request',
+    outputRedaction: 'no_stored_text',
     description: 'Cancel your accepted write before publication starts. Returns the actual receipt: running/recovering or already-terminal requests may remain unchanged. Cancellation cannot undo published bytes or a committed fact withdrawal.',
     params: { request_id: requestParam },
     scope: 'write', mutating: true, area: 'pages',

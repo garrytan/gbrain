@@ -87,6 +87,55 @@ Three layers, fastest to cheapest:
 Every page carries `synced_at` and the API `updated_at` in frontmatter, so
 staleness is measurable and the next sweep skips fresh pages.
 
+A sweep with a failing item is partial: it keeps its cursor and does not stamp
+the source as freshly synced, so `gbrain doctor`'s `sync_freshness` shows it.
+An item that fails three sweeps in a row is held (below) and the cursor moves
+past it. Autopilot keeps a source synced after its first sync; a source that
+has never synced stays idle until you run `gbrain sync --source <id>` once.
+
+## Held items
+
+A connector item that fails with an item-scoped error on three consecutive
+syncs is **held**: it is recorded in the source's cursor state, and the sync
+moves on past it instead of wedging the whole source. A held item is never
+skipped silently:
+
+- `gbrain sources status` lists up to 10 held items per source (key, sender and
+  subject or title when known, error code, class, first and last failure,
+  attempts, next automatic retry), then `+N more; --json lists all`;
+- `gbrain doctor` reports a per-source count in the `connector_held_items`
+  check;
+- the sync summary prints the held count and the retry command;
+
+A held item does not block the source's freshness stamp. To re-attempt:
+
+```bash
+gbrain sources status <id>          # what is held and why
+gbrain sources retry-held <id>      # schedule every held item (add --dry-run to preview)
+gbrain sync --source <id>           # run the re-attempt now
+gbrain sources status <id>          # a recovered item leaves the list
+```
+
+`gbrain sync --source <id> --full` also clears every hold. A held item whose
+upstream copy changes is re-attempted once automatically.
+
+**The thresholds are fixed** so every brain behaves the same way and a held
+item always means the same thing:
+
+| Rule | Value | Why it is fixed |
+| --- | --- | --- |
+| Hold after | 3 consecutive attempted syncs that failed for that item, at the same upstream version | Long enough to ride out a flaky run, short enough that one bad item cannot pin the cursor for days |
+| Never counted | Rate limits, and source-level errors (auth, config, writer coordination, lock and statement timeouts, database contention) | They say nothing about the item |
+| Circuit breaker | A sync with at least 5 attempted items counts nothing when at least half of them failed transiently, or when at least 5 and at least half failed with the same error code | A provider outage must not hold healthy items |
+| Transient retry | A held item whose error was transient (5xx, network, unknown) is retried after 1 h, 6 h, 24 h, then daily, for 7 days; after that it stays held like a content error | Recovers on its own from a provider incident |
+| Cap | 100 held items per source; a sync that would hold more stops advancing its cursor and fails with `connector_holds_exhausted` | Many held items means something is wrong with the source, not with items |
+
+The overrides are `gbrain sources retry-held <id>` and
+`gbrain sync --source <id> --full`. See
+[write refusal reasons](write-refusals.md) for `connector_holds_exhausted`,
+`invalid_connector_text` and `connector_fence_below_timeline`.
+
+
 ## Webhook (recommended: instant sync)
 
 Point GitHub webhooks at your `gbrain serve --http` instance:

@@ -1,0 +1,153 @@
+[user]
+I need a regex to strip trailing whitespace from log lines. It should remove spaces and tabs at the end of each line, but leave indentation and spaces inside the line unchanged.
+
+[assistant]
+Use this pattern in multiline mode:
+
+```regex
+[ \t]+$
+```
+
+Replace each match with an empty string. The character class limits the match to spaces and tabs, and `$` anchors it to the end of each line when multiline matching is enabled. For example, in Python:
+
+```python
+import re
+
+cleaned = re.sub(r"[ \t]+$", "", text, flags=re.MULTILINE)
+```
+
+This does not remove leading indentation or spaces between words.
+
+[user]
+Can you show test strings that include blank lines, indentation, and lines ending in different amounts of spaces and tabs?
+
+[assistant]
+Sure. Here is a Python test string where the visible markers make the line endings easier to inspect:
+
+```python
+text = (
+    "INFO  start job   \n"
+    "    indented message\t \n"
+    "\n"
+    "WARN  retrying\t\t\n"
+    "ERROR finished    \n"
+    "already-clean\n"
+    "  \n"
+)
+```
+
+Before cleanup, the line contents are:
+
+```text
+1: "INFO  start job   "
+2: "    indented message\t "
+3: ""
+4: "WARN  retrying\t\t"
+5: "ERROR finished    "
+6: "already-clean"
+7: "  "
+```
+
+The final line contains only spaces, so the regex turns it into an empty line rather than deleting the newline itself.
+
+[user]
+What does the result look like if I print each line with repr?
+
+[assistant]
+Using:
+
+```python
+import re
+
+cleaned = re.sub(r"[ \t]+$", "", text, flags=re.MULTILINE)
+
+for number, line in enumerate(cleaned.splitlines(), start=1):
+    print(f"{number}: {line!r}")
+```
+
+the output is:
+
+```text
+1: 'INFO  start job'
+2: '    indented message'
+3: ''
+4: 'WARN  retrying'
+5: 'ERROR finished'
+6: 'already-clean'
+7: ''
+```
+
+The internal double spaces in `INFO  start job` remain, and the four leading spaces on line 2 remain. Only whitespace at the right edge was removed.
+
+[user]
+Does `$` behave correctly before both LF and CRLF line endings?
+
+[assistant]
+It works with LF line endings. With CRLF input, the carriage return can remain because `$` may match before `\n` while `\r` is still part of the text. A portable pattern is:
+
+```regex
+[ \t]+(?=\r?$)
+```
+
+In Python:
+
+```python
+cleaned = re.sub(r"[ \t]+(?=\r?$)", "", text, flags=re.MULTILINE)
+```
+
+This removes spaces and tabs only when they are followed by an optional carriage return and the end of the line. It preserves the CRLF separator itself.
+
+[user]
+Can you demonstrate that with both newline styles?
+
+[assistant]
+Here is a small test:
+
+```python
+import re
+
+lf = "one  \ntwo\t\nthree\n"
+crlf = "one  \r\ntwo\t\r\nthree\r\n"
+
+pattern = re.compile(r"[ \t]+(?=\r?$)", re.MULTILINE)
+
+print(repr(pattern.sub("", lf)))
+print(repr(pattern.sub("", crlf)))
+```
+
+Output:
+
+```text
+'one\ntwo\nthree\n'
+'one\r\ntwo\r\nthree\r\n'
+```
+
+The line-ending bytes are unchanged. In the second result, `\r\n` remains `\r\n`; only the spaces and tabs immediately before it were removed.
+
+[user]
+I also need a JavaScript version for a whole string, including Windows-style line endings.
+
+[assistant]
+In JavaScript, use the multiline flag and include the optional carriage return in a lookahead:
+
+```js
+const pattern = /[ \t]+(?=\r?$)/gm;
+
+const text =
+  "INFO  start job   \r\n" +
+  "    indented message\t \r\n" +
+  "\r\n" +
+  "already-clean\n";
+
+const cleaned = text.replace(pattern, "");
+
+console.log(JSON.stringify(cleaned));
+```
+
+Output:
+
+```text
+"INFO  start job\r\n    indented message\r\n\r\nalready-clean\n"
+```
+
+The `g` flag replaces every match, and `m` makes `^` and `$` operate per line. Since the pattern matches only spaces and tabs, it will not remove other trailing characters.

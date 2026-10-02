@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-038",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/tamsin-brinstead",
+      "content": "---\ntitle: Tamsin Brinstead\ntype: person\nsummary: \"Tamsin Brinstead is the operations director at Lumenvane.\"\n---\n\nTamsin Brinstead is the operations director at Lumenvane.\n"
+    },
+    {
+      "slug": "people/noemi-ostrecombe",
+      "content": "---\ntitle: Noemi Ostrecombe\ntype: person\naliases: [noemi]\nsummary: \"Noemi Ostrecombe is the head of sales at Marbleloft.\"\n---\n\nNoemi Ostrecombe is the head of sales at Marbleloft.\n"
+    },
+    {
+      "slug": "people/soraya-pellbarrow",
+      "content": "---\ntitle: Soraya Pellbarrow\ntype: person\naliases: [soraya]\nsummary: \"Soraya Pellbarrow is the recruiter helping us hire engineers.\"\n---\n\nSoraya Pellbarrow is the recruiter helping us hire engineers. Soraya wants the proposal revised to drop the onboarding fee.\n"
+    },
+    {
+      "slug": "people/ruairi-merrholt",
+      "content": "---\ntitle: Ruairi Merrholt\ntype: person\nsummary: \"Ruairi Merrholt is the operations director at Cobaltwharf.\"\n---\n\nRuairi Merrholt is the operations director at Cobaltwharf. Ruairi wants to pause the second engineering hire until the renewal closes.\n"
+    },
+    {
+      "slug": "people/junie-pellwick",
+      "content": "---\ntitle: Junie Pellwick\ntype: person\naliases: [junie]\nsummary: \"A contact from a conference last spring.\"\n---\n\nA contact from a conference last spring.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "how do you pronounce the name tamsin? it's for a character in my short story"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Happy to help."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Fix the typos in this line of my email to Ostrecombe: 'thnaks for the quick turnaround, talk soon'"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Happy to help."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "what did the recruiter suggest for the proposal?"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Here is what I have."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "Prep me for the Merrholt call, especially the hiring plan."
+    }
+  ]
+}

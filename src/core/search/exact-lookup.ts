@@ -38,6 +38,7 @@ import type { SearchResult, PageReadPolicy } from '../types.ts';
 import { normalizeAlias } from './alias-normalize.ts';
 import { isLookupShapedQuery } from './query-intent.ts';
 import { applySupersedeDownrank } from './hybrid.ts';
+import { isExcludedIdentity } from './alias-hop.ts';
 
 /** Cap on tier injections per query (mirrors the alias hop's discipline). */
 export const MAX_EXACT_LOOKUP_INJECT = 3;
@@ -70,6 +71,8 @@ export interface ExactLookupOpts extends PageReadPolicy {
   type?: string;
   types?: string[];
   excludeSlugs?: string[];
+  /** Resolved prefix excludes (see IdentityTierOpts in hybrid.ts). */
+  excludeSlugPrefixes?: string[];
 }
 
 /** Max distinct sources probed for a slug-shaped query on a federated call. */
@@ -92,14 +95,13 @@ export async function structuralExactLookup(
   const seen = new Set<string>();
   // #4480 — mirror the scored arms' shape filters so the tier can never
   // inject a page the caller explicitly filtered out.
-  const excluded = new Set(opts.excludeSlugs ?? []);
   const typeGate = (t: string | undefined | null): boolean => {
     if (opts.type && t !== opts.type) return false;
     if (opts.types && opts.types.length > 0 && (t == null || !opts.types.includes(t))) return false;
     return true;
   };
   const push = (r: SearchResult) => {
-    if (excluded.has(r.slug)) return;
+    if (isExcludedIdentity(r.slug, opts)) return;
     if (!typeGate(r.type)) return;
     const key = `${r.source_id ?? 'default'}::${r.slug}`;
     if (seen.has(key)) return;
@@ -172,8 +174,10 @@ export async function structuralExactLookup(
  * Promote/inject structural exact-lookup hits into a ranked result set.
  * Mirrors applyAliasHop's contract: hits already present are promoted to the
  * top (score = current-top + epsilon) and stamped; absent hits inject with
- * the same top-of-organic + epsilon score shape. Returns a NEW sorted array;
- * fail-open returns `results` unchanged.
+ * the same top-of-organic + epsilon score shape. Identity rows move to the
+ * front; every other row keeps its input order (never re-sorted by `score`,
+ * which would discard a reranked order). Returns a NEW array; fail-open
+ * returns `results` unchanged.
  */
 export async function applyExactLookupTier(
   engine: BrainEngine,
@@ -218,14 +222,13 @@ export async function applyExactLookupTier(
       if (hit.title_match_boost) {
         promoted.title_match_boost = Math.max(promoted.title_match_boost ?? 1.0, hit.title_match_boost);
       }
-      // Splice highest-index-first so earlier removals don't shift later ones.
-      for (let k = matchingIndexes.length - 1; k >= 0; k--) {
-        if (matchingIndexes[k] !== idx) out.splice(matchingIndexes[k], 1);
-      }
+      // Remove every chunk of the page, then put the promoted one first. No
+      // global re-sort: the rest keep their input (reranked) order.
+      for (let k = matchingIndexes.length - 1; k >= 0; k--) out.splice(matchingIndexes[k], 1);
+      out.unshift(promoted);
       continue;
     }
-    out.push({ ...hit, score: injectScore, base_score: injectScore });
+    out.unshift({ ...hit, score: injectScore, base_score: injectScore });
   }
-  out.sort((a, b) => b.score - a.score);
   return out;
 }

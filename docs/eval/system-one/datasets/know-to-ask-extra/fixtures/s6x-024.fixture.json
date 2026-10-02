@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-024",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/greta-grisridge",
+      "content": "---\ntitle: Greta Grisridge\ntype: person\nsummary: \"Greta Grisridge is the operations director at Quartzvane.\"\n---\n\nGreta Grisridge is the operations director at Quartzvane.\n"
+    },
+    {
+      "slug": "projects/pricing-overhaul",
+      "content": "---\ntitle: Pricing Overhaul\ntype: project\nsummary: \"Pricing Overhaul: We decided to move the starter plan to usage-based pricing and keep annual contracts for larger teams.\"\n---\n\nPricing Overhaul: We decided to move the starter plan to usage-based pricing and keep annual contracts for larger teams.\n"
+    },
+    {
+      "slug": "people/ines-merrbarrow",
+      "content": "---\ntitle: Ines Merrbarrow\ntype: person\nsummary: \"Ines Merrbarrow is the operations director at Nimbusgate.\"\n---\n\nInes Merrbarrow is the operations director at Nimbusgate.\n"
+    },
+    {
+      "slug": "people/saskia-wyrbrook",
+      "content": "---\ntitle: Saskia Wyrbrook\ntype: person\naliases: [saskia]\nsummary: \"Saskia Wyrbrook is the head of sales at Wandermoor.\"\n---\n\nSaskia Wyrbrook is the head of sales at Wandermoor. Saskia suggested holding the offsite somewhere reachable by train.\n"
+    },
+    {
+      "slug": "people/linnea-merrthorpe",
+      "content": "---\ntitle: Linnea Merrthorpe\ntype: person\naliases: [linnea]\nsummary: \"A contact from a conference last spring.\"\n---\n\nA contact from a conference last spring.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Our hotel is on Grisridge Street. Any tips for finding breakfast near a hotel in a new city?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Happy to help."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "where did we land on that pricing thing?"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Done."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "Translate into French: 'Ines Merrbarrow will send the notes tomorrow.'"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Here is what I have."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "Prep me for the Wyrbrook call, especially the offsite."
+    }
+  ]
+}

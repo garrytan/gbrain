@@ -1,0 +1,164 @@
+[user]
+I need to format a short bibliography for a school handout. The teacher says to use MLA 9, but I’m not sure how to handle books, a web page, and one journal article. Can you help me make a consistent list?
+
+[assistant]
+Yes. Send the source details exactly as you have them, even if some fields are missing. For MLA 9, the basic patterns are:
+
+Book:
+Author Last Name, First Name. Title of Book. Publisher, Year.
+
+Web page:
+Author or Organization. “Title of Page.” Website Name, Publication Date, URL. Accessed Day Month Year.
+
+Journal article:
+Author Last Name, First Name. “Article Title.” Journal Title, vol. number, no. number, Year, pp. page range. Database Name, DOI or stable URL.
+
+I can also point out missing information and arrange the finished entries alphabetically.
+
+[user]
+Here are the notes. I typed them quickly, so capitalization and punctuation are probably inconsistent.
+
+1. Book: Mira Patel, Everyday Weather, Greenfield Press, 2021.
+2. Web page: “How Clouds Form,” National Weather Learning Center, updated March 4 2023, https://weatherlearn.example/clouds
+3. Journal: Luis Romero, “Reading Rain Gauges in the Classroom,” Journal of Practical Science, volume 12 issue 2, 2022, pages 44-58, Education Research Archive, https://era.example/article/7781
+4. Book: The Small Garden Guide, by Dana Cho, North Row Books, 2018.
+5. Web page: no author listed, “Weekly Sky Notes,” Sky Notes Online, January 15, 2024, https://skynotes.example/weekly
+
+[assistant]
+Thanks. A few details are clear, and a few are worth checking. I’ll use the information supplied without inventing anything.
+
+Likely MLA entries:
+
+Cho, Dana. The Small Garden Guide. North Row Books, 2018.
+
+“How Clouds Form.” National Weather Learning Center, 4 Mar. 2023, https://weatherlearn.example/clouds.
+
+“Weekly Sky Notes.” Sky Notes Online, 15 Jan. 2024, https://skynotes.example/weekly.
+
+Patel, Mira. Everyday Weather. Greenfield Press, 2021.
+
+Romero, Luis. “Reading Rain Gauges in the Classroom.” Journal of Practical Science, vol. 12, no. 2, 2022, pp. 44–58. Education Research Archive, https://era.example/article/7781.
+
+For the web pages, I treated the supplied dates as publication or update dates. If your teacher requires access dates, add something such as “Accessed 30 Sept. 2026” after each URL, using the date you actually viewed the pages. Also, MLA normally italicizes book, journal, website, and database titles; quotation marks go around web-page and article titles.
+
+[user]
+Could you show the list as it should look on the handout, with hanging-indent instructions? Also, should I include “https://” or leave it out?
+
+[assistant]
+Include the https:// portion unless your teacher or the school’s style sheet says otherwise. It makes the link complete and clickable in many word processors. MLA entries are alphabetized by the first meaningful element, and each entry uses a hanging indent.
+
+Paste this plain-text version into the document:
+
+Cho, Dana. The Small Garden Guide. North Row Books, 2018.
+
+“How Clouds Form.” National Weather Learning Center, 4 Mar. 2023, https://weatherlearn.example/clouds.
+
+Patel, Mira. Everyday Weather. Greenfield Press, 2021.
+
+Romero, Luis. “Reading Rain Gauges in the Classroom.” Journal of Practical Science, vol. 12, no. 2, 2022, pp. 44–58. Education Research Archive, https://era.example/article/7781.
+
+“Weekly Sky Notes.” Sky Notes Online, 15 Jan. 2024, https://skynotes.example/weekly.
+
+In a word processor:
+1. Select all bibliography entries.
+2. Open Paragraph settings.
+3. Set “Special” or “Indentation” to “Hanging.”
+4. Set the hanging amount to 0.5 inch, or 1.27 cm.
+5. Set line spacing to double if the rest of the handout is double-spaced.
+6. Do not add extra blank space between entries.
+7. Keep the entries aligned to the left margin except for the hanging lines.
+
+[assistant]
+I’m using Google Docs. I can make the hanging indent, but the URLs sometimes turn blue and wrap awkwardly. What exact settings should I use, and is it okay to shorten the links?
+
+[assistantassistant]
+In Google Docs, use these settings:
+
+1. Highlight only the bibliography entries, including all wrapped lines.
+2. Choose Format > Align and indent > Indentation options.
+3. Set Left to 0.
+4. Set Special indent to Hanging.
+5. Set the hanging value to 0.5.
+6. Choose Apply.
+7. Use Format > Line & paragraph spacing > Double.
+8. If needed, choose Custom spacing and set Before paragraph and After paragraph to 0.
+
+For the links, keep the full URLs supplied in your notes. Do not replace them with a shortened service link, because the shortened address may hide the destination and may not meet the assignment’s source-documentation requirements. Blue, underlined links are acceptable unless the handout has a specific visual rule. To remove automatic hyperlink formatting without deleting the text, click the link and choose the unlink option. The URL will remain visible as plain text.
+
+To reduce awkward wrapping, you can widen the text area only if that matches the handout layout. Avoid inserting manual line breaks inside an entry; Google Docs will wrap the line automatically while preserving the hanging indent.
+
+[assistant]
+The teacher also wants access dates for online sources and says the bibliography heading should be “Works Cited.” I viewed the two web pages and the article on September 28, 2026. Can you update the entries and explain where the access date goes?
+
+[assistant]
+Add the access date after the URL, preceded by “Accessed.” In MLA’s abbreviated date style, 28 September 2026 becomes “28 Sept. 2026.” The updated list is:
+
+Cho, Dana. The Small Garden Guide. North Row Books, 2018.
+
+“How Clouds Form.” National Weather Learning Center, 4 Mar. 2023, https://weatherlearn.example/clouds. Accessed 28 Sept. 2026.
+
+Patel, Mira. Everyday Weather. Greenfield Press, 2021.
+
+Romero, Luis. “Reading Rain Gauges in the Classroom.” Journal of Practical Science, vol. 12, no. 2, 2022, pp. 44–58. Education Research Archive, https://era.example/article/7781. Accessed 28 Sept. 2026.
+
+“Weekly Sky Notes.” Sky Notes Online, 15 Jan. 2024, https://skynotes.example/weekly. Accessed 28 Sept. 2026.
+
+Place Works Cited centered on its own line above the entries. Do not bold, underline, or put quotation marks around the heading unless your class instructions say to use a different heading style. Keep the entries double-spaced, alphabetized, and formatted with a 0.5-inch hanging indent. Only the online sources need access dates here; the two books do not.
+
+[assistant]
+Before I finish, can you give me a quick checklist for checking the document? Also, I noticed the first web page says “updated,” not “published.” Does that change the entry?
+
+[assistant]
+Use this checklist:
+
+- Heading reads Works Cited and is centered.
+- Heading is on its own line above the entries.
+- Entries are alphabetized by the first element: Cho, “How,” Patel, Romero, “Weekly.”
+- Book and container titles are italicized.
+- Article and page titles are in quotation marks.
+- Author names are inverted for the two books and the article.
+- Journal details use “vol.,” “no.,” and “pp.”
+- Entries are double-spaced.
+- Each entry has a 0.5-inch hanging indent.
+- No extra blank paragraph appears between entries.
+- URLs are complete and readable.
+- Access dates appear after the URLs for the online sources.
+- The date uses MLA order: 28 Sept. 2026.
+- The two web-page dates are included as supplied.
+
+“Updated” does not need to be written into the citation. Its date can be used as the page’s publication or update date, so “4 Mar. 2023” remains in that position. If you want to preserve the wording for clarity, you could write “updated 4 Mar. 2023,” but the shorter version is a normal MLA-style treatment when the page’s date is being supplied.
+
+[assistant]
+Could you provide a final copy with italics indicated somehow? I’m working in plain text first, so I need to know exactly what to italicize and what stays in quotation marks.
+
+[assistant]
+Use asterisks as temporary markers for italics, then remove the asterisks and apply actual italics in Google Docs. Keep quotation marks as typed.
+
+Works Cited
+
+Cho, Dana. *The Small Garden Guide*. *North Row Books*, 2018.
+
+“How Clouds Form.” *National Weather Learning Center*, 4 Mar. 2023, https://weatherlearn.example/clouds. Accessed 28 Sept. 2026.
+
+Patel, Mira. *Everyday Weather*. *Greenfield Press*, 2021.
+
+Romero, Luis. “Reading Rain Gauges in the Classroom.” *Journal of Practical Science*, vol. 12, no. 2, 2022, pp. 44–58. *Education Research Archive*, https://era.example/article/7781. Accessed 28 Sept. 2026.
+
+“Weekly Sky Notes.” *Sky Notes Online*, 15 Jan. 2024, https://skynotes.example/weekly. Accessed 28 Sept. 2026.
+
+Italicize these items:
+- The Small Garden Guide
+- North Row Books
+- National Weather Learning Center
+- Everyday Weather
+- Greenfield Press
+- Journal of Practical Science
+- Education Research Archive
+- Sky Notes Online
+
+Keep these in quotation marks:
+- “How Clouds Form”
+- “Reading Rain Gauges in the Classroom”
+- “Weekly Sky Notes”
+
+The title Works Cited is not italicized. In a finished document, remove the asterisks rather than leaving them visible.

@@ -195,14 +195,15 @@ beforeEach(async () => {
   );
   if (updated.length !== 1) throw new Error(`CROSS fixture: expected 1 repointed row, got ${updated.length}`);
 
-  // ── ontology (volunteer_chronicle arm): one diary-sourced, one public. ──
+  // ── ontology (volunteer_chronicle arm): one diary-sourced, one public, both
+  // world-visible so only the diary rule can redact. ──
   await engine.mergeOntologyFact({
     entitySlug: 'people/alpha-person', dimension: 'affect', value: 'DIARYONLYVALUE',
-    source: 'life/diary/2026-06-18', sourceId: 'srcalpha',
+    source: 'life/diary/2026-06-18', sourceId: 'srcalpha', visibility: 'world',
   });
   await engine.mergeOntologyFact({
     entitySlug: 'people/alpha-person', dimension: 'role', value: 'publicrole',
-    source: 'meetings/alpha-sync', sourceId: 'srcalpha',
+    source: 'meetings/alpha-sync', sourceId: 'srcalpha', visibility: 'world',
   });
 }, 60_000);
 

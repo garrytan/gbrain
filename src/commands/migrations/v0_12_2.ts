@@ -21,7 +21,7 @@
  */
 
 import { execSync } from 'child_process';
-import { runGbrainSubprocess } from './in-process.ts';
+import { gbrainChildCommand, runGbrainSubprocess } from './in-process.ts';
 import type { Migration, OrchestratorOpts, OrchestratorResult, OrchestratorPhaseResult } from './types.ts';
 import { childGlobalFlags } from '../../core/cli-options.ts';
 // Bug 3 — ledger writes moved to the runner (apply-migrations.ts).
@@ -66,7 +66,7 @@ function phaseCVerify(opts: OrchestratorOpts): OrchestratorPhaseResult {
     // Any accidental stdout progress from the child would break JSON.parse
     // (per Codex review #12). NOTE: we deliberately do NOT pass
     // --progress-json here — this child is parsed, not watched.
-    const out = execSync('gbrain repair-jsonb --dry-run --json', {
+    const out = execSync(gbrainChildCommand('gbrain repair-jsonb --dry-run --json'), {
       encoding: 'utf-8', timeout: 60_000, env: process.env,
       stdio: ['ignore', 'pipe', 'inherit'],
     });
@@ -136,11 +136,4 @@ export const v0_12_2: Migration = {
       'truncated by the splitBody horizontal-rule bug can be recovered with `gbrain sync --full`.',
   },
   orchestrator,
-};
-
-/** Exported for unit tests. */
-export const __testing = {
-  phaseASchema,
-  phaseBRepair,
-  phaseCVerify,
 };

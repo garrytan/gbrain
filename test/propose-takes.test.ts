@@ -626,7 +626,9 @@ New prose appended here.`;
 
       const result = await runPhaseProposeTakes(buildCtx(engine), {
         extractor,
-        meter: new BudgetMeter({ budgetUsd: 0.000001, phase: 'propose_takes' }),
+        // The OpenRouter alias is not in the canonical pricing table; the
+        // opt-in bypass keeps this test about model-id preservation (C-16).
+        meter: new BudgetMeter({ budgetUsd: 0.000001, phase: 'propose_takes', allowUnpriced: true }),
       });
 
       expect(result.status).toBe('ok');
@@ -1023,6 +1025,37 @@ describe('runPhaseProposeTakes — global-error halt (#3044)', () => {
     expect(details.aborted_global_error).toBeUndefined();
     expect(result.status).toBe('warn'); // still surfaced as a warning
     expect(result.summary).not.toContain('aborted on');
+  });
+});
+
+// ─── #4312: pricing.overrides reach the base-phase budget gate ─────
+
+describe('pricing.overrides reach the base-phase meter (#4312)', () => {
+  test('a $0 operator override lets a capped phase run instead of exhausting at list price', async () => {
+    configureGateway({ chat_model: 'anthropic:claude-sonnet-4-6', env: { ANTHROPIC_API_KEY: 'test-key' } });
+    try {
+      const run = async (overrides: string | null) => {
+        const pages = [buildPage({ slug: 'wiki/override', body: 'an operator rate should price the gate' })];
+        const { engine, captured } = buildMockEngine({ pages });
+        (engine as unknown as { getConfig: (k: string) => Promise<string | null> }).getConfig =
+          async (k: string) => (k === 'pricing.overrides' ? overrides : null);
+        const extractor: ProposeTakesExtractor = async () => [
+          { claim_text: 'an operator rate should price the gate', kind: 'take', holder: 'brain', weight: 0.5 },
+        ];
+        const result = await runPhaseProposeTakes(buildCtx(engine), { extractor, budgetUsd: 0.000001 });
+        return { result, inserted: captured.some(c => c.sql.includes('INSERT INTO take_proposals')) };
+      };
+      // Control: at list price the cap is binding.
+      const listed = await run(null);
+      expect(listed.result.details.budget_exhausted).toBe(true);
+      expect(listed.inserted).toBe(false);
+      // With the operator's $0 rate the same cap admits the call.
+      const priced = await run('{"anthropic:claude-sonnet-4-6": 0}');
+      expect(priced.result.details.budget_exhausted).toBe(false);
+      expect(priced.inserted).toBe(true);
+    } finally {
+      resetGateway();
+    }
   });
 });
 

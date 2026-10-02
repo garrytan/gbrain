@@ -12,6 +12,7 @@ import type { Operation } from './contract.ts';
 
 const get_calibration_profile: Operation = {
   name: 'get_calibration_profile',
+  outputRedaction: 'retrieval',
   description:
     'Read the active calibration profile for a holder. Returns the latest row from calibration_profiles ' +
     '(per-source, per-holder) including Brier score, accuracy, pattern statements, and active bias tags. ' +

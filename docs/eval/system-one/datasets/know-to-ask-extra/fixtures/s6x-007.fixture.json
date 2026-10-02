@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-007",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "companies/tidalwharf",
+      "content": "---\ntitle: Tidalwharf\ntype: company\nsummary: \"Tidalwharf is the bookkeeping vendor we picked.\"\n---\n\nTidalwharf is the bookkeeping vendor we picked. They quoted a per-seat price with a minimum annual commitment.\n"
+    },
+    {
+      "slug": "people/solveig-tulvdale",
+      "content": "---\ntitle: Solveig Tulvdale\ntype: person\naliases: [solveig]\nsummary: \"Solveig Tulvdale is the head of sales at Fableloft.\"\n---\n\nSolveig Tulvdale is the head of sales at Fableloft.\n"
+    },
+    {
+      "slug": "people/mireille-haskstead",
+      "content": "---\ntitle: Mireille Haskstead\ntype: person\naliases: [mireille]\nsummary: \"Mireille Haskstead is the head of sales at Russetgate.\"\n---\n\nMireille Haskstead is the head of sales at Russetgate.\n"
+    },
+    {
+      "slug": "people/marisol-haskbarrow",
+      "content": "---\ntitle: Marisol Haskbarrow\ntype: person\naliases: [marisol]\nsummary: \"A contact from a conference last spring.\"\n---\n\nA contact from a conference last spring.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "what is a good way to structure a postmortem doc?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "when is the bookkeeping service we signed with closing the books this month?"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "Tulvdale's train gets in at 5:40pm and the walk is 15 minutes. What time will they reach the office?"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Okay, noted."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "How do you spell Haskstead in the NATO phonetic alphabet?"
+    }
+  ]
+}
