@@ -114,6 +114,29 @@ a clean tree. Roots beyond the budget report `budget_exhausted`; successive
 sweeps can cover them. Background and stdio refreshes use local probes only;
 remote MCP doctor reads aggregate cache only, with no engine or Git access.
 
+### Remote verification and your Git configuration
+
+The probe runs `git` with an allowlist of your environment, so it reads your own
+`~/.gitconfig`, credential helpers and `url.<base>.insteadOf` rewrites:
+`HOME`, `PATH`, `XDG_CONFIG_HOME`, `SSH_AUTH_SOCK`, `GIT_CONFIG_GLOBAL`,
+`HTTPS_PROXY`, `HTTP_PROXY` and `NO_PROXY` (upper and lower case), plus
+`USERPROFILE`, `APPDATA` and `SystemRoot` on Windows. It never passes `GIT_DIR`,
+`GIT_WORK_TREE` or any other variable, and it always disables prompts.
+
+A deploy key works through `~/.ssh/config` (`Host` with `IdentityFile`). The
+probe sets its own `GIT_SSH_COMMAND` (`ssh -oBatchMode=yes
+-oStrictHostKeyChecking=yes -oConnectTimeout=2`), so a `GIT_SSH_COMMAND` you
+export is not used, and the remote's host key must already be in `known_hosts`.
+
+| `verification.state` | Meaning | What to do |
+|---|---|---|
+| `verified` | The remote branch HEAD matches a clean local HEAD. | Nothing. |
+| `missing_ref` | The remote answered but has no such branch. | `git push -u origin <branch>`, then `gbrain backup check`. |
+| `mismatch` | The remote HEAD differs from the local HEAD, or the tree changed during the probe. | Push or pull until they match, then `gbrain backup check`. |
+| <a id="remote-unavailable"></a>`unavailable` | `git ls-remote` failed: no network, authentication refused, or an unknown host key. The probe passes only `HOME`, `PATH`, `XDG_CONFIG_HOME`, `SSH_AUTH_SOCK`, `GIT_CONFIG_GLOBAL`, `HTTPS_PROXY`/`https_proxy`, `HTTP_PROXY`/`http_proxy`, `NO_PROXY`/`no_proxy` (and `USERPROFILE`, `APPDATA`, `SystemRoot` on Windows). | Run `git -C <root> ls-remote origin` in the same shell; credentials must come from your Git config, a credential helper, `~/.ssh/config` or the SSH agent, not from a prompt or `GIT_SSH_COMMAND`. |
+| `budget_exhausted` | The sweep's eight-probe or eight-second budget ran out first. | Run `gbrain backup check` again. |
+| `stale`, `not_checked` | Earlier evidence expired or no probe ran yet. | `gbrain backup check`. |
+
 When does the compute actually run? On any of: `gbrain backup check`, a stale
 cache at `backup status`/doctor/advisor time, `gbrain sync` completion, the
 serve process (stdio only) when the cache is stale or a warn verdict is >24h

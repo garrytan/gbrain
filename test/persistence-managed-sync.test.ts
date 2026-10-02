@@ -81,6 +81,54 @@ test('imports files without rewriting bytes and checkpoints only committed page 
   }
 }),120_000);
 
+test('a pinned import that trails the current page and its working-tree bytes is skipped, not a conflict', async () => withEnv({ GBRAIN_HOME: home }, async () => {
+  for (const engine of engines) {
+    const current = '---\ntitle: Example note\n---\nThe current observation, already in the database.\n';
+    const pinned = '---\ntitle: Example note\n---\nAn older observation that Git still carries.\n';
+    const f = await fixture(engine, { 'notes/example.md': current });
+    expect((await performManagedSync(engine, { sourceId: f.id, noPull: true })).status).toBe('first_sync');
+    const path = join(f.root, 'notes/example.md');
+    // The state between a coordinated page write and its queued Git effect: the newest commit
+    // holds other bytes than the page, and the working tree already carries the page's own bytes.
+    writeFileSync(path, pinned); const head = commit(f.root, 'commit that trails the page'); writeFileSync(path, current);
+    const result = await performManagedSync(engine, { sourceId: f.id, noPull: true });
+    expect(result.status).not.toBe('blocked_by_failures'); expect(result.managedWrite).toBeUndefined(); expect(result.toCommit).toBe(head);
+    expect((await engine.getPage('notes/example', { sourceId: f.id }))?.compiled_truth).toContain('current observation');
+    expect(readFileSync(path, 'utf8')).toBe(current);
+    expect((await engine.executeRaw<{ last_commit: string }>('SELECT last_commit FROM sources WHERE id=$1', [f.id]))[0].last_commit).toBe(head);
+    expect(loadSyncFailures().filter(row => row.source_id === f.id)).toHaveLength(0);
+    // Working-tree bytes that are neither the pinned commit nor the page are still protected.
+    const foreign = '---\ntitle: Example note\n---\nA local edit that nothing imported.\n';
+    writeFileSync(path, pinned.replace('older', 'still older')); commit(f.root, 'another trailing commit'); writeFileSync(path, foreign);
+    const blocked = await performManagedSync(engine, { sourceId: f.id, noPull: true });
+    expect(blocked).toMatchObject({ status: 'blocked_by_failures', managedWrite: { write_error: 'source_changed', reason: 'pinned_git_worktree_conflict' } });
+    expect(readFileSync(path, 'utf8')).toBe(foreign);
+    expect((await engine.getPage('notes/example', { sourceId: f.id }))?.compiled_truth).toContain('current observation');
+    rmSync(syncFailuresPath(), { force: true });
+  }
+}),120_000);
+
+test('after a trailing-commit skip, the commit that carries the page bytes imports as a no-op', async () => withEnv({ GBRAIN_HOME: home }, async () => {
+  for (const engine of engines) {
+    const current = '---\ntitle: Trailing note\n---\nThe page body the coordinator already published.\n';
+    const pinned = '---\ntitle: Trailing note\n---\nThe body an earlier commit still carries.\n';
+    const f = await fixture(engine, { 'notes/trailing.md': current });
+    expect((await performManagedSync(engine, { sourceId: f.id, noPull: true })).status).toBe('first_sync');
+    const path = join(f.root, 'notes/trailing.md');
+    writeFileSync(path, pinned); commit(f.root, 'commit that trails the page'); writeFileSync(path, current);
+    const before = await engine.readPageSnapshot('notes/trailing', { sourceId: f.id });
+    expect((await performManagedSync(engine, { sourceId: f.id, noPull: true })).status).not.toBe('blocked_by_failures');
+    const carried = commit(f.root, 'the queued Git effect lands');
+    const result = await performManagedSync(engine, { sourceId: f.id, noPull: true });
+    expect(result.status).not.toBe('blocked_by_failures'); expect(result.managedWrite).toBeUndefined();
+    expect((await engine.executeRaw<{ last_commit: string }>('SELECT last_commit FROM sources WHERE id=$1', [f.id]))[0].last_commit).toBe(carried);
+    const after = await engine.readPageSnapshot('notes/trailing', { sourceId: f.id });
+    expect(after?.revision).toBe(before?.revision);
+    expect(after?.page.compiled_truth).toContain('already published');
+    expect(loadSyncFailures().filter(row => row.source_id === f.id)).toHaveLength(0);
+  }
+}),120_000);
+
 test('interrupted cursor resumes its pinned target before a newer HEAD and never advances early', async () => withEnv({ GBRAIN_HOME: home }, async () => {
   for (const engine of engines) {
     const f = await fixture(engine, {'a.md':'First stable observation about engineering.\n','b.md':'Original second observation about engineering.\n'});

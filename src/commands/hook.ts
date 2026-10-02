@@ -34,7 +34,6 @@
  */
 
 import {
-  appendFileSync,
   chmodSync,
   existsSync,
   mkdirSync,
@@ -226,16 +225,18 @@ export interface HookIo {
 
 // ── Entry point ─────────────────────────────────────────────────────────────
 
+export const HOOK_EVENTS = ['session-start', 'user-prompt', 'stop', 'session-end', 'compact'] as const;
+
 const USAGE = `Usage: gbrain hook <event>
 
 Events (wired into .claude/settings.local.json by gbrain bootstrap):
-  session-start   print the greeting digest (MEMORY.md sections, last session,
-                  push status, hook health) to stdout
+  session-start   print the greeting digest (MEMORY.md sections, push status,
+                  hook health) to stdout
   user-prompt     read hook JSON on stdin, request per-turn context from a
                   running 'gbrain serve' over IPC, print additionalContext JSON
                   (--harness <claude-code|codex|opencode> sets the feedback-loop
                   channel; default claude-code, unknown values fall back to the default)
-  stop            append to the per-session live buffer
+  stop            bank the writeback backstop and spawn the workspace push
   session-end     ingest the session transcript into the dream corpus
                   (secret-scanned), prune old corpus files, push the workspace
   compact         (PreCompact) bank the window's standing entities into the
@@ -261,7 +262,7 @@ export async function runHook(args: string[], io: HookIo = {}): Promise<number> 
     const v = args[harnessIdx + 1];
     if (v === 'claude-code' || v === 'codex' || v === 'opencode') io = { ...io, harness: v };
   }
-  if (!event || !['session-start', 'user-prompt', 'stop', 'session-end', 'compact'].includes(event)) {
+  if (!event || !(HOOK_EVENTS as readonly string[]).includes(event)) {
     process.stderr.write(USAGE + '\n');
     return 1;
   }
@@ -423,7 +424,7 @@ function ensureDir0700(dir: string): string {
   return dir;
 }
 
-function sanitizeSessionId(id: unknown): string {
+export function sanitizeSessionId(id: unknown): string {
   // Leading dashes are stripped so the id can never be parsed as a FLAG by a
   // downstream argv consumer (the detached memorable spawn passes it as a
   // positional value) — hook stdin is untrusted input.
@@ -486,10 +487,6 @@ async function hookSessionStart(io: HookIo): Promise<number> {
       // 1. MEMORY.md digest — allowlisted sections only, ≤3KB [A3].
       const digest = memoryDigest(join(ws, 'MEMORY.md'));
       if (digest) out.push(digest);
-
-      // 2. Last-session line from the stop-buffer dir [G15 consumer].
-      const last = await lastSessionLine();
-      if (last) out.push(last);
 
       // 3. Push staleness [B4].
       const pushNote = await pushStatusNote();
@@ -635,32 +632,6 @@ async function liveBufferDir(): Promise<string> {
   const home = await resolveHome();
   ensureDir0700(join(home, 'transcripts'));
   return ensureDir0700(join(home, 'transcripts', 'live'));
-}
-
-async function lastSessionLine(): Promise<string | null> {
-  try {
-    const dir = await liveBufferDir();
-    let newest: { path: string; mtime: number } | null = null;
-    for (const name of readdirSync(dir)) {
-      if (!name.endsWith('.txt')) continue;
-      const p = join(dir, name);
-      const st = statSync(p);
-      if (!newest || st.mtimeMs > newest.mtime) newest = { path: p, mtime: st.mtimeMs };
-    }
-    if (!newest) return null;
-    const lines = readFileSync(newest.path, 'utf8').split('\n').filter((l) => l.trim());
-    const last = lines[lines.length - 1];
-    if (!last) return null;
-    try {
-      const e = JSON.parse(last) as { ts?: string; exchange?: string };
-      const snippet = typeof e.exchange === 'string' ? ` — ${e.exchange.slice(0, 200)}` : '';
-      return `Last session activity: ${e.ts ?? 'unknown time'}${snippet}`;
-    } catch {
-      return `Last session activity: ${last.slice(0, 200)}`;
-    }
-  } catch {
-    return null;
-  }
 }
 
 async function pushStatusNote(): Promise<string | null> {
@@ -1444,16 +1415,9 @@ async function hookStop(io: HookIo): Promise<number> {
   let j: Record<string, unknown> | null = null;
   try {
     j = await readStdinJson(io, 300);
-    const sessionId = sanitizeSessionId(j?.session_id);
-    const dir = await liveBufferDir();
-    const exchange = firstString(j, ['last_assistant_message', 'lastAssistantMessage', 'prompt']);
-    const entry = {
-      ts: new Date().toISOString(),
-      session_id: sessionId,
-      ...(exchange ? { exchange: exchange.slice(0, 400) } : {}),
-    };
-    appendFileSync(join(dir, `${sessionId}.txt`), JSON.stringify(entry) + '\n', { mode: 0o600 });
-    gcOldFiles(dir, STOP_BUFFER_RETENTION_MS);
+    // #5558: stop no longer buffers assistant text; GC drains any buffers
+    // older binaries left behind.
+    gcOldFiles(await liveBufferDir(), STOP_BUFFER_RETENTION_MS);
   } catch (e) {
     outcome = 'error';
     reason = errorCode(e);
@@ -1484,6 +1448,11 @@ async function hookStop(io: HookIo): Promise<number> {
         allowOversize: true,
       });
       if (!conf.ok) return `transcript_${conf.reason}`;
+      // #5820: the SessionEnd guard's fingerprint (#5413) — a turn from
+      // gbrain's own claude-cli subprocess is never banked, or extracting it
+      // spawns another claude-cli call that banks again.
+      const ws = io.cwd ?? (typeof j?.cwd === 'string' ? j.cwd : process.cwd());
+      if (isClaudeCliSelfTranscriptPath(conf.path) || isClaudeCliSelfTranscriptPath(ws)) return 'self_capture';
       const findLastUser = (parsed: ReturnType<typeof parseTranscript>): WindowTurn | undefined => {
         const index = parsed.genuineUserTurnIndexes.at(-1);
         return index === undefined ? undefined : parsed.turns[index];
@@ -1560,7 +1529,7 @@ async function hookStop(io: HookIo): Promise<number> {
     // skipped-vs-failed counters and any alerting stay honest.
     const wbByDesign =
       wbReason === 'wb_scheduled' || wbReason === 'wb_banked' || wbReason === 'wb_dup' ||
-      wbReason === 'no_user_turn' || wbReason.startsWith('flush_skip_') ||
+      wbReason === 'no_user_turn' || wbReason === 'self_capture' || wbReason.startsWith('flush_skip_') ||
       (WRITEBACK_SKIP_REASONS as readonly string[]).includes(wbReason);
     await writeHeartbeat(io, {
       ts: new Date().toISOString(),
@@ -1592,15 +1561,6 @@ async function hookStop(io: HookIo): Promise<number> {
     duration_ms: Date.now() - t0,
   });
   return 0;
-}
-
-function firstString(j: Record<string, unknown> | null, keys: string[]): string | null {
-  if (!j) return null;
-  for (const k of keys) {
-    const v = j[k];
-    if (typeof v === 'string' && v.trim()) return v;
-  }
-  return null;
 }
 
 function gcOldFiles(dir: string, maxAgeMs: number): void {

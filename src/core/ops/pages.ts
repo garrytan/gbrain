@@ -224,7 +224,7 @@ const fetch_page: Operation = {
     const slug = identity?.slug ?? id.trim();
     const missing = () => new OperationError('page_not_found', 'Page not found', 'Pass an id returned by a current `search` call.');
     let sourceOpts: ReturnType<typeof federatedSearchScope>;
-    try { sourceOpts = federatedSearchScope(ctx); }
+    try { sourceOpts = federatedSearchScope(ctx, identity?.sourceId); }
     catch (error) {
       if (error instanceof OperationError && error.code === 'permission_denied') throw missing();
       throw error;

@@ -15,8 +15,10 @@
  * writes (op `managed-connector-retry`), so the re-attempt is admitted under a
  * new request identity.
  */
-import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { atomicWriteFileSync } from '../atomic-write.ts';
+import { withFilesystemPublication } from '../persistence/filesystem-guard.ts';
 import type { BrainEngine } from '../engine.ts';
 import { digest } from '../persistence/digest.ts';
 import { connectorCheckpointKey, connectorIdentity, isConnectorSourceKind, type ConnectorKind } from '../persistence/connector-identity.ts';
@@ -35,6 +37,14 @@ export async function managedBrain(engine: Exec): Promise<boolean> {
   return brain?.enabled === true;
 }
 
+/** The classic-mode state file of a connector source, or null when it has no state directory. */
+export function classicConnectorStateFile(source: ConnectorSourceRow): string | null {
+  const kind = source.config.kind;
+  if (!isConnectorSourceKind(kind)) return null;
+  const dir = (connectorIdentity(kind, source.config, source.local_path).config as { dir?: string }).dir;
+  return dir ? join(dir, kind === 'google' ? '.google-source.json' : '.github-source.json') : null;
+}
+
 /** The connector's cursor state, wherever this brain keeps it. */
 export async function readConnectorCursorState(engine: Exec, source: ConnectorSourceRow, managed?: boolean): Promise<Record<string, unknown> | null> {
   const kind = source.config.kind;
@@ -46,10 +56,8 @@ export async function readConnectorCursorState(engine: Exec, source: ConnectorSo
       [connectorCheckpointKey(source.id, source.incarnation, identity)]);
     return row?.completed_keys?.[0]?.state ?? null;
   }
-  const dir = (identity.config as { dir?: string }).dir;
-  if (!dir) return null;
-  const file = join(dir, kind === 'google' ? '.google-source.json' : '.github-source.json');
-  if (!existsSync(file)) return null;
+  const file = classicConnectorStateFile(source);
+  if (!file || !existsSync(file)) return null;
   // A corrupt state file is unknown hold state, not "no holds": the caller reports it.
   return JSON.parse(readFileSync(file, 'utf-8')) as Record<string, unknown>;
 }
@@ -70,6 +78,84 @@ export async function readAllSourceHolds(engine: Exec, opts: { sourceIds?: strin
     if (held.length) out.push({ sourceId: source.id, kind: source.config.kind as ConnectorKind, held });
   }
   return out;
+}
+
+export interface HoldCarry {
+  source_id: string;
+  /** Held items in the managed checkpoint (0: only stale classic holds are cleared). */
+  items: number;
+  state_file: string | null;
+  unreadable?: string;
+  /** The host that owns the source's worktree when it is not this host. */
+  owner_host?: string;
+}
+
+const CONNECTOR_SOURCES_SQL = "SELECT id,incarnation::text AS incarnation,local_path,config FROM sources WHERE archived IS NOT TRUE AND config->>'kind' IN ('google','github') ORDER BY id";
+
+/** True when the hold cannot be carried from this host: deactivation keeps refusing for it. */
+export function holdCarryBlocked(carry: HoldCarry): boolean {
+  return carry.items > 0 && (!carry.state_file || !!carry.unreadable || !!carry.owner_host);
+}
+
+async function evaluateHoldCarry(engine: Exec, source: ConnectorSourceRow, hostId: string | null): Promise<{ holds: unknown; carry: HoldCarry } | null> {
+  const holds = (await readConnectorCursorState(engine, source, true))?.item_holds;
+  const items = heldItems(holds).length;
+  const file = classicConnectorStateFile(source);
+  let classic: Record<string, unknown> | null = null;
+  let unreadable: string | undefined;
+  if (file && existsSync(file)) {
+    try { classic = JSON.parse(readFileSync(file, 'utf-8')) as Record<string, unknown>; } catch (e) { unreadable = e instanceof Error ? e.message : String(e); }
+  }
+  // Nothing to carry and no copy left behind by an earlier, aborted deactivation.
+  if (!items && !(classic && 'item_holds' in classic)) return null;
+  const [owner] = await engine.executeRaw<{ owner: string | null }>(`SELECT w.owner_host_id::text AS owner FROM persistence_source_bindings b
+    JOIN persistence_worktrees w ON w.id=b.worktree_id WHERE b.source_id=$1 LIMIT 1`, [source.id]);
+  const foreign = owner?.owner && owner.owner !== hostId ? owner.owner : undefined;
+  return { holds, carry: { source_id: source.id, items, state_file: file, ...(unreadable ? { unreadable } : {}), ...(foreign ? { owner_host: foreign } : {}) } };
+}
+
+/**
+ * Managed holds and where classic mode will read them after `sources writer
+ * deactivate`: each source's classic state file (`.google-source.json` /
+ * `.github-source.json`) on the host that owns the source. A source with no
+ * state directory, an existing classic state file that does not parse, or a
+ * worktree owned by another host cannot take its holds from here
+ * (holdCarryBlocked). Read-only.
+ */
+export async function planHoldCarry(engine: Exec, hostId: string | null): Promise<HoldCarry[]> {
+  const out: HoldCarry[] = [];
+  for (const source of await engine.executeRaw<ConnectorSourceRow>(CONNECTOR_SOURCES_SQL)) {
+    const evaluated = await evaluateHoldCarry(engine, source, hostId);
+    if (evaluated) out.push(evaluated.carry);
+  }
+  return out;
+}
+
+/**
+ * Make each locally owned source's classic state file hold exactly its managed
+ * `item_holds` (every other field kept), so a held item stays held, retried and
+ * reported after deactivation, and a hold copied by an earlier deactivation
+ * that then aborted (and was resolved in managed mode since) is cleared.
+ * Throws for a blocked carry; deactivation refuses those first.
+ */
+export async function carryHoldsToClassicState(engine: Exec, hostId: string | null): Promise<HoldCarry[]> {
+  const carried: HoldCarry[] = [];
+  for (const source of await engine.executeRaw<ConnectorSourceRow>(CONNECTOR_SOURCES_SQL)) {
+    const evaluated = await evaluateHoldCarry(engine, source, hostId);
+    if (!evaluated) continue;
+    const { holds, carry } = evaluated;
+    if (holdCarryBlocked(carry)) throw new Error(`connector source ${carry.source_id} cannot take its held items on this host`);
+    if (!carry.state_file || carry.unreadable || carry.owner_host) continue;
+    const file = carry.state_file;
+    const { item_holds: _previous, ...rest } = existsSync(file) ? JSON.parse(readFileSync(file, 'utf-8')) as Record<string, unknown> : {};
+    mkdirSync(dirname(file), { recursive: true });
+    // Deactivation holds the worktree locks and the sources rows, so this write is
+    // its publication into a root that is still registered as managed.
+    await withFilesystemPublication([dirname(file)], async () =>
+      atomicWriteFileSync(file, JSON.stringify(carry.items ? { ...rest, item_holds: holds } : rest, null, 2)));
+    if (carry.items) carried.push(carry);
+  }
+  return carried;
 }
 
 export async function readHoldRetryKeys(engine: Exec, sourceId: string, incarnation: string): Promise<string[]> {

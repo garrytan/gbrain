@@ -107,16 +107,28 @@ sweep reports a link/timeline pass error. Local publication still accepts the
 note but reports an automatic-link error and preserves the prior graph. Repair
 or restore the pack configuration, then retry extraction.
 
-Pack-owned relationship directions and inference rules are unchanged. This
-includes the shipped `gbrain-base` and `company-brain` outgoing attendance
-mappings: they do **not** gain incoming `Who attended` lookup from this change.
-Inspect the active schema and its declared direction rather than reversing
-those rows or disabling the pack as a workaround.
+The shipped `gbrain-base` and `company-brain` packs declare `attended` bound
+only to the meeting page type and map meeting `attendees` to `attended`. Both
+follow the canonical rules above: frontmatter and body attendance are stored
+person -> meeting, and a person only mentioned in the notes stays a mention.
+This also covers brains with no `schema_pack` configured, which resolve
+`gbrain-base`. A pack whose `attended` rule has a phrase `regex` decides
+attendance itself; its body links keep that pack's outgoing semantics and
+historical repair reports them as `pack_semantics_preserved`.
 
-This change does not automatically repair historical links or run a full-brain
-backfill. A repair on a real brain requires a separately approved, verified full
-database backup; a Markdown export is not a rollback image. No native agent
-harness activation or broad answer-accuracy improvement is implied.
+Links extracted before this rule (stored meeting -> person, or typed attended
+from a notes mention) re-derive on the next `gbrain extract --stale` sweep,
+because the extractor version changed. Frontmatter edges re-derive only when
+frontmatter is included, so run this once per source:
+
+```bash
+gbrain extract links --source db --include-frontmatter --source-id <id>
+```
+
+It replaces each page's own derived links (markdown, wikilink and frontmatter
+producers) in one transaction per page; manual links and links other pages
+created are untouched. A repair on a real brain still deserves a verified full
+database backup; a Markdown export is not a rollback image.
 
 ## Preview-bound historical repair
 
@@ -191,8 +203,10 @@ not physical MVCC page-scan or total-process-memory guarantees. At most 20
 diagnostic details are retained, alongside aggregate counts. Retained origin
 receipts above 16 MiB are refused; retry with a smaller window.
 
-Repair preserves pack-owned outgoing attendance, including shipped base and
-company-brain mappings. Missing packs are also report-only. It never guesses
+Repair preserves outgoing attendance only for a pack whose `attended` rule
+has a phrase `regex`; shipped base and company-brain meetings repair to
+person -> meeting like a brain with no pack override. Missing packs are
+report-only. It never guesses
 ownership for NULL, unknown or manual producers. Legacy outgoing Markdown is
 eligible only when authoritative source text proves the same resolved person's
 attendance. Other derived/manual links keep their row IDs and evidence.

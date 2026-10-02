@@ -35,6 +35,7 @@
       "extract_atoms_page_state.extract_atoms_page_state_pkey": "p PRIMARY KEY (source_incarnation, page_id, content_hash)",
       "extract_atoms_page_state.extract_atoms_page_state_source_incarnation_fkey": "f FOREIGN KEY (source_incarnation) REFERENCES sources(incarnation) ON DELETE CASCADE",
       "extract_atoms_transcript_state.extract_atoms_transcript_state_pkey": "p PRIMARY KEY (source_id, file_path, content_hash)",
+      "fact_relink_attempts.fact_relink_attempts_pkey": "p PRIMARY KEY (source_id, fact_id)",
       "fact_withdrawals.fact_withdrawals_pkey": "p PRIMARY KEY (source_id, visibility, subject, fact_hash)",
       "fact_withdrawals.fact_withdrawals_source_id_fkey": "f FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE",
       "fact_withdrawals.fact_withdrawals_visibility_check": "c CHECK ((visibility = ANY (ARRAY['private'::text, 'world'::text])))",
@@ -303,6 +304,9 @@
       "extract_atoms_transcript_state": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
+      "fact_relink_attempts": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
       "fact_withdrawals": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
@@ -520,6 +524,8 @@
       "extract_atoms_page_state_tombstoned_idx": "CREATE INDEX extract_atoms_page_state_tombstoned_idx ON public.extract_atoms_page_state USING btree (source_incarnation, content_hash, page_id) WHERE tombstoned",
       "extract_atoms_transcript_state_pkey": "CREATE UNIQUE INDEX extract_atoms_transcript_state_pkey ON public.extract_atoms_transcript_state USING btree (source_id, file_path, content_hash)",
       "extract_atoms_transcript_state_tombstoned_idx": "CREATE INDEX extract_atoms_transcript_state_tombstoned_idx ON public.extract_atoms_transcript_state USING btree (source_id, content_hash) WHERE tombstoned",
+      "fact_relink_attempts_outcome_idx": "CREATE INDEX fact_relink_attempts_outcome_idx ON public.fact_relink_attempts USING btree (source_id, outcome, attempted_at)",
+      "fact_relink_attempts_pkey": "CREATE UNIQUE INDEX fact_relink_attempts_pkey ON public.fact_relink_attempts USING btree (source_id, fact_id)",
       "fact_withdrawals_pkey": "CREATE UNIQUE INDEX fact_withdrawals_pkey ON public.fact_withdrawals USING btree (source_id, visibility, subject, fact_hash)",
       "files_pkey": "CREATE UNIQUE INDEX files_pkey ON public.files USING btree (id)",
       "files_storage_path_key": "CREATE UNIQUE INDEX files_storage_path_key ON public.files USING btree (storage_path)",
@@ -1080,6 +1086,20 @@
           "6 updated_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
         ],
         "flags": "relkind=r rls=false force_rls=false"
+      },
+      "fact_relink_attempts": {
+        "columns": [
+          "1 source_id text/text NOT NULL",
+          "2 fact_id bigint/int8 NOT NULL",
+          "3 outcome text/text NOT NULL",
+          "4 reason text/text NULL",
+          "5 tier text/text NULL",
+          "6 model text/text NULL",
+          "7 target_slug text/text NULL",
+          "8 run_id text/text NULL",
+          "9 attempted_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
+        ],
+        "flags": "relkind=r rls=true force_rls=false"
       },
       "fact_withdrawals": {
         "columns": [

@@ -74,6 +74,8 @@ export const DOMAIN_OF: Record<string, string> = {
   'activeEmbeddingColId': OOS.helper,
   '_upsertChunksOnce': OOS.helper,
   '_searchKeywordCJK': OOS.helper,
+  'runVectorAttempt': OOS.helper,
+  'vectorIterativeScanSupported': OOS.helper,
 
   // pages
   'getPage': 'pages', 'readPageSnapshot': 'pages', 'lockPageKeys': 'pages', 'findDuplicatePage': 'pages',
@@ -130,7 +132,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'searchKeyword': 'cjk-search', 'searchKeywordChunks': 'cjk-search',
 
   // out of scope
-  'searchTitles': OOS.search, 'searchVector': OOS.search,
+  'searchTitles': OOS.search, 'searchVector': OOS.search, 'explainVectorSearch': OOS.search,
   'relationalFanout': OOS.enrichment, 'getBacklinkCounts': OOS.enrichment, 'getAdjacencyBoosts': OOS.enrichment,
   'getContentFlagsByPageIds': OOS.enrichment, 'getUnverifiedExtractionPageIds': OOS.enrichment,
   'getEffectiveDates': OOS.enrichment, 'getSalienceScores': OOS.enrichment, 'resolveAliases': OOS.enrichment,

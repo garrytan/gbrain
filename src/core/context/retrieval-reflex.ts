@@ -20,7 +20,10 @@
  * Privacy (eng-review D5): the synopsis is taken from a SAFE source —
  * frontmatter `summary` if present, else the page body with takes/private-fact
  * fences STRIPPED (same boundary get_page applies to untrusted readers). Raw
- * compiled_truth is never injected.
+ * compiled_truth is never injected. Page visibility: `visibility: private`
+ * and derived-private pages never resolve unless the caller passes
+ * `excludePrivate: false` (trusted local only) — the same page filter remote
+ * search applies (search/private-visibility.ts).
  */
 
 import type { BrainEngine } from '../engine.ts';
@@ -30,6 +33,7 @@ import { escapeLikePattern } from '../search/sql-ranking.ts';
 import { slugify } from '../entities/resolve.ts';
 import { stripTakesFence } from '../takes-fence.ts';
 import { stripFactsFence } from '../facts-fence.ts';
+import { privatePagesFilterFragment } from '../search/private-visibility.ts';
 import type { EntityCandidate } from './entity-salience.ts';
 import { reflexPointerRationale } from './reflex-rationale.ts';
 import { logVolunteerEventsFireAndForget, volunteerEventRowsFrom } from './volunteer-events.ts';
@@ -140,6 +144,15 @@ export interface ResolvePointersOpts {
    * config — the resolver itself never touches config (sync hot path).
    */
   lexicalArms?: boolean;
+  /**
+   * Hide `visibility: private` (and derived-private) pages from every arm,
+   * using the same predicate remote search applies. Default true
+   * (fail-closed): pointers are injected into agent prompts, so the IPC
+   * resolve, turn-context and direct-Postgres reflex lanes stay world-only.
+   * Only a trusted local caller (volunteer_context with remote === false,
+   * via resolveExcludePrivatePages) passes false.
+   */
+  excludePrivate?: boolean;
 }
 
 export interface PageRow {
@@ -167,9 +180,9 @@ export async function resolveEntitiesToPointers(
   const maxPointers = opts.maxPointers ?? DEFAULT_MAX_POINTERS;
   const priorLc = (opts.priorContextText ?? '').toLowerCase();
 
-  // v0.46.15 identity wave: the two new lexical arms (weak-alias + surname)
-  // share one kill switch. Default ON; `false` reproduces pre-wave behavior.
+  // v0.46.15: weak-alias + surname arms share one kill switch (default ON).
   const lexicalArms = opts.lexicalArms !== false;
+  const privacySql = opts.excludePrivate === false ? '' : `AND ${privatePagesFilterFragment('p')}`;
 
   // display lookup keyed by normalized query, so resolved slugs can recover a
   // human surface form for the pointer label.
@@ -283,8 +296,8 @@ export async function resolveEntitiesToPointers(
     if (hitSlugs.size) {
       try {
         const liveRows = await engine.executeRaw<{ slug: string; source_id: string }>(
-          `SELECT slug, source_id FROM pages
-            WHERE deleted_at IS NULL AND source_id = ANY($1::text[]) AND slug = ANY($2::text[])`,
+          `SELECT p.slug, p.source_id FROM pages p
+            WHERE p.deleted_at IS NULL AND p.source_id = ANY($1::text[]) AND p.slug = ANY($2::text[]) ${privacySql}`,
           [sourceIds, [...hitSlugs]],
         );
         for (const r of liveRows) liveAliasKeys.add(keyOf(r.source_id, r.slug));
@@ -343,24 +356,24 @@ export async function resolveEntitiesToPointers(
     // class ("Labs", "Systems" as pseudo-surnames).
     rows = useSurnameArm
       ? await engine.executeRaw<PageRow>(
-          `SELECT slug, source_id, title, type, frontmatter, compiled_truth
-             FROM pages
-            WHERE deleted_at IS NULL
-              AND source_id = ANY($1::text[])
-              AND ( lower(title) = ANY($2::text[])
-                 OR slug = ANY($3::text[])
-                 OR slug LIKE ANY($4::text[])
-                 OR (lower(title) LIKE ANY($5::text[]) AND type = 'person') )`,
+          `SELECT p.slug, p.source_id, p.title, p.type, p.frontmatter, p.compiled_truth
+             FROM pages p
+            WHERE p.deleted_at IS NULL ${privacySql}
+              AND p.source_id = ANY($1::text[])
+              AND ( lower(p.title) = ANY($2::text[])
+                 OR p.slug = ANY($3::text[])
+                 OR p.slug LIKE ANY($4::text[])
+                 OR (lower(p.title) LIKE ANY($5::text[]) AND p.type = 'person') )`,
           [sourceIds, titlesLc, exactSlugs, slugSuffixes, surnamePatterns],
         )
       : await engine.executeRaw<PageRow>(
-          `SELECT slug, source_id, title, type, frontmatter, compiled_truth
-             FROM pages
-            WHERE deleted_at IS NULL
-              AND source_id = ANY($1::text[])
-              AND ( lower(title) = ANY($2::text[])
-             OR slug = ANY($3::text[])
-             OR slug LIKE ANY($4::text[]) )`,
+          `SELECT p.slug, p.source_id, p.title, p.type, p.frontmatter, p.compiled_truth
+             FROM pages p
+            WHERE p.deleted_at IS NULL ${privacySql}
+              AND p.source_id = ANY($1::text[])
+              AND ( lower(p.title) = ANY($2::text[])
+             OR p.slug = ANY($3::text[])
+             OR p.slug LIKE ANY($4::text[]) )`,
           [sourceIds, titlesLc, exactSlugs, slugSuffixes],
         );
   } catch {
@@ -373,9 +386,9 @@ export async function resolveEntitiesToPointers(
   if (aliasOnly.length) {
     try {
       const extra = await engine.executeRaw<PageRow>(
-        `SELECT slug, source_id, title, type, frontmatter, compiled_truth
-           FROM pages
-          WHERE deleted_at IS NULL AND source_id = ANY($1::text[]) AND slug = ANY($2::text[])`,
+        `SELECT p.slug, p.source_id, p.title, p.type, p.frontmatter, p.compiled_truth
+           FROM pages p
+          WHERE p.deleted_at IS NULL ${privacySql} AND p.source_id = ANY($1::text[]) AND p.slug = ANY($2::text[])`,
         [sourceIds, aliasOnly.map((p) => p.slug)],
       );
       for (const r of extra) rowByKey.set(keyOf(r.source_id, r.slug), r);
@@ -457,11 +470,11 @@ export async function resolveEntitiesToPointers(
     if (cjkNorms.length) {
       try {
         const cjkRows = await engine.executeRaw<PageRow>(
-          `SELECT slug, source_id, title, type, frontmatter, compiled_truth
-             FROM pages
-            WHERE deleted_at IS NULL
-              AND source_id = ANY($1::text[])
-              AND ( lower(title) = ANY($2::text[]) OR slug = ANY($3::text[]) )`,
+          `SELECT p.slug, p.source_id, p.title, p.type, p.frontmatter, p.compiled_truth
+             FROM pages p
+            WHERE p.deleted_at IS NULL ${privacySql}
+              AND p.source_id = ANY($1::text[])
+              AND ( lower(p.title) = ANY($2::text[]) OR p.slug = ANY($3::text[]) )`,
           [sourceIds, cjkNorms, cjkNorms],
         );
         const cjkHits = new Map<string, Array<{ slug: string; source_id: string }>>();

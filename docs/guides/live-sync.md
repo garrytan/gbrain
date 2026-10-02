@@ -261,6 +261,38 @@ vars — incident-time escape hatches, not everyday knobs.
    reads only the filesystem — no database connection — so it keeps working
    during the exact outages it exists to diagnose.
 
+## Several brains on one host
+
+Each brain gets its own autopilot job. The default brain (`~/.gbrain`, that
+is `GBRAIN_HOME` unset or set to your home directory) keeps the shared names:
+launchd label `com.gbrain.autopilot`, systemd unit `gbrain-autopilot.service`,
+start script `~/.gbrain/start-autopilot.sh`, and an unmarked crontab line.
+Any other brain gets names with a suffix: `com.gbrain.autopilot.<suffix>`,
+`gbrain-autopilot-<suffix>.service`, `<brain>/.gbrain/start-autopilot-<suffix>.sh`,
+and a crontab line ending in `# gbrain-autopilot:<suffix>`. The suffix is the
+first 8 hex characters of a random id that `--install` records in
+`<brain>/.gbrain/autopilot-install-id`. Every brain logs to its own
+`<brain>/.gbrain/autopilot.log`.
+
+`gbrain autopilot --status [--json]` prints the brain's job name, suffix,
+install-id path, wrapper path and log path (`job` in `--json`). `--status`
+and `--uninstall` act only on that brain's job.
+
+- **Moving a brain** keeps its id and job. `--status` reports
+  `needs_reinstall: wrapper_missing` until you run
+  `GBRAIN_HOME=<new parent> gbrain autopilot --install`, which repoints the
+  same job.
+- **Copying a brain** (`cp -r`) gives the copy a new id on its first
+  `--install`, so the original brain keeps its job.
+- **Upgrading from an older gbrain**: a non-default brain installed before
+  per-brain names ran under the shared names. `--status` reports
+  `needs_reinstall: legacy_shared_job`; `GBRAIN_HOME=<parent> gbrain autopilot --install`
+  replaces that shared job with the brain's own job and says so.
+- **`autopilot_job_owned_by_other_brain`**: installing the default brain
+  refuses when the shared job still runs another brain. Run the printed
+  `GBRAIN_HOME=<parent> gbrain autopilot --install` for that brain first, then
+  install the default brain again.
+
 ---
 
 *Part of the [GBrain Skillpack](../GBRAIN_SKILLPACK.md).*

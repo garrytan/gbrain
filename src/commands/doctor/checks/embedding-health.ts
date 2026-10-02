@@ -9,6 +9,11 @@
 
 import { hnswIndexExpected, hnswMaxDimsForType } from '../../../core/vector-index.ts';
 import { checkEmbeddingEnvOverride, checkEmbeddingMigrationState } from './search-eval.ts';
+import type { GBrainConfig } from '../../../core/config.ts';
+import { DEFAULT_EMBEDDING_MODEL } from '../../../core/ai/defaults.ts';
+import { providerKeyShadows, providerKeySource } from '../../../core/ai/provider-env.ts';
+import { credentialEnvName, keyShadowWarning } from '../../../core/ai/key-warnings.ts';
+import { getRecipe } from '../../../core/ai/recipes/index.ts';
 import type { Check } from '../../doctor.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
 
@@ -432,4 +437,48 @@ export const embeddingEnvOverrideEntry: DoctorEntry = {
   name: 'embedding_env_override',
   emits: ['embedding_env_override', 'embedding_migration_state'],
   run: runEmbeddingEnvOverride,
+};
+
+/**
+ * Doctor `embedding_key_source` (#5137, DX-O8): which provider keys come from
+ * the environment and override a different config-plane key, and where the
+ * embedding key in effect comes from. Names only, never key values. It sees
+ * only the environment `gbrain doctor` runs in, not a daemon's. Engine-free
+ * filesystem-lane entry (also under `--fast`).
+ */
+const KEY_SOURCE_DOCS = 'docs/guides/repair.md#embedding-key-source';
+const KEY_SOURCE_SCOPE = 'This check sees only the environment `gbrain doctor` runs in; a daemon (gbrain serve, autopilot) has its own, and reports a mismatch in its log with a startup warning or embedding_auth_failed.';
+
+export function embeddingKeySource(fileCfg: GBrainConfig | null, env: Record<string, string | undefined>, file: string): Pick<Check, 'status' | 'message' | 'details'> {
+  const shadows = providerKeyShadows(fileCfg, env);
+  const model = env.GBRAIN_EMBEDDING_MODEL || fileCfg?.embedding_model || DEFAULT_EMBEDDING_MODEL;
+  const variable = credentialEnvName(getRecipe(model.split(':')[0] ?? '')?.auth_env);
+  const source = variable ? providerKeySource(fileCfg, env, variable) : null;
+  const inEffect = !source ? `The embedding model ${model} reads no API key.`
+    : source.kind === 'env' ? `The embedding key in effect is ${source.variable} from this environment.`
+      : source.kind === 'config' ? `The embedding key in effect is ${source.config_key} in ${file}.`
+        : `No embedding key is set here (${source.variable}${source.config_key ? ` or ${source.config_key}` : ''}).`;
+  const details = { shadows: shadows.map(shadow => ({ ...shadow, in_effect: 'env' as const })),
+    embedding_model: model, embedding_key: source ? { kind: source.kind, variable: source.variable, config_key: source.config_key ?? null } : null, docs: KEY_SOURCE_DOCS };
+  if (!shadows.length) return { status: 'ok', message: `${inEffect} No environment variable overrides a different config-plane provider key. ${KEY_SOURCE_SCOPE}`, details };
+  return {
+    status: 'warn',
+    message: `${inEffect} ${shadows.map(shadow => keyShadowWarning(shadow, file).replace('[gbrain] warning: ', '')).join(' ')} ${KEY_SOURCE_SCOPE}`,
+    details,
+  };
+}
+
+async function runEmbeddingKeySource(_ctx: DoctorContext): Promise<Check[]> {
+  const checks: Check[] = [];
+  const { configPath, loadConfigFileOnly } = await import('../../../core/config.ts');
+  let file = 'config.json';
+  try { file = configPath(); } catch { /* invalid GBRAIN_HOME: doctor reports it elsewhere */ }
+  checks.push({ name: 'embedding_key_source', ...embeddingKeySource(loadConfigFileOnly(), process.env, file) });
+  return checks;
+}
+
+export const embeddingKeySourceEntry: DoctorEntry = {
+  name: 'embedding_key_source',
+  emits: ['embedding_key_source'],
+  run: runEmbeddingKeySource,
 };

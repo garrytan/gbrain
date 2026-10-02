@@ -18,6 +18,7 @@ import {
   type CompileViewInput,
 } from '../src/core/context/compile-view.ts';
 import { loadSensitivityConfig } from '../src/core/context/sensitivity-scan.ts';
+import { isPrivatePage } from '../src/core/search/private-visibility.ts';
 import * as tokenBudget from '../src/core/search/token-budget.ts';
 import type { Page, PageFilters, GetPageOpts } from '../src/core/types.ts';
 
@@ -60,6 +61,7 @@ function makeEngine(pages: Page[]): CompileViewEngine {
     async listPages(filters: PageFilters = {}) {
       let rows = pages.slice();
       if (filters.sourceId) rows = rows.filter((p) => p.source_id === filters.sourceId);
+      if (filters.excludePrivate) rows = rows.filter((p) => !isPrivatePage(p));
       if (filters.slugPrefix) rows = rows.filter((p) => p.slug.startsWith(filters.slugPrefix!));
       if (filters.tag) {
         rows = rows.filter((p) => {
@@ -268,6 +270,20 @@ describe('compileView — recency arm (adversarial review: newest-first + tie-dr
     expect(text).not.toContain(`brain://${pad(10)}`);
     // ...and the first strictly-newer row survives.
     expect(text).toContain(`brain://${pad(11)}`);
+  });
+});
+
+describe('compileView — private pages', () => {
+  test('a visibility: private page never reaches the compiled file on any arm (N8 context-path audit)', async () => {
+    const secret = { visibility: 'private', tags: ['compile-context'] };
+    const engine = makeEngine([
+      page('people/public-person', { title: 'Public Person' }),
+      page('people/secret-person', { title: 'SECRETTITLE', compiled_truth: 'SECRETBODY line.', frontmatter: secret }),
+      page('notes/recent-secret', { title: 'RECENTSECRET', frontmatter: { visibility: 'private' }, updated_at: new Date('2026-08-02T00:00:00.000Z') }),
+    ]);
+    const out = await compileView(input(engine));
+    expect(out.text).toContain('people/public-person');
+    for (const marker of ['SECRETTITLE', 'SECRETBODY', 'secret-person', 'RECENTSECRET']) expect(out.text).not.toContain(marker);
   });
 });
 

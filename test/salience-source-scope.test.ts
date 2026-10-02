@@ -180,6 +180,10 @@ describe('find_contradictions source scoping', () => {
     ['local federated', { remote: false, auth: { allowedSources: ['alpha'] } }],
     ['remote empty grant with scalar floor', { sourceId: 'alpha', auth: { allowedSources: [] } }],
     ['local empty grant with scalar floor', { remote: false, sourceId: 'alpha', auth: { allowedSources: [] } }],
+    // N2-2: the implicit-source marker only relaxes the TRUSTED local CLI.
+    ['remote scalar marked implicit', { sourceId: 'default', localSourceImplicit: true }],
+    ['unset trust marked implicit', { remote: undefined, sourceId: 'default', localSourceImplicit: true }],
+    ['local federated marked implicit', { remote: false, sourceId: 'default', localSourceImplicit: true, auth: { allowedSources: ['alpha'] } }],
   ] as const) {
     test(`${label}: reports unavailable before any database load`, async () => {
       const original = engine.loadContradictionsTrend;
@@ -207,6 +211,14 @@ describe('find_contradictions source scoping', () => {
     };
     expect(res.contradictions).toHaveLength(1);
     expect(res.contradictions[0].a.slug).toBe('alpha/one');
+    expect(res.total_in_run).toBe(4);
+  });
+
+  test('N2-2: trusted local CLI with an implicit (non-user-selected) source reads the full report', async () => {
+    const res = await find_contradictions.handler(ctxOf({ remote: false, sourceId: 'default', localSourceImplicit: true }), {}) as {
+      contradictions: Array<{ a: { slug: string }; b: { slug: string } }>; total_in_run: number;
+    };
+    expect(res.contradictions).toHaveLength(4);
     expect(res.total_in_run).toBe(4);
   });
 

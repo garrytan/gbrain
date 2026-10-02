@@ -61,7 +61,7 @@ import {
 // #3190: pack-aware link typing on every extract surface (db/stale/fs).
 import { loadActivePackForLocalEngine } from '../core/schema-pack/best-effort.ts';
 import { resolveIncludeFrontmatter } from '../core/extract-frontmatter.ts';
-import { inferLinkTypeFromPack } from '../core/schema-pack/link-inference.ts';
+import { inferLinkTypeFromPack, ownsAttendanceInference } from '../core/schema-pack/link-inference.ts';
 import { PageRegexBudget } from '../core/schema-pack/redos-guard.ts';
 export { extractTimelineFromContent, type ExtractedTimelineEntry } from '../core/timeline-extract.ts';
 import { extractTimelineFromContent, pruneTimelineOrphans, retractRemovedTimelineEntries, type ExtractedTimelineEntry } from '../core/timeline-extract.ts';
@@ -505,6 +505,7 @@ export async function extractLinksFromFile(
   const globalBasename = opts?.globalBasename ?? false;
   const pack = opts?.pack ?? null;
   const packBudget = pack ? new PageRegexBudget() : undefined;
+  const packOwnsAttendance = ownsAttendanceInference(pack);
   const activePack = pack?.page_types ? { page_types: pack.page_types } : undefined;
   const parsed = parseMarkdown(content, relPath, { activePack });
   const fm = parsed.frontmatter;
@@ -539,6 +540,7 @@ export async function extractLinksFromFile(
       const position = index ?? scanContent.indexOf(name);
       const evidence = scanContent.slice(Math.max(0, position - 120), position + 240);
       let inferred = pack ? inferLinkTypeFromPack(pack, guessedPageType, evidence, packBudget, targetType) : null;
+      if (inferred === 'attended' && guessedPageType === 'meeting' && !packOwnsAttendance) inferred = null;
       const bareTarget = relTarget.endsWith('.md') ? relTarget.slice(0, -3) : relTarget;
       const ambiguousAttendance = !inferred && guessedPageType === 'meeting' && targetType === 'person'
         && !bareTarget.includes('/') && new Set([slugifyPath(bareTarget), normalizeBasename(bareTarget)]
@@ -546,13 +548,13 @@ export async function extractLinksFromFile(
           && (opts?.pageTypes?.get(candidate) ?? parseMarkdown('', `${candidate}.md`, { activePack }).type) === 'person')).size > 1;
       const canonicalAttendance = !inferred && guessedPageType === 'meeting' && targetType === 'person'
         && resolvedSlugs.length === 1 && !ambiguousAttendance
-        && !pack?.link_types.some(lt => lt.name === 'attended' && (lt.inference?.page_type || lt.inference?.target_type))
+        && !(packOwnsAttendance && pack?.link_types.some(lt => lt.name === 'attended' && (lt.inference?.page_type || lt.inference?.target_type)))
         && hasAttendanceEvidence(attendanceRanges, position);
       if (!inferred) {
         inferred = guessedPageType === 'meeting' ? (canonicalAttendance ? 'attended' : 'mentions')
           : inferLinkType(guessedPageType, evidence, scanContent, target, targetType);
         if (inferred === 'mentions' && !pack && !parsed.typeExplicit) inferred = inferTypeByDir(fileDir, dirname(target), fm);
-        if (pack?.link_types.some(lt => lt.name === inferred && (lt.inference?.page_type || lt.inference?.target_type))) inferred = 'mentions';
+        if (!canonicalAttendance && pack?.link_types.some(lt => lt.name === inferred && (lt.inference?.page_type || lt.inference?.target_type))) inferred = 'mentions';
       }
       if (inferred === 'attended' && guessedPageType === 'meeting' && targetType !== 'person') inferred = 'mentions';
       const link: ExtractedLink = {

@@ -77,7 +77,7 @@
           "findByTitleFuzzy: (name: string, dirPrefix?: string, minSimilarity?: number, sourceId?: string) => Promise<{ slug: string; similarity: number; } | null>",
           "findCandidateDuplicates: (source_id: string, entitySlug: string, factText: string, opts?: { k?: number; embedding?: Float32Array; embeddingModel?: string | null; }) => Promise<FactRow[]>",
           "findDuplicatePage?: ((sourceId: string, opts: { hash: string; frontmatterId?: string | null; excludeSlug?: string; }) => Promise<{ slug: string; id: number; } | null>) | undefined",
-          "findOntologyConflicts: (opts?: PageReadScope & { minConfidence?: number; }) => Promise<OntologyConflict[]>",
+          "findOntologyConflicts: (opts?: PageReadScope & { minConfidence?: number; visibility?: OntologyReadOpts[\"visibility\"]; }) => Promise<OntologyConflict[]>",
           "findOrphanPages: (opts?: PageReadScope & { sourceId?: string; sourceIds?: string[]; mode?: \"inbound\" | \"islanded\"; }) => Promise<Array<{ slug: string; title: string; domain: string | null; type?: string | null; quarantined?: boolean; }>>",
           "findTrajectory: (opts: TrajectoryOpts) => Promise<TrajectoryPoint[]>",
           "getAdjacencyBoosts: (pageIds: number[], opts?: PageReadScope) => Promise<Map<number, AdjacencyRow>>",
@@ -633,6 +633,7 @@
           "depth: number",
           "links: { to_slug: string; link_type: string; }[]",
           "slug: string",
+          "source_id: string",
           "title: string",
           "type: string"
         ],
@@ -644,8 +645,10 @@
           "context: string",
           "depth: number",
           "from_slug: string",
+          "from_source_id: string",
           "link_type: string",
-          "to_slug: string"
+          "to_slug: string",
+          "to_source_id: string"
         ],
         "name": "GraphPath"
       },
@@ -785,7 +788,8 @@
           "minConfidence?: number | undefined",
           "requireSafeChunks?: boolean | undefined",
           "sourceId?: string | undefined",
-          "sourceIds?: string[] | undefined"
+          "sourceIds?: string[] | undefined",
+          "visibility?: (\"private\" | \"world\")[] | undefined"
         ],
         "name": "OntologyReadOpts"
       },
@@ -971,11 +975,12 @@
           "executeRaw: <T = Record<string, unknown>>(sql: string, params?: unknown[], opts?: { signal?: AbortSignal; }) => Promise<T[]>",
           "executeRawDirect: <T = Record<string, unknown>>(sql: string, params?: unknown[], opts?: { signal?: AbortSignal; }) => Promise<T[]>",
           "expireFact: (id: number, opts?: { supersededBy?: number; at?: Date; }) => Promise<boolean>",
+          "explainVectorSearch: (embedding: Float32Array, opts?: SearchOpts) => Promise<Record<string, unknown>>",
           "findAnomalies: (opts: AnomaliesOpts) => Promise<AnomalyResult[]>",
           "findByTitleFuzzy: (name: string, dirPrefix?: string, minSimilarity?: number, sourceId?: string) => Promise<{ slug: string; similarity: number; } | null>",
           "findCandidateDuplicates: (source_id: string, entitySlug: string, factText: string, opts?: { k?: number; embedding?: Float32Array; embeddingModel?: string | null; }) => Promise<FactRow[]>",
           "findDuplicatePage: (sourceId: string, opts: { hash: string; frontmatterId?: string | null; excludeSlug?: string; }) => Promise<{ slug: string; id: number; } | null>",
-          "findOntologyConflicts: (opts?: PageReadScope & { minConfidence?: number; }) => Promise<OntologyConflict[]>",
+          "findOntologyConflicts: (opts?: PageReadScope & { minConfidence?: number; visibility?: OntologyReadOpts[\"visibility\"]; }) => Promise<OntologyConflict[]>",
           "findOrphanPages: (opts?: { sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean; mode?: \"inbound\" | \"islanded\"; }) => Promise<Array<{ slug: string; title: string; domain: string | null; type?: string | null; quarantined?: boolean; }>>",
           "findTrajectory: (opts: TrajectoryOpts) => Promise<TrajectoryPoint[]>",
           "getAdjacencyBoosts: (pageIds: number[], opts?: PageReadScope) => Promise<Map<number, AdjacencyRow>>",
@@ -1079,8 +1084,10 @@
           "private resolveFactsEmbeddingCast",
           "private rlsScopeBindingEnabled",
           "private runUnsafe",
+          "private runVectorAttempt",
           "private transactionOn",
           "private vectorIterativeScan",
+          "private vectorIterativeScanSupported",
           "private withScopedReadTransaction",
           "purgeDeletedPages: (olderThanHours: number, opts?: { dryRun?: boolean; }) => Promise<{ slugs: string[]; count: number; pages?: { slug: string; deleted_at: Date; }[]; }>",
           "putContradictionCacheEntry: (opts: { chunk_a_hash: string; chunk_b_hash: string; model_id: string; prompt_version: string; truncation_policy: string; verdict: Record<string, unknown>; ttl_seconds?: number; }) => Promise<void>",
@@ -1277,6 +1284,7 @@
           "types?: string[] | undefined",
           "until?: string | undefined",
           "useCache?: boolean | undefined",
+          "vectorLegacyGuard?: boolean | undefined",
           "walkDepth?: number | undefined"
         ],
         "name": "SearchOpts"
@@ -2454,7 +2462,7 @@
           "retrieval_reflex_volunteer?: boolean | undefined",
           "retrieval_reflex_window_turns?: number | undefined",
           "schema_pack?: string | undefined",
-          "search?: { adaptive_return?: boolean; adaptive_return_entity_max?: number; adaptive_return_other_max?: number; adaptive_return_min_keep?: number; } | undefined",
+          "search?: { adaptive_return?: boolean; adaptive_return_entity_max?: number; adaptive_return_other_max?: number; adaptive_return_min_keep?: number; vector_legacy_guard?: boolean; } | undefined",
           "search_embedding_column?: string | undefined",
           "self_upgrade?: { mode?: \"auto\" | \"notify\" | \"off\"; mode_prompted?: boolean; quiet_hours?: { start?: number; end?: number; tz?: string; }; failed_versions?: string[]; attempting_version?: string; last_check_ts?: number; last_applied_version?: string; } | undefined",
           "storage?: unknown",
@@ -3036,7 +3044,7 @@
           "findByTitleFuzzy: (name: string, dirPrefix?: string, minSimilarity?: number, sourceId?: string) => Promise<{ slug: string; similarity: number; } | null>",
           "findCandidateDuplicates: (source_id: string, entitySlug: string, factText: string, opts?: { k?: number; embedding?: Float32Array; embeddingModel?: string | null; }) => Promise<FactRow[]>",
           "findDuplicatePage?: ((sourceId: string, opts: { hash: string; frontmatterId?: string | null; excludeSlug?: string; }) => Promise<{ slug: string; id: number; } | null>) | undefined",
-          "findOntologyConflicts: (opts?: PageReadScope & { minConfidence?: number; }) => Promise<OntologyConflict[]>",
+          "findOntologyConflicts: (opts?: PageReadScope & { minConfidence?: number; visibility?: OntologyReadOpts[\"visibility\"]; }) => Promise<OntologyConflict[]>",
           "findOrphanPages: (opts?: PageReadScope & { sourceId?: string; sourceIds?: string[]; mode?: \"inbound\" | \"islanded\"; }) => Promise<Array<{ slug: string; title: string; domain: string | null; type?: string | null; quarantined?: boolean; }>>",
           "findTrajectory: (opts: TrajectoryOpts) => Promise<TrajectoryPoint[]>",
           "getAdjacencyBoosts: (pageIds: number[], opts?: PageReadScope) => Promise<Map<number, AdjacencyRow>>",
@@ -4483,7 +4491,7 @@
         "kind": "variable",
         "name": "LINK_EXTRACTOR_VERSION_TS",
         "signature": [
-          "\"2026-09-30T00:00:00Z\""
+          "\"2026-10-01T00:00:00Z\""
         ]
       },
       {
@@ -5371,8 +5379,10 @@
           "dryRun: boolean",
           "emitResponseMeta?: ((key: string, value: unknown) => void) | undefined",
           "engine: BrainEngine",
+          "explicitReadBinding?: ExplicitReadBinding | undefined",
           "jobId?: number | undefined",
           "localFederatedSourceIds?: string[] | undefined",
+          "localSourceImplicit?: boolean | undefined",
           "logger: Logger",
           "remote: boolean",
           "sessionId?: string | undefined",
@@ -5449,7 +5459,7 @@
         "kind": "function",
         "name": "linkReadScopeOpts",
         "signature": [
-          "(ctx: OperationContext) => { sourceId?: string; sourceIds?: string[]; }"
+          "(ctx: OperationContext, scope?: { sourceId?: string; sourceIds?: string[]; }) => { sourceId?: string; sourceIds?: string[]; }"
         ]
       },
       {
@@ -5512,7 +5522,7 @@
         "kind": "function",
         "name": "resolveRequestedScope",
         "signature": [
-          "(ctx: OperationContext, sourceIdParam: string | undefined, allSourcesParam?: boolean) => { sourceId?: string; sourceIds?: string[]; }"
+          "(ctx: OperationContext, sourceIdParam: string | undefined, allSourcesParam?: boolean, explicitReads?: readonly string[]) => { sourceId?: string; sourceIds?: string[]; }"
         ]
       },
       {
@@ -5603,7 +5613,7 @@
           "findByTitleFuzzy: (name: string, dirPrefix?: string, minSimilarity?: number, sourceId?: string) => Promise<{ slug: string; similarity: number; } | null>",
           "findCandidateDuplicates: (source_id: string, entitySlug: string, factText: string, opts?: { k?: number; embedding?: Float32Array; embeddingModel?: string | null; }) => Promise<FactRow[]>",
           "findDuplicatePage: (sourceId: string, opts: { hash: string; frontmatterId?: string | null; excludeSlug?: string; }) => Promise<{ slug: string; id: number; } | null>",
-          "findOntologyConflicts: (opts?: PageReadScope & { minConfidence?: number; }) => Promise<OntologyConflict[]>",
+          "findOntologyConflicts: (opts?: PageReadScope & { minConfidence?: number; visibility?: OntologyReadOpts[\"visibility\"]; }) => Promise<OntologyConflict[]>",
           "findOrphanPages: (opts?: { sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean; mode?: \"inbound\" | \"islanded\"; }) => Promise<Array<{ slug: string; title: string; domain: string | null; type?: string | null; quarantined?: boolean; }>>",
           "findTrajectory: (opts: TrajectoryOpts) => Promise<TrajectoryPoint[]>",
           "getAdjacencyBoosts: (pageIds: number[], opts?: PageReadScope) => Promise<Map<number, AdjacencyRow>>",
@@ -6502,6 +6512,7 @@
           "types?: string[] | undefined",
           "until?: string | undefined",
           "useCache?: boolean | undefined",
+          "vectorLegacyGuard?: boolean | undefined",
           "walkDepth?: number | undefined"
         ],
         "name": "HybridSearchOpts"
@@ -6924,7 +6935,7 @@
         "kind": "function",
         "name": "persistSynthesis",
         "signature": [
-          "(engine: BrainEngine, result: ThinkResult) => Promise<{ slug: string; evidenceInserted: number; warnings: string[]; }>"
+          "(engine: BrainEngine, result: ThinkResult, scope?: { sourceId?: string; allowedSources?: string[]; }) => Promise<{ slug: string; evidenceInserted: number; warnings: string[]; }>"
         ]
       },
       {
@@ -7450,6 +7461,7 @@
           "depth: number",
           "links: { to_slug: string; link_type: string; }[]",
           "slug: string",
+          "source_id: string",
           "title: string",
           "type: string"
         ],
@@ -7461,8 +7473,10 @@
           "context: string",
           "depth: number",
           "from_slug: string",
+          "from_source_id: string",
           "link_type: string",
-          "to_slug: string"
+          "to_slug: string",
+          "to_source_id: string"
         ],
         "name": "GraphPath"
       },
@@ -7602,7 +7616,8 @@
           "minConfidence?: number | undefined",
           "requireSafeChunks?: boolean | undefined",
           "sourceId?: string | undefined",
-          "sourceIds?: string[] | undefined"
+          "sourceIds?: string[] | undefined",
+          "visibility?: (\"private\" | \"world\")[] | undefined"
         ],
         "name": "OntologyReadOpts"
       },
@@ -7886,6 +7901,7 @@
           "types?: string[] | undefined",
           "until?: string | undefined",
           "useCache?: boolean | undefined",
+          "vectorLegacyGuard?: boolean | undefined",
           "walkDepth?: number | undefined"
         ],
         "name": "SearchOpts"

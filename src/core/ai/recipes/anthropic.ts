@@ -25,6 +25,7 @@ export const anthropic: Recipe = {
       models: [
         'claude-fable-5',
         'claude-fable-5-1',
+        'claude-opus-5-5',
         'claude-opus-5',
         'claude-opus-4-8',
         'claude-opus-4-7',
@@ -38,6 +39,7 @@ export const anthropic: Recipe = {
       model_context_tokens: {
         'claude-fable-5': 1_000_000,
         'claude-fable-5-1': 1_000_000,
+        'claude-opus-5-5': 1_000_000,
         'claude-opus-5': 1_000_000,
         'claude-sonnet-5': 1_000_000,
         'claude-opus-4-8': 1_000_000,

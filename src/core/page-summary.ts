@@ -34,6 +34,7 @@ import { chat, type ChatOpts, type ChatResult } from './ai/gateway.ts';
 import { logSynopsisFailure, type SynopsisFailureKind } from './audit-synopsis.ts';
 import { sanitizeSynopsis } from './embedding-context.ts';
 import { resolveTierDefault } from './model-config.ts';
+import { safeSplitIndex } from './text-safe.ts';
 
 /**
  * Default cap on synopsis output tokens. ~200 tokens gives 50-100 token
@@ -258,8 +259,9 @@ function buildUserPrompt(
   // frontmatter, intro paragraphs carry the document-level anchor).
   let trimmedDoc = documentText;
   if (documentText.length > SYNOPSIS_DOC_MAX_CHARS) {
-    trimmedDoc = documentText.slice(0, SYNOPSIS_DOC_MAX_CHARS) +
-      `\n\n[... ${documentText.length - SYNOPSIS_DOC_MAX_CHARS} chars truncated for synopsis budget ...]`;
+    const cut = safeSplitIndex(documentText, SYNOPSIS_DOC_MAX_CHARS);
+    trimmedDoc = documentText.slice(0, cut) +
+      `\n\n[... ${documentText.length - cut} chars truncated for synopsis budget ...]`;
   }
   return [
     `<page_title>${pageTitle}</page_title>`,

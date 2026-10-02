@@ -79,10 +79,10 @@ interface DreamArgs {
    * for `--phase extract_atoms`) holds the cycle lock once and loops bounded
    * batches, rediscovering eligibility each batch, until the backlog empties or
    * `--window` seconds elapse. Reports {extracted, skipped, remaining}; exits
-   * non-zero when remaining > 0 so a cron/agent loop knows to run again.
+   * 3 unless it drained so a cron/agent loop knows to run again.
    */
   drain: boolean;
-  /** Drain wallclock budget in seconds. Default 300 (5 min). */
+  /** Drain window in seconds, a hard deadline for starting work. Default 300 (5 min). */
   windowSeconds: number;
   /**
    * issue #2860 — `--once`. One-shot bypass of the named `--phase`'s own
@@ -449,11 +449,14 @@ Options:
                       (the default phase when --drain is set). Holds the
                       cycle lock once, processes batches until the backlog
                       empties or --window elapses, reports {extracted,
-                      remaining}, and exits 3 when the backlog isn't empty
-                      so a cron/agent loop knows to run again. Use this to
-                      grind down an extract_atoms backlog on a brain whose
-                      pack doesn't run the phase in the routine cycle.
-  --window <seconds>  Drain wallclock budget. Default 300 (5 min).
+                      remaining, stopped}, and exits 3 unless the backlog
+                      drained (printing the rerun command) so a cron/agent
+                      loop knows to run again. Use this to grind down an
+                      extract_atoms backlog on a brain whose pack doesn't
+                      run the phase in the routine cycle.
+  --window <seconds>  Drain window, a hard deadline: no page or transcript
+                      starts after it and the one in flight finishes, so a
+                      run ends within one item of the window. Default 300.
 
   --unsafe-bypass-dream-guard
                       Disable the self-consumption guard. Use only when you
@@ -487,7 +490,8 @@ Related:
 function printHuman(report: CycleReport) {
   if (report.status === 'skipped') {
     if (report.reason === 'cycle_already_running') {
-      console.log(`Skipped: another cycle is already running. (locked)`);
+      const h = report.lock_holder;
+      console.log(`Skipped: another cycle is already running. (locked${h ? ` by pid ${h.holder_pid} on ${h.holder_host} for ${Math.round(h.age_ms / 1000)}s` : ''})`);
     } else if (report.reason === 'no_database') {
       console.log(`Skipped: no database available.`);
     } else {
@@ -659,7 +663,12 @@ async function runDrain(
     console.log(`[drain] extracted ${result.extracted} atom(s) across ${result.batches} batch(es); ${result.remaining ?? '?'} remaining (stopped: ${result.stopped})`);
   }
   // null remaining = the final count query failed; do not report success.
-  if (result.remaining === null || result.remaining > 0) process.exit(EXIT_DRAIN_INCOMPLETE);
+  if (result.stopped === 'drained' && result.remaining === 0) return;
+  process.stderr.write(
+    `[drain] stopped: ${result.stopped}; ${result.remaining ?? '?'} page(s) remaining. ` +
+    `Rerun: gbrain dream --drain --window ${opts.windowSeconds}${opts.source ? ` --source ${opts.source}` : ''}\n`,
+  );
+  process.exit(EXIT_DRAIN_INCOMPLETE);
 }
 
 export async function runDream(engine: BrainEngine | null, args: string[]): Promise<CycleReport | void> {

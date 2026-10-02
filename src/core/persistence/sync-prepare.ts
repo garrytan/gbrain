@@ -15,7 +15,8 @@ import { prepareCanonicalProjections } from './canonical-projections.ts';
 import { digest, sha256 } from './digest.ts';
 import { preserveProtectedTakes } from './protected-takes.ts';
 import { getWorktreeBinding } from './ownership.ts';
-import { assertConfiguredSyncRoot, assertSyncEntryOrigin, syncGit, syncRawHash, type SyncRename } from './sync-discovery.ts';
+import { sourceMirrorReadOnly } from './mirror-read-only.ts';
+import { assertConfiguredSyncRoot, assertSyncEntryOrigin, readSyncFile, syncGit, syncRawHash, type SyncRename } from './sync-discovery.ts';
 import { assertSyncPageOrigin, sameSyncOrigin, syncOriginPath, syncOriginScope, type SyncOriginScope } from './sync-origin.ts';
 import { assertManagedSyncActive, validateSyncAuthority, type SyncAuthority, type SyncProcessingOptions } from './sync-authority.ts';
 import type { PreparedContentImport } from './prepared-import.ts';
@@ -200,7 +201,18 @@ export async function prepareManagedSyncMutation(engine: BrainEngine, row: Write
     throw new OperationError('invalid_params', frontmatterSlugConflictMessage(p.sourcePath, parsedInput.slug, expectedSlug));
   }
   if (!p.companyApproval && base && !p.lineEndingOnly && p.rawHash !== sha256(p.content) && !sameCanonicalImport(base, parsedInput)) {
-    throw new OperationError('source_changed', 'Newer working-tree bytes and the current page disagree with this pinned Git import.');
+    // The pinned commit can simply trail the coordinator: a committed page write reaches the
+    // working tree before its Git effect lands. When the newer working-tree bytes are the
+    // current page itself, there is nothing to import and nothing to protect; the commit that
+    // carries them is imported as a no-op by a later run.
+    // The checkpoint may advance past the pinned commit's bytes because the working tree wins, as for any local edit.
+    const working = renamed ? null : readSyncFile(root, p.path);
+    if (!working || sha256(working) !== p.rawHash
+      || !sameCanonicalImport(base, parseMarkdown(working.toString('utf8'), row.slug, { activePack }))) {
+      throw new OperationError('source_changed', 'Newer working-tree bytes and the current page disagree with this pinned Git import.');
+    }
+    return { observedRevision: snapshot?.revision ?? null, noop: true, contentUnchanged: true, validate,
+      apply: async () => ({ status: 'skipped', slug: row.slug, source_id: row.source_id, chunks: 0, noop: true, imported_file: true }) };
   }
   let importContent = p.content;
   if (row.authority.remote) {
@@ -234,16 +246,20 @@ export async function prepareManagedSyncMutation(engine: BrainEngine, row: Write
   const renamedType = renamed && parsedInput.typeExplicit !== true ? parsedInput.type : undefined;
   const overlay = digest(canonical(parsed, parsed.tags)) !== digest(canonical({ ...ready.parsedPage, type: renamedType ?? ready.parsedPage.type }, tags));
   if (overlay && p.companyApproval) throw new OperationError('source_writeback_required', 'Canonical preparation requires a source-content correction; this profile never writes repository files.');
-  if (overlay && !p.lineEndingOnly && p.rawHash !== sha256(p.content)) throw new OperationError('source_changed', 'Canonical sanitization cannot overwrite newer working-tree bytes.');
+  // #5409: a read-only mirror keeps its canonical metadata in the database only; its checkout stays the remote's bytes.
+  const mirrorReadOnly = overlay && await sourceMirrorReadOnly(engine, row.source_id);
+  const writeback = overlay && !mirrorReadOnly;
+  if (writeback && !p.lineEndingOnly && p.rawHash !== sha256(p.content)) throw new OperationError('source_changed', 'Canonical sanitization cannot overwrite newer working-tree bytes.');
   // A rename projects against the moved page (same id), so its pinned timeline rows carry over.
   const project = await prepareCanonicalProjections(engine, ready.parsedPage, row.slug, row.source_id, base, p.companyApproval ? 'immutable' : 'file');
   return { observedRevision: snapshot?.revision ?? null,
     // Tells the #5470 screen the content is unchanged; publication still queues its effects.
-    contentUnchanged: ready.noop && !moved && !overlay,
+    contentUnchanged: ready.noop && !moved && !writeback,
     ...(renamed ? { additionalPageKeys: [{ sourceId: row.source_id, slug: renamed.slug }] } : {}),
     validate: async tx => { await validate(tx); await ready.validate(tx); },
     deferEmbedding: p.processingOptions?.noEmbed,
-    ...(overlay ? { file: { root, path: join(root, p.path), content: serializePageToMarkdown(renderedPage, tags), expectedBeforeHash: p.rawHash } } : {}),
+    ...(writeback ? { file: { root, path: join(root, p.path), content: serializePageToMarkdown(renderedPage, tags), expectedBeforeHash: p.rawHash } } : {}),
+    ...(mirrorReadOnly ? { databaseOnlyReason: 'mirror_read_only' as const } : {}),
     apply: async tx => {
       let applied = ready;
       if (renamed) {

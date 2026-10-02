@@ -4,6 +4,8 @@ import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import { OperationError } from '../ops/contract.ts';
 import { discoverGitRoot } from '../sync-git.ts';
+import { cliOptsToProgressOptions, getCliOptions } from '../cli-options.ts';
+import { createProgress, type ProgressOptions } from '../progress.ts';
 import { digest, sha256 } from './digest.ts';
 import { localHostId, persistenceHome } from './identity.ts';
 import type { SqlEngine, WriteRequest } from './model.ts';
@@ -153,30 +155,61 @@ export async function activateManagedPersistence(engine: BrainEngine, opts: { co
   await activatePersistence(engine, opts);
 }
 
-/** Deterministic content manifest includes deletions by exact path-set equality. */
-export function worktreeManifest(root: string): { digest: string; files: Record<string, string> } {
+export interface WorktreeManifest { digest: string; file_count: number }
+export type StoredWorktreeManifest = WorktreeManifest & { canonical_stamp?: string; self_transfer?: PhysicalRootRecovery };
+export const MANIFEST_PROGRESS_MIN_FILES = 5000;
+
+/**
+ * Deterministic content manifest includes deletions by exact path-set equality.
+ * The per-file hash map stays local; stored manifests carry only its digest
+ * and file count, so their size does not grow with the worktree.
+ */
+export function worktreeManifest(root: string, opts: { progress?: ProgressOptions } = {}): WorktreeManifest {
   const canonical = realpathSync(root);
-  const files: Record<string, string> = {};
+  const paths: string[] = [];
   const visit = (dir: string) => {
     for (const name of readdirSync(dir).sort()) {
       if (name === '.git' || name === '.gbrain-managed' || isPhysicalRootMetadata(name)) continue;
       const path = join(dir, name), info = lstatSync(path);
       if (info.isSymbolicLink()) throw new OperationError('writer_manifest_unsafe', 'Canonical worktree transfer requires a symlink-free manifest.');
       if (info.isDirectory()) visit(path);
-      else if (info.isFile()) files[relative(canonical, path).split(sep).join('/')] = sha256(readFileSync(path));
+      else if (info.isFile()) paths.push(path);
     }
   };
   visit(canonical);
-  return { digest: digest(files), files };
+  const progress = opts.progress && paths.length > MANIFEST_PROGRESS_MIN_FILES ? createProgress(opts.progress) : undefined;
+  progress?.start('sources.manifest_hash', paths.length);
+  const files: Record<string, string> = {};
+  for (const path of paths) {
+    files[relative(canonical, path).split(sep).join('/')] = sha256(readFileSync(path));
+    progress?.tick();
+  }
+  progress?.finish();
+  return { digest: digest(files), file_count: paths.length };
+}
+
+/** Human-mode progress for manifest hashing; JSON and quiet modes report nothing. */
+export function humanManifestProgress(): ProgressOptions | undefined {
+  const options = cliOptsToProgressOptions(getCliOptions());
+  return options.mode === 'auto' ? options : undefined;
+}
+
+/** Drops a legacy per-file map from a stored manifest, keeping every other field. */
+export function compactStoredManifest<T extends { digest: string; files?: Record<string, string>; file_count?: number }>(manifest: T): Omit<T, 'files'> & { file_count: number } {
+  const { files, ...rest } = manifest;
+  return { ...rest, file_count: rest.file_count ?? Object.keys(files ?? {}).length };
 }
 export async function prepareWriterTransfer(engine: BrainEngine, sourceId: string, hostId = localHostId(), expectedAdminState?: string,
-  opts: { selfTransfer?: boolean; dryRun?: boolean } = {}): Promise<{ worktree_id: string; owner_epoch: string; manifest: ReturnType<typeof worktreeManifest> }> {
+  opts: { selfTransfer?: boolean; dryRun?: boolean } = {}): Promise<{ worktree_id: string; owner_epoch: string; manifest: StoredWorktreeManifest }> {
   const binding = await getWorktreeBinding(engine, sourceId, hostId);
   if (!binding || binding.owner_host_id !== hostId || !binding.local_path) throw new OperationError('permission_denied', 'Only the current owner can prepare this transfer.');
   if (!binding.coordination_path) throw new OperationError('recovery_required', 'The recorded coordination path is missing.');
   const lock = opts.selfTransfer ? await acquireNativeLock(binding.coordination_path, { timeoutMs: 5000 }) : await acquireWorktree(binding, 5000);
   if (!lock) throw new OperationError('write_pending', 'The worktree is busy; retry transfer preparation.');
   try {
+    // The native lock already excludes writers, so hash before checking out a
+    // connection. A hashing failure surfaces after the root checks below, as before.
+    const hashed = (() => { try { return worktreeManifest(binding.local_path!, { progress: humanManifestProgress() }); } catch (error) { return error as Error; } })();
     return await engine.transaction(async tx => {
       await tx.executeRaw("SELECT set_config('synchronous_commit','on',true)");
       await assertWriterAdminState(tx, expectedAdminState);
@@ -193,7 +226,8 @@ export async function prepareWriterTransfer(engine: BrainEngine, sourceId: strin
       const recovery = opts.selfTransfer ? inspectPhysicalRootRecovery(binding.local_path!, { brainId: brain.brain_id,
         worktreeId: binding.worktree_id, hostId, coordinationPath: binding.coordination_path! }) : undefined;
       if (!opts.selfTransfer) assertPhysicalRoot(binding.local_path!, { worktreeId: binding.worktree_id, coordinationPath: binding.coordination_path });
-      const manifest = { ...worktreeManifest(binding.local_path!), ...(recovery ? { self_transfer: recovery } : {}) };
+      if (hashed instanceof Error) throw hashed;
+      const manifest: StoredWorktreeManifest = { ...hashed, ...(recovery ? { self_transfer: recovery } : {}) };
       if (!opts.dryRun) await tx.executeRaw(`UPDATE persistence_worktrees SET state='draining',manifest=$2::text::jsonb WHERE id=$1::uuid`, [binding.worktree_id, JSON.stringify(manifest)]);
       return { worktree_id: binding.worktree_id, owner_epoch: String(owner.owner_epoch), manifest };
     });
@@ -202,8 +236,6 @@ export async function prepareWriterTransfer(engine: BrainEngine, sourceId: strin
 export async function acceptWriterTransfer(engine: BrainEngine, sourceId: string, path: string, expectedEpoch: string, expectedManifest: string, hostId = localHostId(), expectedAdminState?: string,
   opts: { selfTransfer?: boolean; dryRun?: boolean } = {}): Promise<void> {
   const root = realpathSync(resolve(path));
-  const manifest = worktreeManifest(root);
-  if (manifest.digest !== expectedManifest) throw new OperationError('writer_manifest_mismatch', 'Successor checkout differs from the recorded canonical manifest.');
   const binding = await getWorktreeBinding(engine, sourceId, hostId);
   if (!binding) throw new OperationError('not_found', 'Source has no worktree owner.');
   if (opts.selfTransfer && binding.owner_host_id !== hostId) throw new OperationError('permission_denied', 'Self-transfer requires the current owner host.');
@@ -213,6 +245,8 @@ export async function acceptWriterTransfer(engine: BrainEngine, sourceId: string
   const lock = await acquireNativeLock(coordination, { timeoutMs: 5000 });
   if (!lock) throw new OperationError('write_pending', 'Successor worktree is busy.');
   try {
+    if (worktreeManifest(root, { progress: humanManifestProgress() }).digest !== expectedManifest)
+      throw new OperationError('writer_manifest_mismatch', 'Successor checkout differs from the recorded canonical manifest.');
     await engine.transaction(async tx => {
       await tx.executeRaw("SELECT set_config('synchronous_commit','on',true)");
       await assertWriterAdminState(tx, expectedAdminState);
@@ -222,7 +256,7 @@ export async function acceptWriterTransfer(engine: BrainEngine, sourceId: string
       if (!!owner.manifest.self_transfer !== !!opts.selfTransfer || JSON.stringify(await getWorktreeBinding(tx, sourceId, hostId)) !== JSON.stringify(binding)) throw new OperationError('writer_transfer_conflict', 'The prepared transfer mode or binding changed.');
       const pending = await tx.executeRaw(`SELECT id FROM persistence_requests WHERE worktree_id=$1::uuid AND (state IN ('running','recovering') OR recovery IS NOT NULL) LIMIT 1`, [binding.worktree_id]);
       const mirrors = await tx.executeRaw('SELECT id FROM persistence_effects WHERE worktree_id=$1::uuid AND recovery IS NOT NULL LIMIT 1', [binding.worktree_id]);
-      if (pending.length || mirrors.length || worktreeManifest(root).digest !== expectedManifest) throw new OperationError('recovery_required', 'Transfer state changed; prepare again.');
+      if (pending.length || mirrors.length) throw new OperationError('recovery_required', 'Transfer state changed; prepare again.');
       if (opts.selfTransfer) repairPhysicalRoot(root, owner.manifest.self_transfer!, { hostId, worktreeId: binding.worktree_id, coordinationPath: coordination }, opts.dryRun);
       else if (!opts.dryRun) await preparePhysicalRootTransfer(tx, root, { hostId, worktreeId: binding.worktree_id, coordinationPath: coordination, expectedEpoch });
       if (opts.dryRun) return;

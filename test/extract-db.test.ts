@@ -56,9 +56,9 @@ describe('gbrain extract links --source db', () => {
 
     await runExtract(engine, ['links', '--source', 'db']);
 
-    const links = await engine.getLinks('meetings/standup');
+    const links = await engine.getBacklinks('meetings/standup');
     expect(links.length).toBe(2);
-    expect(new Set(links.map(l => l.to_slug))).toEqual(new Set(['people/alice', 'people/bob']));
+    expect(new Set(links.map(l => l.from_slug))).toEqual(new Set(['people/alice', 'people/bob']));
     expect(links.every(l => l.link_type === 'attended')).toBe(true);
   });
 
@@ -295,7 +295,7 @@ describe('--since ref-level prefilter (#4304)', () => {
 
     await runExtract(engine, ['links', '--source', 'db', '--since', '2000-01-01']);
 
-    expect((await engine.getLinks('meetings/standup')).length).toBeGreaterThanOrEqual(1);
+    expect((await engine.getBacklinks('meetings/standup')).length).toBeGreaterThanOrEqual(1);
   });
 
   test('timeline walk applies --since at the ref level too', async () => {

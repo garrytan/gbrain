@@ -25,7 +25,7 @@ import { isIdentityEntity, sameEntityName } from './entities/resolve.ts';
 // #3190: pack-aware link typing. link-inference imports only manifest-v1
 // (zod) + redos-guard (node:vm) — no cycle back into this module.
 import type { SchemaPackManifest } from './schema-pack/manifest-v1.ts';
-import { inferLinkTypeFromPack, frontmatterLinkTypeFromPack } from './schema-pack/link-inference.ts';
+import { inferLinkTypeFromPack, frontmatterLinkTypeFromPack, ownsAttendanceInference } from './schema-pack/link-inference.ts';
 import { PageRegexBudget } from './schema-pack/redos-guard.ts';
 
 /**
@@ -52,6 +52,12 @@ export { parseInlineCitationTimelineEntries, type InlineCitationTimelineCandidat
  * OR updated_at > links_extracted_at`. It is an ISO-8601 string (NOT a number) —
  * the column is TIMESTAMPTZ and the predicate binds it as `::timestamptz`.
  */
+// 2026-10-01: eval wave N9-2/N9-3/N12-7 — schema-pack frontmatter mappings
+// keep FRONTMATTER_LINK_MAP's declared direction (company `investors:` is
+// investor -> company, meeting `attendees:` is person -> meeting), and a
+// pack's `attended` verb on a meeting page follows canonical evidence-gated
+// attendance, so edges the legacy gbrain-base pack stored backwards (or typed
+// attended from a notes mention) re-derive on `extract --stale`.
 // 2026-09-30: #5749 — with link_resolution.global_basename on, a unique
 // basename match resolves a frontmatter wikilink before the fuzzy and live
 // keyword steps, so edges the managed stale sweep re-pointed at a transcript
@@ -82,7 +88,7 @@ export { parseInlineCitationTimelineEntries, type InlineCitationTimelineCandidat
 // PRE-wave code after this date reads as fresh and won't re-extract until
 // the page is next edited; no fixed watermark can cover code that keeps
 // running past it.
-export const LINK_EXTRACTOR_VERSION_TS = '2026-09-30T00:00:00Z';
+export const LINK_EXTRACTOR_VERSION_TS = '2026-10-01T00:00:00Z';
 
 // ─── Entity references ──────────────────────────────────────────
 
@@ -651,6 +657,7 @@ export async function extractPageLinks(
   // here and every such edge landed as 'mentions'.
   const pack = opts.pack ?? null;
   const packBudget = pack ? new PageRegexBudget() : undefined;
+  const packOwnsAttendance = ownsAttendanceInference(pack);
   // Timeline / See-also links never receive the page-role prior — see
   // rolePriorSuppressedRanges (matched on the code-stripped content, so a
   // fenced `## Timeline` never opens a range). idx is the link's position in
@@ -665,7 +672,7 @@ export async function extractPageLinks(
     const targetType = opts.targetType?.(targetSlug, sourceId);
     if (pack) {
       const packVerb = inferLinkTypeFromPack(pack, pageType as string, ctx, packBudget, targetType);
-      if (packVerb) {
+      if (packVerb && (packOwnsAttendance || packVerb !== 'attended' || pageType !== 'meeting')) {
         if (packVerb === 'attended' && pageType === 'meeting'
           && (opts.targetType ? targetType !== 'person' : !targetSlug.startsWith('people/'))) return { linkType: 'mentions' };
         return { linkType: packVerb };
@@ -673,7 +680,7 @@ export async function extractPageLinks(
     }
     if (pageType === 'meeting') {
       if (!bodyReference) return { linkType: 'mentions' };
-      if (pack?.link_types.some(lt => lt.name === 'attended' && (lt.inference?.page_type || lt.inference?.target_type))) return { linkType: 'mentions' };
+      if (packOwnsAttendance && pack?.link_types.some(lt => lt.name === 'attended' && (lt.inference?.page_type || lt.inference?.target_type))) return { linkType: 'mentions' };
       if (idx !== undefined && hasAttendanceEvidence(attendanceRanges, idx)) {
         attendancePending.add(idx);
         if (!opts.targetType || targetType !== undefined) attendanceResolved.add(idx);
@@ -1721,7 +1728,10 @@ export async function extractFrontmatterLinks(
         const prefixes = pack.page_types?.find(pt => pt.name === expectedType)?.path_prefixes.map(p => p.replace(/^\/+|\/+$/g, ''));
         const legacy = FRONTMATTER_LINK_MAP.find(mapping => mapping.fields.includes(field)
           && (!mapping.pageType || mapping.pageType === pageType));
-        packMappings.push({ fields: [field], type, direction: 'outgoing', dirHint: prefixes?.length ? prefixes : legacy?.dirHint ?? '' });
+        const declared = FRONTMATTER_LINK_MAP.find(mapping => mapping.type === type
+          && (!mapping.pageType || mapping.pageType === pageType));
+        packMappings.push({ fields: [field], type, direction: declared?.direction ?? 'outgoing',
+          dirHint: prefixes?.length ? prefixes : legacy?.dirHint ?? '' });
       }
     }
   }
@@ -1789,10 +1799,10 @@ export async function extractFrontmatterLinks(
           continue;
         }
         onResolvedTarget?.(resolved);
-        const expectedType = packMappings.includes(mapping)
-          ? pack?.link_types.find(lt => lt.name === mapping.type)?.inference?.target_type
-          : mapping.type === 'attended' && mapping.direction === 'incoming' ? 'person' : undefined;
-        if (expectedType && (targetType || packMappings.includes(mapping)) && targetType?.(resolved) !== expectedType) {
+        const packTargetType = packMappings.includes(mapping)
+          ? pack?.link_types.find(lt => lt.name === mapping.type)?.inference?.target_type : undefined;
+        const expectedType = canonicalAttendance ? 'person' : packTargetType;
+        if (expectedType && (targetType || packTargetType) && targetType?.(resolved) !== expectedType) {
           if (targetType?.(resolved) === undefined && mapping.type === 'attended') attendanceComplete = false;
           unresolved.push({ field, name, reason: 'target_type_mismatch' });
           continue;

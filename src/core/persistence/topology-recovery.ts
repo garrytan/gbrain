@@ -7,7 +7,7 @@ import { parseSourceConfig } from '../sources-load.ts';
 import { canonicalFilesystemPath } from './root-registry.ts';
 import { managedFilesystemDatastorePath, refreshManagedFilesystemRoots, withFilesystemPublication } from './filesystem-guard.ts';
 import { localHostId } from './identity.ts';
-import { worktreeManifest } from './ownership.ts';
+import { compactStoredManifest, worktreeManifest } from './ownership.ts';
 import { advanceTopology, lockTopologyPrincipal, settleTopologyRequests, topologyCanonicalStamp, withTopologyLocks } from './topology-locks.ts';
 import { withCoordinatedWrite } from './context.ts';
 import { releaseTopologyReservation, type TopologyChange } from './topology-receipts.ts';
@@ -148,7 +148,7 @@ export async function finishTopologyClone(engine:BrainEngine,id:string,hooks:Clo
             else await tx.executeRaw('UPDATE sources SET last_commit=NULL,last_sync_at=NULL WHERE id=$1 AND incarnation=$2::uuid',[record.sourceId,record.incarnation]);
           });
           await advanceTopology(tx,[record.worktreeId]);
-          await tx.executeRaw('UPDATE persistence_worktrees SET manifest=$2::text::jsonb WHERE id=$1::uuid',[record.worktreeId,JSON.stringify({...record.manifest,canonical_stamp:await topologyCanonicalStamp(tx,record.worktreeId)})]);
+          await tx.executeRaw('UPDATE persistence_worktrees SET manifest=$2::text::jsonb WHERE id=$1::uuid',[record.worktreeId,JSON.stringify({...(record.manifest?compactStoredManifest(record.manifest):null),canonical_stamp:await topologyCanonicalStamp(tx,record.worktreeId)})]);
           await refreshManagedFilesystemRoots(tx,managedFilesystemDatastorePath(engine));
           await tx.executeRaw("UPDATE persistence_topology_changes SET state='committed',outcome=outcome||$2::text::jsonb,updated_at=now() WHERE id=$1::uuid",
             [row.id,JSON.stringify({cloned:true,local_path:record.target})]);

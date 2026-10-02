@@ -75,7 +75,7 @@ async function marker(engine: BrainEngine, sourceId: string) {
 }
 
 async function attended(engine: BrainEngine, sourceId: string) {
-  return (await engine.getLinks(MEETING, { sourceId })).filter(l => l.to_slug === PERSON && l.link_type === 'attended').length;
+  return (await engine.getBacklinks(MEETING, { sourceId })).filter(l => l.from_slug === PERSON && l.link_type === 'attended').length;
 }
 
 /** A managed filesystem source with the meeting and its link target; auto_link off so extraction owns the links. */

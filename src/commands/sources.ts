@@ -18,6 +18,7 @@
  *   gbrain sources detach        — remove .gbrain-source from CWD
  *   gbrain sources federate <id>   — sources.config.federated = true
  *   gbrain sources unfederate <id> — sources.config.federated = false
+ *   gbrain sources mirror-readonly|mirror-writable <id> — sources.config.mirror_read_only (#5409)
  *   gbrain sources push [<id>|--path <dir>] — scan-gated add→commit→pull→push
  *                               (agent-bootstrap; core in src/core/workspace-push.ts)
  *
@@ -99,6 +100,7 @@ interface SourceListEntry {
   name: string;
   local_path: string | null;
   federated: boolean;
+  mirror_read_only: boolean;
   page_count: number;
   last_sync_at: string | null;
 }
@@ -727,6 +729,7 @@ async function runList(engine: BrainEngine, args: string[]): Promise<void> {
       name: r.name,
       local_path: r.local_path,
       federated: isFederated(r.config),
+      mirror_read_only: parseConfig(r.config).mirror_read_only === true,
       page_count: pageCount,
       last_sync_at: r.last_sync_at ? new Date(r.last_sync_at).toISOString() : null,
     });
@@ -1867,6 +1870,7 @@ export async function runSources(engine: BrainEngine, args: string[]): Promise<v
     case 'detach':     runDetach(); return;
     case 'federate':   return runFederate(engine, rest, true);
     case 'unfederate': return runFederate(engine, rest, false);
+    case 'mirror-readonly': case 'mirror-writable': return (await import('./sources-mirror.ts')).runMirrorMode(engine, rest, sub === 'mirror-readonly');
     case 'archive':    return runArchive(engine, rest);
     case 'restore':    return runRestore(engine, rest);
     case 'purge':      return runPurge(engine, rest);
@@ -1951,6 +1955,8 @@ Subcommands:
                                     brain needed. See docs/guides/github-source.md.
   federate <id>                     Make source appear in cross-source default search.
   unfederate <id>                   Isolate source from default search.
+  mirror-readonly <id>              Read-only mirror (#5409): managed writes never touch its checkout.
+  mirror-writable <id>              Undo mirror-readonly.
   set-cr-mode <id> <none|title|per_chunk_synopsis>
                                     Per-source contextual retrieval mode
                                     override (v0.40.3.0). Pass "unset" or

@@ -120,3 +120,19 @@ describe('resolveSynopsisMaxTokens config resolver (#3883)', () => {
     expect(await resolveSynopsisMaxTokens(throwing)).toBeUndefined();          // fail-open
   });
 });
+
+describe('surrogate-safe document truncation (#5316)', () => {
+  test('an astral char straddling the cap produces no unpaired surrogate in the prompt', async () => {
+    const { SYNOPSIS_DOC_MAX_CHARS } = await import('../src/core/page-summary.ts');
+    const captured: ChatOpts[] = [];
+    stubChat({ stopReason: 'end' }, captured);
+    const documentText =
+      'a'.repeat(SYNOPSIS_DOC_MAX_CHARS - 1) + '𝑇' + 'b'.repeat(100);
+    const result = await generatePerChunkSynopsis({ ...baseArgs, documentText });
+    expect(result.kind).toBe('success');
+    const prompt = captured[0].messages[0].content as string;
+    expect(prompt.isWellFormed()).toBe(true);
+    expect(() => JSON.parse(JSON.stringify(prompt))).not.toThrow();
+    expect(prompt).toContain('chars truncated for synopsis budget');
+  });
+});

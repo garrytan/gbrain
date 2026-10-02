@@ -78,6 +78,8 @@ describe("guard registration ⇒ execution coverage", () => {
       "duplicates check:admin-build's vite+tsc build; embed freshness covered there",
     "check-image-decoders-embedded.sh":
       "runs its own bun build --compile — too heavy for per-verify cadence",
+    "check-bash32.sh":
+      "needs Docker or a native bash 3.2: runs as a test.yml verify-job step (bash:3.2 image) and in macos-validation.yml (/bin/bash), never in verify",
     "check-test-discriminates.sh":
       "manual per-PR discrimination helper (#3665): reverts named source files and re-runs bun test to prove the test fails without the fix — cannot know which hunk is 'the fix' on an arbitrary diff, so deliberately not in verify/CI (manifest row says the same)",
   };

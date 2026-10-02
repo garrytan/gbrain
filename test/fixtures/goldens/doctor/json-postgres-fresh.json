@@ -298,6 +298,22 @@
           "status": "ok"
         },
         {
+          "category": "brain",
+          "details": {
+            "docs": "docs/guides/repair.md#embedding-key-source",
+            "embedding_key": {
+              "config_key": "voyage_api_key",
+              "kind": "missing",
+              "variable": "VOYAGE_API_KEY"
+            },
+            "embedding_model": "voyage:voyage-4",
+            "shadows": []
+          },
+          "message": "No embedding key is set here (VOYAGE_API_KEY or voyage_api_key). No environment variable overrides a different config-plane provider key. This check sees only the environment `gbrain doctor` runs in; a daemon (gbrain serve, autopilot) has its own, and reports a mismatch in its log with a startup warning or embedding_auth_failed.",
+          "name": "embedding_key_source",
+          "status": "ok"
+        },
+        {
           "category": "ops",
           "message": "Connected, 0 pages",
           "name": "connection",
@@ -365,19 +381,19 @@
         },
         {
           "category": "ops",
-          "message": "RLS enabled on 99/99 public tables",
+          "message": "RLS enabled on 100/100 public tables",
           "name": "rls",
           "status": "ok"
         },
         {
           "category": "meta",
-          "message": "Version 186 (latest: 186)",
+          "message": "Version 188 (latest: 188)",
           "name": "schema_version",
           "status": "ok"
         },
         {
           "category": "meta",
-          "message": "807 column(s) verified against live schema",
+          "message": "816 column(s) verified against live schema",
           "name": "schema_columns",
           "status": "ok"
         },
@@ -648,6 +664,20 @@
         {
           "category": "ops",
           "details": {
+            "column": "embedding",
+            "column_type": "vector(1024)",
+            "docs": "docs/guides/troubleshooting.md#hybrid-search-returns-only-keyword-hits",
+            "embedded_chunks_estimate": 0,
+            "outcome": "skipped",
+            "reason": "small_brain"
+          },
+          "message": "Skipped: about 0 embedded chunk(s) in embedding; below 10000 a sequential scan is the right plan.",
+          "name": "vector_plan",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "details": {
             "command": "gbrain repair embedding-effects",
             "count": "exact",
             "docs": "docs/guides/repair.md#stale-queued-embedding-effects",
@@ -661,6 +691,19 @@
           },
           "message": "No committed write has a stale queued or failed embedding effect.",
           "name": "stale_embedding_effects",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "ambiguous": 0,
+            "docs": "docs/guides/repair.md#explicit-only-repair-kinds",
+            "evidenced": 0,
+            "excluded": 0,
+            "repair": "extractor-facts"
+          },
+          "message": "No conversation-extractor fact is left expired by the pre-v0.60.11.0 projection.",
+          "name": "extractor_facts_expired",
           "status": "ok"
         },
         {
@@ -824,6 +867,23 @@
           "status": "ok"
         },
         {
+          "category": "ops",
+          "details": {
+            "active_ids": [],
+            "authorizable": {},
+            "authorizable_total": 0,
+            "docs": "docs/guides/repair.md#legacy-job-authority",
+            "live": 0,
+            "terminal_keyed": {},
+            "terminal_keyed_total": 0,
+            "unsupported": 0,
+            "unsupported_ids": []
+          },
+          "message": "No queued job predates submission authority.",
+          "name": "legacy_job_authority",
+          "status": "ok"
+        },
+        {
           "category": "brain",
           "message": "No image assets indexed yet",
           "name": "image_assets",
@@ -926,6 +986,34 @@
           "category": "ops",
           "message": "System One is off (every decide slot is off; nothing is sent).",
           "name": "decide_health",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "fix": "preview links: gbrain facts relink --dry-run",
+            "inferred_7d": {
+              "mention": 0,
+              "page": 0
+            },
+            "new_7d": {
+              "facts": 0,
+              "no_subject": 0,
+              "unlinked": 0
+            },
+            "no_subject": 0,
+            "origins": [],
+            "relinked_7d": {},
+            "sources": 1,
+            "window": {
+              "active": 0,
+              "capped": false,
+              "fence_owned": 0,
+              "unlinked": 0
+            }
+          },
+          "message": "No active facts yet; nothing to link.",
+          "name": "unlinked_facts",
           "status": "ok"
         },
         {

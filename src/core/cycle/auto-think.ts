@@ -42,6 +42,8 @@ export interface AutoThinkPhaseOpts {
   client?: ThinkLLMClient;
   /** Override the audit-ledger path (tests). */
   auditPath?: string;
+  /** #5426: source the cycle runs for; syntheses are saved there. */
+  sourceId?: string;
 }
 
 export interface AutoThinkConfig {
@@ -173,6 +175,7 @@ export async function runPhaseAutoThink(
         // Fail-closed trust: the local dream cycle must say so explicitly, or
         // trajectory injection degrades to visibility='world' rows.
         remote: false,
+        ...(opts.sourceId ? { sourceId: opts.sourceId } : {}),
       });
       // #1698: an empty synthesis (no LLM available / malformed output / empty-JSON answer)
       // must NOT count as complete or advance the cooldown — that is the same silent-success
@@ -185,7 +188,7 @@ export async function runPhaseAutoThink(
       const warnings = [...result.warnings];
       let slug: string | undefined;
       if (config.autoCommit) {
-        const persisted = await persistSynthesis(engine, result);
+        const persisted = await persistSynthesis(engine, result, opts.sourceId ? { sourceId: opts.sourceId } : {});
         slug = persisted.slug || undefined;  // '' = persist-skip signal (#1698)
         warnings.push(...persisted.warnings);
       }

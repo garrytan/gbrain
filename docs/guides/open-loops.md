@@ -24,6 +24,10 @@ zero LLM, free, always on). For every synced Gmail thread:
   ≥72h → `unanswered_outbound` — *you are waiting on them*.
 - a reply lands → the loop **closes itself** (`closed_by: reply_detected`).
   Loops close by state transition, never delete — the audit trail stays.
+- "unanswered" is measured from the oldest unanswered message since the
+  last turn flip (the first one addressed to you, or your first question),
+  so a nudge or follow-up never restarts the clock — a request that waited
+  40h and got a "bumping this" 5h ago opens on the first sync.
 
 Precision rules (pinned by a labeled fixture corpus in
 `test/google-loop-detect.test.ts` — every false-positive class gets a

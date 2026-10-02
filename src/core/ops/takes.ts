@@ -24,6 +24,7 @@ import {
   TakesWriteError,
 } from '../takes-write.ts';
 import { embedQuery } from '../embedding.ts';
+import { ALL_SOURCES } from '../source-id.ts';
 import { privatePagesFilterFragment } from '../search/private-visibility.ts';
 
 // --- v0.28: Takes ---
@@ -238,7 +239,11 @@ const think: Operation = {
     let savedSlug: string | undefined;
     let evidenceInserted = 0;
     if (safeSave) {
-      const persisted = await persistSynthesis(ctx.engine, result);
+      const persisted = await persistSynthesis(ctx.engine, result, {
+        // '__all__' is a read scope, not a write destination: an unscoped save keeps the default source.
+        sourceId: ctx.sourceId === ALL_SOURCES ? undefined : ctx.sourceId,
+        ...(thinkScope.allowedSources ? { allowedSources: thinkScope.allowedSources } : {}),
+      });
       savedSlug = persisted.slug;
       evidenceInserted = persisted.evidenceInserted;
       for (const w of persisted.warnings) result.warnings.push(w);

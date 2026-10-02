@@ -340,67 +340,35 @@ describe('checkpoint compaction (cathedral 5)', () => {
   });
 
   it('F5/CK9 drift guard: hook.ts sanitizeSessionId, corpus-segments safeIdComponent, and sanitizeEngineSessionId map an identical probe set to IDENTICAL keys', async () => {
-    const { runHook } = await import('../src/commands/hook.ts');
+    const { sanitizeSessionId } = await import('../src/commands/hook.ts');
     const { segmentFileName, parseSegmentFileName } = await import('../src/core/context/corpus-segments.ts');
 
-    // hook.ts's copy is module-private; its stop lane names the live-buffer
-    // file `${sanitizeSessionId(id)}.txt` — the filename IS the mapping seam
-    // (same seam test/hook-command.serial.test.ts already pins for one id).
-    const savedEnv: Record<string, string | undefined> = {};
-    for (const k of ['GBRAIN_HOOKS', 'GBRAIN_HOOK_LANE', 'GBRAIN_STOP_PUSH']) savedEnv[k] = process.env[k];
-    delete process.env.GBRAIN_HOOKS;
-    delete process.env.GBRAIN_HOOK_LANE;
-    process.env.GBRAIN_STOP_PUSH = '0'; // stop-push arm skips instantly
-    const ws = mkdtempSync(join(tmpdir(), 'gb-ckpt-drift-ws-'));
-    try {
-      let probeN = 0;
-      const hookKey = async (probe: unknown): Promise<string> => {
-        const marker = `drift-probe-${++probeN}-marker`;
-        const code = await runHook(['stop'], {
-          stdin: JSON.stringify({ session_id: probe, last_assistant_message: marker }),
-          cwd: ws, // non-bootstrap workspace: no push machinery runs
-          spawnPush: () => { /* never spawns */ },
-          disableTelemetry: true,
-        });
-        expect(code).toBe(0);
-        const liveDir = join(home!, '.gbrain', 'transcripts', 'live');
-        const hit = readdirSync(liveDir).filter(
-          (f) => f.endsWith('.txt') && readFileSync(join(liveDir, f), 'utf8').includes(marker),
-        );
-        expect(hit).toHaveLength(1);
-        return hit[0].slice(0, -'.txt'.length);
-      };
-      // Third copy (corpus-segments safeIdComponent) read back through its
-      // exported filename builder + parser.
-      const segKey = (probe: string): string => {
-        const parsed = parseSegmentFileName(segmentFileName(probe, 'a'.repeat(24)));
-        expect(parsed).not.toBeNull();
-        return parsed!.sessionId;
-      };
+    // hook.ts's copy is exported for this guard (#5558 removed the stop-lane
+    // live-buffer file that used to expose the mapping).
+    // Third copy (corpus-segments safeIdComponent) read back through its
+    // exported filename builder + parser.
+    const segKey = (probe: string): string => {
+      const parsed = parseSegmentFileName(segmentFileName(probe, 'a'.repeat(24)));
+      expect(parsed).not.toBeNull();
+      return parsed!.sessionId;
+    };
 
-      const probes = ['oc:sess/2026-08', 'a b', '../x', 'UPPER', 'L'.repeat(300)];
-      for (const probe of probes) {
-        const engineKey = sanitizeEngineSessionId(probe);
-        expect(engineKey).not.toBeNull(); // every probe keeps a safe residue
-        expect(await hookKey(probe)).toBe(engineKey!);
-        expect(segKey(probe)).toBe(engineKey!);
-      }
-
-      // Deliberate divergence, pinned so it can only change LOUDLY: degenerate
-      // ids map to hook.ts's 'unknown' sentinel but to engine null — compact()
-      // treats a shared-'unknown' bucket as ABSENT (cross-session pollution),
-      // per the hook.ts compact lane's own sentinel check.
-      expect(sanitizeEngineSessionId('...')).toBeNull();
-      expect(await hookKey('...')).toBe('unknown');
-      expect(sanitizeEngineSessionId(1234)).toBeNull();
-      expect(await hookKey(1234)).toBe('unknown');
-    } finally {
-      rmSync(ws, { recursive: true, force: true });
-      for (const [k, v] of Object.entries(savedEnv)) {
-        if (v === undefined) delete process.env[k];
-        else process.env[k] = v;
-      }
+    const probes = ['oc:sess/2026-08', 'a b', '../x', 'UPPER', 'L'.repeat(300)];
+    for (const probe of probes) {
+      const engineKey = sanitizeEngineSessionId(probe);
+      expect(engineKey).not.toBeNull(); // every probe keeps a safe residue
+      expect(sanitizeSessionId(probe)).toBe(engineKey!);
+      expect(segKey(probe)).toBe(engineKey!);
     }
+
+    // Deliberate divergence, pinned so it can only change LOUDLY: degenerate
+    // ids map to hook.ts's 'unknown' sentinel but to engine null — compact()
+    // treats a shared-'unknown' bucket as ABSENT (cross-session pollution),
+    // per the hook.ts compact lane's own sentinel check.
+    expect(sanitizeEngineSessionId('...')).toBeNull();
+    expect(sanitizeSessionId('...')).toBe('unknown');
+    expect(sanitizeEngineSessionId(1234)).toBeNull();
+    expect(sanitizeSessionId(1234)).toBe('unknown');
   });
 });
 

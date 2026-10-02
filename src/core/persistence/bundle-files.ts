@@ -18,12 +18,22 @@ function unsafe(): OperationError {
   return new OperationError('storage_error', 'Skill publication requires bounded regular files without aliases, links, or special files.');
 }
 
+/**
+ * #5776: check each path segment, not the joined relative path. On Windows the
+ * separator is a backslash, so testing the whole relative path for one
+ * rejected every nested bundle file there.
+ */
+export function bundleRelativePathIsSafe(rel: string, pathSep: string = sep): boolean {
+  const parts = rel.split(pathSep);
+  return parts.length <= BUNDLE_FILE_LIMITS.depth && parts.every(part => part !== '' && !/[\\/\x00-\x1f:]/.test(part));
+}
+
 export function readBundleFile(path: string, root: string): { bytes: Buffer; mode: number } | null {
   if (!path.isWellFormed() || path !== path.normalize('NFC')) throw unsafe();
   const rel = relative(root, path);
   if (!isAbsolute(path) || path !== resolve(path) || !rel || isAbsolute(rel) || rel.startsWith(`..${sep}`) || rel === '..'
     || !rel.isWellFormed() || rel !== rel.normalize('NFC')
-    || rel.split(sep).length > BUNDLE_FILE_LIMITS.depth || /[\\\x00-\x1f:]/.test(rel)) throw unsafe();
+    || !bundleRelativePathIsSafe(rel)) throw unsafe();
   if (realpathSync(root) !== root || !lstatSync(root).isDirectory()) throw unsafe();
   const parts = rel.split(sep);
   let current = root;

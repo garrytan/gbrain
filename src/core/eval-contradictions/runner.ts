@@ -118,8 +118,12 @@ function searchResultToMember(r: SearchResult): PairMember {
     text: r.chunk_text,
     // Lane A1: effective_date carried through from the search projection.
     // null when the page has no temporal anchor (judge will see `(date unknown)`).
-    effective_date: r.effective_date ?? null,
-    effective_date_source: r.effective_date_source ?? null,
+    // N2-1: a 'fallback' (or unlabeled) date is the page's recorded time, not a
+    // temporal anchor — passing it on made the date filter never skip and let
+    // temporal_supersede name the wrong side. Same rule as deriveTimelineAnchor.
+    ...(r.effective_date && r.effective_date_source && r.effective_date_source !== 'fallback'
+      ? { effective_date: r.effective_date, effective_date_source: r.effective_date_source }
+      : { effective_date: null, effective_date_source: null }),
   };
 }
 

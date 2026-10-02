@@ -52,7 +52,31 @@ describe('stdio MCP source resolution', () => {
         dir,
       );
 
-      expect(scope).toEqual({ sourceId: 'team-alpha', tier: 'dotfile' });
+      // #5081: an explicit tier carries the explicit-read binding; no source
+      // in this fixture is federated, so it admits only the bound source.
+      expect(scope).toEqual({
+        sourceId: 'team-alpha',
+        tier: 'dotfile',
+        explicitReadBinding: { sourceId: 'team-alpha', via: '.gbrain-source', sourceIds: ['team-alpha'], optedOut: [] },
+      });
+    });
+  });
+
+  test('#5081: a failed admission lookup keeps the resolved pin instead of falling back to default', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-mcp-source-'));
+    scratchDirs.push(dir);
+    writeSourceDotfile(dir, 'team-alpha');
+    const base = makeEngine(['default', 'team-alpha']);
+    const failing = {
+      ...base,
+      executeRaw: async <T>(sql: string, params?: unknown[]): Promise<T[]> => {
+        if (/SELECT id, config/.test(sql)) throw new Error('sources table unavailable');
+        return base.executeRaw<T>(sql, params);
+      },
+    } as unknown as BrainEngine;
+
+    await withEnv({ GBRAIN_SOURCE: undefined }, async () => {
+      expect(await resolveMcpStdioSourceScope(failing, dir)).toEqual({ sourceId: 'team-alpha', tier: 'dotfile' });
     });
   });
 
@@ -67,7 +91,11 @@ describe('stdio MCP source resolution', () => {
         dir,
       );
 
-      expect(scope).toEqual({ sourceId: 'env-source', tier: 'env' });
+      expect(scope).toEqual({
+        sourceId: 'env-source',
+        tier: 'env',
+        explicitReadBinding: { sourceId: 'env-source', via: 'GBRAIN_SOURCE', sourceIds: ['env-source'], optedOut: [] },
+      });
     });
   });
 });

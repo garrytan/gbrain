@@ -8,6 +8,7 @@
  * listed in docs/designs/refactor-wave-1/w1-inventory.md and left as is.
  */
 import type { PGlite } from '@electric-sql/pglite';
+import { rowToCodeEdge } from '../engine-sql/code-edges.ts';
 
 /** Narrow slice of PGLiteEngine this read uses. */
 export interface PgliteCodeEdgesDeps {
@@ -56,17 +57,3 @@ export async function getEdgesByChunk(
     );
     return (rows as Record<string, unknown>[]).map(rowToCodeEdge);
   }
-
-function rowToCodeEdge(row: Record<string, unknown>): import('../types.ts').CodeEdgeResult {
-  return {
-    id: row.id as number,
-    from_chunk_id: row.from_chunk_id as number,
-    to_chunk_id: row.to_chunk_id == null ? null : (row.to_chunk_id as number),
-    from_symbol_qualified: (row.from_symbol_qualified as string) ?? '',
-    to_symbol_qualified: (row.to_symbol_qualified as string) ?? '',
-    edge_type: (row.edge_type as string) ?? '',
-    edge_metadata: (row.edge_metadata as Record<string, unknown>) ?? {},
-    source_id: row.source_id == null ? null : (row.source_id as string),
-    resolved: Boolean(row.resolved),
-  };
-}

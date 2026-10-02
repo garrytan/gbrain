@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { targetedWithdrawalEffect, upgradeWithdrawalEffect } from './effect-targets.ts';
 import { existsSync, statSync } from 'node:fs';
-import { join, relative, sep } from 'node:path';
+import { basename, join, relative, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import { PERSISTENCE_PROTOCOL_PREDICATE } from './protocol.ts';
 import type { GBrainConfig } from '../config.ts';
@@ -30,10 +30,12 @@ import { guardEffectSource, recoverEffectPublication, reserveEffectRecovery } fr
 import { commitGitTargets, publishGitEffect, pushGitRoot } from './effect-git.ts';
 import { isDurabilityHardenedAsync } from '../brain-repo-durability.ts';
 import { dispatchFactsBackstopEffect } from './effect-facts.ts';
-import { PARK_AFTER_FAILURES, type EffectRecovery, type PersistenceEffect } from './effect-model.ts';
+import { PARK_AFTER_FAILURES, type EffectRecovery, type PersistenceEffect, type SkippedTarget } from './effect-model.ts';
+import { SYNC_SKIP_FILES } from '../sync.ts';
 import { recoveryStagingFile } from './staging.ts';
 import { selectEffectRecoveries } from './effect-recovery-scan.ts';
 import { nativeFileTarget } from './native-file-target.ts';
+import { sourceMirrorReadOnly } from './mirror-read-only.ts';
 
 export interface EffectWorkerOptions {
   hostId: string;
@@ -77,7 +79,8 @@ async function finishPage(engine: BrainEngine, effect: PersistenceEffect, snapsh
 }
 
 /** Missing physical files never prevent the authoritative withdrawal from materializing. */
-async function materializeAndAdvance(engine: BrainEngine, effect: PersistenceEffect, snapshot: PageSnapshot, hostId: string): Promise<void> {
+async function materializeAndAdvance(engine: BrainEngine, effect: PersistenceEffect, snapshot: PageSnapshot, hostId: string,
+  skipped?: SkippedTarget['reason']): Promise<void> {
   await engine.transaction(async tx => {
     await tx.executeRaw("SELECT set_config('synchronous_commit','on',true),set_config('lock_timeout','1s',true),set_config('statement_timeout','5s',true)");
     await guardEffectSource(tx, effect, hostId);
@@ -85,8 +88,30 @@ async function materializeAndAdvance(engine: BrainEngine, effect: PersistenceEff
     const current = await tx.readPageSnapshot(snapshot.page.slug, { sourceId: effect.source_id, includeDeleted: true });
     if (current?.revision !== snapshot.revision || current.page.id !== snapshot.page.id) throw new OperationError('revision_conflict', 'The withdrawal page changed during preparation.');
     await materializePageSnapshot(tx, current);
+    if (skipped) await recordSkippedTarget(tx, effect, { slug: current.page.slug, reason: skipped });
     await finishPage(tx, effect, current);
   });
+}
+
+/** At most this many skipped scan targets are recorded on one effect. */
+const SKIPPED_TARGET_LIMIT = 100;
+
+async function recordSkippedTarget(engine: BrainEngine, effect: PersistenceEffect, target: SkippedTarget): Promise<void> {
+  await engine.executeRaw(`UPDATE persistence_effects SET data=jsonb_set(data,'{skipped}',COALESCE(data->'skipped','[]'::jsonb)||$3::text::jsonb)
+    WHERE id=$1 AND execution_token=$2::uuid AND jsonb_array_length(COALESCE(data->'skipped','[]'::jsonb))<$4`,
+  [effect.id, effect.execution_token, JSON.stringify([target]), SKIPPED_TARGET_LIMIT]);
+}
+
+/**
+ * #5396: sync never imports a metafile (RESOLVER.md carries the managed durability block by design),
+ * so its legacy page and file diverge; a scan never publishes either one to the other.
+ */
+function isMetafilePage(snapshot: PageSnapshot): boolean {
+  return !!snapshot.page.source_path && (SYNC_SKIP_FILES as readonly string[]).includes(basename(snapshot.page.source_path));
+}
+
+function isFileDatabaseDrift(error: unknown): boolean {
+  return error instanceof OperationError && error.code === 'source_changed' && error.detail === 'file_database_drift';
 }
 
 /** The target a failing attempt was working on; unset means the failure is effect-wide. */
@@ -97,8 +122,16 @@ async function mirrorPage(engine: BrainEngine, effect: PersistenceEffect, bindin
   if (!snapshot) { await completeEffect(engine, effect); return; }
   attempt.target = snapshot.page.slug;
   if (snapshot.sourceIncarnation !== effect.source_incarnation) throw new OperationError('source_changed', 'The mirror source was replaced.');
+  if (isMetafilePage(snapshot)) { await materializeAndAdvance(engine, effect, snapshot, opts.hostId, 'metafile'); return; }
   const content = serializePageToMarkdown(snapshot.page, snapshot.tags);
-  const file = binding?.local_path ? await prepareFileTarget(engine, { ...effect, slug: snapshot.page.slug }, snapshot, content, opts.hostId, { allowMissing: true }) : undefined;
+  let file: Awaited<ReturnType<typeof prepareFileTarget>>;
+  try {
+    file = binding?.local_path ? await prepareFileTarget(engine, { ...effect, slug: snapshot.page.slug }, snapshot, content, opts.hostId, { allowMissing: true }) : undefined;
+  } catch (error) {
+    if (!isFileDatabaseDrift(error)) throw error;
+    await materializeAndAdvance(engine, effect, snapshot, opts.hostId, 'file_database_drift');
+    return;
+  }
   if (!file || snapshot.page.deleted_at || !existsSync(file.path)) {
     // A withdrawal cannot resurrect a deleted or missing physical page.
     await materializeAndAdvance(engine, effect, snapshot, opts.hostId);
@@ -142,6 +175,8 @@ async function singleFileGitTarget(engine: BrainEngine, effect: PersistenceEffec
 async function gitPage(engine: BrainEngine, effect: PersistenceEffect, binding: WorktreeBinding | null, opts: EffectWorkerOptions,
   attempt: EffectAttempt, hardened: boolean | undefined): Promise<void> {
   if (!binding?.local_path) { await completeEffect(engine, effect, { git: 'skipped', reason: 'no_repo_configured' }); return; }
+  // #5409: a read-only mirror's checkout is never committed to; its publications wrote no file.
+  if (await sourceMirrorReadOnly(engine, effect.source_id)) { await completeEffect(engine, effect, { git: 'skipped', reason: 'mirror_read_only' }); return; }
   const root = binding.local_path;
   if (!targetedWithdrawalEffect(effect) && !effect.data.source_scan) {
     const target = await singleFileGitTarget(engine, effect, { ...binding, local_path: root }, attempt);
@@ -152,8 +187,20 @@ async function gitPage(engine: BrainEngine, effect: PersistenceEffect, binding: 
   const snapshot = await selectedEffectPage(engine, effect);
   if (!snapshot) { await completeEffect(engine, effect); return; }
   attempt.target = snapshot.page.slug;
-  const file = await prepareFileTarget(engine, { ...effect, slug: snapshot.page.slug }, snapshot,
-    snapshot.page.deleted_at ? null : serializePageToMarkdown(snapshot.page, snapshot.tags), opts.hostId, { allowMissing: true });
+  const skip = async (reason: SkippedTarget['reason']) => engine.transaction(async tx => {
+    await recordSkippedTarget(tx, effect, { slug: snapshot.page.slug, reason });
+    await finishPage(tx, effect, snapshot);
+  });
+  if (isMetafilePage(snapshot)) { await skip('metafile'); return; }
+  let file: Awaited<ReturnType<typeof prepareFileTarget>>;
+  try {
+    file = await prepareFileTarget(engine, { ...effect, slug: snapshot.page.slug }, snapshot,
+      snapshot.page.deleted_at ? null : serializePageToMarkdown(snapshot.page, snapshot.tags), opts.hostId, { allowMissing: true });
+  } catch (error) {
+    if (!isFileDatabaseDrift(error)) throw error;
+    await skip('file_database_drift');
+    return;
+  }
   if (!file) throw new OperationError('source_changed', 'The Git binding changed.');
   const path = file.path;
   if (!existsSync(path)) { await materializeAndAdvance(engine, effect, snapshot, opts.hostId); return; }

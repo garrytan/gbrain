@@ -160,9 +160,11 @@ describe('__all__ is never narrower than an unqualified read', () => {
     expect(federatedSearchScope(ctx, '__all__')).toEqual({
       sourceIds: ['default', 'src-a', 'src-b'],
     });
-    // Transport federation preserves unqualified reads; it does not grant an
-    // arbitrary explicit source to a caller without a durable source grant.
-    expect(() => federatedSearchScope(ctx, 'src-a')).toThrow('outside your granted sources');
+    // #5081 (CEO-A12): an explicit source inside the transport's federated
+    // set is admitted (never wider than the unqualified read above); any
+    // other explicit source is still refused.
+    expect(federatedSearchScope(ctx, 'src-a')).toEqual({ sourceId: 'src-a' });
+    expect(() => federatedSearchScope(ctx, 'src-z')).toThrow('outside your granted sources');
   });
 
   test('remote scalar scope stays pinned when no transport federation exists', () => {

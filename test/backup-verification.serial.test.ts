@@ -11,6 +11,7 @@ import { checkBackupCoverage } from '../src/commands/doctor/checks/backup-covera
 import { pushStatusPathForRoot } from '../src/core/workspace-push.ts';
 import { assessBackupRepository, BACKUP_REMOTE_PROBE_CAP, BACKUP_REMOTE_BUDGET_MS, BACKUP_REMOTE_TIMEOUT_MS } from '../src/core/backup/repository.ts';
 import { makeGitFixture } from './helpers/git-fixture.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 let tmp: string;
 let oldHome: string | undefined;
@@ -278,4 +279,20 @@ test('retained evidence is invalidated by local identity, source, commit, remote
     const result = await assessBackupRepository(root, 'source_repo', change === 'source' ? 'changed-id' : 'source-id', checked, undefined, first);
     expect(result.verification?.state).not.toBe('verified');
   }
+}, 15_000);
+
+test('the remote probe reads the user git config through HOME, so an insteadOf rewrite reaches the remote (#5794)', async () => {
+  const { root, remote } = await repository();
+  const alias = 'https://example.invalid/private-backup.git';
+  git(root, 'remote', 'set-url', 'origin', alias);
+  const userHome = join(tmp, 'user-home');
+  mkdirSync(userHome);
+  writeFileSync(join(userHome, '.gitconfig'), `[url "${remote}"]\n\tinsteadOf = ${alias}\n`);
+  const head = git(root, 'rev-parse', 'HEAD');
+  await withEnv({ HOME: userHome, GIT_CONFIG_GLOBAL: undefined, XDG_CONFIG_HOME: undefined,
+    GIT_DIR: join(tmp, 'not-a-repository'), GIT_WORK_TREE: join(tmp, 'not-a-worktree') }, async () => {
+    const result = await assessBackupRepository(root, 'source_repo', 'source-id', now, { remaining: 1 });
+    expect(result.verification).toMatchObject({ state: 'verified', local_commit: head, remote_commit: head });
+    expect(result.state).toBe('ok');
+  });
 }, 15_000);

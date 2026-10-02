@@ -9,7 +9,7 @@ import { isOwnedClone } from '../sources-ops.ts';
 import { parseSourceConfig } from '../sources-load.ts';
 import type { SourceLifecycleInput } from './source-lifecycle.ts';
 import type { TopologyCloneRecovery } from './topology-clone-model.ts';
-import { getWorktreeBinding, worktreeManifest } from './ownership.ts';
+import { compactStoredManifest, getWorktreeBinding, humanManifestProgress, worktreeManifest } from './ownership.ts';
 import { localHostId, persistenceHome } from './identity.ts';
 import { acquireNativeLock, type NativeLockHandle } from './native-lock.ts';
 import { canonicalFilesystemPath, recordManagedRoots } from './root-registry.ts';
@@ -59,7 +59,7 @@ export async function runManagedSourceClone(engine:BrainEngine,input:SourceLifec
     if(!bindings.some(binding=>binding.worktree_id===worktreeId)){newLock=await acquireNativeLock(coordination!,{timeoutMs:5000});if(!newLock)throw new OperationError('writer_lock_unavailable','The new clone coordination lock is busy.');}
     let accepted:TopologyChange|undefined;
     try{
-      const before=existsSync(target)?worktreeManifest(target):null;
+      const before=existsSync(target)?worktreeManifest(target,{progress:humanManifestProgress()}):null;
       const limits=await readJournalLimits(engine);
       const reserved=Math.min(limits.worktreeRecoveryBytes,limits.brainRecoveryBytes);
       const oldBytes=existsSync(target)?await topologyDirectoryBytes(target,reserved):0;
@@ -86,7 +86,7 @@ export async function runManagedSourceClone(engine:BrainEngine,input:SourceLifec
         const incarnation=source?.incarnation??randomUUID();
         let canonicalStamp=currentBinding?await topologyCanonicalStamp(tx,worktreeId):'';
         const [owner]=currentBinding?await tx.executeRaw<{manifest:TopologyCloneRecovery['manifest']}>('SELECT manifest FROM persistence_worktrees WHERE id=$1::uuid',[worktreeId]):[];
-        const manifest=before?{...before,canonical_stamp:canonicalStamp}:owner?.manifest??null;
+        const manifest=before?{...before,canonical_stamp:canonicalStamp}:owner?.manifest?compactStoredManifest(owner.manifest):null;
         if(input.operation==='reclone'&&(!manifest||manifest.canonical_stamp!==canonicalStamp))
           throw new OperationError('recovery_required','The missing checkout has no current verified canonical manifest. Recover it from a verified checkpoint before recloning.');
         if(manifest&&Buffer.byteLength(JSON.stringify(manifest))>1_048_576)throw new OperationError('request_too_large','The canonical manifest exceeds the 1 MiB recovery metadata bound.');
@@ -125,7 +125,7 @@ export async function runManagedSourceClone(engine:BrainEngine,input:SourceLifec
         });
         await (hooks.clone??cloneTopologyCheckout)(url,recovery.stage,recovery.cloneBudget);
         const stageBytes=await topologyDirectoryBytes(recovery.stage,recovery.cloneBudget);
-        const candidate=worktreeManifest(recovery.stage);
+        const candidate=worktreeManifest(recovery.stage,{progress:humanManifestProgress()});
         if(Buffer.byteLength(JSON.stringify(candidate))>1_048_576)throw new OperationError('request_too_large','The cloned canonical manifest exceeds its 1 MiB recovery metadata bound.');
         if(recovery.manifest&&candidate.digest!==recovery.manifest.digest)throw new OperationError('writer_manifest_mismatch','The cloned checkout differs from the verified canonical manifest, including deletions.');
         flushTopologyTree(recovery.stage);flushTopologyDirectory(dirname(recovery.stage));

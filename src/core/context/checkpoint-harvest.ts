@@ -34,7 +34,8 @@ import type { BrainEngine } from '../engine.ts';
 import type { CapabilityReport } from '../capability.ts';
 import { acquireCorpusClaim, CORPUS_CLAIM_SUFFIX, CORPUS_INGESTED_SUFFIX } from '../sweep.ts';
 import { appendCheckpointManifest } from './session-state.ts';
-import { readSegmentLedger, HARVEST_RECEIPT_SUFFIX } from './corpus-segments.ts';
+import { corpusFileSessionId, corpusTextForExtraction, readSegmentLedger, selfCaptureSidecarJson, HARVEST_RECEIPT_SUFFIX } from './corpus-segments.ts';
+import { isClaudeCliSelfSessionId } from '../ai/providers/claude-cli-scratch.ts';
 import { writeHeartbeat } from './hook-heartbeat.ts';
 
 /** Bounded queue — overflow is a typed skip; the sweep backstop extracts later. */
@@ -298,7 +299,7 @@ async function runOne(job: HarvestJob): Promise<{
       currentAbort = abort;
       let r: Awaited<ReturnType<typeof runFactsPipeline>>;
       try {
-        r = await runFactsPipeline(raw, {
+        r = await runFactsPipeline(corpusTextForExtraction(job.file, raw), {
           engine: job.engine,
           sourceId: job.sourceId,
           sessionId: job.sessionId,
@@ -399,6 +400,14 @@ async function runWritebackTurn(job: HarvestJob, full: string, ingestedPath: str
   duplicate?: number;
   superseded?: number;
 }> {
+  // #5820: a turn banked from gbrain's own claude-cli session (an older
+  // binary's Stop hook, or a child that still ran user hooks) is terminal
+  // here exactly as in the sweep — extracting it would spawn another
+  // claude-cli call that banks again.
+  if (isClaudeCliSelfSessionId(corpusFileSessionId(job.file))) {
+    await writeFile(ingestedPath, selfCaptureSidecarJson());
+    return { outcome: 'ok', reason: 'self_capture' };
+  }
   const { resolveWritebackConfig } = await import('../facts/writeback-config.ts');
   const { loadConfig } = await import('../config.ts');
   // Gate semantics ({gate:true}): a config READ FAILURE is OFF but NOT
@@ -438,7 +447,7 @@ async function runWritebackTurn(job: HarvestJob, full: string, ingestedPath: str
   currentAbort = abort;
   let r: Awaited<ReturnType<typeof runFactsPipeline>>;
   try {
-    r = await runFactsPipeline(raw, {
+    r = await runFactsPipeline(corpusTextForExtraction(job.file, raw), {
       engine: job.engine,
       sourceId: job.sourceId,
       sessionId: job.sessionId,

@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 200378,
-    "stdoutSha256": "c23df35de49ce6ca01006bf4db2ce92fb57d2f37f089f82fef292c047982b00e",
+    "stdoutBytes": 202985,
+    "stdoutSha256": "bd0de8ec965e91bfc419afeccf1983ff9bc1d2590e38ec76d3b751dd53e3fe47",
     "toolNames": [
       "remember",
       "entity",
@@ -168,6 +168,7 @@
           "expected_revision": "string?",
           "fact": "string",
           "force": "boolean?",
+          "infer_entity": "boolean?",
           "kind": "string?",
           "provenance": "string",
           "request_id": "string?",
@@ -191,6 +192,10 @@
             },
             "force": {
               "description": "Explicitly overwrite the current revision. Mutually exclusive with expected_revision; does not bypass authorization or the empty-content guard.",
+              "type": "boolean"
+            },
+            "infer_entity": {
+              "description": "Default true. When `entity` is omitted, link the fact to the one entity page the text names exactly (response `entity_inferred: \"mention\"`); pass false to save it unattributed.",
               "type": "boolean"
             },
             "kind": {
@@ -1322,12 +1327,22 @@
         "description": "List outgoing links from a page",
         "name": "get_links",
         "parameters": {
-          "slug": "string"
+          "all_sources": "boolean?",
+          "slug": "string",
+          "source_id": "string?"
         },
         "schema": {
           "properties": {
+            "all_sources": {
+              "description": "Span sources (equivalent to source_id=__all__): every source locally, only your readable sources remotely.",
+              "type": "boolean"
+            },
             "slug": {
               "description": "Slug of the page whose outgoing links to list.",
+              "type": "string"
+            },
+            "source_id": {
+              "description": "Scope the read to one source (a multi-source brain can hold the same slug in several sources). Omitted: your granted sources remotely (a connection with no grant reads every federated source); locally, the resolved source, or every federated source when no --source / GBRAIN_SOURCE / .gbrain-source pinned it. '__all__' spans every source for trusted local callers and only your readable sources for remote callers.",
               "type": "string"
             }
           },
@@ -1341,12 +1356,22 @@
         "description": "List incoming links to a page",
         "name": "get_backlinks",
         "parameters": {
-          "slug": "string"
+          "all_sources": "boolean?",
+          "slug": "string",
+          "source_id": "string?"
         },
         "schema": {
           "properties": {
+            "all_sources": {
+              "description": "Span sources (equivalent to source_id=__all__): every source locally, only your readable sources remotely.",
+              "type": "boolean"
+            },
             "slug": {
               "description": "Slug of the page whose incoming links to list.",
+              "type": "string"
+            },
+            "source_id": {
+              "description": "Scope the read to one source (a multi-source brain can hold the same slug in several sources). Omitted: your granted sources remotely (a connection with no grant reads every federated source); locally, the resolved source, or every federated source when no --source / GBRAIN_SOURCE / .gbrain-source pinned it. '__all__' spans every source for trusted local callers and only your readable sources for remote callers.",
               "type": "string"
             }
           },
@@ -1370,13 +1395,19 @@
         "description": "Traverse link graph from a page. Remote callers default to bidirectional edges (GraphPath[]) at depth 2 (pass depth explicitly for deeper walks); trusted local no-filter callers keep the legacy node shape at depth 5.",
         "name": "traverse_graph",
         "parameters": {
+          "all_sources": "boolean?",
           "depth": "number?",
           "direction": "string?",
           "link_type": "string?",
-          "slug": "string"
+          "slug": "string",
+          "source_id": "string?"
         },
         "schema": {
           "properties": {
+            "all_sources": {
+              "description": "Span sources (equivalent to source_id=__all__): every source locally, only your readable sources remotely.",
+              "type": "boolean"
+            },
             "depth": {
               "description": "Max traversal depth (capped at 10). Default 5, except a remote call that lets direction default to 'both' uses 2 (bidirectional path enumeration is combinatorial on hubs); an explicit depth is always honored up to the cap.",
               "type": "number"
@@ -1396,6 +1427,10 @@
             },
             "slug": {
               "description": "Slug of the page to start the traversal from, e.g. 'people/alice-example'. This is the start-node param — there is no `start` or `root` param.",
+              "type": "string"
+            },
+            "source_id": {
+              "description": "Scope the read to one source (a multi-source brain can hold the same slug in several sources). Omitted: your granted sources remotely (a connection with no grant reads every federated source); locally, the resolved source, or every federated source when no --source / GBRAIN_SOURCE / .gbrain-source pinned it. '__all__' spans every source for trusted local callers and only your readable sources for remote callers.",
               "type": "string"
             }
           },

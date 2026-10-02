@@ -1131,6 +1131,8 @@ export interface SearchOpts extends PageReadPolicy {
    * call, only when bounded work ended before exhaustion could be proved.
    */
   onVectorPoolMeta?: (m: VectorPoolMeta) => void;
+  /** #5824 rollback: keep the freshness guard inside the HNSW candidate CTE. Latched by the caller (search/vector-legacy-guard.ts). */
+  vectorLegacyGuard?: boolean;
   /**
    * v0.42 — intent-aware adaptive return-sizing. `true` enables with config/
    * default caps; an object overrides caps per-call; omitted/`false` = off
@@ -1411,9 +1413,9 @@ export interface CodeEdgeInput {
 
 /**
  * v0.20.0 Cathedral II: result row from code edge queries (getCallersOf,
- * getCalleesOf, getEdgesByChunk). `resolved=true` means the row came from
- * code_edges_chunk (to_chunk_id is a known chunk); `resolved=false` means
- * code_edges_symbol (to_chunk_id is null).
+ * getCalleesOf, getEdgesByChunk). `resolved=true`: a code_edges_chunk row, or a
+ * code_edges_symbol row stamped with edge_metadata.resolved_chunk_id (N13-2).
+ * `resolved=false`: an unresolved code_edges_symbol row (to_chunk_id null).
  */
 export interface CodeEdgeResult {
   id: number;
@@ -1463,6 +1465,8 @@ export interface Link {
 
 export interface GraphNode {
   slug: string;
+  /** Source holding this page; the same slug in two sources is two nodes. */
+  source_id: string;
   title: string;
   type: PageType;
   depth: number;
@@ -1476,7 +1480,9 @@ export interface GraphNode {
  */
 export interface GraphPath {
   from_slug: string;
+  from_source_id: string;
   to_slug: string;
+  to_source_id: string;
   link_type: string;
   context: string;
   /** Depth of `to_slug` from the root (1 for direct neighbors). */
@@ -1648,6 +1654,8 @@ export interface OntologyReadOpts extends PageReadScope {
   includeQuarantined?: boolean;
   sourceId?: string;
   sourceIds?: string[];
+  /** Fact visibility tiers the caller may read; undefined reads every tier. */
+  visibility?: Array<'private' | 'world'>;
 }
 
 // Raw data

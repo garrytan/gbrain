@@ -147,10 +147,31 @@ no tools; only an absent trusted-local binding uses the default registry.
    A changed snapshot or dependency graph refuses approval; preview and review
    again. Only selected SQL-NULL rows receive application authority. IDs, schedules, attempts, and
    dependencies remain intact. Dependencies require their own explicit review.
+
+   For many rows, select by status and job name instead of typing ids. The
+   preview lists counts by job name and status, the first 20 ids, marks job
+   names whose handlers make paid provider calls, and prints a preview hash;
+   the apply authorizes exactly the previewed set:
+
+   ```sh
+   gbrain jobs authorize-legacy --select "status=waiting|paused,name=synthesize"
+   gbrain jobs authorize-legacy --select "status=waiting|paused,name=synthesize" --expect <hash> --yes
+   ```
+
+   Live rows you do not want to run (including unsupported non-NULL ones)
+   cancel the same way with `gbrain jobs cancel --select "<filter>"` and its
+   printed `--expect <hash> --yes`; a selection that would also cancel a job
+   outside it refuses and names that job. Active jobs are cancelled one at a
+   time with `gbrain jobs cancel <id>` before either preview runs.
+   `gbrain doctor` (`legacy_job_authority`) prints these commands filled in
+   for your brain.
 5. Explicitly authorize or cancel every nonterminal legacy job before restarting
    services. Worker startup refuses unresolved work. Historical terminal rows
-   remain unchanged; review them explicitly before a later local replay.
-   Remote replay cannot authorize legacy rows.
+   remain unchanged and need no step for local producers: a resubmission over a
+   completed or failed legacy key reuses that row, and a dead or cancelled key
+   is released for a fresh job. A remote caller is refused over a terminal
+   legacy key; it resubmits with a new key. Review terminal rows explicitly
+   before a later local replay. Remote replay cannot authorize legacy rows.
 6. Start the matching application, producers, and workers and inspect job
    diagnostics for bounded authorization denials. Resume normal post-upgrade
    setup and automatic-upgrade schedules only after the queue review is complete

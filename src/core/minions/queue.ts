@@ -8,13 +8,14 @@
  *   await queue.prune({ olderThan: new Date(Date.now() - 30 * 86400000) });
  */
 
-import { APPLICATION_AUTHORITY, assertSameAuthority, assertNoUnreviewedJobs, authorizeJobExecution, currentSubmissionAuthority, parseSubmissionAuthority, type SubmissionAuthority } from './submission-authority.ts';
+import { APPLICATION_AUTHORITY, LEGACY_AUTHORITY_COLUMN, assertNoUnreviewedJobs, authorizeJobExecution, currentSubmissionAuthority, parseSubmissionAuthority, type SubmissionAuthority } from './submission-authority.ts';
 import type { BrainEngine } from '../engine.ts';
 import type {
   MinionJob, MinionJobInput, MinionJobStatus, InboxMessage, TokenUpdate,
   MinionQueueOpts, ChildDoneMessage, ChildOutcome, Attachment, AttachmentInput,
 } from './types.ts';
 import { rowToMinionJob, rowToInboxMessage, rowToAttachment } from './types.ts';
+import { coalesceOnIdempotencyKey, decideCoalesce, insertOrCoalesce } from './idempotency-coalesce.ts';
 import { validateAttachment } from './attachments.ts';
 import { isProtectedJobName } from './protected-names.ts';
 import { assertEmbedBackfillQueueAdmission } from './embed-backfill-admission.ts';
@@ -162,18 +163,20 @@ type CoalesceAuditEvent = {
  *  audit append is filesystem I/O, and doing it while holding the advisory
  *  lock + a pool connection would let a hung audit volume serialize every
  *  submission for the scope (adversarial-review finding). */
-function coalesceReturn(
+async function coalesceReturn(
+  tx: BrainEngine,
   row: Record<string, unknown>,
   audit: Omit<CoalesceAuditEvent, 'returned_job_id'>,
   sink: (ev: CoalesceAuditEvent) => void,
   authority: SubmissionAuthority,
-): MinionJob {
-  assertSameAuthority(row.submission_authority, authority);
+): Promise<MinionJob> {
+  if (await decideCoalesce(tx, row, authority) !== 'coalesce') throw new Error(`job ${String(row.id)} is ${String(row.status)} and cannot be a coalesce target`);
   const coalesced = rowToMinionJob(row);
   coalesced.coalesced = true;
   sink({ ...audit, returned_job_id: coalesced.id });
   return coalesced;
 }
+
 
 export class MinionQueue {
   readonly maxSpawnDepth: number;
@@ -345,23 +348,8 @@ export class MinionQueue {
       //    We NULL the key (preserving the row, with the released key in its
       //    data for the dream breaker) and fall through to the INSERT below.
       if (opts?.idempotency_key) {
-        const existing = await tx.executeRaw<Record<string, unknown>>(
-          `SELECT * FROM minion_jobs WHERE idempotency_key = $1`,
-          [opts.idempotency_key]
-        );
-        if (existing.length > 0) {
-          const existingJob = rowToMinionJob(existing[0]);
-          assertSameAuthority(existingJob.submission_authority, authority);
-          if (existingJob.status === 'dead' || existingJob.status === 'cancelled') {
-            await tx.executeRaw(
-              `UPDATE minion_jobs SET idempotency_key = NULL, data = data || $2::text::jsonb WHERE id = $1`,
-              [existingJob.id, JSON.stringify({ __released_idempotency_key: opts.idempotency_key })]
-            );
-          } else {
-            existingJob.coalesced = true;
-            return existingJob;
-          }
-        }
+        const existing = await coalesceOnIdempotencyKey(tx, opts.idempotency_key, authority);
+        if (existing) return existing;
       }
 
       // 1a. Param-coalescing (admission): an identical parentless submit —
@@ -390,7 +378,7 @@ export class MinionQueue {
         const matchParams: unknown[] = [jobName, admissionQueue, paramHash];
         if (ttlHours != null) matchParams.push(ttlHours / 2);
         const match = await tx.executeRaw<Record<string, unknown>>(
-          `SELECT * FROM minion_jobs
+          `SELECT *, ${LEGACY_AUTHORITY_COLUMN} FROM minion_jobs
             WHERE name = $1 AND queue = $2 AND status = 'waiting'
               AND parent_job_id IS NULL
               AND data->>'__param_hash' = $3
@@ -400,7 +388,7 @@ export class MinionQueue {
           matchParams
         );
         if (match.length > 0) {
-          return coalesceReturn(match[0], {
+          return coalesceReturn(tx, match[0], {
             queue: admissionQueue,
             name: jobName,
             param_hash: paramHash,
@@ -501,7 +489,7 @@ export class MinionQueue {
           const pendingCount = parseInt(pendingCountRows[0]?.count ?? '0', 10);
           if (pendingCount >= maxPending) {
             const existingPending = await tx.executeRaw<Record<string, unknown>>(
-              `SELECT * FROM minion_jobs
+              `SELECT *, ${LEGACY_AUTHORITY_COLUMN} FROM minion_jobs
                WHERE name = $1 AND queue = $2 AND ${pendingCond}
                  AND ${scopeExact}
                ORDER BY CASE WHEN status = 'waiting' THEN 0 ELSE 1 END, created_at DESC, id DESC
@@ -509,7 +497,7 @@ export class MinionQueue {
               [jobName, backpressureQueue, bpSourceId]
             );
             if (existingPending.length > 0) {
-              return coalesceReturn(existingPending[0], {
+              return coalesceReturn(tx, existingPending[0], {
                 queue: backpressureQueue,
                 name: jobName,
                 pending_count: pendingCount,
@@ -531,7 +519,7 @@ export class MinionQueue {
           const waitingCount = parseInt(waitingCountRows[0]?.count ?? '0', 10);
           if (waitingCount >= maxWaiting) {
             const existingWaiting = await tx.executeRaw<Record<string, unknown>>(
-              `SELECT * FROM minion_jobs
+              `SELECT *, ${LEGACY_AUTHORITY_COLUMN} FROM minion_jobs
                WHERE name = $1 AND queue = $2 AND status = 'waiting'
                  AND ${scopeWildcard}
                ORDER BY created_at DESC, id DESC
@@ -539,7 +527,7 @@ export class MinionQueue {
               [jobName, backpressureQueue, bpSourceId]
             );
             if (existingWaiting.length > 0) {
-              return coalesceReturn(existingWaiting[0], {
+              return coalesceReturn(tx, existingWaiting[0], {
                 queue: backpressureQueue,
                 name: jobName,
                 waiting_count: waitingCount,
@@ -660,25 +648,12 @@ export class MinionQueue {
       ];
       if (hasMaxStalled) params.push(clampedMaxStalled);
 
-      const inserted = await tx.executeRaw<Record<string, unknown>>(insertSql, params);
+      // ON CONFLICT DO NOTHING returns 0 rows: a concurrent submit won the
+      // race, and its row goes through the same coalesce rule (third path).
+      const outcome = await insertOrCoalesce(tx, insertSql, params, opts?.idempotency_key, authority);
+      if ('coalesced' in outcome) return outcome.coalesced;
 
-      // ON CONFLICT DO NOTHING returns 0 rows — fall back to SELECT to fetch the
-      // existing row that won the race.
-      if (inserted.length === 0 && opts?.idempotency_key) {
-        const existing = await tx.executeRaw<Record<string, unknown>>(
-          `SELECT * FROM minion_jobs WHERE idempotency_key = $1`,
-          [opts.idempotency_key]
-        );
-        if (existing.length === 0) {
-          throw new Error(`idempotency_key ${opts.idempotency_key} insert returned no row and no existing row found`);
-        }
-        const raced = rowToMinionJob(existing[0]);
-        assertSameAuthority(raced.submission_authority, authority);
-        raced.coalesced = true; // third coalesce path: lost the insert race
-        return raced;
-      }
-
-      const child = rowToMinionJob(inserted[0]);
+      const child = rowToMinionJob(outcome.inserted);
 
       // 4. Flip parent to waiting-children if this is a fresh child insert.
       //    Only transition from non-terminal, non-already-waiting-children states.

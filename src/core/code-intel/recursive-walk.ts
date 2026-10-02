@@ -120,28 +120,43 @@ async function disambiguateSymbol(
 }
 
 /**
- * Detect the language of a qualified symbol by looking at the owning
- * chunk's language. Returns null when not found.
+ * Languages of every chunk defining a qualified symbol. A bare name can be
+ * defined in several files and languages at once (gbrain-evals N13-3: a Go
+ * and a Python `shared_helper` share the qualified name), so the gate must
+ * see all of them, not one arbitrary row.
  */
-async function detectSymbolLanguage(
+async function symbolLanguages(
   engine: BrainEngine,
   qualified: string,
   sourceId: string,
-): Promise<string | null> {
+): Promise<string[]> {
   try {
     const rows = await engine.executeRaw<{ language: string | null }>(
-      `SELECT content_chunks.language
+      `SELECT DISTINCT content_chunks.language
          FROM content_chunks
          JOIN pages p ON p.id = content_chunks.page_id
         WHERE p.source_id = $1 AND ${codeReadFilter([], {})}
           AND content_chunks.symbol_name_qualified = $2
-        LIMIT 1`,
+          AND content_chunks.language IS NOT NULL`,
       [sourceId, qualified],
     );
-    return rows[0]?.language ?? null;
+    return rows.map((r) => r.language as string);
   } catch {
-    return null;
+    return [];
   }
+}
+
+const isSupportedLang = (lang: string): boolean =>
+  SUPPORTED_LANGS.includes(lang as (typeof SUPPORTED_LANGS)[number]);
+
+/** Edge origin chunks written in a supported language (one batched read). */
+async function supportedChunkIds(engine: BrainEngine, ids: number[]): Promise<Set<number>> {
+  if (ids.length === 0) return new Set();
+  const rows = await engine.executeRaw<{ id: number }>(
+    `SELECT id FROM content_chunks WHERE id = ANY($1::int[]) AND language = ANY($2::text[])`,
+    [ids, [...SUPPORTED_LANGS]],
+  );
+  return new Set(rows.map((r) => Number(r.id)));
 }
 
 /**
@@ -169,11 +184,17 @@ export async function runRecursiveWalk(
     qualifiedStart = matches[0]!;
   }
 
-  // Step 2: language gate (per D18 honest scope).
-  const lang = await detectSymbolLanguage(engine, qualifiedStart, opts.sourceId);
-  if (lang && !SUPPORTED_LANGS.includes(lang as (typeof SUPPORTED_LANGS)[number])) {
+  // Step 2: language gate (per D18 honest scope), scoped to the symbol's
+  // own definitions: unsupported only when NO defining chunk is in a
+  // supported language. When an unsupported-language namesake shares the
+  // qualified name, the walk keeps only edges whose origin chunk is in a
+  // supported language, so the namesake's call graph does not leak in.
+  const langs = await symbolLanguages(engine, qualifiedStart, opts.sourceId);
+  const lang = langs.find(isSupportedLang) ?? langs[0] ?? null;
+  if (lang && !isSupportedLang(lang)) {
     return { result: 'unsupported_language', supported: SUPPORTED_LANGS };
   }
+  const mixedLanguages = langs.some((l) => !isSupportedLang(l));
 
   // Step 3: BFS walk.
   const visited = new Set<string>([qualifiedStart]);
@@ -198,6 +219,14 @@ export async function runRecursiveWalk(
             : await engine.getCalleesOf(sym, { sourceId: opts.sourceId, limit: maxNodes });
       } catch {
         edges = [];
+      }
+      if (mixedLanguages && edges.length > 0) {
+        try {
+          const keep = await supportedChunkIds(engine, edges.map((e) => e.from_chunk_id));
+          edges = edges.filter((e) => keep.has(e.from_chunk_id));
+        } catch {
+          edges = [];
+        }
       }
 
       // freshness check: any edge whose owning chunk has edges_backfilled_at IS NULL

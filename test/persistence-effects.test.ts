@@ -216,6 +216,35 @@ test('a parked withdrawal mirror target retries through physical publication wit
   for (const file of [f.file, laterFile]) expect(parseFactsFence(readFileSync(file, 'utf8')).facts.filter(fact => fact.active)).toHaveLength(0);
 });
 
+test('a divergent RESOLVER.md page and a locally edited page no longer block the withdrawal request\'s git and embedding effects (#5396)', async () => {
+  const f = await fixture(body());
+  await engine.putPage('resolver', page(body()), { sourceId: f.sourceId });
+  await engine.executeRaw("UPDATE pages SET source_path='RESOLVER.md' WHERE source_id=$1 AND slug='resolver'", [f.sourceId]);
+  const resolver = (await engine.readPageSnapshot('resolver', { sourceId: f.sourceId }))!;
+  const resolverFile = join(f.root, 'RESOLVER.md');
+  const durable = `${serializePageToMarkdown(resolver.page, resolver.tags)}\n<!-- BEGIN gbrain-brain-durability (managed; do not edit between markers) -->\nCommit every page.\n<!-- END gbrain-brain-durability -->\n`;
+  writeFileSync(resolverFile, durable);
+  await engine.putPage('notes/drifted', page(body()), { sourceId: f.sourceId });
+  const drifted = (await engine.readPageSnapshot('notes/drifted', { sourceId: f.sourceId }))!;
+  const driftedFile = join(f.root, 'notes/drifted.md'); mkdirSync(dirname(driftedFile), { recursive: true });
+  const localEdit = `${serializePageToMarkdown(drifted.page, drifted.tags)}\nA local edit nobody imported.\n`;
+  writeFileSync(driftedFile, localEdit);
+  const row = await withdraw(f, { subjectless: true });
+  for (let pass = 0; pass < 4; pass++) {
+    await onlyEffects(row.id);
+    await runPersistenceEffects(engine, config, { hostId, limit: 10 });
+  }
+  const effects = await engine.executeRaw<{ kind: string; state: string; attempts: number; data: Record<string, unknown> }>(
+    'SELECT kind,state,attempts,data FROM persistence_effects WHERE request_id=$1::uuid ORDER BY kind', [row.id]);
+  expect(effects.map(effect => [effect.kind, effect.state])).toEqual([['embedding', 'queued'], ['git', 'committed'], ['withdrawal-mirror', 'committed']]);
+  expect(effects.find(effect => effect.kind === 'embedding')!.attempts).toBeGreaterThan(0);
+  expect(effects.find(effect => effect.kind === 'withdrawal-mirror')!.data.skipped).toEqual([
+    { slug: 'notes/drifted', reason: 'file_database_drift' }, { slug: 'resolver', reason: 'metafile' }]);
+  expect(readFileSync(resolverFile, 'utf8')).toBe(durable);
+  expect(readFileSync(driftedFile, 'utf8')).toBe(localEdit);
+  expect(parseFactsFence(readFileSync(f.file, 'utf8')).facts.filter(fact => fact.active)).toHaveLength(0);
+});
+
 test('configured recovery capacity refuses file mutation without undoing withdrawal', async () => {
   const f = await fixture(body()); const original = readFileSync(f.file, 'utf8'); const row = await withdraw(f); await onlyEffects(row.id);
   await engine.setConfig('persistence.limits.worktree_recovery_bytes', '1');

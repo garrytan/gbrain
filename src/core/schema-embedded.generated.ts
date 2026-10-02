@@ -2426,4 +2426,26 @@ DO \$rls\$ BEGIN
   END IF;
 END \$rls\$;
 -- END GENERATED from src/core/ai/decide/schema.ts (DECIDE_SCHEMA_SQL)
+
+-- gbrain facts relink attempts and journal (#5836).
+-- BEGIN GENERATED from src/core/facts/relink-schema.ts (FACT_RELINK_SCHEMA_SQL). Edit that file, then run: bun run build:schema
+CREATE TABLE IF NOT EXISTS fact_relink_attempts (
+  source_id       TEXT NOT NULL,
+  fact_id         BIGINT NOT NULL,
+  outcome         TEXT NOT NULL,
+  reason          TEXT,
+  tier            TEXT,
+  model           TEXT,
+  target_slug     TEXT,
+  run_id          TEXT,
+  attempted_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (source_id, fact_id)
+);
+CREATE INDEX IF NOT EXISTS fact_relink_attempts_outcome_idx ON fact_relink_attempts (source_id, outcome, attempted_at);
+DO \$rls\$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
+    ALTER TABLE fact_relink_attempts ENABLE ROW LEVEL SECURITY;
+  END IF;
+END \$rls\$;
+-- END GENERATED from src/core/facts/relink-schema.ts (FACT_RELINK_SCHEMA_SQL)
 `;

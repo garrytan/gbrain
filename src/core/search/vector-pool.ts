@@ -2,7 +2,10 @@ import type { SearchOpts } from '../types.ts';
 
 export interface VectorPoolBatch {
   rows: Record<string, unknown>[];
+  /** Raw candidate rows the window returned; a short window means the index ran dry. */
   candidatePool: number;
+  /** Candidates that passed the content-freshness filter outside the CTE; defaults to `candidatePool`. */
+  eligiblePool?: number;
   exhausted?: boolean;
 }
 
@@ -45,7 +48,7 @@ export async function searchVectorPool(
       if (batch.candidatePool < innerLimit) {
         if (!indexed) return batch.rows;
         if (remaining() === 0) { reason = 'deadline'; break; }
-        if (!(await hasMore(batch.candidatePool, remaining()))) return batch.rows;
+        if (!(await hasMore(batch.eligiblePool ?? batch.candidatePool, remaining()))) return batch.rows;
       }
       if (escalations >= 3 || (indexed && !iterative)) break;
       innerLimit = Math.min(innerLimit * 4, Math.max(initialLimit, 20_000));
@@ -66,8 +69,10 @@ export async function searchVectorPool(
 }
 
 export function readVectorPool(rows: Record<string, unknown>[]): VectorPoolBatch {
-  return {
+  const batch: VectorPoolBatch = {
     rows: rows.filter(row => row.page_id != null),
     candidatePool: Number(rows[0]?.candidate_pool ?? 0),
   };
+  if (rows[0]?.eligible_pool != null) batch.eligiblePool = Number(rows[0].eligible_pool);
+  return batch;
 }

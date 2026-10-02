@@ -53,7 +53,9 @@ import {
   embeddingQueryPrefixEntry,
   embeddingColumnRegistryEntry,
   embeddingEnvOverrideEntry,
+  embeddingKeySourceEntry,
 } from './checks/embedding-health.ts';
+import { projectionResidentEntry } from './checks/projection-readiness.ts';
 import {
   graphCoverageEntry,
   orphanRatioEntry,
@@ -76,8 +78,10 @@ import {
   salienceEntry,
 } from './checks/knowledge-health.ts';
 import { queueHealthEntry, indexAuditEntry, imageAssetsEntry } from './checks/queue-assets.ts';
+import { legacyJobAuthorityEntry } from './checks/legacy-job-authority.ts';
 import { syncFreshnessEntry, searchModeEntry } from './checks/sync-search.ts';
 import { decideHealthEntry } from './checks/decide.ts';
+import { unlinkedFactsEntry } from './checks/unlinked-facts.ts';
 import { STOP_DOCTOR, type DoctorContext, type DoctorEntry } from './context.ts';
 import type { Check } from '../doctor.ts';
 
@@ -94,7 +98,9 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   extractionBacklogsEntry,
   homeDirInWorktreeEntry,
   defaultSourcePathEntry,
+  embeddingKeySourceEntry,
   pgliteDataDirEntry,
+  projectionResidentEntry,
   offlineConnectionEntry,
   dbChecksGateEntry,
   connectionEntry,
@@ -127,10 +133,12 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   effectiveDateEntry,
   salienceEntry,
   queueHealthEntry,
+  legacyJobAuthorityEntry,
   indexAuditEntry,
   imageAssetsEntry,
   syncFreshnessEntry,
   decideHealthEntry,
+  unlinkedFactsEntry,
   searchModeEntry,
 ];
 

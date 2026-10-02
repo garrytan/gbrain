@@ -181,6 +181,30 @@ export async function runUpgrade(args: string[], opts: { targetVersion?: string 
     setCliExitVerdict(1);
     return;
   }
+  // #5311: a bare `gbrain upgrade` has no target, so the check above cannot
+  // fire, and on an exact-tag Git pin `bun update` is a successful no-op.
+  // When the version did not change and the global install pins a tag, say
+  // so and exit non-zero instead of reporting an upgrade.
+  if (!target && method === 'bun' && newVersion && newVersion === oldVersion) {
+    const pin = bunGlobalExactTagPin(resolveBunGlobalRoot());
+    if (pin) {
+      const { pendingUpgradeVersion } = await import('../core/self-upgrade.ts');
+      const latest = pendingUpgradeVersion(oldVersion);
+      const reinstall = latest ? `bun add -g github:garrytan/gbrain#v${latest}` : 'bun add -g github:garrytan/gbrain';
+      console.error(`Upgrade did not take effect: still running ${newVersion}, because the global install is pinned to ${pin} and \`bun update\` keeps a pinned tag.`);
+      console.error('Reinstall to move off the pin:');
+      console.error(`  ${reinstall}`);
+      recordUpgradeError({
+        phase: 'verify-pin',
+        fromVersion: oldVersion,
+        toVersion: latest ?? 'latest',
+        error: `pinned to ${pin}; still running ${newVersion} after upgrade`,
+        hint: reinstall,
+      });
+      setCliExitVerdict(1);
+      return;
+    }
+  }
   // Save old version for post-upgrade migration detection
   saveUpgradeState(oldVersion, newVersion);
 
@@ -288,6 +312,22 @@ export function resolveBunGlobalRoot(): string {
 
   const installRoot = findBunInstallRootFromArgv();
   return installRoot ?? defaultRoot;
+}
+
+/**
+ * #5311: the exact Git tag the bun global install pins gbrain to
+ * (`github:garrytan/gbrain#v0.51.0`), or null for an unpinned or branch spec.
+ */
+export function bunGlobalExactTagPin(globalRoot: string): string | null {
+  try {
+    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- globalRoot is resolveBunGlobalRoot(): Bun's own global install dir from BUN_INSTALL or HOME
+    const pkg = JSON.parse(readFileSync(join(globalRoot, 'package.json'), 'utf-8')) as { dependencies?: Record<string, string> };
+    const spec = pkg.dependencies?.gbrain;
+    if (typeof spec !== 'string') return null;
+    return /#v?\d+\.\d+(\.\d+)*$/.test(spec.trim()) ? spec.trim() : null;
+  } catch {
+    return null;
+  }
 }
 
 function isBunGlobalRoot(dir: string): boolean {

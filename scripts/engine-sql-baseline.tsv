@@ -45,7 +45,6 @@ method	src/core/pglite-engine.ts	PGLiteEngine.putRawData
 method	src/core/pglite-engine.ts	PGLiteEngine.searchKeyword
 method	src/core/pglite-engine.ts	PGLiteEngine.searchKeywordChunks
 method	src/core/pglite-engine.ts	PGLiteEngine.searchTitles
-method	src/core/pglite-engine.ts	PGLiteEngine.searchVector
 method	src/core/pglite-engine.ts	PGLiteEngine.setConfig
 method	src/core/pglite-engine.ts	PGLiteEngine.sweepDreamVerdicts
 method	src/core/pglite-engine.ts	PGLiteEngine.unsetConfig
@@ -80,7 +79,6 @@ method	src/core/postgres-engine.ts	PostgresEngine.resolveFactsEmbeddingCast
 method	src/core/postgres-engine.ts	PostgresEngine.searchKeyword
 method	src/core/postgres-engine.ts	PostgresEngine.searchKeywordChunks
 method	src/core/postgres-engine.ts	PostgresEngine.searchTitles
-method	src/core/postgres-engine.ts	PostgresEngine.searchVector
 method	src/core/postgres-engine.ts	PostgresEngine.setConfig
 method	src/core/postgres-engine.ts	PostgresEngine.sweepDreamVerdicts
 method	src/core/postgres-engine.ts	PostgresEngine.unsetConfig

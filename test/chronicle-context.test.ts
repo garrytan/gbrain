@@ -13,8 +13,8 @@ beforeAll(async () => {
   await engine.connect({ database_url: '' });
   await engine.initSchema();
   // An entity with a public role + a diary-sourced affect.
-  await engine.mergeOntologyFact({ entitySlug: SARAH, dimension: 'role', value: 'advisor', source: 'meetings/a' });
-  await engine.mergeOntologyFact({ entitySlug: SARAH, dimension: 'affect', value: 'anxious', source: 'life/diary/2026-06-18', status: 'active' });
+  await engine.mergeOntologyFact({ entitySlug: SARAH, dimension: 'role', value: 'advisor', source: 'meetings/a', visibility: 'world' });
+  await engine.mergeOntologyFact({ entitySlug: SARAH, dimension: 'affect', value: 'anxious', source: 'life/diary/2026-06-18', status: 'active', visibility: 'world' });
 });
 afterAll(async () => { await engine.disconnect(); });
 

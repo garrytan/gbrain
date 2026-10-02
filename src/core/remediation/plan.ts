@@ -12,6 +12,7 @@ import {
 import { loadRecommendationContext } from './context.ts';
 import type { RemediationPlan, RemediationPlanOpts } from './types.ts';
 import { planRepairSteps } from './repairs.ts';
+import { explicitRepairNotices } from '../repair/registry.ts';
 
 /**
  * Synthetic check list for classification. computeRecommendations operates
@@ -74,6 +75,6 @@ export async function computeRemediationPlan(
     est_total_seconds: estTotalSeconds,
     est_total_usd_cost: Number(estTotalUsd.toFixed(2)),
     blocked,
-    ...(opts.repairs ? { repair_steps: await planRepairSteps(engine, { noEmbed: opts.repairs.noEmbed }) } : {}),
+    ...(opts.repairs ? { repair_steps: await planRepairSteps(engine, { noEmbed: opts.repairs.noEmbed }), explicit_repairs: explicitRepairNotices() } : {}),
   };
 }

@@ -143,10 +143,31 @@ export const WAVE_CHECKS: readonly WaveCheckSpec[] = [
     run: async engine => (await import('./checks/self-capture.ts')).selfCaptureCheck(engine),
   },
   {
+    id: 'vector_plan', resolution: 'operator', registration: 'wave',
+    count: d => (d.outcome === 'index_unused' || d.outcome === 'legacy_guard' ? 1 : 0),
+    impact: 'Vector search on the active embedding column does not use its HNSW index, so vector candidates can time out and hybrid search falls back to keyword hits',
+    instruction: 'Upgrade gbrain on the brain host and rerun `gbrain doctor`; check the HNSW index state doctor reports; remove `search.vector_legacy_guard` / GBRAIN_VECTOR_LEGACY_GUARD unless it rolled back a regression, then restart the owning service (docs/guides/troubleshooting.md#hybrid-search-returns-only-keyword-hits).',
+    run: async engine => (await import('./checks/vector-plan.ts')).vectorPlanCheck(engine),
+  },
+  {
     id: 'stale_embedding_effects', resolution: 'repair', registration: 'wave',
     count: d => Number(d.stale_effects ?? 0),
     impact: 'A committed write still has a stale queued or failed embedding effect that blocks compaction and activation',
     run: async (engine, scope) => (await import('./checks/stale-embedding-effects.ts')).staleEmbeddingEffectsCheck(engine, scope.sourceIds),
+  },
+  {
+    id: 'atom_provenance_drift', resolution: 'repair', registration: 'doctor.ts',
+    hostOnly: 'Retiring stale atoms is a host-side, explicit-only repair.',
+    count: d => Number(d.drifted ?? 0),
+    impact: 'Some atoms reference a source page that is gone or was edited, and still surface in search with a quote no current page contains',
+    run: async engine => (await import('./checks/extraction-sync.ts')).computeAtomProvenanceDriftCheck(engine),
+  },
+  {
+    id: 'extractor_facts_expired', resolution: 'repair', registration: 'wave',
+    hostOnly: 'Restoring expired extractor facts is a host-side, explicit-only repair.',
+    count: d => Number(d.evidenced ?? 0) + Number(d.ambiguous ?? 0),
+    impact: 'Some conversation-extractor facts were expired by the pre-v0.60.11.0 canonical projection and recall no longer returns them',
+    run: async (engine, scope) => (await import('./checks/extractor-facts.ts')).extractorFactsCheck(engine, scope.sourceIds),
   },
 ];
 

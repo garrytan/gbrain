@@ -143,9 +143,14 @@ async function runCleanupCallbacks(): Promise<void> {
  * SIGTERM). The SIGINT AbortController path in cli.ts stays untouched —
  * we don't listen to SIGINT here.
  */
-export function installSignalHandlers(): void {
+export function installSignalHandlers(opts: { keepServingOnLogEpipe?: boolean } = {}): void {
   if (installed) return;
   installed = true;
+  // #5079: for `serve --http`, stdout/stderr are only log streams (the MCP
+  // transport is the HTTP socket), so a closed log pipe must not stop the
+  // server: the log write is dropped and it keeps serving. Everywhere else a
+  // broken pipe still exits (for stdio `serve` it means the client left).
+  const keepServing = opts.keepServingOnLogEpipe === true;
 
   const handleSignal = (signal: NodeJS.Signals) => {
     void runCleanupPass().finally(() => {
@@ -171,7 +176,7 @@ export function installSignalHandlers(): void {
   attach(process, 'SIGHUP', () => handleSignal('SIGHUP'));
   // Bun delivers SIGPIPE on a broken pipe (Node ignores it by default and
   // surfaces only an EPIPE write error on the stream, handled below).
-  attach(process, 'SIGPIPE', () => handleSignal('SIGPIPE'));
+  attach(process, 'SIGPIPE', () => { if (!keepServing) handleSignal('SIGPIPE'); });
 
   attach(process, 'uncaughtException', (err: unknown) => {
     try { process.stderr.write(`[uncaughtException] ${err instanceof Error ? err.stack ?? err.message : err}\n`); }
@@ -187,14 +192,14 @@ export function installSignalHandlers(): void {
   // EPIPE on stdout — the canonical `gbrain sync | head -N` case. Route
   // through the cleanup pass so locks release BEFORE we exit.
   attach(process.stdout, 'error', (err: NodeJS.ErrnoException) => {
-    if (err.code === 'EPIPE') {
+    if (err.code === 'EPIPE' && !keepServing) {
       void triggerCleanupAndExit(0);
     }
   });
   // Same for stderr — less common but possible (e.g. `2>&1 | head` after
   // stderr was rerouted to stdout).
   attach(process.stderr, 'error', (err: NodeJS.ErrnoException) => {
-    if (err.code === 'EPIPE') {
+    if (err.code === 'EPIPE' && !keepServing) {
       // No stderr means no useful logs on the way out; still cleanup.
       void triggerCleanupAndExit(0);
     }

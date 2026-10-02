@@ -12,6 +12,8 @@ import { isWriteTargetContained } from '../path-confine.ts';
 import { getWorktreeBinding, type WorktreeBinding } from './ownership.ts';
 import { localHostId } from './identity.ts';
 import { sha256 } from './digest.ts';
+import { isWindowsColonTarget } from './native-file-target.ts';
+import { ERROR_CATALOGUE } from '../error-catalogue.ts';
 import { currentCompanyBrainSync } from '../company-brain/profile.ts';
 import type { CompanyBrainPlan } from '../company-brain/types.ts';
 import { assertDistinctSyncOrigins, legacySyncOrigin, sameSyncOrigin, syncOriginPath, type SyncOriginScope } from './sync-origin.ts';
@@ -23,8 +25,10 @@ export interface SyncEntry { path: string; sourcePath: string; action: 'import' 
   renameFrom?: SyncRename; }
 /** Files that map to a slug another origin keeps; they are left out of the manifest until one is renamed. */
 export interface SyncSlugCollision { slug: string; kept: string; skipped: string[]; }
+/** #5032: a file sync skipped on this host with a named refusal, without failing the run. */
+export interface SyncFileRefusal { path: string; code: 'colon_slug_windows_write_through'; message: string; suggestion: string; docs: string; }
 export interface SyncDiscovery { binding: WorktreeBinding; root: string; gitRoot: string; sourceId: string; incarnation: string;
-  companyPlan?: CompanyBrainPlan; slugCollisions?: SyncSlugCollision[];
+  companyPlan?: CompanyBrainPlan; slugCollisions?: SyncSlugCollision[]; fileRefusals?: SyncFileRefusal[];
   from: string | null; target: string; entries: SyncEntry[]; uncommitted?: { added: number; modified: number; deleted: number }; slugMode: 'git-root' | 'source-root'; }
 export interface ManagedSyncContext { binding: WorktreeBinding; root: string; gitRoot: string; sourceId: string; incarnation: string;
   source: { last_commit: string | null; config: Record<string, unknown> }; }
@@ -133,33 +137,68 @@ export async function discoverManagedSync(engine: BrainEngine, opts: SyncOpts, c
   const delta = !opts.full && source.last_commit ? computeSyncDelta(gitRoot, source.last_commit, target) : null;
   const entries = new Map<string, SyncEntry>();
   const renamedFrom = new Map<string, string>();
+  // #5032: a ':' path has no file on Windows. Each eligible one gets a named
+  // refusal and takes no part in this run, including the origin checks below.
+  // A deletion or rename touching one is refused on both sides, so the page
+  // keeps its identity until the change is synced from macOS or Linux.
+  const refused = new Map<string, SyncFileRefusal>();
+  const refusalMessages = {
+    import: (path: string) => `${path} has a ':' in its name, which Windows cannot store; sync skipped it.`,
+    delete: (path: string) => `${path} has a ':' in its name, which Windows cannot reconcile; sync skipped its deletion and its page stays live.`,
+  };
+  const record = (path: string, message: string) => {
+    if (eligible(path)) refused.set(path, { path, code: 'colon_slug_windows_write_through', message,
+      suggestion: `Rename it without ':' on a macOS or Linux checkout and commit, then run gbrain sync --source ${sourceId} --no-pull.`,
+      docs: ERROR_CATALOGUE.colon_slug_windows_write_through.docs });
+  };
+  const refuse = (path: string, action: SyncEntry['action'] = 'import') => {
+    if (!isWindowsColonTarget(path)) return false;
+    record(path, refusalMessages[action](path));
+    return true;
+  };
+  const storable = <T extends { source_path: string | null }>(page: T) => page.source_path === null || !isWindowsColonTarget(page.source_path);
   const put = (path: string, action: SyncEntry['action'], working = false) => {
     if (process.platform === 'win32' && path.includes('\\')) throw new OperationError('page_identity_changed', 'Git paths containing literal backslashes are not safe Windows sync targets.');
+    if (refuse(path, action)) return;
     if (eligible(path)) entries.set(path, { path: relative(nativeRoot, join(nativeGitRoot, path)).split(sep).join('/'), sourcePath: sourcePath(path), action, working });
+  };
+  const putRename = (rename: { from: string; to: string }, working = false) => {
+    if (isWindowsColonTarget(rename.from) || isWindowsColonTarget(rename.to)) {
+      for (const path of [rename.from, rename.to]) {
+        record(path, `${path} is one side of the rename ${rename.from} -> ${rename.to}, which Windows cannot reconcile; sync skipped both sides so the page keeps its identity.`);
+      }
+      return;
+    }
+    put(rename.from, 'delete', working); put(rename.to, 'import', working); renamedFrom.set(rename.to, rename.from);
   };
   if (delta?.status === 'ok') {
     for (const path of [...delta.manifest.added, ...delta.manifest.modified]) put(path, 'import');
     for (const path of delta.manifest.deleted) put(path, 'delete');
-    for (const rename of delta.manifest.renamed) { put(rename.from, 'delete'); put(rename.to, 'import'); renamedFrom.set(rename.to, rename.from); }
+    for (const rename of delta.manifest.renamed) putRename(rename);
   } else {
-    const paths = syncGit(gitRoot, ['ls-tree', '-r', '--name-only', '-z', target]).split('\0')
+    const listed = syncGit(gitRoot, ['ls-tree', '-r', '--name-only', '-z', target]).split('\0')
       .filter(path => path && (!scope || path.startsWith(`${scope}/`)));
+    const paths = listed.filter(path => !refuse(path));
     assertDistinctSyncOrigins(paths);
     const present = new Set(paths.map(path => syncOriginPath(sourcePath(path))));
     for (const path of paths) put(path, 'import');
-    const pages = await engine.executeRaw<{ slug: string; source_path: string }>('SELECT slug,source_path FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND source_path IS NOT NULL', [sourceId]);
+    const livePages = await engine.executeRaw<{ slug: string; source_path: string }>('SELECT slug,source_path FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND source_path IS NOT NULL', [sourceId]);
+    const gitPathOf = (origin: string) => slugMode === 'source-root' && scope ? `${scope}/${origin}` : origin;
+    const listedSet = new Set(listed);
+    for (const page of livePages) if (!storable(page) && !listedSet.has(gitPathOf(page.source_path))) refuse(gitPathOf(page.source_path), 'delete');
+    const pages = livePages.filter(storable);
     assertDistinctSyncOrigins([...present, ...pages.map(page => page.source_path)]);
     for (const page of pages) {
       const origin = syncOriginPath(page.source_path);
       const stripped = slugMode === 'source-root' && scope && origin.startsWith(`${scope}/`) ? origin.slice(scope.length + 1) : null;
       if (present.has(origin) || stripped !== null && present.has(stripped) && sameSyncOrigin(origin, stripped, originScope, page.slug)) continue;
-      put(slugMode === 'source-root' && scope ? `${scope}/${origin}` : origin, 'delete');
+      put(gitPathOf(origin), 'delete');
     }
   }
   if (working) {
     for (const path of [...dirty.added, ...dirty.modified]) put(path, 'import', true);
     for (const path of dirty.deleted) put(path, 'delete', true);
-    for (const rename of dirty.renamed) { put(rename.from, 'delete', true); put(rename.to, 'import', true); renamedFrom.set(rename.to, rename.from); }
+    for (const rename of dirty.renamed) putRename(rename, true);
   }
   if (company) {
     entries.clear();
@@ -177,15 +216,16 @@ export async function discoverManagedSync(engine: BrainEngine, opts: SyncOpts, c
   const selected = [...entries.values()].sort((a, b) => a.action.localeCompare(b.action) || a.path.localeCompare(b.path));
   if (selected.some(e => !/\.mdx?$/i.test(e.path) && !isCodeFilePath(e.path))) throw new OperationError('writer_coordinator_required', 'Managed image sync requires a prepared importer; this sync was refused before any page write.');
   if (selected.length > 100_000 || Buffer.byteLength(JSON.stringify(selected)) > 16 * 1024 ** 2) throw new OperationError('request_too_large', 'Sync discovery exceeds the bounded cursor size.');
-  const discovered: SyncDiscovery = { binding: { ...binding, owner_epoch: String(binding.owner_epoch), topology_generation: String(binding.topology_generation) }, root, gitRoot, sourceId, incarnation, from: source.last_commit, target, entries: selected, slugMode, ...(company ? { companyPlan: company.plan } : {}) };
+  const discovered: SyncDiscovery = { ...(refused.size ? { fileRefusals: [...refused.values()] } : {}), binding: { ...binding, owner_epoch: String(binding.owner_epoch), topology_generation: String(binding.topology_generation) }, root, gitRoot, sourceId, incarnation, from: source.last_commit, target, entries: selected, slugMode, ...(company ? { companyPlan: company.plan } : {}) };
   // Freeze all logical identities in one database statement, before yielding
   // between pages. A later interactive edit must conflict with this scan.
   const identities = await engine.executeRaw<{ id: number; slug: string; source_path: string | null; knowledge_revision: string }>(
     'SELECT id,slug,source_path,knowledge_revision FROM pages WHERE source_id=$1', [sourceId]);
   const bySlug = new Map(identities.map(p => [p.slug, p]));
   const byPath = new Map<string, typeof identities>();
-  assertDistinctSyncOrigins([...selected.map(entry => entry.sourcePath), ...identities.flatMap(page => page.source_path ? [page.source_path] : [])]);
-  for (const page of identities) if (page.source_path) {
+  const storableIdentities = identities.filter(storable);
+  assertDistinctSyncOrigins([...selected.map(entry => entry.sourcePath), ...storableIdentities.flatMap(page => page.source_path ? [page.source_path] : [])]);
+  for (const page of storableIdentities) if (page.source_path) {
     const origin = syncOriginPath(page.source_path);
     byPath.set(origin, [...(byPath.get(origin) ?? []), page]);
   }

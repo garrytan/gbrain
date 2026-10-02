@@ -37,6 +37,7 @@ import { POSTGRES_CONCURRENT_PERSISTENCE_INDEXES, PERSISTENCE_SCHEMA_STATEMENTS 
 import { PERSISTENCE_TOPOLOGY_SCHEMA_SQL } from '../src/core/persistence/topology-schema.ts';
 import { SHARED_SKILLS_SCHEMA_SQL } from '../src/core/shared-skills/schema-all.ts';
 import { DECIDE_SCHEMA_SQL } from '../src/core/ai/decide/schema.ts';
+import { FACT_RELINK_SCHEMA_SQL } from '../src/core/facts/relink-schema.ts';
 
 const REPO = resolve(import.meta.dir, '..');
 export const SCHEMA_SQL_PATH = 'src/schema.sql';
@@ -91,6 +92,7 @@ export const FRAGMENTS: readonly Fragment[] = [
   { source: 'src/core/company-brain/receipt-schema.ts', expr: 'SOURCE_INGESTION_RECEIPTS_SCHEMA_SQL', postgres: SOURCE_INGESTION_RECEIPTS_SCHEMA_SQL, pglite: SOURCE_INGESTION_RECEIPTS_SCHEMA_SQL },
   { source: 'src/core/shared-skills/schema-all.ts', expr: 'SHARED_SKILLS_SCHEMA_SQL', postgres: SHARED_SKILLS_SCHEMA_SQL, pglite: SHARED_SKILLS_SCHEMA_SQL },
   { source: 'src/core/ai/decide/schema.ts', expr: 'DECIDE_SCHEMA_SQL', postgres: DECIDE_SCHEMA_SQL, pglite: DECIDE_SCHEMA_SQL },
+  { source: 'src/core/facts/relink-schema.ts', expr: 'FACT_RELINK_SCHEMA_SQL', postgres: FACT_RELINK_SCHEMA_SQL, pglite: FACT_RELINK_SCHEMA_SQL },
 ];
 
 const fragmentLabel = (f: Fragment) => `${f.source} (${f.expr})`;

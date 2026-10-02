@@ -40,7 +40,10 @@ fi
 EXEMPT='^(docs/(designs|test-audit|incidents|plans|proposals|research|issues|superpowers|migrations)/|skills/migrations/|docs/architecture/wave-1-)'
 
 # pattern<TAB>current instruction
-RETIRED=$(cat <<'EOF'
+# Read with `read -d ''`, never a `cat` heredoc inside a command substitution:
+# macOS /bin/bash 3.2 quote-scans that heredoc and dies on the apostrophe and
+# the odd backticks in these rows, so the guard could not even parse there.
+IFS= read -r -d '' RETIRED <<'EOF' || true
 MIGRATIONS`? array	Migrations are one file each: `bun run new:migration <snake_name>` scaffolds src/core/schema-migrations/v<NNN>-<name>.ts and regenerates registry.generated.ts; migrate.ts is only the runner.
 append(s|ing)? (an entry |a migration |it )?to (the )?`?MIGRATIONS	Migrations are one file each: `bun run new:migration <snake_name>` (src/core/schema-migrations/), never an array append.
 lands in BOTH	A migrated storage domain's SQL lives once in src/core/engine-sql/<domain>.ts and both engines delegate to it; only unmigrated or dialect-specific methods are written per engine (scripts/engine-sql-baseline.tsv).
@@ -48,7 +51,6 @@ Add the case to	A CLI-only command is a record in src/cli/command-table.ts plus 
 region-exempt	The module-size ratchet has one policy (`ratchet`); migrate.ts is runner-only and ratcheted like every other file.
 schema\.sql \+ pglite-schema\.ts|pglite-schema\.ts \+ schema\.sql	Schema DDL has one hand-edited copy: edit src/schema.sql (or the TS fragment its region banner names), then `bun run build:schema` regenerates schema-embedded.generated.ts and pglite-schema.generated.ts.
 EOF
-)
 
 fail=0
 hits=0

@@ -11,11 +11,11 @@
  * a self-capture cannot be decided from this host. Best-effort: both counts
  * read the local filesystem of the brain host.
  */
-import { readdirSync } from 'node:fs';
+import { readdirSync, statSync } from 'node:fs';
 import { basename, dirname, join, relative } from 'node:path';
 import type { BrainEngine } from '../../../core/engine.ts';
 import type { Check } from '../../doctor.ts';
-import { claudeCliSelfSessionIds } from '../../../core/ai/providers/claude-cli-scratch.ts';
+import { claudeCliSelfProjectDirs, isClaudeCliSelfSessionId } from '../../../core/ai/providers/claude-cli-scratch.ts';
 import { claudeProjectsDir } from '../../../core/bootstrap/host-specs.ts';
 import { corpusFileSessionId } from '../../../core/context/corpus-segments.ts';
 import { pruneDir } from '../../../core/sync.ts';
@@ -63,27 +63,32 @@ export async function selfCaptureCheck(engine: BrainEngine, opts: { projectsRoot
     // An unreadable corpus root throws (unknown health); unreadable subdirectories make the counts a lower bound.
     const { files, unreadable } = corpusTextFiles(corpusDir);
     const projectsRoot = opts.projectsRoot ?? claudeProjectsDir();
-    const selfIds = claudeCliSelfSessionIds(projectsRoot);
+    const selfDirs = claudeCliSelfProjectDirs(projectsRoot);
     const known = harnessSessionIds(projectsRoot);
     const classified: string[] = [], unclassifiable: string[] = [];
+    let newestMs = 0;
     for (const file of files) {
       const session = corpusFileSessionId(basename(file));
-      if (selfIds.has(session)) classified.push(file);
-      else if (!known.has(session)) unclassifiable.push(file);
+      if (isClaudeCliSelfSessionId(session, selfDirs)) {
+        classified.push(file);
+        try { newestMs = Math.max(newestMs, statSync(file).mtimeMs); } catch { /* raced away */ }
+      } else if (!known.has(session)) unclassifiable.push(file);
     }
+    const newest = newestMs ? new Date(newestMs).toISOString() : null;
     const quarantineDir = join(dirname(corpusDir), `${basename(corpusDir)}.quarantine`);
     const destinations = classified.slice(0, SAMPLE).map(file => ({ file, dir: join(quarantineDir, dirname(relative(corpusDir, file))) }));
     const commands = [`mkdir -p ${[...new Set([quarantineDir, ...destinations.map(d => d.dir)])].map(quote).join(' ')}`,
       ...destinations.map(({ file, dir }) => `for f in ${quote(file)}*; do mv -n -- "$f" ${quote(dir)}/; done`)];
     const details = { classified: classified.length, unclassifiable: unclassifiable.length, corpus_files: files.length, unreadable_dirs: unreadable,
       count: unreadable ? 'lower_bound' : 'exact', truncated: classified.length > SAMPLE, ...(unreadable ? { health: 'unknown' } : {}),
-      corpus_dir: corpusDir, quarantine_dir: quarantineDir, classified_sample: classified.slice(0, SAMPLE).map(file => relative(corpusDir, file)),
+      newest_capture_at: newest, corpus_dir: corpusDir, quarantine_dir: quarantineDir, classified_sample: classified.slice(0, SAMPLE).map(file => relative(corpusDir, file)),
       quarantine_commands: commands, docs: 'docs/guides/repair.md#quarantine-self-captured-corpus-files' };
     const unknownNote = unclassifiable.length ? ` ${unclassifiable.length} corpus file(s) have no harness transcript left, so whether they are self-captures cannot be decided here; review them by hand.` : '';
     if (unreadable) return { name, status: 'warn', details, message: `${unreadable} session corpus director${unreadable === 1 ? 'y' : 'ies'} could not be read, so self-capture health is unknown `
       + `(at least ${classified.length} identified self-capture(s)). Fix the directory permissions on the brain host and rerun gbrain doctor.${unknownNote}` };
     if (!classified.length) return { name, status: 'ok', details, message: `No identified gbrain self-capture remains in the session corpus.${unknownNote}` };
-    return { name, status: 'warn', details, message: `${classified.length} session corpus file(s) were captured from gbrain's own claude-cli sessions (#5413). `
+    return { name, status: 'warn', details, message: `${classified.length} session corpus file(s) were captured from gbrain's own claude-cli sessions (#5413); the newest is from ${newest}. `
+      + `This gbrain no longer creates them (#5820), so the count stops growing once every hook and serve process runs it; the existing files need one quarantine. `
       + `Dream and the sweep skip them, but they stay in the corpus until you move them. Nothing was moved or deleted. Quarantine them on the brain host: `
       + `${commands.slice(0, 3).join(' && ')}${classified.length > 2 ? ' … (full list: gbrain doctor --json, check self_capture; recipe: docs/guides/repair.md#quarantine-self-captured-corpus-files)' : ''}.${unknownNote}` };
   } catch (error) {

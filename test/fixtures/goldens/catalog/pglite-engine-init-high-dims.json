@@ -57,6 +57,7 @@
       "extract_atoms_page_state.extract_atoms_page_state_source_incarnation_fkey": "f FOREIGN KEY (source_incarnation) REFERENCES sources(incarnation) ON DELETE CASCADE",
       "extract_atoms_transcript_state.extract_atoms_transcript_state_pkey": "p PRIMARY KEY (source_id, file_path, content_hash)",
       "extract_rollup_7d.extract_rollup_7d_pkey": "p PRIMARY KEY (kind, source_id, day)",
+      "fact_relink_attempts.fact_relink_attempts_pkey": "p PRIMARY KEY (source_id, fact_id)",
       "fact_withdrawals.fact_withdrawals_pkey": "p PRIMARY KEY (source_id, visibility, subject, fact_hash)",
       "fact_withdrawals.fact_withdrawals_source_id_fkey": "f FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE",
       "fact_withdrawals.fact_withdrawals_visibility_check": "c CHECK ((visibility = ANY (ARRAY['private'::text, 'world'::text])))",
@@ -397,6 +398,9 @@
       "extract_rollup_7d": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
+      "fact_relink_attempts": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
       "fact_withdrawals": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
@@ -665,6 +669,8 @@
       "extract_atoms_transcript_state_pkey": "CREATE UNIQUE INDEX extract_atoms_transcript_state_pkey ON public.extract_atoms_transcript_state USING btree (source_id, file_path, content_hash)",
       "extract_atoms_transcript_state_tombstoned_idx": "CREATE INDEX extract_atoms_transcript_state_tombstoned_idx ON public.extract_atoms_transcript_state USING btree (source_id, content_hash) WHERE tombstoned",
       "extract_rollup_7d_pkey": "CREATE UNIQUE INDEX extract_rollup_7d_pkey ON public.extract_rollup_7d USING btree (kind, source_id, day)",
+      "fact_relink_attempts_outcome_idx": "CREATE INDEX fact_relink_attempts_outcome_idx ON public.fact_relink_attempts USING btree (source_id, outcome, attempted_at)",
+      "fact_relink_attempts_pkey": "CREATE UNIQUE INDEX fact_relink_attempts_pkey ON public.fact_relink_attempts USING btree (source_id, fact_id)",
       "fact_withdrawals_pkey": "CREATE UNIQUE INDEX fact_withdrawals_pkey ON public.fact_withdrawals USING btree (source_id, visibility, subject, fact_hash)",
       "facts_pkey": "CREATE UNIQUE INDEX facts_pkey ON public.facts USING btree (id)",
       "facts_typed_claim_idx": "CREATE INDEX facts_typed_claim_idx ON public.facts USING btree (entity_slug, claim_metric, valid_from) WHERE (claim_metric IS NOT NULL)",
@@ -704,11 +710,12 @@
       "idx_facts_entity_active": "CREATE INDEX idx_facts_entity_active ON public.facts USING btree (source_id, entity_slug, valid_from DESC) WHERE (expired_at IS NULL)",
       "idx_facts_extract_conversation_session": "CREATE INDEX idx_facts_extract_conversation_session ON public.facts USING btree (source_id, source_session) WHERE (source ~~ 'cli:extract-conversation-facts%'::text)",
       "idx_facts_fence_key": "CREATE UNIQUE INDEX idx_facts_fence_key ON public.facts USING btree (source_id, source_markdown_slug, row_num) WHERE (row_num IS NOT NULL)",
-      "idx_facts_ontology_dedup": "CREATE UNIQUE INDEX idx_facts_ontology_dedup ON public.facts USING btree (source_id, entity_slug, dimension, value_hash, source_markdown_slug) WHERE (dimension IS NOT NULL)",
+      "idx_facts_ontology_stint_dedup": "CREATE UNIQUE INDEX idx_facts_ontology_stint_dedup ON public.facts USING btree (source_id, entity_slug, dimension, value_hash, source_markdown_slug, valid_from) WHERE (dimension IS NOT NULL)",
       "idx_facts_session": "CREATE INDEX idx_facts_session ON public.facts USING btree (source_id, source_session, created_at DESC) WHERE (expired_at IS NULL)",
       "idx_facts_since": "CREATE INDEX idx_facts_since ON public.facts USING btree (source_id, created_at DESC) WHERE (expired_at IS NULL)",
       "idx_facts_since_event_time": "CREATE INDEX idx_facts_since_event_time ON public.facts USING btree (source_id, COALESCE(valid_from, created_at) DESC) WHERE (expired_at IS NULL)",
       "idx_facts_unconsolidated": "CREATE INDEX idx_facts_unconsolidated ON public.facts USING btree (source_id, entity_slug) WHERE ((consolidated_at IS NULL) AND (expired_at IS NULL))",
+      "idx_facts_unlinked_active": "CREATE INDEX idx_facts_unlinked_active ON public.facts USING btree (source_id, id) WHERE ((entity_slug IS NULL) AND (expired_at IS NULL))",
       "idx_facts_withdrawal_fingerprint": "CREATE INDEX idx_facts_withdrawal_fingerprint ON public.facts USING btree (source_id, visibility, gbrain_fact_fingerprint(fact))",
       "idx_files_hash": "CREATE INDEX idx_files_hash ON public.files USING btree (content_hash)",
       "idx_files_page": "CREATE INDEX idx_files_page ON public.files USING btree (page_slug)",
@@ -1458,6 +1465,20 @@
           "11 expected_limit_count integer/int4 NOT NULL DEFAULT 0"
         ],
         "flags": "relkind=r rls=false force_rls=false"
+      },
+      "fact_relink_attempts": {
+        "columns": [
+          "1 source_id text/text NOT NULL",
+          "2 fact_id bigint/int8 NOT NULL",
+          "3 outcome text/text NOT NULL",
+          "4 reason text/text NULL",
+          "5 tier text/text NULL",
+          "6 model text/text NULL",
+          "7 target_slug text/text NULL",
+          "8 run_id text/text NULL",
+          "9 attempted_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
+        ],
+        "flags": "relkind=r rls=true force_rls=false"
       },
       "fact_withdrawals": {
         "columns": [

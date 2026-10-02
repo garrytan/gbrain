@@ -24,7 +24,7 @@ import type {
   TranscriptAdapter,
   TranscriptMessage,
 } from './types.ts';
-import { TRANSCRIPT_JSONL_HARD_CAP } from './types.ts';
+import { TRANSCRIPT_JSONL_HARD_CAP, utcTimestamp } from './types.ts';
 
 /**
  * Head window kept when a rollout exceeds the parse budget. Only needs to
@@ -102,7 +102,7 @@ export function mapCodexLine(entry: unknown): CodexLineResult {
   if (typeof entry !== 'object' || entry === null) return { kind: 'skip' };
   const e = entry as Record<string, unknown>;
   const payload = (typeof e.payload === 'object' && e.payload !== null ? e.payload : {}) as Record<string, unknown>;
-  const lineTs = typeof e.timestamp === 'string' ? e.timestamp : '';
+  const lineTs = utcTimestamp(e.timestamp);
   if (e.type === 'session_meta') {
     return {
       kind: 'session',
@@ -115,7 +115,7 @@ export function mapCodexLine(entry: unknown): CodexLineResult {
         (typeof payload.session_id === 'string' && payload.session_id) ||
         undefined,
       cwd: typeof payload.cwd === 'string' ? payload.cwd : undefined,
-      startedAt: typeof payload.timestamp === 'string' ? payload.timestamp : lineTs || undefined,
+      startedAt: typeof payload.timestamp === 'string' ? utcTimestamp(payload.timestamp) : lineTs || undefined,
       cliVersion: typeof payload.cli_version === 'string' ? payload.cli_version : undefined,
       modelProvider: typeof payload.model_provider === 'string' ? payload.model_provider : undefined,
     };

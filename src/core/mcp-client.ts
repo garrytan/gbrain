@@ -529,3 +529,26 @@ export function extractResponseMeta(res: unknown): Record<string, unknown> | und
   }
   return undefined;
 }
+
+/**
+ * Params the server reported it ignored (WP3 warn mode): `_meta.warnings`
+ * entries with code `unknown_param`, plus the model-visible warning blocks
+ * after content[0] for transports that drop `_meta`. Empty for hosts that
+ * predate unknown-parameter warnings, which cannot be detected.
+ */
+export function ignoredRemoteParams(res: unknown): string[] {
+  const names = new Set<string>();
+  const warnings = extractResponseMeta(res)?.warnings;
+  if (Array.isArray(warnings)) {
+    for (const w of warnings as Array<{ code?: unknown; param?: unknown }>) {
+      if (w?.code === 'unknown_param' && typeof w.param === 'string') names.add(w.param);
+    }
+  }
+  const content = (res as { content?: unknown[] } | undefined)?.content;
+  for (const block of Array.isArray(content) ? content.slice(1) : []) {
+    const text = (block as { text?: unknown })?.text;
+    if (typeof text !== 'string') continue;
+    for (const m of text.matchAll(/^warning: unknown parameter "([^"]+)" ignored/gm)) names.add(m[1]);
+  }
+  return [...names];
+}

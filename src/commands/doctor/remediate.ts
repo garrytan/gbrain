@@ -11,10 +11,14 @@
  * cap is cumulative across the original run and every `--resume`; the cap,
  * consent and step manifest live in the local remediation checkpoint.
  *
+ * Explicit-only repair kinds are never steps: the plan lists each with its
+ * read-only preview command (`explicit_kind_required`).
+ *
  * After a run, every wave check is classified (cleared, pending,
- * consent_required, operator_required, unsupported). Exit status: 0 when no
- * automatically repairable finding remains and no step failed, even if
- * operator-required or unsupported findings remain (they are listed); 1
+ * consent_required, operator_required, explicit_kind_required, unsupported).
+ * Exit status: 0 when no automatically repairable finding remains and no step
+ * failed, even if operator-required, explicit-kind or unsupported findings
+ * remain (they are listed); 1
  * otherwise and on budget exhaustion; 2 when the target is unreachable and
  * there is no repair step to run, or a resume is refused.
  */
@@ -22,6 +26,7 @@ import type { BrainEngine } from '../../core/engine.ts';
 import { setCliExitVerdict } from '../../core/cli-force-exit.ts';
 import type { RemediationPlan, RemediationResult } from '../../core/remediation/types.ts';
 import type { RepairPlanStep } from '../../core/remediation/repairs.ts';
+import { repairPreviewCommand, repairSpec, type ExplicitRepairNotice } from '../../core/repair/registry.ts';
 import { runWaveChecks, waveRepairKind, type WaveFinding } from './wave-checks.ts';
 
 export const REMEDIATE_HELP = `Usage: gbrain doctor --remediation-plan [--target-score <n>] [--no-embed] [--json]
@@ -117,6 +122,7 @@ interface RemediationPlanShape {
   est_total_usd_cost: number;
   blocked: Array<{ check: string; reason: string }>;
   repair_steps?: RepairPlanStep[];
+  explicit_repairs?: ExplicitRepairNotice[];
 }
 
 /**
@@ -152,6 +158,10 @@ export function renderRemediationPlanLines(plan: RemediationPlanShape, targetSco
       lines.push(`     apply: ${step.command}`);
     }
   }
+  if (plan.explicit_repairs?.length) {
+    lines.push('\nExplicit-only repairs (never run by --remediate or gbrain repair --all; preview each by name on this host):');
+    for (const notice of plan.explicit_repairs) lines.push(`  ${notice.kind}: ${notice.preview_command}`);
+  }
   if (plan.plan.length > 0 || repairs.length > 0) {
     lines.push(`\nApply everything${repairs.length ? ' after the user agrees' : ''}: ${combinedRemediateCommand(plan, targetScore)}`);
     if (repairs.length) lines.push('Ask the user before applying any repair step.');
@@ -163,7 +173,7 @@ export function renderRemediationPlanLines(plan: RemediationPlanShape, targetSco
   return lines;
 }
 
-export type FindingClass = 'cleared' | 'pending' | 'consent_required' | 'operator_required' | 'unsupported';
+export type FindingClass = 'cleared' | 'pending' | 'consent_required' | 'operator_required' | 'explicit_kind_required' | 'unsupported';
 
 export interface RemediationFinding {
   check_id: string;
@@ -197,6 +207,10 @@ export function classifyWaveFindings(before: WaveFinding[], after: WaveFinding[]
     // A repairable finding the repair can only report blocked needs the operator first.
     const blocked = now.check.details?.operator_instruction;
     if (typeof blocked === 'string') { findings.push({ ...base, class: 'operator_required', instruction: blocked, ...(kind ? { repair_kind: kind } : {}) }); continue; }
+    if (kind && repairSpec(kind).explicit_only) {
+      findings.push({ ...base, class: 'explicit_kind_required', repair_kind: kind, command: repairPreviewCommand(kind) });
+      continue;
+    }
     const skipped = result.repairs_skipped?.find(step => step.kind === kind);
     findings.push({ ...base, class: skipped ? 'consent_required' : 'pending', ...(kind ? { repair_kind: kind } : {}),
       ...(skipped ? { command: skipped.command } : kind ? { command: `gbrain repair ${kind} --apply` } : {}) });

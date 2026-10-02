@@ -17,6 +17,7 @@ import { compareVersions } from '../migrations/index.ts';
 import { resolveHoursEnv } from '../../core/env-number.ts';
 import { schemaVersionHealth } from '../../core/schema-version-health.ts';
 import { checkProjectionReadiness } from './checks/projection-readiness.ts';
+import { remoteUnlinkedFactsCheck } from './checks/unlinked-facts.ts';
 import { resolveExcludePrivatePages } from '../../core/search/private-visibility.ts';
 import {
   type Check,
@@ -452,7 +453,7 @@ export async function doctorReportRemote(
   checks.push(await checkProjectionReadiness(engine, {
     sourceIds: opts.sourceIds,
     excludePrivate: await resolveExcludePrivatePages(engine, opts.remote),
-  }));
+  }, { resident: engine.kind === 'pglite' && opts.remote === true }));
 
   // issue #1777 — hidden_by_search_policy: chunked pages withheld from default
   // search by the hard-exclude prefix policy. Pure SQL COUNT, safe on the
@@ -471,8 +472,8 @@ export async function doctorReportRemote(
   checks.push(await checkFederationHealth(engine));
 
   // 13. v0.42 self_upgrade_health: mode, whether behind, recent failures.
-  // File-plane only (no engine) — works on thin clients too.
-  checks.push(checkSelfUpgradeHealth());
+  // File-plane only (no engine) — works on thin clients too. Then #5836 unlinked_facts inside the caller's grant.
+  checks.push(checkSelfUpgradeHealth(), await remoteUnlinkedFactsCheck(engine, opts));
 
   // 14. Wave checks as sanitized host-action lines (doctor/wave-checks.ts):
   // stable check id, a count-free impact summary and the on-host preview

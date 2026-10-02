@@ -558,11 +558,14 @@ dry run first."*
    recovery, `gbrain repair embedding-effects --source <id>` for a stuck
    embedding effect, `gbrain sources writer retry-effects <source> --request-id <id> --dry-run`
    for a failed Git or withdrawal effect, and `gbrain sources writer unlock` for
-   the writer admin lock. A held Google or GitHub item is resolved first:
-   `gbrain sources status <id>` names its error; fix the cause, then run
-   `gbrain sources retry-held <id>` and `gbrain sync --source <id>` (a
-   successful re-attempt clears the hold), because classic mode does not read
-   managed holds. A live connector or maintenance
+   the writer admin lock. Held Google or GitHub items do not block: deactivate
+   copies each source's managed holds into its classic state file
+   (`.google-source.json` or `.github-source.json`), so they stay held, retried
+   and reported in classic mode; the dry run lists them as `carried_holds`. Only
+   a source with no state directory, or with a classic state file that does not
+   parse, blocks; its exit is to move that file aside, or to resolve the holds
+   (`gbrain sources status <id>`, fix the cause, `gbrain sources retry-held <id>`,
+   `gbrain sync --source <id>`). A live connector or maintenance
    lease means waiting for that run. A clean dry run prints `apply_command`,
    the deactivate command bound to the state it reviewed.
 4. Deactivate: run the printed `apply_command`, or `gbrain sources writer status --json`

@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import type { BrainEngine } from '../engine.ts';
 import { OperationError } from '../ops/contract.ts';
-import { atomRetryInputKey, managedAtomSession, publishManagedAtoms, readAtomOrigin, resumeManagedAtoms, type AtomIntent } from './atom-maintenance.ts';
+import { atomRetryInputKey, managedAtomSession, publishManagedAtoms, readAtomOrigin, resumeManagedAtoms, type AtomIntent, type ManagedAtomRetirement } from './atom-maintenance.ts';
 import { isWriteReceipt } from './types.ts';
 
 export async function retryManagedAtomBatch(engine: BrainEngine, sourceId: string, requestId: string, retryId: string): Promise<Record<string, unknown>> {
@@ -23,7 +23,8 @@ export async function retryManagedAtomBatch(engine: BrainEngine, sourceId: strin
     const checkpoint = retry.expectedCheckpoint as Array<{ failure?: string }> | null;
     if (checkpoint && !checkpoint[0]?.failure) return { status: 'completed', replayed: true, model_rerun: false };
     const saved = retry.rows.filter(row => row.intent?.kind === 'managed_atom_page');
-    if (saved.length) {
+    const deleted = retry.rows.filter(row => row.intent?.kind === 'managed_atom_delete');
+    if (saved.length || deleted.length) {
       const atoms: Parameters<typeof publishManagedAtoms>[3] = [];
       for (const row of saved) {
         const p = row.intent as AtomIntent;
@@ -37,7 +38,18 @@ export async function retryManagedAtomBatch(engine: BrainEngine, sourceId: strin
         if (typeof p.content !== 'string') throw new OperationError('storage_error', 'The retained atom publication content is unavailable.');
         atoms.push({ slug: row.slug, content: p.content, links: p.links ?? [], expectedTarget: { pageId, revision } });
       }
-      const receipts = await publishManagedAtoms(engine, session, current, atoms);
+      const retirements: ManagedAtomRetirement[] = [];
+      for (const row of deleted) {
+        const p = row.intent as AtomIntent;
+        const target = await engine.readPageSnapshot(row.slug, { sourceId, includeDeleted: true });
+        const revision = row.state === 'committed' ? row.outcome?.revision : p.expected_revision;
+        if (typeof revision !== 'string' || row.page_id === null || !target ||
+          target.page.id !== row.page_id || target.revision !== revision || Boolean(target.page.deleted_at) !== (row.state === 'committed')) {
+          throw new OperationError('page_identity_changed', 'An atom retirement target changed independently of the failed publication.');
+        }
+        retirements.push({ slug: row.slug, pageId: row.page_id, revision });
+      }
+      const receipts = await publishManagedAtoms(engine, session, current, atoms, undefined, retirements);
       return { status: 'completed', model_rerun: false, write_requests: receipts };
     }
     if (!retry.rows.some(row => row.outcome?.failure)) throw new OperationError('invalid_params', 'This failed batch has no malformed extraction to retry.');

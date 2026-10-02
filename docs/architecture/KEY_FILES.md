@@ -28,7 +28,8 @@ boundary and add its link here rather than raising the cap.
 | [Canonical reconciliation](key-files/canonical-reconciliation.md) | Exact-page repair, private retained originals, derived atom state and receipt diagnostics |
 | [Company-brain ingestion](key-files/company-brain.md) | Inspection, admission, receipts, derived relationships and schema; [operator guide](../guides/company-brain-ingestion.md) |
 | [Commands (1/6)](key-files/commands-1.md) | `src/commands/agent-logs.ts` through `src/commands/db-repair.ts` |
-| [Commands (2/6)](key-files/commands-2.md) | `src/commands/doctor.ts` through `src/commands/embed.ts` |
+| [Commands (2/6)](key-files/commands-2.md) | `src/commands/doctor.ts` and `src/commands/doctor/` |
+| [Commands (2/6, continued)](key-files/commands-2-continued.md) | `src/commands/dream-retriage.ts` through `src/commands/embed.ts` |
 | [Commands (3/6)](key-files/commands-3.md) | `src/commands/engine-status.ts` through `src/commands/frontmatter-install-hook.ts` |
 | [Commands (4/6)](key-files/commands-4.md) | `src/commands/graph-query.ts` through `src/commands/reindex-search-vector.ts` |
 | [Commands (5/6)](key-files/commands-5.md) | `src/commands/reindex.ts` through `src/commands/storage.ts` |
