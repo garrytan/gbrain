@@ -184,6 +184,11 @@ import { v180 } from './v180-pages-links-attendance-blocked.ts';
 import { v181 } from './v181-connector-dispatch-attempts.ts';
 import { v182 } from './v182-page-versions-source-path.ts';
 import { v183 } from './v183-persistence-mode-epoch.ts';
+import { v184 } from './v184-decision-receipts.ts';
+import { v185 } from './v185-decide-calibrations.ts';
+import { v186 } from './v186-decide-proposals.ts';
+import { v187 } from './v187-fact-relink-attempts.ts';
+import { v188 } from './v188-facts-ontology-stint-dedup.ts';
 
 // Array order is historical (see HISTORICAL_ARRAY_ORDER in the generator); the
 // runner sorts by version before applying.
@@ -366,4 +371,9 @@ export const MIGRATIONS: Migration[] = [
   v181,
   v182,
   v183,
+  v184,
+  v185,
+  v186,
+  v187,
+  v188,
 ];

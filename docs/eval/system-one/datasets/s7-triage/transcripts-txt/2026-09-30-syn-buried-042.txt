@@ -1,0 +1,418 @@
+[user]
+I’m on a Linux server and the root filesystem is at 94%. I want to free space safely. The host runs a small Dockerized app called saltbox, plus logs and nightly backups. Can you help me inspect it first?
+
+[assistant/assistant]
+Yes. Start with filesystem-level usage, then inspect the largest top-level directories without crossing into other mounts:
+
+```bash
+df -hT /
+sudo du -xhd1 / 2>/dev/null | sort -h
+```
+
+Also check inode usage, since a filesystem can fill with many small files:
+
+```bash
+df -ih /
+```
+
+Paste the output. Avoid deleting anything until we identify whether the space is in Docker data, logs, backups, or application files.
+
+[user]
+Here’s the output:
+
+```text
+$ df -hT /
+Filesystem     Type  Size  Used Avail Use% Mounted on
+/dev/vda1      ext4   80G   75G  1.8G  98% /
+
+$ sudo du -xhd1 / 2>/dev/null | sort -h
+4.0K    /media
+4.0K    /mnt
+12K     /opt
+28K     /lost+found
+64K     /srv
+180K    /tmp
+2.1M    /root
+3.8G    /usr
+7.4G    /home
+9.6G    /var
+49G     /var/lib
+71G     /
+```
+
+[assistant/assistant]
+The 49G `/var/lib` entry is the main target. The top-level total is lower than `df` because some usage may be in deleted-but-open files or filesystem metadata, but first inspect `/var/lib`:
+
+```bash
+sudo du -xhd1 /var/lib 2>/dev/null | sort -h
+sudo lsof +L1 2>/dev/null | head -80
+```
+
+Since this is Dockerized, also collect Docker’s own accounting:
+
+```bash
+docker system df
+sudo du -xhd1 /var/lib/docker 2>/dev/null | sort -h
+```
+
+Do not run `docker system prune` yet; it can remove stopped containers and unused images.
+
+[user]
+The results are:
+
+```text
+$ sudo du -xhd1 /var/lib 2>/dev/null | sort -h
+32M     /var/lib/dpkg
+210M    /var/lib/apt
+1.1G    /var/lib/postgresql
+3.2G    /var/lib/containerd
+44G     /var/lib/docker
+49G     /var/lib
+
+$ sudo lsof +L1 2>/dev/null | head -80
+COMMAND   PID USER   FD   TYPE DEVICE SIZE/OFF NLINK NODE NAME
+saltbox  1842 root   1w   REG  252,1  734003200     0 4921 /var/log/saltbox/app.log (deleted)
+
+$ docker system df
+TYPE            TOTAL     ACTIVE    SIZE      RECLAIMABLE
+Images          9         3         18.6GB   11.2GB (60%)
+Containers      6         2         1.4GB    1.4GB (100%)
+Local Volumes   7         4         21.7GB   8.9GB (41%)
+Build Cache     0         0         0B       0B
+
+$ sudo du -xhd1 /var/lib/docker 2>/dev/null | sort -h
+4.0K    /var/lib/docker/plugins
+4.0K    /var/lib/docker/swarm
+12K     /var/lib/docker/runtimes
+28K     /var/lib/docker/tmp
+44K     /var/lib/docker/network
+96K     /var/lib/docker/containers
+210M    /var/lib/docker/image
+1.1G    /var/lib/docker/overlay2
+3.2G    /var/lib/docker/containerd
+39G     /var/lib/docker/volumes
+44G     /var/lib/docker
+```
+
+[assistant/assistant]
+Docker volumes are the largest area, and Docker reports 8.9G reclaimable, while 11.2G of images and 1.4G of containers are also potentially removable. The deleted log is holding about 700MiB until the `saltbox` process reopens or closes it.
+
+First identify volumes and whether they are attached:
+
+```bash
+docker volume ls
+docker system df -v
+```
+
+For the deleted log, restart only the service that owns it if the application supports a controlled restart. Before doing that, check its service definition and status:
+
+```bash
+sudo systemctl status saltbox --no-pager
+sudo systemctl cat saltbox
+```
+
+If it is managed by Compose rather than systemd, use the project directory’s `docker compose ps` and avoid restarting unrelated services.
+
+[user]
+Here’s `docker system df -v`:
+
+```text
+Images space usage:
+
+REPOSITORY        TAG       IMAGE ID       CREATED        SIZE      SHARED SIZE   UNIQUE SIZE   CONTAINERS
+saltbox           latest    7c12ab34de56   3 weeks ago    1.8GB     0B            1.8GB         1
+postgres          16        91ab23cd45ef   2 months ago    438MB     0B            438MB        1
+nginx             1.27      3 months ago    192MB     0B            192MB         1
+saltbox           old       64ef98ab12cd   7 months ago   1.8GB     0B            1.8GB         0
+worker            old       aabbccddeeff   9 months ago   1.2GB     0B            1.2GB         0
+
+Containers space usage:
+CONTAINER ID   IMAGE             COMMAND        LOCAL VOLUMES   SIZE
+a1b2c3d4e5f6   saltbox:latest   "/start"       2             820MB
+b2c3d4e5f6a7   postgres:16      "docker-entry…" 1             610MB
+c3d4e5f6a7b8   saltbox:old      "/start"       0             0B
+d4e5f6a7b8c9   worker:old       "/worker"      0             0B
+
+Local Volumes space usage:
+VOLUME NAME                 LINKS     SIZE
+saltbox_pgdata              1         18.4GB
+saltbox_uploads             1         2.1GB
+old_build_cache             0         7.8GB
+old_uploads                 0         1.1GB
+old_pgdata                  0         0B
+```
+
+[assistant]
+The safest obvious cleanup is the two unreferenced volumes, totaling about 8.9G:
+
+- `old_build_cache` — 7.8G
+- `old_uploads` — 1.1G
+
+Because `LINKS 0` means no container currently references them, remove them explicitly after confirming their names are not needed for rollback:
+
+```bash
+docker volume rm old_build_cache old_uploads
+```
+
+Then remove the two stopped containers, which may release their writable layers:
+
+```bash
+docker rm c3d4e5f6a7b8 d4e5f6a7b8c9
+```
+
+The `saltbox:old` and `worker:old` images become unreferenced after that. Do not remove `saltbox_pgdata` or `saltbox_uploads`; they are active application data. Also leave `old_pgdata` alone for now because it is harmlessly empty and might be a named rollback artifact.
+
+[user]
+I checked with the deployment notes. The old volumes are definitely obsolete. I removed them:
+
+```text
+$ docker volume rm old_build_cache old_uploads
+old_build_cache
+old_uploads
+
+$ docker rm c3d4e5f6a7b8 d4e5f6a7b8c9
+c3d4e5f6a7b8
+d4e5f6a7b8c9
+
+$ df -h /
+Filesystem     Type  Size  Used Avail Use% Mounted on
+/dev/vda1      ext4   80G   65G   12G  81% /
+```
+
+That recovered a lot. What should I inspect next?
+
+[assistant]
+Good, you recovered roughly 10G and brought the filesystem down to 81%. Next inspect ordinary `/var` usage and the Docker/container logs, since the deleted `saltbox` log still accounts for about 700MiB held open:
+
+```bash
+sudo du -xhd1 /var 2>/dev/null | sort -h
+sudo find /var/log -xdev -type f -printf '%s %p\n' 2>/dev/null \
+  | sort -n | tail -30
+sudo du -xhd1 /var/lib/docker/containers 2>/dev/null | sort -h
+```
+
+Also check the service definition:
+
+```bash
+sudo systemctl status saltbox --no-pager
+sudo systemctl cat saltbox
+```
+
+If `saltbox` is a systemd service, a controlled restart should release the deleted file, but confirm its restart behavior and any maintenance window first.
+
+[user]
+The `/var` inspection shows:
+
+```text
+$ sudo du -xhd1 /var 2>/dev/null | sort -h
+210M    /var/cache
+640M    /var/log
+1.1G    /var/lib/postgresql
+3.2G    /var/lib/containerd
+34G     /var/lib/docker
+39G     /var
+
+$ sudo find /var/log -xdev -type f -printf '%s %p\n' 2>/dev/null | sort -n | tail -10
+10485760 /var/log/journal/ab12/system@0001.journal
+52428800 /var/log/journal/ab12/system@0002.journal
+94371840 /var/log/saltbox/worker.log
+314572800 /var/log/saltbox/app.log
+```
+
+`systemctl` says saltbox is a generated unit from Compose, and the deployment notes say `docker compose restart saltbox` is safe.
+
+[assistant]
+Before restarting, verify the Compose project and current service state so the command targets the intended project:
+
+```bash
+cd /path/to/saltbox
+docker compose ps
+docker compose config --services
+```
+
+If `saltbox` appears as a service, restart it:
+
+```bash
+docker compose restart saltbox
+```
+
+Then confirm the container is healthy and the deleted-file handle is gone:
+
+```bash
+docker compose ps
+sudo lsof +L1 2>/dev/null | head -40
+df -h /
+```
+
+The visible 300MB `app.log` is separate from the deleted 700MiB file. Do not truncate active logs blindly; check whether the Compose configuration uses Docker’s `json-file` logging or a host-mounted log directory, and inspect rotation settings afterward.
+
+[user]
+I ran it from `/opt/saltbox`:
+
+```text
+$ docker compose ps
+NAME       IMAGE            COMMAND   SERVICE   STATUS
+saltbox    saltbox:latest   "/start"  saltbox   Up 18 days (healthy)
+postgres   postgres:16      ...       postgres  Up 18 days (healthy)
+
+$ docker compose restart saltbox
+[+] Restarting 1/1
+ ✔ Container saltbox  Started
+
+$ sudo lsof +L1 2>/dev/null | head -40
+COMMAND   PID USER   FD   TYPE DEVICE SIZE/OFF NLINK NODE NAME
+
+$ df -h /
+Filesystem     Type  Size  Used Avail Use% Mounted on
+/dev/vda1      ext4   80G   64G   13G  80% /
+```
+
+[assistant]
+That released the deleted log and left the system at a comfortable 80%. Now inspect log rotation and any large application or backup directories, without touching active data:
+
+```bash
+sudo du -xhd2 /var/log/saltbox /var/backups /home 2>/dev/null | sort -h | tail -40
+sudo ls -l /etc/logrotate.d/
+sudo grep -R --line-number -E 'saltbox|/var/log' /etc/logrotate.conf /etc/logrotate.d 2>/dev/null
+```
+
+For Docker’s logging configuration:
+
+```bash
+docker inspect saltbox postgres \
+  --format '{{.Name}}: {{json .HostConfig.LogConfig}}'
+sudo find /var/lib/docker/containers -type f -name '*-json.log' \
+  -printf '%s %p\n' 2>/dev/null | sort -n | tail -20
+```
+
+The two active volumes contain important data, so measure their subdirectories but do not delete files inside them manually. Use application-aware retention for uploads and database backups.
+
+[user]
+The results point to backups:
+
+```text
+$ sudo du -xhd2 /var/backups /var/log/saltbox /home 2>/dev/null | sort -h | tail -20
+120M    /var/log/saltbox
+860M    /var/backups/postgresql
+2.4G    /var/backups/saltbox
+3.8G    /home
+4.7G    /var/backups
+
+$ sudo ls -l /etc/logrotate.d/ | grep -E 'saltbox|docker'
+-rw-r--r-- 1 root root 312 Jan 14  saltbox
+
+$ sudo cat /etc/logrotate.d/saltbox
+/var/log/saltbox/*.log {
+    daily
+    rotate 14
+    compress
+    missingok
+    notifempty
+    copytruncate
+}
+
+$ sudo find /var/lib/docker/containers -type f -name '*-json.log' -printf '%s %p\n' | sort -n | tail
+2097152 /var/lib/docker/containers/a1b2c3d4e5f6/a1b2-json.log
+4194304 /var/lib/docker/containers/b2c3d4e5f6/b2-json.log
+```
+
+[assistant]
+The Docker JSON logs are small and already have no obvious buildup. The backup directory is the next safe target, but identify retention and file ages before deleting anything:
+
+```bash
+sudo find /var/backups -maxdepth 2 -type f \
+  -printf '%TY-%Tm-%Td %TH:%TM %s %p\n' | sort
+```
+
+Also inspect scheduled jobs and any backup documentation:
+
+```bash
+sudo systemctl list-timers --all | grep -i -E 'backup|postgres|saltbox'
+sudo grep -R --line-number -i -E 'backup|retention|keep' \
+  /etc/cron* /etc/systemd/system /opt/saltbox 2>/dev/null | head -100
+```
+
+Look for duplicate or expired snapshots, but preserve the newest known-good database backup and whatever retention policy the deployment requires. Don’t use a broad `rm /var/backups/*` command.
+
+[user]
+I found this:
+
+```text
+$ sudo find /var/backups -maxdepth 2 -type f -printf '%TY-%Tm-%Td %TH:%TM %s %p\n' | sort
+2026-08-01 02:00 536870912 /var/backups/saltbox/app-2026-08-01.tar.zst
+2026-08-08 02:00 536870912 /var/backups/saltbox/app-2026-08-08.tar.zst
+2026-08-15 02:00 536870912 /var/backups/saltbox/app-2026-08-15.tar.zst
+2026-08-22 02:00 536870912 /var/backups/saltbox/app-2026-08-22.tar.zst
+2026-08-29 02:00 536870912 /var/backups/saltbox/app-2026-08-29.tar.zst
+2026-09-05 02:00 536870912 /var/backups/saltbox/app-2026-09-05.tar.zst
+2026-09-12 02:00 536870912 /var/backups/saltbox/app-2026-09-12.tar.zst
+2026-09-19 02:00 536870912 /var/backups/saltbox/app-2026-09-19.tar.zst
+2026-09-26 02:00 536870912 /var/backups/saltbox/app-2026-09-26.tar.zst
+2026-09-30 02:00 1073741824 /var/backups/postgresql/pg-2026-09-30.dump
+2026-09-29 02:00 1073741824 /var/backups/postgresql/pg-2026-09-29.dump
+2026-09-28 02:00 1073741824 /var/backups/postgresql/pg-2026-09-28.dump
+```
+
+The runbook says keep the last three app backups and the last two PostgreSQL dumps.
+
+[user]
+I’ve noticed I often postpone routine cleanup until the disk is nearly full, then I rush and second-guess every deletion. With saltbox, I tend to focus on feature work and treat maintenance as something I’ll get to later. I want to change that by adding a short weekly storage check with clear retention rules, rather than making cleanup an emergency. I also want alerts before usage reaches the point where it disrupts work.
+
+[assistant]
+That’s a concrete pattern to address: delayed maintenance turns a predictable task into a high-pressure one. For this cleanup, the runbook gives an unambiguous retention rule, so remove only the six older app backups and the oldest PostgreSQL dump, preserving the newest three and newest two.
+
+```bash
+sudo rm -- \
+  /var/backups/saltbox/app-2026-08-01.tar.zst \
+  /var/backups/saltbox/app-2026-08-08.tar.zst \
+  /var/backups/saltbox/app-2026-08-15.tar.zst \
+  /var/backups/saltbox/app-2026-08-22.tar.zst \
+  /var/backups/saltbox/app-2026-08-29.tar.zst \
+  /var/backups/saltbox/app-2026-09-05.tar.zst \
+  /var/backups/postgresql/pg-2026-09-28.dump
+```
+
+Then verify the remaining files and space:
+
+```bash
+sudo find /var/backups -maxdepth 2 -type f -printf '%TY-%Tm-%Td %s %p\n' | sort
+df -h /
+```
+
+For prevention, schedule a weekly read-only check and an alert at, for example, 85% usage. Keep deletion separate from alerting so retention changes remain deliberate.
+
+[user]
+I deleted exactly those files:
+
+```text
+$ sudo find /var/backups -maxdepth 2 -type f -printf '%TY-%Tm-%Td %s %p\n' | sort
+2026-09-07 02:00 536870912 /var/backups/saltbox/app-2026-09-07.tar.zst
+2026-09-14 02:00 536870912 /var/backups/saltbox/app-2026-09-14.tar.zst
+2026-09-21 02:00 536870912 /var/backups/saltbox/app-2026-09-21.tar.zst
+2026-09-26 02:00 536870912 /var/backups/saltbox/app-2026-09-26.tar.zst
+2026-09-29 02:00 1073741824 /var/backups/postgresql/pg-2026-09-29.dump
+2026-09-30 02:00 1073741824 /var/backups/postgresql/pg-2026-09-30.dump
+
+$ df -h /
+Filesystem     Type  Size  Used Avail Use% Mounted on
+/dev/vda1      ext4   80G   56G   21G  73% /
+```
+
+[assistant]
+The cleanup is complete: the root filesystem is now at 73%, with 21G available. One detail: four app backups remain, although the stated rule says to keep the last three. That is not urgent, but if the runbook is authoritative, the oldest remaining app backup is `app-2026-09-07.tar.zst`; remove it only after confirming the date list reflects the intended backup schedule.
+
+For a weekly check, a read-only script could be:
+
+```bash
+#!/bin/sh
+set -eu
+df -P / | awk 'NR==2 {
+  gsub(/%/, "", $5)
+  printf "root filesystem: %s%% used, %s available\n", $5, $4
+  if ($5 >= 85) exit 2
+}'
+docker system df
+sudo du -xhd1 /var/backups /var/lib/docker 2>/dev/null | sort -h
+```
+
+Run it from a systemd timer or monitoring agent, and alert at 85% while keeping the cleanup commands manual and retention-based. Also consider configuring Docker log rotation explicitly, for example with `max-size` and `max-file`, then verify the active containers inherit that configuration during their next recreation.

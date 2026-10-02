@@ -14,7 +14,7 @@
  * Normalizer `doctor-json-v1`: ordered checks (name, status, message,
  * details, issues) plus the report envelope, with volatile tokens replaced:
  * temp home / repo / os tmpdir paths, UUIDs, ISO timestamps, the running
- * package version, the machine hostname, and `*_ms` / elapsed / pid-style
+ * package and Bun versions, the machine hostname, and `*_ms` / elapsed / pid-style
  * detail keys. Check order is emitted order (deterministic; no Map/Set
  * iteration is re-sorted). stderr lines are kept (normalized) because the
  * early-stop paths announce themselves there.
@@ -138,6 +138,7 @@ export function normalizeDoctorText(text: string, roots: Record<string, string>,
   out = scrubTimestamps(out).replace(UUID, '<uuid>');
   out = out.replace(/\(most recent caller: at [^()]*\([^()]*\)\)/g, '(most recent caller: <frame>)');
   out = out.split(PACKAGE_VERSION).join('<version>');
+  out = out.split(`Bun ${Bun.version}`).join('Bun <bun-version>');
   const host = hostname();
   if (host) out = out.split(host).join('<hostname>');
   return out;

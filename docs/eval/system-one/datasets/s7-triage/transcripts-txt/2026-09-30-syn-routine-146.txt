@@ -1,0 +1,190 @@
+[user]
+My linter is complaining about import order in `src/report.py`. The file runs correctly, but CI stops at the lint step. Can you help me sort out what it wants?
+
+[assistant]
+Sure. Please paste the linter output and the current import section from `src/report.py`. The exact rule name matters because different tools group standard-library, third-party, and local imports differently.
+
+[user]
+Here’s the output:
+
+```text
+$ ruff check src/report.py
+src/report.py:1:1: I001 [*] Import block is un-sorted or un-formatted
+Found 1 error.
+[*] 1 fixable with the `--fix` option.
+```
+
+The top of the file is:
+
+```python
+import csv
+from pathlib import Path
+
+from app.formatting import format_rows
+import requests
+from app.io import read_rows
+import datetime
+```
+
+[assistant]
+That is Ruff’s `I001` import-order rule. It is treating the imports as one block that needs sorting into categories and alphabetical order. In this case, `datetime`, `csv`, and `Path` are standard-library imports; `requests` is third-party; and the `app` imports are local.
+
+A conventional result would be:
+
+```python
+import csv
+import datetime
+from pathlib import Path
+
+import requests
+
+from app.formatting import format_rows
+from app.io import read_rows
+```
+
+You can apply Ruff’s automatic fix with:
+
+```bash
+ruff check src/report.py --fix
+```
+
+Before changing anything, you can preview the proposed edit with:
+
+```bash
+ruff check src/report.py --diff
+```
+
+[assistant]
+If you want Ruff to format the imports and then verify the file, run:
+
+```bash
+ruff check src/report.py --fix
+ruff format src/report.py
+ruff check src/report.py
+```
+
+The first command addresses the `I001` lint rule. The second applies Ruff’s general formatting rules, and the final command confirms that no lint errors remain.
+
+[assistant]
+Alternatively, if the repository already uses Ruff’s formatter and configuration, this shorter command is usually enough:
+
+```bash
+ruff check src/report.py --fix
+```
+
+The output should look roughly like:
+
+```text
+$ ruff check src/report.py --fix
+Found 1 error (1 fixed, 0 remaining).
+```
+
+Then run:
+
+```bash
+ruff check src/report.py
+```
+
+Expected output when it passes:
+
+```text
+All checks passed!
+```
+
+[assistant]
+The corrected import block should be exactly:
+
+```python
+import csv
+import datetime
+from pathlib import Path
+
+import requests
+
+from app.formatting import format_rows
+from app.io import read_rows
+```
+
+Ruff may also remove unused imports if those checks are enabled, but based on the output you pasted, the reported issue is only import ordering. No application logic needs to change.
+
+[user]
+I ran the preview command first:
+
+```text
+$ ruff check src/report.py --diff
+--- src/report.py
++++ src/report.py
+@@ -1,8 +1,10 @@
+ import csv
++import datetime
+ from pathlib import Path
+ 
+-from app.formatting import format_rows
+ import requests
++
++from app.formatting import format_rows
+ from app.io import read_rows
+-import datetime
+ 
+```
+
+That matches what you described. Is it safe to apply the fix directly?
+
+[assistant]
+Yes. The diff only rearranges import statements; it does not alter function bodies or runtime logic. Apply the targeted fix with:
+
+```bash
+ruff check src/report.py --fix
+```
+
+Then inspect the resulting diff:
+
+```bash
+git diff -- src/report.py
+```
+
+You should see only the import movement shown in the preview. If the file is part of a larger working tree, using the path-specific `git diff` command helps avoid mixing this change with unrelated edits.
+
+[assistant]
+After applying it, verify both the linter and, if your project has one, its normal test command:
+
+```bash
+ruff check src/report.py
+python -m pytest
+```
+
+If the repository’s test suite is larger than needed, you can first run the relevant test file instead, for example:
+
+```bash
+python -m pytest tests/test_report.py
+```
+
+The linter result should be:
+
+```text
+All checks passed!
+```
+
+If Ruff reports additional issues after the fix, paste that output; it may indicate a separate rule rather than another import-order problem.
+
+[assistant]
+The direct fix is appropriate here because Ruff has already shown the exact patch with `--diff`. After running it, the top of `src/report.py` should be:
+
+```python
+import csv
+import datetime
+from pathlib import Path
+
+import requests
+
+from app.formatting import format_rows
+from app.io import read_rows
+```
+
+No further manual sorting is needed. If the project runs Ruff across the whole source tree in CI, you can also check the same scope locally:
+
+```bash
+ruff check .
+```
+
+That can reveal other files with the same `I001` issue, while leaving the already-fixed file unchanged.

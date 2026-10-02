@@ -15,6 +15,8 @@ import type { BrainEngine } from '../core/engine.ts';
 import type { AuthInfo } from '../core/operations.ts';
 import { executeRawJsonb } from '../core/sql-query.ts';
 import { MinionQueue } from '../core/minions/queue.ts';
+import { OperationError } from '../core/ops/contract.ts';
+import { ERROR_CATALOGUE } from '../core/error-catalogue.ts';
 import {
   computeContentHash,
   validateIngestionEvent,
@@ -518,6 +520,13 @@ async function handleIngest(
       message: 'Accepted. Event queued for ingestion.',
     });
   } catch (err) {
+    // A job row left with SQL NULL authority by an upgrade across v0.50 holds
+    // this capture's key (or fills its waiting cap): a conflict the operator
+    // resolves with the hinted recovery, not a server fault.
+    if (err instanceof OperationError && err.docs === ERROR_CATALOGUE.legacy_job_authority.docs) {
+      res.status(409).json({ error: err.code, message: err.message, hint: err.suggestion, docs_url: err.docs });
+      return;
+    }
     const msg = err instanceof Error ? err.message : String(err);
     console.error('POST /ingest queue submission error:', msg);
     res.status(500).json({

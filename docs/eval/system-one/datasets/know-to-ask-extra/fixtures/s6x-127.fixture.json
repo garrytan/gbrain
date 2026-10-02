@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-127",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/mateo-fenholt",
+      "content": "---\ntitle: Mateo Fenholt\ntype: person\naliases: [mateo]\nsummary: \"Mateo Fenholt is the procurement lead at Russetcrest.\"\n---\n\nMateo Fenholt is the procurement lead at Russetcrest.\n"
+    },
+    {
+      "slug": "people/thea-lornstead",
+      "content": "---\ntitle: Thea Lornstead\ntype: person\nsummary: \"Thea Lornstead is the operations director at Pylonyard.\"\n---\n\nThea Lornstead is the operations director at Pylonyard.\n"
+    },
+    {
+      "slug": "companies/fablespire",
+      "content": "---\ntitle: Fablespire\ntype: company\nsummary: \"Fablespire is the legal vendor we picked.\"\n---\n\nFablespire is the legal vendor we picked. The integration slipped because their API still lacks webhooks.\n"
+    },
+    {
+      "slug": "people/noemi-orrinwick",
+      "content": "---\ntitle: Noemi Orrinwick\ntype: person\naliases: [noemi]\nsummary: \"A contact from a conference last spring.\"\n---\n\nA contact from a conference last spring.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Fenholt's train gets in at 5:40pm and the walk is 15 minutes. What time will they reach the office?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Translate into Spanish: 'Lornstead will join the meeting at noon.'"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Okay, noted."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "give me three icebreaker questions for a team lunch"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Okay, noted."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "what did the law firm we hired say about the trademark filing?"
+    }
+  ]
+}

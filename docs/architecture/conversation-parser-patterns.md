@@ -137,7 +137,7 @@ formats:
 
 - `**Speaker** (09:15): text` uses `bold-paren-time`.
 - `**Speaker** (9:15 AM): text` uses `bold-paren-time-12h`.
-- `**Speaker:** text` uses `bold-name-no-time`.
+- `**Speaker:** text` uses `bold-name-no-time`. Its `repeat_speaker_min_turns: 3` structure gate returns no_match when three or more turns never repeat a speaker — a status note's `**Status:**`/`**Owner:**`/`**Next step:**` labels are not a conversation (gbrain-evals N12-1).
 - `**Speaker** (2026-04-09 9:15 AM): text` uses `imessage-slack`.
 
 Keeping these examples in both `test_negative` and parser regression tests makes

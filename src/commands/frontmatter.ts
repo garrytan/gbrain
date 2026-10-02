@@ -216,7 +216,8 @@ async function runValidate(rest: string[]): Promise<void> {
     const rel = relative(brainRoot, file);
     // Files above/outside the brain root fall back to basename rather than
     // emitting a "../"-prefixed slug for non-brain files.
-    const expectedSlug = slugifyPath(rel && !rel.startsWith('..') ? rel : basename(file));
+    const slugPath = rel && !rel.startsWith('..') ? rel : basename(file);
+    const expectedSlug = slugifyPath(slugPath);
     const parsed = parseMarkdown(content, file, { validate: true, expectedSlug });
     const errs = parsed.errors ?? [];
     const result: FileValidation = {
@@ -225,7 +226,9 @@ async function runValidate(rest: string[]): Promise<void> {
     };
 
     if (flags.fix && errs.length > 0) {
-      const { content: fixed, fixes } = autoFixFrontmatter(content, { filePath: file });
+      // #5053: the fixer derives the slug from the same path validate used;
+      // the absolute path re-keyed every declared slug as a mismatch.
+      const { content: fixed, fixes } = autoFixFrontmatter(content, { filePath: slugPath });
       result.fixesApplied = fixes;
       if (fixes.length > 0 && !flags.dryRun) {
         assertManagedFilesystemWrite(file);

@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-120",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/delphine-corvholt",
+      "content": "---\ntitle: Delphine Corvholt\ntype: person\nsummary: \"Delphine Corvholt is the head of sales at Cobaltyard.\"\n---\n\nDelphine Corvholt is the head of sales at Cobaltyard. Delphine pushed to move the reporting feature ahead of the mobile app.\n"
+    },
+    {
+      "slug": "people/ottilie-orrinford",
+      "content": "---\ntitle: Ottilie Orrinford\ntype: person\naliases: [ottilie]\nsummary: \"Ottilie Orrinford is the product lead at Russetcrest.\"\n---\n\nOttilie Orrinford is the product lead at Russetcrest.\n"
+    },
+    {
+      "slug": "projects/onboarding-revamp",
+      "content": "---\ntitle: Onboarding Revamp\ntype: project\nsummary: \"Onboarding Revamp: The plan is to replace the setup call with a guided checklist and a two-week check-in.\"\n---\n\nOnboarding Revamp: The plan is to replace the setup call with a guided checklist and a two-week check-in.\n"
+    },
+    {
+      "slug": "people/dario-fenmere",
+      "content": "---\ntitle: Dario Fenmere\ntype: person\naliases: [dario]\nsummary: \"A contact from a conference last spring.\"\n---\n\nA contact from a conference last spring.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "By the way, someone named Thea Tessridge emailed about partnerships. Never heard of them."
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Done."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Remind me of Corvholt's position on the roadmap before our sync."
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Happy to help."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "How do you pronounce Ottilie? I want to say it right."
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Done."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "remind me what we settled on for that onboarding idea"
+    }
+  ]
+}

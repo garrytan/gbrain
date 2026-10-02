@@ -18,6 +18,7 @@
  */
 
 import { createHash } from 'node:crypto';
+import { stripPastedContent } from '../transcripts/pasted-content.ts';
 
 /** Every gate skip is a BY-DESIGN filter outcome, not a failure — heartbeat
  * writers classify these `outcome: 'ok'` so alerting on 'degraded' never
@@ -31,6 +32,7 @@ export const WRITEBACK_SKIP_REASONS = [
   'question_only',
   'quoted_or_tool_output',
   'bulk_paste',
+  'pasted_content',
 ] as const;
 export type WritebackSkipReason = (typeof WRITEBACK_SKIP_REASONS)[number];
 
@@ -105,18 +107,27 @@ export function gateWritebackTurn(text: unknown): WritebackGateResult {
   // single length compare rejects it.
   if (trimmed.length > MAX_TURN_CHARS) return { ok: false, reason: 'bulk_paste' };
 
-  // 4. ack_or_greeting: ≤6 words AND the whole text is lexicon-matched.
-  const bare = trimmed.toLowerCase().replace(/[.!?,;:~……]+$/gu, '').replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, '').trim();
+  // 4. pasted_content (#5812): Claude Code paste blocks are someone else's
+  //    words, so every later rule and the banked text see only the user's
+  //    own words. A turn that was only pasted text banks nothing.
+  const own = stripPastedContent(trimmed).text.trim();
+  if (own.length === 0) return { ok: false, reason: 'pasted_content' };
+  if (own.length < (CJK_RE.test(own) ? MIN_TURN_CHARS_CJK : MIN_TURN_CHARS)) {
+    return { ok: false, reason: 'too_short' };
+  }
+
+  // 5. ack_or_greeting: ≤6 words AND the whole text is lexicon-matched.
+  const bare = own.toLowerCase().replace(/[.!?,;:~……]+$/gu, '').replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, '').trim();
   if (bare.split(/\s+/).length <= 6 && ACK_RE.test(bare)) {
     return { ok: false, reason: 'ack_or_greeting' };
   }
 
-  // 5. slash_command (harness command, operational)
-  if (trimmed.startsWith('/')) return { ok: false, reason: 'slash_command' };
+  // 6. slash_command (harness command, operational)
+  if (own.startsWith('/')) return { ok: false, reason: 'slash_command' };
 
-  // 6. question_only: every non-empty sentence ends with a question mark.
+  // 7. question_only: every non-empty sentence ends with a question mark.
   //    Precision-biased — a fact embedded in a question is an accepted miss.
-  const sentences = trimmed
+  const sentences = own
     .split(/(?<=[.!?。！？])\s+|\n+/)
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
@@ -124,13 +135,13 @@ export function gateWritebackTurn(text: unknown): WritebackGateResult {
     return { ok: false, reason: 'question_only' };
   }
 
-  // 7. quoted_or_tool_output: strip fences / '>' quotes / indent runs; if the
+  // 8. quoted_or_tool_output: strip fences / '>' quotes / indent runs; if the
   //    residue is not substantive on its own, the turn was quoted material.
-  const residue = stripQuotedAndToolOutput(trimmed).trim();
+  const residue = stripQuotedAndToolOutput(own).trim();
   if (residue.length < (CJK_RE.test(residue) ? MIN_TURN_CHARS_CJK : MIN_TURN_CHARS)) {
     return { ok: false, reason: 'quoted_or_tool_output' };
   }
 
-  const normalized = normalizeTurnText(trimmed);
+  const normalized = normalizeTurnText(own);
   return { ok: true, normalized, hash24: turnHash24(normalized) };
 }

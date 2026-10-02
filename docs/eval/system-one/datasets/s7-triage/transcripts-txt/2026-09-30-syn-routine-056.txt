@@ -1,0 +1,357 @@
+[user]
+My linter is complaining about import order in a small Python project. I thought the imports were already grouped correctly, but CI fails with a formatting error. Can you help me diagnose it?
+
+[assistant]
+Sure. Please paste the linter output and the relevant file’s import section. Also include the formatter or linter configuration if it is not using the project defaults. The exact error text matters because tools such as Ruff, isort, Flake8, and Black may report similar-looking issues while applying slightly different rules.
+
+[user]
+Here is the CI output:
+
+```text
+$ ruff check src tests
+I001 [*] Import block is un-sorted or un-formatted
+ --> src/reporting/summary.py:1:1
+  |
+1 | / import json
+2 | | from pathlib import Path
+3 | | import csv
+4 | | from collections import defaultdict
+  | |_________________________________^
+  |
+  = help: Organize imports
+  = fixable with the `--fix` option
+
+Found 1 error.
+```
+
+The file starts like this:
+
+```python
+import json
+from pathlib import Path
+import csv
+from collections import defaultdict
+
+from reporting.models import Row
+from reporting.util import normalize
+```
+
+[assistant]
+The imports are valid Python, but the standard-library imports are not in the order Ruff expects. A typical sorted block would be:
+
+```python
+import csv
+import json
+from collections import defaultdict
+from pathlib import Path
+
+from reporting.models import Row
+from reporting.util import normalize
+```
+
+Ruff’s `I001` rule is generally provided by its isort-compatible import sorter. Since the diagnostic says it is fixable, you can first preview the change with:
+
+```bash
+ruff check src/reporting/summary.py --diff
+```
+
+If the diff looks right, apply it with:
+
+```bash
+ruff check src/reporting/summary.py --fix
+```
+
+Then run the project’s normal checks again.
+
+[user]
+I ran the diff command. This is what it printed:
+
+```diff
+--- src/reporting/summary.py
++++ src/reporting/summary.py
+@@ -1,7 +1,7 @@
+-import json
+-from pathlib import Path
+ import csv
++import json
+ from collections import defaultdict
++from pathlib import Path
+ 
+ from reporting.models import Row
+ from reporting.util import normalize
+```
+
+So that matches what you described. Is there any reason not to use `--fix` here?
+
+[assistant]
+For this diagnostic, using `--fix` is routine because Ruff has shown the exact proposed edit and it only rearranges imports. A few practical precautions are still useful:
+
+1. Make sure the working tree is clean or that you know which unrelated edits are present.
+2. Run the command at the intended scope, such as the one file or the project’s source directory.
+3. Review the resulting diff afterward.
+4. Run the linter and tests after the edit.
+
+For just this file:
+
+```bash
+ruff check src/reporting/summary.py --fix
+git diff -- src/reporting/summary.py
+ruff check src tests
+```
+
+If the project also runs a formatter, use the project’s configured formatter command after the import fix. Ruff’s formatter and Ruff’s linter are separate operations unless the project has a wrapper command that runs both.
+
+[user]
+I used the one-file command, and the output was:
+
+```text
+$ ruff check src/reporting/summary.py --fix
+Found 1 error (1 fixed, 0 remaining).
+```
+
+Then `git diff` showed:
+
+```diff
+diff --git a/src/reporting/summary.py b/src/reporting/summary.py
+index 8c0a2f1..2c9a4f7 100644
+--- a/src/reporting/summary.py
++++ b/src/reporting/summary.py
+@@ -1,7 +1,7 @@
+-import json
+-from pathlib import Path
+ import csv
++import json
+ from collections import defaultdict
++from pathlib import Path
+ 
+ from reporting.models import Row
+ from reporting.util import normalize
+```
+
+The file has no other changes. Should I run Ruff on all of `src` and `tests` now?
+
+[assistant]
+Yes. The one-file run confirms that this file is fixed, while the original CI command checks both directories. Run the same scope locally:
+
+```bash
+ruff check src tests
+```
+
+If it reports additional import-order problems, you can preview all proposed edits before changing anything:
+
+```bash
+ruff check src tests --diff
+```
+
+Then apply only Ruff’s safe fixes across those directories with:
+
+```bash
+ruff check src tests --fix
+```
+
+Afterward, inspect the diff and run the project’s test command. If the repository has a combined task such as `make check`, `just check`, or a package-script command, that is usually preferable because it reproduces the CI sequence.
+
+[user]
+The full check passed:
+
+```text
+$ ruff check src tests
+All checks passed!
+```
+
+The project uses a separate formatter command in its instructions:
+
+```bash
+python -m black src tests
+```
+
+I have not run that yet. Does Black need to be run after Ruff in this case?
+
+[assistant]
+Run it if the project instructions or CI run it. The import reorder itself does not require Black, but Black may be checking other formatting rules that Ruff’s linter does not apply. Since the project explicitly lists the command, use it and review whether it changes anything:
+
+```bash
+python -m black src tests --diff
+```
+
+If the diff is empty, run the normal command or proceed to the next check:
+
+```bash
+python -m black src tests
+ruff check src tests
+```
+
+If Black reports that files would be reformatted, let it apply those changes, inspect the resulting diff, and then run Ruff again. Running both tools in the project’s documented order helps avoid a local pass that differs from CI.
+
+[user]
+I ran Black with `--diff`, and it produced no diff. Then I ran the normal command:
+
+```text
+$ python -m black src tests
+All done! ✨ 🍰 ✨
+18 files left unchanged.
+```
+
+Ruff still passes:
+
+```text
+$ ruff check src tests
+All checks passed!
+```
+
+Is there a useful command to verify that the import sorter itself would make no further changes?
+
+[assistant]
+Yes. You can ask Ruff to show import-order fixes without applying them. Since `I001` is the import-order rule, use:
+
+```bash
+ruff check src tests --select I001 --diff
+```
+
+No diff means Ruff has no import-order changes to propose in those directories. You can also run the formatter’s check mode separately:
+
+```bash
+python -m black --check src tests
+```
+
+The Black check should report that all files would be left unchanged. Together, these commands distinguish import sorting from general formatting:
+
+```text
+ruff check src tests --select I001 --diff
+python -m black --check src tests
+```
+
+The first command may still print a normal success message when there is no diff, depending on the Ruff version and configuration.
+
+[user]
+The verification commands completed like this:
+
+```text
+$ ruff check src tests --select I001 --diff
+All checks passed!
+
+$ python -m black --check src tests
+All done! ✨ 🍰 ✨
+18 files would be left unchanged.
+```
+
+That seems resolved. For future cases, should I run `ruff format` instead of Black, or stick with the project command?
+
+[assistant]
+Stick with the project command unless the project configuration explicitly switches to Ruff’s formatter. Ruff’s formatter and Black generally target compatible formatting, but they are not automatically interchangeable in every repository. The configured tool, version, line length, excluded paths, preview settings, and CI command all matter.
+
+For this project, a routine sequence is:
+
+```bash
+ruff check src tests --diff
+python -m black src tests --diff
+ruff check src tests --fix
+python -m black src tests
+ruff check src tests
+python -m black --check src tests
+```
+
+You can simplify it once you know the checks. For a normal edit, run the project’s documented formatting and lint commands. Use `ruff check --fix` for safe lint fixes such as import ordering, review the diff, then run Black and the checks. Avoid adding `ruff format` unless the repository configuration and CI use it.
+
+[user]
+I noticed the first suggested sequence previews Ruff changes, then previews Black changes, and only afterward applies Ruff fixes. Would it be cleaner to apply the import fix first and then preview Black?
+
+[assistant]
+Yes, that ordering is clearer for an actual edit. Preview commands are useful before changing files, but once you have confirmed the proposed import diff, apply it first and then let the formatter inspect the updated files:
+
+```bash
+ruff check src tests --select I001 --diff
+ruff check src tests --select I001 --fix
+git diff -- src tests
+python -m black src tests --diff
+python -m black src tests
+ruff check src tests
+python -m black --check src tests
+```
+
+You do not need to use `--select I001` for the regular project-wide Ruff run unless you specifically want to limit the operation to import sorting. The broader form catches all configured lint rules:
+
+```bash
+ruff check src tests --fix
+```
+
+For a single import-order issue, the focused command is convenient. For routine project maintenance, follow the repository’s normal command sequence and inspect the diff between tools.
+
+[user]
+Could the import order differ if the project has a `pyproject.toml` configuration? I want to understand why another directory might sort differently.
+
+[assistant]
+Yes. Ruff’s import sorting can be affected by configuration in `pyproject.toml`, `ruff.toml`, or `.ruff.toml`. Common settings include the selected rules, known first-party modules, third-party sections, forced wrapping, relative-import behavior, and line length. For example:
+
+```toml
+[tool.ruff]
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["reporting"]
+force-single-line = false
+combine-as-imports = true
+```
+
+A package listed in `known-first-party` is separated from third-party imports differently than an unrecognized package. Per-file ignores can also make a diagnostic disappear without changing the sorting behavior. To see the effective Ruff configuration for a path, use the project’s Ruff version and inspect the repository config; command-line options can override it. Checking the config is especially useful when one directory contains namespace packages or generated files.
+
+[user]
+I checked the project configuration and found:
+
+```toml
+[tool.ruff]
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["reporting"]
+```
+
+That explains the blank line before the `reporting` imports. Is there anything else I should check before considering this done?
+
+[assistant]
+The relevant checks have passed, so there is no further import-order diagnosis needed. For a routine cleanup, verify the final working-tree diff and run the same commands CI uses. For example:
+
+```bash
+git diff --check
+git diff -- src/reporting/summary.py
+ruff check src tests
+python -m black --check src tests
+```
+
+`git diff --check` catches whitespace errors, while the file-specific diff confirms that only the import arrangement changed. If CI has additional commands, use those as the final verification. Otherwise, the expected final import block is:
+
+```python
+import csv
+import json
+from collections import defaultdict
+from pathlib import Path
+
+from reporting.models import Row
+from reporting.util import normalize
+```
+
+No configuration change is needed; the formatter and linter now agree with the existing project settings.
+
+[user]
+I ran the final checks:
+
+```text
+$ git diff --check
+$ ruff check src tests
+All checks passed!
+
+$ python -m black --check src tests
+All done! ✨ 🍰 ✨
+18 files would be left unchanged.
+```
+
+The only diff is the four-line import reorder in `summary.py`. Thanks. I’ll leave the configuration unchanged.
+
+[assistant]
+That is resolved. The import block now follows the configured Ruff/isort ordering, the `reporting` imports remain in the first-party section, Black reports no formatting changes, and the full Ruff check passes. The final change is limited to the import reorder, so no configuration update is needed.

@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-053",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/emrys-merrwaite",
+      "content": "---\ntitle: Emrys Merrwaite\ntype: person\nsummary: \"Emrys Merrwaite is the finance lead at Wandercrest.\"\n---\n\nEmrys Merrwaite is the finance lead at Wandercrest.\n"
+    },
+    {
+      "slug": "projects/office-move",
+      "content": "---\ntitle: Office Move\ntype: project\nsummary: \"Office Move: We agreed to sublet the second floor and move the team downstairs at the end of the quarter.\"\n---\n\nOffice Move: We agreed to sublet the second floor and move the team downstairs at the end of the quarter.\n"
+    },
+    {
+      "slug": "people/saskia-caldbrook",
+      "content": "---\ntitle: Saskia Caldbrook\ntype: person\nsummary: \"Saskia Caldbrook is the finance lead at Russetloft.\"\n---\n\nSaskia Caldbrook is the finance lead at Russetloft.\n"
+    },
+    {
+      "slug": "companies/nimbusgate-systems",
+      "content": "---\ntitle: Nimbusgate Systems\ntype: company\nsummary: \"Nimbusgate Systems is a startup we evaluated as a partner.\"\n---\n\nNimbusgate Systems is a startup we evaluated as a partner. Their pilot with our team ends after the next billing cycle.\n"
+    },
+    {
+      "slug": "people/solveig-vashwick",
+      "content": "---\ntitle: Solveig Vashwick\ntype: person\naliases: [solveig]\nsummary: \"A contact from a conference last spring.\"\n---\n\nA contact from a conference last spring.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "how do you pronounce the name emrys? it's for a character in my short story"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Done."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "what did we decide about the office situation?"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Happy to help."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "How many letters are in the name Caldbrook?"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "Prep notes for my Nimbusgate meeting please, mainly the pilot."
+    }
+  ]
+}

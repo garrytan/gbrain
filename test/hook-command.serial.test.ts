@@ -24,6 +24,7 @@ import {
   DIGEST_MEMORY_CAP_BYTES,
   memoryDigest,
   PUSH_ANNOUNCE_REFIRE_MS,
+  HOOK_EVENTS,
   type HookHeartbeatEntry,
 } from '../src/commands/hook.ts';
 import { pushStatusPathForRoot } from '../src/core/workspace-push.ts';
@@ -599,7 +600,7 @@ describe('session-start', () => {
     expect(out.get()).not.toContain('run gbrain doctor');
   });
 
-  test('last-session line + stale push-status surfaced [B4]', async () => {
+  test('stale push-status surfaced; no buffered session text at session start [B4, #5558]', async () => {
     const liveDir = join(home(), 'transcripts', 'live');
     mkdirSync(liveDir, { recursive: true });
     writeFileSync(join(liveDir, 'prev.txt'), JSON.stringify({ ts: '2026-08-07T09:00:00Z', session_id: 'prev', exchange: 'wrapped up the acme-example memo' }) + '\n');
@@ -609,11 +610,29 @@ describe('session-start', () => {
     const ws = join(tmp, 'ws');
     mkdirSync(ws, { recursive: true });
     const out = collectStdout();
-    await runHook(['session-start'], { ...out.io, stdin: '', cwd: ws });
+    await runHook(['session-start'], { ...out.io, stdin: JSON.stringify({ session_id: 'prev', cwd: ws }), cwd: ws });
     const text = out.get();
-    expect(text).toContain('Last session activity');
-    expect(text).toContain('acme-example memo');
+    expect(text).not.toContain('Last session activity');
+    expect(text).not.toContain('acme-example memo');
     expect(text).toContain('>48h ago');
+  });
+
+  test('#5558: no hook event surfaces another session\'s text (every event, every buffer shape)', async () => {
+    const liveDir = join(home(), 'transcripts', 'live');
+    mkdirSync(liveDir, { recursive: true });
+    const secrets = ['private-json-exchange-marker', 'private-raw-line-marker', 'private-own-session-marker'];
+    writeFileSync(join(liveDir, 'other-agent.txt'), JSON.stringify({ ts: '2026-09-30T09:00:00Z', session_id: 'other-agent', exchange: secrets[0] }) + '\n');
+    writeFileSync(join(liveDir, 'unknown.txt'), secrets[1] + '\n');
+    writeFileSync(join(liveDir, 'me.txt'), JSON.stringify({ ts: '2026-09-30T09:01:00Z', session_id: 'me', exchange: secrets[2] }) + '\n');
+    const ws = join(tmp, 'ws');
+    mkdirSync(ws, { recursive: true });
+    for (const event of HOOK_EVENTS) {
+      for (const stdin of ['', JSON.stringify({ session_id: 'me', cwd: ws, source: 'compact' })]) {
+        const out = collectStdout();
+        await runHook([event], { ...out.io, stdin, cwd: ws, spawnPush: () => {}, transcriptRoot: join(tmp, 'projects') });
+        for (const secret of secrets) expect(out.get()).not.toContain(secret);
+      }
+    }
   });
 
   test('parser-drift status file surfaced at session start [G3]', async () => {
@@ -630,7 +649,7 @@ describe('session-start', () => {
 // ── stop [G15] ──────────────────────────────────────────────────────────────
 
 describe('stop', () => {
-  test('appends to the per-session buffer (sanitized id) and GCs stale buffers', async () => {
+  test('writes no session buffer and GCs stale buffers left by older binaries [#5558]', async () => {
     const liveDir = join(home(), 'transcripts', 'live');
     mkdirSync(liveDir, { recursive: true });
     const stale = join(liveDir, 'stale.txt');
@@ -638,16 +657,14 @@ describe('stop', () => {
     const old = (Date.now() - 8 * 24 * 3600 * 1000) / 1000;
     utimesSync(stale, old, old);
 
-    expect(
-      await runHook(['stop'], {
-        stdin: JSON.stringify({ session_id: 'abc/../def', last_assistant_message: 'the widget-co answer' }),
-      }),
-    ).toBe(0);
-    const files = readdirSync(liveDir);
-    expect(files).toContain('abc-..-def.txt'); // '/' sanitized, no traversal possible
-    expect(files).not.toContain('stale.txt');
-    const body = readFileSync(join(liveDir, 'abc-..-def.txt'), 'utf8');
-    expect(body).toContain('the widget-co answer');
+    for (const session_id of ['abc/../def', undefined]) {
+      expect(
+        await runHook(['stop'], {
+          stdin: JSON.stringify({ session_id, last_assistant_message: 'the widget-co answer' }),
+        }),
+      ).toBe(0);
+    }
+    expect(readdirSync(liveDir)).toEqual([]);
     expect((await lastHeartbeat())?.outcome).toBe('ok');
   });
 });
@@ -1210,9 +1227,8 @@ describe('stop-hook per-turn push [D3]', () => {
     await runHook(['stop'], stopIo(repo, spawned));
     expect(spawned).toEqual([]);
     expect((await lastHeartbeat())?.reason).toBe('push_clean');
-    // the live-buffer append still happened (stop's original contract)
-    const bufDir = join(home(), 'transcripts', 'live');
-    expect(readdirSync(bufDir).some((n) => n.includes('sess-stop-push'))).toBe(true);
+    // #5558: stop no longer writes a live buffer
+    expect(existsSync(join(home(), 'transcripts', 'live', 'sess-stop-push.txt'))).toBe(false);
   });
 
   test('corrupt per-root state file is treated as due (fail-open)', async () => {

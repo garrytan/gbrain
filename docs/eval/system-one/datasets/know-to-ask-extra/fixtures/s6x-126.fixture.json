@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-126",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "companies/fablefold",
+      "content": "---\ntitle: Fablefold\ntype: company\nsummary: \"Fablefold is a software vendor we work with.\"\n---\n\nFablefold is a software vendor we work with.\n"
+    },
+    {
+      "slug": "people/florian-haskwaite",
+      "content": "---\ntitle: Florian Haskwaite\ntype: person\naliases: [florian]\nsummary: \"Florian Haskwaite is the recruiter helping us hire engineers.\"\n---\n\nFlorian Haskwaite is the recruiter helping us hire engineers. Florian asked for a longer pilot before signing, ideally a full quarter.\n"
+    },
+    {
+      "slug": "people/noemi-tulvwaite",
+      "content": "---\ntitle: Noemi Tulvwaite\ntype: person\nsummary: \"Noemi Tulvwaite is the operations director at Brackenfold.\"\n---\n\nNoemi Tulvwaite is the operations director at Brackenfold. Noemi wants to pause the second engineering hire until the renewal closes.\n"
+    },
+    {
+      "slug": "companies/russetyard",
+      "content": "---\ntitle: Russetyard\ntype: company\nsummary: \"A company we met once at a trade show.\"\n---\n\nA company we met once at a trade show.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Write a one-line out-of-office reply saying I'm visiting Fablefold on Monday."
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "what did the recruiter suggest for the pilot?"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Happy to help."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "thanks, that helps a lot"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "Prep me for the Tulvwaite call, especially the hiring plan."
+    }
+  ]
+}

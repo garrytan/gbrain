@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-050",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/farah-orrinridge",
+      "content": "---\ntitle: Farah Orrinridge\ntype: person\naliases: [farah]\nsummary: \"Farah Orrinridge is the head of sales at Emberwharf.\"\n---\n\nFarah Orrinridge is the head of sales at Emberwharf.\n"
+    },
+    {
+      "slug": "people/soraya-bringrove",
+      "content": "---\ntitle: Soraya Bringrove\ntype: person\nsummary: \"Soraya Bringrove is the operations director at Kilnvane.\"\n---\n\nSoraya Bringrove is the operations director at Kilnvane. Soraya asked for a longer pilot before signing, ideally a full quarter.\n"
+    },
+    {
+      "slug": "people/yusra-kestfell",
+      "content": "---\ntitle: Yusra Kestfell\ntype: person\nsummary: \"Yusra Kestfell is the procurement lead at Orchidwharf.\"\n---\n\nYusra Kestfell is the procurement lead at Orchidwharf. Yusra asked for a longer pilot before signing, ideally a full quarter.\n"
+    },
+    {
+      "slug": "people/florian-haskstead",
+      "content": "---\ntitle: Florian Haskstead\ntype: person\naliases: [florian]\nsummary: \"A contact from a conference last spring.\"\n---\n\nA contact from a conference last spring.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "How many letters are in the name Orrinridge?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Here is what I have."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Prep me for the Bringrove call, especially the pilot."
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Okay, noted."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "By the way, someone named Ines Wyrholt emailed about partnerships. Never heard of them."
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "did kestfell ever get back to me on the pilot?"
+    }
+  ]
+}

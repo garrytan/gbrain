@@ -98,4 +98,27 @@ describe('bounded vector candidate safety', () => {
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({ reason: 'deadline', candidatePool: 1, incomplete: true, exactFallback: true });
   });
+  test('#5824: a short raw window with stale rows asks hasMore about the fresh count, not the raw count', async () => {
+    // 60 raw candidates came back (window cut short), 4 of them fresh. The
+    // guarded witness sees 30 fresh eligible rows: more than the 4 seen, but
+    // fewer than the 60 raw rows, so comparing against the raw count would
+    // stop here with 4 rows and no metadata.
+    const asked: number[] = [];
+    const attempts: VectorPoolAttempt[] = [];
+    const events: PoolMeta[] = [];
+    const rows = await searchVectorPool(10, 100, true, true, 'pglite', async attempt => {
+      attempts.push(attempt);
+      const first = attempts.length === 1;
+      return { rows: Array.from({ length: first ? 4 : 10 }, (_, page_id) => ({ page_id })), candidatePool: first ? 60 : 400, eligiblePool: first ? 4 : 30 };
+    }, async pool => { asked.push(pool); return 30 > pool; }, meta => events.push(meta));
+    expect(asked).toEqual([4]);
+    expect(attempts.map(a => a.innerLimit)).toEqual([100, 400]);
+    expect(rows).toHaveLength(10);
+    expect(events).toEqual([]);
+  });
+
+  test('#5824: eligible_pool is read next to the raw candidate_pool', () => {
+    expect(readVectorPool([{ page_id: 3, candidate_pool: 100, eligible_pool: 12 }])).toEqual({
+      rows: [{ page_id: 3, candidate_pool: 100, eligible_pool: 12 }], candidatePool: 100, eligiblePool: 12 });
+  });
 });

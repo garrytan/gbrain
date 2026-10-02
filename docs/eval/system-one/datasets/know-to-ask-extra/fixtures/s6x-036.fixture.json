@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-036",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "companies/nimbusloft",
+      "content": "---\ntitle: Nimbusloft\ntype: company\nsummary: \"Nimbusloft is a software vendor we work with.\"\n---\n\nNimbusloft is a software vendor we work with. They quoted a per-seat price with a minimum annual commitment.\n"
+    },
+    {
+      "slug": "people/junie-vashmere",
+      "content": "---\ntitle: Junie Vashmere\ntype: person\nsummary: \"Junie Vashmere is the operations director at Quartzspire.\"\n---\n\nJunie Vashmere is the operations director at Quartzspire. Junie asked for a longer pilot before signing, ideally a full quarter.\n"
+    },
+    {
+      "slug": "people/alaric-grismere",
+      "content": "---\ntitle: Alaric Grismere\ntype: person\nsummary: \"Alaric Grismere is the product lead at Vesperyard.\"\n---\n\nAlaric Grismere is the product lead at Vesperyard.\n"
+    },
+    {
+      "slug": "companies/vesperfold",
+      "content": "---\ntitle: Vesperfold\ntype: company\nsummary: \"A company we met once at a trade show.\"\n---\n\nA company we met once at a trade show.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "perfect, appreciate it"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "what's the status with nimbusloft and pricing?"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "I owe Vashmere an answer on the pilot. What were they asking for?"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Here is what I have."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "Translate into French: 'Alaric Grismere will send the notes tomorrow.'"
+    }
+  ]
+}

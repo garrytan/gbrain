@@ -1,0 +1,354 @@
+[user]
+I’m trying to install `lxml` in a fresh Python 3.12 virtual environment, and pip fails during the build. Can you help me figure out whether this is a Python problem or a missing system dependency?
+
+[assistant]
+Yes. Please paste the complete command you ran and the relevant part of the error, especially the first compiler or configuration error. Also tell me your operating system and distribution version, and whether you’re installing from a requirements file or directly with pip.
+
+[user]
+The machine is Ubuntu 22.04. I created the environment with `python3.12 -m venv .venv`, activated it, upgraded pip, and ran `pip install lxml`. Here’s the end of the output:
+
+```text
+$ python --version
+Python 3.12.3
+$ pip --version
+pip 24.2 from /home/ravi/lumenkit/.venv/lib/python3.12/site-packages/pip (python 3.12)
+$ pip install lxml
+Collecting lxml
+  Downloading lxml-5.2.2.tar.gz (3.7 MB)
+  Installing build dependencies ... done
+  Getting requirements to build wheel ... error
+  error: subprocess-exited-with-error
+
+  × Getting requirements to build wheel did not run successfully.
+  │ exit code: 1
+  ╰─> [18 lines of output]
+      ...
+      Building lxml version 5.2.2.
+      Building without Cython.
+      Error: Please make sure the libxml2 and libxslt development packages are installed.
+      error: command '/usr/bin/gcc' failed with exit code 1
+```
+
+[assistant]
+This is a system-dependency issue rather than a problem with your virtual environment. The source build needs the headers and development metadata for both `libxml2` and `libxslt`. On Ubuntu 22.04, install them with:
+
+```bash
+sudo apt update
+sudo apt install -y libxml2-dev libxslt1-dev zlib1g-dev
+```
+
+`zlib1g-dev` is commonly needed by the same build. Then, from the activated environment, retry:
+
+```bash
+python -m pip install --no-cache-dir lxml
+```
+
+Using `python -m pip` ensures you are invoking pip from the Python 3.12 environment.
+
+[user]
+Before I install anything, why did pip download `lxml-5.2.2.tar.gz` instead of a wheel? I expected a prebuilt wheel, so I’m wondering whether the compiler error is a symptom of pip selecting the wrong artifact.
+
+[assistant]
+That is a useful clue. Pip normally prefers a compatible wheel, but it can fall back to the source archive when no wheel matches the interpreter, platform, architecture, or package version being selected. In your output, `5.2.2` is being built from source because pip did not find a usable wheel for your exact environment.
+
+Run these commands to inspect the environment and ask pip what versions and files it can see:
+
+```bash
+python -m pip debug --verbose
+python -m pip index versions lxml
+python -m pip config list
+uname -m
+```
+
+Look in the `pip debug` output for the supported tags, and check whether a package index or configuration is restricting downloads. You can also test wheel-only installation:
+
+```bash
+python -m pip install --only-binary=:all: lxml
+```
+
+If that says no matching distribution is available, the result confirms that pip cannot use a wheel under the current constraints. Installing the development packages is the correct route if you are willing to build from source.
+
+[user]
+I ran those commands. The machine is `x86_64`, and the relevant output is:
+
+```text
+$ python -m pip config list
+global.index-url='https://packages.example.net/simple'
+global.no-binary=':all:'
+
+$ python -m pip install --only-binary=:all: lxml
+Looking in indexes: https://packages.example.net/simple
+ERROR: Could not find a version that satisfies the requirement lxml (from versions: none)
+ERROR: No matching distribution found for lxml
+```
+
+I didn’t realize the global config had `no-binary`. What’s the safest way to override it for this one install without changing the machine-wide setting?
+
+[assistant]
+Use a per-command option. `--only-binary=:all:` tells pip not to use source archives, and it takes precedence over the configured `no-binary` setting for this invocation:
+
+```bash
+python -m pip install --only-binary=:all: lxml
+```
+
+However, your output also shows an internal package index, and it reports no available versions. That could mean the index does not mirror `lxml`, or it exposes only versions incompatible with Python 3.12. To test the public PyPI index for one command, without changing pip’s configuration, run:
+
+```bash
+python -m pip install \
+  --index-url https://pypi.org/simple \
+  --only-binary=:all: \
+  lxml
+```
+
+If your organization requires the internal index, do not bypass it without checking policy. Instead, ask the repository administrator to mirror a compatible `lxml` wheel. You can inspect the effective settings and environment variables with:
+
+```bash
+python -m pip config debug
+env | grep -i '^PIP_'
+```
+
+Avoid using `--trusted-host` unless you have a specific certificate or TLS issue; it weakens transport verification and is unrelated to selecting wheels.
+
+[user]
+The public-index command found a wheel and installed it successfully:
+
+```text
+Looking in indexes: https://pypi.org/simple
+Collecting lxml
+  Downloading lxml-5.2.2-cp312-cp312-manylinux_2_28_x86_64.whl (5.0 MB)
+Installing collected packages: lxml
+Successfully installed lxml-5.2.2
+```
+
+But our deployment environment is supposed to use the internal index only. Is there a way to make the requirements file or install command express “use a wheel if available, otherwise fail,” while still using the internal index?
+
+[assistant]
+Yes. Keep the internal index and add `--only-binary=:all:` to the install command or requirements file. For a one-off deployment test:
+
+```bash
+python -m pip install \
+  --index-url https://packages.example.net/simple \
+  --only-binary=:all: \
+  -r requirements.txt
+```
+
+If `requirements.txt` should carry the option, add this line near the top:
+
+```text
+--only-binary=:all:
+lxml==5.2.2
+```
+
+That makes pip fail rather than silently compiling from source when no compatible wheel is available. You can verify the behavior with:
+
+```bash
+python -m pip uninstall -y lxml
+python -m pip install \
+  --index-url https://packages.example.net/simple \
+  --only-binary=:all: \
+  lxml==5.2.2
+```
+
+Given your current internal index output, it will probably fail with “No matching distribution found.” That is useful evidence for the repository team: they need to publish or mirror the `cp312` Linux wheel, or explicitly support a source-build path with the required system packages.
+
+[user]
+I tested it with the internal index and got exactly that failure. The repository team says they can mirror packages, but they want the precise artifact requirements. What should I tell them to mirror for this Ubuntu host, and how can I confirm the downloaded wheel is actually compatible before deployment?
+
+[assistant]
+Ask them to make the `lxml` release and its compatible wheel files available through the internal simple index. For this host, the successful public download was:
+
+```text
+lxml-5.2.2-cp312-cp312-manylinux_2_28_x86_64.whl
+```
+
+The tags mean:
+
+- `cp312`: CPython 3.12.
+- The second `cp312`: the wheel uses the CPython 3.12 ABI.
+- `manylinux_2_28`: it requires a Linux environment compatible with glibc 2.28 or newer.
+- `x86_64`: 64-bit Intel/AMD Linux.
+
+They should mirror the wheel and its metadata, and ideally the corresponding distribution files and hashes according to your repository’s normal policy. To check compatibility without installing, use:
+
+```bash
+python -m pip download \
+  --dest /tmp/lxml-wheel \
+  --only-binary=:all: \
+  --no-deps \
+  --index-url https://packages.example.net/simple \
+  lxml==5.2.2
+
+python -m pip install \
+  --dry-run \
+  --only-binary=:all: \
+  --index-url https://packages.example.net/simple \
+  lxml==5.2.2
+```
+
+`pip download` should save a file whose name has the `cp312-cp312-manylinux_2_28_x86_64` tags. You can also ask pip which tags the interpreter accepts:
+
+```bash
+python -m pip debug --verbose
+```
+
+For an additional filename check:
+
+```bash
+python - <<'PY'
+from packaging.utils import parse_wheel_filename
+from pathlib import Path
+
+wheel = next(Path("/tmp/lxml-wheel").glob("lxml-*.whl"))
+name, version, build, tags = parse_wheel_filename(wheel.name)
+print(name, version)
+print("compatible:", any(
+    str(tag) in {str(t) for t in __import__("packaging.tags").tags.sys_tags()}
+    for tag in tags
+))
+PY
+```
+
+The repository team should also test the wheel in the same base image used by deployment. A wheel can have a valid filename yet still expose runtime assumptions that differ between images.
+
+[user]
+The mirror now has the wheel, and the dry run works. I want to make the deployment reproducible and avoid accidentally getting a source archive later. Should I pin only `lxml==5.2.2`, or should I record a hash too?
+
+[assistant]
+For a controlled deployment, pin both the version and the expected wheel hash. A version pin prevents normal upgrades, while a hash pin prevents pip from accepting a different file for that requirement.
+
+First download the exact artifact from the internal index:
+
+```bash
+rm -rf /tmp/lxml-wheel
+mkdir -p /tmp/lxml-wheel
+
+python -m pip download \
+  --dest /tmp/lxml-wheel \
+  --only-binary=:all: \
+  --no-deps \
+  --index-url https://packages.example.net/simple \
+  lxml==5.2.2
+```
+
+Calculate its SHA-256:
+
+```bash
+sha256sum /tmp/lxml-wheel/lxml-5.2.2-cp312-cp312-manylinux_2_28_x86_64.whl
+```
+
+Then use a requirements entry like this, replacing the example digest with the output from your command:
+
+```text
+--only-binary=:all:
+lxml==5.2.2 \
+    --hash=sha256:REPLACE_WITH_ACTUAL_SHA256
+```
+
+Install with hash checking enabled:
+
+```bash
+python -m pip install \
+  --require-hashes \
+  --index-url https://packages.example.net/simple \
+  -r requirements.txt
+```
+
+If your requirements file includes transitive dependencies, `--require-hashes` requires hashes for those too. Generate or maintain a fully pinned lock-style requirements file rather than adding a hash only for `lxml` if the whole deployment is meant to be reproducible. Keep `--only-binary=:all:` as an explicit guard against a source build.
+
+[user]
+One more concern: our build image is Ubuntu 22.04, but the runtime image is much smaller. How do I determine whether the `manylinux_2_28` wheel will run there, and when would compiling against the runtime’s system libraries be preferable?
+
+[assistant]
+Check the runtime image’s architecture and glibc version, then test the actual import in that image. The wheel’s `manylinux_2_28` tag indicates a glibc baseline, not that every Linux image is compatible. For a glibc-based runtime, run:
+
+```bash
+docker run --rm your-runtime-image sh -c '
+  uname -m
+  getconf GNU_LIBC_VERSION || true
+  ldd --version 2>&1 | head -n 1 || true
+'
+```
+
+You can inspect the wheel’s native libraries after downloading it:
+
+```bash
+unzip -q /tmp/lxml-wheel/lxml-5.2.2-*.whl -d /tmp/lxml-unpacked
+find /tmp/lxml-unpacked -name '*.so*' -print
+ldd /tmp/lxml-unpacked/lxml/etree*.so
+```
+
+The most reliable check is an isolated container test using the same runtime image:
+
+```bash
+docker run --rm \
+  -v "$PWD:/app" \
+  -w /app \
+  your-runtime-image \
+  python -c 'import lxml.etree as e; print(e.LXML_VERSION)'
+```
+
+If the runtime is Alpine Linux, it uses musl rather than glibc. A standard `manylinux` wheel generally will not be the right artifact; use an Alpine-compatible wheel if available, or build in an Alpine-compatible environment. Compiling against runtime libraries is preferable when the runtime is musl-based, when the runtime glibc is older than the wheel baseline, or when policy requires linking to approved system libraries. It also means you must install the compiler, Python headers, `libxml2-dev`, `libxslt1-dev`, and related packages in a builder stage, then copy only the resulting environment and required runtime libraries into the final image.
+
+[user]
+That answers the packaging issue. Separately, a durable project fact: lumenkit passed 10,000 weekly active workspaces this month. Ravi Okonkwo-Bell joined as our first full-time reliability engineer, and he is taking ownership of the deployment pipeline. We lost Northstar Labs as a customer because our incident-status updates were too slow during their outage. We are now contractually required to provide status updates within 30 minutes for enterprise incidents.
+
+[assistant]
+That context makes the deployment safeguards especially relevant. Keep the internal-index install deterministic with the exact wheel, `--only-binary=:all:`, and hashes, and run the runtime-image import test in CI before promoting an image. Since the enterprise contract requires updates within 30 minutes, you may also want the deployment pipeline to fail early if it cannot install the pinned artifact rather than attempting an untracked source build. A simple verification step could be:
+
+```bash
+set -eux
+python -m pip install \
+  --require-hashes \
+  --only-binary=:all: \
+  --index-url https://packages.example.net/simple \
+  -r requirements.txt
+python -c 'import lxml.etree; print("lxml import OK")'
+```
+
+Then retain the complete pip output and the wheel digest as build artifacts so a failed deployment can be diagnosed without rebuilding the environment.
+
+[user]
+I’ve confirmed the runtime image is Ubuntu-based and has glibc 2.35, matching the wheel’s requirements. Can you give me a concise final procedure for the repository team and the deployment pipeline?
+
+[assistant]
+Use this procedure:
+
+1. **Repository team:** mirror `lxml==5.2.2` and the compatible artifact:
+
+   ```text
+   lxml-5.2.2-cp312-cp312-manylinux_2_28_x86_64.whl
+   ```
+
+   Preserve the wheel and its SHA-256 metadata in the internal repository.
+
+2. **Requirements file:** pin the version, require wheels, and add the verified hash:
+
+   ```text
+   --only-binary=:all:
+   lxml==5.2.2 \
+       --hash=sha256:ACTUAL_VERIFIED_WHEEL_HASH
+   ```
+
+   Include hashes for every other requirement if using global hash checking.
+
+3. **Deployment install:** use the internal index and enforce hashes:
+
+   ```bash
+   python -m pip install \
+     --require-hashes \
+     --only-binary=:all: \
+     --index-url https://packages.example.net/simple \
+     -r requirements.txt
+   ```
+
+4. **Validation:** run in the exact runtime image:
+
+   ```bash
+   python -c 'import lxml.etree as e; print(e.LXML_VERSION)'
+   ```
+
+   Also confirm the image is `x86_64` and glibc is at least 2.28. Your Ubuntu runtime with glibc 2.35 satisfies that baseline.
+
+5. **CI safeguards:** fail the build if pip cannot retrieve the pinned wheel, do not permit a source fallback, record the install log and wheel hash, and test the final image—not only the builder image.
+
+This gives you a reproducible installation and ensures a missing mirror artifact causes an immediate, visible failure.

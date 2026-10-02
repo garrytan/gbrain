@@ -127,10 +127,10 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-26, windows-latest]
-        bun: ['1.3.11', '1.4.2']
+        bun: ['1.4.0', '1.4.2']
         # Pull requests run the primary Bun version on every OS; pushes,
         # schedules and manual runs add the oldest supported version.
-        exclude: ${{ fromJSON(github.event_name == 'pull_request' && '[{"bun":"1.3.11"}]' || '[]') }}
+        exclude: ${{ fromJSON(github.event_name == 'pull_request' && '[{"bun":"1.4.0"}]' || '[]') }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
@@ -138,9 +138,11 @@ jobs:
           bun-version: ${{ matrix.bun }}
       - run: bun install --frozen-lockfile --ignore-scripts
       - name: Boundary and transport regressions
-        run: bun test --timeout 60000 test/frontmatter-security.test.ts test/data-frontmatter.test.ts test/authorization-boundaries.test.ts test/url-safety.test.ts test/guarded-http.test.ts
+        run: bun test --timeout 60000 test/frontmatter-security.test.ts test/data-frontmatter.test.ts test/authorization-boundaries.test.ts test/url-safety.test.ts test/guarded-http.test.ts test/bundle-files-segments.test.ts
       - name: Isolated TLS and proxy regressions
         run: bun test --timeout 60000 test/guarded-http-tls.serial.test.ts
+      - name: Colon-slug Windows refusals and bound explicit reads (#5032, #5081)
+        run: bun test --timeout 60000 test/colon-slug-windows-5032.test.ts test/cross-lane-5081-5032.test.ts
 
   dependency-audit:
     if: ${{ github.event_name != 'workflow_dispatch' || inputs.native_only != true }}
@@ -191,7 +193,7 @@ jobs:
           path: |
             test/fixtures/pglite-snapshot.tar
             test/fixtures/pglite-snapshot.version
-          key: pglite-snapshot-${{ runner.os }}-${{ hashFiles('src/core/*.ts', 'src/core/engine-sql/bootstrap.ts', 'src/core/schema-migrations/**', 'src/core/ai/defaults.ts', 'src/core/company-brain/receipt-schema.ts', 'src/core/entities/resolve.ts', 'src/core/facts/withdrawal-schema.ts', 'src/core/google/*.ts', 'src/core/grants/*.ts', 'src/core/minions/tools/brain-allowlist.ts', 'src/core/ops/contract.ts', 'src/core/page-state/*schema.ts', 'src/core/persistence/*.ts', 'src/core/schema-pack/link-inference.ts', 'src/core/schema-pack/redos-guard.ts', 'src/core/search/alias-normalize.ts', 'src/core/search/private-visibility.ts', 'src/core/search/projection-statistics.ts', 'src/core/shared-skills/*schema*.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
+          key: pglite-snapshot-${{ runner.os }}-${{ hashFiles('src/core/*.ts', 'src/core/engine-sql/bootstrap.ts', 'src/core/schema-migrations/**', 'src/core/ai/defaults.ts', 'src/core/company-brain/receipt-schema.ts', 'src/core/entities/resolve.ts', 'src/core/facts/withdrawal-schema.ts', 'src/core/facts/relink-schema.ts', 'src/core/google/*.ts', 'src/core/grants/*.ts', 'src/core/minions/tools/brain-allowlist.ts', 'src/core/ops/contract.ts', 'src/core/page-state/*schema.ts', 'src/core/persistence/*.ts', 'src/core/schema-pack/link-inference.ts', 'src/core/schema-pack/redos-guard.ts', 'src/core/search/alias-normalize.ts', 'src/core/search/private-visibility.ts', 'src/core/search/projection-statistics.ts', 'src/core/shared-skills/*schema*.ts', 'src/core/ai/decide/schema.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
       - run: bun install --frozen-lockfile
       # check:schema-migration-order compares new schema migrations with
       # origin/master's latest version; a depth-1 fetch of the ref is enough.
@@ -202,6 +204,16 @@ jobs:
       # default regardless of per-test third-arg timeouts. Runs directly
       # (not via verify's CHECKS array) to avoid a package.json edit.
       - run: bash scripts/check-bun-test-timeout.sh
+      # #5810: every tracked *.sh must parse under bash 3.2 (macOS /bin/bash).
+      # The real parser runs in the digest-pinned bash:3.2 image; REQUIRE
+      # turns a missing Docker into a failure instead of a skip, and makes the
+      # test's real-parser fixture cases mandatory.
+      - name: Shell scripts parse under bash 3.2
+        env:
+          GBRAIN_BASH32_REQUIRE: '1'
+        run: |
+          bun run check:bash32
+          bun test --timeout 60000 test/scripts/check-bash32.test.ts
 
   serial-tests:
     if: ${{ github.event_name != 'workflow_dispatch' || inputs.native_only != true }}
@@ -246,7 +258,7 @@ jobs:
           path: |
             test/fixtures/pglite-snapshot.tar
             test/fixtures/pglite-snapshot.version
-          key: pglite-snapshot-${{ runner.os }}-${{ hashFiles('src/core/*.ts', 'src/core/engine-sql/bootstrap.ts', 'src/core/schema-migrations/**', 'src/core/ai/defaults.ts', 'src/core/company-brain/receipt-schema.ts', 'src/core/entities/resolve.ts', 'src/core/facts/withdrawal-schema.ts', 'src/core/google/*.ts', 'src/core/grants/*.ts', 'src/core/minions/tools/brain-allowlist.ts', 'src/core/ops/contract.ts', 'src/core/page-state/*schema.ts', 'src/core/persistence/*.ts', 'src/core/schema-pack/link-inference.ts', 'src/core/schema-pack/redos-guard.ts', 'src/core/search/alias-normalize.ts', 'src/core/search/private-visibility.ts', 'src/core/search/projection-statistics.ts', 'src/core/shared-skills/*schema*.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
+          key: pglite-snapshot-${{ runner.os }}-${{ hashFiles('src/core/*.ts', 'src/core/engine-sql/bootstrap.ts', 'src/core/schema-migrations/**', 'src/core/ai/defaults.ts', 'src/core/company-brain/receipt-schema.ts', 'src/core/entities/resolve.ts', 'src/core/facts/withdrawal-schema.ts', 'src/core/facts/relink-schema.ts', 'src/core/google/*.ts', 'src/core/grants/*.ts', 'src/core/minions/tools/brain-allowlist.ts', 'src/core/ops/contract.ts', 'src/core/page-state/*schema.ts', 'src/core/persistence/*.ts', 'src/core/schema-pack/link-inference.ts', 'src/core/schema-pack/redos-guard.ts', 'src/core/search/alias-normalize.ts', 'src/core/search/private-visibility.ts', 'src/core/search/projection-statistics.ts', 'src/core/shared-skills/*schema*.ts', 'src/core/ai/decide/schema.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
       - run: bun install --frozen-lockfile
       - run: bun run test:serial
         env:
@@ -308,7 +320,7 @@ jobs:
           path: |
             test/fixtures/pglite-snapshot.tar
             test/fixtures/pglite-snapshot.version
-          key: pglite-snapshot-${{ runner.os }}-${{ hashFiles('src/core/*.ts', 'src/core/engine-sql/bootstrap.ts', 'src/core/schema-migrations/**', 'src/core/ai/defaults.ts', 'src/core/company-brain/receipt-schema.ts', 'src/core/entities/resolve.ts', 'src/core/facts/withdrawal-schema.ts', 'src/core/google/*.ts', 'src/core/grants/*.ts', 'src/core/minions/tools/brain-allowlist.ts', 'src/core/ops/contract.ts', 'src/core/page-state/*schema.ts', 'src/core/persistence/*.ts', 'src/core/schema-pack/link-inference.ts', 'src/core/schema-pack/redos-guard.ts', 'src/core/search/alias-normalize.ts', 'src/core/search/private-visibility.ts', 'src/core/search/projection-statistics.ts', 'src/core/shared-skills/*schema*.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
+          key: pglite-snapshot-${{ runner.os }}-${{ hashFiles('src/core/*.ts', 'src/core/engine-sql/bootstrap.ts', 'src/core/schema-migrations/**', 'src/core/ai/defaults.ts', 'src/core/company-brain/receipt-schema.ts', 'src/core/entities/resolve.ts', 'src/core/facts/withdrawal-schema.ts', 'src/core/facts/relink-schema.ts', 'src/core/google/*.ts', 'src/core/grants/*.ts', 'src/core/minions/tools/brain-allowlist.ts', 'src/core/ops/contract.ts', 'src/core/page-state/*schema.ts', 'src/core/persistence/*.ts', 'src/core/schema-pack/link-inference.ts', 'src/core/schema-pack/redos-guard.ts', 'src/core/search/alias-normalize.ts', 'src/core/search/private-visibility.ts', 'src/core/search/projection-statistics.ts', 'src/core/shared-skills/*schema*.ts', 'src/core/ai/decide/schema.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
       - run: bun install --frozen-lockfile
       - name: Ensure PGLite snapshot (build-or-validate, non-fatal)
         run: bash -c '. scripts/lib/test-env.sh && ensure_pglite_snapshot slow-eval && echo "GBRAIN_PGLITE_SNAPSHOT=${GBRAIN_PGLITE_SNAPSHOT:-}" >> "$GITHUB_ENV"'
@@ -353,13 +365,13 @@ jobs:
           path: |
             test/fixtures/pglite-snapshot.tar
             test/fixtures/pglite-snapshot.version
-          key: pglite-snapshot-${{ runner.os }}-${{ hashFiles('src/core/*.ts', 'src/core/engine-sql/bootstrap.ts', 'src/core/schema-migrations/**', 'src/core/ai/defaults.ts', 'src/core/company-brain/receipt-schema.ts', 'src/core/entities/resolve.ts', 'src/core/facts/withdrawal-schema.ts', 'src/core/google/*.ts', 'src/core/grants/*.ts', 'src/core/minions/tools/brain-allowlist.ts', 'src/core/ops/contract.ts', 'src/core/page-state/*schema.ts', 'src/core/persistence/*.ts', 'src/core/schema-pack/link-inference.ts', 'src/core/schema-pack/redos-guard.ts', 'src/core/search/alias-normalize.ts', 'src/core/search/private-visibility.ts', 'src/core/search/projection-statistics.ts', 'src/core/shared-skills/*schema*.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
+          key: pglite-snapshot-${{ runner.os }}-${{ hashFiles('src/core/*.ts', 'src/core/engine-sql/bootstrap.ts', 'src/core/schema-migrations/**', 'src/core/ai/defaults.ts', 'src/core/company-brain/receipt-schema.ts', 'src/core/entities/resolve.ts', 'src/core/facts/withdrawal-schema.ts', 'src/core/facts/relink-schema.ts', 'src/core/google/*.ts', 'src/core/grants/*.ts', 'src/core/minions/tools/brain-allowlist.ts', 'src/core/ops/contract.ts', 'src/core/page-state/*schema.ts', 'src/core/persistence/*.ts', 'src/core/schema-pack/link-inference.ts', 'src/core/schema-pack/redos-guard.ts', 'src/core/search/alias-normalize.ts', 'src/core/search/private-visibility.ts', 'src/core/search/projection-statistics.ts', 'src/core/shared-skills/*schema*.ts', 'src/core/ai/decide/schema.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
       - uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: |
             test/fixtures/pglite-snapshot-default.tar
             test/fixtures/pglite-snapshot-default.version
-          key: pglite-snapshot-default-${{ runner.os }}-${{ hashFiles('src/core/*.ts', 'src/core/engine-sql/bootstrap.ts', 'src/core/schema-migrations/**', 'src/core/ai/defaults.ts', 'src/core/company-brain/receipt-schema.ts', 'src/core/entities/resolve.ts', 'src/core/facts/withdrawal-schema.ts', 'src/core/google/*.ts', 'src/core/grants/*.ts', 'src/core/minions/tools/brain-allowlist.ts', 'src/core/ops/contract.ts', 'src/core/page-state/*schema.ts', 'src/core/persistence/*.ts', 'src/core/schema-pack/link-inference.ts', 'src/core/schema-pack/redos-guard.ts', 'src/core/search/alias-normalize.ts', 'src/core/search/private-visibility.ts', 'src/core/search/projection-statistics.ts', 'src/core/shared-skills/*schema*.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
+          key: pglite-snapshot-default-${{ runner.os }}-${{ hashFiles('src/core/*.ts', 'src/core/engine-sql/bootstrap.ts', 'src/core/schema-migrations/**', 'src/core/ai/defaults.ts', 'src/core/company-brain/receipt-schema.ts', 'src/core/entities/resolve.ts', 'src/core/facts/withdrawal-schema.ts', 'src/core/facts/relink-schema.ts', 'src/core/google/*.ts', 'src/core/grants/*.ts', 'src/core/minions/tools/brain-allowlist.ts', 'src/core/ops/contract.ts', 'src/core/page-state/*schema.ts', 'src/core/persistence/*.ts', 'src/core/schema-pack/link-inference.ts', 'src/core/schema-pack/redos-guard.ts', 'src/core/search/alias-normalize.ts', 'src/core/search/private-visibility.ts', 'src/core/search/projection-statistics.ts', 'src/core/shared-skills/*schema*.ts', 'src/core/ai/decide/schema.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
       - run: bun install --frozen-lockfile
       - name: Ensure PGLite snapshot (build-or-validate, non-fatal)
         # Absolutized: this file's batch jobs spawn CLI children with varying
@@ -423,7 +435,7 @@ jobs:
           path: |
             test/fixtures/pglite-snapshot-default.tar
             test/fixtures/pglite-snapshot-default.version
-          key: pglite-snapshot-default-${{ runner.os }}-${{ hashFiles('src/core/*.ts', 'src/core/engine-sql/bootstrap.ts', 'src/core/schema-migrations/**', 'src/core/ai/defaults.ts', 'src/core/company-brain/receipt-schema.ts', 'src/core/entities/resolve.ts', 'src/core/facts/withdrawal-schema.ts', 'src/core/google/*.ts', 'src/core/grants/*.ts', 'src/core/minions/tools/brain-allowlist.ts', 'src/core/ops/contract.ts', 'src/core/page-state/*schema.ts', 'src/core/persistence/*.ts', 'src/core/schema-pack/link-inference.ts', 'src/core/schema-pack/redos-guard.ts', 'src/core/search/alias-normalize.ts', 'src/core/search/private-visibility.ts', 'src/core/search/projection-statistics.ts', 'src/core/shared-skills/*schema*.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
+          key: pglite-snapshot-default-${{ runner.os }}-${{ hashFiles('src/core/*.ts', 'src/core/engine-sql/bootstrap.ts', 'src/core/schema-migrations/**', 'src/core/ai/defaults.ts', 'src/core/company-brain/receipt-schema.ts', 'src/core/entities/resolve.ts', 'src/core/facts/withdrawal-schema.ts', 'src/core/facts/relink-schema.ts', 'src/core/google/*.ts', 'src/core/grants/*.ts', 'src/core/minions/tools/brain-allowlist.ts', 'src/core/ops/contract.ts', 'src/core/page-state/*schema.ts', 'src/core/persistence/*.ts', 'src/core/schema-pack/link-inference.ts', 'src/core/schema-pack/redos-guard.ts', 'src/core/search/alias-normalize.ts', 'src/core/search/private-visibility.ts', 'src/core/search/projection-statistics.ts', 'src/core/shared-skills/*schema*.ts', 'src/core/ai/decide/schema.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
       - run: bun install --frozen-lockfile
       - run: bash scripts/ci-brainbench-gate.sh
         env:
@@ -460,7 +472,7 @@ jobs:
           path: |
             test/fixtures/pglite-snapshot.tar
             test/fixtures/pglite-snapshot.version
-          key: pglite-snapshot-${{ runner.os }}-${{ hashFiles('src/core/*.ts', 'src/core/engine-sql/bootstrap.ts', 'src/core/schema-migrations/**', 'src/core/ai/defaults.ts', 'src/core/company-brain/receipt-schema.ts', 'src/core/entities/resolve.ts', 'src/core/facts/withdrawal-schema.ts', 'src/core/google/*.ts', 'src/core/grants/*.ts', 'src/core/minions/tools/brain-allowlist.ts', 'src/core/ops/contract.ts', 'src/core/page-state/*schema.ts', 'src/core/persistence/*.ts', 'src/core/schema-pack/link-inference.ts', 'src/core/schema-pack/redos-guard.ts', 'src/core/search/alias-normalize.ts', 'src/core/search/private-visibility.ts', 'src/core/search/projection-statistics.ts', 'src/core/shared-skills/*schema*.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
+          key: pglite-snapshot-${{ runner.os }}-${{ hashFiles('src/core/*.ts', 'src/core/engine-sql/bootstrap.ts', 'src/core/schema-migrations/**', 'src/core/ai/defaults.ts', 'src/core/company-brain/receipt-schema.ts', 'src/core/entities/resolve.ts', 'src/core/facts/withdrawal-schema.ts', 'src/core/facts/relink-schema.ts', 'src/core/google/*.ts', 'src/core/grants/*.ts', 'src/core/minions/tools/brain-allowlist.ts', 'src/core/ops/contract.ts', 'src/core/page-state/*schema.ts', 'src/core/persistence/*.ts', 'src/core/schema-pack/link-inference.ts', 'src/core/schema-pack/redos-guard.ts', 'src/core/search/alias-normalize.ts', 'src/core/search/private-visibility.ts', 'src/core/search/projection-statistics.ts', 'src/core/shared-skills/*schema*.ts', 'src/core/ai/decide/schema.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
       - run: bun install --frozen-lockfile
       - name: Ensure PGLite snapshot (build-or-validate, non-fatal)
         run: bash -c '. scripts/lib/test-env.sh && ensure_pglite_snapshot slow-perf && echo "GBRAIN_PGLITE_SNAPSHOT=${GBRAIN_PGLITE_SNAPSHOT:-}" >> "$GITHUB_ENV"'
@@ -542,7 +554,7 @@ jobs:
           path: |
             test/fixtures/pglite-snapshot.tar
             test/fixtures/pglite-snapshot.version
-          key: pglite-snapshot-${{ runner.os }}-${{ hashFiles('src/core/*.ts', 'src/core/engine-sql/bootstrap.ts', 'src/core/schema-migrations/**', 'src/core/ai/defaults.ts', 'src/core/company-brain/receipt-schema.ts', 'src/core/entities/resolve.ts', 'src/core/facts/withdrawal-schema.ts', 'src/core/google/*.ts', 'src/core/grants/*.ts', 'src/core/minions/tools/brain-allowlist.ts', 'src/core/ops/contract.ts', 'src/core/page-state/*schema.ts', 'src/core/persistence/*.ts', 'src/core/schema-pack/link-inference.ts', 'src/core/schema-pack/redos-guard.ts', 'src/core/search/alias-normalize.ts', 'src/core/search/private-visibility.ts', 'src/core/search/projection-statistics.ts', 'src/core/shared-skills/*schema*.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
+          key: pglite-snapshot-${{ runner.os }}-${{ hashFiles('src/core/*.ts', 'src/core/engine-sql/bootstrap.ts', 'src/core/schema-migrations/**', 'src/core/ai/defaults.ts', 'src/core/company-brain/receipt-schema.ts', 'src/core/entities/resolve.ts', 'src/core/facts/withdrawal-schema.ts', 'src/core/facts/relink-schema.ts', 'src/core/google/*.ts', 'src/core/grants/*.ts', 'src/core/minions/tools/brain-allowlist.ts', 'src/core/ops/contract.ts', 'src/core/page-state/*schema.ts', 'src/core/persistence/*.ts', 'src/core/schema-pack/link-inference.ts', 'src/core/schema-pack/redos-guard.ts', 'src/core/search/alias-normalize.ts', 'src/core/search/private-visibility.ts', 'src/core/search/projection-statistics.ts', 'src/core/shared-skills/*schema*.ts', 'src/core/ai/decide/schema.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
       - run: bun install --frozen-lockfile
       - name: Run test shard ${{ matrix.shard }}/8
         shell: bash

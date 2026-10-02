@@ -1,0 +1,168 @@
+{
+  "m_voy30": {
+    "questions": 28,
+    "answerable": 24,
+    "errors": 0,
+    "recall_all@5": 0.9583333333333334,
+    "recall_all@5_n": 23,
+    "recall_any@5": 0.9583333333333334,
+    "R@1": 0.875,
+    "fused_pool_size_mean": 50.208333333333336,
+    "pool_recall_all@30": 1.0,
+    "pool_recall_all@50": 1.0,
+    "pool_recall_all@100": 1.0,
+    "pool_recall_all@300": 1.0,
+    "top1_when_present": "21/24",
+    "decide_cost_usd_total": 0.0,
+    "decide_cost_usd_per_question": 0.0,
+    "mean_distinct_sessions_top5": 4.833333333333333
+  },
+  "m_off": {
+    "questions": 28,
+    "answerable": 24,
+    "errors": 0,
+    "recall_all@5": 0.8333333333333334,
+    "recall_all@5_n": 20,
+    "recall_any@5": 0.9583333333333334,
+    "R@1": 0.7916666666666666,
+    "fused_pool_size_mean": 300.2083333333333,
+    "pool_recall_all@30": 1.0,
+    "pool_recall_all@50": 1.0,
+    "pool_recall_all@100": 1.0,
+    "pool_recall_all@300": 1.0,
+    "top1_when_present": "19/24",
+    "decide_cost_usd_total": 0.0,
+    "decide_cost_usd_per_question": 0.0,
+    "mean_distinct_sessions_top5": 4.875,
+    "vs_m_voy30": {
+      "recall_all": {
+        "n": 24,
+        "wins": 0,
+        "losses": 3,
+        "mcnemar_p": 0.25
+      },
+      "R@1": {
+        "n": 24,
+        "wins": 2,
+        "losses": 4,
+        "mcnemar_p": 0.6875
+      }
+    }
+  },
+  "m_jev100": {
+    "questions": 28,
+    "answerable": 24,
+    "errors": 0,
+    "recall_all@5": 0.9166666666666666,
+    "recall_all@5_n": 22,
+    "recall_any@5": 0.9583333333333334,
+    "R@1": 0.75,
+    "fused_pool_size_mean": 100.20833333333333,
+    "pool_recall_all@30": 1.0,
+    "pool_recall_all@50": 1.0,
+    "pool_recall_all@100": 1.0,
+    "pool_recall_all@300": 1.0,
+    "top1_when_present": "18/24",
+    "jev_rerank_latency_ms": {
+      "p50": 633,
+      "p95": 946,
+      "p99": 1080
+    },
+    "decide_cost_usd_total": 0.07743,
+    "decide_cost_usd_per_question": 0.002765,
+    "decide_outcomes": {
+      "rerank:kept": 2700,
+      "rerank:skipped:timeout": 1
+    },
+    "mean_distinct_sessions_top5": 4.875,
+    "vs_m_voy30": {
+      "recall_all": {
+        "n": 24,
+        "wins": 0,
+        "losses": 1,
+        "mcnemar_p": 1.0
+      },
+      "R@1": {
+        "n": 24,
+        "wins": 1,
+        "losses": 4,
+        "mcnemar_p": 0.375
+      }
+    }
+  },
+  "m_jev300": {
+    "questions": 28,
+    "answerable": 24,
+    "errors": 0,
+    "recall_all@5": 0.9166666666666666,
+    "recall_all@5_n": 22,
+    "recall_any@5": 0.9583333333333334,
+    "R@1": 0.7083333333333334,
+    "fused_pool_size_mean": 300.2083333333333,
+    "pool_recall_all@30": 1.0,
+    "pool_recall_all@50": 1.0,
+    "pool_recall_all@100": 1.0,
+    "pool_recall_all@300": 1.0,
+    "top1_when_present": "17/24",
+    "jev_rerank_latency_ms": {
+      "p50": 805,
+      "p95": 1073,
+      "p99": 1231
+    },
+    "decide_cost_usd_total": 0.23442,
+    "decide_cost_usd_per_question": 0.008372,
+    "decide_outcomes": {
+      "rerank:kept": 8400
+    },
+    "mean_distinct_sessions_top5": 4.833333333333333,
+    "vs_m_voy30": {
+      "recall_all": {
+        "n": 24,
+        "wins": 0,
+        "losses": 1,
+        "mcnemar_p": 1.0
+      },
+      "R@1": {
+        "n": 24,
+        "wins": 0,
+        "losses": 4,
+        "mcnemar_p": 0.125
+      }
+    }
+  },
+  "m_jev100x": {
+    "questions": 28,
+    "answerable": 24,
+    "errors": 0,
+    "recall_all@5": 0.8333333333333334,
+    "recall_all@5_n": 20,
+    "recall_any@5": 0.9166666666666666,
+    "R@1": 0.7916666666666666,
+    "fused_pool_size_mean": 175.70833333333334,
+    "pool_recall_all@30": 1.0,
+    "pool_recall_all@50": 1.0,
+    "pool_recall_all@100": 1.0,
+    "pool_recall_all@300": 1.0,
+    "top1_when_present": "19/24",
+    "decide_cost_usd_total": 0.0,
+    "decide_cost_usd_per_question": 0.0,
+    "decide_outcomes": {
+      "rerank:skipped:timeout": 28
+    },
+    "mean_distinct_sessions_top5": 5.0,
+    "vs_m_voy30": {
+      "recall_all": {
+        "n": 24,
+        "wins": 0,
+        "losses": 3,
+        "mcnemar_p": 0.25
+      },
+      "R@1": {
+        "n": 24,
+        "wins": 2,
+        "losses": 4,
+        "mcnemar_p": 0.6875
+      }
+    }
+  }
+}

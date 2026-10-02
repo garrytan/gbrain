@@ -56,6 +56,13 @@ carries the routing-seam picture):
   for canned, actionable error messages. Renderer parity: the local-engine
   path runs `JSON.parse(JSON.stringify(result))` so renderers see the same
   shape on both paths (kills the Date/bigint/Buffer drift class).
+  `applyThinClientSourceScope` maps `--source` / `GBRAIN_SOURCE` /
+  `.gbrain-source` onto a declared `source_id` and returns the ambient binding
+  it used; an empty array result from an op that declares `all_sources`
+  names that binding and the `--all-sources` rerun on stderr.
+  `checkHostHonoredParams` fails the command when the host's unknown-parameter
+  warning names a scope param the client sent (an older host would otherwise
+  answer unscoped); hosts that predate those warnings cannot be detected.
 - `src/core/mcp-client.ts` — `callRemoteTool(config, toolName, args, opts)`,
   the transport under the routing seam. All transport errors normalize to
   `RemoteMcpError` via the `toRemoteMcpError` funnel, with a stable

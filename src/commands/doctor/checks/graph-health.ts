@@ -273,7 +273,9 @@ export const timelineHistoryEntry: DoctorEntry = {
     'unbound_source',
     'writer_version',
     'self_capture',
+    'vector_plan',
     'stale_embedding_effects',
+    'extractor_facts_expired',
   ],
   run: runTimelineHistory,
 };

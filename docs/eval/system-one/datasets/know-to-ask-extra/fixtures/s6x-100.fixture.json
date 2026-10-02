@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-100",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/solveig-tessstead",
+      "content": "---\ntitle: Solveig Tessstead\ntype: person\naliases: [solveig]\nsummary: \"Solveig Tessstead is the product lead at Fablewharf.\"\n---\n\nSolveig Tessstead is the product lead at Fablewharf. Solveig pushed to move the reporting feature ahead of the mobile app.\n"
+    },
+    {
+      "slug": "people/saskia-yarrgrove",
+      "content": "---\ntitle: Saskia Yarrgrove\ntype: person\nsummary: \"Saskia Yarrgrove is the head of partnerships at Vesperspire.\"\n---\n\nSaskia Yarrgrove is the head of partnerships at Vesperspire.\n"
+    },
+    {
+      "slug": "companies/lumenloft",
+      "content": "---\ntitle: Lumenloft\ntype: company\nsummary: \"Lumenloft is a software vendor we work with.\"\n---\n\nLumenloft is a software vendor we work with. Their pilot with our team ends after the next billing cycle.\n"
+    },
+    {
+      "slug": "companies/quartzgate",
+      "content": "---\ntitle: Quartzgate\ntype: company\nsummary: \"A company we met once at a trade show.\"\n---\n\nA company we met once at a trade show.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "What did Tessstead want changed in the roadmap?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Happy to help."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "By the way, someone named Ines Caldcombe emailed about partnerships. Never heard of them."
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Okay, noted."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "How do you spell Yarrgrove in the NATO phonetic alphabet?"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Okay, noted."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "how's lumenloft doing on the pilot?"
+    }
+  ]
+}

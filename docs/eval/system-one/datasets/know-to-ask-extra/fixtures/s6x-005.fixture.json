@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-005",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/ilse-wyrthorpe",
+      "content": "---\ntitle: Ilse Wyrthorpe\ntype: person\naliases: [ilse]\nsummary: \"Ilse Wyrthorpe is the product lead at Fablereach.\"\n---\n\nIlse Wyrthorpe is the product lead at Fablereach.\n"
+    },
+    {
+      "slug": "companies/vesperfold-labs",
+      "content": "---\ntitle: Vesperfold Labs\ntype: company\nsummary: \"Vesperfold Labs is a startup we evaluated as a partner.\"\n---\n\nVesperfold Labs is a startup we evaluated as a partner. The integration slipped because their API still lacks webhooks.\n"
+    },
+    {
+      "slug": "projects/support-rotation",
+      "content": "---\ntitle: Support Rotation\ntype: project\nsummary: \"Support Rotation: Engineers take one week of support each per month, and weekends go to an on-call pager.\"\n---\n\nSupport Rotation: Engineers take one week of support each per month, and weekends go to an on-call pager.\n"
+    },
+    {
+      "slug": "people/calder-tessthorpe",
+      "content": "---\ntitle: Calder Tessthorpe\ntype: person\naliases: [calder]\nsummary: \"A contact from a conference last spring.\"\n---\n\nA contact from a conference last spring.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "How do you spell Wyrthorpe in the NATO phonetic alphabet?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Here is what I have."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Any news from Vesperfold on the integration?"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "how did we end up splitting that support rotation?"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Done."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "By the way, someone named Junie Caldthorpe emailed about partnerships. Never heard of them."
+    }
+  ]
+}

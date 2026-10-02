@@ -187,6 +187,10 @@
       },
       {
         "category": "brain",
+        "name": "unlinked_facts"
+      },
+      {
+        "category": "brain",
         "name": "timeline_history"
       },
       {
@@ -236,6 +240,10 @@
       {
         "category": "brain",
         "name": "self_capture"
+      },
+      {
+        "category": "ops",
+        "name": "vector_plan"
       },
       {
         "category": "ops",

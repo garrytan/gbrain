@@ -232,6 +232,9 @@ async function buildRetrievalResponseMeta(
       ...(m.cache ? { cache: m.cache.status } : {}),
       ...(m.token_budget ? { token_budget: m.token_budget } : {}),
       ...(m.vector_pool_underfilled ? { vector_pool_underfilled: m.vector_pool_underfilled } : {}),
+      ...(m.decide ? { decide: m.decide } : {}),
+      ...(m.rerank ? { rerank: m.rerank } : {}),
+      ...(m.answerability ? { answerability: m.answerability } : {}),
     } : {}),
     ...((m?.degraded !== undefined || degraded.length > 0) ? { degraded } : {}),
     projection_readiness: readiness,
@@ -242,13 +245,26 @@ async function buildRetrievalResponseMeta(
 /**
  * #3985: normalize the `types` param. MCP passes a real array; the CLI
  * passes `--types person,company` as one string. Rejects non-string entries
- * and an all-empty list loudly (invalid_params) instead of silently
- * dropping the filter. The SQL-level plumbing (SearchOpts.types → both
- * engines' keyword/title/vector legs) has existed since v0.33 (whoknows);
- * this just exposes it on the public search/query ops.
+ * and a non-empty list whose entries trim/filter to nothing loudly
+ * (invalid_params) instead of silently dropping the filter.
+ *
+ * #5390: a structurally empty array (`[]`), `""` or a whitespace-only string
+ * carries no user intent — it is
+ * what OpenAI-family MCP clients send when an LLM over-fills every optional
+ * parameter with a type-zero value. Treat it as absent (no filter applied)
+ * rather than throwing, so the search still runs unfiltered. A non-empty
+ * list that filters to nothing (`['']`, `',,'`) still throws, so a CLI
+ * `--types ,` typo is still loud. The SQL-level plumbing (SearchOpts.types
+ * → both engines' keyword/title/vector legs) has existed since v0.33
+ * (whoknows); this just exposes it on the public search/query ops.
  */
 function normalizeTypesParam(raw: unknown): string[] | undefined {
   if (raw === undefined || raw === null) return undefined;
+  // #5390: a structurally empty array, an empty string or a whitespace-only
+  // string is treated as absent, not as a request for an impossible filter.
+  // The CLI typo guard below still catches `',,'`, `' , '` and `['']`.
+  if (Array.isArray(raw) && raw.length === 0) return undefined;
+  if (typeof raw === 'string' && raw.trim() === '') return undefined;
   const arr = Array.isArray(raw)
     ? raw
     : typeof raw === 'string'
@@ -421,6 +437,7 @@ const search: Operation = {
       // #4415: agent-explicit recency + salience (same posture as `query`).
       salience: p.salience as 'off' | 'on' | 'strong' | undefined,
       recency: p.recency as 'off' | 'on' | 'strong' | undefined,
+      decide: { remote: ctx.remote !== false },
       onMeta: (m) => { capturedMeta = m; },
     })).map(r => ({ ...r }));
     stampDeepResearchIds(results);
@@ -676,7 +693,7 @@ const query: Operation = {
       limit: (p.limit as number) || undefined,
       offset: (p.offset as number) || 0,
       excludePrivate,
-      requireSafeChunks: ctx.remote !== false,
+      requireSafeChunks: ctx.remote !== false, decide: { remote: ctx.remote !== false, answerability: true },
       takesHoldersAllowList: readHolders(ctx),
       expansion: expand,
       expandFn: expand ? expandQuery : undefined,
@@ -767,17 +784,11 @@ const query: Operation = {
             expansion: true,
             expandFn: expandQuery,
             relationalRetrieval: true,
-            autocut: false,
+            autocut: false, decide: { remote: ctx.remote !== false, rerankOnly: true }, // System One: S2-S5 off on the re-run
             detail,
-            // Preserve the caller's #3985 type filter on the re-run (raw
-            // pass-through; the base call already rejected malformed input).
-            ...(Array.isArray(p.types) || typeof p.types === 'string'
-              ? {
-                  types: (Array.isArray(p.types) ? (p.types as string[]) : (p.types as string).split(','))
-                    .map((t) => t.trim())
-                    .filter(Boolean),
-                }
-              : {}),
+            // Preserve the caller's #3985 type filter on the re-run, as
+            // normalized for the base call (#5390: [] and "" stay absent).
+            ...(types ? { types } : {}),
             language: (p.lang as string) || undefined,
             symbolKind: (p.symbol_kind as string) || undefined,
             // Preserve the caller's symbol-proximity constraints too — an

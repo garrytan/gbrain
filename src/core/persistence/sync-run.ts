@@ -117,6 +117,7 @@ function result(cursor: Cursor | CursorHeader, status: SyncResult['status'], rea
     toCommit: cursor.authority.writer.remote ? '' : cursor.target, added: cursor.counts.added, modified: cursor.counts.modified,
     deleted: cursor.counts.deleted, renamed: cursor.counts.renamed ?? 0, chunksCreated: cursor.counts.chunks, embedded: 0, pagesAffected: [],
     ...(cursor.slugCollisions?.length ? { slugCollisions: cursor.slugCollisions } : {}),
+    ...(cursor.fileRefusals?.length ? { fileRefusals: cursor.fileRefusals } : {}),
     filesImported: cursor.index, bankedFiles: cursor.index, ...(cursor.uncommitted ? { uncommitted: cursor.uncommitted } : {}), ...(reason ? { reason } : {}),
     ...(cursor.counts.skippedContextualMode || cursor.counts.skippedCanonicalBytes ? { legacySkips: {
       contextualMode: cursor.counts.skippedContextualMode ?? 0, canonicalBytes: cursor.counts.skippedCanonicalBytes ?? 0 } } : {}) };

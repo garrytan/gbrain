@@ -151,6 +151,21 @@ export function transcriptFullId(sourceId: string): string {
 const TITLE_SLUG_MAX = 48;
 
 /**
+ * Normalize an adapter's source timestamp to UTC (gbrain-evals N12-2). A
+ * string carrying an explicit offset ('2026-08-10T22:30:00-07:00') becomes
+ * its UTC ISO instant, so the date and the hour downstream come from the
+ * same instant. Everything else passes through unchanged: UTC strings stay
+ * byte-identical (no churn for existing imports), and unparseable or
+ * zone-less strings keep their current behavior. Non-strings become ''.
+ */
+export function utcTimestamp(v: unknown): string {
+  if (typeof v !== 'string') return '';
+  if (!/[+-]\d{2}:?\d{2}$/.test(v.trim())) return v;
+  const ms = Date.parse(v);
+  return Number.isNaN(ms) ? v : new Date(ms).toISOString();
+}
+
+/**
  * The one slug builder for every imported conversation page.
  *
  * Harness sessions:  conversations/sessions/YYYY-MM-DD-<harness>-<hash12>

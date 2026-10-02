@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-103",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "companies/glintloft",
+      "content": "---\ntitle: Glintloft\ntype: company\nsummary: \"Glintloft is the payroll vendor we picked.\"\n---\n\nGlintloft is the payroll vendor we picked. The integration slipped because their API still lacks webhooks.\n"
+    },
+    {
+      "slug": "people/cassius-marrmere",
+      "content": "---\ntitle: Cassius Marrmere\ntype: person\nsummary: \"Cassius Marrmere is the product lead at Fablewharf.\"\n---\n\nCassius Marrmere is the product lead at Fablewharf.\n"
+    },
+    {
+      "slug": "people/teodor-orrinwick",
+      "content": "---\ntitle: Teodor Orrinwick\ntype: person\nsummary: \"Teodor Orrinwick is the finance lead at Russetvane.\"\n---\n\nTeodor Orrinwick is the finance lead at Russetvane.\n"
+    },
+    {
+      "slug": "people/calder-vashholt",
+      "content": "---\ntitle: Calder Vashholt\ntype: person\naliases: [calder]\nsummary: \"Calder Vashholt is the head of sales at Quartzspire.\"\n---\n\nCalder Vashholt is the head of sales at Quartzspire.\n"
+    },
+    {
+      "slug": "people/corin-tessgrove",
+      "content": "---\ntitle: Corin Tessgrove\ntype: person\naliases: [corin]\nsummary: \"A contact from a conference last spring.\"\n---\n\nA contact from a conference last spring.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "what does the vendor we picked for payroll charge per employee?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "How do you spell Marrmere in the NATO phonetic alphabet?"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "is teodor a common name anywhere? thinking about it for a character"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Here is what I have."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "Vashholt said the room is 12 by 15 feet. What is that in square meters?"
+    }
+  ]
+}

@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-076",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/annika-haskgrove",
+      "content": "---\ntitle: Annika Haskgrove\ntype: person\nsummary: \"Annika Haskgrove is the finance lead at Cobaltgate.\"\n---\n\nAnnika Haskgrove is the finance lead at Cobaltgate.\n"
+    },
+    {
+      "slug": "companies/solacemoor",
+      "content": "---\ntitle: Solacemoor\ntype: company\nsummary: \"Solacemoor is a software vendor we work with.\"\n---\n\nSolacemoor is a software vendor we work with. They quoted a per-seat price with a minimum annual commitment.\n"
+    },
+    {
+      "slug": "people/florian-kestgrove",
+      "content": "---\ntitle: Florian Kestgrove\ntype: person\nsummary: \"Florian Kestgrove is the finance lead at Orchidfold.\"\n---\n\nFlorian Kestgrove is the finance lead at Orchidfold. Florian pushed to move the reporting feature ahead of the mobile app.\n"
+    },
+    {
+      "slug": "people/leonie-marrbrook",
+      "content": "---\ntitle: Leonie Marrbrook\ntype: person\naliases: [leonie]\nsummary: \"A contact from a conference last spring.\"\n---\n\nA contact from a conference last spring.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "How many letters are in the name Haskgrove?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Happy to help."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "what's the status with solacemoor and pricing?"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Done."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "thanks, that helps a lot"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Okay, noted."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "I owe Kestgrove an answer on the roadmap. What were they asking for?"
+    }
+  ]
+}

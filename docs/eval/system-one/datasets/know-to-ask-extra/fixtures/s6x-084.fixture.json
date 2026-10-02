@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-084",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "companies/brackengate",
+      "content": "---\ntitle: Brackengate\ntype: company\nsummary: \"Brackengate is a software vendor we work with.\"\n---\n\nBrackengate is a software vendor we work with.\n"
+    },
+    {
+      "slug": "companies/quartzmoor",
+      "content": "---\ntitle: Quartzmoor\ntype: company\nsummary: \"Quartzmoor is a software vendor we work with.\"\n---\n\nQuartzmoor is a software vendor we work with. Their pilot with our team ends after the next billing cycle.\n"
+    },
+    {
+      "slug": "people/solveig-marrmere",
+      "content": "---\ntitle: Solveig Marrmere\ntype: person\naliases: [solveig]\nsummary: \"Solveig Marrmere is the finance lead at Nimbusspire.\"\n---\n\nSolveig Marrmere is the finance lead at Nimbusspire. Solveig suggested holding the offsite somewhere reachable by train.\n"
+    },
+    {
+      "slug": "people/verity-brinthorpe",
+      "content": "---\ntitle: Verity Brinthorpe\ntype: person\nsummary: \"Verity Brinthorpe is the finance lead at Quartzgate.\"\n---\n\nVerity Brinthorpe is the finance lead at Quartzgate.\n"
+    },
+    {
+      "slug": "companies/nimbusyard",
+      "content": "---\ntitle: Nimbusyard\ntype: company\nsummary: \"A company we met once at a trade show.\"\n---\n\nA company we met once at a trade show.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Make this sentence shorter: 'Our team will be at the Brackengate office for the whole afternoon on Thursday.'"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Happy to help."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "what's the status with quartzmoor and the pilot?"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "Prep me for the Marrmere call, especially the offsite."
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "In the novel I'm reading, Captain Brinthorpe betrays the crew. Is that a common trope?"
+    }
+  ]
+}

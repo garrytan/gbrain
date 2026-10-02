@@ -103,6 +103,10 @@
       },
       {
         "category": "ops",
+        "name": "bun_runtime"
+      },
+      {
+        "category": "ops",
         "name": "supervisor"
       },
       {
@@ -198,12 +202,20 @@
         "name": "orphan_clones"
       },
       {
+        "category": "brain",
+        "name": "embedding_key_source"
+      },
+      {
         "category": "ops",
         "name": "pglite_data_dir"
       },
       {
         "category": "brain",
         "name": "pglite_scratch_probe"
+      },
+      {
+        "category": "brain",
+        "name": "text_projection_readiness"
       },
       {
         "category": "ops",
@@ -228,10 +240,6 @@
       {
         "category": "meta",
         "name": "pages_upsert_arbiter"
-      },
-      {
-        "category": "brain",
-        "name": "text_projection_readiness"
       },
       {
         "category": "ops",
@@ -363,7 +371,15 @@
       },
       {
         "category": "ops",
+        "name": "vector_plan"
+      },
+      {
+        "category": "ops",
         "name": "stale_embedding_effects"
+      },
+      {
+        "category": "brain",
+        "name": "extractor_facts_expired"
       },
       {
         "category": "brain",
@@ -467,6 +483,10 @@
       },
       {
         "category": "ops",
+        "name": "legacy_job_authority"
+      },
+      {
+        "category": "ops",
         "name": "index_audit"
       },
       {
@@ -516,6 +536,14 @@
       {
         "category": "ops",
         "name": "db_only_collector_collision"
+      },
+      {
+        "category": "ops",
+        "name": "decide_health"
+      },
+      {
+        "category": "brain",
+        "name": "unlinked_facts"
       },
       {
         "category": "ops",

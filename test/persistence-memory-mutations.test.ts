@@ -283,7 +283,9 @@ describe('journaled memory publication, both engines', () => {
       const snapshot = (await engine.readPageSnapshot(slug, { sourceId }))!;
       expect(snapshot.revision).not.toBe(before.revision);
       expect(parseFactsFence(snapshot.page.compiled_truth).facts.find(f => f.claim === 'Withdraw this unique memory')?.forgotten).toBe(true);
-      expect(await engine.getChunks(slug, { sourceId })).toEqual([]);
+      const chunks = (await engine.getChunks(slug, { sourceId })).map(chunk => chunk.chunk_text).join('\n');
+      expect(chunks).toContain('Existing biography');
+      expect(chunks).not.toContain('Withdraw this unique memory');
       const local = await registerLocalWriter(engine, 'cli');
       const request = (await getWriteRequest(engine, { kind: 'local_cli', id: local.id }, requestId))!;
       expect(request.worktree_id).toBeNull();

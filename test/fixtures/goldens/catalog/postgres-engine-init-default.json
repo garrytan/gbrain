@@ -24,6 +24,13 @@
       "context_volunteer_events.context_volunteer_events_pkey": "p PRIMARY KEY (id)",
       "conversation_parser_llm_cache.conversation_parser_llm_cache_call_shape_check": "c CHECK ((call_shape = ANY (ARRAY['polish'::text, 'fallback'::text])))",
       "conversation_parser_llm_cache.conversation_parser_llm_cache_pkey": "p PRIMARY KEY (content_sha256, model_id, call_shape)",
+      "decide_calibrations.decide_calibrations_pkey": "p PRIMARY KEY (id)",
+      "decide_proposals.decide_proposals_pkey": "p PRIMARY KEY (id)",
+      "decide_proposals.decide_proposals_sweep_id_pair_index_key": "u UNIQUE (sweep_id, pair_index)",
+      "decide_spend.decide_spend_pkey": "p PRIMARY KEY (request_id)",
+      "decide_state.decide_state_pkey": "p PRIMARY KEY (key)",
+      "decide_sweep_deferred.decide_sweep_deferred_pkey": "p PRIMARY KEY (slot, source_id, fact_id)",
+      "decision_receipts.decision_receipts_pkey": "p PRIMARY KEY (id)",
       "dream_synthesis_completions.dream_synthesis_completions_pkey": "p PRIMARY KEY (source_id, idempotency_key)",
       "dream_verdicts.dream_verdicts_pkey": "p PRIMARY KEY (file_path, content_hash)",
       "drift_decisions.drift_decisions_pkey": "p PRIMARY KEY (id)",
@@ -50,6 +57,7 @@
       "extract_atoms_page_state.extract_atoms_page_state_source_incarnation_fkey": "f FOREIGN KEY (source_incarnation) REFERENCES sources(incarnation) ON DELETE CASCADE",
       "extract_atoms_transcript_state.extract_atoms_transcript_state_pkey": "p PRIMARY KEY (source_id, file_path, content_hash)",
       "extract_rollup_7d.extract_rollup_7d_pkey": "p PRIMARY KEY (kind, source_id, day)",
+      "fact_relink_attempts.fact_relink_attempts_pkey": "p PRIMARY KEY (source_id, fact_id)",
       "fact_withdrawals.fact_withdrawals_pkey": "p PRIMARY KEY (source_id, visibility, subject, fact_hash)",
       "fact_withdrawals.fact_withdrawals_source_id_fkey": "f FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE",
       "fact_withdrawals.fact_withdrawals_visibility_check": "c CHECK ((visibility = ANY (ARRAY['private'::text, 'world'::text])))",
@@ -343,6 +351,24 @@
       "conversation_parser_llm_cache": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
+      "decide_calibrations": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
+      "decide_proposals": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
+      "decide_spend": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
+      "decide_state": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
+      "decide_sweep_deferred": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
+      "decision_receipts": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
       "dream_synthesis_completions": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
@@ -377,6 +403,9 @@
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
       "extract_rollup_7d": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
+      "fact_relink_attempts": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
       "fact_withdrawals": [
@@ -614,6 +643,19 @@
       "context_volunteer_events_src_slug_idx": "CREATE INDEX context_volunteer_events_src_slug_idx ON public.context_volunteer_events USING btree (source_id, slug)",
       "context_volunteer_events_src_time_idx": "CREATE INDEX context_volunteer_events_src_time_idx ON public.context_volunteer_events USING btree (source_id, volunteered_at DESC)",
       "conversation_parser_llm_cache_pkey": "CREATE UNIQUE INDEX conversation_parser_llm_cache_pkey ON public.conversation_parser_llm_cache USING btree (content_sha256, model_id, call_shape)",
+      "decide_calibrations_lookup_idx": "CREATE INDEX decide_calibrations_lookup_idx ON public.decide_calibrations USING btree (slot, provider, model_resolved, created_at DESC)",
+      "decide_calibrations_pkey": "CREATE UNIQUE INDEX decide_calibrations_pkey ON public.decide_calibrations USING btree (id)",
+      "decide_proposals_pkey": "CREATE UNIQUE INDEX decide_proposals_pkey ON public.decide_proposals USING btree (id)",
+      "decide_proposals_status_created_idx": "CREATE INDEX decide_proposals_status_created_idx ON public.decide_proposals USING btree (status, created_at)",
+      "decide_proposals_sweep_id_pair_index_key": "CREATE UNIQUE INDEX decide_proposals_sweep_id_pair_index_key ON public.decide_proposals USING btree (sweep_id, pair_index)",
+      "decide_spend_created_idx": "CREATE INDEX decide_spend_created_idx ON public.decide_spend USING btree (created_at)",
+      "decide_spend_pkey": "CREATE UNIQUE INDEX decide_spend_pkey ON public.decide_spend USING btree (request_id)",
+      "decide_state_pkey": "CREATE UNIQUE INDEX decide_state_pkey ON public.decide_state USING btree (key)",
+      "decide_sweep_deferred_pkey": "CREATE UNIQUE INDEX decide_sweep_deferred_pkey ON public.decide_sweep_deferred USING btree (slot, source_id, fact_id)",
+      "decision_receipts_decision_idx": "CREATE INDEX decision_receipts_decision_idx ON public.decision_receipts USING btree (decision_id)",
+      "decision_receipts_model_slot_idx": "CREATE INDEX decision_receipts_model_slot_idx ON public.decision_receipts USING btree (model_resolved, slot)",
+      "decision_receipts_pkey": "CREATE UNIQUE INDEX decision_receipts_pkey ON public.decision_receipts USING btree (id)",
+      "decision_receipts_slot_created_idx": "CREATE INDEX decision_receipts_slot_created_idx ON public.decision_receipts USING btree (slot, created_at)",
       "dream_synthesis_completions_pkey": "CREATE UNIQUE INDEX dream_synthesis_completions_pkey ON public.dream_synthesis_completions USING btree (source_id, idempotency_key)",
       "dream_verdicts_expires_idx": "CREATE INDEX dream_verdicts_expires_idx ON public.dream_verdicts USING btree (expires_at)",
       "dream_verdicts_pkey": "CREATE UNIQUE INDEX dream_verdicts_pkey ON public.dream_verdicts USING btree (file_path, content_hash)",
@@ -637,6 +679,8 @@
       "extract_atoms_transcript_state_pkey": "CREATE UNIQUE INDEX extract_atoms_transcript_state_pkey ON public.extract_atoms_transcript_state USING btree (source_id, file_path, content_hash)",
       "extract_atoms_transcript_state_tombstoned_idx": "CREATE INDEX extract_atoms_transcript_state_tombstoned_idx ON public.extract_atoms_transcript_state USING btree (source_id, content_hash) WHERE tombstoned",
       "extract_rollup_7d_pkey": "CREATE UNIQUE INDEX extract_rollup_7d_pkey ON public.extract_rollup_7d USING btree (kind, source_id, day)",
+      "fact_relink_attempts_outcome_idx": "CREATE INDEX fact_relink_attempts_outcome_idx ON public.fact_relink_attempts USING btree (source_id, outcome, attempted_at)",
+      "fact_relink_attempts_pkey": "CREATE UNIQUE INDEX fact_relink_attempts_pkey ON public.fact_relink_attempts USING btree (source_id, fact_id)",
       "fact_withdrawals_pkey": "CREATE UNIQUE INDEX fact_withdrawals_pkey ON public.fact_withdrawals USING btree (source_id, visibility, subject, fact_hash)",
       "facts_pkey": "CREATE UNIQUE INDEX facts_pkey ON public.facts USING btree (id)",
       "facts_typed_claim_idx": "CREATE INDEX facts_typed_claim_idx ON public.facts USING btree (entity_slug, claim_metric, valid_from) WHERE (claim_metric IS NOT NULL)",
@@ -679,11 +723,12 @@
       "idx_facts_entity_active": "CREATE INDEX idx_facts_entity_active ON public.facts USING btree (source_id, entity_slug, valid_from DESC) WHERE (expired_at IS NULL)",
       "idx_facts_extract_conversation_session": "CREATE INDEX idx_facts_extract_conversation_session ON public.facts USING btree (source_id, source_session) WHERE (source ~~ 'cli:extract-conversation-facts%'::text)",
       "idx_facts_fence_key": "CREATE UNIQUE INDEX idx_facts_fence_key ON public.facts USING btree (source_id, source_markdown_slug, row_num) WHERE (row_num IS NOT NULL)",
-      "idx_facts_ontology_dedup": "CREATE UNIQUE INDEX idx_facts_ontology_dedup ON public.facts USING btree (source_id, entity_slug, dimension, value_hash, source_markdown_slug) WHERE (dimension IS NOT NULL)",
+      "idx_facts_ontology_stint_dedup": "CREATE UNIQUE INDEX idx_facts_ontology_stint_dedup ON public.facts USING btree (source_id, entity_slug, dimension, value_hash, source_markdown_slug, valid_from) WHERE (dimension IS NOT NULL)",
       "idx_facts_session": "CREATE INDEX idx_facts_session ON public.facts USING btree (source_id, source_session, created_at DESC) WHERE (expired_at IS NULL)",
       "idx_facts_since": "CREATE INDEX idx_facts_since ON public.facts USING btree (source_id, created_at DESC) WHERE (expired_at IS NULL)",
       "idx_facts_since_event_time": "CREATE INDEX idx_facts_since_event_time ON public.facts USING btree (source_id, COALESCE(valid_from, created_at) DESC) WHERE (expired_at IS NULL)",
       "idx_facts_unconsolidated": "CREATE INDEX idx_facts_unconsolidated ON public.facts USING btree (source_id, entity_slug) WHERE ((consolidated_at IS NULL) AND (expired_at IS NULL))",
+      "idx_facts_unlinked_active": "CREATE INDEX idx_facts_unlinked_active ON public.facts USING btree (source_id, id) WHERE ((entity_slug IS NULL) AND (expired_at IS NULL))",
       "idx_facts_withdrawal_fingerprint": "CREATE INDEX idx_facts_withdrawal_fingerprint ON public.facts USING btree (source_id, visibility, gbrain_fact_fingerprint(fact))",
       "idx_file_migration_ledger_status": "CREATE INDEX idx_file_migration_ledger_status ON public.file_migration_ledger USING btree (status) WHERE (status <> 'complete'::text)",
       "idx_files_hash": "CREATE INDEX idx_files_hash ON public.files USING btree (content_hash)",
@@ -912,6 +957,9 @@
       "code_traversal_cache_id_seq": "integer start=1 min=1 max=2147483647 increment=1 cycle=false cache=1 owned_by=code_traversal_cache.id",
       "content_chunks_id_seq": "integer start=1 min=1 max=2147483647 increment=1 cycle=false cache=1 owned_by=content_chunks.id",
       "context_volunteer_events_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=context_volunteer_events.id",
+      "decide_calibrations_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=decide_calibrations.id",
+      "decide_proposals_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=decide_proposals.id",
+      "decision_receipts_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=decision_receipts.id",
       "drift_decisions_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=drift_decisions.id",
       "entity_identities_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=entity_identities.id",
       "eval_candidates_id_seq": "integer start=1 min=1 max=2147483647 increment=1 cycle=false cache=1 owned_by=eval_candidates.id",
@@ -1133,6 +1181,129 @@
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },
+      "decide_calibrations": {
+        "columns": [
+          "1 id bigint/int8 NOT NULL DEFAULT nextval('decide_calibrations_id_seq'::regclass)",
+          "2 slot text/text NOT NULL",
+          "3 call_site text/text NOT NULL",
+          "4 provider text/text NOT NULL",
+          "5 model_resolved text/text NOT NULL",
+          "6 threshold real/float4 NOT NULL",
+          "7 min_keep integer/int4 NULL",
+          "8 metric text/text NOT NULL",
+          "9 metric_value real/float4 NULL",
+          "10 ece real/float4 NULL",
+          "11 retest_sd real/float4 NULL",
+          "12 repack_sd real/float4 NULL",
+          "13 action_precision_lb real/float4 NULL",
+          "14 qualification text/text NULL",
+          "15 qualified_at timestamp with time zone/timestamptz NULL",
+          "16 policy_fingerprint text/text NULL",
+          "17 n integer/int4 NOT NULL",
+          "18 dataset_hash text/text NULL",
+          "19 split_hash text/text NULL",
+          "20 calibrate_ids_hash text/text NULL",
+          "21 calibrate_only boolean/bool NOT NULL DEFAULT true",
+          "22 pack_shape text/text NOT NULL",
+          "23 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
+          "24 retired_at timestamp with time zone/timestamptz NULL",
+          "25 notes text/text NULL"
+        ],
+        "flags": "relkind=r rls=true force_rls=false"
+      },
+      "decide_proposals": {
+        "columns": [
+          "1 id bigint/int8 NOT NULL DEFAULT nextval('decide_proposals_id_seq'::regclass)",
+          "2 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
+          "3 source_id text/text NOT NULL",
+          "4 sweep_id text/text NOT NULL",
+          "5 pair_index integer/int4 NOT NULL",
+          "6 new_fact_id bigint/int8 NOT NULL",
+          "7 old_fact_id bigint/int8 NOT NULL",
+          "8 direction text/text NOT NULL DEFAULT 'new_supersedes_old'::text",
+          "9 p_supersede real/float4 NOT NULL",
+          "10 threshold real/float4 NULL",
+          "11 proposal_floor real/float4 NOT NULL",
+          "12 model_resolved text/text NULL",
+          "13 status text/text NOT NULL DEFAULT 'pending'::text",
+          "14 decided_at timestamp with time zone/timestamptz NULL",
+          "15 before_state text/text NULL",
+          "16 after_state text/text NULL"
+        ],
+        "flags": "relkind=r rls=true force_rls=false"
+      },
+      "decide_spend": {
+        "columns": [
+          "1 request_id text/text NOT NULL",
+          "2 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
+          "3 source_id text/text NULL",
+          "4 slot text/text NOT NULL",
+          "5 provider text/text NOT NULL",
+          "6 model_resolved text/text NULL",
+          "7 lane text/text NOT NULL",
+          "8 remote boolean/bool NOT NULL DEFAULT false",
+          "9 input_tokens integer/int4 NOT NULL DEFAULT 0",
+          "10 cost_usd double precision/float8 NOT NULL DEFAULT 0",
+          "11 outcome text/text NOT NULL"
+        ],
+        "flags": "relkind=r rls=true force_rls=false"
+      },
+      "decide_state": {
+        "columns": [
+          "1 key text/text NOT NULL",
+          "2 value text/text NOT NULL",
+          "3 updated_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
+        ],
+        "flags": "relkind=r rls=true force_rls=false"
+      },
+      "decide_sweep_deferred": {
+        "columns": [
+          "1 source_id text/text NOT NULL",
+          "2 fact_id bigint/int8 NOT NULL",
+          "3 slot text/text NOT NULL",
+          "4 reason text/text NOT NULL",
+          "5 attempts integer/int4 NOT NULL DEFAULT 0",
+          "6 next_attempt_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
+          "7 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
+        ],
+        "flags": "relkind=r rls=true force_rls=false"
+      },
+      "decision_receipts": {
+        "columns": [
+          "1 id bigint/int8 NOT NULL DEFAULT nextval('decision_receipts_id_seq'::regclass)",
+          "2 decision_id text/text NOT NULL",
+          "3 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
+          "4 source_id text/text NULL",
+          "5 slot text/text NOT NULL",
+          "6 mode text/text NOT NULL",
+          "7 provider text/text NOT NULL",
+          "8 model_alias text/text NULL",
+          "9 model_resolved text/text NULL",
+          "10 question_kind text/text NULL",
+          "11 state_hash text/text NULL",
+          "12 question_hash text/text NULL",
+          "13 answer_value real/float4 NULL",
+          "14 answer_choice text/text NULL",
+          "15 confidence real/float4 NULL",
+          "16 threshold real/float4 NULL",
+          "17 outcome text/text NOT NULL",
+          "18 subject_ref text/text NULL",
+          "19 call_site text/text NOT NULL",
+          "20 lane text/text NOT NULL",
+          "21 policy_fingerprint text/text NULL",
+          "22 calibration_ref text/text NULL",
+          "23 latency_ms integer/int4 NULL",
+          "24 input_tokens integer/int4 NULL",
+          "25 error_reason text/text NULL",
+          "26 protected boolean/bool NOT NULL DEFAULT false",
+          "27 min_keep integer/int4 NULL",
+          "28 rank integer/int4 NULL",
+          "29 k_used integer/int4 NULL",
+          "30 remote boolean/bool NOT NULL DEFAULT false",
+          "31 run_meta text/text NULL"
+        ],
+        "flags": "relkind=r rls=true force_rls=false"
+      },
       "dream_synthesis_completions": {
         "columns": [
           "1 source_id text/text NOT NULL",
@@ -1309,6 +1480,20 @@
           "9 rollup_write_failures integer/int4 NOT NULL DEFAULT 0",
           "10 updated_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
           "11 expected_limit_count integer/int4 NOT NULL DEFAULT 0"
+        ],
+        "flags": "relkind=r rls=true force_rls=false"
+      },
+      "fact_relink_attempts": {
+        "columns": [
+          "1 source_id text/text NOT NULL",
+          "2 fact_id bigint/int8 NOT NULL",
+          "3 outcome text/text NOT NULL",
+          "4 reason text/text NULL",
+          "5 tier text/text NULL",
+          "6 model text/text NULL",
+          "7 target_slug text/text NULL",
+          "8 run_id text/text NULL",
+          "9 attempted_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },

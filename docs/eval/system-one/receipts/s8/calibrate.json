@@ -1,0 +1,97 @@
+{
+  "id": 4,
+  "slot": "grounding",
+  "call_site": "dream",
+  "provider": "typesafe:jev-1.13.0",
+  "model_resolved": "jev-1.13.0",
+  "threshold": 0.29,
+  "min_keep": null,
+  "metric": "recall",
+  "metric_value": 0.956140350877193,
+  "ece": 0.11425196850393697,
+  "retest_sd": 0.014758209680393205,
+  "repack_sd": 0.014825988318374835,
+  "n": 254,
+  "dataset_hash": "13c9845020ba8779",
+  "split_hash": "dc24dffe77eff2f0",
+  "calibrate_ids_hash": "bc7b6fcab5f359ce",
+  "calibrate_only": true,
+  "pack_shape": "v1:order=rank-id:max=1:slots=grounding",
+  "notes": null,
+  "precision": 0.5891891891891892,
+  "recall": 0.956140350877193,
+  "f1": 0.7290969899665553,
+  "reliability": [
+    {
+      "lo": 0,
+      "hi": 0.1,
+      "n": 27,
+      "mean_p": 0.05407407407407409,
+      "observed": 0.07407407407407407
+    },
+    {
+      "lo": 0.1,
+      "hi": 0.2,
+      "n": 24,
+      "mean_p": 0.13416666666666668,
+      "observed": 0.08333333333333333
+    },
+    {
+      "lo": 0.2,
+      "hi": 0.3,
+      "n": 21,
+      "mean_p": 0.2385714285714286,
+      "observed": 0.09523809523809523
+    },
+    {
+      "lo": 0.3,
+      "hi": 0.4,
+      "n": 20,
+      "mean_p": 0.3465,
+      "observed": 0.2
+    },
+    {
+      "lo": 0.4,
+      "hi": 0.5,
+      "n": 16,
+      "mean_p": 0.454375,
+      "observed": 0.1875
+    },
+    {
+      "lo": 0.5,
+      "hi": 0.6,
+      "n": 17,
+      "mean_p": 0.548235294117647,
+      "observed": 0.29411764705882354
+    },
+    {
+      "lo": 0.6,
+      "hi": 0.7,
+      "n": 17,
+      "mean_p": 0.6529411764705882,
+      "observed": 0.5294117647058824
+    },
+    {
+      "lo": 0.7,
+      "hi": 0.8,
+      "n": 27,
+      "mean_p": 0.737777777777778,
+      "observed": 0.5185185185185185
+    },
+    {
+      "lo": 0.8,
+      "hi": 0.9,
+      "n": 29,
+      "mean_p": 0.8544827586206896,
+      "observed": 0.7241379310344828
+    },
+    {
+      "lo": 0.9,
+      "hi": 1,
+      "n": 56,
+      "mean_p": 0.9451785714285712,
+      "observed": 0.9285714285714286
+    }
+  ],
+  "margin": 0.05
+}

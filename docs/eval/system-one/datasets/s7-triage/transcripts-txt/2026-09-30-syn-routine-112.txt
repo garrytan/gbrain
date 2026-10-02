@@ -1,0 +1,538 @@
+[user]
+I’m trying to install a Python package in a virtual environment, but `pip` fails while building a dependency. I’m on Ubuntu and the package is `lxml`.
+
+[assistant]
+
+What command did you run, and what is the complete error near the end of the output? Also, please include your Ubuntu version, Python version, and whether you are using a virtual environment.
+
+[user]
+I ran:
+
+```text
+$ python3 -m venv .venv
+$ . .venv/bin/activate
+$ python -m pip install --upgrade pip
+$ python -m pip install lxml
+```
+
+The last part says:
+
+```text
+Building wheel for lxml (pyproject.toml) ... error
+error: subprocess-exited-with-error
+
+× Building wheel for lxml (pyproject.toml) did not run successfully.
+│ exit code: 1
+╰─> [58 lines of output]
+  checking for zlib... no
+  Could not find function xmlCheckVersion in library libxml2.
+  error: Please make sure the libxml2 and libxslt development packages are installed.
+
+note: This error originates from a subprocess, and is likely not a problem with pip.
+```
+
+Ubuntu is 24.04, and `python3 --version` prints `Python 3.12.3`.
+
+[assistant]
+
+That indicates the build is looking for the system development headers and libraries for both `libxml2` and `libxslt`. The runtime libraries may already be present, but the `-dev` packages provide files needed to compile the extension.
+
+First, update the package index and install the build prerequisites:
+
+```bash
+sudo apt update
+sudo apt install build-essential libxml2-dev libxslt1-dev zlib1g-dev
+```
+
+Then, with the virtual environment activated, try:
+
+```bash
+python -m pip install lxml
+```
+
+If it still fails, run the installation with verbose output and paste the final 80–100 lines.
+
+[user]
+Before I install anything, I checked what is already installed:
+
+```text
+$ dpkg -l | grep -E 'libxml2|libxslt|zlib'
+ii  libxml2:amd64       2.9.14+dfsg-1.3ubuntu3       amd64        GNOME XML library
+ii  libxml2-dev:amd64   2.9.14+dfsg-1.3ubuntu3       amd64        GNOME XML library - development files
+ii  libxslt1.1:amd64    1.1.35-1ubuntu2.2            amd64        XSLT 1.0 processing library
+ii  zlib1g:amd64        1:1.3.dfsg-1ubuntu2           amd64        compression library
+```
+
+So `libxml2-dev` is present, but `libxslt1-dev` and `zlib1g-dev` are not.
+
+[assistant]
+
+Right. The missing development packages are likely enough to explain the failure, especially `libxslt1-dev` and `zlib1g-dev`. `libxml2-dev` is already installed.
+
+Install only the missing packages first:
+
+```bash
+sudo apt update
+sudo apt install libxslt1-dev zlib1g-dev
+```
+
+The package manager may also install or upgrade a few related packages. After that, verify the development files are visible:
+
+```bash
+dpkg -l libxml2-dev libxslt1-dev zlib1g-dev
+ls -l /usr/include/libxml2/libxml/xmlversion.h
+ls -l /usr/include/libxslt/xslt.h
+```
+
+You should see package status beginning with `ii` and both header files listed. Then retry:
+
+```bash
+python -m pip install --no-cache-dir lxml
+```
+
+Using `--no-cache-dir` is optional, but it avoids reusing a failed local build artifact.
+
+[user]
+I installed them:
+
+```text
+$ sudo apt install libxslt1-dev zlib1g-dev
+Reading package lists... Done
+Building dependency tree... Done
+The following NEW packages will be installed:
+  libxslt1-dev zlib1g-dev
+0 upgraded, 2 newly installed, 0 to remove and 7 not upgraded.
+...
+Setting up libxslt1-dev:amd64 ...
+Setting up zlib1g-dev:amd64 ...
+```
+
+The headers exist too:
+
+```text
+$ ls -l /usr/include/libxml2/libxml/xmlversion.h /usr/include/libxslt/xslt.h
+-rw-r--r-- 1 root root 22673 Jan 12  2026 /usr/include/libxml2/libxml/xmlversion.h
+-rw-r--r-- 1 root root  4201 Feb  4  2025 /usr/include/libxslt/xslt.h
+```
+
+But `python -m pip install --no-cache-dir lxml` still tries to build and fails with:
+
+```text
+fatal error: Python.h: No such file or directory
+compilation terminated.
+error: command '/usr/bin/gcc' failed with exit code 1
+```
+
+[assistant]
+
+The original system-library issue is resolved, and the new error is for the Python development headers. On Ubuntu, install the development package matching your interpreter:
+
+```bash
+sudo apt install python3.12-dev
+```
+
+Since you are compiling a native extension, keeping the compiler and Python headers installed is also useful:
+
+```bash
+sudo apt install build-essential
+```
+
+Then confirm the header is available:
+
+```bash
+dpkg -L python3.12-dev | grep '/Python.h$'
+```
+
+Expected output includes something like:
+
+```text
+/usr/include/python3.12/Python.h
+```
+
+Afterward, make sure the same virtual environment is active and retry:
+
+```bash
+. .venv/bin/activate
+python -c 'import sys; print(sys.executable); print(sys.version)'
+python -m pip install --no-cache-dir lxml
+```
+
+The `sys.executable` path should point into `.venv`.
+
+[user]
+`python3.12-dev` was not installed. I installed it, and the check now prints:
+
+```text
+$ dpkg -L python3.12-dev | grep '/Python.h$'
+/usr/include/python3.12/Python.h
+```
+
+The virtual environment is active:
+
+```text
+$ . .venv/bin/activate
+$ python -c 'import sys; print(sys.executable); print(sys.version)'
+/home/me/projects/xmltest/.venv/bin/python
+3.12.3 (main, Mar 18 2026, 09:41:22) [GCC 13.2.0]
+```
+
+The install gets further now, but ends with:
+
+```text
+creating build/lib.linux-x86_64-cpython-312/lxml
+gcc ... -I/usr/include/libxml2 ... -c src/lxml/etree.c
+src/lxml/etree.c:12:10: fatal error: libxml/parser.h: No such file or directory
+ #include "libxml/parser.h"
+          ^~~~~~~~~~~~~~~~~
+compilation terminated.
+```
+
+[assistant/assistant]
+
+The header is installed under `/usr/include/libxml2/libxml/parser.h`, rather than directly under `/usr/include/libxml/parser.h`. The compiler command should include `/usr/include/libxml2`, but the abbreviated output may not show whether the include flag is being applied consistently.
+
+First, verify the exact file and the compiler’s package metadata:
+
+```bash
+ls -l /usr/include/libxml2/libxml/parser.h
+dpkg -S /usr/include/libxml2/libxml/parser.h
+pkg-config --cflags --libs libxml-2.0
+```
+
+A normal result from `pkg-config` should contain an include option similar to:
+
+```text
+-I/usr/include/libxml2 -lxml2
+```
+
+Also check whether an environment variable is overriding compiler flags:
+
+```bash
+printf 'CPPFLAGS=%s\n' "$CPPFLAGS"
+printf 'CFLAGS=%s\n' "$CFLAGS"
+printf 'LDFLAGS=%s\n' "$LDFLAGS"
+```
+
+If those variables contain unusual include paths, temporarily clear them for the install:
+
+```bash
+env -u CPPFLAGS -u CFLAGS -u LDFLAGS \
+  python -m pip install --no-cache-dir -v lxml
+```
+
+The `-v` output will show the complete compiler command.
+
+[user]
+The file and `pkg-config` output look normal:
+
+```text
+$ ls -l /usr/include/libxml2/libxml/parser.h
+-rw-r--r-- 1 root root 78244 Jan 12  2026 /usr/include/libxml2/libxml/parser.h
+
+$ dpkg -S /usr/include/libxml2/libxml/parser.h
+libxml2-dev:amd64: /usr/include/libxml2/libxml/parser.h
+
+$ pkg-config --cflags --libs libxml-2.0
+-I/usr/include/libxml2 -lxml2
+```
+
+The variables are empty:
+
+```text
+CPPFLAGS=
+CFLAGS=
+LDFLAGS=
+```
+
+The verbose command shows this:
+
+```text
+gcc -Wsign-compare -DNDEBUG -g -fwrapv -O2 -Wall
+-I/home/me/projects/xmltest/.venv/include
+-I/usr/include/python3.12
+-c src/lxml/etree.c
+```
+
+There is no `-I/usr/include/libxml2` in that command.
+
+[assistant]
+
+That confirms the build is not adding the `libxml2` include directory, even though `pkg-config` can provide it. For a source build, you can explicitly pass the include and library locations through the environment.
+
+Try:
+
+```bash
+export CFLAGS="-I/usr/include/libxml2"
+export LDFLAGS="-L/usr/lib/x86_64-linux-gnu"
+python -m pip install --no-cache-dir -v lxml
+```
+
+If the build also needs the XSLT include path, add it explicitly:
+
+```bash
+export CFLAGS="-I/usr/include/libxml2 -I/usr/include"
+```
+
+On Ubuntu, `libxslt` headers are normally under `/usr/include/libxslt`, and the compiler can find that directory through the standard include path. You can confirm with:
+
+```bash
+ls -l /usr/include/libxslt/xslt.h
+```
+
+If you want to avoid changing the current shell variables permanently, use a one-command form:
+
+```bash
+CFLAGS="-I/usr/include/libxml2" \
+LDFLAGS="-L/usr/lib/x86_64-linux-gnu" \
+python -m pip install --no-cache-dir -v lxml
+```
+
+After a successful build, test the import and print the linked library versions.
+
+[user]
+I tried the one-command form. It got past `parser.h`, but now fails here:
+
+```text
+src/lxml/etree.c:14:10: fatal error: libxslt/xsltconfig.h: No such file or directory
+ #include "libxslt/xsltconfig.h"
+          ^~~~~~~~~~~~~~~~~~~~~~~
+compilation terminated.
+```
+
+`ls /usr/include/libxslt` shows several headers, but not `xsltconfig.h`:
+
+```text
+attributes.h  documents.h  extensions.h  imports.h  namespaces.h
+patterns.h    security.h   templates.h  транс.h
+```
+
+I may have mistyped one of the package names earlier. `apt` says:
+
+```text
+$ apt-cache policy libxslt1-dev libxslt1.1
+libxslt1-dev:
+  Installed: (none)
+  Candidate: 1.1.35-1ubuntu2.2
+libxslt1.1:
+  Installed: 1.1.35-1ubuntu2.2
+```
+
+[assistant]
+
+That explains it: the development package was not actually installed. The runtime package `libxslt1.1` supplies the shared library, while `libxslt1-dev` supplies headers such as `xsltconfig.h` and linker metadata.
+
+Install the package and verify its files:
+
+```bash
+sudo apt update
+sudo apt install libxslt1-dev
+dpkg -L libxslt1-dev | grep -E '/(xsltconfig\.h|libxslt\.la|libxslt\.so)$'
+```
+
+You should see paths similar to:
+
+```text
+/usr/include/libxslt/xsltconfig.h
+/usr/lib/x86_64-linux-gnu/libxslt.so
+```
+
+Then retry with both include directories and the library directory:
+
+```bash
+CFLAGS="-I/usr/include/libxml2 -I/usr/include" \
+LDFLAGS="-L/usr/lib/x86_64-linux-gnu" \
+python -m pip install --no-cache-dir -v lxml
+```
+
+You do not need to add `/usr/include/libxslt` to `CFLAGS` for the include shown in the error, because the compiler searches `/usr/include` and then finds `libxslt/xsltconfig.h`. If the command still omits the flags, paste the complete `gcc` invocation.
+
+[user]
+I installed the package this time:
+
+```text
+$ sudo apt install libxslt1-dev
+The following NEW packages will be installed:
+  libxslt1-dev
+...
+$ dpkg -L libxslt1-dev | grep -E '/(xsltconfig\.h|libxslt\.so)$'
+/usr/include/libxslt/xsltconfig.h
+/usr/lib/x86_64-linux-gnu/libxslt.so
+```
+
+The install command now completes:
+
+```text
+Building wheel for lxml (pyproject.toml) ... done
+Created wheel for lxml: filename=lxml-5.2.2-cp312-cp312-linux_x86_64.whl
+Successfully built lxml
+Successfully installed lxml-5.2.2
+```
+
+I want to check that it imports and that it is using the expected libraries.
+
+[assistantონისძი天天中奖assistant]
+
+Run these checks inside the activated virtual environment:
+
+```bash
+python - <<'PY'
+import lxml
+from lxml import etree
+
+print("lxml:", lxml.__version__)
+print("libxml compiled:", etree.LIBXML_COMPILED_VERSION)
+print("libxml loaded:", etree.LIBXML_VERSION)
+print("libxslt compiled:", etree.LIBXSLT_COMPILED_VERSION)
+print("libxslt loaded:", etree.LIBXSLT_VERSION)
+
+root = etree.fromstring(b"<root><item>ok</item></root>")
+print("tag:", root.tag)
+print("text:", root.findtext("item"))
+PY
+```
+
+A successful result should show the installed lxml version, numeric library versions, and:
+
+```text
+tag: root
+text: ok
+```
+
+You can also inspect the extension’s shared-library dependencies:
+
+```bash
+python - <<'PY'
+from lxml import etree
+from pathlib import Path
+
+print(Path(etree.__file__).resolve())
+PY
+```
+
+Copy the printed `.so` path into `ldd`, for example:
+
+```bash
+ldd /home/me/projects/xmltest/.venv/lib/python3.12/site-packages/lxml/etree.cpython-312-x86_64-linux-gnu.so
+```
+
+Look for resolved entries containing `libxml2.so`, `libxslt.so`, and `libz.so`, rather than any `not found` lines.
+
+[user]
+The import test passed:
+
+```text
+lxml: 5.2.2
+libxml compiled: (2, 9, 14)
+libxml loaded: (2, 9, 14)
+libxslt compiled: (1, 1, 35)
+libxslt loaded: (1, 1, 35)
+tag: root
+text: ok
+```
+
+The extension path is:
+
+```text
+/home/me/projects/xmltest/.venv/lib/python3.12/site-packages/lxml/etree.cpython-312-x86_64-linux-gnu.so
+```
+
+`ldd` shows:
+
+```text
+libxslt.so.1 => /lib/x86_64-linux-gnu/libxslt.so.1
+libxml2.so.2 => /lib/x86_64-linux-gnu/libxml2.so.2
+libz.so.1 => /lib/x86_64-linux-gnu/libz.so.1
+libpython3.12.so.1.0 => /usr/lib/x86_64-linux-gnu/libpython3.12.so.1.0
+```
+
+No `not found` lines.
+
+[assistant]
+
+That confirms the installation is working and the extension can load all required shared libraries. The compiled and loaded versions also match in your output.
+
+For future setup on this machine, the relevant system packages are:
+
+```text
+build-essential
+libxml2-dev
+libxslt1-dev
+zlib1g-dev
+python3.12-dev
+```
+
+You can record the Python-side dependency in a requirements file:
+
+```bash
+python -m pip freeze | grep '^lxml==' > requirements.txt
+cat requirements.txt
+```
+
+For a new virtual environment, activate it before installing:
+
+```bash
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+```
+
+If pip later downloads a compatible prebuilt wheel, the compiler and development packages may not be needed for that particular installation. They are required when pip builds lxml from source, as happened here.
+
+[user]
+Can you summarize the commands that fixed it, including the checks, in a compact sequence I can paste into my notes?
+
+[assistant]
+
+Sure. This sequence installs the required Ubuntu build dependencies, activates the environment, installs lxml with the include paths used during troubleshooting, and verifies the result:
+
+```bash
+sudo apt update
+sudo apt install \
+  build-essential \
+  libxml2-dev \
+  libxslt1-dev \
+  zlib1g-dev \
+  python3.12-dev
+
+python3 -m venv .venv
+. .venv/bin/activate
+
+python -m pip install --upgrade pip
+
+CFLAGS="-I/usr/include/libxml2 -I/usr/include" \
+LDFLAGS="-L/usr/lib/x86_64-linux-gnu" \
+python -m pip install --no-cache-dir lxml
+
+python - <<'PY'
+import lxml
+from lxml import etree
+
+print("lxml:", lxml.__version__)
+print("libxml compiled:", etree.LIBXML_COMPILED_VERSION)
+print("libxml loaded:", etree.LIBXML_VERSION)
+print("libxslt compiled:", etree.LIBXSLT_COMPILED_VERSION)
+print("libxslt loaded:", etree.LIBXSLT_VERSION)
+
+root = etree.fromstring(b"<root><item>ok</item></root>")
+print("tag:", root.tag)
+print("text:", root.findtext("item"))
+PY
+
+python - <<'PY'
+from lxml import etree
+from pathlib import Path
+print(Path(etree.__file__).resolve())
+PY
+```
+
+For the package checks, these commands are useful if installation fails again:
+
+```bash
+dpkg -l libxml2-dev libxslt1-dev zlib1g-dev python3.12-dev
+pkg-config --cflags --libs libxml-2.0
+ls -l /usr/include/libxml2/libxml/parser.h
+ls -l /usr/include/libxslt/xsltconfig.h
+```
+
+The important distinction was between runtime packages and development packages: `libxml2`, `libxslt1.1`, and `zlib1g` provide runtime libraries, while the `-dev` packages provide headers and linker files needed to compile lxml.

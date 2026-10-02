@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-004",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/mireille-vashwick",
+      "content": "---\ntitle: Mireille Vashwick\ntype: person\nsummary: \"Mireille Vashwick is the head of sales at Kilnwharf.\"\n---\n\nMireille Vashwick is the head of sales at Kilnwharf.\n"
+    },
+    {
+      "slug": "people/verity-lornbarrow",
+      "content": "---\ntitle: Verity Lornbarrow\ntype: person\nsummary: \"Verity Lornbarrow is the operations director at Solacespire.\"\n---\n\nVerity Lornbarrow is the operations director at Solacespire.\n"
+    },
+    {
+      "slug": "companies/junipervane",
+      "content": "---\ntitle: Junipervane\ntype: company\nsummary: \"Junipervane is a software vendor we work with.\"\n---\n\nJunipervane is a software vendor we work with. Their pilot with our team ends after the next billing cycle.\n"
+    },
+    {
+      "slug": "people/marisol-lornfell",
+      "content": "---\ntitle: Marisol Lornfell\ntype: person\nsummary: \"Marisol Lornfell is the finance lead at Pylonvane.\"\n---\n\nMarisol Lornfell is the finance lead at Pylonvane. Marisol asked for a longer pilot before signing, ideally a full quarter.\n"
+    },
+    {
+      "slug": "companies/embergate",
+      "content": "---\ntitle: Embergate\ntype: company\nsummary: \"A company we met once at a trade show.\"\n---\n\nA company we met once at a trade show.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "How many letters are in the name Vashwick?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Here is what I have."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "In the novel I'm reading, Captain Lornbarrow betrays the crew. Is that a common trope?"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Okay, noted."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "what's the status with junipervane and the pilot?"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Okay, noted."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "I owe Lornfell an answer on the pilot. What were they asking for?"
+    }
+  ]
+}

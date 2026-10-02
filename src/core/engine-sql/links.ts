@@ -467,7 +467,7 @@ export async function traverseGraph(
     // the truncation callback.
     const cap = opts?.frontierCap;
     const recursiveStep = cap !== undefined && cap > 0
-      ? sqlFragment`(SELECT p2.id, p2.slug, p2.title, p2.type, g.depth + 1, g.visited || p2.id
+      ? sqlFragment`(SELECT p2.id, p2.slug, p2.source_id, p2.title, p2.type, g.depth + 1, g.visited || p2.id
              FROM graph g
              JOIN links l ON l.from_page_id = g.id
              JOIN pages p2 ON p2.id = l.to_page_id
@@ -477,7 +477,7 @@ export async function traverseGraph(
                ${stepScope}
              ORDER BY p2.slug ASC, p2.id ASC
              LIMIT ${cap})`
-      : sqlFragment`SELECT p2.id, p2.slug, p2.title, p2.type, g.depth + 1, g.visited || p2.id
+      : sqlFragment`SELECT p2.id, p2.slug, p2.source_id, p2.title, p2.type, g.depth + 1, g.visited || p2.id
             FROM graph g
             JOIN links l ON l.from_page_id = g.id
             JOIN pages p2 ON p2.id = l.to_page_id
@@ -488,14 +488,14 @@ export async function traverseGraph(
     // Cycle prevention: visited array tracks page IDs already in the path.
     const rows = (await exec.run(sqlFragment`
       WITH RECURSIVE graph AS (
-        SELECT p.id, p.slug, p.title, p.type, 0 as depth, ARRAY[p.id] as visited
+        SELECT p.id, p.slug, p.source_id, p.title, p.type, 0 as depth, ARRAY[p.id] as visited
         FROM pages p WHERE p.slug = ${slug} AND p.deleted_at IS NULL ${privacy('p')} ${seedScope}
 
         UNION ALL
 
         ${recursiveStep}
       )
-      SELECT DISTINCT g.slug, g.title, g.type, g.depth,
+      SELECT DISTINCT g.slug, g.source_id, g.title, g.type, g.depth,
         coalesce(
           -- jsonb_agg(DISTINCT ...) collapses duplicate (to_slug, link_type)
           -- edges that originate from different provenance (markdown body
@@ -510,9 +510,9 @@ export async function traverseGraph(
            WHERE l2.from_page_id = g.id AND p3.deleted_at IS NULL ${privacy('p3', 'l2')} ${aggScope}),
           '[]'::jsonb
         ) as links
-      FROM (SELECT DISTINCT id, slug, title, type, depth
-            FROM (SELECT id, slug, title, type, depth FROM graph LIMIT ${TRAVERSE_WALK_ROW_CAP}) capped) g
-      ORDER BY g.depth, g.slug
+      FROM (SELECT DISTINCT id, slug, source_id, title, type, depth
+            FROM (SELECT id, slug, source_id, title, type, depth FROM graph LIMIT ${TRAVERSE_WALK_ROW_CAP}) capped) g
+      ORDER BY g.depth, g.slug, g.source_id
     `)).rows;
 
     // T8 truncation-detection callback was designed here but the v1 algorithm
@@ -523,6 +523,7 @@ export async function traverseGraph(
 
     return rows.map((r: Record<string, unknown>) => ({
       slug: r.slug as string,
+      source_id: r.source_id as string,
       title: r.title as string,
       type: r.type as string,
       depth: r.depth as number,
@@ -577,10 +578,10 @@ export async function traversePathsDetailed(
     if (direction === 'out') {
       rows = (await exec.run(sqlFragment`
         WITH RECURSIVE walk AS (
-          SELECT p.id, p.slug, 0::int as depth, ARRAY[p.id] as visited
+          SELECT p.id, p.slug, p.source_id, 0::int as depth, ARRAY[p.id] as visited
           FROM pages p WHERE p.slug = ${slug} AND p.deleted_at IS NULL ${privacy('p')} ${seedScope}
           UNION ALL
-          SELECT p2.id, p2.slug, w.depth + 1, w.visited || p2.id
+          SELECT p2.id, p2.slug, p2.source_id, w.depth + 1, w.visited || p2.id
           FROM walk w
           JOIN links l ON l.from_page_id = w.id
           JOIN pages p2 ON p2.id = l.to_page_id
@@ -590,10 +591,11 @@ export async function traversePathsDetailed(
             AND (${!linkTypeMatches} OR l.link_type = ${linkType ?? ''})
             ${stepScope}
         ),
-        capped AS (SELECT id, slug, depth FROM walk LIMIT ${TRAVERSE_WALK_ROW_CAP + 1}),
-        nodes AS (SELECT DISTINCT id, slug, depth FROM capped)
+        capped AS (SELECT id, slug, source_id, depth FROM walk LIMIT ${TRAVERSE_WALK_ROW_CAP + 1}),
+        nodes AS (SELECT DISTINCT id, slug, source_id, depth FROM capped)
         SELECT (SELECT count(*) FROM capped) > ${TRAVERSE_WALK_ROW_CAP} AS walk_truncated,
-               w.slug as from_slug, p2.slug as to_slug,
+               w.id as from_id, w.slug as from_slug, w.source_id as from_source_id,
+               p2.id as to_id, p2.slug as to_slug, p2.source_id as to_source_id,
                l.link_type, l.context, w.depth + 1 as depth
         FROM nodes w
         JOIN links l ON l.from_page_id = w.id
@@ -602,16 +604,16 @@ export async function traversePathsDetailed(
           AND p2.deleted_at IS NULL ${privacy('p2', 'l')}
           AND (${!linkTypeMatches} OR l.link_type = ${linkType ?? ''})
           ${stepScope}
-        ORDER BY depth, from_slug, to_slug
+        ORDER BY depth, from_slug, to_slug, from_source_id, to_source_id
         LIMIT ${TRAVERSE_PATH_ROW_CAP + 1}
       `)).rows;
     } else if (direction === 'in') {
       rows = (await exec.run(sqlFragment`
         WITH RECURSIVE walk AS (
-          SELECT p.id, p.slug, 0::int as depth, ARRAY[p.id] as visited
+          SELECT p.id, p.slug, p.source_id, 0::int as depth, ARRAY[p.id] as visited
           FROM pages p WHERE p.slug = ${slug} AND p.deleted_at IS NULL ${privacy('p')} ${seedScope}
           UNION ALL
-          SELECT p2.id, p2.slug, w.depth + 1, w.visited || p2.id
+          SELECT p2.id, p2.slug, p2.source_id, w.depth + 1, w.visited || p2.id
           FROM walk w
           JOIN links l ON l.to_page_id = w.id
           JOIN pages p2 ON p2.id = l.from_page_id
@@ -621,10 +623,11 @@ export async function traversePathsDetailed(
             AND (${!linkTypeMatches} OR l.link_type = ${linkType ?? ''})
             ${stepScope}
         ),
-        capped AS (SELECT id, slug, depth FROM walk LIMIT ${TRAVERSE_WALK_ROW_CAP + 1}),
-        nodes AS (SELECT DISTINCT id, slug, depth FROM capped)
+        capped AS (SELECT id, slug, source_id, depth FROM walk LIMIT ${TRAVERSE_WALK_ROW_CAP + 1}),
+        nodes AS (SELECT DISTINCT id, slug, source_id, depth FROM capped)
         SELECT (SELECT count(*) FROM capped) > ${TRAVERSE_WALK_ROW_CAP} AS walk_truncated,
-               p2.slug as from_slug, w.slug as to_slug,
+               p2.id as from_id, p2.slug as from_slug, p2.source_id as from_source_id,
+               w.id as to_id, w.slug as to_slug, w.source_id as to_source_id,
                l.link_type, l.context, w.depth + 1 as depth
         FROM nodes w
         JOIN links l ON l.to_page_id = w.id
@@ -633,7 +636,7 @@ export async function traversePathsDetailed(
           AND p2.deleted_at IS NULL ${privacy('p2', 'l')}
           AND (${!linkTypeMatches} OR l.link_type = ${linkType ?? ''})
           ${stepScope}
-        ORDER BY depth, from_slug, to_slug
+        ORDER BY depth, from_slug, to_slug, from_source_id, to_source_id
         LIMIT ${TRAVERSE_PATH_ROW_CAP + 1}
       `)).rows;
     } else {
@@ -655,7 +658,8 @@ export async function traversePathsDetailed(
         capped AS (SELECT id, depth FROM walk LIMIT ${TRAVERSE_WALK_ROW_CAP + 1}),
         nodes AS (SELECT DISTINCT id, depth FROM capped)
         SELECT (SELECT count(*) FROM capped) > ${TRAVERSE_WALK_ROW_CAP} AS walk_truncated,
-               pf.slug as from_slug, pt.slug as to_slug,
+               pf.id as from_id, pf.slug as from_slug, pf.source_id as from_source_id,
+               pt.id as to_id, pt.slug as to_slug, pt.source_id as to_source_id,
                l.link_type, l.context, w.depth + 1 as depth
         FROM nodes w
         JOIN links l ON (l.from_page_id = w.id OR l.to_page_id = w.id)
@@ -667,7 +671,7 @@ export async function traversePathsDetailed(
           AND (${!linkTypeMatches} OR l.link_type = ${linkType ?? ''})
           ${pfScope}
           ${ptScope}
-        ORDER BY depth, from_slug, to_slug
+        ORDER BY depth, from_slug, to_slug, from_source_id, to_source_id
         LIMIT ${TRAVERSE_PATH_ROW_CAP + 1}
       `)).rows;
     }
@@ -676,16 +680,19 @@ export async function traversePathsDetailed(
     // us the walk overflowed and is dropped with everything past the cap.
     const truncated = rows.length > TRAVERSE_PATH_ROW_CAP || (rows as Array<{ walk_truncated?: boolean }>).some((r) => r.walk_truncated === true);
     const bounded = (truncated ? rows.slice(0, TRAVERSE_PATH_ROW_CAP) : rows) as Record<string, unknown>[];
-    // Dedup edges (same edge can appear via multiple visited paths).
+    // Dedup edges (same edge can appear via multiple visited paths). Keyed on
+    // page ids, so the same slug in two sources stays two distinct edges.
     const seen = new Set<string>();
     const result: GraphPath[] = [];
     for (const r of bounded) {
-      const key = `${r.from_slug}|${r.to_slug}|${r.link_type}|${r.depth}`;
+      const key = `${r.from_id}|${r.to_id}|${r.link_type}|${r.depth}`;
       if (seen.has(key)) continue;
       seen.add(key);
       result.push({
         from_slug: r.from_slug as string,
+        from_source_id: r.from_source_id as string,
         to_slug: r.to_slug as string,
+        to_source_id: r.to_source_id as string,
         link_type: r.link_type as string,
         context: (r.context as string) || '',
         depth: Number(r.depth),

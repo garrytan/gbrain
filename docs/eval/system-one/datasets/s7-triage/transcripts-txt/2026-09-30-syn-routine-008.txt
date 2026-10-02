@@ -1,0 +1,294 @@
+[user]
+My home Wi‑Fi keeps dropping in one room, but it works normally everywhere else. I’m using a fairly ordinary dual-band router. Can you walk me through basic troubleshooting?
+
+[assistant]
+Sure. Since the problem is limited to one room, start by checking whether it affects one device or several.
+
+1. In the problem room, test the same device on both the 2.4 GHz and 5 GHz network names, if your router lists them separately.
+2. Try a second device in that room.
+3. Note whether the connection fully disconnects, becomes very slow, or only shows “no internet.”
+4. Temporarily move the device about 1–2 meters closer to the doorway and see whether stability improves.
+5. Check whether anything recently changed in that room, such as furniture, a large appliance, or a metal shelf.
+
+Before changing settings, run a simple test from the affected device. On Windows, open Command Prompt and use:
+
+```text
+ipconfig
+ping 192.168.1.1 -n 30
+ping 1.1.1.1 -n 30
+```
+
+Replace `192.168.1.1` with your router’s gateway if different. The first ping tests the local wireless link; the second tests the internet connection.
+
+[user]
+It happens on my laptop and phone, mostly on 5 GHz. The 2.4 GHz network is slower but seems steadier. I moved a chair and a small metal shelf away from the doorway, but that did not make much difference. The router is in the hallway about 8 meters away, with one wall between it and the room. What should I check next?
+
+[assistant]
+That points toward 5 GHz range or interference rather than an issue with only one device. Check the signal and the exact failure pattern.
+
+On Windows, hold Shift while right-clicking the Wi‑Fi icon, choose “Open Network and Internet settings,” then open the adapter details, or run:
+
+```text
+netsh wlan show interfaces
+```
+
+Look for:
+
+```text
+Signal
+Radio type
+Channel
+Receive rate (Mbps)
+Transmit rate (Mbps)
+```
+
+A signal around 80–100% is strong, 60–79% is usually usable, and below roughly 50–60% can become unreliable through walls. Those percentages are approximate.
+
+Also test while continuously pinging the router:
+
+```text
+ping 192.168.1.1 -t
+```
+
+Walk from the hallway into the problem room. If the router ping starts timing out, the wireless link is the issue. If router pings remain clean but `ping 1.1.1.1 -t` fails, the problem may be upstream of the wireless connection. On the phone, note whether the Wi‑Fi icon disappears or remains connected while apps stop loading.
+
+[assistant]
+What does the Windows command show right now in the room?
+
+[user]
+Here is the output from the laptop:
+
+```text
+C:\>netsh wlan show interfaces
+
+There is 1 interface on the system:
+
+    Name                   : Wi-Fi
+    Description            : Wireless Adapter
+    GUID                   : 12345678-1234-1234-1234-123456789abc
+    Physical address       : 00-11-22-33-44-55
+    State                  : connected
+    SSID                   : HomeNet-5G
+    BSSID                  : AA-BB-CC-DD-EE-FF
+    Network type           : Infrastructure
+    Radio type             : 802.11ac
+    Authentication         : WPA2-Personal
+    Cipher                 : CCMP
+    Connection mode        : Auto Connect
+    Channel                : 149
+    Receive rate (Mbps)    : 866.7
+    Transmit rate (Mbps)   : 866.7
+    Signal                 : 48%
+    Profile                : HomeNet-5G
+```
+
+The router ping had about 20% timeouts while I walked into the room, and then another timeout every few minutes when I stayed near the desk.
+
+[assistant/assistant]
+That confirms the local 5 GHz link is marginal in that location. A negotiated rate of 866.7 Mbps can still coexist with packet loss; the rate is not a guarantee of stability. The immediate options are:
+
+- Use 2.4 GHz in that room.
+- Change the 5 GHz channel.
+- Move the router slightly into a more open position.
+- Reduce the 5 GHz channel width from 80 MHz to 40 MHz.
+- Add a wired access point or mesh node later if needed.
+
+Let’s try the least disruptive configuration change first: change the 5 GHz channel. Log in to the router’s administration page, commonly one of these:
+
+```text
+http://192.168.1.1
+http://192.168.0.1
+```
+
+Open the wireless or Wi‑Fi settings, select the 5 GHz band, and find the channel setting. If it is set to Auto or channel 149, choose a non-DFS channel such as 36, 40, 44, or 48. Use 40 MHz width initially if the router allows it. Save the setting, wait for Wi‑Fi to restart, and reconnect the laptop.
+
+Do not change the security mode or reset the router. Record the old channel first so you can return to it.
+
+[user]
+I logged in and found the 5 GHz settings. It was on Auto, currently showing channel 149, 80 MHz width, and transmit power set to High. The available channel choices are 36, 40, 44, 48, 149, 153, 157, and 161. There is also a setting called “Smart Connect,” which is enabled. Should I turn that off before changing the channel?
+
+[assistant]
+For a clean test, turn Smart Connect off temporarily. Smart Connect usually combines the two bands under one network name and lets the router steer devices between them. That can make it harder to tell which band a device is using, and some routers change channels automatically while it is enabled.
+
+Use this approach:
+
+1. Note the current names and passwords, though you should not need to change either.
+2. Disable Smart Connect.
+3. Give the bands distinct names if the router requires it, such as:
+   - `HomeNet-2G`
+   - `HomeNet-5G`
+4. Leave 2.4 GHz settings unchanged.
+5. Set 5 GHz to channel 36, 40, 44, or 48.
+6. Set channel width to 40 MHz.
+7. Leave transmit power at High.
+8. Save or apply the changes.
+
+The router may restart Wi‑Fi for a minute. Reconnect the laptop explicitly to the 5 GHz name, then run:
+
+```text
+netsh wlan show interfaces
+ping 192.168.1.1 -n 60
+```
+
+Stay in the problem room during the ping. Compare the result with the previous test. If channel 36 is still unstable, try 44 or 48. Avoid changing several other settings at the same time.
+
+[assistant]
+Before you apply it, does the router display any warning about separating the network names or disconnecting devices?
+
+[user]
+It says separating the bands will disconnect currently connected wireless devices, but they can reconnect using the same password. I’ll make the names distinct and use channel 36 at 40 MHz. Is there anything I should do on the laptop before the router saves the change?
+
+[assistant]
+Nothing major is required. To make reconnection predictable, you can prepare the laptop like this:
+
+1. Keep the router settings page open in the browser.
+2. On the laptop, open Wi‑Fi settings and note the current network name.
+3. After applying the router change, wait about 60–90 seconds for the wireless radios to return.
+4. Select the new 5 GHz network name and enter the existing password.
+5. If Windows says it cannot connect, remove only the old saved profile:
+   ```text
+   netsh wlan delete profile name="HomeNet-5G"
+   ```
+   Then select the new network again. Use the exact old profile name if it differs.
+6. Confirm the connection details:
+   ```text
+   netsh wlan show interfaces
+   ```
+
+Do not delete the 2.4 GHz profile, and do not press the router’s physical reset button. After reconnecting, first check the channel and signal, then run the router ping.
+
+A useful comparison is to run the same 60-packet test from the hallway and from the room:
+
+```text
+ping 192.168.1.1 -n 60
+```
+
+You are looking primarily at packet loss and average time, not just the negotiated receive rate.
+
+[user]
+I applied the change. The router restarted its Wi‑Fi, and I connected the laptop to `HomeNet-5G` on channel 36. The new output is:
+
+```text
+Radio type             : 802.11ac
+Channel                : 36
+Receive rate (Mbps)    : 400
+Transmit rate (Mbps)   : 400
+Signal                 : 62%
+
+C:\>ping 192.168.1.1 -n 60
+
+Ping statistics for 192.168.1.1:
+    Packets: Sent = 60, Received = 59, Lost = 1 (1% loss),
+Approximate round trip times in milli-seconds:
+    Minimum = 2ms, Maximum = 28ms, Average = 5ms
+```
+
+It stayed connected for about ten minutes. The phone also seems better, though I have not used it much yet.
+
+[assistant]
+That is a substantial improvement. The signal rose from 48% to 62%, and local packet loss dropped from roughly 20% during the earlier movement test to 1% in this stationary test. The lower negotiated rate is expected after changing from 80 MHz to 40 MHz; stability is more relevant here.
+
+Run two longer checks before deciding whether to leave it:
+
+```text
+ping 192.168.1.1 -n 300
+ping 1.1.1.1 -n 100
+```
+
+Run them separately while the laptop remains at the desk. The first checks the wireless path to the router. The second includes the internet connection, so occasional upstream loss can occur even if the first result is clean.
+
+Also test the phone in the same spot for several minutes. If it remains connected but an app briefly stops loading, compare that with the ping results rather than relying only on the Wi‑Fi icon.
+
+If the router ping stays at 0–1% loss, leave channel 36 and 40 MHz in place. If it rises again, try channel 44 or 48 without changing width or power.
+
+[assistant][user]
+I ran the longer tests from the same desk:
+
+```text
+C:\>ping 192.168.1.1 -n 300
+
+Ping statistics for 192.168.1.1:
+    Packets: Sent = 300, Received = 298, Lost = 2 (0% loss),
+Approximate round trip times in milli-seconds:
+    Minimum = 2ms, Maximum = 41ms, Average = 6ms
+
+C:\>ping 1.1.1.1 -n 100
+
+Ping statistics for 1.1.1.1:
+    Packets: Sent = 100, Received = 99, Lost = 1 (1% loss),
+Approximate round trip times in milli-seconds:
+    Minimum = 11ms, Maximum = 86ms, Average = 19ms
+```
+
+The phone stayed connected for around 20 minutes, and a short video played without stopping. Should I still try channels 44 and 48?
+
+[assistant]
+No, not for now. The current results are good enough to stop changing settings:
+
+- Router ping: 298/300 received, shown as 0% loss after rounding.
+- Internet ping: 99/100 received.
+- Average local latency: 6 ms.
+- The phone remained connected during normal use.
+
+Changing to 44 or 48 could be useful only if the problem returns. Keep the current setup unchanged for a while so you have a clear baseline. If drops recur, note the time, device, band, and whether the router ping fails at the same moment.
+
+You can use this quick diagnostic if it happens again:
+
+```text
+ping 192.168.1.1 -t
+```
+
+If that shows timeouts, the issue is still the wireless signal or channel. If it remains successful while websites fail, check the internet connection or DNS separately. You can stop a continuous ping with `Ctrl+C`.
+
+For now, using 2.4 GHz in that room remains a fallback if a particular device behaves poorly on 5 GHz. There is no need to change transmit power, security, or other advanced settings.
+
+[user]
+I noticed one odd thing: after I walk from the hallway into the room, the laptop sometimes stays connected to `HomeNet-2G` even though I selected the 5 GHz network earlier. The two names are separate now. Could Windows be switching by itself?
+
+[assistant][assistant]
+Yes. Windows can automatically connect to a saved network when its connection settings permit it. It normally will not switch between two distinct SSIDs solely because you walked around, unless the 2.4 GHz profile is configured to connect automatically and the 5 GHz signal becomes weak or briefly disappears. The adapter or driver may also reassociate during a short drop.
+
+Check which profile is active:
+
+```text
+netsh wlan show interfaces
+```
+
+To inspect saved profiles:
+
+```text
+netsh wlan show profiles
+```
+
+In Windows Wi‑Fi settings, open the saved network list and check the connection options for `HomeNet-2G` and `HomeNet-5G`. For a simple test, turn off “Connect automatically when in range” for `HomeNet-2G`, leaving it enabled for `HomeNet-5G`. Then manually select the 5 GHz network.
+
+You can also use:
+
+```text
+netsh wlan set profileparameter name="HomeNet-2G" connectionmode=manual
+netsh wlan set profileparameter name="HomeNet-5G" connectionmode=auto
+```
+
+Use the exact profile names shown by `netsh wlan show profiles`. This does not delete either profile or change the router. Afterward, walk between the hallway and room and check the active SSID with `netsh wlan show interfaces`.
+
+[assistant][user]
+That explains it. I set the 2.4 GHz profile to manual and left 5 GHz on automatic. After walking back and forth a few times, it stayed on `HomeNet-5G`, and the signal ranged from 58% to 64%. I also checked the phone, which remained on the 5 GHz network. The connection has been stable for the rest of the evening.
+
+Is there anything else I should adjust, or is it best to leave the settings alone now?
+
+[assistant][assistant]
+It is best to leave the settings alone now. The current configuration has a useful, simple baseline:
+
+- Smart Connect: off
+- Separate 2.4 GHz and 5 GHz names
+- 5 GHz channel: 36
+- 5 GHz width: 40 MHz
+- Transmit power: High
+- Laptop 2.4 GHz profile: manual connection
+- Laptop 5 GHz profile: automatic connection
+
+Your tests show a stable local link and normal internet reachability. Keep the 2.4 GHz network available as a fallback, but do not change its channel or width unless it also develops problems.
+
+If the issue returns, repeat the local router ping first. A few isolated lost packets are usually less important than repeated bursts of timeouts. If repeated timeouts appear only in that room, try channel 44 or 48 while keeping the 40 MHz width. If the local ping remains clean but internet access fails, investigate the modem or service connection instead.
+
+No further adjustment is needed at this point.

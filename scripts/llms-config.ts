@@ -130,6 +130,13 @@ export const SECTIONS: DocSection[] = [
         path: "docs/schema-author-tutorial.md",
       },
       {
+        title: "docs/guides/system-one.md",
+        description:
+          "System One decision support (TypeSafe Jev or an llm: provider): every slot off or on, executed quickstart (`gbrain decide probe`, `probe --query`, `enable --recommended`, `status`), each slot in plain words, calibration and qualification, fail directions, egress rules, reading status/doctor, receipts, troubleshooting by refusal reason.",
+        path: "docs/guides/system-one.md",
+        includeInFull: false,
+      },
+      {
         title: "docs/guides/live-sync.md",
         description: "Incremental markdown sync setup.",
         path: "docs/guides/live-sync.md",
@@ -202,6 +209,13 @@ export const SECTIONS: DocSection[] = [
         description:
           "Local reranker via llama.cpp --reranking: Qwen3-Reranker, --alias setup, gbrain config keys, cold-start timeout, budget-cap interaction.",
         path: "docs/ai-providers/llama-server-reranker.md",
+        includeInFull: false,
+      },
+      {
+        title: "docs/ai-providers/typesafe.md",
+        description:
+          "TypeSafe Jev: TYPESAFE_API_KEY (JEV_TYPESAFE_API_KEY alias), pinned vs alias models, Jev search reranker setup (#5178), pricing, limits, data handling and what never leaves the machine.",
+        path: "docs/ai-providers/typesafe.md",
         includeInFull: false,
       },
     ],

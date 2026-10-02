@@ -4,7 +4,7 @@ import { affectsRecall } from './core/types.ts';
 import { deliveryVersionSkewWarning } from './core/search/evidence-delivery.ts';
 import { installSigchldHandler } from './core/zombie-reap.ts';
 installSigchldHandler();
-import { installSignalHandlers as installCleanupSignalHandlers } from './core/process-cleanup.ts';
+import { installCleanupSignalHandlers } from './core/serve-invocation.ts';
 
 import { readFileSync, existsSync, unlinkSync, fstatSync } from 'fs';
 import { spawn } from 'child_process';
@@ -43,11 +43,12 @@ import { conceptNudge } from './core/search/query-intent.ts';
 import { redactRetrievalOutput } from './core/search/output-redaction.ts';
 import type { CliOptions } from './core/cli-options.ts';
 import { callRemoteTool, RemoteMcpError, unpackToolResult, extractResponseMeta } from './core/mcp-client.ts';
+import { assertSingleSourceScopeFlag, checkHostHonoredParams, hintAmbientNarrowing, type AmbientSourceBinding } from './cli/source-scope.ts';
 import { maybePromptForUpgrade } from './core/thin-client-upgrade-prompt.ts';
 import { CLI_FLAG_REGISTRY } from './core/cli-flag-registry.generated.ts';
 import { migrationCliArgumentError } from './core/embedding-migration-cli.ts';
 import { VERSION } from './version.ts';
-import { assertSupportedBun } from './core/runtime-version.ts';
+import { exitOnUnsupportedBun } from './core/runtime-version.ts';
 import { bigintToStringReplacer } from './core/utils.ts';
 import {
   CLI_ONLY,
@@ -57,6 +58,7 @@ import {
   findCliCommand,
   type CliDispatchContext,
 } from './cli/command-table.ts';
+import { formatRememberResult } from './cli/remember-format.ts';
 
 // db-availability loop: best-effort brain-id for the GBRAIN_DB_ACCESS marker,
 // so a MOUNT's DB failure reads as `brain=<id>` instead of masquerading as a
@@ -330,6 +332,8 @@ async function main() {
     const { maybeEmitBackupNag } = await import('./core/backup/status-file.ts');
     maybeEmitBackupNag(command, { quiet: getCliOptions().quiet === true });
   }
+  // #5137: once per process, when an env key shadows a different config key; never from hook commands.
+  if (command !== 'hook') (await import('./core/ai/key-warnings.ts')).warnShadowedProviderKeys();
 
   const subArgs = args.slice(1);
 
@@ -570,14 +574,24 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
     // #2098: the local path resolves --source / GBRAIN_SOURCE / .gbrain-source
     // inside makeContext (ctx.sourceId), which this route never reaches — so
     // scope must be mapped onto the op's source_id wire param before the call.
+    let ambientScope: AmbientSourceBinding | null;
     try {
-      applyThinClientSourceScope(op, params);
+      ambientScope = applyThinClientSourceScope(op, params);
     } catch (e: unknown) {
       console.error(e instanceof Error ? e.message : String(e));
       process.exit(1);
     }
-    await runThinClientRouted(op, params, cfgPre!, cliOpts);
+    await runThinClientRouted(op, params, cfgPre!, cliOpts, ambientScope);
     return;
+  }
+
+  // Locally --source reaches the op through makeContext (ctx.sourceId); a
+  // per-call --source-id / --all-sources would silently win over it.
+  try {
+    assertSingleSourceScopeFlag(op, params);
+  } catch (e: unknown) {
+    console.error(e instanceof Error ? e.message : String(e));
+    process.exit(1);
   }
 
   // The live PGLite owner exposes canonical operations over a dedicated
@@ -738,6 +752,7 @@ async function runThinClientRouted(
   params: Record<string, unknown>,
   cfg: GBrainConfig,
   cliOpts: CliOptions,
+  ambientScope: AmbientSourceBinding | null = null,
 ): Promise<void> {
   // ENG-4: per-op timeout default; user override wins.
   const defaultTimeoutMs = op.name === 'think' ? 180_000 : 30_000;
@@ -766,7 +781,9 @@ async function runThinClientRouted(
     // unpacking (old servers lack _meta — capture is simply skipped).
     const envelopeMeta = extractResponseMeta(raw);
     if (envelopeMeta?.retrieval) captureRetrievalMeta('retrieval', envelopeMeta.retrieval);
+    checkHostHonoredParams(op, params, raw);
     const result = unpackToolResult(raw);
+    hintAmbientNarrowing(op, params, result, ambientScope);
     const skew = deliveryVersionSkewWarning(op.name, params, envelopeMeta?.retrieval as Record<string, unknown> | undefined, result);
     if (skew) process.stderr.write(skew + '\n');
     const output = formatResult(op.name, result, params);
@@ -1208,25 +1225,26 @@ export async function readStdinBounded(): Promise<string | null> {
 // these; an explicit --source-id still passes through untouched above.
 const NON_SCOPE_SOURCE_ID_OPS = new Set(['get_skill']);
 
+/**
+ * Returns the ambient binding (GBRAIN_SOURCE / .gbrain-source) that was mapped
+ * onto `source_id`, so an empty result can say what narrowed it; null when the
+ * scope came from a flag or nothing was mapped.
+ */
 export function applyThinClientSourceScope(
   op: Operation,
   params: Record<string, unknown>,
   cwd?: string,
-): void {
-  if ('source' in op.params) return; // the op owns --source; not a scope flag
+): AmbientSourceBinding | null {
+  if ('source' in op.params) return null; // the op owns --source; not a scope flag
+  assertSingleSourceScopeFlag(op, params);
   const explicit = typeof params.source === 'string' && params.source.length > 0
     ? (params.source as string)
     : null;
   delete params.source; // never a wire param on these ops — don't leak it
   // Explicit per-call scope already on the wire wins over ambient tiers.
-  if (params.source_id !== undefined || params.all_sources === true) {
-    if (explicit) {
-      throw new Error('Pass either --source or --source-id/--all-sources, not both.');
-    }
-    return;
-  }
+  if (params.source_id !== undefined || params.all_sources === true) return null;
   const resolved = resolveSourceIdEngineFree(explicit, cwd);
-  if (!resolved) return;
+  if (!resolved) return null;
   if (!('source_id' in op.params) || NON_SCOPE_SOURCE_ID_OPS.has(op.name)) {
     if (explicit) {
       const hint = NON_SCOPE_SOURCE_ID_OPS.has(op.name)
@@ -1236,9 +1254,12 @@ export function applyThinClientSourceScope(
         `gbrain ${op.cliHints?.name || op.name} does not accept --source on a thin-client install ${hint}.`,
       );
     }
-    return; // ambient env/dotfile scope with nowhere to send it
+    return null; // ambient env/dotfile scope with nowhere to send it
   }
   params.source_id = resolved;
+  if (explicit) return null;
+  const env = process.env.GBRAIN_SOURCE;
+  return { sourceId: resolved, via: env && env.length > 0 ? 'GBRAIN_SOURCE' : '.gbrain-source' };
 }
 
 // Exported for tests (same import-safety contract as applyThinClientSourceScope).
@@ -1427,9 +1448,11 @@ export async function makeContext(engine: BrainEngine, params: Record<string, un
   // #2561: when the source resolved via a NON-explicit tier (path-match /
   // brain default / sole-non-default / seed default), unqualified search-shaped
   // reads span every `config.federated = true` source. Computed here (the
-  // trusted local boundary) and consumed by federatedSearchScope in
-  // operations.ts, which additionally gates on ctx.remote === false.
+  // trusted local boundary) and consumed by federatedSearchScope
+  // (src/core/ops/context.ts), which widens only an unqualified read with no
+  // OAuth grant; remote transports compute the same field for no-grant tokens.
   let localFederated: string[] | undefined;
+  let sourceImplicit = true;
   // params.source is set when a CLI flag was parsed for the op (rare; most
   // CLI ops don't take --source). Falls through to env/dotfile/path-match.
   const explicit = (params.source as string | undefined) ?? null;
@@ -1437,6 +1460,7 @@ export async function makeContext(engine: BrainEngine, params: Record<string, un
   try {
     const resolved = await resolveSourceWithTier(engine, explicit);
     sourceId = resolved.source_id;
+    sourceImplicit = resolved.tier !== 'flag' && resolved.tier !== 'env' && resolved.tier !== 'dotfile';
     localFederated = await localFederatedSourceIds(engine, resolved.source_id, resolved.tier);
   } catch (err) {
     // #1712: an EXPLICIT --source that fails to resolve (invalid id, or a
@@ -1518,6 +1542,7 @@ export async function makeContext(engine: BrainEngine, params: Record<string, un
     // brain (that would be an untrusted-caller cross-brain hole over MCP).
     brainId: activeBrainId,
     ...(localFederated ? { localFederatedSourceIds: localFederated } : {}),
+    ...(sourceImplicit ? { localSourceImplicit: true } : {}),
     // T15/FOV-1: capture the retrieval meta for formatResult's empty-result
     // render (the local-engine twin of the MCP _meta.retrieval channel).
     emitResponseMeta: captureRetrievalMeta,
@@ -1756,13 +1781,7 @@ export function formatResult(
     // flag, so the argv probe is safe).
     case 'remember': {
       if (process.argv.includes('--json')) break;
-      const r = result as any;
-      if (r.dry_run) return `[dry-run] would remember: ${r.fact}\n`;
-      const lines = [r.status_text || `${r.status} (fact #${r.id})`];
-      if (r.entity_slug) lines.push(`  entity: ${r.entity_slug}`);
-      if (r.valid_until) lines.push(`  expires: ${r.valid_until}`);
-      if (r.degraded_dedup) lines.push('  note: no embedding provider — duplicate detection degraded');
-      return lines.join('\n') + '\n';
+      return formatRememberResult(result as Record<string, any>);
     }
     case 'entity': {
       if (process.argv.includes('--json')) break;
@@ -1861,6 +1880,8 @@ const THIN_CLIENT_REFUSE_HINTS: Record<string, string> = {
   connectors: 'connectors manage provider session credentials in ~/.gbrain/connectors and sync your chat history on the host. Credentials never cross the wire — run on the host machine.',
   sweep: 'sweep runs the serve-resident maintenance passes against the LOCAL engine. Run it on the host (the serve process also runs it automatically).',
   'compile-context': 'compile-context compiles from the local brain; run it on the host install.',
+  decide: '`gbrain decide` runs on the brain host; run it there.',
+  facts: '`gbrain facts relink` runs on the brain host (it writes the entity pages there): run `gbrain facts relink --source <id> --dry-run` on that machine.',
   // v0.32 audit additions
   pages: '`pages purge-deleted` is admin+localOnly (hard-deletes from the local DB). Run on the host.',
   files: '`files list` and `files url` MCP ops are localOnly (paths live on the host filesystem). Use `gbrain files` on the host machine.',
@@ -1877,6 +1898,7 @@ const THIN_CLIENT_REFUSE_HINTS: Record<string, string> = {
   search: '`search modes|stats|tune` route to the brain host automatically (search_modes / search_stats / search_tune MCP ops). The modes reset form, modes with the source flag (the reset dry-run), and tune apply mutate or preview host config, and `diagnose` runs live retrieval — run those on the host.',
   cache: '`cache stats` routes to the brain host automatically (cache_stats MCP op). clear/prune mutate the host cache — run those on the host.',
   repair: 'repair runs on the brain host (it publishes coordinated page writes against the local engine). Run `gbrain repair` on the brain host.',
+  projections: 'projections drain rebuilds text projections against the local engine. Run `gbrain projections drain` on the brain host.',
   quarantine: '`quarantine list` routes to the brain host automatically (quarantine_list MCP op). scan/clear are host-bound (bulk re-import; the clear trust decision) — run those on the host.',
 };
 
@@ -2129,9 +2151,9 @@ async function routeEngineFreeSubcommands(command: string, args: string[]): Prom
   // explicitly via its grace-tick exit path (PGLite exitCode-hijack guard).
   if (command === 'eval' && args[0] === 'brainbench') {
     const { runEvalBrainBench } = await import('./commands/eval-brainbench.ts');
-    if (args.includes('--llm') && !args.includes('--help') && !args.includes('-h')) {
-      // --llm is the one mode that talks to a provider; mirror the
-      // longmemeval gateway bootstrap so extraction calls are priced.
+    if ((args.includes('--llm') || args.some((a) => a === '--decide' || a.startsWith('--decide='))) && !args.includes('--help') && !args.includes('-h')) {
+      // --llm and --decide arms talk to a provider; mirror the longmemeval
+      // gateway bootstrap so extraction and decide calls are keyed and priced.
       const config = loadConfig() ?? ({} as GBrainConfig);
       const { configureGateway } = await import('./core/ai/gateway.ts');
       configureGateway(buildGatewayConfig(config));
@@ -2854,6 +2876,25 @@ async function connectEngine(opts?: { probeOnly?: boolean }): Promise<BrainEngin
   return engine;
 }
 
+/** CLI-only usage examples appended to `gbrain <command> --help`. */
+const OP_HELP_EXAMPLES: Record<string, string[]> = {
+  get_links: [
+    'gbrain links people/alice-example                    # resolved source (every federated source when unpinned)',
+    'gbrain links people/alice-example --source business  # one source',
+    'gbrain links people/alice-example --all-sources      # every source',
+  ],
+  get_backlinks: [
+    'gbrain backlinks companies/acme-example',
+    'gbrain backlinks companies/acme-example --source-id business',
+    'gbrain backlinks companies/acme-example --all-sources --json',
+  ],
+  traverse_graph: [
+    'gbrain graph people/alice-example --depth 2',
+    'gbrain graph people/alice-example --source business --direction both',
+    'gbrain graph people/alice-example --all-sources   # same slug in two sources stays two nodes (source_id)',
+  ],
+};
+
 export function printOpHelp(op: Operation, invokedName?: string) {
   const positional = (op.cliHints?.positional || []).map(p => `<${p}>`).join(' ');
   // v114 (#1941): when invoked via an alias (e.g. `gbrain link-add --help`),
@@ -2876,6 +2917,8 @@ export function printOpHelp(op: Operation, invokedName?: string) {
       console.log(`${prefix.padEnd(28)} ${def.description || ''}${req}`);
     }
   }
+  const examples = OP_HELP_EXAMPLES[op.name];
+  if (examples) console.log(`\nExamples:\n${examples.map((line) => `  ${line}`).join('\n')}`);
 }
 
 function printHelp() {
@@ -2899,6 +2942,7 @@ SETUP
   upgrade                            Self-update
   check-update [--json]              Check for new versions
   repair [<kind>] [--apply]          Preview/apply residual repairs (timeline, visibility, safe-chunks)
+  projections drain [--limit n]      Rebuild queued text projections now [--json]
   doctor [--json] [--fast] [--probe-pglite]  Health check (resolver, skills, pgvector, RLS, embeddings; --probe-pglite runs the scratch-store probe)
   integrations [subcommand]          Manage integration recipes (senses + reflexes)
 
@@ -2980,6 +3024,8 @@ TOOLS
                                      See also: autopilot --install (continuous daemon).
   compile-context --target <t>       Compile a deterministic, scanned, budgeted context
         [--budget N] [--check]       file (claude-code | codex | openclaw)
+  decide <status|probe|enable|...>   System One decision support (Jev); every slot off by default
+  facts relink [--dry-run]           Link facts saved without an entity to the entity they name
   check-resolvable [--json] [--fix]  Validate skill tree (reachability/MECE/DRY)
   report --type <name> --content ... Save timestamped report to brain/reports/
 
@@ -3093,11 +3139,7 @@ Run gbrain <command> --help for command-specific help.
 // process alive. A fatal error still exits 1 for every command, daemons
 // included (matches the prior unconditional process.exit(1) on rejection).
 if (import.meta.main) {
-  try { assertSupportedBun(); }
-  catch (error) {
-    console.error((error as Error).message);
-    process.exit(1);
-  }
+  exitOnUnsupportedBun(process.argv[2], VERSION);
   // v0.41.6.0 D5: cleanup registry + signal handlers for SIGTERM/SIGHUP/SIGPIPE/
   // uncaughtException. NOT SIGINT (the existing AbortController path owns SIGINT).
   // Installed before main() so locks acquired during boot (e.g. connectEngine's

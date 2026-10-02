@@ -31,6 +31,7 @@
 import { closeSync, lstatSync, openSync, readFileSync, readSync, statSync } from 'node:fs';
 import { isPathContained } from '../path-confine.ts';
 import { detectWslMountRoot, translateWindowsPath } from '../wsl-paths.ts';
+import { stripPastedContent } from './pasted-content.ts';
 import { claudeProjectsDir, type HostSpecTarget } from '../bootstrap/host-specs.ts';
 import type { WindowTurn } from '../context/entity-salience.ts';
 
@@ -384,11 +385,12 @@ function entryToInjectedBlock(entry: unknown): string | null {
  * Claude Code writes slash-command bookkeeping (`/clear`, its stdout) as
  * `user` records whose content is ONLY harness tags. They stay in the window
  * (archival) but are not something the human said, so they never count as a
- * genuine user prompt for the writeback lane.
+ * genuine user prompt for the writeback lane. A turn that is only pasted
+ * content (#5812) is classified the same way; its text is never rewritten.
  */
 const HARNESS_TAG_RE = /<(local-command-stdout|local-command-stderr|command-name|command-message|command-args)>[\s\S]*?<\/\1>/g;
 function isGenuineUserText(text: string): boolean {
-  return text.replace(HARNESS_TAG_RE, '').trim().length > 0;
+  return stripPastedContent(text.replace(HARNESS_TAG_RE, '')).text.trim().length > 0;
 }
 
 function isSkippedTurnEntry(e: Record<string, unknown>): boolean {

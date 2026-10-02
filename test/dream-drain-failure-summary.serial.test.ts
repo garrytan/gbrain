@@ -195,3 +195,45 @@ describe('dream --drain wiring and exit codes (#1678)', () => {
     expect(drainCalls).toEqual([]);
   });
 });
+
+// #5809 / #5832 stop contract: every stop that is not `drained` keeps exit 3,
+// prints the drain JSON, and names the exact rerun command on stderr.
+describe('dream --drain stop contract (#5809)', () => {
+  test.each([
+    { stopped: 'window' as const, remaining: 12 },
+    { stopped: 'deadline' as const, remaining: 30 },
+    { stopped: 'lock_lost' as const, remaining: 8 },
+  ])('a $stopped stop prints the JSON, exits 3 and names the rerun command', async ({ stopped, remaining }) => {
+    nextResult = baseResult({ stopped, remaining, extracted: 4, batches: 2 });
+    const r = await runDrainCaptured(['--json', '--window', '90']);
+    expect(JSON.parse(r.stdout.join('\n'))).toMatchObject({ stopped, remaining, extracted: 4, batches: 2 });
+    expect(r.exitCode).toBe(3);
+    expect(r.stderr).toContain(`[drain] stopped: ${stopped}; ${remaining} page(s) remaining. Rerun: gbrain dream --drain --window 90`);
+  });
+
+  test('a provider_failure stop with an empty final recount still exits 3 (only drained exits 0)', async () => {
+    nextResult = baseResult({ status: 'provider_failure', stopped: 'provider_failure', remaining: 0 });
+    const r = await runDrainCaptured([]);
+    expect(r.exitCode).toBe(3);
+    expect(r.stderr).toContain('Rerun: gbrain dream --drain --window 300');
+  });
+
+  test('a drained run prints no rerun hint and exits 0', async () => {
+    nextResult = baseResult({});
+    const r = await runDrainCaptured([]);
+    expect(r.exitCode).toBeUndefined();
+    expect(r.stderr).not.toContain('Rerun:');
+  });
+
+  test('--help says the window is a hard deadline', async () => {
+    const out: string[] = [];
+    const logSpy = spyOn(console, 'log').mockImplementation((...a: unknown[]) => { out.push(a.map(String).join(' ')); });
+    try {
+      await runDream(engine, ['--help']);
+    } finally {
+      logSpy.mockRestore();
+    }
+    expect(out.join('\n')).toContain('Drain window, a hard deadline');
+  });
+});
+

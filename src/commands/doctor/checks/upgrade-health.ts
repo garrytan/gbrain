@@ -1,6 +1,7 @@
 /**
  * Upgrade trail checks: `upgrade_errors` (post-upgrade failure ledger with the
- * #4517 superseded-record re-verification) and `self_upgrade_health`.
+ * #4517 superseded-record re-verification), `self_upgrade_health` and
+ * `bun_runtime`.
  * Peeled verbatim from doctor.ts (refactor wave 1, W4 doctor); doctor.ts
  * re-exports every symbol under its original name.
  */
@@ -9,6 +10,7 @@ import { existsSync, readFileSync } from 'fs';
 import type { BrainEngine } from '../../../core/engine.ts';
 import { gbrainPath } from '../../../core/config.ts';
 import { LATEST_VERSION } from '../../../core/migrate.ts';
+import { MINIMUM_BUN_VERSION, unsupportedBunMessage } from '../../../core/runtime-version.ts';
 import { VERSION as GBRAIN_BINARY_VERSION } from '../../../version.ts';
 import type { Check } from '../../doctor.ts';
 
@@ -159,4 +161,15 @@ export async function checkUpgradeErrors(
     // Read/parse failure is itself best-effort; skip silently.
     return null;
   }
+}
+
+/**
+ * The running Bun against the supported floor. The CLI refuses to start below
+ * it, so a local doctor normally reports ok; the fail row keeps the fix
+ * command for any caller that reaches doctor on an older runtime.
+ */
+export function checkBunRuntime(version = typeof Bun === 'undefined' ? '' : Bun.version): Check {
+  const refusal = unsupportedBunMessage(version);
+  if (refusal) return { name: 'bun_runtime', status: 'fail', message: refusal.replaceAll('\n', ' ') };
+  return { name: 'bun_runtime', status: 'ok', message: `Bun ${version} (minimum ${MINIMUM_BUN_VERSION})` };
 }

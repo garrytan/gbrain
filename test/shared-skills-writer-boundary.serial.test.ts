@@ -19,6 +19,7 @@ import { importFromContent } from '../src/core/import-file.ts';
 import { activateSharedSkillPersistence } from '../src/core/persistence/skill-activation.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
 import { disposePersistenceConsumer, writeResponse } from '../src/core/persistence/service.ts';
+import { rebuildPendingPageProjections } from '../src/core/page-state/projections.ts';
 import { adoptSharedSkillpack } from '../src/core/shared-skills/publication.ts';
 import { setSharedSkillPolicy } from '../src/core/shared-skills/policy.ts';
 import { assertKnowledgePublicationAllowed } from '../src/core/shared-skills/knowledge-guard.ts';
@@ -140,6 +141,9 @@ test('unresolvable stored file aliases fail closed with a metadata diagnostic in
   const [page] = await f.engine.executeRaw<{ source_uri: string }>(
     'SELECT source_uri FROM pages WHERE source_id=$1 AND slug=$2', ['default', row.slug]);
   expect(page.source_uri).toBe('file:///notes/%2F.md');
+  // The running resident drains queued projections in the background (#5401);
+  // finish that first so the snapshot below compares canonical state only.
+  while ((await rebuildPendingPageProjections(f.engine, 100)).rebuilt > 0) { /* drain */ }
   const snapshot = await f.engine.readPageSnapshot(row.slug, { sourceId: 'default' });
   await expect(submitPageMutation(f.ctx, { operation: 'put_page', params: {
     slug: row.slug, content: note, request_id: randomUUID(), expected_revision: snapshot!.revision,

@@ -36,6 +36,8 @@ import {
 import { tryAcquireDbLock, type DbLockHandle } from '../core/db-lock.ts';
 import { embedBackfillLockId } from '../core/embed-backfill-lock.ts';
 import { AITransientError } from '../core/ai/errors.ts';
+import { resolveEmbedConcurrency } from '../core/embed-concurrency.ts';
+export { resolveEmbedConcurrency, _resetEmbedConcurrencyClampWarningForTest } from '../core/embed-concurrency.ts';
 import { isEmbeddingZeroNormError } from '../core/ai/embedding-guard.ts';
 import { wrapChunkTextsForStoredMode } from '../core/embedding-context.ts';
 import {
@@ -1247,10 +1249,7 @@ async function embedAll(
   // Paced runs lower this to the resolved cap (the real lever vs pooler-slot
   // starvation); unpaced keeps the env/default 20. Codex P2: only ever LOWER —
   // never raise above an operator's existing env cap.
-  const BASE_CONCURRENCY = parseInt(process.env.GBRAIN_EMBED_CONCURRENCY || '20', 10);
-  const CONCURRENCY = staleOpts?.paceMaxConcurrency
-    ? Math.min(BASE_CONCURRENCY, staleOpts.paceMaxConcurrency)
-    : BASE_CONCURRENCY;
+  const CONCURRENCY = resolveEmbedConcurrency(engine.kind, staleOpts?.paceMaxConcurrency);
 
   async function embedOnePage(page: typeof pages[number]) {
     // #1737: bail before doing any work for this page if the run was aborted.
@@ -1803,10 +1802,7 @@ async function embedAllStale(
   // Paced runs lower concurrency to the resolved cap (E-1: worker count IS the
   // lever on this single pool, no separate permit). Codex P2: pacing only ever
   // LOWERS concurrency — never raise above an operator's existing env cap.
-  const BASE_CONCURRENCY = parseInt(process.env.GBRAIN_EMBED_CONCURRENCY || '20', 10);
-  const CONCURRENCY = staleOpts?.paceMaxConcurrency
-    ? Math.min(BASE_CONCURRENCY, staleOpts.paceMaxConcurrency)
-    : BASE_CONCURRENCY;
+  const CONCURRENCY = resolveEmbedConcurrency(engine.kind, staleOpts?.paceMaxConcurrency);
   const pacer = staleOpts?.pacer ?? createNoopPacer();
 
   // D3 + D3a + D8: wall-clock budget. 30 min default; env override.
@@ -1854,6 +1850,7 @@ async function embedAllStale(
     : 'page_id';
 
   const processedPageKeys = new Set<string>(); // #5226: a page spanning listing batches counts once
+  const unavailablePages = new Map<string, string>(); // #5804: key -> slug, summarized once after the drain
   let afterPageId = 0;
   let afterChunkIndex = -1;
   let afterUpdatedAt: string | null = null;
@@ -1989,7 +1986,13 @@ async function embedAllStale(
           // NORMAL post-model-migration path, so raw-text embedding here
           // quietly converted whole corpora to the unwrapped convention.
           const prepared = await observed(pacer, () => readProjectionSnapshot(engine, slug, keySourceId, { requireLiveSource: true }));
-          if (!prepared) return;
+          if (!prepared) {
+            // #5804: a page edited, deleted or unsealed mid-run is a counted failure, not a silent
+            // skip. An archived source is left to reportArchived, which already counts its pages.
+            const [source] = await observed(pacer, () => engine.executeRaw<{ archived: boolean }>('SELECT archived FROM sources WHERE id = $1', [keySourceId]));
+            if (!source?.archived) { result.failures += stale.length; unavailablePages.set(key, slug); }
+            return;
+          }
           const selected = new Map(stale.map(c => [c.chunk_index, c]));
           const existing = prepared.chunks;
           stale = existing.filter(c => selected.get(c.chunk_index)?.chunk_text === c.chunk_text)
@@ -2084,6 +2087,11 @@ async function embedAllStale(
   } finally {
     if (budgetTimer) clearTimeout(budgetTimer);
     await reportArchived();
+    if (unavailablePages.size > 0) {
+      const slugs = [...unavailablePages.values()];
+      const more = slugs.length > 5 ? ` and ${slugs.length - 5} more` : '';
+      result.failure_samples.push(`${slugs.length} page(s) not embedded: the page changed, was deleted or lost its projection during this run, so no embeddings were installed (${slugs.slice(0, 5).join(', ')}${more}). Their stale chunks are kept; rerun gbrain embed --stale, and inspect any page that keeps failing with gbrain get <slug>.`);
+    }
   }
 
   if (!staleOpts?.quiet) slog(`Embedded ${result.embedded} chunks across ${processedPageKeys.size} pages`);

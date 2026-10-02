@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "transcript_id": "syn-routine-039",
+  "scenario": "synthetic-routine",
+  "expected_triage": "low",
+  "label_source": "synthetic-construction",
+  "generator": {
+    "model": "openai:gpt-5.6-luna",
+    "reasoning": "none",
+    "temperature": 1,
+    "seed": 7350001
+  },
+  "spec": {
+    "id": "syn-routine-039",
+    "scenario": "synthetic-routine",
+    "expected_triage": "low",
+    "theme": "renaming a folder of vacation photos by date with a small script",
+    "turns": 11
+  }
+}

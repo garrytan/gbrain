@@ -1,0 +1,162 @@
+[user]
+I have a short bibliography for a school handout, but the entries are inconsistent. Can you help format it in MLA 9?
+
+[assistant]
+Yes. Paste the entries exactly as you have them, and I’ll standardize capitalization, punctuation, italics, dates, URLs, and the hanging-indent layout. I can also flag details that are missing rather than inventing them.
+
+[user]
+Here they are:
+
+1. Smith, Jordan. “Weather Patterns.” Science Weekly, vol 12 no. 3, 2022, pages 44-51. https://example.org/weather-patterns
+2. Green Earth Handbook. 3rd edition. Oak Tree Press, 2019.
+3. “Recycling at School.” City Education Office website, 7 Sept 2021, www.example.edu/recycling.
+4. Lee, Morgan, and Casey Brown. “Notes on Soil.” Journal of Local Studies 5 (2020): 12–19. doi:10.1234/soil.5678
+5. Digital Map Skills. Northside Learning Center, 2020, https://example.net/maps.
+
+[assistant]
+Here is a cleaned MLA 9 version based only on the information supplied:
+
+Smith, Jordan. “Weather Patterns.” *Science Weekly*, vol. 12, no. 3, 2022, pp. 44–51. https://example.org/weather-patterns.
+
+*Green Earth Handbook*. 3rd ed., Oak Tree Press, 2019.
+
+“Recycling at School.” *City Education Office*, 7 Sept. 2021, www.example.edu/recycling.
+
+Lee, Morgan, and Casey Brown. “Notes on Soil.” *Journal of Local Studies*, vol. 5, 2020, pp. 12–19. https://doi.org/10.1234/soil.5678.
+
+*Digital Map Skills*. Northside Learning Center, 2020, https://example.net/maps.
+
+MLA normally omits the access date unless your teacher requests it. The second and fifth entries appear to be standalone works, so their titles are italicized. If “Digital Map Skills” is a report, guide, or webpage rather than a standalone publication, its formatting could change slightly.
+
+[user]
+Could you explain the main changes so I can check them against my teacher’s instructions?
+
+[assistant]
+The main changes are:
+
+- Journal titles and book-length titles are italicized: *Science Weekly*, *Journal of Local Studies*, *Green Earth Handbook*, and *Digital Map Skills*.
+- Article, chapter, and webpage titles remain in quotation marks: “Weather Patterns,” “Recycling at School,” and “Notes on Soil.”
+- Volume and issue information is punctuated as `vol. 12, no. 3`.
+- The page range is abbreviated to `pp. 44–51` and `pp. 12–19`.
+- `3rd edition` becomes `3rd ed.`
+- The DOI is presented as a URL: `https://doi.org/10.1234/soil.5678`.
+- The month is abbreviated in the date: `7 Sept. 2021`.
+- Extra periods and colons are removed or replaced with MLA punctuation.
+- MLA entries are alphabetized by the first important element. In this set, the order would be:
+
+```text
+“Recycling at School.”
+*Digital Map Skills.*
+*Green Earth Handbook.*
+Lee, Morgan, and Casey Brown.
+Smith, Jordan.
+```
+
+That list shows the alphabetical sequence, but each full entry should remain as a complete paragraph in the bibliography.
+
+[user]
+My teacher says to use hanging indents and double spacing. I’m typing in Google Docs. What exact steps should I follow?
+
+[assistant]
+In Google Docs:
+
+1. Put all five entries in one document or bibliography section.
+2. Select the entries.
+3. Open **Format** → **Line & paragraph spacing** → **Double**.
+4. With the text still selected, open **Format** → **Align & indent** → **Indentation options**.
+5. In the dialog box, set **Special indent** to **Hanging**.
+6. Set the hanging indent to **0.5** inches, then select **Apply**.
+7. Use left alignment, not justified alignment.
+8. Make sure there is no extra blank line between entries. Double spacing supplies the required space.
+9. If the bibliography has a heading, center the heading without bold, italics, quotation marks, or underlining unless your teacher specifies otherwise.
+
+You can verify the result by checking that the first line of each entry begins at the left margin and any wrapped lines begin 0.5 inches to the right.
+
+[user]
+Should I keep the URLs as clickable links, and do I need to add access dates?
+
+[assistant]
+Usually, keep the URLs in the entries, but follow your teacher’s preference about clickable formatting. In Google Docs, a blue underlined link is generally acceptable unless the assignment asks for plain text. The important part is that the URL itself is complete and readable.
+
+For access dates, MLA 9 does not require them for every online source. Add one when your teacher requests it, when the page has no publication or update date, or when the content is likely to change. If you add dates, use this form:
+
+```text
+Accessed 30 Sept. 2026.
+```
+
+Place the access date at the end of the relevant entry, before the final period if the entry already ends with a URL or other element. For example:
+
+```text
+“Recycling at School.” *City Education Office*, 7 Sept. 2021, www.example.edu/recycling. Accessed 30 Sept. 2026.
+```
+
+Because access dates describe when you viewed the source, use the actual date you accessed it rather than copying the current date automatically.
+
+[user]
+Can you show the complete bibliography in the correct alphabetical order, with a plain-text version I can paste?
+
+[assistant]
+Certainly. Here is the complete bibliography in alphabetical order:
+
+“Recycling at School.” *City Education Office*, 7 Sept. 2021, www.example.edu/recycling.
+
+*Digital Map Skills*. Northside Learning Center, 2020, https://example.net/maps.
+
+*Green Earth Handbook*. 3rd ed., Oak Tree Press, 2019.
+
+Lee, Morgan, and Casey Brown. “Notes on Soil.” *Journal of Local Studies*, vol. 5, 2020, pp. 12–19. https://doi.org/10.1234/soil.5678.
+
+Smith, Jordan. “Weather Patterns.” *Science Weekly*, vol. 12, no. 3, 2022, pp. 44–51. https://example.org/weather-patterns.
+
+For a plain-text paste, use the same wording without relying on visual italics:
+
+```text
+“Recycling at School.” City Education Office, 7 Sept. 2021, www.example.edu/recycling.
+
+Digital Map Skills. Northside Learning Center, 2020, https://example.net/maps.
+
+Green Earth Handbook. 3rd ed., Oak Tree Press, 2019.
+
+Lee, Morgan, and Casey Brown. “Notes on Soil.” Journal of Local Studies, vol. 5, 2020, pp. 12–19. https://doi.org/10.1234/soil.5678.
+
+Smith, Jordan. “Weather Patterns.” Science Weekly, vol. 12, no. 3, 2022, pp. 44–51. https://example.org/weather-patterns.
+```
+
+After pasting, reapply italics to the journal and standalone-work titles, then apply double spacing and a 0.5-inch hanging indent.
+
+[user]
+One detail: the first source is actually a PDF downloaded from the journal’s website, and the last source is a PDF guide. Does that change the entries?
+
+[assistant]
+It may change the final container or format element, but the core details stay the same. For the first source, add `PDF download` only if your teacher wants the format identified or if the file is being cited as a distinct PDF rather than as the journal article. For the last source, identify it as a guide or report if that information appears on the title page.
+
+Using only what you supplied, cautious versions would be:
+
+Smith, Jordan. “Weather Patterns.” *Science Weekly*, vol. 12, no. 3, 2022, pp. 44–51, https://example.org/weather-patterns. PDF download.
+
+*Digital Map Skills*. Northside Learning Center, 2020, https://example.net/maps. PDF guide.
+
+However, MLA often does not require adding “PDF download” when the source is already clearly cited as a journal article with a stable URL. Similarly, “PDF guide” is optional unless it helps identify the format or your teacher requests it. Do not add those labels if they are not useful or if the assignment has a specific template.
+
+[user]
+Can you give me a final checklist, including how to handle the two PDFs?
+
+[assistant]
+Use this checklist:
+
+- Put the heading “Works Cited” at the top, centered and unformatted unless your teacher says otherwise.
+- Arrange entries alphabetically by the first element.
+- Use double spacing throughout.
+- Apply a 0.5-inch hanging indent to every entry.
+- Keep the left margin aligned and avoid extra blank lines.
+- Italicize journal titles and standalone works.
+- Put article and webpage titles in quotation marks.
+- Use `vol.`, `no.`, `pp.`, and `ed.` in the abbreviated MLA forms.
+- Preserve the DOI as `https://doi.org/...` when available.
+- Include URLs without `https://` only if your teacher’s template prefers that; consistency matters.
+- Add access dates only when required or useful for changeable online material.
+- For the journal PDF, cite the journal article normally and include the article’s stable webpage or DOI. Add `PDF download` only if the assignment specifically asks for the format.
+- For the guide PDF, keep the guide title italicized, retain the organization and year, and add `PDF guide` only if your teacher wants file formats identified.
+- Check the PDF title pages for a subtitle, publication date, edition, author, or report number before submitting. If those details appear, incorporate them rather than guessing.
+- Open each link once to confirm that it leads to the cited source.
+- Compare the final layout with your teacher’s handout rubric, especially its rules for URLs and access dates.

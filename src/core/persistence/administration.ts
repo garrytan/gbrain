@@ -8,7 +8,7 @@ import { isValidSourceId } from '../source-id.ts';
 import { assertValidSlugPrefixes } from '../grants/encoding.ts';
 import { isWriteRequestId } from './types.ts';
 import { writerDiagnostics } from './control.ts';
-import { acceptWriterTransfer, claimWorktree, getWorktreeBinding, prepareWriterTransfer, worktreeManifest } from './ownership.ts';
+import { acceptWriterTransfer, claimWorktree, getWorktreeBinding, humanManifestProgress, prepareWriterTransfer, worktreeManifest } from './ownership.ts';
 import { existingLocalHostId, currentVerifiedLocalWriter, persistenceHome, readLocalWriter, registerLocalWriter, revokeLocalWriter, type LocalGrant } from './identity.ts';
 import type { PersistenceAdminOperation } from './admin-contract.ts';
 import { operationScopesAllowed } from '../scope.ts';
@@ -233,12 +233,12 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
       const binding = await getWorktreeBinding(engine, sourceId, existingLocalHostId());
       if (!binding || binding.owner_host_id !== existingLocalHostId() || !binding.local_path) throw new OperationError('permission_denied', 'Only the current owner can prepare a transfer.');
       const { manifest } = await prepareWriterTransfer(engine, sourceId, existingLocalHostId()!, undefined, { selfTransfer: params.self_transfer === true, dryRun: true });
-      return { dry_run: true, action: operation, binding, manifest: { digest: manifest.digest, file_count: Object.keys(manifest.files).length } };
+      return { dry_run: true, action: operation, binding, manifest: { digest: manifest.digest, file_count: manifest.file_count } };
     }
     const expectedState = await requireWriterAdminIntent(engine, operation, params);
     const prepared = await prepareWriterTransfer(engine, sourceId, undefined, expectedState, { selfTransfer: params.self_transfer === true });
     return { prepared: true, source_id: sourceId, worktree_id: prepared.worktree_id, owner_epoch: prepared.owner_epoch,
-      manifest: { digest: prepared.manifest.digest, file_count: Object.keys(prepared.manifest.files).length } };
+      manifest: { digest: prepared.manifest.digest, file_count: prepared.manifest.file_count } };
   }
   if (operation === 'writer_transfer_accept') {
     keys(params, ['source_id', 'path', 'expected_epoch', 'manifest', 'dry_run', 'admin_intent', 'expected_state', 'self_transfer']);
@@ -249,7 +249,7 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
     if (typeof params.manifest !== 'string' || !/^[a-f0-9]{64}$/.test(params.manifest)) throw invalid('manifest must be the prepared SHA-256 manifest digest.');
     if (params.dry_run && params.self_transfer === true) await acceptWriterTransfer(engine, sourceId, root, params.expected_epoch, params.manifest, existingLocalHostId()!, undefined, { selfTransfer: true, dryRun: true });
     if (params.dry_run) return { dry_run: true, action: operation, source_id: sourceId, current: await getWorktreeBinding(engine, sourceId, existingLocalHostId()),
-      manifest_matches: worktreeManifest(root).digest === params.manifest, expected_epoch: params.expected_epoch };
+      manifest_matches: worktreeManifest(root, { progress: humanManifestProgress() }).digest === params.manifest, expected_epoch: params.expected_epoch };
     const expectedState = await requireWriterAdminIntent(engine, operation, params);
     await acceptWriterTransfer(engine, sourceId, root, params.expected_epoch, params.manifest, undefined, expectedState, { selfTransfer: params.self_transfer === true });
     return { transferred: true, binding: await getWorktreeBinding(engine, sourceId) };

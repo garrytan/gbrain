@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-049",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/kofi-yarrthorpe",
+      "content": "---\ntitle: Kofi Yarrthorpe\ntype: person\nsummary: \"Kofi Yarrthorpe is the operations director at Emberspire.\"\n---\n\nKofi Yarrthorpe is the operations director at Emberspire.\n"
+    },
+    {
+      "slug": "companies/russetreach",
+      "content": "---\ntitle: Russetreach\ntype: company\nsummary: \"Russetreach is a software vendor we work with.\"\n---\n\nRussetreach is a software vendor we work with. Their pilot with our team ends after the next billing cycle.\n"
+    },
+    {
+      "slug": "people/teodor-tulvwaite",
+      "content": "---\ntitle: Teodor Tulvwaite\ntype: person\nsummary: \"Teodor Tulvwaite is the head of sales at Nimbuscrest.\"\n---\n\nTeodor Tulvwaite is the head of sales at Nimbuscrest. Teodor wants the proposal revised to drop the onboarding fee.\n"
+    },
+    {
+      "slug": "people/verity-kestwick",
+      "content": "---\ntitle: Verity Kestwick\ntype: person\nsummary: \"Verity Kestwick is the product lead at Halcyonloft.\"\n---\n\nVerity Kestwick is the product lead at Halcyonloft.\n"
+    },
+    {
+      "slug": "companies/glintwharf",
+      "content": "---\ntitle: Glintwharf\ntype: company\nsummary: \"A company we met once at a trade show.\"\n---\n\nA company we met once at a trade show.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Our hotel is on Yarrthorpe Street. Any tips for finding breakfast near a hotel in a new city?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "what's the status with russetreach and the pilot?"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "what did Teodor say about the proposal?"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "Kestwick's train gets in at 5:40pm and the walk is 15 minutes. What time will they reach the office?"
+    }
+  ]
+}

@@ -10,6 +10,506 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.30.0] - 2026-10-01
+
+**Fix wave 6: two privacy leaks closed, "who invested" and "who attended" answer the right way round, facts saved without a person get one, contradiction checks get much more accurate, and hybrid search on big Postgres brains stops falling back to keyword-only.**
+
+Two privacy fixes first. An agent connected over MCP could read a personal-profile value that had been saved as private, such as a risk tolerance or a decision style, through the ontology tools. Remote callers now see only shared values, like recall. And a fact you told gbrain to forget could still show up in the agent's hot-memory block for up to 30 seconds after the forget, or longer when the forget ran from another process. Every write and forget now clears that cache, on every transport.
+
+The graph stored some relationships backwards. A company page listing `investors: [Bob]` saved "the company invested in Bob", so "Who invested in Gamma?" found nobody. Meetings had the same problem, and on top of that, every person mentioned anywhere in a meeting note was marked as an attendee. Now the investor, partner and attendee links point from the person to the page, and only an explicit attendee list makes someone an attendee. Existing brains re-derive their links once; the commands are below.
+
+Facts saved with no entity used to be invisible to entity recall and skipped by the conflict checker. One production brain had 23% of its facts in that state. `remember` and imports now link a fact when it names exactly one known person or company, and the new `gbrain facts relink` repairs the backlog.
+
+The contradiction judge now needs two different times before it calls something a change over time, and treats look-alike names as different people. On a fresh test world it caught 131 of 150 planted conflicts (was 101) and raised 11 false alarms in 820 unrelated pairs (was 59).
+
+| After upgrading | Before | After |
+| --- | --- | --- |
+| A remote agent reads a private profile value | shown | hidden |
+| Hot memory right after `forget` | kept the fact up to 30 s | fact gone |
+| "Who invested in X?" from frontmatter investors | no answer | the investors |
+| A person only mentioned in meeting notes | typed attended | a mention |
+| A fact with no entity | unlinked, never conflict-checked | linked when one known entity is named |
+| Contradiction judge, same-time conflicts caught | 101/150 | 131/150 |
+| Contradiction judge, false alarms on unrelated pairs | 59/820 | 11/820 |
+| Vector search on a 160k-chunk Postgres brain (p50) | ~500 ms, often cut to keyword-only | ~15 ms, same top 10 |
+| Pasted emails and logs in a Claude Code turn | extracted as facts about you | not extracted |
+
+These bugs came from the gbrain-evals category waves N1 (ontology), N2 (contradiction surfacing), N5 (forget and hot memory), N9 (multi-hop relations) and N12 (meeting attendance). The unlinked-facts work (#5836) came from the GBRA-37 thread.
+
+## To take advantage of v0.60.30.0
+
+`gbrain upgrade` installs the binary and applies two schema migrations: v187 adds the fact-relink attempt table and an index over unlinked facts, and v188 replaces the ontology dedup index with one keyed per stint. Restart every `gbrain serve`, autopilot and worker afterwards so they run the new code.
+
+1. **If `gbrain doctor` warns about a partial migration, run the orchestrator:**
+   ```bash
+   gbrain apply-migrations --yes
+   ```
+2. **Re-derive relationship and attendance links (once per source).** The link extractor version moved, so the next `gbrain extract --stale` (or the autopilot cycle) re-derives body links on its own. Frontmatter links re-derive only with frontmatter included:
+   ```bash
+   gbrain extract links --source db --include-frontmatter --source-id <id>
+   ```
+   Each page's own derived links are replaced in one transaction; manual links and links from other pages are untouched. For a reviewed, preview-bound repair of historical attendance instead, use `gbrain extract links --source db --repair-attendance --source-id <id>` ([attendance evidence](docs/guides/attendance-evidence.md#preview-bound-historical-repair)).
+3. **Link facts that have no entity.** Preview, then apply after you agree (the model tier is capped by `--max-usd`, default $1.00):
+   ```bash
+   gbrain facts relink --dry-run
+   gbrain facts relink
+   ```
+   `gbrain doctor` reports the backlog as `unlinked_facts`. Guide: [docs/guides/facts-relink.md](docs/guides/facts-relink.md).
+4. **Expect one paid re-judge of contradictions.** The judge prompt version moved to 3, so the next `gbrain eval suspected-contradictions` re-judges every pair. It prints its cost estimate first, as on any prompt change.
+5. **Your agent reads `skills/migrations/v0.60.30.0.md`** the next time you talk to it. The symptom table is in [Recover after upgrading](docs/guides/repair.md#fix-wave-6).
+6. **Verify:**
+   ```bash
+   gbrain doctor        # unlinked_facts, vector_plan and self_capture report
+   gbrain stats
+   ```
+7. **If any step fails,** file an issue at https://github.com/garrytan/gbrain/issues with the output of `gbrain doctor` and `~/.gbrain/upgrade-errors.jsonl` if it exists.
+
+**Say to your agent:** *"We upgraded gbrain. Preview the unlinked facts relink and the attendance repair for each source, and tell me what would change before applying anything."*
+
+### Behavior changes
+
+- **Attendance and relation direction contract.** Schema-pack frontmatter relations take their direction from the verb's built-in counterpart for that page type: company `investors`, `key_people` and `partner`, deal `investors` and `lead`, and meeting `attendees` are stored subject -> page (`people/bob-example -> companies/gamma-example`, `invested_in`). Verbs with no counterpart, such as company-brain's `owned_by`, stay page -> target. Under the shipped `gbrain-base` and `company-brain` packs (and brains with no `schema_pack`), meeting attendance follows the canonical rule: only an explicit attendee list makes a person an attendee, stored person -> meeting; a person only mentioned in the notes stays `mentions`. A pack whose `attended` rule has a phrase `regex` still decides attendance itself. Code that walked meeting -> person `attended` edges must walk incoming edges. Repair existing brains with step 2 above.
+- **Concurrent PGLite CLI writers wait for the lock.** A CLI write on a PGLite brain whose lock is held by another CLI call (not a `gbrain serve`) now waits up to 30 seconds for the lock instead of failing at once with `owner_unavailable`. Behind a long-running non-serve holder, such as a jobs daemon, the write waits and then fails lock-busy. A serve holder, or an owner socket that answers, still routes through the owner as before.
+- **Contradiction judge prompt v3.** The three temporal verdicts now need two different times (different dates in the metadata or the text); a same-date or undated value conflict is a contradiction. Look-alike names are different entities. Matched A/B on a fresh N2 seed, one judge sample per arm, 1,371 identical pairs: same-time conflicts caught 101/150 -> 131/150, false contradictions on unplanted pairs 59/820 -> 11/820, judged-pair precision 62.0% -> 91.0%, temporal recognition unchanged at 40/40. The prompt version bump invalidates the judge cache, so the next run re-judges every pair (step 4).
+- **`remember` infers a missing entity.** When `entity` is omitted, `remember` (CLI and MCP) looks for the subject in the fact text without a model call and files the fact on that entity only when exactly one existing entity is named and no other name competes. The response carries `entity_inferred`, or `warnings: ["NO_ENTITY"]` (or `ENTITY_LINK_FAILED`) with a `hint` when it stays unattributed. Pass `infer_entity: false` for one call, or turn it off with `gbrain config set facts.entity_inference off` (earlier links stay). Page imports apply the same inference in the facts backstop.
+- Undated pages reach the contradiction judge as `(date unknown)` instead of their import date, so the date pre-filter and `temporal_supersede` proposals use real content dates.
+- A bare `gbrain find-contradictions` on the local CLI reads the latest stored run instead of returning the "unavailable" note. An explicit `--source`, `GBRAIN_SOURCE`, `.gbrain-source` and every remote caller still get the note.
+- The claude-cli provider now needs Claude Code 2.0.60 or newer and starts its child with hooks disabled; older CLIs get an upgrade message.
+- `gbrain dream --drain --window` is a hard deadline. `--drain` exits 0 only when the backlog drained; every other stop exits 3 and prints `stopped`, `remaining` and the rerun command.
+- `gbrain embed --stale` exits non-zero when a page changed under it, naming the pages and the retry.
+- Link commands on thin clients follow an ambient `GBRAIN_SOURCE` or `.gbrain-source` (use `--all-sources` to span), and fail with an upgrade instruction against an older brain host that ignores the scope.
+
+### Itemized changes
+
+#### Privacy
+
+- **Private ontology values stay private (N1-3).** `ontology_get`, `ontology_conflicts` and `volunteer_chronicle`'s ontologies read only `visibility: world` observations for remote callers, applied before per-dimension resolution and the conflict filter, so a remote caller resolves the newest value they may see. Trusted local callers read every tier. Both engines.
+- **Forgotten facts leave hot memory immediately (N5-1).** Every mutating MCP op clears the per-process hot-memory cache, on success and failure, on both transports. A per-engine generation stops a build that raced an invalidation from storing stale data, and each cache hit rechecks the source's withdrawal watermark, so a forget committed by another process (a CLI next to a running server) is not served either.
+
+#### Graph and attendance (N9, N12)
+
+- **Frontmatter relations keep their declared direction (N9-2).** "Who invested in X?" reaches frontmatter-derived investors.
+- **Canonical attendance under the shipped packs (N9-3, N12-7)** on the database, `put_page`, sweep and filesystem paths. Historical attendance repair now covers shipped-pack meetings and reports only phrase-owning packs as `pack_semantics_preserved`.
+- **"Who attended <meeting>?" resolves its seed (N9-4).** For an incoming `attended` relation the relational arm falls back to a live `meeting` or `event` page whose title exactly matches the question's phrase (case-insensitive, unique in the source). Other relations never seed from titles.
+- A brain with no `schema_pack` keeps `gbrain-base` as its default pack; the attendance and direction differences from `gbrain-base-v2` are fixed in the extractor, so both store the same edges.
+- `LINK_EXTRACTOR_VERSION_TS` moves to `2026-10-01T00:00:00Z`, so pages stamped earlier re-derive on the next stale sweep.
+
+#### Facts and memory (#5836, N5)
+
+- **New `gbrain facts relink`** moves unlinked facts onto their entity page's facts fence through the write coordinator: free tiers first (exact mention, page subject), then the fact extraction model under `--max-usd`. It retires exact duplicates, never supersedes, and queues linked facts for the System One conflict sweep. Migration v187 adds `fact_relink_attempts` and `idx_facts_unlinked_active`.
+- **New doctor check `unlinked_facts`** reports the unlinked share, new unlinked facts over 7 days and the preview command. `gbrain decide status` shows the share of conflict skips caused by a missing entity.
+- **A forget's search text is rebuilt before it answers (N5-2).** A CLI forget used to leave the withdrawn page with no searchable chunks until a resident worker ran. It now rebuilds them after the commit; a failed rebuild stays queued.
+- **The first `remember` after a `forget` no longer refuses as stale bytes (N5-3).** A file write waits while a withdrawal mirror for the same page is queued or running, and a forget that commits while a write is preparing makes the write reprepare instead of failing.
+
+#### Ontology (N1)
+
+- **`ontology_propose` works on managed brains (N1-1).** It commits through the coordinator with the entity's page key instead of being refused by the writer guard. Unmanaged brains keep the direct write.
+- **Returning to an earlier value records it (N1-2).** Lisbon -> Porto -> Lisbon from one source now makes Lisbon current again. Migration v188 replaces the ontology dedup index with `idx_facts_ontology_stint_dedup`, which adds `valid_from`; same-stint repeats stay no-ops.
+
+#### Contradictions (N2)
+
+- Undated pages keep a null date (N2-1), the bare local `find-contradictions` reads the latest run (N2-2), and the judge prompt moves to v3 (N2-3). See behavior changes above.
+
+#### Retrieval and memory hygiene
+
+- **Hybrid search on large Postgres brains keeps its vector half (#5824).** The content-freshness check moved out of the HNSW candidate scan, so the planner keeps `idx_chunks_embedding`; chunks edited after embedding are still never returned, and a since+until date range keeps the index. On a 160k-chunk brain, vector search p50 went from about 500 ms to about 15 ms with identical top-10 results. New doctor check `vector_plan` confirms the index is used. Rollback for this release: `gbrain config set search.vector_legacy_guard true` (or `GBRAIN_VECTOR_LEGACY_GUARD=1`) on the brain host, then restart serve and autopilot. Thanks to @clatyceo for the EXPLAIN analysis and @morven-ai for #5803.
+- **Pasted text is not extracted as facts about you (#5812).** The Stop hook saves only your own words from a turn, and a paste-only turn saves nothing; the sweep, serve harvest and dream `extract_atoms` never show pasted blocks to the extractor. Transcripts, recall and `synthesize` keep the text. Facts extracted from pastes before this release stay until you `gbrain forget` them. Patch from @benswinney.
+- **gbrain's own claude-cli calls stop filling your memory (#5820).** The provider starts `claude --print` with `--settings '{"disableAllHooks":true}'`, and the Stop hook, serve harvest, sweep and dream `extract_atoms` skip these sessions. Doctor `self_capture` shows the newest one captured and prints one-time quarantine commands. Reported by @clatyceo.
+- **Nightly dream stops skipping after a long atom drain (#5809, #5832).** A timed-out, cancelled or taken-over `extract-atoms-drain` job stops at its next page and releases the cycle lock; the interrupted page takes no failure strike. A `cycle_already_running` skip names the lock holder. Ported from @andreineacsu (#5833) and @furuchanchan (#5805).
+- **`bun run verify` works on a stock Mac again (#5810).** `scripts/check-retired-phrases.sh` parses under macOS `/bin/bash` 3.2, and CI parses every tracked shell script with bash 3.2 (`bun run check:bash32`). Ported from @mml-studio (#5811).
+- **`gbrain embed --stale` stops reporting success for pages it skipped (#5804).**
+- **Link and graph tools work on multi-source brains (#5827).** `get_links`, `get_backlinks` and `traverse_graph` read the same federated sources as `search` for agents without a source grant; a granted token stays inside its grant, and private pages stay hidden. Locally, `gbrain links` (new name; `get_links` still works), `gbrain backlinks` and `gbrain graph` read every federated source when none is pinned, accept `--source-id` and `--all-sources`, and graph output carries `source_id`, `from_source_id` and `to_source_id`. Reported by @greenwayveterinary-tech.
+
+### For contributors
+
+- `coordinatedDatabaseWrite` (`src/core/persistence/database-write.ts`) is the managed path for database-only rows; `coordinatedManualLinkWrite` delegates to it.
+- `relink_facts` is a write-coordinator mutation, so a relink request replays or refuses as a unit on managed and unmanaged brains.
+- `rebuildPendingPageProjections` takes a `pages` filter; `CLAIMABLE_WRITE_SQL` skips file writes whose page has a pending withdrawal mirror.
+- `buildJudgePrompt` `PROMPT_VERSION` is 3; `ctx.localSourceImplicit` marks a CLI source that came from a non-explicit tier.
+- The vector statement builder lives in `src/core/search/vector-statement.ts`; `scripts/bench/vector-plan-5824.ts` reproduces the planner measurement.
+- `bun run check:bash32` parses every tracked shell script with a bash 3.2 parser when one is installed.
+
+## [0.60.28.0] - 2026-10-01
+
+**Fix wave 5: session start stops showing another session's text, private pages stay out of ambient recall, big brain repos onboard again, old queued jobs stop wedging synthesize, and the cleanups promised last wave ship.**
+
+Session start used to print a "Last session activity" line taken from whichever session on the machine wrote last. On a host where several agents or people share one machine, that could put one session's private text in front of another. The line is gone, along with the buffer behind it, and nothing turns it back on.
+
+A second privacy leak: `volunteer_context`, the per-turn hook block and `gbrain compile-context` could surface a `visibility: private` page's title and synopsis, including to remote MCP callers. Ambient recall now hides private pages the same way remote search does.
+
+Brain repos with more than about 10,000 files could not be added, claimed or moved: every attempt failed with a "1 MiB" error. That limit is gone. A 50,000-file repo now adds in under a second on our test machine.
+
+If you upgraded across v0.50, old queued jobs from before that release blocked every worker, so synthesize failed on every run and captures to `/ingest` returned a server error. Now old jobs are released or reused where that is safe, `/ingest` answers with a clear 409 and the fix, and `gbrain doctor` walks you through reviewing the rest.
+
+And the leftovers. `gbrain repair stale-atoms` cleans up search atoms that quote text a page no longer has, and `gbrain repair extractor-facts` brings back conversation facts an older release expired. `gbrain projections drain` rebuilds a search backlog right away instead of waiting on a drain that took 2 pages at a time. A stdio agent bound to one source can read the other sources you federated. Plus more than a dozen smaller fixes. Eight community pull requests went into this release.
+
+| After upgrading | Before | After |
+| --- | --- | --- |
+| Session start on a shared machine | could show another session's last message | shows only this workspace's own notes |
+| A private page in `volunteer_context`, the turn block or `compile-context` | title and synopsis shown | hidden (local CLI `volunteer_context` still sees it) |
+| `sources add` on a 50,000-file repo | `request_too_large` | under 1 s (PGLite and Postgres) |
+| A capture that hits a pre-v0.50 job | HTTP 500 | 202, or 409 with the recovery command |
+| Search atoms of deleted or rewritten pages | stay searchable | retired by `gbrain repair stale-atoms` after you review them |
+| Resident projection rebuild | 2 pages per tick | up to 100 pages per pass |
+| An exported key that differs from your config key | silently wins | still wins, with one warning naming both |
+
+## To take advantage of v0.60.28.0
+
+`gbrain upgrade` installs the binary. There is no schema migration. Most fixes take effect only in a process that runs the new binary, so restart everything that runs gbrain.
+
+**What you'll notice.** `gbrain doctor` may name new findings after the upgrade: `legacy_job_authority`, `text_projection_readiness`, `atom_provenance_drift`, `extractor_facts_expired` or `embedding_key_source`. `gbrain repair --all` and `gbrain doctor --remediate` list `stale-atoms` and `extractor-facts` with their preview command instead of running them. A non-default brain's autopilot job gets its own name and log file. Session start no longer shows a `Last session activity` line.
+
+**Why.** These are leftovers of earlier releases: jobs queued before v0.50, atoms and facts an older extraction left behind, and a projection backlog the resident drained 2 pages at a time. The two cleanups that delete or restore data run only when you name them and only on the exact set you previewed.
+
+**What to run.**
+
+1. **Restart every host and resident `gbrain serve`.** Stop autopilot and workers, stop each `gbrain serve` (HTTP services and harnesses that start stdio servers), run `gbrain upgrade` on each host, check `gbrain --version` through each launcher's own binary path, then restart. `gbrain sources writer status --json` shows the last version each host wrote with; it is history, not proof every process upgraded.
+2. **If you set `GBRAIN_HOOKS=0` to work around the session-start leak (#5558), remove it** from the environment your harness starts from (shell profile or service) and restart the harness. It also turns off session capture and persistence.
+3. **Run doctor, then fix what it names in this order:**
+   ```bash
+   gbrain doctor
+   # legacy jobs: stop gbrain serve, autopilot and workers first
+   gbrain jobs cancel <active id>      # each active job doctor lists
+   gbrain jobs authorize-legacy --select "status=waiting|delayed|waiting-children|paused"
+   gbrain jobs authorize-legacy --select "status=waiting|delayed|waiting-children|paused" --expect <hash> --yes
+   # restart serve and workers, then the search backlog:
+   gbrain projections drain            # on PGLite, only while no resident holds the brain
+   # stale atoms and expired facts: preview, then apply the printed hash after you agree
+   gbrain repair stale-atoms --source <id>
+   gbrain repair stale-atoms --source <id> --apply --expect <hash>
+   gbrain repair extractor-facts
+   gbrain repair extractor-facts --apply --expect <hash>
+   gbrain doctor
+   ```
+4. **Code indexes re-chunk once.** `CHUNKER_VERSION` moves 7 → 8 so short `const f = () =>` functions keep their own named chunk; the next sync or `gbrain embed --stale` re-chunks code pages once.
+5. **Several brains on one host:** re-run `gbrain autopilot --install` for each non-default brain (`GBRAIN_HOME=<brain parent>`), then for the default brain.
+6. **Your agent reads `skills/migrations/v0.60.28.0.md`** the next time you talk to it. The full symptom table is in [Recover after upgrading](docs/guides/repair.md#fix-wave-5).
+7. **If any step fails,** file an issue at https://github.com/garrytan/gbrain/issues with the output of `gbrain doctor` and `~/.gbrain/upgrade-errors.jsonl` if it exists.
+
+**Say to your agent:** *"We upgraded gbrain. Restart what runs it, then walk me through what doctor finds, in order, before changing anything."* or *"Preview the stale atoms in my brain and tell me what you'd retire."*
+
+### Behavior changes
+
+- Session start never shows another session's activity. The `Last session activity` line and the stop-hook buffer behind it are removed, with deliberately no opt-in to restore them (#5558). Buffers an older release left in `~/.gbrain/transcripts/live/` are deleted by the stop hook after 7 days.
+- `volunteer_context` (for remote callers, honoring `search.remote_private_pages` like search), the per-turn hook block, the serve IPC `resolve` handler and `gbrain compile-context` exclude private pages, including derived-private atoms and concepts. The trusted local CLI still sees them in `volunteer_context`.
+- `CHUNKER_VERSION` 7 → 8: code pages re-chunk once.
+- `POST /ingest` returns 409 `{error: "permission_denied", message, hint, docs_url}` instead of 500 when a capture's key (or waiting cap) lands on a job row from before v0.50; completed legacy keys are reused (202) and dead or cancelled ones released.
+- Resubmitting over a job key from before v0.50 no longer fails: dead or cancelled keys are released, completed or failed rows are reused by local producers, and remote `submit_job` callers are refused over terminal legacy keys and resubmit with a new key.
+- `gbrain repair --all`, `gbrain repair` with no kind, the remediation plan and `gbrain doctor --remediate` exclude the explicit-only kinds `stale-atoms` and `extractor-facts`: they are listed with their preview command (`explicit_kind_required`) and never run. A finding only they clear does not fail `--remediate`'s exit status.
+- Autopilot jobs are named per brain. The default brain (`~/.gbrain`) keeps `com.gbrain.autopilot`, `gbrain-autopilot.service`, `~/.gbrain/start-autopilot.sh` and an unmarked crontab line; any other `GBRAIN_HOME` gets names with its own suffix (from `<brain>/.gbrain/autopilot-install-id`), a marked crontab line, and logs to `<brain>/.gbrain/autopilot.log`.
+- New stderr warning, once per process and never from `gbrain hook`, when an exported provider key differs from the matching config key. The environment still wins; `gbrain config unset <key>` silences it.
+- New stderr error `embedding_auth_failed` on the first embedding 401 or 403 in a process, naming the key source in effect. Provider error text is scrubbed of key values, masked key echoes and key fragments before it reaches CLI output, `--json` or job errors.
+- The upgraded resident drains up to 100 projection pages per pass (2 while writes wait) instead of 2 per tick.
+- Managed `remember` for a person or company with no page keeps that entity's name as the fact's subject, so the same commitment for two absent people is two facts, as on an unmanaged brain.
+- `serve --http` keeps serving when its stdout or stderr pipe closes; stdio `serve` still exits.
+- A bare `gbrain upgrade` on an exact-tag Bun install that did not move now exits 1 with the reinstall command (it used to say "Upgrade complete").
+- `embed` on Postgres caps its worker count at the connection pool (`GBRAIN_POOL_SIZE`, default 10); an explicit higher `GBRAIN_EMBED_CONCURRENCY` prints one warning.
+- Migration children (backfills, smoke tests, autopilot install) run the CLI that runs the migration instead of the `gbrain` on PATH.
+- `sources writer deactivate` no longer refuses on held Google or GitHub items: it copies them into each source's classic state file (`carried_holds`).
+- `gbrain connect --install` for Codex, Claude Code and opencode prints where the token lives and how to replace it.
+- `search` and `query` treat `types: []` as no type filter (over MCP and the CLI); the CLI also accepts `""` and whitespace-only strings. Over MCP, `types` must still be an array, so omit it or pass `[]`.
+- Colon slugs such as `calendar:abc` are writable again; on Windows a write whose file name would contain `:` is refused with `colon_slug_windows_write_through`.
+- Every host and resident `gbrain serve` must be restarted for these to apply.
+
+### Itemized changes
+
+#### Privacy
+
+- **Session start shows only this session's own context (#5558).** The session-start digest printed the newest stop-buffer entry on the machine, whatever agent or session wrote it. The line and the stop-hook buffer write are removed, the stop hook garbage-collects buffers older binaries left, and a test runs every hook event against buffers other sessions left and asserts none of their text appears. There is no setting that restores the cross-session line.
+
+#### Large brains and harness access
+
+- **Repos over ~10,000 files onboard again (#5790).** Stored worktree manifests carry only `digest` and `file_count`, not a per-file hash map, so `sources add`, `claim`, `rebind`, `archive`, `remove`, clone, reclone and `sources writer transfer` no longer hit the 1 MiB metadata bound. Rows written by older releases stay valid and are compacted on their next rewrite (no migration). Above 5,000 files, human output reports `sources.manifest_hash` progress on stderr, and `sources writer transfer prepare/accept` hash the worktree before opening the database transaction. Measured with 50,000 files (3.4 MB) on a 4-vCPU machine: `sources add`, `claim` and transfer prepare and accept each under 1 s on PGLite and Postgres; peak memory growth about 100 MB on Postgres and 325 MB on PGLite.
+- **`gbrain connect --install` says where the bearer token lives (#5775).** For Codex, Claude Code and opencode the receipt prints `token_storage`, `config_path`, `renew_command`, `if_exposed` and `token_warning`, and `--fresh-token` forces a new token exchange. `docs/mcp/CODEX.md` and the hosted harness guide now say the token is stored inline in the harness config.
+- **A mounted brain's `gbrain serve` accepts writes (#5237).** A resident `serve` in a `.gbrain-mount` project binds its persistence owner for the mounted brain, so CLI writes no longer fail `owner_unavailable` and MCP writes no longer stay queued.
+- **Backup coverage sees private remotes (#5794).** The remote probe passes `HOME`, `PATH`, `XDG_CONFIG_HOME`, `SSH_AUTH_SOCK`, `GIT_CONFIG_GLOBAL`, the proxy variables and, on Windows, `USERPROFILE`, `APPDATA` and `SystemRoot`, so your Git config and credential helpers apply.
+
+#### Atoms, facts and sync
+
+- **Managed re-extraction retires atoms it no longer produces (#5770).** Retired atoms are soft-deleted with `retired_by`, and a later extraction that produces one again restores it. Contributed by @cmontemuino (PR #5774).
+- **New `gbrain repair stale-atoms`** (explicit-only, preview-bound) retires atoms that drifted before this release: atoms of deleted pages (`origin_gone`) and atoms of edited pages whose new text was already extracted (`origin_changed`). `--apply --expect <hash>` retires exactly the previewed set; atoms stay recoverable through `restore_page` for 72 hours.
+- **New `gbrain repair extractor-facts` (#5731).** Restores conversation-extractor facts the pre-v0.60.11.0 projection expired. Facts with receipt evidence restore by default, ambiguous ones only with `--include-ambiguous` and that preview's hash; superseded, withdrawn and duplicated facts never come back. Database-only: no page or file is rewritten. Doctor `extractor_facts_expired` counts candidates.
+- **Managed `remember` keeps attribution for absent entities.** A single fact for a person or company with no page keeps the resolver's fallback slug, so dedup and withdrawal are per entity. The facts backstop is unchanged.
+- **Read-only mirror sources (#5409).** `gbrain sources mirror-readonly <id>` marks a source whose Git remote is authoritative: managed sync and page writes never write files into its checkout, receipts say `storage: "database_only"`, and `gbrain sources mirror-writable <id>` undoes it. Off by default.
+- **Managed sync stops recording a sticky `source_changed`** when a pinned commit trails the page's own queued write (#5777). Contributed by @howardpark (PR #5778).
+- **Withdrawals no longer wedge on `RESOLVER.md` or a locally edited page (#5396).** The page is listed in the effect's `data.skipped` (`metafile` or `file_database_drift`) and the request's Git and embedding effects proceed.
+
+#### Jobs and the v0.50 upgrade
+
+- **Old queued jobs stop blocking synthesize and `/ingest` (#5157, #5114).** One coalesce rule for rows with no submission authority covers every submission path. Thanks to @hausenpepper, whose PR #5048 found the fast-path fix.
+- **New `gbrain jobs authorize-legacy --select <filter>` and `gbrain jobs cancel --select <filter>`.** Both preview by default (counts by job and status, the first 20 ids, paid-provider job names, a hash), and `--expect <hash> --yes` applies exactly the previewed set. Refusals are coded: `legacy_job_selection_invalid`, `legacy_jobs_active`, `preview_changed`.
+- **New doctor check `legacy_job_authority`** counts the rows that block workers and prints the filled commands; `gbrain post-upgrade` names the read-only recovery preview when live legacy rows exist.
+
+#### Search and projections
+
+- **New `gbrain projections drain [--limit n] [--json]` (#5401)** rebuilds queued text projections now (exit 0, 1 when pages failed, 2 when it did not run). On PGLite with a resident owner it refuses with `projection_owner_resident` and prints the stop, drain and restart commands, naming this brain's own autopilot job. Doctor `text_projection_readiness` names the drain, or reports the resident's pending count.
+- **`search` and `query` accept an empty type filter (#5390).** `types: []` means no filter instead of `invalid_params`, and the CLI also accepts `""` and whitespace-only strings (MCP still requires an array, so omit `types` or pass `[]`); `['']`, `' , '` and `',,'` still fail. Contributed by @RerankerGuo (PR #5781).
+- **Provider key source (#5137).** The shadow warning and doctor check `embedding_key_source` say which key is in effect; see the behavior changes above.
+
+#### Sources and agents
+
+- **A bound stdio agent can read federated sources (#5081).** A stdio `gbrain serve` bound with `GBRAIN_SOURCE` or a `.gbrain-source` pin can read a `federated: true` source by naming it in `source_id` (`search`, `query`, `get_page`, `list_pages`, `resolve_slugs`, `recall`). Unqualified reads stay on the bound source, and a source with `federated: false` still reads only itself. An unbound stdio connection or a no-grant HTTP token may likewise name any source its unqualified reads already span. Refusals now say why.
+- **Colon slugs are writable again (#5032).** Contributed by @javieraldape (PR #5044). On Windows a write whose file name would contain `:` is refused before admission with `colon_slug_windows_write_through`, database-only writes succeed (including into a read-only mirror source), and `gbrain sync` skips each such file with that named refusal instead of failing the run.
+- **`gbrain frontmatter validate --fix` keeps correct `slug:` fields (#5053).** It compares against the brain-root-relative path, so it no longer deletes them or re-keys pages.
+- **`recall --source default` means the default source (#5535).** An explicit `--source default` no longer falls through to `GBRAIN_SOURCE` or `sources.default`. Contributed by @RerankerGuo (PR #5706).
+- **`think` saves syntheses to the source it drew from (#5426),** and each citation binds to a page in those sources instead of the first page anywhere with that slug.
+
+#### Hosts, upgrades and autopilot
+
+- **Autopilot jobs per brain (#5195).** `--status` and `--uninstall` act only on this brain's job; `--status` prints the job names, install-id path, wrapper and log, and flags a moved brain's missing wrapper and a legacy shared job. A job whose wrapper runs another live brain is never replaced or removed (`autopilot_job_owned_by_other_brain`).
+- **Migrations follow `GBRAIN_HOME` (#5549).** The v0.11.0 and v0.22.4 orchestrators resolve their state through the brain home instead of `$HOME`. Contributed by @andreineacsu (PR #5696).
+- **Migration children run the running CLI (#5184),** not whatever `gbrain` is on PATH.
+- **`gbrain upgrade` stops reporting false success (#5311)** on an exact-tag Bun install that did not move.
+- **`serve --http` survives a closed log pipe (#5079).**
+- **`embed --stale` no longer waits on itself (#5183)** when `GBRAIN_EMBED_CONCURRENCY` exceeds the Postgres pool.
+- **`sources writer deactivate` carries held connector items** into classic mode instead of refusing.
+- **An autopilot cycle no longer stales a `sources reconcile` preview:** the reconcile policy digest ignores the cycle stamps.
+
+#### Ambient recall, transcripts and code intelligence (from the eval-category wave)
+
+- **Private pages stay out of ambient recall (N8).** `resolveEntitiesToPointers` applies the remote-search private-page predicate on every arm (title, slug, surname, alias, CJK), so `volunteer_context` and the turn block no longer return a private page's title or synopsis; `compile-context` no longer writes private titles and excerpts into `.claude/gbrain-context.md` or `AGENTS.md`.
+- **Open-loop nudges measure grace from the oldest unanswered message (N7).** A run that started days ago is no longer hidden by a fresh follow-up; CC-only mail does not start the clock.
+- **Bold labels are not a conversation (N12).** A body with three or more `**Name**` turns where no speaker speaks twice no longer parses as a chat.
+- **Offset timestamps import on the right day (N12).** Transcript render and the Claude export, Claude Code, Codex and OpenClaw adapters normalize offset-bearing timestamps to UTC; UTC strings pass through unchanged.
+- **Short arrow functions keep their names in code search (N13).** `const f = () =>` and function-expression declarations keep a named chunk instead of merging into a const run.
+- **Code intelligence reports resolved edges as resolved, and a walk ignores other languages' namesakes (N13).**
+
+#### Models, skills and summaries
+
+- **Claude Opus 5.5 is priced (#5359, #5494):** $4 in, $20 out per million tokens, so `--max-cost` runs on it estimate instead of failing with `no_pricing`.
+- **Voice gates work without Anthropic credit (#5165):** the judge model resolves through the key-aware utility tier.
+- **Skill bundles publish on Windows (#5776):** paths are checked per segment.
+- **`brain-pdf` keeps the whole page (#5772):** a portable parser strips only the leading frontmatter block, on macOS and Linux.
+- **Chunk synopses stop failing forever on emoji at the cut (#5316):** the document is truncated on a surrogate-pair boundary. Contributed by @furuchanchan (PR #5387).
+- **Google embedding rejections no longer use up a migration budget:** a request-shaped rejection (400, 413, 422) settles at zero cost for Google, whose billing documentation says rejected requests are not charged. Other providers keep the debit until they document the same.
+
+### For contributors
+
+- `src/core/error-catalogue.ts` maps each wave 5 refusal to its stable code and docs anchor; `test/error-catalogue.test.ts` fails when an anchor in `docs/guides/repair.md` or `docs/guides/write-refusals.md` is renamed.
+- `explicit_only` on `RepairKindSpec` is read by `REPAIR_HELP`, `--all`, the remediation plan and the banner, and enforced inside the runners, so a supplied remediation step cannot run an explicit-only kind.
+- `src/core/persistence/preview-approval.ts` (`previewHash`, `saveApprovedSet`, `loadApprovedSet`) backs every preview-bound apply: `authorize-legacy --select`, `jobs cancel --select`, `stale-atoms` and `extractor-facts`. An approved set older than 7 days refuses with `preview_changed`.
+- `HOOK_EVENTS` in `src/commands/hook.ts` is the dispatcher's event list and the session-isolation matrix test's input.
+- New guide anchors: `docs/guides/repair.md#fix-wave-5`, `#projection-drain`, `#embedding-key-source`, `#stale-atoms`, `#extractor-facts`.
+
+## [0.60.27.0] - 2026-10-01
+
+**GBrain now needs Bun 1.4 or newer, because a bug in older Bun releases could make GBrain wait forever on a helper process that had already finished.**
+
+GBrain starts small helper processes all the time: `git` for your brain repo, background workers, syncs. Older Bun releases had a bug where one of those helpers could exit and Bun would never pass the news along, so whatever was waiting for it waited forever. On a laptop that looks like a command that never returns. On an always-on brain it looks like a worker that quietly stops making progress. Bun 1.4 includes the fix, so 1.4.0 is now the minimum.
+
+Compiled release binaries already carry Bun 1.4.2, so if you run the `gbrain` binary there is nothing to do. If you installed from source with Bun, run `bun upgrade` first.
+
+On an older Bun, every command (including `serve`, `jobs work`, hooks and autopilot) stops at startup with one message that names your Bun, the minimum and the fix, instead of starting and hanging later:
+
+```
+GBrain requires Bun 1.4.0 or newer (found Bun 1.3.14).
+Fix: run `bun upgrade`, then restart GBrain. If a `gbrain upgrade` stopped here, finish it with `gbrain post-upgrade`.
+```
+
+| You run GBrain on | What happens after this release |
+| --- | --- |
+| The compiled `gbrain` binary | Nothing changes |
+| Bun 1.4.0 or newer | Nothing changes; `gbrain doctor` shows a new `bun_runtime` row |
+| Bun 1.3.x | Commands refuse with the message above until you run `bun upgrade` |
+
+### Things to watch
+
+- If you run `gbrain upgrade` while still on Bun 1.3, the new version installs but its migrations stop at the runtime check, and the install prints the same message. Run `bun upgrade`, then `gbrain post-upgrade`.
+- Services under launchd, systemd or cron keep retrying and recover by themselves once Bun is upgraded. The refusal is in `~/.gbrain/autopilot.log`.
+- `gbrain --version` still answers on an older Bun, so tools that check the version keep working.
+
+## To take advantage of v0.60.27.0
+
+1. **Upgrade Bun** (source installs only; compiled binaries skip this):
+   ```bash
+   bun upgrade
+   bun --version   # 1.4.0 or newer
+   ```
+2. **Upgrade GBrain, or finish an upgrade that stopped at the runtime check:**
+   ```bash
+   gbrain upgrade        # or, if you already upgraded on the old Bun: gbrain post-upgrade
+   ```
+   Then restart anything long-running: `gbrain serve` (restart your agent harness for stdio MCP), `gbrain jobs supervisor`, autopilot.
+3. **Your agent reads `skills/migrations/v0.60.27.0.md` the next time you interact with it.** It checks the runtime, asks before running `bun upgrade` for you, and finishes the upgrade.
+4. **Verify the outcome:**
+   ```bash
+   gbrain doctor   # bun_runtime: "Bun 1.4.x (minimum 1.4.0)"
+   ```
+5. **If any step fails,** please file an issue:
+   https://github.com/garrytan/gbrain/issues with:
+   - output of `gbrain doctor`
+   - output of `bun --version` and `which -a bun`
+   - contents of `~/.gbrain/upgrade-errors.jsonl` if it exists
+
+   This feedback loop is how the gbrain maintainers find fragile upgrade paths. Thank you.
+
+**Say to your agent:** *"Is my Bun new enough for GBrain?"* or *"Finish upgrading GBrain after the Bun upgrade."*
+
+### Itemized changes
+
+#### Runtime floor
+
+- `MINIMUM_BUN_VERSION` in `src/core/runtime-version.ts` and `engines.bun` in `package.json` are now 1.4.0, the lowest 1.4 release. It carries the Linux child-exit fix (oven-sh/bun#30301, first shipped in 1.3.14), and `test/bounded-child-exec.test.ts` passes on it.
+- `unsupportedBunMessage()` builds the one refusal text: found version, minimum, `bun upgrade`, restart, and `gbrain post-upgrade` for an interrupted upgrade. `assertSupportedBun()` throws it with code `UNSUPPORTED_RUNTIME`.
+- The CLI entrypoint (`src/cli.ts`) checks before any command runs, so every subcommand fails fast with exit 1. `gbrain --version` prints the version and exits 0, with the refusal on stderr, so an upgrade started by an older gbrain can still confirm what it installed. `gbrain autopilot` also writes the refusal to stdout, because its services log stdout to `autopilot.log` and stderr to an `autopilot.err` nothing points at.
+- `scripts/postinstall.ts` prints the refusal when an install or `bun update` lands on an older Bun, and still exits 0.
+- New doctor check `bun_runtime` (ops): `Bun <version> (minimum 1.4.0)`, or a failure with the fix command.
+- `gbrain bootstrap cloud-setup-script` installs Bun through npm when the sandbox has no Bun or one older than 1.4.0, and its launcher runs that Bun.
+- Install docs (README, `INSTALL_FOR_AGENTS.md`, `BOOTSTRAP_FOR_AGENTS.md`, `CONTRIBUTING.md`, `SECURITY.md`, `docs/guides/authorization-upgrade.md`) state Bun 1.4.0 or newer and name `bun upgrade`.
+
+#### What Bun 1.4 does not fix
+
+- Bun still drops a child's pipe events when a callback re-enters the event loop (for example bun:test `expect().resolves`); a raw repro without `execFileBounded` still hangs on 1.4.2. The in-code bounds on `git` children stay, and their comments now say which part Bun fixed.
+
+### For contributors
+
+- The minimum-version CI lanes move to 1.4.0: `test.yml` security regressions and all four `persistence-validation.yml` matrices run 1.4.0 and 1.4.2 (pull requests still skip the minimum). `native-locks.yml` drops 1.3.11 and 1.3.13 and runs 1.4.0 and 1.4.2 on full scope (16 native pairs, 4 musl, 4 per Windows probe).
+- `test/scripts/ci-pr-scope.test.ts` requires every minimum-version matrix to be exactly `[MINIMUM_BUN_VERSION, primary]`. New `test/runtime-version.test.ts` pins the refusal text, the doctor row, and the floor in `package.json` and the cloud setup script.
+- Doctor goldens scrub the running Bun version (`Bun <bun-version>`).
+- If your local Bun is 1.3.x, `bun upgrade` before running the CLI or CLI-spawning tests.
+
+## [0.60.26.0] - 2026-10-01
+
+**System One: a fast decision model can now make some of your brain's small judgment calls, starting with which chats are worth remembering and which facts replace older ones. If you have a TypeSafe key installed, upgrading turns those two on.**
+
+Your brain makes small calls all day. Is this chat worth turning into notes? Does this new fact replace an old one? Is this search result actually evidence? Today each call is a hand-written rule or a full chat-model call. System One lets a decision model answer them instead: TypeSafe's Jev (fast and cheap) or any chat model you already configured. GBrain's code still owns every threshold and every fallback.
+
+There are nine decision points, called slots. Each is off (today's behavior) or on. We measured every slot. Two clearly helped, so those two are on by default when a TypeSafe key is installed, and the other seven stay off. Without a key, every slot is off, nothing leaves your machine, and your brain behaves exactly as before.
+
+**If you have a TypeSafe key installed** (`TYPESAFE_API_KEY` or `JEV_TYPESAFE_API_KEY`, in your shell or `~/.gbrain/.env`), upgrading turns on:
+
+- **Dream triage.** Each dream cycle sends transcript windows (conversation text, including private chats) to TypeSafe to decide what is worth turning into notes. In our end-to-end run it caught every buried decision (10/10 instead of 3/10) and raised dream spend by 73% ($1.50 to $2.60), because it also synthesizes some routine chats.
+- **Contradiction proposals.** After the fact sweep, fact text (facts are private by default) goes to TypeSafe, which proposes which new facts replace old ones. Nothing changes until you accept a proposal.
+
+For these two slots the key counts as your opt-in for that data. Nothing is written to your config. Turn either off with `gbrain decide disable triage` or `gbrain decide disable conflict`, or everything with `gbrain decide disable --all`.
+
+### How to try it
+
+```bash
+export TYPESAFE_API_KEY=<your-key>
+gbrain decide probe                         # checks the key; sends a fixed sentence, nothing from your brain
+gbrain decide probe --query "<a question>"  # shows today's order next to Jev's; asks before sending, changes nothing
+gbrain decide status                        # triage and conflict: on (default: Jev key present), with the opt-out
+```
+
+### What we measured
+
+| Slot | What it does when on | Result on our eval sets |
+| --- | --- | --- |
+| Dream triage | Picks which transcripts get synthesized | Caught 18/18 buried decisions and commitments (today: 8/18). Costs more: it also synthesizes about a third of routine chats, so dream spend went $1.50 to $2.60 in the end-to-end run |
+| Contradiction sweep | Proposes supersedes for facts that contradict older ones | Found 94/97 labelled updates with 1 wrong proposal (today's rule: 0/97) |
+| Search reranking | Jev instead of Voyage | Worse than Voyage (recall 94.8% vs 94.0% at best); Voyage stays the default |
+| The other six | Routing, evidence gate, abstention, injection signal, know-to-ask, claim support | No measurable change, a regression, or too little data to qualify; off by default |
+
+No label in these evals is a human hand label. Full tables: `docs/eval/system-one/README.md`.
+
+### Things to watch
+
+- With a key, the defaults send private conversation windows and private facts to TypeSafe. They never send pages, and sources in `decide.egress.deny_sources` stay local. An explicit `gbrain config set decide.egress.private deny` or `gbrain config set decide.provider none` turns the defaults off too.
+- Any slot you set yourself (its mode, its provider, or a `deny` on its consent key) is never touched by the default.
+- The contradiction sweep never changes a fact on its own. It writes proposals you review with `gbrain decide proposals list`, then `accept`, `reject` or `undo`.
+- Third-party decide spend is capped at $1.00 per brain per day by default (`decide.budget.daily_usd`). `gbrain decide disable --all` turns everything off and restores your reranker settings.
+
+## To take advantage of v0.60.26.0
+
+`gbrain upgrade` should do this automatically. If it didn't, or if `gbrain doctor` warns about a partial migration:
+
+1. **Run the orchestrator manually:**
+   ```bash
+   gbrain apply-migrations --yes --no-autopilot-install
+   ```
+   Schema migrations v184 to v186 create empty tables. They backfill nothing and change no config value.
+2. **Your agent reads `skills/migrations/v0.60.26.0.md` the next time you interact with it.** It explains System One, tells you what the key-aware defaults send and how to opt out, and stops; it never turns a slot on, allows private egress or raises the budget without asking you.
+3. **Verify the outcome:**
+   ```bash
+   gbrain doctor        # no key: "System One is off (every decide slot is off; nothing is sent)."
+                        # with a key: "triage=on (default: Jev key present), conflict=on (default: Jev key present)" and the opt-out
+   gbrain decide status
+   ```
+4. **If any step fails or the numbers look wrong,** please file an issue:
+   https://github.com/garrytan/gbrain/issues with:
+   - output of `gbrain doctor`
+   - contents of `~/.gbrain/upgrade-errors.jsonl` if it exists
+   - which step broke
+
+   This feedback loop is how the gbrain maintainers find fragile upgrade paths. Thank you.
+
+**Say to your agent:** *"Which System One slots are on, and what do they send?"* or *"Turn off System One dream triage."* or *"Show me the contradiction proposals from the last sweep."*
+
+### Itemized changes
+
+#### Key-aware defaults
+
+- With a TypeSafe key present and nothing set for the slot, `triage` and `conflict` default on with `typesafe:jev-1.13.0` and their shipped reference calibrations; the other seven slots default off. Without a key every slot is off and output is byte-identical to a brain without System One.
+- The default-on set is computed from the reference calibration rows (verdict win and a passing precision gate), the same computation `enable --recommended` uses, so the two cannot disagree.
+- For those two slots the key is the egress opt-in for their own data (conversation text for triage, fact text for the sweep), as a documented default; nothing is written to config. Page visibility rules, derived-page rules and `decide.egress.deny_sources` are unchanged, and the defaults never send pages.
+- Explicit settings always win: `decide.slots.<slot>.mode`, `decide.slots.<slot>.provider`, `decide.provider none`, `decide.egress.private deny`, a `deny` on the slot's consent key, and `gbrain decide disable <slot>|--all`. Eval commands never use the defaults.
+- `gbrain decide status` and doctor's `decide_health` show `on (default: Jev key present)` and the one-line opt-out. `gbrain decide enable` on a slot that is already on by default says so and writes nothing.
+
+#### `gbrain decide`: turning slots on and off
+
+- `gbrain decide probe` checks a TypeSafe key with a fixed sentence and names the model version that answered. `probe --query "<q>"` runs today's search with every slot off, asks Jev once for each result's evidence probability and rerank order, and prints both beside today's order. It says what it will send and asks first (`--yes` in scripts); private pages stay local, and nothing is changed or stored.
+- `gbrain decide enable <slot>` prints what leaves the machine and to whom, the estimated cost and the daily cap, then writes the provider (always the resolved pinned id, never an alias), the consent keys for that slot's data classes, the calibration and the mode in one confirmed step. It refuses, writes nothing and exits non-zero when the slot could not act, naming the reason, the fix command and a `docs/guides/system-one.md#<reason>` anchor.
+- `gbrain decide enable --recommended` turns on only slots with a recorded eval win and a passing reference calibration for your model. For `jev-1.13.0` that is `triage` and `conflict`. When no slot qualifies it says so and exits non-zero.
+- `gbrain decide disable <slot> | --all` is the kill switch; `disable rerank` restores the reranker settings `enable rerank` changed.
+- `gbrain decide status [--egress] [--json]` shows provider, consent, budget and each slot's readiness (`ready for on`, `needs calibration`, `on (default: Jev key present)`, `on (inactive: <reason>)` with the one fix command, `newer reference available`).
+- Advanced: `calibrate`, `qualify`, `calibrations list|adopt|retire|restore`, `dataset --from <source>`, and `receipts [--what-if-threshold <t>]` for calibrating a slot on your own labelled data.
+
+#### The nine slots
+
+- `rerank` (search reranking), `intent` (query routing), `evidence` (evidence gate), `answerable` (abstention in `think`), `injection` (moves results that look like instructions to an AI agent below clean ones), `recall_needed` (know-to-ask on the hook user-prompt path), `triage` (dream triage), `grounding` (claim support for dream pages) and `conflict` (contradiction proposals after the fact sweep).
+- Every slot fails toward today's behavior on timeout, rate limit, provider error, malformed or partial answers, mixed model versions, budget exhaustion, model drift or a changed policy, and writes a receipt with the reason. No slot can weaken a deterministic floor: verbatim quotes, numbers, visibility and trust rules always win.
+- Slots that can remove or withhold content (evidence gate, abstention, know-to-ask suppression, triage rejection, claim quarantine) turn on only with a qualified calibration that passes a 0.90 precision gate.
+- Upgrades never move a slot you enabled: `enable` pins the resolved model id, and a newer reference calibration waits for `gbrain decide calibrations adopt <id>`. A slot on only by the key-aware default uses the reference calibration shipped with your binary.
+
+#### Dream triage and the contradiction sweep
+
+- Triage splits each transcript into windows of whole turns and asks per window whether it holds a decision, commitment, new fact, idea or reflection; the transcript scores as its best window, so one buried signal is enough. Answers near the threshold go to today's Haiku judge. The top windows become the segment map the synthesizer already reads. Turning it on does not re-triage anything.
+- The contradiction sweep runs at the end of the `extract_facts` cycle phase over facts written since its last run, compares each with its nearest neighbours (same source, entity and visibility) and classifies each pair as duplicate, supersede or independent. The fact write path stays unchanged and model-free. The first run starts at the newest fact, so enabling it never sweeps your history silently. Run it now with `gbrain decide sweep --slot conflict`; review with `gbrain decide proposals list|accept|reject|undo` (or `--all-from <sweep id>`).
+- Reference calibrations for `jev-1.13.0` ship for both: triage at a 0.77 threshold (qualified, 39/39 correct rejections), the sweep with a 0.52 duplicate threshold and a 0.65 proposal floor.
+
+#### Egress and spend safety
+
+- One egress rule covers every path: a provider receives a data class (query, candidates, facts, conversation) only with your consent for that provider, each `deny` until `enable` writes `allow` after showing you what leaves (or, for the two key-aware default slots, the key itself). Private pages (including derived pages whose origin is private) never leave without `decide.egress.private allow`; facts and conversation text need it too, except for those two default slots. `decide.egress.deny_sources` applies to every provider. `decide.egress_fallback llm:<provider:model>` answers only the items egress refused.
+- `decide.budget.daily_usd` (default $1.00) caps third-party decide spend per brain per UTC day from a local spend ledger that also charges failed and timed-out requests. Remote MCP callers may use at most `decide.budget.remote_share` (default 0.5) of it.
+- Decision receipts store hashes, never text. Doctor gains `decide_health`: a missing key, alias use, slots on but inactive (with the cause and fix), model drift, a 24-hour error rate over 5%, an exhausted budget, egress refusals and every `force_on` bypass. An all-off brain reports ok.
+
+#### Measured results (eval half of a frozen split, `typesafe:jev-1.13.0`)
+
+- **Triage:** buried-signal misses 10/18 to 0/18; routine chats rejected 78/79 to 52/79; triage cost per transcript $0.0046 to $0.0009; latency p50/p95 2.2/6.2 s to 1.4/4.2 s. End to end with the preset: 10/10 buried signals synthesized vs 3/10, junk pages 2 to 5, dream spend $1.50 to $2.60.
+- **Contradiction sweep:** supersedes found 0/97 to 94/97; wrong supersedes 10 to 1; about $0.00002 per swept fact.
+- **Search reranking:** LongMemEval-S recall_all@5 94.8% with Voyage vs 94.0 / 91.4 / 92.7% with Jev at 30 / 50 / 100 candidates; answer accuracy 91% vs 89% on 100 questions.
+- **Query routing:** routing accuracy rose (search 46.5% to 66.9%) but retrieval did not change. `decide.slots.intent.wait_ms` defaults to 250 ms from measured late rates.
+- **Evidence gate, abstention:** regressions on our data. **Know-to-ask:** mixed (failures 71.3% to 11.3% on a reflex-miss corpus, but 8.5% false fires on sealed BrainBench); `recall_needed.suppress_below` defaults to 0.10. **Claim support, injection signal:** inconclusive.
+- Total paid eval spend $24.95. Datasets, receipts, generators and runners live under `docs/eval/system-one/`.
+
+#### Search reranking on Jev
+
+- `search.reranker.model typesafe:jev-1.13.0` runs a native Jev reranker on the decide core: score questions, normalized scores, stable ties, and failure when one call mixes resolved model versions. `gbrain decide enable rerank` sets it up and remembers your previous settings. Voyage stays the default. Contributed by @dsandrade (PR #5178).
+
+#### Evals
+
+- `gbrain eval longmemeval`, `gbrain eval brainbench` and `gbrain eval retrieval-quality` accept `--decide*` flags to run a slot arm on a throwaway benchmark brain, with per-row receipts and spend.
+- `gbrain decide judge-agreement --suite longmemeval|grounding` (eval only) measures Jev as a judge beside an LLM judge with Cohen's kappa.
+
+#### Fixes
+
+- The retrieval-reflex heartbeat and its doctor check now honor `GBRAIN_HOME`.
+- The per-query decide budget (`decide.query_budget_ms`) starts at the first post-retrieval decide stage, so query expansion no longer uses it up before reranking.
+
+#### Schema migrations
+
+- v184 `decision_receipts` (with the `decide_spend` ledger and internal `decide_state`), v185 `decide_calibrations`, v186 `decide_proposals` (with `decide_sweep_deferred`). Empty tables, no backfill, no long transaction.
+
+### For contributors
+
+- `docs/architecture/decide.md` is the contract: `runDecide(req, { engine, config })` (or `gateway.decide`) with typed `noul` / `choice` / `score` questions over evidence items that carry provenance; failures throw `DecideError` with a catalogued reason and the caller takes its slot's fail direction. Partial answers are never used.
+- Providers: `typesafe:<model>` (`POST /v1/systemone`, `TYPESAFE_API_KEY` or `JEV_TYPESAFE_API_KEY`) and `llm:<provider:model>` (`chat()` with a JSON schema, validated by the same parser).
+- Key-aware defaults: `readDecideConfig(snapshot, { typesafeKey })` (omitting `typesafeKey` means keyless), `recommendedSlots(provider)` in `reference-calibrations.ts`, `DecideSlotConfig.keyDefault`, and `checkEgress(..., { slot })`. Live call sites pass `hasTypesafeKey()`.
+- Extension points: `SLOT_SPECS[slot].wired` (`src/core/ai/decide/slots.ts`), `registerEvidenceCoPack` (`src/core/search/decide-stage.ts`), `registerDatasetAdapter` / `registerDatasetBuilder` (`dataset.ts`, including `unpacked` and `aggregate: 'max'` adapters), `registerDecideSubcommand` (`src/commands/decide.ts`), `registerWhatIfReducer` (`src/commands/decide/receipts.ts`), `writeReceipts`, `resolveSlotPolicy` and `stageDeadlineMs`. "How to add a slot" in the contract walks the five steps.
+- Shared eval flags live in `src/eval/decide-eval-flags.ts`; reference calibrations in `src/core/ai/decide/reference-calibrations.ts`. Eval commands opt in to `GBRAIN_DECIDE_SLOTS` through `enableDecideEvalOverride()`, which never bypasses consent, egress or the cap.
+- File map: `docs/architecture/key-files/core-decide.md`. Operator guide: `docs/guides/system-one.md`. Provider and key setup: `docs/ai-providers/typesafe.md`.
+
 ## [0.60.25.0] - 2026-10-01
 
 **CI now runs on Bun 1.4.2, so contributors stop seeing random test hangs.**

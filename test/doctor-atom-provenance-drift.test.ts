@@ -24,6 +24,8 @@ import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { computeAtomProvenanceDriftCheck } from '../src/commands/doctor.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { doctorFileSource } from './helpers/doctor-source.ts';
+import { WAVE_CHECKS, checkHealthUnknown } from '../src/commands/doctor/wave-checks.ts';
+import { bannerFindingLine } from '../src/commands/doctor/upgrade-banner.ts';
 
 let engine: PGLiteEngine;
 
@@ -199,6 +201,10 @@ describe('computeAtomProvenanceDriftCheck', () => {
     expect(c.status).toBe('warn');
     expect(c.message).toContain('atom_provenance_drift check failed');
     expect(c.message).toContain('relation "pages" does not exist');
+    // As a wave check, a failed inspection is unknown health, never a stale-atoms finding with a zero count.
+    expect(checkHealthUnknown(c)).toBe(true);
+    const spec = WAVE_CHECKS.find(s => s.id === 'atom_provenance_drift')!;
+    expect(bannerFindingLine({ spec, check: c, state: 'unknown' })).toBe('[AGENT]   atom_provenance_drift: could not be checked (health unknown)');
   });
 
   it('does not count transcript-minted (file-bound) atoms as drift (#4806)', async () => {
@@ -359,5 +365,21 @@ describe('computeAtomProvenanceDriftCheck', () => {
     expect(c.message).toContain('30/30');
     expect(c.message).toContain('0 whose source page is gone');
     expect(c.message).toContain('30 slug-unbound');
+  }, 60_000);
+
+  it('counts a managed atom by its stripped provisional hash and names the stale-atoms repair (#5770)', async () => {
+    await seedSource('src-managed', 'original body');
+    const original = await hashOf('src-managed');
+    for (let i = 0; i < 30; i++) {
+      await engine.putPage(`atoms/2026-01-01/managed-${String(i).padStart(6, '0')}`, { type: 'atom', title: `managed ${i}`, compiled_truth: 'claim body',
+        frontmatter: { type: 'atom', source_slug: 'src-managed', source_hash: `pending:${original}`, managed_extraction: true, extracted_at: new Date().toISOString() } });
+    }
+    const healthy = await computeAtomProvenanceDriftCheck(engine);
+    expect(healthy.details).toMatchObject({ total_atoms: 30, drifted: 0 });
+    await seedSource('src-managed', 'edited body');
+    const c = await computeAtomProvenanceDriftCheck(engine);
+    expect(c.status).toBe('warn');
+    expect(c.details).toMatchObject({ drifted: 30, source_changed: 30 });
+    expect(c.message).toContain('gbrain repair stale-atoms');
   }, 60_000);
 });

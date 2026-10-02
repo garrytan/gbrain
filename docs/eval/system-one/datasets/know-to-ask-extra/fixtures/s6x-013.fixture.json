@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-013",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "companies/emberyard-robotics",
+      "content": "---\ntitle: Emberyard Robotics\ntype: company\nsummary: \"Emberyard Robotics is a startup we evaluated as a partner.\"\n---\n\nEmberyard Robotics is a startup we evaluated as a partner. They quoted a per-seat price with a minimum annual commitment.\n"
+    },
+    {
+      "slug": "projects/referral-program",
+      "content": "---\ntitle: Referral Program\ntype: project\nsummary: \"Referral Program: We chose a one-month credit for both sides and capped it at three referrals per account.\"\n---\n\nReferral Program: We chose a one-month credit for both sides and capped it at three referrals per account.\n"
+    },
+    {
+      "slug": "people/oskar-quellmere",
+      "content": "---\ntitle: Oskar Quellmere\ntype: person\nsummary: \"Oskar Quellmere is the operations director at Russetloft.\"\n---\n\nOskar Quellmere is the operations director at Russetloft.\n"
+    },
+    {
+      "slug": "people/hollis-kestgrove",
+      "content": "---\ntitle: Hollis Kestgrove\ntype: person\nsummary: \"Hollis Kestgrove is the operations director at Junipervane.\"\n---\n\nHollis Kestgrove is the operations director at Junipervane.\n"
+    },
+    {
+      "slug": "companies/pylonloft",
+      "content": "---\ntitle: Pylonloft\ntype: company\nsummary: \"A company we met once at a trade show.\"\n---\n\nA company we met once at a trade show.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Prep notes for my Emberyard meeting please, mainly pricing."
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Okay, noted."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "what were the terms of the referral thing we discussed?"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Done."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "Translate into Spanish: 'Quellmere will join the meeting at noon.'"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Here is what I have."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "how do you pronounce the name hollis? it's for a character in my short story"
+    }
+  ]
+}

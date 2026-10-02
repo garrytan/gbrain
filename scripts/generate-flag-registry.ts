@@ -138,6 +138,7 @@ function facadeExpansion(p: string): string[] {
     join(ROOT, 'src/commands/mcp-admin-http.ts'),
   ];
   if (rel === 'src/commands/doctor.ts') return collect(join(ROOT, 'src/commands/doctor'));
+  if (rel === 'src/commands/decide.ts') return collect(join(ROOT, 'src/commands/decide'));
   // Refactor wave 1 (W4 serve-http) peeled runServeHttp into flat
   // serve-http-<area>.ts modules; their text (e.g. the expired-magic-link
   // page's `--url` / `--oauth-request` hint) used to live in serve-http.ts.

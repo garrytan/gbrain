@@ -1,0 +1,463 @@
+[user]
+I’m trying to free some disk space on a Linux workstation. I’d like to inspect usage first, then remove only obvious temporary files. Can you guide me through a cautious shell session?
+
+[assistant]
+Sure. Start by checking the filesystem overview and then the largest top-level directories. These commands only read information:
+
+```sh
+df -h /
+sudo du -xhd1 / 2>/dev/null | sort -h
+```
+
+`df` shows filesystem capacity, while `du` estimates directory usage. The `-x` keeps the scan on the root filesystem, and `-d1` limits the first pass to one directory level. Paste the output, and we can narrow the inspection before deleting anything.
+
+[user]
+Here is the output:
+
+```text
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/nvme0n1p3  475G  461G   14G  98% /
+
+8.0K    /lost+found
+12K     /mnt
+20K     /media
+36K     /opt
+1.2M    /tmp
+2.1G    /root
+4.8G    /var
+18G     /usr
+27G     /home
+311G    /srv
+362G    /
+```
+
+`/srv` is clearly the largest. I’m not sure what is safe to remove there.
+
+[assistant]
+Do not delete anything from `/srv` based only on its size. It often contains application data, archives, uploads, or local service files. First inspect its immediate children, still without changing anything:
+
+```sh
+sudo du -xhd1 /srv 2>/dev/null | sort -h
+sudo find /srv -xdev -maxdepth 2 -type f -printf '%s\t%TY-%Tm-%Td %TH:%TM\t%p\n' 2>/dev/null \
+  | sort -n | tail -40
+```
+
+The first command identifies large subdirectories. The second lists large files near the top of the tree, with size and modification time. Paste both outputs, especially if names suggest backups, caches, exports, or generated data.
+
+[user]
+The output is:
+
+```text
+4.0K    /srv/empty
+2.4G    /srv/cache
+14G     /srv/archive
+294G    /srv/data
+311G    /srv
+
+2147483648    2026-08-12 03:14    /srv/cache/build-cache.tar
+4294967296    2026-07-01 22:10    /srv/archive/image-set-01.tar
+8589934592    2026-06-15 18:42    /srv/archive/image-set-02.tar
+17179869184   2026-05-28 11:07    /srv/archive/image-set-03.tar
+```
+
+The cache archive seems like a possible target, but I want to verify what it is before deleting it. The archive files may be needed, so I don’t want to touch those.
+
+[assistant]
+That is a sensible boundary. Leave `/srv/archive` and `/srv/data` alone. For the cache file, inspect its type, metadata, and archive contents without extracting it:
+
+```sh
+sudo file /srv/cache/build-cache.tar
+sudo stat -c 'path=%n
+size=%s bytes
+modified=%y
+owner=%U:%G
+mode=%A' /srv/cache/build-cache.tar
+sudo tar -tf /srv/cache/build-cache.tar | head -40
+```
+
+If it is a normal tar archive containing build outputs or temporary objects, also count its entries and inspect its top-level names:
+
+```sh
+sudo tar -tf /srv/cache/build-cache.tar | wc -l
+sudo tar -tf /srv/cache/build-cache.tar | awk -F/ 'NF {print $1}' | sort -u
+```
+
+Do not use `tar -xf`; listing is enough for this check.
+
+[user]
+Here is what I got:
+
+```text
+/srv/cache/build-cache.tar: POSIX tar archive
+path=/srv/cache/build-cache.tar
+size=2147483648 bytes
+modified=2026-08-12 03:14:22.000000000 +0000
+owner=cacheuser:cacheuser
+mode=-rw-r--r--
+bin/
+bin/compiler-cache/
+bin/compiler-cache/object-0001
+bin/compiler-cache/object-0002
+bin/compiler-cache/object-0003
+bin/compiler-cache/object-0004
+bin/compiler-cache/object-0005
+bin/compiler-cache/object-0006
+bin/compiler-cache/object-0007
+bin/compiler-cache/object-0008
+bin/compiler-cache/object-0009
+bin/compiler-cache/object-0010
+bin/compiler-cache/object-0011
+bin/compiler-cache/object-0012
+bin/compiler-cache/object-0013
+bin/compiler-cache/object-0014
+bin/compiler-cache/object-0015
+bin/compiler-cache/object-0016
+bin/compiler-cache/object-0017
+bin/compiler-cache/object-0018
+bin/compiler-cache/object-0019
+bin/compiler-cache/object-0020
+bin/compiler-cache/object-0021
+bin/compiler-cache/object-0022
+bin/compiler-cache/object-0023
+bin/compiler-cache/object-0024
+bin/compiler-cache/object-0025
+bin/compiler-cache/object-0026
+bin/compiler-cache/object-0027
+bin/compiler-cache/object-0028
+bin/compiler-cache/object-0029
+bin/compiler-cache/object-0030
+bin/compiler-cache/object-0031
+bin/compiler-cache/object-0032
+bin/compiler-cache/object-0033
+bin/compiler-cache/object-0034
+bin/compiler-cache/object-0035
+bin/compiler-cache/object-0036
+bin/compiler-cache/object-0037
+bin/compiler-cache/object-0038
+bin/compiler-cache/object-0039
+bin/compiler-cache/object-0040
+
+184320
+bin
+```
+
+It looks like a generated cache, but I’m not sure whether a process is currently using it.
+
+[assistant]
+Check for open handles and identify the owning directory’s service context. These commands do not modify files:
+
+```sh
+sudo lsof -- /srv/cache/build-cache.tar
+sudo fuser -v /srv/cache/build-cache.tar
+ps -ef | grep -E '[c]ache|[b]uild' || true
+sudo find /srv/cache -maxdepth 2 -mindepth 1 -printf '%M %u:%g %10s %TY-%Tm-%Td %TH:%TM %p\n' \
+  | sort -k4,4 -k5,5
+```
+
+An empty `lsof`/`fuser` result means no process currently has that exact archive open; it does not prove that no job might recreate it later. The process list and neighboring files can show whether this is an active cache location. Paste the output, and avoid stopping any process unless you specifically intend to.
+
+[user]
+The results were:
+
+```text
+COMMAND     PID     USER      FD   TYPE DEVICE  SIZE/OFF NODE NAME
+builder   18421  cacheuser    3r   REG  259,3 2147483648 81231 /srv/cache/build-cache.tar
+
+builder   18421  cacheuser  3r   REG  259,3 2147483648 81231 /srv/cache/build-cache.tar
+  cacheuser  18421  1  0 09:26 ?        00:00:41 builder --load-cache /srv/cache/build-cache.tar
+-rw-r--r-- cacheuser:cacheuser 2147483648 2026-08-12 03:14 /srv/cache/build-cache.tar
+-rw-r--r-- cacheuser:cacheuser       79 2026-09-30 09:25 /srv/cache/cache.status
+```
+
+So it is actively being read. I’ll leave that file alone. Are there other clearly disposable items elsewhere, such as package caches or old temporary files?
+
+[assistant]
+Yes, inspect common cache and temporary locations before removing anything. First collect sizes and ages:
+
+```sh
+sudo du -xhd1 /var/cache /var/tmp /tmp 2>/dev/null | sort -h
+sudo find /var/cache /var/tmp /tmp -xdev -type f \
+  -printf '%s\t%TY-%Tm-%Td %TH:%TM:%TS\t%p\n' 2>/dev/null \
+  | sort -n | tail -60
+```
+
+For package-manager caches, use the package manager’s cleanup operation rather than manually deleting unknown files. You can identify the distribution with:
+
+```sh
+. /etc/os-release
+printf 'ID=%s\nVERSION_ID=%s\n' "$ID" "$VERSION_ID"
+command -v apt-get dnf yum pacman zypper
+```
+
+Do not remove `/tmp` or `/var/tmp` wholesale while services are running. We can filter for old files and check open handles first.
+
+[user]
+Here is the size output and the system information:
+
+```text
+8.0K    /var/cache/private
+12K     /var/cache/ldconfig
+16K     /var/tmp/session-fragments
+44K     /tmp/ssh-AB12cd
+1.1M    /var/tmp
+1.2M    /tmp
+3.3G    /var/cache
+3.3G    /var/cache/package-archives
+4.4G    /var/cache
+ID=debian
+VERSION_ID=12
+/usr/bin/apt-get
+```
+
+The package cache is 3.3 GB. That sounds like the safest cleanup candidate.
+
+[assistant]
+For Debian, inspect the package cache first and then use APT’s own cache-cleaning command. These steps are limited to cached package files:
+
+```sh
+sudo du -sh /var/cache/apt/archives
+sudo find /var/cache/apt/archives -maxdepth 1 -type f \
+  -printf '%10s %TY-%Tm-%Td %TH:%TM %f\n' 2>/dev/null | sort -n | tail -30
+sudo apt-get -s clean
+```
+
+The `-s` performs a simulation. If its proposed action only removes files from `/var/cache/apt/archives`, run:
+
+```sh
+sudo apt-get clean
+```
+
+Unlike `autoclean`, `clean` clears all locally cached package archives; it does not uninstall packages. Afterward, verify the result:
+
+```sh
+sudo du -sh /var/cache/apt/archives
+df -h /
+```
+
+Paste the simulation output if you want a second check before executing it.
+
+[user]
+The simulation says:
+
+```text
+NOTE: This is only a simulation!
+      apt-get needs root privileges for real execution.
+Reading package lists...
+Building dependency tree...
+Reading state information...
+Del partial-package-a.deb
+Del partial-package-b.deb
+Del old-library.deb
+Del current-tool.deb
+Del base-system.deb
+```
+
+That appears to be only package archives. I ran `sudo apt-get clean`, and the result was:
+
+```text
+Reading package lists...
+Building dependency tree...
+Reading state information...
+```
+
+Then:
+
+```text
+$ sudo du -sh /var/cache/apt/archives
+4.0K    /var/cache/apt/archives
+$ df -h /
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/nvme0n1p3  475G  458G   17G  97% /
+```
+
+That recovered about 3 GB. Can we inspect `/home` next without deleting anything?
+
+[assistant]
+Yes. Start with a one-level summary, then identify large files while staying on the same filesystem:
+
+```sh
+sudo du -xhd1 /home 2>/dev/null | sort -h
+sudo find /home -xdev -type f -printf '%s\t%TY-%Tm-%Td %TH:%TM\t%p\n' 2>/dev/null \
+  | sort -n | tail -50
+```
+
+Because `/home` can contain personal files, do not treat age or size alone as permission to delete. We can distinguish browser caches, build directories, downloaded installers, and ordinary documents. For any candidate, check its path, owner, recent access, and whether a process has it open:
+
+```sh
+sudo lsof -- /path/to/candidate
+sudo stat /path/to/candidate
+```
+
+Paste the summary and the largest-file list, redacting names if needed.
+
+[user]
+The summary is:
+
+```text
+4.0K    /home/shared
+6.8G    /home/user1
+20G     /home/user2
+27G     /home
+```
+
+The largest files are:
+
+```text
+2147483648  2026-09-01 12:00  /home/user2/Downloads/sdk-installer.tar
+1073741824  2026-08-20 08:15  /home/user1/.cache/tool/cache-pack.bin
+786432000   2026-07-11 14:30  /home/user2/Videos/tutorial-recording.mkv
+536870912   2026-09-29 17:05  /home/user1/Downloads/archive.zip
+```
+
+The cache file looks promising, but I don’t want to remove somebody else’s data. There is also a 2 GB installer that might be disposable, but I’m not sure.
+
+[assistant]
+Treat both as unapproved until their owners or users confirm they are no longer needed. You can inspect the cache’s structure and ownership without changing it:
+
+```sh
+sudo stat -c 'path=%n
+owner=%U:%G
+size=%s
+modified=%y' /home/user1/.cache/tool/cache-pack.bin
+
+sudo find /home/user1/.cache/tool -maxdepth 2 -type f \
+  -printf '%s %TY-%Tm-%Td %TH:%TM %p\n' 2>/dev/null | sort -n | tail -30
+
+sudo lsof -- /home/user1/.cache/tool/cache-pack.bin
+sudo stat -c 'path=%n owner=%U:%G mode=%A modified=%y' \
+  /home/user2/Downloads/sdk-installer.tar
+```
+
+For the installer, check whether it is an archive and list its contents:
+
+```sh
+file /home/user2/Downloads/sdk-installer.tar
+tar -tf /home/user2/Downloads/sdk-installer.tar | head -30
+```
+
+Do not infer that a download is disposable merely because it is old or large. If no explicit cleanup policy exists, leave user-owned files alone and focus on system caches.
+
+[user]
+The cache file is owned by `user1`, has a modified time from last month, and `lsof` shows nothing. The directory contains many similarly named binary files. The installer is owned by `user2`, is a valid tar archive, and contains an SDK directory. I’ll leave both alone.
+
+Could we inspect `/var/log` for rotated logs, but only remove files that are clearly old and compressed?
+
+[assistant]
+Yes, inspect log sizes, rotation names, and open handles first. Avoid deleting the current log files or changing anything managed by a logging service:
+
+```sh
+sudo du -xhd2 /var/log 2>/dev/null | sort -h
+sudo find /var/log -xdev -type f \
+  -printf '%s\t%TY-%Tm-%Td %TH:%TM\t%p\n' 2>/dev/null | sort -n | tail -50
+```
+
+To list compressed rotated logs separately:
+
+```sh
+sudo find /var/log -xdev -type f \
+  \( -name '*.gz' -o -name '*.xz' -o -name '*.zst' -o -name '*.bz2' \) \
+  -printf '%s %TY-%Tm-%Td %TH:%TM %p\n' 2>/dev/null | sort -n
+```
+
+Before any removal, check the exact candidates:
+
+```sh
+sudo lsof -- /var/log/example.log.5.gz
+sudo stat /var/log/example.log.5.gz
+```
+
+If the files are managed by `logrotate`, it is generally safer to adjust or invoke the configured rotation policy than to manually remove files. Paste the output first.
+
+[user]
+The relevant output is:
+
+```text
+12K     /var/log/private
+64K     /var/log/journal
+420M    /var/log
+418M    /var/log/app
+1.8M    /var/log/syslog
+2.2M    /var/log/auth.log
+3.1M    /var/log/kern.log
+
+1048576  2026-08-01 00:00 /var/log/app/service.log.4.gz
+2097152  2026-08-08 00:00 /var/log/app/service.log.3.gz
+4194304  2026-08-15 00:00 /var/log/app/service.log.2.gz
+8388608  2026-08-22 00:00 /var/log/app/service.log.1.gz
+```
+
+They are all compressed rotations, but I’m not sure how old is acceptable. The log directory is only 420 MB, so it may not be worth touching.
+
+[assistant]
+Leaving them alone is reasonable. They are rotated, but “compressed” does not by itself establish that they are disposable; retention may be configured for troubleshooting or auditing. Also, the listed files total only about 16 MB, while most of `/var/log/app` is elsewhere. Inspect the remaining files and the retention configuration without deleting anything:
+
+```sh
+sudo find /var/log/app -maxdepth 1 -type f \
+  -printf '%s %TY-%Tm-%Td %TH:%TM %p\n' 2>/dev/null | sort -n | tail -30
+
+sudo grep -RInE '(/var/log/app|service\.log|rotate|rotate [0-9]+)' \
+  /etc/logrotate.conf /etc/logrotate.d 2>/dev/null
+```
+
+If the goal is immediate space, the package-cache cleanup already recovered about 3 GB. A useful final check is to rescan the major directories and confirm that no process has an unexpectedly large deleted file still open:
+
+```sh
+sudo lsof +L1 2>/dev/null | sort -k7 -n | tail -20
+sudo du -xhd1 / 2>/dev/null | sort -h
+df -h /
+```
+
+The `+L1` check is read-only and can reveal space held by files that were deleted while still open.
+
+[user]
+I ran the checks. The app directory contains a current 400 MB log and the four compressed rotations. The configuration says:
+
+```text
+/var/log/app/service.log {
+    weekly
+    rotate 4
+    compress
+    missingok
+}
+```
+
+The deleted-file check shows no large entries. The final usage is:
+
+```text
+18G     /usr
+27G     /home
+294G    /srv
+4.0G    /var
+362G    /
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/nvme0n1p3  475G  458G   17G  97% /
+```
+
+It seems the package cleanup was enough for now. Is there a safe way to record what was done in the shell history without creating a separate note?
+
+[assistant]
+Yes. The shell history already records commands in many configurations. You can review the relevant entries without modifying files:
+
+```sh
+history | tail -30
+```
+
+If you want a short command-visible reminder for the current shell history, use a harmless comment command:
+
+```sh
+: "Inspected /srv, left active build cache and user files untouched; ran sudo apt-get clean; verified df -h"
+```
+
+The `:` is the shell’s no-op command, so it makes no filesystem change. Whether the comment is saved after the shell exits depends on the shell’s history settings. You can verify the current history configuration with:
+
+```sh
+set -o | grep history
+printf 'HISTFILE=%s\n' "${HISTFILE-}"
+```
+
+No separate note is needed, and there is no reason to alter the `/srv` archives, active cache, user-owned files, or rotated logs based on the inspection.
+
+[user]
+I checked the history, and the cleanup command is present. The no-op reminder also ran successfully. I’m satisfied with leaving the remaining large areas alone and only cleaning the package cache today. Thanks.
+
+[assistant]

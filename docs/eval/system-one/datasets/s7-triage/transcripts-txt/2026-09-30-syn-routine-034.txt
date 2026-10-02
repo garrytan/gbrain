@@ -1,0 +1,318 @@
+[user]
+I’m trying to free some space on a Linux workstation. `df -h` says the root filesystem is at 92%, and I’d like to clean up ordinary caches and temporary files without touching personal documents or system packages.
+
+[assistant]
+Start by confirming the filesystem and then inspect the largest top-level directories. These commands only read data:
+
+```sh
+df -h /
+sudo du -xhd1 / 2>/dev/null | sort -h
+```
+
+The `-x` keeps `du` on the root filesystem, and `-d1` limits the first report to one directory level. Paste the output, and we can narrow it down before deleting anything.
+
+[user]
+Here’s the output:
+
+```text
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/nvme0n1p3  220G  202G   7.1G  97% /
+
+8.0K    /boot
+24K     /lost+found
+2.1G    /opt
+4.8G    /root
+7.9G    /var
+18G     /usr
+166G    /home
+202G    /
+```
+
+I was expecting 92%, but it’s actually 97%. `/home` is large, but I don’t want to inspect or remove personal files broadly.
+
+[assistant]
+That leaves `/var`, `/root`, and possibly application data under `/opt` as the safer areas to inspect. We can also check whether deleted files are still held open, since that space would not appear in `du`:
+
+```sh
+sudo lsof +L1 2>/dev/null | head -80
+sudo du -xhd2 /var 2>/dev/null | sort -h
+sudo du -xhd2 /root 2>/dev/null | sort -h
+sudo du -xhd2 /opt 2>/dev/null | sort -h
+```
+
+Avoid removing anything from `/usr` or `/home` based only on size. The `lsof` command may produce no output, which is normal.
+
+[user]
+`lsof` produced no output. The directory reports are:
+
+```text
+12K     /var/opt
+16K     /var/spool
+28K     /var/tmp
+44K     /var/crash
+76K     /var/local
+112K    /var/mail
+1.4M    /var/backups
+38M     /var/cache
+510M    /var/log
+6.4G    /var/lib
+7.9G    /var
+
+8.0K    /root/.ssh
+12K     /root/.config
+20K     /root/.local
+64K     /root/.cache
+4.8G    /root
+```
+
+The `/root` total seems odd because the subdirectories don’t add up. `/var/lib` is the largest obvious target, but I’m not sure what is safe there.
+
+[assistant]
+The `/root` difference is likely one or more files directly under `/root`, so list only those entries without opening their contents:
+
+```sh
+sudo du -xhd1 /root 2>/dev/null | sort -h
+sudo find /root -maxdepth 1 -type f -printf '%s %p\n' 2>/dev/null | sort -n | tail -20
+```
+
+For `/var/lib`, get the next level:
+
+```sh
+sudo du -xhd1 /var/lib 2>/dev/null | sort -h
+```
+
+Do not delete arbitrary files in `/var/lib`; it commonly contains databases, package state, service data, and container or virtual-machine storage. The ordinary cleanup candidates are usually package caches, old logs, temporary files, and application-specific caches.
+
+[user]
+The additional output is:
+
+```text
+64K     /root/.cache
+4.8G    /root
+4.8G    /root/.cache-large
+
+4021841920 /root/.cache-large/tool-index.tar
+1124073472 /root/.cache-large/compiler-cache.bin
+```
+
+I had forgotten about that directory. `/var/lib` shows:
+
+```text
+8.0K    /var/lib/misc
+20K     /var/lib/apt
+36K     /var/lib/dhcp
+84K     /var/lib/systemd
+1.2G    /var/lib/docker
+5.1G    /var/lib/containerd
+6.4G    /var/lib
+```
+
+The large files under `/root/.cache-large` look like caches, but I want to verify their paths before removing them.
+
+[assistant]
+They are directly under a hidden directory named `.cache-large`, not under `/root/.cache`. Before removing them, check ownership, permissions, and file types:
+
+```sh
+sudo ls -lh /root/.cache-large
+sudo file /root/.cache-large/*
+sudo stat -c '%U:%G %a %s %n' /root/.cache-large/*
+```
+
+If this directory is known to be a disposable tool cache and no process is using it, removing its contents should reclaim about 4.1 GB. To check for open handles:
+
+```sh
+sudo lsof -- /root/.cache-large/tool-index.tar /root/.cache-large/compiler-cache.bin
+```
+
+If that returns nothing, use `rm --` with the exact paths rather than a broad wildcard.
+
+[user]
+The checks show:
+
+```text
+-rw------- 1 root root 3.8G Sep 12 09:14 /root/.cache-large/tool-index.tar
+-rw------- 1 root root 1.1G Sep 12 09:16 /root/.cache-large/compiler-cache.bin
+
+/root/.cache-large/tool-index.tar:       POSIX tar archive
+/root/.cache-large/compiler-cache.bin:   data
+
+root:root 600 4021841920 /root/.cache-large/tool-index.tar
+root:root 600 1124073472 /root/.cache-large/compiler-cache.bin
+```
+
+`lsof` returned nothing. I’m okay removing those two cache files. Also, `/var/log` at 510 MB seems worth checking.
+
+[assistant]
+Remove only the two confirmed cache files, then verify the available space:
+
+```sh
+sudo rm -- \
+  /root/.cache-large/tool-index.tar \
+  /root/.cache-large/compiler-cache.bin
+
+sudo du -sh /root/.cache-large
+df -h /
+```
+
+For logs, inspect the largest files first:
+
+```sh
+sudo find /var/log -xdev -type f -printf '%s %p\n' 2>/dev/null |
+  sort -n | tail -30
+```
+
+Do not manually delete active log files yet. Rotated files with names ending in `.gz`, `.old`, or numbered suffixes are generally easier candidates, but check the list and age before choosing specific files.
+
+[user]
+After removing them:
+
+```text
+0       /root/.cache-large
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/nvme0n1p3  220G  198G   11G  95% /
+```
+
+The log list is:
+
+```text
+18432 /var/log/apt/history.log
+28672 /var/log/apt/term.log
+65536 /var/log/auth.log
+90112 /var/log/syslog
+1048576 /var/log/syslog.1
+2097152 /var/log/kern.log.1
+5242880 /var/log/syslog.2.gz
+8388608 /var/log/kern.log.2.gz
+16777216 /var/log/app-runner/service.log.3.gz
+33554432 /var/log/app-runner/service.log.2.gz
+67108864 /var/log/app-runner/service.log.1
+```
+
+The app-runner logs are old rotated logs, but I’m not sure how far back they go.
+
+[assistant]
+Check timestamps and ownership for only those rotated app-runner files:
+
+```sh
+sudo stat -c '%y %U:%G %s %n' \
+  /var/log/app-runner/service.log.3.gz \
+  /var/log/app-runner/service.log.2.gz \
+  /var/log/app-runner/service.log.1
+```
+
+You can also list the directory with dates:
+
+```sh
+sudo ls -lah --time-style=long-iso /var/log/app-runner
+```
+
+If `.1` is the active previous rotation and the `.2.gz` and `.3.gz` files are older compressed rotations, it is reasonable to remove only `.2.gz` and `.3.gz` if retaining old logs is not needed. Leave the current `service.log` and `.1` in place unless you have a specific retention rule.
+
+[user]
+The timestamps are:
+
+```text
+2026-08-01 03:10:22.000000000 +0000 root:adm 16777216 /var/log/app-runner/service.log.3.gz
+2026-08-15 03:10:18.000000000 +0000 root:adm 33554432 /var/log/app-runner/service.log.2.gz
+2026-09-01 03:10:11.000000000 +0000 root:adm 67108864 /var/log/app-runner/service.log.1
+```
+
+There’s also a current `service.log` at 12 MB. I only need routine recent logs, so removing the August compressed rotations seems fine. Before doing that, can we check package caches and temporary files?
+
+[assistant]
+Yes. Inspect their sizes first:
+
+```sh
+sudo du -sh /var/cache/apt /var/cache/* 2>/dev/null | sort -h
+sudo find /var/tmp -xdev -mindepth 1 -maxdepth 1 -printf '%s %p\n' 2>/dev/null | sort -n
+sudo journalctl --disk-usage
+```
+
+For an APT-based system, `sudo apt-get clean` removes downloaded package archives from the APT cache without removing installed packages. It is usually safer than manually deleting files under `/var/lib/apt`. For `/var/tmp`, avoid deleting entries that are currently in use; inspect names, ages, and open handles first.
+
+[user]
+The results are:
+
+```text
+0       /var/cache/private
+4.0K    /var/cache/ldconfig
+12K     /var/cache/debconf
+28K     /var/cache/man
+36K     /var/cache/fontconfig
+42M     /var/cache/apt
+42M     /var/cache
+```
+
+`/var/tmp` is empty, and journal usage is:
+
+```text
+Archived and active journals take up 312.0M in the file system.
+```
+
+APT cache is small. I’d rather not change journal retention for a few hundred megabytes. I’ll remove the two old compressed app logs.
+
+[assistant]
+That is a narrow cleanup. Remove only the two dated compressed rotations:
+
+```sh
+sudo rm -- \
+  /var/log/app-runner/service.log.2.gz \
+  /var/log/app-runner/service.log.3.gz
+
+sudo du -sh /var/log/app-runner
+df -h /
+```
+
+Because these are already rotated and compressed, the running service should continue writing to `service.log`. If you want to confirm the files are gone and the current log remains, run:
+
+```sh
+sudo ls -lah --time-style=long-iso /var/log/app-runner
+```
+
+You can skip `apt-get clean`; its 42 MB cache is relatively minor compared with the space already reclaimed.
+
+[user]
+The cleanup worked:
+
+```text
+96M     /var/log/app-runner
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/nvme0n1p3  220G  198G   11G  95% /
+```
+
+The listing shows `service.log.1` and the current `service.log`; the two `.gz` files are gone. Is there anything else routine I should check, without going into `/home` or deleting system data?
+
+[assistant]
+The remaining obvious routine checks are already small, but you can review them without deleting anything:
+
+```sh
+sudo du -xhd2 /var/cache /var/tmp /tmp 2>/dev/null | sort -h | tail -30
+sudo find /tmp /var/tmp -xdev -mindepth 1 -maxdepth 2 \
+  -mtime +7 -printf '%TY-%Tm-%Td %s %p\n' 2>/dev/null | sort
+sudo journalctl --disk-usage
+```
+
+Also check whether old crash reports exist:
+
+```sh
+sudo find /var/crash -xdev -type f -printf '%s %p\n' 2>/dev/null
+```
+
+Given the current totals, the large cache removal was the meaningful cleanup. I would leave `/var/lib/docker` and `/var/lib/containerd` alone unless you specifically want to inspect unused images or snapshots with their respective tools.
+
+[user]
+The final read-only checks show:
+
+```text
+4.0K    /tmp
+28K     /var/tmp
+38M     /var/cache
+44M     /var/cache/apt
+312M    /var/log/journal
+0       /var/crash
+Archived and active journals take up 312.0M in the file system
+```
+
+There are no old files in `/tmp` or `/var/tmp`. I’m satisfied with the cleanup and will leave container storage and personal files alone.
+
+[assistant]

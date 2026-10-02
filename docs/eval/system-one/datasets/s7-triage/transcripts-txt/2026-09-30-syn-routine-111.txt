@@ -1,0 +1,237 @@
+[user]
+My inbox is overflowing with newsletters. I want to clean it up without accidentally hiding normal mail. Can you help me make a cautious plan?
+
+[assistant]
+A cautious approach is to separate cleanup into three stages: inventory, a review-only filter, and then an automatic rule.
+
+1. Start with a small sample, such as the last 30 days.
+2. Identify repeated newsletter patterns, including sender address, subject wording, and list headers.
+3. Create a temporary label or folder named `Newsletter-Review`.
+4. Build a filter that applies the label but does not archive or delete anything.
+5. Review the results for a few days.
+6. Only then decide whether to archive, mark as read, or keep future messages in that label.
+
+Avoid filtering on broad words like “update,” “news,” or “offer” alone, because ordinary account and service messages can contain them.
+
+[user]
+I use Gmail in a browser. What should I inspect in a typical newsletter message before creating a rule?
+
+[assistant]
+Open one message and inspect these fields:
+
+- **From:** Check the full address, not just the display name.
+- **To:** See whether it was sent to your address directly or through a list.
+- **Subject:** Note stable wording, but do not rely on a changing issue number or date.
+- **Mailing-list headers:** In Gmail, use the three-dot menu and choose “Show original.” Look for lines such as:
+  - `List-Unsubscribe:`
+  - `List-Id:`
+  - `Precedence: list`
+- **Reply behavior:** See whether replies go to a no-reply address or a support address.
+- **Content:** Confirm that it is recurring informational mail rather than a receipt, alert, or account notice.
+
+For safety, inspect two or three messages from the same recurring sender before choosing criteria.
+
+[user]
+Can you show me how to use Gmail search to find likely newsletters without changing anything?
+
+[assistant]
+Yes. Gmail search only displays matching messages; it does not alter them. You can try these searches one at a time:
+
+```text
+after:2026/08/01 ("unsubscribe" OR "manage preferences")
+```
+
+```text
+after:2026/08/01 (list-unsubscribe OR "mailing list")
+```
+
+```text
+after:2026/08/01 category:promotions
+```
+
+```text
+after:2026/08/01 {newsletter digest bulletin}
+```
+
+The first search is often useful, but it may also find legitimate service messages that include an unsubscribe link. Review the results manually. Open a few messages from each apparent sender and record only stable details such as the exact sender address and a consistent subject phrase.
+
+You can narrow a search to one sender after inspection:
+
+```text
+from:sender@example.invalid after:2026/08/01
+```
+
+Replace that placeholder with the actual address you see. Do not create a filter until the result set looks consistent.
+
+[user]
+I found a recurring newsletter from one address. It has “unsubscribe” in every message, and normal mail from that address does not appear to exist. How do I make a review-only filter?
+
+[assistant]
+In Gmail:
+
+1. Run a search using the exact sender address, for example:
+   ```text
+   from:sender@example.invalid
+   ```
+2. Click the search-options icon at the right side of the search box.
+3. Confirm the **From** field contains only the exact address.
+4. Click **Create filter**.
+5. Select **Apply the label**, then choose **New label**.
+6. Name it something clear, such as `Newsletter-Review`.
+7. Leave these unchecked:
+   - Skip the Inbox
+   - Mark as read
+   - Star it
+   - Delete it
+   - Forward it
+8. Decide whether to select **Also apply filter to matching conversations**. If you want to review older examples too, select it; otherwise leave it unchecked.
+9. Click **Create filter**.
+
+This will label matching messages while leaving them in the Inbox and unread state. Check that the filter summary shows the exact sender before saving.
+
+[user]
+I created the label and applied it to the existing messages. There are 37 conversations, and they all look like the same newsletter. What should I check before automating future messages?
+
+[assistant]
+Use the 37-message sample as a final safety check:
+
+- Sort or scan by date to confirm they are recurring messages, not a one-time batch.
+- Check the sender address character by character for lookalike variations.
+- Open a few older and newer messages to make sure the format is consistent.
+- Search for other messages from the same address that were not labeled:
+  ```text
+  from:sender@example.invalid -label:Newsletter-Review
+  ```
+- Check whether any unlabeled results are receipts, notices, or replies.
+- Look at the recipient field to ensure the messages are intended for your mailbox.
+- Confirm that no message contains a one-time code, billing notice, delivery update, or other time-sensitive content.
+- Keep the filter narrow; do not add broad subject terms unless the sender address varies.
+
+If the unlabeled search is empty or contains only unrelated edge cases, an automatic label-and-archive rule is usually a reasonable next test.
+
+[user]
+The unlabeled search shows two older messages from the same address that were in Spam. Does that change the plan?
+
+[assistant/assistant]
+It is worth checking why they were in Spam before changing the rule. Open the messages and compare them with the 37 labeled conversations:
+
+1. Confirm they have the same sender address and similar content.
+2. Check whether Gmail displays a warning about suspicious links, authentication, or spoofing.
+3. Use “Show original” and compare the `Authentication-Results` lines, especially SPF, DKIM, and DMARC results.
+4. Make sure the messages are not impersonating another sender or asking for credentials.
+5. If they are ordinary copies of the same newsletter and there are no warnings, leave them in Spam for now or mark them as not spam separately; do not create a broad “never send to Spam” rule just to make filtering easier.
+6. If they differ materially or show warnings, keep them out of the automation and use a narrower rule based on verified details.
+
+The key distinction is between “same recurring content” and “same address but potentially unsafe delivery.” A label-and-archive rule should not override Gmail’s spam protections.
+
+[user]
+I checked them. They are ordinary copies, and the authentication lines show pass results. I want future matching messages labeled and archived, but I do not want them marked read or deleted. What exact filter settings should I use?
+
+[assistant]
+Use the exact sender address and keep the actions limited:
+
+1. Search for the sender:
+   ```text
+   from:sender@example.invalid
+   ```
+2. Click the search-options icon.
+3. Verify the **From** field contains only that address.
+4. Click **Create filter**.
+5. Select:
+   - **Skip the Inbox (Archive it)**
+   - **Apply the label** → `Newsletter-Review`
+6. Leave these unchecked:
+   - Mark as read
+   - Star it
+   - Delete it
+   - Forward it
+   - Never mark it as important
+   - Always mark it as important
+   - Categorize as
+7. Leave **Also apply filter to matching conversations** unchecked if the 37 existing conversations are already labeled and you do not want to alter them again.
+8. Click **Create filter**.
+
+New matching messages should bypass the Inbox, retain their unread status, and appear under `Newsletter-Review` in the left sidebar. You can test by waiting for the next message or by reviewing the filter’s matching search before saving.
+
+[user]
+I saved the filter. Can I add a second rule for newsletters from several addresses, while keeping the first rule unchanged?
+
+[assistant]
+Yes. Gmail filters are separate, so you can leave the first rule unchanged and create another one for a carefully reviewed group of addresses.
+
+For a small set of exact addresses, use an OR search:
+
+```text
+{from:sender1@example.invalid from:sender2@example.invalid from:sender3@example.invalid}
+```
+
+Then:
+
+1. Run the search and inspect the results.
+2. Confirm every result is a newsletter and that the addresses are correct.
+3. Click the search-options icon and verify the query.
+4. Click **Create filter**.
+5. Select **Skip the Inbox (Archive it)** and **Apply the label**.
+6. Choose the existing `Newsletter-Review` label.
+7. Leave deletion, marking as read, forwarding, and importance changes unchecked.
+8. Do not select **Also apply filter to matching conversations** unless you intentionally want to change older messages.
+9. Save the filter.
+
+Using exact `from:` clauses is safer than matching a shared domain or words in the subject.
+
+[user]
+Some newsletters use different sender addresses but the same List-ID header. Can Gmail filters match that header directly?
+
+[assistant]
+Gmail’s standard filter form does not provide a reliable field for matching arbitrary headers such as `List-ID`. You can search for some header-related text, but header searches may be inconsistent and can include false matches. For a cautious setup, use the stable sender addresses you have verified.
+
+A practical workflow is:
+
+1. Open a message and choose “Show original.”
+2. Record the exact `List-ID` and sender address.
+3. Search by the sender address:
+   ```text
+   from:sender@example.invalid
+   ```
+4. Review the results.
+5. Add each verified address to a grouped search only if all messages are the same newsletter:
+   ```text
+   {from:sender1@example.invalid from:sender2@example.invalid}
+   ```
+6. Apply the same `Newsletter-Review` label and archive action.
+
+If the sender address changes frequently, keep the rule label-only or use Gmail’s unsubscribe controls rather than attempting a broad header-based rule. Avoid matching only a domain, display name, or generic subject phrase.
+
+[user]
+I now have two filters. How do I inspect or edit them later, and how can I avoid accidentally creating duplicate rules?
+
+[assistant]
+In Gmail, open the settings gear, choose **See all settings**, then open **Filters and Blocked Addresses**. Each filter appears with its search criteria and actions.
+
+For each filter, you can:
+
+- Click **edit** to change the criteria or actions.
+- Click **delete** to remove it.
+- Use **show search options** while editing to review the exact query.
+- Check whether both filters target the same sender or address group.
+- Compare their actions, especially archive, label, delete, and mark-as-read settings.
+
+To avoid duplicates:
+
+1. Keep a small text note such as:
+   ```text
+   Newsletter-Review rules
+   1. Exact sender: sender@example.invalid
+      Actions: archive + Newsletter-Review
+   2. Exact senders: sender1@example.invalid OR sender2@example.invalid
+      Actions: archive + Newsletter-Review
+   ```
+2. Before creating a new filter, search the existing list for the address.
+3. Prefer editing an existing grouped filter rather than creating another filter with overlapping criteria.
+4. Periodically test each query in the Gmail search box and compare the result count.
+5. Avoid adding a second rule solely because a message was not labeled; first check whether it was in Spam, Trash, or outside the date range you tested.
+
+Gmail may apply multiple matching filters, but duplicate labels usually have little visible effect; overlapping archive, delete, or forwarding actions are more important to avoid.
+
+[tool]
+You have 757 weighted tokens left

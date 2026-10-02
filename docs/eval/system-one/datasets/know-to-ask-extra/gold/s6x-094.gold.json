@@ -1,0 +1,23 @@
+{
+  "fixture_id": "s6x-094",
+  "turns": {
+    "1": {
+      "should_retrieve": false
+    },
+    "3": {
+      "should_retrieve": true,
+      "gold_slugs": [
+        "people/hollis-wyrridge"
+      ]
+    },
+    "5": {
+      "should_retrieve": true,
+      "gold_slugs": [
+        "people/mateo-tulvmere"
+      ]
+    },
+    "7": {
+      "should_retrieve": false
+    }
+  }
+}

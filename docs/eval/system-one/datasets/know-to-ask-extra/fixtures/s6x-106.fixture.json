@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-106",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/delphine-merrwaite",
+      "content": "---\ntitle: Delphine Merrwaite\ntype: person\naliases: [delphine]\nsummary: \"Delphine Merrwaite is the product lead at Juniperloft.\"\n---\n\nDelphine Merrwaite is the product lead at Juniperloft. Delphine asked for a longer pilot before signing, ideally a full quarter.\n"
+    },
+    {
+      "slug": "people/anselm-caldgrove",
+      "content": "---\ntitle: Anselm Caldgrove\ntype: person\naliases: [anselm]\nsummary: \"Anselm Caldgrove is the head of partnerships at Pylonyard.\"\n---\n\nAnselm Caldgrove is the head of partnerships at Pylonyard. Anselm objected to the auto-renewal clause in the draft contract.\n"
+    },
+    {
+      "slug": "people/rasmus-merrthorpe",
+      "content": "---\ntitle: Rasmus Merrthorpe\ntype: person\naliases: [rasmus]\nsummary: \"Rasmus Merrthorpe is the head of partnerships at Wandergate.\"\n---\n\nRasmus Merrthorpe is the head of partnerships at Wandergate.\n"
+    },
+    {
+      "slug": "companies/solacegate",
+      "content": "---\ntitle: Solacegate\ntype: company\nsummary: \"A company we met once at a trade show.\"\n---\n\nA company we met once at a trade show.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Prep me for the Merrwaite call, especially the pilot."
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "what's the latest with caldgrove on the contract?"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Done."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "perfect, appreciate it"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Here is what I have."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "Merrthorpe's train gets in at 5:40pm and the walk is 15 minutes. What time will they reach the office?"
+    }
+  ]
+}

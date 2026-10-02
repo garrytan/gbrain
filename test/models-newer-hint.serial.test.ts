@@ -98,7 +98,7 @@ describe('gbrain models — newer-available hint', () => {
     const think = report.per_task.find((r) => r.key === 'models.think')!;
     expect(think.resolved).toBe('anthropic:claude-opus-4-7');
     expect(think.newer_available).toBeUndefined();
-    expect(report.tiers.deep.newer_available?.model).toBe('claude-opus-5');
+    expect(report.tiers.deep.newer_available?.model).toBe('claude-opus-5-5');
   });
 });
 

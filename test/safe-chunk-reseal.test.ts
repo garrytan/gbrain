@@ -206,10 +206,15 @@ for (const kind of backends) {
         } });
         await engine.executeRaw('UPDATE pages SET chunker_version=1 WHERE source_id=$1', [sourceId]);
         const scope = await resolveRepairScope(engine, sourceId);
-        const { safeChunksRepair, safeChunkUpgradeAdvisory } = await import('../src/core/repair/safe-chunks.ts');
-        const advisory = await safeChunkUpgradeAdvisory(engine, true);
-        expect(advisory).toContain('3 page(s) are below the safe-chunk index version');
-        expect(advisory).toContain('gbrain repair safe-chunks --apply');
+        const safeChunksModule = await import('../src/core/repair/safe-chunks.ts');
+        const { safeChunksRepair } = safeChunksModule;
+        // Retired (wave 5): the pending count lives only in the doctor check.
+        expect('safeChunkUpgradeAdvisory' in safeChunksModule).toBe(false);
+        const { safeIndexPendingCheck } = await import('../src/commands/doctor/checks/safe-index.ts');
+        const pending = await safeIndexPendingCheck(engine);
+        expect(pending).toMatchObject({ status: 'warn', details: { pages_pending: 3, repair: 'safe-chunks' } });
+        expect(pending.message).toContain('3 page(s) are below the safe-chunk index version');
+        expect(pending.message).toContain('gbrain repair safe-chunks --apply');
         const preview = await runRepair(ctx, safeChunksRepair, scope, { apply: false, sourceFlag: sourceId });
         expect(preview).toMatchObject({ kind: 'safe-chunks', mode: 'dry_run', affected: 3,
           cost: { lifetime_ids: 0, receipt_bytes: 0, embedding_pages: 3 }, apply_command: `gbrain repair safe-chunks --source ${sourceId} --apply` });
@@ -225,7 +230,7 @@ for (const kind of backends) {
         expect(versions.every(r => Number(r.v) >= SAFE_FENCE_CHUNKER_VERSION)).toBe(true);
         const again = await runRepair(ctx, safeChunksRepair, scope, { apply: true, sourceFlag: sourceId });
         expect(again).toMatchObject({ affected: 0, applied: 0, complete: true });
-        expect(await safeChunkUpgradeAdvisory(engine, true)).toBeNull();
+        expect(await safeIndexPendingCheck(engine)).toMatchObject({ status: 'ok', details: { pages_pending: 0 } });
 
         // A provider failure after the re-seal keeps the re-seal and names the recovery command.
         await submitPageMutation(ctx, { operation: 'put_page', params: { slug: 'notes/c', content: md('Legacy body of notes/c.'), request_id: randomUUID() } });

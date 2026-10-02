@@ -27,6 +27,7 @@ import { createHash } from 'crypto';
 import { CR_MODES, type CRMode } from '../types.ts';
 import { getFtsLanguage } from '../fts-language.ts';
 import { loadConfigSnapshot, type BulkConfigReader } from '../config-snapshot.ts';
+import { pickDecideConfig } from '../ai/decide/config.ts';
 import { getRecipe } from '../ai/recipes/index.ts';
 // #3657 seam: the runtime/mode-bundle reranker default has ONE code home
 // (ai/defaults.ts — a leaf module, no SDK loads). The three bundles below
@@ -738,6 +739,8 @@ export interface ResolveSearchModeInput {
   sourceBoosts?: string;
   /** Raw `search.alias_token_hop` (read in the same snapshot; #5428, opt-in). */
   aliasTokenHop?: string;
+  /** decide.* keys from the same snapshot; absent when none are set (System One all-off fast path). */
+  decide?: Record<string, string>;
 }
 
 export interface ResolvedSearchKnobs extends ModeBundle {
@@ -965,6 +968,8 @@ export interface KnobsHashContext {
    * brain's rows under another brain's patterns in a multi-engine process.
    */
   intentPatterns?: string;
+  /** System One decide knobs (search/decide-stage.ts decideKnobsPart); absent when every slot is off. */
+  decide?: string;
 }
 
 export function knobsHash(
@@ -1148,6 +1153,9 @@ export function knobsHash(
     // re-orders the fused page, so a `lexical` write must never serve an
     // `always` lookup. A partial-knobs literal hashes as `always` — the deliberate pre-wave hash identity, NOT the bundle default (`lexical`).
     `mbg=${knobs.metadata_boost_gate ?? DEFAULT_METADATA_BOOST_GATE}`,
+    // System One (append-only, emitted only when a decide slot is not off, so
+    // the all-off key is unchanged and needs no version bump).
+    ...(ctx?.decide ? [`dec=${ctx.decide}`] : []),
   ];
   // #5691 (append-only, no version bump): only a non-empty query prefix adds
   // a part, so every row written without one keeps its key.
@@ -1508,10 +1516,12 @@ export async function loadSearchModeConfig(
     if (overrideValues[i] !== undefined) configMap[key] = overrideValues[i];
   });
 
+  const decide = pickDecideConfig(snapshot);
   return {
     mode,
     overrides: loadOverridesFromConfig(configMap),
     ...(sourceBoosts !== undefined ? { sourceBoosts } : {}),
     ...(aliasTokenHop !== undefined ? { aliasTokenHop } : {}),
+    ...(decide ? { decide } : {}),
   };
 }

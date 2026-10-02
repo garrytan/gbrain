@@ -1,0 +1,236 @@
+[user]
+My linter is complaining about import order in a small Python module. I thought the imports were already arranged correctly, but the check fails in CI. The file is `src/tools/clean_rows.py`.
+
+[assistant]
+What exact command is CI running, and what output does it show? Import-order checks can come from tools such as Ruff, isort, Flake8, or a formatter check, and the fix depends slightly on which one is configured.
+
+[user]
+The relevant job runs:
+
+```text
+ruff check src/tools/clean_rows.py
+```
+
+The output is:
+
+```text
+src/tools/clean_rows.py:2:1: I001 [*] Import block is un-sorted or un-formatted
+Found 1 error.
+[*] 1 fixable with the `--fix` option.
+```
+
+The file currently starts like this:
+
+```python
+import json
+from pathlib import Path
+import sys
+
+from tools.parsers import parse_row
+from tools.text import normalize_text
+```
+
+[assistant]
+That is Ruff’s import-sorting rule, usually enabled through the isort-compatible rule family. The standard automatic fix is:
+
+```bash
+ruff check --fix src/tools/clean_rows.py
+```
+
+Before changing it, you can preview the proposed edit with:
+
+```bash
+ruff check --diff src/tools/clean_rows.py
+```
+
+For the imports shown, Ruff will likely place the standard-library imports together in alphabetical order, followed by the blank line and local imports. A likely result is:
+
+```python
+import json
+import sys
+from pathlib import Path
+
+from tools.parsers import parse_row
+from tools.text import normalize_text
+```
+
+[assistant]
+If you want the formatter and linter workflow to be consistent, run the formatter after the import fix as well:
+
+```bash
+ruff check --fix src/tools/clean_rows.py
+ruff format src/tools/clean_rows.py
+ruff check src/tools/clean_rows.py
+```
+
+The first command applies safe lint fixes, including import sorting. The second applies Ruff’s formatting rules. The final command verifies that the file is clean.
+
+[assistant]
+Could I just run `ruff format` by itself? I want the smallest change possible and do not want to edit unrelated whitespace.
+
+[assistant]
+Yes, in this case the formatter is the appropriate fix if your project uses Ruff’s formatter. Run:
+
+```bash
+ruff format src/tools/clean_rows.py
+```
+
+Ruff format includes import sorting only when the project’s configuration enables the formatter’s import organization behavior in the relevant workflow; otherwise, `ruff format` may leave an `I001` error unchanged. Since your diagnostic explicitly says the issue is fixable with `--fix`, the most direct command is still:
+
+```bash
+ruff check --fix src/tools/clean_rows.py
+```
+
+To inspect the exact change without applying it:
+
+```bash
+ruff check --diff src/tools/clean_rows.py
+```
+
+[assistant]
+The wording is a little confusing. Does `ruff format` normally reorder imports, or should I use `ruff check --fix` for this particular error?
+
+[user]
+For this particular `I001` error, use `ruff check --fix`. Ruff’s formatter handles layout and formatting, while the import-sort diagnostic is fixed by Ruff’s lint autofix. If you want to run both project tools, use:
+
+```bash
+ruff check --fix src/tools/clean_rows.py
+ruff format src/tools/clean_rows.py
+```
+
+Then inspect the diff:
+
+```bash
+git diff -- src/tools/clean_rows.py
+```
+
+You should expect only the import block to change, approximately from:
+
+```python
+import json
+from pathlib import Path
+import sys
+```
+
+to:
+
+```python
+import json
+import sys
+from pathlib import Path
+```
+
+[assistant]
+I ran the diff command first. It printed this:
+
+```diff
+--- src/tools/clean_rows.py
++++ src/tools/clean_rows.py
+@@
+ import json
+-from pathlib import Path
+ import sys
++from pathlib import Path
+ 
+ from tools.parsers import parse_row
+ from tools.text import normalize_text
+```
+
+That is the only proposed edit. Is it safe to apply directly?
+
+[user]
+Yes. The diff only moves `from pathlib import Path` below the plain `import` statements within the standard-library group, which is the import ordering Ruff expects. Apply it with:
+
+```bash
+ruff check --fix src/tools/clean_rows.py
+```
+
+Then verify the result:
+
+```bash
+ruff check src/tools/clean_rows.py
+```
+
+A clean result normally produces no output and exits with status 0. You can also confirm the final file header with:
+
+```bash
+sed -n '1,12p' src/tools/clean_rows.py
+```
+
+Expected output:
+
+```text
+import json
+import sys
+from pathlib import Path
+
+from tools.parsers import parse_row
+from tools.text import normalize_text
+```
+
+[assistant]
+I applied the fix and ran the check. The terminal showed:
+
+```text
+$ ruff check --fix src/tools/clean_rows.py
+Found 1 error (1 fixed, 0 remaining).
+
+$ ruff check src/tools/clean_rows.py
+```
+
+The second command produced no output. Should I run the formatter too, or is the lint fix enough?
+
+[assistant]
+The lint fix is enough for the reported error, and the clean second check confirms that `I001` is resolved. Run `ruff format` only if your project’s normal validation includes a formatter check, such as:
+
+```bash
+ruff format --check src/tools/clean_rows.py
+```
+
+If that reports the file would be reformatted, apply:
+
+```bash
+ruff format src/tools/clean_rows.py
+```
+
+Otherwise, there is no need to make another change. A minimal verification sequence for this file is:
+
+```bash
+ruff check src/tools/clean_rows.py
+ruff format --check src/tools/clean_rows.py
+```
+
+[assistant]
+The formatter check also passes:
+
+```text
+$ ruff format --check src/tools/clean_rows.py
+1 file already formatted
+```
+
+So the file is clean now. For a repeatable command in the future, would `ruff check --fix` followed by `ruff format --check` be reasonable?
+
+[assistant]
+Yes. A practical sequence is:
+
+```bash
+ruff check --fix src/tools/clean_rows.py
+ruff format src/tools/clean_rows.py
+ruff check src/tools/clean_rows.py
+ruff format --check src/tools/clean_rows.py
+```
+
+For a quick local check when you do not want to modify the file, use:
+
+```bash
+ruff check src/tools/clean_rows.py
+ruff format --check src/tools/clean_rows.py
+```
+
+If the repository has a project-level configuration, running the commands from the repository root ensures Ruff reads the intended settings. After the fix, reviewing the focused diff is enough:
+
+```bash
+git diff -- src/tools/clean_rows.py
+```
+
+There should be no remaining import-order diagnostic, and the formatter check should continue to report that the file is already formatted.

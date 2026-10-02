@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-081",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "companies/kilnwharf",
+      "content": "---\ntitle: Kilnwharf\ntype: company\nsummary: \"Kilnwharf is a software vendor we work with.\"\n---\n\nKilnwharf is a software vendor we work with. Their support team promised a named account manager after the last outage.\n"
+    },
+    {
+      "slug": "people/delphine-quellcombe",
+      "content": "---\ntitle: Delphine Quellcombe\ntype: person\nsummary: \"Delphine Quellcombe is the head of partnerships at Nimbuscrest.\"\n---\n\nDelphine Quellcombe is the head of partnerships at Nimbuscrest. Delphine objected to the auto-renewal clause in the draft contract.\n"
+    },
+    {
+      "slug": "companies/orchidloft",
+      "content": "---\ntitle: Orchidloft\ntype: company\nsummary: \"Orchidloft is a software vendor we work with.\"\n---\n\nOrchidloft is a software vendor we work with.\n"
+    },
+    {
+      "slug": "companies/kilnvane",
+      "content": "---\ntitle: Kilnvane\ntype: company\nsummary: \"A company we met once at a trade show.\"\n---\n\nA company we met once at a trade show.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "remind me what we know about kilnwharf and support"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "before I reply to delphine, what was their position on the contract?"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "perfect, appreciate it"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Here is what I have."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "Write a one-line out-of-office reply saying I'm visiting Orchidloft on Monday."
+    }
+  ]
+}

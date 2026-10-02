@@ -93,6 +93,28 @@ describe('query op — CRAG gate (#1663)', () => {
     expect(crag.escalate_to_think).toBe(true);
   }, 30000);
 
+  test('#5390: types: [] escalates exactly like an omitted filter (the re-run reuses the normalized types)', async () => {
+    await engine.setConfig('search.crag_escalation', 'true');
+    let keywordCalls = 0;
+    const counted = new Proxy(engine, {
+      get(target, key) {
+        const value = Reflect.get(target, key, target);
+        if (key === 'searchKeyword') return (...args: unknown[]) => { keywordCalls++; return (value as (...a: unknown[]) => unknown).apply(target, args); };
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+    const calls: number[] = [];
+    for (const types of [undefined, []]) {
+      keywordCalls = 0;
+      const { ctx, meta } = ctxWithMeta();
+      await operationsByName.query.handler({ ...ctx, engine: counted } as OperationContext,
+        { query: 'zxqv nonexistent quux', expand: false, ...(types ? { types } : {}) });
+      expect(cragOf(meta).escalated).toBe(true);
+      calls.push(keywordCalls);
+    }
+    expect(calls[1]).toBe(calls[0]);
+  }, 30000);
+
   test('remote and unset-trust escalation cannot adopt a matching private page', async () => {
     await engine.setConfig('search.crag_escalation', 'true');
     await engine.putPage('notes/private-crag', {

@@ -1566,6 +1566,173 @@ BEGIN
   END IF;
 END \$\$;
 
+-- System One decide storage (decision receipts, spend ledger, calibrations, proposals).
+CREATE TABLE IF NOT EXISTS decision_receipts (
+  id                 BIGSERIAL PRIMARY KEY,
+  decision_id        TEXT NOT NULL,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+  source_id          TEXT,
+  slot               TEXT NOT NULL,
+  mode               TEXT NOT NULL,
+  provider           TEXT NOT NULL,
+  model_alias        TEXT,
+  model_resolved     TEXT,
+  question_kind      TEXT,
+  state_hash         TEXT,
+  question_hash      TEXT,
+  answer_value       REAL,
+  answer_choice      TEXT,
+  confidence         REAL,
+  threshold          REAL,
+  outcome            TEXT NOT NULL,
+  subject_ref        TEXT,
+  call_site          TEXT NOT NULL,
+  lane               TEXT NOT NULL,
+  policy_fingerprint TEXT,
+  calibration_ref    TEXT,
+  latency_ms         INTEGER,
+  input_tokens       INTEGER,
+  error_reason       TEXT,
+  protected          BOOLEAN NOT NULL DEFAULT false,
+  min_keep           INTEGER,
+  rank               INTEGER,
+  k_used             INTEGER,
+  remote             BOOLEAN NOT NULL DEFAULT false,
+  run_meta           TEXT
+);
+CREATE INDEX IF NOT EXISTS decision_receipts_slot_created_idx ON decision_receipts (slot, created_at);
+CREATE INDEX IF NOT EXISTS decision_receipts_model_slot_idx ON decision_receipts (model_resolved, slot);
+CREATE INDEX IF NOT EXISTS decision_receipts_decision_idx ON decision_receipts (decision_id);
+CREATE TABLE IF NOT EXISTS decide_spend (
+  request_id     TEXT PRIMARY KEY,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  source_id      TEXT,
+  slot           TEXT NOT NULL,
+  provider       TEXT NOT NULL,
+  model_resolved TEXT,
+  lane           TEXT NOT NULL,
+  remote         BOOLEAN NOT NULL DEFAULT false,
+  input_tokens   INTEGER NOT NULL DEFAULT 0,
+  cost_usd       DOUBLE PRECISION NOT NULL DEFAULT 0,
+  outcome        TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS decide_spend_created_idx ON decide_spend (created_at);
+CREATE TABLE IF NOT EXISTS decide_state (
+  key        TEXT PRIMARY KEY,
+  value      TEXT NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+DO \$rls\$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
+    ALTER TABLE decision_receipts ENABLE ROW LEVEL SECURITY;
+  END IF;
+END \$rls\$;
+DO \$rls\$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
+    ALTER TABLE decide_spend ENABLE ROW LEVEL SECURITY;
+  END IF;
+END \$rls\$;
+DO \$rls\$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
+    ALTER TABLE decide_state ENABLE ROW LEVEL SECURITY;
+  END IF;
+END \$rls\$;
+
+CREATE TABLE IF NOT EXISTS decide_calibrations (
+  id                  BIGSERIAL PRIMARY KEY,
+  slot                TEXT NOT NULL,
+  call_site           TEXT NOT NULL,
+  provider            TEXT NOT NULL,
+  model_resolved      TEXT NOT NULL,
+  threshold           REAL NOT NULL,
+  min_keep            INTEGER,
+  metric              TEXT NOT NULL,
+  metric_value        REAL,
+  ece                 REAL,
+  retest_sd           REAL,
+  repack_sd           REAL,
+  action_precision_lb REAL,
+  qualification       TEXT,
+  qualified_at        TIMESTAMPTZ,
+  policy_fingerprint  TEXT,
+  n                   INTEGER NOT NULL,
+  dataset_hash        TEXT,
+  split_hash          TEXT,
+  calibrate_ids_hash  TEXT,
+  calibrate_only      BOOLEAN NOT NULL DEFAULT true,
+  pack_shape          TEXT NOT NULL,
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  retired_at          TIMESTAMPTZ,
+  notes               TEXT
+);
+CREATE INDEX IF NOT EXISTS decide_calibrations_lookup_idx ON decide_calibrations (slot, provider, model_resolved, created_at DESC);
+DO \$rls\$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
+    ALTER TABLE decide_calibrations ENABLE ROW LEVEL SECURITY;
+  END IF;
+END \$rls\$;
+
+CREATE TABLE IF NOT EXISTS decide_proposals (
+  id             BIGSERIAL PRIMARY KEY,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  source_id      TEXT NOT NULL,
+  sweep_id       TEXT NOT NULL,
+  pair_index     INTEGER NOT NULL,
+  new_fact_id    BIGINT NOT NULL,
+  old_fact_id    BIGINT NOT NULL,
+  direction      TEXT NOT NULL DEFAULT 'new_supersedes_old',
+  p_supersede    REAL NOT NULL,
+  threshold      REAL,
+  proposal_floor REAL NOT NULL,
+  model_resolved TEXT,
+  status         TEXT NOT NULL DEFAULT 'pending',
+  decided_at     TIMESTAMPTZ,
+  before_state   TEXT,
+  after_state    TEXT,
+  UNIQUE (sweep_id, pair_index)
+);
+CREATE INDEX IF NOT EXISTS decide_proposals_status_created_idx ON decide_proposals (status, created_at);
+CREATE TABLE IF NOT EXISTS decide_sweep_deferred (
+  source_id       TEXT NOT NULL,
+  fact_id         BIGINT NOT NULL,
+  slot            TEXT NOT NULL,
+  reason          TEXT NOT NULL,
+  attempts        INTEGER NOT NULL DEFAULT 0,
+  next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (slot, source_id, fact_id)
+);
+DO \$rls\$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
+    ALTER TABLE decide_proposals ENABLE ROW LEVEL SECURITY;
+  END IF;
+END \$rls\$;
+DO \$rls\$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
+    ALTER TABLE decide_sweep_deferred ENABLE ROW LEVEL SECURITY;
+  END IF;
+END \$rls\$;
+
+-- gbrain facts relink attempts and journal (#5836).
+CREATE TABLE IF NOT EXISTS fact_relink_attempts (
+  source_id       TEXT NOT NULL,
+  fact_id         BIGINT NOT NULL,
+  outcome         TEXT NOT NULL,
+  reason          TEXT,
+  tier            TEXT,
+  model           TEXT,
+  target_slug     TEXT,
+  run_id          TEXT,
+  attempted_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (source_id, fact_id)
+);
+CREATE INDEX IF NOT EXISTS fact_relink_attempts_outcome_idx ON fact_relink_attempts (source_id, outcome, attempted_at);
+DO \$rls\$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
+    ALTER TABLE fact_relink_attempts ENABLE ROW LEVEL SECURITY;
+  END IF;
+END \$rls\$;
+
 `;
 
 export function getPGLiteSchema(

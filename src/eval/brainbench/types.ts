@@ -199,6 +199,8 @@ export interface HarnessTurnResult {
   /** Estimated tokens of injectedText (chars/4 heuristic; intrusion diagnostics). */
   injectedTokens: number;
   latencyMs: number;
+  /** System One (turn-context seams): the per-turn decide meta, present only when a decide slot is not off. */
+  decide?: import('../../core/search/decide-stage.ts').DecideSearchMeta;
 }
 
 export interface HarnessAdapter {
@@ -247,6 +249,8 @@ export interface TurnRow {
   /** Slugs injected from a source other than the fixture's active source (decision 14). */
   cross_source_slugs: string[];
   latency_ms: number;
+  /** System One arm (`--decide`): per-slot receipt for this turn (S6 recall_needed meta + decide spend). Absent when every slot is off. */
+  decide?: Partial<Record<import('../../core/ai/decide/types.ts').DecideSlot, import('../decide-eval-flags.ts').DecideSlotReceipt>>;
 }
 
 /** One harness × suite cell of the scoreboard. Counts first; rates derived. */
@@ -281,6 +285,8 @@ export interface BrainBenchResult {
   /** Fixtures that failed to seed (decision 12) — run exits 2 when non-empty. */
   seed_failures: Array<{ fixture_id: string; error: string }>;
   _meta?: { metric_glossary: Record<string, unknown> };
+  /** System One arm (`--decide`): flags, provider, calibrations, split and the per-slot roll-up. Absent when every slot is off. */
+  decide?: Record<string, unknown>;
 }
 
 // ---------------------------------------------------------------------------

@@ -20,7 +20,7 @@
 
 import { chunkText as recursiveChunk } from './recursive.ts';
 import { buildQualifiedName } from './qualified-names.ts';
-import { MERGE_PROTECTED_SYMBOL_TYPES } from './def-types.ts';
+import { MERGE_PROTECTED_SYMBOL_TYPES, declaresFunctionValue } from './def-types.ts';
 import { estimateTokens, estimateEmbedTokens, estimateEmbedTokensCeiling, DEFAULT_MAX_CHUNK_TOKENS } from './token-estimate.ts';
 import { safeSplitIndex } from '../text-safe.ts';
 import {
@@ -140,7 +140,8 @@ import G_ZIG from '../../assets/wasm/grammars/tree-sitter-zig.wasm' with { type:
 // top-level defs indexed to ZERO symbols). Chunk boundaries change for every
 // previously-merged file, so the bump forces a re-chunk that recovers the
 // erased symbols.
-export const CHUNKER_VERSION = 7;
+// v8 (N13-1): `const f = () => …` definitions keep their own named chunk.
+export const CHUNKER_VERSION = 8;
 
 // Lazy-loaded tree-sitter module (v0.22.x API: Parser is default export)
 let Parser: typeof import('web-tree-sitter') | null = null;
@@ -184,6 +185,8 @@ export interface CodeChunkMetadata {
    * Null when symbolName is missing (merged chunks, module-level fallback).
    */
   symbolNameQualified?: string | null;
+  /** N13-1: a const/let/var whose value is a function — merge-protected (def-types.ts). */
+  definesFunction?: boolean;
 }
 
 export interface CodeChunk {
@@ -835,13 +838,15 @@ async function chunkParsedLanguage(
       }
 
       if (estimateTokens(nodeText) <= largeThreshold) {
-        chunks.push(buildChunk({
+        const chunk = buildChunk({
           body: nodeText, filePath, language, symbolName, symbolType,
           startLine: node.startPosition.row + 1,
           endLine: endNode.endPosition.row + 1,
           index: chunks.length,
           parentSymbolPath: [],
-        }));
+        });
+        if (declaresFunctionValue(typeNode)) chunk.metadata.definesFunction = true;
+        chunks.push(chunk);
         continue;
       }
 
@@ -947,7 +952,8 @@ function mergeSmallSiblings(chunks: CodeChunk[], chunkTarget: number): CodeChunk
   // accumulated into one. The set is a derived view of code-def's DEF_TYPES
   // (def-types.ts), so the lookup allowlist and this guard cannot drift.
   const isDefChunk = (c: CodeChunk): boolean =>
-    c.metadata.symbolName != null && MERGE_PROTECTED_SYMBOL_TYPES.has(c.metadata.symbolType);
+    c.metadata.symbolName != null &&
+    (MERGE_PROTECTED_SYMBOL_TYPES.has(c.metadata.symbolType) || c.metadata.definesFunction === true);
   const merged: CodeChunk[] = [];
   let i = 0;
   while (i < chunks.length) {

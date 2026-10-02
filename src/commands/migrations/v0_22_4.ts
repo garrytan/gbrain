@@ -25,7 +25,7 @@ import { existsSync, mkdirSync, writeFileSync, readFileSync, appendFileSync } fr
 import { join } from 'path';
 import type { Migration, OrchestratorOpts, OrchestratorResult, OrchestratorPhaseResult } from './types.ts';
 import type { BrainEngine } from '../../core/engine.ts';
-import { loadConfig, toEngineConfig } from '../../core/config.ts';
+import { loadConfig, toEngineConfig, gbrainPath } from '../../core/config.ts';
 import { createEngine } from '../../core/engine-factory.ts';
 import { scanBrainSources, type AuditReport } from '../../core/brain-writer.ts';
 
@@ -37,10 +37,7 @@ export function __setTestEngineOverride(engine: BrainEngine | null): void {
   testEngineOverride = engine;
 }
 
-function gbrainDir(): string {
-  return join(process.env.HOME || '', '.gbrain');
-}
-function migrationsDir(): string { return join(gbrainDir(), 'migrations'); }
+function migrationsDir(): string { return gbrainPath('migrations'); }
 function auditReportPath(): string { return join(migrationsDir(), 'v0.22.4-audit.json'); }
 function pendingHostWorkPath(): string { return join(migrationsDir(), 'pending-host-work.jsonl'); }
 
@@ -208,15 +205,19 @@ export const v0_22_4: Migration = {
   version: '0.22.4',
   featurePitch: {
     headline: 'Frontmatter-guard ships — broken brain pages can\'t hide',
-    description:
-      'gbrain v0.22.4 adds end-to-end frontmatter validation: a `gbrain frontmatter` CLI ' +
-      '(validate / audit / install-hook), a `frontmatter_integrity` doctor subcheck, a ' +
-      'pre-commit hook helper, and a new frontmatter-guard skill. The migration is audit-only ' +
-      '(it never mutates your brain) — it scans every registered source, writes a per-source ' +
-      'report to ~/.gbrain/migrations/v0.22.4-audit.json, and queues a TODO with the exact fix ' +
-      'command for malformed frontmatter only. Missing frontmatter is treated as optional metadata ' +
-      'coverage for broad document sources. Run `gbrain frontmatter validate <source-path> --fix` ' +
-      'to repair (creates centralized backups under ~/.gbrain/backups/frontmatter). Ships frontmatter-guard.',
+    // Getter: paths follow GBRAIN_HOME at print time, not module load.
+    get description() {
+      return (
+        'gbrain v0.22.4 adds end-to-end frontmatter validation: a `gbrain frontmatter` CLI ' +
+        '(validate / audit / install-hook), a `frontmatter_integrity` doctor subcheck, a ' +
+        'pre-commit hook helper, and a new frontmatter-guard skill. The migration is audit-only ' +
+        '(it never mutates your brain) — it scans every registered source, writes a per-source ' +
+        `report to ${auditReportPath()}, and queues a TODO with the exact fix ` +
+        'command for malformed frontmatter only. Missing frontmatter is treated as optional metadata ' +
+        'coverage for broad document sources. Run `gbrain frontmatter validate <source-path> --fix` ' +
+        `to repair (creates centralized backups under ${gbrainPath('backups', 'frontmatter')}). Ships frontmatter-guard.`
+      );
+    },
   },
   orchestrator,
 };

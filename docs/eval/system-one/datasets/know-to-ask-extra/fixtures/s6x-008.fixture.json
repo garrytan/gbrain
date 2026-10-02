@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-008",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/maren-haskdale",
+      "content": "---\ntitle: Maren Haskdale\ntype: person\naliases: [maren]\nsummary: \"Maren Haskdale is the operations director at Quartzgate.\"\n---\n\nMaren Haskdale is the operations director at Quartzgate. Maren objected to the auto-renewal clause in the draft contract.\n"
+    },
+    {
+      "slug": "people/odette-marrford",
+      "content": "---\ntitle: Odette Marrford\ntype: person\naliases: [odette]\nsummary: \"Odette Marrford is the operations director at Russetmoor.\"\n---\n\nOdette Marrford is the operations director at Russetmoor.\n"
+    },
+    {
+      "slug": "projects/onboarding-revamp",
+      "content": "---\ntitle: Onboarding Revamp\ntype: project\nsummary: \"Onboarding Revamp: The plan is to replace the setup call with a guided checklist and a two-week check-in.\"\n---\n\nOnboarding Revamp: The plan is to replace the setup call with a guided checklist and a two-week check-in.\n"
+    },
+    {
+      "slug": "people/fintan-grisbarrow",
+      "content": "---\ntitle: Fintan Grisbarrow\ntype: person\nsummary: \"Fintan Grisbarrow is the head of partnerships at Nimbusvane.\"\n---\n\nFintan Grisbarrow is the head of partnerships at Nimbusvane.\n"
+    },
+    {
+      "slug": "people/mateo-orrinbarrow",
+      "content": "---\ntitle: Mateo Orrinbarrow\ntype: person\naliases: [mateo]\nsummary: \"A contact from a conference last spring.\"\n---\n\nA contact from a conference last spring.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Remind me of Haskdale's position on the contract before our sync."
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Okay, noted."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Translate into Spanish: 'Marrford will join the meeting at noon.'"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Done."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "remind me what we settled on for that onboarding idea"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Okay, noted."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "is fintan a common name anywhere? thinking about it for a character"
+    }
+  ]
+}

@@ -137,3 +137,48 @@ though the parent connects fine, and running in-process removes the
 spawn entirely. The grandfather migration runs as a chunked bulk SQL
 pass (keyed on the page PK, soft-delete-filtered, source-safe) and
 completes in seconds on an 80K-page PGLite brain.
+
+## Hybrid search returns only keyword hits
+
+**Symptom.** On a large Postgres brain, `gbrain query` answers look keyword-only,
+search metadata carries `vector_candidates_incomplete`, or each query takes about
+8 seconds. The vector arm ran out of its 8 s candidate budget, usually because
+the planner chose a sequential scan over the HNSW index (`idx_chunks_embedding`).
+
+**Say to your agent:** *"Check whether vector search is using its index"* — the
+agent runs `gbrain doctor` and reads the `vector_plan` check.
+
+`gbrain doctor` reports `vector_plan` (Postgres only):
+
+- `ok`: the statement vector search sends uses the HNSW index.
+- skipped: PGLite, a column wider than pgvector's HNSW cap (exact scan by
+  design), or fewer than 10,000 embedded chunks (a sequential scan is right
+  for a small brain).
+- warn, index unused: the message names the plan the planner chose and whether
+  the HNSW index exists and is valid. Fix in this order: upgrade gbrain on the
+  brain host (`gbrain upgrade`) and rerun `gbrain doctor`; if the index is
+  missing or INVALID, run the `CREATE INDEX CONCURRENTLY` / `REINDEX INDEX
+  CONCURRENTLY` command doctor prints.
+- warn, stale text above 5%: run `gbrain embed --stale` so chunks edited after
+  embedding get fresh vectors.
+- warn, legacy guard: see below.
+
+**Legacy guard (one-release rollback).** If vector search got slower or
+returned different results right after the upgrade that moved the content
+freshness check out of the HNSW candidate scan (#5824), you can restore the
+previous statement while you report it:
+
+1. The setting belongs to the process that runs searches on the brain host
+   (`gbrain serve`, autopilot, job workers), never to a thin client.
+2. Set it with `gbrain config set search.vector_legacy_guard true`, or export
+   `GBRAIN_VECTOR_LEGACY_GUARD=1` in that service's environment (the variable
+   wins over the config key).
+3. Restart the owning service. It reads the setting once at its first search and
+   prints `[gbrain] vector legacy guard active` to stderr.
+4. Confirm with `gbrain doctor`: `vector_plan` warns "legacy guard configured …
+   active after restarting the owning service".
+5. Remove it once the regression is fixed: `gbrain config set
+   search.vector_legacy_guard false` (or unset the variable) and restart again.
+
+The guard is retired in the next release; that release prints a one-time notice
+when the inert setting is still present.

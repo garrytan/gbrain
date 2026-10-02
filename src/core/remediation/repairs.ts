@@ -8,12 +8,14 @@
  * repair step always runs to completion. A paid step (one that may queue
  * embeddings) is not started when its estimate exceeds the remaining budget;
  * free steps still run. Repairs run in-process on the brain host through the
- * same runner `gbrain repair` uses, never as Minion jobs.
+ * same runner `gbrain repair` uses, never as Minion jobs. Explicit-only kinds
+ * are never planned or run here: the plan lists them with their preview
+ * command, and `runRepairSteps` refuses a supplied step that names one.
  */
 import type { BrainEngine } from '../engine.ts';
 import { OperationError } from '../ops/contract.ts';
 import { resolveRepairScope, type RepairKind } from '../repair/core.ts';
-import { REPAIR_REGISTRY, repairApplyCommand, repairMaySpend, repairRunner } from '../repair/registry.ts';
+import { AUTO_REPAIR_REGISTRY, explicitKindRequired, repairApplyCommand, repairMaySpend, repairRunner, repairSpec } from '../repair/registry.ts';
 
 export interface RepairPlanStep {
   step: number;
@@ -46,12 +48,12 @@ export interface RepairStepResult {
   message?: string;
 }
 
-/** Brain-wide preview of every registered kind; kinds with nothing pending are omitted. */
+/** Brain-wide preview of every kind `--all` runs; kinds with nothing pending are omitted. */
 export async function planRepairSteps(engine: BrainEngine, opts: { noEmbed?: boolean; kinds?: readonly RepairKind[] } = {}): Promise<RepairPlanStep[]> {
   const scope = await resolveRepairScope(engine);
   const runner = await repairRunner(engine, { apply: false, noEmbed: opts.noEmbed, logger: { info() {}, warn() {}, error() {} } });
   const steps: RepairPlanStep[] = [];
-  for (const spec of REPAIR_REGISTRY) {
+  for (const spec of AUTO_REPAIR_REGISTRY) {
     if (opts.kinds && !opts.kinds.includes(spec.kind)) continue;
     const preview = await runner.run(spec.kind, scope);
     // contextual-mode stamps only sealed pages; pages the safe-chunks step re-seals become eligible during the run.
@@ -70,7 +72,8 @@ export async function planRepairSteps(engine: BrainEngine, opts: { noEmbed?: boo
  * Apply repair steps in order. `remainingUsd()` is the budget still available
  * (undefined = no cap); a paid step whose estimate exceeds it (or cannot be
  * estimated under a cap) is refused before it starts and the run continues
- * with the next step. Only a trusted local caller may run repairs.
+ * with the next step. Only a trusted local caller may run repairs, and a step
+ * naming an explicit-only kind refuses the whole run before any step starts.
  */
 export async function runRepairSteps(engine: BrainEngine, steps: RepairPlanStep[], opts: {
   remote: boolean; noEmbed?: boolean; remainingUsd: () => number | undefined;
@@ -84,6 +87,8 @@ export async function runRepairSteps(engine: BrainEngine, steps: RepairPlanStep[
 }): Promise<RepairStepResult[]> {
   if (opts.remote !== false) throw new OperationError('permission_denied', 'Repair steps are PROTECTED: only a trusted local caller on the brain host can run them.',
     'On the brain host, run: gbrain doctor --remediation-plan');
+  const explicit = steps.find(step => repairSpec(step.kind)?.explicit_only);
+  if (explicit) throw explicitKindRequired(explicit.kind);
   const { BudgetExhausted } = await import('../budget/budget-tracker.ts');
   const scope = await resolveRepairScope(engine);
   const runner = await repairRunner(engine, { apply: true, noEmbed: opts.noEmbed });

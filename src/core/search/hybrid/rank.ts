@@ -15,6 +15,9 @@ import { type PostFusionOpts, RRF_K, cosineReScore, resolveWalkDedupCap, rrfFusi
 import { type RelationalEvidenceSlotDecision, ensureRelationalEvidenceSlot } from '../relational-recall.ts';
 import { type RelationalRerankPinDecision, pinRelationalRows } from '../relational-rerank-pin.ts';
 import { type RerankFailedReason, type RerankPassThroughReason, type RerankSkipReason, applyReranker } from '../rerank.ts';
+import type { RerankMeta } from '../../ai/gateway.ts';
+import { applyEvidenceGate, recordRerankReceipts, startRerankShadow } from '../decide-stage.ts';
+import { rerankEgressDenied } from '../decide-retrieval.ts';
 import type { SearchResult } from '../../types.ts';
 import { applyAliasHop } from '../alias-hop.ts';
 import { effectiveRrfK } from '../intent-weights.ts';
@@ -258,18 +261,33 @@ export async function rerankAndPin(
   // pass-through (#4648: provider answered 200 with an empty/malformed result
   // set) is stamped `rerank_passthrough`, so --explain, telemetry and eval rows
   // can tell "reranked" from "fell through in RRF order" — never stderr.
-  const reranked = rerankerOpts.enabled
+  // System One S1 (search/decide-stage.ts): Jev shadow scoring starts in
+  // parallel; `on` mode writes receipts. Both are no-ops when the slot is off.
+  const s1 = req.decide?.policies.rerank;
+  req.decide?.budget.anchor();
+  const s1Shadow = startRerankShadow(req.decide, query, deduped.slice(0, rerankerOpts.enabled ? rerankerOpts.topNIn : resolvedMode.reranker_top_n_in), rerankerOpts.timeoutMs ?? resolvedMode.reranker_timeout_ms);
+  let s1Failure: string | undefined;
+  let s1Meta: RerankMeta | undefined;
+  // Owner decision: the Jev reranker never receives a candidate from a source in
+  // decide.egress.deny_sources; such a query keeps fused order (egress_denied).
+  const egressDenied = rerankerOpts.enabled && rerankEgressDenied(req.modeInput.decide, rerankerOpts.model ?? resolvedMode.reranker_model, deduped.slice(0, rerankerOpts.topNIn));
+  if (egressDenied) { s1Failure = 'egress_denied'; pushDegraded(degraded, 'reranker_skipped', 'egress_denied'); }
+  const reranked = rerankerOpts.enabled && !egressDenied
     ? await applyReranker(query, deduped, {
         ...(rerankerOpts as any),
-        onSkip: (reason: RerankSkipReason) => pushDegraded(degraded, 'reranker_skipped', reason),
-        onFailure: (reason: RerankFailedReason) => pushDegraded(degraded, 'rerank_failed', reason),
+        ...(s1?.effective === 'on' ? { timeoutMs: Math.max(1, Math.min(rerankerOpts.timeoutMs ?? resolvedMode.reranker_timeout_ms, req.decide!.budget.remaining())) } : {}),
+        onSkip: (reason: RerankSkipReason) => { s1Failure = reason; pushDegraded(degraded, 'reranker_skipped', reason); },
+        onFailure: (reason: RerankFailedReason) => { s1Failure = reason; pushDegraded(degraded, 'rerank_failed', reason); },
         onPassThrough: (reason: RerankPassThroughReason) => {
           pushDegraded(degraded, 'rerank_passthrough', reason);
           // Chain a per-call callback if the caller supplied one.
           (rerankerOpts as { onPassThrough?: (r: RerankPassThroughReason) => void }).onPassThrough?.(reason);
         },
+        onMeta: (m: RerankMeta) => { s1Meta = m; req.rerankMeta = { model_resolved: m.model_resolved }; },
       })
     : deduped;
+  if (s1 && rerankerOpts.enabled) recordRerankReceipts(req.decide, query, reranked.slice(0, rerankerOpts.topNIn).filter((r) => s1Failure !== undefined || r.rerank_score !== undefined), s1Meta, s1Failure);
+  if (s1Shadow) await s1Shadow(reranked);
 
   // Ranker wave (R1 receipt) — relational-arm rows bypass reranker DEMOTION:
   // re-pinned above the reranked text rows in fused order, bounded by
@@ -311,6 +329,8 @@ export async function sizeReturnPool(
   // the full alias-hopped set before any adaptive trim so the kept results
   // carry evidence regardless of where the cap lands.
   stampEvidence(aliasHopped, { cosineFloor: resolvedMode.evidence_cosine_floor });
+  // System One S3 evidence gate (no-op when the slot is off): prunes, never reorders.
+  const gated = await applyEvidenceGate(req.decide, query, aliasHopped);
 
   // v0.42 — intent-aware adaptive return-sizing (opt-in, default off). Trim
   // the ranked candidate set to an intent-driven cap BEFORE the limit slice,
@@ -322,14 +342,14 @@ export async function sizeReturnPool(
     opts?.adaptiveReturn,
     adaptiveReturnFromConfig(cfgForColumn as Record<string, unknown> | null),
   );
-  let returnPool = aliasHopped;
+  let returnPool = gated;
   let adaptiveDecision: AdaptiveReturnDecision | undefined;
   if (adaptiveCfg.enabled && offset === 0) {
     // 2026-08 fix wave (E5c): AdaptiveQueryIntent now equals the full
     // QueryIntent union, so the classifier's intent passes through unchanged
     // ('concept' → otherMax, the breadth cap). The cache key folds this SAME
     // intent class (ari= in knobsHash v=27) so cross-intent rows never serve.
-    const r = applyAdaptiveReturn(aliasHopped, suggestions.intent, adaptiveCfg);
+    const r = applyAdaptiveReturn(gated, suggestions.intent, adaptiveCfg);
     returnPool = r.kept;
     adaptiveDecision = r.decision;
   }
@@ -364,7 +384,8 @@ export async function sizeReturnPool(
       returnPool,
       // Pinned relational rows are excluded from the cliff math (low scores by
       // construction) and preserved below — text-row autocut is unchanged.
-      (x) => (x.relational_pinned ? undefined : x.rerank_score),
+      // System One rubric scores are level indices, not a calibrated cliff signal.
+      (x) => (x.relational_pinned || x.rerank_score_kind === 'rubric' ? undefined : x.rerank_score),
       // v0.46.15 (#1863): minTopScore is the weak-top floor — below it the
       // cliff signal is untrustworthy and autocut no-ops. #3621: minKeep is
       // now the configured floor instead of the hardcoded 1.

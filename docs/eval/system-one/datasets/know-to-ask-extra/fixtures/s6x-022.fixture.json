@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-022",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/emrys-orringrove",
+      "content": "---\ntitle: Emrys Orringrove\ntype: person\naliases: [emrys]\nsummary: \"Emrys Orringrove is the head of partnerships at Solacevane.\"\n---\n\nEmrys Orringrove is the head of partnerships at Solacevane. Emrys suggested holding the offsite somewhere reachable by train.\n"
+    },
+    {
+      "slug": "people/elodie-brinwick",
+      "content": "---\ntitle: Elodie Brinwick\ntype: person\naliases: [elodie]\nsummary: \"Elodie Brinwick is the user's startup advisor.\"\n---\n\nElodie Brinwick is the user's startup advisor. Elodie wants the proposal revised to drop the onboarding fee.\n"
+    },
+    {
+      "slug": "people/kasimir-caldridge",
+      "content": "---\ntitle: Kasimir Caldridge\ntype: person\naliases: [kasimir]\nsummary: \"Kasimir Caldridge is the head of sales at Cobaltfold.\"\n---\n\nKasimir Caldridge is the head of sales at Cobaltfold.\n"
+    },
+    {
+      "slug": "companies/pylonloft",
+      "content": "---\ntitle: Pylonloft\ntype: company\nsummary: \"A company we met once at a trade show.\"\n---\n\nA company we met once at a trade show.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "explain the difference between gross margin and net margin"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Remind me of Orringrove's position on the offsite before our sync."
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Okay, noted."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "remind me what my advisor said about the proposal"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Okay, noted."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "How do you spell Caldridge in the NATO phonetic alphabet?"
+    }
+  ]
+}

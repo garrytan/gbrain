@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-019",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/teodor-vashthorpe",
+      "content": "---\ntitle: Teodor Vashthorpe\ntype: person\nsummary: \"Teodor Vashthorpe is the head of partnerships at Nimbusfold.\"\n---\n\nTeodor Vashthorpe is the head of partnerships at Nimbusfold. Teodor wants to pause the second engineering hire until the renewal closes.\n"
+    },
+    {
+      "slug": "people/calder-caldwick",
+      "content": "---\ntitle: Calder Caldwick\ntype: person\naliases: [calder]\nsummary: \"Calder Caldwick is the head of sales at Cobaltwharf.\"\n---\n\nCalder Caldwick is the head of sales at Cobaltwharf.\n"
+    },
+    {
+      "slug": "people/delphine-kestholt",
+      "content": "---\ntitle: Delphine Kestholt\ntype: person\nsummary: \"Delphine Kestholt is the procurement lead at Lumengate.\"\n---\n\nDelphine Kestholt is the procurement lead at Lumengate.\n"
+    },
+    {
+      "slug": "people/cassius-tulvbarrow",
+      "content": "---\ntitle: Cassius Tulvbarrow\ntype: person\naliases: [cassius]\nsummary: \"Cassius Tulvbarrow is the operations director at Tidalcrest.\"\n---\n\nCassius Tulvbarrow is the operations director at Tidalcrest.\n"
+    },
+    {
+      "slug": "people/lucan-merrbarrow",
+      "content": "---\ntitle: Lucan Merrbarrow\ntype: person\naliases: [lucan]\nsummary: \"A contact from a conference last spring.\"\n---\n\nA contact from a conference last spring.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "quick one: what's teodor vashthorpe's view on the hiring plan?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Here is what I have."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Caldwick's train gets in at 5:40pm and the walk is 15 minutes. What time will they reach the office?"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "Our hotel is on Kestholt Street. Any tips for finding breakfast near a hotel in a new city?"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Here is what I have."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "How many letters are in the name Tulvbarrow?"
+    }
+  ]
+}

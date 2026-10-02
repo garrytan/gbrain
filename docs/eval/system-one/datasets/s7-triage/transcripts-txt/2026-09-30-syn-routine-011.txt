@@ -1,0 +1,171 @@
+[user]
+I’m debugging a failing unit test in a small Python project. The test loads a JSON fixture, but it fails before the assertion. Can you help me trace it?
+
+[assistant]
+Sure. Please paste the test, the fixture-loading helper if there is one, and the complete failure output, including the traceback. Also mention the command you used to run the test and the relevant directory layout.
+
+[user]
+The test is `tests/test_parser.py`:
+
+```python
+from pathlib import Path
+import json
+
+from app.parser import parse_record
+
+FIXTURE = Path(__file__).parent / "fixtures" / "sample_reccord.json"
+
+def test_parse_record():
+    data = json.loads(FIXTURE.read_text())
+    result = parse_record(data)
+    assert result["status"] == "ready"
+    assert result["count"] == 3
+```
+
+I ran `python -m pytest tests/test_parser.py -q`.
+
+[assistant]
+The likely issue is the filename: `sample_reccord.json` contains `reccord` with two c’s. Before changing anything, please paste the exact traceback and the output of a directory listing for `tests/fixtures`, since the actual file may also contain that spelling.
+
+[assistant]
+Also, is the test being run from the project root, and does `tests/fixtures` contain `sample_record.json` or another similarly named file? A path typo is independent of the current working directory here because `Path(__file__).parent` makes the path relative to the test file.
+
+[user]
+The traceback is:
+
+```text
+============================= test session starts =============================
+platform linux -- Python 3.12.2, pytest-8.2.1
+rootdir: /tmp/parser-demo
+collected 1 item
+
+tests/test_parser.py F
+
+================================== FAILURES ===================================
+______________________________ test_parse_record _______________________________
+
+    def test_parse_record():
+>       data = json.loads(FIXTURE.read_text())
+
+tests/test_parser.py:10: 
+...
+E   FileNotFoundError: [Errno 2] No such file or directory:
+E   '/tmp/parser-demo/tests/fixtures/sample_reccord.json'
+=========================== short test summary info ============================
+FAILED tests/test_parser.py::test_parse_record - FileNotFoundError: [Errno 2] No such file or directory: '/tmp/parser-demo/tests/fixtures/sample_reccord.json'
+1 failed in 0.04s
+```
+
+[assistant]
+That confirms the failure occurs while reading the fixture, before `json.loads` or `parse_record` runs. The traceback shows the test requests:
+
+```text
+/tmp/parser-demo/tests/fixtures/sample_reccord.json
+```
+
+The next step is to compare that exact name with the directory contents. Run:
+
+```bash
+find tests/fixtures -maxdepth 1 -type f -printf '%f\n' | sort
+```
+
+If the output contains `sample_record.json`, then the fixture path has the typo identified above.
+
+[user]
+I ran it:
+
+```text
+$ find tests/fixtures -maxdepth 1 -type f -printf '%f\n' | sort
+sample_record.json
+sample_record_empty.json
+```
+
+The intended fixture is `sample_record.json`. There’s no helper; the test reads it directly.
+
+[assistant]
+Change the fixture constant from `sample_reccord.json` to `sample_record.json`:
+
+```python
+FIXTURE = Path(__file__).parent / "fixtures" / "sample_record.json"
+```
+
+Then rerun the same test:
+
+```bash
+python -m pytest tests/test_parser.py -q
+```
+
+Because the path is built from `__file__`, no working-directory change is needed.
+
+[user]
+I made that edit. The test now passes:
+
+```text
+$ python -m pytest tests/test_parser.py -q
+.                                                                        [100%]
+1 passed in 0.03s
+```
+
+Is there anything else I should check, or was the typo the whole problem?
+
+[assistant]
+The typo was the whole cause of this failure. The original exception was `FileNotFoundError`, and the corrected path resolves to the existing fixture.
+
+A quick verification is to inspect the file and run the test with verbose output:
+
+```bash
+test -f tests/fixtures/sample_record.json
+python -m pytest tests/test_parser.py -vv
+```
+
+You can also check the corrected line directly:
+
+```bash
+grep -n 'FIXTURE' tests/test_parser.py
+```
+
+Expected output should include:
+
+```text
+7:FIXTURE = Path(__file__).parent / "fixtures" / "sample_record.json"
+```
+
+If the project has a broader test command, running it is reasonable, but there is no indication from this traceback that `parse_record` or the fixture contents need changes.
+
+[user]
+I checked the file and ran verbose mode:
+
+```text
+$ test -f tests/fixtures/sample_record.json
+$ python -m pytest tests/test_parser.py -vv
+============================= test session starts =============================
+collecting ... collected 1 item
+
+tests/test_parser.py::test_parse_record PASSED                         [100%]
+
+============================== 1 passed in 0.03s ===============================
+```
+
+The grep output is also:
+
+```text
+7:FIXTURE = Path(__file__).parent / "fixtures" / "sample_record.json"
+```
+
+[assistant]
+That verifies the fix. The test now finds the intended fixture, parses it, calls `parse_record`, and passes both assertions. No further change is needed for this specific issue.
+
+For a minimal final check, review the diff to ensure only the filename typo was corrected:
+
+```bash
+git diff -- tests/test_parser.py
+```
+
+The relevant diff should look like:
+
+```diff
+- FIXTURE = Path(__file__).parent / "fixtures" / "sample_reccord.json"
++ FIXTURE = Path(__file__).parent / "fixtures" / "sample_record.json"
+```
+
+If that is the only change, the debugging is complete.

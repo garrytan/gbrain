@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-094",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/rohan-lornmere",
+      "content": "---\ntitle: Rohan Lornmere\ntype: person\nsummary: \"Rohan Lornmere is the procurement lead at Marbleyard.\"\n---\n\nRohan Lornmere is the procurement lead at Marbleyard.\n"
+    },
+    {
+      "slug": "people/hollis-wyrridge",
+      "content": "---\ntitle: Hollis Wyrridge\ntype: person\naliases: [hollis]\nsummary: \"Hollis Wyrridge is the finance lead at Glintfold.\"\n---\n\nHollis Wyrridge is the finance lead at Glintfold. Hollis wants to pause the second engineering hire until the renewal closes.\n"
+    },
+    {
+      "slug": "people/mateo-tulvmere",
+      "content": "---\ntitle: Mateo Tulvmere\ntype: person\naliases: [mateo]\nsummary: \"Mateo Tulvmere is the recruiter helping us hire engineers.\"\n---\n\nMateo Tulvmere is the recruiter helping us hire engineers. Mateo objected to the auto-renewal clause in the draft contract.\n"
+    },
+    {
+      "slug": "people/florian-caldridge",
+      "content": "---\ntitle: Florian Caldridge\ntype: person\nsummary: \"Florian Caldridge is the procurement lead at Cobaltfold.\"\n---\n\nFlorian Caldridge is the procurement lead at Cobaltfold.\n"
+    },
+    {
+      "slug": "people/ruairi-fenwick",
+      "content": "---\ntitle: Ruairi Fenwick\ntype: person\naliases: [ruairi]\nsummary: \"A contact from a conference last spring.\"\n---\n\nA contact from a conference last spring.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Fix the typos in this line of my email to Lornmere: 'thnaks for the quick turnaround, talk soon'"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Remind me of Wyrridge's position on the hiring plan before our sync."
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "what did the recruiter suggest for the contract?"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Okay, noted."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "Our hotel is on Caldridge Street. Any tips for finding breakfast near a hotel in a new city?"
+    }
+  ]
+}

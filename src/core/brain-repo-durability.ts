@@ -501,9 +501,10 @@ export interface BoundedExecOptions {
 
 /**
  * `execFile` that settles within `timeout` or on abort even when the runtime
- * never delivers the child's exit or pipe close. Bun through 1.3.x drops
- * one-shot pidfd and pipe events when a callback re-enters the event loop
- * (bun:test `expect().resolves/.rejects`, oven-sh/bun#30301): execFile's
+ * never delivers the child's exit or pipe close. Bun drops one-shot pipe
+ * events (and, before 1.3.14, pidfd exit events: oven-sh/bun#30301) when a
+ * callback re-enters the event loop (bun:test `expect().resolves/.rejects`;
+ * pipe loss still reproduces on 1.4.2): execFile's
  * callback and its own `timeout` then never fire and the child stays a zombie,
  * so the deadline and abort are enforced with our own timer.
  *

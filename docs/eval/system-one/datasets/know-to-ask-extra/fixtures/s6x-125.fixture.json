@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-125",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "projects/referral-program",
+      "content": "---\ntitle: Referral Program\ntype: project\nsummary: \"Referral Program: We chose a one-month credit for both sides and capped it at three referrals per account.\"\n---\n\nReferral Program: We chose a one-month credit for both sides and capped it at three referrals per account.\n"
+    },
+    {
+      "slug": "people/soraya-drembarrow",
+      "content": "---\ntitle: Soraya Drembarrow\ntype: person\nsummary: \"Soraya Drembarrow is the head of partnerships at Fablefold.\"\n---\n\nSoraya Drembarrow is the head of partnerships at Fablefold.\n"
+    },
+    {
+      "slug": "companies/pyloncrest-labs",
+      "content": "---\ntitle: Pyloncrest Labs\ntype: company\nsummary: \"Pyloncrest Labs is a startup we evaluated as a partner.\"\n---\n\nPyloncrest Labs is a startup we evaluated as a partner. Their support team promised a named account manager after the last outage.\n"
+    },
+    {
+      "slug": "companies/glintyard",
+      "content": "---\ntitle: Glintyard\ntype: company\nsummary: \"A company we met once at a trade show.\"\n---\n\nA company we met once at a trade show.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "what were the terms of the referral thing we discussed?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Done."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "By the way, someone named Odette Tulvholt emailed about partnerships. Never heard of them."
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Here is what I have."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "Fix the typos in this line of my email to Drembarrow: 'thnaks for the quick turnaround, talk soon'"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Done."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "Any news from Pyloncrest on support?"
+    }
+  ]
+}

@@ -20,6 +20,8 @@ const meeting = 'meetings/planning';
 const positive = 'Attendees: [Alice Example](../people/alice-example.md)';
 const pack = { api_version: 'gbrain-schema-pack-v1', name: 'repair-fixture', version: '1.0.0', extends: null,
   page_types: [], link_types: [], frontmatter_links: [] };
+const phraseOwnedPack = { ...pack, link_types: [{ name: 'attended', inference: { page_type: 'meeting', regex: '\\bpresent\\b' } }],
+  frontmatter_links: [{ page_type: 'meeting', fields: ['attendees'], link_type: 'attended' }] };
 
 for (const kind of testBackends()) {
   describe(`preview-bound attendance repair (${kind}; repair-fixture non-overridden person_to_meeting)`, () => {
@@ -166,7 +168,7 @@ for (const kind of testBackends()) {
       test(`${proof} expired proof refuses ${state} replay and fresh approval recovers without renewing old proof`, async () => {
         if (state === 'changed') await legacy();
         else if (state === 'no-op') await apply(await preview());
-        else { await engine.setConfig('schema_pack', 'company-brain'); await legacy(); }
+        else { writeFileSync(join(root, 'pack.json'), JSON.stringify(phraseOwnedPack)); await legacy(); }
         const receipt = await preview();
         await apply(receipt);
         const before = await rows();
@@ -387,9 +389,8 @@ for (const kind of testBackends()) {
       await apply(receipt); expect(await rows()).toEqual(before);
     });
 
-    test('pack-owned outgoing semantics are excluded and pinned', async () => {
-      writeFileSync(join(root, 'pack.json'), JSON.stringify({ ...pack, link_types: [{ name: 'attended' }],
-        frontmatter_links: [{ page_type: 'meeting', fields: ['attendees'], link_type: 'attended' }] }));
+    test('phrase-owned pack attendance semantics are excluded and pinned', async () => {
+      writeFileSync(join(root, 'pack.json'), JSON.stringify(phraseOwnedPack));
       await legacy(); const before = await rows(); const receipt = await preview();
       expect(receipt.counts.pack_semantics_preserved).toBe(1);
       expect(receipt.direction).toBe('pack_semantics_preserved');
@@ -403,12 +404,14 @@ for (const kind of testBackends()) {
       await apply(receipt); expect(await rows()).toEqual(before);
     });
 
-    for (const name of ['gbrain-base', 'company-brain']) test(`${name} shipped outgoing attendance is report-only`, async () => {
+    for (const name of ['gbrain-base', 'company-brain']) test(`${name} historical outgoing attendance repairs to person -> meeting`, async () => {
       await engine.setConfig('schema_pack', name); await legacy();
-      const before = await rows(); const receipt = await preview();
-      expect(receipt.pack).toBe(name); expect(receipt.direction).toBe('pack_semantics_preserved');
-      expect(receipt.counts).toMatchObject({ add: 0, remove: 0, pack_semantics_preserved: 1 });
-      await apply(receipt); expect(await rows()).toEqual(before);
+      const receipt = await preview();
+      expect(receipt.pack).toBe(name); expect(receipt.direction).toBe('person_to_meeting');
+      expect(receipt.counts).toMatchObject({ add: 1, remove: 1, pack_semantics_preserved: 0 });
+      expect(await apply(receipt)).toMatchObject({ created: 1, removed: 1 });
+      expect((await engine.getBacklinks(meeting, { sourceId })).filter(row => row.link_type === 'attended').map(row => row.from_slug)).toEqual([person]);
+      expect((await engine.getLinks(meeting, { sourceId })).filter(row => row.link_type === 'attended')).toEqual([]);
     });
 
     for (const mutation of ['origin-edit', 'endpoint-edit', 'origin-delete', 'endpoint-delete', 'origin-recreate', 'endpoint-recreate',
@@ -543,7 +546,7 @@ for (const kind of testBackends()) {
     for (const reason of ['pack_semantics_preserved', 'pack_unavailable', 'origin_size_limit', 'edge_limit', 'edge_size_limit', 'reference_limit']) {
       test(`report-only ${reason} with existing edges replays a commit before private checkpoint progress`, async () => {
         await legacy();
-        if (reason === 'pack_semantics_preserved') await engine.setConfig('schema_pack', 'company-brain');
+        if (reason === 'pack_semantics_preserved') writeFileSync(join(root, 'pack.json'), JSON.stringify(phraseOwnedPack));
         if (reason === 'pack_unavailable') await engine.setConfig('schema_pack', 'unavailable-fixture');
         if (reason === 'origin_size_limit') await seed(meeting, 'meeting', 'x'.repeat(256 * 1024 + 1));
         if (reason === 'edge_limit') await engine.executeRaw(`INSERT INTO links(from_page_id,to_page_id,link_type,link_source)

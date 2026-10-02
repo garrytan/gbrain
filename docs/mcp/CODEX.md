@@ -89,12 +89,29 @@ binary the launcher resolves.
 
 Recent versions of the Codex CLI (`@openai/codex`) support remote
 streamable-HTTP MCP servers with a bearer token read from an environment
-variable. On THIS page's `gbrain connect` path the token lives in your shell
-env, not in Codex's config file. The exception is `gbrain bootstrap harness`
-(local agent-framework boxes): framework-spawned codex inherits no shell
-profile, so that lane writes the token INLINE into a managed, 0600
-`[mcp_servers.gbrain]` block in the codex config — stated in its consent
-block, removable with `gbrain bootstrap harness --remove`.
+variable. Where the token lives depends on the path:
+
+| Path | Where the bearer token lives |
+| --- | --- |
+| `gbrain connect <url> --token <token> --agent codex [--install]` (this page) | Your shell environment (`GBRAIN_REMOTE_TOKEN`); Codex's config stores only the variable name. |
+| `gbrain connect <url> --harness codex --credentials-file <handoff> --install` (the [machine handoff](../guides/hosted-harness-access.md)) | **Inline** in a managed, 0600 `[mcp_servers.<name>]` block in `~/.codex/config.toml`. |
+| `gbrain bootstrap harness` (local agent-framework boxes) | **Inline** in the same managed block; stated in its consent block, removable with `gbrain bootstrap harness --remove`. |
+
+The inline paths exist because framework-spawned Codex inherits no shell
+profile. Anything that reads or prints that config file (support bundles,
+config diffs, agents inspecting MCP entries) can see a live token. The
+`--harness codex --install` receipt says so: `token_storage: "inline"`,
+`config_path`, the `renew_command` that writes a fresh token (with
+`--fresh-token`, so it exchanges a new token instead of reinstalling an
+unexpired cached one), and `if_exposed`, which lists the
+[token invalidation](ADMIN.md#invalidate-tokens-revoke-or-delete) preview and
+apply commands for the brain host, then the renew command (a handoff without a
+client secret needs a new handoff from the owner instead), then the Codex
+reload. When the config file sits in a Git working tree that does not
+ignore it, the receipt adds `token_warning`: add the file to that repository's
+`.gitignore` or move the config, and follow `if_exposed` if it was already
+committed. Rotating a client secret does not invalidate access tokens already
+issued, so it is not the fix for an exposed token.
 
 ## Fastest path: `gbrain connect`
 

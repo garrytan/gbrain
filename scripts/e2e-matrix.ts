@@ -6,7 +6,7 @@ import { resolve, relative, isAbsolute } from "node:path";
 import { loadWeights, partition, type WeightMap } from "./sharding.ts";
 
 // PR owner of the reconciliation crash suites is persistence-validation.yml
-// (called from test.yml on every PR; postgres x Bun 1.3.11/1.4.2; crash
+// (called from test.yml on every PR; postgres x Bun 1.4.0/1.4.2; crash
 // manifests uploaded). Nightly full-corpus E2E still runs them.
 export const PERSISTENCE_VALIDATION_OWNED = new Set([
   'test/e2e/reconcile-crash.test.ts',

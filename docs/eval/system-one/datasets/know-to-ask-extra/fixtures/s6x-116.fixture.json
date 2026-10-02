@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-116",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "companies/pylonwharf",
+      "content": "---\ntitle: Pylonwharf\ntype: company\nsummary: \"Pylonwharf is a software vendor we work with.\"\n---\n\nPylonwharf is a software vendor we work with. The integration slipped because their API still lacks webhooks.\n"
+    },
+    {
+      "slug": "people/greta-fenfell",
+      "content": "---\ntitle: Greta Fenfell\ntype: person\naliases: [greta]\nsummary: \"Greta Fenfell is the head of sales at Brackengate.\"\n---\n\nGreta Fenfell is the head of sales at Brackengate. Greta wants the proposal revised to drop the onboarding fee.\n"
+    },
+    {
+      "slug": "people/linnea-merrford",
+      "content": "---\ntitle: Linnea Merrford\ntype: person\nsummary: \"Linnea Merrford is the head of partnerships at Lumenreach.\"\n---\n\nLinnea Merrford is the head of partnerships at Lumenreach.\n"
+    },
+    {
+      "slug": "companies/saffronfold",
+      "content": "---\ntitle: Saffronfold\ntype: company\nsummary: \"A company we met once at a trade show.\"\n---\n\nA company we met once at a trade show.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "remind me what we know about pylonwharf and the integration"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Prep me for the Fenfell call, especially the proposal."
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "sorry, got distracted for a minute"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Done."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "Merrford's train gets in at 5:40pm and the walk is 15 minutes. What time will they reach the office?"
+    }
+  ]
+}

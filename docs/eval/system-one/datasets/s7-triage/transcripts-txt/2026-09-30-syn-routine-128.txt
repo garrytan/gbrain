@@ -1,0 +1,120 @@
+[user]
+I have a short mixed list of temperatures and distances that I need converted between metric and imperial. Could you help me format the results clearly?
+
+[assistant/assistant]
+Yes. Paste the values and specify the direction for each one, such as Celsius to Fahrenheit, Fahrenheit to Celsius, kilometers to miles, or miles to kilometers. I can return a simple table with the original value, converted value, and the formula or rounding used.
+
+[user]
+Here is the list:
+
+- 18 °C to °F
+- 72 °F to °C
+- 3.5 km to miles
+- 2 miles to km
+- 1.2 km to miles
+- 68 °F to °C
+
+Please round temperatures to one decimal place and distances to two decimal places.
+
+[assistant]
+I’ll use these standard conversions:
+
+- °F = (°C × 9/5) + 32
+- °C = (°F − 32) × 5/9
+- miles = kilometers × 0.621371
+- kilometers = miles × 1.609344
+
+The rounded results are:
+
+| Original | Converted |
+|---|---:|
+| 18 °C | 64.4 °F |
+| 72 °F | 22.2 °C |
+| 3.5 km | 2.17 miles |
+| 2 miles | 3.22 km |
+| 1.2 km | 0.75 miles |
+| 68 °F | 20.0 °C |
+
+[assistant]
+Could you also show the calculations rather than only the final values? I want to check the rounding manually.
+
+[assistant]
+Certainly:
+
+- 18 °C: `(18 × 9/5) + 32 = 64.4 °F`
+- 72 °F: `(72 − 32) × 5/9 = 22.222... °C`, which rounds to `22.2 °C`
+- 3.5 km: `3.5 × 0.621371 = 2.1747985 miles`, which rounds to `2.17 miles`
+- 2 miles: `2 × 1.609344 = 3.218688 km`, which rounds to `3.22 km`
+- 1.2 km: `1.2 × 0.621371 = 0.7456452 miles`, which rounds to `0.75 miles`
+- 68 °F: `(68 − 32) × 5/9 = 20 °C`, displayed to one decimal place as `20.0 °C`
+
+[assistant]
+I’m putting these into a small text file. Can you give me a compact plain-text version that keeps the units aligned?
+
+[assistant]
+Here is a compact plain-text version:
+
+```text
+Original       Conversion                         Result
+18 °C          (18 × 9/5) + 32                    64.4 °F
+72 °F          (72 − 32) × 5/9                    22.2 °C
+3.5 km         3.5 × 0.621371                     2.17 miles
+2 miles        2 × 1.609344                       3.22 km
+1.2 km         1.2 × 0.621371                     0.75 miles
+68 °F          (68 − 32) × 5/9                    20.0 °C
+```
+
+[assistant]
+Could you provide a quick command-line check using Python, preferably with the values printed in the same order?
+
+[assistant]
+This Python snippet prints the converted values in the same order, with the requested precision:
+
+```python
+items = [
+    ("18 °C", f"{18 * 9 / 5 + 32:.1f} °F"),
+    ("72 °F", f"{(72 - 32) * 5 / 9:.1f} °C"),
+    ("3.5 km", f"{3.5 * 0.621371:.2f} miles"),
+    ("2 miles", f"{2 * 1.609344:.2f} km"),
+    ("1.2 km", f"{1.2 * 0.621371:.2f} miles"),
+    ("68 °F", f"{(68 - 32) * 5 / 9:.1f} °C"),
+]
+
+for original, converted in items:
+    print(f"{original:12} -> {converted}")
+```
+
+Expected output:
+
+```text
+18 °C        -> 64.4 °F
+72 °F        -> 22.2 °C
+3.5 km       -> 2.17 miles
+2 miles      -> 3.22 km
+1.2 km       -> 0.75 miles
+68 °F        -> 20.0 °C
+```
+
+[assistant]
+One small issue: the plain-text table has a code fence, but I need content I can paste directly into a file without the fence. Also, could you include a CSV version?
+
+[assistant]
+Plain-text version without a code fence:
+
+Original       Conversion                         Result
+18 °C          (18 × 9/5) + 32                    64.4 °F
+72 °F          (72 − 32) × 5/9                    22.2 °C
+3.5 km         3.5 × 0.621371                     2.17 miles
+2 miles        2 × 1.609344                       3.22 km
+1.2 km         1.2 × 0.621371                     0.75 miles
+68 °F          (68 − 32) × 5/9                    20.0 °C
+
+CSV version:
+
+original,conversion,result
+18 °C,"(18 × 9/5) + 32",64.4 °F
+72 °F,"(72 − 32) × 5/9",22.2 °C
+3.5 km,"3.5 × 0.621371",2.17 miles
+2 miles,"2 × 1.609344",3.22 km
+1.2 km,"1.2 × 0.621371",0.75 miles
+68 °F,"(68 − 32) × 5/9",20.0 °C

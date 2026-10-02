@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "transcript_id": "syn-buried-002",
+  "scenario": "synthetic-buried-signal",
+  "expected_triage": "high",
+  "label_source": "synthetic-construction",
+  "generator": {
+    "model": "openai:gpt-5.6-luna",
+    "reasoning": "none",
+    "temperature": 1,
+    "seed": 7350001
+  },
+  "spec": {
+    "id": "syn-buried-002",
+    "scenario": "synthetic-buried-signal",
+    "expected_triage": "high",
+    "theme": "setting up a printer on a laptop and clearing a stuck print queue",
+    "turns": 16,
+    "signal": {
+      "kind": "commitment",
+      "brief": "the user commits to a specific future action with a named person and a date (for example promising to send a named collaborator a term sheet by Friday)",
+      "person": "Wren Okonkwo-Bell",
+      "project": "harbor-ledger",
+      "position": "near the end, before the wrap-up"
+    }
+  }
+}

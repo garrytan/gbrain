@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-110",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/saskia-quellwaite",
+      "content": "---\ntitle: Saskia Quellwaite\ntype: person\naliases: [saskia]\nsummary: \"Saskia Quellwaite is the finance lead at Vesperwharf.\"\n---\n\nSaskia Quellwaite is the finance lead at Vesperwharf. Saskia wants the proposal revised to drop the onboarding fee.\n"
+    },
+    {
+      "slug": "people/odette-dremdale",
+      "content": "---\ntitle: Odette Dremdale\ntype: person\naliases: [odette]\nsummary: \"Odette Dremdale is the product designer we hired last month.\"\n---\n\nOdette Dremdale is the product designer we hired last month. Odette pushed to move the reporting feature ahead of the mobile app.\n"
+    },
+    {
+      "slug": "people/solveig-yarrbrook",
+      "content": "---\ntitle: Solveig Yarrbrook\ntype: person\naliases: [solveig]\nsummary: \"Solveig Yarrbrook is the head of partnerships at Glintmoor.\"\n---\n\nSolveig Yarrbrook is the head of partnerships at Glintmoor.\n"
+    },
+    {
+      "slug": "people/anselm-corvbarrow",
+      "content": "---\ntitle: Anselm Corvbarrow\ntype: person\naliases: [anselm]\nsummary: \"A contact from a conference last spring.\"\n---\n\nA contact from a conference last spring.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "By the way, someone named Bastian Tulvwick emailed about partnerships. Never heard of them."
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Prep me for the Quellwaite call, especially the proposal."
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "what did our new designer want to change in the roadmap?"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Done."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "Fix the typos in this line of my email to Yarrbrook: 'thnaks for the quick turnaround, talk soon'"
+    }
+  ]
+}

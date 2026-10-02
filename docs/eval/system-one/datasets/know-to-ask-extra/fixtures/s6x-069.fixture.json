@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-069",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "projects/office-move",
+      "content": "---\ntitle: Office Move\ntype: project\nsummary: \"Office Move: We agreed to sublet the second floor and move the team downstairs at the end of the quarter.\"\n---\n\nOffice Move: We agreed to sublet the second floor and move the team downstairs at the end of the quarter.\n"
+    },
+    {
+      "slug": "companies/glintvane-robotics",
+      "content": "---\ntitle: Glintvane Robotics\ntype: company\nsummary: \"Glintvane Robotics is a startup we evaluated as a partner.\"\n---\n\nGlintvane Robotics is a startup we evaluated as a partner. Their support team promised a named account manager after the last outage.\n"
+    },
+    {
+      "slug": "people/lucan-corvdale",
+      "content": "---\ntitle: Lucan Corvdale\ntype: person\naliases: [lucan]\nsummary: \"Lucan Corvdale is the head of sales at Brackenloft.\"\n---\n\nLucan Corvdale is the head of sales at Brackenloft.\n"
+    },
+    {
+      "slug": "people/mireille-vashford",
+      "content": "---\ntitle: Mireille Vashford\ntype: person\nsummary: \"Mireille Vashford is the head of partnerships at Halcyongate.\"\n---\n\nMireille Vashford is the head of partnerships at Halcyongate.\n"
+    },
+    {
+      "slug": "people/emrys-wyrbarrow",
+      "content": "---\ntitle: Emrys Wyrbarrow\ntype: person\naliases: [emrys]\nsummary: \"A contact from a conference last spring.\"\n---\n\nA contact from a conference last spring.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "what did we decide about the office situation?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Happy to help."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Remind me where things stand with Glintvane on support."
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Okay, noted."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "How do you pronounce Lucan? I want to say it right."
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "Our hotel is on Vashford Street. Any tips for finding breakfast near a hotel in a new city?"
+    }
+  ]
+}

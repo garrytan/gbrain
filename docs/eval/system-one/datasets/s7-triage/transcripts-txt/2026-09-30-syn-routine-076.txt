@@ -1,0 +1,250 @@
+[user]
+I forgot the admin password for my home router. I’m trying to look up the normal way to reset it without changing anything unnecessarily. The router is on my desk, and I can read the label if needed.
+
+[assistant]
+The safest first step is to identify the exact model and hardware revision from the label, because reset procedures and default login details vary. You can paste the model number, revision, and any wording near the reset button, but omit the serial number, MAC address, Wi-Fi password, and any other unique identifiers.
+
+Before doing a factory reset, check whether the password is merely saved in a browser or password manager. Also consider whether your internet provider supplied the router; some provider-issued units use an app or support portal rather than a local web login.
+
+What model and revision are printed on the label?
+
+[user]
+The label says “AC1200 Dual-Band Wireless Router,” hardware version “V2,” and model “R6120.” There’s a small button marked Reset on the back. I don’t want to paste the serial number or wireless key.
+
+[assistant]
+That is enough to identify the general procedure. For this model family, a factory reset normally erases the customized administrator password, Wi-Fi name and password, port-forwarding rules, parental-control settings, and other local configuration. It does not usually erase the router’s firmware.
+
+Try these non-destructive checks first:
+
+1. Look in the browser or password manager you normally use for saved entries matching the router’s local address.
+2. If you can still access the router from a phone app or another browser, use its password-change page rather than the physical reset.
+3. Check whether the label or setup card lists a default address and default credentials. Do not assume those credentials are still valid after setup.
+4. If the router is provider-managed, check the provider’s instructions before resetting.
+
+If none of those work, disconnecting the router from the modem during the reset is a simple precaution. Do you have a computer connected by Ethernet, or will you use Wi-Fi?
+
+[user]
+I have a laptop and an Ethernet cable. The router is currently connected to the modem, but I can unplug that cable. I’m not sure whether the reset button needs a paper clip or how long to hold it.
+
+[assistant]
+A paper clip or the tip of a straightened SIM-eject tool is commonly used, but use only light pressure. The button is recessed to prevent accidental presses.
+
+A typical reset sequence is:
+
+1. Leave the router powered on.
+2. Disconnect the Ethernet cable running from the modem to the router’s Internet/WAN port. Leave the laptop connected to one of the router’s LAN ports.
+3. Wait about 30 seconds.
+4. Press and hold the recessed Reset button for roughly 7–10 seconds, or until the front LEDs change or the router restarts. Do not force the button.
+5. Release it and wait several minutes for the restart to finish. Avoid unplugging power during this process.
+6. Connect to the router’s default Wi-Fi network or keep using Ethernet.
+7. Open the router’s default local address, which is commonly printed in the manual or on the label. If that does not work, check the laptop’s default gateway.
+
+The exact timing should be confirmed in the model’s official manual if available. What operating system is on the laptop?
+
+[user]
+It’s Windows 11. I can use Ethernet, and I’d rather check the default gateway before trying the reset. How do I do that without changing any settings?
+
+[assistant]
+Checking it is read-only. With the laptop connected to a LAN port, open Windows Terminal or Command Prompt:
+
+1. Press Windows key, type `cmd`, and open Command Prompt.
+2. Run:
+
+```text
+ipconfig
+```
+
+3. Find the adapter labeled “Ethernet.” Look for `Default Gateway`. It may resemble `192.168.1.1` or `192.168.0.1`.
+
+You can also run:
+
+```text
+ipconfig /all
+```
+
+That shows more details, but the shorter command is sufficient. Do not run commands such as `ipconfig /release`, `ipconfig /renew`, or `netsh` for this check.
+
+Paste only the Ethernet section, with the IPv4 address, subnet mask, and default gateway. You can remove the physical address and any IPv6 addresses.
+
+[user]
+Here is the relevant output:
+
+```text
+Ethernet adapter Ethernet:
+
+   Connection-specific DNS Suffix  . :
+   IPv4 Address. . . . . . . . . . . : 192.168.1.23
+   Subnet Mask . . . . . . . . . . . : 255.255.255.0
+   Default Gateway . . . . . . . . . : 192.168.1.1
+```
+
+I haven’t pressed Reset yet.
+
+[assistant]
+That output shows the laptop is communicating with the router at `192.168.1.1`. Before resetting, open that address in a browser:
+
+```text
+http://192.168.1.1
+```
+
+If it redirects to HTTPS, allow the browser to use the redirected address. This is a local address, not a public website.
+
+Possible outcomes:
+
+- A login page appears: try only credentials you already know or have saved. Avoid repeated guesses if the page starts delaying or locking attempts.
+- A setup or password-recovery page appears: follow its on-screen recovery process.
+- The page does not load: confirm the Ethernet cable is in a numbered LAN port, then try another browser or temporarily turn off the laptop’s Wi-Fi so it uses Ethernet.
+- A warning about an untrusted local certificate appears: verify the address is exactly `192.168.1.1` before proceeding.
+
+What page or message do you get?
+
+[user]
+The page loads at 192.168.1.1 and asks for a username and password. The browser’s password manager has no matching saved entry. There is no recovery link, and I don’t remember ever changing the username.
+
+[assistant]
+At this point, the physical factory reset is the standard route, but it will remove the current configuration. Since your laptop is already connected by Ethernet, the process can be done without relying on Wi-Fi.
+
+Before proceeding, note any settings you may need to recreate, if they are visible elsewhere: the current Wi-Fi network name and password, the Internet connection type, and any special entries such as port forwarding. Do not copy or share passwords here. If the router is using a provider-specific connection such as PPPoE, make sure you have the required account details from your provider before resetting; otherwise the router may not reconnect to the Internet afterward.
+
+If this is acceptable, unplug the modem-to-router cable, keep the laptop-to-LAN cable connected, and leave the router powered on. Then use the recessed Reset button. Would you like the reset steps written as a precise checklist?
+
+[user]
+Yes. Please give me the checklist, including what the LEDs may do and how long to wait. I’ll keep the modem cable disconnected during the reset.
+
+[assistant]
+Use this checklist:
+
+1. Save or write down only non-sensitive information you need later, such as the existing Wi-Fi name. Keep passwords private.
+2. Leave the router’s power adapter connected and switched on.
+3. Remove the cable from the router’s Internet/WAN port. Leave the laptop connected to a numbered LAN port.
+4. Wait 30 seconds so the router is idle.
+5. Straighten a paper clip. Insert it gently into the recessed Reset opening until you feel the button press.
+6. Hold it for about 7–10 seconds. On many units, the power or status LED changes, flashes, or the router begins restarting. Release the button when the restart begins or when the LEDs change as described in the manual.
+7. Do not press the button again and do not disconnect power.
+8. Wait 3–5 minutes. LEDs may turn off briefly, flash during startup, and then settle into a normal power/status pattern.
+9. If the laptop loses its address temporarily, wait another minute. Windows should obtain a new local address automatically.
+10. Browse to `http://192.168.1.1`. If that does not respond, run `ipconfig` again and use the new Ethernet `Default Gateway`.
+11. Complete the initial setup, create a new administrator password, and configure Wi-Fi.
+12. Reconnect the modem cable to the router’s Internet/WAN port only after the local setup is complete.
+
+If the LEDs remain abnormal after 10 minutes, power-cycle the router once by unplugging it for 10 seconds, reconnecting it, and waiting several minutes.
+
+[user]
+Before I do it, what exactly will be lost? I want to avoid being surprised by something like the Wi-Fi devices no longer connecting or the Internet needing a special setting.
+
+[assistant]
+A factory reset returns the router to its out-of-box configuration. Commonly lost items include:
+
+- Administrator username/password changes and any custom recovery settings
+- Wi-Fi network name, Wi-Fi password, guest network settings, and wireless schedules
+- Internet/WAN settings, including static addressing, VLAN settings, or PPPoE credentials if they were configured
+- LAN address changes, DHCP reservations, custom DNS servers, and local host names
+- Port-forwarding, port-triggering, UPnP-related preferences, firewall rules, VPN settings, and remote-management settings
+- Parental controls, access-control lists, traffic limits, logs, and firmware-specific options
+
+Your phones, laptops, televisions, and other devices will not be erased, but they will stop connecting automatically if the reset changes the Wi-Fi name or password. You can configure the router afterward with the same Wi-Fi name and password, which may let many devices reconnect without editing each device. That does not restore advanced settings.
+
+If your Internet service uses ordinary automatic addressing, reconnecting the modem may be enough. If it uses PPPoE, a static address, VLAN tagging, or provider-specific activation, you will need those details before reconnecting.
+
+[user]
+I found the original setup card. It says the Internet connection is automatic, and it lists the default Wi-Fi name but not the Wi-Fi password. I don’t need guest Wi-Fi or port forwarding. Is there anything else I should note before resetting?
+
+[assistant]
+That is a reasonable preparation. Before pressing Reset, note these few items:
+
+- The current Wi-Fi name, if you want to reuse it.
+- Which cable goes to the modem and which goes to the laptop, so they return to the correct ports.
+- Whether the router has any extra Ethernet cables connected to LAN ports.
+- The approximate location of the router’s power adapter, so it is not accidentally pulled during the restart.
+- Any device that must be online immediately after setup, in case you need to reconnect it manually.
+
+Because the setup card says automatic Internet connection, you probably will not need a username or password for the WAN connection. The default Wi-Fi password may be printed on the router label or supplied on another card; if not, the setup wizard should let you create a new one.
+
+Keep the modem cable disconnected while resetting. Once the router’s local setup page works and you have created a new administrator password and Wi-Fi password, reconnect the modem and wait for the Internet/status light to settle.
+
+[user]
+I pressed the button with a paper clip for about eight seconds. The power light stayed on, the Internet light went out, and the Wi-Fi lights blinked. I released it, and now the power light is steady while the other lights are cycling.
+
+[assistant]
+That sounds consistent with a restart. Leave the router powered on and wait at least five minutes from the time you released the button. Do not press Reset again during that period.
+
+After five minutes:
+
+1. Keep the modem cable disconnected.
+2. Check that the laptop’s Ethernet cable is still in a numbered LAN port.
+3. Run:
+
+```text
+ipconfig
+```
+
+4. Confirm that Ethernet has an IPv4 address and a `Default Gateway`.
+5. Open the gateway address in the browser.
+
+If the gateway is `192.168.1.1`, use:
+
+```text
+http://192.168.1.1
+```
+
+You should see an initial setup or default login page rather than the old customized login. If the lights continue cycling and there is no Ethernet address after 10 minutes, check both cable ends, wait another minute, and then perform one normal power cycle. Do not hold the Reset button during that power cycle.
+
+[user]
+It has been six minutes. The output now shows:
+
+```text
+Ethernet adapter Ethernet:
+
+   IPv4 Address. . . . . . . . . . . : 192.168.1.2
+   Subnet Mask . . . . . . . . . . . : 255.255.255.0
+   Default Gateway . . . . . . . . . : 192.168.1.1
+```
+
+The setup page appears and asks me to create an administrator password. It also asks for a Wi-Fi name and password. I want to finish without accidentally exposing the router.
+
+[assistant]
+Use the setup wizard with these precautions:
+
+1. Create a new administrator password that is different from the Wi-Fi password. Make it long and unique; a phrase of several unrelated words plus numbers is practical.
+2. Do not use the router’s serial number, address, setup-card wording, or an easily guessed household detail.
+3. Choose a Wi-Fi name that does not reveal an address, apartment number, or other personal detail.
+4. Use WPA2 or WPA3 if the wizard offers it. Avoid WEP, “open,” or “no security.”
+5. Disable remote administration, remote web access, or “management from the Internet” unless you have a specific need.
+6. Leave guest Wi-Fi disabled if you do not use it.
+7. Leave UPnP at its default unless a device specifically requires it; you can review that setting later.
+8. Apply the settings and wait for the router to restart. Your laptop may briefly disconnect.
+9. Reconnect the laptop using Ethernet or the new Wi-Fi details, then sign in once with the new administrator password to confirm it works.
+
+Do not paste either password here. After local setup is complete, reconnect the modem cable to the router’s Internet/WAN port.
+
+[user]
+The setup completed. I used a new administrator password and a separate Wi-Fi password, selected WPA2/WPA3, and left remote administration and guest Wi-Fi disabled. The router restarted, and I can still reach 192.168.1.1 over Ethernet. Should I reconnect the modem now?
+
+[assistant]
+Yes. First confirm that the router’s local setup is complete and that the administrator password works once, which you have done. Then:
+
+1. Leave the router powered on.
+2. Plug the cable from the modem into the router’s Internet/WAN port, not a numbered LAN port.
+3. Wait about two to five minutes while the modem and router negotiate a connection. The Internet/status light may blink before becoming steady.
+4. On the laptop, open a normal website or use the router’s status page to check whether the WAN connection is shown as connected.
+5. If the router reports automatic/DHCP Internet and the connection does not appear, restart the modem first: unplug its power for about 30 seconds, reconnect it, wait until its normal lights settle, and then wait another few minutes for the router.
+6. Avoid pressing the router’s Reset button again.
+
+After Internet access returns, you can reconnect devices to the new Wi-Fi network. If you reused the previous Wi-Fi name and password, some devices may reconnect automatically; otherwise use the new credentials. Finally, store the new administrator password in your password manager, without posting it in chat.
+
+[user]
+I reconnected the modem cable to the WAN port. After about four minutes the Internet light is steady, and the laptop can open websites. My phone sees the new Wi-Fi network too. Is there a quick final check, or am I done?
+
+[assistant]
+You are essentially done. A short final check is:
+
+- Confirm the router’s status page shows the WAN connection as connected and the expected automatic/DHCP mode.
+- Confirm the administrator password works, then sign out of the router page.
+- Check that remote administration remains disabled.
+- Check that Wi-Fi security shows WPA2/WPA3 rather than an open network or WEP.
+- Verify that the laptop can reach the router locally at `192.168.1.1` and browse the Internet.
+- Connect one phone or other ordinary device to Wi-Fi and confirm it can browse.
+- Store the administrator password and the new Wi-Fi password in your password manager.
+- If you wrote down the old password or old setup notes, dispose of them securely if they are no longer useful.
+
+Because the reset removed the old configuration, any specialized settings would need to be recreated later. Since you do not need guest Wi-Fi or port forwarding and automatic Internet setup is working, no further action is required.

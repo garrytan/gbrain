@@ -49,14 +49,16 @@ import { gbrainPath } from './config.ts';
 import type { BrainEngine } from './engine.ts';
 import { createProgress, type ProgressReporter } from './progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from './cli-options.ts';
-import { tryAcquireDbLock, reapDeadHolderLocks, LockStolenError, type DbLockHandle } from './db-lock.ts';
+import { tryAcquireDbLock, reapDeadHolderLocks, inspectLock, LockStolenError, type DbLockHandle } from './db-lock.ts';
 import { timeContainedPhase } from './cycle/phase-containment.ts';
 import { isManagedBrain } from './cycle/phase-table.ts';
 import { assertValidSourceId } from './source-id.ts';
 import { PHASE_SCOPE, SOURCE_FRESHNESS_PHASES, type PhaseScope } from './cycle/phase-scope.ts';
 import { assertEmbedNotStalled } from './embed-stall.ts';
+import { anyAbortSignal } from './abort-signals.ts';
 
 export { PHASE_SCOPE, SOURCE_FRESHNESS_PHASES, type PhaseScope } from './cycle/phase-scope.ts';
+export { anyAbortSignal } from './abort-signals.ts';
 
 // ─── Types ─────────────────────────────────────────────────────────
 
@@ -383,6 +385,8 @@ export interface CycleReport {
   status: CycleStatus;
   /** Present when status = 'skipped'. E.g., 'cycle_already_running' or 'no_database'. Also 'aborted' when the cycle was cancelled mid-flight (#1972), or 'stamp_write_failed' (#3504). */
   reason?: string;
+  /** `cycle_already_running` on the DB lock: who holds it and for how long (best effort). */
+  lock_holder?: { id: string; holder_pid: number; holder_host: string; age_ms: number };
   /**
    * #3504: the cycle ran, but persisting `last_source_cycle_at` /
    * `last_full_cycle_at` threw. Set ONLY on a real write error — never for a
@@ -791,49 +795,6 @@ function acquireFileLock(lockPath = getLockFilePathDefault()): LockHandle | null
  * Returns `undefined` when there's no lock AND no outer hook so phases
  * short-circuit via their `if (!opts.yieldDuringPhase) return;` guard.
  */
-/**
- * W0 fix-wave: combine abort signals (external caller signal + the internal
- * lock-steal controller) into one REAL AbortSignal.
- *
- * Deliberately NOT AbortSignal.any: CycleOpts.signal has always been duck-
- * typed in practice (test stubs pass `{ aborted: false }` and flip the flag;
- * pre-W0 the raw object flowed straight into checkAborted, which only reads
- * `.aborted`/`.reason`). AbortSignal.any throws ERR_INVALID_ARG_TYPE on
- * those. Manual fan-in: real signals propagate via listener; listener-less
- * stubs are polled at 50ms — semantically the flip is seen within a tick,
- * and the RETURNED signal is a genuine AbortSignal so phases can hand it to
- * fetch/timers safely.
- *
- * ALWAYS call dispose() when the consuming scope ends (runCycle's finally):
- * the forward listeners live on the CALLER's signals, and long-lived callers
- * (the autopilot daemon passes its daemon-lifetime shutdown signal into
- * every cycle tick) would otherwise accumulate one listener + captured
- * controller per invocation forever (ship-review perf catch).
- */
-export function anyAbortSignal(signals: AbortSignal[]): { signal: AbortSignal; dispose: () => void } {
-  const c = new AbortController();
-  const cleanups: Array<() => void> = [];
-  const forward = (s: AbortSignal) => { if (!c.signal.aborted) c.abort(s.reason); };
-  for (const s of signals) {
-    if (!s) continue;
-    if (s.aborted) { forward(s); break; }
-    if (typeof (s as Partial<AbortSignal>).addEventListener === 'function') {
-      const listener = () => forward(s);
-      s.addEventListener('abort', listener, { once: true });
-      cleanups.push(() => s.removeEventListener('abort', listener));
-    } else {
-      const t = setInterval(() => { if (s.aborted) { forward(s); clearInterval(t); } }, 50);
-      (t as unknown as { unref?: () => void }).unref?.();
-      c.signal.addEventListener('abort', () => clearInterval(t), { once: true });
-      cleanups.push(() => clearInterval(t));
-    }
-  }
-  return {
-    signal: c.signal,
-    dispose: () => { for (const fn of cleanups) { try { fn(); } catch { /* best effort */ } } },
-  };
-}
-
 export function buildYieldDuringPhase(
   lock: LockHandle | null,
   outer?: () => Promise<void>,
@@ -978,7 +939,7 @@ function resolveCycleLockRefreshMs(): number {
  * throw-out contract even if a steal races it.
  *
  * Takes minimal structural types rather than AbortSignal so it stays callable
- * with the duck-typed stubs this file already documents (see anyAbortSignal)
+ * with the duck-typed stubs this file already documents (see anyAbortSignal in abort-signals.ts)
  * — and so the reason-dropped case is reachable in a test at all, since
  * `abort()` / `abort(undefined)` both yield a DOMException, never `undefined`.
  */
@@ -1509,6 +1470,7 @@ async function runPhaseExtractFacts(
         `destructive full walk may have wiped non-fence facts (#1928).`,
       );
     }
+    const decideConflict = dryRun ? undefined : await (await import('./ai/decide/sweep.ts')).conflictSweepTail(engine, sourceId, signal);
     return {
       phase: 'extract_facts',
       status: result.warnings.length > 0 ? 'warn' : 'ok',
@@ -1531,6 +1493,7 @@ async function runPhaseExtractFacts(
         phantoms_skipped_drift: result.phantomsSkippedDrift,
         phantoms_lock_busy: result.phantomsLockBusy,
         phantoms_more_pending: result.phantomsMorePending,
+        ...(decideConflict ? { decide_conflict: decideConflict } : {}),
       },
     };
   } catch (e) {
@@ -1763,6 +1726,9 @@ async function runPhasePurge(engine: BrainEngine, dryRun: boolean): Promise<Phas
     } catch {
       // Non-fatal.
     }
+    // System One: decision receipts past decide.receipts.retention_days (reported only when rows were pruned).
+    let purgedDecisionReceipts = 0;
+    try { purgedDecisionReceipts = await (await import('./ai/decide/store.ts')).pruneReceiptsForCycle(engine); } catch { /* pre-v179 brain */ }
     return {
       phase: 'purge',
       status: purgedPages.error ? 'fail' : 'ok', error: purgedPages.error,
@@ -1787,6 +1753,7 @@ async function runPhasePurge(engine: BrainEngine, dryRun: boolean): Promise<Phas
         purged_brainstorm_checkpoints_count: purgedBrainstormCheckpoints,
         purged_batch_retry_audit_files_count: purgedBatchRetryAuditFiles,
         purged_volunteer_events_count: purgedVolunteerEvents,
+        ...(purgedDecisionReceipts > 0 ? { purged_decision_receipts_count: purgedDecisionReceipts } : {}),
       },
     };
   } catch (e) {
@@ -1991,12 +1958,14 @@ export async function runCycle(
         if (pgliteFileLock) {
           try { await pgliteFileLock.release(); } catch { /* best effort */ }
         }
+        const holder = await inspectLock(engine, cycleLockIdFor(opts.sourceId)).catch(() => null);
         return {
           schema_version: '1',
           timestamp,
           duration_ms: Math.round(performance.now() - start),
           status: 'skipped',
           reason: 'cycle_already_running',
+          ...(holder ? { lock_holder: { id: holder.id, holder_pid: holder.holder_pid, holder_host: holder.holder_host, age_ms: holder.age_ms } } : {}),
           brain_dir: opts.brainDir,
           phases: [],
           totals: emptyTotals(),
@@ -2404,6 +2373,10 @@ export async function runCycle(
                 ...(synthesizeWrittenSlugs ?? []),
               ]
             : undefined;
+        // #5833: a real signal (cycleSignal can be the raw duck-typed
+        // opts.signal) so a timeout or lock steal stops the phase at its next
+        // item instead of extracting on after the race below has returned.
+        const xaSignal = cycleSignal ? anyAbortSignal([cycleSignal]) : null;
         const { result, duration_ms } = await racedTimePhase(() => runPhaseExtractAtoms(engine, {
           brainDir: brainDir ?? undefined,
           sourceId: xaSourceId,
@@ -2414,7 +2387,8 @@ export async function runCycle(
           // v0.41.19.0 (T4): pass same reporter (not a child — cycle.ts
           // owns start/finish; phase only ticks).
           progress,
-        }), 'extract_atoms');
+          signal: xaSignal?.signal,
+        }), 'extract_atoms').finally(() => xaSignal?.dispose());
         result.duration_ms = duration_ms;
         phaseResults.push(result);
         progress.finish();

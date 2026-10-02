@@ -1,0 +1,102 @@
+{
+  "eligible_only": true,
+  "duplicate_threshold": {
+    "threshold": 0.49,
+    "metric": "precision",
+    "metric_value": 1,
+    "precision": 1,
+    "recall": 0.851063829787234,
+    "f1": 0.9195402298850576
+  },
+  "proposal_floor": {
+    "threshold": 0.09,
+    "metric": "precision",
+    "metric_value": 0.90625,
+    "precision": 0.90625,
+    "recall": 1,
+    "f1": 0.9508196721311475
+  },
+  "applied_policy": {
+    "threshold": 0.52,
+    "proposalFloor": 0.65
+  },
+  "eval": {
+    "baseline_cosine_rule": {
+      "n": 88,
+      "confusion": {
+        "duplicate": {
+          "independent": 39,
+          "supersede": 10
+        },
+        "supersede": {
+          "independent": 30
+        },
+        "independent": {
+          "independent": 9
+        }
+      },
+      "supersedes_found": 0,
+      "supersede_labels": 30,
+      "proposals": 10,
+      "wrong_supersedes": 10,
+      "wrong_supersede_rate": 1,
+      "proposal_precision_lb": 0,
+      "label_agreement": 0.10227272727272728
+    },
+    "s9_calibrated": {
+      "n": 88,
+      "confusion": {
+        "duplicate": {
+          "independent": 7,
+          "duplicate": 42
+        },
+        "supersede": {
+          "independent": 1,
+          "proposal": 29
+        },
+        "independent": {
+          "independent": 9
+        }
+      },
+      "supersedes_found": 29,
+      "supersede_labels": 30,
+      "proposals": 29,
+      "wrong_supersedes": 0,
+      "wrong_supersede_rate": 0,
+      "proposal_precision_lb": 0.8830301998708162,
+      "label_agreement": 0.9090909090909091
+    },
+    "s9_default_floor_0_5": {
+      "n": 88,
+      "confusion": {
+        "duplicate": {
+          "independent": 7,
+          "duplicate": 42
+        },
+        "supersede": {
+          "proposal": 30
+        },
+        "independent": {
+          "independent": 9
+        }
+      },
+      "supersedes_found": 30,
+      "supersede_labels": 30,
+      "proposals": 30,
+      "wrong_supersedes": 0,
+      "wrong_supersede_rate": 0,
+      "proposal_precision_lb": 0.886486605238548,
+      "label_agreement": 0.9204545454545454
+    }
+  },
+  "retest_flip_rate": {
+    "n": 88,
+    "flips": 0
+  },
+  "latency_ms_per_request": {
+    "p50": 148,
+    "p95": 238,
+    "p99": 380
+  },
+  "cost_usd_per_swept_fact": 0.000024111370370370356
+}

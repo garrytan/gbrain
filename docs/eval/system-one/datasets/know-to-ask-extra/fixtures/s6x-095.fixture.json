@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-095",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/fintan-lornridge",
+      "content": "---\ntitle: Fintan Lornridge\ntype: person\naliases: [fintan]\nsummary: \"Fintan Lornridge is the procurement lead at Quartzcrest.\"\n---\n\nFintan Lornridge is the procurement lead at Quartzcrest.\n"
+    },
+    {
+      "slug": "people/solveig-fenford",
+      "content": "---\ntitle: Solveig Fenford\ntype: person\naliases: [solveig]\nsummary: \"Solveig Fenford is the head of partnerships at Glintcrest.\"\n---\n\nSolveig Fenford is the head of partnerships at Glintcrest.\n"
+    },
+    {
+      "slug": "companies/cobaltmoor",
+      "content": "---\ntitle: Cobaltmoor\ntype: company\nsummary: \"Cobaltmoor is the cloud hosting vendor we picked.\"\n---\n\nCobaltmoor is the cloud hosting vendor we picked. They quoted a per-seat price with a minimum annual commitment.\n"
+    },
+    {
+      "slug": "companies/wandercrest",
+      "content": "---\ntitle: Wandercrest\ntype: company\nsummary: \"A company we met once at a trade show.\"\n---\n\nA company we met once at a trade show.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Lornridge's train gets in at 5:40pm and the walk is 15 minutes. What time will they reach the office?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Fix the typos in this line of my email to Fenford: 'thnaks for the quick turnaround, talk soon'"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Happy to help."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "remind me why we went with the hosting provider we picked last week"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Done."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "By the way, someone named Bram Lornbrook emailed about partnerships. Never heard of them."
+    }
+  ]
+}

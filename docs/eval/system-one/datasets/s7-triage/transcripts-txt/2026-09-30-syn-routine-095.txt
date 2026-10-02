@@ -1,0 +1,182 @@
+[user]
+I’m fixing a spreadsheet and one formula started returning `#REF!` after I moved a column. Can you help me trace it?
+
+[assistant]
+Yes. Please paste the formula exactly as it appears now, along with the sheet names and a small description of where the formula is located. Also mention which column was moved and whether it was moved within the same sheet or between sheets.
+
+[user]
+The formula is in `Summary!H14`:
+
+`=IFERROR(INDEX(Data!$A$2:$M$500,MATCH($B14,Data!$B$2:$B$500,0),MATCH(H$3,Data!$A$1:$M$1,0)),"")`
+
+I moved the old `Data` column H to column K. Now the formula returns `#REF!` in several cells. The headers are on row 1, and the lookup label in `Summary!B14` is still present.
+
+[assistant]
+The formula is intended to find a row in `Data!B2:B500`, find a header in row 1, and return the intersecting cell from `Data!A2:M500`.
+
+The important detail is that the three ranges must remain aligned:
+
+- Return range: `Data!A2:M500`
+- Row-match range: `Data!B2:B500`
+- Column-match range: `Data!A1:M1`
+
+Moving a column normally should not break this formula if the spreadsheet updates references automatically. A literal `#REF!` usually means one of the references was deleted, or the move left an invalid reference in the formula. First, click `Summary!H14` and confirm whether the formula shown in the formula bar is exactly the one you pasted, or whether any part has become something like `Data!#REF!`.
+
+[assistant]
+I checked the formula bar. It is actually:
+
+`=IFERROR(INDEX(Data!$A$2:#REF!,MATCH($B14,Data!$B$2:$B$500,0),MATCH(H$3,Data!$A$1:$M$1,0)),"")`
+
+So the return range ends at `#REF!`. The moved column had been the last column in the original range, but I inserted it elsewhere rather than deleting it.
+
+[assistant]
+That explains the error. The return range was originally `Data!A2:M500`, and its ending reference was broken during the move. Replace `#REF!` with the current last column of the intended return range.
+
+If the data still spans columns A through M, use:
+
+`=IFERROR(INDEX(Data!$A$2:$M$500,MATCH($B14,Data!$B$2:$B$500,0),MATCH(H$3,Data!$A$1:$M$1,0)),"")`
+
+If the moved column caused the data to extend through N, use `$A$2:$N$500` and change the header range to `$A$1:$N$1` as well. Since your current header range still ends at M, check the actual header position before choosing.
+
+[assistant]
+The headers now run from A through N. The column moved from H to K, and the old K through M columns shifted right, so N is now the last column. I changed both ranges to N:
+
+`=IFERROR(INDEX(Data!$A$2:$N$500,MATCH($B14,Data!$B$2:$B$500,0),MATCH(H$3,Data!$A$1:$N$1,0)),"")`
+
+It no longer shows `#REF!`, but some cells are blank even though I can see matching values in `Data`.
+
+[assistant]
+That formula is structurally corrected. The blank cells are likely caused by the outer `IFERROR`, which hides several possible errors, including:
+
+- `MATCH($B14,Data!$B$2:$B$500,0)` not finding the row label
+- `MATCH(H$3,Data!$A$1:$N$1,0)` not finding the header
+- The matched row or column containing an error
+- A mismatch between the displayed text and the underlying value, such as extra spaces
+
+Temporarily remove `IFERROR` in one blank cell so the underlying result is visible:
+
+`=INDEX(Data!$A$2:$N$500,MATCH($B14,Data!$B$2:$B$500,0),MATCH(H$3,Data!$A$1:$N$1,0))`
+
+Then report the exact error or returned value. Also compare `Summary!B14` with the matching value in `Data!B:B`, and compare `Summary!H3` with the intended header in `Data!1:1`.
+
+[assistant]
+I removed `IFERROR` from `Summary!H14`. It returns `#N/A`. `Summary!B14` looks like `Item 104`, and I found `Item 104` in `Data!B217`. The header in `Summary!H3` is `Total`, and there are two `Total` headers in the data: one in column F and another in column K.
+
+[assistant]
+The row match is probably working, but the header match is ambiguous. `MATCH` with an exact match returns the first matching `Total`, which is column F. If the formula is meant to use the moved column K, the header-only lookup cannot distinguish the two columns.
+
+First, verify which `Total` the summary cell should use. You can test the two positions directly:
+
+`=INDEX(Data!$A$2:$N$500,MATCH($B14,Data!$B$2:$B$500,0),6)`
+
+and:
+
+`=INDEX(Data!$A$2:$N$500,MATCH($B14,Data!$B$2:$B$500,0),11)`
+
+Within `A:N`, column F is position 6 and column K is position 11. If the second formula returns the expected value, the simplest fix is to make the summary header unique, such as `Total (moved)`, and change the corresponding data header to the same text. Alternatively, use a fixed column reference for that summary column.
+
+[assistant]
+The first test returned 184, and the second returned 927. The summary layout has separate columns for the two totals, but both summary headers currently just say `Total`. The column at `Summary!H` is supposed to pull the value from `Data!K`.
+
+[assistant]
+Use a formula that identifies the intended source column rather than relying on the duplicated header. For `Summary!H14`, where the source is specifically `Data!K`, use:
+
+`=IFERROR(INDEX(Data!$K$2:$K$500,MATCH($B14,Data!$B$2:$B$500,0)),"")`
+
+This is shorter and avoids the duplicate-header issue. It also remains clear if other columns are inserted elsewhere, provided the source data stays in column K.
+
+If you want the formula to remain based on the summary header, make the data headers unique and use the original two-dimensional formula. For example, change the relevant headers to `Total - old` and `Total - moved`, then use matching labels in the summary row. Do not use the same header text when `MATCH` needs to choose between two columns.
+
+[assistant]
+I used the direct K-column formula in H14, and it returns 927. I need to fill it down through row 60. Before I do that, I want to make sure the row lookup will adjust correctly.
+
+[assistant]
+It will. In this formula:
+
+`=IFERROR(INDEX(Data!$K$2:$K$500,MATCH($B14,Data!$B$2:$B$500,0)),"")`
+
+- `$K$2:$K$500` is fully absolute, so it stays fixed.
+- `$B14` locks column B but leaves the row relative, so it becomes `$B15`, `$B16`, and so on when filled down.
+- `Data!$B$2:$B$500` is fully absolute, so the lookup range stays fixed.
+
+You can fill it from `H14` through `H60`. If you are using a spreadsheet with a fill handle, drag or copy and paste the formula into that range. A quick check in `H15` should show `$B15` in the formula bar.
+
+[assistant]
+I filled it down. Most rows work, but a few are blank. I checked one of them, `Summary!B22`, and it has a trailing space. The corresponding data label does not.
+
+[assistant]
+That trailing space prevents an exact match. You can normalize the summary lookup value with `TRIM`:
+
+`=IFERROR(INDEX(Data!$K$2:$K$500,MATCH(TRIM($B14),Data!$B$2:$B$500,0)),"")`
+
+This removes leading and trailing ordinary spaces from the value in `Summary!B14` as the formula evaluates. Fill the revised formula down through row 60.
+
+If the data labels might also contain extra spaces, normalize both sides with a helper column. For example, in an unused `Data` column, enter a trimmed version of the label and match against that helper column. In many spreadsheet applications, an array-based alternative is also possible, but a helper column is easier to inspect and maintain.
+
+[assistant]
+I changed it to use `TRIM`, and the row with the trailing space now works. There are still two blanks. One lookup label contains a nonbreaking space copied from a web page. Is `TRIM` enough for that?
+
+[assistant]
+Usually not. Standard `TRIM` removes ordinary spaces, but a nonbreaking space is often represented by character code 160. You can replace it before trimming:
+
+`=IFERROR(INDEX(Data!$K$2:$K$500,MATCH(TRIM(SUBSTITUTE($B14,CHAR(160)," ")),Data!$B$2:$B$500,0)),"")`
+
+This converts nonbreaking spaces in the summary label to ordinary spaces, then removes leading and trailing ordinary spaces.
+
+If the data labels may contain nonbreaking spaces too, clean the data labels in a helper column. For example, in `Data!N2`:
+
+`=TRIM(SUBSTITUTE(B2,CHAR(160)," "))`
+
+Fill that down, then use the helper range as the match range:
+
+`=IFERROR(INDEX(Data!$K$2:$K$500,MATCH(TRIM(SUBSTITUTE($B14,CHAR(160)," ")),Data!$N$2:$N$500,0)),"")`
+
+Be aware that this uses column N, so if N is already part of the data, choose another unused column.
+
+[assistant]
+I checked the remaining blank. It was a regular label mismatch, not a space issue: the summary says `Item 208`, but the data says `Item 208A`. The formula is now working for all exact matches. Is there anything else I should verify before considering this fixed?
+
+[assistant]
+Do a short validation pass:
+
+1. Confirm the source column. Check that `Summary!H14` uses `Data!$K$2:$K$500`, since K is the intended moved column.
+2. Confirm the row behavior. Check a few filled-down cells and ensure the lookup changes from `$B14` to `$B15`, `$B16`, and so on.
+3. Check the boundaries. Verify that the last possible data row is covered by row 500 and that the fill reaches the intended summary row.
+4. Check duplicate labels. If `Data!B:B` contains the same item label more than once, `MATCH` returns the first one.
+5. Check blanks versus errors. `IFERROR(...,"")` intentionally hides missing labels and other errors. During troubleshooting, temporarily remove `IFERROR` if a future blank needs investigation.
+6. Check the original formulas in adjacent summary columns. If another column is supposed to use `Data!F`, it should not accidentally use K after a copy or move.
+7. Save or recalculate the workbook, then inspect a few known values directly against the corresponding cells in column K.
+
+For the repaired column, the final formula can be:
+
+`=IFERROR(INDEX(Data!$K$2:$K$500,MATCH(TRIM(SUBSTITUTE($B14,CHAR(160)," ")),Data!$B$2:$B$500,0)),"")`
+
+If only ordinary spaces need cleanup, the shorter `TRIM($B14)` version is sufficient.
+
+[assistant]
+I checked a few values against column K, confirmed the relative row references, and found no duplicate labels in the rows I checked. The formula now works. One question: would using `XLOOKUP` make this simpler?
+
+[assistant]
+Yes, if your spreadsheet supports `XLOOKUP`, it can replace the `INDEX` and `MATCH` combination because you are returning a value from one fixed column based on a label.
+
+For `Summary!H14`:
+
+`=XLOOKUP(TRIM(SUBSTITUTE($B14,CHAR(160)," ")),Data!$B$2:$B$500,Data!$K$2:$K$500,"")`
+
+The arguments are:
+
+- Lookup value: the cleaned summary label
+- Lookup range: `Data!$B$2:$B$500`
+- Return range: `Data!$K$2:$K$500`
+- Not-found result: `""`
+
+This is easier to read and has matching lookup and return ranges. It still returns the first matching row if duplicate labels exist, so it does not solve duplicate-key ambiguity. If `XLOOKUP` is unavailable or the workbook needs compatibility with older software, keep the `INDEX`/`MATCH` formula you already repaired.
+
+[assistant]
+I’ll keep the `INDEX`/`MATCH` version for compatibility. The final formula is:
+
+`=IFERROR(INDEX(Data!$K$2:$K$500,MATCH(TRIM(SUBSTITUTE($B14,CHAR(160)," ")),Data!$B$2:$B$500,0)),"")`
+
+That fixed the moved-column error and the spacing issue.
+
+[assistant]

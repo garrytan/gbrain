@@ -66,6 +66,30 @@ describe('#4511 — short flat definitions keep their symbol names', () => {
     expect(named[0]!.metadata.symbolType).toBe('function');
   });
 
+  // gbrain-evals N13-1: `const name = (...) => ...` is a named function
+  // definition even though its node is a lexical declaration (a mergeable
+  // run form). 9 of 50 pathe functions were folded into nameless chunks.
+  test('typescript: short const arrow functions keep their names (N13-1)', async () => {
+    const src = [
+      'const ALPHABET = "abcdefghijklmnopqrstuvwxyz";', '',
+      'const int2alpha = (int: number): string => {', '  let alpha = "";', '  while (int > 0) {', '    alpha = ALPHABET[(int - 1) % 26] + alpha;', '    int = Math.floor((int - 1) / 26);', '  }', '  return alpha;', '};', '',
+      'const alpha2int = (str: string): number => {', '  let int = 0;', '  for (const char of str) int = int * 26 + ALPHABET.indexOf(char) + 1;', '  return int;', '};', '',
+      'let legacy = function (v: number) { return v; };', '',
+      'export function roundTrip(n: number): number {', '  return alpha2int(int2alpha(n));', '}', '',
+    ].join('\n');
+    const chunks = await chunkCodeText(src, 'sample.ts');
+    const names = chunks.map((c) => c.metadata.symbolName);
+    expect(names).toEqual(expect.arrayContaining(['int2alpha', 'alpha2int', 'legacy', 'roundTrip']));
+    expect(chunks.some((c) => c.metadata.symbolType === 'merged' && /int2alpha =|alpha2int =|legacy =/.test(c.text))).toBe(false);
+  });
+
+  test('javascript: const value runs still merge (only function values are protected)', async () => {
+    const src = Array.from({ length: 6 }, (_, i) => `const K${i} = ${i};`).join('\n') + '\n';
+    const chunks = await chunkCodeText(src, 'consts.js');
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0]!.metadata.symbolType).toBe('merged');
+  });
+
   test('import runs still merge (the pass keeps its stated purpose)', async () => {
     const src = Array.from({ length: 8 }, (_, i) => `import mod_${i}`).join('\n') + '\n';
     const chunks = await chunkCodeText(src, 'imports.py');
@@ -75,6 +99,10 @@ describe('#4511 — short flat definitions keep their symbol names', () => {
 
   test('CHUNKER_VERSION bumped to 6 so existing indexes re-chunk', () => {
     expect(CHUNKER_VERSION).toBeGreaterThanOrEqual(6);
+  });
+
+  test('CHUNKER_VERSION bumped to 8 so files with merged arrow functions re-chunk (N13-1)', () => {
+    expect(CHUNKER_VERSION).toBeGreaterThanOrEqual(8);
   });
 
   test('merge guard is a derived view of code-def DEF_TYPES (single shared list)', () => {

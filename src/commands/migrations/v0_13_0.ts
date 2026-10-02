@@ -26,7 +26,7 @@
  */
 
 import { execSync } from 'child_process';
-import { runGbrainSubprocess } from './in-process.ts';
+import { gbrainChildCommand, runGbrainSubprocess } from './in-process.ts';
 import type { Migration, OrchestratorOpts, OrchestratorResult, OrchestratorPhaseResult } from './types.ts';
 // Bug 3 — ledger writes moved to the runner (apply-migrations.ts). The
 // orchestrator returns its result and the runner persists it.
@@ -38,12 +38,14 @@ import type { Migration, OrchestratorOpts, OrchestratorResult, OrchestratorPhase
 // ~10s (ALTER + index builds). Bumped timeout accounts for slow Supabase
 // links (v0.12.1 pattern — migrations can time out on the 60s default).
 //
-// Shell out to the canonical `gbrain` shim on PATH (`/usr/local/bin/gbrain`
-// by default). An earlier revision resolved via the active Node/Bun runtime
-// binary, but on bun-installed trees that binary is `bun` — the spawned
-// `bun extract ...` gets reinterpreted as `bun run extract` and crashes the
-// upgrade mid-migration. The shim is already the canonical wrapper; trust
-// it. Regression guarded by test/migrations-v0_13_0.test.ts.
+// Children run the CLI that is running this migration (#5184,
+// gbrainChildCommand): the compiled executable, or bun plus the running
+// cli.ts, else the `gbrain` on PATH. An earlier revision spawned the bare
+// runtime binary, which on bun-installed trees is `bun` — `bun extract ...`
+// was reinterpreted as `bun run extract` and crashed the upgrade
+// mid-migration; resolveChildCliInvocation never returns bun without the
+// cli.ts entrypoint. Regression guarded by test/migrations-v0_13_0.test.ts
+// and test/migration-child-cli.test.ts.
 
 async function phaseASchema(opts: OrchestratorOpts): Promise<OrchestratorPhaseResult> {
   if (opts.dryRun) return { name: 'schema', status: 'skipped', detail: 'dry-run' };
@@ -87,7 +89,7 @@ function phaseCVerify(opts: OrchestratorOpts): OrchestratorPhaseResult {
     // docs-only brains, and brains with no entity pages legitimately
     // produce 0. Phase B's own stdout shows `Links: created N` which is
     // the authoritative signal — user sees it during upgrade.
-    const out = execSync('gbrain call get_stats', {
+    const out = execSync(gbrainChildCommand('gbrain call get_stats'), {
       encoding: 'utf-8', timeout: 60_000, env: process.env,
     });
     const parsed = JSON.parse(out) as { link_count?: number; page_count?: number };

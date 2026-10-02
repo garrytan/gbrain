@@ -89,18 +89,35 @@ function scopeSources(opts: RelationalArmOpts): string[] {
   return ['default'];
 }
 
+/** Page types a relation's seed may be besides an entity. The entity resolver
+ *  never returns a meeting, so "Who attended <meeting title>?" needs its own
+ *  exact-title tier. */
+function titleSeedTypes(parsed: RelationalQuery): string[] {
+  return parsed.direction === 'in' && parsed.linkTypes?.includes('attended') ? ['meeting', 'event'] : [];
+}
+
 /** Resolve a seed phrase to all in-scope (source_id, slug) pairs that
- *  resolve to a REAL page (confidence gate D3 tier-1: drop fallback_slugify). */
+ *  resolve to a REAL page (confidence gate D3 tier-1: drop fallback_slugify).
+ *  When the entity resolver only slugifies, a live page of one of
+ *  `titleTypes` whose title is exactly the phrase (case-insensitive, unique in
+ *  the source) is the seed. */
 async function resolveSeedScoped(
   engine: BrainEngine,
   sources: string[],
   phrase: string,
   policy: PageReadPolicy,
+  titleTypes: string[] = [],
 ): Promise<Array<{ source_id: string; slug: string }>> {
   const out: Array<{ source_id: string; slug: string }> = [];
   const seen = new Set<string>();
   for (const sid of sources) {
-    const r = await resolveEntitySlugWithSource(engine, sid, phrase);
+    let r = await resolveEntitySlugWithSource(engine, sid, phrase);
+    if (r?.source === 'fallback_slugify' && titleTypes.length) {
+      const titled = await engine.executeRaw<{ slug: string }>(
+        `SELECT slug FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND type = ANY($2::text[])
+           AND lower(title) = lower($3) LIMIT 2`, [sid, titleTypes, phrase.trim()]);
+      if (titled.length === 1) r = { slug: titled[0].slug, source: 'exact_page' };
+    }
     if (!r || r.source === 'fallback_slugify') continue;
     const key = `${sid}:${r.slug}`;
     if (seen.has(key)) continue;
@@ -325,7 +342,7 @@ export async function buildRelationalArm(
     }
 
     // who_rel / who_at / intro: single logical seed (may resolve in N sources).
-    const resolved = await resolveSeedScoped(engine, sources, parsed.seeds[0], opts);
+    const resolved = await resolveSeedScoped(engine, sources, parsed.seeds[0], opts, titleSeedTypes(parsed));
     if (resolved.length === 0) return finish([]);
     meta.seeds_resolved = resolved.length;
     const slugs = Array.from(new Set(resolved.map(r => r.slug)));

@@ -207,6 +207,14 @@ brain's reranker is actually running"* — *"turn reranking off for now"* —
 your agent runs `gbrain search modes` / `gbrain doctor`, then either exports
 `VOYAGE_API_KEY` or runs `gbrain config set search.reranker.enabled false`.
 
+TypeSafe's Jev can be the reranker instead of Voyage (`gbrain decide enable
+rerank` sets it and `gbrain decide disable rerank` restores your previous
+reranker; setup in [TypeSafe (Jev)](../ai-providers/typesafe.md)). The same
+provider also powers System One, a set of off-by-default decision slots in
+the search path, such as an evidence gate that drops results with no evidence
+for the question but, by default, never below three results and never an exact match.
+None of them changes a mode bundle. See [System One](system-one.md).
+
 The mode picker runs inside `gbrain init`. Non-TTY initialization tentatively
 applies its recommendation: `conservative` for a Haiku subagent or no detected
 expansion-capable key, otherwise `tokenmax`. Existing valid selections are

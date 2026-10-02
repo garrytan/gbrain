@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-023",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "companies/tidalwharf",
+      "content": "---\ntitle: Tidalwharf\ntype: company\nsummary: \"Tidalwharf is the payroll vendor we picked.\"\n---\n\nTidalwharf is the payroll vendor we picked. They quoted a per-seat price with a minimum annual commitment.\n"
+    },
+    {
+      "slug": "people/oskar-vashthorpe",
+      "content": "---\ntitle: Oskar Vashthorpe\ntype: person\nsummary: \"Oskar Vashthorpe is the product lead at Kilnmoor.\"\n---\n\nOskar Vashthorpe is the product lead at Kilnmoor.\n"
+    },
+    {
+      "slug": "people/ruairi-fenholt",
+      "content": "---\ntitle: Ruairi Fenholt\ntype: person\nsummary: \"Ruairi Fenholt is the head of sales at Russetfold.\"\n---\n\nRuairi Fenholt is the head of sales at Russetfold.\n"
+    },
+    {
+      "slug": "people/odette-pellthorpe",
+      "content": "---\ntitle: Odette Pellthorpe\ntype: person\naliases: [odette]\nsummary: \"Odette Pellthorpe is the finance lead at Orchidwharf.\"\n---\n\nOdette Pellthorpe is the finance lead at Orchidwharf.\n"
+    },
+    {
+      "slug": "companies/brackenspire",
+      "content": "---\ntitle: Brackenspire\ntype: company\nsummary: \"A company we met once at a trade show.\"\n---\n\nA company we met once at a trade show.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "what does the vendor we picked for payroll charge per employee?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "is oskar a common name anywhere? thinking about it for a character"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "Fix the typos in this line of my email to Fenholt: 'thnaks for the quick turnaround, talk soon'"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "How do you spell Pellthorpe in the NATO phonetic alphabet?"
+    }
+  ]
+}

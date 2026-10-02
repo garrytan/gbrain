@@ -1,0 +1,149 @@
+[user]
+My laptop will not connect to my Bluetooth headphones. They show up in the Bluetooth list, but clicking Connect either does nothing or changes back to Disconnected. Can you help me troubleshoot it?
+
+[assistant]
+Sure. We can work through the common causes without changing anything risky. First, what operating system is the laptop using, and do the headphones connect successfully to another device right now? Also, are they charged and within a couple of metres of the laptop?
+
+[user]
+It is Windows 11. The headphones have about 70% battery and connect to my phone normally. They are sitting next to the laptop. I already turned Bluetooth off and back on in Windows, but that did not help.
+
+[assistant]
+Thanks. Since the headphones work with the phone, the issue is probably the Windows pairing state, an active connection to the phone, or the Bluetooth driver. Start by disconnecting the headphones from the phone, then put the headphones into pairing mode rather than merely powering them on. Leave the phone’s Bluetooth screen closed for the moment.
+
+On Windows, open Settings with Win+I, choose Bluetooth & devices, and tell me whether the headphones appear under “My devices” or under “Add device.”
+
+[user]
+They were under “My devices.” I turned off Bluetooth on the phone, removed the headphones from the laptop, and put them back into pairing mode. Now they appear under Add device, but Windows still fails when I select them.
+
+[assistant]
+That narrows it down. Let’s check whether Windows is seeing a stale or duplicate device entry.
+
+1. In Settings, select Bluetooth & devices > Devices.
+2. Scroll down and open “More Bluetooth settings,” if it is available.
+3. In the Hardware or device list, note whether there is more than one entry related to the headphones.
+4. Close Settings afterward.
+
+Then open Device Manager by right-clicking Start and choosing Device Manager. Expand “Bluetooth,” and paste the names of the entries you see there. Do not uninstall anything yet.
+
+[user]
+Under Bluetooth I see:
+
+Intel(R) Wireless Bluetooth(R)
+Microsoft Bluetooth Enumerator
+Microsoft Bluetooth LE Enumerator
+Bluetooth Device (RFCOMM Protocol TDI)
+Headphones
+
+There is only one “Headphones” entry in the older Devices window. Device Manager shows no warning icons.
+
+[assistant]
+The adapter and enumerators look normal, and the lack of a warning icon is useful, but the “Headphones” entry may still be a partially installed device. Remove that entry from Device Manager, then restart the laptop before pairing again.
+
+In Device Manager:
+
+1. Right-click “Headphones” under Bluetooth.
+2. Choose “Uninstall device.”
+3. If a confirmation box offers “Attempt to remove the driver for this device,” leave that box unchecked.
+4. Select Uninstall.
+5. Restart Windows from Start > Power > Restart.
+
+After the restart, put the headphones into pairing mode again and try Settings > Bluetooth & devices > Add device > Bluetooth. Tell me the exact result or message.
+
+[user]
+I uninstalled it and restarted. The headphones paired this time, but Windows says “Connected” briefly and then changes to “Paired.” There is no sound through them.
+
+[assistant]
+That usually means pairing succeeded but the audio service did not select the headphones as the output device. First check the output selection:
+
+1. Click the speaker icon on the taskbar.
+2. Select the output-device button to the right of the volume slider.
+3. Choose the headphones from the list.
+4. Play a short system sound or a local audio file.
+
+If the headphones are listed but selecting them does nothing, open Settings > System > Sound. Under Output, select the headphones and tell me whether they appear as one device or as separate “Headphones” and “Headset” options.
+
+[user]
+They appear as two choices: “Headphones Stereo” and “Headset Hands-Free.” I selected Headphones Stereo, but the laptop still uses its speakers. In Sound, the output meter moves for the laptop speakers, not the headphones.
+
+[assistant]
+Select “Headphones Stereo,” then open its properties and verify that it is not disabled or muted:
+
+1. Go to Settings > System > Sound.
+2. Under Output, select “Headphones Stereo.”
+3. Set Volume to around 70.
+4. Make sure the Output setting is not “Don’t allow.”
+5. Under Format, leave the default format unchanged for now.
+6. Use the Test button, if present.
+
+Also check the per-application routing. Go to Settings > System > Sound > Volume mixer. Under Apps, find the application producing sound and set its Output device to “Default” or “Headphones Stereo.” If the application is not listed, play audio for a few seconds and refresh the page.
+
+[user]
+The device volume was 70 and it was allowed. The volume mixer showed my browser routed to the laptop speakers. I changed the browser to Default, and now the headphones work for browser audio. However, a media player I use still comes from the laptop speakers.
+
+[assistant]
+That media player has its own Windows app-output assignment. With the player open and actively playing audio:
+
+1. Open Settings > System > Sound > Volume mixer.
+2. Expand the Apps section if necessary.
+3. Find the media player by name.
+4. Set its Output device to “Headphones Stereo,” not just “Default.”
+5. Set its app volume above zero.
+6. Stop playback, wait a few seconds, and start it again.
+
+If it still uses the speakers, close the media player completely, including any icon in the notification area, then reopen it. Windows sometimes keeps an existing audio stream on the old endpoint until the application is restarted.
+
+[assistant]
+[user]
+I set the media player specifically to Headphones Stereo, closed it from the notification area, and reopened it. It now plays through the headphones. Is there anything else I should check so this does not keep happening?
+
+[assistant]
+A few routine checks can reduce repeat problems:
+
+- Keep the phone’s Bluetooth connection off while troubleshooting or until you finish using the headphones with the laptop.
+- In Settings > System > Sound, confirm Headphones Stereo is the selected output when the headphones are connected.
+- In Volume mixer, leave applications on Default unless one needs a separate output.
+- Avoid choosing Headset Hands-Free unless you need the headphone microphone; Stereo generally provides better playback quality.
+- Run Windows Update, including Optional updates only if they specifically mention Bluetooth, wireless, or audio.
+- In Device Manager, open Intel(R) Wireless Bluetooth(R) > Properties > Power Management and see whether “Allow the computer to turn off this device to save power” is enabled. If it is, you can clear it and select OK.
+
+Do not change unrelated adapter settings.
+
+[assistant]
+[user]
+I checked Windows Update and there was a Bluetooth driver update listed under optional updates. I installed it and restarted. The headphones reconnect, but after waking the laptop from sleep they sometimes return to Paired instead of Connected.
+
+[assistant]
+That can happen when the Bluetooth service or audio endpoint does not recover cleanly from sleep. Try these checks after the next wake:
+
+1. Open Settings > Bluetooth & devices > Devices and select the headphones. If Connect works there, no re-pairing is needed.
+2. If it remains Paired, toggle Bluetooth off and on once.
+3. Open the speaker menu and select Headphones Stereo again.
+4. If this is frequent, open Device Manager and inspect the Bluetooth adapter’s Power Management tab. Clear “Allow the computer to turn off this device to save power,” if that option is present, then restart Windows.
+
+Also check Settings > System > Power & battery > Screen and sleep. Note the current sleep interval, but there is no need to change it just for this issue.
+
+[assistant]
+[user]
+I cleared the power-management checkbox and tested sleep twice. The headphones reconnected both times, and the media player stayed routed correctly. I think it is fixed. Can I remove the Hands-Free option so it does not get selected accidentally?
+
+[assistant]
+It is better not to remove it from Device Manager. The Hands-Free option is the Bluetooth headset profile, and Windows may need it for the headphone microphone or call applications. Removing profile-related entries can create another pairing problem.
+
+Instead, leave Headphones Stereo as the normal output. If an application switches to Hands-Free, open Settings > System > Sound > Volume mixer while that application is running and select Headphones Stereo for its output. You can also choose the laptop’s built-in microphone as the input device when you do not need the headphone microphone.
+
+[assistant]
+[user]
+Understood. Before we finish, could you give me a short summary of what fixed it and the main steps to repeat if it happens again?
+
+[assistant]
+The successful sequence was:
+
+1. Disconnect the headphones from the phone and put them into pairing mode.
+2. Remove the stale “Headphones” entry from Device Manager, leaving the driver-removal box unchecked.
+3. Restart Windows and pair the headphones again.
+4. In Settings > System > Sound, select “Headphones Stereo” as the output.
+5. In Volume mixer, change each affected application from the laptop speakers to “Default” or “Headphones Stereo,” then restart that application.
+6. Install the available Bluetooth driver update.
+7. Clear “Allow the computer to turn off this device to save power” for the Bluetooth adapter.
+
+If it happens again, first check the phone connection, the selected output, and the app-specific Volume mixer setting. Re-pairing is only needed if those checks do not restore the connection.

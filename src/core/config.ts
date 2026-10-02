@@ -252,6 +252,8 @@ export interface GBrainConfig {
     adaptive_return_entity_max?: number;
     adaptive_return_other_max?: number;
     adaptive_return_min_keep?: number;
+    /** #5824 rollback switch (search/vector-legacy-guard.ts); file > DB, env wins over both. */
+    vector_legacy_guard?: boolean;
   };
 
   /**
@@ -1153,6 +1155,8 @@ export async function loadConfigWithEngine(
     const n = Number(await dbStr(`search.${cap}`));
     if (Number.isFinite(n)) mergedSearch[cap] = n;
   }
+  const dbVectorLegacyGuard = await dbBoolStrict('search.vector_legacy_guard');
+  if (mergedSearch.vector_legacy_guard === undefined && dbVectorLegacyGuard !== undefined) mergedSearch.vector_legacy_guard = dbVectorLegacyGuard;
   if (Object.keys(mergedSearch).length > 0) {
     merged.search = mergedSearch;
   }
@@ -1325,6 +1329,8 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // weak-graded query), and unlike crag_think it is reachable by remote
   // callers — attacker-shaped weak queries drive that spend (ship security
   // review). See docs/operations/spend-controls.md.
+  // #5824 one-release rollback, latched per process (search/vector-legacy-guard.ts).
+  'search.vector_legacy_guard',
   'search.adaptive_return',
   'search.adaptive_return_entity_max',
   'search.adaptive_return_other_max',
@@ -1411,6 +1417,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // didn't specify one: 'private' (default) | 'world'. Resolved by
   // src/core/facts/visibility.ts; explicit caller values always win.
   'facts.default_visibility',
+  'facts.entity_inference', // #5836: write-time subject inference kill switch (subject-infer.ts)
   // Ambient memory writeback (opt-in, default OFF): 'off' | 'salient' | 'all'.
   // DUAL-PLANE: `gbrain config set` writes the DB plane (authoritative — the
   // serve-side harvest gate re-checks it) AND mirrors into the file plane's
@@ -1644,6 +1651,7 @@ export const KNOWN_CONFIG_KEY_PREFIXES: readonly string[] = [
   //   parser; numeric 0 disables.
   'minions.',
   'pace.',              // pace.mode + PACE_MODE_CONFIG_KEYS (src/core/pace-mode.ts)
+  'decide.',            // System One decide.* (validated by src/core/ai/decide/config.ts DECIDE_CONFIG_KEYS)
   'connectors.',        // chat-connectors: source_id, sync_floor_min, embed_kickoff_min_pages, doctor_stale_hours, <provider>.{auto_sync,last_sync_at,auth_error_at,watermark_iso} (no secrets — creds are file-plane)
 ];
 

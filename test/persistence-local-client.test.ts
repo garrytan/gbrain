@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { persistenceConfigForBrain, readPersistenceCliRegistration, maybeDelegateLocalOperation } from '../src/core/persistence/local-client.ts';
+import { persistenceConfigForBrain, readPersistenceCliRegistration, maybeDelegateLocalOperation, residentPersistenceConfig } from '../src/core/persistence/local-client.ts';
+import { acquireLock, releaseLock } from '../src/core/pglite-lock.ts';
+import { PersistenceIpcTransportError } from '../src/core/persistence/ipc.ts';
 import { resolveSourceId } from '../src/core/source-resolver.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -20,6 +22,18 @@ describe('engine-free local persistence routing', () => {
     expect(persistenceConfigForBrain(host, 'example', mounts)?.database_path).toBe('/mount/db');
     expect(() => persistenceConfigForBrain(host, 'absent', mounts)).toThrow('not an enabled mount');
     expect(() => persistenceConfigForBrain(host, 'example-brain', [{ ...mounts[0], enabled: false }])).toThrow('not an enabled mount');
+  });
+
+  test('a resident owner takes the datastore of the brain its engine opened (#5237)', async () => {
+    const dir = temp(), project = join(dir, 'project'), mounts = join(dir, 'mounts.json');
+    mkdirSync(project);
+    writeFileSync(join(project, '.gbrain-mount'), 'example-brain\n'); chmodSync(join(project, '.gbrain-mount'), 0o644);
+    writeFileSync(mounts, JSON.stringify({ version: 1, mounts: [{ id: 'example-brain', engine: 'pglite', path: join(dir, 'clone'), database_path: '/mount/db' }] }), { mode: 0o600 });
+    const host = { engine: 'postgres' as const, database_url: 'postgresql://example.invalid/host', embedding_model: 'example-model' };
+    await withEnv({ GBRAIN_MOUNTS_PATH: mounts, GBRAIN_BRAIN_ID: undefined }, () => {
+      expect(residentPersistenceConfig(host, dir)).toBe(host);
+      expect(residentPersistenceConfig(host, project)).toEqual({ ...host, engine: 'pglite', database_path: '/mount/db', database_url: undefined });
+    });
   });
 
   test('missing registration never allocates a replacement principal', async () => {
@@ -55,6 +69,21 @@ describe('engine-free local persistence routing', () => {
     expect(originalId).toMatch(/^[a-f0-9-]{36}$/);
     await maybeDelegateLocalOperation('put_page', params, config, { brain: 'host', cwd: dir });
     expect(params.request_id).toBe(originalId);
+  });
+
+  test('another CLI holding the datastore hands off through the lock; only a serve holder is a resident owner', async () => {
+    const dir = temp();
+    const config = { engine: 'pglite' as const, database_path: join(dir, 'db') };
+    const lock = await acquireLock(config.database_path, { timeoutMs: 1000 });
+    const holder = (subcommand: string) => writeFileSync(lock.lockPath!, JSON.stringify({ ...JSON.parse(readFileSync(lock.lockPath!, 'utf8')), subcommand }));
+    try {
+      await withEnv({ GBRAIN_HOME: dir, GBRAIN_BRAIN_ID: 'host' }, async () => {
+        holder('call');
+        expect(await maybeDelegateLocalOperation('forget', { id: '1' }, config, { brain: 'host', cwd: dir })).toEqual({ handled: false });
+        holder('serve');
+        await expect(maybeDelegateLocalOperation('forget', { id: '1' }, config, { brain: 'host', cwd: dir })).rejects.toBeInstanceOf(PersistenceIpcTransportError);
+      });
+    } finally { await releaseLock(lock); }
   });
 
   test('owner source environment and dotfiles cannot redirect a client with no local signal', async () => {

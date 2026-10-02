@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-028",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/marisol-tulvwaite",
+      "content": "---\ntitle: Marisol Tulvwaite\ntype: person\nsummary: \"Marisol Tulvwaite is the finance lead at Russetreach.\"\n---\n\nMarisol Tulvwaite is the finance lead at Russetreach.\n"
+    },
+    {
+      "slug": "people/florian-tulvholt",
+      "content": "---\ntitle: Florian Tulvholt\ntype: person\nsummary: \"Florian Tulvholt is the operations director at Fablegate.\"\n---\n\nFlorian Tulvholt is the operations director at Fablegate. Florian objected to the auto-renewal clause in the draft contract.\n"
+    },
+    {
+      "slug": "people/saskia-corvford",
+      "content": "---\ntitle: Saskia Corvford\ntype: person\nsummary: \"Saskia Corvford is the operations director at Kilncrest.\"\n---\n\nSaskia Corvford is the operations director at Kilncrest.\n"
+    },
+    {
+      "slug": "companies/lumenreach",
+      "content": "---\ntitle: Lumenreach\ntype: company\nsummary: \"Lumenreach is a software vendor we work with.\"\n---\n\nLumenreach is a software vendor we work with. Their pilot with our team ends after the next billing cycle.\n"
+    },
+    {
+      "slug": "companies/glintloft",
+      "content": "---\ntitle: Glintloft\ntype: company\nsummary: \"A company we met once at a trade show.\"\n---\n\nA company we met once at a trade show.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Tulvwaite's train gets in at 5:40pm and the walk is 15 minutes. What time will they reach the office?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Done."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "I owe Tulvholt an answer on the contract. What were they asking for?"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Here is what I have."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "is saskia a common name anywhere? thinking about it for a character"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Done."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "how's lumenreach doing on the pilot?"
+    }
+  ]
+}

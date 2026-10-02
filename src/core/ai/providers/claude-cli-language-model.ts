@@ -34,7 +34,7 @@
  * (gateway.toolLoop primarily) use doGenerate.
  */
 import { randomUUIDv7 } from 'bun';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
 import {
   claudeCliConfigDir,
@@ -306,6 +306,26 @@ function renderPrompt(prompt: LanguageModelV2Prompt): { systemText: string; user
   return { systemText: systemParts.join('\n'), userPrompt: convo.join('\n\n') };
 }
 
+/** Oldest claude CLI that accepts every flag `runClaude` passes (probed:
+ * 2.0.59 rejects `--disable-slash-commands`, 2.0.60 accepts the full argv). */
+export const MIN_CLAUDE_CLI_VERSION = '2.0.60';
+
+/** The CLI's argument parser rejected a flag (`error: unknown option '--x'`). */
+export function isUnknownOptionError(stderr: string): boolean {
+  return /\bunknown option\b/i.test(stderr);
+}
+
+export function oldClaudeCliMessage(version: string | null): string {
+  return `claude CLI ${MIN_CLAUDE_CLI_VERSION} or newer required (found ${version ?? 'an unknown version'}); upgrade Claude Code`;
+}
+
+/** `claude --version`'s version number, or null. Only called after a failed
+ * run, so the extra spawn never sits on the success path. */
+function claudeCliVersion(env: NodeJS.ProcessEnv): string | null {
+  const r = spawnSync(claudeBin(), ['--version'], { encoding: 'utf8', timeout: 5_000, env });
+  return /\d+\.\d+\.\d+/.exec(typeof r.stdout === 'string' ? r.stdout : '')?.[0] ?? null;
+}
+
 /**
  * Spawn `claude --print` with the contamination-suppression flags and return
  * the parsed `--output-format json` envelope. Aborts propagate to SIGTERM on
@@ -331,6 +351,12 @@ function runClaude(
       // contention). Verified against claude CLI 2.1.145 --help.
       '--tools', '',
       '--strict-mcp-config',
+      // #5820: the child must not run the user's Claude Code hooks — gbrain's
+      // own Stop hook would bank this call's prompt as a "conversation" and
+      // extracting it spawns another call. Unlike --bare this keeps the
+      // subscription login (credentials are not settings). Accepted by every
+      // CLI that accepts the flags above.
+      '--settings', '{"disableAllHooks":true}',
     ];
     if (systemPrompt) {
       args.push('--system-prompt', systemPrompt);
@@ -411,8 +437,11 @@ function runClaude(
         // model/page-derived text, and classifyGlobalLlmError's phrase
         // regexes only scan text before the marker (an auth-looking essay in
         // stdout must never read as a whole-run auth outage).
+        const headline = isUnknownOptionError(stderr)
+          ? oldClaudeCliMessage(claudeCliVersion(env))
+          : `claude-cli exited ${code}`;
         reject(new ClaudeCliProcessError(
-          `claude-cli exited ${code}\n--- raw ---\n${stderr.trim() || stdout.trim()}`,
+          `${headline}\n--- raw ---\n${stderr.trim() || stdout.trim()}`,
           { exitCode: code ?? undefined },
         ));
         return;

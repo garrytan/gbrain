@@ -1,0 +1,274 @@
+[user]
+I forgot the admin password for my home router. How do I reset it?
+
+[assistant/assistant]
+You can usually recover access by either using a saved password or performing a factory reset. First, identify the router’s brand and model from the label on the underside or back. Before resetting, note that a factory reset erases your Wi‑Fi name, Wi‑Fi password, internet settings, port forwards, parental controls, and other custom settings.
+
+Try these steps in order:
+
+1. Check whether the password is saved in your browser or password manager.
+2. Look up the model’s official support page for its default address and reset procedure.
+3. If you still cannot sign in, hold the recessed Reset button for the time specified by the manufacturer, commonly 10–15 seconds while powered on.
+4. Reconnect using the default Wi‑Fi details printed on the label, or connect by Ethernet.
+5. Complete the setup wizard and create a new administrator password.
+
+What brand and model is it?
+
+[user]
+It’s a TP-Link Archer C7, hardware version V5. I can connect to Wi‑Fi, but I don’t know the admin password. I’d prefer not to wipe the settings if there’s another way.
+
+[assistant]
+For an Archer C7 V5, there generally is no supported way to display or recover the existing administrator password from the router. If the password is saved locally, you can check your browser:
+
+- Chrome: Settings → Password Manager → search for `tplinkwifi.net`, `192.168.0.1`, or `192.168.1.1`
+- Edge: Settings → Profiles → Passwords
+- Firefox: Settings → Privacy & Security → Saved Passwords
+- macOS: Passwords in System Settings, or Keychain Access
+- Windows: Credential Manager, if it was stored there
+
+You can also try visiting `http://tplinkwifi.net`, `http://192.168.0.1`, and `http://192.168.1.1`. The correct address depends on the network configuration. If no saved credential works, a factory reset is the normal recovery path.
+
+Before doing that, you can export or record anything you may need from a device already connected, such as the Wi‑Fi name, Wi‑Fi password, ISP username, VPN settings, and any port-forwarding rules.
+
+[user]
+I’m on a Linux laptop. Is there a command to find the router address and maybe see whether the password is stored somewhere?
+
+[assistant]
+Yes. To find the default gateway, run:
+
+```text
+ip route | grep default
+```
+
+Typical output is:
+
+```text
+default via 192.168.0.1 dev wlp2s0 proto dhcp src 192.168.0.42 metric 600
+```
+
+Here, `192.168.0.1` is the router address. You can also run:
+
+```text
+nmcli connection show
+nmcli connection show "<connection name>"
+```
+
+Look for `IP4.GATEWAY`.
+
+For saved credentials, check your browser’s password manager first. On Linux, NetworkManager normally stores the Wi‑Fi password in a protected keyring or connection profile, but that is the Wi‑Fi key, not the router’s web administrator password. You can inspect connection names with:
+
+```text
+sudo grep -R "psk=" /etc/NetworkManager/system-connections/
+```
+
+That may expose the wireless password, so avoid pasting the output publicly. It will not normally reveal the router admin password. If you use GNOME Keyring, KDE Wallet, Firefox, Chromium, or a separate password manager, search those for the router address or `tplinkwifi.net`.
+
+[user]
+I’m thinking about a product idea unrelated to the router. Dario Castellan’s harbor-ledger could treat small business records like shipping containers: each item gets a clear status, owner, and next port, rather than disappearing into folders. The useful thesis is that most workflow software fails because it stores documents but does not show movement or blockage. A lightweight board with an audit trail could make “waiting on customer” visibly different from “ready to ship” without forcing a full ERP. It might work best for repair shops and small importers that coordinate by email and spreadsheets.
+
+[assistant/assistant]
+That is a concrete product thesis: represent work as units moving through explicit states, with responsibility and blockers visible. For harbor-ledger, a small first version could include:
+
+- A record such as repair order, shipment, or invoice
+- Status and next action
+- Current owner
+- “Waiting on” party or condition
+- Due date and exception flag
+- Immutable activity history
+- Email or CSV import, so users do not need to re-enter existing records
+
+A repair-shop workflow might be `Received → Diagnosing → Waiting for approval → Parts ordered → In repair → Ready for pickup → Closed`. The key test would be whether staff can identify stalled records in under a minute, without opening every document. For an initial prototype, you could use a table plus a filtered status board rather than building a full ERP.
+
+[user]
+That makes sense. For now I need to get back into the router, and I don’t want to lose the current Wi‑Fi setup if I can avoid it.
+
+[assistant]
+Understood. Since you can still connect to the Wi‑Fi, gather the information needed to recreate it before resetting.
+
+On Linux, first find the active connection:
+
+```text
+nmcli -t -f NAME,TYPE connection show --active
+```
+
+Then inspect the connection without exposing secrets:
+
+```text
+nmcli connection show "<connection name>"
+```
+
+Record:
+
+- Wi‑Fi network name, shown as `802-11-wireless.ssid`
+- Router address, shown as `IP4.GATEWAY`
+- DNS servers, if they are custom
+- Whether the connection uses DHCP or manual addressing
+
+To retrieve the Wi‑Fi password through NetworkManager, use:
+
+```text
+sudo nmcli --fields 802-11-wireless-security.psk connection show "<connection name>"
+```
+
+Your system may ask for your Linux account password. Treat the result as secret. If the command shows nothing, the password may be held in your desktop keyring. You can also read the SSID from:
+
+```text
+nmcli -f IN-USE,SSID,SECURITY dev wifi
+```
+
+Do not reset until you know whether your ISP requires PPPoE credentials or a special VLAN setting.
+
+[user]
+How exactly do I reset the Archer C7 V5, and what should I expect afterward? I can connect by Ethernet if that’s safer.
+
+[assistant]
+For the Archer C7 V5, use the physical reset button:
+
+1. Leave the router powered on.
+2. Locate the recessed **WPS/RESET** button on the rear panel.
+3. Use a paperclip and press it continuously for about 10 seconds, until the LEDs change or the router restarts. Do not release after a brief press, because a short press may activate WPS rather than reset.
+4. Wait several minutes for the reboot to finish. Do not unplug it during this process.
+5. Connect the laptop to a LAN port with Ethernet. Disable Wi‑Fi temporarily if you want to ensure you are configuring the router over the cable.
+6. Open `http://tplinkwifi.net`; if that does not load, try `http://192.168.0.1` and then `http://192.168.1.1`.
+
+After a full reset, the setup page will ask you to create a new local administrator password. The wireless network may return to the name and password printed on the router label, or the setup wizard may ask you to configure them. Internet access may not work until you restore ISP-specific settings. Do not confuse the router’s admin password with the Wi‑Fi password: they are separate credentials.
+
+[user]
+Before I do it, can I back up the configuration without knowing the admin password? Also, is there a way to tell whether my ISP uses PPPoE?
+
+[assistant]
+A configuration backup normally requires signing in to the router, so there is no supported way to export a complete Archer C7 configuration without the administrator password. You can still preserve the important values manually.
+
+From Linux, collect the local network details:
+
+```text
+nmcli -f GENERAL,IP4,DHCP4 device show
+ip route
+resolvectl status
+```
+
+For PPPoE, look at how the router’s WAN connection was originally provisioned. Clues include:
+
+- Your ISP gave you a broadband username and password specifically for the router.
+- The router’s Internet/WAN type was set to **PPPoE**.
+- The router status page, if accessible through a mobile app or another already authenticated session, shows PPPoE.
+- Your ISP’s setup documentation explicitly says to select PPPoE.
+
+If your connection uses a cable modem or an Ethernet handoff that gives the router an address automatically, it is often Dynamic IP/DHCP, but do not rely on that assumption. Ask the ISP whether your service requires PPPoE, VLAN tagging, a static IP, or MAC-address registration. If you have a separate modem/router combination, identify which device is actually performing authentication before resetting anything.
+
+[user]
+I reset it, and I’m connected by Ethernet now. `tplinkwifi.net` opens the setup page. What settings should I enter first, and how can I verify the internet is working before reconnecting everything?
+
+[assistant]
+Start with the basic setup wizard:
+
+1. Create a new router administrator password. Use a unique password of at least 14 characters and save it in your password manager.
+2. Set the time zone and allow automatic time synchronization.
+3. Select the correct Internet connection type:
+   - **Dynamic IP** if your ISP provides the address automatically.
+   - **PPPoE** only if your ISP supplied a PPPoE username and password.
+   - **Static IP** only if the ISP supplied an address, subnet mask, gateway, and DNS values.
+4. Configure Wi‑Fi with the previous SSID and password if you want devices to reconnect automatically. Using the old values is convenient, but choose a new Wi‑Fi password if you suspect the old one was shared.
+5. Install the current official firmware for the Archer C7 V5 only after confirming the hardware version. Download it from TP-Link’s support site, use a wired connection, and do not interrupt power during installation.
+
+To test before reconnecting other devices:
+
+- Check the router’s status page for a WAN IP address.
+- From the Linux laptop, run:
+
+```text
+ip route
+ping -c 4 192.168.0.1
+ping -c 4 1.1.1.1
+getent hosts example.com
+```
+
+The first ping checks the router, the second checks Internet routing, and the final command checks DNS. If the router responds but `1.1.1.1` does not, review the WAN type, modem connection, and ISP requirements. If the IP ping works but name lookup fails, check the router’s DNS settings or temporarily use automatic DNS.
+
+[tool]
+You have 726 weighted tokens left
+
+[user]
+The router shows a WAN address, and `ping -c 4 1.1.1.1` works, but `getent hosts example.com` returns nothing. What should I check?
+
+[assistant]
+That indicates the WAN connection and basic routing work, but DNS resolution is failing. Check these items:
+
+1. Confirm the laptop received DNS servers:
+
+```text
+nmcli device show | grep -E 'IP4.DNS|IP4.GATEWAY'
+resolvectl status
+```
+
+2. Test DNS directly against public resolvers:
+
+```text
+resolvectl query example.com
+dig example.com
+dig @1.1.1.1 example.com
+dig @8.8.8.8 example.com
+```
+
+If `dig` is not installed, on Debian or Ubuntu you can install it with:
+
+```text
+sudo apt update
+sudo apt install dnsutils
+```
+
+3. In the router’s Internet or DHCP settings, leave DNS on automatic first. If that fails, try manually entering `1.1.1.1` and `8.8.8.8`, save, and reboot the router or renew the laptop’s lease:
+
+```text
+nmcli connection down "<connection name>"
+nmcli connection up "<connection name>"
+```
+
+4. Check that the router’s system time is correct; incorrect time can interfere with some services, though it usually does not prevent ordinary DNS queries.
+
+If `dig @1.1.1.1 example.com` succeeds but ordinary `dig example.com` fails, the configured DNS path is the problem. If direct queries also fail, check whether the ISP blocks external DNS or requires a particular DNS configuration. Avoid changing unrelated firewall or WAN settings while troubleshooting.
+
+[tool]
+You have 356 weighted tokens left
+
+[user]
+`dig @1.1.1.1 example.com` works, but plain `dig example.com` times out. I set the router DNS to 1.1.1.1 and 8.8.8.8, but the laptop still has the old DNS address. What should I do?
+
+[assistant/assistant]
+The laptop likely still has a cached DHCP lease or an explicitly configured DNS override. First inspect the active NetworkManager profile:
+
+```text
+nmcli connection show "<connection name>" | grep -E 'ipv4.method|ipv4.dns|ipv4.ignore-auto-dns'
+```
+
+If you want the router to provide DNS, clear profile-level overrides:
+
+```text
+sudo nmcli connection modify "<connection name>" ipv4.dns "" ipv4.ignore-auto-dns no
+sudo nmcli connection down "<connection name>"
+sudo nmcli connection up "<connection name>"
+```
+
+Then check:
+
+```text
+nmcli device show | grep -E 'IP4.DNS|IP4.GATEWAY'
+resolvectl flush-caches
+getent hosts example.com
+```
+
+If the old address remains, restart NetworkManager:
+
+```text
+sudo systemctl restart NetworkManager
+```
+
+You can also temporarily set DNS directly on the laptop:
+
+```text
+sudo nmcli connection modify "<connection name>" ipv4.dns "1.1.1.1 8.8.8.8" ipv4.ignore-auto-dns yes
+nmcli connection down "<connection name>"
+nmcli connection up "<connection name>"
+```
+
+Once resolution works, test several domains and reconnect other devices one at a time.

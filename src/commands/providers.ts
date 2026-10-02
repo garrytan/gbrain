@@ -44,6 +44,7 @@ function configureFromEnv(): void {
 }
 
 export function envReady(recipe: Recipe, env: NodeJS.ProcessEnv = process.env): boolean {
+  if (recipe.authPresent) return recipe.authPresent(env);
   const required = recipe.auth_env?.required ?? [];
   if (required.length === 0) return true; // e.g. local Ollama
   return required.every(k => !!env[k]);
@@ -98,8 +99,8 @@ export function formatRecipeTable(recipes: Recipe[], env: NodeJS.ProcessEnv = pr
   // in test/providers.test.ts. Auto-widening keeps the contract — every row's
   // id is followed by at least one space — without per-recipe column tuning.
   const idCol = Math.max(14, ...recipes.map(r => r.id.length + 1));
-  const totalWidth = idCol + 18 + 8 + 8 + 8 + 16; // tier+embed+expand+chat+status
-  rows.push('PROVIDER'.padEnd(idCol) + 'TIER'.padEnd(18) + 'EMBED'.padEnd(8) + 'EXPAND'.padEnd(8) + 'CHAT'.padEnd(8) + 'STATUS');
+  const totalWidth = idCol + 18 + 8 + 8 + 8 + 8 + 8 + 16; // tier+embed+expand+chat+rerank+decide+status
+  rows.push('PROVIDER'.padEnd(idCol) + 'TIER'.padEnd(18) + 'EMBED'.padEnd(8) + 'EXPAND'.padEnd(8) + 'CHAT'.padEnd(8) + 'RERANK'.padEnd(8) + 'DECIDE'.padEnd(8) + 'STATUS');
   rows.push('-'.repeat(totalWidth));
   for (const r of recipes) {
     const hasEmbed = !!r.touchpoints.embedding && (r.touchpoints.embedding.models.length > 0);
@@ -113,6 +114,8 @@ export function formatRecipeTable(recipes: Recipe[], env: NodeJS.ProcessEnv = pr
       (hasEmbed ? 'yes' : '—').padEnd(8) +
       (hasExpand ? 'yes' : '—').padEnd(8) +
       (hasChat ? 'yes' : '—').padEnd(8) +
+      (r.touchpoints.reranker ? 'yes' : '—').padEnd(8) +
+      (r.touchpoints.decide ? 'yes' : '—').padEnd(8) +
       status,
     );
   }

@@ -127,11 +127,13 @@ export async function writeSingleFact(
 
   if (managed) {
     // The coordinator's fact intent owns dedup, supersession, the fence row and
-    // the file on a managed brain; the legacy direct writes stay unmanaged.
+    // the file on a managed brain; the legacy direct writes stay unmanaged. An
+    // entity with no page keeps its resolver slug database-only, as the
+    // unmanaged path stores it, so dedup is per entity.
     const { publishManagedEntityFacts } = await import('./managed-fact-write.ts');
     const written = await publishManagedEntityFacts(engine, sourceId, resolvedSlug, [{ fact: factText, kind, notability: 'medium',
       source: input.provenance, visibility, confidence: input.confidence ?? 1.0, validFrom: new Date(), validUntil,
-      embedding, embedding_model: embeddingModel, sessionId: input.sessionId ?? null }], { supersede: true });
+      embedding, embedding_model: embeddingModel, sessionId: input.sessionId ?? null }], { supersede: true, attributeFallback: true });
     const [stored] = await engine.executeRaw<{ entity_slug: string | null }>('SELECT entity_slug FROM facts WHERE id=$1', [written.ids[0]]);
     return { id: written.ids[0], status: written.superseded ? 'superseded' : written.inserted ? 'inserted' : 'duplicate', entity_slug: stored?.entity_slug ?? null,
       valid_until: validUntil, degraded_dedup: degradedDedup };

@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-064",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/greta-fenwick",
+      "content": "---\ntitle: Greta Fenwick\ntype: person\nsummary: \"Greta Fenwick is the procurement lead at Juniperyard.\"\n---\n\nGreta Fenwick is the procurement lead at Juniperyard.\n"
+    },
+    {
+      "slug": "projects/pricing-overhaul",
+      "content": "---\ntitle: Pricing Overhaul\ntype: project\nsummary: \"Pricing Overhaul: We decided to move the starter plan to usage-based pricing and keep annual contracts for larger teams.\"\n---\n\nPricing Overhaul: We decided to move the starter plan to usage-based pricing and keep annual contracts for larger teams.\n"
+    },
+    {
+      "slug": "people/bastian-merrwick",
+      "content": "---\ntitle: Bastian Merrwick\ntype: person\naliases: [bastian]\nsummary: \"Bastian Merrwick is the head of sales at Tidalyard.\"\n---\n\nBastian Merrwick is the head of sales at Tidalyard. Bastian wants the proposal revised to drop the onboarding fee.\n"
+    },
+    {
+      "slug": "people/tamsin-quellwick",
+      "content": "---\ntitle: Tamsin Quellwick\ntype: person\nsummary: \"Tamsin Quellwick is the head of partnerships at Marbleyard.\"\n---\n\nTamsin Quellwick is the head of partnerships at Marbleyard.\n"
+    },
+    {
+      "slug": "people/elodie-orrinholt",
+      "content": "---\ntitle: Elodie Orrinholt\ntype: person\naliases: [elodie]\nsummary: \"A contact from a conference last spring.\"\n---\n\nA contact from a conference last spring.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "In the novel I'm reading, Captain Fenwick betrays the crew. Is that a common trope?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Happy to help."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "where did we land on that pricing thing?"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "What did Merrwick want changed in the proposal?"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Okay, noted."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "Turn this into a checklist: Quellwick sends the deck, I review it, we both sign off on Friday."
+    }
+  ]
+}

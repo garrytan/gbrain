@@ -62,7 +62,7 @@ const FENCE_END = '<!--- gbrain:facts:end -->';
  * `superseded by #N` reference instead of the withdrawal marker, so the next
  * reconcile links it and it never becomes a durable withdrawal.
  */
-function supersededFact(fact: ParsedFact, today: string, newRowNum: number | null): ParsedFact {
+export function supersededFact(fact: ParsedFact, today: string, newRowNum: number | null): ParsedFact {
   const context = [newRowNum !== null ? `superseded by #${newRowNum}` : 'superseded', fact.context?.trim()].filter(Boolean).join(' | ');
   const validUntil = fact.validUntil && /^\d{4}-\d{2}-\d{2}$/.test(fact.validUntil) && fact.validUntil < today ? fact.validUntil : today;
   return { ...fact, active: false, validUntil, context };
@@ -75,7 +75,7 @@ function supersededFact(fact: ParsedFact, today: string, newRowNum: number | nul
  * fence lacks the row (DB drifted from markdown) or its markers — callers
  * fall back to a DB-only expire.
  */
-function strikeFenceRow(body: string, rowNum: number, strike: (fact: ParsedFact) => ParsedFact): string | null {
+export function strikeFenceRow(body: string, rowNum: number, strike: (fact: ParsedFact) => ParsedFact): string | null {
   const parsed = parseFactsFence(body);
   const target = parsed.facts.find(f => f.rowNum === rowNum);
   if (!target) return null;

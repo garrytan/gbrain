@@ -51,7 +51,8 @@ import type {
   NewFact, FactListOpts, FactsHealth,
   SourceRow,
 } from './engine.ts';
-import { DREAM_VERDICT_TTL_SECONDS, MAX_SEARCH_LIMIT, clampSearchLimit } from './engine.ts';
+import { DREAM_VERDICT_TTL_SECONDS, clampSearchLimit } from './engine.ts';
+import { searchLimitCap } from './search/eval-pool-depth.ts';
 // Engine-path imports stay static unless a call site carries an explicit
 // engine-dynamic-import-ok justification. The gateway is the only current
 // exception because its local try/catch preserves a soft fallback.
@@ -70,8 +71,9 @@ import {
 } from './chronicle/ontology.ts';
 import { logBatchRetry as auditLogBatchRetry, logBatchExhausted as auditLogBatchExhausted } from './audit/batch-retry-audit.ts';
 import { runMigrations } from './migrate.ts';
-import { hnswIndexExpected, supportsHnswIterativeScan } from './vector-index.ts';
+import { supportsHnswIterativeScan } from './vector-index.ts';
 import { searchVectorPool, readVectorPool } from './search/vector-pool.ts';
+import { buildVectorSearchStatement, VECTOR_EXTENSION_VERSION_SQL } from './search/vector-statement.ts';
 import { withVectorSettings } from './search/vector-settings.ts';
 import { PGLITE_SCHEMA_SQL, getPGLiteSchema } from './pglite-schema.ts';
 import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } from './ai/defaults.ts';
@@ -114,14 +116,11 @@ import { finalizeLastSeen } from './chronicle/last-seen.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
 import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildBestPerPagePoolCte, buildOrFallbackWebsearchQuery, boundWebsearchQuery } from './search/sql-ranking.ts';
 import { privatePagesFilterFragment, privateSnapshotFilterFragment, privateLinkOriginFilterFragment, privateTimelineEventFilterFragment, privateProvenanceFilterFragment } from './search/private-visibility.ts';
-import { unverifiedExtractionFragment } from './extraction-review.ts';
 import { shouldExcludeFromOrphanReporting, loadOrphanPolicyOverrides } from './orphan-policy.ts';
 import { LINK_EXTRACTOR_VERSION_TS } from './link-extraction.ts';
 import { EMBED_SKIP_FILTER_FRAGMENT } from './embed-skip.ts';
 import { QUARANTINE_FILTER_FRAGMENT, quarantineFilterFragment } from './quarantine.ts';
 import {
-  normalizeEngineColumn,
-  buildVectorCastFragment,
   vectorCastSuffix,
   resolveActiveEmbeddingColumnFromEngine,
   resolveWriteColumnFromConfigRows,
@@ -1322,16 +1321,16 @@ export class PGLiteEngine implements BrainEngine {
   // than direct window function + GROUP BY. Fetch more chunks than the
   // page limit (3x) to ensure N dedup'd pages survive; bounded and fast.
   async searchKeyword(query: string, opts?: SearchOpts): Promise<SearchResult[]> {
-    const limit = clampSearchLimit(opts?.limit);
+    const limit = clampSearchLimit(opts?.limit, 20, searchLimitCap());
     const offset = opts?.offset || 0;
     const detailFilter = opts?.detail === 'low' ? `AND cc.chunk_source = 'compiled_truth'` : '';
 
-    if (opts?.limit && opts.limit > MAX_SEARCH_LIMIT) {
-      console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${MAX_SEARCH_LIMIT}`);
+    if (opts?.limit && opts.limit > searchLimitCap()) {
+      console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${searchLimitCap()}`);
     }
 
     // Fetch 3x to give dedup headroom, then page-dedup + re-limit.
-    const innerLimit = Math.min(limit * 3, MAX_SEARCH_LIMIT * 3);
+    const innerLimit = Math.min(limit * 3, searchLimitCap() * 3);
 
     // Source-aware ranking (v0.22): see postgres-engine.ts for rationale.
     const boostMap = opts?.source_boosts ?? resolveBoostMap();
@@ -1477,12 +1476,12 @@ export class PGLiteEngine implements BrainEngine {
     // meaning; a code-scoped query gets no title candidates rather than
     // rows that silently violate the caller's filter.
     if (opts?.language || opts?.symbolKind) return [];
-    const limit = clampSearchLimit(opts?.limit);
+    const limit = clampSearchLimit(opts?.limit, 20, searchLimitCap());
     const offset = opts?.offset || 0;
     const detailLow = opts?.detail === 'low';
 
-    if (opts?.limit && opts.limit > MAX_SEARCH_LIMIT) {
-      console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${MAX_SEARCH_LIMIT}`);
+    if (opts?.limit && opts.limit > searchLimitCap()) {
+      console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${searchLimitCap()}`);
     }
 
     const boostMap = opts?.source_boosts ?? resolveBoostMap();
@@ -1635,12 +1634,12 @@ export class PGLiteEngine implements BrainEngine {
    * contract). This method is intentionally a narrow internal knob.
    */
   async searchKeywordChunks(query: string, opts?: SearchOpts): Promise<SearchResult[]> {
-    const limit = clampSearchLimit(opts?.limit);
+    const limit = clampSearchLimit(opts?.limit, 20, searchLimitCap());
     const offset = opts?.offset || 0;
     const detailFilter = opts?.detail === 'low' ? `AND cc.chunk_source = 'compiled_truth'` : '';
 
-    if (opts?.limit && opts.limit > MAX_SEARCH_LIMIT) {
-      console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${MAX_SEARCH_LIMIT}`);
+    if (opts?.limit && opts.limit > searchLimitCap()) {
+      console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${searchLimitCap()}`);
     }
 
     // Source-aware ranking applied here too — searchKeywordChunks is the
@@ -1723,41 +1722,15 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   async searchVector(embedding: Float32Array, opts?: SearchOpts): Promise<SearchResult[]> {
-    const limit = clampSearchLimit(opts?.limit);
-    const offset = opts?.offset || 0;
-    const vecStr = '[' + Array.from(embedding).join(',') + ']';
-    const detailFilter = opts?.detail === 'low' ? `AND cc.chunk_source = 'compiled_truth'` : '';
-
-    if (opts?.limit && opts.limit > MAX_SEARCH_LIMIT) {
-      console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${MAX_SEARCH_LIMIT}`);
+    const limit = clampSearchLimit(opts?.limit, 20, searchLimitCap());
+    if (opts?.limit && opts.limit > searchLimitCap()) {
+      console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${searchLimitCap()}`);
     }
-
-    // Two-stage CTE (v0.22): pure-distance ORDER BY in inner CTE preserves
-    // HNSW; outer SELECT re-ranks by raw_score * source_factor over the
-    // narrow candidate pool. innerLimit scales with offset to preserve the
-    // pagination contract. See postgres-engine.ts searchVector for rationale.
-    const boostMap = opts?.source_boosts ?? resolveBoostMap();
-    // Outer SELECT references the aliased CTE column. Aliasing the CTE as `hc`
-    // disambiguates the correlated subquery (`te.page_id = hc.page_id`) from
-    // the inner column. Without the alias, an unqualified `page_id` in the
-    // subquery's WHERE would lexically resolve back to `te.page_id` itself
-    // and degrade to `te.page_id = te.page_id` (always true), making every
-    // result stale=true. Codex caught this in adversarial review.
-    // Built on the bare `slug` output column: applied inside the `scored` CTE
-    // whose FROM is the single relation `hnsw_candidates`, so unqualified
-    // `slug` resolves cleanly (T1 per-page pool restructure).
-    // issue #160: guard predicate projected as `unverified_stub` in
-    // hnsw_candidates (parity with postgres-engine) so unverified stubs get
-    // factor 1.0, not the people/ 1.2x, inside the pre-LIMIT re-rank.
-    const sourceFactorCaseOnSlug = buildSourceFactorCase('slug', boostMap, opts?.detail, 'unverified_stub');
-    const hardExcludePrefixes = resolveHardExcludes(opts?.exclude_slug_prefixes, opts?.include_slug_prefixes);
-    const hardExcludeClause = buildHardExcludeClause('p.slug', hardExcludePrefixes);
-    const resolvedColEarly = normalizeEngineColumn(opts?.embeddingColumn);
-    const indexed = hnswIndexExpected(resolvedColEarly.type, resolvedColEarly.dimensions);
-    const innerLimit = offset + Math.max(limit * 5, 100);
-    this.vectorIterativeScan ??= this.executeRaw<{ extversion: string }>(
-      `SELECT extversion FROM pg_extension WHERE extname = 'vector'`,
-    ).then(rows => supportsHnswIterativeScan(rows[0]?.extversion));
+    // Same statement as postgres-engine (search/vector-statement.ts); the
+    // PGLite dialect adds the timeline `stale` flag and has no exact fallback.
+    const stmt = buildVectorSearchStatement({ dialect: 'pglite', embedding, limit, offset: opts?.offset || 0, opts });
+    this.vectorIterativeScan ??= this.executeRaw<{ extversion: string }>(VECTOR_EXTENSION_VERSION_SQL)
+      .then(rows => supportsHnswIterativeScan(rows[0]?.extversion));
     const probe = this.vectorIterativeScan;
     let iterative: boolean;
     try { iterative = await probe; }
@@ -1765,154 +1738,16 @@ export class PGLiteEngine implements BrainEngine {
       if (this.vectorIterativeScan === probe) this.vectorIterativeScan = undefined;
       throw error;
     }
-    const params: unknown[] = [vecStr];
-    let extraFilter = '';
-    if (opts?.type) {
-      params.push(opts.type);
-      extraFilter += ` AND p.type = $${params.length}`;
-    }
-    if (opts?.exclude_slugs?.length) {
-      params.push(opts.exclude_slugs);
-      extraFilter += ` AND p.slug != ALL($${params.length}::text[])`;
-    }
-    if (opts?.language) {
-      params.push(opts.language);
-      extraFilter += ` AND cc.language = $${params.length}`;
-    }
-    if (opts?.symbolKind) {
-      params.push(opts.symbolKind);
-      extraFilter += ` AND cc.symbol_type = $${params.length}`;
-    }
-    // v0.33: multi-type filter for whoknows. Applied inside HNSW candidate
-    // CTE so the candidate pool consists only of typed pages — limit budget
-    // goes to person/company pages instead of being eaten by other types.
-    if (opts?.types && opts.types.length > 0) {
-      params.push(opts.types);
-      extraFilter += ` AND p.type = ANY($${params.length}::text[])`;
-    }
-    // v0.29.1 since/until parity (codex pass-1 #10). Filter applied INSIDE
-    // the inner CTE so HNSW's candidate pool already excludes out-of-range
-    // pages — preserves pagination contract.
-    if (opts?.afterDate) {
-      params.push(opts.afterDate);
-      extraFilter += ` AND COALESCE(p.effective_date, p.updated_at, p.created_at) ${opts?.afterDateInclusive ? '>=' : '>'} $${params.length}::text::timestamptz`;
-    }
-    if (opts?.beforeDate) {
-      params.push(opts.beforeDate);
-      extraFilter += ` AND COALESCE(p.effective_date, p.updated_at, p.created_at) ${opts?.beforeDateInclusive ? '<=' : '<'} $${params.length}::text::timestamptz`;
-    }
-    // v0.34.1 (#861, F2 — P0 leak seal): source-isolation in the INNER CTE
-    // so HNSW candidate pool narrows before re-rank. Mirrors postgres-engine
-    // placement decision (codex flagged this during plan review).
-    if (opts?.sourceIds && opts.sourceIds.length > 0) {
-      params.push(opts.sourceIds);
-      extraFilter += ` AND p.source_id = ANY($${params.length}::text[])`;
-    } else if (opts?.sourceId) {
-      params.push(opts.sourceId);
-      extraFilter += ` AND p.source_id = $${params.length}`;
-    }
-
-    if (resolvedColEarly.name === 'embedding') {
-      params.push(resolvedColEarly.embeddingModel || null);
-      extraFilter += ` AND ((cc.model=$${params.length} AND (cc.embedded_text_hash=md5(cc.chunk_text) OR cc.embedded_text_hash IS NULL))
-        OR ($${params.length}::text IS NULL AND NOT EXISTS(SELECT 1 FROM config WHERE key='embedding_migration.state')))`;
-    }
-    const innerLimitIdx = params.length;
-    params.push(innerLimit, limit, offset);
-    const innerLimitParam = `$${innerLimitIdx + 1}`;
-    const limitParam = `$${innerLimitIdx + 2}`;
-    const offsetParam = `$${innerLimitIdx + 3}`;
-
-    // v0.26.5: visibility filter applied in the inner CTE so HNSW sees the
-    // same candidate count it always did. See postgres-engine.ts for rationale.
-    const visibilityClause = buildVisibilityClause('p', 's', opts);
-
-    // v0.36 (D11): column routing via resolved descriptor. Engine doesn't
-    // read config — caller resolved at hybrid/op boundary. The cast SQL
-    // ($1::vector vs $1::halfvec(N)) comes from buildVectorCastFragment.
-    //
-    // v0.36 Phase 3: 'embedding_multimodal' is the unified column populated
-    // by `gbrain reindex --multimodal`. No modality filter — the column
-    // itself is the discriminator (only re-embedded rows have non-NULL).
-    const resolvedCol = resolvedColEarly;
-    const { col, castSql } = buildVectorCastFragment(resolvedCol);
-    let modalityFilter: string;
-    if (resolvedCol.name === 'embedding_image') {
-      modalityFilter = `AND cc.modality = 'image'`;
-    } else if (resolvedCol.name === 'embedding_multimodal') {
-      modalityFilter = '';
-    } else {
-      modalityFilter = `AND cc.modality = 'text'`;
-    }
-
-    const candidateFrom = `FROM content_chunks cc
-         JOIN pages p ON p.id = cc.page_id
-         JOIN sources s ON s.id = p.source_id
-         WHERE cc.${col} IS NOT NULL ${modalityFilter} ${detailFilter}${extraFilter} ${hardExcludeClause} ${visibilityClause}`;
-    const rawQuery = `WITH hnsw_candidates AS (
-         SELECT
-           p.slug, p.id as page_id, p.title, p.type, p.source_id, p.updated_at,
-           p.effective_date, p.effective_date_source,
-           CASE WHEN NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
-             THEN p.frontmatter->>'message_id' END AS message_id, p.frontmatter->>'thread_id' AS thread_id,
-           CASE WHEN NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
-             THEN NULLIF(p.frontmatter->>'subject', '') END AS source_subject,
-           cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
-           (${unverifiedExtractionFragment('p')}) AS unverified_stub,
-           1 - (cc.${col} <=> ${castSql}) AS raw_score
-         ${candidateFrom}
-         ORDER BY cc.${col} <=> ${castSql}
-         LIMIT ${innerLimitParam}
-       ),
-       -- score as a select-list expr; inner ORDER BY stays pure-distance so
-       -- the HNSW index is usable.
-       scored AS (
-         SELECT *, raw_score * ${sourceFactorCaseOnSlug} AS score
-         FROM hnsw_candidates
-       ),
-       -- T1 (retrieval-maxpool incident): collapse to the best chunk PER PAGE
-       -- over the full candidate set before the user LIMIT. Shared builder with
-       -- postgres-engine + the keyword path so they cannot drift.
-       ${buildBestPerPagePoolCte('scored')},
-       page_results AS (
-       SELECT
-         bpp.slug, bpp.page_id, bpp.title, bpp.type, bpp.source_id,
-         bpp.effective_date, bpp.effective_date_source,
-         bpp.message_id, bpp.thread_id, bpp.source_subject,
-         bpp.chunk_id, bpp.chunk_index, bpp.chunk_text, bpp.chunk_source,
-         bpp.score,
-         CASE WHEN bpp.updated_at < (
-           SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = bpp.page_id
-         ) THEN true ELSE false END AS stale
-       FROM best_per_page bpp
-       -- v0.41.13: stable tiebreaker. When two chunks share a score (same
-       -- source-prefix boost + same cosine distance, the basis-vector + same-
-       -- source-prefix case in eval fixtures), older page_id wins. Without
-       -- this, planner choice + index presence can flip ordering between
-       -- master and feature branches that add unrelated indexes — see the
-       -- pages_dedup_idx (v95) regression that motivated this.
-       ORDER BY bpp.score DESC, bpp.page_id ASC, bpp.chunk_id ASC
-       LIMIT ${limitParam}
-       OFFSET ${offsetParam}
-       )
-       SELECT page_results.*, pool.candidate_pool
-       FROM (SELECT count(*)::int AS candidate_pool FROM hnsw_candidates) pool
-       LEFT JOIN page_results ON true
-       ORDER BY score DESC NULLS LAST, page_id ASC, chunk_id ASC`;
-
-    const rows = await searchVectorPool(limit, innerLimit, iterative, indexed, 'pglite',
+    const rows = await searchVectorPool(limit, stmt.innerLimit, iterative, stmt.indexed, 'pglite',
       async ({ innerLimit: requested, maxScanTuples }) => this.db.transaction(async tx => {
         return withVectorSettings(async (sql, values) => (await tx.query<Record<string, unknown>>(sql, values)).rows, iterative, requested, maxScanTuples, async () => {
-          const bound = [...params];
-          bound[innerLimitIdx] = requested;
-          return readVectorPool((await tx.query<Record<string, unknown>>(rawQuery, bound)).rows);
+          const bound = [...stmt.params];
+          bound[stmt.innerLimitIdx] = requested;
+          return readVectorPool((await tx.query<Record<string, unknown>>(stmt.sql, bound)).rows);
         });
       }),
       async pool => {
-        const bound = [...params.slice(0, innerLimitIdx), pool + 1];
-        const { rows } = await this.db.query<{ eligible: number }>(`SELECT count(*)::int AS eligible FROM (
-          SELECT 1 ${candidateFrom} AND $1::text IS NOT NULL LIMIT $${bound.length}
-        ) eligible`, bound);
+        const { rows } = await this.db.query<{ eligible: number }>(stmt.hasMoreSql, [...stmt.params.slice(0, stmt.innerLimitIdx), pool + 1]);
         return Number(rows[0].eligible) > pool;
       },
       opts?.onVectorPoolMeta,
@@ -2281,11 +2116,19 @@ export class PGLiteEngine implements BrainEngine {
     const current = cur.rows[0] as { id: number; value_hash: string; valid_from: string | null } | undefined;
 
     if (current && current.value_hash === vh && !isBackdatedObservation(validFrom, current.valid_from)) {
+      // This provenance already observed the value during the current stint.
+      const seen = await this.db.query(
+        `SELECT 1 FROM facts
+          WHERE source_id = $1 AND entity_slug = $2 AND dimension = $3 AND value_hash = $4 AND source_markdown_slug = $5
+            AND COALESCE(valid_from,'-infinity'::timestamptz) >= COALESCE($6::timestamptz,'-infinity'::timestamptz) LIMIT 1`,
+        [sourceId, obs.entitySlug, dimension, vh, obs.source, current.valid_from],
+      );
+      if (seen.rows.length) return { action: 'noop', factId: null, supersededId: null };
       const ins = await this.db.query(
         `INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, dimension, value, value_hash, dim_status,
                             confidence, source, source_markdown_slug, valid_from, valid_until, expired_at, consolidated_into)
          VALUES ($1,$2,$3,'fact',$4,$5,$6,$7,$8,$9,$10,$10,COALESCE($11::timestamptz, now()),$12, now(), $13)
-         ON CONFLICT (source_id, entity_slug, dimension, value_hash, source_markdown_slug) WHERE dimension IS NOT NULL
+         ON CONFLICT (source_id, entity_slug, dimension, value_hash, source_markdown_slug, valid_from) WHERE dimension IS NOT NULL
          DO NOTHING RETURNING id`,
         [sourceId, obs.entitySlug, factText, visibility, dimension, obs.value, vh, status, conf, obs.source, validFrom, validUntil, current.id],
       );
@@ -2298,7 +2141,7 @@ export class PGLiteEngine implements BrainEngine {
       `INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, dimension, value, value_hash, dim_status,
                           confidence, source, source_markdown_slug, valid_from, valid_until)
        VALUES ($1,$2,$3,'fact',$4,$5,$6,$7,$8,$9,$10,$10,COALESCE($11::timestamptz, now()),$12)
-       ON CONFLICT (source_id, entity_slug, dimension, value_hash, source_markdown_slug) WHERE dimension IS NOT NULL
+       ON CONFLICT (source_id, entity_slug, dimension, value_hash, source_markdown_slug, valid_from) WHERE dimension IS NOT NULL
        DO NOTHING RETURNING id`,
       [sourceId, obs.entitySlug, factText, visibility, dimension, obs.value, vh, status, conf, obs.source, validFrom, validUntil],
     );
@@ -2331,12 +2174,14 @@ export class PGLiteEngine implements BrainEngine {
     // Page-visibility gate on the provenance page, applied BEFORE DISTINCT ON
     // so the untrusted caller resolves the newest value they may see.
     const privacy = opts?.excludePrivate ? `AND ${privateProvenanceFilterFragment('facts')}` : '';
+    params.push(opts?.visibility ?? null);
+    const visibility = `AND ($${params.length}::text[] IS NULL OR visibility = ANY($${params.length}::text[]))`;
     const r = await this.db.query(
       `SELECT DISTINCT ON (dimension) dimension, value, confidence,
          source_markdown_slug AS source, valid_from, valid_until AS valid_to,
          COALESCE(dim_status,'active') AS status, id AS fact_id
        FROM facts
-       WHERE entity_slug = $1 AND dimension IS NOT NULL AND expired_at IS NULL ${scope} ${privacy}
+       WHERE entity_slug = $1 AND dimension IS NOT NULL AND expired_at IS NULL ${scope} ${privacy} ${visibility}
          AND COALESCE(valid_from,'-infinity'::timestamptz) <= COALESCE($2::timestamptz, now())
          AND COALESCE(valid_until,'infinity'::timestamptz) > COALESCE($2::timestamptz, now())
          AND confidence >= $3
@@ -2364,7 +2209,7 @@ export class PGLiteEngine implements BrainEngine {
     });
   }
 
-  async findOntologyConflicts(opts?: PageReadScope & { minConfidence?: number }): Promise<OntologyConflict[]> {
+  async findOntologyConflicts(opts?: PageReadScope & { minConfidence?: number; visibility?: OntologyReadOpts['visibility'] }): Promise<OntologyConflict[]> {
     const minConf = opts?.minConfidence ?? 0;
     const params: unknown[] = [minConf];
     let scope: string;
@@ -2373,11 +2218,13 @@ export class PGLiteEngine implements BrainEngine {
     // Same provenance-page gate as getOntology, inside the CTE so a conflict
     // that only exists because of a hidden provenance is never reported.
     const privacy = opts?.excludePrivate ? `AND ${privateProvenanceFilterFragment('facts')}` : '';
+    params.push(opts?.visibility ?? null);
+    const visibility = `AND ($${params.length}::text[] IS NULL OR visibility = ANY($${params.length}::text[]))`;
     const r = await this.db.query(
       `WITH cur AS (
          SELECT entity_slug, dimension, value, source_markdown_slug AS source, confidence, id AS fact_id
          FROM facts WHERE dimension IS NOT NULL AND expired_at IS NULL AND valid_until IS NULL
-           AND (dim_status IS NULL OR dim_status = 'active') AND confidence >= $1 ${scope} ${privacy}
+           AND (dim_status IS NULL OR dim_status = 'active') AND confidence >= $1 ${scope} ${privacy} ${visibility}
        )
        SELECT entity_slug, dimension,
               json_agg(json_build_object('value', value, 'source', source, 'confidence', confidence, 'fact_id', fact_id)) AS values

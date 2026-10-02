@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-060",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/farah-orrinbarrow",
+      "content": "---\ntitle: Farah Orrinbarrow\ntype: person\nsummary: \"Farah Orrinbarrow is the product lead at Junipercrest.\"\n---\n\nFarah Orrinbarrow is the product lead at Junipercrest. Farah pushed to move the reporting feature ahead of the mobile app.\n"
+    },
+    {
+      "slug": "companies/cobaltfold",
+      "content": "---\ntitle: Cobaltfold\ntype: company\nsummary: \"Cobaltfold is a software vendor we work with.\"\n---\n\nCobaltfold is a software vendor we work with. The integration slipped because their API still lacks webhooks.\n"
+    },
+    {
+      "slug": "companies/glintfold",
+      "content": "---\ntitle: Glintfold\ntype: company\nsummary: \"Glintfold is a software vendor we work with.\"\n---\n\nGlintfold is a software vendor we work with.\n"
+    },
+    {
+      "slug": "companies/brackenspire",
+      "content": "---\ntitle: Brackenspire\ntype: company\nsummary: \"A company we met once at a trade show.\"\n---\n\nA company we met once at a trade show.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "I owe Orrinbarrow an answer on the roadmap. What were they asking for?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "how's cobaltfold doing on the integration?"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Happy to help."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "By the way, someone named Joaquin Yarrbrook emailed about partnerships. Never heard of them."
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "Write a one-line out-of-office reply saying I'm visiting Glintfold on Monday."
+    }
+  ]
+}

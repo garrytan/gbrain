@@ -30,6 +30,9 @@ import {
   CLAUDE_CLI_CWD_PREFIX,
   claudeCliCwdDir,
   claudeCliConfigDir,
+  claudeCliSelfProjectDirs,
+  claudeCliSelfSessionIds,
+  isClaudeCliSelfSessionId,
   isClaudeCliSelfTranscriptPath,
   sweepDeadClaudeCliScratchDirs,
 } from '../src/core/ai/providers/claude-cli-scratch.ts';
@@ -91,6 +94,29 @@ describe('transcript discovery — claude-cli self-session exclusion (#4472)', (
     expect(
       isClaudeCliSelfTranscriptPath(`/Users/alice/.claude/projects/-private-tmp-${CLAUDE_CLI_CWD_PREFIX}999/s.jsonl`),
     ).toBe(true);
+  });
+});
+
+describe('single-session self-capture classifier (#5820)', () => {
+  test('true only for a session id held by a scratch project; agrees with the set form', () => {
+    const dirs = claudeCliSelfProjectDirs(projectsRoot);
+    expect(dirs.map((d) => basename(d))).toEqual([`-private-tmp-${CLAUDE_CLI_CWD_PREFIX}12345`]);
+    expect(isClaudeCliSelfSessionId('session-self', dirs)).toBe(true);
+    expect(isClaudeCliSelfSessionId('session-user', dirs)).toBe(false);
+    expect(isClaudeCliSelfSessionId('no-such-session', dirs)).toBe(false);
+    expect([...claudeCliSelfSessionIds(projectsRoot)]).toEqual(['session-self']);
+  });
+
+  test('a path-shaped id never escapes the scratch projects', () => {
+    const dirs = claudeCliSelfProjectDirs(projectsRoot);
+    expect(isClaudeCliSelfSessionId('../-Users-alice-code-myapp/session-user', dirs)).toBe(false);
+    expect(isClaudeCliSelfSessionId('..', dirs)).toBe(false);
+    expect(isClaudeCliSelfSessionId('', dirs)).toBe(false);
+  });
+
+  test('a missing projects root classifies nothing', () => {
+    expect(claudeCliSelfProjectDirs(join(projectsRoot, 'missing'))).toEqual([]);
+    expect(isClaudeCliSelfSessionId('session-self', [])).toBe(false);
   });
 });
 

@@ -179,6 +179,11 @@
       "status": "ok"
     },
     {
+      "message": "Bun <bun-version> (minimum 1.4.0)",
+      "name": "bun_runtime",
+      "status": "ok"
+    },
+    {
       "message": "disabled (opt-in). Enable with: gbrain config set autopilot.nightly_quality_probe.enabled true",
       "name": "nightly_quality_probe_health",
       "status": "ok"
@@ -208,6 +213,9 @@
       "status": "ok"
     },
     {
+      "details": {
+        "health": "unknown"
+      },
       "message": "atom provenance query returned no rows",
       "name": "atom_provenance_drift",
       "status": "warn"
@@ -235,6 +243,21 @@
     {
       "message": "No abandoned PGLite store under the gbrain home (engine: postgres).",
       "name": "pglite_leftovers",
+      "status": "ok"
+    },
+    {
+      "details": {
+        "docs": "docs/guides/repair.md#embedding-key-source",
+        "embedding_key": {
+          "config_key": "voyage_api_key",
+          "kind": "missing",
+          "variable": "VOYAGE_API_KEY"
+        },
+        "embedding_model": "voyage:voyage-4",
+        "shadows": []
+      },
+      "message": "No embedding key is set here (VOYAGE_API_KEY or voyage_api_key). No environment variable overrides a different config-plane provider key. This check sees only the environment `gbrain doctor` runs in; a daemon (gbrain serve, autopilot) has its own, and reports a mismatch in its log with a startup warning or embedding_auth_failed.",
+      "name": "embedding_key_source",
       "status": "ok"
     },
     {

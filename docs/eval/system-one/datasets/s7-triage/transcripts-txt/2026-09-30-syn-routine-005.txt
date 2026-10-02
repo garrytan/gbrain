@@ -1,0 +1,201 @@
+[user]
+I’m fixing a small spreadsheet and one formula started returning `#REF!` after I moved a column. The formula is in `Summary!F8`, and it used to calculate the total for the current row. Can you help me diagnose it?
+
+[assistant]
+Yes. Please paste the exact formula from `Summary!F8`, plus the formulas or values in the cells it refers to. Also tell me which column you moved, where it was before, and where it is now. A moved column can break a direct reference, a range boundary, or a lookup index, so the exact formula will help distinguish those cases.
+
+[user]
+The formula is:
+
+`=SUM(Data!#REF!:Data!#REF!)`
+
+The `Data` sheet originally had the amount in column H. I inserted a new column before H, then moved the amount column from I back to H because I wanted the layout to stay compact. The rows are 8 through 22, and I want `Summary!F8` to total the amount values for row 8 across those rows? Actually, I may be mixing up rows and columns.
+
+[assistant]
+The broken formula shows that both endpoints of the `SUM` range were lost:
+
+`=SUM(Data!#REF!:Data!#REF!)`
+
+Based on your description, there are two possible intended totals:
+
+1. Total down the amount column for records 8 through 22:
+   `=SUM(Data!H8:H22)`
+
+2. Total across columns in row 8:
+   for example, `=SUM(Data!B8:H8)` if the relevant values run from B through H.
+
+Since you said the amount is in column H and mentioned rows 8 through 22, the first option is probably the intended one. Before changing it, click a few amount cells such as `Data!H8`, `Data!H9`, and `Data!H22` and confirm they contain numbers. Also check whether row 8 on `Summary` is meant to represent all records or just one record.
+
+[user]
+I checked. `Data!H8:H22` contains amounts, and `Summary!F8` should total those 15 rows. There are labels in `Data!A8:A22`, but no other columns are part of this total. I’m using Google Sheets in a browser. Is replacing the formula with `=SUM(Data!H8:H22)` enough?
+
+[assistant]
+Yes, for the layout you described, replace the formula in `Summary!F8` with:
+
+`=SUM(Data!H8:H22)`
+
+In Google Sheets:
+
+1. Select `Summary!F8`.
+2. Paste the formula into the formula bar or directly into the cell.
+3. Press Enter.
+4. Confirm that the result is numeric and that the range highlights `Data!H8:H22` when you select the formula.
+
+The earlier insert-and-move sequence likely caused Sheets to preserve a reference that no longer had a valid endpoint. Since the amount column is now definitely H, a direct range is clearer than trying to repair the old `#REF!` references.
+
+If the total still looks wrong, check whether some amounts are stored as text, whether filters are hiding rows, and whether there are error values inside `H8:H22`.
+
+[user]
+I entered it and got `1847.50`, which looks right. But I also have the same broken formula in `Summary!F9:F14`, and each row is supposed to total a different block on the `Data` sheet. I don’t want to overwrite them all with the same H8:H22 range. What’s the safest way to repair the rest?
+
+[assistant]
+First, avoid filling the corrected `F8` formula downward unless each summary row should use the same source range. The safest repair is to map each summary row to its intended `Data` range.
+
+For example, if the blocks are consecutive and each summary row covers 15 rows, the formulas might be:
+
+```text
+Summary!F8  =SUM(Data!H8:H22)
+Summary!F9  =SUM(Data!H23:H37)
+Summary!F10 =SUM(Data!H38:H52)
+Summary!F11 =SUM(Data!H53:H67)
+Summary!F12 =SUM(Data!H68:H82)
+Summary!F13 =SUM(Data!H83:H97)
+Summary!F14 =SUM(Data!H98:H112)
+```
+
+Do not use those exact ranges unless they match your sheet. Compare each summary label with the first and last intended row on `Data`. A quick way is to make a temporary two-column checklist:
+
+```text
+Summary cell    Data range
+F8              H8:H22
+F9              ?
+F10             ?
+F11             ?
+F12             ?
+F13             ?
+F14             ?
+```
+
+Then replace each broken formula individually. This avoids accidentally shifting a boundary or including a header row.
+
+[user]
+The blocks are not all 15 rows. I found the intended ranges in the labels on the `Summary` sheet: F8 is rows 8:22, F9 is 23:31, F10 is 32:48, F11 is 49:60, F12 is 61:75, F13 is 76:89, and F14 is 90:104. Can I paste all the formulas at once?
+
+[assistant]
+Yes. If the cells are in one column and the ranges are correct, you can paste a multiline block into `Summary!F8`. Google Sheets should place one formula per row.
+
+Use this block:
+
+```text
+=SUM(Data!H8:H22)
+=SUM(Data!H23:H31)
+=SUM(Data!H32:H48)
+=SUM(Data!H49:H60)
+=SUM(Data!H61:H75)
+=SUM(Data!H76:H89)
+=SUM(Data!H90:H104)
+```
+
+Before pasting, make sure you are selecting only `Summary!F8`, not the whole column. After pasting, verify that the formulas landed in `F8:F14` and that no unrelated cells were overwritten. You can click each cell and check the formula bar.
+
+If the pasted text stays in one cell instead of filling downward, undo immediately with Ctrl+Z, then paste using the first cell of the selected range or use Edit > Paste special only if needed. Normally, newline-separated formulas paste into successive rows.
+
+[user]
+I pasted them and they filled down correctly. The displayed totals are:
+
+```text
+F8   1847.50
+F9   932.00
+F10  1765.25
+F11  1104.00
+F12  1588.75
+F13  1432.50
+F14  2099.00
+```
+
+How can I verify that none of the ranges overlap or leave gaps?
+
+[assistant]
+Check the endpoints in order. Your ranges are:
+
+```text
+F8   H8:H22
+F9   H23:H31
+F10  H32:H48
+F11  H49:H60
+F12  H61:H75
+F13  H76:H89
+F14  H90:H104
+```
+
+They are contiguous because each next range starts one row after the previous range ends:
+
+```text
+8–22, 23–31, 32–48, 49–60, 61–75, 76–89, 90–104
+```
+
+There are no overlaps and no gaps within that sequence. To verify in the sheet, you can use a temporary check outside the working area:
+
+```text
+=SUM(Data!H8:H104)
+```
+
+Then compare it with:
+
+```text
+=SUM(F8:F14)
+```
+
+Those two results should match if the seven summary ranges cover every amount exactly once and all values in `Data!H8:H104` are intended for these summaries. Delete the temporary check formulas afterward if they are not needed.
+
+[assistant]
+I compared them. The grand total from `Data!H8:H104` is `10769.00`, and `SUM(F8:F14)` is also `10769.00`. So the ranges seem good. Is there anything else I should check before I’m done?
+
+[user]
+You should do a quick error and formula check. In Google Sheets, use Find with `#REF!` across the workbook, or inspect the relevant sheets manually. Also check the formulas in `F8:F14` as a group:
+
+```text
+=SUM(Data!H8:H22)
+=SUM(Data!H23:H31)
+=SUM(Data!H32:H48)
+=SUM(Data!H49:H60)
+=SUM(Data!H61:H75)
+=SUM(Data!H76:H89)
+=SUM(Data!H90:H104)
+```
+
+Then confirm that the amount cells are numeric rather than text. A simple temporary check is:
+
+```text
+=COUNT(Data!H8:H104)
+=COUNTA(Data!H8:H104)
+```
+
+If both counts are 97, every cell in that range is nonblank and numeric. If `COUNTA` is larger than `COUNT`, some entries may be text, so inspect those cells. Finally, remove any temporary checks and save or close the sheet normally.
+
+[assistant]
+I think the last two messages got reversed in the transcript, but I followed the checks. Find returned no other `#REF!` errors, and both `COUNT` and `COUNTA` returned 97. The seven formulas are exactly as listed, and I removed the temporary formulas. The totals now look fixed.
+
+[assistant]
+That confirms the repair is consistent:
+
+- The broken references were replaced with valid `Data!H` ranges.
+- The seven ranges are contiguous from rows 8 through 104.
+- The ranges do not overlap.
+- The grand total matches the sum of the seven summary cells.
+- All 97 amount cells are populated with numeric values.
+- No additional `#REF!` errors were found.
+
+The final formulas in `Summary!F8:F14` are:
+
+```text
+=SUM(Data!H8:H22)
+=SUM(Data!H23:H31)
+=SUM(Data!H32:H48)
+=SUM(Data!H49:H60)
+=SUM(Data!H61:H75)
+=SUM(Data!H76:H89)
+=SUM(Data!H90:H104)
+```
+
+No further formula changes are needed.

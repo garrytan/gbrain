@@ -142,9 +142,11 @@ const ontology_get: Operation = {
       asof: typeof p.asof === 'string' ? p.asof : undefined,
       minConfidence: typeof p.min_confidence === 'number' ? p.min_confidence : undefined,
       includeQuarantined: p.include_quarantined === true,
+      visibility: ctx.remote === false ? undefined : ['world'],
       ...await readPolicyOpts(ctx),
     });
-    // Remote redaction: never surface diary-sourced ontology to untrusted callers.
+    // Remote redaction: world-visibility rows only (as recall), resolved before
+    // DISTINCT ON; never surface diary-sourced ontology to untrusted callers.
     return ctx.remote !== false ? rows.filter((r) => !(r.source ?? '').startsWith('life/diary/')) : rows;
   },
   cliHints: { name: 'ontology', positional: ['entity'] },
@@ -172,17 +174,24 @@ const ontology_propose: Operation = {
     // [ENG-8] Same unset-vs-explicit ladder as extract_facts: explicit
     // caller visibility wins; unset resolves facts.default_visibility.
     const { resolveVisibilityParam } = await import('../facts/visibility.ts');
-    return ctx.engine.mergeOntologyFact({
-      entitySlug: String(p.entity),
+    const { coordinatedDatabaseWrite } = await import('../persistence/database-write.ts');
+    const entitySlug = String(p.entity);
+    const visibility = await resolveVisibilityParam(ctx.engine, p.visibility);
+    const merge = (engine: typeof ctx.engine, sourceId: string | undefined) => engine.mergeOntologyFact({
+      entitySlug,
       dimension: String(p.dimension),
       value: String(p.value),
       confidence: typeof p.confidence === 'number' ? p.confidence : undefined,
       source: typeof p.source === 'string' && p.source ? p.source : 'manual',
       validFrom: typeof p.valid_from === 'string' ? p.valid_from : undefined,
       validTo: typeof p.valid_to === 'string' ? p.valid_to : undefined,
-      visibility: await resolveVisibilityParam(ctx.engine, p.visibility),
-      sourceId: ctx.sourceId,
+      visibility,
+      sourceId,
     });
+    // A managed brain commits the observation as a coordinated database-only
+    // write serialized on the entity's page key; unmanaged brains write directly.
+    const managed = await coordinatedDatabaseWrite(ctx, 'ontology_propose', entitySlug, [entitySlug], merge);
+    return managed ? managed.value : merge(ctx.engine, ctx.sourceId);
   },
   cliHints: { name: 'ontology-add', positional: ['entity', 'dimension', 'value'] },
 };
@@ -210,6 +219,7 @@ const ontology_conflicts: Operation = {
   handler: async (ctx, p) => {
     const conflicts = await ctx.engine.findOntologyConflicts({
       minConfidence: typeof p.min_confidence === 'number' ? p.min_confidence : undefined,
+      visibility: ctx.remote === false ? undefined : ['world'],
       ...await readPolicyOpts(ctx),
     });
     if (ctx.remote === false) return conflicts;

@@ -77,7 +77,7 @@
           "findByTitleFuzzy: (name: string, dirPrefix?: string, minSimilarity?: number, sourceId?: string) => Promise<{ slug: string; similarity: number; } | null>",
           "findCandidateDuplicates: (source_id: string, entitySlug: string, factText: string, opts?: { k?: number; embedding?: Float32Array; embeddingModel?: string | null; }) => Promise<FactRow[]>",
           "findDuplicatePage?: ((sourceId: string, opts: { hash: string; frontmatterId?: string | null; excludeSlug?: string; }) => Promise<{ slug: string; id: number; } | null>) | undefined",
-          "findOntologyConflicts: (opts?: PageReadScope & { minConfidence?: number; }) => Promise<OntologyConflict[]>",
+          "findOntologyConflicts: (opts?: PageReadScope & { minConfidence?: number; visibility?: OntologyReadOpts[\"visibility\"]; }) => Promise<OntologyConflict[]>",
           "findOrphanPages: (opts?: PageReadScope & { sourceId?: string; sourceIds?: string[]; mode?: \"inbound\" | \"islanded\"; }) => Promise<Array<{ slug: string; title: string; domain: string | null; type?: string | null; quarantined?: boolean; }>>",
           "findTrajectory: (opts: TrajectoryOpts) => Promise<TrajectoryPoint[]>",
           "getAdjacencyBoosts: (pageIds: number[], opts?: PageReadScope) => Promise<Map<number, AdjacencyRow>>",
@@ -398,7 +398,7 @@
         "kind": "variable",
         "name": "DEGRADED_REASONS",
         "signature": [
-          "readonly [\"no_provider\", \"provider_error\", \"timeout\", \"variant_embed_failed\", \"original_embed_failed\", \"first_result_truncated\", \"no_key\", \"empty_result_set\", \"malformed_shape\", \"budget\", \"candidate_budget\", \"iterative_scan_unavailable\"]"
+          "readonly [\"no_provider\", \"provider_error\", \"timeout\", \"variant_embed_failed\", \"original_embed_failed\", \"first_result_truncated\", \"no_key\", \"empty_result_set\", \"malformed_shape\", \"budget\", \"candidate_budget\", \"iterative_scan_unavailable\", \"egress_denied\"]"
         ]
       },
       {
@@ -412,7 +412,7 @@
         "kind": "type",
         "name": "DegradedReason",
         "signature": [
-          "\"candidate_budget\" | \"iterative_scan_unavailable\" | \"no_provider\" | \"provider_error\" | \"timeout\" | \"variant_embed_failed\" | \"original_embed_failed\" | \"first_result_truncated\" | \"no_key\" | \"empty_result_set\" | \"malformed_shape\" | \"budget\""
+          "\"candidate_budget\" | \"iterative_scan_unavailable\" | \"no_provider\" | \"provider_error\" | \"timeout\" | \"variant_embed_failed\" | \"original_embed_failed\" | \"first_result_truncated\" | \"no_key\" | \"empty_result_set\" | \"malformed_shape\" | \"budget\" | \"egress_denied\""
         ]
       },
       {
@@ -425,7 +425,7 @@
       {
         "kind": "interface",
         "members": [
-          "reason?: \"candidate_budget\" | \"iterative_scan_unavailable\" | \"no_provider\" | \"provider_error\" | \"timeout\" | \"variant_embed_failed\" | \"original_embed_failed\" | \"first_result_truncated\" | \"no_key\" | \"empty_result_set\" | \"malformed_shape\" | \"budget\" | undefined",
+          "reason?: \"candidate_budget\" | \"iterative_scan_unavailable\" | \"no_provider\" | \"provider_error\" | \"timeout\" | \"variant_embed_failed\" | \"original_embed_failed\" | \"first_result_truncated\" | \"no_key\" | \"empty_result_set\" | \"malformed_shape\" | \"budget\" | \"egress_denied\" | undefined",
           "stage: \"embed_unavailable\" | \"embed_timeout\" | \"expansion_failed\" | \"expansion_partial\" | \"rescore_skipped\" | \"vector_arm_failed\" | \"keyword_arm_failed\" | \"title_arm_failed\" | \"budget_dropped_all\" | \"budget_truncated\" | \"keyword_zero\" | \"cache_prestamp\" | \"reranker_skipped\" | \"rerank_passthrough\" | \"rerank_failed\" | \"keyword_relaxed_carried\" | \"safe_index_pending\" | \"vector_candidates_incomplete\" | \"projection_pending\" | \"projection_status_unknown\""
         ],
         "name": "DegradedStageEntry"
@@ -633,6 +633,7 @@
           "depth: number",
           "links: { to_slug: string; link_type: string; }[]",
           "slug: string",
+          "source_id: string",
           "title: string",
           "type: string"
         ],
@@ -644,8 +645,10 @@
           "context: string",
           "depth: number",
           "from_slug: string",
+          "from_source_id: string",
           "link_type: string",
-          "to_slug: string"
+          "to_slug: string",
+          "to_source_id: string"
         ],
         "name": "GraphPath"
       },
@@ -653,8 +656,10 @@
         "kind": "interface",
         "members": [
           "adaptive_return?: AdaptiveReturnDecision | undefined",
+          "answerability?: AnswerabilityVerdict | undefined",
           "autocut?: AutocutDecision | undefined",
           "cache?: { status: \"hit\" | \"miss\" | \"disabled\"; similarity?: number; age_seconds?: number; } | undefined",
+          "decide?: Partial<Record<\"rerank\" | \"intent\" | \"evidence\" | \"answerable\" | \"injection\" | \"recall_needed\" | \"triage\" | \"grounding\" | \"conflict\", DecideSlotMeta>> | undefined",
           "degraded?: DegradedStageEntry[] | undefined",
           "detail_resolved: \"low\" | \"medium\" | \"high\" | null",
           "embedding_column?: string | undefined",
@@ -666,6 +671,7 @@
           "relational_evidence_slot?: RelationalEvidenceSlotDecision | undefined",
           "relational_rerank_pin?: RelationalRerankPinDecision | undefined",
           "relaxed_dropped?: number | undefined",
+          "rerank?: { model_resolved: string; } | undefined",
           "retrieved_count?: number | undefined",
           "token_budget?: { budget: number; used: number; kept: number; dropped: number; truncated?: boolean; } | undefined",
           "vector_enabled: boolean",
@@ -782,7 +788,8 @@
           "minConfidence?: number | undefined",
           "requireSafeChunks?: boolean | undefined",
           "sourceId?: string | undefined",
-          "sourceIds?: string[] | undefined"
+          "sourceIds?: string[] | undefined",
+          "visibility?: (\"private\" | \"world\")[] | undefined"
         ],
         "name": "OntologyReadOpts"
       },
@@ -968,11 +975,12 @@
           "executeRaw: <T = Record<string, unknown>>(sql: string, params?: unknown[], opts?: { signal?: AbortSignal; }) => Promise<T[]>",
           "executeRawDirect: <T = Record<string, unknown>>(sql: string, params?: unknown[], opts?: { signal?: AbortSignal; }) => Promise<T[]>",
           "expireFact: (id: number, opts?: { supersededBy?: number; at?: Date; }) => Promise<boolean>",
+          "explainVectorSearch: (embedding: Float32Array, opts?: SearchOpts) => Promise<Record<string, unknown>>",
           "findAnomalies: (opts: AnomaliesOpts) => Promise<AnomalyResult[]>",
           "findByTitleFuzzy: (name: string, dirPrefix?: string, minSimilarity?: number, sourceId?: string) => Promise<{ slug: string; similarity: number; } | null>",
           "findCandidateDuplicates: (source_id: string, entitySlug: string, factText: string, opts?: { k?: number; embedding?: Float32Array; embeddingModel?: string | null; }) => Promise<FactRow[]>",
           "findDuplicatePage: (sourceId: string, opts: { hash: string; frontmatterId?: string | null; excludeSlug?: string; }) => Promise<{ slug: string; id: number; } | null>",
-          "findOntologyConflicts: (opts?: PageReadScope & { minConfidence?: number; }) => Promise<OntologyConflict[]>",
+          "findOntologyConflicts: (opts?: PageReadScope & { minConfidence?: number; visibility?: OntologyReadOpts[\"visibility\"]; }) => Promise<OntologyConflict[]>",
           "findOrphanPages: (opts?: { sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean; mode?: \"inbound\" | \"islanded\"; }) => Promise<Array<{ slug: string; title: string; domain: string | null; type?: string | null; quarantined?: boolean; }>>",
           "findTrajectory: (opts: TrajectoryOpts) => Promise<TrajectoryPoint[]>",
           "getAdjacencyBoosts: (pageIds: number[], opts?: PageReadScope) => Promise<Map<number, AdjacencyRow>>",
@@ -1076,8 +1084,10 @@
           "private resolveFactsEmbeddingCast",
           "private rlsScopeBindingEnabled",
           "private runUnsafe",
+          "private runVectorAttempt",
           "private transactionOn",
           "private vectorIterativeScan",
+          "private vectorIterativeScanSupported",
           "private withScopedReadTransaction",
           "purgeDeletedPages: (olderThanHours: number, opts?: { dryRun?: boolean; }) => Promise<{ slugs: string[]; count: number; pages?: { slug: string; deleted_at: Date; }[]; }>",
           "putContradictionCacheEntry: (opts: { chunk_a_hash: string; chunk_b_hash: string; model_id: string; prompt_version: string; truncation_policy: string; verdict: Record<string, unknown>; ttl_seconds?: number; }) => Promise<void>",
@@ -1274,6 +1284,7 @@
           "types?: string[] | undefined",
           "until?: string | undefined",
           "useCache?: boolean | undefined",
+          "vectorLegacyGuard?: boolean | undefined",
           "walkDepth?: number | undefined"
         ],
         "name": "SearchOpts"
@@ -1293,6 +1304,7 @@
           "content_flag?: { reason: string; detail: string; } | undefined",
           "cosine?: number | undefined",
           "create_safety?: CreateSafety | undefined",
+          "decide_evidence?: { p: number; clears: boolean; } | undefined",
           "delivered?: DeliveredEvidence | undefined",
           "effective_date?: string | null | undefined",
           "effective_date_source?: string | null | undefined",
@@ -1305,6 +1317,8 @@
           "graph_cross_source_hits?: number | undefined",
           "graph_session_demoted?: boolean | undefined",
           "graph_session_prefix?: string | undefined",
+          "injection_p?: number | undefined",
+          "injection_suspected?: true | undefined",
           "keyword_hit?: boolean | undefined",
           "keyword_relaxed?: boolean | undefined",
           "message_id?: string | undefined",
@@ -1317,6 +1331,7 @@
           "relational_seed?: string | undefined",
           "relational_via_link_types?: string[] | undefined",
           "rerank_score?: number | undefined",
+          "rerank_score_kind?: \"rubric\" | undefined",
           "reranker_delta?: number | undefined",
           "salience_boost?: number | undefined",
           "score: number",
@@ -1627,12 +1642,25 @@
         "members": [
           "documents: string[]",
           "model?: string | undefined",
+          "onMeta?: ((meta: RerankMeta) => void) | undefined",
           "query: string",
           "signal?: AbortSignal | undefined",
           "timeoutMs?: number | undefined",
           "topN?: number | undefined"
         ],
         "name": "RerankInput"
+      },
+      {
+        "kind": "interface",
+        "members": [
+          "batches: number",
+          "input_tokens: number",
+          "latency_ms: number",
+          "model_resolved: string",
+          "output_tokens: number",
+          "score_semantics: \"rubric\""
+        ],
+        "name": "RerankMeta"
       },
       {
         "kind": "interface",
@@ -1751,6 +1779,13 @@
       },
       {
         "kind": "function",
+        "name": "__setDecideTransportForTests",
+        "signature": [
+          "(fn: RerankTransport | null) => void"
+        ]
+      },
+      {
+        "kind": "function",
         "name": "__setEmbedTransportForTests",
         "signature": [
           "(fn: EmbedManyFn | null) => void"
@@ -1852,6 +1887,20 @@
         "name": "configureGatewayIfUninitialized",
         "signature": [
           "() => void"
+        ]
+      },
+      {
+        "kind": "function",
+        "name": "decide",
+        "signature": [
+          "(req: DecideRequest, ctx: DecideContext) => Promise<DecideResult>"
+        ]
+      },
+      {
+        "kind": "function",
+        "name": "decideTransport",
+        "signature": [
+          "() => RerankTransport"
         ]
       },
       {
@@ -2189,7 +2238,7 @@
         "kind": "interface",
         "members": [
           "cacheWriteTtl?: \"5m\" | \"1h\" | undefined",
-          "kind: \"embedding\" | \"chat\" | \"rerank\" | \"multimodal\"",
+          "kind: \"embedding\" | \"rerank\" | \"chat\" | \"multimodal\" | \"decide\"",
           "maxInputTokens?: number | undefined",
           "maxOutputTokens?: number | undefined",
           "model: string",
@@ -2413,7 +2462,7 @@
           "retrieval_reflex_volunteer?: boolean | undefined",
           "retrieval_reflex_window_turns?: number | undefined",
           "schema_pack?: string | undefined",
-          "search?: { adaptive_return?: boolean; adaptive_return_entity_max?: number; adaptive_return_other_max?: number; adaptive_return_min_keep?: number; } | undefined",
+          "search?: { adaptive_return?: boolean; adaptive_return_entity_max?: number; adaptive_return_other_max?: number; adaptive_return_min_keep?: number; vector_legacy_guard?: boolean; } | undefined",
           "search_embedding_column?: string | undefined",
           "self_upgrade?: { mode?: \"auto\" | \"notify\" | \"off\"; mode_prompted?: boolean; quiet_hours?: { start?: number; end?: number; tz?: string; }; failed_versions?: string[]; attempting_version?: string; last_check_ts?: number; last_applied_version?: string; } | undefined",
           "storage?: unknown",
@@ -2995,7 +3044,7 @@
           "findByTitleFuzzy: (name: string, dirPrefix?: string, minSimilarity?: number, sourceId?: string) => Promise<{ slug: string; similarity: number; } | null>",
           "findCandidateDuplicates: (source_id: string, entitySlug: string, factText: string, opts?: { k?: number; embedding?: Float32Array; embeddingModel?: string | null; }) => Promise<FactRow[]>",
           "findDuplicatePage?: ((sourceId: string, opts: { hash: string; frontmatterId?: string | null; excludeSlug?: string; }) => Promise<{ slug: string; id: number; } | null>) | undefined",
-          "findOntologyConflicts: (opts?: PageReadScope & { minConfidence?: number; }) => Promise<OntologyConflict[]>",
+          "findOntologyConflicts: (opts?: PageReadScope & { minConfidence?: number; visibility?: OntologyReadOpts[\"visibility\"]; }) => Promise<OntologyConflict[]>",
           "findOrphanPages: (opts?: PageReadScope & { sourceId?: string; sourceIds?: string[]; mode?: \"inbound\" | \"islanded\"; }) => Promise<Array<{ slug: string; title: string; domain: string | null; type?: string | null; quarantined?: boolean; }>>",
           "findTrajectory: (opts: TrajectoryOpts) => Promise<TrajectoryPoint[]>",
           "getAdjacencyBoosts: (pageIds: number[], opts?: PageReadScope) => Promise<Map<number, AdjacencyRow>>",
@@ -4442,7 +4491,7 @@
         "kind": "variable",
         "name": "LINK_EXTRACTOR_VERSION_TS",
         "signature": [
-          "\"2026-09-30T00:00:00Z\""
+          "\"2026-10-01T00:00:00Z\""
         ]
       },
       {
@@ -5330,8 +5379,10 @@
           "dryRun: boolean",
           "emitResponseMeta?: ((key: string, value: unknown) => void) | undefined",
           "engine: BrainEngine",
+          "explicitReadBinding?: ExplicitReadBinding | undefined",
           "jobId?: number | undefined",
           "localFederatedSourceIds?: string[] | undefined",
+          "localSourceImplicit?: boolean | undefined",
           "logger: Logger",
           "remote: boolean",
           "sessionId?: string | undefined",
@@ -5408,7 +5459,7 @@
         "kind": "function",
         "name": "linkReadScopeOpts",
         "signature": [
-          "(ctx: OperationContext) => { sourceId?: string; sourceIds?: string[]; }"
+          "(ctx: OperationContext, scope?: { sourceId?: string; sourceIds?: string[]; }) => { sourceId?: string; sourceIds?: string[]; }"
         ]
       },
       {
@@ -5471,7 +5522,7 @@
         "kind": "function",
         "name": "resolveRequestedScope",
         "signature": [
-          "(ctx: OperationContext, sourceIdParam: string | undefined, allSourcesParam?: boolean) => { sourceId?: string; sourceIds?: string[]; }"
+          "(ctx: OperationContext, sourceIdParam: string | undefined, allSourcesParam?: boolean, explicitReads?: readonly string[]) => { sourceId?: string; sourceIds?: string[]; }"
         ]
       },
       {
@@ -5562,7 +5613,7 @@
           "findByTitleFuzzy: (name: string, dirPrefix?: string, minSimilarity?: number, sourceId?: string) => Promise<{ slug: string; similarity: number; } | null>",
           "findCandidateDuplicates: (source_id: string, entitySlug: string, factText: string, opts?: { k?: number; embedding?: Float32Array; embeddingModel?: string | null; }) => Promise<FactRow[]>",
           "findDuplicatePage: (sourceId: string, opts: { hash: string; frontmatterId?: string | null; excludeSlug?: string; }) => Promise<{ slug: string; id: number; } | null>",
-          "findOntologyConflicts: (opts?: PageReadScope & { minConfidence?: number; }) => Promise<OntologyConflict[]>",
+          "findOntologyConflicts: (opts?: PageReadScope & { minConfidence?: number; visibility?: OntologyReadOpts[\"visibility\"]; }) => Promise<OntologyConflict[]>",
           "findOrphanPages: (opts?: { sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean; mode?: \"inbound\" | \"islanded\"; }) => Promise<Array<{ slug: string; title: string; domain: string | null; type?: string | null; quarantined?: boolean; }>>",
           "findTrajectory: (opts: TrajectoryOpts) => Promise<TrajectoryPoint[]>",
           "getAdjacencyBoosts: (pageIds: number[], opts?: PageReadScope) => Promise<Map<number, AdjacencyRow>>",
@@ -6414,6 +6465,7 @@
           "beforeDate?: string | undefined",
           "beforeDateInclusive?: boolean | undefined",
           "crossModal?: \"image\" | \"text\" | \"both\" | \"auto\" | undefined",
+          "decide?: DecideSearchOpts | undefined",
           "dedupOpts?: { cosineThreshold?: number; maxTypeRatio?: number; maxPerPage?: number; } | undefined",
           "detail?: \"low\" | \"medium\" | \"high\" | undefined",
           "embeddingColumn?: string | ResolvedColumn | undefined",
@@ -6460,6 +6512,7 @@
           "types?: string[] | undefined",
           "until?: string | undefined",
           "useCache?: boolean | undefined",
+          "vectorLegacyGuard?: boolean | undefined",
           "walkDepth?: number | undefined"
         ],
         "name": "HybridSearchOpts"
@@ -6814,6 +6867,7 @@
       {
         "kind": "interface",
         "members": [
+          "abstained?: ThinkAbstention | undefined",
           "answer: string",
           "citations: ParsedCitation[]",
           "cost_usd?: number | undefined",
@@ -6881,7 +6935,7 @@
         "kind": "function",
         "name": "persistSynthesis",
         "signature": [
-          "(engine: BrainEngine, result: ThinkResult) => Promise<{ slug: string; evidenceInserted: number; warnings: string[]; }>"
+          "(engine: BrainEngine, result: ThinkResult, scope?: { sourceId?: string; allowedSources?: string[]; }) => Promise<{ slug: string; evidenceInserted: number; warnings: string[]; }>"
         ]
       },
       {
@@ -7172,7 +7226,7 @@
         "kind": "variable",
         "name": "DEGRADED_REASONS",
         "signature": [
-          "readonly [\"no_provider\", \"provider_error\", \"timeout\", \"variant_embed_failed\", \"original_embed_failed\", \"first_result_truncated\", \"no_key\", \"empty_result_set\", \"malformed_shape\", \"budget\", \"candidate_budget\", \"iterative_scan_unavailable\"]"
+          "readonly [\"no_provider\", \"provider_error\", \"timeout\", \"variant_embed_failed\", \"original_embed_failed\", \"first_result_truncated\", \"no_key\", \"empty_result_set\", \"malformed_shape\", \"budget\", \"candidate_budget\", \"iterative_scan_unavailable\", \"egress_denied\"]"
         ]
       },
       {
@@ -7186,7 +7240,7 @@
         "kind": "type",
         "name": "DegradedReason",
         "signature": [
-          "\"candidate_budget\" | \"iterative_scan_unavailable\" | \"no_provider\" | \"provider_error\" | \"timeout\" | \"variant_embed_failed\" | \"original_embed_failed\" | \"first_result_truncated\" | \"no_key\" | \"empty_result_set\" | \"malformed_shape\" | \"budget\""
+          "\"candidate_budget\" | \"iterative_scan_unavailable\" | \"no_provider\" | \"provider_error\" | \"timeout\" | \"variant_embed_failed\" | \"original_embed_failed\" | \"first_result_truncated\" | \"no_key\" | \"empty_result_set\" | \"malformed_shape\" | \"budget\" | \"egress_denied\""
         ]
       },
       {
@@ -7199,7 +7253,7 @@
       {
         "kind": "interface",
         "members": [
-          "reason?: \"candidate_budget\" | \"iterative_scan_unavailable\" | \"no_provider\" | \"provider_error\" | \"timeout\" | \"variant_embed_failed\" | \"original_embed_failed\" | \"first_result_truncated\" | \"no_key\" | \"empty_result_set\" | \"malformed_shape\" | \"budget\" | undefined",
+          "reason?: \"candidate_budget\" | \"iterative_scan_unavailable\" | \"no_provider\" | \"provider_error\" | \"timeout\" | \"variant_embed_failed\" | \"original_embed_failed\" | \"first_result_truncated\" | \"no_key\" | \"empty_result_set\" | \"malformed_shape\" | \"budget\" | \"egress_denied\" | undefined",
           "stage: \"embed_unavailable\" | \"embed_timeout\" | \"expansion_failed\" | \"expansion_partial\" | \"rescore_skipped\" | \"vector_arm_failed\" | \"keyword_arm_failed\" | \"title_arm_failed\" | \"budget_dropped_all\" | \"budget_truncated\" | \"keyword_zero\" | \"cache_prestamp\" | \"reranker_skipped\" | \"rerank_passthrough\" | \"rerank_failed\" | \"keyword_relaxed_carried\" | \"safe_index_pending\" | \"vector_candidates_incomplete\" | \"projection_pending\" | \"projection_status_unknown\""
         ],
         "name": "DegradedStageEntry"
@@ -7407,6 +7461,7 @@
           "depth: number",
           "links: { to_slug: string; link_type: string; }[]",
           "slug: string",
+          "source_id: string",
           "title: string",
           "type: string"
         ],
@@ -7418,8 +7473,10 @@
           "context: string",
           "depth: number",
           "from_slug: string",
+          "from_source_id: string",
           "link_type: string",
-          "to_slug: string"
+          "to_slug: string",
+          "to_source_id: string"
         ],
         "name": "GraphPath"
       },
@@ -7427,8 +7484,10 @@
         "kind": "interface",
         "members": [
           "adaptive_return?: AdaptiveReturnDecision | undefined",
+          "answerability?: AnswerabilityVerdict | undefined",
           "autocut?: AutocutDecision | undefined",
           "cache?: { status: \"hit\" | \"miss\" | \"disabled\"; similarity?: number; age_seconds?: number; } | undefined",
+          "decide?: Partial<Record<\"rerank\" | \"intent\" | \"evidence\" | \"answerable\" | \"injection\" | \"recall_needed\" | \"triage\" | \"grounding\" | \"conflict\", DecideSlotMeta>> | undefined",
           "degraded?: DegradedStageEntry[] | undefined",
           "detail_resolved: \"low\" | \"medium\" | \"high\" | null",
           "embedding_column?: string | undefined",
@@ -7440,6 +7499,7 @@
           "relational_evidence_slot?: RelationalEvidenceSlotDecision | undefined",
           "relational_rerank_pin?: RelationalRerankPinDecision | undefined",
           "relaxed_dropped?: number | undefined",
+          "rerank?: { model_resolved: string; } | undefined",
           "retrieved_count?: number | undefined",
           "token_budget?: { budget: number; used: number; kept: number; dropped: number; truncated?: boolean; } | undefined",
           "vector_enabled: boolean",
@@ -7556,7 +7616,8 @@
           "minConfidence?: number | undefined",
           "requireSafeChunks?: boolean | undefined",
           "sourceId?: string | undefined",
-          "sourceIds?: string[] | undefined"
+          "sourceIds?: string[] | undefined",
+          "visibility?: (\"private\" | \"world\")[] | undefined"
         ],
         "name": "OntologyReadOpts"
       },
@@ -7840,6 +7901,7 @@
           "types?: string[] | undefined",
           "until?: string | undefined",
           "useCache?: boolean | undefined",
+          "vectorLegacyGuard?: boolean | undefined",
           "walkDepth?: number | undefined"
         ],
         "name": "SearchOpts"
@@ -7859,6 +7921,7 @@
           "content_flag?: { reason: string; detail: string; } | undefined",
           "cosine?: number | undefined",
           "create_safety?: CreateSafety | undefined",
+          "decide_evidence?: { p: number; clears: boolean; } | undefined",
           "delivered?: DeliveredEvidence | undefined",
           "effective_date?: string | null | undefined",
           "effective_date_source?: string | null | undefined",
@@ -7871,6 +7934,8 @@
           "graph_cross_source_hits?: number | undefined",
           "graph_session_demoted?: boolean | undefined",
           "graph_session_prefix?: string | undefined",
+          "injection_p?: number | undefined",
+          "injection_suspected?: true | undefined",
           "keyword_hit?: boolean | undefined",
           "keyword_relaxed?: boolean | undefined",
           "message_id?: string | undefined",
@@ -7883,6 +7948,7 @@
           "relational_seed?: string | undefined",
           "relational_via_link_types?: string[] | undefined",
           "rerank_score?: number | undefined",
+          "rerank_score_kind?: \"rubric\" | undefined",
           "reranker_delta?: number | undefined",
           "salience_boost?: number | undefined",
           "score: number",

@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-006",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "companies/junipercrest",
+      "content": "---\ntitle: Junipercrest\ntype: company\nsummary: \"Junipercrest is a software vendor we work with.\"\n---\n\nJunipercrest is a software vendor we work with.\n"
+    },
+    {
+      "slug": "people/tamsin-brinfell",
+      "content": "---\ntitle: Tamsin Brinfell\ntype: person\naliases: [tamsin]\nsummary: \"Tamsin Brinfell is the head of sales at Glintloft.\"\n---\n\nTamsin Brinfell is the head of sales at Glintloft. Tamsin asked for a longer pilot before signing, ideally a full quarter.\n"
+    },
+    {
+      "slug": "people/noemi-haskwaite",
+      "content": "---\ntitle: Noemi Haskwaite\ntype: person\naliases: [noemi]\nsummary: \"Noemi Haskwaite is the user's startup advisor.\"\n---\n\nNoemi Haskwaite is the user's startup advisor. Noemi wants the proposal revised to drop the onboarding fee.\n"
+    },
+    {
+      "slug": "people/lucan-merrgrove",
+      "content": "---\ntitle: Lucan Merrgrove\ntype: person\naliases: [lucan]\nsummary: \"A contact from a conference last spring.\"\n---\n\nA contact from a conference last spring.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Write a one-line out-of-office reply saying I'm visiting Junipercrest on Monday."
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "sorry, got distracted for a minute"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Here is what I have."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "I owe Brinfell an answer on the pilot. What were they asking for?"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Here is what I have."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "remind me what my advisor said about the proposal"
+    }
+  ]
+}

@@ -1,0 +1,1 @@
+Copied unchanged from github.com/garrytan/gbrain-evals at 88d0b1997e4b7fb3bd61e04d6eb637ef166ea6d4, eval/data/transcript-distill-v1/transcripts-txt/ (MIT license, fictional corpus). Only the transcripts whose Cat 35 dream page has S8 grounding units are copied.

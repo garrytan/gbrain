@@ -47,6 +47,8 @@ import type { GBrainConfig } from '../config.ts';
 import { isAvailable } from '../ai/gateway.ts';
 import { withAIInvocationPreflight } from '../ai/invocation-guard.ts';
 import { decideSingleFact } from './single-prepare.ts';
+import { appendContextNote, type InferredVia } from './subject-infer.ts';
+import { inferenceNote, inferMissingSubjects } from './subject-infer-write.ts';
 
 /**
  * Notability-filter vocabulary shared by the durable facts-absorb payload
@@ -71,10 +73,12 @@ export function coerceNotabilityFilter(v: unknown): FactNotabilityFilter {
 function annotateUnverifiedResolution(
   context: string | null,
   resolutionSource: ResolutionSource | null,
+  inferred?: InferredVia,
 ): string | null {
+  // #5836: a write-time inferred subject says so, in the DB row and the fence cell alike.
+  if (inferred) return appendContextNote(context, inferenceNote(inferred));
   if (resolutionSource !== 'prefix_expansion') return context;
-  const note = 'entity matched by bare name only (prefix expansion) — unverified, please confirm';
-  return context ? `${context} — ${note}` : note;
+  return appendContextNote(context, 'entity matched by bare name only (prefix expansion) — unverified, please confirm');
 }
 
 export interface FactsBackstopCtx {
@@ -649,12 +653,11 @@ async function runPipelineBodyInner(
     return { inserted: 0, duplicate: 0, superseded: 0, fact_ids: [], entity_slugs: [], skipped_reason: outcome.reason };
   }
 
-  const facts = outcome.facts;
-
   // [ENG-8] Explicit ctx.visibility wins; unset resolves the operator-set
   // facts.default_visibility (fail-closed to 'private').
   const { resolveDefaultVisibility } = await import('./visibility.ts');
   const visibility = ctx.visibility ?? (await resolveDefaultVisibility(ctx.engine));
+  const facts = await inferMissingSubjects(ctx, outcome.facts, visibility, input.pageSlug, managed);
   if (managed) return publishManagedFacts(ctx.engine, managed, ctx, facts, visibility, input.pageSlug);
 
   let inserted = 0;
@@ -695,7 +698,7 @@ async function runPipelineBodyInner(
     // at write time). Threshold 0.95 unchanged.
     const exact = resolvedSlug ? await decideSingleFact(ctx.engine, ctx.sourceId, { entity_slug: resolvedSlug, fact: f.fact, kind: f.kind ?? 'fact', visibility }, null) : null;
     let matchedExistingId: number | null = exact?.candidate?.id ?? null;
-    if (matchedExistingId === null && resolvedSlug && f.embedding) {
+    if (matchedExistingId === null && resolvedSlug && f.embedding && !f.entity_inferred) {
       const candidates = await ctx.engine.findCandidateDuplicates(
         ctx.sourceId,
         resolvedSlug,
@@ -791,7 +794,7 @@ async function runPipelineBodyInner(
       // DB-only row has no fence to name the page it came from, so the page
       // path's slug fills context when the caller passed no sourceSlug.
       valid_from: f.valid_from ?? ctx.validFrom,
-      context: annotateUnverifiedResolution(ctx.sourceSlug ?? input.pageSlug ?? null, resolutionSource),
+      context: annotateUnverifiedResolution(ctx.sourceSlug ?? input.pageSlug ?? null, resolutionSource, f.entity_inferred),
     };
     const result = await ctx.engine.insertFact(newFact, { source_id: ctx.sourceId }); // gbrain-allow-direct-insert: legacy DB-only fallback for unparented / thin-client facts (no entity page to fence onto)
     fact_ids.push(result.id);
@@ -819,7 +822,7 @@ async function runPipelineBodyInner(
       source: f.source,
       // #4206: the caller's source_slug (which page/transcript the turn came
       // from) lands in the fence context cell — visible in recall projections.
-      context: annotateUnverifiedResolution(ctx.sourceSlug ?? null, resolutionSource),
+      context: annotateUnverifiedResolution(ctx.sourceSlug ?? null, resolutionSource, f.entity_inferred),
       visibility,
       confidence: f.confidence,
       // #4206: extractor-derived date wins; then the caller's event time
@@ -868,7 +871,7 @@ async function runPipelineBodyInner(
         const newFact: NewFact = {
           fact: f.fact,
           kind: f.kind,
-          entity_slug: slug,
+          entity_slug: f.entity_inferred ? null : slug,
           visibility,
           notability: f.notability,
           source: f.source,
@@ -901,7 +904,7 @@ async function runPipelineBodyInner(
         const newFact: NewFact = {
           fact: f.fact,
           kind: f.kind,
-          entity_slug: slug,
+          entity_slug: f.entity_inferred ? null : slug,
           visibility,
           notability: f.notability,
           source: f.source,

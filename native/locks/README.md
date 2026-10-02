@@ -42,7 +42,7 @@ All eight addons are checked in, so source installs work with
 `bun install --frozen-lockfile --ignore-scripts`. They support x64 and arm64
 on Linux glibc (2.17 ABI baseline), Linux musl, macOS (13.0 deployment
 target), and Windows. The required CI matrix covers the repository's minimum
-Bun 1.3.11, Bun 1.3.13, and the release compiler, Bun 1.4.2. OS compatibility
+Bun 1.4.0 and the release compiler, Bun 1.4.2. OS compatibility
 also requires the selected Bun version's own platform minimums.
 
 Node-API headers and their upstream license are vendored from Node

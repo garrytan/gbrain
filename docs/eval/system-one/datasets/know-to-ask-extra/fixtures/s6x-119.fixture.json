@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-119",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/oskar-tulvridge",
+      "content": "---\ntitle: Oskar Tulvridge\ntype: person\nsummary: \"Oskar Tulvridge is the finance lead at Kilnyard.\"\n---\n\nOskar Tulvridge is the finance lead at Kilnyard.\n"
+    },
+    {
+      "slug": "people/florian-wyrstead",
+      "content": "---\ntitle: Florian Wyrstead\ntype: person\naliases: [florian]\nsummary: \"Florian Wyrstead is the procurement lead at Cobaltyard.\"\n---\n\nFlorian Wyrstead is the procurement lead at Cobaltyard.\n"
+    },
+    {
+      "slug": "people/kasimir-yarrmere",
+      "content": "---\ntitle: Kasimir Yarrmere\ntype: person\nsummary: \"Kasimir Yarrmere is the finance lead at Fablevane.\"\n---\n\nKasimir Yarrmere is the finance lead at Fablevane.\n"
+    },
+    {
+      "slug": "companies/nimbusloft",
+      "content": "---\ntitle: Nimbusloft\ntype: company\nsummary: \"Nimbusloft is the legal vendor we picked.\"\n---\n\nNimbusloft is the legal vendor we picked. The renewal is blocked on a security review that is due next month.\n"
+    },
+    {
+      "slug": "people/lucan-caldwaite",
+      "content": "---\ntitle: Lucan Caldwaite\ntype: person\naliases: [lucan]\nsummary: \"A contact from a conference last spring.\"\n---\n\nA contact from a conference last spring.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Our hotel is on Tulvridge Street. Any tips for finding breakfast near a hotel in a new city?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Translate into Spanish: 'Wyrstead will join the meeting at noon.'"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Happy to help."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "How many letters are in the name Yarrmere?"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Done."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "what did the law firm we hired say about the trademark filing?"
+    }
+  ]
+}

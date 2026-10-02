@@ -1,7 +1,8 @@
 /**
  * The only network adapter for untrusted URLs. The caller has already checked
  * every DNS answer; connect to that literal while preserving the HTTP authority
- * and TLS identity. Bun >= 1.3.11 is required for explicit TLS serverName.
+ * and TLS identity. Explicit TLS serverName needs the supported Bun floor
+ * (MINIMUM_BUN_VERSION in runtime-version.ts).
  *
  * Bun's native fetch and node:http wrapper cannot reliably disable environment
  * proxies per request. Fail closed in that environment: a proxy could resolve

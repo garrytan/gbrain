@@ -852,6 +852,8 @@ async function applyAliasResolvedBoost(
 
 export interface HybridSearchOpts extends SearchOpts {
   expansion?: boolean;
+  /** System One: remote spend accounting, call site, S1-only re-runs (see search/decide-stage.ts). */
+  decide?: import('./decide-stage.ts').DecideSearchOpts;
   /**
    * #5428 — opt-in single-token alias hop (see applyAliasTokenHop). Per-call
    * wins; otherwise brain config `search.alias_token_hop=true`. Default off.
@@ -1102,7 +1104,7 @@ export async function hybridSearch(
   // Hermetic eval canaries/CI: a caller-supplied queryEmbedFn produces the
   // vector-arm query embedding without the gateway, so provider
   // availability is irrelevant — skip the keyword-only short-circuit.
-  if (!opts?.queryEmbedFn && !isAvailable('embedding', providerProbe) && !willTryMultimodal) {
+  if (opts?.decide?.keywordOnly || (!opts?.queryEmbedFn && !isAvailable('embedding', providerProbe) && !willTryMultimodal)) {
     return searchWithoutEmbeddings(req, lexical, relationalList, postFusionOpts, providerProbe);
   }
 

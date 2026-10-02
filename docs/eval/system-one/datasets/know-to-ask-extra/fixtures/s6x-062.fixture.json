@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-062",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/ines-tulvwick",
+      "content": "---\ntitle: Ines Tulvwick\ntype: person\naliases: [ines]\nsummary: \"Ines Tulvwick is the user's cofounder and CTO.\"\n---\n\nInes Tulvwick is the user's cofounder and CTO. Ines suggested holding the offsite somewhere reachable by train.\n"
+    },
+    {
+      "slug": "people/oriel-haskdale",
+      "content": "---\ntitle: Oriel Haskdale\ntype: person\naliases: [oriel]\nsummary: \"Oriel Haskdale is the finance lead at Juniperfold.\"\n---\n\nOriel Haskdale is the finance lead at Juniperfold.\n"
+    },
+    {
+      "slug": "people/kasimir-brinford",
+      "content": "---\ntitle: Kasimir Brinford\ntype: person\nsummary: \"Kasimir Brinford is the procurement lead at Pylonmoor.\"\n---\n\nKasimir Brinford is the procurement lead at Pylonmoor. Kasimir wants the proposal revised to drop the onboarding fee.\n"
+    },
+    {
+      "slug": "people/verity-fengrove",
+      "content": "---\ntitle: Verity Fengrove\ntype: person\naliases: [verity]\nsummary: \"A contact from a conference last spring.\"\n---\n\nA contact from a conference last spring.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "what did my cofounder think about the offsite?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Done."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Haskdale mentioned the pomodoro technique on a call. How does the pomodoro technique work?"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "what is a good way to structure a postmortem doc?"
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Sure."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "What did Brinford want changed in the proposal?"
+    }
+  ]
+}

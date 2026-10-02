@@ -49,7 +49,7 @@ import { readAllSourceHolds } from '../src/core/connectors/item-holds-store.ts';
 import { retryHeld } from '../src/commands/sources-retry-held.ts';
 import { planRepairSteps } from '../src/core/remediation/repairs.ts';
 import { runRemediate } from '../src/commands/doctor/remediate.ts';
-import { REPAIR_REGISTRY } from '../src/core/repair/registry.ts';
+import { AUTO_REPAIR_REGISTRY } from '../src/core/repair/registry.ts';
 import { capture } from './helpers/wave-scenarios.ts';
 import { createConnectorFixture, contact, json, options, withGoogleAccount } from './helpers/connector-fixture.ts';
 import { addThread, fakeGmail, gmailFetch } from './helpers/connector-holds-fixture.ts';
@@ -149,7 +149,7 @@ test('X4: the v0.32.2 facts adoption on a connector page publishes above the tim
   }
 }), 240_000);
 
-test('X6: deactivate refuses while a connector item is held (classic mode cannot read managed holds); after the printed exit it succeeds and the dispatch gate stays open', async () => withEnv(env, async () => {
+test('X6: deactivate carries a held connector item into classic state (wave 5): it stays held after the mode change, the retry-held exit still clears it, and the dispatch gate stays open', async () => withEnv(env, async () => {
   const account = 'reader@example.com';
   const gmailConfig = { kind: 'google', g_account: account, g_services: 'gmail', g_access: 'env', g_token_env: 'CONNECTOR_TEST_TOKEN' };
   for (const engine of engines) {
@@ -166,27 +166,29 @@ test('X6: deactivate refuses while a connector item is held (classic mode cannot
 
     const settle = () => engine.transaction(async tx => { await declarePersistenceProtocol(tx); await tx.executeRaw("UPDATE persistence_effects SET state='committed' WHERE state<>'committed'"); });
     await settle();
-    const dry = await runPersistenceAdministration(engine, 'writer_deactivate', { dry_run: true }) as { blockers: Array<{ kind: string; source_id?: string; exit: string }>; apply_command?: string };
-    const held = dry.blockers.find(b => b.kind === 'connector_holds');
-    expect(held).toMatchObject({ source_id: f.id, exit: expect.stringContaining(`gbrain sources retry-held ${f.id}`) });
-    expect(dry.apply_command).toBeUndefined();
-    await expect(runPersistenceAdministration(engine, 'writer_deactivate', { admin_intent: 'writer_deactivate', expected_state: await writerAdminState(engine) }))
-      .rejects.toMatchObject({ code: 'writer_not_quiesced' });
+    // The held item no longer blocks: the dry run names where it will be carried and prints the apply command.
+    const dry = await runPersistenceAdministration(engine, 'writer_deactivate', { dry_run: true }) as {
+      blockers: Array<{ kind: string; source_id?: string }>; apply_command?: string; carried_holds?: Array<{ source_id: string; items: number; state_file: string }> };
+    expect(dry.blockers.filter(b => b.kind === 'connector_holds' && b.source_id === f.id)).toEqual([]);
+    expect(dry.carried_holds).toContainEqual({ source_id: f.id, items: 1, state_file: join(f.dir, '.google-source.json') });
+    const expected = /--expected-state ([a-f0-9]{64})$/.exec(dry.apply_command ?? '')?.[1];
+    expect(expected).toBeDefined();
+    const done = await runPersistenceAdministration(engine, 'writer_deactivate', { admin_intent: 'writer_deactivate', expected_state: expected }) as Record<string, unknown>;
+    expect(done).toMatchObject({ mode: 'classic', deactivated: true });
+    expect(done.carried_holds).toContainEqual({ source_id: f.id, items: 1, state_file: join(f.dir, '.google-source.json') });
 
-    // The printed exit: retry the held thread (recovered upstream) and sync; the hold clears and deactivate proceeds.
+    // Classic mode reads the carried hold, and a classic run keeps it held while the upstream error persists.
+    expect((await readAllSourceHolds(engine, { sourceIds: [f.id] }))[0]?.held.map(h => h.key)).toEqual(['a1b2c3d4e5f60302']);
+    await run();
+    expect((await readAllSourceHolds(engine, { sourceIds: [f.id] }))[0]?.held.map(h => h.key)).toEqual(['a1b2c3d4e5f60302']);
+
+    // The printed exit still works in classic mode: retry the held thread (recovered upstream) and sync; the hold clears.
     await retryHeld(engine, f.id);
     fx.failThreads.delete('a1b2c3d4e5f60302');
     fx.fetched.length = 0;
     expect((await run()).status).not.toBe('partial');
-    await disposePersistenceConsumer(engine);
     expect(fx.fetched).toContain('a1b2c3d4e5f60302');
     expect(await readAllSourceHolds(engine, { sourceIds: [f.id] })).toEqual([]);
-    await settle();
-    const clean = await runPersistenceAdministration(engine, 'writer_deactivate', { dry_run: true }) as { apply_command?: string };
-    const expected = /--expected-state ([a-f0-9]{64})$/.exec(clean.apply_command ?? '')?.[1];
-    expect(expected).toBeDefined();
-    const done = await runPersistenceAdministration(engine, 'writer_deactivate', { admin_intent: 'writer_deactivate', expected_state: expected }) as Record<string, unknown>;
-    expect(done).toMatchObject({ mode: 'classic', deactivated: true });
 
     // Lane B's gate survives Lane D's mode change: autopilot keeps dispatching the connector.
     expect((await attemptedConnectorSourceIds(engine)).has(f.id)).toBe(true);
@@ -207,7 +209,7 @@ test('X6: deactivate refuses while a connector item is held (classic mode cannot
 
 test('X11: the remediation run reaches every new repair kind, runs the free ones under --max-usd 0 and clears their doctor findings', async () => withEnv(env, async () => {
   for (const engine of engines) {
-    expect(REPAIR_REGISTRY.map(spec => spec.kind)).toEqual(['timeline', 'visibility', 'safe-chunks', 'contextual-mode', 'connector-checkpoints',
+    expect(AUTO_REPAIR_REGISTRY.map(spec => spec.kind)).toEqual(['timeline', 'visibility', 'safe-chunks', 'contextual-mode', 'connector-checkpoints',
       'request-indexes', 'connector-fences', 'orphan-bindings', 'embedding-effects']);
     // Pending work for Lane A (a dropped index) and Lane D (an orphan binding of a removed source).
     await engine.executeRaw('DROP INDEX IF EXISTS persistence_requests_sync_run_open');

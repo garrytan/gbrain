@@ -1,0 +1,60 @@
+{"ts":"2026-09-30T21:29:25.291Z","purpose":"s9 baseline_cosine embeddings (256 texts)","provider":"openai","model":"text-embedding-3-large@1536","input_tokens":3333,"output_tokens":0,"usd":0.000433}
+{"ts":"2026-09-30T21:29:26.377Z","purpose":"s9 baseline_cosine embeddings (256 texts)","provider":"openai","model":"text-embedding-3-large@1536","input_tokens":3061,"output_tokens":0,"usd":0.000398}
+{"ts":"2026-09-30T21:29:27.091Z","purpose":"s9 baseline_cosine embeddings (89 texts)","provider":"openai","model":"text-embedding-3-large@1536","input_tokens":1060,"output_tokens":0,"usd":0.000138}
+{"ts":"2026-09-30T21:30:06.881Z","purpose":"s9 baseline_cosine embeddings (256 texts)","provider":"openai","model":"text-embedding-3-large@1536","input_tokens":3478,"output_tokens":0,"usd":0.000452}
+{"ts":"2026-09-30T21:30:07.983Z","purpose":"s9 baseline_cosine embeddings (256 texts)","provider":"openai","model":"text-embedding-3-large@1536","input_tokens":3001,"output_tokens":0,"usd":0.00039}
+{"ts":"2026-09-30T21:30:08.826Z","purpose":"s9 baseline_cosine embeddings (133 texts)","provider":"openai","model":"text-embedding-3-large@1536","input_tokens":1573,"output_tokens":0,"usd":0.000204}
+{"ts":"2026-09-30T21:30:29.110Z","purpose":"s9 baseline_cosine embeddings (256 texts)","provider":"openai","model":"text-embedding-3-large@1536","input_tokens":3475,"output_tokens":0,"usd":0.000452}
+{"ts":"2026-09-30T21:30:30.278Z","purpose":"s9 baseline_cosine embeddings (256 texts)","provider":"openai","model":"text-embedding-3-large@1536","input_tokens":3051,"output_tokens":0,"usd":0.000397}
+{"ts":"2026-09-30T21:30:31.273Z","purpose":"s9 baseline_cosine embeddings (256 texts)","provider":"openai","model":"text-embedding-3-large@1536","input_tokens":3017,"output_tokens":0,"usd":0.000392}
+{"ts":"2026-09-30T21:30:31.852Z","purpose":"s9 baseline_cosine embeddings (7 texts)","provider":"openai","model":"text-embedding-3-large@1536","input_tokens":77,"output_tokens":0,"usd":0.00001}
+{"ts":"2026-09-30T21:30:54.989Z","purpose":"s9 baseline_cosine embeddings (175 texts)","provider":"openai","model":"text-embedding-3-large@1536","input_tokens":2199,"output_tokens":0,"usd":0.000286}
+{"ts":"2026-09-30T21:35:00.000Z","purpose":"model id probe (2 tiny calls)","provider":"anthropic","model":"claude-sonnet-5,claude-sonnet-4-6","input_tokens":19,"output_tokens":9,"usd":0.000192}
+{"ts":"2026-09-30T21:34:45.623Z","purpose":"s8 judge coding-reflection-01","provider":"anthropic","model":"claude-sonnet-5","input_tokens":3093,"output_tokens":2161,"usd":0.041694}
+{"ts":"2026-09-30T21:34:57.990Z","purpose":"s8 judge coding-reflection-03","provider":"anthropic","model":"claude-sonnet-5","input_tokens":3275,"output_tokens":3305,"usd":0.0594}
+{"ts":"2026-09-30T21:35:00.301Z","purpose":"s8 perturb coding-reflection-01","provider":"anthropic","model":"claude-sonnet-5","input_tokens":2575,"output_tokens":1748,"usd":0.033945}
+{"ts":"2026-09-30T21:35:07.847Z","purpose":"s8 perturb coding-reflection-03","provider":"anthropic","model":"claude-sonnet-5","input_tokens":2744,"output_tokens":1028,"usd":0.023652}
+{"ts":"2026-09-30T21:35:09.629Z","purpose":"s8 judge coding-reflection-04","provider":"anthropic","model":"claude-sonnet-5","input_tokens":8583,"output_tokens":4907,"usd":0.099354}
+{"ts":"2026-09-30T21:35:14.326Z","purpose":"s8 judge-perturbed coding-reflection-01","provider":"anthropic","model":"claude-sonnet-5","input_tokens":2672,"output_tokens":1656,"usd":0.032856}
+{"ts":"2026-09-30T21:35:17.709Z","purpose":"s8 judge-perturbed coding-reflection-03","provider":"anthropic","model":"claude-sonnet-5","input_tokens":2888,"output_tokens":1175,"usd":0.026289}
+{"ts":"2026-09-30T21:35:19.648Z","purpose":"s8 perturb coding-reflection-04","provider":"anthropic","model":"claude-sonnet-5","input_tokens":7544,"output_tokens":1088,"usd":0.038952}
+{"ts":"2026-09-30T21:35:20.688Z","purpose":"s8 judge emotional-processing-01","provider":"anthropic","model":"claude-sonnet-5","input_tokens":3046,"output_tokens":5995,"usd":0.099063}
+{"ts":"2026-09-30T21:35:38.190Z","purpose":"s8 judge-perturbed coding-reflection-04","provider":"anthropic","model":"claude-sonnet-5","input_tokens":7686,"output_tokens":1981,"usd":0.052773}
+{"ts":"2026-09-30T21:35:40.964Z","purpose":"s8 perturb emotional-processing-01","provider":"anthropic","model":"claude-sonnet-5","input_tokens":1908,"output_tokens":2263,"usd":0.039669}
+{"ts":"2026-09-30T21:35:44.158Z","purpose":"s8 judge emotional-processing-03","provider":"anthropic","model":"claude-sonnet-5","input_tokens":3175,"output_tokens":2859,"usd":0.05241}
+{"ts":"2026-09-30T21:35:46.235Z","purpose":"s8 judge emotional-processing-02","provider":"anthropic","model":"claude-sonnet-5","input_tokens":3537,"output_tokens":3642,"usd":0.065241}
+{"ts":"2026-09-30T21:35:52.711Z","purpose":"s8 judge-perturbed emotional-processing-01","provider":"anthropic","model":"claude-sonnet-5","input_tokens":2030,"output_tokens":1278,"usd":0.02526}
+{"ts":"2026-09-30T21:35:58.973Z","purpose":"s8 perturb emotional-processing-02","provider":"anthropic","model":"claude-sonnet-5","input_tokens":2616,"output_tokens":1334,"usd":0.027858}
+{"ts":"2026-09-30T21:36:05.469Z","purpose":"s8 perturb emotional-processing-03","provider":"anthropic","model":"claude-sonnet-5","input_tokens":2664,"output_tokens":2321,"usd":0.042807}
+{"ts":"2026-09-30T21:36:07.780Z","purpose":"s8 judge-perturbed emotional-processing-02","provider":"anthropic","model":"claude-sonnet-5","input_tokens":2735,"output_tokens":1048,"usd":0.023925}
+{"ts":"2026-09-30T21:36:13.896Z","purpose":"s8 judge mixed-routine-signal-02","provider":"anthropic","model":"claude-sonnet-5","input_tokens":2841,"output_tokens":2524,"usd":0.046383}
+{"ts":"2026-09-30T21:36:17.910Z","purpose":"s8 judge-perturbed emotional-processing-03","provider":"anthropic","model":"claude-sonnet-5","input_tokens":2791,"output_tokens":1489,"usd":0.030708}
+{"ts":"2026-09-30T21:36:29.768Z","purpose":"s8 judge emotional-processing-04","provider":"anthropic","model":"claude-sonnet-5","input_tokens":11266,"output_tokens":5759,"usd":0.120183}
+{"ts":"2026-09-30T21:36:35.975Z","purpose":"s8 perturb mixed-routine-signal-02","provider":"anthropic","model":"claude-sonnet-5","input_tokens":2219,"output_tokens":2438,"usd":0.043227}
+{"ts":"2026-09-30T21:36:40.666Z","purpose":"s8 judge people-deal-01","provider":"anthropic","model":"claude-sonnet-5","input_tokens":2837,"output_tokens":4111,"usd":0.070176}
+{"ts":"2026-09-30T21:36:43.192Z","purpose":"s8 judge-perturbed mixed-routine-signal-02","provider":"anthropic","model":"claude-sonnet-5","input_tokens":2360,"output_tokens":920,"usd":0.02088}
+{"ts":"2026-09-30T21:36:50.621Z","purpose":"s8 perturb emotional-processing-04","provider":"anthropic","model":"claude-sonnet-5","input_tokens":10065,"output_tokens":2380,"usd":0.065895}
+{"ts":"2026-09-30T21:37:02.345Z","purpose":"s8 judge-perturbed emotional-processing-04","provider":"anthropic","model":"claude-sonnet-5","input_tokens":10099,"output_tokens":1311,"usd":0.049962}
+{"ts":"2026-09-30T21:37:02.501Z","purpose":"s8 judge people-deal-02","provider":"anthropic","model":"claude-sonnet-5","input_tokens":4509,"output_tokens":5071,"usd":0.089592}
+{"ts":"2026-09-30T21:37:12.002Z","purpose":"s8 perturb people-deal-02","provider":"anthropic","model":"claude-sonnet-5","input_tokens":2872,"output_tokens":1057,"usd":0.024471}
+{"ts":"2026-09-30T21:37:18.761Z","purpose":"s8 judge people-deal-03","provider":"anthropic","model":"claude-sonnet-5","input_tokens":3772,"output_tokens":4759,"usd":0.082701}
+{"ts":"2026-09-30T21:37:19.599Z","purpose":"s8 judge-perturbed people-deal-02","provider":"anthropic","model":"claude-sonnet-5","input_tokens":3015,"output_tokens":854,"usd":0.021855}
+{"ts":"2026-09-30T21:37:28.060Z","purpose":"s8 perturb people-deal-01","provider":"anthropic","model":"claude-sonnet-5","input_tokens":2267,"output_tokens":5156,"usd":0.084141}
+{"ts":"2026-09-30T21:37:31.957Z","purpose":"s8 perturb people-deal-03","provider":"anthropic","model":"claude-sonnet-5","input_tokens":2884,"output_tokens":1729,"usd":0.034587}
+{"ts":"2026-09-30T21:37:38.850Z","purpose":"s8 judge-perturbed people-deal-01","provider":"anthropic","model":"claude-sonnet-5","input_tokens":2370,"output_tokens":1228,"usd":0.02553}
+{"ts":"2026-09-30T21:37:47.236Z","purpose":"s8 judge-perturbed people-deal-03","provider":"anthropic","model":"claude-sonnet-5","input_tokens":2997,"output_tokens":1895,"usd":0.037416}
+{"ts":"2026-09-30T21:37:48.847Z","purpose":"s8 judge people-deal-04","provider":"anthropic","model":"claude-sonnet-5","input_tokens":10142,"output_tokens":5697,"usd":0.115881}
+{"ts":"2026-09-30T21:37:57.961Z","purpose":"s8 judge startup-ideation-02","provider":"anthropic","model":"claude-sonnet-5","input_tokens":3440,"output_tokens":2217,"usd":0.043575}
+{"ts":"2026-09-30T21:38:04.436Z","purpose":"s8 perturb people-deal-04","provider":"anthropic","model":"claude-sonnet-5","input_tokens":9047,"output_tokens":1601,"usd":0.051156}
+{"ts":"2026-09-30T21:38:07.073Z","purpose":"s8 perturb startup-ideation-02","provider":"anthropic","model":"claude-sonnet-5","input_tokens":2536,"output_tokens":932,"usd":0.021588}
+{"ts":"2026-09-30T21:38:15.184Z","purpose":"s8 judge-perturbed startup-ideation-02","provider":"anthropic","model":"claude-sonnet-5","input_tokens":2685,"output_tokens":910,"usd":0.021705}
+{"ts":"2026-09-30T21:38:15.696Z","purpose":"s8 judge startup-ideation-01","provider":"anthropic","model":"claude-sonnet-5","input_tokens":4055,"output_tokens":7006,"usd":0.117255}
+{"ts":"2026-09-30T21:38:17.336Z","purpose":"s8 judge-perturbed people-deal-04","provider":"anthropic","model":"claude-sonnet-5","input_tokens":9177,"output_tokens":1714,"usd":0.053241}
+{"ts":"2026-09-30T21:38:30.504Z","purpose":"s8 judge startup-ideation-03","provider":"anthropic","model":"claude-sonnet-5","input_tokens":3157,"output_tokens":5156,"usd":0.086811}
+{"ts":"2026-09-30T21:38:38.958Z","purpose":"s8 perturb startup-ideation-03","provider":"anthropic","model":"claude-sonnet-5","input_tokens":2116,"output_tokens":1019,"usd":0.021633}
+{"ts":"2026-09-30T21:38:45.176Z","purpose":"s8 perturb startup-ideation-01","provider":"anthropic","model":"claude-sonnet-5","input_tokens":2698,"output_tokens":3254,"usd":0.056904}
+{"ts":"2026-09-30T21:38:51.003Z","purpose":"s8 judge-perturbed startup-ideation-03","provider":"anthropic","model":"claude-sonnet-5","input_tokens":2243,"output_tokens":1359,"usd":0.027114}
+{"ts":"2026-09-30T21:38:56.960Z","purpose":"s8 judge-perturbed startup-ideation-01","provider":"anthropic","model":"claude-sonnet-5","input_tokens":2805,"output_tokens":1431,"usd":0.02988}
+{"ts":"2026-09-30T21:39:17.959Z","purpose":"s8 judge startup-ideation-04","provider":"anthropic","model":"claude-sonnet-5","input_tokens":8623,"output_tokens":7335,"usd":0.135894}
+{"ts":"2026-09-30T21:39:31.521Z","purpose":"s8 perturb startup-ideation-04","provider":"anthropic","model":"claude-sonnet-5","input_tokens":7444,"output_tokens":1528,"usd":0.045252}
+{"ts":"2026-09-30T21:39:47.152Z","purpose":"s8 judge-perturbed startup-ideation-04","provider":"anthropic","model":"claude-sonnet-5","input_tokens":7573,"output_tokens":1911,"usd":0.051384}

@@ -18,7 +18,10 @@
  * not frontmatter) ∪ `listPages({updated_after: anchor−30d, sourceId,
  * limit})` for recency. The RESOLVED sourceId is passed into EVERY
  * listPages call and EVERY body read (`getPage(slug, {sourceId})`) —
- * unscoped reads are the cross-source-leak invariant class.
+ * unscoped reads are the cross-source-leak invariant class. Every arm also
+ * passes `excludePrivate: true`: the compiled file lands in AGENTS.md /
+ * CLAUDE.md imports, the same world-only injected-context posture as the
+ * turn hook, so `visibility: private` pages never become candidates.
  *
  * Score = recency-decay(vs anchor) × longest-prefix boost from
  * DEFAULT_SOURCE_BOOSTS, plus a fixed pin bonus for tag-pinned pages.
@@ -191,14 +194,14 @@ async function fetchCandidates(
   const [prefixResults, tagPages, probe] = await Promise.all([
     Promise.all(
       prefixes.map((slugPrefix) =>
-        engine.listPages({ slugPrefix, sourceId, sort: 'slug', limit: PREFIX_CANDIDATE_LIMIT }),
+        engine.listPages({ slugPrefix, sourceId, excludePrivate: true, sort: 'slug', limit: PREFIX_CANDIDATE_LIMIT }),
       ),
     ),
     // Tag arm — explicit pins (few by construction; slug sort for stable order).
-    engine.listPages({ tag: COMPILE_CONTEXT_TAG, sourceId, sort: 'slug' }),
+    engine.listPages({ tag: COMPILE_CONTEXT_TAG, sourceId, excludePrivate: true, sort: 'slug' }),
     // Recency-anchor probe: the newest updated_at in the source (ties share
     // the timestamp, so tie order cannot change the probed VALUE).
-    engine.listPages({ sourceId, sort: 'updated_desc', limit: 1 }),
+    engine.listPages({ sourceId, excludePrivate: true, sort: 'updated_desc', limit: 1 }),
   ]);
   for (const pages of prefixResults) add(pages, false);
   add(tagPages, true);
@@ -216,6 +219,7 @@ async function fetchCandidates(
     const recent = await engine.listPages({
       updated_after: windowStart,
       sourceId,
+      excludePrivate: true,
       sort: 'updated_desc',
       limit: RECENCY_CANDIDATE_LIMIT,
     });

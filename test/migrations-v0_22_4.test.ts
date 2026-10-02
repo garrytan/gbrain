@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import { v0_22_4 } from '../src/commands/migrations/v0_22_4.ts';
 import { migrations, getMigration } from '../src/commands/migrations/index.ts';
+import { join } from 'path';
+import { withEnv } from './helpers/with-env.ts';
 
 describe('v0.22.4 migration (B11)', () => {
   test('exports a Migration with the right version', () => {
@@ -57,6 +59,15 @@ describe('v0.22.4 migration (B11)', () => {
     expect(__testing.pendingHostWorkPath()).toMatch(/pending-host-work\.jsonl$/);
   });
 
+  test('output paths resolve under GBRAIN_HOME, not $HOME/.gbrain (#5549)', async () => {
+    const { __testing } = await import('../src/commands/migrations/v0_22_4.ts');
+    await withEnv({ HOME: '/tmp/gbrain-5549-home', GBRAIN_HOME: '/tmp/gbrain-5549-gbrain-home' }, () => {
+      const migrationsDir = join('/tmp/gbrain-5549-gbrain-home', '.gbrain', 'migrations');
+      expect(__testing.auditReportPath()).toBe(join(migrationsDir, 'v0.22.4-audit.json'));
+      expect(__testing.pendingHostWorkPath()).toBe(join(migrationsDir, 'pending-host-work.jsonl'));
+    });
+  });
+
   test('dotted migration filename references — emit-todo entries point at v0.22.4.md', async () => {
     // The runtime convention is dotted (v0.22.4.md), not underscored.
     // Source-grep guards the contract without spinning up a real audit.
@@ -71,9 +82,15 @@ describe('v0.22.4 migration (B11)', () => {
     const fs = await import('fs');
     const path = await import('path');
     const os = await import('os');
+    // HOME and GBRAIN_HOME point at different dirs so the write must follow
+    // GBRAIN_HOME, never $HOME/.gbrain (#5549). Bun's os.homedir() ignores
+    // runtime HOME changes, so HOME alone does not isolate the test.
     const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'gbrain-migration-test-'));
+    const gbrainHome = fs.mkdtempSync(path.join(os.tmpdir(), 'gbrain-migration-gbrain-home-'));
     const origHome = process.env.HOME;
+    const origGbrainHome = process.env.GBRAIN_HOME;
     process.env.HOME = tmpHome;
+    process.env.GBRAIN_HOME = gbrainHome;
     try {
       const fakeReport = {
         ok: false,
@@ -120,7 +137,10 @@ describe('v0.22.4 migration (B11)', () => {
         fakeReport,
       );
       expect(r.status).toBe('complete');
-      const jsonl = fs.readFileSync(__testing.pendingHostWorkPath(), 'utf8');
+      const expectedPath = path.join(gbrainHome, '.gbrain', 'migrations', 'pending-host-work.jsonl');
+      expect(fs.existsSync(expectedPath)).toBe(true);
+      expect(fs.existsSync(path.join(tmpHome, '.gbrain'))).toBe(false);
+      const jsonl = fs.readFileSync(expectedPath, 'utf8');
       const lines = jsonl.split('\n').filter(Boolean);
       // Two sources had issues; clean-source should NOT produce an entry.
       expect(lines.length).toBe(2);
@@ -142,8 +162,12 @@ describe('v0.22.4 migration (B11)', () => {
         expect(e.command).toContain('--fix');
       }
     } finally {
-      process.env.HOME = origHome;
+      if (origHome === undefined) delete process.env.HOME;
+      else process.env.HOME = origHome;
+      if (origGbrainHome === undefined) delete process.env.GBRAIN_HOME;
+      else process.env.GBRAIN_HOME = origGbrainHome;
       fs.rmSync(tmpHome, { recursive: true, force: true });
+      fs.rmSync(gbrainHome, { recursive: true, force: true });
     }
   });
 });

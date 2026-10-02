@@ -240,6 +240,15 @@ export interface PatternEntry {
    * real transcript stays ~1.0.
    */
   score_full_body?: boolean;
+  /**
+   * Conversational-structure gate for broad label-shaped patterns
+   * (gbrain-evals N12-1). When the parsed body has at least this many
+   * turns and no speaker ever speaks twice, the page is a list of one-off
+   * labels (`**Status:** … **Owner:** … **Next step:** …`), not an
+   * exchange, and the orchestrator returns no_match. Density scoring
+   * cannot see this: a short status block clears the 0.05 floor.
+   */
+  repeat_speaker_min_turns?: number;
   /** D7: module-load validation — known-positive sample lines. */
   test_positive: string[];
   /** D7: module-load validation — known-negative sample lines. */

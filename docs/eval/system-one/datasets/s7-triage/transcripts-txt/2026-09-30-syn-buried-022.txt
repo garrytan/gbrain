@@ -1,0 +1,575 @@
+[user]
+I want to plan dinners for the next seven days around leftovers so I cook less, waste less, and still have enough variety. Can you help me build the plan and a grocery list?
+
+[assistant]
+Absolutely. I’ll design the week around a few larger “anchor” meals whose leftovers become lunches or are deliberately transformed into later dinners. Before I draft it, what should I know about:
+
+- Number of people and appetite levels
+- Dietary restrictions or strong dislikes
+- How many nights you want to cook
+- Available equipment, such as slow cooker, pressure cooker, or grill
+- Ingredients already on hand
+- Approximate budget
+- Whether you want leftovers for lunches too
+
+[assistant]
+[user]
+There are two adults, and we usually eat moderate portions. No allergies, but we prefer meals that are vegetable-forward and not too spicy. I want to cook four times, use leftovers for three dinners, and have lunches covered when possible. I have an oven, stovetop, slow cooker, blender, and rice cooker. We already have olive oil, soy sauce, rice vinegar, canned tomatoes, dried pasta, rice, lentils, rolled oats, garlic, onions, and basic dried herbs and spices. Let’s keep the grocery budget around $110.
+
+[assistant]
+[user]
+I’d also like at least two dinners to be vegetarian, and I would rather not eat the exact same meal twice. Fish is fine once, but I don’t want more than two meat-based dinners.
+
+[assistant]
+[assistant]
+That gives us a useful structure: four cooking sessions, three intentional leftover dinners, at least two vegetarian dinners, one fish dinner, and no more than two meat-based dinners. I’ll assume lunches can repeat components even when dinners are repurposed.
+
+## Weekly strategy
+
+- **Cook 1:** Roast a large tray of vegetables and chickpeas; use some for bowls and some for wraps.
+- **Cook 2:** Make a lemon-herb chicken and vegetable tray bake; reserve chicken for soup.
+- **Cook 3:** Bake salmon with vegetables; turn extra salmon into cakes or patties.
+- **Cook 4:** Make a lentil-tomato stew; serve it once with rice and once over pasta or with toast.
+
+That draft actually risks more than two meat-based dinners if the salmon cakes and chicken soup are counted separately, so I’ll refine it. The cleanest version is:
+
+1. **Vegetarian roasted vegetable and chickpea bowls**
+2. **Chicken tray bake**
+3. **Leftover chicken and vegetable soup**
+4. **Salmon with green vegetables**
+5. **Vegetarian lentil bolognese**
+6. **Leftover lentil bolognese over pasta**
+7. **Leftover roasted vegetables and chickpeas in wraps**
+
+The repeated components change form enough that the dinners should not feel identical. It also gives you three vegetarian dinners, one fish dinner, and two chicken-based dinners.
+
+[assistant]
+[user]
+That sounds close, but I count the chicken tray bake and chicken soup as two meat dinners, which is okay, and the salmon cakes would make a second fish dinner if we include them. I’d rather use the salmon leftovers for lunch instead of creating another dinner. Could you make the plan more concrete, with quantities and a day-by-day schedule?
+
+[assistant]
+[user]
+Also, we do not eat wraps very often. Could the roasted vegetables become a grain salad or a soup instead?
+
+[assistant]
+[assistant]
+Yes. I’ll use the roasted vegetables in a warm grain salad and reserve a portion for a blended soup, rather than planning wraps. To stay within budget and avoid cooking every night, I’d schedule the meals like this:
+
+## Seven-day dinner schedule
+
+### Day 1 — Roasted vegetable and chickpea bowls
+Cook: roast about 2.5 kg / 5.5 lb mixed vegetables with two cans of chickpeas. Serve over rice with a lemon-yogurt or tahini-style sauce.
+
+Make six portions. Eat two for dinner, pack two lunches, and refrigerate two portions for Day 3.
+
+### Day 2 — Lemon-herb chicken tray bake
+Cook: roast 1.2–1.5 kg / 2.5–3 lb chicken thighs with potatoes, carrots, onions, and green beans.
+
+Eat two portions for dinner. Reserve two portions of chicken and vegetables for Day 4 soup. If there is extra, use it for lunches.
+
+### Day 3 — Warm roasted-vegetable grain salad
+Reheat the reserved roasted vegetables and chickpeas. Toss with cooked farro or barley, cucumber, parsley, lemon, and a simple olive-oil dressing.
+
+This changes the texture and flavor while using the Day 1 leftovers. Make four portions so lunch is covered the next day.
+
+### Day 4 — Chicken and vegetable soup
+Simmer the reserved chicken and roasted vegetables with stock, canned tomatoes, celery, and herbs. Add a modest amount of rice or pasta at the end.
+
+This should make four portions: two for dinner and two lunches.
+
+### Day 5 — Baked salmon with broccoli and rice
+Bake 700–900 g / 1.5–2 lb salmon with lemon and herbs. Serve with broccoli and rice. Make four portions; use the extra salmon for lunches, not another dinner.
+
+### Day 6 — Lentil bolognese
+Cook a large pot with lentils, canned tomatoes, mushrooms, carrots, celery, onion, and spinach. Serve over pasta.
+
+Make six portions: two for dinner, two lunches, and two for Day 7.
+
+### Day 7 — Lentil bolognese with a different finish
+Reheat the lentil sauce and serve it over baked potatoes, polenta, or rice instead of pasta. Add grated cheese and a green salad if desired.
+
+## Important quantity adjustment
+
+Because the Day 1 vegetables are used for both bowls and grain salad, roast:
+
+- 1 large cauliflower
+- 4 bell peppers
+- 4 zucchini
+- 1.5 kg / 3.3 lb sweet potatoes
+- 3 red onions
+- 2 cans chickpeas
+
+Toss with approximately 3 tablespoons olive oil, 2 teaspoons dried herbs, 1 teaspoon cumin, salt, and pepper. Roast at 220°C / 425°F for 30–40 minutes, stirring once.
+
+For Day 3, reserve about one-third of the tray immediately after cooling. Do not leave the full cooked batch in one deep container; spread it into shallow containers so it cools quickly.
+
+[assistant]
+[user]
+I like the schedule, but I’m not sure the quantities work for two adults plus lunches. Can you estimate portions more carefully and give me a grocery list grouped by section? Please account for the rice, pasta, lentils, and canned tomatoes we already have so we don’t buy duplicates.
+
+[assistant]
+[assistant]
+Yes. I’ll estimate portions by cooked yield and use your existing pantry items first. The plan below produces approximately 28 dinner servings for the week: 14 servings eaten at dinner, with the remaining portions used for lunches or held as flexible leftovers. A “serving” here is roughly 100–150 g cooked protein or legumes, 1–1½ cups vegetables, and ¾–1 cup cooked grains or pasta.
+
+## Portion plan
+
+### Day 1: roasted vegetable and chickpea bowls
+Target: 6 portions.
+
+Buy or use:
+- 2 cans chickpeas, about 400 g / 15 oz each, drained
+- 2.4–2.7 kg / 5.3–6 lb raw vegetables
+- 360 g / 2 cups dry rice, using your existing rice
+
+After roasting, portion:
+- 2 dinner bowls
+- 2 lunches
+- 2 portions for Day 3
+
+### Day 2: chicken tray bake
+Target: 6 portions.
+
+Buy:
+- 1.4 kg / 3 lb boneless, skinless chicken thighs
+- 1.5 kg / 3.3 lb potatoes
+- 700 g / 1.5 lb carrots
+- 450 g / 1 lb green beans
+- 2 onions
+
+This should yield about 900 g cooked chicken and six moderate portions once vegetables are included. Reserve two portions for soup, eat two at dinner, and use two for lunches or freeze them.
+
+### Day 3: warm roasted-vegetable grain salad
+Target: 4 portions.
+
+Use two Day 1 portions and add:
+- 250 g / 1¼ cups dry farro or barley
+- 1 cucumber
+- 1 bunch parsley
+- 1 lemon
+
+Eat two portions for dinner and save two for lunch.
+
+### Day 4: chicken and vegetable soup
+Target: 4 portions.
+
+Use the two reserved chicken portions plus:
+- 1.5–2 liters / 6–8 cups low-sodium stock
+- 1 can diced tomatoes, from your pantry
+- 2 celery stalks
+- 150 g / ¾ cup dry rice or pasta, from your pantry
+- Reserved tray-bake vegetables
+
+Eat two portions for dinner and save two lunches. Add the rice or pasta only to the amount you expect to eat within one day if you want to avoid it becoming soft.
+
+### Day 5: baked salmon with broccoli and rice
+Target: 4 portions.
+
+Buy:
+- 900 g / 2 lb salmon fillet
+- 900 g / 2 lb broccoli
+- 300 g / 1½ cups dry rice, from your pantry
+- 2 lemons
+
+Serve two portions at dinner and refrigerate two portions for lunches. Refrigerate cooked salmon promptly and use within three days.
+
+### Day 6 and Day 7: lentil bolognese
+Target: 8 portions total.
+
+Use:
+- 450 g / 2¼ cups dry lentils, from your pantry
+- 2 cans diced tomatoes, from your pantry
+- 500 g mushrooms
+- 4 carrots
+- 2 celery stalks
+- 2 onions
+- 300 g spinach
+- 500–600 g dry pasta, from your pantry
+
+Serve four portions with pasta on Day 6 and reserve four portions. On Day 7, reheat the sauce and serve it over baked potatoes or rice. If the sauce seems thick, add water or stock.
+
+## Grocery list
+
+### Produce
+- 1 large cauliflower
+- 4 bell peppers
+- 4 zucchini
+- 1.5 kg / 3.3 lb sweet potatoes
+- 1.5 kg / 3.3 lb potatoes
+- 1.4–1.5 kg / 3–3.3 lb carrots
+- 3 onions, if your existing onions are not enough
+- 1 bulb garlic, if your current supply is low
+- 450 g / 1 lb green beans
+- 900 g / 2 lb broccoli
+- 500 g mushrooms
+- 300 g spinach
+- 1 cucumber
+- 1 bunch parsley
+- 1 bunch celery
+- 5 lemons
+
+### Meat and fish
+- 1.4 kg / 3 lb boneless, skinless chicken thighs
+- 900 g / 2 lb salmon fillet
+
+### Canned and packaged
+- 2 cans chickpeas, about 400 g / 15 oz each
+- 1 liter or 2 cartons low-sodium stock
+- 250 g / 1¼ cups farro or barley
+
+### Dairy or alternatives
+- 500 g plain Greek yogurt, for the bowl sauce and optional soup garnish
+- 150–200 g grated Parmesan, optional for the bolognese
+- 200 g feta, optional for the grain salad
+
+### Check before buying
+- Rice: use existing supply
+- Pasta: use existing supply
+- Dry lentils: use existing supply
+- Canned tomatoes: use existing supply
+- Olive oil, soy sauce, rice vinegar, oats, garlic, onions, herbs, and spices: use existing supply
+
+[assistant]
+[user]
+The 28-serving estimate feels high because some of those portions are lunch portions, not extra dinners. Can you separate the dinner servings from the lunch servings, and show what actually needs to be cooked on each cooking day?
+
+[assistant]
+[assistant]
+You’re right. The earlier “28 servings” figure mixed dinner portions, lunch portions, and held leftovers, so it overstated the amount needed for the dinners. Here is a cleaner accounting for two adults.
+
+## What the week actually needs
+
+There are 14 dinner servings total:
+
+- 7 dinners × 2 adults = **14 dinner servings**
+- Planned lunches: 8–10 servings, depending on appetite
+- Practical total to prepare: **22–24 servings**
+- Any extra beyond that is optional and can be frozen
+
+## Cooking schedule and yields
+
+### Cooking day 1: roasted vegetables and chickpeas
+
+Prepare:
+- 2 cans chickpeas, drained
+- About 2.2 kg / 4.8 lb vegetables
+- 2 cups dry rice
+
+Expected yield:
+- 4 dinner-sized portions of vegetables and chickpeas
+- 2 dinner-sized portions reserved for Day 3
+- 2–4 lunch portions, depending on how much rice and vegetables you serve
+
+Use:
+- Day 1 dinner: 2 portions
+- Day 3 dinner: 2 portions, transformed into grain salad
+- Lunches: 2–4 portions
+
+The two Day 3 portions are not additional food beyond the batch; they are included in the six dinner-equivalent portions produced by the roast.
+
+### Cooking day 2: chicken tray bake
+
+Prepare:
+- 1.1–1.2 kg / 2.5 lb boneless, skinless chicken thighs
+- 1.2 kg / 2.6 lb potatoes
+- 600 g / 1.3 lb carrots
+- 400 g / 14 oz green beans
+- 2 onions
+
+Expected yield:
+- 4 dinner-sized portions
+- 2 lunch-sized portions
+
+Use:
+- Day 2 dinner: 2 portions
+- Day 4 soup: 2 portions, using the reserved chicken and some vegetables
+- Lunches: 2 portions, or use part of the reserved amount in soup
+
+If you want exactly four chicken servings total, purchase closer to 900 g / 2 lb chicken and accept smaller lunch portions.
+
+### Cooking day 3: warm grain salad
+
+No new major cooking is needed. Cook:
+- 1 cup dry farro or barley
+
+Combine it with:
+- The two reserved Day 1 vegetable-and-chickpea portions
+- Cucumber, parsley, lemon, and dressing
+
+Expected yield:
+- Day 3 dinner: 2 portions
+- Day 4 lunch: 2 portions
+
+### Cooking day 4: chicken and vegetable soup
+
+Prepare:
+- The two reserved chicken-and-vegetable portions
+- 6 cups stock
+- 1 can diced tomatoes
+- ¾ cup dry rice or pasta
+- 2 celery stalks
+- Extra herbs
+
+Expected yield:
+- Day 4 dinner: 2 portions
+- Day 5 lunch: 2 portions
+
+### Cooking day 5: salmon
+
+Prepare:
+- 700–800 g / 1.5–1.75 lb salmon
+- 700–900 g / 1.5–2 lb broccoli
+- 1½ cups dry rice
+
+Expected yield:
+- Day 5 dinner: 2 portions
+- Lunches: 2 portions
+
+The salmon is not used for another dinner.
+
+### Cooking day 6: lentil bolognese
+
+Prepare:
+- 2 cups dry lentils
+- 2 cans diced tomatoes
+- 400 g mushrooms
+- 3 carrots
+- 2 celery stalks
+- 2 onions
+- 250–300 g spinach
+- 500 g dry pasta
+
+Expected yield:
+- Day 6 dinner: 2 portions
+- Day 7 dinner: 2 portions
+- 2–4 lunch portions
+
+For Day 7, change the serving format by using a baked potato, rice, or a smaller pasta portion with a fresh salad. You can reserve half the sauce before adding pasta so it reheats better.
+
+## Dinner-only count
+
+- Day 1 roasted bowls: 2
+- Day 2 chicken tray bake: 2
+- Day 3 grain salad: 2
+- Day 4 chicken soup: 2
+- Day 5 salmon: 2
+- Day 6 lentil bolognese: 2
+- Day 7 lentil bolognese, changed format: 2
+
+**Total: 14 dinner servings.**
+
+The lunch servings are separate targets layered onto the batches, rather than being counted as additional dinners.
+
+[assistant]
+[user]
+Could you revise the grocery list to match those smaller quantities? We already have enough onions and garlic, and I’d like to skip optional cheese and yogurt to keep the budget predictable. Also, can you estimate the cost by section?
+
+[assistant]
+[assistant]
+Here is the revised list for the quantities above. I’m assuming an ordinary supermarket in the U.S.; prices vary by region, season, and whether you buy frozen produce or store brands. The estimate lands around $92–$108 before tax, leaving some room under your $110 target.
+
+## Produce — estimated $29–$36
+
+- 1 large cauliflower: $3–$5
+- 4 bell peppers: $5–$7
+- 4 zucchini: $3–$5
+- 1.5 kg / 3.3 lb sweet potatoes: $4–$6
+- 1.2 kg / 2.6 lb potatoes: $3–$5
+- 1.2 kg / 2.6 lb carrots: $2–$3
+- 400 g / 14 oz green beans: $3–$4
+- 700–900 g / 1.5–2 lb broccoli: $3–$5
+- 400 g mushrooms: $3–$5
+- 250–300 g spinach: $3–$4
+- 1 cucumber: $1–$2
+- 1 bunch parsley: $1.50–$2.50
+- 1 bunch celery: $2–$3
+- 5 lemons: $3–$5
+
+The sweet potatoes are for the roasted vegetable batch; the regular potatoes can be used with Day 7’s lentil sauce. If you need to cut cost, use regular potatoes for both and omit sweet potatoes.
+
+## Meat and fish — estimated $31–$39
+
+- 1.1–1.2 kg / 2.5 lb boneless, skinless chicken thighs: $10–$15
+- 700–800 g / 1.5–1.75 lb salmon: $21–$24
+
+For a tighter budget, buy frozen salmon or reduce the fillet to 600–700 g / 1.3–1.5 lb and serve it with more broccoli and rice.
+
+## Canned and packaged — estimated $15–$20
+
+- 2 cans chickpeas: $2–$4
+- 1 liter or 2 cartons low-sodium stock: $3–$5
+- 250 g / 1 cup dry farro or barley: $3–$5
+- 1 package whole-grain bread or crackers, optional for soup: $3–$4
+
+The bread or crackers are optional and can be removed. Rice, pasta, lentils, and canned tomatoes are excluded because you already have them.
+
+## Revised expected total
+
+- Produce: $29–$36
+- Meat and fish: $31–$39
+- Canned and packaged: $12–$16 without optional bread
+- **Estimated total: $72–$91**
+
+That lower total assumes the store has ordinary prices and that your pantry supply is sufficient. If salmon is unusually expensive, frozen salmon or a smaller portion is the easiest substitution.
+
+## One practical correction
+
+The list includes both cauliflower, peppers, zucchini, and sweet potatoes for the roasted batch, plus potatoes and other vegetables for later meals. To avoid buying more roast vegetables than needed for two dinners and lunches, use this exact Day 1 combination:
+
+- 1 cauliflower
+- 3 bell peppers
+- 3 zucchini
+- 900 g / 2 lb sweet potatoes
+- 2 cans chickpeas
+
+That produces about six dinner-equivalent portions after roasting. The remaining produce is for the chicken tray bake, grain salad, soup, salmon dinner, and lentil sauce.
+
+[assistant]
+[user]
+I’m going to shop tomorrow and batch-cook on Sunday. Can you give me a prep timeline that keeps the food safe, especially the chicken, salmon, rice, and cooked lentil sauce? I’d like the plan to minimize washing dishes too.
+
+[assistant]
+[user]
+One more thing: I learned today that Dario Moradi is joining lumenkit as our first full-time operations lead on October 14. He will own vendor coordination, fulfillment workflows, and weekly inventory reporting. This is a key hire because our pilot shipments have been delayed by manual packing and inconsistent stock counts. Please keep that project context in mind if we discuss planning or operations later.
+
+[assistant/analysis]
+[assistant]
+That’s useful project context: Dario Moradi will join lumenkit as the first full-time operations lead on October 14, owning vendor coordination, fulfillment workflows, and weekly inventory reporting. The hire is intended to address pilot-shipment delays caused by manual packing and inconsistent stock counts. I’ll keep that in mind for later planning or operations discussions.
+
+For Sunday, the safest and least dish-heavy approach is to prep components in a deliberate order and cool anything perishable promptly.
+
+## Before Sunday
+
+Shop on Saturday if possible. Refrigerate chicken and salmon immediately at 4°C / 40°F or below. Keep chicken on the lowest refrigerator shelf in a sealed tray. If either package will not be used within one to two days, freeze it and thaw it in the refrigerator, never on the counter.
+
+Set out:
+- Two large sheet pans
+- One large pot for lentil sauce
+- One medium pot or rice cooker
+- One soup pot or clean container for soup
+- Shallow storage containers
+- Labels or masking tape
+- A food thermometer, if available
+
+## Sunday prep order
+
+### 1. Wash and organize produce — 15 minutes
+
+Wash vegetables that will be eaten cooked or raw. Keep mushrooms dry until use if possible. Set aside:
+
+- Roast vegetables
+- Chicken-tray vegetables
+- Broccoli
+- Grain-salad cucumber and parsley
+- Lentil-sauce vegetables
+
+Use one cutting board for produce first. Do not put raw chicken on it until all ready-to-eat produce has been cut and the board has been washed with hot, soapy water.
+
+### 2. Start the lentil sauce — 45–60 minutes
+
+Use the large pot:
+
+1. Sauté onion, carrot, celery, and mushrooms.
+2. Add lentils, canned tomatoes, herbs, and water or stock.
+3. Simmer until the lentils are tender.
+4. Stir in spinach near the end.
+5. Divide the sauce into shallow containers.
+
+Do not cool the full pot on the counter or place a large hot pot directly into the refrigerator. Portion it into shallow containers, leave them uncovered briefly while steam subsides, then refrigerate within two hours of finishing. Once cold, cover them. Keep enough for Day 6 and Day 7 in the refrigerator if using within four days; freeze the Day 7 portion if your schedule could extend beyond that.
+
+### 3. Cook rice and farro or barley — 30–45 minutes
+
+Use the rice cooker for rice and the medium pot for farro or barley, or cook one after the other to avoid extra equipment.
+
+- Cool cooked rice quickly in a shallow container.
+- Refrigerate it within two hours.
+- Use refrigerated rice within three to four days.
+- For rice needed later in the week, freeze portions promptly once cooled and thaw them in the refrigerator.
+
+For the grain salad, cool the farro or barley separately. Do not mix in cucumber or herbs until serving; this keeps the salad fresher.
+
+### 4. Roast vegetables and chickpeas — 35–45 minutes
+
+Roast the Day 1 vegetables and chickpeas on one or two sheet pans at 220°C / 425°F. Avoid crowding so they roast rather than steam.
+
+Cool the batch in shallow containers. Reserve the Day 3 portion in its own labeled container. Refrigerate within two hours and use within three to four days.
+
+You can reuse a sheet pan for the chicken after the vegetables are done, but wash it if raw chicken will touch it.
+
+### 5. Prepare the chicken tray bake — 45–55 minutes
+
+Use the second sheet pan if available. Put the vegetables on first, then add the chicken according to the recipe timing. The thickest part of the chicken should reach at least 74°C / 165°F.
+
+After cooking:
+
+- Keep the two Day 2 dinner portions separate.
+- Remove the chicken from the bones or divide it into the portions intended for soup.
+- Cool in shallow containers.
+- Refrigerate within two hours.
+- Use the cooked chicken within three to four days.
+
+Because Day 4 soup is only a couple of days away, refrigeration is appropriate. If you may not eat it by then, freeze the reserved chicken promptly.
+
+### 6. Do not cook the salmon on Sunday
+
+Keep the salmon raw and refrigerated until the day before or day of the meal. Fish is best cooked close to serving. If you need to prepare it ahead, bake it no more than one day in advance, cool it quickly, and use it within one to two days.
+
+### 7. Make the soup on Day 4
+
+Use the reserved chicken and vegetables with stock, canned tomatoes, celery, and rice or pasta. Bring the soup fully to a simmer. Add rice or pasta only to the amount being eaten soon, because it absorbs liquid and becomes soft during storage.
+
+Cool extra soup in shallow containers and refrigerate within two hours. Use it within three to four days, or freeze it.
+
+## Suggested storage labels
+
+Write the contents and date on each container:
+
+- “Roast veg/chickpeas — Sun — use by Wed”
+- “Grain — Sun — use by Wed”
+- “Chicken — Sun — use by Wed”
+- “Lentil sauce — Sun — use by Wed/Thu”
+- “Cooked rice — Sun — use by Wed or freeze”
+
+When reheating leftovers, heat them until steaming hot throughout, ideally to 74°C / 165°F. Discard food that sat at room temperature for more than two hours, or more than one hour in very hot conditions. Keep the refrigerator at or below 4°C / 40°F, and avoid stacking hot containers tightly together because that slows cooling.
+
+[assistant]
+[user]
+Great. Please give me the final compact weekly plan and the shopping list in one place, with the exact Sunday batch-cooking steps and a short note on which portions to freeze.
+
+[assistant]
+You have enough pantry staples, so the final plan can stay within the $110 target and use four substantial cooking sessions: Sunday batch cooking, the chicken tray bake, the salmon, and the lentil sauce. The schedule deliberately keeps the salmon fresh and turns the first two batches into different meals.
+
+## Weekly dinner plan
+
+### Sunday — roasted vegetable and chickpea bowls
+Roast:
+- 1 cauliflower
+- 3 bell peppers
+- 3 zucchini
+- 900 g / 2 lb sweet potatoes
+- 2 cans chickpeas
+
+Serve with existing rice and a dressing of olive oil, lemon, rice vinegar, salt, pepper, and herbs.
+
+Portion:
+- 2 dinner servings for Sunday
+- 2 servings for Wednesday’s grain salad
+- 2–4 lunch servings, depending on bowl size
+
+### Monday — lemon-herb chicken tray bake
+Cook:
+- 1.1–1.2 kg / 2.5 lb chicken thighs
+- 1.2 kg / 2.6 lb potatoes
+- 600 g / 1.3 lb carrots
+- 400 g / 14 oz green beans
+- Existing onions and garlic
+
+Portion:
+- 2 dinner servings for Monday
+- 2 chicken-and-vegetable portions for Wednesday’s soup
+- 2 lunch servings, if the yield allows
+
+### Tuesday — flexible leftover night or pantry meal
+Use any remaining Sunday or Monday portions. If both batches are already allocated, make a quick lentil-and-tomato rice bowl from your existing lentils, tomatoes, and rice. This is a buffer night that prevents forcing food into the schedule before it is needed.
+
+### Wednesday — warm roasted-vegetable grain salad
+Cook

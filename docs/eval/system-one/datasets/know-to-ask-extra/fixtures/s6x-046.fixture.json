@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-046",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "people/idris-tessstead",
+      "content": "---\ntitle: Idris Tessstead\ntype: person\naliases: [idris]\nsummary: \"Idris Tessstead is the user's cofounder and CTO.\"\n---\n\nIdris Tessstead is the user's cofounder and CTO. Idris pushed to move the reporting feature ahead of the mobile app.\n"
+    },
+    {
+      "slug": "people/maren-grisgrove",
+      "content": "---\ntitle: Maren Grisgrove\ntype: person\nsummary: \"Maren Grisgrove is the head of sales at Juniperyard.\"\n---\n\nMaren Grisgrove is the head of sales at Juniperyard.\n"
+    },
+    {
+      "slug": "people/kasimir-fencombe",
+      "content": "---\ntitle: Kasimir Fencombe\ntype: person\naliases: [kasimir]\nsummary: \"Kasimir Fencombe is the operations director at Tidalreach.\"\n---\n\nKasimir Fencombe is the operations director at Tidalreach. Kasimir objected to the auto-renewal clause in the draft contract.\n"
+    },
+    {
+      "slug": "people/farah-haskholt",
+      "content": "---\ntitle: Farah Haskholt\ntype: person\naliases: [farah]\nsummary: \"A contact from a conference last spring.\"\n---\n\nA contact from a conference last spring.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "what did my cofounder think about the roadmap?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Got it."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "perfect, appreciate it"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Happy to help."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "Turn this into a checklist: Grisgrove sends the deck, I review it, we both sign off on Friday."
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Here is what I have."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "What did Fencombe want changed in the contract?"
+    }
+  ]
+}

@@ -1,0 +1,144 @@
+[user]
+I need a generic out-of-office auto-reply drafted with the dates filled in. I’ll be away from Monday, October 12 through Friday, October 16, and back on Monday, October 19.
+
+[assistant]
+Here is a straightforward version:
+
+Subject: Out of Office
+
+Hello,
+
+Thank you for your message. I am out of the office from Monday, October 12 through Friday, October 16, and will return on Monday, October 19. I will respond to your message as soon as possible after I return.
+
+Best,
+[Your Name]
+
+[user]
+Can you make it a little more polished without sounding formal or overly warm?
+
+[assistant]
+Subject: Out of Office
+
+Hello,
+
+Thanks for your message. I’m out of the office from Monday, October 12 through Friday, October 16, and will be back on Monday, October 19. I’ll get back to you as soon as I can after I return.
+
+Best,
+[Your Name]
+
+[user]
+Please include a line saying that messages are not being monitored while I’m away.
+
+[assistant]
+Subject: Out of Office
+
+Hello,
+
+Thanks for your message. I’m out of the office from Monday, October 12 through Friday, October 16, and will be back on Monday, October 19. Messages are not being monitored while I’m away, and I’ll get back to you as soon as I can after I return.
+
+Best,
+[Your Name]
+
+[user]
+Could you give me a version that does not use “I’ll get back to you as soon as I can”? I want to avoid implying a specific response time.
+
+[assistant]
+Subject: Out of Office
+
+Hello,
+
+Thanks for your message. I’m out of the office from Monday, October 12 through Friday, October 16, and will be back on Monday, October 19. Messages are not being monitored while I’m away. I’ll respond after I return.
+
+Best,
+[Your Name]
+
+[user]
+I’d like two alternatives: one very concise and one that mentions when the message will be reviewed.
+
+[assistant]
+Concise version:
+
+Subject: Out of Office
+
+Hello,
+
+I’m out of the office from Monday, October 12 through Friday, October 16, returning Monday, October 19. Messages are not being monitored while I’m away.
+
+Best,
+[Your Name]
+
+Version mentioning review:
+
+Subject: Out of Office
+
+Hello,
+
+Thanks for your message. I’m out of the office from Monday, October 12 through Friday, October 16, and will return Monday, October 19. Messages are not being monitored while I’m away. Messages will be reviewed after I return.
+
+Best,
+[Your Name]
+
+[user]
+Can you remove the greeting and sign-off so it can be pasted directly into an auto-reply field?
+
+[assistant]
+Out of the office from Monday, October 12 through Friday, October 16, returning Monday, October 19. Messages are not being monitored while away. Messages will be reviewed after returning.
+
+[user]
+Please make that slightly less repetitive.
+
+[assistant]
+Out of the office from Monday, October 12 through Friday, October 16, returning Monday, October 19. Messages are not being monitored during this period and will be reviewed after I return.
+
+[user]
+Can you provide a plain-text version and an HTML version?
+
+[assistant]
+Plain-text version:
+
+Out of the office from Monday, October 12 through Friday, October 16, returning Monday, October 19. Messages are not being monitored during this period and will be reviewed after I return.
+
+HTML version:
+
+<p>Out of the office from Monday, October 12 through Friday, October 16, returning Monday, October 19. Messages are not being monitored during this period and will be reviewed after I return.</p>
+
+[user]
+The system has separate fields for an internal reply and an external reply. Please draft both, keeping them generic and not adding an alternate contact.
+
+[assistant]
+Internal reply:
+
+Out of the office from Monday, October 12 through Friday, October 16, returning Monday, October 19. Messages are not being monitored during this period and will be reviewed after I return.
+
+External reply:
+
+Thank you for your message. I’m out of the office from Monday, October 12 through Friday, October 16, and will return Monday, October 19. Messages are not being monitored during this period and will be reviewed after I return.
+
+[user]
+Could you make the external version match the internal one more closely, while retaining a brief “thank you”?
+
+[assistant]
+Internal reply:
+
+Out of the office from Monday, October 12 through Friday, October 16, returning Monday, October 19. Messages are not being monitored during this period and will be reviewed after I return.
+
+External reply:
+
+Thank you. Out of the office from Monday, October 12 through Friday, October 16, returning Monday, October 19. Messages are not being monitored during this period and will be reviewed after I return.
+
+[user]
+For the final copy, please show both fields with labels, and include a quick check that the weekday and date combinations are consistent.
+
+[assistant]
+Internal reply:
+Out of the office from Monday, October 12 through Friday, October 16, returning Monday, October 19. Messages are not being monitored during this period and will be reviewed after I return.
+
+External reply:
+Thank you. Out of the office from Monday, October 12 through Friday, October 16, returning Monday, October 19. Messages are not being monitored during this period and will be reviewed after I return.
+
+Date check:
+- October 12: Monday
+- October 16: Friday
+- October 19: Monday
+
+The weekday and date combinations are consistent.

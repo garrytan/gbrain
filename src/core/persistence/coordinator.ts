@@ -23,6 +23,7 @@ import { assertRecoveryStagingAbsent, cleanupRecoveryStaging, recoveryStagingFil
 import { assertMutationProtocol, assertSharedSkillPersistence, declarePersistenceProtocol, PERSISTENCE_PROTOCOL_PREDICATE } from './protocol.ts';
 import { assertBundleRecoveryBinding, bundleFileHash, prepareBundleRecovery, publishStagedBundleFile, stageBundleFile, type MutationFile } from './bundle-files.ts';
 import { assertKnowledgePublicationAllowed } from '../shared-skills/knowledge-guard.ts';
+import { classifyMirrorPage, sourceMirrorReadOnly } from './mirror-read-only.ts';
 
 interface PreparedMutationBase {
   sourceExclusive?: boolean;
@@ -33,7 +34,7 @@ interface PreparedMutationBase {
   contentUnchanged?: boolean;
   deferEmbedding?: boolean;
   /** Why a page write bound to a worktree publishes no file (receipt `write_through.skipped`). */
-  databaseOnlyReason?: 'db_only' | 'unbound_source';
+  databaseOnlyReason?: 'db_only' | 'unbound_source' | 'mirror_read_only';
   /** Must perform only transaction-composable database work. */
   apply(tx: BrainEngine): Promise<Record<string, unknown>>;
   validate?(tx: BrainEngine): Promise<void>;
@@ -178,6 +179,13 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
         },
       };
       if (prepared.file.expectedBeforeHash !== undefined && record.beforeHash !== prepared.file.expectedBeforeHash) {
+        // A coordinated writer (a withdrawal mirror) also advanced the page:
+        // reprepare against it. Bytes changed at an unchanged revision are an
+        // uncoordinated edit.
+        const current = await engine.readPageSnapshot(row.slug, { sourceId: row.source_id, includeDeleted: true });
+        if ((current?.revision ?? null) !== prepared.observedRevision) {
+          throw new OperationError('revision_conflict', 'The page changed during preparation.', 'Read its current revision and submit the updated intent with a new request_id.');
+        }
         throw new OperationError('source_changed', 'The canonical file changed after preparation.');
       }
       const nextBytes = prepared.file.content === null ? 0 : typeof prepared.file.content === 'string'
@@ -209,6 +217,11 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
         if ((snapshot?.revision ?? null) !== prepared.observedRevision) throw new OperationError('revision_conflict', 'The page changed during preparation.', 'Read its current revision and submit the updated intent with a new request_id.');
       }
       await prepared.validate?.(tx);
+      // #5409: a file target prepared before the source became a read-only mirror is never published.
+      if (!skill && prepared.file && await sourceMirrorReadOnly(tx, row.source_id, true)) {
+        throw new OperationError('source_changed', 'The source became a read-only mirror after this write was prepared; nothing was written to its checkout.',
+          'Retry the write with a new request_id; it is now stored database-only.');
+      }
       if (recovery) {
         const records = recoveryFiles(recovery);
         for (const record of records) if ((skill ? bundleFileHash(record) : fileHash(record.path)) !== record.beforeHash) {
@@ -235,10 +248,12 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
       }
       const outcome = await withCoordinatedWrite(tx, [row.source_id], () => prepared.apply(tx));
       if (!skill) await classifyUnboundPage(tx, row);
+      if (prepared.databaseOnlyReason === 'mirror_read_only') await classifyMirrorPage(tx, row);
       const final = skill ? null : await tx.readPageSnapshot(row.slug, { sourceId: row.source_id, includeDeleted: true });
       if (final) outcome.revision = final.revision;
       outcome.persistence = { mode: files.length ? 'filesystem' : 'database', ...(files.length ? { file_written: !prepared.noop } : {}), ...(skill ? { git_state: 'not_requested' } : {}) };
       outcome.write_through = files.length ? { written: !prepared.noop } : { written: false, skipped: prepared.databaseOnlyReason ?? row.authority.databaseOnlyReason ?? 'no_repo_configured' };
+      if (prepared.databaseOnlyReason === 'mirror_read_only') outcome.storage = 'database_only';
       if (row.operation === 'put_page' && row.authority.remote && row.authority.databaseOnlyReason === 'no_repo_configured') outcome.write_through = withNoRepoWriteThroughWarning(outcome.write_through as { written: boolean; skipped?: string }, row.source_id);
       if ((outcome.write_through as { skipped?: string }).skipped === 'unbound_source') {
         outcome.write_through = { ...outcome.write_through as object, warning: unboundWriteWarning(row.operation, row.source_id, row.authority.databaseOnlyReason === 'unbound_source') };

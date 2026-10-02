@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "fixture_id": "s6x-085",
+  "suites": [
+    "know-to-ask"
+  ],
+  "category": "s6-extra",
+  "seed_pages": [
+    {
+      "slug": "projects/referral-program",
+      "content": "---\ntitle: Referral Program\ntype: project\nsummary: \"Referral Program: We chose a one-month credit for both sides and capped it at three referrals per account.\"\n---\n\nReferral Program: We chose a one-month credit for both sides and capped it at three referrals per account.\n"
+    },
+    {
+      "slug": "people/zainab-fenfell",
+      "content": "---\ntitle: Zainab Fenfell\ntype: person\nsummary: \"Zainab Fenfell is the head of partnerships at Fableloft.\"\n---\n\nZainab Fenfell is the head of partnerships at Fableloft.\n"
+    },
+    {
+      "slug": "companies/emberyard-health",
+      "content": "---\ntitle: Emberyard Health\ntype: company\nsummary: \"Emberyard Health is a startup we evaluated as a partner.\"\n---\n\nEmberyard Health is a startup we evaluated as a partner. Their support team promised a named account manager after the last outage.\n"
+    },
+    {
+      "slug": "people/lucan-ostregrove",
+      "content": "---\ntitle: Lucan Ostregrove\ntype: person\naliases: [lucan]\nsummary: \"A contact from a conference last spring.\"\n---\n\nA contact from a conference last spring.\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "what were the terms of the referral thing we discussed?"
+    },
+    {
+      "turn_id": 2,
+      "role": "assistant",
+      "text": "Done."
+    },
+    {
+      "turn_id": 3,
+      "role": "user",
+      "text": "Translate into Spanish: 'Fenfell will join the meeting at noon.'"
+    },
+    {
+      "turn_id": 4,
+      "role": "assistant",
+      "text": "Done."
+    },
+    {
+      "turn_id": 5,
+      "role": "user",
+      "text": "By the way, someone named Ruairi Pellbarrow emailed about partnerships. Never heard of them."
+    },
+    {
+      "turn_id": 6,
+      "role": "assistant",
+      "text": "Here is what I have."
+    },
+    {
+      "turn_id": 7,
+      "role": "user",
+      "text": "Any news from Emberyard on support?"
+    }
+  ]
+}

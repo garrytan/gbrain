@@ -78,3 +78,20 @@ export const MERGE_PROTECTED_SYMBOL_TYPES: ReadonlySet<string> = new Set([
   'export statement',
   'decorated definition',
 ]);
+
+const FUNCTION_VALUE_TYPES = new Set(['arrow_function', 'function_expression', 'function', 'generator_function']);
+
+/**
+ * gbrain-evals N13-1: a TS/JS `lexical_declaration` / `variable_declaration`
+ * whose declarator value is a function (`const f = () => …`, `let g =
+ * function () {…}`) is a named function definition wearing a mergeable run
+ * type. The chunker stamps it `definesFunction` so mergeSmallSiblings keeps
+ * it (and its symbol_name, which code-def resolves) on its own chunk, while
+ * plain const/let value runs still merge. Takes a tree-sitter node.
+ */
+export function declaresFunctionValue(node: any): boolean {
+  if (node.type !== 'lexical_declaration' && node.type !== 'variable_declaration') return false;
+  return node.namedChildren.some(
+    (child: any) => child.type === 'variable_declarator' && FUNCTION_VALUE_TYPES.has(child.childForFieldName('value')?.type),
+  );
+}

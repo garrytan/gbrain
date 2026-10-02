@@ -42,10 +42,10 @@ function classify(files: string): string {
 describe('pull-request CI scope', () => {
   test('pushes, schedules and manual runs keep every Bun version on every native target', () => {
     const full = nativeCells('full');
-    expect(full.native).toHaveLength(18);
-    expect(full.musl).toHaveLength(6);
-    expect(full.console).toHaveLength(6);
-    expect(full.dotnet).toHaveLength(6);
+    expect(full.native).toHaveLength(12);
+    expect(full.musl).toHaveLength(4);
+    expect(full.console).toHaveLength(4);
+    expect(full.dotnet).toHaveLength(4);
     expect(full.openclaw).toBe(true);
   });
 
@@ -106,7 +106,7 @@ describe('pull-request CI scope', () => {
     for (const name of ['read-performance', 'deployment-matrix', 'invariants', 'reconciliation']) {
       const full = cells(persistence[name], push);
       const primary = cells(persistence[name], pr);
-      expect(full.filter(cell => cell.endsWith('1.3.11')).length, name).toBe(full.length / 2);
+      expect(full.filter(cell => cell.endsWith(MINIMUM_BUN_VERSION)).length, name).toBe(full.length / 2);
       expect(primary, name).toEqual(full.filter(cell => cell.endsWith('1.4.2')));
     }
   });
@@ -139,7 +139,7 @@ describe('pull-request CI scope', () => {
     expect(matrices).toHaveLength(5);
     for (const bun of matrices) expect(bun).toEqual([MINIMUM_BUN_VERSION, primary]);
     for (const job of ['native', 'musl', 'windows-backup-console', 'windows-backup-dotnet']) {
-      expect(native[job].strategy!.matrix.bun as string[]).toEqual(expect.arrayContaining([MINIMUM_BUN_VERSION, primary]));
+      expect(native[job].strategy!.matrix.bun).toEqual([MINIMUM_BUN_VERSION, primary]);
     }
   });
 });
