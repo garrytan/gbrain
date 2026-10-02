@@ -7,7 +7,7 @@
  * - MCP tool calls at /mcp with bearer auth + scope enforcement
  * - Admin dashboard at /admin with cookie auth
  * - SSE live activity feed at /admin/events
- * - Health check at /health
+ * - Health check at /health (liveness) and /ready (pipeline watchdog)
  *
  * buildServeHttpApp builds the shared ServeHttpContext and mounts the
  * serve-http-<area>.ts modules in registration order; runServeHttp listens.
@@ -22,6 +22,7 @@ import cookieParser from 'cookie-parser';
 import rateLimit from 'express-rate-limit';
 import { randomBytes, createHash } from 'crypto';
 import { createMetricsCounters, metricsTrackingMiddleware, mountHealth, mountMetrics, type MetricsCounters } from './serve-http-metrics.ts';
+import { attachHostedHttpGuards, createHostedHttpGuards } from '../core/http-hosted-guards.ts';
 import { ADMIN_TOKEN_SHAPE } from '../core/serve-service.ts';
 import { getOAuthProtectedResourceMetadataUrl } from '@modelcontextprotocol/sdk/server/auth/router.js';
 import { InvalidTokenError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
@@ -401,6 +402,8 @@ interface ServeHttpOptions {
    * captured to a non-interactive log and accept the leak.
    */
   printAdminToken?: boolean;
+  /** Exit on unhandledRejection. Default true. In-process tests pass false. GBRAIN_HTTP_FATAL_EXIT=0 disables. */
+  installFatalHandlers?: boolean;
 }
 
 /**
@@ -816,6 +819,8 @@ export async function buildServeHttpApp(app: express.Express, engine: BrainEngin
     requireAdmin, adminLimits, ccRateLimiter, ingestRateLimiter, githubWebhookLimiter,
     metricsCounters, sseClients, broadcastEvent,
   };
+  const hosted = createHostedHttpGuards();
+  attachHostedHttpGuards(ctx, hosted);
 
   mountOAuth(app, ctx);
   mountHealth(app, ctx);
@@ -828,15 +833,16 @@ export async function buildServeHttpApp(app: express.Express, engine: BrainEngin
   mountMcp(app, ctx);
   mountWebhooks(app, ctx);
 
-  return { bind, config, sql, issuerUrl, skillStatus, bootstrapToken, bootstrapFromEnv, suppressBootstrapPrint };
+  return { bind, config, sql, issuerUrl, skillStatus, bootstrapToken, bootstrapFromEnv, suppressBootstrapPrint, hosted };
 }
 
 export async function runServeHttp(engine: BrainEngine, options: ServeHttpOptions) {
   const { port, tokenTtl, enableDcr, enableDcrInsecure } = options;
   // Express 5 app
   const app = express();
-  const { bind, config, sql, issuerUrl, skillStatus, bootstrapToken, bootstrapFromEnv, suppressBootstrapPrint } =
-    await buildServeHttpApp(app, engine, options);
+  const built = await buildServeHttpApp(app, engine, options);
+  const { bind, config, sql, issuerUrl, skillStatus, bootstrapToken, bootstrapFromEnv, suppressBootstrapPrint } = built;
+  const stopHosted = built.hosted.arm(options.installFatalHandlers !== false);
 
   // ---------------------------------------------------------------------------
   // Start server
@@ -885,6 +891,7 @@ ${bootstrapFromEnv
   if (ipcBinding.socketPath) {
     console.error(`  Resolve IPC: ${ipcBinding.socketPath}`);
   }
+  console.error(built.hosted.readyLine(port));
 
   // SIGTERM/SIGHUP route through process-cleanup's pass and then
   // `process.exit`, which skips cli.ts's finally-teardown — so on those
@@ -906,6 +913,7 @@ ${bootstrapFromEnv
   try {
     await waitForHttpServerLifecycle(httpServer);
   } finally {
+    stopHosted();
     // Close the IPC listener + reap the socket file on orderly shutdown
     // (abnormal termination goes through the registered cleanup above).
     ipcBinding.close();

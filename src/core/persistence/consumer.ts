@@ -10,8 +10,19 @@ import { publicationConcurrency } from './pool-capacity.ts';
 import { runPersistenceEffects } from './effects.ts';
 import { PERSISTENCE_PROTOCOL_PREDICATE } from './protocol.ts';
 import { isWriteErrorCode } from './types.ts';
+import { isStatementTimeoutError } from '../retry-matcher.ts';
+import { AbandonedError, settleOrAbandon } from './settle-or-abandon.ts';
 
 export type PrepareMutation = (engine: BrainEngine, row: WriteRequest, config: GBrainConfig, signal?: AbortSignal) => Promise<PreparedMutation>;
+
+/** Statement timeout that is not an intentional user-request cancel. */
+function statementTimeoutFollowUp(error: unknown): boolean {
+  if (error instanceof Error && /canceling statement due to user request/i.test(error.message)) return false;
+  const message = (error as { message?: unknown } | null)?.message;
+  if (typeof message === 'string' && /canceling statement due to user request/i.test(message)) return false;
+  return isStatementTimeoutError(error);
+}
+
 export class PersistenceConsumer {
   private stopping = false;
   private timer: ReturnType<typeof setTimeout> | undefined;
@@ -409,14 +420,35 @@ export class PersistenceConsumer {
         await releaseUnpublishedClaim(this.engine, row, observation.deadline_exceeded ? 'preparation_deadline' : 'consumer_stopping');
         return false;
       }
-      const current = await getWriteRequestById(this.engine, row.id);
-      if (current && !isTerminal(current) && current.execution_token === row.execution_token && !current.recovery) {
-        return isTerminal(await finishUnpublishedFailure(this.engine, current, error));
+      // phase() still awaits the cancelled query so the pool client returns.
+      // The hang to cap is a renewal that never settles, and a statement-timeout
+      // follow-up (release/read) that waits on the same saturated pool.
+      const followUp = async (): Promise<boolean> => {
+        const current = await getWriteRequestById(this.engine, row.id);
+        if (current && !isTerminal(current) && current.execution_token === row.execution_token && !current.recovery) {
+          return isTerminal(await finishUnpublishedFailure(this.engine, current, error));
+        }
+        throw error;
+      };
+      if (statementTimeoutFollowUp(error)) {
+        try {
+          return await settleOrAbandon(followUp(), this.opts.phaseMs ?? 5000);
+        } catch (followUpError) {
+          if (followUpError instanceof AbandonedError || statementTimeoutFollowUp(followUpError)) {
+            this.report(error);
+            return false;
+          }
+          throw followUpError;
+        }
       }
-      throw error;
+      return await followUp();
     } finally {
       closed = true; clearInterval(interval); if (timeout) clearTimeout(timeout);
-      this.abort.signal.removeEventListener('abort', stop); this.preparing.delete(row.id); await renewing;
+      this.abort.signal.removeEventListener('abort', stop); this.preparing.delete(row.id);
+      if (renewing) {
+        try { await settleOrAbandon(renewing, this.opts.phaseMs ?? 5000); }
+        catch { claimLive = false; }
+      }
     }
   }
   /** Mandatory barrier: engine.close must be sequenced AFTER this promise. */

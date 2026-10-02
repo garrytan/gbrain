@@ -52,7 +52,7 @@ test('SIGINT shutdown closes the resolve-IPC socket and deregisters every cleanu
   const errorSpy = spyOn(console, 'error').mockImplementation((...args: unknown[]) => { lines.push(args.map(String).join(' ')); });
   try {
     const baseline = _registeredCleanupCountForTests();
-    const done = runServeHttp(engine, { port: 0, tokenTtl: 3600, enableDcr: false });
+    const done = runServeHttp(engine, { port: 0, tokenTtl: 3600, enableDcr: false, installFatalHandlers: false });
     let socketPath: string | undefined;
     for (let i = 0; i < 200 && (socketPath === undefined || _registeredCleanupCountForTests() < baseline + 3); i++) {
       socketPath ??= lines.map(l => /Resolve IPC: (\S+)/.exec(l)?.[1]).find(Boolean);

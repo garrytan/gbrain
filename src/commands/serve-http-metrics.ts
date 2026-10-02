@@ -22,6 +22,8 @@ import type { Express, NextFunction, Request, RequestHandler, Response } from 'e
 import type { BrainEngine } from '../core/engine.ts';
 import { VERSION } from '../version.ts';
 import type { ServeHttpContext } from './serve-http.ts';
+import { readHostedHttpGuards } from '../core/http-hosted-guards.ts';
+import { readinessHttpResult } from '../core/http-pipeline-watchdog.ts';
 
 export interface MetricsCounters {
   requests: number;
@@ -212,12 +214,30 @@ export async function probeLiveness(
 /** GET /health: liveness only (full stats are the admin-only /admin/api/full-stats). */
 export function mountHealth(app: Express, ctx: ServeHttpContext): void {
   const { engine, config } = ctx;
+  const engineName = config.engine || 'pglite';
   // ---------------------------------------------------------------------------
   // Health check — liveness only. Full engine stats live at
   // /admin/api/full-stats (requireAdmin). See probeLiveness above for the why.
+  // GET /ready is the watchdog. It does not touch the database. ?deep=1 on
+  // /health is ignored unless GBRAIN_HTTP_HEALTH_DEEP=1.
   // ---------------------------------------------------------------------------
-  app.get('/health', async (_req, res) => {
-    const result = await probeLiveness(engine, config.engine || 'pglite', VERSION);
+  app.get('/health', async (req, res) => {
+    const guards = readHostedHttpGuards(ctx);
+    if (guards?.config.deepHealth && req.query.deep === '1') {
+      const verdict = guards.watchdog.assess();
+      if (!verdict.ready) {
+        const blocked = readinessHttpResult(verdict, VERSION, engineName);
+        res.status(blocked.status).json(blocked.body);
+        return;
+      }
+    }
+    const result = await probeLiveness(engine, engineName, VERSION);
+    res.status(result.status).json(result.body);
+  });
+  app.get('/ready', (_req, res) => {
+    const guards = readHostedHttpGuards(ctx);
+    const verdict = guards?.watchdog.assess() ?? { ready: true, reason: null };
+    const result = readinessHttpResult(verdict, VERSION, engineName);
     res.status(result.status).json(result.body);
   });
 }
