@@ -9,7 +9,8 @@ import { runPhaseSynthesize } from '../src/core/cycle/synthesize.ts';
 import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
-import { configureGateway, resetGateway, __setChatTransportForTests, __setEmbedTransportForTests } from '../src/core/ai/gateway.ts';
+import { configureGateway, resetGateway, __setChatTransportForTests, __setEmbedTransportForTests, __setDecideTransportForTests } from '../src/core/ai/gateway.ts';
+import { flushDecideWrites } from '../src/core/ai/decide/store.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { withEnv } from './helpers/with-env.ts';
 import * as staleEmbedding from '../src/core/embed-stale.ts';
@@ -47,7 +48,7 @@ async function fixture(run: (f: {
   engine: BrainEngine; sourceId: string; root: string;
   opts: { brainDir: string; sourceId: string; dryRun: boolean; inputFile: string; date: string };
   calls: () => number; edit: (slug: string) => Promise<void>;
-}) => Promise<void>, outputCount = 1) {
+}) => Promise<void>, outputCount = 1, outputBody?: string) {
   for (const engine of engines) {
     const dir = mkdtempSync(join(tmpdir(), 'gbrain-synth-postprocess-'));
     const root = join(dir, 'brain');
@@ -83,7 +84,7 @@ async function fixture(run: (f: {
             ? JSON.stringify({ score: 0.9, content_type: 'reflection', segments: [{ quote, note: 'evidence' }], entities: [], reasons: ['durable insight'] })
             : JSON.stringify({ pages: Array.from({ length: outputCount }, (_, i) => ({
               slug: `wiki/personal/reflections/session${i ? `-${i}` : ''}-${hash}`, title: `Session ${i}`, type: 'note',
-              body: `A memory strategy with [[people/example]]. Evidence item ${i}. Allegedly: "an entirely invented quotation that should lose its marks".`,
+              body: outputBody ?? `A memory strategy with [[people/example]]. Evidence item ${i}. Allegedly: "an entirely invented quotation that should lose its marks".`,
             })), skipped: false });
           return { text, blocks: [{ type: 'text', text }], stopReason: 'end',
             usage: { input_tokens: 100, output_tokens: 100, cache_read_tokens: 0, cache_creation_tokens: 0 },
@@ -98,6 +99,8 @@ async function fixture(run: (f: {
           } });
       });
     } finally {
+      await flushDecideWrites();
+      __setDecideTransportForTests(null);
       configureGateway({ embedding_model: 'openai:text-embedding-3-large', embedding_dimensions: 1536, env: {} });
       __setChatTransportForTests(null);
       __setEmbedTransportForTests(null);
@@ -112,6 +115,62 @@ async function outputSlug(engine: BrainEngine, sourceId: string): Promise<string
   const [row] = await engine.executeRaw<{ slug: string }>("SELECT slug FROM pages WHERE source_id=$1 AND slug LIKE 'wiki/personal/reflections/session-%'", [sourceId]);
   return row.slug;
 }
+
+test('managed native synthesis quarantines interpretations around valid evidence before mirror/chunk publication', async () => {
+  const supported = 'Reliable memories should survive every tool change.';
+  const unsupported = [
+    'The user completed the durability roadmap in 2026.',
+    'The user completed the roadmap: "we charge for durability because reliable memories should survive every tool".',
+  ];
+  await fixture(async ({ engine, sourceId, root, opts }) => {
+    const groundingConfig = {
+      'decide.provider': 'typesafe:jev-1.13.0', 'decide.slots.grounding.mode': 'on',
+      'decide.slots.grounding.threshold': '0.5', 'decide.slots.grounding.force_on': 'true',
+      'decide.egress.private': 'allow', 'decide.egress.typesafe.conversation': 'allow',
+      'decide.budget.daily_usd': '50',
+    };
+    const previousConfig = new Map(await Promise.all(Object.keys(groundingConfig).map(async key => [key, await engine.getConfig(key)] as const)));
+    try {
+      for (const [key, value] of Object.entries(groundingConfig)) await engine.setConfig(key, value);
+      configureGateway({ embedding_model: 'openai:text-embedding-3-large', embedding_dimensions: 1536,
+        env: { TYPESAFE_API_KEY: 'sk-test-typesafe' } });
+      const claims: string[] = [];
+      __setDecideTransportForTests(async (_url, init) => {
+        const payload = JSON.parse(init.body as string);
+        const answers: Record<string, unknown> = {};
+        for (const [id, question] of Object.entries<any>(payload.questions)) {
+          claims.push(question.instructions.claim);
+          answers[id] = { type: 'noul', noul: unsupported.includes(question.instructions.claim) ? 0.05 : 0.93 };
+        }
+        return new Response(JSON.stringify({ model: 'jev-1.13.0', answers, usage: { input_tokens: 200, output_tokens: 3 } }));
+      });
+      const report = await runPhaseSynthesize(engine, opts);
+      expect(report.status).toBe('ok');
+      expect(claims).toEqual(expect.arrayContaining(unsupported));
+      const slug = await outputSlug(engine, sourceId);
+      const page = (await engine.readPageSnapshot(slug, { sourceId }))!.page;
+      const rendered = readFileSync(join(root, `${slug}.md`), 'utf8');
+      expect(page.compiled_truth).toContain(supported);
+      expect(page.compiled_truth).not.toContain('completed');
+      expect(page.frontmatter.unverified_claims).toEqual(expect.arrayContaining(unsupported.map(text =>
+        expect.objectContaining({ text, reason: 'unsupported_paraphrase' }))));
+      expect(rendered).toContain('unsupported_paraphrase');
+      expect(rendered.slice(rendered.indexOf('\n---\n') + 5)).not.toContain('completed');
+      const chunks = await engine.executeRaw<{ content: string }>('SELECT c.chunk_text AS content FROM content_chunks c JOIN pages p ON p.id=c.page_id WHERE p.slug=$1 AND p.source_id=$2', [slug, sourceId]);
+      const chunkText = chunks.map(c => c.content).join('\n');
+      expect(chunkText).toContain(supported);
+      expect(chunkText).not.toContain('completed');
+      expect((await engine.searchKeyword('Reliable memories', { limit: 5, sourceId })).some(hit => hit.slug === slug)).toBe(true);
+      expect((await engine.searchKeyword('completed durability roadmap', { limit: 5, sourceId })).some(hit => hit.slug === slug)).toBe(false);
+    } finally {
+      await flushDecideWrites();
+      for (const [key, value] of previousConfig) {
+        if (value === null) await engine.unsetConfig(key);
+        else await engine.setConfig(key, value);
+      }
+    }
+  }, 1, [supported, ...unsupported, 'Related context: [[people/example]].'].join('\n\n'));
+}, 120_000);
 
 async function interruptAfterChild(engine: BrainEngine, sourceId: string, opts: Parameters<typeof runPhaseSynthesize>[1]) {
   const controller = new AbortController();
