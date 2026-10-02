@@ -10,6 +10,56 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.33.0] - 2026-10-02
+
+**Dream checks the interpretation around a valid quote, date or speaker name.**
+
+A transcript saying someone bought a conference ticket does not prove they
+attended. Previously, a generated sentence containing a real quote, a known
+year or a speaker name could skip the optional source-support check. When that
+check is enabled, it now also reviews those sentences. Unsupported claims with
+adequate evidence go into the existing reviewable quarantine, while supported
+claims stay in the published note.
+
+Evidence can also be spread across several conversation turns. The check now
+measures coverage across the excerpts it actually sends together, retaining the
+same coverage floor and three-excerpt limit. Repeated words and omitted evidence
+do not increase coverage.
+
+### How to use it
+
+Existing users of the optional `grounding` decision slot receive this fix on
+upgrade without changing their configuration. Check `gbrain decide status` to
+see whether the slot is off, shadow or on; see the [System One guide](docs/guides/system-one.md#claim-support-grounding)
+before opting into a provider or sending conversation text.
+
+| Generated statement | What the check now does |
+|---|---|
+| Bought a ticket, described as completed attendance | Checks the completion interpretation even beside a valid quote or year |
+| A completion explicitly stated in the source | Keeps it when the source-support decision passes |
+| Claim with weak evidence or a provider error | Retains the existing mechanical result and records the outcome |
+
+### Things to watch
+
+More eligible prose can require more decision calls, within the existing page,
+phase and spending limits. The slot remains optional. Off, shadow, timeout and
+error behavior are unchanged; mechanical verification alone is not a guarantee
+of factual support. There are no schema, prompt or threshold changes, and no
+existing pages are rewritten on upgrade.
+
+### Itemized changes
+
+### Fixed
+
+- S8 covers substantive new passing units with quotes, numbers or attribution;
+  quarantine uses the final mechanically repaired quote text.
+- Source coverage uses distinct content words across the selected excerpts.
+
+### For contributors
+
+- Synthetic regressions exercise claim selection, selected-window coverage and
+  native synthesis publication through page bodies, mirrors, chunks and search.
+
 ## [0.60.31.0] - 2026-10-02
 
 **Your brain stops handing stored passwords and keys back to your agents, catches credential shapes it used to miss, and keeps your Gmail pages private on disk.**

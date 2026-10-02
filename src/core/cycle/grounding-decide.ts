@@ -2,14 +2,14 @@
  * S8 `grounding`: claim support for dream pages, decided by a System One
  * provider after the mechanical checks (synthesize-verify.ts).
  *
- *   verifyDreamPage (mechanical, sync) ──▶ units that pass ONLY because they
- *   carry no quote, number or attribution
+ *   verifyDreamPage (mechanical, sync) ──▶ substantive new passing units,
+ *   including units with valid quotes, numbers or speaker attribution
  *        │  per unit: up to three source windows (normalized-substring,
  *        │  keyword and embedding neighbours over the page's transcripts)
  *        ▼  one `noul` per unit, ONE REQUEST PER UNIT (background lane)
  *   p ≥ threshold                       → pass
  *   p ≥ threshold − margin              → margin_hold (kept)
- *   low p, no window above keyword floor → insufficient_context (kept)
+ *   low p, weak selected-window coverage → insufficient_context (kept)
  *   low p, adequate coverage            → quarantine (`unsupported_paraphrase`)
  *
  * Runs at both verifyDreamPage call sites and finishes (or times out to the
@@ -34,7 +34,7 @@ import { splitTurnWindows } from './triage-decide.ts';
 
 /** Source windows per claim (fixed by design). */
 export const GROUNDING_MAX_WINDOWS = 3;
-/** Coverage floor: a window must hold at least this share of the claim's content words. */
+/** Coverage floor: selected windows must collectively hold this share of the claim's content words. */
 export const GROUNDING_KEYWORD_FLOOR = 0.25;
 /** One page's decision, and the whole S8 pass per dream phase run. */
 export const GROUNDING_PAGE_MS = 30_000;
@@ -92,7 +92,11 @@ export function selectSourceWindows(claim: string, index: readonly IndexedWindow
   const bySim = scored.filter((s) => s.sim > -1 && !used.has(s.i)).sort((a, b) => b.sim - a.sim || a.i - b.i);
   if (bySim[0]) take(bySim[0].i, 'embedding');
   for (const s of byOverlap) take(s.i, 'keyword');
-  const adequate = scored.some((s) => s.substring || s.overlap >= GROUNDING_KEYWORD_FLOOR);
+  // A multi-clause claim can draw on several turns. Assess the actual excerpts
+  // sent to the judge together, not one window at a time or omitted evidence.
+  const covered = new Set([...used].flatMap(i => [...index[i]!.words]));
+  const overlap = words.size ? [...words].filter(word => covered.has(word)).length / words.size : 0;
+  const adequate = picked.some(w => w.via === 'substring') || overlap >= GROUNDING_KEYWORD_FLOOR;
   return { windows: picked, coverage: adequate ? 'adequate' : 'weak' };
 }
 
