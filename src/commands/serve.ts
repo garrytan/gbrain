@@ -62,6 +62,15 @@ const IDLE_SWEEP_INTERVAL_MS = 10 * 60_000;
 // serving tool calls the moment the client wakes up.
 const IDLE_SWEEP_BUDGET_MS = 3_000;
 
+/** Port from $PORT: a valid TCP port, else the 3131 default (with a warning when set). */
+export function resolveEnvPort(raw: string | undefined, warn: (msg: string) => void): number {
+  if (raw === undefined || raw === '') return 3131;
+  const n = /^[0-9]+$/.test(raw) ? Number(raw) : NaN;
+  if (Number.isInteger(n) && n >= 1 && n <= 65535) return n;
+  warn(`[gbrain serve] ignoring PORT=${JSON.stringify(raw)} (not a TCP port); using 3131`);
+  return 3131;
+}
+
 export interface ServeOptions {
   // Test seam — defaults to the live process. The lifecycle plumbing reads
   // these for stdin EOF detection, signal handlers, and exit, so unit
@@ -128,6 +137,9 @@ export interface ServeOptions {
   // without booting the real OAuth server. Type-only reference to
   // serve-http.ts — erased at compile time, so the lazy runtime import stays.
   runServeHttp?: (typeof import('./serve-http.ts'))['runServeHttp'];
+  // Test seam: the environment the --http lane reads PORT and
+  // GBRAIN_PUBLIC_URL from. Defaults to process.env.
+  env?: Record<string, string | undefined>;
   // Test seam (#4281): replaces installLoopStallWatchdog.
   installStallWatchdog?: (o: LoopStallWatchdogOpts) => WatchdogHandle;
   // Test seam (#4281) for the loop-stall threshold in ms; 0 = off. Defaults
@@ -235,8 +247,14 @@ export async function runServe(
   }
 
   if (isHttp) {
+    // Container platforms (Cloud Run, Fly, Heroku, Render) inject the port
+    // to listen on as $PORT and probe it. Explicit --port wins; a $PORT that
+    // isn't a valid TCP port is ignored with a warning rather than guessed.
+    const env = opts.env ?? process.env;
     const portIdx = args.indexOf('--port');
-    const port = portIdx >= 0 ? parseInt(args[portIdx + 1]) || 3131 : 3131;
+    const port = portIdx >= 0
+      ? parseInt(args[portIdx + 1]) || 3131
+      : resolveEnvPort(env.PORT, opts.log ?? ((msg: string) => console.error(msg)));
 
     const ttlIdx = args.indexOf('--token-ttl');
     const tokenTtl = ttlIdx >= 0 ? parseInt(args[ttlIdx + 1]) || 3600 : 3600;
@@ -248,8 +266,10 @@ export async function runServe(
     const enableDcrInsecure = args.includes('--enable-dcr-insecure');
     const enableDcr = args.includes('--enable-dcr') || enableDcrInsecure;
 
+    // The OAuth issuer. GBRAIN_PUBLIC_URL lets a container image set it
+    // from service config instead of baking it into the command line.
     const publicUrlIdx = args.indexOf('--public-url');
-    const publicUrl = publicUrlIdx >= 0 ? args[publicUrlIdx + 1] : undefined;
+    const publicUrl = publicUrlIdx >= 0 ? args[publicUrlIdx + 1] : (env.GBRAIN_PUBLIC_URL || undefined);
 
     // F8 escape hatch: --log-full-params writes raw payloads to mcp_request_log
     // and the admin SSE feed instead of redacted summaries. Off by default

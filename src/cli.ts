@@ -3104,11 +3104,11 @@ ADMIN
     --surface verbs|starter|full     Tool surface: the 7 memory verbs, the ~20-op
                                      starter set, or every op (default full).
                                      On --http this is the per-client CEILING.
-  serve --http [--port N]            HTTP MCP server with OAuth 2.1
+  serve --http [--port N]            HTTP MCP server with OAuth 2.1 (port default: $PORT, else 3131)
     --token-ttl N                    Access token TTL in seconds (default: 3600)
     --enable-dcr                     Enable Dynamic Client Registration (DCR clients default to authorization_code)
     --enable-dcr-insecure            Also allow the consent-bypassing client_credentials grant on DCR (implies --enable-dcr)
-    --public-url URL                 Public issuer URL (required behind proxy/tunnel)
+    --public-url URL                 Public issuer URL (required behind proxy/tunnel; default: $GBRAIN_PUBLIC_URL)
   connect <mcp-url> --token <t>      Wire Claude Code to a remote gbrain (bearer token)
         [--install] [--json]         Print the paste-ready command, or --install to run it
   auth <create|list|revoke|...>      Manage legacy tokens + OAuth 2.1 clients
