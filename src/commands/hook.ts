@@ -130,9 +130,10 @@ export const CORPUS_RETENTION_DAYS_DEFAULT = 30;
  * Sweep sidecar suffixes — DUPLICATED from sweep.ts on purpose: hook.ts is
  * engine-free by construction (module header D5), and sweep.ts eagerly imports
  * capability.ts, so a value-import here would drag that in. A corpus (re)write
- * MUST invalidate any prior completion/claim marker so the serve sweep
- * re-ingests the appended transcript of a resumed session (otherwise the new
- * turns are skipped forever). Keep these in sync with sweep.ts's
+ * MUST invalidate prior completion so the sweep sees a resumed session's new
+ * turns. Preserve the live claim and prefix checkpoint: only the owning sweep
+ * releases its claim, and append-only progress avoids repaying the head.
+ * Keep these in sync with sweep.ts's
  * CORPUS_INGESTED_SUFFIX / CORPUS_CLAIM_SUFFIX.
  */
 export const CORPUS_INGESTED_SUFFIX = '.ingested';
@@ -1770,17 +1771,15 @@ async function hookSessionEnd(io: HookIo): Promise<number> {
           } catch {
             /* best effort — sidecar invalidation never fails the hook */
           }
-          try {
-            rmSync(corpusFile + CORPUS_CLAIM_SUFFIX, { force: true });
-          } catch {
-            /* best effort */
-          }
+          // Keep any live sweep claim and append-aware .progress checkpoint.
+          // The owner releases the claim; stale-claim recovery handles crashes.
         }
         const retentionMs = corpusRetentionDays(cfg) * 24 * 60 * 60 * 1000;
         gcOldFiles(dir, retentionMs); // [G15]
         gcCorpusArtifacts(dir, retentionMs, [
           CORPUS_INGESTED_SUFFIX,
           CORPUS_CLAIM_SUFFIX,
+          '.progress',
           HARVEST_RECEIPT_SUFFIX,
         ]);
       }

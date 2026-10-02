@@ -559,12 +559,14 @@ async function runCorpusIngestPass(
   const txtFiles = entries.filter(n => n.endsWith('.txt')).sort();
   if (txtFiles.length === 0) return;
 
-  const alreadyIngested = txtFiles.filter(n => entrySet.has(n + CORPUS_INGESTED_SUFFIX));
-  skip('already_ingested', alreadyIngested.length);
-
-  const candidates = txtFiles
-    .filter(n => !entrySet.has(n + CORPUS_INGESTED_SUFFIX))
-    .slice(0, batchLimit);
+  const { extractCorpusWindows, corpusIsIngested, corpusContentHash } = await import('./context/corpus-progress.ts');
+  const candidates: string[] = [];
+  for (const name of txtFiles) {
+    if (overBudget()) break;
+    if (entrySet.has(name + CORPUS_INGESTED_SUFFIX) && await corpusIsIngested(join(dir, name))) {
+      skip('already_ingested');
+    } else if (candidates.length < batchLimit) candidates.push(name);
+  }
   if (candidates.length === 0) return;
 
   // Ambient-writeback turn files (`.wb-` basenames) ride this pass as the
@@ -647,7 +649,7 @@ async function runCorpusIngestPass(
       // Re-check under the claim: another sweep may have finished this file
       // between our readdir and our claim (it releases its claim only after
       // writing the .ingested sidecar, so this closes the double-spend gap).
-      const doneAlready = await stat(full + CORPUS_INGESTED_SUFFIX).then(() => true, () => false);
+      const doneAlready = await corpusIsIngested(full);
       if (doneAlready) {
         skip('already_ingested');
         continue;
@@ -705,7 +707,7 @@ async function runCorpusIngestPass(
       const wbSourceId = wbMeta?.sourceId && isValidSourceId(wbMeta.sourceId)
         ? wbMeta.sourceId
         : sourceId;
-      const r = await runFactsPipeline(raw, {
+      const r = await extractCorpusWindows(full, raw, wbMeta ? wbSourceId : sourceId, text => runFactsPipeline(text, {
         engine,
         sourceId: wbMeta ? wbSourceId : sourceId,
         sessionId: wbMeta ? wbMeta.sessionId : `sweep:corpus:${name}`,
@@ -720,16 +722,23 @@ async function runCorpusIngestPass(
         abortSignal: signal,
         ...(wbMeta && wbCfg.mode === 'salient' ? { notabilityFilter: 'medium-and-up' as const } : {}),
         // visibility deliberately unset → resolveDefaultVisibility [ENG-8]
-      });
+      }), overBudget, signal);
 
       // POST-check (adversarial review, same class the harvest FIFO pins):
       // runFactsPipeline returns NORMALLY with partial results when the
       // budget signal aborts mid-file. Writing `.ingested` here would
       // permanently mark a half-extracted file done — skip the sidecar,
       // release the claim, and let the next sweep retry it.
-      if (signal.aborted) {
+      if (!r || signal.aborted) {
         skip('budget_exhausted:corpus', candidates.length - i);
         abortLoop = true;
+        continue;
+      }
+
+      // Session-end can replace the transcript while extraction holds the
+      // claim. Keep prefix progress, but never retire its new tail.
+      if (await readFile(full, 'utf8') !== raw) {
+        skip('corpus_changed');
         continue;
       }
 
@@ -775,6 +784,7 @@ async function runCorpusIngestPass(
           ingested_at: new Date().toISOString(),
           facts_inserted: r.inserted,
           facts_duplicate: r.duplicate,
+          content_hash: corpusContentHash(raw),
           // Honesty: the sweep is the LAST attempt (the harvest lane already
           // declined to sidecar on this), so a non-transport extraction skip
           // is terminal HERE — record why instead of a silent zero-count.

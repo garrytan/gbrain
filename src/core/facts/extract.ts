@@ -345,7 +345,7 @@ export function buildExtractorSystem(admitsLow: boolean): string {
   return admitsLow ? EXTRACTOR_SYSTEM_ADMITS_LOW : EXTRACTOR_SYSTEM_SKIPS_LOW;
 }
 
-const MAX_TURN_TEXT_CHARS = 8000;
+export const MAX_TURN_TEXT_CHARS = 8000;
 
 /**
  * #4863 — JSON Schema for the extractor reply, sent as `responseSchema` on

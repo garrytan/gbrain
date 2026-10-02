@@ -70,6 +70,16 @@ configs with a chat key but no embedding provider may insert duplicate fence
 rows on that fallback (the 0.95 dedup arm needs embeddings) — segmentation
 makes this the exception path.
 
+The sweep extracts corpus files in windows no larger than the facts extractor's
+8,000-character limit, preferring line boundaries and preserving surrogate pairs.
+It checkpoints each completed window in `<file>.progress` (offset plus a hash of
+the processed prefix). Session-end invalidates `.ingested`, but preserves this
+checkpoint and any live sweep claim: an append-only resume extracts only the new
+tail; a replaced prefix replays safely through fact dedup. Budget interruption or
+a transport failure retries the unfinished window, not the already completed head.
+New completion markers bind to the transcript snapshot hash, so a hook rewrite
+racing completion cannot hide new turns. Legacy terminal markers remain supported.
+
 ## Harness wirings
 
 - **Claude Code** — zero setup beyond `gbrain bootstrap` (the PreCompact +

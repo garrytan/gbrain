@@ -772,7 +772,7 @@ describe('session-end', () => {
     expect((await lastHeartbeat())?.segment).toBe('self_transcript');
   });
 
-  test('resumed session rewrite drops the stale .ingested/.in-progress sidecars so the sweep re-ingests', async () => {
+  test('resumed session rewrite invalidates completion but preserves a live sweep claim', async () => {
     const projRoot = join(tmp, 'projects');
     const ws = join(tmp, 'ws');
     mkdirSync(ws, { recursive: true });
@@ -805,9 +805,9 @@ describe('session-end', () => {
 
     // The corpus reflects the appended content …
     expect(readFileSync(corpusFile, 'utf8')).toContain('appended resumed content');
-    // … and the stale sidecars are GONE so the next sweep re-processes it.
+    // Completion is invalidated, but a live sweep keeps exclusive ownership.
     expect(existsSync(corpusFile + '.ingested')).toBe(false);
-    expect(existsSync(corpusFile + '.in-progress')).toBe(false);
+    expect(existsSync(corpusFile + '.in-progress')).toBe(true);
     // No torn tmp file left behind by the atomic write.
     expect(readdirSync(corpusDir).filter((f) => f.includes('.tmp-'))).toEqual([]);
   });
