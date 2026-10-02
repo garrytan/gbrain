@@ -130,6 +130,23 @@ describe('lookupEmbeddingPrice — nested gateway ids (#2504)', () => {
     }
   });
 
+  test.each([
+    ['openrouter:voyageai/voyage-4', 0.06, 'voyage:voyage-4'],
+    ['openrouter:voyageai/voyage-4-large', 0.12, 'voyage:voyage-4-large'],
+    ['openrouter:voyageai/rerank-2.5', 0.05, 'voyage:rerank-2.5'],
+  ])('%s (OpenRouter\'s real `voyageai/` slug) resolves via the voyage alias', (model, expected, key) => {
+    const r = lookupEmbeddingPrice(model as string);
+    expect(r.kind).toBe('known');
+    if (r.kind === 'known') {
+      expect(r.pricePerMTok).toBe(expected as number);
+      expect(r.key).toBe(key as string);
+    }
+  });
+
+  test('voyageai alias with no voyage twin stays unknown', () => {
+    expect(lookupEmbeddingPrice('openrouter:voyageai/voyage-9000').kind).toBe('unknown');
+  });
+
   test('nested provider aliases still apply (router → azure-openai → openai)', () => {
     const r = lookupEmbeddingPrice('openrouter:azure-openai/text-embedding-3-small');
     expect(r.kind).toBe('known');

@@ -19,6 +19,13 @@ describe('OpenRouter recipe — reranker touchpoint', () => {
     expect(m).toContain('nvidia/llama-nemotron-rerank-vl-1b-v2:free');
   });
 
+  test('models list includes the Voyage rerankers under OpenRouter\'s `voyageai/` slug', () => {
+    const m = getRecipe('openrouter')!.touchpoints.reranker!.models;
+    for (const id of ['voyageai/rerank-2.5', 'voyageai/rerank-2.5-lite', 'voyageai/rerank-3', 'voyageai/rerank-3-lite']) {
+      expect(m).toContain(id);
+    }
+  });
+
   test('default_model is cohere/rerank-v3.5', () => {
     const tp = getRecipe('openrouter')!.touchpoints.reranker!;
     expect(tp.default_model).toBe('cohere/rerank-v3.5');

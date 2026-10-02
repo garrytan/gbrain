@@ -101,6 +101,9 @@ export type PriceLookupResult =
  */
 const EMBEDDING_PROVIDER_ALIASES: Record<string, string> = {
   'azure-openai': 'openai',
+  // OpenRouter names the Voyage vendor `voyageai/` (e.g.
+  // `openrouter:voyageai/voyage-4`); it bills Voyage's own per-token rate.
+  'voyageai': 'voyage',
 };
 
 /**

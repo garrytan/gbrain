@@ -291,6 +291,12 @@ export const openrouter: Recipe = {
         'cohere/rerank-4-fast',
         'cohere/rerank-4-pro',
         'nvidia/llama-nemotron-rerank-vl-1b-v2:free',
+        // Voyage rerankers as OpenRouter lists them (vendor slug `voyageai/`).
+        // Same /rerank request/response shape as the Cohere routes above.
+        'voyageai/rerank-2.5',
+        'voyageai/rerank-2.5-lite',
+        'voyageai/rerank-3',
+        'voyageai/rerank-3-lite',
       ],
       default_model: 'cohere/rerank-v3.5',
       // Cohere bills per-search, not per-token. This is a pseudo-per-1M rate
