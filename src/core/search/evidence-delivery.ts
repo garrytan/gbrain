@@ -31,6 +31,7 @@ import { currentTextProjectionFilter, safeChunksFilter, requiresSafeChunks } fro
 import { resolveExcludePrivatePages } from './private-visibility.ts';
 import { safeSplitIndex } from '../text-safe.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
+import { credentialSafeProjection } from '../credential-projection.ts';
 import { stripChunkHeader } from '../chunkers/code.ts';
 import { OperationError } from '../ops/contract.ts';
 
@@ -516,12 +517,14 @@ function fallbackBlock(hit: SearchResult, hits: SearchResult[], reason: string):
  * The page text evidence is cut from: the complete stored body, sanitized
  * with the strict protected-body boundary BEFORE any slicing (Takes, non-world
  * and withdrawn Facts rows, malformed protected tails, materialized markers),
- * compiled truth and timeline each sanitized whole and joined the way
- * serializeMarkdown joins them. Frontmatter is not part of it.
+ * compiled truth and timeline each sanitized whole, run through the same
+ * credential-safe projection the chunkers cut from (private-key spans become
+ * newline-padded tokens), and joined the way serializeMarkdown joins them.
+ * Frontmatter is not part of it.
  */
 export function pageEvidenceText(page: { compiled_truth: string; timeline: string }, includeTimeline: boolean): { text: string; timelineAt: number } {
-  const truth = sanitizeRemoteBody(page.compiled_truth ?? '');
-  const timeline = includeTimeline ? sanitizeRemoteBody(page.timeline ?? '') : '';
+  const truth = credentialSafeProjection(sanitizeRemoteBody(page.compiled_truth ?? ''));
+  const timeline = includeTimeline ? credentialSafeProjection(sanitizeRemoteBody(page.timeline ?? '')) : '';
   if (!timeline.trim()) return { text: truth, timelineAt: -1 };
   return { text: truth + TIMELINE_SEPARATOR + timeline, timelineAt: truth.length + TIMELINE_SEPARATOR.length };
 }

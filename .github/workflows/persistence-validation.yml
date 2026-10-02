@@ -16,10 +16,10 @@ jobs:
       fail-fast: false
       matrix:
         engine: [pglite, postgres]
-        bun: ['1.3.11', '1.4.2']
+        bun: ['1.4.0', '1.4.2']
         # Pull requests run the primary Bun version; pushes, schedules and
         # manual runs keep every supported version.
-        exclude: ${{ fromJSON(github.event_name == 'pull_request' && '[{"bun":"1.3.11"}]' || '[]') }}
+        exclude: ${{ fromJSON(github.event_name == 'pull_request' && '[{"bun":"1.4.0"}]' || '[]') }}
     services:
       postgres:
         image: pgvector/pgvector:pg16
@@ -57,10 +57,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        bun: ['1.3.11', '1.4.2']
+        bun: ['1.4.0', '1.4.2']
         # Pull requests run the primary Bun version; pushes, schedules and
         # manual runs keep every supported version.
-        exclude: ${{ fromJSON(github.event_name == 'pull_request' && '[{"bun":"1.3.11"}]' || '[]') }}
+        exclude: ${{ fromJSON(github.event_name == 'pull_request' && '[{"bun":"1.4.0"}]' || '[]') }}
     services:
       postgres:
         image: pgvector/pgvector:pg16
@@ -168,10 +168,10 @@ jobs:
       fail-fast: false
       matrix:
         engine: [pglite, postgres]
-        bun: ['1.3.11', '1.4.2']
+        bun: ['1.4.0', '1.4.2']
         # Pull requests run the primary Bun version; pushes, schedules and
         # manual runs keep every supported version.
-        exclude: ${{ fromJSON(github.event_name == 'pull_request' && '[{"bun":"1.3.11"}]' || '[]') }}
+        exclude: ${{ fromJSON(github.event_name == 'pull_request' && '[{"bun":"1.4.0"}]' || '[]') }}
     services:
       postgres:
         image: pgvector/pgvector:pg16
@@ -217,10 +217,10 @@ jobs:
       fail-fast: false
       matrix:
         engine: [pglite, postgres]
-        bun: ['1.3.11', '1.4.2']
+        bun: ['1.4.0', '1.4.2']
         # Pull requests run the primary Bun version; pushes, schedules and
         # manual runs keep every supported version.
-        exclude: ${{ fromJSON(github.event_name == 'pull_request' && '[{"bun":"1.3.11"}]' || '[]') }}
+        exclude: ${{ fromJSON(github.event_name == 'pull_request' && '[{"bun":"1.4.0"}]' || '[]') }}
     services:
       postgres:
         image: pgvector/pgvector:pg16

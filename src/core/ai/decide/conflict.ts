@@ -40,12 +40,46 @@ export function factEvidence(f: ConflictFact): EvidenceItem {
   return { text: f.fact, class: 'facts', fact_id: f.id, source_id: f.source_id, visibility: f.visibility };
 }
 
+/** A fact with the timestamps the sweep orders a pair by. */
+export interface DatedConflictFact extends ConflictFact {
+  valid_from: Date | string;
+  created_at: Date | string;
+}
+
+const iso = (v: Date | string) => new Date(v).toISOString();
+
+/** The fact's timestamps as evidence with the fact's own provenance (egress judges it exactly like the fact). */
+function timeEvidence(f: DatedConflictFact): EvidenceItem {
+  return { ...factEvidence(f), text: `valid from ${iso(f.valid_from)}; recorded ${iso(f.created_at)}` };
+}
+
+/**
+ * True when `a` is older than `b`: valid_from, then created_at, then id. The sweep presents the newer fact of a pair
+ * as `fact`, so a proposal always retires the older one, even when the older fact is the one being swept (a fact
+ * that just gained an entity through `gbrain facts relink`).
+ */
+export function isOlderFact(a: DatedConflictFact, b: DatedConflictFact): boolean {
+  const ms = (v: Date | string) => new Date(v).getTime();
+  return (ms(a.valid_from) - ms(b.valid_from) || ms(a.created_at) - ms(b.created_at) || a.id - b.id) < 0;
+}
+
 export function conflictState(f: ConflictFact): Record<string, EvidenceItem> {
   return { fact: factEvidence(f) };
 }
 
 export function conflictQuestion(id: string, rank: number, candidate: ConflictFact): DecideQuestion {
   return { id, kind: 'choice', rank, instructions: CONFLICT_INSTRUCTIONS, options: { ...CONFLICT_OPTIONS }, inputs: { candidate: factEvidence(candidate) } };
+}
+
+/** The state of a pair the sweep reordered by chronology: the newer fact plus its timestamps (`fact_time`). */
+export function datedConflictState(f: DatedConflictFact): Record<string, EvidenceItem> {
+  return { ...conflictState(f), fact_time: timeEvidence(f) };
+}
+
+/** The question of a reordered pair: the older (swept) fact as `candidate` plus its timestamps (`candidate_time`). */
+export function datedConflictQuestion(id: string, rank: number, candidate: DatedConflictFact): DecideQuestion {
+  const q = conflictQuestion(id, rank, candidate);
+  return { ...q, inputs: { ...q.inputs, candidate_time: timeEvidence(candidate) } };
 }
 
 /** P(supersede) for the proposal floor: the reported probability, else the confidence when supersede was chosen. */

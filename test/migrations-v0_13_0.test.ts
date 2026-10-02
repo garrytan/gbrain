@@ -61,8 +61,9 @@ describe('v0.13.0 — Frontmatter relationship indexing migration', () => {
     // Backfill extract goes through the stderr-capturing wrapper (still bare
     // `gbrain` so the canonical shim on PATH wins).
     expect(src).toContain("runGbrainSubprocess('gbrain extract links --source db --include-frontmatter'");
-    // Stats readback still shells out (reads stdout); bare gbrain.
-    expect(src).toContain("execSync('gbrain call get_stats'");
+    // Stats readback still shells out (reads stdout), through the running
+    // CLI rather than PATH (#5184).
+    expect(src).toContain("execSync(gbrainChildCommand('gbrain call get_stats')");
   });
 
   test('phase commands never reference `bun` or `.ts` paths (Bug 1 regression)', () => {

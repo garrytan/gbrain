@@ -12,6 +12,7 @@ export { MEMORY_VERBS_VERSION };
 // operations.ts is unchanged.
 
 import type { Operation } from './ops/contract.ts';
+import { withOutputRedaction } from './search/output-redaction.ts';
 
 // Re-exports: the full previously-exported foundation surface of this module.
 // The formerly file-private helpers (enforceSubagentSlugFence, slugUnderSubagentFence,
@@ -322,6 +323,7 @@ for (const op of operations) {
   if (op.area === undefined && OP_AREAS[op.name] !== undefined) {
     op.area = OP_AREAS[op.name];
   }
+  op.handler = withOutputRedaction(op);
 }
 
 export const operationsByName = Object.fromEntries(

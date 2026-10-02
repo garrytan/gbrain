@@ -16,6 +16,7 @@ import type { Operation } from './contract.ts';
 
 const migrate_embeddings: Operation = {
   name: 'migrate_embeddings',
+  outputRedaction: 'no_stored_text',
   description: 'Re-embed the brain onto a different embedding provider/model (#3390): schema dimension transition, NULL-signature (#3391) invalidation, query-cache purge, resumable re-embed. Without yes=true returns the plan + cost estimate only. Local-only admin op; the primary surface is `gbrain migrate embeddings`.',
   params: {
     to: { type: 'string', required: true, description: 'Target provider:model (e.g. openai:text-embedding-3-small).' },

@@ -7,10 +7,10 @@
  * pennies; on a 100K-page brain it's tens of dollars. Surprise OpenAI bills
  * are how trust breaks.
  *
- * Per D3=B: print a stderr line with the real-data estimate before the
- * sweep starts, give the operator 10 seconds to Ctrl-C, then proceed.
- *
- * TTY-only wait so non-TTY upgrades (CI, cron-driven, headless) don't hang.
+ * Print a stderr line with the real-data estimate, then re-embed only on an
+ * affirmative answer: a TTY operator must type `y`; a non-TTY upgrade (CI,
+ * cron, an agent) never spends and prints the commands to run instead
+ * (security wave ENG-3: no paid work without consent).
  *
  * Codex C3 corrections in place:
  *   - Real SQL queries against `pages.chunker_version < N AND page_kind = 'markdown'`
@@ -80,7 +80,7 @@ export async function computeReembedEstimate(
  * Format the operator-facing stderr line. Pure function so tests can pin
  * the exact wording.
  */
-export function formatReembedPrompt(est: ReembedEstimate, graceSeconds: number): string {
+export function formatReembedPrompt(est: ReembedEstimate): string {
   if (est.pendingCount === 0) {
     return `[chunker-bump] No pending markdown pages. Skipping re-embed.`;
   }
@@ -97,36 +97,41 @@ export function formatReembedPrompt(est: ReembedEstimate, graceSeconds: number):
     `title before embedding (Anthropic's published method).`;
   if (est.pricingKnown && est.estimatedCostUsd !== null) {
     const dollars = est.estimatedCostUsd.toFixed(2);
-    return `[chunker-bump] Will re-embed ~${est.pendingCount} markdown pages via ${est.modelString}, est. ~$${dollars}, ~${minEst}min. Press Ctrl-C within ${graceSeconds}s to abort.${crNote}`;
+    return `[chunker-bump] Re-embedding ~${est.pendingCount} markdown pages via ${est.modelString} would cost est. ~$${dollars}, ~${minEst}min.${crNote}`;
   }
-  return `[chunker-bump] Will re-embed ~${est.pendingCount} markdown pages via ${est.modelString}; pricing estimate unavailable for this provider. Press Ctrl-C within ${graceSeconds}s to abort.${crNote}`;
+  return `[chunker-bump] Re-embedding ~${est.pendingCount} markdown pages via ${est.modelString} has a cost; pricing estimate unavailable for this provider.${crNote}`;
 }
 
 export interface PromptResult {
   proceeded: boolean;
-  reason: 'no_pending' | 'bypassed_no_reembed' | 'tty_proceeded' | 'non_tty_proceeded';
+  reason: 'no_pending' | 'bypassed_no_reembed' | 'consent_required' | 'tty_declined' | 'tty_consented';
   estimate: ReembedEstimate;
 }
 
+/** What to run instead when the operator has not agreed to re-embed now. */
+export const REEMBED_DEFERRED_HINT = '[chunker-bump] Not re-embedding without your consent. When ready: `gbrain reindex --markdown` '
+  + '(re-embeds), or `gbrain repair safe-chunks --apply --no-embed` to re-chunk without provider calls, then `gbrain embed --stale`.';
+
+async function askYesNo(question: string): Promise<boolean> {
+  const { createInterface } = await import('readline');
+  return new Promise<boolean>(resolveAnswer => {
+    const rl = createInterface({ input: process.stdin, output: process.stderr });
+    let answered = false;
+    rl.question(question, answer => {
+      answered = true;
+      resolveAnswer(/^y(es)?$/i.test(answer.trim()));
+      rl.close();
+    });
+    rl.on('close', () => { if (!answered) resolveAnswer(false); });
+  });
+}
+
 /**
- * Run the post-upgrade chunker-bump prompt + grace window. Returns whether
- * the caller should proceed to invoke `gbrain reindex --markdown`.
- *
- * Env overrides (codex C3 + D3=B):
- *   - GBRAIN_NO_REEMBED=1     → bail out entirely (writes a doctor warning marker).
- *   - GBRAIN_REEMBED_GRACE_SECONDS=0 → skip wait (proceed immediately).
- *   - Non-TTY (CI / cron) → skip wait, proceed.
- *
- * v0.41.13.0 T13 retrofit relationship: this prompt is a pre-flight gate
- * for `gbrain reindex --markdown` (which is a separate site we retrofitted
- * onto the progressive-batch primitive — see T11 in reindex.ts). The
- * underlying reindex sweep now writes progressive-batch audit JSONL +
- * cost-cap gating; this prompt remains as the operator-facing cost
- * estimate before that work starts. The `GBRAIN_NO_REEMBED=1` env var
- * remains the authoritative bail-out at THIS layer; the
- * `GBRAIN_PROGRESSIVE_BATCH_DISABLED=1` env var at the reindex layer
- * is a different toggle (skips ramp within reindex but doesn't bail
- * out the whole cycle).
+ * Run the post-upgrade chunker-bump prompt. Returns whether the caller should
+ * proceed to invoke `gbrain reindex --markdown`, which calls the embedding
+ * provider. It proceeds only when a TTY operator answers yes; the default,
+ * a non-TTY run and an unanswered prompt all decline and print
+ * REEMBED_DEFERRED_HINT. `GBRAIN_NO_REEMBED=1` skips the prompt entirely.
  */
 export async function runPostUpgradeReembedPrompt(
   engine: BrainEngine,
@@ -134,8 +139,8 @@ export async function runPostUpgradeReembedPrompt(
   opts: {
     /** Override for tests: pretend stdin is/isn't a TTY. */
     isTTY?: boolean;
-    /** Override for tests: how long the wait window is. */
-    graceSeconds?: number;
+    /** Override for tests: the yes/no answer source. Defaults to a readline prompt on stdin. */
+    confirm?: (question: string) => Promise<boolean>;
     /** Override for tests: env-var bag. Defaults to process.env. */
     env?: Record<string, string | undefined>;
     /** Override for tests: where to write. Defaults to process.stderr. */
@@ -155,23 +160,18 @@ export async function runPostUpgradeReembedPrompt(
     return { proceeded: false, reason: 'bypassed_no_reembed', estimate };
   }
 
-  const grace = typeof opts.graceSeconds === 'number'
-    ? opts.graceSeconds
-    : (() => {
-        const n = parseInt(env.GBRAIN_REEMBED_GRACE_SECONDS ?? '', 10);
-        return Number.isFinite(n) && n >= 0 ? n : 10;
-      })();
+  writeFn(formatReembedPrompt(estimate));
 
-  writeFn(formatReembedPrompt(estimate, grace));
-
-  const isTTY = typeof opts.isTTY === 'boolean'
-    ? opts.isTTY
-    : Boolean(process.stdin.isTTY);
-
-  if (!isTTY || grace === 0) {
-    return { proceeded: true, reason: isTTY ? 'tty_proceeded' : 'non_tty_proceeded', estimate };
+  const isTTY = typeof opts.isTTY === 'boolean' ? opts.isTTY : Boolean(process.stdin.isTTY);
+  if (!isTTY) {
+    writeFn(REEMBED_DEFERRED_HINT);
+    return { proceeded: false, reason: 'consent_required', estimate };
   }
 
-  await new Promise<void>(resolveSleep => setTimeout(resolveSleep, grace * 1000));
-  return { proceeded: true, reason: 'tty_proceeded', estimate };
+  const consented = await (opts.confirm ?? askYesNo)('[chunker-bump] Re-embed now? [y/N] ');
+  if (!consented) {
+    writeFn(REEMBED_DEFERRED_HINT);
+    return { proceeded: false, reason: 'tty_declined', estimate };
+  }
+  return { proceeded: true, reason: 'tty_consented', estimate };
 }

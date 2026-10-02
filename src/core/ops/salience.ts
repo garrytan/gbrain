@@ -19,6 +19,7 @@ import {
 
 const get_recent_salience: Operation = {
   name: 'get_recent_salience',
+  outputRedaction: 'retrieval',
   description: GET_RECENT_SALIENCE_DESCRIPTION,
   scope: 'read',
   params: {
@@ -67,6 +68,7 @@ const get_recent_salience: Operation = {
 
 const find_anomalies: Operation = {
   name: 'find_anomalies',
+  outputRedaction: 'retrieval',
   description: FIND_ANOMALIES_DESCRIPTION,
   scope: 'read',
   params: {

@@ -24,13 +24,14 @@ export async function managedFactWritePreflight(engine: BrainEngine, sourceId: s
  * replays its receipt. Returned ids follow input order.
  */
 export async function publishManagedEntityFacts(engine: BrainEngine, sourceId: string, entity: string | null,
-  facts: FenceInputFact[], options: { supersede?: boolean } = {}): Promise<{ inserted: number; duplicate: number; superseded: number; ids: number[] }> {
+  facts: FenceInputFact[], options: { supersede?: boolean; attributeFallback?: boolean } = {}): Promise<{ inserted: number; duplicate: number; superseded: number; ids: number[] }> {
   const out = { inserted: 0, duplicate: 0, superseded: 0, ids: new Array<number>(facts.length) };
   for (const visibility of ['private', 'world'] as const) {
     const positions = facts.flatMap((fact, i) => fact.visibility === visibility ? [i] : []);
     if (!positions.length) continue;
     const group = positions.map(i => facts[i]);
     const ctx = factsContext(engine, sourceId, { writer: 'fence_write', entity, visibility, supersede: options.supersede === true,
+      ...(options.attributeFallback ? { attribute_fallback: true } : {}),
       facts: group.map(f => [f.fact, f.kind, f.source, f.notability, f.confidence ?? 1, f.validFrom?.toISOString() ?? null,
         f.validUntil?.toISOString() ?? null, f.sessionId, f.context ?? null]) }, group[0].sessionId);
     const session = (await prepareManagedFactsSession(ctx, { turnText: '' }))!;
@@ -42,7 +43,8 @@ export async function publishManagedEntityFacts(engine: BrainEngine, sourceId: s
         notability: f.notability, source: f.source, context: f.context ?? null, confidence: f.confidence ?? 1,
         valid_from: f.validFrom, valid_until: f.validUntil ?? null, source_session: f.sessionId,
         embedding: signature && f.embedding_model === signature.model && f.embedding?.length === signature.dimensions ? f.embedding : null }));
-      result = await publishManagedFacts(engine, session, ctx, extracted, visibility, undefined, { supersede: options.supersede, explicitContext: true });
+      result = await publishManagedFacts(engine, session, ctx, extracted, visibility, undefined,
+        { supersede: options.supersede, explicitContext: true, attributeFallback: options.attributeFallback });
     }
     out.inserted += result.inserted;
     out.duplicate += result.duplicate;

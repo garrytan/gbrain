@@ -20,6 +20,16 @@
 // to quote). It NEVER fails the install: every path exits 0.
 
 import { which } from 'bun';
+import { unsupportedBunMessage } from '../src/core/runtime-version.ts';
+
+// The install itself runs on the user's Bun, so this is the first place an
+// upgrade onto a newer Bun floor can say so. Nothing else here would work:
+// every gbrain command refuses until Bun is upgraded.
+const runtimeRefusal = unsupportedBunMessage();
+if (runtimeRefusal) {
+  console.error(`[gbrain] Installed, but gbrain will not start on this Bun.\n${runtimeRefusal}`);
+  process.exit(0);
+}
 
 const HINT =
   '[gbrain] postinstall skipped. If installed via bun install -g github:...: ' +

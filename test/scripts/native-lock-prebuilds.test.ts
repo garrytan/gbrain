@@ -91,7 +91,7 @@ describe('native lock distribution integrity', () => {
         continue;
       }
       const matrix = job.strategy.matrix;
-      expect(matrix.bun).toEqual(['1.3.11', '1.3.13', '1.4.2']);
+      expect(matrix.bun).toEqual(['1.4.0', '1.4.2']);
       const script = job.steps.map(step => step.run ?? '').join('\n');
       expect(script).toContain('bun install --frozen-lockfile --ignore-scripts');
       const lockTests = script.split('\n').find(line => /\bbun test\b/.test(line) && line.includes('test/native-lock.test.ts'));
@@ -108,7 +108,7 @@ describe('native lock distribution integrity', () => {
       }
     }
     expect(pairs.sort()).toEqual(Object.keys(manifest.artifacts)
-      .flatMap(target => ['1.3.11', '1.3.13', '1.4.2'].map(bun => `${target}/${bun}`)).sort());
-    expect(new Set(pairs).size).toBe(24);
+      .flatMap(target => ['1.4.0', '1.4.2'].map(bun => `${target}/${bun}`)).sort());
+    expect(new Set(pairs).size).toBe(16);
   });
 });

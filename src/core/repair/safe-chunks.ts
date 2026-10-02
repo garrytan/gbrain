@@ -18,22 +18,6 @@ import { SAFE_FENCE_CHUNKER_VERSION } from '../search/safe-chunks.ts';
 import { embedStalePages } from '../embed-stale.ts';
 import { afterCursor, type RepairCursor, type RepairHandler, type RepairItem, type RepairScope } from './core.ts';
 
-/**
- * DX-D7: post-upgrade names the drain for pages still withheld. On a managed
- * brain `gbrain reindex --markdown` refuses; elsewhere it covers markdown only,
- * so code pages can remain. Null when nothing is withheld.
- */
-export async function safeChunkUpgradeAdvisory(engine: Pick<BrainEngine, 'executeRaw'>, managed: boolean): Promise<string | null> {
-  const [row] = await engine.executeRaw<{ pending: number }>(`SELECT COUNT(*)::int AS pending FROM pages
-    WHERE deleted_at IS NULL AND chunker_version < ${SAFE_FENCE_CHUNKER_VERSION}
-      AND source_id IN (SELECT id FROM sources WHERE archived IS NOT TRUE)`);
-  const pending = Number(row?.pending ?? 0);
-  if (pending === 0) return null;
-  return `[gbrain] ${pending} page(s) are below the safe-chunk index version and withheld from remote/MCP search. `
-    + (managed ? 'This brain is managed, so the markdown reindex does not run here. ' : '')
-    + 'Preview: gbrain repair safe-chunks — apply: gbrain repair safe-chunks --apply';
-}
-
 interface PendingRow { id: number; source_id: string; slug: string; page_kind: string; rebuildable: boolean; chars: number }
 
 export const safeChunksRepair: RepairHandler = {

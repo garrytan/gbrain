@@ -6,7 +6,8 @@
  * existing, deterministic sources —
  *
  *   1. reflex pointers   — extractCandidatesFromWindow → resolveEntitiesToPointers
- *                          (slug-only suppression, the windowed contract)
+ *                          (slug-only suppression, the windowed contract;
+ *                          private pages excluded like remote search, N8-2)
  *   2. volunteered pages — volunteerContext (confidence-gated, ≤3, deduped
  *                          against section 1 via excludeSlugs)
  *   3. hot facts         — getBrainHotMemoryMeta's cache + shape [ENG-11], with
@@ -240,6 +241,7 @@ export async function assembleTurnContext(
           suppression: 'slug-only',
           maxPointers: DEFAULT_MAX_POINTERS,
           lexicalArms: opts.lexicalArms,
+          excludePrivate: true,
         });
         pointers = block?.pointers ?? [];
       }
@@ -261,6 +263,7 @@ export async function assembleTurnContext(
           // v0.46.15+ lexical-arms kill switch rides the same threading as the
           // pointer arm above (ResolvePointersOpts.lexicalArms).
           lexicalArms: opts.lexicalArms,
+          excludePrivate: true,
         });
       }
     } catch {

@@ -9,7 +9,7 @@ import { runPhaseExtractAtoms } from '../src/core/cycle/extract-atoms.ts';
 import { stopPersistenceConsumer } from '../src/core/persistence/service.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { withEnv } from './helpers/with-env.ts';
-import { atomContractCases, exerciseManagedAtoms, atomBatchCases, exerciseManagedAtomBatch, atomAuthorityCases, exerciseManagedAtomAuthority } from './helpers/managed-atoms-contract.ts';
+import { atomContractCases, exerciseManagedAtoms, atomBatchCases, exerciseManagedAtomBatch, atomAuthorityCases, exerciseManagedAtomAuthority, exerciseManagedAtomReconciliation, atomRetirementCases, exerciseManagedAtomRetirement } from './helpers/managed-atoms-contract.ts';
 
 let engine: PGLiteEngine;
 beforeAll(async () => {
@@ -52,3 +52,6 @@ test('managed public atom extraction publishes searchable atoms and replays with
     });
   } finally { await stopPersistenceConsumer(engine); rmSync(home, { recursive: true, force: true }); }
 }, 60_000);
+
+test('managed extraction retires stale atom pages and files after a source edit', () => exerciseManagedAtomReconciliation(engine), 60_000);
+for (const scenario of atomRetirementCases) test(`managed atom retirement ${scenario}`, () => exerciseManagedAtomRetirement(engine, scenario), 60_000);

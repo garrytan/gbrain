@@ -53,7 +53,7 @@ describe('conjunctive link inference', () => {
       const withoutEvidence = await extractPageLinks('sessions/weekly', 'See [[choices/choice]] and [[members/alice-example]].', {}, 'meeting',
         { resolve: async () => null }, { pack: active, targetType: slug => slug.startsWith('members/') ? 'person' : 'decision' });
       expect(withoutEvidence.candidates.find(c => c.targetSlug === 'choices/choice')?.linkType).toBe('mentions');
-      expect(withoutEvidence.candidates.find(c => c.targetSlug === 'members/alice-example')?.linkType).toBe(active ? 'attended' : 'mentions');
+      expect(withoutEvidence.candidates.find(c => c.targetSlug === 'members/alice-example')?.linkType).toBe('mentions');
     }
   });
 
@@ -73,11 +73,11 @@ describe('conjunctive link inference', () => {
     expect(resolved).toEqual({ ok: true, fromSlug: 'rivals/rival-example', fromSourceId: 'alpha', toSourceId: 'beta' });
   });
 
-  test('pack attendees override the legacy incoming mapping without inverse duplicates', async () => {
+  test('pack attendees keep the declared incoming direction without inverse duplicates', async () => {
     const result = await extractPageLinks('sessions/weekly', '', { attendees: ['members/alice-example'] }, 'meeting',
       { resolve: async name => name }, { pack, targetType: () => 'person' });
     expect(result.candidates.map(c => [c.fromSlug, c.targetSlug, c.linkType])).toEqual([
-      ['sessions/weekly', 'members/alice-example', 'attended'],
+      ['members/alice-example', 'sessions/weekly', 'attended'],
     ]);
   });
 

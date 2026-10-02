@@ -31,7 +31,7 @@
  */
 
 import { execSync } from 'child_process';
-import { runGbrainSubprocess } from './in-process.ts';
+import { gbrainChildCommand, runGbrainSubprocess } from './in-process.ts';
 import type { Migration, OrchestratorOpts, OrchestratorResult, OrchestratorPhaseResult } from './types.ts';
 import { childGlobalFlags } from '../../core/cli-options.ts';
 // Bug 3 — ledger writes moved to the runner (apply-migrations.ts).
@@ -69,7 +69,7 @@ function phaseBConfigCheck(opts: OrchestratorOpts): OrchestratorPhaseResult & { 
   // Default behavior when unset = enabled (per isAutoLinkEnabled).
   let raw = '';
   try {
-    raw = execSync('gbrain config get auto_link', { encoding: 'utf-8', timeout: 10_000, env: process.env }).trim();
+    raw = execSync(gbrainChildCommand('gbrain config get auto_link'), { encoding: 'utf-8', timeout: 10_000, env: process.env }).trim();
   } catch {
     // get exits non-zero when the key isn't set — that's fine, defaults to enabled.
     raw = '';
@@ -124,7 +124,7 @@ interface StatsSnapshot {
 
 function readStats(): StatsSnapshot | null {
   try {
-    const out = execSync('gbrain get_stats --json 2>/dev/null || gbrain stats', {
+    const out = execSync(gbrainChildCommand('gbrain get_stats --json 2>/dev/null || gbrain stats'), {
       encoding: 'utf-8', timeout: 30_000, env: process.env,
     });
     // The fallback `gbrain stats` prints human-readable output; parse loosely.

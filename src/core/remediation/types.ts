@@ -10,6 +10,7 @@
 
 import type { RemediationStep } from '../remediation-step.ts';
 import type { RepairPlanStep, RepairStepResult } from './repairs.ts';
+import type { ExplicitRepairNotice } from '../repair/registry.ts';
 
 /**
  * Options for computeRemediationPlan. All fields are optional with
@@ -51,6 +52,8 @@ export interface RemediationPlan {
   blocked: Array<{ check: string; reason: string }>;
   /** Present when `repairs` was requested: PROTECTED steps that need `--include-repairs`. */
   repair_steps?: RepairPlanStep[];
+  /** Present with `repair_steps`: explicit-only kinds, never planned as steps; preview each by name. */
+  explicit_repairs?: ExplicitRepairNotice[];
 }
 
 /**

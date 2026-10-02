@@ -935,7 +935,9 @@ export async function prepareConnectorMutation(engine: BrainEngine, row: WriteRe
   const project = await prepareCanonicalProjections(engine, ready.parsedPage, row.slug, row.source_id, snapshot, 'preserving');
   const tags = [...new Set([...(snapshot?.tags ?? []), ...ready.parsedPage.tags])].sort();
   const page: Page = { ...(snapshot?.page ?? { id: 0, slug: row.slug, source_id: row.source_id, created_at: new Date(row.created_at), updated_at: new Date(row.created_at) }), ...ready.parsedPage };
-  const file = await connectorFileTarget(engine, row, snapshot, serializePageToMarkdown(page, tags), p.sourcePath, p.canonicalRoot);
+  const target = await connectorFileTarget(engine, row, snapshot, serializePageToMarkdown(page, tags), p.sourcePath, p.canonicalRoot);
+  // Google pages hold private mail: derived here from the stored connector, never submitted, so request ids are unchanged.
+  const file = target && p.connector === 'google' ? { ...target, publishMode: 0o600 } : target;
   if (file && (file.path !== p.filePath || file.expectedBeforeHash !== p.fileBeforeHash)) throw new OperationError('source_changed', 'The connector canonical file changed during preparation.');
   return { observedRevision: ready.observedRevision, sourceExclusive: true,
     validate: async tx => { await validate(tx); await ready.validate(tx); },

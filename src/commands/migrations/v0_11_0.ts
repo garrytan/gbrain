@@ -24,8 +24,9 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync, lst
 import { join, resolve, dirname } from 'path';
 import { execSync } from 'child_process';
 import type { Migration, OrchestratorOpts, OrchestratorResult, OrchestratorPhaseResult } from './types.ts';
+import { gbrainChildCommand } from './in-process.ts';
 import { savePreferences, loadPreferences } from '../../core/preferences.ts';
-import { loadConfig } from '../../core/config.ts';
+import { loadConfig, configPath, gbrainPath } from '../../core/config.ts';
 // Bug 3 — appendCompletedMigration moved to the runner (apply-migrations.ts).
 import { promptLine } from '../../core/cli-util.ts';
 import { VERSION } from '../../version.ts';
@@ -35,9 +36,10 @@ const AGENTS_MD_MARKER = '<!-- gbrain:subagent-routing v0.11.0 -->';
 const CRON_MIGRATED_PROPERTY = '_gbrain_migrated_by';
 const MAX_HOST_FILE_BYTES = 1_000_000;
 
+// home() locates host-agent config ($HOME/.claude, $HOME/.openclaw); gbrain's
+// own state follows GBRAIN_HOME via gbrainPath() (#5549).
 function home(): string { return process.env.HOME || ''; }
-function gbrainDir(): string { return join(home(), '.gbrain'); }
-function pendingHostWorkPath(): string { return join(gbrainDir(), 'migrations', 'pending-host-work.jsonl'); }
+function pendingHostWorkPath(): string { return gbrainPath('migrations', 'pending-host-work.jsonl'); }
 
 export interface PendingHostWorkEntry {
   type: 'cron-handler-needs-host-registration' | 'agents-md-dispatcher-needs-host-review';
@@ -83,7 +85,7 @@ async function phaseASchema(opts: OrchestratorOpts): Promise<OrchestratorPhaseRe
 function phaseBSmoke(opts: OrchestratorOpts): OrchestratorPhaseResult {
   if (opts.dryRun) return { name: 'smoke', status: 'skipped', detail: 'dry-run' };
   try {
-    execSync('gbrain jobs smoke', { stdio: 'inherit', timeout: 30_000, env: process.env });
+    execSync(gbrainChildCommand('gbrain jobs smoke'), { stdio: 'inherit', timeout: 30_000, env: process.env });
     return { name: 'smoke', status: 'complete' };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -259,7 +261,7 @@ function rewriteCronManifest(
   // We load config lazily to avoid a hard dep.
   let enginePglite = false;
   try {
-    const cfg = JSON.parse(readFileSync(join(gbrainDir(), 'config.json'), 'utf-8'));
+    const cfg = JSON.parse(readFileSync(configPath(), 'utf-8'));
     enginePglite = cfg?.engine === 'pglite';
   } catch { /* best-effort */ }
 
@@ -407,7 +409,7 @@ function phaseFInstall(opts: OrchestratorOpts): OrchestratorPhaseResult {
     if (loadConfig()?.engine === 'pglite') {
       return { name: 'install', status: 'skipped', detail: 'PGLite is single-writer; use gbrain serve for background maintenance' };
     }
-    execSync('gbrain autopilot --install --yes', { stdio: 'inherit', timeout: 60_000, env: process.env });
+    execSync(gbrainChildCommand('gbrain autopilot --install --yes'), { stdio: 'inherit', timeout: 60_000, env: process.env });
     return { name: 'install', status: 'complete' };
   } catch (e) {
     return { name: 'install', status: 'failed', detail: e instanceof Error ? e.message : String(e) };

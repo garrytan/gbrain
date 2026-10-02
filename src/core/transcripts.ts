@@ -17,6 +17,7 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, basename } from 'node:path';
 import type { BrainEngine } from './engine.ts';
 import { isDreamOutput } from './cycle/transcript-discovery.ts';
+import { redactFindings } from './secret-scan.ts';
 
 export interface RecentTranscriptOpts {
   /** Window in days. Default 7. */
@@ -114,12 +115,14 @@ export async function listRecentTranscripts(
 
     const name = basename(c.path);
     const dateMatch = DATE_RE.exec(name);
+    // Redact the whole file before the summary/full-read cap cuts it.
+    const text = redactFindings(raw, { highEntropy: true }).text;
     out.push({
       path: name,
       date: dateMatch ? dateMatch[1] : null,
       mtime: new Date(c.mtimeMs).toISOString(),
       length: c.size,
-      summary: summary ? buildSummary(raw) : raw.slice(0, FULL_READ_CAP),
+      summary: summary ? buildSummary(text) : text.slice(0, FULL_READ_CAP),
     });
   }
   return out;

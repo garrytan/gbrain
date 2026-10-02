@@ -6,7 +6,7 @@ import { resolveBrainId, __testing } from '../src/core/brain-resolver.ts';
 import { HOST_BRAIN_ID, type MountEntry } from '../src/core/brain-registry.ts';
 
 const toCleanup: string[] = [];
-const originalEnv = { ...process.env };
+const originalBrainId = process.env.GBRAIN_BRAIN_ID;
 
 function mktmp(prefix = 'brain-resolver-'): string {
   const dir = mkdtempSync(join(tmpdir(), prefix));
@@ -20,7 +20,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  process.env = { ...originalEnv };
+  if (originalBrainId === undefined) delete process.env.GBRAIN_BRAIN_ID;
+  else process.env.GBRAIN_BRAIN_ID = originalBrainId;
   while (toCleanup.length > 0) {
     const p = toCleanup.pop();
     if (!p) continue;

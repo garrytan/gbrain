@@ -97,6 +97,9 @@ written up in [`RETRIEVAL_MAXPOOL_INCIDENT.md`](../incidents/RETRIEVAL_MAXPOOL_I
   a JavaScript timeout can cancel its WASM work. Unresolved shortfalls appear
   as `vector_candidates_incomplete` in `degraded`, with scoped
   `vector_pool_underfilled` details in the public retrieval metadata.
+  The content-freshness check runs after the HNSW candidate scan on indexed
+  columns (the planner cannot estimate it and would drop the index); doctor
+  `vector_plan` warns when the emitted statement still misses the index.
 - **Title-phrase boost** — when the normalized query is a contiguous token-run
   inside `page.title` (or an exact full-title match), a floor-ratio-gated,
   bounded multiplier fires (`applyTitleBoost`, `search.title_boost` knob). A

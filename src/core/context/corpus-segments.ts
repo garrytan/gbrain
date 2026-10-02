@@ -31,10 +31,11 @@
 
 import { createHash } from 'node:crypto';
 import { closeSync, existsSync, openSync, readdirSync, readFileSync, readSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import type { WindowTurn } from './entity-salience.ts';
 import { toCorpusText, type ToolCallRecord } from '../transcripts/claude-code-jsonl.ts';
 import { mapOpenclawLine } from '../transcripts/openclaw.ts';
+import { stripPastedContent, stripPastedContentFromCorpus } from '../transcripts/pasted-content.ts';
 
 /** Length of the hex content-hash slice in segment filenames. */
 /**
@@ -334,12 +335,29 @@ export function corpusFileSessionId(name: string): string {
   return parseSegmentFileName(name)?.sessionId ?? parseWbFileName(name)?.sessionId ?? name.replace(/\.txt$/, '');
 }
 
+/**
+ * #5812 — the text a fact extractor may see from a session-corpus file: paste
+ * blocks removed (someone else's words), the file itself unchanged. A
+ * writeback turn file is one user turn; every other corpus file is
+ * `toCorpusText` blocks, stripped per `[user]` block.
+ */
+export function corpusTextForExtraction(path: string, text: string): string {
+  return parseWbFileName(basename(path)) ? stripPastedContent(text).text : stripPastedContentFromCorpus(text);
+}
+
 /** The TERMINAL writeback_off `.ingested` sidecar payload — the wb state
  * machine's one terminal skip, written identically by the serve harvest and
  * the sweep backstop (shape drift between the two writers would be invisible
  * until a consumer disagrees). */
 export function writebackOffSidecarJson(): string {
   return JSON.stringify({ ingested_at: new Date().toISOString(), skipped: 'writeback_off' }) + '\n';
+}
+
+/** The TERMINAL self_capture `.ingested` sidecar payload (#5413/#5820) —
+ * written identically by the serve harvest and the sweep, so neither retries
+ * a corpus file captured from gbrain's own claude-cli session. */
+export function selfCaptureSidecarJson(): string {
+  return JSON.stringify({ ingested_at: new Date().toISOString(), skipped: 'self_capture' }) + '\n';
 }
 
 /**

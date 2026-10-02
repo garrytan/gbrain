@@ -23,6 +23,7 @@
 
 import type { BrainEngine } from '../engine.ts';
 import type { SearchResult } from '../types.ts';
+import { currentTextProjectionFilter } from './safe-chunks.ts';
 
 const MAX_WALK_DEPTH = 2;
 const NEIGHBOR_CAP_PER_HOP = 50;
@@ -198,7 +199,7 @@ export async function hydrateChunks(
             cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source
        FROM content_chunks cc
        JOIN pages p ON p.id = cc.page_id
-       WHERE cc.id = ANY($1::int[])`,
+       WHERE cc.id = ANY($1::int[]) AND ${currentTextProjectionFilter('p')}`,
     [chunkIds],
   );
   return rows.map((r) => ({

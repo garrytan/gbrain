@@ -12,6 +12,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
 import { REPAIR_KINDS } from '../src/core/repair/core.ts';
 import { REPAIR_HELP, runRepairCommand } from '../src/commands/repair.ts';
+import { AUTO_REPAIR_REGISTRY } from '../src/core/repair/registry.ts';
 import { withEnv } from './helpers/with-env.ts';
 
 let engine: PGLiteEngine;
@@ -76,7 +77,7 @@ describe('gbrain repair flags', () => {
     const out = await captured(['--all', '--json']);
     const parsed = JSON.parse(out) as { mode: string; results: Array<{ kind: string; cost: Record<string, unknown>; paid: boolean }>; paid_kinds: string[] };
     expect(parsed.mode).toBe('dry_run');
-    expect(parsed.results.map(r => r.kind)).toEqual([...REPAIR_KINDS]);
+    expect(parsed.results.map(r => r.kind)).toEqual(AUTO_REPAIR_REGISTRY.map(spec => spec.kind));
     for (const result of parsed.results) {
       expect(result.cost).toHaveProperty('lifetime_ids');
       expect(result.cost).toHaveProperty('embedding_usd');

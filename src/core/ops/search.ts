@@ -245,13 +245,26 @@ async function buildRetrievalResponseMeta(
 /**
  * #3985: normalize the `types` param. MCP passes a real array; the CLI
  * passes `--types person,company` as one string. Rejects non-string entries
- * and an all-empty list loudly (invalid_params) instead of silently
- * dropping the filter. The SQL-level plumbing (SearchOpts.types → both
- * engines' keyword/title/vector legs) has existed since v0.33 (whoknows);
- * this just exposes it on the public search/query ops.
+ * and a non-empty list whose entries trim/filter to nothing loudly
+ * (invalid_params) instead of silently dropping the filter.
+ *
+ * #5390: a structurally empty array (`[]`), `""` or a whitespace-only string
+ * carries no user intent — it is
+ * what OpenAI-family MCP clients send when an LLM over-fills every optional
+ * parameter with a type-zero value. Treat it as absent (no filter applied)
+ * rather than throwing, so the search still runs unfiltered. A non-empty
+ * list that filters to nothing (`['']`, `',,'`) still throws, so a CLI
+ * `--types ,` typo is still loud. The SQL-level plumbing (SearchOpts.types
+ * → both engines' keyword/title/vector legs) has existed since v0.33
+ * (whoknows); this just exposes it on the public search/query ops.
  */
 function normalizeTypesParam(raw: unknown): string[] | undefined {
   if (raw === undefined || raw === null) return undefined;
+  // #5390: a structurally empty array, an empty string or a whitespace-only
+  // string is treated as absent, not as a request for an impossible filter.
+  // The CLI typo guard below still catches `',,'`, `' , '` and `['']`.
+  if (Array.isArray(raw) && raw.length === 0) return undefined;
+  if (typeof raw === 'string' && raw.trim() === '') return undefined;
   const arr = Array.isArray(raw)
     ? raw
     : typeof raw === 'string'
@@ -307,6 +320,7 @@ async function resolveSnippetCap(ctx: OperationContext, p: Record<string, unknow
 
 const search: Operation = {
   name: 'search',
+  outputRedaction: 'retrieval',
   description: SEARCH_DESCRIPTION,
   params: {
     query: { type: 'string', required: true, description: "Search text. Exact tokens, names, and structured-field values work best here (e.g. 'acme-example series A'), since this op does no LLM expansion. This is the search text param — there is no `text` or `q` param." },
@@ -441,6 +455,7 @@ const search: Operation = {
 
 const query: Operation = {
   name: 'query',
+  outputRedaction: 'retrieval',
   description: QUERY_DESCRIPTION,
   params: {
     // v0.27.1: `query` is no longer strictly required — `--image <path>`
@@ -773,15 +788,9 @@ const query: Operation = {
             relationalRetrieval: true,
             autocut: false, decide: { remote: ctx.remote !== false, rerankOnly: true }, // System One: S2-S5 off on the re-run
             detail,
-            // Preserve the caller's #3985 type filter on the re-run (raw
-            // pass-through; the base call already rejected malformed input).
-            ...(Array.isArray(p.types) || typeof p.types === 'string'
-              ? {
-                  types: (Array.isArray(p.types) ? (p.types as string[]) : (p.types as string).split(','))
-                    .map((t) => t.trim())
-                    .filter(Boolean),
-                }
-              : {}),
+            // Preserve the caller's #3985 type filter on the re-run, as
+            // normalized for the base call (#5390: [] and "" stay absent).
+            ...(types ? { types } : {}),
             language: (p.lang as string) || undefined,
             symbolKind: (p.symbol_kind as string) || undefined,
             // Preserve the caller's symbol-proximity constraints too — an
@@ -904,6 +913,7 @@ const query: Operation = {
  */
 const assemble_evidence: Operation = {
   name: 'assemble_evidence',
+  outputRedaction: 'retrieval',
   description:
     'Deliver whole evidence for an ordered list of search hits (each {source_id, slug, chunk_id} from a prior search/query result): ' +
     "the same windows, sections or pages `query` returns with return_unit, packed into token_budget. Use it to widen hits you already have " +
@@ -952,6 +962,7 @@ const assemble_evidence: Operation = {
 
 const search_stats: Operation = {
   name: 'search_stats',
+  outputRedaction: 'no_stored_text',
   description:
     'Search observability over a window: cache hit rate, intent/mode mix, budget drops, ' +
     'rank-1 score drift, graph-signals failure counts. Same payload as the search-stats ' +
@@ -992,6 +1003,7 @@ const search_stats: Operation = {
 
 const search_modes: Operation = {
   name: 'search_modes',
+  outputRedaction: 'no_stored_text',
   description:
     'Read-only search-mode dashboard: active mode, EVERY mode-bundle knob resolved with ' +
     'attribution (mode default vs config override), the three frozen bundles, and a ' +
@@ -1014,6 +1026,7 @@ const search_modes: Operation = {
 
 const search_tune: Operation = {
   name: 'search_tune',
+  outputRedaction: 'no_stored_text',
   description:
     'Read-only tuning recommendations derived from the last 7 days of search telemetry: ' +
     'what should change, why, and the paste-ready config command per recommendation — relay ' +
@@ -1032,6 +1045,7 @@ const search_tune: Operation = {
 
 const cache_stats: Operation = {
   name: 'cache_stats',
+  outputRedaction: 'no_stored_text',
   description:
     'Semantic query-cache introspection: resolved knobs (enabled, similarity threshold, TTL) ' +
     'plus row counts and total hits. Read-only; clearing/pruning the cache stays on the CLI.',

@@ -12,7 +12,7 @@ import { compareVersions } from '../../migrations/index.ts';
 import { bootstrapDoctorChecks } from '../bootstrap-checks.ts';
 import { buildMemorableRelayCheck } from './integrations-memorable.ts';
 import { buildMemoryWritebackCheck } from './memory-writeback.ts';
-import { checkSelfUpgradeHealth, checkUpgradeErrors } from './upgrade-health.ts';
+import { checkBunRuntime, checkSelfUpgradeHealth, checkUpgradeErrors } from './upgrade-health.ts';
 import type { Check } from '../../doctor.ts';
 import type { DoctorContext, DoctorEntry } from '../context.ts';
 
@@ -199,11 +199,12 @@ async function runMinionsMigration(ctx: DoctorContext): Promise<Check[]> {
   // so a wedged auto-upgrade loop was invisible exactly where it would be
   // diagnosed. Sits beside the upgrade_errors trail it complements.
   checks.push(checkSelfUpgradeHealth());
+  checks.push(checkBunRuntime());
   return checks;
 }
 
 export const minionsMigrationEntry: DoctorEntry = {
   name: 'minions_migration',
-  emits: ['minions_migration', 'upgrade_errors', 'self_upgrade_health'],
+  emits: ['minions_migration', 'upgrade_errors', 'self_upgrade_health', 'bun_runtime'],
   run: runMinionsMigration,
 };

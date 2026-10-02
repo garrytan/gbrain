@@ -69,7 +69,8 @@ export async function prepareGoogleReceiptPatch(engine: BrainEngine, row: WriteR
   const frontmatter = { ...current.page.frontmatter, gmail_attachment_receipts: receipts };
   const page = { ...current.page, frontmatter };
   const noop = digest(current.page.frontmatter.gmail_attachment_receipts ?? null) === digest(receipts);
-  const file = await prepareFileTarget(engine, row, current, serializePageToMarkdown(page, current.tags));
+  const target = await prepareFileTarget(engine, row, current, serializePageToMarkdown(page, current.tags));
+  const file = target && { ...target, publishMode: 0o600 };
   const projection = noop ? null : await readProjectionSnapshot(engine, row.slug, row.source_id, { allowUnsealed: true });
   if (!noop && (!projection || projection.snapshot.revision !== current.revision)) throw new OperationError('revision_conflict', 'The Gmail page changed during receipt preparation.');
   const chunks = projection ? await preparePageProjection(projection) : null;

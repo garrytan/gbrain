@@ -9,6 +9,8 @@ import { engineMutationPrecondition, parseMutationPrecondition } from './precond
 import { preparePageMutation } from './page-prepare.ts';
 import type { PreparedMutation } from './coordinator.ts';
 import type { WriteRequest } from './model.ts';
+import { appendContextNote, type InferredVia } from '../facts/subject-infer.ts';
+import { inferenceNote } from '../facts/subject-infer-write.ts';
 
 function conflict(): never { throw new OperationError('revision_conflict', 'The memory changed during semantic preparation.'); }
 function candidateState(value: Awaited<ReturnType<typeof decideSingleFact>>): string {
@@ -16,12 +18,16 @@ function candidateState(value: Awaited<ReturnType<typeof decideSingleFact>>): st
   return JSON.stringify([value.status, c?.id, c?.fact, c?.kind, c?.visibility,
     c?.valid_until ? new Date(c.valid_until).toISOString() : null, c?.source_markdown_slug, c?.row_num]);
 }
-function outcome(id: number, status: 'inserted' | 'duplicate' | 'superseded', entitySlug: string | null, validUntil: Date | string | null, degraded: boolean) {
+export const NO_ENTITY_HINT = 'Saved without an entity, so entity-scoped recall will not find it. Pass `entity` (the person, company or project this fact is about) to link it.';
+function outcome(id: number, status: 'inserted' | 'duplicate' | 'superseded', entitySlug: string | null, validUntil: Date | string | null, degraded: boolean, p: Record<string, unknown>) {
   const statusText = status === 'inserted' ? `remembered as fact #${id}` : status === 'duplicate'
     ? `already knew this — kept fact #${id}` : `updated — fact #${id} supersedes the previous version`;
   return { id: String(id), status, status_text: statusText, entity_slug: entitySlug,
     valid_until: validUntil ? new Date(validUntil).toISOString() : null,
-    ...(degraded ? { degraded_dedup: true } : {}), protocol_version: 1 };
+    ...(degraded ? { degraded_dedup: true } : {}),
+    ...(entitySlug !== null && p.entity_inferred ? { entity_inferred: p.entity_inferred as InferredVia } : {}),
+    ...(entitySlug === null ? { warnings: [p.entity_warning === 'ENTITY_LINK_FAILED' ? 'ENTITY_LINK_FAILED' : 'NO_ENTITY'], hint: NO_ENTITY_HINT } : {}),
+    protocol_version: 1 };
 }
 
 /** Every retry renders the semantic append from the latest coherent snapshot. */
@@ -41,21 +47,24 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
   const observedEmbeddingConfig = JSON.stringify(await engine.executeRaw(embeddingConfigSql));
   const { embedding, embedding_model, degraded } = await prepareFactEmbedding(input.fact, signal);
   signal?.throwIfAborted();
-  const decision = await decideSingleFact(engine, row.source_id, input, embedding, embedding_model);
+  // #5836: an inferred link dedups exact text only, so it never supersedes or drops a similar fact.
+  const dedupEmbedding = p.entity_inferred ? null : embedding;
+  const decision = await decideSingleFact(engine, row.source_id, input, dedupEmbedding, embedding_model);
   const validate = async (tx: BrainEngine) => {
     await assertFactNotWithdrawn(tx, row.source_id, input);
     if (embedding && JSON.stringify(await tx.executeRaw(`${embeddingConfigSql} FOR SHARE`)) !== observedEmbeddingConfig) conflict();
-    const current = await decideSingleFact(tx, row.source_id, input, embedding, embedding_model);
+    const current = await decideSingleFact(tx, row.source_id, input, dedupEmbedding, embedding_model);
     if (candidateState(current) !== candidateState(decision)) conflict();
   };
   if (decision.status === 'duplicate') {
     const duplicate = decision.candidate!;
-    return { observedRevision, noop: true, validate, apply: async () => outcome(duplicate.id, 'duplicate', input.entity_slug, duplicate.valid_until, degraded) };
+    return { observedRevision, noop: true, validate, apply: async () => outcome(duplicate.id, 'duplicate', input.entity_slug, duplicate.valid_until, degraded, p) };
   }
   const validUntil = p.valid_until ? new Date(String(p.valid_until)) : null;
   const validFrom = new Date(String(p.valid_from));
+  const context = p.entity_inferred ? appendContextNote(null, inferenceNote(p.entity_inferred as InferredVia)) : undefined;
   const fact: NewFact = { ...input, source: String(p.provenance).trim(), valid_from: validFrom, valid_until: validUntil,
-    confidence: 1, embedding, embedding_model };
+    confidence: 1, embedding, embedding_model, ...(context ? { context } : {}) };
   let page: PreparedMutation | undefined;
   let rowNum: number | undefined;
   if (p.fence === true && snapshot) {
@@ -63,7 +72,7 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
     if (parsed.warnings.length) throw new OperationError('storage_error', 'The entity facts fence is malformed; repair it before appending memory.');
     const appended = upsertFactRow(snapshot.page.compiled_truth, { claim: input.fact, kind: input.kind, visibility: input.visibility,
       confidence: 1, notability: 'medium', validFrom: formatFenceDate(validFrom),
-      validUntil: validUntil ? formatFenceDate(validUntil) : undefined, source: fact.source });
+      validUntil: validUntil ? formatFenceDate(validUntil) : undefined, source: fact.source, context });
     rowNum = appended.rowNum;
     let body = appended.body;
     const old = decision.candidate;
@@ -91,6 +100,6 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
     }
     if (decision.status === 'superseded') await tx.executeRaw(`UPDATE facts SET expired_at=now(),superseded_by=$3
       WHERE id=$1 AND source_id=$2 AND expired_at IS NULL`, [decision.candidate!.id, row.source_id, id]);
-    return outcome(id, decision.status, input.entity_slug, validUntil, degraded);
+    return outcome(id, decision.status, input.entity_slug, validUntil, degraded, p);
   } };
 }

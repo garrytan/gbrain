@@ -24,12 +24,14 @@ import {
   TakesWriteError,
 } from '../takes-write.ts';
 import { embedQuery } from '../embedding.ts';
+import { ALL_SOURCES } from '../source-id.ts';
 import { privatePagesFilterFragment } from '../search/private-visibility.ts';
 
 // --- v0.28: Takes ---
 
 const takes_list: Operation = {
   name: 'takes_list',
+  outputRedaction: 'retrieval',
   description: 'List takes (typed/weighted/attributed claims) filtered by holder/kind/active/etc.',
   scope: 'read',
   params: {
@@ -64,6 +66,7 @@ const takes_list: Operation = {
 
 const takes_search: Operation = {
   name: 'takes_search',
+  outputRedaction: 'retrieval',
   description: 'Keyword search across takes (pg_trgm similarity over claim text)',
   scope: 'read',
   params: {
@@ -90,6 +93,7 @@ const takes_search: Operation = {
  */
 const takes_scorecard: Operation = {
   name: 'takes_scorecard',
+  outputRedaction: 'no_stored_text',
   description: 'Calibration scorecard for resolved bets: counts, accuracy, Brier (correct ∨ incorrect only), partial_rate.',
   scope: 'read',
   params: {
@@ -126,6 +130,7 @@ const takes_scorecard: Operation = {
  */
 const takes_calibration: Operation = {
   name: 'takes_calibration',
+  outputRedaction: 'no_stored_text',
   description: 'Calibration curve: resolved correct/incorrect bets binned by stated weight; observed vs predicted per bucket.',
   scope: 'read',
   params: {
@@ -185,6 +190,7 @@ async function countMcpResolved(ctx: OperationContext): Promise<number> {
 
 const think: Operation = {
   name: 'think',
+  outputRedaction: 'retrieval',
   description: 'Multi-hop synthesis across pages + takes + graph. Pulls relevant evidence and produces a cited answer with conflict + gap analysis.',
   scope: 'read',
   params: {
@@ -238,7 +244,11 @@ const think: Operation = {
     let savedSlug: string | undefined;
     let evidenceInserted = 0;
     if (safeSave) {
-      const persisted = await persistSynthesis(ctx.engine, result);
+      const persisted = await persistSynthesis(ctx.engine, result, {
+        // '__all__' is a read scope, not a write destination: an unscoped save keeps the default source.
+        sourceId: ctx.sourceId === ALL_SOURCES ? undefined : ctx.sourceId,
+        ...(thinkScope.allowedSources ? { allowedSources: thinkScope.allowedSources } : {}),
+      });
       savedSlug = persisted.slug;
       evidenceInserted = persisted.evidenceInserted;
       for (const w of persisted.warnings) result.warnings.push(w);
@@ -386,6 +396,7 @@ function mirrorWarnFields(mirror: { mirror_warning?: string }): Record<string, s
 
 const takes_add: Operation = {
   name: 'takes_add',
+  outputRedaction: 'no_stored_text',
   description:
     'Record a take (typed claim) on a page: fact / take / bet / hunch, with a holder (who ' +
     'holds the belief: world, people/<slug>, companies/<slug>, or brain), weight 0..1, and ' +
@@ -417,6 +428,7 @@ const takes_add: Operation = {
 
 const takes_update: Operation = {
   name: 'takes_update',
+  outputRedaction: 'no_stored_text',
   description:
     'Update a take\'s mutable fields (weight, source, since date). Claim/kind/holder are ' +
     'immutable — supersede instead. Markdown-canonical: the target row must exist in the ' +
@@ -445,6 +457,7 @@ const takes_update: Operation = {
 
 const takes_supersede: Operation = {
   name: 'takes_supersede',
+  outputRedaction: 'no_stored_text',
   description:
     'Supersede a take with a replacement claim: the old row is struck through (kept for ' +
     'archaeology), the replacement appends at the next fence row number. Kind/holder inherit ' +
@@ -476,6 +489,7 @@ const takes_supersede: Operation = {
 
 const takes_resolve: Operation = {
   name: 'takes_resolve',
+  outputRedaction: 'no_stored_text',
   description:
     'Resolve a take: quality correct / incorrect / partial / unresolvable, with optional ' +
     'evidence text and measured value/unit. Resolutions feed the calibration scorecard. ' +

@@ -16,10 +16,13 @@ export function printManagedSyncDiagnostic(result: SyncResult, sink: NodeJS.Writ
   return true;
 }
 
-/** Informational managed-sync lines: skipped slug collisions and the links derived after the checkpoint. */
+/** Informational managed-sync lines: skipped slug collisions, refused files and the links derived after the checkpoint. */
 export function printManagedSyncNotes(result: SyncResult, write: (line: string) => void): void {
   for (const collision of result.slugCollisions ?? []) {
     write(`  Slug collision: ${collision.skipped.join(', ')} and ${collision.kept} map to ${collision.slug}; kept ${collision.kept}. Rename one file to import both.`);
+  }
+  for (const refusal of result.fileRefusals ?? []) {
+    write(`  Refused ${refusal.code}: ${refusal.message} ${refusal.suggestion} (${refusal.docs})`);
   }
   const skips = result.legacySkips;
   if (skips?.contextualMode) write(`  ${skips.contextualMode} legacy file(s) skipped because they parse to the same page but have no contextual retrieval mode, which a skipped import cannot stamp; to stamp it: gbrain repair contextual-mode`);

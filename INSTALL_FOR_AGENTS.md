@@ -38,7 +38,7 @@ If you fetched this file by URL without cloning yet, the companion files live at
 > garrytan/gbrain` + `/plugin install gbrain@gbrain`). Details:
 > docs/mcp/CODEX.md and docs/mcp/CLAUDE_CODE.md.
 
-Default path (Bun is required — gbrain is a Bun + TypeScript runtime):
+Default path (Bun 1.4.0 or newer is required — gbrain is a Bun + TypeScript runtime; on an older Bun, run `bun upgrade` first):
 
 ```bash
 curl -fsSL https://bun.sh/install | bash

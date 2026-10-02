@@ -387,7 +387,7 @@ clients in the existing Agents page.
 Queued work also retains its submitting authority and is revalidated before
 execution. Worker upgrades require a stopped-service cutover; see the
 [authorization and worker upgrade guide](docs/guides/authorization-upgrade.md)
-before migrating an existing queue. That guide also covers the Bun 1.3.11
+before migrating an existing queue. That guide also covers the Bun 1.4.0
 minimum and guarded outbound connections.
 
 ```bash

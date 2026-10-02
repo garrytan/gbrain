@@ -20,7 +20,7 @@
  */
 import { describe, expect, test } from 'bun:test';
 import { createHash } from 'crypto';
-import { ECHO_MAX_UNIQUE, ECHO_MAX_VALUE_CHARS, redactFindings, scanText } from '../src/core/secret-scan.ts';
+import { ECHO_MAX_UNIQUE, ECHO_MAX_VALUE_CHARS, privateKeySpans, redactFindings, scanText } from '../src/core/secret-scan.ts';
 
 function elapsedMs(fn: () => void): number {
   const t0 = performance.now();
@@ -208,7 +208,7 @@ describe('jwt + high_entropy_assignment are linear on adversarial `-`/`_` runs',
   });
 });
 
-describe('PEM_BLOCK_RE is linear in headers and text', () => {
+describe('private-key claims are linear in headers and text', () => {
   const MB_TAIL = 'x'.repeat(1024 * 1024);
   const PEM_BODY_LINE = ['MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSj', 'AgEAAoIBAQC7VJTUt9Us8cKj'].join('');
   // Header/footer joined from fragments so the committed source never carries a whole PEM block (gitleaks private-key rule).
@@ -412,5 +412,86 @@ describe('redactFindings is linear in unique values (span-splice, not replaceAll
     expect(result.text.includes(OPAQUE)).toBe(false);
     expect(result.text).toBe(Array.from({ length: 5000 }, () => 'Bearer <REDACTED:bearer>').join(' '));
     expect(ms).toBeLessThan(200);
+  });
+});
+
+describe('security fix wave shapes are linear (A1 walks, A2, A3, A5; ENG-15, ENG-17)', () => {
+  // Fences and values are joined from fragments; measured timings on the
+  // dev box were 2-90 ms for every input below.
+  const DASHES = '-'.repeat(5);
+  const BEGIN = [DASHES, 'BEGIN RSA ', 'PRIVATE KEY', DASHES].join('');
+  const END = [DASHES, 'END RSA ', 'PRIVATE KEY', DASHES].join('');
+  const bodyLine = (i: number) => ['MIIEvQIBADANBgkqhkiG9w0BAQEF', 'AASCBKcwggSj', i.toString(36).padStart(24, 'Q')].join('');
+  const MB_OF_BODY_LINES = Array.from({ length: 16_000 }, (_, i) => bodyLine(i)).join('\n');
+  const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!#%<>';
+  const entropic = (n: number, salt: number) =>
+    Array.from({ length: n }, (_, k) => ALPHABET[(k * 7 + salt) % ALPHABET.length]).join('');
+
+  test('20000 unterminated BEGIN fences, each with a body line: 20000 claims, < 400ms', () => {
+    const text = Array.from({ length: 20_000 }, (_, i) => `${BEGIN}\n${bodyLine(i)}`).join('\n');
+    let findings: ReturnType<typeof scanText> = [];
+    const ms = elapsedMs(() => { findings = scanText(text); });
+    expect(findings.length).toBe(20_000);
+    expect(JSON.stringify(findings).includes(bodyLine(7))).toBe(false);
+    expect(ms).toBeLessThan(400);
+  });
+
+  test('20000 END-only fences (each walk stops at the previous fence): 0 findings, < 300ms; on ONE line ahead of an 8 MB tail, < 1500ms', () => {
+    let ms = elapsedMs(() => { expect(scanText(`${END}\n`.repeat(20_000))).toEqual([]); });
+    expect(ms).toBeLessThan(300);
+    ms = elapsedMs(() => { expect(scanText(`${END} `.repeat(20_000) + 'x'.repeat(8 << 20))).toEqual([]); });
+    expect(ms).toBeLessThan(1500);
+  });
+
+  test('20000 END fences each preceded by a body line: 20000 backward claims, < 400ms', () => {
+    const text = Array.from({ length: 20_000 }, (_, i) => `${bodyLine(i)}\n${END}`).join('\n');
+    const ms = elapsedMs(() => { expect(privateKeySpans(text).length).toBe(20_000); });
+    expect(ms).toBeLessThan(400);
+  });
+
+  test('1 MB of base64 lines with no fence, after a BEGIN, before an END, and with a fence every 10 lines: each < 300ms', () => {
+    for (const text of [
+      MB_OF_BODY_LINES,
+      `${BEGIN}\n${MB_OF_BODY_LINES}`,
+      `${MB_OF_BODY_LINES}\n${END}`,
+      MB_OF_BODY_LINES.split('\n').map((l, i) => (i % 10 === 9 ? END : l)).join('\n'),
+      MB_OF_BODY_LINES.split('\n').map((l, i) => (i % 10 === 9 ? BEGIN : l)).join('\n'),
+    ]) {
+      const ms = elapsedMs(() => { scanText(text); });
+      expect(ms).toBeLessThan(300);
+    }
+  });
+
+  test('url_credentials: 160k of repeated scheme + user + colon and a lone @, and 8000 credential-less https URLs with an email: < 200ms', () => {
+    const sep = ':' + '//';
+    let ms = elapsedMs(() => { expect(scanText(['https', sep, 'a:'].join('').repeat(16_000) + '@')).toEqual([]); });
+    expect(ms).toBeLessThan(200);
+    const json = '[' + Array.from({ length: 8000 }, (_, i) => `{"u":"${['https', sep, `host${i}.example:8443/x`].join('')}"}`).join(',') + ',{"e":"ops@example.com"}]';
+    ms = elapsedMs(() => { expect(scanText(json)).toEqual([]); });
+    expect(ms).toBeLessThan(200);
+  });
+
+  test('basic_auth: a 1 MB run of `Basic ` / `Authorization: Basic `, `Basic` + 1 MB of base64, and 500 valid 2048-char values: < 300ms', () => {
+    for (const text of ['Basic '.repeat(180_000), 'Authorization: Basic '.repeat(50_000), 'Basic ' + 'A'.repeat(1 << 20)]) {
+      const ms = elapsedMs(() => { expect(scanText(text)).toEqual([]); });
+      expect(ms).toBeLessThan(300);
+    }
+    const value = Buffer.from(['u', ':', 'a'.repeat(1534)].join('')).toString('base64');
+    const ms = elapsedMs(() => { expect(scanText(`Basic ${value} `.repeat(500)).length).toBe(500); });
+    expect(ms).toBeLessThan(300);
+  });
+
+  test('high_entropy_assignment: 250 quoted and 250 unquoted 4096-char values on one line, and 4100-char runs of trailing punctuation: < 300ms', () => {
+    const quoted = Array.from({ length: 250 }, (_, i) => `password="${entropic(4096, i)}"`).join(' ');
+    let result!: ReturnType<typeof redactFindings>;
+    let ms = elapsedMs(() => { result = redactFindings(quoted, { highEntropy: true }); });
+    expect(result.redactions.length).toBe(250);
+    expect(ms).toBeLessThan(300);
+    const unquoted = Array.from({ length: 250 }, (_, i) => `token=${entropic(4096, i).replace(/[<>]/g, '.')}`).join(' ');
+    ms = elapsedMs(() => { result = redactFindings(unquoted, { highEntropy: true }); });
+    expect(result.redactions.length).toBe(250);
+    expect(ms).toBeLessThan(300);
+    ms = elapsedMs(() => { expect(scanText(`token=${'.'.repeat(4100)} `.repeat(250), { highEntropy: true })).toEqual([]); });
+    expect(ms).toBeLessThan(300);
   });
 });

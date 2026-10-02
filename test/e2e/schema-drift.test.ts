@@ -269,13 +269,14 @@ describe.skipIf(skip)('schema drift: PGLite ↔ Postgres post-initSchema parity 
         ],
       },
       {
-        // Facts ontology dedup (migration 122): partial unique keyed on the
-        // deterministic value_hash, scoped WHERE dimension IS NOT NULL.
-        name: 'idx_facts_ontology_dedup',
+        // Facts ontology dedup (migration 188): partial unique keyed on the
+        // deterministic value_hash plus the stint's valid_from, scoped
+        // WHERE dimension IS NOT NULL.
+        name: 'idx_facts_ontology_stint_dedup',
         table: 'facts',
         defMust: [
           'create unique index',
-          '(source_id, entity_slug, dimension, value_hash, source_markdown_slug)',
+          '(source_id, entity_slug, dimension, value_hash, source_markdown_slug, valid_from)',
           'where (dimension is not null)',
         ],
       },

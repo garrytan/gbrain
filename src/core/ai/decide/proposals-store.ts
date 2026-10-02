@@ -35,11 +35,12 @@ export interface SweepFact {
   entity_slug: string | null;
   fact: string;
   visibility: 'private' | 'world';
+  valid_from: Date | string;
   created_at: Date | string;
   has_embedding: boolean;
 }
 
-const SWEEP_FACT_COLUMNS = `id, source_id, entity_slug, fact, visibility, created_at,
+const SWEEP_FACT_COLUMNS = `id, source_id, entity_slug, fact, visibility, valid_from, created_at,
   (embedding IS NOT NULL AND embedding_model IS NOT NULL AND embedded_text_hash = md5(fact)) AS has_embedding`;
 const ACTIVE = `expired_at IS NULL AND (valid_until IS NULL OR valid_until > now()) AND source <> ALL($2::text[])`;
 
@@ -74,6 +75,8 @@ export interface ConflictCandidateRow {
   expired_at: Date | string | null;
   valid_until: Date | string | null;
   source_markdown_slug: string | null;
+  valid_from: Date | string;
+  created_at: Date | string;
   similarity: number;
 }
 
@@ -87,7 +90,7 @@ export interface ConflictCandidateRow {
 export async function conflictNeighbours(engine: BrainEngine, factId: number, sourceId: string): Promise<ConflictCandidateRow[]> {
   const rows = await engine.executeRaw<ConflictCandidateRow>(
     `SELECT c.id, c.source_id, c.entity_slug, c.fact, c.visibility, c.expired_at, c.valid_until, c.source_markdown_slug,
-            (1 - (c.embedding <=> n.embedding))::float8 AS similarity
+            c.valid_from, c.created_at, (1 - (c.embedding <=> n.embedding))::float8 AS similarity
        FROM facts n JOIN facts c
          ON c.source_id = n.source_id AND c.entity_slug = n.entity_slug AND c.visibility = n.visibility AND c.id <> n.id
       WHERE n.id = $1 AND n.source_id = $3
@@ -103,14 +106,16 @@ export async function conflictNeighbours(engine: BrainEngine, factId: number, so
 }
 
 // ---------------------------------------------------------------------------
-// Deferred retries (transient skips: no_embedding, provider failure)
+// Deferred retries (transient skips: no_embedding, provider failure) and
+// relinked facts handed over by `gbrain facts relink`
 // ---------------------------------------------------------------------------
 
+/** Due retries, oldest due first (fact id breaks ties), so a large relinked backlog never starves a transient retry. */
 export async function dueDeferred(engine: BrainEngine, sourceId: string, limit: number): Promise<Array<{ fact_id: number; attempts: number }>> {
   const rows = await engine.executeRaw<{ fact_id: number | string; attempts: number | string }>(
     `SELECT fact_id, attempts FROM decide_sweep_deferred
       WHERE slot = 'conflict' AND source_id = $1 AND attempts < $2 AND next_attempt_at <= now()
-      ORDER BY fact_id LIMIT $3`,
+      ORDER BY next_attempt_at, fact_id LIMIT $3`,
     [sourceId, DEFERRED_MAX_ATTEMPTS, limit],
   );
   return rows.map((r) => ({ fact_id: Number(r.fact_id), attempts: Number(r.attempts) }));
@@ -125,6 +130,22 @@ export async function deferFact(engine: BrainEngine, sourceId: string, factId: n
        next_attempt_at = now() + ($4::int * (decide_sweep_deferred.attempts + 1) * interval '1 minute')`,
     [sourceId, factId, reason, DEFERRED_BACKOFF_MINUTES],
   );
+}
+
+/**
+ * Queue facts that just gained an entity for the next conflict sweep: attempts 0, due now, reason `relinked`.
+ * An existing row (a pending transient retry) is left untouched. Pass the caller's transaction engine so the
+ * handoff commits with the relink write. Returns the number of rows queued.
+ */
+export async function enqueueRelinked(engine: BrainEngine, sourceId: string, factIds: readonly number[]): Promise<number> {
+  if (factIds.length === 0) return 0;
+  const rows = await engine.executeRaw<{ fact_id: number | string }>(
+    `INSERT INTO decide_sweep_deferred (source_id, fact_id, slot, reason, attempts, next_attempt_at)
+     SELECT $1, ids.id::bigint, 'conflict', 'relinked', 0, now() FROM unnest($2::text[]) AS ids(id)
+     ON CONFLICT (slot, source_id, fact_id) DO NOTHING RETURNING fact_id`,
+    [sourceId, factIds.map(String)],
+  );
+  return rows.length;
 }
 
 export async function clearDeferred(engine: BrainEngine, sourceId: string, factId: number): Promise<void> {

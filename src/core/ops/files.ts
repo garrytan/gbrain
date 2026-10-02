@@ -18,6 +18,7 @@ const FILE_LIST_LIMIT = 100;
 
 const file_list: Operation = {
   name: 'file_list',
+  outputRedaction: 'no_stored_text',
   description: 'List stored files',
   params: {
     slug: { type: 'string', description: 'Filter by page slug' },
@@ -43,6 +44,7 @@ const file_list: Operation = {
 
 const file_upload: Operation = {
   name: 'file_upload',
+  outputRedaction: 'no_stored_text',
   description: 'Upload a file to storage',
   params: {
     path: { type: 'string', required: true, description: 'Local file path' },
@@ -151,6 +153,7 @@ const file_upload: Operation = {
 
 const file_url: Operation = {
   name: 'file_url',
+  outputRedaction: 'no_stored_text',
   description: 'Get a URL for a stored file',
   params: {
     storage_path: { type: 'string', required: true },

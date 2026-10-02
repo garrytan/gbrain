@@ -14,7 +14,7 @@ export interface ChronicleContextOpts extends PageReadScope {
   entities?: string[];
   /** Cap on timeline rows (default 50). */
   limit?: number;
-  /** Untrusted caller → diary-sourced ontology is redacted. */
+  /** Untrusted caller → only world-visibility ontology, diary-sourced rows redacted. */
   remote?: boolean;
   sourceId?: string;
   sourceIds?: string[];
@@ -44,7 +44,7 @@ export async function loadChronicleContext(
 
   const ontologies: Record<string, OntologyValue[]> = {};
   for (const slug of opts.entities ?? []) {
-    let vals = await engine.getOntology(slug, { ...scope, excludePrivate: opts.excludePrivate });
+    let vals = await engine.getOntology(slug, { ...scope, excludePrivate: opts.excludePrivate, visibility: opts.remote ? ['world'] : undefined });
     if (opts.remote) vals = vals.filter((v) => !(v.source ?? '').startsWith('life/diary/'));
     if (vals.length) ontologies[slug] = vals;
   }

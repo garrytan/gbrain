@@ -239,8 +239,12 @@ warning naming the minimum server version.
   sanitized WHOLE before any slicing with the same strict boundary the chunker
   uses (Takes fences removed, only world and not-withdrawn Facts rows kept,
   malformed or unterminated protected tails dropped, materialized markers
-  stripped), `compiled_truth` and `timeline` each sanitized whole. This applies
-  to every caller, including trusted local ones. Chunks only anchor the hits in
+  stripped), `compiled_truth` and `timeline` each sanitized whole, then run
+  through the credential-safe projection the chunkers also cut from: every
+  private-key span (complete, or cut off at its `BEGIN` or `END` line) becomes
+  `<REDACTED:private_key_pem>` followed by as many newlines as the span held,
+  so line positions and chunk anchors stay aligned and no key material is
+  delivered. This applies to every caller, including trusted local ones. Chunks only anchor the hits in
   that text, and the page must hold a sealed chunk index. Delivered text never
   contains anything `get_page` would not return to the same caller.
   `detail: "low"` never adds timeline text.
@@ -260,10 +264,14 @@ warning naming the minimum server version.
    chunks never contribute neighbor text.
 2. **Fetch.** One query returns each page's authorization, seal, stored body
    and the chunks within ±`return_window` of each hit (at most 1,024 rows).
-3. **Page text and anchors.** The page text is `sanitize(compiled_truth)`,
-   plus `\n\n<!-- timeline -->\n\n` + `sanitize(timeline)` when the
+3. **Page text and anchors.** The page text is
+   `project(sanitize(compiled_truth))`, plus `\n\n<!-- timeline -->\n\n` +
+   `project(sanitize(timeline))` when the
    timeline is non-empty after sanitizing and `detail` is not `low` (the join
-   `serializeMarkdown` writes). Each fetched chunk is located in that text in
+   `serializeMarkdown` writes); `project` is `credentialSafeProjection`
+   (`src/core/credential-projection.ts`), the function the markdown and code
+   chunkers apply before splitting, so chunks and page text agree on every
+   redacted key. Each fetched chunk is located in that text in
    `chunk_index` order: exact match first, then a whitespace-insensitive match
    (the chunker trims chunks and folds some whitespace-only runs, so chunk text
    is not always verbatim). A fenced-code hit is placed by its code without the

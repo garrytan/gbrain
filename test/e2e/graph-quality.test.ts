@@ -99,17 +99,17 @@ describe('E2E graph quality (v0.10.1 pipeline)', () => {
     const bobAcme = bobLinks.find(l => l.to_slug === 'companies/acme');
     expect(bobAcme?.link_type).toBe('invested_in');
 
-    // The standup meeting references both Alice and Bob as attendees. Assert the
-    // exact attendee edges are present and typed 'attended' (a plain .every()
-    // would silently pass if a meeting->company edge were misclassified or if the
-    // attendee edges were missing entirely).
-    const meetingLinks = await engine.getLinks('meetings/standup');
+    // The standup meeting lists Alice and Bob as attendees. Canonical attendance
+    // is stored person -> meeting, so the exact attendee edges are backlinks
+    // typed 'attended' and the meeting has no outgoing attendance.
+    const meetingBacklinks = await engine.getBacklinks('meetings/standup');
     const attended = new Set(
-      meetingLinks.filter(l => l.link_type === 'attended').map(l => l.to_slug),
+      meetingBacklinks.filter(l => l.link_type === 'attended').map(l => l.from_slug),
     );
     expect(attended.has('people/alice')).toBe(true);
     expect(attended.has('people/bob')).toBe(true);
-    expect(meetingLinks.every(l => l.link_type === 'attended')).toBe(true);
+    expect(meetingBacklinks.every(l => l.link_type === 'attended')).toBe(true);
+    expect((await engine.getLinks('meetings/standup')).filter(l => l.link_type === 'attended')).toEqual([]);
   });
 
   test('auto-link via put_page operation handler', async () => {

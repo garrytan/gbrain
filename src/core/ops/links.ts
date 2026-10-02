@@ -10,13 +10,19 @@ import { coordinatedManualLinkWrite } from '../persistence/manual-links.ts';
 
 import { OperationError, type Operation } from './contract.ts';
 import {
+  assertExplicitSourceLive,
   enforceClientSlugFence,
+  federatedSearchScope,
   linkReadScopeOpts,
+  parseSourceIdParam,
   readPolicyOpts,
   reclassifyMutationTimePageMiss,
   requireWritablePage,
   sourceScopeOpts,
 } from './context.ts';
+import type { OperationContext } from './contract.ts';
+import type { Link, PageReadPolicy } from '../types.ts';
+import { ALL_SOURCES } from '../source-id.ts';
 import { PageMissingError } from '../engine-errors.ts';
 import { TRAVERSE_PATH_ROW_CAP } from '../engine-constants.ts';
 // #4224: flag-gated cross-source identity union for the link read ops.
@@ -45,6 +51,7 @@ export const MANAGED_LINK_SOURCES = ['markdown', 'frontmatter', 'mentions', 'wik
 
 const add_link: Operation = {
   name: 'add_link',
+  outputRedaction: 'no_stored_text',
   description: 'Create link between pages',
   params: {
     from: { type: 'string', required: true, description: "Slug of the page the link originates from (the edge renders on this page), e.g. 'people/alice-example'. These are page slugs — there is no `source`/`target` pair." },
@@ -121,6 +128,7 @@ const add_link: Operation = {
 
 const remove_link: Operation = {
   name: 'remove_link',
+  outputRedaction: 'no_stored_text',
   description: 'Remove link between pages',
   params: {
     from: { type: 'string', required: true, description: 'Slug of the page the link originates from (same endpoint order as add_link).' },
@@ -154,60 +162,177 @@ const remove_link: Operation = {
   cliHints: { name: 'unlink', aliases: ['link-rm'], positional: ['from', 'to'] },
 };
 
-const get_links: Operation = {
-  name: 'get_links',
-  description: 'List outgoing links from a page',
-  params: {
-    slug: { type: 'string', required: true, description: 'Slug of the page whose outgoing links to list.' },
-  },
-  handler: async (ctx, p) => {
-    // #2200: linkReadScopeOpts so a federated grant — and an untrusted remote
-    // scalar scope (promoted to sourceIds[]) — reaches the engine's all-endpoint
-    // branch. Trusted local/internal callers keep the scalar cross-source view.
-    const sourceOpts = await readPolicyOpts(ctx, linkReadScopeOpts(ctx));
-    const links = await ctx.engine.getLinks(p.slug as string, sourceOpts);
+const LINK_SOURCE_ID_PARAM = {
+  type: 'string',
+  description: "Scope the read to one source (a multi-source brain can hold the same slug in several sources). Omitted: your granted sources remotely (a connection with no grant reads every federated source); locally, the resolved source, or every federated source when no --source / GBRAIN_SOURCE / .gbrain-source pinned it. '__all__' spans every source for trusted local callers and only your readable sources for remote callers.",
+} as const;
+const LINK_ALL_SOURCES_PARAM = {
+  type: 'boolean',
+  description: 'Span sources (equivalent to source_id=__all__): every source locally, only your readable sources remotely.',
+} as const;
+
+/**
+ * #5827: the per-call source scope of a link read (get_links, get_backlinks,
+ * traverse_graph). `federatedSearchScope` is the single trust + grant
+ * resolver (#5081 explicit-read admission; an unqualified no-grant read widens
+ * to the transport-computed federated set; a grant never widens), the
+ * liveness check runs strictly after it (an archived source the caller was
+ * never granted answers permission_denied, not unknown_source), and
+ * `linkReadScopeOpts` promotes a remote scalar to `sourceIds[]` so the
+ * engine's #2200 all-endpoints branch applies. Trusted local callers get the
+ * scope as resolved: an explicit source stays scalar, `__all__` is brain-wide,
+ * and an unqualified read may come back as the federated `sourceIds[]`.
+ */
+async function resolveLinkReadScope(
+  ctx: OperationContext,
+  p: Record<string, unknown>,
+  opName: string,
+): Promise<{ requested: string | undefined; policy: PageReadPolicy }> {
+  const sourceIdParam = parseSourceIdParam(p.source_id, opName, { allowAll: true });
+  if (p.all_sources === true && sourceIdParam !== undefined && sourceIdParam !== ALL_SOURCES) {
+    throw new OperationError(
+      'invalid_params',
+      `${opName}: pass either source_id or all_sources, not both.`,
+      'Drop all_sources to read one source, or drop source_id to span sources.',
+    );
+  }
+  const requested = p.all_sources === true ? ALL_SOURCES : sourceIdParam;
+  const scope = federatedSearchScope(ctx, requested);
+  await assertExplicitSourceLive(ctx, requested);
+  return { requested, policy: await readPolicyOpts(ctx, linkReadScopeOpts(ctx, scope)) };
+}
+
+const linkIdentity = (l: Link) => JSON.stringify([
+  l.from_source_id, l.from_slug, l.to_source_id, l.to_slug, l.link_type,
+  l.link_source ?? null, l.origin_source_id ?? null, l.origin_slug ?? null, l.origin_field ?? null,
+]);
+
+/**
+ * get_links / get_backlinks body. A trusted local unqualified read whose scope
+ * widened to the federated set runs the scalar read once per federated source
+ * (resolved source first, the set's own order) and merges, de-duplicated on
+ * link identity: the scalar branch keeps the cross-source far-endpoint view
+ * local callers rely on, which the all-endpoints branch would drop for far
+ * pages in non-federated sources. Every other caller runs one read.
+ */
+async function readLinkEdges(
+  ctx: OperationContext,
+  p: Record<string, unknown>,
+  opName: 'get_links' | 'get_backlinks',
+  direction: 'out' | 'in',
+): Promise<Link[]> {
+  const slug = p.slug as string;
+  const { requested, policy } = await resolveLinkReadScope(ctx, p, opName);
+  const scopes: PageReadPolicy[] = ctx.remote === false && policy.sourceIds
+    ? policy.sourceIds.map((sourceId) => ({ ...policy, sourceIds: undefined, sourceId }))
+    : [policy];
+  const perScope: Link[][] = [];
+  for (const sourceOpts of scopes) {
+    const links = direction === 'out'
+      ? await ctx.engine.getLinks(slug, sourceOpts)
+      : await ctx.engine.getBacklinks(slug, sourceOpts);
     // #4224: flag-gated identity union — merge edges from the page's identity
     // co-members (entity_identity.union config, default off; pure no-op then).
     // Member visibility never widens past the caller's grant. The scalar base
     // scope (when present) pins group resolution to the page actually read.
-    const unioned = await unionLinksAcrossIdentity(ctx.engine, p.slug as string, links, 'out', {
+    // The engine authorizes the base and every member read before merging;
+    // each union contributor must preserve this policy because no final filter runs.
+    perScope.push(await unionLinksAcrossIdentity(ctx.engine, slug, links, direction, {
       sourceId: sourceOpts.sourceId,
       allowedSources: sourceOpts.sourceIds,
       excludePrivate: sourceOpts.excludePrivate,
-    });
-    // The engine authorizes the base and every member read before merging;
-    // each union contributor must preserve this policy because no final filter runs.
-    return unioned;
+    }));
+  }
+  if (perScope.length === 1) {
+    if (perScope[0].length === 0) await hintScopedLinkMiss(ctx, p, requested, policy, direction);
+    return perScope[0];
+  }
+  const seen = new Set<string>();
+  const merged = perScope.flat().filter((l) => {
+    const key = linkIdentity(l);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  if (merged.length === 0) await hintScopedLinkMiss(ctx, p, requested, policy, direction);
+  return merged;
+}
+
+/**
+ * #5827: local scoped-miss hint. A trusted local unqualified link read that
+ * found nothing, for a slug that has links in a source outside the read scope
+ * (a non-federated source, or any other source when the read was pinned),
+ * names the scope it read, the per-source link counts and the exact rerun
+ * command on stderr. stdout keeps the empty result; quiet under --json; never
+ * for remote callers (no cross-source existence oracle).
+ */
+async function hintScopedLinkMiss(
+  ctx: OperationContext,
+  p: Record<string, unknown>,
+  requested: string | undefined,
+  policy: PageReadPolicy,
+  direction: 'out' | 'in',
+): Promise<void> {
+  if (ctx.remote !== false || requested !== undefined || p.json === true) return;
+  const readSources = policy.sourceIds ?? (policy.sourceId !== undefined ? [policy.sourceId] : undefined);
+  if (readSources === undefined) return;
+  const slug = p.slug as string;
+  try {
+    const rows = await ctx.engine.executeRaw<{ source_id: string }>(
+      `SELECT DISTINCT p.source_id FROM pages p JOIN sources s ON s.id = p.source_id
+       WHERE p.slug = $1 AND p.deleted_at IS NULL AND s.archived IS NOT TRUE
+       ORDER BY p.source_id`,
+      [slug],
+    );
+    const counts: Array<{ sourceId: string; count: number }> = [];
+    for (const { source_id: sourceId } of rows) {
+      if (readSources.includes(sourceId)) continue;
+      const opts = { sourceId, excludePrivate: policy.excludePrivate };
+      const links = direction === 'out' ? await ctx.engine.getLinks(slug, opts) : await ctx.engine.getBacklinks(slug, opts);
+      if (links.length > 0) counts.push({ sourceId, count: links.length });
+    }
+    if (counts.length === 0) return;
+    const command = direction === 'out' ? 'links' : 'backlinks';
+    const label = readSources.length === 1 ? `source ${readSources[0]}` : `sources ${readSources.join(', ')}`;
+    ctx.logger.warn(
+      `[gbrain] ${command}: no ${direction === 'out' ? 'outgoing' : 'incoming'} links for ${slug} in ${label}; ` +
+      `found ${counts.map((c) => `${c.count} in source ${c.sourceId}`).join(', ')}. Rerun with:\n` +
+      counts.map((c) => `  gbrain ${command} ${slug} --source ${c.sourceId}`).join('\n'),
+    );
+  } catch { /* the hint is best-effort; the empty result stands */ }
+}
+
+const get_links: Operation = {
+  name: 'get_links',
+  outputRedaction: 'retrieval',
+  description: 'List outgoing links from a page',
+  params: {
+    slug: { type: 'string', required: true, description: 'Slug of the page whose outgoing links to list.' },
+    source_id: LINK_SOURCE_ID_PARAM,
+    all_sources: LINK_ALL_SOURCES_PARAM,
   },
+  handler: async (ctx, p) => readLinkEdges(ctx, p, 'get_links', 'out'),
   scope: 'read',
+  cliHints: { name: 'links', aliases: ['get_links'], positional: ['slug'] },
 };
 
 const get_backlinks: Operation = {
   name: 'get_backlinks',
+  outputRedaction: 'retrieval',
   description: 'List incoming links to a page',
   params: {
     slug: { type: 'string', required: true, description: 'Slug of the page whose incoming links to list.' },
+    source_id: LINK_SOURCE_ID_PARAM,
+    all_sources: LINK_ALL_SOURCES_PARAM,
   },
-  handler: async (ctx, p) => {
-    // #2200: linkReadScopeOpts — federated grant + untrusted remote scalar
-    // (promoted to sourceIds[]) reach the engine's all-endpoint branch.
-    const sourceOpts = await readPolicyOpts(ctx, linkReadScopeOpts(ctx));
-    const links = await ctx.engine.getBacklinks(p.slug as string, sourceOpts);
-    // #4224: flag-gated identity union (see get_links).
-    const unioned = await unionLinksAcrossIdentity(ctx.engine, p.slug as string, links, 'in', {
-      sourceId: sourceOpts.sourceId,
-      allowedSources: sourceOpts.sourceIds,
-      excludePrivate: sourceOpts.excludePrivate,
-    });
-    // Base and member reads enforce the policy before merging (see get_links).
-    return unioned;
-  },
+  handler: async (ctx, p) => readLinkEdges(ctx, p, 'get_backlinks', 'in'),
   scope: 'read',
   cliHints: { name: 'backlinks', positional: ['slug'] },
 };
 
 const list_link_sources: Operation = {
   name: 'list_link_sources',
+  outputRedaction: 'no_stored_text',
   // v114 (#1941): the read-side counterpart to link-add/link-rm. Since
   // link_source is now an open kebab provenance (no allowlist), this is how an
   // agent discovers which provenances a brain actually carries.
@@ -246,12 +371,15 @@ const DEFAULT_TRAVERSE_DEPTH = 5;
 
 const traverse_graph: Operation = {
   name: 'traverse_graph',
+  outputRedaction: 'retrieval',
   description: `Traverse link graph from a page. Remote callers default to bidirectional edges (GraphPath[]) at depth ${REMOTE_BIDIRECTIONAL_DEFAULT_DEPTH} (pass depth explicitly for deeper walks); trusted local no-filter callers keep the legacy node shape at depth ${DEFAULT_TRAVERSE_DEPTH}.`,
   params: {
     slug: { type: 'string', required: true, description: "Slug of the page to start the traversal from, e.g. 'people/alice-example'. This is the start-node param — there is no `start` or `root` param." },
     depth: { type: 'number', description: `Max traversal depth (capped at ${TRAVERSE_DEPTH_CAP}). Default ${DEFAULT_TRAVERSE_DEPTH}, except a remote call that lets direction default to 'both' uses ${REMOTE_BIDIRECTIONAL_DEFAULT_DEPTH} (bidirectional path enumeration is combinatorial on hubs); an explicit depth is always honored up to the cap.` },
     link_type: { type: 'string', description: 'Filter to one link type (per-edge filter, traversal only follows matching edges)' },
     direction: { type: 'string', enum: ['in', 'out', 'both'], description: "Traversal direction ('in', 'out', or 'both'). Remote callers default to 'both'; trusted local no-filter callers keep the legacy outgoing-node output." },
+    source_id: LINK_SOURCE_ID_PARAM,
+    all_sources: LINK_ALL_SOURCES_PARAM,
   },
   handler: async (ctx, p) => {
     const slug = p.slug as string;
@@ -278,7 +406,10 @@ const traverse_graph: Operation = {
     // walks stay within the auth'd client's accessible sources. Pre-fix,
     // traverseGraph / traversePaths happily followed edges into pages from
     // foreign sources, leaking topology + page metadata via the graph op.
-    const scope = await readPolicyOpts(ctx);
+    // #5827: the walk scopes every visited page, so a federated `sourceIds[]`
+    // (no-grant remote, or a trusted local unqualified read) walks the
+    // federated set in one query; nodes and edges carry their source ids.
+    const { policy: scope } = await resolveLinkReadScope(ctx, p, 'traverse_graph');
     // Backward compat: trusted local no-filter callers keep the legacy
     // GraphNode[] shape used by `gbrain graph`. Remote MCP callers need the
     // natural no-filter invocation to surface inbound-only typed edges too,

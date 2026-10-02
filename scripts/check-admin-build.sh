@@ -30,6 +30,10 @@ cd admin
 # Idempotent install — bun is fast enough on no-op (~50ms).
 bun install --silent >/dev/null 2>&1 || bun install
 
-# Build runs `tsc -b && vite build`. Output to admin/dist/. Exit non-zero
-# on TS error, missing symbol, or Vite bundling error.
-bun run build
+# Build runs `vite build` into a throwaway directory. Exit non-zero on TS
+# error, missing symbol, or Vite bundling error. Never into the committed
+# admin/dist/: vite empties its outDir first, so a parallel verify check that
+# reads tracked files (check:privacy) would find them missing mid-build.
+out=$(mktemp -d "${TMPDIR:-/tmp}/gbrain-admin-build.XXXXXX")
+trap 'rm -rf "$out"' EXIT
+bun run build --outDir "$out" --emptyOutDir

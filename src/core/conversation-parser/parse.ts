@@ -759,6 +759,24 @@ export function parseConversation(
   const diag = { unrecognized_headings: [] as string[], date_fallback_count: 0 };
   const messages = applyPattern(body, top.entry, dateCtx, diag);
 
+  // Structure gate (N12-1): enough turns with every speaker distinct is a
+  // list of labels, not a conversation.
+  const minTurns = top.entry.repeat_speaker_min_turns;
+  if (
+    minTurns !== undefined &&
+    messages.length >= minTurns &&
+    new Set(messages.map((m) => m.speaker)).size === messages.length
+  ) {
+    return {
+      messages: [],
+      phase: 'no_match',
+      patterns_scored: patternsScored,
+      unmatched_line_count: opts.diagnostic
+        ? body.split(/\r?\n/).filter((l) => l.trim().length > 0).length
+        : undefined,
+    };
+  }
+
   // Timezone warning surface (D19).
   let timezone_warning: string | undefined;
   if (

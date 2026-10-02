@@ -12,6 +12,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import {
+  formatSensitivityDrop,
   loadSensitivityConfig,
   scanSensitive,
   SensitivityScanConfigError,
@@ -286,5 +287,20 @@ describe('secret-scan owns the jwt/bearer shapes — no double report with the P
   test('a short bearer token (below the secret-scan floor) still reaches pii:bearer — coverage is not lost', () => {
     const findings = scanSensitive('Bearer abcdef1234', makeConfig(ws()));
     expect(findings.map((f) => f.family)).toEqual(['pii:bearer']);
+  });
+});
+
+describe('DX-7: a dropped entry gets one content-free diagnostic line', () => {
+  test('names reason, pattern, fingerprint and the allowlist recovery, never the value', () => {
+    const token = ['gh', 'p_'].join('') + 'Q7'.repeat(18);
+    const [finding] = scanSensitive(`notes ${token} end`, loadSensitivityConfig({ blocklist: '' }));
+    const line = formatSensitivityDrop({ slug: 'concepts/leaky', ...finding! }, '/work/space');
+    expect(line).toContain('concepts/leaky');
+    expect(line).toContain('reason: sensitivity_scan');
+    expect(line).toContain('pattern: secret:github_token');
+    expect(line).toContain(`fingerprint: ${finding!.fingerprint}`);
+    expect(line).toContain(`add the line "${finding!.fingerprint}" to ${join('/work/space', SCAN_ALLOW_FILENAME)}`);
+    expect(line).not.toContain(token);
+    expect(line).not.toContain('\n');
   });
 });

@@ -41,7 +41,7 @@ import {
 import { canonicalOAuthResource } from '../core/oauth-grants.ts';
 import type { McpSurface } from '../mcp/surface.ts';
 import { bindResolveIpcForServe } from '../mcp/resolve-ipc-binding.ts';
-import { createPersistenceIpcProvider } from '../core/persistence/provider.ts';
+import { createPersistenceIpcProvider, residentPersistenceConfig } from '../core/persistence/provider.ts';
 import { resolveMcpStdioSourceScope } from '../mcp/server.ts';
 import { loadConfig, type GBrainConfig } from '../core/config.ts';
 import { buildError } from '../core/errors.ts';
@@ -880,7 +880,7 @@ ${bootstrapFromEnv
   const ipcBinding = await bindResolveIpcForServe(
     engine,
     (await resolveMcpStdioSourceScope(engine)).sourceId,
-    await createPersistenceIpcProvider(engine, config),
+    await createPersistenceIpcProvider(engine, residentPersistenceConfig(config) ?? config),
   );
   if (ipcBinding.socketPath) {
     console.error(`  Resolve IPC: ${ipcBinding.socketPath}`);

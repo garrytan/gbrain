@@ -9,12 +9,12 @@
  * them.
  * Fails when: a retired phrase in a scanned location stops failing, an exempt
  * location starts failing, or the failure loses its FAIL / Why / Fix / See
- * lines or the file:line.
+ * lines or the file:line, or the script stops parsing under macOS /bin/bash 3.2.
  * Seam: GBRAIN_GUARD_ROOT pointed at temp trees.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -89,5 +89,29 @@ describe('check-retired-phrases.sh', () => {
     ]) write(rel, 'the MIGRATIONS array; a new method lands in BOTH engines\n');
     const r = run();
     expect(r.status).toBe(0);
+  });
+});
+
+// macOS ships /bin/bash 3.2, which quote-scans a heredoc inside $(...) and so
+// could not parse the retired table's prose (an apostrophe, odd backticks):
+// `bun run verify` failed this guard and guard-self-test on every Mac. Run the
+// guard under /bin/bash itself so a Mac catches it, and pin the table read
+// textually so Linux CI (bash 5 parses either form) catches it too.
+describe('check-retired-phrases.sh under /bin/bash (3.2 on macOS)', () => {
+  it('parses', () => {
+    const r = spawnSync('/bin/bash', ['-n', SCRIPT], { encoding: 'utf8' });
+    expect(r.stderr).toBe('');
+    expect(r.status).toBe(0);
+  });
+
+  it('still flags a retired phrase', () => {
+    write('docs/guides/x.md', '# Guide\n\nSee the MIGRATIONS array.\n');
+    const r = spawnSync('/bin/bash', [SCRIPT], { encoding: 'utf8', env: { ...process.env, GBRAIN_GUARD_ROOT: root } });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('FAIL: docs/guides/x.md:3 retired phrase "MIGRATIONS array"');
+  });
+
+  it('reads the retired table without a heredoc inside $(...)', () => {
+    expect(readFileSync(SCRIPT, 'utf8')).not.toMatch(/\$\(\s*cat\s+<</);
   });
 });

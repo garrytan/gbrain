@@ -3,6 +3,7 @@ import type { WithdrawalTarget } from '../facts/withdrawal-discovery.ts';
 
 export type EffectKind = 'git' | 'embedding' | 'withdrawal-mirror' | 'facts-backstop';
 export interface ParkedTarget { slug?: string; error_code: string }
+export interface SkippedTarget { slug: string; reason: 'metafile' | 'file_database_drift' }
 /** A Git or withdrawal target parks after this many consecutive execution failures. */
 export const PARK_AFTER_FAILURES = 5;
 export interface EffectRecovery {
@@ -39,7 +40,9 @@ export interface PersistenceEffect {
     /** Parked scan targets an explicit retry authorized for one more attempt. */
     retry_slugs?: string[];
     /** Explicit retry authorizations granted to this effect's parked targets. */
-    retried?: number };
+    retried?: number;
+    /** #5396: scan targets passed without a file publication (a sync-skip metafile, or a file with an uncoordinated local edit). */
+    skipped?: SkippedTarget[] };
   state: 'queued' | 'running' | 'committed' | 'failed';
   execution_token: string | null;
   claim_expires_at: string | Date | null;

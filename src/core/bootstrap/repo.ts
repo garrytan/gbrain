@@ -32,13 +32,15 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { configDir } from '../config.ts';
 import { invalidateBackupStatus } from '../backup/status-file.ts';
 import { realpathOrResolve } from '../path-confine.ts';
 import { defaultRunner, isProxyBlocked403, parseGithubOwnerRepo, type ExecRunner } from '../repo-visibility.ts';
 import { detectExecutionEnvironment } from '../execution-env.ts';
-import { loadWorkspaceAllowlist, scanFiles, SCAN_ALLOW_FILENAME } from '../secret-scan.ts';
+import { loadWorkspaceAllowlist, scanFiles, SCAN_ALLOW_FILENAME, type SecretFinding } from '../secret-scan.ts';
+import { SECRET_SCAN_REFUSAL_DOCS } from '../workspace-push.ts';
+import { shellQuote } from '../mcp-registration.ts';
 import { GITHUB_URL_PLACEHOLDER } from './assets.ts';
 import {
   guardReceiptOverwrite,
@@ -415,12 +417,16 @@ function secretScanOrThrow(workspaceDir: string, relFiles: string[]): void {
     workspaceRoot: workspaceDir,
   });
   if (findings.length > 0) {
-    const sample = findings.slice(0, 5).map((f) => `${f.file}:${f.line} [${f.pattern}]`).join('; ');
+    const sample = findings.slice(0, 5).map((f) => {
+      const { since } = f as SecretFinding & { since?: string };
+      return `${f.file}:${f.line} [${f.pattern}${since ? ` since gbrain v${since.replace(/^v/, '')}` : ''}] ${f.fingerprint}`;
+    }).join('; ');
     throw new BootstrapError(
       'SECRET_SCAN_BLOCKED',
       `secret scan found ${findings.length} finding(s) before the first push: ${sample}` +
         `${findings.length > 5 ? '; …' : ''} — nothing was committed or pushed. ` +
-        `Remove the secret(s), or allowlist a false positive in ${SCAN_ALLOW_FILENAME}, then re-run \`gbrain bootstrap repo\`.`,
+        'Remove a real credential first; allowlist only a reviewed false positive by appending its fingerprint to ' +
+        `${shellQuote(resolve(workspaceDir, SCAN_ALLOW_FILENAME))} (${SECRET_SCAN_REFUSAL_DOCS}), then re-run \`gbrain bootstrap repo\`.`,
       { details: { findings: findings.length } },
     );
   }

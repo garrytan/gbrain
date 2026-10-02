@@ -23,7 +23,7 @@ import { getWriteRequest } from '../persistence/journal.ts';
 import { initializeLocalPersistence, requestPrincipalForContext } from '../persistence/page-mutations.ts';
 import { lookupEmbeddingPrice, estimateCostFromChars } from '../embedding-pricing.ts';
 
-export const REPAIR_KINDS = ['timeline', 'visibility', 'safe-chunks', 'contextual-mode', 'connector-checkpoints', 'request-indexes', 'connector-fences', 'orphan-bindings', 'embedding-effects'] as const;
+export const REPAIR_KINDS = ['timeline', 'visibility', 'safe-chunks', 'contextual-mode', 'connector-checkpoints', 'request-indexes', 'connector-fences', 'orphan-bindings', 'embedding-effects', 'google-file-modes', 'stale-atoms', 'extractor-facts'] as const;
 export type RepairKind = typeof REPAIR_KINDS[number];
 
 export interface RepairScope { brain_id: string; source_ids: string[] }
@@ -38,10 +38,21 @@ export interface RepairItem {
 }
 
 export interface RepairPlan {
+  /** Operator warnings the preview prints before its items (for example an older writer that can undo the repair). */
+  warnings?: string[];
   items: RepairItem[];
   /** Counts of rows the kind keeps and reports instead of repairing. */
   residuals: Record<string, number>;
+  /** Preview-bound kinds: the `previewHash` an apply must pass back with `--expect`. */
+  preview_hash?: string;
+  /** Preview-bound kinds: every previewed item with its class, all of which the hash covers. */
+  listing?: RepairListing[];
 }
+
+export interface RepairListing { item: string; class: string; detail?: string }
+
+/** What the run was asked to do; preview-bound (explicit-only) kinds read `expect` and `includeAmbiguous`. */
+export interface RepairPlanOptions { apply: boolean; expect?: string; includeAmbiguous?: boolean }
 
 export interface RepairHandler {
   kind: RepairKind;
@@ -50,7 +61,7 @@ export interface RepairHandler {
   /** False for kinds whose items are bookkeeping rows, not pages: no embedding cost. */
   embeds?: boolean;
   /** Pending items after `after`, in cursor order. */
-  plan(engine: BrainEngine, scope: RepairScope, after: RepairCursor | null): Promise<RepairPlan>;
+  plan(engine: BrainEngine, scope: RepairScope, after: RepairCursor | null, opts?: RepairPlanOptions): Promise<RepairPlan>;
   /**
    * Apply one item; `false` when it no longer needs repair. `embed` is false
    * under --no-embed. `runId` identifies this repair run and survives a resume.
@@ -65,6 +76,7 @@ export interface RepairItemOutcome { applied: boolean; outcome: string; reason?:
 export interface RepairResult {
   kind: RepairKind;
   mode: 'dry_run' | 'apply';
+  warnings?: string[];
   scope: RepairScope;
   affected: number;
   sample: string[];
@@ -77,6 +89,8 @@ export interface RepairResult {
   complete: boolean;
   stopped?: { reason: string; message: string };
   apply_command: string;
+  /** Preview-bound kinds' dry run: every item the preview hash covers. */
+  listing?: RepairListing[];
   /** Per-outcome counts and the first items, for kinds that name outcomes. */
   outcomes?: Record<string, number>;
   outcome_items?: Array<{ item: string; outcome: string; reason?: string }>;
@@ -95,25 +109,26 @@ export async function resolveRepairScope(engine: BrainEngine, source?: string): 
   return { brain_id: brain?.brain_id ?? 'host', source_ids: rows.map(row => row.id) };
 }
 
-function fingerprint(kind: RepairKind, scope: RepairScope): string {
-  return digest(['repair-v1', kind, scope.brain_id, scope.source_ids]);
+/** A preview-bound apply keeps its cursor under its approval hash, so a new preview never resumes an older set's cursor. */
+function fingerprint(kind: RepairKind, scope: RepairScope, approval?: string): string {
+  return digest(['repair-v1', kind, scope.brain_id, scope.source_ids, ...(approval ? [approval] : [])]);
 }
 
-async function readCursor(engine: BrainEngine, kind: RepairKind, scope: RepairScope): Promise<{ cursor: RepairCursor | null; runId: string | null }> {
+async function readCursor(engine: BrainEngine, kind: RepairKind, scope: RepairScope, approval?: string): Promise<{ cursor: RepairCursor | null; runId: string | null }> {
   const [row] = await engine.executeRaw<{ completed_keys: Array<{ cursor?: RepairCursor | null; run_id?: string }> }>(
-    "SELECT completed_keys FROM op_checkpoints WHERE op='repair' AND fingerprint=$1", [fingerprint(kind, scope)]);
+    "SELECT completed_keys FROM op_checkpoints WHERE op='repair' AND fingerprint=$1", [fingerprint(kind, scope, approval)]);
   return { cursor: row?.completed_keys[0]?.cursor ?? null, runId: row?.completed_keys[0]?.run_id ?? null };
 }
 
 /** Stores the run's cursor and id; with neither, the run is finished and the row is cleared. */
-async function writeCursor(engine: BrainEngine, kind: RepairKind, scope: RepairScope, cursor: RepairCursor | null, runId: string | null): Promise<void> {
+async function writeCursor(engine: BrainEngine, kind: RepairKind, scope: RepairScope, cursor: RepairCursor | null, runId: string | null, approval?: string): Promise<void> {
   if (!cursor && !runId) {
-    await engine.executeRaw("DELETE FROM op_checkpoints WHERE op='repair' AND fingerprint=$1", [fingerprint(kind, scope)]);
+    await engine.executeRaw("DELETE FROM op_checkpoints WHERE op='repair' AND fingerprint=$1", [fingerprint(kind, scope, approval)]);
     return;
   }
   await engine.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES('repair',$1,$2::text::jsonb)
     ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=EXCLUDED.completed_keys,updated_at=now()`,
-  [fingerprint(kind, scope), JSON.stringify([{ kind, scope, cursor, run_id: runId }])]);
+  [fingerprint(kind, scope, approval), JSON.stringify([{ kind, scope, cursor, run_id: runId }])]);
 }
 
 /** Cumulative journal counters this repair's admissions consume, with their 90% stop line. */
@@ -159,11 +174,19 @@ function writerHeld(error: unknown): error is OperationError {
   return error instanceof OperationError && ['owner_unavailable', 'writer_lock_unavailable', 'writer_busy'].includes(error.code);
 }
 
+/**
+ * `explicit`: the operator named this kind on the command line. An
+ * explicit-only kind (registry `explicit_only`) refuses without it, so no
+ * `--all` loop or supplied remediation step can run one.
+ */
 export async function runRepair(ctx: OperationContext, handler: RepairHandler, scope: RepairScope,
-  opts: { apply: boolean; limit?: number; embeddingModel?: string; sourceFlag?: string; embed?: boolean; applyArgs?: string[] }): Promise<RepairResult> {
+  opts: { apply: boolean; limit?: number; embeddingModel?: string; sourceFlag?: string; embed?: boolean; applyArgs?: string[];
+    explicit?: boolean; expect?: string; includeAmbiguous?: boolean }): Promise<RepairResult> {
+  const { repairSpec, explicitKindRequired } = await import('./registry.ts');
+  if (repairSpec(handler.kind)?.explicit_only && opts.explicit !== true) throw explicitKindRequired(handler.kind);
   if (opts.apply) await initializeLocalPersistence(ctx);
-  const { cursor: resumed, runId: storedRunId } = await readCursor(ctx.engine, handler.kind, scope);
-  const plan = await handler.plan(ctx.engine, scope, resumed);
+  const { cursor: resumed, runId: storedRunId } = await readCursor(ctx.engine, handler.kind, scope, opts.apply ? opts.expect : undefined);
+  const plan = await handler.plan(ctx.engine, scope, resumed, { apply: opts.apply, expect: opts.expect, includeAmbiguous: opts.includeAmbiguous });
   const pending = opts.limit !== undefined ? plan.items.slice(0, opts.limit) : plan.items;
   const counters = await capacity(ctx);
   const admits = (handler.publication ?? 'coordinated') === 'coordinated' ? pending.length : 0;
@@ -173,16 +196,18 @@ export async function runRepair(ctx: OperationContext, handler: RepairHandler, s
     cost: { lifetime_ids: admits, receipt_bytes: admits * RECEIPT_BYTES, embedding_pages: handler.embeds === false ? 0 : pending.length,
       embedding_usd: embeddingUsd(pending.reduce((sum, item) => sum + item.chars, 0), opts.embeddingModel) },
     capacity: counters.map(({ scope: key, resource, used, limit, stop_at }) => ({ scope: key, resource, used, limit, stop_at })),
-    resumed_from: resumed, applied: 0, skipped: 0, complete: false,
-    apply_command: `gbrain repair ${handler.kind}${opts.sourceFlag ? ` --source ${opts.sourceFlag}` : ''}${(opts.applyArgs ?? []).map(arg => ` ${arg}`).join('')} --apply`,
+    resumed_from: resumed, applied: 0, skipped: 0, complete: false, ...(plan.warnings?.length ? { warnings: plan.warnings } : {}),
+    apply_command: `gbrain repair ${handler.kind}${opts.sourceFlag ? ` --source ${opts.sourceFlag}` : ''}${(opts.applyArgs ?? []).map(arg => ` ${arg}`).join('')}`
+      + `${opts.includeAmbiguous ? ' --include-ambiguous' : ''} --apply${plan.preview_hash ? ` --expect ${plan.preview_hash}` : ''}`,
   };
   if (!opts.apply) {
+    if (plan.listing) result.listing = plan.listing;
     result.complete = pending.length === plan.items.length;
     return result;
   }
   // A resumed run keeps its id, so work it authorized is replayed, not authorized twice.
   const runId = storedRunId ?? randomUUID();
-  if (!storedRunId) await writeCursor(ctx.engine, handler.kind, scope, resumed, runId);
+  if (!storedRunId) await writeCursor(ctx.engine, handler.kind, scope, resumed, runId, opts.expect);
   for (const [index, item] of pending.entries()) {
     const remaining = pending.length - index;
     const full = admits ? (await capacity(ctx)).find(c => c.used + (c.resource === 'lifetime_ids' ? 1 : RECEIPT_BYTES) > c.stop_at) : undefined;
@@ -216,10 +241,10 @@ export async function runRepair(ctx: OperationContext, handler: RepairHandler, s
         + `Inspect it with: gbrain sources writer status ${item.source_id} — then rerun \`${result.apply_command}\` to resume.` };
       return result;
     }
-    await writeCursor(ctx.engine, handler.kind, scope, item.cursor, runId);
+    await writeCursor(ctx.engine, handler.kind, scope, item.cursor, runId, opts.expect);
   }
   result.complete = pending.length === plan.items.length;
-  if (result.complete) await writeCursor(ctx.engine, handler.kind, scope, null, null);
+  if (result.complete) await writeCursor(ctx.engine, handler.kind, scope, null, null, opts.expect);
   return result;
 }
 

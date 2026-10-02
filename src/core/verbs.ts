@@ -60,6 +60,7 @@ const PROVENANCE_MAX = 500;
 
 const remember: Operation = {
   name: 'remember',
+  outputRedaction: 'no_stored_text',
   description:
     'MEMORY VERB (v1): save one fact to durable agent memory — the protocol write verb. ' +
     'provenance is REQUIRED (free text, e.g. "conversation 2026-06-12", "user said in chat", "import: notes.md"). ' +
@@ -86,6 +87,11 @@ const remember: Operation = {
       type: 'string',
       description:
         'Person/company/project this fact is about (name or slug; canonicalized server-side). Set it whenever the fact has a subject — entity-scoped recall misses unattributed facts.',
+    },
+    infer_entity: {
+      type: 'boolean',
+      description:
+        'Default true. When `entity` is omitted, link the fact to the one entity page the text names exactly (response `entity_inferred: "mention"`); pass false to save it unattributed.',
     },
     kind: {
       type: 'string',
@@ -165,6 +171,7 @@ const remember: Operation = {
 
 const entity: Operation = {
   name: 'entity',
+  outputRedaction: 'retrieval',
   description:
     'MEMORY VERB (v1): inspect ONE known person/company/project card — zero LLM calls, sub-100ms. ' +
     'Resolution: alias > exact title > slug-suffix; ties break on most-recently-touched. ' +
@@ -219,6 +226,7 @@ const SYNTHESIS_FAILURE_CODES: Record<string, string> = {
 
 const synthesize: Operation = {
   name: 'synthesize',
+  outputRedaction: 'retrieval',
   description:
     '[EXPENSIVE / SLOW — makes LLM calls, seconds-to-minutes latency, costs money] ' +
     'MEMORY VERB (v1): answer a broad question using cross-page LLM reasoning with citations and gap analysis. ' +
@@ -341,6 +349,7 @@ const synthesize: Operation = {
 
 const forget: Operation = {
   name: 'forget',
+  outputRedaction: 'no_stored_text',
   description:
     'MEMORY VERB (v1): expire a remembered fact by id — the protocol delete verb. ' +
     '`id` is the opaque string id returned by remember and recall (facts[].fact_id) — never a page slug. ' +
@@ -484,6 +493,10 @@ export const RESPONSE_SCHEMAS: Record<VerbName, Record<string, unknown>> = {
       entity_slug: { type: ['string', 'null'] },
       valid_until: { type: ['string', 'null'], description: 'ISO 8601 or null (never expires).' },
       degraded_dedup: { type: 'boolean', description: 'Present (true) when no embedding provider — near-duplicates may insert.' },
+      entity_inferred: { type: 'string', enum: ['mention'], description: 'Present when `entity` was omitted and the subject was inferred from an exact mention.' },
+      warnings: { type: 'array', items: { type: 'string', enum: ['NO_ENTITY', 'ENTITY_LINK_FAILED'] },
+        description: 'NO_ENTITY: saved unattributed. ENTITY_LINK_FAILED: an inferred entity could not be linked; saved unattributed.' },
+      hint: { type: 'string', description: 'Present with warnings: how to attribute the fact (pass `entity`).' },
       write_request: WRITE_RECEIPT_SCHEMA,
     },
   },

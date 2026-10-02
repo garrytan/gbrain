@@ -132,7 +132,7 @@ writing or reviewing an operation, consult `src/core/operations.ts` for the cont
   cumulative across `--resume`; a paid step that would exceed it is not
   started while free steps still run. Without `--include-repairs`, repair
   steps are listed as skipped. `--json` classifies each finding `cleared`,
-  `pending`, `consent_required`, `operator_required` or `unsupported`.
+  `pending`, `consent_required`, `operator_required`, `explicit_kind_required` or `unsupported`.
   Stale extraction uses source-scoped database pages, including DB-only
   pages; it does not require a repository sync first. Empty brains (no
   entity pages) or unconfigured embedding keys hit a `max_reachable_score`

@@ -41,6 +41,7 @@ import { managedPersistenceEnabled } from './persistence/ownership.ts';
 import { existsSync, mkdirSync, renameSync, rmSync, lstatSync, realpathSync } from 'fs';
 import { join, dirname, basename, resolve as resolvePath } from 'path';
 import { isPathContained, msysToNativePath } from './path-confine.ts';
+import { mkdirPrivate } from './atomic-write.ts';
 import { randomBytes } from 'crypto';
 import type { BrainEngine } from './engine.ts';
 import {
@@ -650,7 +651,7 @@ export async function addSource(
     // vault; config carries only the account POINTER (mirrors gh_token_env
     // storing an env NAME — check:source-config-leak stays trivially green).
     const finalPath = opts.google.dir;
-    mkdirSync(finalPath, { recursive: true });
+    mkdirPrivate(finalPath);
     const config: Record<string, unknown> = {
       kind: 'google',
       g_account: opts.google.account,

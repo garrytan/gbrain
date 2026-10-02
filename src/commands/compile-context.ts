@@ -32,7 +32,7 @@ import { join, relative } from 'path';
 import type { BrainEngine } from '../core/engine.ts';
 import { atomicWriteTextFile } from '../core/bootstrap/atomic-write.ts';
 import { compileView, type CompileViewMeta } from '../core/context/compile-view.ts';
-import { loadSensitivityConfig } from '../core/context/sensitivity-scan.ts';
+import { formatSensitivityDrop, loadSensitivityConfig } from '../core/context/sensitivity-scan.ts';
 import { resolveSourceId, ALL_SOURCES } from '../core/source-resolver.ts';
 
 // ── Constants ───────────────────────────────────────────────────────────────
@@ -274,9 +274,7 @@ export async function runCompileContext(
 
     // Drops are always reported: slug + family + fingerprint, never the text.
     for (const d of meta.scan_drops) {
-      process.stderr.write(
-        `compile-context: dropped ${d.slug} (${d.family} ${d.fingerprint})\n`,
-      );
+      process.stderr.write(`compile-context: ${formatSensitivityDrop(d, cwd)}\n`);
     }
 
     const outPath = flags.out ?? defaultOutPath(flags.target, cwd);

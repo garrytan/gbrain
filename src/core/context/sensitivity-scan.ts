@@ -265,3 +265,19 @@ export function scanSensitive(
 
   return out;
 }
+
+/**
+ * The one diagnostic line for an entry dropped by the scan: reason, family,
+ * fingerprint and the recovery hint. Content-free by construction (the slug
+ * is the page id the caller already reports; the value is never passed in).
+ */
+export function formatSensitivityDrop(
+  drop: { slug: string; family: string; fingerprint: string },
+  workspaceRoot: string,
+): string {
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
+  const allowPath = join(workspaceRoot, SCAN_ALLOW_FILENAME);
+  return `omitted ${drop.slug} from the compiled context (reason: sensitivity_scan, pattern: ${drop.family}, ` +
+    `fingerprint: ${drop.fingerprint}). Remove the value from the page; if it is a reviewed false positive, ` +
+    `add the line "${drop.fingerprint}" to ${allowPath}.`;
+}

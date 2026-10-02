@@ -77,6 +77,17 @@ suppresses writes for that turn, including when standing capture is enabled.
 > connection test, use only a harmless synthetic `visibility: "world"` fixture
 > with the user's test authorization, retain its ID, and withdraw it afterward.
 >
+> **`<REDACTED:pattern>` in a result** (for example `<REDACTED:url_credentials>`
+> or `<REDACTED:high_entropy_assignment>`) means the brain holds a
+> credential-shaped value there and withheld it from this response; the stored
+> page is unchanged. Tell the user which kind of value was withheld and that it
+> is readable on the brain host. Do not retry other operations to recover it,
+> and do not echo a guess. A credential the user asked you to `remember` is
+> withheld from remote recall by design: every MCP caller, including stdio, and
+> a thin CLI connected to MCP is remote, so only `gbrain recall` run on the
+> brain host shows it as written. Docs:
+> `docs/guides/write-refusals.md#secret-scan-refusals-and-redaction`.
+>
 > **Keyless brains:** when `extract_facts` returns `skipped:
 > extraction_unavailable`, YOU are the extractor — pull the facts from the turn
 > yourself and write each one via `remember` with `kind` set (event | preference

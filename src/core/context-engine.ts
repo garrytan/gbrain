@@ -981,14 +981,14 @@ export function createGBrainContextEngine(ctx: {
     try {
       const hb = await import('./context/hook-heartbeat.ts');
       if (!deadlineHit() && (await hb.memorableGateAllowed(cfg)).allowed) {
-        // Entropy parity with the hook lane [red-team]: the segment file was
-        // vendor-scanned only — its rendering feeds the Cathedral-5 ledger
-        // hash and cannot change — but the relay child derives its egress
-        // task line from that text. Re-scan with highEntropy and REFUSE the
-        // relay when it finds anything the vendor pass missed (fail-closed;
-        // the next compaction window re-evaluates).
+        // Entropy parity with the hook lane [red-team]: the segment file was vendor-scanned
+        // only (its rendering feeds the Cathedral-5 ledger hash), but the relay child derives
+        // its egress task line from that text. Re-scan with highEntropy and REFUSE the relay on
+        // any hit, logged content-free (fail-closed; the next compaction window re-evaluates).
         const scan = await import('./secret-scan.ts');
-        if (scan.redactFindings(rendered.text, { highEntropy: true }).redactions.length > 0) {
+        const [hit] = scan.redactFindings(rendered.text, { highEntropy: true }).redactions;
+        if (hit) {
+          await hb.writeHeartbeat(hb.relayRefusalHeartbeat(hit), { trim: false });
           throw new Error('entropy_hit'); // caught below — receipt+relay skipped, checkpoint unaffected
         }
         // Same span rule as the hook lane: windowTurns is a suffix of

@@ -57,13 +57,15 @@ import { parseLlmJson } from '../llm-json.ts';
 import type { BrainEngine } from '../engine.ts';
 import { dimsProviderOptions } from './dims.ts';
 import { hasAnthropicKey, stashGatewayAnthropicKeyFromEnv } from './anthropic-key.ts';
-import { AIConfigError, AITransientError, isStructuredOutputRejection, normalizeAIError } from './errors.ts';
+import { AIConfigError, AITransientError, isStructuredOutputRejection, isUnbilledEmbeddingRejection, normalizeAIError } from './errors.ts';
 import { isEmbeddingZeroNormError, screenAlignedEmbeddings, screenEmbeddings, sendableEmbeddingInputs } from './embedding-guard.ts';
 import { getProviderCapabilities } from './capabilities.ts';
 import { runGuardrails, hasGuardrails, type GuardrailHook } from '../guardrails.ts';
 import { loadConfig } from '../config.ts';
 import type { GBrainConfig } from '../config.ts';
 import { mergedProviderEnv } from './provider-env.ts';
+import { redactProviderKeys } from './key-redact.ts';
+import { reportEmbeddingAuthFailure } from './key-warnings.ts';
 import { buildGatewayConfig, foldNativeBaseUrlsFromFilePlane } from './build-gateway-config.ts';
 import { invokeAI, sdkInvocationUsage, responseInvocationUsage, hasAIInvocationGuard, isAIInvocationPolicyError } from './invocation-guard.ts';
 import { createGuardedGeneration, chatInvocation } from './guarded-generation.ts';
@@ -123,6 +125,8 @@ const DEFAULT_CHAT_MODEL = 'anthropic:claude-sonnet-4-6';
 // the mode bundles) — `voyage:rerank-2.5` since v0.48.2.
 
 let _config: AIGatewayConfig | null = null;
+/** #5137: provider auth errors echo keys; scrub every key in effect before the text leaves the gateway. */
+const redactKeys = (text: string): string => redactProviderKeys(text, _config?.env ?? {});
 const _modelCache = new Map<string, any>();
 
 /**
@@ -1710,7 +1714,7 @@ async function embedSubBatch(
       // deadline) — shorter wins.
       abortSignal: withDefaultTimeout(opts?.abortSignal, AI_EMBED_TIMEOUT_MS),
       ...(hasAIInvocationGuard() ? { maxRetries: 0 } : opts?.maxRetries !== undefined ? { maxRetries: opts.maxRetries } : {}),
-    }), sdkInvocationUsage, err => isTokenLimitError(err) ? { inputTokens: 0, outputTokens: 0 } : null);
+    }), sdkInvocationUsage, err => isTokenLimitError(err) || isUnbilledEmbeddingRejection(recipe.id, err) ? { inputTokens: 0, outputTokens: 0 } : null);
     // Carry the threaded input_type across the SDK boundary via
     // __embedInputTypeStore (the adapter strips it from providerOptions —
     // see the store's doc comment). Populated only when dimsProviderOptions
@@ -1751,7 +1755,8 @@ async function embedSubBatch(
       const right = await embedSubBatch(texts.slice(mid), model, providerOpts, expectedDims, recipe, modelId, opts);
       return [...left, ...right];
     }
-    throw normalizeAIError(err, `embed(${recipe.id}:${modelId})`);
+    reportEmbeddingAuthFailure(recipe, err);
+    throw normalizeAIError(err, `embed(${recipe.id}:${modelId})`, redactKeys);
   }
 }
 
@@ -1913,12 +1918,13 @@ export async function embedMultimodal(
       }), responseInvocationUsage);
     } catch (err) {
       if (isAIInvocationPolicyError(err)) throw err;
-      throw normalizeAIError(err, `embedMultimodal(${recipe.id}:${parsed.modelId})`);
+      throw normalizeAIError(err, `embedMultimodal(${recipe.id}:${parsed.modelId})`, redactKeys);
     }
 
     if (!res.ok) {
-      const text = await res.text().catch(() => '');
+      const text = redactKeys(await res.text().catch(() => ''));
       if (res.status === 401 || res.status === 403) {
+        reportEmbeddingAuthFailure(recipe, { status: res.status });
         throw new AIConfigError(
           `Voyage multimodal returned ${res.status}: ${text || 'auth failed'}.`,
           `Re-export ${recipe.auth_env?.required[0]} or rotate the key at ${recipe.auth_env?.setup_url}.`,
@@ -2059,12 +2065,13 @@ async function embedMultimodalOpenAICompat(
       }), responseInvocationUsage);
     } catch (err) {
       if (isAIInvocationPolicyError(err)) throw err;
-      throw normalizeAIError(err, `embedMultimodal(${recipe.id}:${modelId})`);
+      throw normalizeAIError(err, `embedMultimodal(${recipe.id}:${modelId})`, redactKeys);
     }
 
     if (!res.ok) {
-      const text = await res.text().catch(() => '');
+      const text = redactKeys(await res.text().catch(() => ''));
       if (res.status === 401 || res.status === 403) {
+        reportEmbeddingAuthFailure(recipe, { status: res.status });
         const requiredKey = recipe.auth_env?.required[0];
         throw new AIConfigError(
           `${recipe.name} multimodal returned ${res.status}: ${text || 'auth failed'}.`,
@@ -2531,7 +2538,7 @@ export async function expand(query: string): Promise<string[]> {
   } catch (err) {
     if (isAIInvocationPolicyError(err)) throw err;
     // Expansion is best-effort: on failure, fall back to the original query alone.
-    const normalized = normalizeAIError(err, 'expand');
+    const normalized = normalizeAIError(err, 'expand', redactKeys);
     if (normalized instanceof AIConfigError) {
       console.warn(`[ai.gateway] expansion disabled: ${normalized.message}`);
     }
@@ -3690,7 +3697,7 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
     // Pessimistic fallback (A3 amended): when err.usage isn't there, charge
     // the worst-case ceiling — better to overcount on failure than under.
     _recordBudget(failedCallUsage(err, { inputTokens: estimatedInputTokens, outputTokens: maxOutputTokens }));
-    throw normalizeAIError(err, `chat(${recipe.id}:${modelId})`);
+    throw normalizeAIError(err, `chat(${recipe.id}:${modelId})`, redactKeys);
   }
 }
 

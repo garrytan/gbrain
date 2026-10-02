@@ -118,6 +118,19 @@ describe('v0.41 T9 R-GATE: dispatch consults the active pack', () => {
   }, 120_000);
 });
 
+describe('cycle_already_running names the holder', () => {
+  test('a busy cycle lock reports the holder and its age', async () => {
+    await engine.executeRaw(
+      `INSERT INTO gbrain_cycle_locks (id, holder_pid, holder_host, acquired_at, ttl_expires_at)
+       VALUES ('gbrain-cycle', 99999, 'other-host', NOW() - INTERVAL '90 seconds', NOW() + INTERVAL '1 hour')`,
+    );
+    const report = await cycleUnderPack('gbrain-base', { brainDir, phases: ['extract_atoms'], dryRun: true });
+    expect(report.reason).toBe('cycle_already_running');
+    expect(report.lock_holder).toMatchObject({ id: 'gbrain-cycle', holder_pid: 99999, holder_host: 'other-host' });
+    expect(report.lock_holder!.age_ms).toBeGreaterThanOrEqual(89_000);
+  }, 60_000);
+});
+
 describe('v0.41 T9 R-GATE: lens phases take the cycle lock', () => {
   for (const phase of PACK_GATED) {
     test(`${phase} alone waits behind a live cycle-lock holder`, async () => {

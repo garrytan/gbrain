@@ -161,7 +161,14 @@ export async function getEdgesByChunk(
     return [...chunkRows, ...symbolRows].map(r => rowToCodeEdge(r as Record<string, unknown>));
   }
 
-function rowToCodeEdge(row: Record<string, unknown>): CodeEdgeResult {
+/**
+ * Shared by both engines' reads. `resolved` is true for a code_edges_chunk
+ * row AND for a code_edges_symbol row the resolver stamped with
+ * edge_metadata.resolved_chunk_id (gbrain-evals N13-2); to_chunk_id still
+ * reports the stored column.
+ */
+export function rowToCodeEdge(row: Record<string, unknown>): CodeEdgeResult {
+  const edgeMetadata = (row.edge_metadata as Record<string, unknown>) ?? {};
   return {
     id: row.id as number,
     from_chunk_id: row.from_chunk_id as number,
@@ -169,8 +176,8 @@ function rowToCodeEdge(row: Record<string, unknown>): CodeEdgeResult {
     from_symbol_qualified: (row.from_symbol_qualified as string) ?? '',
     to_symbol_qualified: (row.to_symbol_qualified as string) ?? '',
     edge_type: (row.edge_type as string) ?? '',
-    edge_metadata: (row.edge_metadata as Record<string, unknown>) ?? {},
+    edge_metadata: edgeMetadata,
     source_id: row.source_id == null ? null : (row.source_id as string),
-    resolved: Boolean(row.resolved),
+    resolved: Boolean(row.resolved) || typeof edgeMetadata.resolved_chunk_id === 'number',
   };
 }

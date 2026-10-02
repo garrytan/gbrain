@@ -265,6 +265,7 @@ export const timelineHistoryEntry: DoctorEntry = {
     'timeline_history',
     'derived_visibility',
     'safe_index_pending',
+    'credential_projection_pending',
     'connector_checkpoints',
     'persistence_request_indexes',
     'persistence_request_growth',
@@ -273,7 +274,10 @@ export const timelineHistoryEntry: DoctorEntry = {
     'unbound_source',
     'writer_version',
     'self_capture',
+    'vector_plan',
     'stale_embedding_effects',
+    'google_file_modes',
+    'extractor_facts_expired',
   ],
   run: runTimelineHistory,
 };

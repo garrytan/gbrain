@@ -1,15 +1,34 @@
 import type { BrainEngine, ReservedConnection } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
-import { claimNextWrite, compactWriteReceipts, getWriteRequestById, releaseUnpublishedClaim, renewWriteClaim, vacuumPersistenceQueues } from './journal.ts';
+import { CLAIMABLE_WRITE_SQL, claimNextWrite, compactWriteReceipts, hasClaimableWrite, getWriteRequestById, releaseUnpublishedClaim, renewWriteClaim, vacuumPersistenceQueues } from './journal.ts';
 import { finishUnpublishedFailure, publishMutation, recoverPublication, type PreparedMutation } from './coordinator.ts';
 import { localHostId } from './identity.ts';
 import { isTerminal, type WriteRequest } from './model.ts';
 import { refreshManagedFilesystemRoots } from './filesystem-guard.ts';
-import { rebuildPendingPageProjections } from '../page-state/projections.ts';
+import { PROJECTION_RETRY_READY_SQL, rebuildPendingPageProjections } from '../page-state/projections.ts';
 import { publicationConcurrency } from './pool-capacity.ts';
 import { runPersistenceEffects } from './effects.ts';
 import { PERSISTENCE_PROTOCOL_PREDICATE } from './protocol.ts';
 import { isWriteErrorCode } from './types.ts';
+
+/**
+ * #5401: one resident projection invocation takes up to this many pages and
+ * starts no new page once the budget has passed since it began. When a write is
+ * claimable at its start it takes the small batch, so the drain never delays
+ * queued writes by more than about two page rebuilds.
+ */
+export const RESIDENT_PROJECTION_PAGES = 100;
+export const RESIDENT_PROJECTION_BUDGET_MS = 250;
+export const WRITE_WAITING_PROJECTION_PAGES = 2;
+
+export async function runResidentProjectionInvocation(engine: BrainEngine, hostId: string, excludeRoots: string[],
+  now: () => number = Date.now, signal?: AbortSignal) {
+  // Advisory and bounded by the caller's signal: a probe that cannot answer
+  // (for example behind a table lock) counts as a waiting write.
+  const writesWaiting = publicationConcurrency(engine) > 0 && await hasClaimableWrite(engine, hostId, excludeRoots, signal).catch(() => true);
+  return rebuildPendingPageProjections(engine, writesWaiting ? WRITE_WAITING_PROJECTION_PAGES : RESIDENT_PROJECTION_PAGES,
+    { deadlineMs: RESIDENT_PROJECTION_BUDGET_MS, now, retryCooldown: true });
+}
 
 export type PrepareMutation = (engine: BrainEngine, row: WriteRequest, config: GBrainConfig, signal?: AbortSignal) => Promise<PreparedMutation>;
 export class PersistenceConsumer {
@@ -92,13 +111,7 @@ export class PersistenceConsumer {
     const retryingTopologies = [...this.topologyRetryAfter.keys()];
     const [row] = await this.phase('idle_probe', async signal => this.probeQuery<{ work: boolean }>(await this.acquireIdleLane(signal), `SELECT (
       EXISTS (SELECT 1 FROM persistence_requests r LEFT JOIN persistence_worktrees w ON w.id=r.worktree_id
-        WHERE r.state='queued' AND (r.worktree_id IS NULL OR (w.owner_host_id=$1::uuid AND w.state='active'))
-        AND NOT (COALESCE(r.worktree_id::text,'db:'||r.source_incarnation::text)=ANY($2::text[]))
-        AND NOT EXISTS (SELECT 1 FROM persistence_effects blocked WHERE blocked.worktree_id=r.worktree_id AND blocked.recovery IS NOT NULL)
-        AND NOT EXISTS (SELECT 1 FROM persistence_requests blocked WHERE blocked.worktree_id=r.worktree_id AND blocked.recovery IS NOT NULL)
-        AND NOT EXISTS (SELECT 1 FROM persistence_requests earlier
-          WHERE COALESCE(earlier.worktree_id::text,'db:'||earlier.source_incarnation::text)=COALESCE(r.worktree_id::text,'db:'||r.source_incarnation::text)
-          AND earlier.sequence<r.sequence AND earlier.state IN ('queued','running','recovering'))
+        WHERE ${CLAIMABLE_WRITE_SQL}
         AND ($3::boolean OR r.blocked_reason IS DISTINCT FROM 'writer_pool_capacity'))
       OR EXISTS (SELECT 1 FROM persistence_requests r JOIN persistence_worktrees w ON w.id=r.worktree_id
         WHERE w.owner_host_id=$1::uuid AND r.recovery IS NOT NULL AND NOT (r.worktree_id::text=ANY($2::text[])))
@@ -117,7 +130,7 @@ export class PersistenceConsumer {
       OR EXISTS (SELECT 1 FROM page_projection_jobs j JOIN sources s ON s.incarnation=j.source_incarnation
         JOIN pages p ON p.source_id=s.id AND p.slug=j.slug
         WHERE p.deleted_at IS NULL AND NOT s.archived AND p.page_kind IN ('markdown','code')
-        AND (j.reason IS DISTINCT FROM 'rebuild_failed' OR j.updated_at<now()-interval '30 seconds'))
+        AND ${PROJECTION_RETRY_READY_SQL})
       OR EXISTS (SELECT 1 FROM persistence_topology_changes c
         JOIN persistence_worktrees w ON w.id=(c.recovery->>'worktreeId')::uuid
         WHERE c.recovery IS NOT NULL AND w.owner_host_id=$1::uuid AND NOT (c.id::text=ANY($4::text[])))
@@ -246,7 +259,9 @@ export class PersistenceConsumer {
         .then(rows => { this.maintenanceVolume = 50 + Math.ceil(rows * 0.2); }).catch(error => this.report(error))
         .finally(() => { this.maintenanceWorker = undefined; });
     }
-    if (!this.projectionWorker) this.projectionWorker = rebuildPendingPageProjections(this.engine, 2)
+    if (!this.projectionWorker) this.projectionWorker = runResidentProjectionInvocation(this.engine, this.hostId,
+      [...this.activeRoots, ...this.rootRetryAfter.keys()], Date.now, this.engine.kind === 'postgres'
+        ? AbortSignal.any([this.abort.signal, AbortSignal.timeout(this.opts.phaseMs ?? 5000)]) : undefined)
       .catch(error => this.report(error)).finally(() => { this.projectionWorker = undefined; });
     // Recover only our owner roots. Kernel exclusion, not elapsed heartbeat,
     // proves that a previous process can no longer be publishing this root.

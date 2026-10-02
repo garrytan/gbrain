@@ -10,8 +10,8 @@ import { describe, test, expect } from 'bun:test';
 import { chunkCodeText, detectCodeLanguage, CHUNKER_VERSION } from '../../src/core/chunkers/code.ts';
 
 describe('CHUNKER_VERSION', () => {
-  test('#5082 Bash grammar refresh bumped to 7', () => {
-    expect(CHUNKER_VERSION).toBe(7);
+  test('N13-1 function-valued declarations bumped to 8 (after #5082 Bash grammar refresh at 7)', () => {
+    expect(CHUNKER_VERSION).toBe(8);
   });
 });
 

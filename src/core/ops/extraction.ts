@@ -46,6 +46,7 @@ const MAX_EXTRACT_ENTITIES = 200;
 
 const extract_entities: Operation = {
   name: 'extract_entities',
+  outputRedaction: 'retrieval',
   description: 'Extract entity names (people, companies) from text and create/update their brain stub pages. Stubs from untrusted input land in the quarantine lane (frontmatter `provenance: auto-extracted` + `status: unverified`) — excluded from authoritative retrieval boosts until reviewed. Direct authoritative writes require the trusted local CLI AND --trusted-extraction.',
   params: {
     text: { type: 'string', required: true, description: 'The text to extract entities from (email, transcript, pasted content, …). Max 200k characters — split larger inputs.' },
@@ -101,6 +102,7 @@ const extract_entities: Operation = {
 
 const extraction_pending: Operation = {
   name: 'extraction_pending',
+  outputRedaction: 'retrieval',
   description: 'List unverified auto-extracted entity stubs awaiting owner review (the quarantine lane from extract_entities). Promote or reject them with extraction_review.',
   params: {
     limit: { type: 'number', required: false, description: 'Max rows (default 100, cap 500).' },
@@ -146,6 +148,7 @@ const extraction_pending: Operation = {
 
 const extraction_review: Operation = {
   name: 'extraction_review',
+  outputRedaction: 'no_stored_text',
   description: 'Promote or reject unverified auto-extracted entity stubs (batch). Promote flips `status` to verified (provenance kept for audit); reject soft-deletes the stub. Owner-only: this op is refused for any non-local caller. (The markers are ordinary frontmatter — the boundary against rewriting them wholesale is put_page write authz, same as for any page.)',
   params: {
     action: { type: 'string', required: true, description: "'promote' or 'reject'." },

@@ -14,6 +14,7 @@ import { linkReadScopeOpts } from './context.ts';
 
 const log_ingest: Operation = {
   name: 'log_ingest',
+  outputRedaction: 'no_stored_text',
   description: 'Log an ingestion event',
   params: {
     source_type: { type: 'string', required: true, description: "Kind of ingest source, e.g. 'email', 'meeting', 'rss', 'api'." },
@@ -42,6 +43,7 @@ const log_ingest: Operation = {
 
 const get_ingest_log: Operation = {
   name: 'get_ingest_log',
+  outputRedaction: 'retrieval',
   description: 'Get recent ingestion log entries',
   params: {
     limit: { type: 'number', description: 'Max entries (default 20)' },

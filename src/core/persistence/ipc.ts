@@ -66,8 +66,17 @@ export interface PersistenceIpcAdminRequest {
   registration: PersistenceIpcRegistration;
 }
 
+/** #5401: the resident's queued text-projection backlog. Counts only, never identifiers. */
+export interface PersistenceProjectionStatus {
+  pending: number;
+  failed: number;
+  oldest_age_seconds: number | null;
+}
+
 export interface PersistenceIpcProvider {
   brainId: string;
+  /** Read-only and credential-free, like capabilities: serves doctor while this process holds the datastore. */
+  projectionStatus?(): Promise<PersistenceProjectionStatus>;
   /** Authenticate registration against the DB, reconstruct context, then dispatch through the registry. */
   dispatch(request: PersistenceIpcRequest): Promise<unknown>;
   /** Verify the live CLI registration again; never accept stdio or a wire trust assertion. */
@@ -199,6 +208,15 @@ export async function startPersistenceIpcServer(
               max_frame_bytes: PERSISTENCE_IPC_MAX_BYTES,
               ...(provider.administer ? { administration: PERSISTENCE_ADMIN_OPERATIONS } : {}),
             } satisfies PersistenceIpcCapabilities }));
+            return;
+          }
+          if (record(request) && exactKeys(request, ['version', 'kind']) && request.version === 1 && request.kind === 'projection_status') {
+            if (!provider.projectionStatus) throw new OperationError('unavailable', 'This owner does not report projection status.');
+            if (active >= PERSISTENCE_IPC_MAX_CONNECTIONS) throw new OperationError('queue_capacity', 'The persistence listener is at capacity; retry shortly.');
+            active++;
+            admitted = true;
+            const status = await provider.projectionStatus();
+            if (!socket.destroyed) socket.end(responseFrame({ version: 1, ok: true, result: status }));
             return;
           }
           if (!operationRequest(request) && !administrationRequest(request)) throw new OperationError('invalid_params', 'Invalid persistence request envelope.');
@@ -340,6 +358,17 @@ export async function requestPersistenceCapabilities(socketPath: string, timeout
     throw new PersistenceIpcTransportError(false);
   }
   return value as unknown as PersistenceIpcCapabilities;
+}
+
+function count(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+}
+
+export async function requestPersistenceProjectionStatus(socketPath: string, timeoutMs = 2_000): Promise<PersistenceProjectionStatus> {
+  const value = await exchange(socketPath, { version: 1, kind: 'projection_status' }, timeoutMs);
+  if (!record(value) || !count(value.pending) || !count(value.failed)
+    || !(value.oldest_age_seconds === null || count(value.oldest_age_seconds))) throw new PersistenceIpcTransportError(false);
+  return { pending: value.pending, failed: value.failed, oldest_age_seconds: value.oldest_age_seconds };
 }
 
 export async function requestPersistenceOperation(socketPath: string, request: PersistenceIpcRequest, timeoutMs = 30_000): Promise<unknown> {

@@ -286,6 +286,11 @@
         "mode": "off",
         "model": null,
         "newer_reference": null,
+        "no_entity_7d": {
+          "receipts": 0,
+          "share": 0,
+          "skipped": 0
+        },
         "plain": "contradiction",
         "provider": "none",
         "readiness": "off",

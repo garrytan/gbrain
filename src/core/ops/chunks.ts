@@ -14,6 +14,7 @@ import { federatedSearchScope, parseSourceIdParam } from './context.ts';
 
 const resolve_slugs: Operation = {
   name: 'resolve_slugs',
+  outputRedaction: 'no_stored_text',
   description: 'Fuzzy-resolve a partial slug to matching page slugs',
   params: {
     partial: { type: 'string', required: true, description: "Partial slug or title text to match, e.g. 'alice-ex' or 'meeting notes'. This is the search text param — there is no `text` param." },
@@ -38,6 +39,7 @@ const resolve_slugs: Operation = {
 
 const get_chunks: Operation = {
   name: 'get_chunks',
+  outputRedaction: { exempt: 'explicit chunk read by slug, the page-read twin of get_page (CEO-17 raw-read exception)' },
   description: 'Get content chunks for a page',
   params: {
     slug: { type: 'string', required: true, description: 'Slug of the page whose content chunks to return.' },

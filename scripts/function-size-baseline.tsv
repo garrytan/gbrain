@@ -13,7 +13,7 @@ src/commands/doctor/bootstrap-checks.ts	bootstrapDoctorChecks	476	seed: W5 basel
 src/commands/doctor/checks/extraction-sync.ts	checkSyncFreshness	333	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
 src/commands/doctor/report-remote.ts	doctorReportRemote	416	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
 src/commands/dream-retriage.ts	runDreamRetriage	524	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
-src/commands/embed.ts	embedAllStale	551	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
+src/commands/embed.ts	embedAllStale	560	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1); +9 #5804: a null projection snapshot is a counted failure (archived sources left to reportArchived) with one end-of-run batch summary
 src/commands/embed.ts	runEmbedCore	376	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
 src/commands/eval-longmemeval.ts	runEvalLongMemEval	740	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
 src/commands/extract-conversation-facts.ts	processPage	307	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
@@ -30,12 +30,12 @@ src/core/ai/gateway.ts	chat	311	seed: W5 baseline, refactor wave 1 (decompositio
 src/core/bootstrap/harness.ts	applyHarness	1167	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
 src/core/brainstorm/orchestrator.ts	_runBrainstormInner	412	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
 src/core/check-resolvable.ts	checkResolvable	419	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
-src/core/config.ts	loadConfigWithEngine	360	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
+src/core/config.ts	loadConfigWithEngine	362	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1); +2 #5824: search.vector_legacy_guard DB-plane merge
 src/core/context-engine.ts	createGBrainContextEngine	519	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
 src/core/context/retrieval-reflex.ts	resolveEntitiesToPointers	355	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
-src/core/cycle.ts	runCycle	1229	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
-src/core/cycle/extract-atoms.ts	runPhaseExtractAtoms	810	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
-src/core/cycle/extract-atoms.ts	runPhaseExtractAtoms>withBudgetTracker(#1)	305	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
+src/core/cycle.ts	runCycle	1236	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1); +5 #5809: extract_atoms phase gets a real abort signal; +2 #5809: cycle_already_running names the lock holder
+src/core/cycle/extract-atoms.ts	runPhaseExtractAtoms	822	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1); +12 #5809/#5832: hard/soft stop checks, chat-call signal, abortable pacing, no post-stop writes
+src/core/cycle/extract-atoms.ts	runPhaseExtractAtoms>withBudgetTracker(#1)	316	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1); +11 #5809/#5832: per-item and pre-commit abort checks, chat-call signal, abortable pacing, catch-side stop
 src/core/cycle/extract-facts.ts	runExtractFacts	505	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
 src/core/cycle/grade-takes.ts	GradeTakesPhase.process	402	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
 src/core/cycle/patterns.ts	runPhasePatterns	303	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
@@ -64,5 +64,5 @@ src/core/sources-ops.ts	addSource	317	seed: W5 baseline, refactor wave 1 (decomp
 src/core/think/index.ts	runThink	450	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
 src/core/transcripts/ingest.ts	runTranscriptsIngest	317	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
 src/core/workspace-push.ts	workspacePush	312	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
-src/mcp/dispatch.ts	dispatchToolCall	322	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
+src/mcp/dispatch.ts	dispatchToolCall	325	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1); +3 eval wave N5-1: hot-memory invalidation after mutating ops (success and failure paths)
 src/mcp/http-transport.ts	startHttpTransport	408	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)

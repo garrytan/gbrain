@@ -11,22 +11,25 @@
  * Scope: the first run records the current max fact id and sweeps nothing
  * unless `since` is given. The watermark only advances past facts created
  * more than 60 s ago. Transient skips (no embedding, provider failure) go to
- * decide_sweep_deferred and are retried with an attempt cap.
+ * decide_sweep_deferred and are retried with an attempt cap; `gbrain facts
+ * relink` queues facts that just gained an entity there too (enqueueRelinked).
+ * A pair is always presented newer fact first (valid_from, then created_at),
+ * so a relinked older fact never becomes the claim that retires a newer one.
  */
 import { randomBytes } from 'node:crypto';
 import type { BrainEngine } from '../../engine.ts';
 import { loadConfigSnapshot } from '../../config-snapshot.ts';
 import { readDecideConfig, type DecideConfig } from './config.ts';
 import {
-  CONFLICT_INSTRUCTIONS, CONFLICT_OPTIONS, DEFAULT_PROPOSAL_FLOOR, conflictQuestion, conflictState, eligibleCandidate, pairKey,
-  proposalDirection, reduceConflict, supersedeProbability, sweepWindow, type ConflictOutcome,
+  CONFLICT_INSTRUCTIONS, CONFLICT_OPTIONS, DEFAULT_PROPOSAL_FLOOR, conflictQuestion, conflictState, datedConflictQuestion,
+  datedConflictState, eligibleCandidate, isOlderFact, pairKey, proposalDirection, reduceConflict, supersedeProbability, sweepWindow, type ConflictOutcome,
 } from './conflict.ts';
 import { hasTypesafeKey, runDecide } from './index.ts';
 import { packShape } from './pack.ts';
 import { driftReason, resolveSlotPolicy, type SlotPolicy } from './policy.ts';
 import {
   answeredPairRefs, clearDeferred, conflictNeighbours, deferFact, dueDeferred, factsAfter, factsByIds, getSweepWatermark,
-  insertProposal, maxFactId, proposedPairs, setSweepWatermark, type SweepFact,
+  insertProposal, maxFactId, proposedPairs, setSweepWatermark, type ConflictCandidateRow, type SweepFact,
 } from './proposals-store.ts';
 import { writeReceipts } from './receipts.ts';
 import { flushDecideWrites, hmacRef, listCalibrations, receiptSalt, recentResolvedModels } from './store.ts';
@@ -135,7 +138,79 @@ function fallbackPolicyFor(ctx: SweepContext): SlotPolicy {
   });
 }
 
-/** Judge one fact; returns false when the sweep must stop (daily budget spent, caller abort). */
+type PairFact = SweepFact | ConflictCandidateRow;
+
+/**
+ * One request: `claim` is presented as `fact` and judged against each of `others` as `candidate`. A proposal
+ * would retire the `candidate`. `dated` marks a pair reordered by chronology (the swept fact is the older one),
+ * whose evidence carries both facts' timestamps. Returns 'error' after a failed request (the swept fact is
+ * deferred unless the failure is permanent) and 'stop' when the sweep must stop.
+ */
+async function judgePairs(ctx: SweepContext, fact: SweepFact, claim: PairFact, others: readonly PairFact[], dated: boolean):
+  Promise<'answered' | 'unanswered' | 'error' | 'stop'> {
+  const { engine, result } = ctx;
+  const questions = others.map((c, i) => dated ? datedConflictQuestion(`conflict:${i}`, i, c) : conflictQuestion(`conflict:${i}`, i, c));
+  const subjects = Object.fromEntries(others.map((c, i) => [`conflict:${i}`, pairKey(fact.source_id, claim.id, c.id)]));
+  const state = dated ? datedConflictState(claim) : conflictState(claim);
+  const base = { slot: 'conflict' as const, callSite: 'sweep', lane: 'background' as const, state, subjects, sourceId: fact.source_id };
+  let r: DecideResult;
+  try {
+    r = await runDecide({ slot: 'conflict', callSite: 'sweep', state, questions, deadlineMs: ctx.deadlineMs, provider: ctx.policy.provider, lane: 'background', signal: ctx.signal },
+      { engine, config: ctx.cfg, sourceId: fact.source_id });
+  } catch (err) {
+    const reason = err instanceof DecideError ? err.reason : 'provider_error';
+    ctx.receipts.push(writeReceipts(engine, { ...base, mode: receiptMode(ctx.policy), provider: ctx.policy.provider, policy: ctx.policy, questions, outcomes: {}, fallbackOutcome: 'error', reason }));
+    result.skipped++;
+    if (!PERMANENT_FAILURES.has(reason)) {
+      await deferFact(engine, fact.source_id, fact.id, reason);
+      result.deferred++;
+    }
+    if (reason === 'budget_exhausted' || ctx.signal?.aborted) { result.stopped = ctx.signal?.aborted ? 'aborted' : reason; return 'stop'; }
+    return 'error';
+  }
+  const primaryIds = questions.filter((q) => !r.fallback?.answers[q.id]).map((q) => q.id);
+  const fallbackIds = questions.filter((q) => r.fallback?.answers[q.id]).map((q) => q.id);
+  let answeredAny = false;
+  const judge = async (ids: string[], policy: SlotPolicy, sub: DecideResult) => {
+    if (ids.length === 0) return;
+    const skip = policy.effective === 'off' ? policy.inactive ?? 'no_provider' : driftReason(policy, sub.model_resolved);
+    const outcomes: Record<string, ConflictOutcome> = {};
+    for (const id of ids) {
+      const answer = sub.answers[id];
+      if (skip || !answer || answer.kind !== 'choice') continue;
+      const candidate = others[Number(id.split(':')[1])]!;
+      const outcome = reduceConflict(answer, { threshold: policy.threshold, proposalFloor: ctx.floor });
+      outcomes[id] = outcome;
+      answeredAny = true;
+      ctx.judged.add(pairKey(fact.source_id, claim.id, candidate.id));
+      result.pairs++;
+      if (outcome === 'duplicate') result.duplicates++;
+      else if (outcome === 'independent') result.independents++;
+      else if (policy.effective !== 'on') result.shadow_proposals++;
+      else {
+        const proposalId = await insertProposal(engine, {
+          source_id: fact.source_id, sweep_id: ctx.sweepId, pair_index: ctx.pairIndex++, new_fact_id: claim.id, old_fact_id: candidate.id,
+          direction: proposalDirection(claim.id, candidate.id), p_supersede: supersedeProbability(answer), threshold: policy.threshold ?? null,
+          proposal_floor: ctx.floor, model_resolved: sub.model_resolved || null,
+        });
+        if (proposalId !== null) result.proposals++;
+      }
+    }
+    ctx.receipts.push(writeReceipts(engine, {
+      ...base, mode: receiptMode(policy), provider: policy.provider, policy, result: sub, questions: questions.filter((q) => ids.includes(q.id)),
+      outcomes, fallbackOutcome: 'skipped', ...(skip ? { reason: skip } : {}),
+    }));
+  };
+  await judge(primaryIds, ctx.policy, r);
+  if (r.fallback) await judge(fallbackIds, fallbackPolicyFor(ctx), r.fallback);
+  return answeredAny ? 'answered' : 'unanswered';
+}
+
+/**
+ * Judge one fact; returns false when the sweep must stop (daily budget spent, caller abort). Neighbours older than
+ * the fact share one request with the fact as the new claim; each neighbour newer than the fact gets its own
+ * request with that neighbour as the new claim, so a proposal never retires the newer fact.
+ */
 async function sweepFact(ctx: SweepContext, fact: SweepFact, retry: boolean): Promise<boolean> {
   const { engine, result } = ctx;
   result.facts++;
@@ -157,60 +232,18 @@ async function sweepFact(ctx: SweepContext, fact: SweepFact, retry: boolean): Pr
     if (retry) await clearDeferred(engine, fact.source_id, fact.id);
     return true;
   }
-  const questions = candidates.map((c, i) => conflictQuestion(`conflict:${i}`, i, c));
-  const subjects = Object.fromEntries(candidates.map((c, i) => [`conflict:${i}`, pairKey(fact.source_id, fact.id, c.id)]));
-  const state = conflictState(fact);
-  const base = { slot: 'conflict' as const, callSite: 'sweep', lane: 'background' as const, state, subjects, sourceId: fact.source_id };
-  let r: DecideResult;
-  try {
-    r = await runDecide({ slot: 'conflict', callSite: 'sweep', state, questions, deadlineMs: ctx.deadlineMs, provider: ctx.policy.provider, lane: 'background', signal: ctx.signal },
-      { engine, config: ctx.cfg, sourceId: fact.source_id });
-  } catch (err) {
-    const reason = err instanceof DecideError ? err.reason : 'provider_error';
-    ctx.receipts.push(writeReceipts(engine, { ...base, mode: receiptMode(ctx.policy), provider: ctx.policy.provider, policy: ctx.policy, questions, outcomes: {}, fallbackOutcome: 'error', reason }));
-    result.skipped++;
-    if (!PERMANENT_FAILURES.has(reason)) {
-      await deferFact(engine, fact.source_id, fact.id, reason);
-      result.deferred++;
-    }
-    if (reason === 'budget_exhausted' || ctx.signal?.aborted) { result.stopped = ctx.signal?.aborted ? 'aborted' : reason; return false; }
-    return true;
-  }
-  const primaryIds = questions.filter((q) => !r.fallback?.answers[q.id]).map((q) => q.id);
-  const fallbackIds = questions.filter((q) => r.fallback?.answers[q.id]).map((q) => q.id);
+  const older = candidates.filter((c) => !isOlderFact(fact, c));
+  const requests: Array<[PairFact, readonly PairFact[], boolean]> = [
+    ...(older.length > 0 ? [[fact, older, false] as [PairFact, readonly PairFact[], boolean]] : []),
+    ...candidates.filter((c) => isOlderFact(fact, c)).map((c): [PairFact, readonly PairFact[], boolean] => [c, [fact], true]),
+  ];
   let answeredAny = false;
-  const judge = async (ids: string[], policy: SlotPolicy, sub: DecideResult) => {
-    if (ids.length === 0) return;
-    const skip = policy.effective === 'off' ? policy.inactive ?? 'no_provider' : driftReason(policy, sub.model_resolved);
-    const outcomes: Record<string, ConflictOutcome> = {};
-    for (const id of ids) {
-      const answer = sub.answers[id];
-      if (skip || !answer || answer.kind !== 'choice') continue;
-      const candidate = candidates[Number(id.split(':')[1])]!;
-      const outcome = reduceConflict(answer, { threshold: policy.threshold, proposalFloor: ctx.floor });
-      outcomes[id] = outcome;
-      answeredAny = true;
-      ctx.judged.add(pairKey(fact.source_id, fact.id, candidate.id));
-      result.pairs++;
-      if (outcome === 'duplicate') result.duplicates++;
-      else if (outcome === 'independent') result.independents++;
-      else if (policy.effective !== 'on') result.shadow_proposals++;
-      else {
-        const proposalId = await insertProposal(engine, {
-          source_id: fact.source_id, sweep_id: ctx.sweepId, pair_index: ctx.pairIndex++, new_fact_id: fact.id, old_fact_id: candidate.id,
-          direction: proposalDirection(fact.id, candidate.id), p_supersede: supersedeProbability(answer), threshold: policy.threshold ?? null,
-          proposal_floor: ctx.floor, model_resolved: sub.model_resolved || null,
-        });
-        if (proposalId !== null) result.proposals++;
-      }
-    }
-    ctx.receipts.push(writeReceipts(engine, {
-      ...base, mode: receiptMode(policy), provider: policy.provider, policy, result: sub, questions: questions.filter((q) => ids.includes(q.id)),
-      outcomes, fallbackOutcome: 'skipped', ...(skip ? { reason: skip } : {}),
-    }));
-  };
-  await judge(primaryIds, ctx.policy, r);
-  if (r.fallback) await judge(fallbackIds, fallbackPolicyFor(ctx), r.fallback);
+  for (const [claim, others, dated] of requests) {
+    const outcome = await judgePairs(ctx, fact, claim, others, dated);
+    if (outcome === 'stop') return false;
+    if (outcome === 'error') return true;
+    answeredAny ||= outcome === 'answered';
+  }
   if (!answeredAny) result.skipped++;
   if (retry) await clearDeferred(engine, fact.source_id, fact.id);
   return true;

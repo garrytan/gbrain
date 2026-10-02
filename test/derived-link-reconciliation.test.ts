@@ -196,7 +196,7 @@ for (const kind of ['pglite', ...(process.env.DATABASE_URL ? ['postgres'] : [])]
       await seed('sessions/weekly', 'meeting', 'See [[choices/choice]].', { attendees: ['members/alice-example'] });
       expect((await reconcileSourceLinks(engine, sourceId, { pack })).ok).toBe(true);
       expect((await graph()).map(row => [row.from_slug, row.to_slug, row.link_type])).toEqual([
-        ['sessions/weekly', 'choices/choice', 'mentions'], ['sessions/weekly', 'members/alice-example', 'attended'],
+        ['members/alice-example', 'sessions/weekly', 'attended'], ['sessions/weekly', 'choices/choice', 'mentions'],
       ]);
     });
 

@@ -28,8 +28,8 @@ import { REFUSAL_CATALOG, SLOT_PLAIN_NAMES, refusalLine } from '../core/ai/decid
 import { toWireQuestion } from '../core/ai/decide/providers/typesafe.ts';
 import { SLOT_SPECS } from '../core/ai/decide/slots.ts';
 import {
-  dailySpend, deleteDecideState, flushDecideWrites, getDecideState, listCalibrations, recentResolvedModels, setDecideState, slotUsage,
-  type CalibrationRow,
+  conflictNoEntityShare, dailySpend, deleteDecideState, flushDecideWrites, getDecideState, listCalibrations, recentResolvedModels, setDecideState,
+  slotUsage, type CalibrationRow,
 } from '../core/ai/decide/store.ts';
 import { DECIDE_SLOTS, DecideError, EVIDENCE_CLASSES, type DecideQuestion, type DecideSlot } from '../core/ai/decide/types.ts';
 import { usageCostUsd } from '../core/budget/reservation-cost.ts';
@@ -186,7 +186,10 @@ function costPer1k(slot: DecideSlot, provider: string, usage?: { decisions: numb
 // ---------------------------------------------------------------------------
 
 export async function buildStatus(engine: BrainEngine, state: DecideState) {
-  const [spend, usage] = await Promise.all([dailySpend(engine).catch(() => ({ total: 0, remote: 0 })), slotUsage(engine, 24).catch(() => [])]);
+  const [spend, usage, noEntity] = await Promise.all([
+    dailySpend(engine).catch(() => ({ total: 0, remote: 0 })), slotUsage(engine, 24).catch(() => []),
+    conflictNoEntityShare(engine).catch(() => ({ skipped: 0, receipts: 0, share: 0 })),
+  ]);
   const slots = DECIDE_SLOTS.map((slot) => {
     const p = policyFor(state, slot);
     const u = usage.find((x) => x.slot === slot);
@@ -204,6 +207,7 @@ export async function buildStatus(engine: BrainEngine, state: DecideState) {
       cost_per_1k: { ...costPer1k(slot, p.provider, u), unit: COST_UNITS[slot]?.unit ?? 'units' },
       effective_line: effectiveModeLine(p),
       ...(state.cfg.slots[slot].keyDefault ? { key_default: true, opt_out: keyDefaultOptOut(slot) } : {}),
+      ...(slot === 'conflict' ? { no_entity_7d: noEntity } : {}),
     };
   });
   return {
@@ -247,6 +251,9 @@ async function cmdStatus(engine: BrainEngine, args: string[]): Promise<number> {
     console.log(`  ${s.slot.padEnd(14)} ${s.readiness}${threshold}${cost}${activity}${s.wired ? '' : ' (not available in this build)'}`);
     if (s.force_on) console.log(`    WARN: decide.slots.${s.slot}.force_on bypasses the action-precision gate`);
     if (s.newer_reference) console.log(`    newer reference available: ${s.newer_reference} (gbrain decide calibrations adopt ${s.newer_reference})`);
+    if (s.no_entity_7d && s.no_entity_7d.skipped > 0) {
+      console.log(`    ${(s.no_entity_7d.share * 100).toFixed(1)}% of conflict receipts in 7 days (${s.no_entity_7d.skipped} of ${s.no_entity_7d.receipts}) skipped a fact with no entity (no_entity); link them: gbrain facts relink --dry-run`);
+    }
     if (s.opt_out) console.log(`    on by default because a TypeSafe key is present (sends ${SLOT_SPECS[s.slot].egressClasses.map((c) => CLASS_TEXT[c]).join(', ')} to TypeSafe); opt out: ${s.opt_out}`);
   }
   const lines = status.slots.map((s) => s.effective_line).filter(Boolean);

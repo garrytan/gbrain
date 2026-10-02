@@ -275,6 +275,8 @@ describe('verifyWorkspace — keyless pass', () => {
       const scan = check(res.checks, 'secret_scan')[0];
       expect(scan.ok).toBe(false);
       expect(scan.detail).toContain('openai');
+      expect(scan.detail).toContain(`allowlist only a reviewed false positive by appending its fingerprint to ${join(ws, '.gbrain-scan-allow')}`);
+      expect(scan.detail).toContain('write-refusals.md#secret-scan-refusals-and-redaction');
       // Redaction discipline: the finding detail NEVER carries the secret value.
       expect(scan.detail).not.toContain('sk-AAAAAAAAAAAAAAAAAAAAAAAA');
 

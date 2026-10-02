@@ -13,7 +13,7 @@ import type {
   ParseSessionsOpts,
   TranscriptAdapter,
 } from './types.ts';
-import { TRANSCRIPT_JSONL_HARD_CAP } from './types.ts';
+import { TRANSCRIPT_JSONL_HARD_CAP, utcTimestamp } from './types.ts';
 import { parseClaudeSessionFile, SPEC_TARGET } from './claude-code-jsonl.ts';
 import { basename } from 'node:path';
 import { closeSync, openSync, readSync } from 'node:fs';
@@ -183,12 +183,12 @@ export const claudeCodeAdapter: TranscriptAdapter = {
           harness: 'claude-code',
           sessionId,
           cwd: r.cwd,
-          startedAt: r.startedAt || undefined,
+          startedAt: utcTimestamp(r.startedAt) || undefined,
           raw: { sessionId, cwd: r.cwd ?? null, source_path: path },
         },
         messages: r.turns.map((t) => ({
           role: t.role,
-          timestamp: t.timestamp,
+          timestamp: utcTimestamp(t.timestamp),
           text: t.text,
         })),
       };

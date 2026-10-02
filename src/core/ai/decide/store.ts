@@ -414,6 +414,19 @@ export async function slotUsage(engine: BrainEngine, sinceHours = 24): Promise<S
   return rows.map((r) => ({ slot: String(r.slot), decisions: Number(r.decisions), rows: Number(r.rows), input_tokens: Number(r.input_tokens), errors: Number(r.errors), skipped: Number(r.skipped), egress: Number(r.egress) }));
 }
 
+/** Conflict receipts in the window and how many were fact-level `no_entity` skips (facts the sweep cannot judge). */
+export async function conflictNoEntityShare(engine: BrainEngine, sinceHours = 24 * 7): Promise<{ skipped: number; receipts: number; share: number }> {
+  const [row] = await engine.executeRaw<{ receipts: number | string; skipped: number | string }>(
+    `SELECT COUNT(*)::int AS receipts,
+            COUNT(*) FILTER (WHERE outcome = 'skipped' AND error_reason = 'no_entity')::int AS skipped
+       FROM decision_receipts WHERE slot = 'conflict' AND created_at >= now() - ($1::int * interval '1 hour')`,
+    [sinceHours],
+  );
+  const receipts = Number(row?.receipts ?? 0);
+  const skipped = Number(row?.skipped ?? 0);
+  return { skipped, receipts, share: receipts > 0 ? Number((skipped / receipts).toFixed(4)) : 0 };
+}
+
 export interface ReplayReceipt {
   decision_id: string;
   answer_value: number | null;

@@ -89,3 +89,43 @@ describe('gateWritebackTurn — ok path: normalization + idempotency hash', () =
     expect(turnHash24(normalizeTurnText('I prefer dark mode in every editor.'))).toBe(a.hash24);
   });
 });
+
+describe('gateWritebackTurn — Claude Code paste blocks (#5812)', () => {
+  const PASTE = (body: string, id = '2830') => `<pasted_content id="${id}">\n${body}\n</pasted_content id="${id}">`;
+  const EMAIL = 'The offsite moves to March and the budget is final, per the finance team.';
+
+  test('a paste-only turn → pasted_content (nothing banked)', () => {
+    expect(gateWritebackTurn(`\n\n${PASTE(EMAIL)}\n`)).toEqual({ ok: false, reason: 'pasted_content' });
+    expect(gateWritebackTurn(`${PASTE(EMAIL, '1')}\n\n${PASTE(EMAIL, '2')}`)).toEqual({ ok: false, reason: 'pasted_content' });
+  });
+
+  test('a mixed turn banks only the user\'s own words', () => {
+    const r = gateWritebackTurn(`Please remember this note I got: \n\n${PASTE(EMAIL)}\n\n and also I prefer dark roast coffee.`);
+    if (!r.ok) throw new Error(`expected ok, got ${r.reason}`);
+    expect(r.normalized).toBe('Please remember this note I got: and also I prefer dark roast coffee.');
+    expect(JSON.stringify(r)).not.toContain('finance team');
+    expect(JSON.stringify(r)).not.toContain('pasted_content');
+  });
+
+  test('an unclosed paste tail is stripped too', () => {
+    const r = gateWritebackTurn(`I moved our weekly sync to Tuesdays at 10am.\n\n<pasted_content id="9">\n${EMAIL}`);
+    if (!r.ok) throw new Error(`expected ok, got ${r.reason}`);
+    expect(r.normalized).toBe('I moved our weekly sync to Tuesdays at 10am.');
+  });
+
+  test('the remaining rules run on the user\'s own words', () => {
+    expect(gateWritebackTurn(`thanks ${PASTE(EMAIL)}`)).toEqual({ ok: false, reason: 'too_short' });
+    expect(gateWritebackTurn(`Can you summarize this email for me please? ${PASTE(EMAIL)}`)).toEqual({ ok: false, reason: 'question_only' });
+  });
+
+  test('CJK own words keep the CJK floor after the strip', () => {
+    const r = gateWritebackTurn(`我对花生严重过敏，随身带肾上腺素笔 ${PASTE(EMAIL)}`);
+    if (!r.ok) throw new Error(`expected ok, got ${r.reason}`);
+    expect(r.normalized).toBe('我对花生严重过敏，随身带肾上腺素笔');
+  });
+
+  test('a multi-megabyte paste is still bulk_paste (length check before any scan)', () => {
+    const big = `I prefer dark roast coffee. ${PASTE('x'.repeat(3 * 1024 * 1024))}`;
+    expect(gateWritebackTurn(big)).toEqual({ ok: false, reason: 'bulk_paste' });
+  });
+});

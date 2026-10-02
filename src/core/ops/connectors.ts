@@ -28,6 +28,7 @@ import { runConnectorSync } from '../connectors/sync.ts';
 
 const connectors_status: Operation = {
   name: 'connectors_status',
+  outputRedaction: 'no_stored_text',
   description:
     'Per-provider chat-connector status: strategies, whether a credential is ' +
     'present and from where (env/file — never the value), token expiry, ' +
@@ -71,6 +72,7 @@ const connectors_status: Operation = {
 
 const connector_sync: Operation = {
   name: 'connector_sync',
+  outputRedaction: 'no_stored_text',
   description:
     'Sync a chat provider\'s conversation history into the brain: list new ' +
     'conversations since the watermark, fetch them, and ingest as pages under ' +

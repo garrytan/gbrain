@@ -24,6 +24,7 @@ import { hybridSearchCached, stampContentFlags } from '../search/hybrid.ts';
 import { dedupResults } from '../search/dedup.ts';
 import { bumpLastRetrievedAt } from '../last-retrieved.ts';
 import { packToBudget, estimateTokens, resultTokens } from '../search/token-budget.ts';
+import { redactRetrievalOutput } from '../search/output-redaction.ts';
 import { isAvailable } from '../ai/gateway.ts';
 // #4209: the named entity-hints cap — surfaced in the extract_facts param
 // description and the entity_hints_used/_dropped response fields.
@@ -40,6 +41,7 @@ import { AUDIT_ROW_SOURCES } from '../facts/audit-sources.ts';
 
 const extract_facts: Operation = {
   name: 'extract_facts',
+  outputRedaction: 'no_stored_text',
   description:
     'v0.31: extract personal-knowledge facts (events, preferences, commitments, beliefs, ideas, and plain facts) from a conversation turn into the per-source hot memory. Sanitizes turn_text via INJECTION_PATTERNS, calls the configured extraction model (key-aware: any servable provider — OpenAI or Anthropic key both work), runs the cosine fast-path + classifier dedup pipeline, INSERTs into facts. Returns counts by status. With NO servable chat model, returns skipped: extraction_unavailable + an agent_action telling YOU to extract and write via `remember` (visibility: "private"). Skips extraction when the turn is dream-generated content (anti-loop). For agent memory writes of a SINGLE already-formed fact, prefer the `remember` verb (zero LLM, mandatory provenance).',
   params: {
@@ -199,6 +201,7 @@ function recallEvidencePlan(ctx: OperationContext, p: Record<string, unknown>): 
 
 const recall: Operation = {
   name: 'recall',
+  outputRedaction: { retrieval: { localVerbatim: ['facts'] } },
   description:
     'MEMORY VERB (v1): retrieve saved facts/snippets — the protocol read verb. Filters hot-memory facts by entity / since / session_id; pass `query` to ALSO run hybrid search over pages (results[] arm); pass `budget_tokens` for server-side packing (response reports budget_used + dropped_count — never trims client-side). Remote callers see visibility=world facts only. Routing: for ONE known person/company/project card use `entity` (zero LLM); for broad questions needing reasoning use `synthesize` (expensive). Branch on structured fields (status/kind/evidence), never on prose. Every response carries protocol_version.',
   params: {
@@ -457,6 +460,11 @@ const recall: Operation = {
       if (applied) ({ results: searchResults, delivery } = await deliverEvidence(ctx.engine, searchResults, applied, { ...searchScope, excludePrivate, requireSafeChunks: ctx.remote !== false }));
     }
 
+    // Pack what is delivered: results redacted for all; facts for remote only (localVerbatim).
+    const view = redactRetrievalOutput([{ facts: rows.map(r => ({ fact: r.fact, context: r.context, source: r.source })), results: searchResults }], {}).results[0];
+    searchResults = view.results;
+    if (ctx.remote !== false) rows = rows.map((r, i) => ({ ...r, ...view.facts[i] }));
+
     let packedFacts = rows;
     let packedResults = searchResults;
     let budgetUsed: number | undefined;
@@ -597,6 +605,7 @@ const dropAll = <T>(items: T[]) => ({ items: [] as T[], meta: { budget: 0, used:
 
 const context_pack: Operation = {
   name: 'context_pack',
+  outputRedaction: { retrieval: { localVerbatim: ['facts'] } },
   description:
     'MEMORY VERB (v1): budget-packed session-boundary bundle for a set of standing entities — entity cards + open threads + hot facts, zero-LLM, sub-second. Call at session start (warm cold context) and after compaction (rehydrate what the summary lost). WORLD-ONLY by default; pass include_private (honored for LOCAL trusted callers only) to widen all arms. budget_tokens packs server-side (response reports budget_used + dropped_count; cards pack first, then facts). Branch on structured fields, never prose. protocol_version rides every response.',
   params: {
@@ -644,8 +653,12 @@ const context_pack: Operation = {
       maxEntities: PACK_DEFAULT_MAX_ENTITIES,
     });
 
-    let cards = res.cards ?? [];
-    let facts = res.facts ?? [];
+    // Pack, price and render the redacted presentation sets (one echo
+    // dictionary); local callers get the delivered facts back raw below.
+    const rawFacts = res.facts ?? [];
+    const view = redactRetrievalOutput([{ cards: res.cards ?? [], facts: rawFacts }], {}).results[0];
+    let cards = view.cards;
+    let facts = view.facts;
     // The SAME since filter the assembler applied (pre-landing review: the raw
     // flatMap silently dropped the documented `since` contract from the
     // structured array whenever budget packing ran) — shared with the card
@@ -687,7 +700,7 @@ const context_pack: Operation = {
         backlink_count: c.backlink_count,
       })),
       open_threads,
-      facts: facts.map((f) => ({
+      facts: (ctx.remote === false ? rawFacts.slice(0, facts.length) : facts).map((f) => ({
         fact: f.fact,
         kind: f.kind,
         entity_slug: f.entity_slug,
@@ -707,6 +720,7 @@ const context_pack: Operation = {
 
 const delta: Operation = {
   name: 'delta',
+  outputRedaction: { retrieval: { localVerbatim: ['facts'] } },
   description:
     'MEMORY VERB (v1): "what changed since T" for heartbeats — pages updated after `since` + hot facts newer than `since` + open-thread events after `since`, zero-LLM. Lets a periodic wake maintain warm state in O(changes) instead of re-deriving. Optionally scope thread deltas to `entities`. WORLD-ONLY by default; include_private honored for local trusted callers only. budget_tokens packs server-side (pages first, then facts; threads are never dropped). protocol_version rides every response.',
   params: {
@@ -830,11 +844,17 @@ const delta: Operation = {
 
     // Pages arrive OLDEST first by (updated_at, slug) — no client-side dedup
     // needed; the keyset already excludes everything at/before the cursor.
-    let pages = res.deltaPages ?? [];
-    let facts = res.facts ?? [];
+    // Pack, price and render the redacted presentation sets (one echo
+    // dictionary). The cursor reads the raw page at the delivered index and
+    // local callers get the delivered facts back raw below.
+    const rawPages = res.deltaPages ?? [];
+    const rawFacts = res.facts ?? [];
+    const view = redactRetrievalOutput([{ pages: rawPages, facts: rawFacts, threads: res.openThreads ?? [] }], {}).results[0];
+    let pages = view.pages;
+    let facts = view.facts;
     // Threads are NEVER budget-dropped: they are the commitments a heartbeat
     // must not miss, and they have no keyset of their own to resume from.
-    const threads = res.openThreads ?? [];
+    const threads = view.threads;
     let droppedCount: number | undefined;
     let factsDropped = 0;
     const fetchedPages = pages.length;
@@ -874,7 +894,7 @@ const delta: Operation = {
     // NOT advance (deliver-before-advance; a too-small budget must not eat it).
     const nextCursor =
       pages.length > 0
-        ? { since: pages[pages.length - 1].updated_at, slug: pages[pages.length - 1].slug }
+        ? { since: rawPages[pages.length - 1].updated_at, slug: rawPages[pages.length - 1].slug }
         : { since: effectiveSince, slug: sinceSlug ?? '' };
     if (sessionId) {
       if (pages.length > 0) {
@@ -902,7 +922,7 @@ const delta: Operation = {
       protocol_version: MEMORY_VERBS_VERSION,
       since: effectiveSince,
       pages,
-      facts: facts.map((f) => ({
+      facts: (ctx.remote === false ? rawFacts.slice(0, facts.length) : facts).map((f) => ({
         fact: f.fact,
         kind: f.kind,
         entity_slug: f.entity_slug,
@@ -927,6 +947,7 @@ const delta: Operation = {
 
 const forget_fact: Operation = {
   name: 'forget_fact',
+  outputRedaction: 'no_stored_text',
   description: 'Forget a fact by recording a durable withdrawal in its source and visibility. Strikes the Markdown facts fence when writable; otherwise keeps the withdrawal in the database. Stale imports cannot reactivate the same normalized claim. This retracts memory; original prose, files and backups may retain the text. Idempotent on already-expired or unknown ids.',
   params: {
     request_id: WRITE_REQUEST_PARAM,

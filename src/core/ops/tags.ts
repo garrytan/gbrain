@@ -14,6 +14,7 @@ import { WRITE_REQUEST_PARAM } from '../persistence/params.ts';
 
 const add_tag: Operation = {
   name: 'add_tag',
+  outputRedaction: 'no_stored_text',
   description: 'Add tag to page',
   params: {
     request_id: WRITE_REQUEST_PARAM,
@@ -33,6 +34,7 @@ const add_tag: Operation = {
 
 const remove_tag: Operation = {
   name: 'remove_tag',
+  outputRedaction: 'no_stored_text',
   description: 'Remove tag from page',
   params: {
     request_id: WRITE_REQUEST_PARAM,
@@ -51,6 +53,7 @@ const remove_tag: Operation = {
 
 const get_tags: Operation = {
   name: 'get_tags',
+  outputRedaction: 'no_stored_text',
   description: 'List tags for a page',
   params: {
     slug: { type: 'string', required: true, description: 'Slug of the page whose tags to list.' },

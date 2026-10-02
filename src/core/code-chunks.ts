@@ -3,11 +3,12 @@ import type { ChunkInput, CodeEdgeInput } from './types.ts';
 import { chunkCodeTextFull } from './chunkers/code.ts';
 import { findChunkForOffset } from './chunkers/edge-extractor.ts';
 import { sanitizeRemoteBody } from './remote-body.ts';
+import { credentialSafeProjection } from './credential-projection.ts';
 import { isEmbedSkipped } from './embed-skip.ts';
 import { isQuarantined } from './quarantine.ts';
 
 export async function prepareCodeChunks(page: { compiled_truth: string; frontmatter?: Record<string, unknown> | null }, path: string) {
-  const content = sanitizeRemoteBody(page.compiled_truth);
+  const content = credentialSafeProjection(sanitizeRemoteBody(page.compiled_truth));
   const prepared = isEmbedSkipped(page.frontmatter) || isQuarantined(page.frontmatter)
     ? { chunks: [], edges: [] } : await chunkCodeTextFull(content, path);
   const chunks: ChunkInput[] = prepared.chunks.map((c, i) => ({

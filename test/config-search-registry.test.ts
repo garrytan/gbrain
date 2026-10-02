@@ -32,6 +32,7 @@ const DIRECTLY_READ_SINGLETONS = [
   'search.adaptive_return_entity_max',
   'search.adaptive_return_other_max',
   'search.adaptive_return_min_keep',
+  'search.vector_legacy_guard',              // search/vector-legacy-guard.ts via loadConfigWithEngine
   'search.crag_escalation',                  // ops/search.ts
   'search.crag_think',                       // ops/search.ts
   'search.return_unit',                      // search/evidence-delivery.ts

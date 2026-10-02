@@ -29,7 +29,7 @@ import { carryLegacyFailCounts } from '../connectors/item-holds.ts';
  * sources.config, which stores only the account pointer.
  */
 
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, closeSync, existsSync, fchmodSync, lstatSync, openSync, readFileSync, renameSync, rmSync, unlinkSync, writeSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 
 import type { BrainEngine } from '../engine.ts';
@@ -41,7 +41,7 @@ import { credentialId, openVault, type CredentialEntry, type CredentialVault } f
 import { createProgress, startHeartbeat } from '../progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../cli-options.ts';
 import { isWriteTargetContained } from '../path-confine.ts';
-import { atomicWriteFileSync } from '../atomic-write.ts';
+import { atomicWriteFileSync, mkdirPrivate } from '../atomic-write.ts';
 import {
   CalendarClient,
   GmailClient,
@@ -109,22 +109,70 @@ export function readGoogleState(dir: string): GoogleSourceState {
     // A CORRUPT existing state file is not a fresh install: silently
     // returning emptyState() would re-run the entire backfill with zero
     // diagnostic. Quarantine for forensics and say so loudly.
+    const quarantine = `${file}.corrupt`;
+    let failure: { step: 'chmod' | 'rename'; path: string; error: unknown } | null = null;
     try {
-      renameSync(file, `${file}.corrupt`);
-    } catch { /* best-effort */ }
+      chmodSync(file, 0o600);
+    } catch (error) {
+      failure = { step: 'chmod', path: file, error };
+    }
+    try {
+      renameSync(file, quarantine);
+      if (failure) failure.path = quarantine;
+    } catch (error) {
+      failure ??= { step: 'rename', path: file, error };
+    }
     process.stderr.write(
       `[google] state file ${file} was corrupt (${e instanceof Error ? e.message : String(e)}); ` +
         `quarantined to .corrupt — cursors reset, the next sync re-anchors and resumes.\n`,
     );
+    if (failure) {
+      process.stderr.write(
+        `[google] could not secure the quarantined state file ${failure.path}: ${failure.step} failed ` +
+          `(${failure.error instanceof Error ? failure.error.message : String(failure.error)}). ` +
+          `It may be readable by other local users; run chmod 600 ${failure.path} or delete it.\n`,
+      );
+    }
     return emptyState();
   }
 }
 
 function writeGoogleState(dir: string, state: GoogleSourceState): void {
-  mkdirSync(dir, { recursive: true });
+  mkdirPrivate(dir);
   // Atomic (tmp+fsync+rename): this file is written once per backfill batch;
   // a torn write would silently reset every cursor (full re-backfill).
-  atomicWriteFileSync(googleStateFile(dir), JSON.stringify(state, null, 2));
+  // 0600 is reasserted on every write, so a legacy 0644 file tightens.
+  atomicWriteFileSync(googleStateFile(dir), JSON.stringify(state, null, 2), { mode: 0o600 });
+}
+
+/**
+ * Write a page's temp file privately: a stale `.tmp` left by a crash is
+ * removed first (never followed), then the temp file is created exclusively at
+ * 0600 and fchmod-ed past the umask before any byte lands. Renaming it over
+ * the page makes new and rewritten pages 0600.
+ */
+function writePrivateTemp(tmpPath: string, markdown: string): void {
+  let stale: ReturnType<typeof lstatSync> | null = null;
+  try { stale = lstatSync(tmpPath); } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+  if (stale?.isDirectory()) {
+    throw new Error(`Stale temporary path ${tmpPath} is a directory; remove it and re-run the sync.`);
+  }
+  if (stale) unlinkSync(tmpPath);
+  const buf = Buffer.from(markdown, 'utf-8');
+  const fd = openSync(tmpPath, 'wx', 0o600);
+  try {
+    fchmodSync(fd, 0o600);
+    let off = 0;
+    while (off < buf.length) {
+      const n = writeSync(fd, buf, off, buf.length - off);
+      if (n <= 0) throw new Error(`Short write to ${tmpPath} at offset ${off}/${buf.length}`);
+      off += n;
+    }
+  } finally {
+    closeSync(fd);
+  }
 }
 
 /** The "my addresses" identity set: account + Gmail sendAs aliases. */
@@ -208,12 +256,12 @@ async function importRendered(
   }
   const filePath = join(deps.cfg.dir, relPath);
   assertContained(deps.cfg.dir, filePath);
-  mkdirSync(dirname(filePath), { recursive: true });
+  mkdirPrivate(dirname(filePath), deps.cfg.dir);
   const before = existsSync(filePath);
   // Temp-write → import → rename: a failed import never destroys the
   // previously-good page (github-source pattern).
   const tmpPath = `${filePath}.tmp`;
-  writeFileSync(tmpPath, markdown, 'utf-8');
+  writePrivateTemp(tmpPath, markdown);
   try {
     const { importFile } = await import('../import-file.ts');
     const result = await importFile(deps.engine, tmpPath, relPath, {

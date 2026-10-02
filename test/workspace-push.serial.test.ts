@@ -19,6 +19,7 @@ import {
   workspacePush, acquirePushLock, pushLockDir, pushStatusPath, pushStatusPathForRoot,
   readPushStatuses, readPushStatusForRoot, summarizePushStatuses, verifyRemotePrivacy,
   parseGithubOwnerRepo, resolveWorkspaceRoot, PUSH_LOCK_STALE_MS, PUSH_DENY_GLOBS,
+  sanitizePushReason, SECRET_SCAN_REFUSAL_DOCS,
 } from '../src/core/workspace-push.ts';
 import { SCAN_ALLOW_FILENAME } from '../src/core/secret-scan.ts';
 import { visibilityCachePath } from '../src/core/repo-visibility.ts';
@@ -264,6 +265,31 @@ describe('secret-scan gate', () => {
     // The documented escape hatch still works for a declared-safe value.
     writeFileSync(join(work, SCAN_ALLOW_FILENAME), `${r.findings![0]!.fingerprint}\n`);
     expect((await push()).status).toBe('pushed');
+  }, T);
+});
+
+describe('secret-scan refusal guidance (DX-3/ENG-11)', () => {
+  test('the status-file reason survives sanitizePushReason; fix steps ride findings[]', async () => {
+    const deep = join(work, ...Array.from({ length: 10 }, (_, i) => `folder-level-${i}`));
+    mkdirSync(deep, { recursive: true });
+    writeFileSync(join(deep, 'notes.md'), `ok\nmy key: ${OPENAI}\n`);
+    writeFileSync(join(work, 'other.md'), `again: ${OPENAI}\n`);
+    const r = await push();
+    expect(r.status).toBe('blocked_secrets');
+    expect(r.findings?.length).toBe(2);
+    const status = readPushStatuses()[0]!;
+    expect(status.reason).toBe(r.reason);
+    expect(r.reason!.length).toBeLessThanOrEqual(140);
+    expect(sanitizePushReason(status.reason)).toBe(status.reason!);
+    expect(status.reason).toMatch(/^2 secret finding\(s\), first .*notes\.md:2 \[openai\]; nothing committed/);
+    const repoRoot = git(work, 'rev-parse', '--show-toplevel');
+    for (const f of r.findings!) {
+      expect(f.allowlistPath).toBe(join(repoRoot, SCAN_ALLOW_FILENAME));
+      expect(f.allowCommand).toContain(f.fingerprint);
+      expect(f.retryCommand).toBe(`gbrain sources push --path ${work} --branch main --allow-unverified-remote`);
+      expect(f.docs).toBe(SECRET_SCAN_REFUSAL_DOCS);
+    }
+    expect(JSON.stringify(r).includes(OPENAI)).toBe(false);
   }, T);
 });
 

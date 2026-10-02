@@ -74,6 +74,7 @@ function stripPrivacyFencesForRemoteReader(page: Page): Page {
 
 const get_page: Operation = {
   name: 'get_page',
+  outputRedaction: { exempt: 'explicit page read by slug/id; governed by page visibility, not output redaction (CEO-17 raw-read exception)' },
   description: 'Read a page by slug (supports optional fuzzy matching). Slug aliases left by renames redirect to the canonical page in the source that owns the alias (archived sources excluded); a redirected read reports `resolved_slug`. To edit a page, pass include_content: true — the returned `content` field is the canonical full markdown (frontmatter + body + timeline sentinel); edit THAT and pass it back to put_page to round-trip losslessly. Reassembling compiled_truth/timeline by hand risks dropping sections. Soft-deleted pages are hidden by default; pass include_deleted: true to surface them with deleted_at populated (see v0.26.5 recovery window). `timeline` is only the markdown section after the timeline sentinel; entries written by add_timeline_entry or extraction live in timeline rows, which include_timeline_entries: true returns as `timeline_entries` (the same rows get_timeline returns).',
   params: {
     slug: { type: 'string', required: true, description: 'Page slug' },
@@ -209,6 +210,7 @@ const get_page: Operation = {
 
 const fetch_page: Operation = {
   name: 'fetch',
+  outputRedaction: { exempt: 'explicit page read by slug/id; governed by page visibility, not output redaction (CEO-17 raw-read exception)' },
   description: "Fetch the full text of one search result by its opaque, source-qualified `id` (OpenAI deep-research contract: the search/fetch pair). Pass the id unchanged; it does not grant access. Legacy slug ids work only when unambiguous within your current read scope. Returns { id, title, text, url, metadata } — `text` is the page's canonical markdown. For fuzzy slugs, soft-delete recovery, or lossless edit round-trips, use get_page.",
   params: {
     id: { type: 'string', required: true, description: 'Opaque result id from a prior `search` call. Pass unchanged. Unambiguous legacy slugs are also accepted.' },
@@ -224,7 +226,7 @@ const fetch_page: Operation = {
     const slug = identity?.slug ?? id.trim();
     const missing = () => new OperationError('page_not_found', 'Page not found', 'Pass an id returned by a current `search` call.');
     let sourceOpts: ReturnType<typeof federatedSearchScope>;
-    try { sourceOpts = federatedSearchScope(ctx); }
+    try { sourceOpts = federatedSearchScope(ctx, identity?.sourceId); }
     catch (error) {
       if (error instanceof OperationError && error.code === 'permission_denied') throw missing();
       throw error;
@@ -279,6 +281,7 @@ const fetch_page: Operation = {
 
 const put_page: Operation = {
   name: 'put_page',
+  outputRedaction: 'no_stored_text',
   description: 'Replace a complete canonical Markdown page. Read get_page with include_content:true and pass its revision as expected_revision; force explicitly overwrites the current revision. Omitting both permits creation only. Retain a UUID request_id and repeat identical arguments after transport failure or a pending receipt. Content, tags, sanitized text projections, versions and the committed receipt publish together; embedding and optional Git effects have separate status. Remote callers preserve protected facts/takes fences; automatic graph links are skipped for untrusted writes. A stdio `gbrain serve` sweeps them at startup + on idle; `gbrain serve --http` does not self-sweep — run `gbrain sweep --once` or use trusted local capture/put_page for inline link extraction. Remote callers receive write_through.warning when no repo is configured. For file input use gbrain capture --file PATH --slug SLUG.',
   params: {
     ...PAGE_MUTATION_PARAMS,
@@ -356,6 +359,7 @@ async function runAutoLink(
 
 const delete_page: Operation = {
   name: 'delete_page',
+  outputRedaction: 'no_stored_text',
   description: 'Soft-delete a page and remove its markdown file from the source working tree (the source local_path, or sync.repo_path when the source has none). File removal is skipped when sync.write_through is off; the committed receipt reports the persistence mode and write_through outcome. Read the page revision first and pass expected_revision; retain request_id for replay. The row is hidden from search and from get_page/list_pages, but is recoverable via restore_page within 72h, which re-creates the file. The autopilot purge phase hard-deletes after the recovery window. Pass include_deleted: true to get_page to verify the soft-delete landed. purge: true is trusted-local CLI only and removes the row, chunks, links and raw data immediately after its recorded markdown artifact is removed. Purge uses the same revision, request_id and recovery protocol, including for existing tombstones. A removal failure preserves the prior row and never reports purge success; repair the artifact and submit a new request_id. A committed purge warns that git history, synced copies, exports and derived rows may retain content; rotate exposed credentials.',
   params: {
     ...PAGE_MUTATION_PARAMS,
@@ -383,6 +387,7 @@ const delete_page: Operation = {
 
 const restore_page: Operation = {
   name: 'restore_page',
+  outputRedaction: 'no_stored_text',
   description: 'v0.26.5 — restore a soft-deleted page (clear deleted_at) and re-create its markdown file on disk (the counterpart to delete_page removing it; the result write_through field reports the outcome). Returns success only if the page was actually soft-deleted. After this op, the page reappears in search and in get_page/list_pages without the include_deleted flag.',
   params: {
     ...PAGE_MUTATION_PARAMS,
@@ -408,6 +413,7 @@ const restore_page: Operation = {
 
 const purge_deleted_pages: Operation = {
   name: 'purge_deleted_pages',
+  outputRedaction: 'no_stored_text',
   description: 'v0.26.5 — admin-only. Hard-deletes pages whose deleted_at is older than older_than_hours (default 72). Cascades through content_chunks, page_links, chunk_relations. Local CLI only (not exposed over HTTP MCP). Manual escape hatch alongside the autopilot purge phase.',
   params: {
     older_than_hours: { type: 'number', description: 'Age cutoff in hours. Default 72.' },
@@ -429,6 +435,7 @@ type ListPagesSort = typeof LIST_PAGES_SORT_VALUES[number];
 
 const list_pages: Operation = {
   name: 'list_pages',
+  outputRedaction: 'retrieval',
   description: LIST_PAGES_DESCRIPTION,
   params: {
     type: { type: 'string', description: 'Filter by page type' },
@@ -580,6 +587,7 @@ const list_pages: Operation = {
  */
 const capture: Operation = {
   name: 'capture',
+  outputRedaction: 'no_stored_text',
   description: CAPTURE_DESCRIPTION,
   params: {
     ...PAGE_MUTATION_PARAMS,

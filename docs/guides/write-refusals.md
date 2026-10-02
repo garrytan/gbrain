@@ -60,6 +60,8 @@ of making a duplicate.
 | <a id="migrations_running"></a>`migrations_running` | `migrations_running` (exit 75) | `gbrain apply-migrations` (or the post-upgrade step of `gbrain upgrade`) found another runner holding the brain's orchestration lock and stopped before touching the migration ledger, so migrations never run twice in parallel. The message names the holder's host and pid. A holder that died is taken over automatically on the next run. `gbrain upgrade` reports this as `Migrations: running`, not as a failed upgrade. | Wait for the other run to finish; `gbrain doctor` shows migration progress. Then `gbrain apply-migrations --yes` confirms everything is applied. |
 | <a id="writer_deactivate"></a>`writer_deactivate` blockers | `writer_not_quiesced`, `writer_admin_locked`, `writer_admin_state_changed`, `writer_lock_unavailable` | `gbrain sources writer deactivate` found pending work (a queued, running or recovering write, a topology change or effect that is not settled, a held connector item, or a live connector or maintenance lease), the writer admin lock, a changed admin state, or a local process holding a worktree lock. Nothing changed. The suggestion names each blocker and its exit. | Run `gbrain sources writer deactivate --dry-run` for the full list, run each named exit (`gbrain cancel-write-request <request_id>`, `gbrain sync --source <id> --no-pull --retry-failed`, `gbrain repair embedding-effects --source <id>`, `gbrain sources writer retry-effects <source> --request-id <id> --dry-run`, `gbrain sources writer unlock`, `gbrain sources retry-held <id>`), then deactivate again with a fresh `--expected-state` from `gbrain sources writer status --json`. See the [deactivate runbook](../architecture/topologies.md#deactivate-runbook). |
 | unknown option (repair) | `invalid_params` | `gbrain repair` refuses any option it does not list, so a mistyped flag or `--max-usd` never runs a repair silently without it. | Fix the option (`gbrain repair --help`). To cap paid repair work, run `gbrain doctor --remediate --yes --include-repairs --max-usd <n>`. |
+| <a id="colon_slug_windows_write_through"></a>`colon_slug_windows_write_through` | `colon_slug_windows_write_through` | A page slug such as `calendar:abc` is valid, but its canonical file name would contain `:`, which Windows cannot store (it names an alternate data stream). On Windows, a write that would publish that file is refused before admission, and `gbrain sync` skips each such file with this reason instead of failing the run. Database-only writes of the same slug (no repo configured, `sync.write_through` off, an unbound source, or a [read-only mirror](multi-source-brains.md#read-only-mirror-sources) source and pages created while it was one) still succeed, and macOS and Linux are unchanged. | Use a slug without `:` (the suggestion names one), or write the page from a macOS or Linux host that owns the source. For a skipped sync file, rename it without `:` on a macOS or Linux checkout, commit, then run `gbrain sync --source <source> --no-pull` on the Windows host. |
+| <a id="embedding_auth_failed"></a>`embedding_auth_failed` | `embedding_auth_failed` | The embedding provider rejected the configured key (HTTP 401 or 403). Printed once per process on stderr, naming the key source in effect: an environment variable (for example `OPENAI_API_KEY`, which wins over the config key) or the config key in `~/.gbrain/config.json`. No key or part of one is printed. | Environment key in effect but the config key is right: remove the variable from the environment of the process that reported it (shell profile, `~/.gbrain/.env`, or a daemon's service definition) and restart that process. Environment key intended: replace it with a valid key, restart, and run `gbrain config unset openai_api_key` (or the matching key). Config key in effect: `gbrain config set openai_api_key <valid key>`. Then `gbrain embed --stale` embeds what was saved meanwhile. `gbrain doctor` (`embedding_key_source`) shows the key source in doctor's own environment. |
 
 ### Other error codes
 
@@ -148,6 +150,196 @@ per source. While the source is unbound it is `ok` and prints the bind command;
 after binding it warns, because those pages sit outside the canonical files.
 There is no command yet that turns them into files; to move one, save its
 content under a new slug and delete the database-only page.
+
+## Secret scan refusals and redaction
+
+GBrain runs one secret scanner in several places. Depending on where a
+credential-shaped value turns up, it blocks a push, leaves an entry out of
+compiled context, skips a relay, or is replaced in output with a
+`<REDACTED:pattern>` token (for example `<REDACTED:url_credentials>`). The
+stored page never changes: redaction applies to what a caller receives, not
+to your files or database.
+
+| Where | What happens | What to do |
+| --- | --- | --- |
+| `gbrain sources push` | Refused with `blocked_secrets`, exit code 5. Nothing is committed; the index is reset to `HEAD` and files on disk are untouched. | Remove a real credential and rotate it. Allowlist only a reviewed false positive (below). |
+| `gbrain bootstrap verify`, `gbrain bootstrap repo` | The secret-scan check fails, or the first push stops before anything is committed or pushed. Each finding shows its file, line, pattern, fingerprint and the version that added the rule. | Same as push. |
+| Compiled context (`gbrain compile-context`) | The entry is left out. One line on stderr names the page, the pattern and the fingerprint, never the value. | Remove the value from the page, or allowlist a reviewed false positive. |
+| Memory relay at compaction | The receipt and relay are skipped for that compaction window only; the checkpoint is kept. A content-free line (`reason: secret_scan_refused`, pattern, fingerprint, hint) goes to `~/.gbrain/integrations/hooks/heartbeat.jsonl`. | Nothing to run; the next window is scanned again. Remove the value from the transcript source if it keeps recurring. |
+| Retrieval output | The value is replaced with `<REDACTED:pattern>`; everything else in the result is unchanged. | Nothing. Read the page on the brain host if you need the value (see what stays raw below). |
+| Page reads | Not redacted. | See [what stays raw by design](#what-stays-raw-by-design). |
+| Configured providers | Not redacted yet. | See [what stays raw by design](#what-stays-raw-by-design). |
+
+An allowlist entry stops pushes and compiled context from refusing a
+finding. It does not turn off retrieval redaction: search and recall still
+replace an allowlisted value.
+
+### Shapes this scanner catches
+
+Vendor key prefixes (OpenAI, Anthropic, Voyage, GitHub, GitLab, Slack, AWS, Google,
+Stripe, SendGrid, Twilio, Supabase, npm, Hugging Face, DigitalOcean, gbrain
+tokens), JWTs, `Bearer` tokens, private keys, database URLs carrying a
+password, `http(s)` URLs carrying a password (`url_credentials`) and
+`Authorization: Basic` credentials (`basic_auth`). A private key is caught
+even when a snippet or chunk cut off its `BEGIN` or `END` line: the key body
+lines are redacted along with whichever fence is present.
+
+Search chunks never hold key material. A page whose text contains a private
+key is chunked from a copy in which each key is replaced by
+`<REDACTED:private_key_pem>` (line breaks kept, so positions do not shift),
+and evidence delivery cuts `window`, `section` and `page` text from the same
+copy. A chunk from the middle of a long key, with neither its `BEGIN` nor
+its `END` line, therefore carries the token instead of key lines, and key
+material never reaches the embedding provider. The stored page is unchanged.
+Pages indexed before v0.60.31.0 that contain a `BEGIN` or `END … PRIVATE
+KEY` line are withheld from search until the upgrade re-chunks them, without
+provider calls; `gbrain doctor` reports them as `credential_projection_pending`
+until then, and `gbrain embed --stale` embeds the new chunks when you choose
+to. Key material with no `BEGIN` or `END` line anywhere on the page, and keys
+inside image OCR text, are not projected.
+
+Retrieval output, transcript import, hooks and the memory relay also run the
+assignment rule (`high_entropy_assignment`): a value of 12 or more characters
+with at least one digit and enough randomness, assigned to a key such as
+`password`, `token`, `secret` or `api_key`. Pushes and compiled context do
+not run that rule, so a plain `DB_PASSWORD=...` line never blocks a push.
+
+Placeholder passwords in URLs are skipped: `<password>`, `${VAR}`, `$VAR`,
+and all-`*` or all-`x` masks. A URL with a user and no password, and paths
+that only contain `@` (`https://registry.example/@scope/pkg`), are not
+credentials.
+
+### When a push is refused
+
+```text
+PUSH BLOCKED — secret scan findings (nothing committed):
+  notes/deploy.md:12 [url_credentials] clone <REDACTED:url_credentials>git.example.com/team/repo.git
+    fingerprint: sha256:<16 hex characters>
+    rule [url_credentials] blocks pushes since gbrain v0.60.31.0
+    allow this finding: printf '\n%s\n' sha256:<16 hex characters> >> '/home/you/brain/.gbrain-scan-allow'
+Remove a real credential from the file (and rotate it) first. Allowlist only a reviewed false positive
+with the "allow this finding" command above (it appends to '/home/you/brain/.gbrain-scan-allow'), then retry:
+  gbrain sources push --path '/home/you/brain'
+Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/write-refusals.md#secret-scan-refusals-and-redaction
+```
+
+Each finding carries:
+
+- **fingerprint**: `sha256:` plus the first 16 hex characters of the
+  value's hash. It identifies the value without revealing it.
+- **rule ... since**: the gbrain version that added or changed the rule,
+  shown for rules this release added or changed (`url_credentials`,
+  `basic_auth`, `digitalocean` and private keys whose `BEGIN` or `END` line
+  is missing). A push that worked before an upgrade and fails after it names
+  the version here.
+- **allow this finding**: the exact command that appends the fingerprint to
+  the `.gbrain-scan-allow` file at the repository root. The path is absolute
+  and quoted, so the command works from any directory.
+- **retry**: the push command to run again, with the same `--path`,
+  `--branch` and `--allow-unverified-remote` you used.
+
+`gbrain sources push --json` returns the same data in `findings[]`, one
+object per finding with `file`, `line`, `pattern`, `redactedPreview`,
+`fingerprint`, `since`, `allowlistPath`, `allowCommand`, `retryCommand`,
+`docs` and, when it applies, `staleAllowlistEntry`. The `reason` field
+stays a one-line summary of at most 140 characters (count, first location,
+pattern), so hook and doctor surfaces show it whole.
+
+### Allowlisting a reviewed false positive
+
+First decide whether the value is a real credential. If it is, remove it
+from the file, rotate it with the provider, and push again; allowlisting a
+real credential publishes it.
+
+If it is not (a sample value in documentation, a test fixture), run the
+"allow this finding" command from the refusal, review the change to
+`.gbrain-scan-allow`, then run the retry command. The file holds one entry
+per line: a fingerprint (`sha256:` and at least 16 hex characters) or a path
+glob (a glob without `/` matches a file name at any depth; one with `/` is
+anchored at the repository root), with `#` comments. Commit the file so
+other machines push the same tree.
+
+Prefer a fingerprint over a glob. A glob skips the scan for every file it
+matches, including credentials added later.
+
+### A stale allowlist entry for a private key
+
+Before v0.60.31.0, a private key whose `END` line was missing (a cut-off
+excerpt) was matched by its `BEGIN` line alone, and its fingerprint covered
+only that line. The fingerprint now covers the key body too, so an old entry
+for such a key no longer matches and the push is refused again. The refusal
+says so and gives the replacement:
+
+```text
+    stale allowlist entry: sha256:<old> matched only this key's BEGIN header before gbrain v0.60.31.0; the fingerprint now covers the key body.
+    if the key is a reviewed false positive, replace that line in '/home/you/brain/.gbrain-scan-allow' with: sha256:<new>
+```
+
+Replace the old line only if the key is a reviewed false positive. A cut-off
+key's fingerprint depends on where the text was cut, so an entry for a
+truncated key is not stable: if the excerpt changes, the fingerprint
+changes and the push is refused again. For sample keys in documentation,
+show a placeholder instead of key material.
+
+### Redaction in retrieval output
+
+Every operation that returns retrieved text redacts it before any caller
+sees it: `search`, `query`, evidence delivery, `recall`, `context_pack`,
+`delta`, `entity`, `synthesize`, `think`, takes, timelines, transcripts and
+the other retrieval operations. The same pass applies on the CLI, both MCP
+transports, subagent tools and `gbrain call`.
+
+A safe way to see it, on a scratch brain with a value made up on the spot:
+
+```bash
+export GBRAIN_HOME="$(mktemp -d)"
+gbrain init --pglite --no-embedding
+PW="Gx7$(openssl rand -hex 12)"
+gbrain capture --stdin <<EOF
+Deploy notes for the scratch redaction check.
+clone https://deploy:${PW}@git.example.com/team/repo.git
+staging DB_PASSWORD="${PW}#x"
+EOF
+gbrain search "scratch redaction check" --json | grep chunk_text
+```
+
+Expected (one line, shown wrapped):
+
+```text
+"chunk_text": "# Deploy notes for the scratch redaction check.\n\nDeploy notes for the scratch redaction check.\n
+clone <REDACTED:url_credentials>git.example.com/team/repo.git\nstaging DB_PASSWORD=\"<REDACTED:high_entropy_assignment>\"",
+```
+
+The host and path stay; only the user and password are replaced. IDs and
+slugs are never redacted, so do not put secrets in page slugs.
+
+Remembered facts are the one per-caller difference. The `fact`, `context`
+and `source` fields of `recall`, `context_pack` and `delta` are redacted
+for remote callers and returned raw to the trusted local CLI on the brain
+host, so a credential you asked the brain to remember is readable with
+`gbrain recall` there. Every MCP caller, including stdio MCP, and a thin
+client connected over MCP count as remote. Search results, rendered `text`
+and entity cards are redacted for every caller.
+
+When an agent sees `<REDACTED:pattern>`, the brain holds a value of that
+shape and withheld it. The agent should tell the user that, name the
+pattern, and point to the brain host for the value. It should not retry
+other operations to get around it.
+
+### What stays raw by design
+
+- **Page reads.** `get_page`, `fetch`, `get_chunks`, `get_raw_data` and
+  `get_versions` return the stored text unredacted. They are explicit
+  requests for a page and are governed by page visibility, not redaction.
+  Installed skill files (`get_skill`, `get_skill_asset`, the skill catalog
+  operations) and admin job operations are raw too.
+- **Configured providers.** The embedding provider at import, a hosted
+  reranker, and `synthesize`/`think` generation still receive stored text
+  unredacted, except private keys, which chunks never contain. Redaction covers what callers receive, not what gbrain sends
+  to a model provider you configured.
+- **Your files and database.** Redaction never edits stored content. If a
+  real credential reached the brain, rotate it, then follow
+  ["If a secret reached the brain"](../../SECURITY.md#if-a-secret-reached-the-brain).
 
 ## Related
 

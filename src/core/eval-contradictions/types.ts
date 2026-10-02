@@ -20,8 +20,10 @@ export const SCHEMA_VERSION = 1 as const;
  *
  * v2 (Lane A1, 2026-05): judge prompt now receives `Statement A (from: YYYY-MM-DD)`
  *   or `(date unknown)` per side. Old v1 verdicts are silently invalidated.
+ * v3 (N2-3, 2026-10): temporal verdicts need two different times; look-alike
+ *   names are different entities.
  */
-export const PROMPT_VERSION = '2' as const;
+export const PROMPT_VERSION = '3' as const;
 
 /** Truncation policy string baked into the cache key. */
 export const TRUNCATION_POLICY = '1500-chars-utf8-safe' as const;

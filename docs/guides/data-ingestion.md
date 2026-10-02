@@ -15,6 +15,17 @@ Page writes return durable receipts. Replacements require the revision you read 
 
 **Ambient memory writeback (opt-in, personal brains).** Stop having to say "remember this": once enabled, your agents save durable facts you state in passing — preferences, decisions, commitments — with provenance, and transient facts (a cold, a trip) expire when saved with an explicit TTL. Off by default; on a personal brain gbrain asks you once at init/upgrade; company brains are never nudged. **Say to your agent:** *"Turn on ambient memory writeback"* — your agent runs `gbrain config set memory.auto_writeback salient` and `gbrain bootstrap harness --yes`. Full mechanics, privacy posture, and per-harness limitations: [`docs/guides/ambient-writeback.md`](ambient-writeback.md).
 
+**Credentials you save stay in the brain, but retrieval withholds them.** What
+you capture or `remember` is stored as written. When a search, query or memory
+read returns text containing a credential-shaped value (an API key, a password
+assignment, a URL with a password, a private key), the value comes back as
+`<REDACTED:pattern>`. A credential you ask the brain to remember is withheld
+from remote recall by design: every MCP caller, including stdio MCP, and a
+thin-client install count as remote. On the brain host, `gbrain recall` shows
+remembered facts as written. Full page reads (`get_page`) are not redacted;
+they follow page visibility. Details and the full list of what stays raw:
+[secret scan refusals and redaction](write-refusals.md#secret-scan-refusals-and-redaction).
+
 For webhook ingestion (Zapier / IFTTT / Apple Shortcuts):
 
 ```bash
@@ -52,8 +63,10 @@ parses agent session logs (Claude Code, Codex, OpenClaw, Hermes, Grok Build) and
 consumer chat exports (ChatGPT / Claude.ai `conversations.json`) into readable
 conversation pages with provenance back to the exact session file. Pattern-based redaction runs over message bodies, titles, speakers, and session
 metadata before anything is written — vendor key prefixes, JWTs, cloud/API key
-shapes, `Bearer` headers, connection-string credentials, and high-entropy
-`KEY=`/`TOKEN=` assignments become `<REDACTED:…>` placeholders (preview with
+shapes, `Bearer` and `Authorization: Basic` headers, database and `http(s)`
+URLs carrying a password, private keys (also when an excerpt cut off the
+`BEGIN` or `END` line), and high-entropy `KEY=`/`TOKEN=`/`password=`
+assignments (quoted values may contain punctuation) become `<REDACTED:…>` placeholders (preview with
 `--dry-run`; no pattern set is complete, so if a secret still lands see
 ["If a secret reached the brain"](../../SECURITY.md#if-a-secret-reached-the-brain):
 rotate it, then `gbrain delete <slug> --purge`). Embedding is off by default

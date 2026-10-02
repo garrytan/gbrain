@@ -9,9 +9,9 @@ afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
 /**
  * Starts short-lived children whose first exit callback re-enters the event
- * loop the way bun:test `expect().resolves/.rejects` does. On Bun 1.3.x that
- * drops the other exit and pipe events of the same poll batch
- * (oven-sh/bun#30301), which is how managed-maintenance, persistence-reconcile
+ * loop the way bun:test `expect().resolves/.rejects` does. Bun drops the other
+ * pipe events of the same poll batch (still on 1.4.2) and, before 1.3.14, the
+ * exit events too (oven-sh/bun#30301), which is how managed-maintenance, persistence-reconcile
  * and google-attachments hung behind a persistence consumer's git probe.
  */
 function nestedTickDuring<T>(work: () => Promise<T>[]): Promise<T[]> {

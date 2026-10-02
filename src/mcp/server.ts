@@ -14,7 +14,7 @@ import { getBrainHotMemoryMeta } from '../core/facts/meta-hook.ts';
 import { loadConfig } from '../core/config.ts';
 import { gcSessionContextState } from '../core/context/session-state.ts';
 import { bindResolveIpcForServe } from './resolve-ipc-binding.ts';
-import { createPersistenceIpcProvider } from '../core/persistence/provider.ts';
+import { createPersistenceIpcProvider, residentPersistenceConfig } from '../core/persistence/provider.ts';
 import { resolveMcpInstructions } from './instructions.ts';
 import { installCapabilitiesResource, mcpAdministrationGuidance } from './capabilities.ts';
 import { createSkillResources } from './skill-resources.ts';
@@ -27,7 +27,12 @@ import { assertStdioSourceBindable } from './source-preflight.ts';
 export async function resolveMcpStdioSourceScope(
   engine: BrainEngine,
   cwd: string = process.cwd(),
-): Promise<{ sourceId: string; localFederatedSourceIds?: string[]; tier: import('../core/source-resolver.ts').SourceTier }> {
+): Promise<{
+  sourceId: string;
+  localFederatedSourceIds?: string[];
+  explicitReadBinding?: import('../core/ops/contract.ts').ExplicitReadBinding;
+  tier: import('../core/source-resolver.ts').SourceTier;
+}> {
   // Degraded mode (db-availability 4c): short-circuit WITHOUT touching the
   // engine. This site runs before EVERY dispatch and its catch below
   // swallows errors into sourceId 'default' — letting it hit a degraded
@@ -47,12 +52,16 @@ export async function resolveMcpStdioSourceScope(
       : { sourceId: 'default', tier: 'seed_default' };
   }
   try {
-    const { resolveSourceWithTier, localFederatedSourceIds } = await import('../core/source-resolver.ts');
+    const { resolveSourceWithTier, localFederatedSourceIds, explicitReadBinding } = await import('../core/source-resolver.ts');
     const resolved = await resolveSourceWithTier(engine, null, cwd);
     const federated = await localFederatedSourceIds(engine, resolved.source_id, resolved.tier);
+    // #5081: the admission set is optional; a failed lookup must not discard
+    // the resolved binding (the catch below would fall back to 'default').
+    const binding = await explicitReadBinding(engine, resolved.source_id, resolved.tier).catch(() => undefined);
     return {
       sourceId: resolved.source_id,
       ...(federated ? { localFederatedSourceIds: federated } : {}),
+      ...(binding ? { explicitReadBinding: binding } : {}),
       tier: resolved.tier,
     };
   } catch {
@@ -327,6 +336,9 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
       ...(sourceScope.localFederatedSourceIds
         ? { localFederatedSourceIds: sourceScope.localFederatedSourceIds }
         : {}),
+      ...(sourceScope.explicitReadBinding
+        ? { explicitReadBinding: sourceScope.explicitReadBinding }
+        : {}),
       // --source-guard (plugin lanes): thread the winning resolution tier so
       // dispatch can fail-close ambient-tier writes. Off (undefined) unless
       // the serve was started with the flag.
@@ -362,7 +374,7 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
     ipcBinding = await bindResolveIpcForServe(
       engine,
       (await resolveMcpStdioSourceScope(engine)).sourceId,
-      await createPersistenceIpcProvider(engine, config ?? { engine: engine.kind }),
+      await createPersistenceIpcProvider(engine, residentPersistenceConfig(config) ?? { engine: engine.kind }),
     );
 
     // v0.45.7 ambient recall: age out stale session cursors once per serve boot

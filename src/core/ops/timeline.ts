@@ -19,6 +19,7 @@ import {
 
 const add_timeline_entry: Operation = {
   name: 'add_timeline_entry',
+  outputRedaction: 'retrieval',
   description: 'Append an entry to the canonical Markdown timeline and structured timeline store in one committed write. Exact replay changes neither store.',
   params: {
     request_id: WRITE_REQUEST_PARAM,
@@ -61,6 +62,7 @@ const add_timeline_entry: Operation = {
 
 const get_timeline: Operation = {
   name: 'get_timeline',
+  outputRedaction: 'retrieval',
   description: 'Get timeline entries for a page, optionally filtered by date window',
   params: {
     slug: { type: 'string', required: true, description: 'Slug of the page whose timeline entries to return.' },

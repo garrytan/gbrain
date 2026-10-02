@@ -1,6 +1,6 @@
 {
   "golden": {
-    "count": 181,
+    "count": 184,
     "gaps": [
       17,
       18,
@@ -8,6 +8,8 @@
       100
     ],
     "helpers": {
+      "FACT_RELINK_TABLE_SQL": "1fdde4b99d0077365274096f294be64a992961c7b4544af794224de238b03630",
+      "FACT_UNLINKED_INDEX_SQL": "87dcf23c3fa570d93bfb214b6bbb024faa9ff9bff227aa78869a29580be03298",
       "PERSISTENCE_DATABASE_PENDING_INDEX_SQL": "6e0f618be33d037454933ea4dea11438413d45aef35d3bd4f33e89624d6e199e",
       "PERSISTENCE_EFFECT_PARKED_INDEX_SQL": "0107863883415378d7c0dce7a0cbd5311c2c5a59fc0f81917cc8b767fd235cf2",
       "PERSISTENCE_SYNC_RUN_INDEXES": "e1b12613c5fd2facb850e6857b0bddcf49b2478ec258fa226fe15e71e55df9c1",
@@ -25,7 +27,7 @@
       "slugifyPath": "401dbca23580865d8b168dd8d84db4a6c708c6610d7cb61abafc7d0ee9809063",
       "verifyProjectionStatistics": "59d9ccfea1c53384d8607874a51209a9c2dfd51b2b85a2cb6269fa4120faf1f3"
     },
-    "latest": 186,
+    "latest": 189,
     "records": [
       {
         "handler": {
@@ -2751,6 +2753,53 @@
         "transaction": "absent",
         "verify": "absent",
         "version": 186
+      },
+      {
+        "handler": {
+          "form": "arrow",
+          "helpers": [
+            "FACT_RELINK_TABLE_SQL",
+            "FACT_UNLINKED_INDEX_SQL",
+            "dropInvalidConcurrentIndex"
+          ],
+          "sha256": "b4d519036887e9ba4f75e78b94982150f0f1b26a5f2c01ae5c7796d0cfdceed8"
+        },
+        "idempotent": true,
+        "name": "fact_relink_attempts",
+        "sql": {
+          "length": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "sqlFor": "absent",
+        "transaction": false,
+        "verify": "absent",
+        "version": 187
+      },
+      {
+        "handler": "absent",
+        "idempotent": true,
+        "name": "facts_ontology_stint_dedup",
+        "sql": {
+          "length": 264,
+          "sha256": "4b1e09f341664813647809462824659f7eea74998e3a4be8600d251428127bf5"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 188
+      },
+      {
+        "handler": "absent",
+        "idempotent": true,
+        "name": "pages_credential_projection_pending",
+        "sql": {
+          "length": 757,
+          "sha256": "8aa1667978e6e6f065afd4e0344cf0547bc03665a549ed7a5a8fdcd984cb14f5"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 189
       }
     ],
     "versions": [
@@ -2934,7 +2983,10 @@
       183,
       184,
       185,
-      186
+      186,
+      187,
+      188,
+      189
     ]
   },
   "normalizer": "migrations-record-v1"

@@ -6,6 +6,9 @@
 import type { BrainEngine } from '../../core/engine.ts';
 import type { MinionQueue } from '../../core/minions/queue.ts';
 import type { MinionJob } from '../../core/minions/types.ts';
+import type { OperationError } from '../../core/ops/contract.ts';
+import type { SelectionSummary } from '../../core/minions/legacy-selection.ts';
+import { setCliExitVerdict } from '../../core/cli-force-exit.ts';
 import { parseNiceValue } from '../../core/minions/niceness.ts';
 import { defaultTimeoutMsFor, defaultLockDurationMsFor } from '../../core/minions/handler-timeouts.ts';
 
@@ -226,4 +229,30 @@ export function formatJobDetail(job: MinionJob): string {
   if (job.result != null) lines.push(`  Result: ${JSON.stringify(job.result)}`);
   lines.push(`  Data: ${JSON.stringify(job.data)}`);
   return lines.join('\n');
+}
+
+/** Renders a coded jobs refusal: the `toJSON()` envelope on stdout with --json, the human lines on stderr, exit 1. */
+export function reportJobsError(error: OperationError, json: boolean): void {
+  if (json) console.log(JSON.stringify(error.toJSON(), null, 2));
+  console.error(`Error [${error.code}]: ${error.message}`);
+  if (error.suggestion) console.error(`Fix: ${error.suggestion}`);
+  if (error.docs) console.error(`Docs: ${error.docs}`);
+  setCliExitVerdict(1);
+}
+
+/** Handlers outside the gateway-refresh set that can still spend: embedding by default, or the subagent and optimizer loops. */
+const OTHER_PAID_JOB_NAMES = new Set(['subagent', 'skillopt', 'import', 'reindex', 'sync', 'ingest_capture']);
+
+/** Job names whose handlers can make paid model-provider calls (DX-O3(d) marks them in a legacy preview). */
+export async function paidJobNames(names: Iterable<string>): Promise<string[]> {
+  const { GATEWAY_REFRESH_JOB_NAMES } = await import('../jobs.ts');
+  return [...new Set(names)].filter(name => GATEWAY_REFRESH_JOB_NAMES.has(name) || OTHER_PAID_JOB_NAMES.has(name)).sort();
+}
+
+/** DX-O3(d) human preview lines: counts by job name and status, the first 20 ids, paid markers. */
+export function selectionSummaryLines(summary: SelectionSummary, paid: readonly string[]): string[] {
+  const lines = Object.entries(summary.by_name).sort(([a], [b]) => a.localeCompare(b)).map(([name, counts]) =>
+    `  ${name}: ${Object.entries(counts).map(([status, n]) => `${status} ${n}`).join(', ')}${paid.includes(name) ? '  [may make paid provider calls]' : ''}`);
+  if (summary.total) lines.push(`  First ${summary.first_ids.length} ids: ${summary.first_ids.join(', ')}${summary.total > summary.first_ids.length ? ' …' : ''}`);
+  return lines;
 }
