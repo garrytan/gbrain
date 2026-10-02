@@ -58,6 +58,7 @@ const FED_SOURCE = 'e2e-sg-fed';
 const PRIV_SOURCE = 'e2e-sg-priv';
 const DEFAULT_PAGE = 'e2e-sg-default-page';
 const FED_PAGE = 'e2e-sg-fed-page';
+const FED_PEER = 'e2e-sg-fed-peer';
 const PRIV_PAGE = 'e2e-sg-priv-page';
 
 describeE2E('/mcp source-grant wiring — legacy no-grant widening vs granted confinement (#3242)', () => {
@@ -121,6 +122,17 @@ describeE2E('/mcp source-grant wiring — legacy no-grant widening vs granted co
     await engine.putPage(PRIV_PAGE, {
       type: 'note', title: 'SG non-federated-source page', compiled_truth: 'Body of the non-federated-source probe page.',
     }, { sourceId: PRIV_SOURCE });
+    await engine.putPage(FED_PEER, {
+      type: 'note', title: 'SG federated peer', compiled_truth: 'Federated graph peer.',
+    }, { sourceId: FED_SOURCE });
+    await engine.addLink(DEFAULT_PAGE, FED_PAGE, 'federated inbound', 'supports', 'manual', undefined, undefined,
+      { fromSourceId: 'default', toSourceId: FED_SOURCE });
+    await engine.addLink(FED_PAGE, FED_PEER, 'granted control', 'supports', 'manual', undefined, undefined,
+      { fromSourceId: FED_SOURCE, toSourceId: FED_SOURCE });
+    await engine.addLink(PRIV_PAGE, FED_PAGE, 'non-federated inbound', 'supports', 'manual', undefined, undefined,
+      { fromSourceId: PRIV_SOURCE, toSourceId: FED_SOURCE });
+    await engine.addLink(DEFAULT_PAGE, PRIV_PAGE, 'non-federated outbound', 'supports', 'manual', undefined, undefined,
+      { fromSourceId: 'default', toSourceId: PRIV_SOURCE });
 
     // Legacy bearer tokens. permissions WITHOUT source_id is the historical
     // no-grant floor (`gbrain auth create` writes {takes_holders:[...]});
@@ -170,8 +182,8 @@ describeE2E('/mcp source-grant wiring — legacy no-grant widening vs granted co
       await conn.unsafe(`DELETE FROM access_tokens WHERE name LIKE 'sg-e2e-%'`);
       // Pages first (FK), then the fixture sources.
       await conn.unsafe(
-        `DELETE FROM pages WHERE slug IN ($1, $2, $3)`,
-        [DEFAULT_PAGE, FED_PAGE, PRIV_PAGE],
+        `DELETE FROM pages WHERE slug IN ($1, $2, $3, $4)`,
+        [DEFAULT_PAGE, FED_PAGE, PRIV_PAGE, FED_PEER],
       );
       await conn.unsafe(`DELETE FROM sources WHERE id IN ($1, $2)`, [FED_SOURCE, PRIV_SOURCE]);
     } catch (e: any) {
@@ -271,6 +283,37 @@ describeE2E('/mcp source-grant wiring — legacy no-grant widening vs granted co
     expect(miss.isError).toBe(true);
     expect(miss.content[0].text).toContain('page_not_found');
   }, 15_000);
+
+  // #5827: protect observable graph federation on the real HTTP/Postgres path.
+  // Reverting either linkReadScopeOpts or traverse_graph's scope wiring makes
+  // the no-grant calls empty. Existing tests above cover pages, not graph reads.
+  // Granted same-source controls prove confinement is not vacuous; no new seam.
+  for (const [name, args] of [
+    ['get_links', { slug: DEFAULT_PAGE }],
+    ['get_backlinks', { slug: FED_PAGE }],
+    ['traverse_graph', { slug: FED_PAGE, direction: 'in', depth: 1 }],
+  ] as const) {
+    test(`no-grant legacy token: ${name} returns the federated edge and excludes the non-federated endpoint`, async () => {
+      const result = await mcpToolResult(noGrantToken, name, args);
+      expect(result.isError).not.toBe(true);
+      expect(parseToolJson(result)).toEqual([
+        expect.objectContaining({ from_slug: DEFAULT_PAGE, to_slug: FED_PAGE, context: 'federated inbound' }),
+      ]);
+    }, 15_000);
+
+    test(`granted legacy token: ${name} cannot see the default-source edge but can read its own graph`, async () => {
+      const denied = await mcpToolResult(grantedToken, name, args);
+      expect(denied.isError).not.toBe(true);
+      expect(parseToolJson(denied)).toEqual([]);
+      const ownArgs = name === 'get_backlinks' ? { slug: FED_PEER }
+        : name === 'traverse_graph' ? { slug: FED_PAGE, direction: 'out', depth: 1 } : { slug: FED_PAGE };
+      const own = await mcpToolResult(grantedToken, name, ownArgs);
+      expect(own.isError).not.toBe(true);
+      expect(parseToolJson(own)).toEqual([
+        expect.objectContaining({ from_slug: FED_PAGE, to_slug: FED_PEER, context: 'granted control' }),
+      ]);
+    }, 15_000);
+  }
 
   // =========================================================================
   // Contrast pair (anti-vacuity): a grant-bearing legacy token is CONFINED

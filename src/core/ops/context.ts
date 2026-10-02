@@ -572,10 +572,12 @@ export function thinkSourceScopeOpts(ctx: OperationContext): {
  * and have a foreign far/origin slug disclosed. So for remote callers we promote a
  * scalar scope to a single-element `sourceIds:[id]`, routing them through the
  * all-endpoint branch. Trusted local CLI (`ctx.remote === false`) keeps the scalar
- * cross-source view, and a federated array passes through unchanged.
+ * cross-source view, and a federated array passes through unchanged. Unqualified
+ * no-grant reads use the transport-computed federation just like page reads;
+ * the shared resolver keeps explicit source selection and grants authoritative.
  */
 export function linkReadScopeOpts(ctx: OperationContext): { sourceId?: string; sourceIds?: string[] } {
-  const scope = sourceScopeOpts(ctx);
+  const scope = federatedSearchScope(ctx);
   if (ctx.remote !== false && scope.sourceId && !scope.sourceIds) {
     return { sourceIds: [scope.sourceId] };
   }
@@ -687,8 +689,9 @@ export function parseSourceIdParam(
  * transport-computed federated set, but never widens an OAuth grant.
  *
  * Deliberately NOT inside `sourceScopeOpts`: code-intel ops collapse a
- * multi-element scope to an error (`resolveCodeIntelScope`), and the remaining
- * scalar reads (get_links, get_chunks, …) keep their long-standing behavior.
+ * multi-element scope to an error (`resolveCodeIntelScope`), and unrelated
+ * scalar reads keep their long-standing behavior. Graph reads opt in through
+ * `linkReadScopeOpts`, retaining remote all-endpoint confinement.
  */
 export function federatedSearchScope(
   ctx: OperationContext,
