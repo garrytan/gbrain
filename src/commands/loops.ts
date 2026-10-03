@@ -162,22 +162,29 @@ export async function runLoops(engine: BrainEngine, args: string[]): Promise<voi
   if (sub === 'list' || sub === 'show') {
     const statusIdx = rest.indexOf('--status');
     const typeIdx = rest.indexOf('--type');
+    const id = sub === 'show' ? Number(rest.find((a) => /^\d+$/.test(a))) : undefined;
+    if (id !== undefined && !(Number.isSafeInteger(id) && id > 0)) {
+      console.error('Usage: gbrain loops show <id> [--json]');
+      process.exit(2);
+    }
+    // show looks the id up in the op (any status, any rank), never in the
+    // listed page: a page holds only the most recent loops of one status.
     const result = (await handleToolCall(
       engine,
       'open_loops',
       {
         group_by: 'none',
         limit: 200,
+        ...(id !== undefined ? { id } : {}),
         ...(statusIdx !== -1 ? { status: rest[statusIdx + 1] } : {}),
         ...(typeIdx !== -1 ? { loop_type: rest[typeIdx + 1] } : {}),
       },
       { sourceId: sourceFlag(rest) ?? ALL_SOURCES },
     )) as { loops: Array<Record<string, unknown>>; count: number };
     if (sub === 'show') {
-      const id = Number(rest.find((a) => /^\d+$/.test(a)));
       const loop = result.loops.find((l) => l.id === id);
       if (!loop) {
-        console.error(`No loop ${id}. (gbrain loops list shows ids; closed loops need --status done/dropped/stale)`);
+        console.error(`No loop ${id}. (gbrain loops list shows ids)`);
         setCliExitVerdict(1);
         return;
       }

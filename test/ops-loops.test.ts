@@ -22,6 +22,7 @@ import { loopsOperations } from '../src/core/ops/loops.ts';
 import { operationsByName } from '../src/core/operations.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
 import {
+  closeOpenLoop,
   listOpenLoops,
   loadSuppressions,
   upsertOpenLoop,
@@ -610,6 +611,92 @@ describe('open_loops per-call scope (source_id / all_sources)', () => {
         group_by: 'none',
       }),
     ).rejects.toThrow(/resolved source scope/);
+  });
+});
+
+describe('open_loops id lookup (#5870)', () => {
+  interface FlatResult {
+    loops: Array<{ id: number; status: string; quote?: string }>;
+    count: number;
+    truncated: boolean;
+    redacted: boolean;
+  }
+
+  // 501 open loops in g1 one hour apart (the oldest sits past the 500-row
+  // internal fetch), one done loop in g1, and g2 as a second google source.
+  async function seed(): Promise<{ oldestOpen: number; done: number }> {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, config, last_sync_at)
+       VALUES ('g2', 'g2', '{"kind":"google"}'::jsonb, now())
+       ON CONFLICT (id) DO NOTHING`,
+    );
+    await engine.executeRaw(
+      `INSERT INTO open_loops (source_id, dedup_key, loop_type, counterparty_email, summary, detector, last_activity_at)
+       SELECT 'g1', 'thread:bulk' || g || ':unanswered_inbound', 'unanswered_inbound',
+              'p' || g || '@example.com', 'Reply owed to p' || g || '@example.com', 'deterministic_thread',
+              now() - make_interval(hours => g)
+       FROM generate_series(1, 501) AS g`,
+    );
+    const oldestOpen = Number((await engine.executeRaw<{ id: number }>(
+      `SELECT id FROM open_loops ORDER BY last_activity_at ASC LIMIT 1`,
+    ))[0].id);
+    const { id: done } = await upsertOpenLoop(engine, loop());
+    await closeOpenLoop(engine, 'g1', done, 'done', 'manual');
+    return { oldestOpen, done };
+  }
+
+  const granted = (allowedSources: string[]) =>
+    ctx({ remote: true, sourceId: undefined, auth: { token: 't', clientId: 'c', scopes: ['read'], allowedSources } });
+
+  test.each([
+    { name: 'a closed loop, no status given', caller: () => ctx(), target: 'done', found: true, quote: 'Can you review the plan?' },
+    { name: 'an open loop past the 500-row fetch', caller: () => ctx(), target: 'oldestOpen', found: true },
+    { name: 'an explicit status the loop has', caller: () => ctx(), target: 'done', params: { status: 'done' }, found: true, quote: 'Can you review the plan?' },
+    { name: 'an explicit status the loop lacks', caller: () => ctx(), target: 'done', params: { status: 'open' }, found: false },
+    { name: 'an explicit loop_type the loop lacks', caller: () => ctx(), target: 'done', params: { loop_type: 'decision_pending' }, found: false },
+    { name: 'an explicit counterparty the loop lacks', caller: () => ctx(), target: 'done', params: { counterparty: 'eve@example.com' }, found: false },
+    { name: 'a trusted call narrowed to another source', caller: () => ctx(), target: 'done', params: { source_id: 'g2' }, found: false },
+    { name: 'a remote grant covering the source (redacted)', caller: () => granted(['g1', 'g2']), target: 'done', found: true },
+    { name: 'a remote grant outside the source', caller: () => granted(['g2']), target: 'done', found: false },
+  ] as const)('id lookup: $name', async (c) => {
+    const ids = await seed();
+    const id = ids[c.target];
+    const caller = c.caller();
+    const res = (await openLoopsOp.handler(caller, {
+      group_by: 'none',
+      id,
+      ...('params' in c ? c.params : {}),
+    })) as FlatResult;
+    expect(res.loops.map((l) => l.id)).toEqual(c.found ? [id] : []);
+    expect(res.count).toBe(c.found ? 1 : 0);
+    expect(res.redacted).toBe(caller.remote !== false);
+    if (c.found) {
+      expect(res.loops[0].status).toBe(c.target === 'done' ? 'done' : 'open');
+      expect(res.loops[0].quote).toBe('quote' in c ? c.quote : undefined);
+    }
+  });
+
+  test.each([['omitted', {}], ['null', { id: null }]] as const)('id %s: the open default still applies, the closed loop stays out of a list', async (_label, extra) => {
+    const { done } = await seed();
+    const res = (await openLoopsOp.handler(ctx(), { group_by: 'none', limit: 500, ...extra })) as FlatResult;
+    expect(res.loops.map((l) => l.id)).not.toContain(done);
+    expect(res.loops.every((l) => l.status === 'open')).toBe(true);
+    expect(res.truncated).toBe(true);
+  });
+
+  // Grouped (the default view): the trusted "waiting on you" digest would
+  // misdescribe a closed loop, and call a missing id "You are clean".
+  test.each([['a closed loop', true], ['an id with no loop', false]] as const)('grouped id lookup of %s returns its groups and no text digest', async (_label, found) => {
+    const { done } = await seed();
+    const id = found ? done : done + 10_000;
+    const res = (await openLoopsOp.handler(ctx(), { id })) as GroupsResult;
+    expect(res.groups.flatMap((g) => g.loops.map((l) => l.id))).toEqual(found ? [id] : []);
+    expect(res.count).toBe(found ? 1 : 0);
+    expect('text' in res).toBe(false);
+  });
+
+  test.each([0, -1, 1.5, '7'])('id %p is rejected with invalid_params', async (bad) => {
+    await expect(openLoopsOp.handler(ctx(), { id: bad })).rejects.toMatchObject({ code: 'invalid_params' });
   });
 });
 

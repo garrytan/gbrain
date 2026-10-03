@@ -28,6 +28,7 @@ import {
 } from '../src/core/cli-force-exit.ts';
 import {
   addSuppression,
+  closeOpenLoop,
   listOpenLoops,
   loadSuppressions,
   upsertOpenLoop,
@@ -302,8 +303,46 @@ describe('runLoops', () => {
     expect(env.loop.id).toBe(1);
   });
 
-  test('show with an unknown id sets verdict 1', async () => {
+  test('show <id> finds a loop below the 200 most recent and a closed loop, with no --status (#5870)', async () => {
+    // 205 open loops one hour apart, then one done loop with the newest activity.
+    await engine.executeRaw(
+      `INSERT INTO open_loops (source_id, dedup_key, loop_type, counterparty_email, summary, detector, last_activity_at)
+       SELECT 'default', 'thread:bulk' || g || ':unanswered_inbound', 'unanswered_inbound',
+              'p' || g || '@example.com', 'Reply owed to p' || g || '@example.com', 'deterministic_thread',
+              now() - make_interval(hours => g)
+       FROM generate_series(1, 205) AS g`,
+    );
+    const oldest = Number((await engine.executeRaw<{ id: number }>(
+      `SELECT id FROM open_loops ORDER BY last_activity_at ASC LIMIT 1`,
+    ))[0].id);
+    const { id: doneId } = await upsertOpenLoop(engine, loop());
+    await closeOpenLoop(engine, 'default', doneId, 'done', 'manual');
+
+    const old = await captured(() => runLoops(engine, ['show', String(oldest)]));
+    expect(old.out).toContain(`#${oldest} [unanswered_inbound] open`);
+    expect(old.out).toContain('Reply owed to p205@example.com');
+    expect(old.verdict).toBe(0);
+
+    const done = await captured(() => runLoops(engine, ['show', String(doneId), '--json']));
+    const env = JSON.parse(done.out) as { ok: boolean; loop: { id: number; status: string } };
+    expect(env.ok).toBe(true);
+    expect(env.loop).toMatchObject({ id: doneId, status: 'done' });
+    expect(done.verdict).toBe(0);
+
+    const doneHuman = await captured(() => runLoops(engine, ['show', String(doneId)]));
+    expect(doneHuman.out).toContain(`#${doneId} [unanswered_inbound] done`);
+    expect(doneHuman.verdict).toBe(0);
+
+    // An explicit --status still narrows: the done loop is not open.
+    const narrowed = await captured(() => runLoops(engine, ['show', String(doneId), '--status', 'open']));
+    expect(narrowed.err).toContain(`No loop ${doneId}.`);
+    expect(narrowed.verdict).toBe(1);
+  });
+
+  test('show with an unknown id sets verdict 1 and drops the --status hint', async () => {
     const r = await captured(() => runLoops(engine, ['show', '999']));
+    expect(r.err).toContain('No loop 999.');
+    expect(r.err).not.toContain('--status');
     expect(r.verdict).toBe(1);
   });
 
@@ -352,9 +391,11 @@ describe('runLoops', () => {
     expect(rows[0].closed_by).toBe('handled in person');
   });
 
-  test('done without a numeric id hard-exits with usage code 2', async () => {
-    const r = await captured(() => runLoops(engine, ['done']));
+  test.each([[['done']], [['show']], [['show', '0']]])('%p without a positive numeric id hard-exits with usage code 2', async (args) => {
+    const r = await captured(() => runLoops(engine, args));
     expect(r.exitCalled).toBe(2);
+    expect(r.err).toContain(`Usage: gbrain loops ${args[0]} <id>`);
+    expect(r.out).toBe('');
   });
 
   test('mute sender writes the suppression row (lowercased) and prints the semantics', async () => {
