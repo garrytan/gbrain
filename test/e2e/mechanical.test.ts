@@ -1079,6 +1079,27 @@ describeE2E('E2E: RLS Verification', () => {
   const cliCwd = join(import.meta.dir, '../..');
   const cliEnv = () => ({ ...process.env, DATABASE_URL: process.env.DATABASE_URL!, GBRAIN_DATABASE_URL: process.env.DATABASE_URL! });
 
+  // The RLS tests re-run `init` as setup and historically ignored its result, so
+  // a failed, killed or slow init left nothing in the log. Keep the
+  // ignore-the-result behaviour, but log the bounded, redacted output whenever
+  // init exits non-zero or takes more than 5 s.
+  function initForRls(timeoutMs = 15_000) {
+    const started = performance.now();
+    const result = Bun.spawnSync({
+      cmd: ['bun', 'run', 'src/cli.ts', 'init', '--non-interactive', '--url', process.env.DATABASE_URL!],
+      cwd: cliCwd, env: cliEnv(), timeout: timeoutMs,
+    });
+    const elapsedMs = Math.round(performance.now() - started);
+    if (result.exitCode !== 0 || elapsedMs > 5_000) {
+      console.error(cliDiagnostic(`RLS init (${elapsedMs}ms, timeout=${timeoutMs}ms)`, {
+        exitCode: result.exitCode ?? -1,
+        stdout: new TextDecoder().decode(result.stdout),
+        stderr: new TextDecoder().decode(result.stderr),
+      }, [process.env.DATABASE_URL!]));
+    }
+    return result;
+  }
+
   // Seed a unique suffix per run so concurrent test DBs / crashed prior
   // runs don't collide. All helper tables follow `gbrain_rls_regression_<suffix>`.
   const suffix = `${process.pid}_${Date.now()}`;
@@ -1116,10 +1137,7 @@ describeE2E('E2E: RLS Verification', () => {
       // (e.g. while debugging) and creates a public table without RLS.
       // doctor's existing rls check must still flag it. The new
       // rls_event_trigger check warns separately about the missing trigger.
-      Bun.spawnSync({
-        cmd: ['bun', 'run', 'src/cli.ts', 'init', '--non-interactive', '--url', process.env.DATABASE_URL!],
-        cwd: cliCwd, env: cliEnv(), timeout: 15_000,
-      });
+      initForRls();
 
       // Drop the trigger so CREATE TABLE doesn't auto-enable RLS, then create
       // the test table without RLS. ALTER TABLE … DISABLE is a belt-and-
@@ -1159,10 +1177,7 @@ describeE2E('E2E: RLS Verification', () => {
       await conn.unsafe(`ALTER TABLE public.${tbl} DISABLE ROW LEVEL SECURITY`);
       await conn.unsafe(`COMMENT ON TABLE public.${tbl} IS 'GBRAIN:RLS_EXEMPT reason=e2e test fixture, anon-readable ok'`);
 
-      Bun.spawnSync({
-        cmd: ['bun', 'run', 'src/cli.ts', 'init', '--non-interactive', '--url', process.env.DATABASE_URL!],
-        cwd: cliCwd, env: cliEnv(), timeout: 15_000,
-      });
+      initForRls();
       const result = Bun.spawnSync({
         cmd: ['bun', 'run', 'src/cli.ts', 'doctor', '--json'],
         cwd: cliCwd, env: cliEnv(), timeout: 20_000,
@@ -1187,10 +1202,7 @@ describeE2E('E2E: RLS Verification', () => {
       // Missing the `reason=<...>` segment — prefix alone is not enough.
       await conn.unsafe(`COMMENT ON TABLE public.${tbl} IS 'GBRAIN:RLS_EXEMPT'`);
 
-      Bun.spawnSync({
-        cmd: ['bun', 'run', 'src/cli.ts', 'init', '--non-interactive', '--url', process.env.DATABASE_URL!],
-        cwd: cliCwd, env: cliEnv(), timeout: 15_000,
-      });
+      initForRls();
       const result = Bun.spawnSync({
         cmd: ['bun', 'run', 'src/cli.ts', 'doctor', '--json'],
         cwd: cliCwd, env: cliEnv(), timeout: 20_000,
@@ -1214,10 +1226,7 @@ describeE2E('E2E: RLS Verification', () => {
       await conn.unsafe(`ALTER TABLE public.${tbl} DISABLE ROW LEVEL SECURITY`);
       await conn.unsafe(`COMMENT ON TABLE public.${tbl} IS 'Regular docs comment, not an exemption'`);
 
-      Bun.spawnSync({
-        cmd: ['bun', 'run', 'src/cli.ts', 'init', '--non-interactive', '--url', process.env.DATABASE_URL!],
-        cwd: cliCwd, env: cliEnv(), timeout: 15_000,
-      });
+      initForRls();
       const result = Bun.spawnSync({
         cmd: ['bun', 'run', 'src/cli.ts', 'doctor', '--json'],
         cwd: cliCwd, env: cliEnv(), timeout: 20_000,
@@ -1266,10 +1275,7 @@ describeE2E('E2E: RLS Verification', () => {
       // Re-trigger initSchema via the CLI. With the guard, this should
       // apply v24 cleanly and advance version to 24. Without the guard,
       // this would error out with 42P01 and leave version at 23.
-      const result = Bun.spawnSync({
-        cmd: ['bun', 'run', 'src/cli.ts', 'init', '--non-interactive', '--url', process.env.DATABASE_URL!],
-        cwd: cliCwd, env: cliEnv(), timeout: 30_000,
-      });
+      const result = initForRls(30_000);
       const stdout = new TextDecoder().decode(result.stdout);
       const stderr = new TextDecoder().decode(result.stderr);
 
