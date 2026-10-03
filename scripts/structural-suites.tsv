@@ -251,7 +251,7 @@ test/scripts/build-schema-migrations.test.ts	out-of-order landing check	2	exec-s
 test/scripts/check-function-size.test.ts	check-function-size.ts rules	11	readFileSync
 test/scripts/ci-gates.test.ts	CI execution evidence	6	readFileSync
 test/scripts/ci-gates.test.ts	test:full exit status	0	readFileSync
-test/scripts/ci-local-rendering.test.ts	ci-local command rendering	1	readFileSync
+test/scripts/ci-local-rendering.test.ts	ci-local command rendering	2	readFileSync
 test/scripts/ci-local-rendering.test.ts	ci-local execution coverage	3	readFileSync
 test/scripts/ci-local-rendering.test.ts	local test configuration through run-e2e	2	readFileSync
 test/scripts/ci-local-rendering.test.ts	required PgBouncer execution through run-e2e	1	readFileSync
