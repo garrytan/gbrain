@@ -10,8 +10,8 @@
  * status call when its DB is down anyway.
  *
  * Zero round-trips without --probe. With --probe: a SINGLE bounded connect
- * (the driver's built-in `connect_timeout: 10` in db.ts — never a custom
- * race) + SELECT 1; failures come back as a classified PgAccessDiagnosis,
+ * (the pool's `connect_timeout`, 10s unless `database_url` sets one — never
+ * a custom race) + SELECT 1; failures come back as a classified PgAccessDiagnosis,
  * not a raw error. On PGLite the probe is LOCK-AWARE: a live `gbrain serve`
  * holding the single-writer lock reports `locked_by_serve` (healthy-with-
  * note) instead of hanging ~30s on the lock and misreporting a broken brain.
