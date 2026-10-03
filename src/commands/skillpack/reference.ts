@@ -1,8 +1,8 @@
 /**
  * `gbrain skillpack reference` — read-only diff lens + --apply-clean-hunks.
  *
- * Peeled from src/commands/skillpack.ts (module-size ratchet). Behavior is
- * unchanged from the façade version. Flag-registry note: this file is scanned
+ * Peeled from src/commands/skillpack.ts (module-size ratchet); the peel
+ * itself changed no behavior. Flag-registry note: this file is scanned
  * for skillpack's flag allowlist — spell foreign (non-skillpack) CLI flags
  * WITHOUT leading dashes in comments and strings.
  */
@@ -15,6 +15,8 @@ import {
 } from '../../core/skillpack/reference.ts';
 import { findGbrainOrDie, resolveWorkspace } from './shared.ts';
 
+const BOOL_FLAGS = new Set(['--all', '--apply-clean-hunks', '--dry-run', '--json']);
+
 export async function cmdReference(args: string[]): Promise<void> {
   // Harness lane (cathedral-7): diff a harness install (stub-aware,
   // three-way local_edit vs upstream_drift) instead of a workspace.
@@ -25,12 +27,29 @@ export async function cmdReference(args: string[]): Promise<void> {
   }
   if (args.includes('--help') || args.includes('-h')) {
     console.log(
-      'gbrain skillpack reference <name> | --all [--workspace PATH] [--apply-clean-hunks] [--since <version>] [--dry-run] [--json]\n\n' +
+      'gbrain skillpack reference <name> [--workspace PATH] [--apply-clean-hunks [--dry-run]] [--json]\n' +
+        'gbrain skillpack reference --all [--workspace PATH] [--since <version>] [--json]\n\n' +
+        '  --apply-clean-hunks Aligns every clean hunk in ONE skill to gbrain,\n' +
+        '                      including intentional local edits; preview with\n' +
+        '                      --dry-run. Not available with --all (it would do that\n' +
+        '                      to every skill at once). Sweep with --all, then apply\n' +
+        '                      per skill.\n' +
+        '  --dry-run           With --apply-clean-hunks, report outcomes, write nothing.\n' +
         '  --since <version>   With --all, restrict the sweep to skills whose source\n' +
         '                      changed in gbrain between <version> and HEAD. Useful\n' +
         '                      after `gbrain upgrade` to see only what moved.',
     );
     process.exit(0);
+  }
+  // Agents commonly emit `--dry-run=true`; the flag registry tolerates the
+  // value but args.includes() would silently miss it, a real write on an
+  // intended dry run. Refuse instead of guessing.
+  for (const a of args) {
+    const eq = a.indexOf('=');
+    if (eq > 0 && BOOL_FLAGS.has(a.slice(0, eq))) {
+      console.error(`Error: ${a.slice(0, eq)} is a boolean flag and takes no value (drop the '=${a.slice(eq + 1)}').`);
+      process.exit(2);
+    }
   }
   const json = args.includes('--json');
   const apply = args.includes('--apply-clean-hunks');
@@ -39,6 +58,13 @@ export async function cmdReference(args: string[]): Promise<void> {
   let name: string | null = null;
   let workspace: string | null = null;
   let since: string | null = null;
+  const sinceValue = (v: string | undefined): string => {
+    if (!v || v.startsWith('--')) {
+      console.error('Error: --since needs a value (e.g. --since v0.56.0.0).');
+      process.exit(2);
+    }
+    return v;
+  };
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === '--workspace') {
@@ -47,10 +73,10 @@ export async function cmdReference(args: string[]): Promise<void> {
     } else if (a?.startsWith('--workspace=')) {
       workspace = a.slice('--workspace='.length) || null;
     } else if (a === '--since') {
-      since = args[i + 1] ?? null;
+      since = sinceValue(args[i + 1]);
       i++;
     } else if (a?.startsWith('--since=')) {
-      since = a.slice('--since='.length) || null;
+      since = sinceValue(a.slice('--since='.length));
     } else if (a && !a.startsWith('--') && !name) {
       name = a;
     }
@@ -59,18 +85,26 @@ export async function cmdReference(args: string[]): Promise<void> {
     console.error('Error: pass a skill name or --all.');
     process.exit(2);
   }
+  if (all && apply) {
+    console.error(
+      'Error: --apply-clean-hunks works on one skill at a time, not with --all\n' +
+        '(it aligns every clean hunk to gbrain, including intentional local edits,\n' +
+        'and with --all it would do that to every skill at once).\n' +
+        '  1. gbrain skillpack reference --all                       list which skills differ\n' +
+        '  2. gbrain skillpack reference <slug>                      inspect one skill\'s diff\n' +
+        '  3. gbrain skillpack reference <slug> --apply-clean-hunks  apply it (add --dry-run to preview)',
+    );
+    process.exit(2);
+  }
+  if (since && !all) {
+    console.error(`warn: --since only applies with --all; ignored for 'reference ${name}'.`);
+  }
 
   const gbrainRoot = findGbrainOrDie();
   const targetWorkspace = resolveWorkspace({ workspace });
 
   try {
     if (apply) {
-      if (all) {
-        console.error(
-          'Error: --apply-clean-hunks is intentionally NOT supported with --all. Apply one skill at a time.',
-        );
-        process.exit(2);
-      }
       // Two-way merge warning fires BEFORE the apply. Goes to stderr so
       // it survives stdout redirection. Suppressed in --json mode so
       // machine consumers (CI, agent scripts) get a clean envelope; the
