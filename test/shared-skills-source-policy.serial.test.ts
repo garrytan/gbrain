@@ -88,6 +88,30 @@ test('a real approved company source remains byte-identical across shared-skill 
   });
 }, 180_000);
 
+test('a source with config.shared_skills=false opts out of adoption without touching its files', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'gbrain-shared-optout-'));
+  await withEnv({ GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, async () => {
+    const { engine, close } = await isolatedSharedSkillsEngine();
+    try {
+      const ctx: OperationContext = { engine, config: { engine: 'pglite' }, sourceId: 'default', remote: false, dryRun: false, logger: { info() {}, warn() {}, error() {} } };
+      expect(await sharedSkillSourcePolicy(engine, 'default')).toEqual({ mode: 'content' });
+      await engine.executeRaw("UPDATE sources SET config='{\"shared_skills\": false}'::jsonb WHERE id='default'");
+      const policy = await sharedSkillSourcePolicy(engine, 'default');
+      expect(policy.mode).toBe('preserve_files');
+      expect(policy.mode === 'preserve_files' && policy.reason).toContain('source_shared_skills_disabled');
+      const migration = await runSharedSkillsMigration(ctx);
+      expect(migration.sources[0].status).not.toBe('conflict');
+      expect(migration.sources[0].stages[0].reason).toContain('source_shared_skills_disabled');
+      await expect(installPackagedSharedSkills(ctx, 'default')).rejects.toMatchObject({ code: 'source_writeback_required' });
+      // Only an explicit `false` opts out — absent or `true` stays eligible.
+      await engine.executeRaw("UPDATE sources SET config='{\"shared_skills\": true}'::jsonb WHERE id='default'");
+      expect(await sharedSkillSourcePolicy(engine, 'default')).toEqual({ mode: 'content' });
+      await engine.executeRaw("UPDATE sources SET config='{}'::jsonb WHERE id='default'");
+      expect(await sharedSkillSourcePolicy(engine, 'default')).toEqual({ mode: 'content' });
+    } finally { await close(); rmSync(home, { recursive: true, force: true }); }
+  });
+}, 60_000);
+
 test('connector and unapproved external sources cannot receive packaged content or DB-export scaffolding', async () => {
   const home = mkdtempSync(join(tmpdir(), 'gbrain-shared-connectors-'));
   await withEnv({ GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, async () => {
