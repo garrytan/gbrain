@@ -216,6 +216,7 @@ async function runValidate(rest: string[]): Promise<void> {
   }
 
   // Each target keeps its own brain root (slug derivation) and backup source path.
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- each target is the operator's own CLI path argument, already checked to exist; read-only validation of local files
   const resolvedTargets = targets.map((target) => resolve(target));
   const files = resolvedTargets.flatMap((resolved) => {
     const brainRoot = findBrainRoot(resolved);

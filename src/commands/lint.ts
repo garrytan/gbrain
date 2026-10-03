@@ -689,6 +689,7 @@ export async function runLint(args: string[]) {
       onPagesCollected: (count) => progress.start('lint.pages', count),
       onPageScanned: () => progress.tick(1),
       onPageIssues: (relPath, issues, fixedCount) => {
+        // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- display-only label: dirPrefix is the operator's own CLI target and relPath a page path found under it
         console.log(`\n${dirPrefix ? join(dirPrefix, relPath) : relPath}:`);
         for (const issue of issues) {
           const fixLabel = issue.fixable ? ' [fixable]' : '';
