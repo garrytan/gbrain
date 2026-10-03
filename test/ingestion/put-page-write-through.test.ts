@@ -256,6 +256,46 @@ page_types:
     });
   });
 
+  test('a page stored before its pack subtype rule existed accepts edits and gains the subtype (#5928)', async () => {
+    const writePack = (name: string, subtypes: string) => {
+      const packDir = path.join(tmpRoot, 'home', '.gbrain', 'schema-packs', name);
+      fs.mkdirSync(packDir, { recursive: true });
+      fs.writeFileSync(path.join(packDir, 'pack.yaml'), `api_version: gbrain-schema-pack-v1
+name: ${name}
+version: 1.0.0
+extends: gbrain-base-v2
+page_types:
+  - name: meeting
+    primitive: temporal
+    path_prefixes: [therapy-meetings/, meetings/]
+    aliases: []
+    extractable: false
+    expert_routing: false
+${subtypes}`);
+    };
+    writePack('before-rule', '');
+    writePack('after-rule', `    subtypes:
+      - name: therapy
+        when:
+          path_pattern: '^therapy-meetings/'
+`);
+    const ctx = makeCtx({ remote: true });
+    const slug = 'therapy-meetings/session';
+    const file = path.join(brainDir, `${slug}.md`);
+    const content = '---\ntitle: Session\n---\n\nFirst discussion.';
+    const first = await withEnv({ GBRAIN_SCHEMA_PACK: 'before-rule' }, () => putPage.handler(ctx, { slug, content })) as { revision: string };
+    expect((await engine.readPageSnapshot(slug, { sourceId: 'default' }))?.page.frontmatter).not.toHaveProperty('subtype');
+    expect(fs.readFileSync(file, 'utf8')).not.toContain('subtype:');
+
+    // The canonical file is unchanged since that write; only the active pack gained a rule.
+    const edited = await withEnv({ GBRAIN_SCHEMA_PACK: 'after-rule' }, () =>
+      putPage.handler(ctx, { slug, content: content.replace('First', 'Second'), expected_revision: first.revision }));
+    expect(edited).toMatchObject({ state: 'committed' });
+    expect((await engine.readPageSnapshot(slug, { sourceId: 'default' }))?.page).toMatchObject({
+      type: 'meeting', compiled_truth: 'Second discussion.', frontmatter: { subtype: 'therapy' } });
+    expect(fs.readFileSync(file, 'utf8')).toContain('subtype: therapy');
+  });
+
   test('stamps provenance frontmatter (ingested_via=put_page for local CLI)', async () => {
     const ctx = makeCtx({ remote: false });
     const result = (await putPage.handler(ctx, {
