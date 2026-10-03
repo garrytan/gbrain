@@ -11,9 +11,9 @@ export interface McpToolDef {
     additionalProperties?: false;
   };
   /**
-   * MCP ToolAnnotations (SDK 1.29+), emitted ONLY when the op defines them —
-   * existing tools keep byte-identical definitions (the byte-equality
-   * regression test depends on absent keys staying absent).
+   * MCP ToolAnnotations (SDK 1.29+): the op's own annotations, else
+   * `{ readOnlyHint: true }` for a read-only op (see toolAnnotations), else
+   * absent, so an unannotated write keeps its definition byte for byte.
    */
   annotations?: {
     title?: string;
@@ -72,6 +72,22 @@ function strictPassthroughProperties(op: Operation): Record<string, unknown> {
 }
 
 /**
+ * The `annotations` entry for one op (#5037). An op's own annotations are
+ * emitted verbatim. Otherwise a read-scoped op that does not declare
+ * `mutating: true` (the read classification `opAllowedForBoundClient` uses)
+ * gets `readOnlyHint: true`, so a client that decides approval from
+ * annotations can tell a read from a write. `think` and the other
+ * read-scoped writers stay unannotated. Nothing else is derived: no op flag
+ * says "destructive", and an absent hint is the MCP default every write
+ * already advertises.
+ */
+function toolAnnotations(op: Operation): Pick<McpToolDef, 'annotations'> {
+  if (op.annotations) return { annotations: op.annotations };
+  if (op.scope === 'read' && op.mutating !== true) return { annotations: { readOnlyHint: true } };
+  return {};
+}
+
+/**
  * Build MCP tool definitions from operations.
  *
  * Default emission (no opts / strictParams false) is BYTE-IDENTICAL to the
@@ -99,6 +115,6 @@ export function buildToolDefs(ops: Operation[], opts?: { strictParams?: boolean 
         .map(([k]) => k),
       ...(strict ? { additionalProperties: false as const } : {}),
     },
-    ...(op.annotations ? { annotations: op.annotations } : {}),
+    ...toolAnnotations(op),
   }));
 }

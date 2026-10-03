@@ -11,7 +11,7 @@
 import { describe, test, expect } from 'bun:test';
 import { operations } from '../src/core/operations.ts';
 import { buildToolDefs, paramDefToSchema } from '../src/mcp/tool-defs.ts';
-import type { ParamDef } from '../src/core/operations.ts';
+import type { Operation, ParamDef } from '../src/core/operations.ts';
 
 // Reference shape — mirrors the canonical `paramDefToSchema` helper from
 // src/mcp/tool-defs.ts. Drift between the helper and this reference fails
@@ -56,10 +56,12 @@ function legacyInlineMap(ops: typeof operations) {
         .filter(([, v]) => v.required)
         .map(([k]) => k),
     },
-    // MEMORY_VERBS v1: ToolAnnotations passthrough, emitted ONLY when the op
-    // defines them. The byte-stability contract is per-op: ops WITHOUT
-    // annotations keep the exact pre-v1 shape (pinned explicitly below).
-    ...(op.annotations ? { annotations: op.annotations } : {}),
+    // MEMORY_VERBS v1: ToolAnnotations passthrough when the op defines them;
+    // #5037: otherwise readOnlyHint for a read-scoped, non-mutating op. Ops
+    // that are neither keep the exact pre-v1 shape (pinned explicitly below).
+    ...(op.annotations
+      ? { annotations: op.annotations }
+      : op.scope === 'read' && !op.mutating ? { annotations: { readOnlyHint: true } } : {}),
   }));
 }
 
@@ -76,11 +78,14 @@ describe('buildToolDefs', () => {
     expect(JSON.stringify(buildToolDefs(operations, { strictParams: false }))).toBe(base);
   });
 
-  test('ops without annotations keep the pre-annotations shape exactly (no annotations key)', () => {
+  test('ops without their own annotations: read-only ops carry exactly readOnlyHint, the rest keep the pre-annotations shape (#5037)', () => {
     const extracted = buildToolDefs(operations);
     for (const def of extracted) {
       const op = operations.find(o => o.name === def.name)!;
-      if (!op.annotations) {
+      if (op.annotations) continue;
+      if (op.scope === 'read' && op.mutating !== true) {
+        expect(def.annotations, def.name).toEqual({ readOnlyHint: true });
+      } else {
         expect('annotations' in def).toBe(false);
         expect(Object.keys(def)).toEqual(['name', 'description', 'inputSchema']);
       }
@@ -160,6 +165,72 @@ describe('buildToolDefs', () => {
     expect(firstSentence(del!.description)).toMatch(/\bfile\b/);
 
     expect(restore!.description).toMatch(/\bfile\b/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #5037 — default ToolAnnotations from the op's scope.
+//
+// A client that decides approval from ToolAnnotations treats an unannotated
+// tool as a possible write and prompts on every call. Read-only ops say so;
+// writes, and read-scoped ops that declare `mutating`, must not.
+// ---------------------------------------------------------------------------
+
+describe('default ToolAnnotations from op scope (#5037)', () => {
+  const defs = new Map(buildToolDefs(operations).map(d => [d.name, d]));
+  const synthetic = (name: string, extra: Partial<Operation>): Operation => ({
+    name,
+    description: `${name} test op`,
+    params: {},
+    handler: async () => null,
+    outputRedaction: 'no_stored_text',
+    ...extra,
+  });
+
+  test('the core page, search and graph reads are annotated read-only', () => {
+    for (const name of ['get_page', 'list_pages', 'search', 'query', 'get_links', 'traverse_graph']) {
+      expect(defs.get(name)!.annotations, name).toEqual({ readOnlyHint: true });
+    }
+  });
+
+  test('writes carry no readOnlyHint', () => {
+    for (const name of ['put_page', 'delete_page', 'add_link', 'submit_job']) {
+      expect(defs.get(name)!.annotations?.readOnlyHint, name).toBeUndefined();
+    }
+  });
+
+  test('a read-scoped op that declares mutating is never marked read-only', () => {
+    const readScopedWriters = operations.filter(o => o.scope === 'read' && o.mutating === true);
+    expect(readScopedWriters.map(o => o.name)).toContain('think');
+    for (const op of readScopedWriters) {
+      expect(defs.get(op.name)!.annotations?.readOnlyHint, op.name).not.toBe(true);
+    }
+  });
+
+  test('only read scope derives the hint; an undeclared mutating flag elsewhere does not', () => {
+    const [write, admin, read] = buildToolDefs([
+      synthetic('w', { scope: 'write' }),
+      synthetic('a', { scope: 'admin' }),
+      synthetic('r', { scope: 'read', mutating: false }),
+    ]);
+    expect('annotations' in write).toBe(false);
+    expect('annotations' in admin).toBe(false);
+    expect(read.annotations).toEqual({ readOnlyHint: true });
+  });
+
+  test("an op's own annotations win verbatim, with nothing merged in", () => {
+    const [def] = buildToolDefs([synthetic('r', { scope: 'read', annotations: { title: 'custom' } })]);
+    expect(def.annotations).toEqual({ title: 'custom' });
+    expect(defs.get('forget')!.annotations).toEqual(operations.find(o => o.name === 'forget')!.annotations!);
+  });
+
+  test('every readOnlyHint on the surface sits on a read-scoped, non-mutating op', () => {
+    for (const def of defs.values()) {
+      if (def.annotations?.readOnlyHint !== true) continue;
+      const op = operations.find(o => o.name === def.name)!;
+      expect(op.scope, def.name).toBe('read');
+      expect(op.mutating, def.name).not.toBe(true);
+    }
   });
 });
 

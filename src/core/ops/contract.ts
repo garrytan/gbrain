@@ -586,8 +586,9 @@ export interface Operation {
    */
   agentCallable?: true;
   /**
-   * MCP ToolAnnotations passthrough (SDK 1.29+). Emitted by buildToolDefs
-   * ONLY when set — existing tools keep byte-identical definitions.
+   * MCP ToolAnnotations passthrough (SDK 1.29+). buildToolDefs emits these
+   * verbatim when set; when unset, a read-scoped non-mutating op gets
+   * `{ readOnlyHint: true }` and every other op emits no annotations.
    */
   annotations?: {
     title?: string;
