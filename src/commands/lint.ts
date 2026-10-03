@@ -65,14 +65,61 @@ const FRONTMATTER_FIXABLE: ReadonlySet<ParseValidationCode> = new Set<ParseValid
 
 // ── LLM artifact patterns ──────────────────────────────────────────
 
+// Anchored to the START of the page body only (no `g`/`m` flags): a
+// preamble is something an LLM prepends to its output, so a line that
+// merely begins "Sure! Here is..." further down the page (a quoted reply,
+// a transcript turn) is real content and must never be flagged or deleted.
 const LLM_PREAMBLES = [
-  /^Of course\.?\s*Here is (?:a |the )?(?:detailed |comprehensive |updated )?(?:brain )?page[^.\n]*\.?\s*\n*/gim,
-  /^Certainly\.?\s*Here is[^.\n]*\.?\s*\n*/gim,
-  /^Here is (?:a |the )?(?:detailed |comprehensive |updated )?(?:brain )?page[^.\n]*\.?\s*\n*/gim,
-  /^I've (?:created|updated|written|prepared) (?:a |the )?(?:detailed |comprehensive )?(?:brain )?page[^.\n]*\.?\s*\n*/gim,
-  /^Sure(?:!|,)?\s*Here (?:is|are)[^.\n]*\.?\s*\n*/gim,
-  /^Absolutely\.?\s*Here[^.\n]*\.?\s*\n*/gim,
+  /^Of course\.?\s*Here is (?:a |the )?(?:detailed |comprehensive |updated )?(?:brain )?page[^.\n]*\.?\s*\n*/i,
+  /^Certainly\.?\s*Here is[^.\n]*\.?\s*\n*/i,
+  /^Here is (?:a |the )?(?:detailed |comprehensive |updated )?(?:brain )?page[^.\n]*\.?\s*\n*/i,
+  /^I've (?:created|updated|written|prepared) (?:a |the )?(?:detailed |comprehensive )?(?:brain )?page[^.\n]*\.?\s*\n*/i,
+  /^Sure(?:!|,)?\s*Here (?:is|are)[^.\n]*\.?\s*\n*/i,
+  /^Absolutely\.?\s*Here[^.\n]*\.?\s*\n*/i,
 ];
+
+const LEADING_FRONTMATTER = /^---\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/;
+const LEADING_MARKDOWN_FENCE = /^```(?:markdown|md)[ \t]*\r?\n/;
+
+/**
+ * Offsets where an LLM preamble may legitimately sit: the very top of the
+ * file (an LLM that wrapped its whole answer, frontmatter included), the
+ * start of the body right after a leading frontmatter block, and the line
+ * after a whole-page ```markdown wrapper. Leading blank lines are skipped.
+ */
+function preambleAnchors(content: string): number[] {
+  const skipBlank = (i: number) => {
+    const m = /^\s*/.exec(content.slice(i));
+    return i + (m ? m[0].length : 0);
+  };
+  const anchors = [skipBlank(0)];
+  const fm = LEADING_FRONTMATTER.exec(content);
+  if (fm) anchors.push(skipBlank(fm[0].length));
+  // A whole-page ```markdown wrapper (code-fence-wrap) may sit above it.
+  const fence = LEADING_MARKDOWN_FENCE.exec(content);
+  if (fence) anchors.push(skipBlank(fence[0].length));
+  return anchors;
+}
+
+/**
+ * Find the leading preamble run (one or more stacked preamble lines) at a
+ * body-start anchor. Returns the [start, end) span to remove, or null. Pure
+ * + exported for tests.
+ */
+export function findLeadingPreamble(content: string): { start: number; end: number } | null {
+  for (const start of preambleAnchors(content)) {
+    let end = start;
+    // Bounded: each pass consumes at least one line or stops.
+    for (let guard = 0; guard < 16; guard++) {
+      const rest = content.slice(end);
+      const hit = LLM_PREAMBLES.map(p => p.exec(rest)).find(m => m && m[0].length > 0);
+      if (!hit) break;
+      end += hit[0].length;
+    }
+    if (end > start) return { start, end };
+  }
+  return null;
+}
 
 // ── Rules ──────────────────────────────────────────────────────────
 
@@ -128,15 +175,13 @@ export function lintContent(content: string, filePath: string, opts: LintContent
   }
 
   // Rule: LLM preamble artifacts
-  for (const pattern of LLM_PREAMBLES) {
-    pattern.lastIndex = 0;
-    if (pattern.test(content)) {
-      issues.push({
-        file: filePath, line: 1, rule: 'llm-preamble',
-        message: 'LLM preamble artifact detected (e.g., "Of course! Here is...")',
-        fixable: true,
-      });
-    }
+  const preamble = findLeadingPreamble(content);
+  if (preamble) {
+    issues.push({
+      file: filePath, line: content.slice(0, preamble.start).split('\n').length, rule: 'llm-preamble',
+      message: 'LLM preamble artifact detected (e.g., "Of course! Here is...")',
+      fixable: true,
+    });
   }
 
   // Rule: Wrapping code fences (```markdown ... ```)
@@ -353,11 +398,9 @@ export function promoteCreatedFromCapture(content: string): string {
 export function fixContent(content: string): string {
   let fixed = content;
 
-  // Fix LLM preambles
-  for (const pattern of LLM_PREAMBLES) {
-    pattern.lastIndex = 0;
-    fixed = fixed.replace(pattern, '');
-  }
+  // Fix LLM preambles — only the leading run at the top of the body.
+  const preamble = findLeadingPreamble(fixed);
+  if (preamble) fixed = fixed.slice(0, preamble.start) + fixed.slice(preamble.end);
 
   // Fix wrapping code fences
   fixed = fixed.replace(/^```(?:markdown|md)\s*\n/, '');
@@ -559,6 +602,18 @@ export interface LintResult {
   total_fixed: number;
   dryRun: boolean;
   applied_fix: boolean;
+  /** Pages whose fix could not be written because the file is not writable
+   *  (EACCES / EPERM / EROFS), relative to the target. Recorded and skipped
+   *  so one read-only file cannot fail the whole run; their fixable issues
+   *  stay in total_issues and are not counted in total_fixed. */
+  unwritable: string[];
+}
+
+const UNWRITABLE_CODES = new Set(['EACCES', 'EPERM', 'EROFS']);
+
+function isUnwritableError(e: unknown): boolean {
+  const code = (e as NodeJS.ErrnoException | null)?.code;
+  return typeof code === 'string' && UNWRITABLE_CODES.has(code);
 }
 
 /**
@@ -611,6 +666,7 @@ export async function runLintCore(opts: LintOpts): Promise<LintResult> {
   let totalFixable = 0;
   let totalFixed = 0;
   let pagesWithIssues = 0;
+  const unwritable: string[] = [];
 
   for (let idx = 0; idx < pages.length; idx++) {
     assertSourceFilesystemActive();
@@ -636,14 +692,25 @@ export async function runLintCore(opts: LintOpts): Promise<LintResult> {
     if (opts.fix && issues.some(i => i.fixable)) {
       const fixed = fixContent(content);
       if (fixed !== content) {
-        fixCount = issues.filter(i => i.fixable).length;
-        totalFixed += fixCount;
+        let written = true;
         if (!opts.dryRun) {
           assertSourceFilesystemActive();
-          writeSourceFileSync(page, fixed);
-          if (commitFixes) {
+          try {
+            writeSourceFileSync(page, fixed);
+          } catch (e) {
+            // A read-only page (permissions, read-only mount) is skipped and
+            // reported, not fatal: the rest of the tree still gets linted.
+            if (!isUnwritableError(e)) throw e;
+            written = false;
+            unwritable.push(relPath);
+          }
+          if (written && commitFixes) {
             commitWriteThroughFile(repoProbe, page, relative(repoProbe, page).replace(/\.md$/u, ''));
           }
+        }
+        if (written) {
+          fixCount = issues.filter(i => i.fixable).length;
+          totalFixed += fixCount;
         }
       }
     }
@@ -658,6 +725,33 @@ export async function runLintCore(opts: LintOpts): Promise<LintResult> {
     total_fixed: totalFixed,
     dryRun: !!opts.dryRun,
     applied_fix: !!opts.fix,
+    unwritable,
+  };
+}
+
+/**
+ * `dream.lint.exclude`: comma-separated dir/file basenames the cycle's lint
+ * phase skips, same semantics as `gbrain lint --exclude` (e.g. raw capture or
+ * transcript trees that must never be rewritten). Unset or unreadable → [].
+ */
+export async function cycleLintExclude(engine?: BrainEngine | null): Promise<string[]> {
+  if (!engine) return [];
+  const raw = await engine.getConfig('dream.lint.exclude').catch(() => null);
+  return (raw ?? '').split(',').map(s => s.trim()).filter(Boolean);
+}
+
+/** Cycle lint phase summary suffix for pages skipped as not writable. */
+export function lintUnwritableSuffix(result: LintResult): string {
+  const n = result.unwritable?.length ?? 0;
+  return n > 0 ? `, ${n} page(s) skipped (not writable)` : '';
+}
+
+/** Extra cycle lint phase details: skipped read-only pages (first 20) and the exclude list. */
+export function lintPhaseDetails(result: LintResult, exclude: string[]): Record<string, unknown> {
+  const unwritable = result.unwritable ?? [];
+  return {
+    ...(unwritable.length > 0 ? { unwritable_count: unwritable.length, unwritable: unwritable.slice(0, 20) } : {}),
+    ...(exclude.length > 0 ? { exclude } : {}),
   };
 }
 
@@ -729,6 +823,9 @@ export async function runLint(args: string[]) {
   console.log(`\n${result.pages_scanned} pages scanned. ${result.total_issues} issue(s) in ${result.pages_with_issues} page(s).`);
   if (doFix) {
     console.log(`${dryRun ? '(dry run) ' : ''}${result.total_fixed} auto-fixed.`);
+    if (result.unwritable.length > 0) {
+      console.log(`${result.unwritable.length} page(s) skipped (not writable): ${result.unwritable.join(', ')}`);
+    }
   } else if (result.total_fixable > 0) {
     // #3958: only advertise --fix when at least one finding is actually
     // fixable — an all-unfixable report used to send operators on a no-op

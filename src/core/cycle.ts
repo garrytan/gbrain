@@ -1005,13 +1005,14 @@ function checkAborted(signal?: AbortSignal): void {
 // going through runCycle's full setup cost.
 export async function runPhaseLint(brainDir: string, dryRun: boolean, engine?: BrainEngine | null, signal?: AbortSignal): Promise<PhaseResult> {
   try {
-    const { runLintCore } = await import('../commands/lint.ts');
+    const { runLintCore, cycleLintExclude, lintUnwritableSuffix, lintPhaseDetails } = await import('../commands/lint.ts');
     // issue #1678: pass the cycle's live engine so lint's content-sanity
     // DB-plane lift REUSES it instead of creating + disconnecting a
     // competing module-style engine that nulls the shared db singleton
     // mid-cycle (which broke every phase after lint with a misleading
     // "connect() has not been called").
-    const result = await runLintCore({ target: brainDir, fix: !(engine && await isManagedBrain(engine)), dryRun, engine: engine ?? undefined, signal });
+    const exclude = await cycleLintExclude(engine); // `dream.lint.exclude` basenames, as `gbrain lint --exclude`
+    const result = await runLintCore({ target: brainDir, fix: !(engine && await isManagedBrain(engine)), dryRun, engine: engine ?? undefined, signal, exclude });
     const issues = result.total_issues ?? 0;
     const fixed = result.total_fixed ?? 0;
     const remaining = Math.max(0, issues - fixed);
@@ -1027,8 +1028,8 @@ export async function runPhaseLint(brainDir: string, dryRun: boolean, engine?: B
       duration_ms: 0, // set by caller
       summary: dryRun
         ? `${issues} issue(s) found (dry-run, no writes)`
-        : `${fixed} fix(es) applied, ${remaining} remaining`,
-      details: { issues, fixed, pages_scanned: result.pages_scanned, dryRun },
+        : `${fixed} fix(es) applied, ${remaining} remaining${lintUnwritableSuffix(result)}`,
+      details: { issues, fixed, pages_scanned: result.pages_scanned, dryRun, ...lintPhaseDetails(result, exclude) },
     };
   } catch (e) {
     return {
