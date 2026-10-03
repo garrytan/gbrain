@@ -1749,7 +1749,36 @@ async function embedSubBatch(
       );
     }
 
-    for (const embedding of result.embeddings) {
+    // Nemotron-3-Embed-8B returns 4096 coordinates and documents 1024/2048
+    // Matryoshka prefixes followed by L2 normalization. Keep this exact model
+    // match narrow; other width mismatches continue to fail below.
+    const embeddings = modelId === 'nvidia/Nemotron-3-Embed-8B' &&
+      (expectedDims === 1024 || expectedDims === 2048)
+      ? result.embeddings.map((embedding: number[]) => {
+        if (!Array.isArray(embedding) || embedding.length !== 4096) return embedding;
+
+        const prefix = embedding.slice(0, expectedDims);
+        let norm = 0;
+        for (const coordinate of prefix) {
+          if (!Number.isFinite(coordinate)) {
+            throw new AIConfigError(
+              `Embedding provider returned a non-finite coordinate in the ${expectedDims}-dim prefix for ${modelId}.`,
+              `Retry after checking provider output; non-finite embeddings are not safe to index.`,
+            );
+          }
+          norm = Math.hypot(norm, coordinate);
+        }
+        if (!Number.isFinite(norm) || norm === 0) {
+          throw new AIConfigError(
+            `Embedding provider returned a ${norm === 0 ? 'zero' : 'non-finite'} norm in the ${expectedDims}-dim prefix for ${modelId}.`,
+            `Retry after checking provider output; malformed embeddings are not safe to index.`,
+          );
+        }
+        return prefix.map((coordinate) => coordinate / norm);
+      })
+      : result.embeddings;
+
+    for (const embedding of embeddings) {
       if (Array.isArray(embedding) && embedding.length !== expectedDims) {
         throw new AIConfigError(
           `Embedding dim mismatch: model ${modelId} returned ${embedding.length} but schema expects ${expectedDims}.`,
@@ -1761,7 +1790,7 @@ async function embedSubBatch(
     recordSubBatchSuccess(recipe);
     const usageTokens = (result as { usage?: { tokens?: unknown } }).usage?.tokens;
     return {
-      embeddings: result.embeddings.map((e: number[]) => new Float32Array(e)),
+      embeddings: embeddings.map((e: number[]) => new Float32Array(e)),
       reportedTokens: typeof usageTokens === 'number' && Number.isFinite(usageTokens) && usageTokens > 0
         ? usageTokens
         : null,
