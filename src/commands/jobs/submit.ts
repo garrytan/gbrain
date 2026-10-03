@@ -6,6 +6,31 @@ import { clampLockDurationMs } from '../../core/minions/handler-timeouts.ts';
 import { MinionWorker } from '../../core/minions/worker.ts';
 import { reportInlineWorkerConfiguration } from '../jobs-readiness.ts';
 
+function parseIntegerFlag(
+  raw: string | undefined,
+  flag: string,
+  requirement: string,
+  accepts: (value: number) => boolean,
+): number | undefined {
+  if (raw === undefined) return undefined;
+  const value = Number(raw);
+  if (!/^[+-]?\d+$/.test(raw) || !Number.isSafeInteger(value) || !accepts(value)) {
+    console.error(`Error: ${flag} must be ${requirement}`);
+    process.exit(1);
+  }
+  return value;
+}
+
+function parseJitterFlag(raw: string | undefined): number | undefined {
+  if (raw === undefined) return undefined;
+  const value = Number(raw);
+  if (!raw.trim() || !Number.isFinite(value) || value < 0 || value > 1) {
+    console.error('Error: --backoff-jitter must be a number between 0 and 1');
+    process.exit(1);
+  }
+  return value;
+}
+
 export async function runJobsSubmit({ args, engine, queue }: JobsCommandContext): Promise<void> {
   // Lazy: jobs.ts imports this module statically, so a static import back would be a cycle.
   const { registerBuiltinHandlers } = await import('../jobs.ts');
@@ -22,11 +47,11 @@ export async function runJobsSubmit({ args, engine, queue }: JobsCommandContext)
     catch { console.error('Error: --params must be valid JSON'); process.exit(1); }
   }
 
-  const priority = parseInt(parseFlag(args, '--priority') ?? '0', 10);
-  const delay = parseInt(parseFlag(args, '--delay') ?? '0', 10);
-  const maxAttempts = parseInt(parseFlag(args, '--max-attempts') ?? '3', 10);
+  const priority = parseIntegerFlag(parseFlag(args, '--priority') ?? '0', '--priority', 'a safe integer', Number.isSafeInteger)!;
+  const delay = parseIntegerFlag(parseFlag(args, '--delay') ?? '0', '--delay', 'a non-negative integer (milliseconds)', (n) => n >= 0)!;
+  const maxAttempts = parseIntegerFlag(parseFlag(args, '--max-attempts') ?? '3', '--max-attempts', 'a positive integer', (n) => n >= 1)!;
   const maxStalledRaw = parseFlag(args, '--max-stalled');
-  const maxStalled = maxStalledRaw !== undefined ? parseInt(maxStalledRaw, 10) : undefined;
+  const maxStalled = parseIntegerFlag(maxStalledRaw, '--max-stalled', 'a non-negative integer', (n) => n >= 0);
   // --max-waiting N: submission-time backpressure cap. Mirrors --max-stalled
   // clamp [1, 100]. Feature is usable from CLI as of v0.19.1; pre-v0.19.1
   // only programmatic callers reached it.
@@ -40,24 +65,16 @@ export async function runJobsSubmit({ args, engine, queue }: JobsCommandContext)
     ? backoffTypeRaw
     : undefined;
   const backoffDelayRaw = parseFlag(args, '--backoff-delay');
-  const backoffDelay = backoffDelayRaw !== undefined ? parseInt(backoffDelayRaw, 10) : undefined;
+  const backoffDelay = parseIntegerFlag(backoffDelayRaw, '--backoff-delay', 'a non-negative integer (milliseconds)', (n) => n >= 0);
   const backoffJitterRaw = parseFlag(args, '--backoff-jitter');
-  const backoffJitter = backoffJitterRaw !== undefined ? parseFloat(backoffJitterRaw) : undefined;
+  const backoffJitter = parseJitterFlag(backoffJitterRaw);
   const timeoutMsRaw = parseFlag(args, '--timeout-ms');
-  const timeoutMs = timeoutMsRaw !== undefined ? parseInt(timeoutMsRaw, 10) : undefined;
-  if (timeoutMsRaw !== undefined && (isNaN(timeoutMs!) || timeoutMs! <= 0)) {
-    console.error('Error: --timeout-ms must be a positive integer (milliseconds)');
-    process.exit(1);
-  }
+  const timeoutMs = parseIntegerFlag(timeoutMsRaw, '--timeout-ms', 'a positive integer (milliseconds)', (n) => n > 0);
   // #4145: per-job lock lease. Clamped to [5s,1h] in queue.add via
   // clampLockDurationMs (shared with the MCP op); NULL falls to the
   // handler map, then the worker default.
   const lockDurationMsRaw = parseFlag(args, '--lock-duration-ms');
-  const lockDurationMs = lockDurationMsRaw !== undefined ? parseInt(lockDurationMsRaw, 10) : undefined;
-  if (lockDurationMsRaw !== undefined && (isNaN(lockDurationMs!) || lockDurationMs! <= 0)) {
-    console.error('Error: --lock-duration-ms must be a positive integer (milliseconds)');
-    process.exit(1);
-  }
+  const lockDurationMs = parseIntegerFlag(lockDurationMsRaw, '--lock-duration-ms', 'a positive integer (milliseconds)', (n) => n > 0);
   const idempotencyKey = parseFlag(args, '--idempotency-key');
   const queueName = parseFlag(args, '--queue') ?? 'default';
   const dryRun = hasFlag(args, '--dry-run');
