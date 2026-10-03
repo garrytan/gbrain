@@ -584,6 +584,43 @@ describe('status surface + completion smoke check (D6/D11)', () => {
     }
   }, 30000);
 
+  test('live marker exposes the exact formatter command in JSON, human status, and doctor', async () => {
+    const state: MigrationState = {
+      version: 2,
+      to_model: 'voyage:voyage-4',
+      to_dims: 1024,
+      from_model: 'openai:text-embedding-3-small',
+      from_dims: TO_DIMS,
+      started_at: '2026-08-10T00:00:00.000Z',
+      force_sunset_target: true,
+    };
+    const expected = renderResumeCommand(state);
+    await engine.setConfig(MIGRATION_STATE_KEY, JSON.stringify(state));
+    try {
+      const jsonCap = captureStdout();
+      try {
+        expect(await runMigrate(['--status', '--json'])).toBe(0);
+      } finally {
+        jsonCap.restore();
+      }
+      const json = JSON.parse(jsonCap.lines.join('\n')) as { resume_command: string };
+      expect(json.resume_command).toBe(expected);
+
+      const humanCap = captureStdout();
+      try {
+        expect(await runMigrate(['--status'])).toBe(0);
+      } finally {
+        humanCap.restore();
+      }
+      expect(humanCap.lines.join('\n')).toContain(`Resume:     ${expected}`);
+
+      const doctor = await (await import('../src/commands/doctor.ts')).checkEmbeddingMigrationState(engine);
+      expect(doctor.message).toContain(`Resume: ${expected}`);
+    } finally {
+      await engine.unsetConfig(MIGRATION_STATE_KEY);
+    }
+  }, 30000);
+
   test('verifySearchRoundTrip: pass on a healthy brain; error samples warn; unconfigured gateway skips — never throws', async () => {
     const { verifySearchRoundTrip } = await import('../src/core/embedding-migration.ts');
 
