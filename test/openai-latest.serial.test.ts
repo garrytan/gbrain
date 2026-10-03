@@ -4,6 +4,7 @@
  * GBRAIN_HOME + process env + module memo state.
  */
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { createHash } from 'node:crypto';
 import {
   mkdtempSync,
   rmSync,
@@ -187,6 +188,50 @@ describe('refresh + cache + resolution overlay', () => {
     expect(calls).toBe(1); // fresh cache → throttled
     await refreshLatestOpenAIModels({ env: { OPENAI_API_KEY: 'k' }, fetchImpl: counting, force: true });
     expect(calls).toBe(2);
+  });
+
+  test('concurrent refreshes for the same identity share one fetch', async () => {
+    let calls = 0;
+    let release!: (response: Response) => void;
+    const deferred = (async () => {
+      calls++;
+      return new Promise<Response>((resolve) => { release = resolve; });
+    }) as unknown as typeof fetch;
+    const first = refreshLatestOpenAIModels({
+      env: { OPENAI_API_KEY: 'sk-same-account' }, fetchImpl: deferred, force: true,
+    });
+    const second = refreshLatestOpenAIModels({
+      env: { OPENAI_API_KEY: 'sk-same-account' }, fetchImpl: deferred, force: true,
+    });
+    expect(calls).toBe(1);
+    release(new Response(JSON.stringify({ data: [{ id: 'gpt-5.6' }] }), { status: 200 }));
+    await Promise.all([first, second]);
+    expect(calls).toBe(1);
+  });
+
+  test('concurrent refresh for another identity runs after the pending refresh', async () => {
+    let releaseA!: (response: Response) => void;
+    const fetchA = (async () => new Promise<Response>((resolve) => { releaseA = resolve; })) as unknown as typeof fetch;
+    let callsB = 0;
+    const fetchB = (async () => {
+      callsB++;
+      return new Response(JSON.stringify({ data: [{ id: 'gpt-5.5' }] }), { status: 200 });
+    }) as unknown as typeof fetch;
+
+    const refreshA = refreshLatestOpenAIModels({
+      env: { OPENAI_API_KEY: 'sk-account-a' }, fetchImpl: fetchA, force: true,
+    });
+    const refreshB = refreshLatestOpenAIModels({
+      env: { OPENAI_API_KEY: 'sk-account-b' }, fetchImpl: fetchB, force: true,
+    });
+    releaseA(new Response(JSON.stringify({ data: [{ id: 'gpt-5.6' }] }), { status: 200 }));
+    await Promise.all([refreshA, refreshB]);
+
+    expect(callsB).toBe(1);
+    const raw = JSON.parse(readFileSync(join(tmpHome, '.gbrain', 'model-cache.json'), 'utf8'));
+    const fingerprintB = createHash('sha256')
+      .update('https://api.openai.com/v1|sk-account-b').digest('hex').slice(0, 16);
+    expect(raw.openai.fingerprint).toBe(fingerprintB);
   });
 
   test('fail-open: keyless, disabled, HTTP error, and throwing fetch never write or throw', async () => {
