@@ -15,6 +15,7 @@ import {
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import {
   assembleTurnContext,
+  assembleDeltaContext,
   TURN_CONTEXT_ENVELOPE,
   TURN_CONTEXT_DEFAULT_MAX_BYTES,
 } from '../src/core/context/turn-context.ts';
@@ -254,6 +255,61 @@ describe('assembleTurnContext', () => {
     expect(r.pointers.length).toBe(0);
     expect(r.factsCount).toBe(0);
     expect(r.degradedReason).toBeUndefined();
+  });
+});
+
+describe('assembleDeltaContext read failures', () => {
+  test('a failed pages arm is reported while healthy facts are returned', async () => {
+    await seedFact('WORLD-FACT remains available', 'world');
+    const partialEngine = {
+      listPages: async () => { throw new Error('private storage detail'); },
+      listFactsSince: (...args: Parameters<BrainEngine['listFactsSince']>) => engine.listFactsSince(...args),
+    } as unknown as BrainEngine;
+
+    const result = await assembleDeltaContext(partialEngine, {
+      sourceId: 'default',
+      since: new Date(0).toISOString(),
+    });
+
+    expect(result.deltaPages).toEqual([]);
+    expect(result.facts?.map((fact) => fact.fact)).toContain('WORLD-FACT remains available');
+    expect(result.degradedReason).toBe('pages');
+    expect(result.degradedReason).not.toContain('private storage detail');
+  });
+
+  test('a failed facts arm is reported while healthy pages are returned', async () => {
+    await seedPage('notes/delta-readable', 'Readable page', 'A changed page.');
+    const partialEngine = {
+      listPages: (...args: Parameters<BrainEngine['listPages']>) => engine.listPages(...args),
+      listFactsSince: async () => { throw new Error('private storage detail'); },
+    } as unknown as BrainEngine;
+
+    const result = await assembleDeltaContext(partialEngine, {
+      sourceId: 'default',
+      since: new Date(0).toISOString(),
+    });
+
+    expect(result.deltaPages?.map((page) => page.slug)).toContain('notes/delta-readable');
+    expect(result.facts).toEqual([]);
+    expect(result.degradedReason).toBe('facts');
+    expect(result.degradedReason).not.toContain('private storage detail');
+  });
+
+  test('both failed read arms are reported together as a degraded empty result', async () => {
+    const partialEngine = {
+      listPages: async () => { throw new Error('private page detail'); },
+      listFactsSince: async () => { throw new Error('private fact detail'); },
+    } as unknown as BrainEngine;
+
+    const result = await assembleDeltaContext(partialEngine, {
+      sourceId: 'default',
+      since: new Date(0).toISOString(),
+    });
+
+    expect(result.deltaPages).toEqual([]);
+    expect(result.facts).toEqual([]);
+    expect(result.degradedReason).toBe('pages,facts');
+    expect(result.degradedReason).not.toContain('private');
   });
 });
 
