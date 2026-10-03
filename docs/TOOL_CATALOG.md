@@ -4,7 +4,7 @@
 <!-- Regenerate: bun run scripts/generate-tool-catalog.ts -->
 <!-- Freshness-guarded by scripts/check-tool-catalog-fresh.sh (bun run verify). -->
 
-Every non-localOnly operation on the MCP surface: 134 tools across 23 areas. **Starter** marks membership in the ~38-op `starter` surface (`src/mcp/surface.ts`); **Gate** names the config key that must be true before remote callers see/call the op (`gbrain config set <key> true`). What a given token actually sees is further filtered per request by scope, bound-client fence, publish gates, and the per-client surface — see `docs/operations/mcp-surface-runbook.md`. Area names are non-contractual groupings.
+Every non-localOnly operation on the MCP surface: 135 tools across 23 areas. **Starter** marks membership in the ~39-op `starter` surface (`src/mcp/surface.ts`); **Gate** names the config key that must be true before remote callers see/call the op (`gbrain config set <key> true`). What a given token actually sees is further filtered per request by scope, bound-client fence, publish gates, and the per-client surface — see `docs/operations/mcp-surface-runbook.md`. Area names are non-contractual groupings.
 
 ## admin
 
@@ -160,6 +160,7 @@ Every non-localOnly operation on the MCP surface: 134 tools across 23 areas. **S
 | `cancel_write_request` | Cancel your accepted write before publication starts. | write | yes |  |
 | `capture` | Capture a quick note into the brain — the "just remember this" write. | write | yes |  |
 | `delete_page` | Soft-delete a page and remove its markdown file from the source working tree (the source local_path, or sync.repo_path when the source has none). | write |  |  |
+| `edit_page` | Change parts of a page without re-sending it: exact-string replacements applied server-side to the canonical `content` get_page returns (include_content: true), in order, each old_string matching exactly once, then written through the put_page path under expected_revision (required; the revision from the read). | write | yes |  |
 | `fetch` | Fetch the full text of one search result by its opaque, source-qualified `id` (OpenAI deep-research contract: the search/fetch pair). | read |  |  |
 | `get_chunks` | Get content chunks for a page | read |  |  |
 | `get_page` | Read a page by slug (supports optional fuzzy matching). | read | yes |  |

@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 204505,
-    "stdoutSha256": "361a0a6ada8208de169e71c9f95264e6bd6e6a3dc652a6148f46230a824035af",
+    "stdoutBytes": 207029,
+    "stdoutSha256": "99d0d723a9c3e8333848fc73b232603247d46a443281b0a2299e729a9c36677f",
     "toolNames": [
       "remember",
       "entity",
@@ -17,6 +17,7 @@
       "purge_deleted_pages",
       "capture",
       "fetch",
+      "edit_page",
       "get_write_request",
       "list_write_requests",
       "cancel_write_request",
@@ -684,6 +685,55 @@
           },
           "required": [
             "id"
+          ],
+          "type": "object"
+        }
+      },
+      {
+        "description": "Change parts of a page without re-sending it: exact-string replacements applied server-side to the canonical `content` get_page returns (include_content: true), in order, each old_string matching exactly once, then written through the put_page path under expected_revision (required; the revision from the read). Zero or several matches refuse the whole call naming the edit; a revision that moved refuses with revision_conflict; nothing is written in either case. Returns what put_page returns, plus edits_applied. Everything put_page guards and preserves applies here too (slug fences, protected facts/takes fences, receipts, write-through). For a rewrite, or to create a page, use put_page.",
+        "name": "edit_page",
+        "parameters": {
+          "edits": "array",
+          "expected_revision": "string?",
+          "force": "boolean?",
+          "request_id": "string?",
+          "slug": "string",
+          "source_id": "string?"
+        },
+        "schema": {
+          "properties": {
+            "edits": {
+              "description": "Ordered list of { old_string, new_string } (1–50). old_string is copied verbatim from the current content and must occur exactly once; new_string replaces it (empty deletes it). Later edits see the result of earlier ones.",
+              "items": {
+                "description": "{ old_string, new_string }",
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "expected_revision": {
+              "description": "Revision returned by the page read. Required when replacing an existing page unless force is true. Omit both for create-only writes.",
+              "type": "string"
+            },
+            "force": {
+              "description": "Explicitly overwrite the current revision. Mutually exclusive with expected_revision; does not bypass authorization or the empty-content guard.",
+              "type": "boolean"
+            },
+            "request_id": {
+              "description": "Optional caller-generated UUID for this write. Reuse the same UUID and original arguments to recover its outcome after a timeout; a different intent requires a new UUID.",
+              "type": "string"
+            },
+            "slug": {
+              "description": "Page slug",
+              "type": "string"
+            },
+            "source_id": {
+              "description": "Source to mutate. Defaults to the selected source. Remote callers may only use their current write source.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "slug",
+            "edits"
           ],
           "type": "object"
         }

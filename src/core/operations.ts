@@ -55,6 +55,7 @@ export {
 // contractual — docs/TOOL_CATALOG.md is generated from it).
 
 import { pagesOperations } from './ops/pages.ts';
+import { editPageOperations } from './ops/edit-page.ts';
 import { persistenceOperations } from './ops/persistence.ts';
 import { searchOperations } from './ops/search.ts';
 import { takesOperations } from './ops/takes.ts';
@@ -133,6 +134,8 @@ export const operations: Operation[] = [
   // Page CRUD (get_page, put_page, delete_page, list_pages + the v0.26.5
   // destructive-guard ops restore_page, purge_deleted_pages) — ops/pages.ts
   ...pagesOperations,
+  // edit_page (#5616): exact-string replacements written through the put_page path — ops/edit-page.ts
+  ...editPageOperations,
   ...persistenceOperations,
   // Search (search, query) — ops/search.ts
   ...searchOperations,

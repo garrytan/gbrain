@@ -96,6 +96,9 @@ export const STARTER_OPS: ReadonlySet<string> = new Set([
   // starter connect lanes retire the "unknown tool: capture" FAQ, which only
   // works if the starter surface actually lists it.
   'capture',
+  // #5616: edit_page sits beside put_page on the starter surface, or a client
+  // with a starter snapshot keeps re-sending whole pages for one-line edits.
+  'edit_page',
   'get_write_request', 'list_write_requests', 'cancel_write_request',
   'list_skills', 'get_skill', 'list_brain_skillpack', 'get_skill_asset',
   'join_brain', 'sync_brain_skills', 'leave_brain', 'put_skill', 'delete_skill',
