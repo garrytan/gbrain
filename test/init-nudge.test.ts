@@ -86,6 +86,28 @@ describe('runInitNudge — empty-brain suppression', () => {
   });
 });
 
+describe('runInitNudge — embed staleness selector', () => {
+  test('stale probe joins pages and excludes embed_skip rows', async () => {
+    let staleSql = '';
+    const engine = {
+      executeRaw: async (sql: string) => {
+        if (sql.includes('content_chunks')) {
+          staleSql = sql;
+          return [{ count: 0 }];
+        }
+        if (sql.includes('FROM takes')) return [{ count: 5 }];
+        if (sql.includes("type IN ('person'")) return [{ count: 0 }];
+        return [{ count: 10 }];
+      },
+    } as unknown as BrainEngine;
+
+    await runNudgeCaptured(engine);
+
+    expect(staleSql).toContain('JOIN pages p ON p.id = cc.page_id');
+    expect(staleSql).toContain("frontmatter, '{}'::jsonb) ? 'embed_skip'");
+  });
+});
+
 describe('runInitNudge — pages probe failure is fail-open', () => {
   test('pages probe REJECTS with takes 0 → nudge still fires with "0 takes"', async () => {
     // The -1 sentinel means "count unknown" — treat as non-empty so the

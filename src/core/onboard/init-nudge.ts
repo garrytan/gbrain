@@ -14,6 +14,7 @@
 // also short-circuits (CI/scripted callers see nothing).
 
 import type { BrainEngine } from '../engine.ts';
+import { EMBED_SKIP_FILTER_FRAGMENT } from '../embed-skip.ts';
 
 const NUDGE_BUDGET_MS = 3000;
 
@@ -53,7 +54,11 @@ export async function runInitNudge(engine: BrainEngine): Promise<void> {
     // Run 4 cheap counts in parallel against the 3s budget.
     const results = await Promise.allSettled([
       engine.executeRaw<{ count: string | number }>(
-        `SELECT COUNT(*) AS count FROM content_chunks WHERE embedding IS NULL`,
+        `SELECT COUNT(*) AS count
+           FROM content_chunks cc
+           JOIN pages p ON p.id = cc.page_id
+          WHERE cc.embedding IS NULL
+            AND ${EMBED_SKIP_FILTER_FRAGMENT}`,
         [],
         { signal: controller.signal },
       ),
