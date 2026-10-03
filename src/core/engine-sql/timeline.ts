@@ -138,20 +138,30 @@ export async function getTimelineForDate(exec: LegacyUnscopedRead, date: string,
     // ISO week (date_trunc('week') → Monday) or the single day.
     const lower = opts?.week ? sqlFragment`date_trunc('week', ${date}::date)::date` : sqlFragment`${date}::date`;
     const upper = opts?.week ? sqlFragment`(date_trunc('week', ${date}::date) + interval '6 days')::date` : sqlFragment`${date}::date`;
+    // A limit keeps the NEWEST rows of the window: the inner select takes the
+    // last `limit` rows (DESC), the outer one restores chronological order and
+    // keeps the sort keys out of the row shape. An ASC ... LIMIT kept the
+    // oldest rows instead, so a cut read silently lost the most recent ones.
     const rows = (await exec.run(sqlFragment`
-      SELECT te.date::text AS date, te.summary, te.detail, te.source,
-             te.page_id, p.slug AS page_slug,
-             te.event_page_id, ep.slug AS event_slug,
-             ep.effective_date::text AS effective_date,
-             ep.frontmatter->'event'->>'kind' AS kind
-      FROM timeline_entries te
-      JOIN pages p ON p.id = te.page_id AND p.deleted_at IS NULL
-      LEFT JOIN pages ep ON ep.id = te.event_page_id ${chronicleSourceCond(opts, true)}
-      WHERE te.date >= ${lower} AND te.date <= ${upper}
-        AND (te.event_page_id IS NULL OR ep.deleted_at IS NULL)
-        ${chronicleSourceCond(opts)}
-      ORDER BY COALESCE(ep.effective_date, te.date::timestamptz) ASC, te.id ASC
-      LIMIT ${limit}`)).rows;
+      SELECT c.date, c.summary, c.detail, c.source, c.page_id, c.page_slug,
+             c.event_page_id, c.event_slug, c.effective_date, c.kind
+      FROM (
+        SELECT te.date::text AS date, te.summary, te.detail, te.source,
+               te.page_id, p.slug AS page_slug,
+               te.event_page_id, ep.slug AS event_slug,
+               ep.effective_date::text AS effective_date,
+               ep.frontmatter->'event'->>'kind' AS kind,
+               COALESCE(ep.effective_date, te.date::timestamptz) AS sort_at, te.id AS sort_id
+        FROM timeline_entries te
+        JOIN pages p ON p.id = te.page_id AND p.deleted_at IS NULL
+        LEFT JOIN pages ep ON ep.id = te.event_page_id ${chronicleSourceCond(opts, true)}
+        WHERE te.date >= ${lower} AND te.date <= ${upper}
+          AND (te.event_page_id IS NULL OR ep.deleted_at IS NULL)
+          ${chronicleSourceCond(opts)}
+        ORDER BY sort_at DESC, sort_id DESC
+        LIMIT ${limit}
+      ) c
+      ORDER BY c.sort_at ASC, c.sort_id ASC`)).rows;
     return rows as unknown as ChronicleTimelineRow[];
   }
 
@@ -159,21 +169,28 @@ export async function getTimelineForDate(exec: LegacyUnscopedRead, date: string,
 export async function getSince(exec: LegacyUnscopedRead, date: string, opts?: ChronicleTimelineOpts): Promise<ChronicleTimelineRow[]> {
     const limit = opts?.limit ?? 200;
     const kindCond = opts?.kind ? sqlFragment`AND ep.frontmatter->'event'->>'kind' = ${opts.kind}` : sqlFragment``;
+    // Newest-wins under a limit, presented chronologically (see getTimelineForDate).
     const rows = (await exec.run(sqlFragment`
-      SELECT te.date::text AS date, te.summary, te.detail, te.source,
-             te.page_id, p.slug AS page_slug,
-             te.event_page_id, ep.slug AS event_slug,
-             ep.effective_date::text AS effective_date,
-             ep.frontmatter->'event'->>'kind' AS kind
-      FROM timeline_entries te
-      JOIN pages p ON p.id = te.page_id AND p.deleted_at IS NULL
-      LEFT JOIN pages ep ON ep.id = te.event_page_id ${chronicleSourceCond(opts, true)}
-      WHERE te.date >= ${date}::date
-        AND (te.event_page_id IS NULL OR ep.deleted_at IS NULL)
-        ${kindCond}
-        ${chronicleSourceCond(opts)}
-      ORDER BY COALESCE(ep.effective_date, te.date::timestamptz) ASC, te.id ASC
-      LIMIT ${limit}`)).rows;
+      SELECT c.date, c.summary, c.detail, c.source, c.page_id, c.page_slug,
+             c.event_page_id, c.event_slug, c.effective_date, c.kind
+      FROM (
+        SELECT te.date::text AS date, te.summary, te.detail, te.source,
+               te.page_id, p.slug AS page_slug,
+               te.event_page_id, ep.slug AS event_slug,
+               ep.effective_date::text AS effective_date,
+               ep.frontmatter->'event'->>'kind' AS kind,
+               COALESCE(ep.effective_date, te.date::timestamptz) AS sort_at, te.id AS sort_id
+        FROM timeline_entries te
+        JOIN pages p ON p.id = te.page_id AND p.deleted_at IS NULL
+        LEFT JOIN pages ep ON ep.id = te.event_page_id ${chronicleSourceCond(opts, true)}
+        WHERE te.date >= ${date}::date
+          AND (te.event_page_id IS NULL OR ep.deleted_at IS NULL)
+          ${kindCond}
+          ${chronicleSourceCond(opts)}
+        ORDER BY sort_at DESC, sort_id DESC
+        LIMIT ${limit}
+      ) c
+      ORDER BY c.sort_at ASC, c.sort_id ASC`)).rows;
     return rows as unknown as ChronicleTimelineRow[];
   }
 
