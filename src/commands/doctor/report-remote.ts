@@ -60,6 +60,7 @@ import {
   checkSchemaPackActive,
   checkSchemaPackConsistency,
   checkSchemaPackSourceDrift,
+  multiSourceDriftSyncCommand,
 } from './schema-pack-checks.ts';
 
 // Same alias the local doctor keeps for its own freshness checks; the alias
@@ -295,16 +296,15 @@ export async function doctorReportRemote(
         });
       } else if (result.count > 0) {
         const sampleStr = result.sample.map(s => `${s.slug} (intended=${s.intended_source})`).join(', ');
-        const skipNote = result.git_root_skipped.length > 0
-          ? multiSourceDriftGitRootSkipNote(result.git_root_skipped)
-          : '';
+        const syncCommand = await multiSourceDriftSyncCommand(engine);
+        const skipNote = result.git_root_skipped.length > 0 ? multiSourceDriftGitRootSkipNote(result.git_root_skipped) : '';
         checks.push({
           name: 'multi_source_drift',
           status: 'warn',
           message:
             `${result.count} page slug(s) appear at 'default' but NOT at the intended source ` +
             `(e.g., ${sampleStr}). Likely pre-v0.30.3 misroutes OR an incomplete initial sync. ` +
-            `Verify on the brain host: \`gbrain sources status\` then \`gbrain sync --source <id> --full\`.` +
+            `Verify on the brain host: \`gbrain sources status\` then \`${syncCommand}\`.` +
             skipNote,
         });
       } else {

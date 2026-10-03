@@ -66,6 +66,12 @@ describe('#2185 sweep — every command rejects a nonsense flag', () => {
 });
 
 describe('#2185 acceptance — real usage stays legal', () => {
+  test('doctor rejects writer-transfer flags mentioned only by a dependency', () => {
+    for (const flag of ['--expected-epoch', '--manifest', '--self-transfer']) {
+      expect(validateCommandFlags('doctor', [flag])).toBe(flag);
+    }
+  });
+
   test('op flags from the contract are accepted, including values starting with --', () => {
     const search = operationsByName.search;
     expect(findUnknownOpFlag(search, ['needle', '--limit', '5'])).toBeNull();

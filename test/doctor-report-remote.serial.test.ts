@@ -8,7 +8,7 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
-import { mkdtempSync, rmSync } from 'fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -216,6 +216,41 @@ describe('doctorReportRemote — source scope (#4592)', () => {
     const scopedBacklog = scoped.checks.find(c => c.name === 'extract_atoms_backlog')!;
     expect(Number((scopedBacklog.details as { backlog: number }).backlog)).toBe(0);
     expect(JSON.stringify(scoped)).not.toContain(SRCB);
+  });
+});
+
+describe('doctorReportRemote — managed drift advice', () => {
+  test('managed advice uses --no-pull --full; unmanaged output keeps its previous command', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'gbrain-doctor-drift-'));
+    const sourceId = 'doctor-drift-advice-test';
+    try {
+      mkdirSync(join(root, 'notes'), { recursive: true });
+      writeFileSync(join(root, 'notes', 'misrouted.md'), '# Misrouted\n');
+      await engine.executeRaw(
+        'INSERT INTO sources (id, name, local_path) VALUES ($1, $1, $2) ON CONFLICT (id) DO UPDATE SET local_path = EXCLUDED.local_path',
+        [sourceId, root],
+      );
+      await engine.putPage('notes/misrouted', {
+        title: 'Misrouted', type: 'note', compiled_truth: '# Misrouted\n',
+      });
+
+      await engine.executeRaw('UPDATE persistence_brain SET enabled = true WHERE singleton = 1');
+      const managed = (await doctorReportRemote(engine)).checks.find(c => c.name === 'multi_source_drift')!;
+      expect(managed.message).toContain('--no-pull --full');
+      expect(managed.message).not.toContain('--include-gitignored');
+
+      await engine.executeRaw('UPDATE persistence_brain SET enabled = false WHERE singleton = 1');
+      const unmanaged = (await doctorReportRemote(engine)).checks.find(c => c.name === 'multi_source_drift')!;
+      expect(unmanaged.message).toBe(
+        "1 page slug(s) appear at 'default' but NOT at the intended source " +
+          '(e.g., notes/misrouted (intended=doctor-drift-advice-test)). Likely pre-v0.30.3 misroutes OR an incomplete initial sync. ' +
+          'Verify on the brain host: `gbrain sources status` then `gbrain sync --source <id> --full`.',
+      );
+    } finally {
+      await engine.executeRaw('DELETE FROM pages WHERE slug = $1 AND source_id = \'default\'', ['notes/misrouted']);
+      await engine.executeRaw('DELETE FROM sources WHERE id = $1', [sourceId]);
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 

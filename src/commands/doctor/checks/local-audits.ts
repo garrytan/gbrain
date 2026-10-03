@@ -9,7 +9,7 @@
 
 import { join } from 'path';
 import { gbrainPath } from '../../../core/config.ts';
-import { multiSourceDriftGitRootSkipNote, multiSourceDriftAdvice } from '../schema-pack-checks.ts';
+import { managedSyncAdviceEnabled, multiSourceDriftGitRootSkipNote, multiSourceDriftAdvice } from '../schema-pack-checks.ts';
 import { computeConversationFormatCoverageCheck } from './conversation-coverage.ts';
 import {
   computeExtractHealthCheck,
@@ -507,13 +507,14 @@ async function runDefaultSourcePath(ctx: DoctorContext): Promise<Check[]> {
         });
       } else if (result.count > 0) {
         const sampleStr = result.sample.map(s => `${s.slug} (intended=${s.intended_source})`).join(', ');
+        const managed = await managedSyncAdviceEnabled(engine!);
         const skipNote = result.git_root_skipped.length > 0
           ? multiSourceDriftGitRootSkipNote(result.git_root_skipped)
           : '';
         checks.push({
           name: 'multi_source_drift',
           status: 'warn',
-          message: multiSourceDriftAdvice(result.count, sampleStr) + skipNote,
+          message: multiSourceDriftAdvice(result.count, sampleStr, managed) + skipNote,
         });
       } else {
         // #4712: if EVERY candidate source was skipped as git-root-pinned,
