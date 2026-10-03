@@ -225,7 +225,13 @@ describe('delta cursor lifecycle', () => {
     // Wave review: a calendar-INVALID value in the microsecond passthrough shape
     // is Date.parse-able (JS rolls Feb 31 to Mar 3) but would reach the
     // ::timestamptz cast raw → engine error. It is invalid_params instead.
-    await expect(call(del, ctxFor({ remote: false }), { since: '2026-02-31T00:00:00.000000Z' })).rejects.toThrow(/calendar|ISO/i);
+    for (const since of [
+      '2026-02-31T00:00:00Z',
+      '2026-02-31T00:00:00.000Z',
+      '2026-02-31T00:00:00.000000Z',
+    ]) {
+      await expect(call(del, ctxFor({ remote: false }), { since })).rejects.toThrow(/calendar|ISO/i);
+    }
     // ...while a valid microsecond cursor still passes through verbatim.
     const r3 = await call(del, ctxFor({ remote: false }), { since: '2026-02-28T00:00:00.000100Z' });
     expect(r3.since).toBe('2026-02-28T00:00:00.000100Z');

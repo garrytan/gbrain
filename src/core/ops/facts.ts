@@ -756,14 +756,14 @@ const delta: Operation = {
     // canonical microsecond shape `listPages` projects (`next_cursor.since`
     // passed back) is kept verbatim: rounding it through a JS Date would
     // re-select every same-millisecond row on the resumed wake.
-    // The verbatim passthrough must round-trip: a calendar-invalid but
-    // Date.parse-able value (2026-02-31T…) would otherwise reach the
-    // ::timestamptz cast raw and surface as an engine error, not invalid_params.
-    if (
-      rawSince !== null &&
-      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/.test(rawSince) &&
-      new Date(rawSince).toISOString().slice(0, 19) !== rawSince.slice(0, 19)
-    ) {
+    // Date.parse normalizes dates such as Feb 31 into March. Check the ISO
+    // calendar date before normalization, including cursors without the
+    // microsecond passthrough shape.
+    const isoDate = rawSince?.match(/^(\d{4})-(\d{2})-(\d{2})T/);
+    const [year, month, day] = isoDate?.slice(1).map(Number) ?? [];
+    const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+    const daysInMonth = [31, leapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    if (rawSince !== null && isoDate && (month < 1 || month > 12 || day < 1 || day > daysInMonth[month - 1])) {
       throw verbError(
         'invalid_params',
         `delta: since is not a valid ISO 8601 calendar timestamp: "${rawSince.slice(0, 60)}"`,
