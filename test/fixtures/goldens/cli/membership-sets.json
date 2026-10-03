@@ -63,7 +63,8 @@
       "cliOnlyWithoutHandler": [],
       "handlerNotInCliOnly": [],
       "refuseHintNeverReached": [
-        "connectors"
+        "connectors",
+        "recall"
       ],
       "refusedNotInCliOnly": [],
       "refusedWithoutHint": [
@@ -287,6 +288,7 @@
         "upgrade"
       ],
       "THIN_CLIENT_REFUSED_COMMANDS": [
+        "advisor",
         "apply-migrations",
         "call",
         "code-callees",
@@ -300,6 +302,7 @@
         "embed",
         "enrich",
         "eval",
+        "export",
         "extract",
         "extract-conversation-facts",
         "facts",
@@ -322,6 +325,7 @@
         "watch"
       ],
       "THIN_CLIENT_REFUSE_HINTS": [
+        "advisor",
         "apply-migrations",
         "cache",
         "call",
@@ -337,6 +341,7 @@
         "embed",
         "enrich",
         "eval",
+        "export",
         "extract",
         "extract-conversation-facts",
         "facts",
@@ -348,6 +353,7 @@
         "pages",
         "projections",
         "quarantine",
+        "recall",
         "repair",
         "repair-jsonb",
         "retrieval-upgrade",

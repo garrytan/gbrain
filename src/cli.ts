@@ -341,6 +341,7 @@ async function main() {
   if (command === 'ask') {
     command = 'query';
   }
+  dispatchedCommand = command;
 
   // Local patch 2026-06-11 — mark one-shot CLI processes so the facts
   // backstop routes absorb work to the durable jobs worker instead of the
@@ -1904,6 +1905,9 @@ const THIN_CLIENT_REFUSE_HINTS: Record<string, string> = {
   repair: 'repair runs on the brain host (it publishes coordinated page writes against the local engine). Run `gbrain repair` on the brain host.',
   projections: 'projections drain rebuilds text projections against the local engine. Run `gbrain projections drain` on the brain host.',
   quarantine: '`quarantine list` routes to the brain host automatically (quarantine_list MCP op). scan/clear are host-bound (bulk re-import; the clear trust decision) — run those on the host.',
+  advisor: 'advisor ranks next actions from the host brain. Use the `advisor` MCP tool from your agent (when the host publishes it), or run `gbrain advisor` on the host.',
+  export: 'export dumps the host brain to disk and has no MCP equivalent. Run `gbrain export` on the host, or read pages with the `get_page` MCP tool.',
+  recall: '`recall --query`/`--budget-tokens` without `--budget-policy` runs the recall op locally. Add `--budget-policy facts_first` to send it to the brain host (`recall` MCP op).',
 };
 
 /**
@@ -2552,9 +2556,19 @@ async function prepareConnectedDispatch(command: string, args: string[]): Promis
     }
   }
 
+  // These handlers already call their MCP twin on a thin client and never touch
+  // the engine there; run them engine-free instead of opening one (#5102).
+  if ((command === 'salience' || command === 'anomalies' || command === 'graph-query' || command === 'whoknows' || command === 'founder') &&
+    isThinClient(loadConfig())) {
+    await dispatchConnectedCommand(command, null as never, args);
+    return null;
+  }
+
+  // Every recall form but an in-process --query/--budget-tokens call has a
+  // thin-client path; that one reaches connectEngine, which refuses it.
   if (command === 'recall' && isThinClient(loadConfig())) {
-    const { hasRecallBudgetPolicy, runRecall } = await import('./commands/recall.ts');
-    if (hasRecallBudgetPolicy(args)) {
+    const { recallNeedsLocalEngine, runRecall } = await import('./commands/recall.ts');
+    if (!recallNeedsLocalEngine(args)) {
       if (getCliOptions().brain) {
         console.error('--brain is not supported on a thin-client install: the remote server is a single brain. ' +
           'Remove the flag, or run from a machine with local mounts (gbrain mounts list).');
@@ -2715,6 +2729,9 @@ export { buildGatewayConfig };
  */
 let activeBrainId: string = 'host';
 
+/** The command main() dispatched; connectEngine's thin-client refusal names it. */
+let dispatchedCommand = '';
+
 /**
  * Connect to a mounted brain (brain axis, non-host). Routes through
  * BrainRegistry so:
@@ -2774,6 +2791,13 @@ async function connectEngine(opts?: { probeOnly?: boolean }): Promise<BrainEngin
     } catch { /* marker is best-effort — the message below always prints */ }
     console.error('No brain configured. Run: gbrain init');
     process.exit(1);
+  }
+
+  // A thin client has no local database. Every command that gets here would die
+  // with "No database URL" (whose suggested init replaces remote_mcp) or answer
+  // from an empty in-memory PGLite, so refuse with the routing hint (#5102).
+  if (isThinClient(config) && !config.database_url) {
+    refuseThinClient(dispatchedCommand, config.remote_mcp!.mcp_url);
   }
 
   // Configure the AI gateway BEFORE engine connect — initSchema needs embedding dims.

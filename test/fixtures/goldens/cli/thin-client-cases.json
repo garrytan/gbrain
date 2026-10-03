@@ -50,7 +50,8 @@
       "argv": "import",
       "exitCode": 1,
       "stderr": [
-        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+        "`gbrain import` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Run `import` on the remote host, or use the corresponding MCP tool from your agent."
       ],
       "stdout": []
     },
@@ -58,7 +59,8 @@
       "argv": "export",
       "exitCode": 1,
       "stderr": [
-        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+        "`gbrain export` is not routable. export dumps the host brain to disk and has no MCP equivalent. Run `gbrain export` on the host, or read pages with the `get_page` MCP tool.",
+        "(thin-client of http://127.0.0.1:1/mcp)"
       ],
       "stdout": []
     },
@@ -147,7 +149,8 @@
       "argv": "agent",
       "exitCode": 1,
       "stderr": [
-        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+        "`gbrain agent` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Run `agent` on the remote host, or use the corresponding MCP tool from your agent."
       ],
       "stdout": []
     },
@@ -155,7 +158,8 @@
       "argv": "book-mirror",
       "exitCode": 1,
       "stderr": [
-        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+        "`gbrain book-mirror` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Run `book-mirror` on the remote host, or use the corresponding MCP tool from your agent."
       ],
       "stdout": []
     },
@@ -199,7 +203,8 @@
       "argv": "features",
       "exitCode": 1,
       "stderr": [
-        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+        "`gbrain features` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Run `features` on the remote host, or use the corresponding MCP tool from your agent."
       ],
       "stdout": []
     },
@@ -207,23 +212,57 @@
       "argv": "autopilot",
       "exitCode": 1,
       "stderr": [
-        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+        "`gbrain autopilot` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Run `autopilot` on the remote host, or use the corresponding MCP tool from your agent."
       ],
       "stdout": []
     },
     {
       "argv": "graph-query",
       "exitCode": 1,
-      "stderr": [
-        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
-      ],
-      "stdout": []
+      "stderr": [],
+      "stdout": [
+        "Usage: gbrain graph-query <slug> [options]",
+        "",
+        "Traverse the link graph from a page. Returns an indented tree of edges.",
+        "Per-edge type filter: traversal only follows matching links.",
+        "",
+        "Options:",
+        "  --type <link_type>     Filter to one link type (attended, works_at, invested_in,",
+        "                         founded, advises, mentions, source).",
+        "  --depth <N>            Max traversal depth (default 5).",
+        "  --direction <dir>      'out' (default), 'in', or 'both'.",
+        "  --source <id>          Scope the walk to this source. Defaults to the",
+        "                         resolved source (GBRAIN_SOURCE, .gbrain-source,",
+        "                         path match, brain default); __all__ spans every",
+        "                         source. An unknown source is a hard error. Local",
+        "                         installs only: a thin client rejects it (the server",
+        "                         scopes the walk to your grant).",
+        "  --include-foreign      Include edges to pages in other sources (v0.37.7.0).",
+        "                         Off by default; the walk stays inside the resolved",
+        "                         source, and a footer reports the count of",
+        "                         foreign-source edges hidden so users discover they exist.",
+        "                         Not forwarded on a thin client.",
+        "  -h, --help             Show this message.",
+        "",
+        "Examples:",
+        "  gbrain graph-query people/alice --type attended --depth 2",
+        "    -> who attended meetings with Alice (multi-hop)",
+        "  gbrain graph-query companies/acme --type works_at --direction in",
+        "    -> who works at Acme",
+        "  gbrain graph-query people/bob --depth 1",
+        "    -> Bob's direct connections",
+        "  gbrain graph-query people/bob --include-foreign",
+        "    -> include edges to pages in other sources",
+        ""
+      ]
     },
     {
       "argv": "reconcile-links",
       "exitCode": 1,
       "stderr": [
-        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+        "`gbrain reconcile-links` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Run `reconcile-links` on the remote host, or use the corresponding MCP tool from your agent."
       ],
       "stdout": []
     },
@@ -249,7 +288,8 @@
       "argv": "maintain",
       "exitCode": 1,
       "stderr": [
-        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+        "`gbrain maintain` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Run `maintain` on the remote host, or use the corresponding MCP tool from your agent."
       ],
       "stdout": []
     },
@@ -257,7 +297,8 @@
       "argv": "reindex",
       "exitCode": 1,
       "stderr": [
-        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+        "`gbrain reindex` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Run `reindex` on the remote host, or use the corresponding MCP tool from your agent."
       ],
       "stdout": []
     },
@@ -265,7 +306,7 @@
       "argv": "salience",
       "exitCode": 1,
       "stderr": [
-        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+        "OAuth discovery failed: OAuth discovery network error: Unable to connect. Is the computer able to access the url?"
       ],
       "stdout": []
     },
@@ -273,7 +314,7 @@
       "argv": "anomalies",
       "exitCode": 1,
       "stderr": [
-        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+        "OAuth discovery failed: OAuth discovery network error: Unable to connect. Is the computer able to access the url?"
       ],
       "stdout": []
     },
@@ -301,7 +342,8 @@
       "argv": "advisor",
       "exitCode": 1,
       "stderr": [
-        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+        "`gbrain advisor` is not routable. advisor ranks next actions from the host brain. Use the `advisor` MCP tool from your agent (when the host publishes it), or run `gbrain advisor` on the host.",
+        "(thin-client of http://127.0.0.1:1/mcp)"
       ],
       "stdout": []
     },
@@ -333,15 +375,32 @@
       "argv": "edges-backfill",
       "exitCode": 1,
       "stderr": [
-        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+        "`gbrain edges-backfill` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Run `edges-backfill` on the remote host, or use the corresponding MCP tool from your agent."
       ],
       "stdout": []
     },
     {
       "argv": "whoknows",
-      "exitCode": 1,
+      "exitCode": 2,
       "stderr": [
-        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+        "gbrain whoknows: topic argument required",
+        "Usage: gbrain whoknows <topic> [options]",
+        "",
+        "Ask your brain who knows about a topic. Returns ranked person/company",
+        "pages by expertise depth, relationship recency, and salience.",
+        "",
+        "Options:",
+        "  --limit N           Max results (default 5)",
+        "  --explain           Show the ranking factor breakdown per result",
+        "  --json              JSON output for agents",
+        "  --help, -h          Show this help",
+        "",
+        "Examples:",
+        "  gbrain whoknows \"lab automation\"",
+        "  gbrain whoknows fintech compliance --explain",
+        "  gbrain whoknows \"ai agents\" --limit 10 --json",
+        ""
       ],
       "stdout": []
     },
@@ -349,7 +408,8 @@
       "argv": "brainstorm",
       "exitCode": 1,
       "stderr": [
-        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+        "`gbrain brainstorm` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Run `brainstorm` on the remote host, or use the corresponding MCP tool from your agent."
       ],
       "stdout": []
     },
@@ -357,7 +417,8 @@
       "argv": "lsd",
       "exitCode": 1,
       "stderr": [
-        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+        "`gbrain lsd` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Run `lsd` on the remote host, or use the corresponding MCP tool from your agent."
       ],
       "stdout": []
     },
@@ -365,7 +426,8 @@
       "argv": "skillopt",
       "exitCode": 1,
       "stderr": [
-        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+        "`gbrain skillopt` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Run `skillopt` on the remote host, or use the corresponding MCP tool from your agent."
       ],
       "stdout": []
     },
@@ -373,7 +435,8 @@
       "argv": "calibration",
       "exitCode": 1,
       "stderr": [
-        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+        "`gbrain calibration` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Run `calibration` on the remote host, or use the corresponding MCP tool from your agent."
       ],
       "stdout": []
     },
@@ -390,7 +453,8 @@
       "argv": "models",
       "exitCode": 1,
       "stderr": [
-        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+        "`gbrain models` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Run `models` on the remote host, or use the corresponding MCP tool from your agent."
       ],
       "stdout": []
     },
@@ -407,7 +471,8 @@
       "argv": "onboard",
       "exitCode": 1,
       "stderr": [
-        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+        "`gbrain onboard` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Run `onboard` on the remote host, or use the corresponding MCP tool from your agent."
       ],
       "stdout": []
     },
@@ -415,7 +480,24 @@
       "argv": "founder",
       "exitCode": 1,
       "stderr": [
-        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+        "Unknown founder subcommand: (none). Did you mean \"founder scorecard\"?",
+        "",
+        "Usage: gbrain founder scorecard <entity-slug> [options]",
+        "",
+        "Rolls up the entity's typed-claim trajectory + resolved-take outcomes into",
+        "the four founder-evaluation metrics: claim accuracy, consistency, growth",
+        "trajectory, red flags.",
+        "",
+        "Options:",
+        "  --since YYYY-MM-DD  Lower bound on valid_from / take created_at (default: 1 year ago)",
+        "  --until YYYY-MM-DD  Upper bound (default: today)",
+        "  --json              JSON output (stable schema_version: 1)",
+        "  --help, -h          Show this help",
+        "",
+        "Examples:",
+        "  gbrain founder scorecard companies/acme-example",
+        "  gbrain founder scorecard companies/acme-example --since 2025-05-17 --json",
+        ""
       ],
       "stdout": []
     },
@@ -459,7 +541,7 @@
       "argv": "recall",
       "exitCode": 1,
       "stderr": [
-        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+        "OAuth discovery failed: OAuth discovery network error: Unable to connect. Is the computer able to access the url?"
       ],
       "stdout": []
     },
@@ -467,7 +549,8 @@
       "argv": "notability-eval",
       "exitCode": 1,
       "stderr": [
-        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+        "`gbrain notability-eval` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Run `notability-eval` on the remote host, or use the corresponding MCP tool from your agent."
       ],
       "stdout": []
     },
@@ -484,7 +567,8 @@
       "argv": "waiting",
       "exitCode": 1,
       "stderr": [
-        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+        "`gbrain waiting` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Run `waiting` on the remote host, or use the corresponding MCP tool from your agent."
       ],
       "stdout": []
     },
@@ -492,7 +576,8 @@
       "argv": "loops",
       "exitCode": 1,
       "stderr": [
-        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+        "`gbrain loops` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Run `loops` on the remote host, or use the corresponding MCP tool from your agent."
       ],
       "stdout": []
     },
@@ -500,7 +585,8 @@
       "argv": "connectors",
       "exitCode": 1,
       "stderr": [
-        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+        "`gbrain connectors` is not routable. connectors manage provider session credentials in ~/.gbrain/connectors and sync your chat history on the host. Credentials never cross the wire — run on the host machine.",
+        "(thin-client of http://127.0.0.1:1/mcp)"
       ],
       "stdout": []
     },
@@ -562,7 +648,8 @@
       "argv": "reindex-code",
       "exitCode": 1,
       "stderr": [
-        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+        "`gbrain reindex-code` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Run `reindex-code` on the remote host, or use the corresponding MCP tool from your agent."
       ],
       "stdout": []
     },
@@ -570,7 +657,8 @@
       "argv": "reindex-search-vector",
       "exitCode": 1,
       "stderr": [
-        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+        "`gbrain reindex-search-vector` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Run `reindex-search-vector` on the remote host, or use the corresponding MCP tool from your agent."
       ],
       "stdout": []
     },
@@ -578,7 +666,8 @@
       "argv": "reindex-frontmatter",
       "exitCode": 1,
       "stderr": [
-        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+        "`gbrain reindex-frontmatter` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Run `reindex-frontmatter` on the remote host, or use the corresponding MCP tool from your agent."
       ],
       "stdout": []
     },
@@ -586,7 +675,8 @@
       "argv": "backfill",
       "exitCode": 1,
       "stderr": [
-        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+        "`gbrain backfill` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Run `backfill` on the remote host, or use the corresponding MCP tool from your agent."
       ],
       "stdout": []
     },
@@ -612,7 +702,8 @@
       "argv": "repos",
       "exitCode": 1,
       "stderr": [
-        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+        "`gbrain repos` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Run `repos` on the remote host, or use the corresponding MCP tool from your agent."
       ],
       "stdout": []
     }

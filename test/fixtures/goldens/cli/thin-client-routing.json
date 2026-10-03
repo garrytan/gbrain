@@ -207,7 +207,7 @@
       "argv": "recall q",
       "exitCode": 1,
       "stderr": [
-        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+        "OAuth discovery failed: OAuth discovery network error: Unable to connect. Is the computer able to access the url?"
       ],
       "stdout": []
     },
