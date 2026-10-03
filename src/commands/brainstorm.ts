@@ -150,7 +150,9 @@ Options:
   --no-save                       Don't save; print only
   --yes, -y                       Skip the 10s cost-preview wait (TTY only)
   --limit N                       Override the far-bank size (default 6 brainstorm / 12 LSD)
-  --max-cost USD                  Abort if estimated cost exceeds USD (default 5)
+  --max-cost USD                  Abort if estimated cost exceeds USD (default 5; an
+                                  unpriced chat model counts at Sonnet rates, and an
+                                  explicit cap on it needs a pricing.overrides rate)
   --max-far-set N                 Cap domain bank prefix sampling (default 50)
   --strict-budget                 Abort if running cost exceeds 5× the estimate
   --judge-model MODEL             Override the judge LLM (larger-context for big runs)
@@ -185,7 +187,9 @@ Options:
   --save                          Persist to wiki/ideas/<date>-lsd-<slug>.md (default OFF)
   --yes, -y                       Skip the 10s cost-preview wait (TTY only)
   --limit N                       Override the far-bank size (default 12)
-  --max-cost USD                  Abort if estimated cost exceeds USD (default 5)
+  --max-cost USD                  Abort if estimated cost exceeds USD (default 5; an
+                                  unpriced chat model counts at Sonnet rates, and an
+                                  explicit cap on it needs a pricing.overrides rate)
   --max-far-set N                 Cap domain bank prefix sampling (default 50)
   --strict-budget                 Abort if running cost exceeds 5× the estimate
   --judge-model MODEL             Override the judge LLM (larger-context for big runs)

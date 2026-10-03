@@ -428,11 +428,11 @@ export async function doctorReportRemote(
   // meaningfully. <10% inbound coverage warns; >=30% ok with metric.
   checks.push(await checkGraphSignalsCoverage(engine));
 
-  // 9b. v0.37.0 brainstorm_health: surfaces three brainstorm/lsd readiness
+  // 9b. v0.37.0 brainstorm_health: surfaces four brainstorm/lsd readiness
   // signals: (a) migration v79 applied (last_retrieved_at column exists),
   // (b) calibration cold-start status (active_bias_tags empty), (c)
-  // search.track_retrieval enabled/disabled. Each surfaces a paste-ready
-  // fix hint.
+  // search.track_retrieval enabled/disabled, (d) a cross or judge chat model
+  // with no price (#5873). Each surfaces a paste-ready fix hint.
   checks.push(await checkBrainstormHealth(engine));
 
   // 10. v0.36.1.0 Hindsight calibration wave (T12) — four new checks:

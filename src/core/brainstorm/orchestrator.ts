@@ -47,7 +47,20 @@ import {
   type JudgeConfig,
   type ChatFn,
 } from './judges.ts';
-import { canonicalLookup } from '../model-pricing.ts';
+import {
+  assertExplicitCapPriceable,
+  assertJudgeWithinCeiling,
+  ceilingRemedy,
+  chatCostUsd,
+  configuredChatModel,
+  configuredEmbeddingModel,
+  judgeCostUsd,
+  pricingOverrideRemedy,
+  resolveBrainstormCostGate,
+  resolveBrainstormJudgeModel,
+  type BrainstormCostGate,
+} from './cost-gate.ts';
+import type { PricingOverrides } from '../budget/reservation-cost.ts';
 import { ensureWellFormed } from '../text-safe.ts';
 
 // ---------------------------------------------------------------------------
@@ -58,7 +71,7 @@ import { ensureWellFormed } from '../text-safe.ts';
 // module (the only known caller is the test suite).
 // ---------------------------------------------------------------------------
 
-import { BudgetExhausted, BudgetTracker } from '../budget/budget-tracker.ts';
+import { BudgetExhausted, BudgetTracker, loadPricingOverrides } from '../budget/budget-tracker.ts';
 import { withBudgetTracker } from '../ai/gateway.ts';
 import {
   computeRunId,
@@ -155,9 +168,11 @@ export interface BrainstormOptions {
   /** Stderr sink — defaults to process.stderr.write. Tests pipe into a buffer. */
   stderrWrite?: (s: string) => void;
   /**
-   * Maximum projected cost in USD before the run aborts. Default $5.
-   * The pre-run estimate is compared against this ceiling; if higher, we
-   * abort with a paste-ready error (unless `skipCostPreview` is set AND
+   * Maximum projected cost in USD before the run aborts. Default $5. On a
+   * chat model with no price, the default stays off the run tracker (it would
+   * fail closed) and the estimate and mid-run guards price that model at
+   * Sonnet rates (#5873: see cost-gate.ts). The pre-run estimate is
+   * compared against this ceiling; if higher, we abort with a paste-ready error (unless `skipCostPreview` is set AND
    * the caller is non-interactive — then we still abort, the ceiling is
    * a hard limit).
    */
@@ -268,23 +283,25 @@ export interface BrainstormResult {
  * Per-profile cost estimate. At Sonnet pricing ($3/M in, $15/M out — the
  * gateway fallback), this formula yields brainstorm ~$0.8 and lsd ~$1.0;
  * it scales linearly with the configured chat model's pricing (a Haiku 4.5
- * chat_model at $1/$5 lands exactly 3x lower). The estimate is
+ * chat_model at $1/$5 lands exactly 3x lower). Operator `pricing.overrides`
+ * win over the shipped tables, and the judge share is priced at the judge
+ * model (#5873). The estimate is
  * informational — operators see actuals printed at run-end.
  */
-export function estimateCost(profile: BrainstormProfile, model: string): number {
+export function estimateCost(
+  profile: BrainstormProfile,
+  model: string,
+  pricingOverrides?: PricingOverrides,
+  judgeModel: string = model,
+): number {
   const crosses = profile.k_close * profile.m_far;
   const ideas = crosses * profile.ideas_per_cross;
   // Rough per-cross budget: ~3K in, ~1.5K out (prompt + ideas).
   const inTokens = crosses * 3000;
   const outTokens = ideas * 250;
   // Judge: one batch ~ all ideas in, ~200 tokens per scored idea out.
-  const judgeIn = ideas * 350;
-  const judgeOut = ideas * 200;
-
-  const pricing = canonicalLookup(model) ?? { input: 3, output: 15 };
-  const inCost = ((inTokens + judgeIn) / 1_000_000) * pricing.input;
-  const outCost = ((outTokens + judgeOut) / 1_000_000) * pricing.output;
-  return inCost + outCost;
+  return chatCostUsd(model, inTokens, outTokens, pricingOverrides)
+    + judgeCostUsd(judgeModel, ideas, pricingOverrides);
 }
 
 /** Pretty-print a USD cost with 2 decimals + leading dollar. */
@@ -301,12 +318,15 @@ function fmtUsd(n: number): string {
 export async function previewCostAndWait(opts: {
   profile: BrainstormProfile;
   model: string;
+  pricingOverrides?: PricingOverrides;
+  /** Model the judge share is priced at; defaults to `model`. */
+  judgeModel?: string;
   skip: boolean;
   stderrWrite: (s: string) => void;
   /** Test seam — override the wait so suites don't hang. */
   graceMs?: number;
 }): Promise<{ aborted: boolean; estimate: number }> {
-  const estimate = estimateCost(opts.profile, opts.model);
+  const estimate = estimateCost(opts.profile, opts.model, opts.pricingOverrides, opts.judgeModel);
   const isTTY = typeof process !== 'undefined' && process.stderr?.isTTY === true;
   opts.stderrWrite(
     `[${opts.profile.label}] estimated cost: ${fmtUsd(estimate)} (${opts.profile.k_close}×${opts.profile.m_far} = ${opts.profile.k_close * opts.profile.m_far} crosses × ${opts.profile.ideas_per_cross} ideas + judge)\n`
@@ -511,30 +531,31 @@ export interface BrainstormRunConfig {
 /**
  * Model used for the cost preview + hard cost ceiling. Mirrors what the
  * gateway will actually run: explicit --model override, else the configured
- * chat_model (gateway default), else the hardcoded gateway fallback. Before
- * this resolved through config, a non-Sonnet chat_model got its preview
- * priced against the wrong model. (Takeover of PR #1855 by @starm2010.)
+ * gateway's chat model (which carries the DB-plane `models.tier.*` /
+ * `models.default` overrides the file config lacks, #5873), else the file
+ * config's chat_model, else the hardcoded gateway fallback. Before this
+ * resolved through config, a non-Sonnet chat_model got its preview priced
+ * against the wrong model. (Takeover of PR #1855 by @starm2010.)
  */
 export function resolveBrainstormChatModel(
   config: { chat_model?: string },
   modelOverride?: string,
+  gatewayChatModel?: string | null,
 ): string {
-  return modelOverride ?? config.chat_model ?? 'anthropic:claude-sonnet-4-6';
+  return modelOverride ?? gatewayChatModel ?? config.chat_model ?? 'anthropic:claude-sonnet-4-6';
 }
 
-/**
- * Judge-phase model precedence: --judge-model flag, else the
- * `models.brainstorm.judge` config key, else undefined (falls back to
- * `modelOverride` then the gateway default at the runJudge callsite).
- */
-export async function resolveBrainstormJudgeModel(
-  engine: BrainEngine,
-  judgeModelFlag?: string,
-): Promise<string | undefined> {
-  if (judgeModelFlag) return judgeModelFlag;
-  const configured = await engine.getConfig('models.brainstorm.judge');
-  return configured ?? undefined;
+/** Models and cost gate resolved once per run, before the tracker scope opens. */
+interface BrainstormRunPlan {
+  chatModel: string;
+  /** Judge model from --judge-model, `models.brainstorm.judge` or the --model override; undefined runs the gateway default. */
+  judgeModel: string | undefined;
+  gate: BrainstormCostGate;
 }
+
+// Judge-model precedence lives beside the cost gate that prices it, so the
+// brainstorm_health doctor check reads it without this module's imports.
+export { resolveBrainstormJudgeModel };
 
 export async function runBrainstorm(
   engine: BrainEngine,
@@ -571,17 +592,50 @@ async function runBrainstormImpl(
   // estimated call leaks past the ceiling (TX1). BudgetExhausted is NOT
   // SQLSTATE 57014, so the outer classifyBrainstormError lets it pass
   // through with its original shape (which the CLI formatter renders).
-  const _runTracker = new BudgetTracker({
-    label: `brainstorm.${opts.profile?.label ?? 'brainstorm'}`,
-    maxCostUsd: opts.maxCostUsd ?? 5,
+  //
+  // #5873: a capped tracker hard-fails (no_pricing) on any model it cannot
+  // price, so the $5 default goes on the tracker only when the cross and
+  // judge models have a price; an explicit --max-cost on an unpriced model is
+  // refused before any work. The orchestrator's estimate, mid-run and
+  // pre-judge checks keep the ceiling regardless. All of them read operator
+  // `pricing.overrides`.
+  const label = opts.profile?.label ?? 'brainstorm';
+  const stderr = opts.stderrWrite ?? ((s: string) => { process.stderr.write(s); });
+  const chatModel = resolveBrainstormChatModel(config, opts.modelOverride, configuredChatModel());
+  const judgeModel = (await resolveBrainstormJudgeModel(engine, opts.judgeModel)) ?? opts.modelOverride;
+  const gate = resolveBrainstormCostGate({
+    maxCostUsd: opts.maxCostUsd,
+    crossModel: chatModel,
+    judgeModel: judgeModel ?? chatModel,
+    embedModel: configuredEmbeddingModel(),
+    pricingOverrides: await loadPricingOverrides(engine),
   });
-  return withBudgetTracker(_runTracker, () => _runBrainstormInner(engine, config, opts));
+  assertExplicitCapPriceable(gate, label);
+  for (const [model, role] of [[gate.unpricedCrossModel, 'chat'], [gate.unpricedJudgeModel, 'judge']] as const) {
+    if (!model || (role === 'judge' && model === gate.unpricedCrossModel)) continue;
+    stderr(
+      `[${label}] ${role} model "${model}" has no price: the run tracker cannot cap it, so the estimate, ` +
+      `mid-run and pre-judge checks cost it at Sonnet rates against the ${fmtUsd(gate.maxCostUsd)} ceiling. ` +
+      `Declare its real rate with ${pricingOverrideRemedy(model)}.\n`,
+    );
+  }
+  if (gate.zeroPricedEmbedModel) {
+    stderr(`[${label}] embedding model "${gate.zeroPricedEmbedModel}" has no price; the question embedding counts as $0.\n`);
+  }
+  const _runTracker = new BudgetTracker({
+    label: `brainstorm.${label}`,
+    maxCostUsd: gate.trackerCapUsd,
+    pricingOverrides: gate.pricingOverrides,
+  });
+  return withBudgetTracker(_runTracker, () =>
+    _runBrainstormInner(engine, config, opts, { chatModel, judgeModel, gate }));
 }
 
 async function _runBrainstormInner(
   engine: BrainEngine,
   config: BrainstormRunConfig,
   opts: BrainstormOptions,
+  plan: BrainstormRunPlan,
 ): Promise<BrainstormResult> {
   const profile = opts.profile ?? BRAINSTORM_PROFILE;
   const stderr = opts.stderrWrite ?? ((s: string) => { process.stderr.write(s); });
@@ -589,10 +643,11 @@ async function _runBrainstormInner(
   const embedFn = opts.embedQueryFn ?? embedQuery;
 
   // ---- Phase 0: cost preview + TTY grace ----
-  const modelStr = resolveBrainstormChatModel(config, opts.modelOverride);
   const { aborted, estimate } = await previewCostAndWait({
     profile,
-    model: modelStr,
+    model: plan.chatModel,
+    pricingOverrides: plan.gate.pricingOverrides,
+    judgeModel: plan.gate.judgeModel,
     skip: opts.skipCostPreview === true,
     stderrWrite: stderr,
   });
@@ -607,11 +662,11 @@ async function _runBrainstormInner(
   // the wild on a 13K-page brain) because `m_far` got blown out by
   // un-capped prefix sampling. We refuse to start if the *estimate alone*
   // already exceeds the user's ceiling.
-  const maxCostUsd = opts.maxCostUsd ?? 5;
+  const maxCostUsd = plan.gate.maxCostUsd;
   if (estimate > maxCostUsd) {
     throw new BudgetExhausted(
       `${profile.label}: estimated cost ${fmtUsd(estimate)} exceeds --max-cost ${fmtUsd(maxCostUsd)}. ` +
-      `Lower --limit, raise --max-cost, or pass --max-far-set <n> to cap the domain bank.`,
+      `Lower --limit, ${ceilingRemedy(plan.gate)}, or pass --max-far-set <n> to cap the domain bank.`,
       { reason: 'cost', spent: estimate, cap: maxCostUsd },
     );
   }
@@ -776,7 +831,7 @@ async function _runBrainstormInner(
   };
 
   let totalUsage = { input_tokens: 0, output_tokens: 0 };
-  let crossModel = modelStr;
+  let crossModel = plan.chatModel;
 
   // Parallelize chat calls bounded at DEFAULT_PARALLELISM.
   const rawIdeasByCross = await mapWithConcurrency(crosses, DEFAULT_PARALLELISM, async (cross) => {
@@ -812,10 +867,8 @@ async function _runBrainstormInner(
       crossModel = result.model;
       // Mid-run cost guard: if running spend already exceeds the projected
       // ceiling or the strict-budget multiplier, abort the remaining crosses.
-      const runningPricing = canonicalLookup(result.model) ?? { input: 3, output: 15 };
-      const runningUsd =
-        (totalUsage.input_tokens / 1_000_000) * runningPricing.input +
-        (totalUsage.output_tokens / 1_000_000) * runningPricing.output;
+      const runningUsd = chatCostUsd(
+        result.model, totalUsage.input_tokens, totalUsage.output_tokens, plan.gate.pricingOverrides);
       if (runningUsd > maxCostUsd) {
         throw new BudgetExhausted(
           `${profile.label}: running cost ${fmtUsd(runningUsd)} exceeded --max-cost ${fmtUsd(maxCostUsd)} mid-run; aborting remaining crosses`,
@@ -899,8 +952,9 @@ async function _runBrainstormInner(
       close_slug: i.close_slug,
       far_slug: i.far_slug,
     }));
+    assertJudgeWithinCeiling(plan.gate, crossModel, totalUsage, judgeInput.length, profile.label);
     const judgeResult = await runJudge(profile.judge_config, judgeInput, {
-      modelOverride: (await resolveBrainstormJudgeModel(engine, opts.judgeModel)) ?? opts.modelOverride,
+      modelOverride: plan.judgeModel,
       chatFn: opts.chatFn,
       activeBiasTags: activeBiasTags ?? undefined,
       abortSignal: opts.abortSignal,
@@ -938,8 +992,7 @@ async function _runBrainstormInner(
   // Cost actuals (codex r2 #10).
   const totalIn = totalUsage.input_tokens + judgeUsage.input_tokens;
   const totalOut = totalUsage.output_tokens + judgeUsage.output_tokens;
-  const pricing = canonicalLookup(crossModel) ?? { input: 3, output: 15 };
-  const actual = (totalIn / 1_000_000) * pricing.input + (totalOut / 1_000_000) * pricing.output;
+  const actual = chatCostUsd(crossModel, totalIn, totalOut, plan.gate.pricingOverrides);
   stderr(`[${profile.label}] actual cost: ${fmtUsd(actual)} (estimated ${fmtUsd(estimate)}) — in=${totalIn} out=${totalOut} tokens\n`);
 
   // TX4: surface --resume hint when any cross failed during this run.

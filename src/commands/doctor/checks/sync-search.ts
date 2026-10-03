@@ -166,7 +166,7 @@ async function runSearchMode(ctx: DoctorContext): Promise<Check[]> {
     // edge counts (generic-token names like "Will"). Warn + list only.
     progress.heartbeat('junk_entity_hubs');
     checks.push(await checkJunkEntityHubs(engine));
-    // v0.37.0 brainstorm_health — migration v79, track_retrieval, calibration cold-start.
+    // v0.37.0 brainstorm_health — migration v79, track_retrieval, unpriced chat model (#5873), calibration cold-start.
     progress.heartbeat('brainstorm_health');
     checks.push(await checkBrainstormHealth(engine));
     // issue #972 link_resolution_opportunity — full scan: count bare wikilinks

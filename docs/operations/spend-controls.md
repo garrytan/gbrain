@@ -231,9 +231,9 @@ Semantics:
   automatically by enrich and the cycle's `enrich_thin` phase, the
   `embed-backfill` job handler, and every conversation-facts entry point
   (`gbrain extract-conversation-facts`, the cycle's
-  `conversation_facts_backfill` phase, transcript facts ingest) — an override
-  declared once in config reaches the queued/background lanes too, not just
-  interactive enrich.
+  `conversation_facts_backfill` phase, transcript facts ingest), and
+  `gbrain brainstorm` / `gbrain lsd` — an override declared once in config
+  reaches the queued/background lanes too, not just interactive enrich.
 
 ### Default caps vs unpriced models (embed backfill)
 
@@ -248,6 +248,22 @@ different contract: you chose a ceiling, so an unpriced model stays
 fail-closed (`no_pricing`) — declare the model's rate in `pricing.overrides`
 to proceed. Spend is ledgered by the tracker either way; only the ceiling
 changes.
+
+### Default caps vs unpriced models (brainstorm / lsd)
+
+`gbrain brainstorm` and `gbrain lsd` default to a $5 ceiling. When the
+cross-generation or judge chat model has no pricing row and no
+`pricing.overrides` entry, the run's budget tracker gets no cap (a capped
+tracker would refuse the first call), and one stderr line per unpriced model
+names it. The ceiling still holds: the pre-run estimate, the mid-run guard over
+the crosses and a check before the judge cost that model at Sonnet rates and
+stop the run at $5. An explicit `--max-cost` keeps the fail-closed contract:
+the run refuses before any work and names the model and the override to
+declare. A declared rate (for a flat-rate subscription route such as
+`claude-cli:*`, `{"input": 0, "output": 0}`) prices every one of those checks,
+and an override keyed by a model alias also matches the id the provider serves
+for it. `gbrain doctor`'s `brainstorm_health` check warns about an unpriced
+cross or judge model.
 
 A present-but-unparsable value is a third contract, and it is fail-closed:
 when `embed.backfill_max_usd` is SET but not a positive number (`"ten"`, `0`,

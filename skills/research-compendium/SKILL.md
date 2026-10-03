@@ -153,10 +153,10 @@ exists and the user says "go deeper," bump exactly one level.
   [conventions/test-before-bulk.md](../conventions/test-before-bulk.md) before
   any bulk acquisition run.
 - **`gbrain lsd` passes are real runs** on the archived corpus (not in-head
-  synthesis): `gbrain lsd "<the driving question>" --save --max-cost 5`. Seed
-  each pass from a different angle (per-angle, cross-angle, third-term) so
-  passes don't collide on the same survivors. `--save` persists survivors
-  natively; note each pass in the index ledger.
+  synthesis): `gbrain lsd "<the driving question>" --save` (the default $5 cost
+  ceiling applies). Seed each pass from a different angle (per-angle,
+  cross-angle, third-term) so passes don't collide on the same survivors.
+  `--save` persists survivors natively; note each pass in the index ledger.
 - **The compendium carries a depth badge.** Frontmatter gets `depth: "++"`
   plus a one-line "what this level added" note.
 
