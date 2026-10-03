@@ -85,6 +85,17 @@ describe('target-local configuration installation', () => {
     await expect(installHarnessConnection(creds(), { harness: 'muse', root })).rejects.toThrow('existing state');
     expect(() => statSync(join(root, '.gbrain', 'config.json'))).toThrow();
   });
+  test('thin installer leaves hosted brain and source routing to the grant', async () => {
+    const root = temp();
+    await installHarnessConnection({ ...creds(), source_id: 'isolated-write' }, { harness: 'muse', root });
+    const launcher = readFileSync(join(root, 'bin', 'gbrain'), 'utf8');
+    expect(launcher).not.toContain('GBRAIN_BRAIN_ID=');
+    expect(launcher).not.toContain('GBRAIN_SOURCE=');
+    expect(launcher).not.toContain('--brain host');
+    const child = Bun.spawn([join(root, 'bin', 'gbrain'), '--version'], { stdout: 'pipe', stderr: 'pipe' });
+    expect(await child.exited).toBe(0);
+    expect(await new Response(child.stdout).text()).toMatch(/^gbrain \d/);
+  });
 });
 
 function fakePeer(options: { failCleanup?: boolean; lostWriteResponse?: boolean; workerResult?: boolean } = {}) {
