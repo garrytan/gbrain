@@ -90,6 +90,15 @@ function hasFlag(args: string[], flag: string): boolean {
   return args.includes(flag);
 }
 
+function parsePositiveIntegerFlag(args: string[], flag: string): number | undefined {
+  if (!hasFlag(args, flag)) return undefined;
+  const raw = parseFlag(args, flag)?.trim();
+  if (!raw || !/^\d+$/.test(raw)) throw new Error(`${flag} requires a positive integer`);
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < 1) throw new Error(`${flag} requires a positive integer`);
+  return value;
+}
+
 function parseFlags(args: string[]): BookMirrorFlags {
   if (hasFlag(args, '--help') || hasFlag(args, '-h')) {
     printHelp();
@@ -102,8 +111,8 @@ function parseFlags(args: string[]): BookMirrorFlags {
   const title = parseFlag(args, '--title');
   const author = parseFlag(args, '--author');
   const model = parseFlag(args, '--model') ?? 'claude-opus-4-7';
-  const maxTurnsStr = parseFlag(args, '--max-turns');
-  const timeoutMsStr = parseFlag(args, '--timeout-ms');
+  const maxTurns = parsePositiveIntegerFlag(args, '--max-turns');
+  const timeoutMs = parsePositiveIntegerFlag(args, '--timeout-ms');
 
   return {
     chaptersDir,
@@ -112,8 +121,8 @@ function parseFlags(args: string[]): BookMirrorFlags {
     title,
     author,
     model,
-    maxTurns: maxTurnsStr ? parseInt(maxTurnsStr, 10) : DEFAULT_MAX_TURNS,
-    timeoutMs: timeoutMsStr ? parseInt(timeoutMsStr, 10) : undefined,
+    maxTurns: maxTurns ?? DEFAULT_MAX_TURNS,
+    timeoutMs,
     noConfirm: hasFlag(args, '--no-confirm') || hasFlag(args, '--yes'),
     follow: process.stdout.isTTY === true && !hasFlag(args, '--no-follow'),
     dryRun: hasFlag(args, '--dry-run'),
