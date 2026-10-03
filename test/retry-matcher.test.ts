@@ -4,6 +4,7 @@ import {
   isLockTimeoutError,
   isRetryableConnError,
   isRetryableError,
+  isRetryableWorkerConnectError,
 } from '../src/core/retry-matcher.ts';
 
 function pgError(code: string, message: string): Error & { code: string } {
@@ -132,5 +133,42 @@ describe('isRetryableError', () => {
 
   test('still false for unrelated errors', () => {
     expect(isRetryableError(new Error('foreign key violation'))).toBe(false);
+  });
+});
+
+describe('isRetryableWorkerConnectError', () => {
+  // The two shapes postgres.js 3.4.x builds for `Errors.connection('CONNECT_TIMEOUT', ...)`:
+  // the TCP socket's host:port, or undefined:undefined once secure() has swapped
+  // in the tls.connect() socket.
+  const beforeTls = pgError('CONNECT_TIMEOUT', 'write CONNECT_TIMEOUT db.example.test:5432');
+  const afterTls = pgError('CONNECT_TIMEOUT', 'write CONNECT_TIMEOUT undefined:undefined');
+
+  test('retries CONNECT_TIMEOUT in both shapes, and via the message when a wrapper dropped the code', () => {
+    expect(isRetryableWorkerConnectError(beforeTls)).toBe(true);
+    expect(isRetryableWorkerConnectError(afterTls)).toBe(true);
+    expect(isRetryableWorkerConnectError(new Error('write CONNECT_TIMEOUT db.example.test:5432'))).toBe(true);
+  });
+
+  test('accepts everything the general connection matcher accepts', () => {
+    for (const err of [
+      new Error('connection refused'),
+      new Error('the database system is starting up'),
+      pgError('CONNECTION_ENDED', 'write CONNECTION_ENDED'),
+      pgError('53300', 'too many connections for role'),
+    ]) {
+      expect(isRetryableConnError(err)).toBe(true);
+      expect(isRetryableWorkerConnectError(err)).toBe(true);
+    }
+  });
+
+  test('still refuses permanent errors and statement / lock timeouts', () => {
+    expect(isRetryableWorkerConnectError(pgError('3D000', 'database "gbrain" does not exist'))).toBe(false);
+    expect(isRetryableWorkerConnectError(pgError('57014', 'canceling statement due to statement timeout'))).toBe(false);
+    expect(isRetryableWorkerConnectError(pgError('55P03', 'could not obtain lock on row'))).toBe(false);
+  });
+
+  test('the general matcher is not widened: a first connect still fails fast on CONNECT_TIMEOUT', () => {
+    expect(isRetryableConnError(beforeTls)).toBe(false);
+    expect(isRetryableConnError(afterTls)).toBe(false);
   });
 });

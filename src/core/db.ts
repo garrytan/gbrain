@@ -4,7 +4,7 @@ import { SCHEMA_SQL } from './schema-embedded.generated.ts';
 import { applyPostgresForwardReferenceBootstrap } from './engine-sql/bootstrap.ts';
 import type { BrainEngine } from './engine.ts';
 import { verifySchema } from './schema-verify.ts';
-import { isRetryableConnError } from './retry-matcher.ts';
+import { isRetryableConnError, isRetryableWorkerConnectError } from './retry-matcher.ts';
 
 let sql: ReturnType<typeof postgres> | null = null;
 let connectedUrl: string | null = null;
@@ -397,6 +397,8 @@ export interface ConnectWithRetryOpts {
   baseDelayMs?: number;
   noRetry?: boolean;
   log?: (line: string) => void;
+  /** Which errors earn another attempt. Defaults to `isRetryableDbConnectError`. */
+  isRetryable?: (err: unknown) => boolean;
 }
 
 export async function connectWithRetry(
@@ -416,7 +418,7 @@ export async function connectWithRetry(
       return;
     } catch (e: unknown) {
       lastErr = e;
-      const retryable = isRetryableDbConnectError(e);
+      const retryable = (opts.isRetryable ?? isRetryableDbConnectError)(e);
       const isLast = i === attempts - 1;
       if (!retryable || isLast) {
         throw e;
@@ -429,4 +431,20 @@ export async function connectWithRetry(
   }
   // Unreachable, but TS needs the throw.
   throw lastErr;
+}
+
+/**
+ * Connect one per-worker pool of a parallel `import` or incremental `sync`.
+ * Each is a fresh TCP + TLS + auth handshake, and one that failed used to
+ * abort the whole import (under `sync --all`, drop the whole source). Same
+ * bounded retry as the CLI's startup connect (3 attempts, 1s/2s backoff;
+ * GBRAIN_NO_RETRY_CONNECT=1 opts out), plus CONNECT_TIMEOUT: the parent engine
+ * already reached this URL, so a timeout here is a starved handshake, not a
+ * bad route (see isRetryableWorkerConnectError).
+ */
+export function connectWorkerEngine(
+  engine: BrainEngine,
+  config: EngineConfig & { poolSize: number },
+): Promise<void> {
+  return connectWithRetry(engine, config, { isRetryable: isRetryableWorkerConnectError });
 }
