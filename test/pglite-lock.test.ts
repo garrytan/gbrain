@@ -79,6 +79,22 @@ describe('PGLite datastore kernel ownership', () => {
     child.kill(9); await child.exited;
     expect((await take(dataDir)).acquired).toBe(true);
   });
+  test('lock file preserves argv boundaries (#5072)', async () => {
+    const originalArgv = process.argv;
+    const dataDir = join(temporary(), 'store');
+    const argv = ['/Users/Full Name/project/src/my cli.ts', 'serve', '--label', 'two words', ''];
+    let lock: LockHandle | undefined;
+    try {
+      process.argv = [process.execPath, ...argv];
+      lock = await take(dataDir);
+      const lockData = JSON.parse(readFileSync(join(dataDir, '.gbrain-lock', 'lock'), 'utf-8'));
+      expect(lockData.argv).toEqual(argv);
+      expect(lockData.command).toBe(argv.join(' ')); // legacy display field is retained
+    } finally {
+      process.argv = originalArgv;
+      if (lock) await releaseLock(lock);
+    }
+  });
   test('datastore replacement cannot replace the ownership inode', async () => {
     const root = temporary(), dataDir = join(root, 'store');
     const lock = await take(dataDir);
