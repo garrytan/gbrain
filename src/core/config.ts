@@ -1655,6 +1655,13 @@ export const KNOWN_CONFIG_KEY_PREFIXES: readonly string[] = [
   'connectors.',        // chat-connectors: source_id, sync_floor_min, embed_kickoff_min_pages, doctor_stale_hours, <provider>.{auto_sync,last_sync_at,auth_error_at,watermark_iso} (no secrets — creds are file-plane)
 ];
 
+/** Prefixes above whose every read key is in KNOWN_CONFIG_KEYS, so `config set`
+ *  warns on any other key under them: search.* (pinned key-by-key by
+ *  test/config-search-registry.test.ts) and content_sanity.* (one reader, the
+ *  DB-plane merge in loadConfigWithEngine). The rest hold per-phase,
+ *  per-provider or per-name sub-keys that are not all registered. */
+export const ENUMERATED_CONFIG_KEY_PREFIXES: readonly string[] = ['search.', 'content_sanity.'];
+
 /**
  * Canonical truthiness for DB-plane boolean config values (#2753).
  *
