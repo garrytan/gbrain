@@ -399,6 +399,31 @@ describe('chat touchpoint — provider_chat_options passthrough', () => {
     });
   });
 
+  test('anthropic call-scoped thinking override wins without dropping configured siblings (#5331)', async () => {
+    // #5331 asked for a dedicated per-call thinking switch. The generic
+    // providerOptions merge already supplies that seam on current master:
+    // call-scoped leaves win, configured siblings survive.
+    const providerOptions = await captureProviderOptions({
+      chat_model: 'anthropic:claude-sonnet-4-6',
+      provider_chat_options: {
+        anthropic: {
+          thinking: { type: 'adaptive' },
+          cacheControl: { type: 'ephemeral', ttl: '1h' },
+        },
+      },
+      env: { ANTHROPIC_API_KEY: 'fake' },
+    }, {
+      providerOptions: { anthropic: { thinking: { type: 'disabled' } } },
+    });
+
+    expect(providerOptions).toEqual({
+      anthropic: {
+        thinking: { type: 'disabled' },
+        cacheControl: { type: 'ephemeral', ttl: '1h' },
+      },
+    });
+  });
+
   test('anthropic cacheControl survives provider_chat_options merging', async () => {
     // gbrain#2490: this call-level cacheControl is real (not a no-op) —
     // @ai-sdk/anthropic serializes it as the Anthropic API's documented
