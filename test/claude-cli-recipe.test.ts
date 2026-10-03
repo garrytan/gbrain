@@ -92,6 +92,7 @@ describe('claude-cli recipe registration', () => {
     expect(recipe!.touchpoints.chat!.models).toContain('claude-fable-5');
     expect(recipe!.touchpoints.chat!.models).toContain('claude-fable-5-1');
     expect(recipe!.touchpoints.chat!.models).toContain('claude-opus-5');
+    expect(recipe!.touchpoints.chat!.models).toContain('claude-opus-5-5');
     expect(recipe!.touchpoints.chat!.models).toContain('claude-opus-4-8');
     expect(recipe!.touchpoints.chat!.models).toContain('claude-sonnet-5');
     expect(recipe!.touchpoints.embedding).toBeUndefined();
