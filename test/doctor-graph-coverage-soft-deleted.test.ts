@@ -37,7 +37,7 @@ beforeEach(async () => {
   await resetPgliteState(engine);
 });
 
-/** Two entity pages plus a plain note; the entity pages are then soft-deleted. */
+/** Five eligible entity pages plus a plain note; the entities are then soft-deleted. */
 async function seedSoftDeletedEntities(eng: PGLiteEngine): Promise<void> {
   const sql = sqlQueryForEngine(eng);
   await sql`
@@ -45,9 +45,12 @@ async function seedSoftDeletedEntities(eng: PGLiteEngine): Promise<void> {
     VALUES
       ('acme-example', 'default', 'company', 'Acme', '', '{}', 'sd1', now(), now()),
       ('alice-example', 'default', 'person', 'Alice', '', '{}', 'sd2', now(), now()),
+      ('people/filler-example-1', 'default', 'person', 'Filler 1', '', '{}', 'sd4', now(), now()),
+      ('people/filler-example-2', 'default', 'person', 'Filler 2', '', '{}', 'sd5', now(), now()),
+      ('people/filler-example-3', 'default', 'person', 'Filler 3', '', '{}', 'sd6', now(), now()),
       ('technical-a', 'default', 'note', 'Tech A', '', '{}', 'sd3', now(), now())
   `;
-  await sql`UPDATE pages SET deleted_at = now() WHERE slug IN ('acme-example', 'alice-example')`;
+  await sql`UPDATE pages SET deleted_at = now() WHERE slug IN ('acme-example', 'alice-example', 'people/filler-example-1', 'people/filler-example-2', 'people/filler-example-3')`;
 }
 
 /** Same shape, but the entity pages stay live — the control. */
@@ -58,6 +61,9 @@ async function seedLiveEntities(eng: PGLiteEngine): Promise<void> {
     VALUES
       ('acme-example', 'default', 'company', 'Acme', '', '{}', 'lv1', now(), now()),
       ('alice-example', 'default', 'person', 'Alice', '', '{}', 'lv2', now(), now()),
+      ('people/filler-example-1', 'default', 'person', 'Filler 1', '', '{}', 'lv4', now(), now()),
+      ('people/filler-example-2', 'default', 'person', 'Filler 2', '', '{}', 'lv5', now(), now()),
+      ('people/filler-example-3', 'default', 'person', 'Filler 3', '', '{}', 'lv6', now(), now()),
       ('technical-a', 'default', 'note', 'Tech A', '', '{}', 'lv3', now(), now())
   `;
 }
@@ -94,9 +100,8 @@ describe('graph_coverage counts live entity pages only (#3754, doctor surface)',
     const checks = await buildChecks(engine, [], null);
     const graph = checks.find((c) => c.name === 'graph_coverage');
     expect(graph, 'graph_coverage check must be present').toBeDefined();
-    // 2 live entity pages + 1 soft-deleted. The count doctor reports — and
-    // divides its percentages by — must be the live 2.
-    expect(graph!.message).toContain('(2 entity pages)');
-    expect(graph!.message).not.toContain('(3 entity pages)');
+    // 5 live entity pages + 1 soft-deleted. The reported denominator excludes it.
+    expect(graph!.message).toContain('(5 entity pages)');
+    expect(graph!.message).not.toContain('(6 entity pages)');
   });
 });

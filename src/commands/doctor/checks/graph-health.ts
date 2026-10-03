@@ -9,6 +9,7 @@
 
 import { startHeartbeat } from '../../../core/progress.ts';
 import { quarantineFilterFragment } from '../../../core/quarantine.ts';
+import { MIN_ENTITY_PAGES_FOR_COVERAGE } from '../../../core/types.ts';
 import type { Check } from '../../doctor.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
 
@@ -84,6 +85,8 @@ async function runGraphCoverage(ctx: DoctorContext): Promise<Check[]> {
         status: 'ok',
         message: `Only code/test fixture entity pages found (${entityCount}); graph_coverage not applicable`,
       });
+    } else if (eligibleEntityCount < MIN_ENTITY_PAGES_FOR_COVERAGE) {
+      checks.push({ name: 'graph_coverage', status: 'ok', message: `Only ${eligibleEntityCount} eligible entity page${eligibleEntityCount === 1 ? '' : 's'} (< ${MIN_ENTITY_PAGES_FOR_COVERAGE}) — coverage ratio not meaningful at this scale` });
     } else if (linkCoverage >= 0.7 && timelineCoverage >= 0.5) {
       checks.push({ name: 'graph_coverage', status: 'ok', message: `Entity connected coverage (in/out) ${linkPct}%, entity timeline coverage ${timelinePct}%` });
     } else {

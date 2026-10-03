@@ -19,6 +19,7 @@ import type { BrainEngine } from '../engine.ts';
 import type { RemediationStep } from '../remediation-step.ts';
 import { makeRemediationStep } from '../remediation-step.ts';
 import { QUARANTINE_FILTER_FRAGMENT } from '../quarantine.ts';
+import { MIN_ENTITY_PAGES_FOR_COVERAGE } from '../types.ts';
 
 /** Shared shape returned by all four checks. */
 export interface OnboardCheckResult {
@@ -238,6 +239,16 @@ export async function checkEntityLinkCoverage(
       remediations: [],
     };
   }
+  if (totalEntities < MIN_ENTITY_PAGES_FOR_COVERAGE) {
+    return {
+      check: {
+        name: 'entity_link_coverage',
+        status: 'ok',
+        message: `Only ${totalEntities} entity page${totalEntities === 1 ? '' : 's'} (< ${MIN_ENTITY_PAGES_FOR_COVERAGE}) — coverage ratio not meaningful at this scale`,
+      },
+      remediations: [],
+    };
+  }
 
   // Decide TABLESAMPLE policy (PG only, when >50K entities)
   const useSample = engine.kind === 'postgres' && totalEntities > 50_000;
@@ -322,6 +333,16 @@ export async function checkTimelineCoverage(
   if (totalEntities === 0) {
     return {
       check: { name: 'timeline_coverage', status: 'ok', message: 'No entity pages — coverage check vacuous' },
+      remediations: [],
+    };
+  }
+  if (totalEntities < MIN_ENTITY_PAGES_FOR_COVERAGE) {
+    return {
+      check: {
+        name: 'timeline_coverage',
+        status: 'ok',
+        message: `Only ${totalEntities} entity page${totalEntities === 1 ? '' : 's'} (< ${MIN_ENTITY_PAGES_FOR_COVERAGE}) — coverage ratio not meaningful at this scale`,
+      },
       remediations: [],
     };
   }

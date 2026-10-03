@@ -34,7 +34,7 @@ beforeEach(async () => {
 });
 
 /**
- * Two entity pages that are LINKED TO (inbound only) from note pages, each
+ * Five entity pages that are LINKED TO (inbound only) from note pages, each
  * with a timeline entry so the timeline half of the check stays green and
  * the assertion isolates the link-direction predicate.
  */
@@ -45,6 +45,9 @@ async function seedInboundOnlyEntities(eng: PGLiteEngine): Promise<void> {
     VALUES
       ('alice-example', 'default', 'person', 'Alice', '', '{}', 'in1', now(), now()),
       ('acme-example', 'default', 'company', 'Acme', '', '{}', 'in2', now(), now()),
+      ('bob-example', 'default', 'person', 'Bob', '', '{}', 'in4', now(), now()),
+      ('carol-example', 'default', 'person', 'Carol', '', '{}', 'in5', now(), now()),
+      ('dave-example', 'default', 'person', 'Dave', '', '{}', 'in6', now(), now()),
       ('meetings/2026-04-03', 'default', 'note', 'Standup', '', '{}', 'in3', now(), now())
   `;
   // Inbound-only: the note links TO both entities; the entities link to nothing.
@@ -52,11 +55,11 @@ async function seedInboundOnlyEntities(eng: PGLiteEngine): Promise<void> {
     INSERT INTO links (from_page_id, to_page_id, link_type)
     SELECT n.id, e.id, 'mentions'
     FROM pages n, pages e
-    WHERE n.slug = 'meetings/2026-04-03' AND e.slug IN ('alice-example', 'acme-example')
+    WHERE n.slug = 'meetings/2026-04-03' AND e.slug IN ('alice-example', 'acme-example', 'bob-example', 'carol-example', 'dave-example')
   `;
   await sql`
     INSERT INTO timeline_entries (page_id, date, summary)
-    SELECT id, '2026-04-03', 'met at standup' FROM pages WHERE slug IN ('alice-example', 'acme-example')
+    SELECT id, '2026-04-03', 'met at standup' FROM pages WHERE slug IN ('alice-example', 'acme-example', 'bob-example', 'carol-example', 'dave-example')
   `;
 }
 
@@ -66,7 +69,7 @@ describe('graph_coverage counts inbound-connected entities (#4191)', () => {
     const checks = await buildChecks(engine, [], null);
     const graph = checks.find((c) => c.name === 'graph_coverage');
     expect(graph, 'graph_coverage check must be present').toBeDefined();
-    // Both entities have inbound links → 100% connected coverage, ok.
+    // All five entities have inbound links → 100% connected coverage, ok.
     expect(graph!.status).toBe('ok');
     expect(graph!.message).toContain('connected coverage (in/out)');
     expect(graph!.message).toContain('100%');
@@ -78,12 +81,28 @@ describe('graph_coverage counts inbound-connected entities (#4191)', () => {
       INSERT INTO pages (slug, source_id, type, title, compiled_truth, frontmatter, content_hash, created_at, updated_at)
       VALUES
         ('bob-example', 'default', 'person', 'Bob', '', '{}', 'un1', now(), now()),
-        ('widget-co', 'default', 'company', 'Widget Co', '', '{}', 'un2', now(), now())
+        ('widget-co', 'default', 'company', 'Widget Co', '', '{}', 'un2', now(), now()),
+        ('carol-example', 'default', 'person', 'Carol', '', '{}', 'un3', now(), now()),
+        ('dave-example', 'default', 'person', 'Dave', '', '{}', 'un4', now(), now()),
+        ('erin-example', 'default', 'person', 'Erin', '', '{}', 'un5', now(), now())
     `;
     const checks = await buildChecks(engine, [], null);
     const graph = checks.find((c) => c.name === 'graph_coverage');
     expect(graph!.status).toBe('warn');
     expect(graph!.message).toContain('connected coverage (in/out) 0%');
     expect(graph!.message).toContain('target 70%');
+  });
+
+  test('one eligible entity page is not applicable without a coverage warning', async () => {
+    const sql = sqlQueryForEngine(engine);
+    await sql`
+      INSERT INTO pages (slug, source_id, type, title, compiled_truth, frontmatter, content_hash, created_at, updated_at)
+      VALUES ('one-example', 'default', 'person', 'One', '', '{}', 'one', now(), now())
+    `;
+    const checks = await buildChecks(engine, [], null);
+    const graph = checks.find((c) => c.name === 'graph_coverage');
+    expect(graph!.status).toBe('ok');
+    expect(graph!.message).toContain('Only 1 eligible entity page (< 5)');
+    expect(graph!.message).not.toContain('target 70%');
   });
 });
