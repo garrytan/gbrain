@@ -62,6 +62,10 @@ export type RemoteMcpErrorReason =
   | 'discovery'
   | 'auth'
   | 'auth_after_refresh'
+  /** OAuth /token answered 429; `detail.retry_after_s` carries its Retry-After. */
+  | 'rate_limited'
+  /** OAuth /token failed after discovery succeeded (non-auth HTTP status or bad body). */
+  | 'token'
   | 'network'
   | 'tool_error'
   | 'parse';
@@ -73,6 +77,8 @@ export interface RemoteMcpErrorDetail {
   kind?: 'timeout' | 'aborted' | 'unreachable';
   /** v0.31.1: server-supplied error code on tool_error (e.g. 'missing_scope'). */
   code?: string;
+  /** Seconds the server asked us to wait before minting again (rate_limited). */
+  retry_after_s?: number;
   /** An accepted mutation's receipt survives the transport's tool-error wrapper. */
   write_request?: WriteReceipt;
   write_error?: WriteErrorCode;
@@ -263,10 +269,14 @@ async function getAccessToken(config: GBrainConfig, force = false, signal?: Abor
   const tokenRes = await mintClientCredentialsToken(disco.metadata.token_endpoint, remote.oauth_client_id, secret, { signal });
   signal?.throwIfAborted();
   if (!tokenRes.ok) {
+    // Discovery already succeeded, so a /token failure is never 'discovery'.
     throw new RemoteMcpError(
-      tokenRes.reason === 'auth' ? 'auth' : tokenRes.reason === 'network' ? 'network' : 'discovery',
+      tokenRes.reason === 'http' || tokenRes.reason === 'parse' ? 'token' : tokenRes.reason,
       `OAuth /token failed: ${tokenRes.message}`,
-      { ...(tokenRes.status ? { status: tokenRes.status } : {}), ...(tokenRes.kind ? { kind: tokenRes.kind } : {}), mcp_url: remote.mcp_url },
+      {
+        ...(tokenRes.status ? { status: tokenRes.status } : {}), ...(tokenRes.kind ? { kind: tokenRes.kind } : {}),
+        ...(tokenRes.retry_after_s !== undefined ? { retry_after_s: tokenRes.retry_after_s } : {}), mcp_url: remote.mcp_url,
+      },
     );
   }
 

@@ -44,6 +44,7 @@ beforeAll(async () => {
     if (req.url === '/token') {
       res.statusCode = tokenStatus;
       res.setHeader('Content-Type', 'application/json');
+      if (tokenStatus === 429) res.setHeader('Retry-After', '900');
       res.end(JSON.stringify({
         access_token: 'token-' + Date.now(),
         token_type: 'bearer',
@@ -262,6 +263,23 @@ describe('gbrain init --mcp-only — pre-flight smoke failures', () => {
     expect(existsSync(configPath())).toBe(false);
     const parsed = JSON.parse(r.stdout.trim().split('\n').pop()!);
     expect(parsed.reason).toBe('token_auth');
+  });
+
+  test('token 429 → exits 1 with token_rate_limited, the wait, and a rate-limit hint', async () => {
+    tokenStatus = 429;
+    const r = await run([
+      'init', '--mcp-only', '--json',
+      '--issuer-url', `http://127.0.0.1:${port}`,
+      '--mcp-url', `http://127.0.0.1:${port}/mcp`,
+      '--oauth-client-id', 'cid',
+      '--oauth-client-secret', 'csecret',
+    ]);
+    expect(r.exitCode).toBe(1);
+    expect(existsSync(configPath())).toBe(false);
+    const parsed = JSON.parse(r.stdout.trim().split('\n').pop()!);
+    expect(parsed).toMatchObject({ reason: 'token_rate_limited', status: 429, retry_after_s: 900 });
+    expect(parsed.message).toContain('GBRAIN_OAUTH_TOKEN_RATE_LIMIT_MAX');
+    expect(parsed.message).not.toContain('register-client');
   });
 
   test('mcp smoke 500 → exits 1 with mcp_smoke_http reason', async () => {

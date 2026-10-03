@@ -815,6 +815,14 @@ async function runThinClientRouted(
           console.error('OAuth auth failed after token refresh. Credentials may have been revoked.');
           console.error('Run `gbrain remote doctor` to confirm.');
           break;
+        case 'rate_limited':
+          console.error(`OAuth /token is rate-limited by the server (HTTP 429)${e.detail?.retry_after_s !== undefined ? `; retry in ${e.detail.retry_after_s}s` : ''}.`);
+          console.error('This is the host\'s token-mint budget, not a connectivity problem; the host operator can raise GBRAIN_OAUTH_TOKEN_RATE_LIMIT_MAX.');
+          break;
+        case 'token':
+          console.error(`${e.message} (issuer ${cfg.remote_mcp!.issuer_url}).`);
+          console.error('Run `gbrain remote doctor` for details.');
+          break;
         case 'network':
           if (e.detail?.kind === 'timeout') {
             const hint = cliOpts.timeoutMs ? '' : ` (default ${defaultTimeoutMs}ms; pass --timeout=Ns to override)`;
