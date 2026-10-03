@@ -135,7 +135,11 @@ export function makeContextualReindexHandler(opts: MakeContextualReindexHandlerO
     // 'default' for the initial lookup, then if the page isn't found
     // there, surface as unrecoverable (the submitter should have
     // included expected_source_id).
-    let foundPage = await tryLoadPageAcrossSources(engine, data.page_slug);
+    let foundPage = await tryLoadPageAcrossSources(
+      engine,
+      data.page_slug,
+      data.expected_source_id,
+    );
     if (!foundPage) {
       throw new UnrecoverableError(
         `Page not found for slug '${data.page_slug}'. ` +
@@ -243,7 +247,16 @@ function parseJobData(raw: Record<string, unknown> | undefined): ContextualReind
 async function tryLoadPageAcrossSources(
   engine: BrainEngine,
   pageSlug: string,
+  expectedSourceId?: string,
 ): Promise<{ source_id: string } | null> {
+  // A submitter that knows the source must not be redirected to a same-slug
+  // page in another source. The page row remains authoritative: a missing
+  // scoped page is reported as missing rather than silently falling back.
+  if (expectedSourceId) {
+    const expectedPage = await engine.getPage(pageSlug, { sourceId: expectedSourceId });
+    return expectedPage ? { source_id: expectedPage.source_id } : null;
+  }
+
   // First try default. Most brains live here.
   const defaultPage = await engine.getPage(pageSlug, { sourceId: 'default' });
   if (defaultPage) return { source_id: defaultPage.source_id };
