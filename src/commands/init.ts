@@ -924,9 +924,10 @@ async function initRemoteMcp(opts: {
   if (!tokenRes.ok) {
     fail(
       `token_${tokenRes.reason}`,
-      `Pre-flight failed: OAuth /token — ${tokenRes.message}\n` +
-      `Hint: the host operator can run \`gbrain auth register-client <name> --grant-types client_credentials --scopes read,write,admin\` to mint fresh credentials.`,
-      { detail: tokenRes.message, ...(tokenRes.status ? { status: tokenRes.status } : {}) },
+      `Pre-flight failed: OAuth /token — ${tokenRes.message}\n` + (tokenRes.reason === 'rate_limited'
+        ? `Hint: the host's /token mint budget is spent; rerun after the wait, or the host operator can raise GBRAIN_OAUTH_TOKEN_RATE_LIMIT_MAX.`
+        : `Hint: the host operator can run \`gbrain auth register-client <name> --grant-types client_credentials --scopes read,write,admin\` to mint fresh credentials.`),
+      { detail: tokenRes.message, ...(tokenRes.status ? { status: tokenRes.status } : {}), ...(tokenRes.retry_after_s !== undefined ? { retry_after_s: tokenRes.retry_after_s } : {}) },
     );
   }
   if (!jsonOutput) console.log(`  ✓ OAuth /token (${tokenRes.token.token_type ?? 'bearer'}, scope=${tokenRes.token.scope ?? 'unspecified'})`);

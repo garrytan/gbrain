@@ -173,7 +173,10 @@ export async function collectRemoteDoctorReport(
       name: 'oauth_token',
       status: 'fail',
       message: tokenRes.message,
-      detail: { reason: tokenRes.reason, ...(tokenRes.status ? { status: tokenRes.status } : {}) },
+      detail: {
+        reason: tokenRes.reason, ...(tokenRes.status ? { status: tokenRes.status } : {}),
+        ...(tokenRes.retry_after_s !== undefined ? { retry_after_s: tokenRes.retry_after_s } : {}),
+      },
     });
     return finalize(remote, checks);
   }
