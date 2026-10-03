@@ -114,12 +114,34 @@ See also:
 `);
 }
 
+// setTimeout treats delays above 2^31-1 ms as ~1 ms; stay within that bound.
+const MAX_WATCH_INTERVAL_SECONDS = Math.floor(2_147_483_647 / 1000);
+
+function parseWatchIntervalSeconds(value: string | undefined): number {
+  if (value === undefined || !/^\d+$/.test(value)) {
+    throw new Error(`--interval must be an integer from 1 to ${MAX_WATCH_INTERVAL_SECONDS} seconds.`);
+  }
+  const seconds = Number(value);
+  if (!Number.isSafeInteger(seconds) || seconds < 1 || seconds > MAX_WATCH_INTERVAL_SECONDS) {
+    throw new Error(`--interval must be an integer from 1 to ${MAX_WATCH_INTERVAL_SECONDS} seconds.`);
+  }
+  return seconds;
+}
+
 /** Flags read before the `--break-lock` branch. */
 export function parseSyncFlags(args: string[]) {
   const repoPath = args.find((a, i) => args[i - 1] === '--repo') || undefined;
   const watch = args.includes('--watch');
-  const intervalStr = args.find((a, i) => args[i - 1] === '--interval');
-  const interval = intervalStr ? parseInt(intervalStr, 10) : 60;
+  const intervalIndex = args.indexOf('--interval');
+  let interval = 60;
+  if (intervalIndex !== -1) {
+    try {
+      interval = parseWatchIntervalSeconds(args[intervalIndex + 1]);
+    } catch (e) {
+      console.error(e instanceof Error ? e.message : String(e));
+      process.exit(1);
+    }
+  }
   const dryRun = args.includes('--dry-run');
   const full = args.includes('--full');
   const noPull = args.includes('--no-pull');
