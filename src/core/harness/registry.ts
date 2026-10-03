@@ -46,6 +46,9 @@ export const HARNESS_ADAPTERS: readonly HarnessAdapter[] = [
   { id: 'muse-code', label: 'Muse Code', aliases: [], modes: ['stdio', 'http'], connection: 'manual', renewable: true,
     guide: 'docs/guides/muse.md#muse-code-is-a-different-product', reload: 'Reload Muse Code’s MCP connection.', nativeInstructions: 'manual',
     evidence: dated(['https://dev.meta.ai/docs/muse-code/extending']) },
+  { id: 'prime-agent', label: 'Prime Agent', aliases: ['prime'], modes: ['http'], connection: 'manual', renewable: true,
+    guide: 'docs/mcp/PRIME_AGENT.md', reload: 'Restart the Prime Agent session and inspect its MCP tools.', nativeInstructions: 'manual',
+    evidence: { documentedAt: '2026-09-23', runtimeTestedAt: '2026-09-23', references: ['~/.prime/agent/settings.json mcpServers entry (type http + Bearer header), observed on a live install'] } },
   ...(['cursor', 'perplexity', 'chatgpt', 'generic'] as const).map(id => ({
     id, label: id === 'generic' ? 'your agent' : id === 'perplexity' ? 'Perplexity Computer' : id, aliases: [], modes: ['http'] as HarnessMode[],
     connection: 'manual' as const, renewable: true, guide: 'docs/guides/hosted-harness-access.md',
