@@ -140,6 +140,7 @@ export async function runValidation(options: ValidationOptions) {
         producer_admission: options.engine === 'postgres' ? 'independent database clients' : 'resident fixture loopback endpoint',
         duration_ms: duration, operations_per_second: counts.operations / (duration / 1000),
         duplicate_replays: results.reduce((sum, row) => sum + row.result.replays, 0),
+        admission_contention_retries: results.reduce((sum, row) => sum + (row.result.admission_contention_retries ?? 0), 0),
         admission: distribution(results.flatMap(row => row.result.admission_ms)),
         caller_completion: distribution(results.flatMap(row => row.result.completion_ms)),
         concurrent_canonical_read: distribution(ownerResults.flatMap(owner => owner.concurrent_read_ms)),

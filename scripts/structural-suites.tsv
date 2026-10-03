@@ -223,6 +223,7 @@ test/openclaw-plugin-manifest.test.ts	root OpenClaw plugin manifest	2	readFileSy
 test/persistence-git-subdir-origin.test.ts	(file-level)	6	readFileSync
 test/persistence-request-indexes.test.ts	(file-level)	4	readFileSync
 test/persistence-sync-options.serial.test.ts	(file-level)	1	readFileSync
+test/persistence-validation-worker.test.ts	persistence validation producer admission	5	readFileSync
 test/pg-access-classify.test.ts	marker contract (skill↔binary lockstep, the UPGRADE_AVAILABLE pattern)	3	bun-file
 test/pglite-engine.test.ts	PGLiteEngine: v0.13.1 error-wrap on connect() (#223)	1	source-surface-helper
 test/pglite-repair-command.serial.test.ts	gbrain pglite-repair — interactive confirm wiring (#4318 residual)	1	readFileSync
