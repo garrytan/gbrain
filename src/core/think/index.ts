@@ -31,7 +31,7 @@ import { chat as gatewayChat, probeChatModel, isThinkingModel, type ChatResult }
 import { AIConfigError } from '../ai/errors.ts';
 import { normalizeModelId } from '../model-id.ts';
 import { hasAnthropicKey } from '../ai/anthropic-key.ts';
-import { parseTemporalWindow } from './temporal-window.ts';
+import { resolveTemporalWindow } from './temporal-window.ts';
 import { resolveExcludePrivatePages } from '../search/private-visibility.ts';
 import { deliverEvidence, effectivePlan, resolveEvidencePlan, EVIDENCE_BLOCK_CHAR_CAP, THINK_RETURN_UNIT_CONFIG_KEY, type DeliveryMeta } from '../search/evidence-delivery.ts';
 import { startThinkDecide, thinkAbstainResult, type ThinkAbstention } from './decide.ts';
@@ -526,7 +526,9 @@ export async function runThink(
 ): Promise<ThinkResult> {
   const rounds = Math.max(1, opts.rounds ?? 1);
   const warnings: string[] = [];
-  const window = parseTemporalWindow(opts.since, opts.until);
+  // Explicit caller since/until stay authoritative; only when BOTH are absent do we
+  // derive a temporal window from an explicit date token in the question.
+  const window = resolveTemporalWindow(opts.question, opts.since, opts.until);
 
   // Resolve the model through the 6-tier chain.
   const modelUsed = await resolveModel(engine, {
