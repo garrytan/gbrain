@@ -384,4 +384,39 @@ describe('CLI dispatch integration', () => {
     expect(tools[0]).toHaveProperty('description');
     expect(tools[0]).toHaveProperty('parameters');
   });
+
+  test("--tools-json carries each op's access contract after the legacy keys", async () => {
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-tools-json-'));
+    try {
+      const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', '--tools-json'], {
+        cwd: repoRoot,
+        stdout: 'pipe',
+        stderr: 'pipe',
+        env: isolatedEnv(home),
+      });
+      const stdout = await new Response(proc.stdout).text();
+      expect(await proc.exited).toBe(0);
+      const tools = JSON.parse(stdout) as Array<Record<string, unknown>>;
+      const byName = new Map(tools.map(t => [t.name as string, t]));
+
+      expect(Object.keys(byName.get('get_page')!)).toEqual([
+        'name', 'description', 'parameters', 'schema', 'scope', 'required_scopes', 'mutating', 'local_only',
+      ]);
+      expect(byName.get('get_page')).toMatchObject({ scope: 'read', required_scopes: [], mutating: false, local_only: false });
+      expect(byName.get('put_page')).toMatchObject({ scope: 'write', mutating: true, local_only: false });
+      expect(byName.get('think')).toMatchObject({ scope: 'read', mutating: true });
+      expect(byName.get('join_brain')).toMatchObject({ scope: 'read', required_scopes: ['skills_member_self'] });
+      expect(byName.get('sync_brain')).toMatchObject({ scope: 'admin', local_only: true });
+
+      const { operations } = await import('../src/core/operations.ts');
+      for (const op of operations) {
+        const t = byName.get(op.name)!;
+        expect([t.scope, t.required_scopes, t.mutating, t.local_only], op.name).toEqual([
+          op.scope ?? 'read', op.requiredScopes ?? [], op.mutating === true, op.localOnly === true,
+        ]);
+      }
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
 });
