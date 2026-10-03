@@ -433,11 +433,12 @@ export async function listFactsBySession(
 export async function listSupersessions(
   exec: LegacyUnscopedRead,
     source_id: string,
-    opts?: { since?: Date; limit?: number; visibility?: ('private' | 'world')[] },
+    opts?: { since?: Date; limit?: number; visibility?: ('private' | 'world')[]; kinds?: FactKind[] },
   ): Promise<FactRow[]> {
     const limit = clampSearchLimit(opts?.limit, 50, MAX_SEARCH_LIMIT);
     const since = opts?.since ?? null;
     const visibility = (opts?.visibility && opts.visibility.length > 0) ? opts.visibility : null;
+    const kinds = (opts?.kinds && opts.kinds.length > 0) ? opts.kinds : null;
     // v0.46 (#3014) — filter on `superseded_by` alone; the ontology
     // writer closes a superseded row via `valid_until` (not `expired_at`,
     // which would break its `--asof` time-travel), so requiring both
@@ -450,6 +451,7 @@ export async function listSupersessions(
         AND superseded_by IS NOT NULL
         ${since ? sqlFragment`AND COALESCE(expired_at, valid_until) >= ${since}` : sqlFragment``}
         ${visibility ? sqlFragment`AND visibility = ANY(${visibility}::text[])` : sqlFragment``}
+        ${kinds ? sqlFragment`AND kind = ANY(${kinds}::text[])` : sqlFragment``}
       ORDER BY COALESCE(expired_at, valid_until) DESC, id DESC
       LIMIT ${limit}
     `)).rows;
