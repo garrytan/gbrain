@@ -5,7 +5,8 @@ import { OperationError } from '../core/ops/contract.ts';
 import { isValidSourceId } from '../core/source-id.ts';
 import { msysToNativePath } from '../core/path-confine.ts';
 import { isWriteRequestId } from '../core/persistence/types.ts';
-import { defaultCloneDir, type AddSourceOpts } from '../core/sources-ops.ts';
+import { defaultCloneDir, sourceStrategyError, type AddSourceOpts } from '../core/sources-ops.ts';
+import type { SyncStrategy } from '../core/sync.ts';
 import { isValidRepoName } from '../core/github-source.ts';
 import { ALL_GOOGLE_SERVICES, DEFAULT_CALENDAR_ID } from '../core/google/types.ts';
 
@@ -34,7 +35,7 @@ export function parseSourceLifecycleArgs(args: string[], generatedId = randomUUI
     'federated', 'no-federated', 'no-federate', 'refederate', 'no-harden']);
   const valued = new Set(['request-id', 'expected-incarnation', 'brain', 'path', 'url', 'name', 'clone-dir',
     'pat-file', 'kind', 'account', 'access', 'token-command', 'token-env', 'services', 'history-days',
-    'calendar-id', 'scope', 'repos', 'dir', 'app-id', 'app-pem', 'app-install']);
+    'calendar-id', 'scope', 'repos', 'dir', 'app-id', 'app-pem', 'app-install', 'strategy']);
   for (let i = 0; i < rest.length; i++) {
     const token = rest[i];
     if (!token.startsWith('-')) { positionals.push(token); continue; }
@@ -107,7 +108,8 @@ export function parseSourceLifecycleArgs(args: string[], generatedId = randomUUI
   const opts: AddSourceOpts = { id, requestId, expectedIncarnation: incarnation,
     name: values.get('name'), localPath: values.has('path') ? absolute(values.get('path')!) : null,
     remoteUrl: values.get('url'), cloneDir: values.has('clone-dir') ? absolute(values.get('clone-dir')!) : undefined,
-    federated: flags.has('federated') ? true : flags.has('no-federated') ? false : null, force: flags.has('force') };
+    federated: flags.has('federated') ? true : flags.has('no-federated') ? false : null, force: flags.has('force'),
+    ...(values.has('strategy') ? { strategy: values.get('strategy') as SyncStrategy } : {}) };
   if (kind === 'github') {
     const scope = values.get('scope') ?? 'auto';
     const repos = (values.get('repos') ?? '').split(',').map(value => value.trim()).filter(Boolean);
@@ -133,6 +135,8 @@ export function parseSourceLifecycleArgs(args: string[], generatedId = randomUUI
       dir: absolute(values.get('dir') ?? defaultCloneDir(`${id}-google`)), access: access as 'vault' | 'command' | 'env',
       tokenCommand: values.get('token-command'), tokenEnv: values.get('token-env') };
   }
+  const strategyError = sourceStrategyError(opts);
+  if (strategyError) throw invalid(strategyError);
   return { operation: 'source_add', params: { options: opts, request_id: requestId, ...(dryRun ? { dry_run: true } : {}) },
     brain: values.get('brain'), legacyOnly: values.has('pat-file'), json: flags.has('json') };
 }

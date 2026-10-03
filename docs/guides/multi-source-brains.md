@@ -195,7 +195,7 @@ always-current reference — it also covers `status`, `current`,
 `set-cr-mode`, and the `push`/`pull` durability surface):
 
 ```
-gbrain sources add <id> --path <p> [--name <n>] [--federated|--no-federated] [--force]
+gbrain sources add <id> --path <p> [--name <n>] [--federated|--no-federated] [--force] [--strategy <s>]
                                Register a source. id: [a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?
                                --path must be a git repo (or a subdirectory of one) — see
                                "The git requirement for --path sources" below. --force
@@ -223,6 +223,7 @@ gbrain sources federate <id>
 gbrain sources unfederate <id>
 gbrain sources mirror-readonly <id>
 gbrain sources mirror-writable <id>
+gbrain sources set-strategy <id> <markdown|code|auto>
 ```
 
 ### Read-only mirror sources
@@ -245,6 +246,23 @@ maintenance write) is stored database-only too; its receipt says
 write on, except for pages created while the source was a mirror: those have
 no file in the checkout and stay database-only. Git effects of a mirror's
 writes (for example a `forget`) complete as skipped. The flag is off by default.
+
+### Code sources: persist the sync strategy
+
+Every sync of a source (`sync --all`, `sync --source`, autopilot, the dream
+cycle, the MCP `sync` op) uses the strategy stored on the source when the call
+names none. Unset, that is `markdown`, which imports only Markdown and deletes
+the page of a code file that changes. Store `code` (code only) or `auto`
+(Markdown and code) for a code repository, at registration or later:
+
+```bash
+gbrain sources add api --path ~/src/api --strategy code
+gbrain sources set-strategy api auto
+gbrain sync --source api --full   # re-classify files unchanged since the last sync
+```
+
+`gbrain sources list --json` shows `strategy` per source (`null` when unset).
+An explicit `gbrain sync --strategy` still wins for that run.
 
 ## The git requirement for --path sources
 

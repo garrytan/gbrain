@@ -56,6 +56,7 @@ import {
 } from './git-remote.ts';
 import { gbrainPath } from './config.ts';
 import { isValidSourceId } from './source-id.ts';
+import { isSyncStrategy, SYNC_STRATEGIES, type SyncStrategy } from './sync.ts';
 import { DEFAULT_CALENDAR_ID } from './google/types.ts';
 import { resolveSourceWithTier, type SourceTier } from './source-resolver.ts';
 import { deleteSourceRow } from './source-delete.ts';
@@ -75,7 +76,8 @@ export type SourceOpErrorCode =
   | 'clone_dir_outside_gbrain'
   | 'symlink_escape'
   | 'unmanaged_path'
-  | 'not_a_git_repo';
+  | 'not_a_git_repo'
+  | 'invalid_strategy';
 
 export class SourceOpError extends Error {
   constructor(
@@ -120,6 +122,8 @@ export interface SourceListEntry {
   local_path: string | null;
   remote_url: string | null;
   federated: boolean;
+  /** Persisted `config.strategy`; null means sync falls back to 'markdown'. */
+  strategy: SyncStrategy | null;
   page_count: number;
   last_sync_at: string | null;
 }
@@ -150,6 +154,12 @@ export interface AddSourceOpts {
   localPath?: string | null;
   remoteUrl?: string;
   federated?: boolean | null;
+  /**
+   * Persisted as `config.strategy`, which every sync path reads when its
+   * caller states no --strategy (#4899). Git-backed sources only (--path,
+   * --url); a connector kind materializes Markdown and refuses it.
+   */
+  strategy?: SyncStrategy;
   /**
    * Override clone destination. Defaults to $GBRAIN_HOME/clones/<id>/.
    * Only honored when remoteUrl is set.
@@ -244,6 +254,23 @@ function validateSourceId(id: string): void {
       `Invalid source id "${id}". Must be 1-32 lowercase alnum chars with optional interior hyphens.`,
     );
   }
+}
+
+/**
+ * Why `opts.strategy` cannot be persisted, or null when it can (or is
+ * absent). One rule for every add path; each caller wraps the message in its
+ * own error envelope, like validateSourceId.
+ */
+export function sourceStrategyError(opts: Pick<AddSourceOpts, 'strategy' | 'github' | 'google'>): string | null {
+  if (opts.strategy === undefined) return null;
+  if (!isSyncStrategy(opts.strategy)) return `Unknown sync strategy "${String(opts.strategy)}". Valid: ${SYNC_STRATEGIES.join(', ')}.`;
+  if (opts.github || opts.google) return 'A sync strategy applies to Git-backed sources (--path or --url), not to connector kinds.';
+  return null;
+}
+
+function assertSourceStrategy(opts: Pick<AddSourceOpts, 'strategy' | 'github' | 'google'>): void {
+  const message = sourceStrategyError(opts);
+  if (message) throw new SourceOpError('invalid_strategy', message);
 }
 
 function parseConfig(config: unknown): Record<string, unknown> {
@@ -446,6 +473,7 @@ export async function addSource(
   if(await managedPersistenceEnabled(engine))return (await import('./persistence/managed-sources.ts')).addManagedSource(engine,opts);
   await assertUnmanagedCanonicalWriter(engine, 'sources add');
   validateSourceId(opts.id);
+  assertSourceStrategy(opts);
 
   // gbrain#2955: normalize a Git Bash / MSYS drive path (`/c/Users/x`,
   // `/cygdrive/c/x`) to native Windows form BEFORE the overlap check and the
@@ -565,6 +593,7 @@ export async function addSource(
     if (opts.federated !== null && opts.federated !== undefined) {
       config.federated = opts.federated;
     }
+    if (opts.strategy) config.strategy = opts.strategy;
     const displayName = opts.name ?? opts.id;
 
     try {
@@ -718,26 +747,27 @@ export async function addSource(
     }
     if (attachPath) {
       // #3903: non-destructive attach — the row already exists (path-less).
-      // local_path is set, and an explicitly-passed --name / --federated is
-      // applied too (silently dropping them would lie to the caller who
-      // typed them). Unmentioned fields, other config keys, and pages all
-      // survive. No JSON.stringify into ::jsonb — the federated flag merges
-      // via jsonb_build_object on a bound boolean.
+      // local_path is set, and an explicitly-passed --name / --federated /
+      // --strategy is applied too (silently dropping them would lie to the
+      // caller who typed them). Unmentioned fields, other config keys, and
+      // pages all survive. No JSON.stringify into ::jsonb — the flags merge
+      // via jsonb_build_object on bound values (strip_nulls drops the unset one).
       await engine.executeRaw(
         `UPDATE sources
             SET local_path = $2,
                 name = COALESCE($3, name),
-                config = CASE WHEN $4::boolean IS NULL THEN config
+                config = CASE WHEN $4::boolean IS NULL AND $5::text IS NULL THEN config
                               ELSE COALESCE(config, '{}'::jsonb)
-                                   || jsonb_build_object('federated', $4::boolean) END
+                                   || jsonb_strip_nulls(jsonb_build_object('federated', $4::boolean, 'strategy', $5::text)) END
           WHERE id = $1`,
-        [opts.id, finalPath, opts.name ?? null, opts.federated ?? null],
+        [opts.id, finalPath, opts.name ?? null, opts.federated ?? null, opts.strategy ?? null],
       );
     } else {
       const config: Record<string, unknown> = {};
       if (opts.federated !== null && opts.federated !== undefined) {
         config.federated = opts.federated;
       }
+      if (opts.strategy) config.strategy = opts.strategy;
       const displayName = opts.name ?? opts.id;
       await engine.executeRaw(
         `INSERT INTO sources (id, name, local_path, config)
@@ -895,6 +925,7 @@ export async function listSources(
       local_path: r.local_path,
       remote_url: typeof cfg.remote_url === 'string' ? cfg.remote_url : null,
       federated: cfg.federated === true,
+      strategy: isSyncStrategy(cfg.strategy) ? cfg.strategy : null,
       page_count: await countVisiblePages(engine, r.id),
       last_sync_at: r.last_sync_at ? new Date(r.last_sync_at).toISOString() : null,
     });
