@@ -86,9 +86,8 @@ function captureReserve(t: BudgetTracker, modelId: string, kind: 'chat' | 'embed
 
 beforeAll(async () => {
   auditDir = mkdtempSync(join(tmpdir(), 'gbrain-no-pricing-'));
-  engine = new PGLiteEngine();
-  await engine.connect({});
-  await engine.initSchema();
+  // Configure the gateway before the engine: connect() and initSchema() size
+  // the vector columns from it, and the embed transport below returns 1536-d.
   resetGateway();
   configureGateway({
     chat_model: MODEL,
@@ -97,6 +96,9 @@ beforeAll(async () => {
     base_urls: { litellm: 'http://localhost:4000' },
     env: { LITELLM_BASE_URL: 'http://localhost:4000', OPENAI_API_KEY: 'test' },
   });
+  engine = new PGLiteEngine();
+  await engine.connect({});
+  await engine.initSchema();
   __setChatTransportForTests(async (): Promise<ChatResult> => {
     chatCalls++;
     return {
