@@ -104,6 +104,8 @@ export interface ExtractAtomsDrainDeps {
   runBatch: (signals: { signal: AbortSignal; stopSignal: AbortSignal }) => Promise<{
     extracted: number;
     skipped: number;
+    /** Diagnostic-only source drift count from this batch. */
+    sourceChanged?: number;
     providerFailure?: boolean;
     failureCount?: number;
     firstError?: string;
@@ -176,6 +178,8 @@ export interface ExtractAtomsDrainResult {
   status: 'ok' | 'provider_failure';
   extracted: number;
   skipped: number;
+  /** Diagnostic-only sum of live atoms whose source changed since extraction. */
+  atoms_source_changed: number;
   /** Eligible pages still pending (see DrainStop for hard stops). null if no count succeeded. */
   remaining: number | null;
   /** Batches actually processed. */
@@ -233,6 +237,7 @@ export async function runExtractAtomsDrain(
   // rethrows after `work` settled still reports the partial progress.
   let extracted = 0;
   let skipped = 0;
+  let sourceChanged = 0;
   let batches = 0;
   // issue #3218: latched once any batch reports providerFailure — drives
   // the returned `status`, independent of how `stopped` reads after the
@@ -250,6 +255,7 @@ export async function runExtractAtomsDrain(
     status: providerFailure ? 'provider_failure' : 'ok',
     extracted,
     skipped,
+    atoms_source_changed: sourceChanged,
     remaining,
     batches,
     stopped,
@@ -311,6 +317,10 @@ export async function runExtractAtomsDrain(
           const r = await deps.runBatch({ signal: hard.signal, stopSignal: soft.signal });
           extracted += r.extracted;
           skipped += r.skipped;
+          sourceChanged +=
+            typeof r.sourceChanged === 'number' && Number.isFinite(r.sourceChanged) && r.sourceChanged > 0
+              ? Math.floor(r.sourceChanged)
+              : 0;
           batches++;
           // #4730: preserve typed per-item records (bounded, sanitized) while
           // keeping failure_count exact and reconcilable — count-only adapters
@@ -509,6 +519,7 @@ export async function runExtractAtomsDrainForSource(
         return {
           extracted: Number(d.atoms_extracted ?? 0),
           skipped: Number(d.duplicates_skipped ?? 0),
+          sourceChanged: Number(d.atoms_source_changed ?? 0),
           providerFailure: failures.length > 0 && itemsSucceeded === 0,
           failureCount: failures.length,
           failures: typedFailures,

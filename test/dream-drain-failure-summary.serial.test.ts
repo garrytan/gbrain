@@ -12,6 +12,7 @@
  */
 
 import { afterAll, beforeAll, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
+import * as realDrain from '../src/core/cycle/extract-atoms-drain.ts';
 import type { ExtractAtomsDrainResult } from '../src/core/cycle/extract-atoms-drain.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { LockUnavailableError } from '../src/core/db-lock.ts';
@@ -20,6 +21,9 @@ let nextResult: ExtractAtomsDrainResult | Error;
 let drainCalls: Array<{ sourceId: string | undefined; windowSeconds: number }> = [];
 
 mock.module('../src/core/cycle/extract-atoms-drain.ts', () => ({
+  // Bun's module mocks are process-wide; preserve the real pure loop exports
+  // for neighboring tests while replacing only the source wiring helper.
+  ...realDrain,
   MAX_DRAIN_FAILURE_RECORDS: 25,
   MAX_DRAIN_FAILURE_SOURCE_CHARS: 256,
   MAX_DRAIN_FAILURE_REASON_CHARS: 200,
@@ -54,6 +58,7 @@ function baseResult(overrides: Partial<ExtractAtomsDrainResult>): ExtractAtomsDr
     status: 'ok',
     extracted: 1,
     skipped: 0,
+    atoms_source_changed: 0,
     remaining: 0, // fully drained → dream exits 0 (no process.exit call)
     batches: 1,
     stopped: 'drained',
