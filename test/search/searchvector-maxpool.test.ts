@@ -24,7 +24,7 @@
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { installFixtureChunks } from '../helpers/page-projection.ts';
-import { configureGateway } from '../../src/core/ai/gateway.ts';
+import { configureGateway, resetGateway } from '../../src/core/ai/gateway.ts';
 import type { ChunkInput } from '../../src/core/types.ts';
 
 let engine: PGLiteEngine;
@@ -96,6 +96,9 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await engine.disconnect();
+  // configureGateway above mutates the PROCESS-GLOBAL gateway; restore the
+  // preload baseline so later files in this bun shard don't inherit it.
+  resetGateway();
 }, 60_000);
 
 describe('searchVector per-page max-pool (T1)', () => {

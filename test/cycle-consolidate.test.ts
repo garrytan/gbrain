@@ -10,7 +10,7 @@
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { configureGateway } from '../src/core/ai/gateway.ts';
+import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 import { runPhaseConsolidate } from '../src/core/cycle/phases/consolidate.ts';
 
 let engine: PGLiteEngine;
@@ -37,6 +37,9 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await engine.disconnect();
+  // configureGateway above mutates the PROCESS-GLOBAL gateway; restore the
+  // preload baseline so later files in this bun shard don't inherit it.
+  resetGateway();
 });
 
 beforeEach(async () => {

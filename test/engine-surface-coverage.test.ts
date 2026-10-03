@@ -37,7 +37,7 @@ import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { configureGateway } from '../src/core/ai/gateway.ts';
+import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 
 const DIM = 1536;
 
@@ -353,6 +353,9 @@ describe('uncovered-method smokes (seeded PGLite)', () => {
 
   afterAll(async () => {
     await engine.disconnect();
+    // configureGateway in the beforeAll above mutates the PROCESS-GLOBAL
+    // gateway; restore the preload baseline for later files in this shard.
+    resetGateway();
   });
 
   test('kind discriminator (readonly instance property, not on the prototype)', () => {

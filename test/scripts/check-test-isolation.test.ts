@@ -236,6 +236,93 @@ describe('check-test-isolation.sh', () => {
     });
   });
 
+  describe('R5 — configureGateway() requires resetGateway()', () => {
+    it('flags configureGateway without any resetGateway', () => {
+      const r = runLintIn([
+        {
+          path: 'gw-leak.test.ts',
+          contents:
+            `import { beforeAll } from 'bun:test';\n` +
+            `import { configureGateway } from '../src/core/ai/gateway.ts';\n` +
+            `beforeAll(() => configureGateway({ embedding_model: 'litellm:x', env: {} }));\n`,
+        },
+      ]);
+      expect(r.status).toBe(1);
+      expect(r.stdout).toContain('R5');
+      expect(r.stdout).toContain('gw-leak.test.ts');
+    });
+
+    it('flags a dynamic-import configureGateway call', () => {
+      const r = runLintIn([
+        {
+          path: 'gw-dyn.test.ts',
+          contents: `test('x', async () => { (await import('../src/core/ai/gateway.ts')).configureGateway({ env: {} }); });\n`,
+        },
+      ]);
+      expect(r.status).toBe(1);
+      expect(r.stdout).toContain('R5');
+    });
+
+    it('does NOT flag configureGateway paired with afterAll(resetGateway)', () => {
+      const r = runLintIn([
+        {
+          path: 'gw-ok.test.ts',
+          contents:
+            `import { beforeAll, afterAll } from 'bun:test';\n` +
+            `import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';\n` +
+            `beforeAll(() => configureGateway({ env: {} }));\n` +
+            `afterAll(() => resetGateway());\n`,
+        },
+      ]);
+      expect(r.status).toBe(0);
+    });
+
+    it('a resetGateway() mention inside a comment does NOT satisfy R5', () => {
+      const r = runLintIn([
+        {
+          path: 'gw-comment-reset.test.ts',
+          contents:
+            `// a co-sharded test that calls resetGateway() would reshuffle us\n` +
+            `configureGateway({ env: {} });\n`,
+        },
+      ]);
+      expect(r.status).toBe(1);
+      expect(r.stdout).toContain('R5');
+    });
+
+    it('a configureGateway() mention only in comments is NOT flagged', () => {
+      const r = runLintIn([
+        {
+          path: 'gw-comment-only.test.ts',
+          contents:
+            `/**\n * configureGateway() pushes the snapshot (push seam)\n */\n` +
+            `// configureGateway() is not called here\n` +
+            `test('x', () => {});\n`,
+        },
+      ]);
+      expect(r.status).toBe(0);
+    });
+
+    it('skips *.serial.test.ts', () => {
+      const r = runLintIn([
+        { path: 'gw.serial.test.ts', contents: `configureGateway({ env: {} });\n` },
+      ]);
+      expect(r.status).toBe(0);
+    });
+
+    it('honors the R5-subprocess-only pragma (call runs in a spawned child)', () => {
+      const r = runLintIn([
+        {
+          path: 'gw-subprocess.test.ts',
+          contents:
+            `// isolation-lint: R5-subprocess-only — script string runs in a child process\n` +
+            `const script = \`\n  configureGateway({ env: {} });\n\`;\n`,
+        },
+      ]);
+      expect(r.status).toBe(0);
+    });
+  });
+
   describe('scope', () => {
     it('skips *.serial.test.ts files entirely', () => {
       const r = runLintIn([
