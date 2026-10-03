@@ -19,7 +19,9 @@ export interface StorageConfig {
   bucket: string;
   region?: string;
   endpoint?: string;
-  // S3 credentials
+  // S3 credentials — optional as a pair. Set both for static keys (R2, MinIO,
+  // IAM user); omit both to use the AWS SDK default credential provider chain
+  // (env vars, shared config/SSO, EC2/ECS/Lambda roles). Setting only one throws.
   accessKeyId?: string;
   secretAccessKey?: string;
   // Supabase credentials
