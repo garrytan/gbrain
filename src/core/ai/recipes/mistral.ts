@@ -6,6 +6,16 @@ import type { Recipe } from '../types.ts';
  * exists: a brain that must stay inside EU jurisdiction can run embed +
  * expansion + chat on a single provider without a US hop.
  *
+ * REGIONAL ASSURANCE (#5302): the default endpoint is EU-by-default, not
+ * EU-assured — Mistral notes data can be temporarily transferred outside
+ * the EU for some features. The regional-inference endpoint
+ * `https://api.eu.mistral.ai/v1` (billed at 1.1x list) is the mechanism
+ * that assures the inference region; opt in via
+ * `gbrain config set provider_base_urls.mistral https://api.eu.mistral.ai/v1`
+ * (DB plane — verify with `gbrain config get provider_base_urls.mistral`,
+ * or `gbrain providers env mistral`, which reads that layer too when a
+ * brain is reachable and reports the plane it resolved).
+ *
  * Verified against the live API on 2026-07-19 (model catalog, embedding
  * dimensions, dimension-parameter rejection, and the batch ceiling — see
  * the notes on each field below).
