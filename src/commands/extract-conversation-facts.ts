@@ -1772,6 +1772,13 @@ interface ParsedArgs {
   error?: string;
 }
 
+function parseSafeIntegerFlag(value: string, allowZero: boolean): number | undefined {
+  if (!/^\d+$/.test(value)) return undefined;
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || (allowZero ? parsed < 0 : parsed <= 0)) return undefined;
+  return parsed;
+}
+
 function parseArgs(args: string[]): ParsedArgs {
   const out: ParsedArgs = {};
   for (let i = 0; i < args.length; i++) {
@@ -1797,18 +1804,30 @@ function parseArgs(args: string[]): ParsedArgs {
       continue;
     }
     if (a === '--limit') {
-      const n = parseInt(args[++i] ?? '', 10);
-      if (Number.isFinite(n) && n > 0) out.limit = n;
+      const n = parseSafeIntegerFlag(args[++i] ?? '', false);
+      if (n === undefined) {
+        out.error = '--limit requires a positive safe integer.';
+        return out;
+      }
+      out.limit = n;
       continue;
     }
     if (a === '--sleep') {
-      const n = parseInt(args[++i] ?? '', 10);
-      if (Number.isFinite(n) && n >= 0) out.sleepMs = n;
+      const n = parseSafeIntegerFlag(args[++i] ?? '', true);
+      if (n === undefined) {
+        out.error = '--sleep requires a non-negative safe integer.';
+        return out;
+      }
+      out.sleepMs = n;
       continue;
     }
     if (a === '--segment-limit') {
-      const n = parseInt(args[++i] ?? '', 10);
-      if (Number.isFinite(n) && n >= 0) out.segmentLimit = n;
+      const n = parseSafeIntegerFlag(args[++i] ?? '', true);
+      if (n === undefined) {
+        out.error = '--segment-limit requires a non-negative safe integer.';
+        return out;
+      }
+      out.segmentLimit = n;
       continue;
     }
     if (a === '--max-cost-usd') {
