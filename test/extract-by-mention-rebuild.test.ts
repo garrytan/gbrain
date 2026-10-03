@@ -16,6 +16,7 @@ import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:tes
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runExtract } from '../src/commands/extract.ts';
 import { setCliOptions } from '../src/core/cli-options.ts';
+import { scanStaleMentions } from '../src/core/by-mention.ts';
 
 let engine: PGLiteEngine;
 
@@ -108,6 +109,25 @@ async function mentionTargets(fromSlug: string): Promise<Array<{ to: string; kin
 }
 
 describe('extract links --by-mention --rebuild (#3674)', () => {
+  test('Hangul boundary repair removes historical false links but keeps real mentions', async () => {
+    await engine.putPage('people/jiwon', {
+      type: 'person', title: '지원', compiled_truth: '', timeline: '', frontmatter: {},
+    });
+    await seedContentPage('writing/false', '재지원 안내');
+    await seedContentPage('writing/real', '지원에게 물었다');
+    // Persist the link an older character-only matcher would have written.
+    await engine.addLinksBatch([{
+      from_slug: 'writing/false', to_slug: 'people/jiwon', link_type: 'mentions',
+      link_source: 'mentions', context: '', from_source_id: 'default', to_source_id: 'default',
+    }]);
+    expect((await scanStaleMentions(engine)).staleLinks).toBe(1);
+    await runCli(['links', '--by-mention', '--rebuild', '--source', 'db']);
+    expect(exitedWith).toBeNull();
+    expect(await mentionTargets('writing/false')).toEqual([]);
+    expect((await mentionTargets('writing/real')).map(t => t.to)).toEqual(['people/jiwon']);
+    expect((await scanStaleMentions(engine)).staleLinks).toBe(0);
+  });
+
   test('rebuild removes the stale mention the additive path leaves behind', async () => {
     await seedEntities();
     await seedContentPage('writing/post-1', 'We met with Acme Corp yesterday.');
