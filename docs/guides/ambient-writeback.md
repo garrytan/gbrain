@@ -118,6 +118,35 @@ bank remains harmless — the target serve's own DB gate decides.
    `gbrain serve` for that brain is running (heartbeat `no_serve` between
    serves — the banked file is the durable artifact either way).
 
+   When the brain's canonical writer stays busy past the extraction
+   preflight's own wait (a Git commit or push holds the writer lock for a few
+   seconds), the serve re-queues the turn up to three times, 5, 15 and 45
+   seconds apart (heartbeat `writer_busy_requeued`), before any model call.
+   A turn that still fails ends with the error name and code as its reason
+   (for example `operationerror:writer_lock_unavailable`), the serve's
+   stderr names the first failure of each reason, and `gbrain doctor` warns
+   in `memory_writeback` when at least 10 harvests finished in the last 7
+   days and more than 20% of them failed. A failed turn keeps its file and
+   waits for a corpus sweep.
+
+   **Under `gbrain serve --http`, or with a slow extraction model, schedule
+   that sweep yourself.** An HTTP serve never sweeps on its own, and a stdio
+   serve's startup and idle sweeps run on budgets of 5 and 3 seconds, which
+   stop a slow model's extraction mid-call. Turns the serve could not extract
+   (failed, over the per-session cap, or banked while the serve was down)
+   then wait until something runs `gbrain sweep --once`. Run it from the
+   brain host's scheduler (cron, launchd) every 15 to 30 minutes, with a
+   budget above your extraction model's slowest call: the default 5000 ms
+   budget stops an extraction mid-call too, so with `claude-cli` (often 8 to
+   25 seconds per turn) use something like
+   `gbrain sweep --once --budget-ms 120000`.
+
+   **Say to your agent:** *"Make sure the turns my brain could not extract
+   are swept."* (the agent schedules `gbrain sweep --once
+   --budget-ms <n>` on the brain host) or *"Why are my writeback harvests
+   failing?"* (the agent reads `gbrain doctor` `memory_writeback` and the
+   `writeback` heartbeat reasons).
+
    Sessions run by gbrain's own `claude-cli` model provider are never
    banked (heartbeat reason `self_capture`): extracting gbrain's internal
    LLM calls as your conversations would spawn another call that banks

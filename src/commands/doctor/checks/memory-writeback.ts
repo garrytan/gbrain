@@ -50,6 +50,13 @@ import {
 export const MEMORY_WRITEBACK_CHECK_NAME = 'memory_writeback';
 
 const COUNTER_WINDOW_DAYS = 7;
+/**
+ * #5557: share of finished serve-side harvests (ok + error; a busy-writer
+ * re-queue is not finished) that fails before the check warns, judged on at
+ * least this many harvests.
+ */
+const HARVEST_FAILURE_WARN_SHARE = 0.2;
+const HARVEST_FAILURE_MIN_FINISHED = 10;
 
 /** Every path an ambient block could live at: the receipt's recorded
  * `instructions` targets UNION the two canonical install paths — an
@@ -313,6 +320,16 @@ export async function buildMemoryWritebackCheck(engine: BrainEngine | null): Pro
         // was declined (cap/queue policy) — the sweep extracts it later.
         turns_banked: bank.filter((e) => e.reason === 'wb_scheduled' || e.reason === 'wb_banked' || e.reason?.startsWith('flush_skip_')).length,
       };
+      const failures = harvest.filter((e) => e.outcome === 'error');
+      const finished = failures.length + harvest.filter((e) => e.outcome === 'ok').length;
+      if (finished >= HARVEST_FAILURE_MIN_FINISHED && failures.length / finished > HARVEST_FAILURE_WARN_SHARE) {
+        const counts = new Map<string, number>();
+        for (const e of failures) counts.set(e.reason ?? 'error', (counts.get(e.reason ?? 'error') ?? 0) + 1);
+        const [topReason, topN] = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]!;
+        problems.push(`${failures.length}/${finished} writeback harvests failed in ${COUNTER_WINDOW_DAYS}d (top: ${topReason} x${topN}); `
+          + 'failed turns wait for a corpus sweep (gbrain sweep --once) that an HTTP serve never runs and a stdio serve\'s short sweeps cannot finish with a slow model; '
+          + 'serve\'s stderr names the first failure of each reason');
+      }
     } catch { /* heartbeat unreadable — counters stay absent */ }
 
     return {
