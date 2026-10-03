@@ -147,12 +147,13 @@ export const minimax: Recipe = {
       // MiniMax M2+/M3 chat returns OpenAI-compatible tool_calls: a live
       // tools -> role:tool continuation round-trip was verified (#4782). The
       // original `false` came from #1977's untested suggested snippet (plain
-      // chat probe only), not from any provider test. Same call as the
-      // Moonshot/Mistral recipes: ordinary tool calls are fine, but the
-      // subagent loop stays refused until a live abort/retry replay pin lands
-      // (see the OpenRouter-family precedent in TODOS).
+      // chat probe only), not from any provider test. MiniMax-M3 additionally
+      // has a live abort/retry replay pin in
+      // test/e2e/minimax-m3-subagent-replay.live.test.ts, so enable the
+      // subagent loop for that exact model only. Other MiniMax models remain
+      // fail-closed until they have their own replay evidence.
       supports_tools: true,
-      supports_subagent_loop: false,
+      supports_subagent_loop: (modelId) => modelId === 'MiniMax-M3',
     },
   },
   setup_hint:
