@@ -83,6 +83,6 @@ function isValidDate(s: string): boolean {
   const [y, mo, d] = s.split('-').map(Number);
   if (mo < 1 || mo > 12) return false;
   if (d < 1 || d > 31) return false;
-  const dt = new Date(Date.UTC(y, mo - 1, d));
+  const dt = new Date(new Date(0).setUTCFullYear(y, mo - 1, d)); // not Date.UTC: it maps years 0-99 to 1900-1999
   return dt.getUTCFullYear() === y && dt.getUTCMonth() === mo - 1 && dt.getUTCDate() === d;
 }

@@ -925,6 +925,15 @@ describe('parseTimelineEntries', () => {
     expect(entries[0]).toEqual({ date: '2026-01-15', summary: 'Met with Alice', detail: '', source: 'markdown' });
   });
 
+  test('parses dates in years 0001-0099', () => {
+    expect(parseTimelineEntries('- **0099-01-01** | Event')).toEqual([{
+      date: '0099-01-01',
+      summary: 'Event',
+      detail: '',
+      source: 'markdown',
+    }]);
+  });
+
   test('parses dash variant: - **YYYY-MM-DD** -- summary', () => {
     const entries = parseTimelineEntries('- **2026-01-15** -- Met with Bob');
     expect(entries.length).toBe(1);

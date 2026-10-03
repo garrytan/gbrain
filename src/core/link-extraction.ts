@@ -2016,7 +2016,7 @@ function isValidDate(s: string): boolean {
   if (mo < 1 || mo > 12) return false;
   if (d < 1 || d > 31) return false;
   // Use Date object as final check (catches 2026-02-30 etc.)
-  const dt = new Date(Date.UTC(y, mo - 1, d));
+  const dt = new Date(new Date(0).setUTCFullYear(y, mo - 1, d)); // not Date.UTC: it maps years 0-99 to 1900-1999
   return dt.getUTCFullYear() === y && dt.getUTCMonth() === mo - 1 && dt.getUTCDate() === d;
 }
 

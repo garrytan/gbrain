@@ -166,6 +166,18 @@ test('fence masking preserves mixed LF, CRLF, and bare CR at exact offsets', () 
 // Gmail URL, so the citation text strip must take the target with it — the
 // leftover `(url)` otherwise became the summary itself, and timeline rows
 // cannot be removed once written.
+describe('inline citation timeline dates', () => {
+  test('a citation dated in years 0001-0099 is kept', () => {
+    expect(parseInlineCitationTimelineEntries('Event happened. [Source: chronicle, 0099-01-01]\n')).toEqual([
+      { date: '0099-01-01', source: 'chronicle', summary: 'Event happened.' },
+    ]);
+  });
+
+  test('a calendar-invalid citation date is still dropped', () => {
+    expect(parseInlineCitationTimelineEntries('Event happened. [Source: chronicle, 2026-02-30]\n')).toEqual([]);
+  });
+});
+
 describe('inline citation link targets (#5483)', () => {
   const cite = emailCitation({
     account: 'user@example.com',
