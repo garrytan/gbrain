@@ -452,6 +452,29 @@ export async function tryRunConfigThinClient(args: string[]): Promise<boolean> {
   return false;
 }
 
+/**
+ * #4605 follow-up: a prefix admits any sub-key, so `config set
+ * search.token_budget` (the reader is `search.tokenBudget`) used to be written
+ * without a word and then never read. Under an enumerated prefix an
+ * unregistered key now gets a warning with the nearest registered spelling.
+ * The write still happens: a warning, not a refusal, so a key that a newer
+ * binary reads can be set ahead of an upgrade.
+ */
+async function warnUnreadPrefixedKey(key: string): Promise<void> {
+  const { KNOWN_CONFIG_KEYS, ENUMERATED_CONFIG_KEY_PREFIXES } = await import('../core/config.ts');
+  const prefix = ENUMERATED_CONFIG_KEY_PREFIXES.find((p) => key.startsWith(p));
+  if (!prefix || KNOWN_CONFIG_KEYS.includes(key)) return;
+  // Compared case- and underscore-blind: the #4605 class is a camelCase
+  // reader under a snake_case write (or the reverse), not a typo.
+  const { suggestNearest } = await import('../core/levenshtein.ts');
+  const fold = (k: string) => k.toLowerCase().replaceAll('_', '');
+  const registered = KNOWN_CONFIG_KEYS.filter((k) => k.startsWith(prefix));
+  const nearest = suggestNearest(fold(key), registered.map(fold), 3);
+  const suggestion = registered.find((k) => fold(k) === nearest);
+  console.error(`[config] WARN: "${key}" is not a registered ${prefix}* key, so nothing in gbrain reads it.` +
+    (suggestion ? ` Did you mean "${suggestion}"?` : ''));
+}
+
 export async function runConfig(engine: BrainEngine, args: string[]) {
   const action = args[0];
 
@@ -985,6 +1008,7 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
         }
       }
     }
+    await warnUnreadPrefixedKey(key);
 
     // v0.36 (D12 + D14): validate embedding-column keys at set time so a
     // bad config gets rejected loud + early. The `--coverage-override`

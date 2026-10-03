@@ -2412,6 +2412,13 @@
         ]
       },
       {
+        "kind": "variable",
+        "name": "ENUMERATED_CONFIG_KEY_PREFIXES",
+        "signature": [
+          "readonly string[]"
+        ]
+      },
+      {
         "kind": "interface",
         "members": [
           "anthropic_api_key?: string | undefined",
