@@ -88,16 +88,40 @@ export function parseRunAllArgs(args: string[]): RunAllOpts {
       opts.suites = list;
       continue;
     }
-    if (a === '--limit') { opts.limit = Number(args[++i]); continue; }
-    if (a === '--seed') { opts.seed = Number(args[++i]); continue; }
+    if (a === '--limit') {
+      const raw = args[++i];
+      const n = Number(raw);
+      if (!raw || !/^\d+$/.test(raw.trim()) || !Number.isSafeInteger(n) || n < 1) {
+        throw new Error('--limit must be a positive safe integer');
+      }
+      opts.limit = n;
+      continue;
+    }
+    if (a === '--seed') {
+      const raw = args[++i];
+      const n = Number(raw);
+      if (!raw || !/^-?\d+$/.test(raw.trim()) || !Number.isSafeInteger(n)) {
+        throw new Error('--seed must be a safe integer');
+      }
+      opts.seed = n;
+      continue;
+    }
     if (a === '--parallel') {
       const n = Number(args[++i]);
       if (!Number.isFinite(n) || n < 1) throw new Error('--parallel must be >= 1');
       opts.parallel = Math.min(n, SEARCH_MODES.length);
       continue;
     }
-    if (a === '--budget-usd-retrieval') { opts.budgetUsdRetrieval = Number(args[++i]); continue; }
-    if (a === '--budget-usd-answer') { opts.budgetUsdAnswer = Number(args[++i]); continue; }
+    if (a === '--budget-usd-retrieval' || a === '--budget-usd-answer') {
+      const raw = args[++i];
+      const n = Number(raw);
+      if (!raw?.trim() || !Number.isFinite(n) || n < 0) {
+        throw new Error(`${a} must be a finite non-negative number`);
+      }
+      if (a === '--budget-usd-retrieval') opts.budgetUsdRetrieval = n;
+      else opts.budgetUsdAnswer = n;
+      continue;
+    }
     if (a === '--yes' || a === '-y') { opts.yes = true; continue; }
     if (a === '--output' || a === '--output-dir') { opts.outputDir = args[++i]; continue; }
     if (a === '--json') { opts.jsonOutput = true; continue; }

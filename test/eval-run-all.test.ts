@@ -67,6 +67,29 @@ describe('parseRunAllArgs', () => {
     expect(() => parseRunAllArgs(['--parallel', '-1'])).toThrow(/must be >= 1/);
   });
 
+  test('--limit requires a positive safe integer', () => {
+    for (const value of ['NaN', 'Infinity', '1.5', '0', '-1', '9007199254740992']) {
+      expect(() => parseRunAllArgs(['--limit', value]), `--limit ${value}`).toThrow(/--limit/);
+    }
+  });
+
+  test('--seed requires a safe integer and allows zero', () => {
+    expect(parseRunAllArgs(['--seed', '0']).seed).toBe(0);
+    for (const value of ['NaN', 'Infinity', '1.5', '9007199254740992']) {
+      expect(() => parseRunAllArgs(['--seed', value]), `--seed ${value}`).toThrow(/--seed/);
+    }
+  });
+
+  test('budget caps require finite non-negative amounts', () => {
+    expect(parseRunAllArgs(['--budget-usd-answer', '0']).budgetUsdAnswer).toBe(0);
+    expect(parseRunAllArgs(['--budget-usd-retrieval', '0.25']).budgetUsdRetrieval).toBe(0.25);
+    for (const flag of ['--budget-usd-retrieval', '--budget-usd-answer']) {
+      for (const value of ['NaN', 'Infinity', '-Infinity', '-1']) {
+        expect(() => parseRunAllArgs([flag, value]), `${flag} ${value}`).toThrow(new RegExp(flag));
+      }
+    }
+  });
+
   test('--yes flag toggles', () => {
     expect(parseRunAllArgs(['--yes']).yes).toBe(true);
     expect(parseRunAllArgs(['-y']).yes).toBe(true);
