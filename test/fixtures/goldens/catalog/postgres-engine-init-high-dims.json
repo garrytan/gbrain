@@ -1475,7 +1475,8 @@
           "8 round_completed_count integer/int4 NOT NULL DEFAULT 0",
           "9 rollup_write_failures integer/int4 NOT NULL DEFAULT 0",
           "10 updated_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
-          "11 expected_limit_count integer/int4 NOT NULL DEFAULT 0"
+          "11 expected_limit_count integer/int4 NOT NULL DEFAULT 0",
+          "12 halt_reasons jsonb/jsonb NOT NULL DEFAULT '{}'::jsonb"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },

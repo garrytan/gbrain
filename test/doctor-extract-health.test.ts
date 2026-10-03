@@ -57,6 +57,32 @@ describe('computeExtractHealthCheck — empty + happy paths', () => {
 });
 
 describe('computeExtractHealthCheck — WARN paths', () => {
+  test('high halt rate names the most frequent recorded reason', async () => {
+    await clearRollup();
+    await engine.executeRaw(
+      `INSERT INTO extract_rollup_7d
+         (kind, source_id, day, halt_count, round_completed_count, halt_reasons)
+       VALUES ('atoms', 'default', CURRENT_DATE, 3, 4,
+         '{"coordinator_refused": 3}'::jsonb)`,
+    );
+    const check = await computeExtractHealthCheck(engine);
+    expect(check.status).toBe('warn');
+    expect(check.message).toContain('atoms=42.9%');
+    expect(check.message).toContain('(top reason: coordinator_refused x3)');
+  });
+
+  test('unknown is reported when it is the only recorded reason', async () => {
+    await clearRollup();
+    await engine.executeRaw(
+      `INSERT INTO extract_rollup_7d
+         (kind, source_id, day, halt_count, round_completed_count, halt_reasons)
+       VALUES ('atoms', 'default', CURRENT_DATE, 2, 1, '{"unknown": 2}'::jsonb)`,
+    );
+    const check = await computeExtractHealthCheck(engine);
+    expect(check.status).toBe('warn');
+    expect(check.message).toContain('(top reason: unknown x2)');
+  });
+
   test('halt rate > 10% on one kind returns WARN with top-3 in message', async () => {
     await clearRollup();
     // facts.conversation: 5 halts, 5 completed = 50% halt rate (WARN)

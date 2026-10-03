@@ -103,6 +103,8 @@ test('fresh and upgraded engines agree on the database-only pending index', asyn
     expect(upgraded.indexdef).toBe(fresh.indexdef);
     const [parked] = await engine.executeRaw<{ indexdef: string }>("SELECT indexdef FROM pg_indexes WHERE indexname='persistence_effects_parked'");
     expect(parked.indexdef).toContain('parked');
+    const [haltReasons] = await engine.executeRaw<{ column_name: string }>("SELECT column_name FROM information_schema.columns WHERE table_name='extract_rollup_7d' AND column_name='halt_reasons'");
+    expect(haltReasons?.column_name).toBe('halt_reasons');
     expect(await engine.getConfig('version')).toBe(String(LATEST_VERSION));
   }
 }, 15000);
