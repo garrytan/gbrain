@@ -27,9 +27,12 @@ const pages = [
   ['concepts/stamped-world', 'concept', 'quokka stamped concept body', { synthesized_by: 'synthesize_concepts-v0.41', visibility: 'world' }],
   ['notes/ordinary-concept', 'concept', 'quokka ordinary concept body', {}],
   ['notes/ordinary-note', 'note', 'quokka ordinary note body', {}],
+  ['notes/legacy-private', 'note', 'quokka legacy private body', { sensitivity: 'private' }],
+  ['notes/legacy-conflict', 'note', 'quokka legacy conflict body', { sensitivity: 'private', visibility: 'world' }],
+  ['notes/legacy-public', 'note', 'quokka legacy public body', { sensitivity: 'public' }],
 ] as const;
-const hidden = ['atoms/transcript-origin', 'atoms/private-origin', 'concepts/unstamped'];
-const visible = ['atoms/world-origin', 'concepts/stamped-world', 'notes/ordinary-concept', 'notes/ordinary-note'];
+const hidden = ['atoms/transcript-origin', 'atoms/private-origin', 'concepts/unstamped', 'notes/legacy-private', 'notes/legacy-conflict'];
+const visible = ['atoms/world-origin', 'concepts/stamped-world', 'notes/ordinary-concept', 'notes/ordinary-note', 'notes/legacy-public'];
 
 beforeAll(async () => {
   if (backends.includes('pglite')) {
@@ -106,6 +109,30 @@ describe('#5525 derived pages without visibility are private to remote readers',
       const authority = { remote: true, sourceId: 'default', excludePrivate: true } as unknown as WriteAuthority;
       for (const slug of hidden) await expect(authorizePageVisibility(engine, authority, slug)).rejects.toMatchObject({ code: 'page_not_found' });
       for (const slug of visible) await authorizePageVisibility(engine, authority, slug);
+    }
+  });
+
+  test('legacy-private origins and inputs hide explicitly world-visible derived pages without a repair', async () => {
+    for (const engine of engines) {
+      for (const [slug, type, frontmatter] of [
+        ['atoms/legacy-origin', 'atom', { source_slug: 'notes/legacy-conflict', visibility: 'world' }],
+        ['concepts/legacy-origin', 'concept', { synthesized_by: 'test', visibility: 'world' }],
+        ['concepts/legacy-input', 'concept', { synthesized_by: 'test', visibility: 'world' }],
+      ] as const) {
+        await importFromContent(engine, slug, serializeMarkdown(frontmatter, 'quokka derived body', '', { type, title: slug, tags: [] }),
+          { noEmbed: true, forceRechunk: true });
+      }
+      await engine.addLink('concepts/legacy-origin', 'atoms/legacy-origin', '', 'synthesized_from', 'concept-provenance');
+      await engine.addLink('concepts/legacy-input', 'notes/legacy-conflict', '', 'synthesized_from', 'concept-provenance');
+      const derived = ['atoms/legacy-origin', 'concepts/legacy-origin', 'concepts/legacy-input'];
+      __resetPrivateVisibilityCacheForTests();
+      const remote = (await engine.searchKeyword('quokka', { limit: 50, excludePrivate: true })).map(r => r.slug);
+      for (const slug of derived) {
+        expect(remote).not.toContain(slug);
+        await expect(operationsByName.get_page.handler(ctx(engine, true), { slug })).rejects.toThrow(/Page not found/);
+        expect(((await operationsByName.get_page.handler(ctx(engine, false), { slug })) as { slug: string }).slug).toBe(slug);
+        expect((await engine.getPage(slug))!.frontmatter.visibility).toBe('world');
+      }
     }
   });
 });

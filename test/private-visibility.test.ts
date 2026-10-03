@@ -40,6 +40,8 @@ beforeAll(async () => {
   for (const [slug, title, body, frontmatter] of [
     ['notes/world-page', 'Zebra Widget World', 'zebra widget public knowledge body', { visibility: 'world' }],
     ['notes/private-page', 'Zebra Widget Private', 'zebra widget secret private knowledge body', { visibility: 'private' }],
+    ['notes/legacy-private', 'Zebra Widget Legacy', 'zebra widget legacy secret body', { sensitivity: 'private' }],
+    ['notes/legacy-conflict', 'Zebra Widget Conflict', 'zebra widget conflicting secret body', { sensitivity: 'private', visibility: 'world' }],
     // No visibility key at all → defaults to world (visible everywhere).
     ['notes/unmarked-page', 'Zebra Widget Unmarked', 'zebra widget unmarked knowledge body', {}],
   ] as const) {
@@ -80,6 +82,10 @@ describe('engine search paths honor excludePrivate (#4352)', () => {
       expect(slugsWith).toContain('notes/unmarked-page');
       // Trusted path unchanged: private page still retrievable.
       expect(slugsWithout).toContain('notes/private-page');
+      for (const slug of ['notes/legacy-private', 'notes/legacy-conflict']) {
+        expect(slugsWith).not.toContain(slug);
+        expect(slugsWithout).toContain(slug);
+      }
     });
   }
 });

@@ -43,7 +43,7 @@ export async function submissionAuthority(ctx: OperationContext, operation: stri
     scopes: [...(ctx.auth?.scopes ?? localGrant?.scopes ?? [])],
     operations: ctx.auth?.allowedOperations ? [...ctx.auth.allowedOperations] : localGrant?.operations ?? null,
     slugPrefixes: ctx.auth?.boundSlugPrefixes ? [...ctx.auth.boundSlugPrefixes] : localGrant?.slugPrefixes ?? null,
-    ...(ctx.viaSubagent ? { restrictedNamespace: true, delegated: !!ctx.auth,
+    ...(ctx.viaSubagent ? { restrictedNamespace: true, delegated: !!ctx.auth, subagentId: ctx.subagentId,
       delegatedPrefixes: ctx.allowedSlugPrefixes?.length ? [...ctx.allowedSlugPrefixes]
         : typeof ctx.subagentId === 'number' ? [`wiki/agents/${ctx.subagentId}/*`] : [] } : {}),
   };
@@ -63,7 +63,7 @@ export async function authorizeWrite(engine: SqlEngine, a: WriteAuthority, opera
   const suffix = lock ? ' FOR SHARE' : '';
   if (a.principal.kind === 'oauth_client') {
     const [row] = await engine.executeRaw<Record<string, unknown>>(`SELECT deleted_at,scope,source_id,allowed_operations,
-      bound_slug_prefixes,bound_tools,delegated_slug_prefixes FROM oauth_clients WHERE client_id=$1${suffix}`, [a.principal.id]);
+      bound_slug_prefixes,bound_tools,delegated_slug_prefixes,delegated_namespace FROM oauth_clients WHERE client_id=$1${suffix}`, [a.principal.id]);
     if (!row || row.deleted_at != null || row.source_id !== a.sourceId) deny('The owning OAuth client is revoked or its source changed.');
     const scopes = typeof row.scope === 'string' ? row.scope.split(/\s+/) : [];
     assertSkillWriteScopes(scopes, operation, a.remote);
@@ -71,7 +71,11 @@ export async function authorizeWrite(engine: SqlEngine, a: WriteAuthority, opera
     if (!hasScope(scopes, a.delegated ? 'agent' : 'write')) deny('The current OAuth grant no longer permits this write.');
     if (a.delegated) {
       if (!strings(row.bound_tools) || !row.bound_tools.some(t => t.replace(/^(?:brain_|mcp__gbrain__)/, '') === operation)) deny('The delegated tool was removed from the current grant.');
-      if (!strings(row.delegated_slug_prefixes) || !matchesSlugAllowList(slug, row.delegated_slug_prefixes)) deny('The delegated namespace was narrowed.');
+      const currentPrefixes = row.delegated_namespace === 'job' && row.delegated_slug_prefixes === null
+        && typeof a.subagentId === 'number' && Number.isSafeInteger(a.subagentId) && a.subagentId > 0
+        ? [`wiki/agents/${a.subagentId}/*`]
+        : row.delegated_namespace === 'prefixes' && strings(row.delegated_slug_prefixes) ? row.delegated_slug_prefixes : [];
+      if (!matchesSlugAllowList(slug, currentPrefixes)) deny('The delegated namespace was narrowed.');
     } else if (!operationAllowed(row.allowed_operations, operation) ||
       (row.bound_slug_prefixes != null && (!strings(row.bound_slug_prefixes) || !prefixAllowed(row.bound_slug_prefixes, slug)))) deny('The current operation or slug grant excludes this write.');
     return;

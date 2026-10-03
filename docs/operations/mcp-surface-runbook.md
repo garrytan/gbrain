@@ -130,11 +130,16 @@ bun run scripts/generate-tool-catalog.ts # refresh the Starter column; freshness
 slice. The advisor's drift finding (`mcp_starter_ops_drift`) is the
 standing prompt to re-run this move.
 
-## Move 5 — expose `visibility: private` pages to remote callers (opt-out)
+## Move 5 — expose private pages to remote callers (opt-out)
 
-Pages carrying `visibility: private` frontmatter are hidden from every
-remote/untrusted read path by default (fail-closed; trusted local CLI —
-`ctx.remote === false` — always sees everything). The gate covers search +
+Pages carrying `visibility: private` or the legacy `sensitivity: private`
+frontmatter are hidden from every remote/untrusted read path by default
+(fail-closed; trusted local CLI — `ctx.remote === false` — always sees
+everything). The legacy marker remains private even when `visibility: world`
+is also present. The shared policy also governs publication and derived-origin
+privacy checks: ordinary unmarked pages remain world, while derived pages
+without a privacy stamp remain private. No migration or re-embedding is needed.
+The gate covers search +
 recall's query arm, entity cards / context_pack / delta, and the page read
 ops: `get_page` / `fetch` / `list_pages`, `get_chunks` / `get_versions` /
 `get_timeline` / `get_raw_data`, `resolve_slugs`,
@@ -146,7 +151,7 @@ like a missing one (no existence oracle), and link/graph output never
 enumerates private slugs.
 
 Single-user brains where every connected agent is equally trusted can opt
-out:
+out for pages private under either marker:
 
 ```bash
 gbrain config set search.remote_private_pages visible   # also accepts true / 1
