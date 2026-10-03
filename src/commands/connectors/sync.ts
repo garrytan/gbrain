@@ -16,6 +16,7 @@ import { connectorProviderNames, isConnectorProviderName } from '../../core/conn
 import { loadCredential } from '../../core/connectors/credentials.ts';
 import { sourceIdKey } from '../../core/connectors/config-keys.ts';
 import type { ConnectorProviderName } from '../../core/connectors/types.ts';
+import { OperationError } from '../../core/ops/contract.ts';
 
 interface SyncFlags {
   full: boolean;
@@ -40,12 +41,23 @@ function parseFlags(args: string[]): { provider: string; flags: SyncFlags } {
     else if (a === '--embed') flags.embed = true;
     else if (a === '--background') flags.background = true;
     else if (a === '--json') flags.json = true;
-    else if (a === '--limit') flags.limit = Number(args[++i]);
-    else if (a === '--window-days') flags.windowDays = Number(args[++i]);
+    else if (a === '--limit') flags.limit = parseIntegerFlag(args[++i], '--limit');
+    else if (a === '--window-days') flags.windowDays = parseIntegerFlag(args[++i], '--window-days', true);
     else if (a === '--source') flags.source = args[++i];
     else if (!a.startsWith('-')) provider = a;
   }
   return { provider, flags };
+}
+
+function parseIntegerFlag(value: string | undefined, flagName: string, allowZero = false): number {
+  if (value === undefined || !/^\d+$/.test(value)) {
+    throw new OperationError('invalid_params', `${flagName} must be a ${allowZero ? 'non-negative' : 'positive'} integer.`);
+  }
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < (allowZero ? 0 : 1)) {
+    throw new OperationError('invalid_params', `${flagName} must be a ${allowZero ? 'non-negative' : 'positive'} integer.`);
+  }
+  return parsed;
 }
 
 export async function runConnectorSyncCmd(engine: BrainEngine, args: string[]): Promise<void> {
