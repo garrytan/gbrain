@@ -16,7 +16,7 @@
  * `generateText` import via Bun's module-replace pattern.
  */
 
-import { describe, test, expect, beforeEach, mock } from 'bun:test';
+import { describe, test, expect, beforeEach, afterAll, mock } from 'bun:test';
 import {
   configureGateway,
   resetGateway,
@@ -32,6 +32,11 @@ import { parseModelId, resolveRecipe, assertTouchpoint } from '../../src/core/ai
 import { AIConfigError } from '../../src/core/ai/errors.ts';
 import { listRecipes, getRecipe } from '../../src/core/ai/recipes/index.ts';
 import type { Recipe } from '../../src/core/ai/types.ts';
+
+// These cases configure the gateway without an embedding model (the default
+// shape). Restore the suite baseline so files that share this Bun process
+// (CI runs a shard in one process) keep the pinned embedding shape.
+afterAll(() => resetGateway());
 
 describe('chat touchpoint — recipe registry', () => {
   test('all hosted tool-loop providers ship a chat touchpoint with supports_subagent_loop', () => {
