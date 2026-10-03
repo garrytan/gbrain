@@ -456,6 +456,17 @@ describe('gbrain reindex --markdown (v0.32.7)', () => {
     expect(validateReindexModeScope(['--markdown', '--type', 'atom'])).toBeNull();
   });
 
+  test('rejects invalid --limit values before dispatching any reindex mode', () => {
+    for (const value of ['NaN', '0', '-1', '1.5', '1oops', '9007199254740992']) {
+      expect(validateReindexModeScope(['--multimodal', '--limit', value]), `multimodal ${value}`)
+        .toBe('invalid --limit: expected a positive integer');
+      expect(validateReindexModeScope(['--aliases', `--limit=${value}`]), `aliases ${value}`)
+        .toBe('invalid --limit: expected a positive integer');
+    }
+    expect(validateReindexModeScope(['--multimodal', '--limit', '3'])).toBeNull();
+    expect(validateReindexModeScope(['--aliases', '--limit=3'])).toBeNull();
+  });
+
   test('source-file import errors are surfaced, counted, and fail the CLI', async () => {
     const repo = mkdtempSync(join(tmpdir(), 'gbrain-reindex-'));
     try {

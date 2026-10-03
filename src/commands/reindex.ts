@@ -143,6 +143,7 @@ function pendingDriftPredicate(noEmbed: boolean): string {
 
 export function validateReindexModeScope(args: string[]): string | null {
   args = normalizeReindexArgs(args);
+  if (invalidPositiveIntegerFlag(args, '--limit')) return 'invalid --limit: expected a positive integer';
   if (!args.includes('--type')) return null;
   if (args.includes('--multimodal')) return '--type is only supported with reindex --markdown, not --multimodal';
   if (args.includes('--aliases')) return '--type is only supported with reindex --markdown, not --aliases';
@@ -153,7 +154,8 @@ function invalidPositiveIntegerFlag(args: string[], flag: string): boolean {
   return args.some((arg, index) => {
     if (arg !== flag) return false;
     const raw = args[index + 1];
-    return raw == null || raw.startsWith('--') || !/^\d+$/.test(raw) || Number(raw) <= 0;
+    return raw == null || raw.startsWith('--') || !/^\d+$/.test(raw) ||
+      !Number.isSafeInteger(Number(raw)) || Number(raw) <= 0;
   });
 }
 
