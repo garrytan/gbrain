@@ -15,6 +15,8 @@ import { readSourceFileSync, writeSourceFileSync, hasSourceFilesystemLock, withS
  *   gbrain lint <dir> --fix        # auto-fix what's fixable
  *   gbrain lint <dir> --fix --dry-run  # preview fixes
  *   gbrain lint <file.md>          # lint single file
+ *   gbrain lint a.md b.md dir/     # several targets, one process
+ *   gbrain lint <dir> --strict     # exit 1 when any issue remains
  */
 
 import { readdirSync, statSync, lstatSync, existsSync } from 'fs';
@@ -630,20 +632,28 @@ export async function runLint(args: string[]) {
       skipIdx.add(i + 1);
     }
   }
-  const target = args.find((a, i) => !a.startsWith('--') && !skipIdx.has(i));
+  // Every positional is a target. Pre-fix only the FIRST was linted and the
+  // rest were dropped without a word, so `gbrain lint a.md b.md` checked a.md,
+  // exited 0, and a batch caller believed both files had passed.
+  const targets = args.filter((a, i) => !a.startsWith('--') && !skipIdx.has(i));
   const doFix = args.includes('--fix');
   const dryRun = args.includes('--dry-run');
+  const strict = args.includes('--strict');
 
-  if (!target) {
-    console.error('Usage: gbrain lint <dir|file.md> [--fix] [--dry-run] [--exclude a,b]');
+  if (targets.length === 0) {
+    console.error('Usage: gbrain lint <dir|file.md>... [--fix] [--dry-run] [--exclude a,b] [--strict]');
     console.error('  --fix      Auto-fix fixable issues (LLM preambles, code fences)');
     console.error('  --dry-run  Preview fixes without writing');
     console.error('  --exclude  Comma-separated dir/file basenames to skip (in addition to node_modules)');
+    console.error('  --strict   Exit 1 when any issue remains (default: exit 0, the count is the signal)');
     process.exit(1);
   }
 
-  if (!existsSync(target)) {
-    console.error(`Not found: ${target}`);
+  // All targets are checked before any is linted, so a typo in the last path
+  // never leaves the earlier ones half-fixed.
+  const missing = targets.filter((t) => !existsSync(t));
+  if (missing.length > 0) {
+    for (const t of missing) console.error(`Not found: ${t}`);
     process.exit(1);
   }
 
@@ -662,26 +672,37 @@ export async function runLint(args: string[]) {
   const { getCliOptions, cliOptsToProgressOptions } = await import('../core/cli-options.ts');
   const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
 
-  const result = await runLintCore({
-    target,
-    fix: doFix,
-    dryRun,
-    exclude: extraExcludes,
-    onPagesCollected: (count) => progress.start('lint.pages', count),
-    onPageScanned: () => progress.tick(1),
-    onPageIssues: (relPath, issues, fixedCount) => {
-      console.log(`\n${relPath}:`);
-      for (const issue of issues) {
-        const fixLabel = issue.fixable ? ' [fixable]' : '';
-        console.log(`  L${issue.line} ${issue.rule}: ${issue.message}${fixLabel}`);
-      }
-      if (fixedCount > 0) {
-        console.log(`  ${dryRun ? '(dry run) ' : ''}Fixed ${fixedCount} issue(s)`);
-      }
-    },
-  });
+  // Content-sanity config (which may open the configured engine to lift DB
+  // keys) resolves ONCE for the whole run, not once per target.
+  const contentSanity = await resolveLintContentSanity();
+  const result = { pages_scanned: 0, pages_with_issues: 0, total_issues: 0, total_fixable: 0, total_fixed: 0 };
+  for (const target of targets) {
+    // With several targets, a directory's page paths are shown under it so
+    // two `index.md` from different directories stay distinguishable.
+    const dirPrefix = targets.length > 1 && statSync(target).isDirectory() ? target : null;
+    const one = await runLintCore({
+      target,
+      fix: doFix,
+      dryRun,
+      exclude: extraExcludes,
+      contentSanity,
+      onPagesCollected: (count) => progress.start('lint.pages', count),
+      onPageScanned: () => progress.tick(1),
+      onPageIssues: (relPath, issues, fixedCount) => {
+        console.log(`\n${dirPrefix ? join(dirPrefix, relPath) : relPath}:`);
+        for (const issue of issues) {
+          const fixLabel = issue.fixable ? ' [fixable]' : '';
+          console.log(`  L${issue.line} ${issue.rule}: ${issue.message}${fixLabel}`);
+        }
+        if (fixedCount > 0) {
+          console.log(`  ${dryRun ? '(dry run) ' : ''}Fixed ${fixedCount} issue(s)`);
+        }
+      },
+    });
+    progress.finish();
+    for (const k of Object.keys(result) as Array<keyof typeof result>) result[k] += one[k];
+  }
 
-  progress.finish();
   console.log(`\n${result.pages_scanned} pages scanned. ${result.total_issues} issue(s) in ${result.pages_with_issues} page(s).`);
   if (doFix) {
     console.log(`${dryRun ? '(dry run) ' : ''}${result.total_fixed} auto-fixed.`);
@@ -691,4 +712,7 @@ export async function runLint(args: string[]) {
     // `--fix` run that changed nothing.
     console.log(`Run with --fix to auto-fix ${result.total_fixable} fixable issue(s).`);
   }
+  // Opt-in gate: a dry run fixes nothing, so every finding still remains.
+  const remaining = result.total_issues - (doFix && !dryRun ? result.total_fixed : 0);
+  if (strict && remaining > 0) (await import('../core/cli-force-exit.ts')).setCliExitVerdict(1);
 }

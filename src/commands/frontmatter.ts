@@ -3,8 +3,9 @@ import { assertManagedFilesystemWrite } from '../core/persistence/filesystem-gua
  * gbrain frontmatter — Frontmatter validation, audit, and auto-repair.
  *
  * Subcommands:
- *   gbrain frontmatter validate <path> [--json] [--fix] [--dry-run]
- *     Validate one file or recursively a directory. --fix writes centralized
+ *   gbrain frontmatter validate <path>... [--json] [--fix] [--dry-run]
+ *     Validate files and, recursively, directories (any number of paths, one
+ *     process). --fix writes centralized
  *     backups under ~/.gbrain/backups/frontmatter/... then rewrites in place.
  *     --dry-run previews without writing.
  *
@@ -85,13 +86,14 @@ function printHelp() {
   console.log(`gbrain frontmatter — frontmatter validation, audit, auto-repair, and generation
 
 Usage:
-  gbrain frontmatter validate <path> [--json] [--fix] [--dry-run]
+  gbrain frontmatter validate <path>... [--json] [--fix] [--dry-run]
   gbrain frontmatter generate <path> [--fix] [--dry-run] [--json] [--include-catch-all]
   gbrain frontmatter audit [--source <id>] [--json]
   gbrain frontmatter install-hook [--source <id>] [--force] [--uninstall]
 
 validate
-  Validate one .md file or recursively a directory. Each file is parsed via
+  Validate .md files and, recursively, directories (any number of paths,
+  one process). Each file is parsed via
   parseMarkdown(..., {validate:true}); errors are reported by code:
     MISSING_OPEN, MISSING_CLOSE, YAML_PARSE, SLUG_MISMATCH,
     NULL_BYTES, NESTED_QUOTES, EMPTY_FRONTMATTER
@@ -180,38 +182,50 @@ function findBrainRoot(start: string): string {
 
 async function runValidate(rest: string[]): Promise<void> {
   const flags: ValidateFlags = { json: false, fix: false, dryRun: false };
-  let target: string | null = null;
+  // Every positional is a target. Pre-fix only the LAST one was validated and
+  // the rest were dropped without a word, so `validate broken.md clean.md`
+  // printed OK and exited 0.
+  const targets: string[] = [];
   for (const a of rest) {
     if (a === '--json') flags.json = true;
     else if (a === '--fix') flags.fix = true;
     else if (a === '--dry-run') flags.dryRun = true;
-    else if (!a.startsWith('--')) target = a;
+    else if (!a.startsWith('--')) targets.push(a);
   }
-  if (!target) {
+  if (targets.length === 0) {
     console.error('error: gbrain frontmatter validate requires a <path> argument');
     setCliExitVerdict(1);
     return;
   }
 
-  const resolved = resolve(target);
-  if (!existsSync(resolved)) {
-    console.error(`error: path not found: ${target}`);
-    setCliExitVerdict(1);
-    return;
+  // Every target is checked before any file is read or fixed.
+  let invalidTarget = false;
+  for (const target of targets) {
+    const resolved = resolve(target);
+    if (!existsSync(resolved)) {
+      console.error(`error: path not found: ${target}`);
+      invalidTarget = true;
+    } else if (lstatSync(resolved).isFile() && !isMarkdownFilePath(resolved)) {
+      console.error(`error: frontmatter validation supports only .md and .mdx files: ${target}`);
+      invalidTarget = true;
+    }
   }
-  if (lstatSync(resolved).isFile() && !isMarkdownFilePath(resolved)) {
-    console.error(`error: frontmatter validation supports only .md and .mdx files: ${target}`);
+  if (invalidTarget) {
     setCliExitVerdict(1);
     return;
   }
 
-  const brainRoot = findBrainRoot(resolved);
-  const files = collectFiles(resolved);
-  if (flags.fix && !flags.dryRun) for (const file of files) assertManagedFilesystemWrite(file);
+  // Each target keeps its own brain root (slug derivation) and backup source path.
+  const resolvedTargets = targets.map((target) => resolve(target));
+  const files = resolvedTargets.flatMap((resolved) => {
+    const brainRoot = findBrainRoot(resolved);
+    return collectFiles(resolved).map((file) => ({ file, resolved, brainRoot }));
+  });
+  if (flags.fix && !flags.dryRun) for (const { file } of files) assertManagedFilesystemWrite(file);
   const results: FileValidation[] = [];
   const backupRunId = makeFrontmatterBackupRunId();
 
-  for (const file of files) {
+  for (const { file, resolved, brainRoot } of files) {
     const content = readFileSync(file, 'utf8');
     const rel = relative(brainRoot, file);
     // Files above/outside the brain root fall back to basename rather than
@@ -247,7 +261,9 @@ async function runValidate(rest: string[]): Promise<void> {
   if (flags.json) {
     const envelope = {
       ok: totalErrors === 0,
-      target: resolved,
+      // One target keeps the single-target shape; several report `targets`.
+      target: resolvedTargets.length === 1 ? resolvedTargets[0] : undefined,
+      targets: resolvedTargets.length > 1 ? resolvedTargets : undefined,
       total_files: files.length,
       files_with_errors: filesWithErrors,
       total_errors: totalErrors,

@@ -3018,7 +3018,7 @@ TOOLS
   extract --explain <kind> [--json] Full details: gbrain extract --help
   publish <page.md> [--password]     Shareable HTML (strips private data, optional AES-256)
   check-backlinks <check|fix> [dir]  Find/fix missing back-links across brain
-  lint <dir|file> [--fix]            Catch LLM artifacts, placeholder dates, bad frontmatter
+  lint <dir|file>... [--fix]         Catch LLM artifacts, placeholder dates, bad frontmatter
   backfill <kind|list>               v0.30.1: run a registered backfill (effective-date, ...)
   orphans [--json] [--count]         Find pages with no inbound wikilinks
   salience [--days N] [--kind P]     v0.29: pages ranked by emotional + activity salience
