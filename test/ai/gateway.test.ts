@@ -528,3 +528,136 @@ describe('embedding response integrity', () => {
     }
   });
 });
+
+describe('nvidia Nemotron embedding compatibility', () => {
+  const modelId = 'nvidia/Nemotron-3-Embed-8B';
+
+  beforeEach(() => {
+    resetGateway();
+    __setEmbedTransportForTests(null);
+  });
+
+  function configureNemotron(dimensions: number, selectedModelId = modelId): void {
+    configureGateway({
+      embedding_model: `litellm:${selectedModelId}`,
+      embedding_dimensions: dimensions,
+      env: { LITELLM_API_KEY: 'test-only' },
+    });
+  }
+
+  function vectorWithPrefix(prefixWidth: number, first: number, second: number): number[] {
+    const vector = new Array(4096).fill(0);
+    vector[0] = first;
+    vector[1] = second;
+    // This value is outside the requested prefix. Normalizing the full vector
+    // instead of the retained prefix would produce a different first value.
+    vector[prefixWidth] = 12;
+    return vector;
+  }
+
+  function setEmbeddingResponses(
+    embeddings: number[][] | ((inputs: string[]) => number[][]),
+  ): void {
+    __setEmbedTransportForTests(async (args: any) => ({
+      embeddings: typeof embeddings === 'function' ? embeddings(args.values) : embeddings,
+      usage: { tokens: args.values.length },
+    }) as any);
+  }
+
+  test('normalizes the first 1024 coordinates by the prefix norm', async () => {
+    configureNemotron(1024);
+    setEmbeddingResponses([vectorWithPrefix(1024, 3, 4)]);
+
+    const [vector] = await embed(['one passage']);
+
+    expect(vector).toHaveLength(1024);
+    expect(vector[0]).toBeCloseTo(0.6, 6);
+    expect(vector[1]).toBeCloseTo(0.8, 6);
+    expect(vector[2]).toBe(0);
+  });
+
+  test('normalizes the first 2048 coordinates by the prefix norm', async () => {
+    configureNemotron(2048);
+    setEmbeddingResponses([vectorWithPrefix(2048, 3, 4)]);
+
+    const [vector] = await embed(['one passage']);
+
+    expect(vector).toHaveLength(2048);
+    expect(vector[0]).toBeCloseTo(0.6, 6);
+    expect(vector[1]).toBeCloseTo(0.8, 6);
+    expect(vector[2]).toBe(0);
+  });
+
+  test('preserves batch order and cardinality while transforming each row', async () => {
+    configureNemotron(1024);
+    const inputs: string[] = [];
+    setEmbeddingResponses((values) => {
+      inputs.push(...values);
+      return [vectorWithPrefix(1024, 3, 4), vectorWithPrefix(1024, 4, 3)];
+    });
+
+    const vectors = await embed(['first passage', 'second passage']);
+
+    expect(inputs).toEqual(['first passage', 'second passage']);
+    expect(vectors).toHaveLength(2);
+    expect(vectors[0]).toHaveLength(1024);
+    expect(vectors[1]).toHaveLength(1024);
+    expect(vectors[0]![0]).toBeCloseTo(0.6, 6);
+    expect(vectors[0]![1]).toBeCloseTo(0.8, 6);
+    expect(vectors[1]![0]).toBeCloseTo(0.8, 6);
+    expect(vectors[1]![1]).toBeCloseTo(0.6, 6);
+  });
+
+  test('leaves an already expected-width vector unchanged', async () => {
+    configureNemotron(1024);
+    const expectedWidth = new Array(1024).fill(0);
+    expectedWidth[0] = 3;
+    expectedWidth[1] = 4;
+    setEmbeddingResponses([expectedWidth]);
+
+    const [vector] = await embed(['already narrow']);
+
+    expect(vector).toHaveLength(1024);
+    expect(vector[0]).toBe(3);
+    expect(vector[1]).toBe(4);
+  });
+
+  test('rejects non-finite prefix coordinates and non-finite or zero norms', async () => {
+    configureNemotron(1024);
+    const malformed: Array<[string, number[]]> = [
+      ['NaN coordinate', [Number.NaN, 1]],
+      ['infinite coordinate', [Number.POSITIVE_INFINITY, 1]],
+      ['non-finite norm', [Number.MAX_VALUE, Number.MAX_VALUE]],
+      ['zero norm', [0, 0]],
+    ];
+
+    for (const [label, firstTwo] of malformed) {
+      const vector = new Array(4096).fill(0);
+      vector[0] = firstTwo[0];
+      vector[1] = firstTwo[1];
+      setEmbeddingResponses([vector]);
+      await expect(embed([label])).rejects.toThrow(/finite|norm|zero/i);
+    }
+  });
+
+  test('rejects a wrong raw response width', async () => {
+    configureNemotron(1024);
+    setEmbeddingResponses([new Array(3072).fill(1)]);
+
+    await expect(embed(['wrong raw width'])).rejects.toThrow('returned 3072 but schema expects 1024');
+  });
+
+  test('rejects an unsupported target width for a 4096-coordinate response', async () => {
+    configureNemotron(1536);
+    setEmbeddingResponses([new Array(4096).fill(1)]);
+
+    await expect(embed(['unsupported target'])).rejects.toThrow('returned 4096 but schema expects 1536');
+  });
+
+  test('does not transform a different model id', async () => {
+    configureNemotron(1024, 'nvidia/Nemotron-3-Embed-8b');
+    setEmbeddingResponses([new Array(4096).fill(1)]);
+
+    await expect(embed(['different model id'])).rejects.toThrow('returned 4096 but schema expects 1024');
+  });
+});
