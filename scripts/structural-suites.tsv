@@ -97,7 +97,7 @@ test/destructive-guard.test.ts	purgeExpiredSources — clone cleanup containment
 test/detached-stderr.test.ts	jobs.ts detach branch (source pin, #4418)	2	source-surface-helper
 test/docs-mcp-deploy.test.ts	DEPLOY.md documents the owner magic-link flow (#5007)	1	readFileSync,source-surface-helper
 test/docs-navigation.test.ts	primary documentation navigation	1	readFileSync
-test/doctor-atom-provenance-drift.test.ts	computeAtomProvenanceDriftCheck	19	doctor-source-helper
+test/doctor-atom-provenance-drift.test.ts	computeAtomProvenanceDriftCheck	20	doctor-source-helper
 test/doctor-embedding-env-override.test.ts	cross-surface parity (source-grep regression guard)	1	doctor-source-helper
 test/doctor-fix.test.ts	gbrain doctor --fix CLI integration	3	readFileSync
 test/doctor-frontmatter-partial.test.ts	doctor frontmatter_integrity — load-bearing render strings	5	doctor-source-helper
