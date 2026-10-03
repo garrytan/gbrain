@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 205046,
-    "stdoutSha256": "143679d6c4da4ecdb9ddc4b8fe6cb77ca29572aacac2b2b4a0d98a854c329a72",
+    "stdoutBytes": 205042,
+    "stdoutSha256": "42ca176d3f371072c3ec77d6284a5928224c00ecf5cdaad94fbefc455421c61e",
     "toolNames": [
       "remember",
       "entity",
@@ -2399,7 +2399,7 @@
               "type": "string"
             },
             "source_id": {
-              "description": "Scope the read to a single source (a multi-source brain can hold the same slug in several sources). Defaults to ctx.sourceId / the caller's grant; when the slug exists in more than one source in scope, the chunks of the page get_page returns are read. '__all__' spans every source for trusted local callers, your granted sources for remote callers.",
+              "description": "Scope the read to a single source (a multi-source brain can hold the same slug in several sources). Defaults to ctx.sourceId / the caller's grant, where chunks from every source in scope that holds the slug are returned, each naming its source_id. '__all__' spans every source for trusted local callers, your granted sources for remote callers.",
               "type": "string"
             }
           },

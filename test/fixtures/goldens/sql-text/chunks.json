@@ -135,8 +135,8 @@
               "string",
               "string"
             ],
-            "sql": "SELECT cc.id, cc.page_id, cc.chunk_index, cc.chunk_text, cc.chunk_source, cc.model, cc.token_count, cc.embedded_at, cc.language, cc.symbol_name, cc.symbol_type, cc.start_line, cc.end_line, cc.parent_symbol_path, cc.doc_comment, cc.symbol_name_qualified, cc.modality, (cc.\"embedding\" IS NULL) AS embedding_is_null FROM content_chunks cc JOIN pages p ON p.id = cc.page_id WHERE p.slug = $1 AND p.source_id = $2 AND (p.text_projection_revision = p.knowledge_revision) IS TRUE ORDER BY cc.chunk_index",
-            "textSha256": "02b487e8df64fa7271eb25c8371b58ae41d78c1f679d54cef3a2a88e8ba74322"
+            "sql": "SELECT cc.id, cc.page_id, cc.chunk_index, cc.chunk_text, cc.chunk_source, cc.model, cc.token_count, cc.embedded_at, cc.language, cc.symbol_name, cc.symbol_type, cc.start_line, cc.end_line, cc.parent_symbol_path, cc.doc_comment, cc.symbol_name_qualified, cc.modality, (cc.\"embedding\" IS NULL) AS embedding_is_null, p.source_id FROM content_chunks cc JOIN pages p ON p.id = cc.page_id WHERE p.slug = $1 AND p.source_id = $2 AND (p.text_projection_revision = p.knowledge_revision) IS TRUE ORDER BY cc.chunk_index",
+            "textSha256": "80c273856b585782fa457346892ef09334ed801b7166932f6a507eec855ace52"
           }
         ],
         "excludePrivate": [
@@ -152,8 +152,8 @@
               "string",
               "string"
             ],
-            "sql": "SELECT cc.id, cc.page_id, cc.chunk_index, cc.chunk_text, cc.chunk_source, cc.model, cc.token_count, cc.embedded_at, cc.language, cc.symbol_name, cc.symbol_type, cc.start_line, cc.end_line, cc.parent_symbol_path, cc.doc_comment, cc.symbol_name_qualified, cc.modality, (cc.\"embedding\" IS NULL) AS embedding_is_null FROM content_chunks cc JOIN pages p ON p.id = cc.page_id WHERE p.slug = $1 AND p.source_id = $2 AND (COALESCE(p.frontmatter->>'visibility', CASE WHEN (p.type = 'atom' OR (p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private' AND NOT (CASE WHEN p.type = 'atom' THEN EXISTS (SELECT 1 FROM pages derived_origin WHERE derived_origin.source_id = p.source_id AND derived_origin.slug = p.frontmatter->>'source_slug' AND derived_origin.frontmatter->>'visibility' = 'private') WHEN (p.type = 'atom' OR (p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL)) THEN EXISTS (SELECT 1 FROM links derived_input_link JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id WHERE derived_input_link.from_page_id = p.id AND derived_input_link.link_source = 'concept-provenance' AND derived_input_link.link_type = 'synthesized_from' AND (COALESCE(derived_input.frontmatter->>'visibility', CASE WHEN derived_input.type = 'atom' THEN 'private' ELSE 'world' END) = 'private' OR EXISTS (SELECT 1 FROM pages derived_input_origin WHERE derived_input_origin.source_id = derived_input.source_id AND derived_input_origin.slug = derived_input.frontmatter->>'source_slug' AND derived_input_origin.frontmatter->>'visibility' = 'private'))) ELSE false END)) AND (p.text_projection_revision = p.knowledge_revision) IS TRUE AND COALESCE(p.chunker_version, 0) >= 4 ORDER BY cc.chunk_index",
-            "textSha256": "3cb8400a2685f5af370b095c9fd29226d1c5038901f08dab3410ea8a7003ee5b"
+            "sql": "SELECT cc.id, cc.page_id, cc.chunk_index, cc.chunk_text, cc.chunk_source, cc.model, cc.token_count, cc.embedded_at, cc.language, cc.symbol_name, cc.symbol_type, cc.start_line, cc.end_line, cc.parent_symbol_path, cc.doc_comment, cc.symbol_name_qualified, cc.modality, (cc.\"embedding\" IS NULL) AS embedding_is_null, p.source_id FROM content_chunks cc JOIN pages p ON p.id = cc.page_id WHERE p.slug = $1 AND p.source_id = $2 AND (COALESCE(p.frontmatter->>'visibility', CASE WHEN (p.type = 'atom' OR (p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private' AND NOT (CASE WHEN p.type = 'atom' THEN EXISTS (SELECT 1 FROM pages derived_origin WHERE derived_origin.source_id = p.source_id AND derived_origin.slug = p.frontmatter->>'source_slug' AND derived_origin.frontmatter->>'visibility' = 'private') WHEN (p.type = 'atom' OR (p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL)) THEN EXISTS (SELECT 1 FROM links derived_input_link JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id WHERE derived_input_link.from_page_id = p.id AND derived_input_link.link_source = 'concept-provenance' AND derived_input_link.link_type = 'synthesized_from' AND (COALESCE(derived_input.frontmatter->>'visibility', CASE WHEN derived_input.type = 'atom' THEN 'private' ELSE 'world' END) = 'private' OR EXISTS (SELECT 1 FROM pages derived_input_origin WHERE derived_input_origin.source_id = derived_input.source_id AND derived_input_origin.slug = derived_input.frontmatter->>'source_slug' AND derived_input_origin.frontmatter->>'visibility' = 'private'))) ELSE false END)) AND (p.text_projection_revision = p.knowledge_revision) IS TRUE AND COALESCE(p.chunker_version, 0) >= 4 ORDER BY cc.chunk_index",
+            "textSha256": "48e874451482026d3b796b2ea973a59aa606134748d5c87adc2818be52839d72"
           }
         ],
         "includeEmbedding": [
@@ -169,8 +169,8 @@
               "string",
               "string"
             ],
-            "sql": "SELECT cc.id, cc.page_id, cc.chunk_index, cc.chunk_text, cc.chunk_source, cc.model, cc.token_count, cc.embedded_at, cc.language, cc.symbol_name, cc.symbol_type, cc.start_line, cc.end_line, cc.parent_symbol_path, cc.doc_comment, cc.symbol_name_qualified, cc.modality, (cc.\"embedding\" IS NULL) AS embedding_is_null , cc.\"embedding\" AS embedding FROM content_chunks cc JOIN pages p ON p.id = cc.page_id WHERE p.slug = $1 AND p.source_id = $2 AND (p.text_projection_revision = p.knowledge_revision) IS TRUE ORDER BY cc.chunk_index",
-            "textSha256": "d05c5f0f47493688117ed6d6c98ffc0b1f41b72a5e298f8360d263cec67e8f11"
+            "sql": "SELECT cc.id, cc.page_id, cc.chunk_index, cc.chunk_text, cc.chunk_source, cc.model, cc.token_count, cc.embedded_at, cc.language, cc.symbol_name, cc.symbol_type, cc.start_line, cc.end_line, cc.parent_symbol_path, cc.doc_comment, cc.symbol_name_qualified, cc.modality, (cc.\"embedding\" IS NULL) AS embedding_is_null, p.source_id , cc.\"embedding\" AS embedding FROM content_chunks cc JOIN pages p ON p.id = cc.page_id WHERE p.slug = $1 AND p.source_id = $2 AND (p.text_projection_revision = p.knowledge_revision) IS TRUE ORDER BY cc.chunk_index",
+            "textSha256": "168a9451303f3a7cd80e0a9d5d6cd59a8992594050776364628171d144c2f569"
           }
         ],
         "includeUnsealed": [
@@ -186,8 +186,8 @@
               "string",
               "string"
             ],
-            "sql": "SELECT cc.id, cc.page_id, cc.chunk_index, cc.chunk_text, cc.chunk_source, cc.model, cc.token_count, cc.embedded_at, cc.language, cc.symbol_name, cc.symbol_type, cc.start_line, cc.end_line, cc.parent_symbol_path, cc.doc_comment, cc.symbol_name_qualified, cc.modality, (cc.\"embedding\" IS NULL) AS embedding_is_null FROM content_chunks cc JOIN pages p ON p.id = cc.page_id WHERE p.slug = $1 AND p.source_id = $2 ORDER BY cc.chunk_index",
-            "textSha256": "8b8ab767f1d1e7b9cdb04111263aa1e456bf6413e7511af19828fe03659ade28"
+            "sql": "SELECT cc.id, cc.page_id, cc.chunk_index, cc.chunk_text, cc.chunk_source, cc.model, cc.token_count, cc.embedded_at, cc.language, cc.symbol_name, cc.symbol_type, cc.start_line, cc.end_line, cc.parent_symbol_path, cc.doc_comment, cc.symbol_name_qualified, cc.modality, (cc.\"embedding\" IS NULL) AS embedding_is_null, p.source_id FROM content_chunks cc JOIN pages p ON p.id = cc.page_id WHERE p.slug = $1 AND p.source_id = $2 ORDER BY cc.chunk_index",
+            "textSha256": "b7e2c6785ff8ffa1dc1af5176a7c70b8033846e616ea27eaebcbdc0ce03870c3"
           }
         ],
         "requireSafeChunks": [
@@ -203,8 +203,8 @@
               "string",
               "string"
             ],
-            "sql": "SELECT cc.id, cc.page_id, cc.chunk_index, cc.chunk_text, cc.chunk_source, cc.model, cc.token_count, cc.embedded_at, cc.language, cc.symbol_name, cc.symbol_type, cc.start_line, cc.end_line, cc.parent_symbol_path, cc.doc_comment, cc.symbol_name_qualified, cc.modality, (cc.\"embedding\" IS NULL) AS embedding_is_null FROM content_chunks cc JOIN pages p ON p.id = cc.page_id WHERE p.slug = $1 AND p.source_id = $2 AND (p.text_projection_revision = p.knowledge_revision) IS TRUE AND COALESCE(p.chunker_version, 0) >= 4 ORDER BY cc.chunk_index",
-            "textSha256": "801424734bf4f4f4f33ee47c0e550d27a5eafd784b83d167385baad41a69d3b3"
+            "sql": "SELECT cc.id, cc.page_id, cc.chunk_index, cc.chunk_text, cc.chunk_source, cc.model, cc.token_count, cc.embedded_at, cc.language, cc.symbol_name, cc.symbol_type, cc.start_line, cc.end_line, cc.parent_symbol_path, cc.doc_comment, cc.symbol_name_qualified, cc.modality, (cc.\"embedding\" IS NULL) AS embedding_is_null, p.source_id FROM content_chunks cc JOIN pages p ON p.id = cc.page_id WHERE p.slug = $1 AND p.source_id = $2 AND (p.text_projection_revision = p.knowledge_revision) IS TRUE AND COALESCE(p.chunker_version, 0) >= 4 ORDER BY cc.chunk_index",
+            "textSha256": "6f3dc172eb23bd1b7168c442d4729fe49905d400f70541a9f7d32b55b7b24a31"
           }
         ],
         "sourceIds": [
@@ -220,8 +220,8 @@
               "string",
               "array<string>"
             ],
-            "sql": "SELECT cc.id, cc.page_id, cc.chunk_index, cc.chunk_text, cc.chunk_source, cc.model, cc.token_count, cc.embedded_at, cc.language, cc.symbol_name, cc.symbol_type, cc.start_line, cc.end_line, cc.parent_symbol_path, cc.doc_comment, cc.symbol_name_qualified, cc.modality, (cc.\"embedding\" IS NULL) AS embedding_is_null FROM content_chunks cc JOIN pages p ON p.id = cc.page_id WHERE p.slug = $1 AND p.source_id = ANY($2::text[]) AND (p.text_projection_revision = p.knowledge_revision) IS TRUE ORDER BY cc.chunk_index",
-            "textSha256": "ef9ace371c5e87953e2030cc6b0751687032596f3222806e258fe902971a9860"
+            "sql": "SELECT cc.id, cc.page_id, cc.chunk_index, cc.chunk_text, cc.chunk_source, cc.model, cc.token_count, cc.embedded_at, cc.language, cc.symbol_name, cc.symbol_type, cc.start_line, cc.end_line, cc.parent_symbol_path, cc.doc_comment, cc.symbol_name_qualified, cc.modality, (cc.\"embedding\" IS NULL) AS embedding_is_null, p.source_id FROM content_chunks cc JOIN pages p ON p.id = cc.page_id WHERE p.slug = $1 AND p.source_id = ANY($2::text[]) AND (p.text_projection_revision = p.knowledge_revision) IS TRUE ORDER BY cc.chunk_index",
+            "textSha256": "f0ac121d31d051c4a9afb467b8355d255ac38b78adbb2076c33a01d72c14544e"
           }
         ]
       },

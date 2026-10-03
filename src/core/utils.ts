@@ -444,6 +444,9 @@ export function rowToChunk(row: Record<string, unknown>, includeEmbedding = fals
     // Only present when the SELECT included it (getChunks); undefined elsewhere
     // so callers can tell "not selected" from "vector present".
     ...(row.embedding_is_null !== undefined && { embedding_is_null: Boolean(row.embedding_is_null) }),
+    // Only present when the SELECT included it (getChunks): the source of the
+    // page the chunk belongs to, since one slug can live in several sources.
+    ...(row.source_id !== undefined && { source_id: row.source_id as string }),
   };
 }
 
