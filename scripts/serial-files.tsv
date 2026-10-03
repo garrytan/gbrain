@@ -345,6 +345,7 @@ test/upgrade.serial.test.ts	R2	R2: mock.module(${repoRoot}src/core/binary-self-u
 test/v0_28_5-fix-wave.serial.test.ts	R1	R1: mutates process.env (GBRAIN_PGLITE_SNAPSHOT)
 test/v0_37_fix_wave.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, GBRAIN_EMBEDDING_MODEL, GBRAIN_EMBEDDING_DIMENSIONS, OPENAI_API_KEY (+4 more))
 test/v0_37_gap_fill.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, GBRAIN_NON_INTERACTIVE)
+test/worker-connect-retry.serial.test.ts	R2	R2: mock.module(../src/core/postgres-engine.ts) replaces modules for every file in the process
 test/worker-lock-renewal-e2e.serial.test.ts	R1	R1: mutates process.env (GBRAIN_AUDIT_DIR)
 test/worker-registry.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME)
 test/workspace-push.serial.test.ts	R1	R1: mutates process.env (HOME, GBRAIN_HOME, GBRAIN_GIT_ALLOW_FILE_TRANSPORT, PATH (+1 more))

@@ -160,6 +160,29 @@ export function isConnectionEndedError(err: unknown): boolean {
 }
 
 /**
+ * Is this a transient failure of a PER-WORKER pool's connect (the extra
+ * PostgresEngine pools that parallel `import` and `sync` open, one per worker)?
+ *
+ * Everything `isRetryableConnError` accepts, plus postgres.js's library code
+ * `CONNECT_TIMEOUT` ("write CONNECT_TIMEOUT host:port", or "undefined:undefined"
+ * once the socket has been upgraded to TLS). The general matcher leaves that
+ * code out on purpose: on a process's FIRST connect a timeout usually means
+ * the host does not route (pg-access-classify's `network_unreachable`), and
+ * the fix is the URL, not a retry.
+ *
+ * A worker pool is different by construction. It is opened only after the
+ * parent engine has connected to the same `database_url`, so the route is
+ * proven, and a handshake that misses `connect_timeout` there was starved
+ * rather than misrouted: most often by the client's own event loop, held by a
+ * synchronous stretch (a large repository walk) longer than the timeout. No
+ * session was established, so a fresh attempt is safe.
+ */
+export function isRetryableWorkerConnectError(err: unknown): boolean {
+  if (isRetryableConnError(err)) return true;
+  return getCode(err) === 'CONNECT_TIMEOUT' || /CONNECT_TIMEOUT/.test(getMessage(err));
+}
+
+/**
  * Convenience: is this error retryable for ANY reason (connection drop OR
  * statement timeout)? Backfill uses this — callers that need finer-grained
  * dispatch (different backoff per kind) call the dedicated predicates.
