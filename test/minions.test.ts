@@ -2742,6 +2742,30 @@ describe('connectWithRetry / isRetryableDbConnectError', () => {
     ).rejects.toThrow();
     expect(attempts).toBe(1);
   });
+
+  test('connectWithRetry: isRetryable decides which errors earn another attempt; the default is unchanged', async () => {
+    const { connectWithRetry } = await import('../src/core/db.ts');
+    const { isRetryableWorkerConnectError } = await import('../src/core/retry-matcher.ts');
+    const timeout = Object.assign(new Error('write CONNECT_TIMEOUT undefined:undefined'), { code: 'CONNECT_TIMEOUT' });
+    let attempts = 0;
+    const fakeEngine = {
+      connect: async () => {
+        attempts++;
+        if (attempts === 1) throw timeout;
+      },
+    } as unknown as Parameters<typeof connectWithRetry>[0];
+
+    await expect(
+      connectWithRetry(fakeEngine, { database_url: 'postgres://x' }, { baseDelayMs: 1, log: () => {} })
+    ).rejects.toBe(timeout);
+    expect(attempts).toBe(1);
+
+    attempts = 0;
+    await connectWithRetry(fakeEngine, { database_url: 'postgres://x' }, {
+      baseDelayMs: 1, log: () => {}, isRetryable: isRetryableWorkerConnectError,
+    });
+    expect(attempts).toBe(2);
+  });
 });
 
 // ---------------------------------------------------------------------------

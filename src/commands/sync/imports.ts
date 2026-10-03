@@ -407,7 +407,7 @@ async function drainImports(
         }
       } else {
         const { PostgresEngine } = await import('../../core/postgres-engine.ts');
-        const { resolvePoolSize } = await import('../../core/db.ts');
+        const { resolvePoolSize, connectWorkerEngine } = await import('../../core/db.ts');
         const workerPoolSize = Math.min(2, resolvePoolSize(2));
         const workerCount = Math.min(effectiveConcurrency, importsToDo.length);
         const databaseUrl = config.database_url;
@@ -423,7 +423,7 @@ async function drainImports(
           // already-connected engines on any one failure.
           for (let i = 0; i < workerCount; i++) {
             const eng = new PostgresEngine();
-            await eng.connect({ database_url: databaseUrl, poolSize: workerPoolSize });
+            await connectWorkerEngine(eng, { database_url: databaseUrl, poolSize: workerPoolSize });
             workerEngines.push(eng);
           }
 
