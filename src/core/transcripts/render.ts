@@ -30,7 +30,7 @@
 import { safeDump } from 'js-yaml';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { DEFAULT_BYTES_BLOCK } from '../content-sanity.ts';
+import { DEFAULT_BYTES_WARN } from '../content-sanity.ts';
 import { applyRedaction, planRedaction, type EchoDictionary, type RedactionPlan } from '../secret-scan.ts';
 import { loadPatterns } from '../skillpack/harvest-lint.ts';
 import { sanitizeForJsonb } from '../batch-rows.ts';
@@ -60,8 +60,18 @@ export const MESSAGE_CHAR_CAP = 4000;
  * would import as a zero-chunk, unsearchable page, defeating the split.
  * (Operators can lower the threshold via config; the 0.6 factor leaves
  * headroom for frontmatter overhead and modest overrides.)
+ *
+ * #5427: with the prior `min(300KB, floor(BLOCK * 0.6))` shape, the target
+ * landed at 300KB — six times the content-sanity WARN line (50KB). Every
+ * transcript-import part between 50KB and 300KB therefore took the
+ * content-sanity warn branch (`oversize_warn` audit row + stderr
+ * `exceeds warn threshold, consider splitting` — pointing at the very
+ * splitter that produced the page) on every re-ingest, drowning the doctor
+ * recent-events signal. The block tier stays untouched (the hard floor for
+ * the no-zero-chunk invariant). The 0.9 headroom against WARN gives the
+ * part header + OVERLAP_MESSAGES duplicates room to breathe.
  */
-export const PART_TARGET_BYTES = Math.min(300 * 1024, Math.floor(DEFAULT_BYTES_BLOCK * 0.6));
+export const PART_TARGET_BYTES = Math.floor(DEFAULT_BYTES_WARN * 0.9);
 /** Messages repeated at each part boundary for cross-part fact grounding. */
 export const OVERLAP_MESSAGES = 2;
 

@@ -16,6 +16,7 @@ import {
   redactSession,
   renderSessionParts,
 } from '../src/core/transcripts/render.ts';
+import { DEFAULT_BYTES_WARN } from '../src/core/content-sanity.ts';
 import { parseConversation } from '../src/core/conversation-parser/parse.ts';
 import { FACTS_FENCE_BEGIN, FACTS_FENCE_END, parseFactsFence, stripFactsFence } from '../src/core/facts-fence.ts';
 import { TAKES_FENCE_BEGIN, parseTakesFence } from '../src/core/takes-fence.ts';
@@ -275,6 +276,34 @@ describe('part splitting [embed-skip is the binding limit]', () => {
     const p1LastAnchor = p1Body.trimEnd().split('\n\n').at(-OVERLAP_MESSAGES)?.split('\n')[0];
     expect(p1LastAnchor).toBeTruthy();
     expect(p2Body.startsWith(p1LastAnchor as string)).toBe(true);
+  });
+
+  // #5427: PART_TARGET_BYTES must stay under the content-sanity WARN line.
+  // The prior `min(300KB, floor(BLOCK * 0.6))` shape landed at 300KB — six
+  // times DEFAULT_BYTES_WARN (50KB) — so every transcript part between 50KB
+  // and 300KB took the warn branch (`oversize_warn` audit row + stderr
+  // noise pointing at the very splitter that produced the page) on every
+  // re-ingest. The block tier stays untouched (the no-zero-chunk invariant).
+  test('PART_TARGET_BYTES stays under the content-sanity warn line (#5427)', () => {
+    expect(PART_TARGET_BYTES).toBeLessThan(DEFAULT_BYTES_WARN);
+  });
+
+  test('a session split at the new target produces no oversize_warn part (#5427)', async () => {
+    // Each message is ~1KB; 80 messages (~80KB) used to fit one 80KB part
+    // — well under the old 300KB target, but the part then triggered the
+    // 50KB WARN branch on every re-ingest. With the new ~45KB target the
+    // session now splits into ≥2 parts and each part stays below WARN.
+    const chunk = 'x'.repeat(900);
+    const msgs = Array.from({ length: 80 }, (_, i) => ({
+      role: (i % 2 === 0 ? 'user' : 'assistant') as 'user' | 'assistant',
+      timestamp: `2026-08-02T09:${String(Math.floor(i / 60)).padStart(2, '0')}:${String(i % 60).padStart(2, '0')}.000Z`,
+      text: `m${i} ${chunk}`,
+    }));
+    const r = renderSessionParts(redactSession(session(msgs), { userPatternsPath: '/nonexistent' }));
+    expect(r.parts.length).toBeGreaterThan(1);
+    for (const p of r.parts) {
+      expect(Buffer.byteLength(splitBody(p.content), 'utf8')).toBeLessThan(DEFAULT_BYTES_WARN);
+    }
   });
 
   test('sessions with zero timestamps are refused (never fabricate provenance)', () => {
