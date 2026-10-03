@@ -6,6 +6,7 @@
 op	remember	coordinator	submitRememberMutation admits a journaled page mutation.
 op	forget	coordinator	submitForgetMutation records a coordinated withdrawal.
 op	put_page	coordinator	submitPageMutation; unbound Postgres sources refuse unless persistence.unbound_write=database_only.
+op	edit_page	coordinator	submitPageMutation as put_page: exact-string replacements applied to the current content before admission; same fences and receipts.
 op	delete_page	coordinator	submitPageMutation soft delete or trusted-local purge.
 op	restore_page	coordinator	submitPageMutation restores a recorded version.
 op	purge_deleted_pages	coordinator	purgeDeletedPagesCoordinated purges each expired tombstone through delete_page purge.

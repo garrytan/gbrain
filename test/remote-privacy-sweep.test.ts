@@ -191,6 +191,8 @@ const PARAM_FACTORY: Record<string, Record<string, unknown>> = {
   // put_page-into-fence-bearing-page restoration-echo class is explicitly
   // NOT covered here (write-side sweep TODO).
   put_page: { slug: 'notes/sweep-fresh-write', content: '# Fresh write\n\nNew content.\n' },
+  // edit_page needs the revision of a read it made; a stale one refuses (revision_conflict / page_not_found) and writes nothing.
+  edit_page: { slug: 'notes/sweep-fresh-write', expected_revision: 'sweep-stale-revision', edits: [{ old_string: 'New content.', new_string: 'Edited content.' }] },
   remember: { fact: 'fresh sweep fact', provenance: 'sweep', entity: 'people/sweep-fresh-entity' },
   capture: { content: 'fresh sweep capture' },
   add_tag: { slug: WORLD_PAGE_SLUG, tag: 'sweep-tag' },
@@ -208,7 +210,7 @@ const PARAM_FACTORY: Record<string, Record<string, unknown>> = {
 // carries ctx.auth; the scalar shape — like the stdio transport — doesn't).
 // These operations enforce durable write authority inside the shared dispatcher.
 // Other scope checks remain transport-owned and outside this privacy harness.
-const COORDINATED_WRITES = new Set(['put_page', 'capture', 'delete_page', 'restore_page', 'revert_version',
+const COORDINATED_WRITES = new Set(['put_page', 'edit_page', 'capture', 'delete_page', 'restore_page', 'revert_version',
   'remember', 'forget', 'add_tag', 'remove_tag', 'add_timeline_entry',
   'takes_add', 'takes_update', 'takes_supersede', 'takes_resolve',
   'get_write_request', 'list_write_requests', 'cancel_write_request']);
@@ -331,6 +333,7 @@ const EXPECTED_OUTCOME: Record<string, Outcome> = {
   remember: 'ok',
   forget: 'error',
   put_page: 'ok',
+  edit_page: 'error',
   delete_page: 'ok',
   restore_page: 'ok',
   capture: 'ok',
