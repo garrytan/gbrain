@@ -141,12 +141,14 @@ function discoveredOrStaticOpenAITier(tier: ModelTier): string {
 }
 
 export const PROVIDER_TIER_DEFAULTS: ReadonlyArray<{
-  provider: 'anthropic' | 'openai';
+  provider: 'anthropic' | 'openai' | 'google';
   envKey: string;
   tiers: (tier: ModelTier) => string;
 }> = [
   { provider: 'anthropic', envKey: 'ANTHROPIC_API_KEY', tiers: (tier) => TIER_DEFAULTS[tier] },
   { provider: 'openai', envKey: 'OPENAI_API_KEY', tiers: discoveredOrStaticOpenAITier },
+  { provider: 'google', envKey: 'GOOGLE_GENERATIVE_AI_API_KEY', tiers: (tier) =>
+    tier === 'utility' ? 'google:gemini-2.5-flash-lite' : 'google:gemini-2.5-flash' },
 ];
 
 /** loadConfig, throw-safe (the hasAnthropicKey pattern): unreadable config = env-only. */
@@ -190,8 +192,9 @@ export function resolveTierDefault(
   for (const entry of PROVIDER_TIER_DEFAULTS) {
     if (merged[entry.envKey]) return entry.tiers(tier);
   }
-  // #3813: no anthropic/openai key. PROVIDER_TIER_DEFAULTS knows only those
-  // two, so a single-provider install (deepseek, openrouter, together, ...)
+  // #3813: no supported built-in provider key. PROVIDER_TIER_DEFAULTS covers
+  // the providers with curated tier defaults, so a single-provider install
+  // (deepseek, openrouter, together, ...)
   // used to land on the Anthropic floor and every bare-default caller
   // (extract_atoms, facts classify, page-summary, ...) called a provider with
   // no key. A servable pin for this tier beats the floor. Sits BELOW the key

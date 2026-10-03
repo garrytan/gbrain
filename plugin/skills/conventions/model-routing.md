@@ -25,7 +25,11 @@ the newest usable models discovered from your own account (`GET /v1/models`,
 priced-only, 24h cache at `<configDir>/model-cache.json`,
 `GBRAIN_MODEL_DISCOVERY=off` kill switch), with the openai recipe's ranked
 chat list as the offline floor. OpenAI defaults are never pinned to a model
-id that can go stale.
+id that can go stale. When `GOOGLE_GENERATIVE_AI_API_KEY` (or its
+`GEMINI_API_KEY` alias) is the only chat key, utility resolves to
+`google:gemini-2.5-flash-lite` and the other tiers resolve to
+`google:gemini-2.5-flash`. Anthropic remains first when multiple supported
+provider keys are present.
 
 Override priority (highest first):
 
