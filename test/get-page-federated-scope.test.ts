@@ -642,6 +642,56 @@ describe('#2555 get_chunks federated scope', () => {
 });
 
 // ---------------------------------------------------------------------------
+// get_chunks on a slug held by several sources — get_page parity (#4329 class).
+// Contract: get_chunks reads the one page get_page returns for the same caller,
+// honors a per-call source_id (grant-checked), and names the source on every
+// row. Regression: a multi-source scope merges every same-slug page's chunks,
+// interleaved by chunk_index, and a passed source_id is silently dropped. The
+// #2555 cases above only seed the slug in one granted source.
+// ---------------------------------------------------------------------------
+describe('get_chunks: same slug in several sources', () => {
+  beforeEach(async () => {
+    await importPage('secret/beta-doc', 'beta', 'Beta secret', 'beta chunk zero', 'beta chunk one');
+    await importPage('secret/beta-doc', 'default', 'Default decoy', 'default decoy chunk');
+  });
+
+  const expected: Record<string, string[]> = {
+    beta: ['beta chunk zero', 'beta chunk one'],
+    default: ['default decoy chunk'],
+  };
+
+  test('a grant spanning both sources reads the page get_page returns, never a merge', async () => {
+    for (const grant of [['beta', 'default'], ['default', 'beta']]) {
+      const ctx = remoteCtx(grant);
+      const page = await get_page.handler(ctx, { slug: 'secret/beta-doc' }) as { source_id: string };
+      const chunks = await get_chunks.handler(ctx, { slug: 'secret/beta-doc' }) as Array<{ chunk_text: string; source_id: string; slug: string }>;
+      expect(chunks.map(c => c.chunk_text)).toEqual(expected[page.source_id]);
+      expect(chunks.every(c => c.source_id === page.source_id && c.slug === 'secret/beta-doc')).toBe(true);
+    }
+  });
+
+  test('source_id narrows the read to that source and the rows name it', async () => {
+    const chunks = await get_chunks.handler(remoteCtx(['beta', 'default']), {
+      slug: 'secret/beta-doc', source_id: 'default',
+    }) as Array<{ chunk_text: string; source_id: string }>;
+    expect(chunks.map(c => [c.source_id, c.chunk_text])).toEqual([['default', 'default decoy chunk']]);
+  });
+
+  test('source_id outside the grant is refused, not ignored', async () => {
+    await expect(get_chunks.handler(remoteCtx(['beta']), { slug: 'secret/beta-doc', source_id: 'default' }))
+      .rejects.toMatchObject({ code: 'permission_denied' });
+  });
+
+  test("trusted local '__all__' spans sources the way get_page does", async () => {
+    const ctx = ctxOf({ remote: false, sourceId: 'alpha' });
+    const page = await get_page.handler(ctx, { slug: 'secret/beta-doc', source_id: '__all__' }) as { source_id: string };
+    const chunks = await get_chunks.handler(ctx, { slug: 'secret/beta-doc', source_id: '__all__' }) as Array<{ chunk_text: string; source_id: string }>;
+    expect(chunks.map(c => c.chunk_text)).toEqual(expected[page.source_id]);
+    expect(chunks.every(c => c.source_id === page.source_id)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // #4275 ship-review follow-ups — the alias hop's scope and precedence.
 //   - the trusted UNSCOPED hop consulted listAllSources({includeArchived:true})
 //     while archived sources are excluded everywhere else in the ladder; it

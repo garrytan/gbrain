@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 204505,
-    "stdoutSha256": "361a0a6ada8208de169e71c9f95264e6bd6e6a3dc652a6148f46230a824035af",
+    "stdoutBytes": 205046,
+    "stdoutSha256": "143679d6c4da4ecdb9ddc4b8fe6cb77ca29572aacac2b2b4a0d98a854c329a72",
     "toolNames": [
       "remember",
       "entity",
@@ -2386,15 +2386,20 @@
         }
       },
       {
-        "description": "Get content chunks for a page",
+        "description": "Get content chunks for a page. Each chunk carries the source_id and slug of the page it was read from.",
         "name": "get_chunks",
         "parameters": {
-          "slug": "string"
+          "slug": "string",
+          "source_id": "string?"
         },
         "schema": {
           "properties": {
             "slug": {
               "description": "Slug of the page whose content chunks to return.",
+              "type": "string"
+            },
+            "source_id": {
+              "description": "Scope the read to a single source (a multi-source brain can hold the same slug in several sources). Defaults to ctx.sourceId / the caller's grant; when the slug exists in more than one source in scope, the chunks of the page get_page returns are read. '__all__' spans every source for trusted local callers, your granted sources for remote callers.",
               "type": "string"
             }
           },

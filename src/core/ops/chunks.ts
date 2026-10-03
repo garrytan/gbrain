@@ -8,7 +8,7 @@
 
 import type { Operation } from './contract.ts';
 import { readPolicyOpts } from './context.ts';
-import { federatedSearchScope, parseSourceIdParam } from './context.ts';
+import { assertExplicitSourceLive, federatedSearchScope, parseSourceIdParam } from './context.ts';
 
 // --- Resolution & Chunks ---
 
@@ -40,18 +40,32 @@ const resolve_slugs: Operation = {
 const get_chunks: Operation = {
   name: 'get_chunks',
   outputRedaction: { exempt: 'explicit chunk read by slug, the page-read twin of get_page (CEO-17 raw-read exception)' },
-  description: 'Get content chunks for a page',
+  description: 'Get content chunks for a page. Each chunk carries the source_id and slug of the page it was read from.',
   params: {
     slug: { type: 'string', required: true, description: 'Slug of the page whose content chunks to return.' },
+    source_id: { type: 'string', description: "Scope the read to a single source (a multi-source brain can hold the same slug in several sources). Defaults to ctx.sourceId / the caller's grant; when the slug exists in more than one source in scope, the chunks of the page get_page returns are read. '__all__' spans every source for trusted local callers, your granted sources for remote callers." },
   },
   handler: async (ctx, p) => {
+    const slug = p.slug as string;
     // #2555: route through the canonical scope ladder (federated array >
     // scalar floor > nothing) instead of the pre-#2200 scalar-only pattern —
     // a federated grant could read the page via get_page but got [] here.
-    const scope = await readPolicyOpts(ctx);
+    // get_page parity: the same per-call source_id (grant-checked by
+    // federatedSearchScope) and the same unqualified federated read set.
+    const sourceIdParam = parseSourceIdParam(p.source_id, 'get_chunks', { allowAll: true });
+    const scope = federatedSearchScope(ctx, sourceIdParam);
+    await assertExplicitSourceLive(ctx, sourceIdParam);
+    const policy = await readPolicyOpts(ctx, scope);
+    // A multi-source scope can hold the slug in several sources. Read the one
+    // page get_page resolves (same lookup, same precedence) rather than every
+    // page's chunks interleaved by chunk_index.
+    const sourceId = policy.sourceIds?.length === 1 ? policy.sourceIds[0]
+      : policy.sourceId ?? (await ctx.engine.getPage(slug, { sourceIds: policy.sourceIds, excludePrivate: policy.excludePrivate }))?.source_id;
+    if (sourceId === undefined) return [];
     // #4352 remediation: a `visibility: private` page's chunks read exactly
     // like a missing page's ([]) for untrusted callers — no existence oracle.
-    return ctx.engine.getChunks(p.slug as string, scope);
+    const chunks = await ctx.engine.getChunks(slug, { ...policy, sourceIds: undefined, sourceId });
+    return chunks.map(chunk => ({ ...chunk, source_id: sourceId, slug }));
   },
   scope: 'read',
 };
