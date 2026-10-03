@@ -146,19 +146,32 @@ describe('doctor checkCycleFreshness', () => {
     expect(result.message).toMatch(/No federated sources/);
   });
 
-  test('sync-disabled sources still report stale maintenance cycles', async () => {
-    await seed('disabled-example', agoH(72), { syncEnabled: false });
-    await seed('enabled-example', agoH(1), { syncEnabled: true });
-    const result = await checkCycleFreshness(engine, { nowMs: NOW });
-    expect(result.status).toBe('fail');
-    expect(result.message).toContain("'disabled-example' last cycled 72h ago");
-    expect(result.message).not.toContain('enabled-example');
-  });
-
-  test('sync-disabled sources with fresh maintenance cycles remain healthy', async () => {
-    await seed('disabled-example', agoH(1), { syncEnabled: false });
+  // #4399: config.syncEnabled=false is already honored by performSync's
+  // choke point and the autopilot freshness dispatcher (#4952) — this
+  // check must not report a deliberately-excluded source as stale either.
+  test('config.syncEnabled=false source excluded even when never cycled', async () => {
+    await engine.executeRaw(`UPDATE sources SET local_path = NULL WHERE id = 'default'`);
+    await seed('frozen', undefined, { syncEnabled: false });
     const result = await checkCycleFreshness(engine, { nowMs: NOW });
     expect(result.status).toBe('ok');
-    expect(result.message).toBe('All 1 federated source(s) cycled recently');
+    expect(result.message).toMatch(/No federated sources/);
+  });
+
+  test('mixed: syncEnabled=false source excluded, stale enabled source still fails', async () => {
+    await engine.executeRaw(`UPDATE sources SET local_path = NULL WHERE id = 'default'`);
+    await seed('frozen', agoH(72), { syncEnabled: false });
+    await seed('stale', agoH(72));
+    const result = await checkCycleFreshness(engine, { nowMs: NOW });
+    expect(result.status).toBe('fail');
+    expect(result.message).not.toMatch(/frozen/);
+    expect(result.message).toMatch(/stale/);
+  });
+
+  test('config.syncEnabled=true source is unaffected', async () => {
+    await engine.executeRaw(`UPDATE sources SET local_path = NULL WHERE id = 'default'`);
+    await seed('active', agoH(72), { syncEnabled: true });
+    const result = await checkCycleFreshness(engine, { nowMs: NOW });
+    expect(result.status).toBe('fail');
+    expect(result.message).toMatch(/active/);
   });
 });

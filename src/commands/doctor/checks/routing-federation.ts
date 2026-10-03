@@ -7,6 +7,7 @@
 import { existsSync, readFileSync } from 'fs';
 import type { BrainEngine } from '../../../core/engine.ts';
 import { gbrainPath } from '../../../core/config.ts';
+import { isSyncDisabledConfig } from '../../../core/sync-policy.ts';
 import { embedBackfillWorkerSurface } from '../../../core/minions/embed-backfill-admission.ts';
 import { isUndefinedTableError, isUndefinedColumnError } from '../../../core/utils.ts';
 import { ALLOWED_SCOPES_LIST, DCR_REGISTRABLE_SCOPES } from '../../../core/scope.ts';
@@ -96,7 +97,8 @@ export async function checkFederationHealth(engine: BrainEngine): Promise<Check>
   try {
     const { loadAllSources } = await import('../../../core/sources-load.ts');
     const { computeAllSourceMetrics } = await import('../../../core/source-health.ts');
-    const sources = await loadAllSources(engine, { includeArchived: false });
+    const sources = (await loadAllSources(engine, { includeArchived: false }))
+      .filter((source) => !isSyncDisabledConfig(source.config));
     if (sources.length <= 1) {
       return {
         name: 'federation_health',

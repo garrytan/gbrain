@@ -78,6 +78,20 @@ describe('checkFederationHealth', () => {
     expect(check.message).toContain('gbrain sync trigger --source stale-source');
   });
 
+  test('stale sync-disabled source is ignored while enabled stale source still warns', async () => {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, config, last_sync_at) VALUES
+        ('frozen-source', 'frozen-source', '{"federated":true,"syncEnabled":false}', NOW() - INTERVAL '48 hours'),
+        ('active-stale-source', 'active-stale-source', '{"federated":true,"syncEnabled":true}', NOW() - INTERVAL '2 hours')`,
+    );
+    const check = await checkFederationHealth(engine);
+    expect(check.status).toBe('warn');
+    expect(check.message).toContain('active-stale-source');
+    expect(check.message).toContain('gbrain sync trigger --source active-stale-source');
+    expect(check.message).not.toContain('frozen-source');
+    expect(check.message).not.toContain('gbrain sync trigger --source frozen-source');
+  });
+
   test('source with lag > 24h → fail with remediation', async () => {
     await engine.executeRaw(
       `INSERT INTO sources (id, name, config, last_sync_at) VALUES ('dead-source', 'dead-source', '{"federated":true}', NOW() - INTERVAL '48 hours')`,
