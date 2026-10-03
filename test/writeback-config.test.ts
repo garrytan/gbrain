@@ -54,6 +54,18 @@ describe('parseTtlShorthand (pure leaf)', () => {
     expect(res.validUntil.toISOString()).toBe('2030-01-02T00:00:00.000Z');
   });
 
+  test('date-only ISO values must be valid calendar dates', () => {
+    expect(parseTtlShorthand('2026-02-30')).toEqual({
+      ok: false,
+      code: 'unparseable',
+      input: '2026-02-30',
+    });
+    const leapDay = parseTtlShorthand('2024-02-29');
+    if (!leapDay.ok || !leapDay.validUntil) throw new Error('expected valid leap-day date');
+    expect(leapDay.validUntil.toISOString().slice(0, 10)).toBe('2024-02-29');
+    expect(parseTtlShorthand('2026-02-28T10:00:00Z').ok).toBe(true);
+  });
+
   test('typed failures: not_string / iso_duration / unparseable', () => {
     expect(parseTtlShorthand(30)).toMatchObject({ ok: false, code: 'not_string' });
     expect(parseTtlShorthand('P30D')).toMatchObject({ ok: false, code: 'iso_duration' });

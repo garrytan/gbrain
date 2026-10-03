@@ -54,6 +54,11 @@ export function parseTtlShorthand(raw: unknown): TtlParseResult {
   const ms = parseDurationShorthandMs(s);
   if (ms !== null) return { ok: true, validUntil: new Date(Date.now() + ms) };
 
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s) &&
+      (!Number.isFinite(Date.parse(s)) || new Date(s).toISOString().slice(0, 10) !== s)) {
+    return { ok: false, code: 'unparseable', input: s };
+  }
+
   const iso = Date.parse(s);
   if (Number.isFinite(iso)) return { ok: true, validUntil: new Date(iso) };
 
