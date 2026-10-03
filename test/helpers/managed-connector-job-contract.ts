@@ -546,6 +546,10 @@ const cases: Record<ContractCase, (state: CaseState) => Promise<void>> = {
     await engine.executeRaw("DELETE FROM links WHERE from_page_id IN (SELECT id FROM pages WHERE source_id=$1 AND slug='notes/plan-review')", [state.sourceId]);
     await engine.executeRaw("UPDATE pages SET links_extracted_at=NULL WHERE source_id=$1", [state.sourceId]);
     expect(await staleCount(state)).toBeGreaterThan(0);
+    // The sweep queued loops_extract (priority 5). Left waiting, the cycle's worker can
+    // claim it once the cycle job finishes; its commitment fact then republishes
+    // people/alice-example after the extract phase stamped it, and that page reads stale.
+    await engine.executeRaw("UPDATE minion_jobs SET status='cancelled' WHERE id > $1 AND status IN ('waiting','delayed')", [state.detector.jobsFrom]);
     const [job] = await runJobs(engine, [{ name: 'autopilot-cycle', data: { source_id: state.sourceId, phases: ['extract'] } }], 120_000);
     requireCompleted([job]);
     const extract = (job.result as { report?: { phases?: Array<{ phase: string; status: string; details?: Record<string, unknown> }> } }).report?.phases?.find(p => p.phase === 'extract');
