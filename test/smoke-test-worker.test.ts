@@ -8,7 +8,7 @@ const REPO = resolve(import.meta.dir, '..');
 const SCRIPT = join(REPO, 'scripts', 'smoke-test.sh');
 const tempDirs: string[] = [];
 
-function runSmoke(opts: { supervisorRunning: boolean; legacyPid?: number }) {
+function runSmoke(opts: { supervisorRunning: boolean; legacyPid?: number; disableTimeout?: boolean }) {
   const dir = mkdtempSync(join(tmpdir(), 'gbrain-smoke-worker-'));
   tempDirs.push(dir);
   const fakeBun = join(dir, 'bun');
@@ -57,6 +57,7 @@ exit 0
       SMOKE_BUN_CALLS: calls,
       SMOKE_WORKER_STARTED: workerStarted,
       SMOKE_SUPERVISOR_RUNNING: opts.supervisorRunning ? '1' : '0',
+      ...(opts.disableTimeout ? { GBRAIN_SMOKE_TIMEOUT_BIN: 'none' } : {}),
     },
   });
   return { ...result, calls, workerStarted, workerPid };
@@ -92,5 +93,13 @@ describe('smoke-test worker health (#4175)', () => {
     expect(result.status).toBe(1);
     expect(result.stdout).toContain('duplicate supervisor + legacy worker');
     expect(existsSync(result.workerStarted)).toBe(false);
+  }, 30_000);
+
+  test('runs on hosts without GNU timeout via the background watchdog fallback', () => {
+    const result = runSmoke({ supervisorRunning: true, disableTimeout: true });
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(result.stdout).toContain('GBrain CLI');
+    expect(result.stdout).toContain('GBrain worker (supervisor-managed)');
   }, 30_000);
 });
