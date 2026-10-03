@@ -64,7 +64,7 @@ interface GoogleSourceFreshness {
 async function googleSourceFreshness(
   ctx: OperationContext,
   scope: { sourceId?: string; sourceIds?: string[] },
-): Promise<{ sources: GoogleSourceFreshness[]; stale: boolean }> {
+): Promise<{ sources: GoogleSourceFreshness[]; stale: boolean; staleSources: string[] }> {
   try {
     const rows = await ctx.engine.executeRaw<{ id: string; last_sync_at: string | null; config: unknown }>(
       `SELECT id, last_sync_at, config FROM sources WHERE archived IS NOT TRUE`,
@@ -87,12 +87,16 @@ async function googleSourceFreshness(
         stale:
           r.last_sync_at === null || Date.now() - Date.parse(r.last_sync_at) > STALE_AFTER_MS,
       }));
-    return { sources, stale: sources.length > 0 && sources.every((s) => s.stale) };
+    return {
+      sources,
+      stale: sources.length > 0 && sources.every((s) => s.stale),
+      staleSources: sources.filter((s) => s.stale).map((s) => s.id),
+    };
   } catch {
     // Fail TOWARD stale: this surface's invariant is "stale-but-confident is
     // worse than nothing" — a DB error must not present confident output
     // with the stale warning suppressed.
-    return { sources: [], stale: true };
+    return { sources: [], stale: true, staleSources: [] };
   }
 }
 
@@ -252,10 +256,16 @@ function rankGroups(groups: CounterpartyGroup[], backlinks: Map<string, number>,
 }
 
 function renderText(groups: CounterpartyGroup[], stale: boolean, noGoogleSources: boolean,
-  coverage: { completeness: 'complete' | 'partial'; held: HeldItemView[] }, nowMs: number): string {
+  coverage: { completeness: 'complete' | 'partial'; held: HeldItemView[] }, nowMs: number,
+  partialStaleSources: string[]): string {
   const lines: string[] = [];
   const { held } = coverage;
   if (stale) lines.push('⚠ google sources have not synced recently — this may be out of date.');
+  else if (partialStaleSources.length > 0) {
+    lines.push(
+      `⚠ some google sources have not synced recently — this may be out of date: ${partialStaleSources.join(', ')}.`,
+    );
+  }
   const partial = coverage.completeness === 'partial';
   const what = held.length ? `${held.length} held item(s) could not be imported:` : 'the held-item state could not be read.';
   if (partial && groups.length === 0) {
@@ -375,6 +385,7 @@ const open_loops: Operation = {
     });
     const freshness = await googleSourceFreshness(ctx, scope);
     const noGoogleSources = freshness.sources.length === 0;
+    const partialStaleSources = freshness.stale ? [] : freshness.staleSources;
     const coverage = await heldCoverage(ctx, freshness.sources, trusted);
     const deepLinks = trusted ? await deepLinksFor(ctx, loops) : new Map<string, string>();
 
@@ -387,6 +398,7 @@ const open_loops: Operation = {
         truncated,
         stale: freshness.stale,
         sources: freshness.sources,
+        ...(partialStaleSources.length > 0 ? { stale_sources: partialStaleSources } : {}),
         completeness: coverage.completeness,
         held: coverage.held,
         no_google_sources: noGoogleSources,
@@ -468,12 +480,13 @@ const open_loops: Operation = {
       truncated,
       stale: freshness.stale,
       sources: freshness.sources,
+      ...(partialStaleSources.length > 0 ? { stale_sources: partialStaleSources } : {}),
       completeness: coverage.completeness,
       held: coverage.held,
       no_google_sources: noGoogleSources,
       redacted: !trusted,
       as_of: new Date(nowMs).toISOString(),
-      ...(trusted ? { text: renderText(groups, freshness.stale, noGoogleSources, coverage, nowMs) } : {}),
+      ...(trusted ? { text: renderText(groups, freshness.stale, noGoogleSources, coverage, nowMs, partialStaleSources) } : {}),
     };
   },
 };
