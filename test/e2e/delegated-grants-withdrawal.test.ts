@@ -16,7 +16,14 @@ beforeAll(async () => {
     await engine.executeRaw(`DELETE FROM ${table} WHERE client_id IN ('pg-agent-fixture','pg-budget-fixture')`);
   }
 });
-afterAll(async () => { if (RUN) await teardownDB(); });
+afterAll(async () => {
+  if (!RUN) return;
+  const engine = getEngine();
+  for (const table of ['mcp_spend_reservations', 'mcp_spend_log', 'oauth_clients']) {
+    await engine.executeRaw(`DELETE FROM ${table} WHERE client_id IN ('pg-agent-fixture','pg-budget-fixture')`);
+  }
+  await teardownDB();
+});
 
 d('Postgres delegated admission and durable withdrawal', () => {
   test('concurrent queue submissions share one client row lock across queues', async () => {
