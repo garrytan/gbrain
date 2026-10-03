@@ -680,3 +680,34 @@ describe('sources_add SSRF gate (delegated to parseRemoteUrl)', () => {
     });
   });
 });
+
+describe('sources_add strategy (persisted as sources.config.strategy)', () => {
+  test('a remote --url registration persists the strategy and sources_list reports it', async () => {
+    await withEnv({ GBRAIN_HOME, PATH: fakePath() }, async () => {
+      const row = (await findOp('sources_add').handler(ctxRemote(['sources_admin']), {
+        id: 'mcp-strategy',
+        url: 'https://github.com/example/repo',
+        strategy: 'code',
+      })) as any;
+      expect(row.config).toMatchObject({ remote_url: 'https://github.com/example/repo', managed_clone: true, strategy: 'code' });
+      const result = (await findOp('sources_list').handler(ctxRemote(['read'], ['mcp-strategy']), {})) as any;
+      expect(result.sources.find((s: any) => s.id === 'mcp-strategy').strategy).toBe('code');
+    });
+  });
+
+  test('an unknown strategy is refused before anything is cloned or inserted', async () => {
+    await withEnv({ GBRAIN_HOME, PATH: fakePath() }, async () => {
+      await expect(findOp('sources_add').handler(ctxRemote(['sources_admin']), {
+        id: 'mcp-bad-strategy',
+        url: 'https://github.com/example/repo',
+        strategy: 'everything',
+      })).rejects.toMatchObject({ code: 'invalid_strategy' });
+      expect(await engine.executeRaw(`SELECT id FROM sources WHERE id = 'mcp-bad-strategy'`)).toEqual([]);
+      expect(existsSync(join(GBRAIN_HOME, 'clones', 'mcp-bad-strategy'))).toBe(false);
+    });
+  });
+
+  test('the tool definition advertises the strategy enum', () => {
+    expect(findOp('sources_add').params.strategy).toMatchObject({ type: 'string', enum: ['markdown', 'code', 'auto'] });
+  });
+});

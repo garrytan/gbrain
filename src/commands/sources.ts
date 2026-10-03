@@ -7,7 +7,7 @@
  * full story.
  *
  * Subcommands:
- *   gbrain sources add <id> --path <path> [--name <display>] [--federated|--no-federated] [--force]
+ *   gbrain sources add <id> --path <path> [--name <display>] [--federated|--no-federated] [--force] [--strategy <s>]
  *                               --path must be a git-initialized repo (files committed,
  *                               not just present) — #2707. --force skips the check.
  *   gbrain sources list [--json]
@@ -19,6 +19,7 @@
  *   gbrain sources federate <id>   — sources.config.federated = true
  *   gbrain sources unfederate <id> — sources.config.federated = false
  *   gbrain sources mirror-readonly|mirror-writable <id> — sources.config.mirror_read_only (#5409)
+ *   gbrain sources set-strategy <id> <markdown|code|auto> — sources.config.strategy (sources-strategy.ts)
  *   gbrain sources push [<id>|--path <dir>] — scan-gated add→commit→pull→push
  *                               (agent-bootstrap; core in src/core/workspace-push.ts)
  *
@@ -53,6 +54,7 @@ import {
   type SourceRow as OpsSourceRow,
 } from '../core/sources-ops.ts';
 import { isValidRepoName } from '../core/github-source.ts';
+import { isSyncStrategy, SYNC_STRATEGIES, type SyncStrategy } from '../core/sync.ts';
 import { ALL_GOOGLE_SERVICES, DEFAULT_CALENDAR_ID } from '../core/google/types.ts';
 import {
   resolveSourceWithTier,
@@ -101,6 +103,7 @@ interface SourceListEntry {
   local_path: string | null;
   federated: boolean;
   mirror_read_only: boolean;
+  strategy: SyncStrategy | null;
   page_count: number;
   last_sync_at: string | null;
 }
@@ -136,7 +139,7 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
   if (!id) {
     console.error(
       'Usage: gbrain sources add <id> [--path <path> | --url <https-url> | --kind github|google] ' +
-        '[--name <display>] [--federated|--no-federated] [--clone-dir <path>] [--force]\n' +
+        '[--name <display>] [--federated|--no-federated] [--clone-dir <path>] [--force] [--strategy markdown|code|auto]\n' +
         '       github kind: [--token-env <env>] [--scope auto|repos] ' +
         '[--repos owner/name,...] [--dir <path>] ' +
         '[--app-id <n> --app-pem <path>] [--app-install <n>]\n' +
@@ -151,6 +154,7 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
   let remoteUrl: string | undefined;
   let displayName: string | undefined;
   let federated: boolean | null = null;
+  let strategy: SyncStrategy | undefined;
   let cloneDir: string | undefined;
   let patFile: string | undefined;
   let noHarden = false;
@@ -185,6 +189,8 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
     if (a === '--pat-file') { patFile = args[++i]; continue; }
     if (a === '--no-harden') { noHarden = true; continue; }
     if (a === '--force') { force = true; continue; }
+    if (a === '--strategy' && isSyncStrategy(args[i + 1])) { strategy = args[++i] as SyncStrategy; continue; }
+    if (a === '--strategy') { console.error(`--strategy must be one of: ${SYNC_STRATEGIES.join(', ')}.`); process.exit(2); }
     if (a === '--kind') {
       const kind = args[++i];
       if (kind === 'github') {
@@ -406,6 +412,7 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
     localPath,
     remoteUrl,
     federated,
+    strategy,
     cloneDir,
     force,
     ...(ghKind
@@ -462,6 +469,7 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
   console.log(
     `  federated: ${fed}${fed ? ' — appears in cross-source default search' : ' — only searched when explicitly named via --source'}`,
   );
+  if (strategy) console.log(`  strategy: ${strategy} — every sync of this source uses it unless --strategy overrides`);
   if (ghKind || gKind) {
     console.log(`  sync: run \`gbrain sync --source ${id}\` once; after its first sync, autopilot keeps it synced on the autopilot interval.`);
   }
@@ -720,12 +728,14 @@ async function runList(engine: BrainEngine, args: string[]): Promise<void> {
   const entries: SourceListEntry[] = [];
   for (const r of rows) {
     const pageCount = await countPages(engine, r.id);
+    const cfg = parseConfig(r.config);
     entries.push({
       id: r.id,
       name: r.name,
       local_path: r.local_path,
       federated: isFederated(r.config),
-      mirror_read_only: parseConfig(r.config).mirror_read_only === true,
+      mirror_read_only: cfg.mirror_read_only === true,
+      strategy: isSyncStrategy(cfg.strategy) ? cfg.strategy : null,
       page_count: pageCount,
       last_sync_at: r.last_sync_at ? new Date(r.last_sync_at).toISOString() : null,
     });
@@ -1867,6 +1877,7 @@ export async function runSources(engine: BrainEngine, args: string[]): Promise<v
     case 'federate':   return runFederate(engine, rest, true);
     case 'unfederate': return runFederate(engine, rest, false);
     case 'mirror-readonly': case 'mirror-writable': return (await import('./sources-mirror.ts')).runMirrorMode(engine, rest, sub === 'mirror-readonly');
+    case 'set-strategy': return (await import('./sources-strategy.ts')).runSetStrategy(engine, rest);
     case 'archive':    return runArchive(engine, rest);
     case 'restore':    return runRestore(engine, rest);
     case 'purge':      return runPurge(engine, rest);
@@ -1913,9 +1924,10 @@ Subcommands:
   connect <path> --brain <id> --source <id> [--profile company-brain] [--yes] [--json]
                                     Preview, approve, import and verify a new company source; --plan <file> reuses a saved inspection.
   demo company-brain [--json]        Run a fictional company through the real import and graph pipeline offline.
-  add <id> --path <p> [--name <n>] [--federated|--no-federated] [--force]
+  add <id> --path <p> [--name <n>] [--federated|--no-federated] [--force] [--strategy <s>]
                                     Register a new source. --path must be a git repo
                                     with committed files; --force skips that check.
+                                    --strategy markdown|code|auto is persisted (see set-strategy).
   list [--json]                     List registered sources with page counts.
   writer status|claim|activate|transfer  Inspect, activate or transfer canonical ownership (see writer --help).
   reconcile <id> <slug> --brain <id> Preview or apply a guarded file/database repair (see reconcile --help).
@@ -1953,6 +1965,9 @@ Subcommands:
   unfederate <id>                   Isolate source from default search.
   mirror-readonly <id>              Read-only mirror (#5409): managed writes never touch its checkout.
   mirror-writable <id>              Undo mirror-readonly.
+  set-strategy <id> <markdown|code|auto>
+                                    Persist the file strategy every sync of this source uses
+                                    when no --strategy is passed (default: markdown).
   set-cr-mode <id> <none|title|per_chunk_synopsis>
                                     Per-source contextual retrieval mode
                                     override (v0.40.3.0). Pass "unset" or
