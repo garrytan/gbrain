@@ -34,6 +34,7 @@ import {
   EXTRACTOR_FAILURE_HALT_STREAK,
   type ProposeTakesExtractor,
 } from '../src/core/cycle/propose-takes.ts';
+import { classifyGlobalLlmError } from '../src/core/ai/errors.ts';
 import type { OperationContext } from '../src/core/operations.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 
@@ -129,45 +130,66 @@ describe('defaultExtractor truncation retry (#3763)', () => {
   });
 });
 
-// ─── per-call timeout scales with the output cap (#5771) ────────────
+// ─── per-call timeout: output-cap scaling (#5771), override (#5874) ──
 
-describe('defaultExtractor per-call timeout scales with maxTokens (#5771)', () => {
+/** Runs `fn` with AbortSignal.timeout spied; returns every armed timeout (ms). */
+async function armedTimeouts(fn: () => Promise<unknown>): Promise<number[]> {
+  const timeouts: number[] = [];
+  const realTimeout = AbortSignal.timeout;
+  AbortSignal.timeout = ((ms: number) => {
+    timeouts.push(ms);
+    return realTimeout.call(AbortSignal, ms);
+  }) as typeof AbortSignal.timeout;
+  try {
+    await fn();
+  } finally {
+    AbortSignal.timeout = realTimeout;
+  }
+  return timeouts;
+}
+
+describe('defaultExtractor per-call timeout (#5771, #5874)', () => {
   const input = {
     pagePath: 'companies/acme-example',
     pageBody: 'I bet Acme doubles ARR by Q4. They ship weekly.',
     existingTakes: [],
   };
 
-  async function timeoutsFor(extra: { maxTokens?: number; retryMaxTokens?: number }): Promise<number[]> {
-    const timeouts: number[] = [];
-    const realTimeout = AbortSignal.timeout;
-    AbortSignal.timeout = ((ms: number) => {
-      timeouts.push(ms);
-      return realTimeout.call(AbortSignal, ms);
-    }) as typeof AbortSignal.timeout;
+  // The first call truncates, so every case arms the base call AND the retry.
+  test.each([
+    ['base call keeps 90s; the default 4096 retry gets 180s', {}, [90_000, 180_000]],
+    ['a large configured retry cap is bounded at the 300s gateway ceiling, not 90s', { retryMaxTokens: 12_000 }, [90_000, 300_000]],
+    ['small caps never drop below the 90s floor', { maxTokens: 256, retryMaxTokens: 256 }, [90_000, 90_000]],
+    ['callTimeoutMs bounds both calls', { callTimeoutMs: 240_000 }, [240_000, 240_000]],
+    ['callTimeoutMs wins over output-cap scaling, below the default too', { callTimeoutMs: 30_000, retryMaxTokens: 12_000 }, [30_000, 30_000]],
+  ] as const)('%s', async (_name, extra, expected) => {
     let calls = 0;
     __setChatTransportForTests(async () => {
       calls++;
       return calls === 1 ? chatResult('[{"claim_text":"Acme dou', 'length') : chatResult(GOOD_JSON, 'end');
     });
-    try {
-      await defaultExtractor({ ...input, ...extra });
-    } finally {
-      AbortSignal.timeout = realTimeout;
-    }
-    return timeouts;
-  }
-
-  test('base call keeps 90s; the default 4096 retry gets 180s', async () => {
-    expect(await timeoutsFor({})).toEqual([90_000, 180_000]);
+    expect(await armedTimeouts(() => defaultExtractor({ ...input, ...extra }))).toEqual([...expected]);
   });
 
-  test('a large configured retry cap is bounded at the 300s gateway ceiling, not 90s', async () => {
-    expect(await timeoutsFor({ retryMaxTokens: 12_000 })).toEqual([90_000, 300_000]);
+  test('a call its own timeout stops names the bound and the key, and stays a per-page failure', async () => {
+    // Hangs until aborted, the way a stalled `claude -p` does.
+    __setChatTransportForTests((opts) => new Promise((_resolve, reject) => {
+      opts.abortSignal?.addEventListener('abort', () => reject(new Error('claude-cli adapter aborted')), { once: true });
+    }));
+    const err = await defaultExtractor({ ...input, callTimeoutMs: 20 }).then(() => null, (e: unknown) => e as Error);
+    expect(err?.message).toContain('timed out after 20 ms');
+    expect(err?.message).toContain('dream.propose_takes.call_timeout_ms');
+    expect(err?.message).toContain('claude-cli adapter aborted');
+    expect(classifyGlobalLlmError(err)).toBeNull();
   });
 
-  test('small caps never drop below the 90s floor', async () => {
-    expect(await timeoutsFor({ maxTokens: 256, retryMaxTokens: 256 })).toEqual([90_000, 90_000]);
+  test('a failure before the timeout keeps its own error', async () => {
+    __setChatTransportForTests(async () => {
+      throw new Error('provider exploded');
+    });
+    const err = await defaultExtractor(input).then(() => null, (e: unknown) => e as Error);
+    expect(err?.message).toContain('provider exploded');
+    expect(err?.message).not.toContain('timed out');
   });
 });
 
@@ -175,10 +197,16 @@ describe('defaultExtractor per-call timeout scales with maxTokens (#5771)', () =
 
 interface CapturedSql { sql: string; params: unknown[] }
 
-function buildMockEngine(pageCount: number): { engine: BrainEngine; captured: CapturedSql[] } {
+function buildMockEngine(
+  pageCount: number,
+  config: Record<string, string> = {},
+): { engine: BrainEngine; captured: CapturedSql[] } {
   const captured: CapturedSql[] = [];
   const engine = {
     kind: 'pglite',
+    async getConfig(key: string): Promise<string | null> {
+      return config[key] ?? null;
+    },
     async executeRaw<T>(sql: string, params?: unknown[]): Promise<T[]> {
       captured.push({ sql, params: params ?? [] });
       if (sql.includes('SELECT slug, source_id, compiled_truth')) {
@@ -206,6 +234,21 @@ function buildCtx(engine: BrainEngine): OperationContext {
     sourceId: 'default',
   };
 }
+
+describe('dream.propose_takes.call_timeout_ms reaches the extractor call (#5874)', () => {
+  test('a run that never truncates (the claude-cli shape) arms the configured timeout, not 90s', async () => {
+    const { engine } = buildMockEngine(1, { 'dream.propose_takes.call_timeout_ms': '240000' });
+    // claude-cli ignores maxTokens and always reports a clean stop, so the
+    // truncation retry never fires and the base call's bound is the only one.
+    __setChatTransportForTests(async () => chatResult(GOOD_JSON, 'end'));
+    let details: Record<string, unknown> = {};
+    const timeouts = await armedTimeouts(async () => {
+      details = (await runPhaseProposeTakes(buildCtx(engine), {})).details as Record<string, unknown>;
+    });
+    expect(timeouts).toEqual([240_000]);
+    expect(details.llm_calls_succeeded).toBe(1);
+  });
+});
 
 describe('extractor failure-streak halt (#3763)', () => {
   test(`always-throwing extractor over N+2 pages halts at N with status 'fail' and no tombstones`, async () => {

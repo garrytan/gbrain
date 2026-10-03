@@ -40,7 +40,7 @@
 import { randomUUID, createHash } from 'node:crypto';
 import { BaseCyclePhase, CYCLE_DEADLINE_RESERVE_MS, type ScopedReadOpts, type BasePhaseOpts } from './base-phase.ts';
 import { defaultTimeoutMsFor } from '../minions/handler-timeouts.ts';
-import { chat as gatewayChat, getChatModel, probeChatModel } from '../ai/gateway.ts';
+import { AI_CHAT_TIMEOUT_MS, chat as gatewayChat, getChatModel, probeChatModel } from '../ai/gateway.ts';
 import { createGlobalLlmHaltTracker, haltedClassOf, type GlobalLlmErrorClass } from '../ai/errors.ts';
 import { normalizeModelId } from '../model-id.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
@@ -192,6 +192,9 @@ export type ProposeTakesExtractor = (input: {
   /** #4494: escalated cap for the one truncation retry (default
    *  PROPOSE_TAKES_RETRY_MAX_TOKENS; clamped to >= maxTokens). */
   retryMaxTokens?: number;
+  /** #5874: wall-clock timeout for every extractor call, from
+   *  dream.propose_takes.call_timeout_ms. Unset: scales with the output cap. */
+  callTimeoutMs?: number;
   /** #5425: include EXTRACT_TAKES_ATTRIBUTION_RULES (opt-in). */
   attributionRules?: boolean;
 }) => Promise<ProposedTake[]>;
@@ -384,8 +387,18 @@ export const PROPOSE_TAKES_RETRY_MAX_TOKENS = 4096;
  * page was re-billed (base call + aborted retry) forever with no tombstone.
  * 90s per PROPOSE_TAKES_MAX_TOKENS of output, floored at 90s, capped at
  * EXTRACTOR_CALL_TIMEOUT_MAX_MS.
+ *
+ * #5874: an operator-set `callTimeoutMs` (dream.propose_takes.call_timeout_ms)
+ * replaces the scaling for every call. The claude-cli provider ignores
+ * maxTokens and never reports stopReason 'length', so the retry never runs and
+ * the base call keeps 90s, which a large page on a slow model (plus the
+ * `claude -p` cold start) does not fit. The gateway backstop
+ * (GBRAIN_AI_CHAT_TIMEOUT_MS) still bounds the call, and the phase deadline is
+ * checked between pages, so a longer bound can overrun it by up to two such
+ * bounds (the base call plus the truncation retry).
  */
-function extractorCallTimeoutMs(maxTokens: number): number {
+function extractorCallTimeoutMs(maxTokens: number, callTimeoutMs?: number): number {
+  if (callTimeoutMs !== undefined) return callTimeoutMs;
   const scaled = Math.ceil((EXTRACTOR_CALL_TIMEOUT_MS * maxTokens) / PROPOSE_TAKES_MAX_TOKENS);
   return Math.min(EXTRACTOR_CALL_TIMEOUT_MAX_MS, Math.max(EXTRACTOR_CALL_TIMEOUT_MS, scaled));
 }
@@ -434,13 +447,31 @@ export async function defaultExtractor(
   // full gateway default (GBRAIN_AI_CHAT_TIMEOUT_MS, 300s) x pageLimit. The
   // caller already catches per-page errors, logs a warning, and continues.
   // The bound scales with maxTokens so an escalated or configured larger cap
-  // gets time to generate what it allows.
-  const call = (maxTokens: number) => gatewayChat({
-    messages: [{ role: 'user', content: prompt }],
-    ...(input.modelHint ? { model: input.modelHint } : {}),
-    maxTokens,
-    abortSignal: AbortSignal.timeout(extractorCallTimeoutMs(maxTokens)),
-  });
+  // gets time to generate what it allows, unless
+  // dream.propose_takes.call_timeout_ms replaces it for every call.
+  const call = async (maxTokens: number) => {
+    const timeoutMs = extractorCallTimeoutMs(maxTokens, input.callTimeoutMs);
+    const abortSignal = AbortSignal.timeout(timeoutMs);
+    try {
+      return await gatewayChat({
+        messages: [{ role: 'user', content: prompt }],
+        ...(input.modelHint ? { model: input.modelHint } : {}),
+        maxTokens,
+        abortSignal,
+      });
+    } catch (err) {
+      if (!abortSignal.aborted) throw err;
+      // #5874: the provider's own abort message ("claude-cli adapter aborted")
+      // names neither the bound nor the key that moves it.
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new Error(
+        `propose_takes extractor: call timed out after ${timeoutMs} ms on ${input.pagePath} (${msg}); ` +
+        `raise dream.propose_takes.call_timeout_ms (GBRAIN_AI_CHAT_TIMEOUT_MS still caps it); ` +
+        `no tombstone written, page retries next cycle`,
+        { cause: err },
+      );
+    }
+  };
   let result = await call(baseMaxTokens);
 
   // #3763: a truncated response (stopReason 'length' — e.g. reasoning tokens
@@ -649,6 +680,46 @@ export function resolveProposeTakesDeadlineMs(
   return Math.min(fractioned, PROPOSE_TAKES_FALLBACK_DEADLINE_MS);
 }
 
+/**
+ * #5874: resolve dream.propose_takes.call_timeout_ms. Unset or blank keeps the
+ * output-cap scaling; a value that is not a positive number of milliseconds,
+ * or a failed read, keeps it too and returns a warning for the phase report. A
+ * value above the gateway chat timeout is held to it, with a warning.
+ */
+async function resolveExtractorCallTimeout(
+  engine: BrainEngine,
+): Promise<{ ms?: number; warning?: string }> {
+  const key = 'dream.propose_takes.call_timeout_ms';
+  let raw: string | null | undefined;
+  try {
+    raw = await engine.getConfig?.(key);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { warning: `could not read ${key} (${msg}); extractor calls keep the default timeout` };
+  }
+  if (raw == null || String(raw).trim() === '') return {};
+  const ms = Math.floor(Number(raw));
+  if (!Number.isFinite(ms) || ms <= 0) {
+    return {
+      warning:
+        `ignored ${key}=${JSON.stringify(String(raw))}: expected a positive number of ` +
+        'milliseconds; extractor calls keep the default timeout',
+    };
+  }
+  // The gateway races its own chat timeout against this one and the shorter
+  // wins, so a larger value would be cut without a trace; holding it here also
+  // keeps it in the range AbortSignal.timeout accepts.
+  if (ms > AI_CHAT_TIMEOUT_MS) {
+    return {
+      ms: AI_CHAT_TIMEOUT_MS,
+      warning:
+        `${key}=${ms} exceeds the gateway chat timeout; extractor calls use ` +
+        `${AI_CHAT_TIMEOUT_MS} ms. Raise GBRAIN_AI_CHAT_TIMEOUT_MS to allow more`,
+    };
+  }
+  return { ms };
+}
+
 class ProposeTakesPhase extends BaseCyclePhase {
   readonly name = 'propose_takes' as CyclePhase;
   protected readonly budgetUsdKey = 'cycle.propose_takes.budget_usd';
@@ -740,6 +811,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
       if (retryCap != null) extractorRetryMaxTokens = Math.floor(retryCap);
     } catch { /* keep defaults */ }
     extractorRetryMaxTokens = Math.max(extractorMaxTokens, extractorRetryMaxTokens);
+    const callTimeout = await resolveExtractorCallTimeout(engine); // #5874
 
     // With the default (gateway) extractor, skip cheaply when the resolved
     // model's provider can't run — same probe semantics as patterns.ts /
@@ -812,6 +884,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
       warnings: [],
       deadline_hit: false,
     };
+    if (callTimeout.warning) result.warnings.push(callTimeout.warning);
 
     // gbrain#4168: job budget already inside the reserve window — exit
     // cleanly before ANY work (the in-loop `elapsed > deadline` check can't
@@ -907,6 +980,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
           // #4494: configurable output caps (see resolution above).
           maxTokens: extractorMaxTokens,
           retryMaxTokens: extractorRetryMaxTokens,
+          callTimeoutMs: callTimeout.ms,
           attributionRules,
         });
       } catch (err) {

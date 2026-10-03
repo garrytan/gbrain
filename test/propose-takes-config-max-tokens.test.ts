@@ -13,6 +13,7 @@
 
 import { describe, test, expect, beforeEach, afterAll } from 'bun:test';
 import {
+  AI_CHAT_TIMEOUT_MS,
   configureGateway,
   resetGateway,
   __setChatTransportForTests,
@@ -193,5 +194,49 @@ describe('runPhaseProposeTakes threads dream.propose_takes.* config (#4494)', ()
     await runPhaseProposeTakes(buildCtx(engine), { extractor });
     expect(seen[0].maxTokens).toBe(PROPOSE_TAKES_MAX_TOKENS);
     expect(seen[0].retryMaxTokens).toBe(PROPOSE_TAKES_RETRY_MAX_TOKENS);
+  });
+
+  // #5874: the per-call timeout override. Blank reads as unset (as for the
+  // caps above); a set value the phase cannot use as given warns instead of
+  // vanishing, and a value above the gateway's own chat timeout is held to it.
+  test.each([
+    ['a positive value threads through', '240000', 240_000, false],
+    ['a fractional value floors', '1500.7', 1_500, false],
+    ['unset keeps the output-cap scaling', undefined, undefined, false],
+    ['blank reads as unset', '  ', undefined, false],
+    ['a non-number is ignored with a warning', 'banana', undefined, true],
+    ['zero is ignored with a warning', '0', undefined, true],
+    ['a negative value is ignored with a warning', '-5', undefined, true],
+    ['above the gateway chat timeout is held to it with a warning', String(AI_CHAT_TIMEOUT_MS + 1), AI_CHAT_TIMEOUT_MS, true],
+    ['a value AbortSignal.timeout rejects is held to the gateway chat timeout', '1e16', AI_CHAT_TIMEOUT_MS, true],
+  ] as const)('call_timeout_ms: %s', async (_name, raw, expectedMs, warns) => {
+    const engine = buildMockEngine(raw === undefined ? {} : { 'dream.propose_takes.call_timeout_ms': raw });
+    const seen: Array<number | undefined> = [];
+    const extractor: ProposeTakesExtractor = async (input) => {
+      seen.push(input.callTimeoutMs);
+      return [];
+    };
+    const result = await runPhaseProposeTakes(buildCtx(engine), { extractor });
+    expect(seen).toEqual([expectedMs]);
+    const warnings = (result.details as { warnings: string[] }).warnings;
+    expect(warnings.some((w) => w.includes('dream.propose_takes.call_timeout_ms'))).toBe(warns);
+  });
+
+  test('call_timeout_ms: a failed config read keeps the default and says so', async () => {
+    const engine = buildMockEngine({});
+    const getConfig = engine.getConfig.bind(engine);
+    engine.getConfig = async (key: string) => {
+      if (key === 'dream.propose_takes.call_timeout_ms') throw new Error('config plane down');
+      return getConfig(key);
+    };
+    const seen: Array<number | undefined> = [];
+    const extractor: ProposeTakesExtractor = async (input) => {
+      seen.push(input.callTimeoutMs);
+      return [];
+    };
+    const result = await runPhaseProposeTakes(buildCtx(engine), { extractor });
+    expect(seen).toEqual([undefined]);
+    const warnings = (result.details as { warnings: string[] }).warnings;
+    expect(warnings).toContainEqual(expect.stringContaining('could not read dream.propose_takes.call_timeout_ms (config plane down)'));
   });
 });

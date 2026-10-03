@@ -92,7 +92,7 @@ function resolveAiTimeoutMs(envVar: string, fallback: number): number {
   return Number.isFinite(n) && n > 0 ? n : fallback;
 }
 /** chat / expansion / OCR — generous; only catches true hangs (non-streaming generateText). */
-const AI_CHAT_TIMEOUT_MS = resolveAiTimeoutMs('GBRAIN_AI_CHAT_TIMEOUT_MS', 300_000);
+export const AI_CHAT_TIMEOUT_MS = resolveAiTimeoutMs('GBRAIN_AI_CHAT_TIMEOUT_MS', 300_000);
 /** embed sub-batch (per SDK call, NOT per whole import). */
 const AI_EMBED_TIMEOUT_MS = resolveAiTimeoutMs('GBRAIN_AI_EMBED_TIMEOUT_MS', 60_000);
 /** multimodal per request. */
