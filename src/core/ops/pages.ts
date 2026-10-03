@@ -21,6 +21,7 @@ import { getContentFlag } from '../quarantine.ts';
 import { bumpLastRetrievedAt } from '../last-retrieved.ts';
 import { resolveExcludePrivatePages, isPrivatePage, findPrivateOnlySlugs } from '../search/private-visibility.ts';
 import { LIST_PAGES_DESCRIPTION, CAPTURE_DESCRIPTION } from '../operations-descriptions.ts';
+import { listPagesPagination } from './list-pages-pagination.ts';
 import { OperationError } from './contract.ts';
 import type { Operation, OperationContext } from './contract.ts';
 import {
@@ -573,6 +574,10 @@ const list_pages: Operation = {
         `updated_after_slug=<last row's slug>, or narrow with type/tag.`,
       );
     }
+    // MCP callers see neither that notice nor the clamp warning (server log):
+    // the `pagination` meta tells them, rendered as a model-visible block too.
+    ctx.emitResponseMeta?.('pagination', listPagesPagination({
+      truncated, limit, requestedLimit, offset, sort, last: pages[pages.length - 1] }));
     return pages.map(pg => ({
       slug: pg.slug,
       source_id: pg.source_id,
