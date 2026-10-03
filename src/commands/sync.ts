@@ -50,7 +50,7 @@ export interface SyncResult {
   legacySkips?: { contextualMode: number; canonicalBytes: number };
   /** Managed sync: files skipped because another origin keeps their slug, and links derived after the checkpoint. */
   slugCollisions?: import('../core/persistence/sync-discovery.ts').SyncSlugCollision[];
-  fileRefusals?: import('../core/persistence/sync-discovery.ts').SyncFileRefusal[]; links?: import('../core/persistence/links-maintenance.ts').ManagedLinkExtraction;
+  fileRefusals?: import('../core/persistence/sync-discovery.ts').SyncFileRefusal[]; imageRefusalsOmitted?: number; links?: import('../core/persistence/links-maintenance.ts').ManagedLinkExtraction;
   /**
    * Aggregated alias/undeclared explicit-type warnings (schema.type_warnings,
    * default on) — one entry per distinct non-canonical type this run.

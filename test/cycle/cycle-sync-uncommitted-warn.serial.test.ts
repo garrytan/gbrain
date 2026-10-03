@@ -14,6 +14,7 @@
 import { describe, test, expect, mock, beforeAll, afterAll } from 'bun:test';
 
 let uncommitted: { added: number; modified: number; deleted: number } | undefined;
+let refusals: { fileRefusals: unknown[]; imageRefusalsOmitted?: number } | undefined;
 
 mock.module('../../src/commands/sync.ts', () => ({
   performSync: async () => ({
@@ -28,6 +29,7 @@ mock.module('../../src/commands/sync.ts', () => ({
     embedded: 0,
     pagesAffected: ['a'],
     ...(uncommitted ? { uncommitted } : {}),
+    ...(refusals ?? {}),
   }),
   runSync: async () => {},
   buildSyncManifest: () => ({ added: [], modified: [], deleted: [], renamed: [] }),
@@ -68,5 +70,19 @@ describe('runCycle sync phase — uncommitted working-tree drift', () => {
     expect(dirtyPhase?.summary).toContain('3 uncommitted file(s)');
     expect(dirtyPhase?.summary).toContain('sync.include_working_tree');
     expect(dirtyPhase?.details.uncommitted).toEqual({ added: 2, modified: 1, deleted: 0 });
+  }, 60_000);
+
+  // #5493: an autopilot-cycle job keeps only the phase details, so files managed
+  // sync skipped by name must reach them or nothing records the skip.
+  test('managed file refusals reach details; the phase stays ok', async () => {
+    uncommitted = undefined;
+    const refusal = { path: 'notes/photo.png', code: 'managed_image_sync_unsupported', message: 'skipped', suggestion: 'later', docs: 'docs/guides/write-refusals.md#managed_image_sync_unsupported' };
+    refusals = { fileRefusals: [refusal], imageRefusalsOmitted: 3 };
+    try {
+      const phase = (await runCycle(engine, { brainDir: '/tmp/brain', phases: ['sync'] })).phases.find(p => p.phase === 'sync');
+      expect(phase?.status).toBe('ok');
+      expect(phase?.details.fileRefusals).toEqual([refusal]);
+      expect(phase?.details.imageRefusalsOmitted).toBe(3);
+    } finally { refusals = undefined; }
   }, 60_000);
 });

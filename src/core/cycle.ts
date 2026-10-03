@@ -1275,6 +1275,9 @@ async function runPhaseSync(
         syncStatus: result.status,
         ...(result.reason ? { syncReason: result.reason } : {}),
         ...(result.uncommitted ? { uncommitted: result.uncommitted } : {}),
+        // Managed sync: files skipped by name, which the checkpoint has moved past.
+        ...(result.fileRefusals?.length ? { fileRefusals: result.fileRefusals } : {}),
+        ...(result.imageRefusalsOmitted ? { imageRefusalsOmitted: result.imageRefusalsOmitted } : {}),
         dryRun,
       },
       pagesAffected: result.pagesAffected,
