@@ -60,6 +60,7 @@ interface ParsedFlags {
   since: Date | null;
   sessionId: string | null;
   grep: string | null;
+  kind: FactKind | null;
   today: boolean;
   supersessions: boolean;
   includeExpired: boolean;
@@ -94,6 +95,7 @@ function parseFlags(args: string[]): ParsedFlags {
     since: null,
     sessionId: null,
     grep: null,
+    kind: null,
     today: false,
     supersessions: false,
     includeExpired: false,
@@ -117,6 +119,8 @@ function parseFlags(args: string[]): ParsedFlags {
     if (a === '--since') { out.since = parseSinceParam(args[++i] ?? ''); continue; }
     if (a === '--session' || a === '--session-id') { out.sessionId = args[++i] ?? null; continue; }
     if (a === '--grep') { out.grep = (args[++i] ?? '').toLowerCase(); continue; }
+    if (a === '--kind') { out.kind = (args[++i] ?? '') as FactKind; continue; }
+    if (a.startsWith('--kind=')) { out.kind = a.slice('--kind='.length) as FactKind; continue; }
     if (a === '--today') { out.today = true; continue; }
     if (a === '--supersessions') { out.supersessions = true; continue; }
     if (a === '--include-expired') { out.includeExpired = true; continue; }
@@ -205,6 +209,10 @@ function validateAndNormalizeFlags(flags: ParsedFlags): void {
   }
   if (flags.source !== 'default' && !SOURCE_ID_RE.test(flags.source)) {
     process.stderr.write(`Error: --source value "${flags.source}" must match [a-z0-9-]{1,32} (kebab-case).\n`);
+    process.exit(2);
+  }
+  if (flags.kind !== null && !Object.prototype.hasOwnProperty.call(KIND_ICON, flags.kind)) {
+    process.stderr.write(`Error: --kind must be one of: ${Object.keys(KIND_ICON).join(', ')}.\n`);
     process.exit(2);
   }
 }
@@ -341,6 +349,7 @@ async function runRecallVerb(engine: BrainEngine, flags: ParsedFlags, sourceId?:
     ...(flags.budgetTokens ? { budget_tokens: flags.budgetTokens } : {}),
     ...(flags.since ? { since: flags.since.toISOString() } : {}),
     ...(flags.grep ? { grep: flags.grep } : {}),
+    ...(flags.kind ? { kind: flags.kind } : {}),
     include_expired: flags.includeExpired,
     limit: flags.limit,
     ...(flags.budgetPolicy !== null ? {
@@ -443,6 +452,7 @@ async function runRecallOnce(
     if (flags.sessionId) params.session_id = flags.sessionId;
     if (resolvedSince) params.since = resolvedSince.toISOString();
     if (flags.grep) params.grep = flags.grep;
+    if (flags.kind) params.kind = flags.kind;
     if (flags.pending) params.include_pending = true;
     // #5535: send source_id whenever the selector was explicit — including
     // an explicit 'default'. Omitting it let the remote server apply ITS
@@ -534,6 +544,7 @@ async function fetchRowsLocal(
     return engine.listSupersessions(sourceId, {
       since: resolvedSince ?? undefined,
       limit: flags.limit,
+      kinds: flags.kind ? [flags.kind] : undefined,
     });
   }
   // An explicit `--since DURATION` / `--today` cutoff is a "what happened in
@@ -552,12 +563,14 @@ async function fetchRowsLocal(
           activeOnly: !flags.includeExpired,
           limit: flags.limit,
           grep: flags.grep ?? undefined,
+          kinds: flags.kind ? [flags.kind] : undefined,
           excludeAuditRows: true,
         })
       : await engine.listFactsByEntity(sourceId, slug, {
           activeOnly: !flags.includeExpired,
           limit: flags.limit,
           grep: flags.grep ?? undefined,
+          kinds: flags.kind ? [flags.kind] : undefined,
           excludeAuditRows: true,
         });
     // #4720: the bare positional is entity-first, but keyless/casual usage
@@ -600,6 +613,7 @@ async function fetchRowsLocal(
       activeOnly: !flags.includeExpired,
       limit: flags.limit,
       grep: flags.grep ?? undefined,
+      kinds: flags.kind ? [flags.kind] : undefined,
       excludeAuditRows: true,
     });
   }
@@ -618,6 +632,7 @@ async function fetchRowsLocal(
       activeOnly: !flags.includeExpired,
       limit: flags.limit,
       grep: flags.grep ?? undefined,
+      kinds: flags.kind ? [flags.kind] : undefined,
       excludeAuditRows: true,
     });
   }

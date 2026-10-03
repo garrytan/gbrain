@@ -24,7 +24,7 @@ import type {
   TakeBatchInput, Take, TakesListOpts, TakeHit, StaleTakeRow, TakeEmbeddingInput,
   TakeResolution, SynthesisEvidenceInput,
   TakesScorecard, TakesScorecardOpts, CalibrationBucket, CalibrationCurveOpts,
-  FactRow, FactInsertStatus,
+  FactRow, FactInsertStatus, FactKind,
   NewFact, FactListOpts, FactsHealth,
   SourceRow,
 } from './engine.ts';
@@ -2130,7 +2130,7 @@ export class PostgresEngine implements BrainEngine {
 
   async listSupersessions(
     source_id: string,
-    opts?: { since?: Date; limit?: number; visibility?: ('private' | 'world')[] },
+    opts?: { since?: Date; limit?: number; visibility?: ('private' | 'world')[]; kinds?: FactKind[] },
   ): Promise<FactRow[]> {
     return factsImpl.listSupersessions(unscopedExecutor(this.engineSql, 'facts: unscoped on master (EO4 inventory)'), source_id, opts);
   }

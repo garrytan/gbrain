@@ -106,12 +106,15 @@ have no per-client row: they serve the server-resolved surface directly.
 
 ## The verbs
 
-### recall(query?, entity?, budget_tokens?, budget_policy?, source_id?, since?, session_id?, limit?, …) — read
+### recall(query?, entity?, kind?, budget_tokens?, budget_policy?, source_id?, since?, session_id?, limit?, …) — read
 
 Retrieve saved facts and (with `query`) budget-packed page snippets.
 
 - `entity` scopes the FACTS arm; `query` runs the hybrid-search arm over
   pages; both present ⇒ both arms run.
+- `kind`: optional FACTS-arm filter (`event` | `preference` | `commitment` |
+  `belief` | `fact` | `idea`). It composes with `entity`, `since`, `session_id`
+  and `grep`, and is applied before the per-arm limit and budget packing.
 - `since`: ISO 8601 date/datetime — filters the FACTS arm only in v1. (The
   reference implementation also accepts relative phrases like `"8 hours ago"`
   as a convenience; only ISO 8601 is part of the frozen contract.) The window

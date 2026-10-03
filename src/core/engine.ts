@@ -2214,7 +2214,7 @@ export interface BrainEngine {
    */
   listSupersessions(
     source_id: string,
-    opts?: { since?: Date; limit?: number; visibility?: FactVisibility[] },
+    opts?: { since?: Date; limit?: number; visibility?: FactVisibility[]; kinds?: FactKind[] },
   ): Promise<FactRow[]>;
 
   /**
