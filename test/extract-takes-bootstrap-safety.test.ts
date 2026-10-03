@@ -107,6 +107,34 @@ describe('takes bootstrap safety (B-14)', () => {
     expect(chatCalls).toBe(0);
     expect(result.budget_exhausted).toBe(true);
     expect(result.claims_extracted).toBe(0);
+    expect(result.next_before).toBeNull();
+  });
+
+  test('a budget-limited cursor resumes before the unclassified tail', async () => {
+    await seed('concepts/budget-tail');
+    await seed('concepts/budget-head');
+    await engine.executeRaw(`UPDATE pages SET updated_at = '2030-01-02T03:04:05.123456Z'::timestamptz`);
+    const [head] = await engine.executeRaw<{ id: number }>(
+      'SELECT id FROM pages WHERE slug = $1', ['concepts/budget-head'],
+    );
+    reply = () => '[]';
+    const first = await extractTakesFromPages(engine, { bootstrapEnabled: true, budgetUsd: 0.015 });
+    expect(chatCalls).toBe(1);
+    expect(first.budget_exhausted).toBe(true);
+    expect(first.next_before).toEndWith(`,${head.id}`);
+    const separator = first.next_before!.lastIndexOf(',');
+
+    reply = () => '[{"claim":"The older page still gets classified","kind":"take","weight":0.5}]';
+    const second = await extractTakesFromPages(engine, {
+      bootstrapEnabled: true,
+      before: {
+        updatedAt: first.next_before!.slice(0, separator),
+        id: Number(first.next_before!.slice(separator + 1)),
+      },
+    });
+    expect(second.pages_scanned).toBe(1);
+    expect(second.claims_extracted).toBe(1);
+    expect(chatCalls).toBe(2);
   });
 
   test('the budget reads takes.bootstrap_budget_usd', async () => {

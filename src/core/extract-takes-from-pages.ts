@@ -62,6 +62,8 @@ export interface ExtractTakesFromPagesOpts {
   sourceIdFilter?: string;
   /** Max pages to classify per run (caps cost). Default 50. */
   maxPages?: number;
+  /** Continue below this `(updated_at, id)` keyset cursor. */
+  before?: { updatedAt: string; id: number };
   /**
    * Also rescan pages that already hold takes (refresh semantics).
    * Default false: bootstrap runs skip covered pages, so repeated runs
@@ -86,6 +88,8 @@ export interface ExtractTakesFromPagesOpts {
 export interface ExtractTakesFromPagesResult {
   pages_scanned: number;
   claims_extracted: number;
+  /** Pass this exact value to the next run's `--before` flag. */
+  next_before: string | null;
   /** True if the run was a no-op because bootstrapEnabled is false. */
   consent_gate_blocked: boolean;
   /** True if chat gateway is unavailable (no LLM call possible). */
@@ -158,7 +162,7 @@ export async function extractTakesFromPages(
   engine: BrainEngine,
   opts: ExtractTakesFromPagesOpts,
 ): Promise<ExtractTakesFromPagesResult> {
-  const emptyTail = { pages_skipped: 0, skipped: [], mirror_warnings: 0, budget_exhausted: false, duplicates_skipped: 0 };
+  const emptyTail = { next_before: null, pages_skipped: 0, skipped: [], mirror_warnings: 0, budget_exhausted: false, duplicates_skipped: 0 };
   // A12 consent gate: refuse without bootstrap_enabled even on manual call.
   if (!opts.bootstrapEnabled) {
     return {
@@ -184,8 +188,13 @@ export async function extractTakesFromPages(
   const managedJournalWrites = await managedPersistenceEnabled(engine);
   const maxPages = opts.maxPages ?? 50;
   const holder = opts.holder ?? 'system';
-  const sourceFilter = opts.sourceIdFilter ? `AND source_id = $1` : '';
-  const params = opts.sourceIdFilter ? [opts.sourceIdFilter] : [];
+  const params: unknown[] = [];
+  const sourceFilter = opts.sourceIdFilter
+    ? `AND source_id = $${params.push(opts.sourceIdFilter)}`
+    : '';
+  const beforeFilter = opts.before
+    ? `AND (updated_at, id) < ($${params.push(opts.before.updatedAt)}::timestamptz, $${params.push(opts.before.id)})`
+    : '';
 
   // Fetch eligible pages. Order by updated_at DESC so recently-edited
   // pages get bootstrapped first.
@@ -199,14 +208,15 @@ export async function extractTakesFromPages(
     ? ''
     : `AND NOT EXISTS (SELECT 1 FROM takes t WHERE t.page_id = pages.id)`;
   const pages = await engine.executeRaw<PageRow>(
-    `SELECT id, slug, source_id, type, compiled_truth, updated_at
+    `SELECT id, slug, source_id, type, compiled_truth, updated_at::text AS updated_at
        FROM pages
       WHERE type IN (${typesList})
         AND deleted_at IS NULL
         AND length(COALESCE(compiled_truth, '')) > 200
         ${coveredFilter}
         ${sourceFilter}
-      ORDER BY updated_at DESC
+        ${beforeFilter}
+      ORDER BY updated_at DESC, id DESC
       LIMIT ${maxPages}`,
     params,
   );
@@ -218,6 +228,7 @@ export async function extractTakesFromPages(
   let budgetExhausted = false;
   let duplicatesSkipped = 0;
   const skipped: Array<{ slug: string; reason: string }> = [];
+  let nextBefore: string | null = null;
   const model = opts.model || getChatModel();
   const meter = new BudgetMeter({
     budgetUsd: await resolveBudgetUsd(engine, opts.budgetUsd),
@@ -235,6 +246,8 @@ export async function extractTakesFromPages(
   };
 
   for (const page of pages) {
+    const previousCursor = nextBefore;
+    nextBefore = `${String(page.updated_at)},${page.id}`;
     pagesScanned++;
     opts.onProgress?.(pagesScanned, pages.length, claimsExtracted);
 
@@ -276,6 +289,8 @@ export async function extractTakesFromPages(
       label: 'takes_bootstrap',
     });
     if (!budget.allowed) {
+      // Resume at the last processed page, not past the unclassified tail.
+      nextBefore = previousCursor;
       budgetExhausted = true;
       break;
     }
@@ -391,6 +406,7 @@ export async function extractTakesFromPages(
   return {
     pages_scanned: pagesScanned,
     claims_extracted: claimsExtracted,
+    next_before: nextBefore,
     consent_gate_blocked: false,
     llm_unavailable: false,
     pages_skipped: pagesSkipped,
