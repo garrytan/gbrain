@@ -107,6 +107,7 @@ import {
 } from '../core/backup/status-file.ts';
 import { realpathOrResolve } from '../core/path-confine.ts';
 import { isClaudeCliSelfTranscriptPath } from '../core/ai/providers/claude-cli-scratch.ts';
+import { withoutPhysicalRootMetadata } from '../core/persistence/root-metadata.ts';
 
 // ── Tunables ────────────────────────────────────────────────────────────────
 
@@ -846,7 +847,7 @@ async function treeNeedsPush(root: string): Promise<boolean> {
   // doesn't resolve yet (never pushed), any commit past the empty tree counts
   // as needs-push.
   const status = await tryExecAsync('git', ['-C', root, 'status', '--porcelain']);
-  if ((status ?? '') !== '') return true;
+  if (withoutPhysicalRootMetadata(status ?? '') !== '') return true;
   const branch = await tryExecAsync('git', ['-C', root, 'branch', '--show-current']);
   const b = (branch ?? '').trim();
   if (b) {

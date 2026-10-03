@@ -16,10 +16,7 @@ const uuid = (value: unknown): value is string => typeof value === 'string' && /
 export function physicalRootError(message = 'The physical checkout identity changed or belongs to another owner.'): OperationError {
   return new OperationError('recovery_required', message, 'Use verified writer transfer or source recovery; do not remove ownership markers to claim this path.');
 }
-export function isPhysicalRootMetadata(name: string): boolean {
-  return name === PHYSICAL_ROOT_MARKER || /^\.gbrain-owner-[a-f0-9]{64}\.json$/.test(name)
-    || /^\.gbrain-owner\.json\.[a-f0-9-]{36}\.tmp$/.test(name);
-}
+export { isPhysicalRootMetadata } from './root-metadata.ts';
 export function physicalRootReservationPath(root: string): string {
   return join(dirname(root), `${RESERVATION_PREFIX}${sha256(root)}.json`);
 }

@@ -40,7 +40,7 @@ export function hasFilesystemPublication(path: string): boolean {
   const held = active.getStore();
   return held?.active === true && held.roots.some(root => encloses(root, path));
 }
-/** True when the path is inside (or encloses) a managed canonical worktree. */
+/** Same managed-root predicate used by write guards, available to read-only diagnostics. */
 export function isManagedFilesystemPath(path: string): boolean {
   return hasManagedRootMarker(path) || registeredManagedRoots().some(root => encloses(root, path) || encloses(path, root))
     || [...managedRoots.values()].some(roots => [...roots].some(root => encloses(root, path) || encloses(path, root)));
