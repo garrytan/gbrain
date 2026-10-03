@@ -6,7 +6,7 @@ import type { SyncOpts } from '../../commands/sync.ts';
 import { parseMarkdown } from '../markdown.ts';
 import { OperationError } from '../ops/contract.ts';
 import { buildDetachedWorkingTreeManifest, computeSyncDelta } from '../sync-delta.ts';
-import { isSyncable, isCodeFilePath, matchesAnyGlob, resolveSlugForPath } from '../sync.ts';
+import { isSyncable, isCodeFilePath, isImageFilePath, matchesAnyGlob, resolveSlugForPath } from '../sync.ts';
 import { resolveSlugRootMode } from '../sync-anchor.ts';
 import { isWriteTargetContained } from '../path-confine.ts';
 import { getWorktreeBinding, type WorktreeBinding } from './ownership.ts';
@@ -29,10 +29,14 @@ export interface SyncEntry { path: string; sourcePath: string; action: 'import' 
 /** Files that map to a slug another origin keeps; they are left out of the manifest until one is renamed. */
 export interface SyncSlugCollision { slug: string; kept: string; skipped: string[]; }
 /** #5032: a file sync skipped on this host with a named refusal, without failing the run. */
-export interface SyncFileRefusal { path: string; code: 'colon_slug_windows_write_through'; message: string; suggestion: string; docs: string; }
+export interface SyncFileRefusal { path: string; code: 'colon_slug_windows_write_through' | 'managed_image_sync_unsupported'; message: string; suggestion: string; docs: string; }
 export interface SyncDiscovery { binding: WorktreeBinding; root: string; gitRoot: string; sourceId: string; incarnation: string;
   companyPlan?: CompanyBrainPlan; slugCollisions?: SyncSlugCollision[]; fileRefusals?: SyncFileRefusal[];
+  /** #5493: refused images beyond the IMAGE_REFUSAL_SAMPLE listed in `fileRefusals`. */
+  imageRefusalsOmitted?: number;
   from: string | null; target: string; entries: SyncEntry[]; uncommitted?: { added: number; modified: number; deleted: number }; slugMode: 'git-root' | 'source-root'; }
+/** The cursor header carrying `fileRefusals` is rewritten on every page, so a run lists this many refused images and counts the rest. */
+const IMAGE_REFUSAL_SAMPLE = 20;
 export interface ManagedSyncContext { binding: WorktreeBinding; root: string; gitRoot: string; sourceId: string; incarnation: string;
   source: { last_commit: string | null; config: Record<string, unknown> }; }
 export function syncGit(root: string, args: string[]): string {
@@ -146,30 +150,45 @@ export async function discoverManagedSync(engine: BrainEngine, opts: SyncOpts, c
   // A deletion or rename touching one is refused on both sides, so the page
   // keeps its identity until the change is synced from macOS or Linux.
   const refused = new Map<string, SyncFileRefusal>();
-  const refusalMessages = {
+  const colonRefusalMessages = {
     import: (path: string) => `${path} has a ':' in its name, which Windows cannot store; sync skipped it.`,
     delete: (path: string) => `${path} has a ':' in its name, which Windows cannot reconcile; sync skipped its deletion and its page stays live.`,
   };
-  const record = (path: string, message: string) => {
-    if (eligible(path)) refused.set(path, { path, code: 'colon_slug_windows_write_through', message,
-      suggestion: `Rename it without ':' on a macOS or Linux checkout and commit, then run gbrain sync --source ${sourceId} --no-pull.`,
-      docs: ERROR_CATALOGUE.colon_slug_windows_write_through.docs });
+  // #5493: the managed importer has no image branch, so each image import the
+  // multimodal gate admits is refused the same way and the rest of the run
+  // imports; a deletion needs no importer and reconciles its page. The
+  // checkpoint still advances past a refused image, so only a full scan revisits it.
+  const refusedImages = new Set<string>();
+  const refusalSuggestions: Record<SyncFileRefusal['code'], string> = {
+    colon_slug_windows_write_through: `Rename it without ':' on a macOS or Linux checkout and commit, then run gbrain sync --source ${sourceId} --no-pull.`,
+    managed_image_sync_unsupported: `Later syncs do not retry a committed image. Once managed sync imports images, run gbrain sync --source ${sourceId} --no-pull --full to import the images it skipped.`,
+  };
+  const record = (path: string, message: string, code: SyncFileRefusal['code']) => {
+    if (eligible(path)) refused.set(path, { path, code, message, suggestion: refusalSuggestions[code], docs: ERROR_CATALOGUE[code].docs });
   };
   const refuse = (path: string, action: SyncEntry['action'] = 'import') => {
     if (!isWindowsColonTarget(path)) return false;
-    record(path, refusalMessages[action](path));
+    record(path, colonRefusalMessages[action](path), 'colon_slug_windows_write_through');
     return true;
+  };
+  const refuseImage = (path: string) => {
+    // A company plan replaces these entries with its own manifest below, so it records no image refusal.
+    if (company || refusedImages.has(path)) return;
+    refusedImages.add(path);
+    if (refusedImages.size <= IMAGE_REFUSAL_SAMPLE) record(path, `${path} is an image, which managed sync does not import yet; sync skipped it.`, 'managed_image_sync_unsupported');
   };
   const storable = <T extends { source_path: string | null }>(page: T) => page.source_path === null || !isWindowsColonTarget(page.source_path);
   const put = (path: string, action: SyncEntry['action'], working = false) => {
     if (process.platform === 'win32' && path.includes('\\')) throw new OperationError('page_identity_changed', 'Git paths containing literal backslashes are not safe Windows sync targets.');
-    if (refuse(path, action)) return;
-    if (eligible(path)) entries.set(path, { path: relative(nativeRoot, join(nativeGitRoot, path)).split(sep).join('/'), sourcePath: sourcePath(path), action, working });
+    if (refuse(path, action) || !eligible(path)) return;
+    // A later import of the same path replaces an earlier entry, as it does for Markdown.
+    if (action === 'import' && isImageFilePath(path)) { entries.delete(path); refuseImage(path); return; }
+    entries.set(path, { path: relative(nativeRoot, join(nativeGitRoot, path)).split(sep).join('/'), sourcePath: sourcePath(path), action, working });
   };
   const putRename = (rename: { from: string; to: string }, working = false) => {
     if (isWindowsColonTarget(rename.from) || isWindowsColonTarget(rename.to)) {
       for (const path of [rename.from, rename.to]) {
-        record(path, `${path} is one side of the rename ${rename.from} -> ${rename.to}, which Windows cannot reconcile; sync skipped both sides so the page keeps its identity.`);
+        record(path, `${path} is one side of the rename ${rename.from} -> ${rename.to}, which Windows cannot reconcile; sync skipped both sides so the page keeps its identity.`, 'colon_slug_windows_write_through');
       }
       return;
     }
@@ -218,9 +237,10 @@ export async function discoverManagedSync(engine: BrainEngine, opts: SyncOpts, c
     }
   }
   const selected = [...entries.values()].sort((a, b) => a.action.localeCompare(b.action) || a.path.localeCompare(b.path));
-  if (selected.some(e => !/\.mdx?$/i.test(e.path) && !isCodeFilePath(e.path))) throw new OperationError('writer_coordinator_required', 'Managed image sync requires a prepared importer; this sync was refused before any page write.');
+  if (selected.some(e => e.action === 'import' && !/\.mdx?$/i.test(e.path) && !isCodeFilePath(e.path))) throw new OperationError('writer_coordinator_required', 'Managed image sync requires a prepared importer; this sync was refused before any page write.');
   if (selected.length > 100_000 || Buffer.byteLength(JSON.stringify(selected)) > 16 * 1024 ** 2) throw new OperationError('request_too_large', 'Sync discovery exceeds the bounded cursor size.');
-  const discovered: SyncDiscovery = { ...(refused.size ? { fileRefusals: [...refused.values()] } : {}), binding: { ...binding, owner_epoch: String(binding.owner_epoch), topology_generation: String(binding.topology_generation) }, root, gitRoot, sourceId, incarnation, from: source.last_commit, target, entries: selected, slugMode, ...(company ? { companyPlan: company.plan } : {}) };
+  const discovered: SyncDiscovery = { ...(refused.size ? { fileRefusals: [...refused.values()] } : {}),
+    ...(refusedImages.size > IMAGE_REFUSAL_SAMPLE ? { imageRefusalsOmitted: refusedImages.size - IMAGE_REFUSAL_SAMPLE } : {}), binding: { ...binding, owner_epoch: String(binding.owner_epoch), topology_generation: String(binding.topology_generation) }, root, gitRoot, sourceId, incarnation, from: source.last_commit, target, entries: selected, slugMode, ...(company ? { companyPlan: company.plan } : {}) };
   // Freeze all logical identities in one database statement, before yielding
   // between pages. A later interactive edit must conflict with this scan.
   const identities = await engine.executeRaw<{ id: number; slug: string; source_path: string | null; knowledge_revision: string }>(

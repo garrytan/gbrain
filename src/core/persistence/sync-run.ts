@@ -118,6 +118,7 @@ function result(cursor: Cursor | CursorHeader, status: SyncResult['status'], rea
     deleted: cursor.counts.deleted, renamed: cursor.counts.renamed ?? 0, chunksCreated: cursor.counts.chunks, embedded: 0, pagesAffected: [],
     ...(cursor.slugCollisions?.length ? { slugCollisions: cursor.slugCollisions } : {}),
     ...(cursor.fileRefusals?.length ? { fileRefusals: cursor.fileRefusals } : {}),
+    ...(cursor.imageRefusalsOmitted ? { imageRefusalsOmitted: cursor.imageRefusalsOmitted } : {}),
     filesImported: cursor.index, bankedFiles: cursor.index, ...(cursor.uncommitted ? { uncommitted: cursor.uncommitted } : {}), ...(reason ? { reason } : {}),
     ...(cursor.counts.skippedContextualMode || cursor.counts.skippedCanonicalBytes ? { legacySkips: {
       contextualMode: cursor.counts.skippedContextualMode ?? 0, canonicalBytes: cursor.counts.skippedCanonicalBytes ?? 0 } } : {}) };

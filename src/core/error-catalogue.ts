@@ -42,6 +42,7 @@ export const ERROR_CATALOGUE = {
   source_checkout_missing: { code: 'recovery_required', docs: 'docs/guides/write-refusals.md#source_checkout_missing' },
   managed_pull_skipped: { code: 'managed_pull_skipped', docs: 'docs/guides/write-refusals.md#managed_pull_skipped' },
   no_pricing: { code: 'no_pricing', docs: 'docs/guides/write-refusals.md#no_pricing' },
+  managed_image_sync_unsupported: { code: 'managed_image_sync_unsupported', docs: 'docs/guides/write-refusals.md#managed_image_sync_unsupported' },
 } as const satisfies Record<string, CatalogueEntry>;
 
 export type CatalogueName = keyof typeof ERROR_CATALOGUE;

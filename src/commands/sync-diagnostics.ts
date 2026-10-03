@@ -1,4 +1,5 @@
 import type { SyncResult } from './sync.ts';
+import { ERROR_CATALOGUE } from '../core/error-catalogue.ts';
 
 export function printManagedSyncDiagnostic(result: SyncResult, sink: NodeJS.WriteStream): boolean {
   const d = result.managedWrite;
@@ -23,6 +24,9 @@ export function printManagedSyncNotes(result: SyncResult, write: (line: string) 
   }
   for (const refusal of result.fileRefusals ?? []) {
     write(`  Refused ${refusal.code}: ${refusal.message} ${refusal.suggestion} (${refusal.docs})`);
+  }
+  if (result.imageRefusalsOmitted) {
+    write(`  Refused managed_image_sync_unsupported: ${result.imageRefusalsOmitted} more image(s) skipped the same way and not listed. (${ERROR_CATALOGUE.managed_image_sync_unsupported.docs})`);
   }
   const skips = result.legacySkips;
   if (skips?.contextualMode) write(`  ${skips.contextualMode} legacy file(s) skipped because they parse to the same page but have no contextual retrieval mode, which a skipped import cannot stamp; to stamp it: gbrain repair contextual-mode`);
