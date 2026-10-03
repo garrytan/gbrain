@@ -362,6 +362,33 @@ export function buildEmptyRetrievalBlock(retrieval: unknown): string | null {
 }
 
 /**
+ * D8-style model-visible block for a truncated list_pages result, rendered
+ * from the handler-emitted `pagination` meta: the body stays a bare array, so
+ * a full page still reads as complete to any client that ignores `_meta`
+ * unless this block says otherwise. Null when nothing was dropped or the
+ * meta is malformed — best-effort loudness, never a failure source.
+ */
+export function buildTruncatedListingBlock(pagination: unknown): string | null {
+  if (pagination === null || typeof pagination !== 'object') return null;
+  const p = pagination as { truncated?: unknown; limit?: unknown; clamped_from?: unknown; next?: unknown };
+  if (p.truncated !== true || typeof p.limit !== 'number') return null;
+  const clamp = typeof p.clamped_from === 'number' ? ` (limit ${p.clamped_from} was capped at ${p.limit})` : '';
+  const next = p.next !== null && typeof p.next === 'object'
+    ? ` Next page: repeat the call with ${JSON.stringify(p.next)}, all other params unchanged.`
+    : '';
+  return `truncated: more rows match than the ${p.limit} returned${clamp}.${next}`;
+}
+
+/** The D8 extra blocks a successful result gets from its handler-emitted meta. */
+function metaDiagnosisBlocks(result: unknown, meta: Record<string, unknown>): string[] {
+  const blocks = [
+    Array.isArray(result) && result.length === 0 && meta.retrieval ? buildEmptyRetrievalBlock(meta.retrieval) : null,
+    buildTruncatedListingBlock(meta.pagination),
+  ];
+  return blocks.filter((b): b is string => b !== null);
+}
+
+/**
  * Amendment 33 / D10 — honest-catalog metric classifier. True when a parsed
  * error envelope is an OP-LEVEL denial the tools/list filter SHOULD have
  * prevented (the same predicates gate list and call time, so in a correct
@@ -722,14 +749,12 @@ export async function dispatchToolCall(
       });
     }
     const out: ToolResult = { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    // D8: model-visible loudness for empty retrievals. The body stays a bare
-    // array (D3 — deployed thin-clients parse content[0] only), and a SECOND
-    // text block carries the diagnosis the model actually sees. Structured
-    // consumers read the same facts from _meta.retrieval below.
-    if (Array.isArray(result) && result.length === 0 && responseMeta.retrieval) {
-      const block = buildEmptyRetrievalBlock(responseMeta.retrieval);
-      if (block) out.content.push({ type: 'text', text: block });
-    }
+    // D8: model-visible loudness for empty retrievals and truncated listings.
+    // The body stays a bare array (D3 — deployed thin-clients parse
+    // content[0] only), and a SECOND text block carries the diagnosis the
+    // model actually sees. Structured consumers read the same facts from
+    // _meta.retrieval / _meta.pagination below.
+    for (const block of metaDiagnosisBlocks(result, responseMeta)) out.content.push({ type: 'text', text: block });
     // WP3/D8: warn-mode unknown-param notices ride the same model-visible
     // extra-block mechanism, so the grace period actually corrects clients
     // (old thin-clients read content[0] only — skew-safe).
