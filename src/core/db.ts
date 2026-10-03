@@ -106,6 +106,34 @@ export function resolvePrepare(url: string): boolean | undefined {
   return undefined;
 }
 
+const DEFAULT_CONNECT_TIMEOUT_SECONDS = 10;
+
+/**
+ * Client connect timeout, in seconds, for every postgres() call site (module
+ * singleton, engine instance pool, ConnectionManager read + direct pools).
+ *
+ * postgres.js resolves each option as `k in opts ? opts[k] : k in url.query ? ...`
+ * (`parseOptions`), so an explicit `connect_timeout` in the options object
+ * shadows a `?connect_timeout=N` in the URL; a hardcoded value would silently
+ * discard the URL's. A positive integer in the URL wins (whole seconds, as
+ * libpq defines the parameter); anything else keeps the 10s default. `0` is
+ * not honoured: postgres.js reads it as "no timer at all", and every gbrain
+ * connect stays bounded.
+ */
+export function resolveConnectTimeoutSeconds(url: string): number {
+  try {
+    const parsed = new URL(url.replace(/^postgres(ql)?:\/\//, 'http://'));
+    const raw = parsed.searchParams.get('connect_timeout')?.trim();
+    if (raw && /^\d+$/.test(raw)) {
+      const seconds = Number(raw);
+      if (seconds > 0) return seconds;
+    }
+  } catch {
+    // URL parse failure — fall through to default
+  }
+  return DEFAULT_CONNECT_TIMEOUT_SECONDS;
+}
+
 export function resolvePoolSize(explicit?: number): number {
   if (typeof explicit === 'number' && explicit > 0) return explicit;
   const raw = process.env.GBRAIN_POOL_SIZE;
@@ -289,7 +317,7 @@ export async function connect(config: EngineConfig): Promise<boolean> {
     const opts: Record<string, unknown> = {
       max: resolvePoolSize(),
       idle_timeout: 20,
-      connect_timeout: 10,
+      connect_timeout: resolveConnectTimeoutSeconds(url),
       // Explicit (matches the postgres.js implicit default; GBRAIN_POOL_MAX_LIFETIME_S overrides).
       max_lifetime: resolveMaxLifetimeSeconds(),
       types: {
