@@ -173,6 +173,41 @@ describe('parseJudgeJson failure signalling (#2606)', () => {
   });
 });
 
+describe('parseJudgeJson — trailing bracketed prose no longer hijacks recovery (sibling of #5064)', () => {
+  // A naive `lastIndexOf(']')` recovery picks up a bracket from prose AFTER
+  // the array instead of the array's own closing bracket, so an otherwise
+  // well-formed response is reported unparseable. Mirrors the fix in
+  // `extract-atoms.ts` (`findArrayCloseIndex`, #5064), now shared via
+  // `findJsonCloseIndex` in `llm-json.ts`.
+  const EVENT = '{"when":"2026-06-18","who":[],"what":"x","kind":"meeting"}';
+
+  test('recovers the array when a [Source: X] citation follows it', () => {
+    const raw = `[${EVENT}]\nSee [Source: alice-example].`;
+    const arr = parseJudgeJson(raw);
+    expect(Array.isArray(arr)).toBe(true);
+    expect(arr!.length).toBe(1);
+  });
+
+  test('recovers the array when a [[wikilink]] backlink follows it', () => {
+    const raw = `[${EVENT}]\nRelated: [[people/alice-example]].`;
+    const arr = parseJudgeJson(raw);
+    expect(arr!.length).toBe(1);
+  });
+
+  test('a legitimate empty array followed by bracketed prose is still []', () => {
+    expect(parseJudgeJson('[]\nSee [Source: X].')).toEqual([]);
+  });
+
+  test('a bracket inside a quoted string field does not confuse the depth count', () => {
+    // The `what` field's own value contains a literal `]`; a depth counter
+    // that doesn't skip string-literal contents would close the array early.
+    const raw = '[{"when":"2026-06-18","who":[],"what":"see [note]","kind":"meeting"}]\nSee [Source: X].';
+    const arr = parseJudgeJson(raw);
+    expect(arr!.length).toBe(1);
+    expect(arr![0]!.what).toBe('see [note]');
+  });
+});
+
 describe('runChronicleBackstop gating', () => {
   beforeEach(async () => {
     await engine.unsetConfig('auto_chronicle');
