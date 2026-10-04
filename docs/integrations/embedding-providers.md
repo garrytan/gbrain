@@ -35,6 +35,7 @@ The resolved provider + dimensions get persisted to `~/.gbrain/config.json` atom
 | `llama-server` | (none — runs locally) | user-set | 0 | yes | no |
 | `lmstudio` | (none — runs locally) | user-set | 0 | yes | no |
 | `litellm` | `LITELLM_API_KEY` (optional) | user-set | varies | yes (proxy) | yes (backend permitting) |
+| `omlx` | (none — runs locally) | 1024 | 0 | yes | yes (`Qwen3-VL-Embedding-2B-*`) |
 | `together` | `TOGETHER_API_KEY` | 768 | varies | no | no |
 | `anthropic` | (no embedding model — chat only) | — | — | — | — |
 | `deepseek` | (no embedding model — chat only) | — | — | — | — |
@@ -211,6 +212,18 @@ Run [LiteLLM](https://docs.litellm.ai/docs/proxy/quick_start) in front of any pr
 This is the catch-all for "my provider isn't in the list above." Set up LiteLLM, then `gbrain init --embedding-model litellm:<your-model-id> --embedding-dimensions <N>`.
 
 **Include the `/v1` suffix in `LITELLM_BASE_URL` if your proxy serves the OpenAI route there** (e.g. `http://localhost:4000/v1`). Many LiteLLM deployments expose the OpenAI-compatible API only under `/v1`; pointing gbrain at the bare host 404s or fails authentication with no hint. gbrain trusts the dimension you declare for the proxy-backed model — the proxy's backend, not gbrain, decides the true width — so `--embedding-dimensions <N>` is required and accepted as-is.
+
+### oMLX (local, Apple Silicon)
+
+[oMLX](https://github.com/jundot/omlx) is an OpenAI-compatible local inference server for Apple Silicon (default port 1216). No env required — local setups ignore auth; set `OMLX_API_KEY` only if your server enforces one. Optional `OMLX_BASE_URL` (default `http://localhost:1216/v1`).
+
+Unlike the other local providers, oMLX serves **multimodal embedding models** — the Qwen3-VL-Embedding family embeds text and images into the same vector space (oMLX #369/#373). Its `/v1/embeddings` wire shape deviates from OpenAI's content-array convention: text goes through plain-string `input`, images through structured `items: [{image: "data:...", text?}]`. The recipe ships a compat fetch that rewrites gbrain's multimodal request into that shape, so no sidecar translation proxy is needed:
+
+```bash
+gbrain init --embedding-model omlx:Qwen3-VL-Embedding-2B-mlx --embedding-dimensions 1024
+```
+
+The VL-Embedding-2B family is 2048-native but honors Matryoshka `dimensions` down to 1024 (the recipe declares 1024 so the pgvector column matches; `dims_options` lists 1024/1536/2048). Text-only Qwen3-Embedding models in the same server keep the plain-string fast path untouched. `gbrain doctor` probes oMLX's `/health` endpoint for readiness.
 
 ## Choosing dimensions
 
