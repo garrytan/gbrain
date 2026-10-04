@@ -1,0 +1,14 @@
+// Routing eval fixtures for skills/brain-ingest-gate. Each positive intent
+// includes at least one trigger string as substring.
+{"intent": "migrate to brain: these project notes have been sitting in the workspace for weeks", "expected_skill": "brain-ingest-gate"}
+{"intent": "before you save that concept page, is this already in the brain somewhere?", "expected_skill": "brain-ingest-gate"}
+{"intent": "copy these files into the brain — the whole notes/ folder from this project", "expected_skill": "brain-ingest-gate"}
+{"intent": "check for duplicates before writing anything from this batch", "expected_skill": "brain-ingest-gate"}
+{"intent": "move this to brain, but make sure it's not just a raw copy to brain with no linking", "expected_skill": "brain-ingest-gate"}
+// Negative: quick one-off thought capture goes through the capture front door, not the gate.
+{"intent": "capture this thought: pricing pages should default to the annual toggle", "expected_skill": "capture", "ambiguous_with": []}
+// Ambiguous vs concept-synthesis: retroactive dedup of stubs ALREADY in the brain
+// routes to concept-synthesis; this gate is prevention at write time.
+{"intent": "run concept synthesis to dedupe the stubs that piled up in the brain over the last few months", "expected_skill": "concept-synthesis", "ambiguous_with": ["brain-ingest-gate"]}
+// Negative: adjacent (pre-send quality pass) but out of scope — nothing is being written to the brain.
+{"intent":"Fix the typos in this outgoing email before I hit send","expected_skill":null}
